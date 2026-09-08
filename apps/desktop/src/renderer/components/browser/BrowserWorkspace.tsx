@@ -1,5 +1,5 @@
 import {
-  useCallback,
+	useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -7,13 +7,17 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type {
-	FilePreview,
-	MemoryRecord,
-	MemoryRecallStatus,
-	RuntimeSession,
-	UserBrowserFile,
-	UserBrowserTabOrganizationPreview,
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import {
+	parseChromeWebStoreListingUrl,
+	type ChromeWebStoreExtensionInspection,
+	type FilePreview,
+	type MemoryRecord,
+	type MemoryRecallStatus,
+	type InstalledExtension,
+	type RuntimeSession,
+	type UserBrowserFile,
+	type UserBrowserTabOrganizationPreview,
 } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import {
@@ -24,15 +28,33 @@ import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import { BookmarksBar } from "./BookmarksBar";
 import { BrowserToolbar } from "./BrowserToolbar";
+import { BookmarkDialog, type BookmarkDialogSaveInput } from "./BookmarkDialog";
+import { ChromeWebStoreInstallBar } from "./ChromeWebStoreInstallBar";
+import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
+import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
 import { NewTabPage } from "./NewTabPage";
 import { OrganizeTabsDialog } from "./OrganizeTabsDialog";
 import { TabStrip } from "./TabStrip";
 import { recordNewTabGreetingVisit } from "./new-tab";
+import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
+
+function threatTypeLabel(type: string): string {
+  return (
+    {
+      malware: "Malware",
+      "social-engineering": "Deceptive site",
+      "unwanted-software": "Unwanted software",
+      "potentially-harmful-application": "Potentially harmful app",
+      "unsafe-site": "Unsafe site",
+    }[type] ?? "Unsafe site"
+  );
+}
 
 export function BrowserWorkspace({
   browser,
   agentName,
 	greetingName,
+  navigationSidebar,
   agentOpen,
   onToggleAgent,
   onNewAgent,
@@ -57,6 +79,7 @@ export function BrowserWorkspace({
   browser: UserBrowserController;
   agentName: string;
 	greetingName?: string | undefined;
+  navigationSidebar?: ReactNode;
   agentOpen: boolean;
   onToggleAgent(): void;
   onNewAgent(prompt?: string): void;
@@ -78,23 +101,44 @@ export function BrowserWorkspace({
 	memoryRecall: MemoryRecallStatus;
 	onOpenLifeMemory?(): void;
 }) {
+  const reducedMotion = useReducedMotion() ?? false;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
   const findRef = useRef<HTMLInputElement | null>(null);
+  const findTabIdRef = useRef<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
-  const [fileDragActive, setFileDragActive] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [openChromeMenus, setOpenChromeMenus] = useState({
     tab: false,
     toolbar: false,
   });
+  const [tabDragActive, setTabDragActive] = useState(false);
+  const tabDragActiveRef = useRef(false);
   const [organizeTabsPreview, setOrganizeTabsPreview] =
     useState<UserBrowserTabOrganizationPreview | null>(null);
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
+  const [organizeTabsPresent, setOrganizeTabsPresent] = useState(false);
   const [historyPopoverRequestId, setHistoryPopoverRequestId] = useState(0);
+  const [nativePagePreview, setNativePagePreview] = useState<{
+    tabId: string;
+    dataUrl: string;
+  } | null>(null);
+  const [bookmarkDialog, setBookmarkDialog] = useState<{
+    tabId: string;
+    bookmarkId?: string;
+  } | null>(null);
+  const [bookmarkDialogPresent, setBookmarkDialogPresent] = useState(false);
+  const [extensionInspection, setExtensionInspection] =
+    useState<ChromeWebStoreExtensionInspection | null>(null);
+  const [installedChromeWebStoreExtension, setInstalledChromeWebStoreExtension] =
+    useState<InstalledExtension | null>(null);
+  const [extensionCompatibilityDialogPresent, setExtensionCompatibilityDialogPresent] =
+    useState(false);
   const organizeTabsRequestRef = useRef(0);
+  const pagePreviewRequestRef = useRef(0);
   const lastBoundsRef = useRef("");
-  const syncBoundsRef = useRef<() => void>(() => undefined);
+  const syncBoundsRef = useRef<(visible?: boolean) => void>(() => undefined);
   const scheduleBoundsSyncRef = useRef<() => void>(() => undefined);
   const state = browser.state;
   const {
@@ -104,6 +148,7 @@ export function BrowserWorkspace({
     reopenClosedTab,
     forward,
     navigate,
+    dismissThreat,
     reload,
     selectTab,
     setContentBounds,
@@ -113,7 +158,10 @@ export function BrowserWorkspace({
     zoomIn,
     zoomOut,
     zoomReset,
-    toggleBookmark,
+    saveBookmark,
+    updateBookmark,
+    removeBookmark,
+    createBookmarkFolder,
     pinTab,
     muteTab,
     duplicateTab,
@@ -122,9 +170,12 @@ export function BrowserWorkspace({
     stopFindInPage,
     printTab,
     openDevTools,
+    saveScreenshot,
     moveTab,
     applyTabOrganization,
     detachTab,
+    reattachTab,
+    isDetachedWindow,
     previewOrganizeTabs,
   } = browser;
 
@@ -133,6 +184,7 @@ export function BrowserWorkspace({
     setOrganizeTabsOpening(true);
     try {
       const preview = await previewOrganizeTabs();
+      setOrganizeTabsPresent(true);
       setOrganizeTabsPreview(preview);
     } catch {
       // The browser controller reports request failures in its own error area;
@@ -157,16 +209,213 @@ export function BrowserWorkspace({
   }, [openOrganizeTabs, organizeTabsRequestId]);
 
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
+  const zoomFeedback = browser.zoomFeedback;
+  const activeZoomPercent =
+    zoomFeedback && zoomFeedback.tabId === activeTab?.id
+      ? zoomFeedback.percent
+      : undefined;
   const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
   const activeFilePage = activeTab ? parseKestrelFilePage(activeTab.url) : undefined;
+  const openBookmarkDialog = useCallback(() => {
+    if (!activeTab?.url || activeAppPage || activeFilePage) {
+      return;
+    }
+    setBookmarkDialogPresent(true);
+    setBookmarkDialog({ tabId: activeTab.id });
+  }, [
+    activeAppPage,
+    activeFilePage,
+    activeTab?.error,
+    activeTab?.id,
+    activeTab?.url,
+  ]);
+  const closeBookmarkDialog = useCallback(() => {
+    setBookmarkDialog(null);
+  }, []);
+  const toggleBookmarkFromChrome = useCallback(() => {
+    const existing = activeTab?.url
+      ? state?.bookmarks.find((bookmark) => bookmark.url === activeTab.url)
+      : undefined;
+    if (existing) {
+      void removeBookmark(existing.id);
+      return;
+    }
+    openBookmarkDialog();
+  }, [activeTab?.url, openBookmarkDialog, removeBookmark, state?.bookmarks]);
+  const editBookmark = useCallback(
+    (bookmarkId: string) => {
+      if (
+        !activeTab ||
+        !state?.bookmarks.some((bookmark) => bookmark.id === bookmarkId)
+      )
+        return;
+      setBookmarkDialogPresent(true);
+      setBookmarkDialog({ tabId: activeTab.id, bookmarkId });
+    },
+    [activeTab, state?.bookmarks],
+  );
+  const saveBookmarkDialog = useCallback(
+    async (input: BookmarkDialogSaveInput) => {
+      if (!bookmarkDialog) return;
+      if (state?.activeTabId !== bookmarkDialog.tabId) {
+        throw new Error("The active page changed. Close this dialog and try again.");
+      }
+      if (bookmarkDialog.bookmarkId) {
+        await updateBookmark({
+          bookmarkId: bookmarkDialog.bookmarkId,
+          title: input.title,
+          displayMode: input.displayMode,
+          folderId: input.folderId,
+        });
+      } else {
+        await saveBookmark({
+          title: input.title,
+          displayMode: input.displayMode,
+          folderId: input.folderId,
+        });
+      }
+      setBookmarkDialog(null);
+    }, [bookmarkDialog, saveBookmark, state?.activeTabId, updateBookmark],
+  );
+  const bookmarkDialogBookmark = bookmarkDialog?.bookmarkId
+    ? state?.bookmarks.find((bookmark) => bookmark.id === bookmarkDialog.bookmarkId)
+    : undefined;
+  const bookmarkDialogSourceTab = bookmarkDialog
+    ? state?.tabs.find((tab) => tab.id === bookmarkDialog.tabId)
+    : undefined;
+  const bookmarkDialogTab =
+    bookmarkDialogBookmark && bookmarkDialogSourceTab
+      ? {
+          ...bookmarkDialogSourceTab,
+          url: bookmarkDialogBookmark.url,
+          title: bookmarkDialogBookmark.title,
+          faviconDataUrl: bookmarkDialogBookmark.faviconDataUrl,
+        }
+      : bookmarkDialogSourceTab;
+  useEffect(() => {
+    if (!bookmarkDialog) return;
+    const tabStillExists = state?.tabs.some((tab) => tab.id === bookmarkDialog.tabId);
+    const bookmarkStillExists = bookmarkDialog.bookmarkId
+      ? state?.bookmarks.some((bookmark) => bookmark.id === bookmarkDialog.bookmarkId)
+      : true;
+    if (tabStillExists === false || bookmarkStillExists === false)
+      setBookmarkDialog(null);
+  }, [bookmarkDialog, state?.bookmarks, state?.tabs]);
   const nativePageEligible = Boolean(
-    activeTab?.url && !activeTab.error && !activeAppPage && !activeFilePage,
+    activeTab?.url &&
+      !activeTab.error &&
+      !activeTab.blockedNavigation &&
+      !activeAppPage &&
+      !activeFilePage,
   );
   const nativePageVisible =
     nativePageEligible &&
+    // Keep the renderer in the input path while a tab is being dragged;
+    // native WebContentsView siblings sit above the renderer surface.
+    !tabDragActive &&
     !openChromeMenus.tab &&
     !openChromeMenus.toolbar &&
-    !organizeTabsPreview;
+    !organizeTabsOpening &&
+    !organizeTabsPreview &&
+    !organizeTabsPresent &&
+    !bookmarkDialogPresent &&
+    !extensionCompatibilityDialogPresent;
+  const showChromeWebStoreInstall = Boolean(
+    nativePageEligible &&
+      activeTab?.url &&
+      parseChromeWebStoreListingUrl(activeTab.url),
+  );
+	const activeChromeWebStoreExtensionId = activeTab?.url
+		? parseChromeWebStoreListingUrl(activeTab.url)
+		: null;
+	useEffect(() => {
+		if (!activeChromeWebStoreExtensionId) return;
+		let cancelled = false;
+		void window.kestrel
+			.request({ type: "browser-list-extensions" })
+			.then((response) => {
+				if (cancelled || !response.ok || !("extensions" in response)) return;
+				const extension = response.extensions.find(
+					(item) => item.id === activeChromeWebStoreExtensionId,
+				);
+				if (extension) setInstalledChromeWebStoreExtension(extension);
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [activeChromeWebStoreExtensionId]);
+  const inspectChromeWebStoreExtension = useCallback(
+    async (urlOrId: string) => {
+			setInstalledChromeWebStoreExtension(null);
+      const response = await window.kestrel.request({
+        type: "browser-inspect-extension-url",
+        urlOrId,
+      });
+      if (!response.ok || !("extensionInspection" in response)) {
+			const failure = new Error(
+				"error" in response
+					? String(response.error)
+					: "Kestrel could not inspect this Chrome Web Store package.",
+			);
+			throw new Error(chromeWebStoreInstallErrorMessage(failure));
+		}
+      setExtensionCompatibilityDialogPresent(true);
+      setExtensionInspection(response.extensionInspection);
+    },
+    [],
+  );
+  const closeExtensionCompatibilityDialog = useCallback(() => {
+    setExtensionInspection(null);
+  }, []);
+  const installReviewedChromeWebStoreExtension = useCallback(
+    async (inspectionId: string) => {
+      const response = await window.kestrel.request({
+        type: "browser-install-extension-url",
+        inspectionId,
+      });
+      if (!response.ok || !("extension" in response)) {
+			const failure = new Error(
+				"error" in response
+					? String(response.error)
+					: "Kestrel could not install this reviewed extension.",
+			);
+			throw new Error(chromeWebStoreInstallErrorMessage(failure));
+		}
+		setInstalledChromeWebStoreExtension(response.extension);
+      setExtensionInspection(null);
+    },
+    [],
+  );
+
+  const openFind = useCallback(() => {
+    findTabIdRef.current = activeTab?.id ?? null;
+    setFindOpen(true);
+    window.requestAnimationFrame(() => {
+      findRef.current?.focus();
+      findRef.current?.select();
+    });
+  }, [activeTab?.id]);
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindQuery("");
+    const searchedTabId = findTabIdRef.current ?? activeTab?.id;
+    findTabIdRef.current = null;
+    if (searchedTabId) void stopFindInPage(searchedTabId);
+    // The native page cannot reliably receive renderer focus, so return to the
+    // nearest stable browser control instead of leaving focus in an exiting row.
+    window.requestAnimationFrame(() => addressRef.current?.focus());
+  }, [activeTab, stopFindInPage]);
+
+  useEffect(() => {
+    const searchedTabId = findTabIdRef.current;
+    if (!findOpen || !searchedTabId || searchedTabId === activeTab?.id) return;
+    setFindOpen(false);
+    setFindQuery("");
+    findTabIdRef.current = null;
+    void stopFindInPage(searchedTabId);
+  }, [activeTab?.id, findOpen, stopFindInPage]);
 
   const handleTabMenuOpenChange = useCallback((open: boolean) => {
     setOpenChromeMenus((current) =>
@@ -179,12 +428,7 @@ export function BrowserWorkspace({
     );
   }, []);
 
-  useEffect(
-    () => window.kestrel.onFileDrag(({ active }) => setFileDragActive(active)),
-    [],
-  );
-
-  const syncBounds = useCallback(() => {
+  const syncBounds = useCallback((visibleOverride?: boolean) => {
     const node = viewportRef.current;
     if (!node) return;
     const rect = node.getBoundingClientRect();
@@ -194,21 +438,45 @@ export function BrowserWorkspace({
       width: Math.max(0, Math.round(rect.width)),
       height: Math.max(0, Math.round(rect.height)),
     };
-    const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${nativePageVisible}`;
+    const targetTabId = activeTab?.id ?? null;
+    const targetVisible =
+      visibleOverride ?? (!tabDragActiveRef.current && nativePageVisible);
+    const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${targetVisible}:${targetTabId ?? ""}`;
     if (lastBoundsRef.current === key) return;
     lastBoundsRef.current = key;
-    void setContentBounds(bounds, nativePageVisible).catch(() => undefined);
-  }, [nativePageVisible, setContentBounds]);
+    const requestId = ++pagePreviewRequestRef.current;
+    void setContentBounds(bounds, targetVisible)
+      .then((browserPagePreview) => {
+        if (requestId !== pagePreviewRequestRef.current) return;
+        if (targetVisible) {
+          setNativePagePreview(null);
+          return;
+        }
+        if (browserPagePreview && targetTabId) {
+          setNativePagePreview({
+            tabId: targetTabId,
+            dataUrl: browserPagePreview,
+          });
+        }
+      })
+      .catch(() => undefined);
+  }, [activeTab?.id, nativePageVisible, setContentBounds]);
+
+  const handleTabDragStateChange = useCallback((dragging: boolean) => {
+    tabDragActiveRef.current = dragging;
+    setTabDragActive(dragging);
+    if (dragging) syncBoundsRef.current(false);
+  }, []);
 
   const scheduleBoundsSync = useCallback(() => {
-    syncBounds();
+    syncBoundsRef.current();
     window.requestAnimationFrame(() => {
-      syncBounds();
+      syncBoundsRef.current();
       for (const delay of [100, 320, 400]) {
-        window.setTimeout(syncBounds, delay);
+        window.setTimeout(() => syncBoundsRef.current(), delay);
       }
     });
-  }, [syncBounds]);
+  }, []);
 
   syncBoundsRef.current = syncBounds;
   scheduleBoundsSyncRef.current = scheduleBoundsSync;
@@ -259,6 +527,7 @@ export function BrowserWorkspace({
 
   useEffect(
     () => () => {
+      pagePreviewRequestRef.current += 1;
       lastBoundsRef.current = "";
       void setContentBounds({ x: 0, y: 0, width: 0, height: 0 }, false).catch(
         () => undefined,
@@ -282,30 +551,33 @@ export function BrowserWorkspace({
         else if (command === "new-agent") onNewAgent();
         else if (command === "open-commands") onOpenMenu();
         else if (command === "open-history") openHistoryPopover();
-        else if (command === "open-downloads") onOpenDownloads();
+        else if (command === "open-downloads") setDownloadsOpen(true);
         else if (command === "open-bookmarks") onOpenBookmarks();
+        else if (command === "bookmark-page") openBookmarkDialog();
         else if (command === "open-settings") onOpenSettings?.();
         else if (command === "show-shortcuts") onShowShortcuts?.();
         else if (command === "toggle-sidebar") onToggleSidebar?.();
         else if (command === "reopen-closed-tab") void reopenClosedTab();
-        else if (command === "find-in-page") {
-          setFindOpen(true);
-          window.requestAnimationFrame(() => findRef.current?.focus());
-        }
+        else if (command === "find-in-page") openFind();
         else if (command === "print-page" && activeTab?.url)
           void printTab(activeTab.id);
+        else if (command === "save-screenshot" && activeTab?.url)
+          void saveScreenshot(activeTab.id).catch(() => undefined);
       }),
     [
       activeTab,
       onNewAgent,
       onOpenMenu,
       openHistoryPopover,
-      onOpenDownloads,
+      setDownloadsOpen,
       onOpenBookmarks,
+      openBookmarkDialog,
       onOpenSettings,
       onShowShortcuts,
       onToggleSidebar,
+      openFind,
       printTab,
+      saveScreenshot,
       reopenClosedTab,
     ],
   );
@@ -313,13 +585,16 @@ export function BrowserWorkspace({
   useEffect(() => {
     function shortcuts(event: KeyboardEvent) {
       if (event.defaultPrevented) return;
+      if (bookmarkDialogPresent) return;
 
       if (event.key === "Escape") {
-        if (findOpen && activeTab) {
+		const foregroundOverlay = document.querySelector(
+			'[aria-modal="true"], .model-selector-menu, [role="menu"], .browser-address-suggestions',
+		);
+		if (foregroundOverlay) return;
+        if (findOpen) {
           event.preventDefault();
-          setFindOpen(false);
-          setFindQuery("");
-          void stopFindInPage(activeTab.id);
+          closeFind();
           return;
         }
         if (activeTab?.loading) {
@@ -439,7 +714,7 @@ export function BrowserWorkspace({
         }
       } else if (key === "w" && activeTab) {
         event.preventDefault();
-        void closeTab(activeTab.id);
+        void closeTab(activeTab.id).catch(() => undefined);
       } else if (key === "r" && activeTab) {
         event.preventDefault();
         void reload(activeTab.id, event.shiftKey);
@@ -448,17 +723,16 @@ export function BrowserWorkspace({
         openHistoryPopover();
       } else if (key === "j") {
         event.preventDefault();
-        onOpenDownloads();
+        setDownloadsOpen(true);
       } else if (key === "f") {
         const target = event.target as HTMLElement | null;
         if (target?.closest("#runtime-prompt, textarea, input")) return;
         event.preventDefault();
-        setFindOpen(true);
-        window.requestAnimationFrame(() => findRef.current?.focus());
+        openFind();
       } else if (key === "d") {
         event.preventDefault();
         if (event.shiftKey) onOpenBookmarks();
-        else void toggleBookmark();
+        else toggleBookmarkFromChrome();
       } else if (key === "p" && !event.shiftKey && activeTab?.url) {
         event.preventDefault();
         void printTab(activeTab.id);
@@ -501,12 +775,14 @@ export function BrowserWorkspace({
     back,
     browser,
     closeTab,
+    closeFind,
     createTab,
     forward,
     onNewAgent,
     onOpenBookmarks,
     openHistoryPopover,
-    onOpenDownloads,
+    openFind,
+    setDownloadsOpen,
     onOpenMenu,
     onOpenSettings,
     onShowShortcuts,
@@ -520,22 +796,13 @@ export function BrowserWorkspace({
     stop,
     stopFindInPage,
     findOpen,
-    toggleBookmark,
+    bookmarkDialogPresent,
+    toggleBookmarkFromChrome,
     zoomIn,
     zoomOut,
     zoomReset,
   ]);
 
-  if (!state || !activeTab) {
-    return (
-      <main className="browser-workspace browser-starting">
-        <BrandMark />
-        <p>{browser.error || "Opening your browser…"}</p>
-      </main>
-    );
-  }
-
-  const showBookmarksBar = state.settings.showBookmarksBar && !activeTab.url;
   const closeOrganizeTabs = useCallback(() => {
     setOrganizeTabsPreview(null);
   }, []);
@@ -558,13 +825,25 @@ export function BrowserWorkspace({
     [applyTabOrganization],
   );
 
+  if (!state || !activeTab) {
+    return (
+      <main className="browser-workspace browser-starting">
+        <BrandMark />
+        <p>{browser.error || "Opening your browser…"}</p>
+      </main>
+    );
+  }
+
+  const showBookmarksBar = state.settings.showBookmarksBar && !activeTab.url;
+
   return (
     <main
       className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
         showBookmarksBar ? " browser-workspace-bookmarks" : ""
-      }`}
+      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}`}
       aria-label="Browser"
     >
+      {navigationSidebar}
       <TabStrip
         tabs={state.tabs}
         originFavicons={state.originFavicons}
@@ -572,19 +851,29 @@ export function BrowserWorkspace({
         activeTabId={state.activeTabId}
         orientation={state.settings.tabLayout}
         onSelect={(tabId) => void selectTab(tabId)}
-        onClose={(tabId) => void closeTab(tabId)}
+        onClose={(tabId) => closeTab(tabId)}
         onCreate={() => void createTab()}
         onPin={(tabId, pinned) => void pinTab(tabId, pinned)}
         onMute={(tabId, muted) => void muteTab(tabId, muted)}
         onDuplicate={(tabId) => void duplicateTab(tabId)}
-        onCloseOthers={(tabId) => void closeOtherTabs(tabId)}
-        onMoveTab={(tabId, toIndex) => void moveTab(tabId, toIndex)}
-        onDetachTab={(tabId) => void detachTab(tabId)}
+        onCloseOthers={(tabId) => closeOtherTabs(tabId)}
+        onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
+        onTabDragStateChange={handleTabDragStateChange}
+        {...(!isDetachedWindow
+          ? { onDetachTab: (tabId: string) => detachTab(tabId) }
+          : {})}
+        {...(isDetachedWindow
+          ? { onReattachTab: (tabId: string) => reattachTab(tabId) }
+          : {})}
         onReopenClosedTab={(index) => void reopenClosedTab(index)}
         recentlyClosedTabs={state.recentlyClosedTabs}
         onOrganizeTabs={openOrganizeTabs}
         onOpenWorkspaces={onOpenWorkspaces}
         onMenuOpenChange={handleTabMenuOpenChange}
+        tabSizing={state.settings.tabSizing}
+        onTabSizingChange={(tabSizing) => {
+          void browser.updateSettings({ tabSizing });
+        }}
         onToggleOrientation={() => {
           void browser.updateSettings({
             tabLayout:
@@ -611,6 +900,8 @@ export function BrowserWorkspace({
         addressRef={addressRef as RefObject<HTMLInputElement | null>}
         showBookmarksBar={state.settings.showBookmarksBar}
         sleepingTabsEnabled={state.settings.sleepingTabsEnabled}
+        downloads={[...state.downloads].reverse()}
+        downloadsOpen={downloadsOpen}
         onToggleBookmarksBar={() =>
           void browser.updateSettings({
             showBookmarksBar: !state.settings.showBookmarksBar,
@@ -621,6 +912,14 @@ export function BrowserWorkspace({
             sleepingTabsEnabled: !state.settings.sleepingTabsEnabled,
           })
         }
+        onNewTab={() => void createTab()}
+        onOrganizeTabs={() => void openOrganizeTabs()}
+        onZoomIn={() => void zoomIn(activeTab.id)}
+        onZoomOut={() => void zoomOut(activeTab.id)}
+        onZoomReset={() => void zoomReset(activeTab.id)}
+        {...(activeZoomPercent !== undefined
+          ? { zoomPercent: activeZoomPercent }
+          : {})}
         bookmarked={state.bookmarks.some((item) => item.url === activeTab.url)}
         onToggleAgent={onToggleAgent}
         onNavigate={(input) => void navigate(activeTab.id, input)}
@@ -632,18 +931,34 @@ export function BrowserWorkspace({
         onOpenHistoryFull={onOpenHistory}
         onClearHistory={() => void browser.clearHistory()}
         historyPopoverRequestId={historyPopoverRequestId}
-        onOpenDownloads={onOpenDownloads}
+        onDownloadsOpenChange={setDownloadsOpen}
+        onStartDownloadDrag={(downloadId) => {
+          void browser.startDownloadDrag(downloadId).catch(() => undefined);
+        }}
+        onOpenDownload={(downloadId) => {
+          setDownloadsOpen(false);
+          void browser.openDownload(downloadId).catch(() => undefined);
+        }}
+        onRevealDownload={(downloadId) => {
+          setDownloadsOpen(false);
+          void browser.revealDownload(downloadId).catch(() => undefined);
+        }}
+        onCancelDownload={(downloadId) => {
+          void browser.cancelDownload(downloadId).catch(() => undefined);
+        }}
         onOpenBookmarks={onOpenBookmarks}
         onOpenFind={() => {
-          setFindOpen(true);
-          window.requestAnimationFrame(() => findRef.current?.focus());
+          openFind();
         }}
         onPrint={() => void printTab(activeTab.id)}
         onOpenDevTools={() => void openDevTools(activeTab.id)}
         onSaveScreenshot={() => browser.saveScreenshot(activeTab.id)}
         onMenuOpenChange={handleToolbarMenuOpenChange}
-        onToggleBookmark={() => void toggleBookmark()}
+        onToggleBookmark={toggleBookmarkFromChrome}
         onOpenSettings={onOpenSettings}
+        onOpenExtensionStore={() =>
+          void browser.createTab("https://chromewebstore.google.com")
+        }
         onToggleCalculator={() => {
           const node = viewportRef.current;
           if (!node) return;
@@ -660,16 +975,44 @@ export function BrowserWorkspace({
       {showBookmarksBar && (
         <BookmarksBar
           bookmarks={state.bookmarks}
+          bookmarkFolders={state.bookmarkFolders}
           originFavicons={state.originFavicons}
           onOpen={(url) => void navigate(activeTab.id, url)}
           onOpenInNewTab={(url) => void createTab(url)}
-          onRemove={(bookmarkId) => void browser.removeBookmark(bookmarkId)}
+          onRemove={(bookmarkId) => void removeBookmark(bookmarkId)}
+          onEdit={editBookmark}
           onManage={onOpenBookmarks}
         />
       )}
+      {showChromeWebStoreInstall && (
+        <ChromeWebStoreInstallBar
+          url={activeTab.url}
+          onReview={inspectChromeWebStoreExtension}
+			installedExtension={
+				installedChromeWebStoreExtension?.id ===
+				activeChromeWebStoreExtensionId
+					? installedChromeWebStoreExtension
+					: null
+			}
+        />
+      )}
+      <AnimatePresence initial={false}>
       {findOpen && (
-        <form
+        <motion.form
+          key="browser-find-bar"
           className="browser-find-bar"
+          initial={
+            reducedMotion
+              ? false
+              : { height: 0, opacity: 0, y: -4, pointerEvents: "none" }
+          }
+          animate={{ height: 40, opacity: 1, y: 0, pointerEvents: "auto" }}
+          exit={
+            reducedMotion
+              ? { height: 0, opacity: 1, y: 0, pointerEvents: "none" }
+              : { height: 0, opacity: 0, y: -4, pointerEvents: "none" }
+          }
+          transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
           onSubmit={(event) => {
             event.preventDefault();
             if (activeTab?.url)
@@ -714,21 +1057,32 @@ export function BrowserWorkspace({
           <button
             type="button"
             aria-label="Close find"
-            onClick={() => {
-              setFindOpen(false);
-              setFindQuery("");
-              if (activeTab) void stopFindInPage(activeTab.id);
-            }}
+            onClick={closeFind}
           >
             <Icon name="close" />
           </button>
-        </form>
+        </motion.form>
       )}
-      {browser.error && (
-        <p className="browser-inline-error" role="status">
-          {browser.error}
-        </p>
-      )}
+      </AnimatePresence>
+			<AnimatePresence initial={false}>
+				{browser.error && (
+          <motion.p
+            key="browser-inline-error"
+            className="browser-inline-error"
+            role="status"
+            initial={reducedMotion ? false : { opacity: 0, x: "-50%", y: -4 }}
+            animate={{ opacity: 1, x: "-50%", y: 0 }}
+            exit={
+              reducedMotion
+                ? { opacity: 1, x: "-50%", y: 0, pointerEvents: "none" }
+                : { opacity: 0, x: "-50%", y: -4, pointerEvents: "none" }
+            }
+            transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+          >
+            {browser.error}
+          </motion.p>
+        )}
+      </AnimatePresence>
       <div
         id="browser-viewport"
         ref={viewportRef}
@@ -736,7 +1090,20 @@ export function BrowserWorkspace({
         role="tabpanel"
         aria-label={activeTab.title}
       >
-        {activeAppPage && appPage}
+		{!nativePageVisible &&
+			nativePageEligible &&
+			nativePagePreview?.tabId === activeTab.id && (
+			<img
+				className="browser-native-page-preview"
+				src={nativePagePreview.dataUrl}
+				alt=""
+				aria-hidden="true"
+				draggable={false}
+			/>
+		)}
+		<AnimatePresence initial={false} mode="sync">
+			{activeAppPage && appPage}
+		</AnimatePresence>
         {activeFilePage && activeTab.file && (
           <FileTabView
             tabId={activeFilePage.tabId}
@@ -745,7 +1112,49 @@ export function BrowserWorkspace({
             onAskFile={onAskFile}
           />
         )}
-        {!activeTab.url && (
+        {activeTab.blockedNavigation && (
+          <section
+            className="browser-threat-interstitial"
+            role="alert"
+            aria-labelledby="browser-threat-title"
+          >
+            <span className="browser-threat-interstitial-icon" aria-hidden="true">
+              <Icon name="warning" />
+            </span>
+            <p className="browser-threat-interstitial-eyebrow">Browsing protection</p>
+            <h1 id="browser-threat-title">Kestrel stopped this site</h1>
+            <p>
+              A reputation check flagged this address as potentially harmful. The
+              page was not opened.
+            </p>
+            <code>{activeTab.blockedNavigation.url}</code>
+            <ul aria-label="Reported risks">
+              {activeTab.blockedNavigation.threatTypes.map((type) => (
+                <li key={type}>{threatTypeLabel(type)}</li>
+              ))}
+            </ul>
+            <p className="browser-threat-interstitial-provider">
+              Reported by {activeTab.blockedNavigation.provider}.
+            </p>
+            <div>
+              <button
+                type="button"
+                className="button primary"
+                onClick={() => void dismissThreat(activeTab.id)}
+              >
+                Back to safety
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void createTab()}
+              >
+                New Tab
+              </button>
+            </div>
+          </section>
+        )}
+        {!activeTab.url && !activeTab.blockedNavigation && (
           <NewTabPage
             tabId={activeTab.id}
             history={state.history}
@@ -811,28 +1220,55 @@ export function BrowserWorkspace({
           </section>
         )}
       </div>
-      {fileDragActive && (
-        <div className="browser-file-drop-veil" aria-hidden="true">
-          <span className="browser-file-drop-mark">
-            <span className="browser-file-drop-triangle browser-file-drop-triangle-back" />
-            <span className="browser-file-drop-triangle browser-file-drop-triangle-mid" />
-            <span className="browser-file-drop-triangle browser-file-drop-triangle-front" />
-          </span>
-          <strong>Release to open in Kestrel</strong>
-          <small>Files become tabs and task context</small>
-        </div>
-      )}
       {activeTab.loading && (
         <span className="browser-loading-line" aria-label="Page loading" />
       )}
-      {organizeTabsPreview && (
-        <OrganizeTabsDialog
-          preview={organizeTabsPreview}
-          originFavicons={state.originFavicons}
-          onCancel={closeOrganizeTabs}
-          onApply={applyOrganizeTabs}
-        />
-      )}
+      <AnimatePresence
+        initial={false}
+        onExitComplete={() => setBookmarkDialogPresent(false)}
+      >
+        {bookmarkDialog && bookmarkDialogTab && (
+          <BookmarkDialog
+            key={`bookmark-dialog-${bookmarkDialog.tabId}-${bookmarkDialog.bookmarkId ?? "new"}`}
+            tab={bookmarkDialogTab}
+            {...(bookmarkDialogBookmark
+              ? { bookmark: bookmarkDialogBookmark }
+              : {})}
+            bookmarkFolders={state.bookmarkFolders}
+            originFavicons={state.originFavicons}
+            onCancel={closeBookmarkDialog}
+            onSave={saveBookmarkDialog}
+            onCreateFolder={createBookmarkFolder}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence
+        initial={false}
+        onExitComplete={() => setExtensionCompatibilityDialogPresent(false)}
+      >
+        {extensionInspection && (
+          <ExtensionCompatibilityDialog
+            key={`extension-compatibility-${extensionInspection.inspectionId}`}
+            inspection={extensionInspection}
+            onCancel={closeExtensionCompatibilityDialog}
+            onInstall={installReviewedChromeWebStoreExtension}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence
+        initial={false}
+        onExitComplete={() => setOrganizeTabsPresent(false)}
+      >
+        {organizeTabsPreview && (
+          <OrganizeTabsDialog
+            key="organize-tabs-dialog"
+            preview={organizeTabsPreview}
+            originFavicons={state.originFavicons}
+            onCancel={closeOrganizeTabs}
+            onApply={applyOrganizeTabs}
+          />
+        )}
+      </AnimatePresence>
     </main>
   );
 }
@@ -1010,8 +1446,8 @@ function FilePreviewBody({
       <span className="file-tab-fallback-mark" aria-hidden="true">
         <Icon name="artifacts" />
       </span>
-      <strong>Kestrel can keep this file as an object.</strong>
-      <p>{preview.detail || "This format is available to compatible agent routes and the default app."}</p>
+			<strong>Preview unavailable.</strong>
+			<p>{preview.detail || "You can still use this file with compatible apps."}</p>
     </div>
   );
 }

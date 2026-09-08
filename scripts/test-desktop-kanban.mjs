@@ -144,7 +144,7 @@ try {
 	assert.equal(
 		await page
 			.getByText(
-				"No worker lanes are configured. Cards remain with the local operator.",
+			"No worker lanes. Cards remain local.",
 			)
 			.isVisible(),
 		true,

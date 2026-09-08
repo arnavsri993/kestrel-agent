@@ -1,5 +1,5 @@
 const commandCenterHeading = (page) =>
-	page.getByRole("heading", { name: "Capabilities", exact: true });
+	page.getByRole("heading", { name: "Command Center", exact: true });
 
 export async function dismissDefaultBrowserPrompt(page) {
 	const defaultBrowserModal = page.locator(".default-browser-modal");
@@ -10,6 +10,17 @@ export async function dismissDefaultBrowserPrompt(page) {
 		await page.getByRole("button", { name: "Not Now" }).click();
 		await defaultBrowserModal.waitFor({ state: "detached" });
 	}
+}
+
+export async function revealNewTabControl(page) {
+	const tabRow = page.locator(".browser-tab-row-horizontal");
+	await tabRow.hover();
+	const control = page.getByRole("button", {
+		name: "New Tab",
+		exact: true,
+	});
+	await control.waitFor({ state: "visible" });
+	return control;
 }
 
 export async function openCommandCenter(page) {
@@ -25,30 +36,13 @@ export async function openCommandCenter(page) {
 
 	const openers = [
 		async () => {
-			const toolbarButton = page.getByRole("button", {
-				name: "Capabilities and commands",
+			const commandCenterButton = page.getByRole("button", {
+				name: "Open command center",
 				exact: true,
 			});
-			if (!(await toolbarButton.isVisible().catch(() => false)))
-				throw new Error("Capabilities toolbar button is not visible.");
-			await toolbarButton.click();
-		},
-		async () => {
-			const sidebarSearch = page.getByRole("button", {
-				name: "Search capabilities and shortcuts",
-				exact: true,
-			});
-			if (!(await sidebarSearch.isVisible().catch(() => false)))
-				throw new Error("Sidebar capabilities search button is not visible.");
-			await sidebarSearch.click();
-		},
-		async () => {
-			const sidebarCapabilities = page
-				.locator(".kestrel-sidebar-primary")
-				.getByRole("button", { name: "Capabilities", exact: true });
-			if (!(await sidebarCapabilities.isVisible().catch(() => false)))
-				throw new Error("Sidebar Capabilities button is not visible.");
-			await sidebarCapabilities.click();
+			if (!(await commandCenterButton.isVisible().catch(() => false)))
+				throw new Error("Command Center button is not visible.");
+			await commandCenterButton.click();
 		},
 		async () => {
 			await page.locator("#new-tab-title").click({ force: true });
@@ -96,4 +90,51 @@ export async function openKestrelDestination(page, label) {
 		.first();
 	await destination.waitFor();
 	await destination.evaluate((button) => button.click());
+}
+
+export async function selectSettingsSection(page, value, label) {
+	const legacySectionAliases = {
+		general: "agent-general",
+		connections: "agent-connections",
+		models: "agent-models",
+		intelligence: "agent-memory",
+		extensions: "agent-tools",
+		privacy: "agent-permissions",
+		advanced: "agent-diagnostics",
+	};
+	const sectionValue = legacySectionAliases[value] ?? value;
+	const legacyLabels = {
+		Models: "Models & routing",
+		Memory: "Memory & context",
+		Plugins: "Tools, MCP & skills",
+		Advanced: "Diagnostics",
+	};
+	const sectionLabel = legacyLabels[label] ?? label;
+	const scopeLabel = sectionValue === "browser" || sectionValue.startsWith("browser-")
+		? "Browser"
+		: "Agent";
+	const scopeTab = page
+		.locator(".settings-scope-switcher")
+		.getByRole("tab", { name: new RegExp(`^${scopeLabel}`) });
+	if ((await scopeTab.getAttribute("aria-selected")) !== "true") {
+		await scopeTab.click();
+		await page.waitForFunction(
+			(scope) =>
+				[...document.querySelectorAll(".settings-scope-switcher [role=tab]")].some(
+					(tab) =>
+						tab.textContent?.trim().startsWith(scope) &&
+						tab.getAttribute("aria-selected") === "true",
+				),
+			scopeLabel,
+		);
+	}
+	const compactPicker = page.locator(".settings-section-picker select");
+	if (await compactPicker.isVisible().catch(() => false)) {
+		await compactPicker.selectOption(sectionValue);
+		return;
+	}
+	await page
+		.getByRole("navigation", { name: "Settings sections" })
+		.getByRole("button", { name: sectionLabel, exact: true })
+		.click();
 }

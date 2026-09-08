@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-setup-test-"));
 const testHome = join(root, "home");
@@ -55,15 +56,15 @@ try {
 			colorScheme: getComputedStyle(element).colorScheme,
 			color: getComputedStyle(element).color,
 		}));
-	assert.equal(setupTheme.canvas, "#0d0e11");
-	assert.equal(setupTheme.solid, "#f3f4f6");
+	assert.equal(setupTheme.canvas, "#0b0c0e");
+	assert.equal(setupTheme.solid, "#f5f5f7");
 	assert.equal(setupTheme.colorScheme, "dark");
-	assert.equal(setupTheme.color, "rgb(243, 244, 246)");
+	assert.equal(setupTheme.color, "rgb(245, 245, 247)");
 	await page.waitForFunction(
 		() =>
 			getComputedStyle(document.documentElement)
 				.getPropertyValue("--canvas")
-			.trim() === "#0d0e11",
+			.trim() === "#0b0c0e",
 	);
 	assert.equal(await page.locator(".setup-product-anchor").count(), 0);
 	assert.deepEqual(
@@ -90,15 +91,78 @@ try {
 			.evaluate((heading) => document.activeElement === heading),
 		true,
 	);
+	await page.locator(".setup-stage.setup-stage-0").waitFor({
+		state: "detached",
+	});
 	assert.equal(
 		await page.getByRole("button", { name: "Welcome, completed" }).isEnabled(),
 		true,
 	);
 	const continueButton = page.getByRole("button", { name: "Continue" });
 	assert.equal(await continueButton.isDisabled(), true);
+	const warningHeading = page.getByRole("heading", {
+		name: "Know what leaves this Mac.",
+	});
+	const warningHeadingBefore = await warningHeading.boundingBox();
+	assert.ok(warningHeadingBefore, "The warning heading should be measurable.");
+	const warningPanel = page.locator(".warning-panel");
+	const warningPanelBefore = await warningPanel.boundingBox();
+	assert.ok(warningPanelBefore, "The warning panel should be measurable.");
+	const warningCheck = page.locator(".warning-check");
+	const warningCheckBox = await warningCheck.boundingBox();
+	assert.ok(warningCheckBox, "The warning acknowledgement should be measurable.");
+	assert.ok(
+		warningCheckBox.height <= 48,
+		`The warning acknowledgement should stay compact, but is ${warningCheckBox.height}px tall.`,
+	);
 	const firstBoundary = page.locator(".warning-panel details").first();
 	await firstBoundary.locator("summary").click();
-	await page.getByText(/retention and training terms/).waitFor();
+	await page.getByText(/provider's data terms/).waitFor();
+	const warningHeadingAfterFirstOpen = await warningHeading.boundingBox();
+	assert.ok(
+		warningHeadingAfterFirstOpen,
+		"The warning heading should remain measurable after opening a boundary.",
+	);
+	assert.ok(
+		Math.abs(
+			warningHeadingAfterFirstOpen.y - warningHeadingBefore.y,
+		) <= 1,
+		`Opening one boundary moved the warning heading by ${warningHeadingAfterFirstOpen.y - warningHeadingBefore.y}px.`,
+	);
+	const warningPanelAfterFirstOpen = await warningPanel.boundingBox();
+	assert.ok(
+		warningPanelAfterFirstOpen,
+		"The warning panel should remain measurable after opening a boundary.",
+	);
+	assert.ok(
+		Math.abs(warningPanelAfterFirstOpen.width - warningPanelBefore.width) <= 1,
+		`Opening one boundary changed the warning panel width by ${warningPanelAfterFirstOpen.width - warningPanelBefore.width}px.`,
+	);
+	for (const index of [2, 3]) {
+		await page
+			.locator(".warning-panel details")
+			.nth(index)
+			.locator("summary")
+			.click();
+	}
+	const warningHeadingAfterManyOpen = await warningHeading.boundingBox();
+	assert.ok(
+		warningHeadingAfterManyOpen,
+		"The warning heading should remain measurable after opening multiple boundaries.",
+	);
+	assert.ok(
+		Math.abs(warningHeadingAfterManyOpen.y - warningHeadingBefore.y) <= 1,
+		`Opening multiple boundaries moved the warning heading by ${warningHeadingAfterManyOpen.y - warningHeadingBefore.y}px.`,
+	);
+	const warningPanelAfterManyOpen = await warningPanel.boundingBox();
+	assert.ok(
+		warningPanelAfterManyOpen,
+		"The warning panel should remain measurable after opening multiple boundaries.",
+	);
+	assert.ok(
+		Math.abs(warningPanelAfterManyOpen.width - warningPanelBefore.width) <= 1,
+		`Opening multiple boundaries changed the warning panel width by ${warningPanelAfterManyOpen.width - warningPanelBefore.width}px.`,
+	);
 	await page.getByLabel("I understand these boundaries").check();
 	assert.equal(await continueButton.isEnabled(), true);
 
@@ -115,7 +179,54 @@ try {
 	await page
 		.getByRole("heading", { name: "Where should answers come from?" })
 		.waitFor();
-	await page.getByRole("button", { name: /Use an account/ }).click();
+	assert.equal(
+		await page.getByText(/Pick one to start/).count(),
+		0,
+		"The model choice page should not repeat the selection instruction.",
+	);
+	assert.equal(
+		await page
+			.getByText("Choose an option above to continue.", { exact: true })
+			.count(),
+		0,
+		"The footer should not repeat the selection instruction.",
+	);
+	assert.equal(await continueButton.isDisabled(), true);
+	const modelSourcePicker = page.locator(".model-source-picker");
+	const modelSourceLayout = await modelSourcePicker.evaluate((picker) => {
+		const choice = picker.querySelector("button");
+		return {
+			display: getComputedStyle(picker).display,
+			rowGap: Number.parseFloat(getComputedStyle(picker).rowGap),
+			pickerBackground: getComputedStyle(picker).backgroundColor,
+			choiceBorder: choice ? getComputedStyle(choice).borderColor : "",
+		};
+	});
+	assert.ok(
+		modelSourceLayout.display === "grid" &&
+		modelSourceLayout.rowGap >= 24 &&
+			modelSourceLayout.pickerBackground === "rgba(0, 0, 0, 0)" &&
+			modelSourceLayout.choiceBorder !== "rgba(0, 0, 0, 0)",
+		`Model access choices should be visibly separated; found ${JSON.stringify(modelSourceLayout)}.`,
+	);
+	const accountChoice = page.getByRole("button", { name: /Use an account/ });
+	await accountChoice.click();
+	assert.equal(await accountChoice.getAttribute("aria-pressed"), "true");
+	assert.equal(
+		await page
+			.getByRole("heading", { name: "Where should answers come from?" })
+			.count(),
+		1,
+	);
+	assert.equal(await continueButton.isEnabled(), true);
+	const footerBox = await page.locator(".onboarding-actions").boundingBox();
+	const backBox = await page.getByRole("button", { name: "Back" }).boundingBox();
+	assert.ok(footerBox && backBox);
+	assert.ok(
+		Math.abs(backBox.x - footerBox.x) <= 2,
+		`Back should align to the left edge of the footer (${backBox.x} vs ${footerBox.x}).`,
+	);
+	await continueButton.click();
 	await page.getByRole("heading", { name: "Connect an account." }).waitFor();
 	await page.getByText("Choose a paid provider", { exact: true }).waitFor();
 	const paidProviders = page.getByRole("group", { name: "Paid AI providers" });
@@ -197,7 +308,21 @@ try {
 	await page.getByLabel("Find a provider").fill("");
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Run on this Mac/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
+	const automaticSetup = page.getByRole("region", {
+		name: "Automatic local setup",
+	});
+	await automaticSetup.waitFor();
+	await page.getByText(/logical CPUs? detected/).waitFor();
+	await automaticSetup
+		.getByText(/One click downloads the pinned Ollama runtime/)
+		.waitFor();
+	await automaticSetup
+		.getByRole("button", {
+			name: /Set up automatically|Verify local setup again/,
+		})
+		.waitFor();
 	await page.locator(".recommended-model-tiers article").first().waitFor();
 	const tierNames = page.locator(".model-tier-name strong");
 	await tierNames.first().waitFor();
@@ -207,14 +332,21 @@ try {
 	if (names.length === 3) {
 		assert.deepEqual(names, ["Light", "Balanced", "Power"]);
 		await page.locator(".recommended-model-tiers article.preferred").waitFor();
-		await page.getByText("Recommended", { exact: true }).waitFor();
+		await page
+			.locator(".recommended-model-tiers")
+			.getByText("Best fit", { exact: true })
+			.waitFor();
 	} else {
 		assert.ok(!names.includes("Balanced"));
 		assert.equal(
 			await page.locator(".recommended-model-tiers article.preferred").count(),
-			0,
-			"A constrained CI device must not claim a nonexistent balanced tier is recommended.",
+			1,
+			"The strongest compatible tier must be marked as the best fit even on a constrained device.",
 		);
+		await page
+			.locator(".recommended-model-tiers")
+			.getByText("Best fit", { exact: true })
+			.waitFor();
 	}
 	const tierDetails = page.locator(".model-tier-details");
 	const detailIndex = Math.min(1, (await tierDetails.count()) - 1);
@@ -230,10 +362,6 @@ try {
 		.nth(detailIndex)
 		.getByText(/GB · 256K context/, { exact: true })
 		.waitFor();
-	assert.equal(
-		await page.getByText("Automatic setup", { exact: true }).count(),
-		0,
-	);
 	await page
 		.getByText("huihui_ai/qwen3.5-abliterated:4b", { exact: true })
 		.count()
@@ -252,6 +380,7 @@ try {
 	await page.getByText("Any other Ollama model", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Try free providers/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page
 		.getByRole("heading", { name: "Set up free provider accounts." })
 		.waitFor();
@@ -344,7 +473,7 @@ try {
 		.getByRole("button", { name: "Finish with setup help" })
 		.click({ timeout: 120_000 });
 	await page
-		.getByRole("button", { name: "New task", exact: true })
+		.getByRole("button", { name: "New chat", exact: true })
 		.first()
 		.waitFor();
 	assert.equal(
@@ -450,7 +579,7 @@ try {
 	}
 	const newAgentButton = page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" });
+		.getByRole("button", { name: "New chat" });
 	await newAgentButton.click();
 	assert.equal(
 		await newAgentButton.getAttribute("aria-keyshortcuts"),
@@ -468,14 +597,14 @@ try {
 	await page.getByLabel("Message Kestrel").fill(preservedDraft);
 	await page.keyboard.press("Meta+K");
 	await page
-		.getByRole("heading", { name: "Capabilities", exact: true })
+		.getByRole("heading", { name: "Command Center", exact: true })
 		.waitFor();
 	await page
 		.locator(".command-groups button")
 		.filter({ has: page.getByText("Settings", { exact: true }) })
 		.first()
 		.click();
-	await page.getByRole("heading", { name: "Preferences" }).waitFor();
+	await page.getByRole("heading", { name: "Settings" }).waitFor();
 	assert.equal(
 		await page.getByLabel("Message Kestrel").inputValue(),
 		preservedDraft,
@@ -524,11 +653,11 @@ try {
 		.filter({ hasText: "Readiness" })
 		.click();
 	await page
-		.getByRole("heading", { name: /Ready for work|Needs attention/ })
+		.getByRole("heading", { name: "Readiness", exact: true })
 		.waitFor();
 	await page.keyboard.press("Meta+K");
 	await page
-		.getByRole("heading", { name: "Capabilities", exact: true })
+		.getByRole("heading", { name: "Command Center", exact: true })
 		.waitFor();
 	await page
 		.locator(".command-groups button")
@@ -538,7 +667,7 @@ try {
 	await page.locator(".command-center").waitFor({ state: "detached" });
 	assert.equal(await page.locator(".command-center").count(), 0);
 	await page.setViewportSize({ width: 1320, height: 860 });
-	await page.getByRole("heading", { name: "Preferences" }).waitFor();
+	await page.getByRole("heading", { name: "Settings" }).waitFor();
 	assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
 	assert.equal(await page.locator(".page-header > p").count(), 0);
 	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
@@ -571,10 +700,7 @@ try {
 		true,
 	);
 	await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
-	await page
-		.getByRole("navigation", { name: "Settings sections" })
-		.getByRole("button", { name: /General & Autonomy/ })
-		.click();
+	await selectSettingsSection(page, "general", "General");
 	const communicationStyle = page.getByRole("group", {
 		name: "Communication style",
 	});
@@ -602,17 +728,14 @@ try {
 	await page.locator("#runtime-prompt").waitFor();
 	await page.keyboard.press("Meta+K");
 	await page
-		.getByRole("heading", { name: "Capabilities", exact: true })
+		.getByRole("heading", { name: "Command Center", exact: true })
 		.waitFor();
 	await page
 		.locator(".command-groups button")
 		.filter({ has: page.getByText("Settings", { exact: true }) })
 		.first()
 		.click();
-	await page
-		.getByRole("navigation", { name: "Settings sections" })
-		.getByRole("button", { name: /General & Autonomy/ })
-		.click();
+	await selectSettingsSection(page, "general", "General");
 	await page.getByRole("button", { name: "Open setup guide" }).click();
 	await page.getByRole("heading", { name: /Your AI answers/ }).waitFor();
 	assert.equal(

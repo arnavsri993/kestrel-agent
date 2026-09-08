@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+	mkdtempSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import {
+	openKestrelDestination,
+	revealNewTabControl,
+} from "./desktop-browser-test-helpers.mjs";
 
 const mainBundle = readFileSync(resolve("apps/desktop/out/main/index.js"), "utf8");
 assert.match(
@@ -14,6 +24,9 @@ assert.match(
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-layout-"));
 const userData = join(root, "user-data");
+const evidenceDirectory = resolve(".tmp/desktop-layout");
+mkdirSync(evidenceDirectory, { recursive: true });
+const evidenceStamp = new Date().toISOString().replace(/[:.]/g, "-");
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 const executablePath = packagedExecutable
@@ -30,7 +43,147 @@ assert.doesNotMatch(
 );
 
 let application;
+let page;
 const pageErrors = [];
+const runtimeDiagnostics = {
+	lastOperation: "before launch",
+	lastBreakpoint: null,
+	pageClosed: false,
+	pageCrashed: false,
+	process: {
+		pid: null,
+		exitCode: null,
+		signalCode: null,
+		error: null,
+		closeCode: null,
+		closeSignal: null,
+		stderr: "",
+	},
+};
+
+function noteOperation(operation, breakpoint = null) {
+	runtimeDiagnostics.lastOperation = operation;
+	if (breakpoint !== null) runtimeDiagnostics.lastBreakpoint = breakpoint;
+}
+
+function appendProcessStderr(chunk) {
+	const value = String(chunk).replace(/(?:api[_-]?key|token|secret|password)=\S+/gi, "$1=<redacted>");
+	runtimeDiagnostics.process.stderr = `${runtimeDiagnostics.process.stderr}${value}`.slice(-12_000);
+}
+
+function observeApplicationProcess() {
+	const child = application?.process();
+	if (!child) return;
+	runtimeDiagnostics.process.pid = child.pid ?? null;
+	child.on("error", (error) => {
+		runtimeDiagnostics.process.error = error.message;
+	});
+	child.on("exit", (code, signal) => {
+		runtimeDiagnostics.process.exitCode = code;
+		runtimeDiagnostics.process.signalCode = signal;
+	});
+	child.on("close", (code, signal) => {
+		runtimeDiagnostics.process.closeCode = code;
+		runtimeDiagnostics.process.closeSignal = signal;
+	});
+	child.stderr?.on("data", appendProcessStderr);
+}
+
+async function captureFailureEvidence(error) {
+	const prefix = join(evidenceDirectory, `${evidenceStamp}-${packagedExecutable ? "packaged" : "source"}`);
+	const diagnosticsPath = `${prefix}-diagnostics.json`;
+	const screenshotPath = `${prefix}-failure.png`;
+	const diagnostics = {
+		mode: packagedExecutable ? "packaged" : "source",
+		executablePath,
+		userData,
+		failure: error instanceof Error ? error.stack ?? error.message : String(error),
+		pageErrors,
+		runtime: runtimeDiagnostics,
+	};
+	if (page) {
+		try {
+			diagnostics.layout = await readLayout(page);
+		} catch (layoutError) {
+			diagnostics.layoutError = String(layoutError);
+		}
+		try {
+			diagnostics.taskSettings = await readTaskSettingsLayout(page);
+		} catch (taskSettingsError) {
+			diagnostics.taskSettingsError = String(taskSettingsError);
+		}
+		try {
+			diagnostics.interaction = await readInteractionDiagnostics(page);
+		} catch (interactionError) {
+			diagnostics.interactionError = String(interactionError);
+		}
+		try {
+			diagnostics.unhandledRejections = await readUnhandledRejections(page);
+		} catch (rejectionError) {
+			diagnostics.unhandledRejectionsError = String(rejectionError);
+		}
+		try {
+			await page.screenshot({ path: screenshotPath, fullPage: false });
+			diagnostics.screenshotPath = screenshotPath;
+		} catch (screenshotError) {
+			diagnostics.screenshotError = String(screenshotError);
+		}
+	}
+	writeFileSync(diagnosticsPath, `${JSON.stringify(diagnostics, null, 2)}\n`);
+	return { diagnosticsPath, screenshotPath: diagnostics.screenshotPath ?? null };
+}
+
+async function readUnhandledRejections(page) {
+	return page.evaluate(
+		() => window.__kestrelDesktopLayoutUnhandledRejections ?? [],
+	);
+}
+
+async function readInteractionDiagnostics(page) {
+	return page.evaluate(() => {
+		const target = document.querySelector("#browser-agent-toggle");
+		if (!target) return { target: null };
+		const bounds = target.getBoundingClientRect();
+		const x = bounds.left + bounds.width / 2;
+		const y = bounds.top + bounds.height / 2;
+		return {
+			target: {
+				ariaLabel: target.getAttribute("aria-label"),
+				left: bounds.left,
+				top: bounds.top,
+				right: bounds.right,
+				bottom: bounds.bottom,
+			},
+			hitStack: document.elementsFromPoint(x, y).slice(0, 8).map((element) => ({
+				tag: element.tagName,
+				id: element.id,
+				className: typeof element.className === "string" ? element.className : "",
+				pointerEvents: getComputedStyle(element).pointerEvents,
+			})),
+			activeElement: document.activeElement?.outerHTML?.slice(0, 500) ?? null,
+			shell: document.querySelector(".ai-browser-app")?.className ?? null,
+		};
+	});
+}
+
+async function readAgentRailMotionState(page) {
+	return page.evaluate(() => {
+		const shell = document.querySelector(".ai-browser-app");
+		const panel = document.querySelector(".agent-sidebar");
+		if (!shell || !panel) throw new Error("The Agent rail is unavailable.");
+		const presentedWidth = Number.parseFloat(
+			getComputedStyle(shell).getPropertyValue("--agent-panel-presented-width"),
+		);
+		return {
+			width: panel.getBoundingClientRect().width,
+			presentedWidth: Number.isFinite(presentedWidth) ? presentedWidth : null,
+			settling: shell.classList.contains("agent-sidebar-settling"),
+			ariaLabel: document
+				.querySelector("#browser-agent-toggle")
+				?.getAttribute("aria-label"),
+		};
+	});
+}
 
 function assertNear(actual, expected, message) {
 	assert.ok(
@@ -39,24 +192,40 @@ function assertNear(actual, expected, message) {
 	);
 }
 
+function rectanglesIntersect(first, second, tolerance = 1) {
+	return (
+		first.left < second.right - tolerance &&
+		second.left < first.right - tolerance &&
+		first.top < second.bottom - tolerance &&
+		second.top < first.bottom - tolerance
+	);
+}
+
+function rectCenterY(rect) {
+	return (rect.top + rect.bottom) / 2;
+}
+
 function expectedAgentPanelWidth(viewportWidth) {
-	if (viewportWidth <= 760) return 300;
-	if (viewportWidth <= 980) return 305;
-	if (viewportWidth <= 1_120) return 330;
-	return 360;
+	if (viewportWidth <= 760) return 0;
+	if (viewportWidth <= 980) return 288;
+	if (viewportWidth <= 1_120) return 312;
+	return 336;
 }
 
 function expectedNavigationWidth(viewportWidth) {
-	return viewportWidth <= 1_120 ? 56 : 248;
+	return viewportWidth <= 1_120 ? 56 : 216;
 }
 
 async function readLayout(page) {
 	return page.evaluate(() => {
 		const shell = document.querySelector(".ai-browser-app");
 		if (!shell) throw new Error("The Kestrel browser shell is unavailable.");
-		const bounds = (selector) => {
+		const bounds = (selector, optional = false) => {
 			const rect = document.querySelector(selector)?.getBoundingClientRect();
-			if (!rect) throw new Error(`Missing ${selector}.`);
+			if (!rect) {
+				if (optional) return { left: 0, right: 0, width: 0 };
+				throw new Error(`Missing ${selector}.`);
+			}
 			return {
 				left: rect.left,
 				right: rect.right,
@@ -68,7 +237,7 @@ async function readLayout(page) {
 			innerWidth,
 			classes: shell.className,
 			columns: getComputedStyle(shell).gridTemplateColumns,
-			navigation: bounds(".kestrel-sidebar"),
+			navigation: bounds(".kestrel-sidebar", true),
 			main: bounds(".browser-main-plane"),
 			viewport: bounds("#browser-viewport"),
 			agent: bounds(".agent-sidebar"),
@@ -92,8 +261,37 @@ async function readTaskSettingsLayout(page) {
 		const composer = document.querySelector(
 			".agent-conversation-host .runtime-new-composer",
 		);
+		const modelTrigger = document.querySelector(
+			".agent-conversation-host .model-selector-trigger",
+		);
+		const taskTrigger = document.querySelector(
+			".agent-conversation-host .task-settings-trigger",
+		);
+		const sendActions = document.querySelector(
+			".agent-conversation-host .composer-send-actions",
+		);
 		const host = document.querySelector(".agent-conversation-host");
-		if (!button || !panel || !composer || !host) {
+		const footer = document.querySelector(
+			".agent-conversation-host .composer-footer",
+		);
+		const contextActions = document.querySelector(
+			".agent-conversation-host .composer-context-actions",
+		);
+		const sendButton = sendActions?.querySelector(
+			".send-button, button:not(.voice-button)",
+		);
+		if (
+			!button ||
+			!panel ||
+			!composer ||
+			!modelTrigger ||
+			!taskTrigger ||
+			!sendActions ||
+			!host ||
+			!footer ||
+			!contextActions ||
+			!sendButton
+		) {
 			throw new Error("Task settings layout is unavailable.");
 		}
 		const rect = (element) => {
@@ -113,9 +311,21 @@ async function readTaskSettingsLayout(page) {
 			button: rect(button),
 			buttonDisplay: buttonStyle.display,
 			chevron: chevron ? rect(chevron) : null,
+			modelTrigger: rect(modelTrigger),
+			taskTrigger: {
+				...rect(taskTrigger),
+				ariaLabel: taskTrigger.getAttribute("aria-label"),
+			},
+			sendActions: rect(sendActions),
+			sendButton: rect(sendButton),
+			contextActions: rect(contextActions),
+			footer: rect(footer),
 			panel: rect(panel),
 			composer: rect(composer),
 			host: rect(host),
+			controlOrder: [modelTrigger, taskTrigger, sendButton].map((element) =>
+				Array.from(footer.querySelectorAll("button, summary")).indexOf(element),
+			),
 		};
 	});
 }
@@ -137,6 +347,45 @@ function assertTaskSettingsLayout(layout) {
 		layout.chevron && layout.chevron.width <= 16 && layout.chevron.height <= 16,
 		`New Tab task settings chevron is too large: ${JSON.stringify(layout.chevron)}.`,
 	);
+	assert.equal(
+		layout.taskTrigger.ariaLabel,
+		"Task settings",
+		"The task-settings trigger must keep its accessible name.",
+	);
+	assert.ok(
+		layout.taskTrigger.width <= 40,
+		`Task settings duplicated the model selector label: ${layout.taskTrigger.width}px.`,
+	);
+	assert.ok(
+		!rectanglesIntersect(layout.modelTrigger, layout.taskTrigger),
+		`Model and task-settings triggers intersect: ${JSON.stringify({ model: layout.modelTrigger, task: layout.taskTrigger })}.`,
+	);
+	assert.ok(
+		!rectanglesIntersect(layout.taskTrigger, layout.sendActions),
+		`Task-settings trigger intersects send actions: ${JSON.stringify({ task: layout.taskTrigger, send: layout.sendActions })}.`,
+	);
+	assert.ok(
+		layout.modelTrigger.right <= layout.taskTrigger.left + 1,
+		`Model selector must precede Task settings: ${JSON.stringify({ model: layout.modelTrigger, task: layout.taskTrigger })}.`,
+	);
+	assert.ok(
+		layout.taskTrigger.right <= layout.sendActions.left + 1,
+		`Task settings must precede send actions: ${JSON.stringify({ task: layout.taskTrigger, send: layout.sendActions })}.`,
+	);
+	for (const [label, first, second] of [
+		["model and task-settings", layout.modelTrigger, layout.taskTrigger],
+		["task-settings and send", layout.taskTrigger, layout.sendActions],
+	]) {
+		assert.ok(
+			Math.abs(rectCenterY(first) - rectCenterY(second)) <= 2,
+			`${label} controls are not aligned on the composer row: ${JSON.stringify({ first, second })}.`,
+		);
+	}
+	assert.ok(
+		layout.controlOrder[0] < layout.controlOrder[1] &&
+			layout.controlOrder[1] < layout.controlOrder[2],
+		`Composer controls must remain in model, task-settings, send order: ${JSON.stringify(layout.controlOrder)}.`,
+	);
 	assert.ok(
 		layout.panel.top >= layout.host.top - 1,
 		`Task settings panel escaped above the Agent conversation host: ${layout.panel.top} < ${layout.host.top}.`,
@@ -153,9 +402,9 @@ function assertTaskSettingsLayout(layout) {
 
 function assertTheme(layout) {
 	assert.deepEqual(layout.theme, {
-		canvas: "#0d0e11",
-		sidebar: "#131519",
-		solid: "#f3f4f6",
+		canvas: "#0b0c0e",
+		sidebar: "#111317",
+		solid: "#f5f5f7",
 		colorScheme: "dark",
 	});
 	assert.equal(layout.bridgeReady, true);
@@ -216,6 +465,12 @@ async function assertMotionContract(page) {
 		"auto",
 		"The agent rail must not stay GPU-promoted at rest.",
 	);
+	assertNoLayoutTransition(
+		motion.agent.transitionProperty
+			.split(",")
+			.map((property) => property.trim()),
+		"Agent rail",
+	);
 	assert.ok(
 		Math.max(...transitionDurationsInSeconds(motion.control.transitionDuration)) <= 0.15,
 		`Control feedback is too slow: ${motion.control.transitionDuration}.`,
@@ -230,6 +485,49 @@ async function assertMotionContract(page) {
 			"New Tab widget transform motion must have a single Motion owner.",
 		);
 	}
+}
+
+async function assertNewTabHoverAffordance(page) {
+	const control = page.getByRole("button", {
+		name: "New Tab",
+		exact: true,
+	});
+	await control.waitFor({ state: "visible" });
+	const readStyle = () =>
+		control.evaluate((element) => {
+			const style = getComputedStyle(element);
+			return {
+				opacity: style.opacity,
+				pointerEvents: style.pointerEvents,
+				backgroundColor: style.backgroundColor,
+				borderRadius: style.borderRadius,
+			};
+		});
+	const idle = await readStyle();
+	assert.equal(idle.opacity, "1", "New Tab must remain visible at rest.");
+	assert.equal(
+		idle.pointerEvents,
+		"auto",
+		"New Tab must remain interactive at rest.",
+	);
+	assert.equal(
+		idle.backgroundColor,
+		"rgba(0, 0, 0, 0)",
+		"New Tab must keep a quiet background before hover.",
+	);
+	await control.hover();
+	await page.waitForTimeout(100);
+	const hovered = await readStyle();
+	assert.notEqual(
+		hovered.backgroundColor,
+		idle.backgroundColor,
+		"New Tab hover must paint its circular background.",
+	);
+	assert.equal(
+		hovered.borderRadius,
+		"50%",
+		"New Tab hover must retain the circular affordance shape.",
+	);
 }
 
 async function assertReducedMotionStyles(page) {
@@ -259,6 +557,102 @@ async function assertReducedMotionStyles(page) {
 	assert.equal(reduced.home.animationName, "none");
 	assert.equal(reduced.tab.scrollBehavior, "auto");
 	await page.emulateMedia({ reducedMotion: "no-preference" });
+}
+
+async function assertAgentRailInterruption(page) {
+	const toggle = page.locator("#browser-agent-toggle");
+	const expectedWidth = expectedAgentPanelWidth(
+		await page.evaluate(() => innerWidth),
+	);
+	const readWidth = () =>
+		page.locator(".agent-sidebar").evaluate((element) =>
+			element.getBoundingClientRect().width,
+		);
+	const afterTwoFrames = () =>
+		page.evaluate(
+			() =>
+				new Promise((resolve) =>
+					requestAnimationFrame(() => requestAnimationFrame(resolve)),
+				),
+		);
+
+	await clickAfterHitTest(page, toggle, "#browser-agent-toggle");
+	await page.waitForFunction(
+		(target) => {
+			const shell = document.querySelector(".ai-browser-app");
+			const agent = document.querySelector(".agent-sidebar");
+			const width = agent?.getBoundingClientRect().width ?? 0;
+			return (
+				shell?.classList.contains("agent-sidebar-settling") &&
+				width > 8 &&
+				width < target - 8
+			);
+		},
+		expectedWidth,
+	);
+	const openingWidth = await readWidth();
+
+	// Reverse while the spring is live. The rail may briefly carry its incoming
+	// velocity, but it must not jump to either endpoint or lock the toggle.
+	await clickAfterHitTest(page, toggle, "#browser-agent-toggle");
+	await afterTwoFrames();
+	const reversedWidth = await readWidth();
+	assert.ok(
+		reversedWidth > 0 && reversedWidth < expectedWidth,
+		`Rail reversal jumped to an endpoint (${reversedWidth}px).`,
+	);
+	assert.ok(
+		Math.abs(reversedWidth - openingWidth) < expectedWidth * 0.36,
+		`Rail reversal jumped from ${openingWidth}px to ${reversedWidth}px.`,
+	);
+	await page.waitForFunction(
+		(before) =>
+			(document.querySelector(".agent-sidebar")?.getBoundingClientRect().width ?? 0) <
+			before - 4,
+		openingWidth,
+	);
+	// Re-open before the close finishes. This proves the next input is accepted
+	// during motion and that the new spring starts from the rendered width. Read
+	// the first resumed frame before sampling two more frames; displacement over
+	// two frames is expected spring motion, not evidence of an endpoint jump.
+	// The close spring keeps moving while Playwright resolves the hit target.
+	// Sample immediately before dispatching the reopen click so the continuity
+	// assertion compares against the width the person could actually see.
+	await waitForHitTestTarget(page, "#browser-agent-toggle");
+	const closingStateBeforeReopen = await readAgentRailMotionState(page);
+	await toggle.click();
+	await page.waitForFunction(
+		(label) =>
+			document.querySelector("#browser-agent-toggle")?.getAttribute("aria-label") ===
+			label,
+		"Hide Pragmatic",
+	);
+	const reopenedStart = await readAgentRailMotionState(page);
+	const continuityTolerance = Math.max(24, expectedWidth * 0.16);
+	assert.ok(
+		reopenedStart.settling,
+		"Interrupted re-open did not start a settling transition.",
+	);
+	assert.ok(
+		Math.abs(reopenedStart.width - closingStateBeforeReopen.width) <= continuityTolerance,
+		`Interrupted re-open did not start from the rendered width (${closingStateBeforeReopen.width}px to ${reopenedStart.width}px; tolerance ${continuityTolerance}px).`,
+	);
+	if (reopenedStart.presentedWidth !== null) {
+		assert.ok(
+			Math.abs(reopenedStart.presentedWidth - reopenedStart.width) <= 2,
+			`Interrupted re-open presented width diverged from its rendered width (${JSON.stringify(reopenedStart)}).`,
+		);
+	}
+	await afterTwoFrames();
+	const reopenedWidth = await readWidth();
+	assert.ok(
+		reopenedWidth > 0 && reopenedWidth < expectedWidth,
+		`Interrupted re-open jumped to an endpoint (${reopenedWidth}px).`,
+	);
+	await waitForOpenAgentLayout(page, expectedWidth);
+
+	await clickAfterHitTest(page, toggle, "#browser-agent-toggle");
+	await waitForCollapsedLayout(page);
 }
 
 async function assertTabDragMotion(page, orientation = "horizontal") {
@@ -408,25 +802,20 @@ async function assertVerticalTabLayout(page) {
 	);
 	assert.equal(
 		verticalViewportProperties.includes("right"),
-		true,
-		"Vertical browser content must animate with the agent rail instead of jumping.",
+		false,
+		"The rAF spring owns vertical browser geometry; CSS must not trail it.",
 	);
 
 	await assertTabDragMotion(page, "vertical");
-	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
+	await clickAfterHitTest(
+		page,
+		page.locator("#browser-agent-toggle"),
+		"#browser-agent-toggle",
+	);
 	const agentWidth = expectedAgentPanelWidth(
 		await page.evaluate(() => innerWidth),
 	);
-	await page.waitForFunction((expectedWidth) => {
-		const shell = document.querySelector(".ai-browser-app");
-		const agent = document.querySelector(".agent-sidebar");
-		return (
-			shell &&
-			agent &&
-			!shell.classList.contains("agent-sidebar-collapsed") &&
-			Math.abs(agent.getBoundingClientRect().width - expectedWidth) <= 1
-		);
-	}, agentWidth);
+	await waitForOpenAgentLayout(page, agentWidth);
 	await page.waitForFunction(() => {
 		const viewport = document.querySelector("#browser-viewport");
 		const agent = document.querySelector(".agent-sidebar");
@@ -440,16 +829,12 @@ async function assertVerticalTabLayout(page) {
 	});
 	assertVerticalTabGeometry(await readVerticalTabLayout(page), agentWidth);
 
-	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().click();
-	await page.waitForFunction(() => {
-		const shell = document.querySelector(".ai-browser-app");
-		const agent = document.querySelector(".agent-sidebar");
-		return (
-			shell?.classList.contains("agent-sidebar-collapsed") &&
-			agent &&
-			Math.abs(agent.getBoundingClientRect().width) <= 1
-		);
-	});
+	await clickAfterHitTest(
+		page,
+		page.locator("#browser-agent-toggle"),
+		"#browser-agent-toggle",
+	);
+	await waitForCollapsedLayout(page);
 	await page.waitForFunction(() => {
 		const viewport = document.querySelector("#browser-viewport");
 		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
@@ -530,6 +915,22 @@ function assertOpenLayout(layout) {
 	assertTheme(layout);
 }
 
+function agentPanelWidthBounds(viewportWidth) {
+	if (viewportWidth <= 760) return { min: 0, max: 0 };
+	return {
+		min: 288,
+		max: Math.max(288, Math.min(520, viewportWidth * 0.44)),
+	};
+}
+
+function assertResponsiveAgentPanelWidth(layout) {
+	const bounds = agentPanelWidthBounds(layout.innerWidth);
+	assert.ok(
+		layout.agent.width >= bounds.min - 1 && layout.agent.width <= bounds.max + 1,
+		`Agent panel width escaped its responsive bounds at ${layout.innerWidth}px: ${layout.agent.width}px, expected ${bounds.min}-${bounds.max}px.`,
+	);
+}
+
 async function setDesktopZoom(
 	application,
 	page,
@@ -555,6 +956,7 @@ async function setDesktopZoom(
 }
 
 async function setDesktopWindowWidth(application, page, width) {
+	noteOperation("resize window", width);
 	const appliedWidth = await application.evaluate(
 		({ BrowserWindow }, requestedWidth) => {
 			const window = BrowserWindow.getAllWindows().find(
@@ -574,16 +976,85 @@ async function setDesktopWindowWidth(application, page, width) {
 	);
 }
 
+async function waitForHitTestTarget(page, selector) {
+	await page.waitForFunction((targetSelector) => {
+		const target = document.querySelector(targetSelector);
+		if (!target) return false;
+		const style = getComputedStyle(target);
+		if (
+			style.pointerEvents === "none" ||
+			style.visibility === "hidden" ||
+			style.display === "none"
+		)
+			return false;
+		const bounds = target.getBoundingClientRect();
+		if (bounds.width <= 0 || bounds.height <= 0) return false;
+		const hit = document.elementFromPoint(
+			bounds.left + bounds.width / 2,
+			bounds.top + bounds.height / 2,
+		);
+		return hit === target || target.contains(hit);
+	}, selector);
+}
+
+async function clickAfterHitTest(page, locator, selector) {
+	await waitForHitTestTarget(page, selector);
+	await locator.click();
+}
+
 async function waitForCollapsedLayout(page) {
+	noteOperation("wait for collapsed Agent layout");
 	await page.waitForFunction(() => {
+		const shell = document.querySelector(".ai-browser-app");
 		const viewport = document.querySelector("#browser-viewport");
 		const agent = document.querySelector(".agent-sidebar");
-		if (!viewport || !agent) return false;
+		if (!shell || !viewport || !agent) return false;
 		return (
+			shell.classList.contains("agent-sidebar-collapsed") &&
+			!shell.classList.contains("agent-sidebar-settling") &&
 			Math.abs(agent.getBoundingClientRect().width) <= 1 &&
 			Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1
 		);
 	});
+}
+
+async function waitForOpenAgentLayout(page, expectedWidth = null) {
+	noteOperation("wait for open Agent layout", expectedWidth);
+	await page.waitForFunction(
+		(target) => {
+			const shell = document.querySelector(".ai-browser-app");
+			const agent = document.querySelector(".agent-sidebar");
+			const width = agent?.getBoundingClientRect().width ?? 0;
+			return (
+				shell &&
+				agent &&
+				!shell.classList.contains("agent-sidebar-collapsed") &&
+				!shell.classList.contains("agent-sidebar-settling") &&
+				width > 0 &&
+				(target === null || Math.abs(width - target) <= 1)
+			);
+		},
+		expectedWidth,
+	);
+}
+
+async function assertTaskSettingsAtCurrentWidth(page) {
+	noteOperation("measure Task settings", runtimeDiagnostics.lastBreakpoint);
+	await waitForOpenAgentLayout(page);
+	assertResponsiveAgentPanelWidth(await readLayout(page));
+	const details = page.locator(".agent-conversation-host .task-settings");
+	await details.waitFor();
+	await details.evaluate((element) => element.removeAttribute("open"));
+	await clickAfterHitTest(
+		page,
+		page.locator(".kestrel-home-model-selector"),
+		".kestrel-home-model-selector",
+	);
+	await page
+		.locator('.agent-conversation-host .task-settings[open] .task-settings-panel')
+		.waitFor();
+	assertTaskSettingsLayout(await readTaskSettingsLayout(page));
+	await details.evaluate((element) => element.removeAttribute("open"));
 }
 
 async function readZoomReflow(page) {
@@ -613,6 +1084,10 @@ async function readZoomReflow(page) {
 				height: rect.height,
 			};
 		};
+		const agentToggleLabel = document.querySelector(
+			".browser-agent-toggle > span:not(.pragmatic-logo)",
+		);
+		const navigationControl = document.querySelector(".kestrel-sidebar-new-task");
 
 		return {
 			innerWidth,
@@ -644,35 +1119,33 @@ async function readZoomReflow(page) {
 						element.scrollWidth > element.clientWidth + 1,
 				)
 				.slice(0, 12),
-			sidebarLabelDisplay: getComputedStyle(
-				document.querySelector(".kestrel-sidebar-nav-item span"),
-			).display,
-			agentToggleLabelDisplay: getComputedStyle(
-				document.querySelector(
-					".browser-agent-toggle > span:not(.pragmatic-logo)",
-				),
-			).display,
+			sidebarLabelDisplay: document.querySelector(".kestrel-sidebar-nav-item span")
+				? getComputedStyle(
+					document.querySelector(".kestrel-sidebar-nav-item span"),
+				).display
+				: "none",
+			agentToggleLabelDisplay: agentToggleLabel
+				? getComputedStyle(agentToggleLabel).display
+				: "none",
 			controls: [
-				readControl(".kestrel-sidebar-new-task"),
+				navigationControl ? readControl(".kestrel-sidebar-new-task") : null,
 				readControl(".browser-new-tab"),
 				readControl("#browser-address-input"),
-				readControl('.browser-toolbar-actions button[aria-label="Tools"]'),
-				readControl('.browser-toolbar-actions button[aria-label="Page options"]'),
 				readControl(
-					'.browser-toolbar-actions button[aria-label="Capabilities and commands"]',
+					'.browser-toolbar-actions button[aria-label="Browser menu"]',
 				),
 				readControl(".browser-agent-toggle"),
-			],
+			].filter(Boolean),
 		};
 	});
 }
 
-function assertZoomReflow(layout, reflow) {
+function assertZoomReflow(layout, reflow, navigationWidth = 56) {
 	assert.ok(
 		reflow.innerWidth <= 700,
 		`Expected a compact CSS viewport at 200% zoom, got ${reflow.innerWidth}px.`,
 	);
-	assertNear(layout.navigation.width, 56, "zoomed navigation width");
+	assertNear(layout.navigation.width, navigationWidth, "zoomed navigation width");
 	assertNear(
 		layout.main.left,
 		0,
@@ -696,8 +1169,8 @@ function assertZoomReflow(layout, reflow) {
 	assert.equal(reflow.sidebarLabelDisplay, "none");
 	assert.equal(reflow.agentToggleLabelDisplay, "none");
 	assert.ok(
-		reflow.secondaryToolbarDisplays.length >= 4 &&
-			reflow.secondaryToolbarDisplays.every((display) => display === "none"),
+		reflow.secondaryToolbarDisplays.length >= 3 &&
+		reflow.secondaryToolbarDisplays.every((display) => display === "none"),
 		"High zoom must hide direct toolbar shortcuts before primary controls overflow.",
 	);
 	for (const [surface, overflow] of Object.entries({
@@ -734,11 +1207,58 @@ function assertZoomReflow(layout, reflow) {
 	assertTheme(layout);
 }
 
-async function assertWindowControlMotion(page) {
+function assertInTabAgentLayout(layout) {
+	assert.doesNotMatch(layout.classes, /agent-full-page/);
+	assert.match(layout.classes, /agent-sidebar-collapsed/);
+	const navigationWidth = expectedNavigationWidth(layout.innerWidth);
+	assertNear(layout.navigation.width, navigationWidth, "in-tab Agent navigation width");
+	assertNear(
+		layout.main.left,
+		0,
+		"in-tab Agent browser plane starts at the window edge",
+	);
+	assertNear(
+		layout.main.right,
+		layout.innerWidth,
+		"in-tab Agent browser plane reaches the window edge",
+	);
+	assertNear(
+		layout.viewport.left,
+		navigationWidth,
+		"in-tab Agent page viewport starts after the navigation rail",
+	);
+	assertNear(
+		layout.viewport.right,
+		layout.innerWidth,
+		"in-tab Agent page viewport reaches the window edge",
+	);
+	assertNear(layout.agent.width, 0, "in-tab Agent collapsed Pragmatic width");
+	assertTheme(layout);
+}
+
+async function sendWindowFocusState(application, focused) {
+	await application.evaluate(({ BrowserWindow }, value) => {
+		const window = BrowserWindow.getAllWindows().find(
+			(candidate) => !candidate.isDestroyed() && candidate.isVisible(),
+		);
+		if (!window) throw new Error("The Kestrel window is unavailable.");
+		// The renderer deliberately renders the state carried by this trusted main
+		// process bridge. Driving the bridge avoids depending on macOS granting a
+		// background test process native foreground ownership.
+		window.webContents.send("kestrel:window-focus", value);
+	}, focused);
+}
+
+async function assertWindowControlMotion(page, application) {
 	const control = page.locator(".window-control-close");
 	await control.waitFor();
-	await page.bringToFront();
-	await page.waitForFunction(() => document.hasFocus());
+	await sendWindowFocusState(application, true);
+	await page.waitForFunction(
+		() =>
+			!document
+				.querySelector(".window-controls")
+				?.classList.contains("window-controls-inactive"),
+	);
 	await page.evaluate(
 		() =>
 			new Promise((resolveFrame) =>
@@ -747,6 +1267,34 @@ async function assertWindowControlMotion(page) {
 	);
 	const box = await control.boundingBox();
 	assert.ok(box, "The close window control has no visible bounds.");
+	const appearance = await page.locator(".window-control").evaluateAll((elements) =>
+		elements.map((element) => {
+			const style = getComputedStyle(element);
+			return {
+				fill: style.getPropertyValue("--window-control-fill").trim(),
+				iconColor: style.getPropertyValue("--window-control-icon-color").trim(),
+			};
+		}),
+	);
+	assert.deepEqual(appearance, [
+		{ fill: "#f45146", iconColor: "#8c0000" },
+		{ fill: "#fcb600", iconColor: "#a63a00" },
+		{ fill: "#00bc00", iconColor: "#2e7300" },
+	]);
+
+	await sendWindowFocusState(application, false);
+	await page.waitForFunction(() =>
+		document
+			.querySelector(".window-controls")
+			?.classList.contains("window-controls-inactive"),
+	);
+	await sendWindowFocusState(application, true);
+	await page.waitForFunction(
+		() =>
+			!document
+				.querySelector(".window-controls")
+				?.classList.contains("window-controls-inactive"),
+	);
 
 	const readMotion = () =>
 		control.evaluate((element) => {
@@ -848,7 +1396,29 @@ try {
 			KESTREL_TEST_USER_DATA: userData,
 		},
 	});
-	const page = await application.firstWindow();
+	noteOperation("application launched");
+	observeApplicationProcess();
+	page = await application.firstWindow();
+	await page.addInitScript(() => {
+		window.addEventListener("unhandledrejection", (event) => {
+			const reason = event.reason;
+			const message =
+				reason instanceof Error ? reason.stack ?? reason.message : String(reason);
+			const existing = window.__kestrelDesktopLayoutUnhandledRejections ?? [];
+			window.__kestrelDesktopLayoutUnhandledRejections = [
+				...existing,
+				message,
+			].slice(-20);
+		});
+	});
+	page.on("close", () => {
+		runtimeDiagnostics.pageClosed = true;
+		runtimeDiagnostics.lastOperation = "page closed";
+	});
+	page.on("crash", () => {
+		runtimeDiagnostics.pageCrashed = true;
+		runtimeDiagnostics.lastOperation = "page crashed";
+	});
 	page.setDefaultTimeout(30_000);
 	page.on("pageerror", (error) => pageErrors.push(error.message));
 	await page.waitForLoadState("domcontentloaded");
@@ -858,40 +1428,36 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 		localStorage.setItem("kestrel:navigation-sidebar", "open");
 		localStorage.setItem("kestrel:agent-sidebar", "collapsed");
+		localStorage.setItem("kestrel:agent-universe-rail", "collapsed");
 	});
 	await page.reload();
 	await page.locator(".new-tab-page").waitFor();
-	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
-	await page.waitForFunction(() => {
-		const shell = document.querySelector(".ai-browser-app");
-		const agent = document.querySelector(".agent-sidebar");
-		return (
-			shell &&
-			agent &&
-			!shell.classList.contains("agent-sidebar-collapsed") &&
-			agent.getBoundingClientRect().width > 0
-		);
-	});
+	await clickAfterHitTest(
+		page,
+		page.locator("#browser-agent-toggle"),
+		"#browser-agent-toggle",
+	);
+	await waitForOpenAgentLayout(
+		page,
+		expectedAgentPanelWidth(await page.evaluate(() => innerWidth)),
+	);
 	const homeTaskSettings = page.locator(".kestrel-home-model-selector");
 	await homeTaskSettings.waitFor();
-	await homeTaskSettings.click();
-	await page
-		.locator('.agent-conversation-host .task-settings[open] .task-settings-panel')
-		.waitFor();
-	assertTaskSettingsLayout(await readTaskSettingsLayout(page));
-	await page
-		.locator(".agent-conversation-host .task-settings")
-		.evaluate((details) => details.removeAttribute("open"));
-	await page
-		.locator(".agent-sidebar")
-		.getByRole("button", { name: "Hide Pragmatic", exact: true })
-		.click();
+	await assertTaskSettingsAtCurrentWidth(page);
+	await clickAfterHitTest(
+		page,
+		page.locator("#browser-agent-toggle"),
+		"#browser-agent-toggle",
+	);
 	await waitForCollapsedLayout(page);
-	await assertWindowControlMotion(page);
+	await assertWindowControlMotion(page, application);
 	await waitForCollapsedLayout(page);
 	await assertMotionContract(page);
 	await assertReducedMotionStyles(page);
-	await page.getByRole("button", { name: "New Tab", exact: true }).click();
+	await assertAgentRailInterruption(page);
+	const newTabControl = await revealNewTabControl(page);
+	await assertNewTabHoverAffordance(page);
+	await newTabControl.click();
 	await page.waitForFunction(
 		() => document.querySelectorAll(".browser-tabs .browser-tab").length >= 2,
 	);
@@ -900,43 +1466,56 @@ try {
 
 	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
-	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
+	await clickAfterHitTest(
+		page,
+		page.locator("#browser-agent-toggle"),
+		"#browser-agent-toggle",
+	);
 	const openAgentWidth = expectedAgentPanelWidth(
 		await page.evaluate(() => innerWidth),
 	);
-	await page.waitForFunction((expectedWidth) => {
-		const shell = document.querySelector(".ai-browser-app");
-		const agent = document.querySelector(".agent-sidebar");
-		return (
-			shell &&
-			agent &&
-			!shell.classList.contains("agent-sidebar-collapsed") &&
-			Math.abs(agent.getBoundingClientRect().width - expectedWidth) <= 1
-		);
-	}, openAgentWidth);
+	await waitForOpenAgentLayout(page, openAgentWidth);
 	assertOpenLayout(await readLayout(page));
 
-	await page
-		.getByRole("button", { name: "Hide Pragmatic", exact: true })
-		.first()
-		.click();
-	await page.waitForFunction(() => {
-		const shell = document.querySelector(".ai-browser-app");
-		const agent = document.querySelector(".agent-sidebar");
-		return (
-			shell?.classList.contains("agent-sidebar-collapsed") &&
-			agent &&
-			Math.abs(agent.getBoundingClientRect().width) <= 1
-		);
-	});
+	await clickAfterHitTest(
+		page,
+		page.locator("#browser-agent-toggle"),
+		"#browser-agent-toggle",
+	);
 	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
 
 	// Opening Agent from the navigation rail should stay in the browser tab
 	// surface like New Tab, with browser chrome visible and the chat rail optional.
-	await page.getByRole("button", { name: "New Tab", exact: true }).click();
+	await (await revealNewTabControl(page)).click();
 	await page.locator(".new-tab-page").waitFor();
-	await page.getByRole("button", { name: "Agent", exact: true }).click();
+
+	// Exercise the composer at every supported non-compact rail breakpoint.
+	// The rail must finish its spring before the controls are measured; otherwise
+	// a transient narrow frame can wrap the context group and create a false
+	// packaged-layout failure.
+	await clickAfterHitTest(
+		page,
+		page.locator("#browser-agent-toggle"),
+		"#browser-agent-toggle",
+	);
+	await waitForOpenAgentLayout(
+		page,
+		expectedAgentPanelWidth(await page.evaluate(() => innerWidth)),
+	);
+	for (const width of [920, 979, 980, 981, 1119, 1120, 1121, 1280, 1440]) {
+		await setDesktopWindowWidth(application, page, width);
+		await waitForOpenAgentLayout(page);
+		await assertTaskSettingsAtCurrentWidth(page);
+	}
+	await clickAfterHitTest(
+		page,
+		page.locator("#browser-agent-toggle"),
+		"#browser-agent-toggle",
+	);
+	await waitForCollapsedLayout(page);
+
+	await openKestrelDestination(page, "Agent");
 	await page.waitForFunction(() => {
 		const shell = document.querySelector(".ai-browser-app");
 		const workspace = document.querySelector("#browser-viewport .agent-workspace");
@@ -956,7 +1535,7 @@ try {
 
 	await setDesktopWindowWidth(application, page, 920);
 	await waitForCollapsedLayout(page);
-	assertCollapsedLayout(await readLayout(page));
+	assertInTabAgentLayout(await readLayout(page));
 	const baselineViewportWidth = await page.evaluate(() => innerWidth);
 	await setDesktopZoom(application, page, 2, baselineViewportWidth / 2);
 	await waitForCollapsedLayout(page);
@@ -964,19 +1543,26 @@ try {
 		const viewport = document.querySelector("#browser-viewport");
 		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
 	});
-	assertZoomReflow(await readLayout(page), await readZoomReflow(page));
+	assertZoomReflow(await readLayout(page), await readZoomReflow(page), 56);
 	await setDesktopZoom(application, page, 1, baselineViewportWidth);
 	await waitForCollapsedLayout(page);
 	await page.waitForFunction(() => {
 		const viewport = document.querySelector("#browser-viewport");
 		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
 	});
-	assertCollapsedLayout(await readLayout(page));
+	assertInTabAgentLayout(await readLayout(page));
 
 	assert.deepEqual(pageErrors, []);
+	assert.deepEqual(await readUnhandledRejections(page), []);
 	process.stdout.write(
 		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, in-tab Agent route, and minimum-width 200% zoom reflow.\n",
 	);
+} catch (error) {
+	const evidence = await captureFailureEvidence(error);
+	process.stderr.write(
+		`Desktop layout failure evidence: ${evidence.diagnosticsPath}${evidence.screenshotPath ? `; ${evidence.screenshotPath}` : ""}\n`,
+	);
+	throw error;
 } finally {
 	await application?.close();
 	rmSync(root, { recursive: true, force: true });

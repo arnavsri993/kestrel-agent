@@ -1,19 +1,28 @@
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import type {
-  InstalledExtension,
+	ChromeWebStoreExtensionInspection,
+	ExtensionCompatibilityReport,
+	ExtensionCompatibilityState,
+	InstalledExtension,
   UserBrowserSettings,
+  UserBrowserSitePermission,
 } from "@kestrel/shared-types";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
 } from "react";
+import type { BrowserSettingsSection } from "../../settings-catalog";
 import { Icon } from "../Icon";
 import { Status } from "../ui";
 import { PasswordSettings } from "./PasswordSettings";
 import { PaymentSettings } from "./PaymentSettings";
+import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
+import { browserExtensionOperationErrorMessage } from "../../../browser-extension-error";
+import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
   NEW_TAB_BACKGROUND_OPTIONS,
@@ -51,50 +60,181 @@ const SLEEPING_TAB_TIMEOUT_OPTIONS = [
   { value: 1440, label: "24 hours" },
 ] as const;
 
+const SPELLCHECK_LANGUAGES = [
+  ["en-US", "English (United States)"],
+  ["en-GB", "English (United Kingdom)"],
+  ["es", "Spanish"],
+  ["fr", "French"],
+  ["de", "German"],
+  ["it", "Italian"],
+  ["pt-BR", "Portuguese (Brazil)"],
+  ["ja", "Japanese"],
+  ["ko", "Korean"],
+  ["zh-CN", "Chinese (Simplified)"],
+] as const;
+
+const DEFAULT_ZOOM_OPTIONS = [
+  75, 80, 90, 100, 110, 125, 150, 175, 200,
+] as const;
+
+const FONT_OPTIONS = [
+  ["system-ui", "System UI"],
+  ["-apple-system, BlinkMacSystemFont, sans-serif", "System sans"],
+  ["Arial, sans-serif", "Arial"],
+  ["Georgia, serif", "Georgia"],
+  ["Verdana, sans-serif", "Verdana"],
+] as const;
+
+function sectionIs(
+  current: BrowserSettingsSection,
+  ...sections: BrowserSettingsSection[]
+): boolean {
+  return current === "browser" || sections.includes(current);
+}
+
+function errorText(cause: unknown, fallback: string): string {
+  return cause instanceof Error ? cause.message : fallback;
+}
+
+function formatPath(path: string): string {
+  if (!path) return "Your Downloads folder";
+  const pieces = path.split(/[\\/]/).filter(Boolean);
+  return pieces.length > 2 ? `…/${pieces.slice(-2).join("/")}` : path;
+}
+
+function validHomepage(value: string): boolean {
+  if (!value.trim()) return true;
+  try {
+    const url = new URL(value.trim());
+    return (
+      ["http:", "https:"].includes(url.protocol) &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
+}
+
+const EXTENSION_COMPATIBILITY_LABELS: Record<
+  ExtensionCompatibilityState,
+  string
+> = {
+  verified: "Runtime verified",
+  expected_compatible: "Expected compatible",
+  partial: "Partial compatibility",
+  unsupported: "Unsupported",
+  unknown: "Not yet verified",
+};
+
+function extensionCompatibilityLabel(
+  compatibility: ExtensionCompatibilityReport | undefined,
+): string {
+  return compatibility
+    ? EXTENSION_COMPATIBILITY_LABELS[compatibility.state]
+    : "Compatibility not recorded";
+}
+
+function runtimeEvidenceLabel(
+  compatibility: ExtensionCompatibilityReport | undefined,
+): string {
+  if (!compatibility) return "No runtime evidence recorded";
+  const runtime = compatibility.runtime;
+  const evidence: string[] = [];
+  if (runtime.registered === "passed") evidence.push("registered");
+  if (runtime.ready === "passed") evidence.push("ready");
+  if (runtime.backgroundServiceWorker === "passed") evidence.push("worker started");
+  if (runtime.remainedLoaded === "passed") evidence.push("still loaded");
+  if (runtime.persistedAcrossRestart === "passed") evidence.push("restart verified");
+  return evidence.length > 0
+    ? `Runtime evidence: ${evidence.join(", ")}`
+    : "Runtime evidence: not yet available";
+}
+
 export function BrowserSettings({
   browser,
   contextEnabled,
   onToggleContext,
+  section = "browser",
 }: {
   browser: UserBrowserController;
   contextEnabled: boolean;
   onToggleContext(): void;
+  section?: BrowserSettingsSection;
 }) {
   const settings = browser.state?.settings;
-  const [isDefaultBrowser, setIsDefaultBrowser] = useState<boolean | null>(null);
+  const [isDefaultBrowser, setIsDefaultBrowser] = useState<boolean | null>(
+    null,
+  );
   const [canSetAsDefault, setCanSetAsDefault] = useState<boolean | null>(null);
   const [defaultBrowserBusy, setDefaultBrowserBusy] = useState(false);
   const [backgroundError, setBackgroundError] = useState("");
   const [backgroundBusy, setBackgroundBusy] = useState(false);
   const backgroundInputRef = useRef<HTMLInputElement | null>(null);
-
-  // Custom search engine state
-  const [customName, setCustomName] = useState(settings?.customSearchName ?? "");
+  const [customName, setCustomName] = useState(
+    settings?.customSearchName ?? "",
+  );
   const [customUrl, setCustomUrl] = useState(settings?.customSearchUrl ?? "");
-
-  // Sleeping tabs excluded domains input
   const [newExcludedDomain, setNewExcludedDomain] = useState("");
   const [sleepingBusy, setSleepingBusy] = useState(false);
-
-  // Extension management state
   const [extensions, setExtensions] = useState<InstalledExtension[]>([]);
   const [extensionUrlInput, setExtensionUrlInput] = useState("");
   const [extensionLoading, setExtensionLoading] = useState(false);
+  const [extensionInspection, setExtensionInspection] =
+    useState<ChromeWebStoreExtensionInspection | null>(null);
   const [extensionMessage, setExtensionMessage] = useState<{
     type: "success" | "error";
     text: string;
   } | null>(null);
+  const [startupPageInput, setStartupPageInput] = useState("");
+  const [homepageInput, setHomepageInput] = useState(
+    settings?.homepageUrl ?? "",
+  );
+  const [saveState, setSaveState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [saveError, setSaveError] = useState("");
+  const [restartRequired, setRestartRequired] = useState(false);
+  const [dataBusy, setDataBusy] = useState<"import" | "export" | "">("");
+  const [dataMessage, setDataMessage] = useState("");
+  const [dataError, setDataError] = useState("");
+  const [permissionBusy, setPermissionBusy] = useState("");
+  const [permissionError, setPermissionError] = useState("");
+  const [resetSettingsConfirm, setResetSettingsConfirm] = useState(false);
+  const [retryingLoad, setRetryingLoad] = useState(false);
+
+  const persist = useCallback(
+    async (next: Partial<UserBrowserSettings>) => {
+      setSaveState("saving");
+      setSaveError("");
+      try {
+        if (
+          settings &&
+          "hardwareAccelerationEnabled" in next &&
+          next.hardwareAccelerationEnabled !==
+            settings.hardwareAccelerationEnabled
+        )
+          setRestartRequired(true);
+        await browser.updateSettings(next);
+        setSaveState("saved");
+      } catch (cause) {
+        setSaveState("error");
+        setSaveError(errorText(cause, "Browser setting could not be saved."));
+      }
+    },
+    [browser, settings?.hardwareAccelerationEnabled],
+  );
 
   const fetchExtensions = useCallback(async () => {
     try {
       const response = await window.kestrel.request({
         type: "browser-list-extensions",
       });
-      if (response.ok && "extensions" in response) {
+      if (response.ok && "extensions" in response)
         setExtensions(response.extensions as InstalledExtension[]);
-      }
     } catch {
-      // Ignore extension list error
+      // Extension availability is shown as an empty state if the native manager
+      // is unavailable; the rest of Browser settings remains usable.
     }
   }, []);
 
@@ -103,29 +243,30 @@ export function BrowserSettings({
     void window.kestrel
       .request({ type: "get-default-browser-status" })
       .then((response) => {
-        if (!cancelled && response.ok && "isDefault" in response) {
-          setIsDefaultBrowser(Boolean(response.isDefault));
-          if ("canSetAsDefault" in response)
-            setCanSetAsDefault(response.canSetAsDefault);
-        }
+        if (cancelled || !response.ok || !("isDefault" in response)) return;
+        setIsDefaultBrowser(Boolean(response.isDefault));
+        if ("canSetAsDefault" in response)
+          setCanSetAsDefault(response.canSetAsDefault);
       })
       .catch(() => undefined);
-
     void fetchExtensions();
-
     return () => {
       cancelled = true;
     };
   }, [fetchExtensions]);
 
   useEffect(() => {
-    if (settings?.customSearchName !== undefined) {
+    if (settings?.customSearchName !== undefined)
       setCustomName(settings.customSearchName);
-    }
-    if (settings?.customSearchUrl !== undefined) {
+    if (settings?.customSearchUrl !== undefined)
       setCustomUrl(settings.customSearchUrl);
-    }
-  }, [settings?.customSearchName, settings?.customSearchUrl]);
+    if (settings?.homepageUrl !== undefined)
+      setHomepageInput(settings.homepageUrl);
+  }, [
+    settings?.customSearchName,
+    settings?.customSearchUrl,
+    settings?.homepageUrl,
+  ]);
 
   const handleSetDefault = async () => {
     setDefaultBrowserBusy(true);
@@ -133,19 +274,29 @@ export function BrowserSettings({
       const response = await window.kestrel.request({
         type: "set-default-browser",
       });
+      if (!response.ok)
+        throw new Error(
+          "error" in response
+            ? response.error
+            : "Kestrel could not become the default browser.",
+        );
       if (response.ok && "isDefault" in response) {
         setIsDefaultBrowser(Boolean(response.isDefault));
         if ("canSetAsDefault" in response)
           setCanSetAsDefault(response.canSetAsDefault);
       }
+    } catch (cause) {
+      setSaveState("error");
+      setSaveError(
+        errorText(cause, "Kestrel could not become the default browser."),
+      );
     } finally {
       setDefaultBrowserBusy(false);
     }
   };
 
   const handleSaveCustomSearch = async () => {
-    if (!settings) return;
-    await browser.updateSettings({
+    await persist({
       searchEngine: "custom",
       customSearchName: customName.trim(),
       customSearchUrl: customUrl.trim(),
@@ -155,11 +306,8 @@ export function BrowserSettings({
   const handleSelectBackground = async (
     background: Exclude<UserBrowserSettings["newTabBackground"], "custom">,
   ) => {
-    if (!settings) return;
     setBackgroundError("");
-    await browser.updateSettings({
-      newTabBackground: background,
-    });
+    await persist({ newTabBackground: background });
   };
 
   const handleUploadBackground = async (
@@ -168,7 +316,6 @@ export function BrowserSettings({
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file || !settings) return;
-
     if (
       !SUPPORTED_BACKGROUND_MIME_TYPES.includes(
         file.type as (typeof SUPPORTED_BACKGROUND_MIME_TYPES)[number],
@@ -181,20 +328,17 @@ export function BrowserSettings({
       setBackgroundError("Choose an image smaller than 5 MB.");
       return;
     }
-
     setBackgroundBusy(true);
     setBackgroundError("");
     try {
       const dataUrl = await readBackgroundFile(file);
-      await browser.updateSettings({
+      await persist({
         newTabBackground: "custom",
         newTabBackgroundCustomDataUrl: dataUrl,
       });
     } catch (cause) {
       setBackgroundError(
-        cause instanceof Error
-          ? cause.message
-          : "The selected image could not be saved.",
+        errorText(cause, "The selected image could not be saved."),
       );
     } finally {
       setBackgroundBusy(false);
@@ -203,8 +347,7 @@ export function BrowserSettings({
 
   const handleRemoveUploadedBackground = async () => {
     if (!settings) return;
-    setBackgroundError("");
-    await browser.updateSettings({
+    await persist({
       newTabBackground:
         settings.newTabBackground === "custom"
           ? "graphite"
@@ -215,23 +358,24 @@ export function BrowserSettings({
 
   const handleAddExcludedDomain = async () => {
     if (!settings || !newExcludedDomain.trim()) return;
-    const cleanDomain = newExcludedDomain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    const cleanDomain = newExcludedDomain
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "");
     if (!cleanDomain) return;
-
     const existing = settings.sleepingTabExcludedDomains ?? [];
-    if (!existing.includes(cleanDomain)) {
-      await browser.updateSettings({
-        sleepingTabExcludedDomains: [...existing, cleanDomain],
-      });
-    }
+    if (!existing.includes(cleanDomain))
+      await persist({ sleepingTabExcludedDomains: [...existing, cleanDomain] });
     setNewExcludedDomain("");
   };
 
   const handleRemoveExcludedDomain = async (domain: string) => {
     if (!settings) return;
-    const existing = settings.sleepingTabExcludedDomains ?? [];
-    await browser.updateSettings({
-      sleepingTabExcludedDomains: existing.filter((d) => d !== domain),
+    await persist({
+      sleepingTabExcludedDomains: (
+        settings.sleepingTabExcludedDomains ?? []
+      ).filter((item) => item !== domain),
     });
   };
 
@@ -239,40 +383,75 @@ export function BrowserSettings({
     setSleepingBusy(true);
     try {
       await browser.sleepInactiveTabs();
+    } catch (cause) {
+      setSaveState("error");
+      setSaveError(
+        errorText(cause, "Inactive tabs could not be put to sleep."),
+      );
     } finally {
-      setTimeout(() => setSleepingBusy(false), 600);
+      setSleepingBusy(false);
     }
   };
 
-  const handleInstallExtensionFromUrl = async () => {
+  const handleInspectExtensionFromUrl = async () => {
     if (!extensionUrlInput.trim()) return;
     setExtensionLoading(true);
     setExtensionMessage(null);
     try {
       const response = await window.kestrel.request({
-        type: "browser-install-extension-url",
+        type: "browser-inspect-extension-url",
         urlOrId: extensionUrlInput.trim(),
       });
-      if (response.ok && "extension" in response) {
-        setExtensionMessage({
-          type: "success",
-          text: `Successfully installed ${(response.extension as InstalledExtension).name}!`,
-        });
-        setExtensionUrlInput("");
-        await fetchExtensions();
+      if (response.ok && "extensionInspection" in response) {
+        setExtensionInspection(response.extensionInspection);
       } else {
         setExtensionMessage({
           type: "error",
-          text: "error" in response ? String(response.error) : "Failed to install extension.",
+          text: chromeWebStoreInstallErrorMessage(
+            new Error(
+              "error" in response
+                ? String(response.error)
+                : "The extension inspector returned no extension package.",
+            ),
+          ),
         });
       }
     } catch (cause) {
       setExtensionMessage({
         type: "error",
-        text: cause instanceof Error ? cause.message : "Failed to download extension.",
+        text: chromeWebStoreInstallErrorMessage(cause),
       });
     } finally {
       setExtensionLoading(false);
+    }
+  };
+
+  const handleInstallReviewedExtension = async (inspectionId: string) => {
+    try {
+      const response = await window.kestrel.request({
+        type: "browser-install-extension-url",
+        inspectionId,
+      });
+      if (!response.ok || !("extension" in response)) {
+        throw new Error(
+          chromeWebStoreInstallErrorMessage(
+            new Error(
+              "error" in response
+                ? String(response.error)
+                : "The extension installer returned no extension.",
+            ),
+          ),
+        );
+      }
+      setExtensionMessage({
+        type: "success",
+        text: `Installed ${(response.extension as InstalledExtension).name}. Kestrel will verify persistence after the next browser start.`,
+      });
+      setExtensionUrlInput("");
+      setExtensionInspection(null);
+      await fetchExtensions();
+    } catch (cause) {
+      throw new Error(chromeWebStoreInstallErrorMessage(cause));
     }
   };
 
@@ -283,13 +462,11 @@ export function BrowserSettings({
         extensionId: id,
         enabled,
       });
-      if (response.ok) {
-        await fetchExtensions();
-      }
+      if (response.ok) await fetchExtensions();
     } catch (cause) {
       setExtensionMessage({
         type: "error",
-        text: cause instanceof Error ? cause.message : "Failed to toggle extension.",
+        text: browserExtensionOperationErrorMessage(cause),
       });
     }
   };
@@ -300,667 +477,1562 @@ export function BrowserSettings({
         type: "browser-uninstall-extension",
         extensionId: id,
       });
-      if (response.ok) {
-        await fetchExtensions();
-      }
+      if (response.ok) await fetchExtensions();
     } catch (cause) {
       setExtensionMessage({
         type: "error",
-        text: cause instanceof Error ? cause.message : "Failed to uninstall extension.",
+        text: browserExtensionOperationErrorMessage(cause),
       });
     }
   };
 
-  if (!settings) return <p>Browser settings are loading.</p>;
+  const handleReloadExtension = async (id: string) => {
+    try {
+      const response = await window.kestrel.request({
+        type: "browser-reload-extension",
+        extensionId: id,
+      });
+      if (!response.ok)
+        throw new Error(
+          "error" in response
+            ? String(response.error)
+            : "Failed to reload extension.",
+        );
+      await fetchExtensions();
+    } catch (cause) {
+      setExtensionMessage({
+        type: "error",
+        text: browserExtensionOperationErrorMessage(cause),
+      });
+    }
+  };
+
+  const handleStartupBehavior = (
+    behavior: UserBrowserSettings["startupBehavior"],
+  ) => {
+    void persist({
+      startupBehavior: behavior,
+      restoreSession: behavior === "restore",
+    });
+  };
+
+  const handleSaveHomepage = () => {
+    const value = homepageInput.trim();
+    if (!validHomepage(value)) {
+      setSaveState("error");
+      setSaveError(
+        "Use a complete HTTP(S) URL without a username or password.",
+      );
+      return;
+    }
+    void persist({ homepageUrl: value });
+  };
+
+  const handleAddStartupPage = () => {
+    if (!settings) return;
+    const value = startupPageInput.trim();
+    if (!validHomepage(value) || !value) {
+      setSaveState("error");
+      setSaveError(
+        "Add a complete HTTP(S) URL without a username or password.",
+      );
+      return;
+    }
+    if (settings.startupPages.includes(value)) return;
+    void persist({
+      startupPages: [...settings.startupPages, value],
+      startupBehavior: "specific_pages",
+      restoreSession: false,
+    });
+    setStartupPageInput("");
+  };
+
+  const handleRemoveStartupPage = (url: string) => {
+    if (!settings) return;
+    void persist({
+      startupPages: settings.startupPages.filter((item) => item !== url),
+    });
+  };
+
+  const handleDownloadLocation = async () => {
+    setSaveState("saving");
+    setSaveError("");
+    try {
+      const changed = await browser.selectDownloadDirectory();
+      setSaveState(changed ? "saved" : "idle");
+    } catch (cause) {
+      setSaveState("error");
+      setSaveError(errorText(cause, "Download location could not be changed."));
+    }
+  };
+
+  const handleResetDownloadLocation = async () => {
+    try {
+      await browser.resetDownloadDirectory();
+      setSaveState("saved");
+    } catch (cause) {
+      setSaveState("error");
+      setSaveError(errorText(cause, "Download location could not be reset."));
+    }
+  };
+
+  const handleExport = async () => {
+    setDataBusy("export");
+    setDataError("");
+    setDataMessage("");
+    try {
+      const path = await browser.exportBrowserData();
+      if (path) setDataMessage(`Browser data exported to ${formatPath(path)}.`);
+    } catch (cause) {
+      setDataError(errorText(cause, "Browser data could not be exported."));
+    } finally {
+      setDataBusy("");
+    }
+  };
+
+  const handleImport = async () => {
+    setDataBusy("import");
+    setDataError("");
+    setDataMessage("");
+    try {
+      const imported = await browser.importBrowserData();
+      if (imported)
+        setDataMessage(
+          "Bookmarks, history, site permissions, and preferences were imported.",
+        );
+    } catch (cause) {
+      setDataError(
+        errorText(cause, "That browser data file could not be imported."),
+      );
+    } finally {
+      setDataBusy("");
+    }
+  };
+
+  const handleResetSettings = async () => {
+    if (!resetSettingsConfirm) {
+      setResetSettingsConfirm(true);
+      return;
+    }
+    setResetSettingsConfirm(false);
+    setSaveState("saving");
+    setSaveError("");
+    try {
+      await browser.resetBrowserSettings();
+      setSaveState("saved");
+    } catch (cause) {
+      setSaveState("error");
+      setSaveError(errorText(cause, "Browser settings could not be reset."));
+    }
+  };
+
+  const clearPermission = async (permission: UserBrowserSitePermission) => {
+    setPermissionBusy(`${permission.origin}:${permission.permission}`);
+    setPermissionError("");
+    try {
+      await browser.clearSitePermission(
+        permission.origin,
+        permission.permission,
+      );
+    } catch (cause) {
+      setPermissionError(
+        errorText(cause, "The site permission could not be revoked."),
+      );
+    } finally {
+      setPermissionBusy("");
+    }
+  };
+
+  const sitePermissions = useMemo(
+    () => browser.state?.sitePermissions ?? [],
+    [browser.state?.sitePermissions],
+  );
+
+  if (!settings)
+    return (
+      <div className="browser-settings-loading" role="status" aria-busy="true">
+        <span className="browser-settings-loading-mark" aria-hidden="true" />
+        <p>Browser settings are loading.</p>
+        {browser.error && <small role="alert">{browser.error}</small>}
+        <button
+          type="button"
+          className="button secondary"
+          disabled={retryingLoad}
+          onClick={() => {
+            setRetryingLoad(true);
+            void browser
+              .refresh()
+              .catch(() => undefined)
+              .finally(() => setRetryingLoad(false));
+          }}
+        >
+          {retryingLoad ? "Retrying…" : "Try again"}
+        </button>
+      </div>
+    );
+
+  const show = (...sections: BrowserSettingsSection[]) =>
+    sectionIs(section, ...sections);
+  const statusCopy =
+    saveState === "saving"
+      ? "Saving…"
+      : saveState === "saved"
+        ? "Saved"
+        : saveState === "error"
+          ? saveError
+          : "";
 
   return (
-    <div className="browser-settings-wrapper">
+    <div className="browser-settings-wrapper" data-settings-section={section}>
       <header className="browser-settings-intro">
-        <span className="eyebrow">Browser settings</span>
-        <h2>Make the browser feel like yours.</h2>
-        <p>
-          Keep browser controls here. Agent behavior, models, memory, and
-          approvals live in the separate Agent settings area.
-        </p>
+        <h2>Browser</h2>
+        {statusCopy && (
+          <small
+            className={`browser-settings-save-state ${saveState}`}
+            role={saveState === "error" ? "alert" : "status"}
+          >
+            {statusCopy}
+          </small>
+        )}
       </header>
 
-      <PasswordSettings browser={browser} />
-      <PaymentSettings browser={browser} />
-
-      {/* New tab appearance */}
-      <section
-        className="settings-stack browser-settings-panel browser-background-panel"
-        aria-labelledby="browser-background-title"
-      >
-        <header className="settings-panel-header">
-          <h2 id="browser-background-title">
-            <Icon name="artifacts" /> New tab background
-          </h2>
-          <p>
-            Start with Kestrel’s light default, choose a bundled scene, or add
-            a local image. Your upload stays in this Kestrel profile.
-          </p>
-        </header>
-
-        <div
-          className="background-option-grid"
-          role="radiogroup"
-          aria-label="New tab background presets"
+      {show("browser-startup") && (
+        <section
+          className="settings-stack browser-settings-panel"
+          aria-labelledby="browser-startup-title"
+          data-settings-panel="browser-startup"
         >
-          {NEW_TAB_BACKGROUND_OPTIONS.map((option) => (
-            <label
-              key={option.value}
-              className={`background-option ${
-                settings.newTabBackground === option.value ? "selected" : ""
-              }`}
-            >
-              <input
-                type="radio"
-                name="new-tab-background"
-                value={option.value}
-                checked={settings.newTabBackground === option.value}
-                onChange={() => void handleSelectBackground(option.value)}
-              />
-              <span
-                className={`background-option-preview background-option-preview-${option.value}`}
-                aria-hidden="true"
-              >
-                {settings.newTabBackground === option.value && (
-                  <span className="background-option-check">
-                    <Icon name="check" />
-                  </span>
-                )}
-              </span>
-              <span className="background-option-copy">
-                <strong>{option.label}</strong>
-                <small>{option.description}</small>
-              </span>
-            </label>
-          ))}
-
+          <header className="settings-panel-header">
+            <h2 id="browser-startup-title">
+              <Icon name="reload" /> Startup
+            </h2>
+            <p>Choose what opens at launch.</p>
+          </header>
           <div
-            className={`background-upload-card ${
-              settings.newTabBackground === "custom" &&
-              settings.newTabBackgroundCustomDataUrl
-                ? "selected"
-                : ""
-            }`}
+            className="setting-row browser-setting-row"
+            id="setting-browser-startup-behavior"
           >
-            <span
-              className="background-option-preview background-option-preview-custom"
-              aria-hidden="true"
-              style={
-                settings.newTabBackgroundCustomDataUrl
-                  ? {
-                      backgroundImage: `url("${settings.newTabBackgroundCustomDataUrl}")`,
-                    }
-                  : undefined
+            <div className="browser-setting-copy">
+              <strong>When Kestrel starts</strong>
+              <p>Keeps your tabs and folders.</p>
+            </div>
+            <select
+              aria-label="Startup behavior"
+              value={settings.startupBehavior}
+              onChange={(event) =>
+                handleStartupBehavior(
+                  event.target.value as UserBrowserSettings["startupBehavior"],
+                )
               }
             >
-              {settings.newTabBackground === "custom" &&
-                settings.newTabBackgroundCustomDataUrl && (
-                  <span className="background-option-check">
-                    <Icon name="check" />
-                  </span>
-                )}
-            </span>
-            <span className="background-upload-copy">
-              <strong>Your image</strong>
-              <small>PNG, JPEG, WebP, AVIF, or GIF up to 5 MB.</small>
-              <span className="background-upload-actions">
+              <option value="restore">Restore previous session</option>
+              <option value="new_tab">Open the new tab page</option>
+              <option value="homepage">Open the homepage</option>
+              <option value="specific_pages">Open specific pages</option>
+            </select>
+          </div>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-homepage"
+          >
+            <div className="browser-setting-copy">
+              <strong>Homepage URL</strong>
+              <p>Use an HTTP(S) address, or leave blank for New Tab.</p>
+            </div>
+            <div className="browser-inline-control">
+              <input
+                aria-label="Homepage URL"
+                type="url"
+                value={homepageInput}
+                placeholder="https://example.com"
+                onChange={(event) => setHomepageInput(event.target.value)}
+              />
+              <button
+                type="button"
+                className="button secondary"
+                onClick={handleSaveHomepage}
+                disabled={!validHomepage(homepageInput)}
+              >
+                Save homepage
+              </button>
+            </div>
+          </div>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-startup-pages"
+          >
+            <div className="browser-setting-copy">
+              <strong>Specific startup pages</strong>
+              <p>Open these pages in order.</p>
+            </div>
+            <div className="browser-startup-pages-control">
+              <div className="browser-inline-control">
+                <input
+                  aria-label="Add startup page"
+                  type="url"
+                  value={startupPageInput}
+                  placeholder="https://example.com"
+                  onChange={(event) => setStartupPageInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleAddStartupPage();
+                    }
+                  }}
+                />
                 <button
                   type="button"
                   className="button secondary"
-                  onClick={() => backgroundInputRef.current?.click()}
-                  disabled={backgroundBusy}
-                  aria-controls="new-tab-background-upload"
+                  onClick={handleAddStartupPage}
+                  disabled={
+                    !validHomepage(startupPageInput) || !startupPageInput.trim()
+                  }
                 >
-                  {backgroundBusy ? "Reading image…" : "Choose image"}
+                  Add page
                 </button>
-                {settings.newTabBackgroundCustomDataUrl && (
-                  <button
-                    type="button"
-                    className="quiet-link"
-                    onClick={() => void handleRemoveUploadedBackground()}
-                  >
-                    Remove upload
-                  </button>
-                )}
-              </span>
-              <input
-                ref={backgroundInputRef}
-                id="new-tab-background-upload"
-                className="sr-only"
-                type="file"
-                accept="image/avif,image/gif,image/jpeg,image/png,image/webp"
-                onChange={(event) => void handleUploadBackground(event)}
-                disabled={backgroundBusy}
-                tabIndex={-1}
-                aria-hidden="true"
-              />
-            </span>
-          </div>
-        </div>
-        {backgroundError && (
-          <p className="browser-background-error" role="alert">
-            {backgroundError}
-          </p>
-        )}
-      </section>
-
-      {/* Search engine */}
-      <section className="settings-stack browser-settings-panel" aria-label="Search engine preferences">
-        <header className="settings-panel-header">
-          <h2>
-            <Icon name="search" /> Search Engine
-          </h2>
-        </header>
-
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Default search engine</strong>
-          </div>
-          <select
-            aria-label="Search engine"
-            value={settings.searchEngine}
-            onChange={(event) =>
-              void browser.updateSettings({
-                searchEngine: event.target.value as typeof settings.searchEngine,
-              })
-            }
-          >
-            {SEARCH_ENGINE_OPTIONS.map((engine) => (
-              <option key={engine.value} value={engine.value}>
-                {engine.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {settings.searchEngine === "custom" && (
-          <div className="custom-search-config-box">
-            <div className="custom-search-fields">
-              <label className="custom-search-label">
-                <span>Engine name</span>
-                <input
-                  type="text"
-                  placeholder="e.g. My Intranet Search"
-                  value={customName}
-                  onChange={(e) => setCustomName(e.target.value)}
-                  className="ui-input"
-                />
-              </label>
-              <label className="custom-search-label">
-                <span>Search URL Template</span>
-                <input
-                  type="url"
-                  placeholder="https://example.com/search?q=%s"
-                  value={customUrl}
-                  onChange={(e) => setCustomUrl(e.target.value)}
-                  className="ui-input"
-                />
-              </label>
+              </div>
+              {settings.startupPages.length > 0 && (
+                <ul className="browser-settings-list">
+                  {settings.startupPages.map((url) => (
+                    <li key={url}>
+                      <span>{url}</span>
+                      <button
+                        type="button"
+                        className="quiet-link"
+                        onClick={() => handleRemoveStartupPage(url)}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => void handleSaveCustomSearch()}
-              disabled={!customUrl.trim()}
-            >
-              Save custom engine
-            </button>
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
-      {/* Performance and sleeping tabs */}
-      <section className="settings-stack browser-settings-panel" aria-label="Performance and sleeping tabs">
-        <header className="settings-panel-header">
-          <h2>
-            <Icon name="sparkles" /> Performance & Memory Saver
-          </h2>
-        </header>
-
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Sleeping tabs</strong>
-          </div>
-          <button
-            type="button"
-            className={`switch ${(settings.sleepingTabsEnabled ?? true) ? "on" : ""}`}
-            role="switch"
-            aria-label="Sleeping tabs"
-            aria-checked={settings.sleepingTabsEnabled ?? true}
-            onClick={() =>
-              void browser.updateSettings({
-                sleepingTabsEnabled: !(settings.sleepingTabsEnabled ?? true),
-              })
-            }
+      {show("browser-appearance") && (
+        <>
+          <section
+            className="settings-stack browser-settings-panel browser-background-panel"
+            aria-labelledby="browser-background-title"
+            data-settings-panel="browser-appearance"
           >
-            <span />
-          </button>
-        </div>
-
-        {settings.sleepingTabsEnabled !== false && (
-          <>
-            <div className="setting-row browser-setting-row">
+            <header className="settings-panel-header">
+              <h2 id="browser-background-title">
+                <Icon name="artifacts" /> New tab background
+              </h2>
+              <p>
+                Start with Kestrel’s light default, choose a bundled scene, or
+                add a local image. Your upload stays in this Kestrel profile.
+              </p>
+            </header>
+            <div
+              id="setting-browser-new-tab-background"
+              className="background-option-grid"
+              role="radiogroup"
+              aria-label="New tab background presets"
+            >
+              {NEW_TAB_BACKGROUND_OPTIONS.map((option) => (
+                <label
+                  key={option.value}
+                  className={`background-option ${settings.newTabBackground === option.value ? "selected" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="new-tab-background"
+                    value={option.value}
+                    checked={settings.newTabBackground === option.value}
+                    onChange={() => void handleSelectBackground(option.value)}
+                  />
+                  <span
+                    className={`background-option-preview background-option-preview-${option.value}`}
+                    aria-hidden="true"
+                  >
+                    {settings.newTabBackground === option.value && (
+                      <span className="background-option-check">
+                        <Icon name="check" />
+                      </span>
+                    )}
+                  </span>
+                  <span className="background-option-copy">
+                    <strong>{option.label}</strong>
+                    <small>{option.description}</small>
+                  </span>
+                </label>
+              ))}
+              <div
+                className={`background-upload-card ${settings.newTabBackground === "custom" && settings.newTabBackgroundCustomDataUrl ? "selected" : ""}`}
+              >
+                <span
+                  className="background-option-preview background-option-preview-custom"
+                  aria-hidden="true"
+                  style={
+                    settings.newTabBackgroundCustomDataUrl
+                      ? {
+                          backgroundImage: `url("${settings.newTabBackgroundCustomDataUrl}")`,
+                        }
+                      : undefined
+                  }
+                >
+                  {settings.newTabBackground === "custom" &&
+                    settings.newTabBackgroundCustomDataUrl && (
+                      <span className="background-option-check">
+                        <Icon name="check" />
+                      </span>
+                    )}
+                </span>
+                <span className="background-upload-copy">
+                  <strong>Your image</strong>
+                  <small>PNG, JPEG, WebP, AVIF, or GIF up to 5 MB.</small>
+                  <span className="background-upload-actions">
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => backgroundInputRef.current?.click()}
+                      disabled={backgroundBusy}
+                      aria-controls="new-tab-background-upload"
+                    >
+                      {backgroundBusy ? "Reading image…" : "Choose image"}
+                    </button>
+                    {settings.newTabBackgroundCustomDataUrl && (
+                      <button
+                        type="button"
+                        className="quiet-link"
+                        onClick={() => void handleRemoveUploadedBackground()}
+                      >
+                        Remove upload
+                      </button>
+                    )}
+                  </span>
+                  <input
+                    ref={backgroundInputRef}
+                    id="new-tab-background-upload"
+                    className="sr-only"
+                    type="file"
+                    accept="image/avif,image/gif,image/jpeg,image/png,image/webp"
+                    onChange={(event) => void handleUploadBackground(event)}
+                    disabled={backgroundBusy}
+                    tabIndex={-1}
+                    aria-hidden="true"
+                  />
+                </span>
+              </div>
+            </div>
+            {backgroundError && (
+              <p className="browser-background-error" role="alert">
+                {backgroundError}
+              </p>
+            )}
+          </section>
+          <section
+            className="settings-stack browser-settings-panel"
+            aria-label="Appearance preferences"
+          >
+            <header className="settings-panel-header">
+              <h2>
+                <Icon name="browser" /> Tabs and appearance
+              </h2>
+            </header>
+            <div
+              className="setting-row browser-setting-row"
+              id="setting-browser-tab-layout"
+            >
               <div className="browser-setting-copy">
-                <strong>Put inactive tabs to sleep after</strong>
+                <strong>Tab layout</strong>
               </div>
               <select
-                aria-label="Sleeping tab timeout"
-                value={settings.sleepingTabTimeoutMinutes ?? 30}
+                aria-label="Tab layout"
+                value={settings.tabLayout}
                 onChange={(event) =>
-                  void browser.updateSettings({
-                    sleepingTabTimeoutMinutes: Number(
-                      event.target.value,
-                    ) as typeof settings.sleepingTabTimeoutMinutes,
+                  void persist({
+                    tabLayout: event.target.value as typeof settings.tabLayout,
                   })
                 }
               >
-                {SLEEPING_TAB_TIMEOUT_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
+                <option value="horizontal">Horizontal tabs</option>
+                <option value="vertical">Vertical tabs</option>
               </select>
             </div>
-
-            <div className="setting-row browser-setting-row">
+            {settings.tabLayout !== "vertical" && (
+              <div
+                className="setting-row browser-setting-row"
+                id="setting-browser-tab-sizing"
+              >
+                <div className="browser-setting-copy">
+                  <strong>Tab sizing</strong>
+                  <p>Choose scrolling or shrinking tabs.</p>
+                </div>
+                <select
+                  aria-label="Tab sizing"
+                  value={settings.tabSizing}
+                  onChange={(event) =>
+                    void persist({
+                      tabSizing: event.target.value as typeof settings.tabSizing,
+                    })
+                  }
+                >
+                  <option value="scrolling">Horizontal scrolling tabs</option>
+                  <option value="shrinking">Shrinking tabs</option>
+                </select>
+              </div>
+            )}
+            <div
+              className="setting-row browser-setting-row"
+              id="setting-browser-bookmarks-bar"
+            >
               <div className="browser-setting-copy">
-                <strong>Memory Saver mode</strong>
+                <strong>Show bookmarks bar</strong>
+                <p>Show below the address bar. ⌘⇧B toggles it.</p>
               </div>
               <button
                 type="button"
-                className={`switch ${(settings.memorySaverMode ?? true) ? "on" : ""}`}
+                className={`switch ${settings.showBookmarksBar ? "on" : ""}`}
                 role="switch"
-                aria-label="Memory Saver mode"
-                aria-checked={settings.memorySaverMode ?? true}
+                aria-label="Show bookmarks bar"
+                aria-checked={settings.showBookmarksBar}
                 onClick={() =>
-                  void browser.updateSettings({
-                    memorySaverMode: !(settings.memorySaverMode ?? true),
-                  })
+                  void persist({ showBookmarksBar: !settings.showBookmarksBar })
                 }
               >
                 <span />
               </button>
             </div>
-
-            <div className="setting-row browser-setting-row">
+            <div
+              className="setting-row browser-setting-row"
+              id="setting-browser-default-zoom"
+            >
               <div className="browser-setting-copy">
-                <strong>Manual tab hibernation</strong>
+                <strong>Default page zoom</strong>
+                <p>Updates new and open pages.</p>
+              </div>
+              <select
+                aria-label="Default page zoom"
+                value={settings.defaultZoomPercent}
+                onChange={(event) =>
+                  void persist({
+                    defaultZoomPercent: Number(event.target.value),
+                  })
+                }
+              >
+                {DEFAULT_ZOOM_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}%
+                  </option>
+                ))}
+              </select>
+            </div>
+          </section>
+        </>
+      )}
+
+      {show("browser-search") && (
+        <section
+          className="settings-stack browser-settings-panel"
+          aria-label="Search and address bar preferences"
+          data-settings-panel="browser-search"
+        >
+          <header className="settings-panel-header">
+            <h2>
+              <Icon name="search" /> Search and address bar
+            </h2>
+            <p>
+              Address-bar suggestions are local to this profile; typed text is
+              not sent anywhere for suggestions.
+            </p>
+          </header>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-search-engine"
+          >
+            <div className="browser-setting-copy">
+              <strong>Default search engine</strong>
+            </div>
+            <select
+              aria-label="Search engine"
+              value={settings.searchEngine}
+              onChange={(event) =>
+                void persist({
+                  searchEngine: event.target
+                    .value as typeof settings.searchEngine,
+                })
+              }
+            >
+              {SEARCH_ENGINE_OPTIONS.map((engine) => (
+                <option key={engine.value} value={engine.value}>
+                  {engine.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {settings.searchEngine === "custom" && (
+            <div
+              className="custom-search-config-box"
+              id="setting-browser-custom-search"
+            >
+              <div className="custom-search-fields">
+                <label className="custom-search-label">
+                  <span>Engine name</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. My Intranet Search"
+                    value={customName}
+                    onChange={(event) => setCustomName(event.target.value)}
+                    className="ui-input"
+                  />
+                </label>
+                <label className="custom-search-label">
+                  <span>Search URL template</span>
+                  <input
+                    type="url"
+                    placeholder="https://example.com/search?q=%s"
+                    value={customUrl}
+                    onChange={(event) => setCustomUrl(event.target.value)}
+                    className="ui-input"
+                  />
+                </label>
               </div>
               <button
                 type="button"
                 className="button secondary"
-                onClick={() => void handleSleepInactiveNow()}
-                disabled={sleepingBusy}
+                onClick={() => void handleSaveCustomSearch()}
+                disabled={!customUrl.trim()}
               >
-                {sleepingBusy ? "Suspending…" : "Sleep inactive tabs now"}
+                Save custom engine
               </button>
             </div>
+          )}
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-address-suggestions"
+          >
+            <div className="browser-setting-copy">
+              <strong>Address bar suggestions</strong>
+              <p>Suggest only local history, favorites, and open tabs.</p>
+            </div>
+            <button
+              type="button"
+              className={`switch ${settings.addressBarSuggestionsEnabled ? "on" : ""}`}
+              role="switch"
+              aria-label="Address bar suggestions"
+              aria-checked={settings.addressBarSuggestionsEnabled}
+              onClick={() =>
+                void persist({
+                  addressBarSuggestionsEnabled:
+                    !settings.addressBarSuggestionsEnabled,
+                })
+              }
+            >
+              <span />
+            </button>
+          </div>
+        </section>
+      )}
 
-            <div className="excluded-domains-setting">
-              <div className="browser-setting-copy">
-                <strong>Never put tabs to sleep on these sites</strong>
+      {show("browser-privacy") && (
+        <section
+          className="settings-stack browser-settings-panel"
+          aria-label="Browser privacy and site permissions"
+          data-settings-panel="browser-privacy"
+        >
+          <header className="settings-panel-header">
+            <h2>
+              <Icon name="privacy" /> Privacy and site permissions
+            </h2>
+          </header>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-page-context"
+          >
+            <div
+              className="browser-setting-copy"
+            >
+              <strong>Use current page context with agent</strong>
+              <p>Kestrel uses the page only when you ask.</p>
+            </div>
+            <button
+              type="button"
+              className={`switch ${contextEnabled ? "on" : ""}`}
+              role="switch"
+              aria-label="Use current page context with agent"
+              aria-checked={contextEnabled}
+              onClick={onToggleContext}
+            >
+              <span />
+            </button>
+          </div>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-history-retention"
+          >
+            <div className="browser-setting-copy">
+              <strong>Keep browsing history</strong>
+              <p>Stored on this Mac.</p>
+            </div>
+            <select
+              aria-label="Browser history retention"
+              value={settings.historyRetentionDays}
+              onChange={(event) =>
+                void persist({
+                  historyRetentionDays: Number(
+                    event.target.value,
+                  ) as typeof settings.historyRetentionDays,
+                })
+              }
+            >
+              <option value={0}>Don’t keep</option>
+              <option value={7}>7 days</option>
+              <option value={30}>30 days</option>
+              <option value={90}>90 days</option>
+              <option value={365}>1 year</option>
+            </select>
+          </div>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-site-permissions"
+          >
+            <div className="browser-setting-copy">
+              <strong>Remembered site permissions</strong>
+              <p>Review what each site can access.</p>
+              {sitePermissions.length === 0 ? (
+                <small>No remembered site permissions.</small>
+              ) : (
+                <ul className="browser-settings-list">
+                  {sitePermissions.map((permission) => {
+                    const key = `${permission.origin}:${permission.permission}`;
+                    return (
+                      <li key={key}>
+                        <span>
+                          {permission.origin} · {permission.permission} ·{" "}
+                          {permission.decision}
+                        </span>
+                        <button
+                          type="button"
+                          className="quiet-link"
+                          disabled={permissionBusy === key}
+                          onClick={() => void clearPermission(permission)}
+                        >
+                          {permissionBusy === key ? "Revoking…" : "Revoke"}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+            <Status tone="neutral">{sitePermissions.length} saved</Status>
+          </div>
+          {permissionError && (
+            <small className="browser-settings-feedback error" role="alert">
+              {permissionError}
+            </small>
+          )}
+        </section>
+      )}
+
+      {show("browser-autofill") && (
+        <section
+          className="settings-stack browser-settings-panel"
+          aria-label="Autofill preferences"
+          data-settings-panel="browser-autofill"
+        >
+          <header className="settings-panel-header">
+            <h2>
+              <Icon name="lock" /> Autofill
+            </h2>
+            <p>Passwords and cards stay in your Mac's secure storage and are not exported.</p>
+          </header>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-password-autofill"
+          >
+            <div className="browser-setting-copy">
+              <strong>Password autofill and save prompts</strong>
+              <p>Fill saved passwords on matching HTTPS sites and ask before saving new ones.</p>
+            </div>
+            <button
+              type="button"
+              className={`switch ${settings.passwordAutofillEnabled ? "on" : ""}`}
+              role="switch"
+              aria-label="Password autofill and save prompts"
+              aria-checked={settings.passwordAutofillEnabled}
+              onClick={() =>
+                void persist({
+                  passwordAutofillEnabled: !settings.passwordAutofillEnabled,
+                })
+              }
+            >
+              <span />
+            </button>
+          </div>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-payment-autofill"
+          >
+            <div className="browser-setting-copy">
+              <strong>Payment autofill</strong>
+              <p>Fill saved cards only after you confirm.</p>
+            </div>
+            <button
+              type="button"
+              className={`switch ${settings.paymentAutofillEnabled ? "on" : ""}`}
+              role="switch"
+              aria-label="Payment autofill"
+              aria-checked={settings.paymentAutofillEnabled}
+              onClick={() =>
+                void persist({
+                  paymentAutofillEnabled: !settings.paymentAutofillEnabled,
+                })
+              }
+            >
+              <span />
+            </button>
+          </div>
+          <PasswordSettings browser={browser} />
+          <PaymentSettings browser={browser} />
+        </section>
+      )}
+
+      {show("browser-performance") && (
+        <section
+          className="settings-stack browser-settings-panel"
+          aria-label="Performance and sleeping tabs"
+          data-settings-panel="browser-performance"
+        >
+          <header className="settings-panel-header">
+            <h2>
+              <Icon name="sparkles" /> Performance and memory saver
+            </h2>
+            <p>
+              Sleeping tabs discard inactive page views while keeping the tab
+              record and URL.
+            </p>
+          </header>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-sleeping-tabs"
+          >
+            <div className="browser-setting-copy">
+              <strong>Sleeping tabs</strong>
+            </div>
+            <button
+              type="button"
+              className={`switch ${(settings.sleepingTabsEnabled ?? true) ? "on" : ""}`}
+              role="switch"
+              aria-label="Sleeping tabs"
+              aria-checked={settings.sleepingTabsEnabled ?? true}
+              onClick={() =>
+                void persist({
+                  sleepingTabsEnabled: !(settings.sleepingTabsEnabled ?? true),
+                })
+              }
+            >
+              <span />
+            </button>
+          </div>
+          {settings.sleepingTabsEnabled !== false && (
+            <>
+              <div
+                className="setting-row browser-setting-row"
+                id="setting-browser-sleeping-timeout"
+              >
+                <div className="browser-setting-copy">
+                  <strong>Put inactive tabs to sleep after</strong>
+                </div>
+                <select
+                  aria-label="Sleeping tab timeout"
+                  value={settings.sleepingTabTimeoutMinutes ?? 30}
+                  onChange={(event) =>
+                    void persist({
+                      sleepingTabTimeoutMinutes: Number(
+                        event.target.value,
+                      ) as typeof settings.sleepingTabTimeoutMinutes,
+                    })
+                  }
+                >
+                  {SLEEPING_TAB_TIMEOUT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div className="excluded-domain-input-group">
-                <input
-                  type="text"
-                  placeholder="e.g. youtube.com, spotify.com"
-                  value={newExcludedDomain}
-                  onChange={(e) => setNewExcludedDomain(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void handleAddExcludedDomain();
-                    }
-                  }}
-                  className="ui-input"
-                />
+              <div
+                className="setting-row browser-setting-row"
+                id="setting-browser-memory-saver"
+              >
+                <div className="browser-setting-copy">
+                  <strong>Memory Saver mode</strong>
+                </div>
+                <button
+                  type="button"
+                  className={`switch ${(settings.memorySaverMode ?? true) ? "on" : ""}`}
+                  role="switch"
+                  aria-label="Memory Saver mode"
+                  aria-checked={settings.memorySaverMode ?? true}
+                  onClick={() =>
+                    void persist({
+                      memorySaverMode: !(settings.memorySaverMode ?? true),
+                    })
+                  }
+                >
+                  <span />
+                </button>
+              </div>
+              <div className="setting-row browser-setting-row">
+                <div className="browser-setting-copy">
+                  <strong>Manual tab hibernation</strong>
+                </div>
                 <button
                   type="button"
                   className="button secondary"
-                  onClick={() => void handleAddExcludedDomain()}
-                  disabled={!newExcludedDomain.trim()}
+                  onClick={() => void handleSleepInactiveNow()}
+                  disabled={sleepingBusy}
                 >
-                  Add site
+                  {sleepingBusy ? "Suspending…" : "Sleep inactive tabs now"}
                 </button>
               </div>
-
-              {(settings.sleepingTabExcludedDomains ?? []).length > 0 && (
-                <div className="excluded-domains-list" aria-label="Excluded domains">
-                  {(settings.sleepingTabExcludedDomains ?? []).map((domain) => (
-                    <span key={domain} className="excluded-domain-chip">
-                      <span>{domain}</span>
-                      <button
-                        type="button"
-                        className="chip-remove-btn"
-                        title={`Remove ${domain}`}
-                        onClick={() => void handleRemoveExcludedDomain(domain)}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
+              <div className="excluded-domains-setting">
+                <div className="browser-setting-copy">
+                  <strong>Never put tabs to sleep on these sites</strong>
                 </div>
+                <div className="excluded-domain-input-group">
+                  <input
+                    type="text"
+                    placeholder="e.g. youtube.com, spotify.com"
+                    value={newExcludedDomain}
+                    onChange={(event) =>
+                      setNewExcludedDomain(event.target.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void handleAddExcludedDomain();
+                      }
+                    }}
+                    className="ui-input"
+                  />
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => void handleAddExcludedDomain()}
+                    disabled={!newExcludedDomain.trim()}
+                  >
+                    Add site
+                  </button>
+                </div>
+                {(settings.sleepingTabExcludedDomains ?? []).length > 0 && (
+                  <div
+                    className="excluded-domains-list"
+                    aria-label="Excluded domains"
+                  >
+                    {(settings.sleepingTabExcludedDomains ?? []).map(
+                      (domain) => (
+                        <span key={domain} className="excluded-domain-chip">
+                          <span>{domain}</span>
+                          <button
+                            type="button"
+                            className="chip-remove-btn"
+                            title={`Remove ${domain}`}
+                            onClick={() =>
+                              void handleRemoveExcludedDomain(domain)
+                            }
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ),
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {show("browser-downloads") && (
+        <section
+          className="settings-stack browser-settings-panel"
+          aria-label="Download preferences"
+          data-settings-panel="browser-downloads"
+        >
+          <header className="settings-panel-header">
+            <h2>
+              <Icon name="downloads" /> Downloads
+            </h2>
+            <p>
+              Choose a folder, or ask where to save each file before it starts.
+            </p>
+          </header>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-download-location"
+          >
+            <div className="browser-setting-copy">
+              <strong>Download behavior</strong>
+              <p>
+                {settings.downloadBehavior === "ask"
+                  ? "Ask where to save each file."
+                  : `Save automatically to ${formatPath(settings.downloadDirectory)}.`}
+              </p>
+            </div>
+            <select
+              aria-label="Download behavior"
+              value={settings.downloadBehavior}
+              onChange={(event) =>
+                void persist({
+                  downloadBehavior: event.target
+                    .value as UserBrowserSettings["downloadBehavior"],
+                })
+              }
+            >
+              <option value="automatic">Save automatically</option>
+              <option value="ask">Ask where to save each file</option>
+            </select>
+          </div>
+          <div className="setting-row browser-setting-row">
+            <div className="browser-setting-copy">
+              <strong>Download folder</strong>
+              <p>{formatPath(settings.downloadDirectory)}</p>
+            </div>
+            <div className="button-row">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void handleDownloadLocation()}
+                disabled={saveState === "saving"}
+              >
+                {saveState === "saving" ? "Choosing…" : "Choose folder"}
+              </button>
+              {settings.downloadDirectory && (
+                <button
+                  type="button"
+                  className="quiet-link"
+                  onClick={() => void handleResetDownloadLocation()}
+                >
+                  Use default
+                </button>
               )}
             </div>
-          </>
-        )}
-      </section>
+          </div>
+        </section>
+      )}
 
-      {/* Web extensions */}
-      <section className="settings-stack browser-settings-panel" aria-label="Web extensions and store">
-        <header className="settings-panel-header">
-          <h2>
-            <Icon name="extensions" /> Web Extensions & Add-ons
-          </h2>
-        </header>
-
-        {extensionMessage && (
-          <div className={`extension-alert ${extensionMessage.type}`}>
-            <span>{extensionMessage.text}</span>
+      {show("browser-languages") && (
+        <section
+          className="settings-stack browser-settings-panel"
+          aria-label="Languages and accessibility preferences"
+          data-settings-panel="browser-languages"
+        >
+          <header className="settings-panel-header">
+            <h2>
+              <Icon name="writing" /> Languages and accessibility
+            </h2>
+          </header>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-spellcheck"
+          >
+            <div className="browser-setting-copy">
+              <strong>Spellcheck</strong>
+              <p>Use your system spellchecker where available.</p>
+            </div>
             <button
               type="button"
-              className="quiet-link"
-              onClick={() => setExtensionMessage(null)}
+              className={`switch ${settings.spellcheckEnabled ? "on" : ""}`}
+              role="switch"
+              aria-label="Spellcheck"
+              aria-checked={settings.spellcheckEnabled}
+              onClick={() =>
+                void persist({ spellcheckEnabled: !settings.spellcheckEnabled })
+              }
             >
-              Dismiss
+              <span />
             </button>
           </div>
-        )}
-
-        <div className="extension-install-bar">
-          <input
-            type="text"
-            placeholder="Paste Chrome Web Store URL or Extension ID (e.g. https://chromewebstore.google.com/...)"
-            value={extensionUrlInput}
-            onChange={(e) => setExtensionUrlInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void handleInstallExtensionFromUrl();
-              }
-            }}
-            className="ui-input extension-url-input"
-            disabled={extensionLoading}
-          />
-          <button
-            type="button"
-            className="button primary"
-            onClick={() => void handleInstallExtensionFromUrl()}
-            disabled={extensionLoading || !extensionUrlInput.trim()}
-          >
-            {extensionLoading ? "Installing…" : "Install from Web Store"}
-          </button>
-        </div>
-
-        <div className="extension-actions-row">
-          <a
-            href="https://chromewebstore.google.com"
-            target="_blank"
-            rel="noreferrer"
-            className="button quiet-action-link"
-            onClick={(e) => {
-              e.preventDefault();
-              void browser.createTab("https://chromewebstore.google.com");
-            }}
-          >
-            <Icon name="globe" /> Browse Chrome Web Store ↗
-          </a>
-        </div>
-        <p className="honest-status">
-          Kestrel verifies each store package and keeps it only after Electron
-          loads its signed identity. Manifest V3 background workers must also
-          start successfully. Some Chrome extension APIs are not available in
-          Electron.
-        </p>
-
-        <div className="installed-extensions-section">
-          <h4>Installed Extensions ({extensions.length})</h4>
-          {extensions.length === 0 ? (
-            <div className="empty-extensions-state">
-              <p>No browser extensions installed yet.</p>
-              <small>Install from the Chrome Web Store above.</small>
+          <div className="setting-row browser-setting-row">
+            <div className="browser-setting-copy">
+              <strong>Spellcheck language</strong>
             </div>
-          ) : (
-            <div className="extensions-grid">
-              {extensions.map((ext) => (
-                <article key={ext.id} className={`extension-card ${ext.enabled ? "enabled" : "disabled"}`}>
-                  <div className="extension-card-header">
-                    <div className="extension-card-icon">
-                      <Icon name="extensions" />
-                    </div>
-                    <div className="extension-card-title-group">
-                      <strong>{ext.name}</strong>
-                      <span className="extension-version">v{ext.version}</span>
-                      <span className="extension-source-badge">
-                        {ext.source === "chrome_web_store" ? "Chrome Web Store" : ext.source === "unpacked" ? "Unpacked (development)" : "Local package (development)"}
-                      </span>
-                    </div>
-                  </div>
-                  {ext.description && (
-                    <p className="extension-description">{ext.description}</p>
-                  )}
-                  <div className="extension-card-actions">
-                    <label className="extension-toggle-label">
-                      <span>{ext.enabled ? "Enabled" : "Disabled"}</span>
-                      <input
-                        type="checkbox"
-                        checked={ext.enabled}
-                        onChange={(e) => void handleToggleExtension(ext.id, e.target.checked)}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="button danger-subtle"
-                      onClick={() => void handleUninstallExtension(ext.id)}
-                      title="Uninstall extension"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </article>
+            <select
+              aria-label="Spellcheck language"
+              value={settings.spellcheckLanguage}
+              onChange={(event) =>
+                void persist({ spellcheckLanguage: event.target.value })
+              }
+            >
+              {SPELLCHECK_LANGUAGES.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
               ))}
+            </select>
+          </div>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-fonts"
+          >
+            <div className="browser-setting-copy">
+              <strong>Default font</strong>
+              <p>Used when a page doesn't choose its own font.</p>
+            </div>
+            <select
+              aria-label="Default font"
+              value={settings.defaultFontFamily}
+              onChange={(event) =>
+                void persist({ defaultFontFamily: event.target.value })
+              }
+            >
+              {FONT_OPTIONS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="setting-row browser-setting-row">
+            <div className="browser-setting-copy">
+              <strong>Minimum text size</strong>
+              <p>Default keeps the page's size.</p>
+            </div>
+            <select
+              aria-label="Minimum text size"
+              value={settings.minimumFontSize}
+              onChange={(event) =>
+                void persist({ minimumFontSize: Number(event.target.value) })
+              }
+            >
+              <option value={0}>Default</option>
+              <option value={10}>10 px</option>
+              <option value={12}>12 px</option>
+              <option value={14}>14 px</option>
+              <option value={16}>16 px</option>
+              <option value={18}>18 px</option>
+              <option value={20}>20 px</option>
+            </select>
+          </div>
+        </section>
+      )}
+
+      {show("browser-extensions") && (
+        <section
+          className="settings-stack browser-settings-panel"
+          aria-label="Web extensions and store"
+          data-settings-panel="browser-extensions"
+          id="setting-browser-extensions"
+        >
+          <header className="settings-panel-header">
+            <h2>
+              <Icon name="extensions" /> Web extensions and add-ons
+            </h2>
+            <p>
+              Only verified store packages or explicitly enabled development
+              packages are loaded.
+            </p>
+          </header>
+          {extensionMessage && (
+            <div
+              className={`extension-alert ${extensionMessage.type}`}
+              role={extensionMessage.type === "error" ? "alert" : "status"}
+            >
+              <span>{extensionMessage.text}</span>
+              <button
+                type="button"
+                className="quiet-link"
+                onClick={() => setExtensionMessage(null)}
+              >
+                Dismiss
+              </button>
             </div>
           )}
-        </div>
-      </section>
-
-      {/* Tabs and general */}
-      <section className="settings-stack browser-settings-panel" aria-label="General browser preferences">
-        <header className="settings-panel-header">
-          <h2>
-            <Icon name="browser" /> Tabs & General
-          </h2>
-        </header>
-
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Default browser</strong>
+          <div className="extension-install-bar">
+            <input
+              type="text"
+              placeholder="Paste Chrome Web Store URL or Extension ID"
+              value={extensionUrlInput}
+              onChange={(event) => setExtensionUrlInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void handleInspectExtensionFromUrl();
+                }
+              }}
+              className="ui-input extension-url-input"
+              disabled={extensionLoading}
+            />
+            <button
+              type="button"
+              className="button primary"
+              onClick={() => void handleInspectExtensionFromUrl()}
+              disabled={extensionLoading || !extensionUrlInput.trim()}
+            >
+              {extensionLoading ? "Reviewing…" : "Review from Web Store"}
+            </button>
           </div>
-          {isDefaultBrowser ? (
-            <Status tone="verified">Default browser</Status>
-          ) : canSetAsDefault === false ? (
-            <Status tone="neutral">Available in installed Kestrel</Status>
-          ) : (
+          <div className="extension-actions-row">
+            <a
+              href="https://chromewebstore.google.com"
+              target="_blank"
+              rel="noreferrer"
+              className="button quiet-action-link"
+              onClick={(event) => {
+                event.preventDefault();
+                void browser.createTab("https://chromewebstore.google.com");
+              }}
+            >
+              <Icon name="globe" /> Browse Chrome Web Store ↗
+            </a>
+          </div>
+          <p className="honest-status">
+            Kestrel verifies each package before showing its declared access and
+            compatibility evidence. Electron does not implement every Chrome API.
+          </p>
+          <div className="installed-extensions-section">
+            <h4>Installed extensions ({extensions.length})</h4>
+            {extensions.length === 0 ? (
+              <div className="empty-extensions-state">
+                <p>No browser extensions installed yet.</p>
+                <small>Install from the Chrome Web Store above.</small>
+              </div>
+            ) : (
+              <div className="extensions-grid">
+                {extensions.map((extension) => (
+                  <article
+                    key={extension.id}
+                    className={`extension-card ${extension.enabled ? "enabled" : "disabled"}`}
+                  >
+                    <div className="extension-card-header">
+                      <div className="extension-card-icon">
+                        <Icon name="extensions" />
+                      </div>
+                      <div className="extension-card-title-group">
+                        <strong>{extension.name}</strong>
+                        <span className="extension-version">
+                          v{extension.version}
+                        </span>
+                        <span className="extension-source-badge">
+                          {extension.source === "chrome_web_store"
+                            ? "Chrome Web Store"
+                            : extension.source === "unpacked"
+                              ? "Unpacked (development)"
+                              : "Local package (development)"}
+                        </span>
+                      </div>
+                    </div>
+                    {extension.description && (
+                      <p className="extension-description">
+                        {extension.description}
+                      </p>
+                    )}
+                    <div className="extension-compatibility-summary">
+                      <span
+                        className={`extension-compatibility-badge is-${extension.compatibility?.state ?? "unknown"}`}
+                      >
+                        {extensionCompatibilityLabel(extension.compatibility)}
+                      </span>
+                      <p>
+                        {extension.compatibility?.summary ??
+                          "This extension was installed before Kestrel recorded compatibility evidence."}
+                      </p>
+                      {extension.compatibility?.findings
+                        .filter((finding) => finding.status !== "full")
+                        .slice(0, 3)
+                        .map((finding) => (
+                          <p
+                            className="extension-compatibility-finding"
+                            key={`${finding.capability}-${finding.evidence}`}
+                          >
+                            <strong>{finding.capability}</strong>
+                            <span className={`is-${finding.status}`}>
+                              {finding.status.replace("_", " ")}
+                            </span>
+                            <small>{finding.reason}</small>
+                          </p>
+                        ))}
+                      {extension.compatibility &&
+                        extension.compatibility.declaredRequirements.length >
+                          0 && (
+                          <p className="extension-permission-summary">
+                            Declared access: {" "}
+                            {extension.compatibility.declaredRequirements
+                              .slice(0, 3)
+                              .join(" · ")}
+                            {extension.compatibility.declaredRequirements
+                              .length > 3
+                              ? " · …"
+                              : ""}
+                          </p>
+                        )}
+                      <small className="extension-runtime-evidence">
+                        {runtimeEvidenceLabel(extension.compatibility)}
+                      </small>
+                      <details className="extension-developer-diagnostics">
+                        <summary>Developer diagnostics</summary>
+                        <code>Extension ID: {extension.id}</code>
+                        <small>
+                          Static analysis scanned {" "}
+                          {extension.compatibility?.staticAnalysis.filesScanned ??
+                            0} source file
+                          {(extension.compatibility?.staticAnalysis.filesScanned ??
+                            0) === 1
+                            ? ""
+                            : "s"}
+                          {extension.compatibility?.staticAnalysis.truncated
+                            ? "; coverage was limited."
+                            : "."}
+                        </small>
+                      </details>
+                    </div>
+                    <div className="extension-card-actions">
+                      <label className="extension-toggle-label">
+                        <span>
+                          {extension.enabled ? "Enabled" : "Disabled"}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={extension.enabled}
+                          onChange={(event) =>
+                            void handleToggleExtension(
+                              extension.id,
+                              event.target.checked,
+                            )
+                          }
+                        />
+                      </label>
+                      <div className="extension-card-action-buttons">
+                        <button
+                          type="button"
+                          className="button subtle"
+                          onClick={() =>
+                            void handleReloadExtension(extension.id)
+                          }
+                          disabled={!extension.enabled}
+                          title={
+                            extension.enabled
+                              ? "Reload extension"
+                              : "Enable the extension before reloading"
+                          }
+                        >
+                          Reload
+                        </button>
+                        <button
+                          type="button"
+                          className="button danger-subtle"
+                          onClick={() =>
+                            void handleUninstallExtension(extension.id)
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {show("browser-system") && (
+        <section
+          className="settings-stack browser-settings-panel"
+          aria-label="Browser system integration"
+          data-settings-panel="browser-system"
+        >
+          <header className="settings-panel-header">
+            <h2>
+              <Icon name="system" /> System integration
+            </h2>
+          </header>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-default-browser"
+          >
+            <div className="browser-setting-copy">
+              <strong>Default browser</strong>
+              <p>Open supported web links in Kestrel.</p>
+            </div>
+            {isDefaultBrowser ? (
+              <Status tone="verified">Default browser</Status>
+            ) : canSetAsDefault === false ? (
+              <Status tone="neutral">Available in installed Kestrel</Status>
+            ) : (
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void handleSetDefault()}
+                disabled={defaultBrowserBusy}
+              >
+                {defaultBrowserBusy ? "Setting…" : "Set as default"}
+              </button>
+            )}
+          </div>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-hardware-acceleration"
+          >
+            <div className="browser-setting-copy">
+              <strong>Hardware acceleration</strong>
+              <p>Uses your Mac's graphics hardware. Restart to apply changes.</p>
+            </div>
+            <button
+              type="button"
+              className={`switch ${settings.hardwareAccelerationEnabled ? "on" : ""}`}
+              role="switch"
+              aria-label="Hardware acceleration"
+              aria-checked={settings.hardwareAccelerationEnabled}
+              onClick={() =>
+                void persist({
+                  hardwareAccelerationEnabled:
+                    !settings.hardwareAccelerationEnabled,
+                })
+              }
+            >
+              <span />
+            </button>
+          </div>
+          {restartRequired && (
+            <small className="settings-restart-notice" role="status">
+              Restart Kestrel to apply the hardware acceleration change.
+            </small>
+          )}
+        </section>
+      )}
+
+      {show("browser-reset") && (
+        <section
+          className="settings-stack browser-settings-panel"
+          aria-label="Browser data and reset"
+          data-settings-panel="browser-reset"
+        >
+          <header className="settings-panel-header">
+            <h2>
+              <Icon name="reset" /> Data and reset
+            </h2>
+          </header>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-data-transfer"
+          >
+            <div className="browser-setting-copy">
+              <strong>Import and export browser data</strong>
+              <p>Import or export bookmarks, history, permissions, and preferences.</p>
+              <small>Passwords, cards, cookies, and active sessions are never included.</small>
+            </div>
+            <div className="button-row">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void handleExport()}
+                disabled={Boolean(dataBusy)}
+              >
+                {dataBusy === "export" ? "Exporting…" : "Export data"}
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void handleImport()}
+                disabled={Boolean(dataBusy)}
+              >
+                {dataBusy === "import" ? "Importing…" : "Import data"}
+              </button>
+            </div>
+          </div>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-clear-history"
+          >
+            <div className="browser-setting-copy">
+              <strong>Clear browsing history</strong>
+              <p>Keeps open tabs.</p>
+            </div>
             <button
               type="button"
               className="button secondary"
-              onClick={() => void handleSetDefault()}
-              disabled={defaultBrowserBusy}
+              onClick={() => void browser.clearHistory()}
+              disabled={
+                !browser.state?.history.length &&
+                !browser.state?.recentlyClosedTabs.length
+              }
             >
-              {defaultBrowserBusy ? "Setting…" : "Set as default"}
+              Clear history
             </button>
+          </div>
+          <div
+            className="setting-row browser-setting-row"
+            id="setting-browser-clear-site-data"
+          >
+            <div className="browser-setting-copy">
+              <strong>Clear cookies and site data</strong>
+              <p>Removes cookies, cache, and saved permissions.</p>
+            </div>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() =>
+                void browser.clearBrowsingData({ cookies: true, cache: true })
+              }
+            >
+              Clear site data
+            </button>
+          </div>
+          <div
+            className="setting-row browser-setting-row danger"
+            id="setting-browser-reset-settings"
+          >
+            <div className="browser-setting-copy">
+              <strong>Reset browser settings</strong>
+              <p>Keeps history, saved pages, credentials, and extensions.</p>
+            </div>
+            <div className="button-row">
+              {resetSettingsConfirm && (
+                <button
+                  type="button"
+                  className="quiet-link"
+                  onClick={() => setResetSettingsConfirm(false)}
+                >
+                  Cancel
+                </button>
+              )}
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void handleResetSettings()}
+                disabled={Boolean(dataBusy) || saveState === "saving"}
+              >
+                {resetSettingsConfirm ? "Confirm reset" : "Reset settings"}
+              </button>
+            </div>
+          </div>
+          {dataMessage && (
+            <small className="browser-settings-feedback" role="status">
+              {dataMessage}
+            </small>
           )}
-        </div>
+          {dataError && (
+            <small className="browser-settings-feedback error" role="alert">
+              {dataError}
+            </small>
+          )}
+        </section>
+      )}
 
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Show bookmarks bar</strong>
-            <p>Shows saved pages on New Tab under the address bar. Toggle with ⌘⇧B.</p>
-          </div>
-          <button
-            type="button"
-            className={`switch ${settings.showBookmarksBar ? "on" : ""}`}
-            role="switch"
-            aria-label="Show bookmarks bar"
-            aria-checked={settings.showBookmarksBar}
-            onClick={() =>
-              void browser.updateSettings({
-                showBookmarksBar: !settings.showBookmarksBar,
-              })
-            }
-          >
-            <span />
-          </button>
-        </div>
-
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Address bar suggestions</strong>
-            <p>Suggests only local history, favorites, and open tabs. Typed text is not sent anywhere for suggestions.</p>
-          </div>
-          <button
-            type="button"
-            className={`switch ${settings.addressBarSuggestionsEnabled ? "on" : ""}`}
-            role="switch"
-            aria-label="Address bar suggestions"
-            aria-checked={settings.addressBarSuggestionsEnabled}
-            onClick={() =>
-              void browser.updateSettings({
-                addressBarSuggestionsEnabled: !settings.addressBarSuggestionsEnabled,
-              })
-            }
-          >
-            <span />
-          </button>
-        </div>
-
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Tab layout</strong>
-          </div>
-          <select
-            aria-label="Tab layout"
-            value={settings.tabLayout}
-            onChange={(event) =>
-              void browser.updateSettings({
-                tabLayout: event.target.value as typeof settings.tabLayout,
-              })
-            }
-          >
-            <option value="horizontal">Horizontal tabs</option>
-            <option value="vertical">Vertical tabs</option>
-          </select>
-        </div>
-
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Restore tabs on startup</strong>
-          </div>
-          <button
-            type="button"
-            className={`switch ${settings.restoreSession ? "on" : ""}`}
-            role="switch"
-            aria-label="Restore tabs on startup"
-            aria-checked={settings.restoreSession}
-            onClick={() =>
-              void browser.updateSettings({
-                restoreSession: !settings.restoreSession,
-              })
-            }
-          >
-            <span />
-          </button>
-        </div>
-
-      </section>
-
-      {/* Privacy and history */}
-      <section className="settings-stack browser-settings-panel" aria-label="Browser privacy and history">
-        <header className="settings-panel-header">
-          <h2>
-            <Icon name="privacy" /> Privacy & History
-          </h2>
-        </header>
-
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Use current page context with agent</strong>
-          </div>
-          <button
-            type="button"
-            className={`switch ${contextEnabled ? "on" : ""}`}
-            role="switch"
-            aria-label="Use current page context with agent"
-            aria-checked={contextEnabled}
-            onClick={onToggleContext}
-          >
-            <span />
-          </button>
-        </div>
-
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Keep browsing history</strong>
-          </div>
-          <select
-            aria-label="Browser history retention"
-            value={settings.historyRetentionDays}
-            onChange={(event) =>
-              void browser.updateSettings({
-                historyRetentionDays: Number(
-                  event.target.value,
-                ) as typeof settings.historyRetentionDays,
-              })
-            }
-          >
-            <option value={0}>Don’t keep</option>
-            <option value={7}>7 days</option>
-            <option value={30}>30 days</option>
-            <option value={90}>90 days</option>
-            <option value={365}>1 year</option>
-          </select>
-        </div>
-
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Clear browsing history</strong>
-          </div>
-          <button
-            type="button"
-            className="button secondary"
-            onClick={() => void browser.clearHistory()}
-            disabled={
-              !browser.state?.history.length &&
-              !browser.state?.recentlyClosedTabs.length
-            }
-          >
-            Clear browsing history
-          </button>
-        </div>
-
-        <div className="setting-row browser-setting-row">
-          <div className="browser-setting-copy">
-            <strong>Clear cookies and site data</strong>
-            <p>
-              Removes cookies, cache, and remembered site permissions for this
-              browser profile. Open tabs stay put.
-            </p>
-          </div>
-          <button
-            type="button"
-            className="button secondary"
-            onClick={() =>
-              void browser.clearBrowsingData({ cookies: true, cache: true })
-            }
-          >
-            Clear site data
-          </button>
-        </div>
-      </section>
+      {section === "browser" && (
+        <p className="browser-settings-compatibility" role="note">
+          This overview keeps existing deep links working. Use the Basic and
+          Advanced sections in the settings rail for the focused layout.
+        </p>
+      )}
+      {extensionInspection && (
+        <ExtensionCompatibilityDialog
+          inspection={extensionInspection}
+          onCancel={() => setExtensionInspection(null)}
+          onInstall={handleInstallReviewedExtension}
+        />
+      )}
     </div>
   );
 }

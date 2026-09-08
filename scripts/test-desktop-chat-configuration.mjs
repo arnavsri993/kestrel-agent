@@ -252,12 +252,15 @@ try {
 	);
 
 	await page.getByRole("button", { name: /^Model:/ }).click();
-	const modelMenu = page.getByRole("menu", {
-		name: "Choose provider, model, and thinking level",
+	const modelMenu = page.getByRole("dialog", {
+		name: "Choose a provider, account, model, and thinking level",
 	});
-	await modelMenu.getByRole("menuitem", { name: /^Nous/ }).click();
-	await modelMenu.getByLabel("Custom model ID").fill("fixture-model");
-	await modelMenu.getByLabel("Custom model ID").press("Enter");
+	await modelMenu
+		.locator('.model-selector-column[aria-label="Provider"]')
+		.getByRole("button", { name: /^Nous/ })
+		.click();
+	await modelMenu.getByLabel("Explicit model ID").fill("fixture-model");
+	await modelMenu.getByLabel("Explicit model ID").press("Enter");
 	await modelMenu.waitFor({ state: "detached" });
 	await page
 		.getByRole("textbox", { name: "Message Kestrel" })

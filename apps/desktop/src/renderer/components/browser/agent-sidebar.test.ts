@@ -121,8 +121,10 @@ describe("sidebar approval routing", () => {
 });
 
 describe("sidebar footer destination", () => {
-	it("keeps the four primary destinations", () => {
+	it("keeps the primary destinations in sync", () => {
 		expect(sidebarActiveDestination("browser")).toBe("browser");
+		expect(sidebarActiveDestination("work")).toBe("scheduled");
+		expect(sidebarActiveDestination("kestrel://work")).toBe("scheduled");
 		expect(sidebarActiveDestination("agent")).toBe("agent");
 		expect(sidebarActiveDestination("projects")).toBe("projects");
 		expect(sidebarActiveDestination("approvals")).toBe("approvals");
@@ -140,6 +142,6 @@ describe("sidebar footer destination", () => {
 
 	it("keeps the global sidebar destination in sync", () => {
 		expect(sidebarActiveDestination("kestrel://commands")).toBe("capabilities");
-		expect(sidebarActiveDestination("kestrel://work")).toBe("agent");
+		expect(sidebarActiveDestination("kestrel://work")).toBe("scheduled");
 	});
 });

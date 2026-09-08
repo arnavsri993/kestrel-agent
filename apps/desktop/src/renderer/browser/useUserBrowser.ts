@@ -3,13 +3,18 @@ import type {
 	RendererResponse,
 	SelectedAttachment,
 	UserBrowserFindMatch,
+	UserBrowserBookmarkDisplayMode,
+	UserBrowserBookmarkFolder,
+	UserBrowserBookmarkFolderId,
 	UserBrowserPageContext,
 	UserBrowserSettings,
 	UserBrowserState,
 	UserBrowserTabOrganizationApply,
 	UserBrowserTabOrganizationPreview,
+	UserBrowserZoom,
 } from "@kestrel/shared-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { userFacingError } from "../error-copy";
 
 function responseError(response: RendererResponse): string {
 	return !response.ok && "error" in response
@@ -20,7 +25,10 @@ function responseError(response: RendererResponse): string {
 export interface UserBrowserController {
 	state: UserBrowserState | null;
 	error: string;
+	isDetachedWindow: boolean;
+	refresh(): Promise<void>;
 	findMatch: UserBrowserFindMatch | null;
+	zoomFeedback: UserBrowserZoom | null;
 	openFileTabs(paths: string[], active?: boolean): Promise<SelectedAttachment[]>;
 	filePreview(tabId: string): Promise<FilePreview | undefined>;
 	openFileDefault(tabId: string): Promise<void>;
@@ -29,6 +37,7 @@ export interface UserBrowserController {
 	closeTab(tabId: string): Promise<void>;
 	selectTab(tabId: string): Promise<void>;
 	navigate(tabId: string, input: string): Promise<void>;
+	dismissThreat(tabId: string): Promise<void>;
 	back(tabId: string): Promise<void>;
 	forward(tabId: string): Promise<void>;
 	reload(tabId: string, ignoreCache?: boolean): Promise<void>;
@@ -39,10 +48,15 @@ export interface UserBrowserController {
 	setContentBounds(
 		bounds: { x: number; y: number; width: number; height: number },
 		visible: boolean,
-	): Promise<void>;
+	): Promise<string | undefined>;
 	toggleCalculator(bounds?: BrowserContentBounds): Promise<void>;
 	pageContext(tabId?: string): Promise<UserBrowserPageContext | undefined>;
 	updateSettings(settings: Partial<UserBrowserSettings>): Promise<void>;
+	resetBrowserSettings(): Promise<void>;
+	selectDownloadDirectory(): Promise<boolean>;
+	resetDownloadDirectory(): Promise<void>;
+	exportBrowserData(): Promise<string | undefined>;
+	importBrowserData(): Promise<boolean>;
 	clearHistory(): Promise<void>;
 	clearBrowsingData(options: {
 		history?: boolean;
@@ -51,9 +65,24 @@ export interface UserBrowserController {
 	}): Promise<void>;
 	revealDownload(downloadId: string): Promise<void>;
 	openDownload(downloadId: string): Promise<void>;
+	startDownloadDrag(downloadId: string): Promise<void>;
 	cancelDownload(downloadId: string): Promise<void>;
 	toggleBookmark(url?: string, title?: string): Promise<void>;
+	saveBookmark(input: {
+		title: string;
+		displayMode: UserBrowserBookmarkDisplayMode;
+		folderId?: UserBrowserBookmarkFolderId | null;
+	}): Promise<void>;
+	updateBookmark(input: {
+		bookmarkId: string;
+		title: string;
+		displayMode: UserBrowserBookmarkDisplayMode;
+		folderId?: UserBrowserBookmarkFolderId | null;
+	}): Promise<void>;
 	removeBookmark(bookmarkId: string): Promise<void>;
+	createBookmarkFolder(name: string): Promise<UserBrowserBookmarkFolder | undefined>;
+	renameBookmarkFolder(folderId: UserBrowserBookmarkFolderId, name: string): Promise<void>;
+	removeBookmarkFolder(folderId: UserBrowserBookmarkFolderId): Promise<void>;
 	pinTab(tabId: string, pinned: boolean): Promise<void>;
 	muteTab(tabId: string, muted: boolean): Promise<void>;
 	duplicateTab(tabId: string): Promise<void>;
@@ -65,6 +94,7 @@ export interface UserBrowserController {
 		organization: UserBrowserTabOrganizationApply,
 	): Promise<void>;
 	detachTab(tabId: string): Promise<void>;
+	reattachTab(tabId: string): Promise<void>;
 	findInPage(
 		tabId: string,
 		query: string,
@@ -79,6 +109,7 @@ export interface UserBrowserController {
 		permission: string,
 		decision: "allow" | "deny",
 	): Promise<void>;
+	clearSitePermission(origin: string, permission: string): Promise<void>;
 	sleepTab(tabId: string): Promise<void>;
 	sleepInactiveTabs(): Promise<void>;
 }
@@ -93,15 +124,41 @@ export interface BrowserContentBounds {
 export function useUserBrowser(): UserBrowserController {
 	const [state, setState] = useState<UserBrowserState | null>(null);
 	const [error, setError] = useState("");
+	const [isDetachedWindow, setIsDetachedWindow] = useState(false);
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
+	const [zoomFeedback, setZoomFeedback] = useState<UserBrowserZoom | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
+	const zoomFeedbackTimeoutRef = useRef<number | undefined>(undefined);
+	const tabCloseRequestRef = useRef<Promise<void>>(Promise.resolve());
 	const settingsRequestRef = useRef<Promise<void>>(Promise.resolve());
-	const contentBoundsRequestRef = useRef<Promise<void>>(Promise.resolve());
+	const contentBoundsRequestRef = useRef<Promise<string | undefined>>(
+		Promise.resolve(undefined),
+	);
+	const contentBoundsIntentRef = useRef(0);
 	stateRef.current = state;
 	const applyState = useCallback((nextState: UserBrowserState) => {
 		stateRef.current = nextState;
 		setState(nextState);
 	}, []);
+	const refresh = useCallback(async () => {
+		try {
+			const response = await window.kestrel.request({ type: "browser-get-state" });
+			if (!response.ok || !("browserState" in response))
+				throw new Error(responseError(response));
+			if ("browserWindowRole" in response)
+				setIsDetachedWindow(response.browserWindowRole === "detached");
+			applyState(response.browserState);
+			setError("");
+		} catch (cause) {
+			setError(
+				userFacingError(
+					cause,
+					"The browser did not respond. Quit and reopen Kestrel, or try again.",
+				),
+			);
+			throw cause;
+		}
+	}, [applyState]);
 
 	const requestState = useCallback(
 		async (request: Parameters<typeof window.kestrel.request>[0]) => {
@@ -109,18 +166,30 @@ export function useUserBrowser(): UserBrowserController {
 				const response = await window.kestrel.request(request);
 				if (!response.ok || !("browserState" in response))
 					throw new Error(responseError(response));
+				if ("browserWindowRole" in response)
+					setIsDetachedWindow(response.browserWindowRole === "detached");
 				applyState(response.browserState);
 				setError("");
 			} catch (cause) {
-				const message =
-					cause instanceof Error
-						? cause.message
-						: "The browser request failed.";
-				setError(message);
+				setError(userFacingError(cause, "The browser request failed. Try again."));
 				throw cause;
 			}
 		},
 		[applyState],
+	);
+	const enqueueTabCloseRequest = useCallback(
+		(request: Parameters<typeof window.kestrel.request>[0]) => {
+			// A close burst can generate several pointer/keyboard events before the
+			// first IPC response reaches the renderer. Keep those mutations ordered so
+			// each response describes the state immediately after the previous close,
+			// rather than allowing a slow response to overwrite a newer tab list.
+			const pending = tabCloseRequestRef.current
+				.catch(() => undefined)
+				.then(() => requestState(request));
+			tabCloseRequestRef.current = pending;
+			return pending;
+		},
+		[requestState],
 	);
 	const openFileTabs = useCallback(
 		async (paths: string[], active = true) => {
@@ -157,37 +226,29 @@ export function useUserBrowser(): UserBrowserController {
 	}, []);
 
 	useEffect(() => {
-		let active = true;
 		const unsubscribe = window.kestrel.onBrowserEvent((event) => {
-			if (!active) return;
 			if (event.type === "state") {
 				applyState(event.state);
 				setError("");
+			} else if (event.type === "zoom") {
+				setZoomFeedback(event.zoom);
+				if (zoomFeedbackTimeoutRef.current !== undefined)
+					window.clearTimeout(zoomFeedbackTimeoutRef.current);
+				zoomFeedbackTimeoutRef.current = window.setTimeout(() => {
+					setZoomFeedback(null);
+					zoomFeedbackTimeoutRef.current = undefined;
+				}, 2_600);
 			} else if (event.type === "find-in-page") {
 				setFindMatch(event.match);
 			}
 		});
-		void window.kestrel
-			.request({ type: "browser-get-state" })
-			.then((response) => {
-				if (!active) return;
-				if (!response.ok || !("browserState" in response))
-					throw new Error(responseError(response));
-				applyState(response.browserState);
-			})
-			.catch((cause) => {
-				if (active)
-					setError(
-						cause instanceof Error
-							? cause.message
-							: "The browser did not respond. Quit and reopen Kestrel, or open a new tab to continue.",
-					);
-			});
+		void refresh().catch(() => undefined);
 		return () => {
-			active = false;
 			unsubscribe();
+			if (zoomFeedbackTimeoutRef.current !== undefined)
+				window.clearTimeout(zoomFeedbackTimeoutRef.current);
 		};
-	}, [applyState]);
+	}, [applyState, refresh]);
 
 	const createTab = useCallback(
 		(input?: string, active = true) =>
@@ -203,8 +264,9 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 	const closeTab = useCallback(
-		(tabId: string) => requestState({ type: "browser-close-tab", tabId }),
-		[requestState],
+		(tabId: string) =>
+			enqueueTabCloseRequest({ type: "browser-close-tab", tabId }),
+		[enqueueTabCloseRequest],
 	);
 	const selectTab = useCallback(
 		(tabId: string) => requestState({ type: "browser-select-tab", tabId }),
@@ -213,6 +275,11 @@ export function useUserBrowser(): UserBrowserController {
 	const navigate = useCallback(
 		(tabId: string, input: string) =>
 			requestState({ type: "browser-navigate", tabId, input }),
+		[requestState],
+	);
+	const dismissThreat = useCallback(
+		(tabId: string) =>
+			requestState({ type: "browser-dismiss-threat", tabId }),
 		[requestState],
 	);
 	const back = useCallback(
@@ -271,17 +338,25 @@ export function useUserBrowser(): UserBrowserController {
 			// Layout effects hide the native view during cleanup and reveal it
 			// again after a route or orientation change. Serialize those IPC
 			// updates so an older cleanup cannot arrive after the newer visible
-			// bounds and leave the active page detached.
-			const pending = contentBoundsRequestRef.current
-				.catch(() => undefined)
-				.then(async () => {
-					const response = await window.kestrel.request({
-						type: "browser-set-content-bounds",
-						bounds,
-						visible,
-					});
-					if (!response.ok) throw new Error(responseError(response));
+			// bounds and leave the active page detached. Hides are dispatched
+			// immediately so a native page cannot swallow a renderer pointerup
+			// while an older screenshot is still settling.
+			const intent = ++contentBoundsIntentRef.current;
+			const request = async () => {
+				if (visible && intent !== contentBoundsIntentRef.current) return undefined;
+				const response = await window.kestrel.request({
+					type: "browser-set-content-bounds",
+					bounds,
+					visible,
 				});
+				if (!response.ok) throw new Error(responseError(response));
+				return "browserPagePreview" in response
+					? response.browserPagePreview
+					: undefined;
+			};
+			const pending = visible
+				? contentBoundsRequestRef.current.catch(() => undefined).then(request)
+				: request();
 			contentBoundsRequestRef.current = pending;
 			return pending;
 		},
@@ -343,9 +418,48 @@ export function useUserBrowser(): UserBrowserController {
 		},
 		[requestState],
 	);
+	const resetBrowserSettings = useCallback(
+		() => requestState({ type: "browser-reset-settings" }),
+		[requestState],
+	);
 	const clearHistory = useCallback(
 		() => requestState({ type: "browser-clear-history" }),
 		[requestState],
+	);
+	const selectDownloadDirectory = useCallback(
+		async () => {
+			const response = await window.kestrel.request({
+				type: "browser-select-download-directory",
+			});
+			if (!response.ok || !("browserState" in response))
+				throw new Error(responseError(response));
+			applyState(response.browserState);
+			setError("");
+			return !("cancelled" in response && response.cancelled === true);
+		},
+		[applyState],
+	);
+	const resetDownloadDirectory = useCallback(
+		() => requestState({ type: "browser-reset-download-directory" }),
+		[requestState],
+	);
+	const exportBrowserData = useCallback(async () => {
+		const response = await window.kestrel.request({ type: "browser-export-data" });
+		if (!response.ok) throw new Error(responseError(response));
+		return "browserDataPath" in response ? response.browserDataPath : undefined;
+	}, []);
+	const importBrowserData = useCallback(
+		async () => {
+			const response = await window.kestrel.request({
+				type: "browser-import-data",
+			});
+			if (!response.ok || !("browserState" in response))
+				throw new Error(responseError(response));
+			applyState(response.browserState);
+			setError("");
+			return !("cancelled" in response && response.cancelled === true);
+		},
+		[applyState],
 	);
 	const clearBrowsingData = useCallback(
 		(options: { history?: boolean; cookies?: boolean; cache?: boolean }) =>
@@ -371,6 +485,13 @@ export function useUserBrowser(): UserBrowserController {
 		});
 		if (!response.ok) throw new Error(responseError(response));
 	}, []);
+	const startDownloadDrag = useCallback(async (downloadId: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-start-download-drag",
+			downloadId,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
 	const cancelDownload = useCallback(
 		(downloadId: string) =>
 			requestState({ type: "browser-cancel-download", downloadId }),
@@ -385,9 +506,83 @@ export function useUserBrowser(): UserBrowserController {
 			}),
 		[requestState],
 	);
+	const saveBookmark = useCallback(
+		(input: {
+			title: string;
+			displayMode: UserBrowserBookmarkDisplayMode;
+			folderId?: UserBrowserBookmarkFolderId | null;
+		}) =>
+			requestState({
+				type: "browser-save-bookmark",
+				title: input.title,
+				displayMode: input.displayMode,
+				...(input.folderId !== undefined
+					? { folderId: input.folderId }
+					: {}),
+			}),
+		[requestState],
+	);
+	const updateBookmark = useCallback(
+		(input: {
+			bookmarkId: string;
+			title: string;
+			displayMode: UserBrowserBookmarkDisplayMode;
+			folderId?: UserBrowserBookmarkFolderId | null;
+		}) =>
+			requestState({
+				type: "browser-update-bookmark",
+				bookmarkId: input.bookmarkId,
+				title: input.title,
+				displayMode: input.displayMode,
+				...(input.folderId !== undefined
+					? { folderId: input.folderId }
+					: {}),
+			}),
+		[requestState],
+	);
 	const removeBookmark = useCallback(
 		(bookmarkId: string) =>
 			requestState({ type: "browser-remove-bookmark", bookmarkId }),
+		[requestState],
+	);
+	const createBookmarkFolder = useCallback(
+		async (name: string) => {
+			try {
+				const response = await window.kestrel.request({
+					type: "browser-create-bookmark-folder",
+					name,
+				});
+				if (!response.ok || !("browserState" in response))
+					throw new Error(responseError(response));
+				applyState(response.browserState);
+				setError("");
+				if (!("bookmarkFolderId" in response) || !response.bookmarkFolderId)
+					return undefined;
+				return response.browserState.bookmarkFolders.find(
+					(folder) => folder.id === response.bookmarkFolderId,
+				);
+			} catch (cause) {
+				setError(userFacingError(cause, "The bookmark folder could not be created."));
+				throw cause;
+			}
+		},
+		[applyState],
+	);
+	const renameBookmarkFolder = useCallback(
+		(folderId: UserBrowserBookmarkFolderId, name: string) =>
+			requestState({
+				type: "browser-rename-bookmark-folder",
+				folderId,
+				name,
+			}),
+		[requestState],
+	);
+	const removeBookmarkFolder = useCallback(
+		(folderId: UserBrowserBookmarkFolderId) =>
+			requestState({
+				type: "browser-remove-bookmark-folder",
+				folderId,
+			}),
 		[requestState],
 	);
 	const pinTab = useCallback(
@@ -405,8 +600,9 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 	const closeOtherTabs = useCallback(
-		(tabId: string) => requestState({ type: "browser-close-other-tabs", tabId }),
-		[requestState],
+		(tabId: string) =>
+			enqueueTabCloseRequest({ type: "browser-close-other-tabs", tabId }),
+		[enqueueTabCloseRequest],
 	);
 	const moveTab = useCallback(
 		(tabId: string, toIndex: number) =>
@@ -435,6 +631,10 @@ export function useUserBrowser(): UserBrowserController {
 	);
 	const detachTab = useCallback(
 		(tabId: string) => requestState({ type: "browser-detach-tab", tabId }),
+		[requestState],
+	);
+	const reattachTab = useCallback(
+		(tabId: string) => requestState({ type: "browser-reattach-tab", tabId }),
 		[requestState],
 	);
 	const findInPage = useCallback(
@@ -483,6 +683,15 @@ export function useUserBrowser(): UserBrowserController {
 			}),
 		[requestState],
 	);
+	const clearSitePermission = useCallback(
+		(origin: string, permission: string) =>
+			requestState({
+				type: "browser-clear-site-permission",
+				origin,
+				permission,
+			}),
+		[requestState],
+	);
 	const sleepTab = useCallback(
 		(tabId: string) => requestState({ type: "browser-sleep-tab", tabId }),
 		[requestState],
@@ -496,7 +705,10 @@ export function useUserBrowser(): UserBrowserController {
 		() => ({
 			state,
 			error,
+			isDetachedWindow,
+			refresh,
 			findMatch,
+			zoomFeedback,
 			openFileTabs,
 			filePreview,
 			openFileDefault,
@@ -505,6 +717,7 @@ export function useUserBrowser(): UserBrowserController {
 			closeTab,
 			selectTab,
 			navigate,
+			dismissThreat,
 			back,
 			forward,
 			reload,
@@ -516,13 +729,24 @@ export function useUserBrowser(): UserBrowserController {
 			toggleCalculator,
 			pageContext,
 			updateSettings,
+			resetBrowserSettings,
+			selectDownloadDirectory,
+			resetDownloadDirectory,
+			exportBrowserData,
+			importBrowserData,
 			clearHistory,
 			clearBrowsingData,
 			revealDownload,
 			openDownload,
+			startDownloadDrag,
 			cancelDownload,
 			toggleBookmark,
+			saveBookmark,
+			updateBookmark,
 			removeBookmark,
+			createBookmarkFolder,
+			renameBookmarkFolder,
+			removeBookmarkFolder,
 			pinTab,
 			muteTab,
 			duplicateTab,
@@ -532,19 +756,24 @@ export function useUserBrowser(): UserBrowserController {
 			previewOrganizeTabs,
 			applyTabOrganization,
 			detachTab,
+			reattachTab,
 			findInPage,
 			stopFindInPage,
 			printTab,
 			openDevTools,
 			saveScreenshot,
 			setSitePermission,
+			clearSitePermission,
 			sleepTab,
 			sleepInactiveTabs,
 		}),
 		[
 			state,
 			error,
+			isDetachedWindow,
+			refresh,
 			findMatch,
+			zoomFeedback,
 			openFileTabs,
 			filePreview,
 			openFileDefault,
@@ -553,6 +782,7 @@ export function useUserBrowser(): UserBrowserController {
 			closeTab,
 			selectTab,
 			navigate,
+			dismissThreat,
 			back,
 			forward,
 			reload,
@@ -564,13 +794,24 @@ export function useUserBrowser(): UserBrowserController {
 			toggleCalculator,
 			pageContext,
 			updateSettings,
+			resetBrowserSettings,
+			selectDownloadDirectory,
+			resetDownloadDirectory,
+			exportBrowserData,
+			importBrowserData,
 			clearHistory,
 			clearBrowsingData,
 			revealDownload,
 			openDownload,
+			startDownloadDrag,
 			cancelDownload,
 			toggleBookmark,
+			saveBookmark,
+			updateBookmark,
 			removeBookmark,
+			createBookmarkFolder,
+			renameBookmarkFolder,
+			removeBookmarkFolder,
 			pinTab,
 			muteTab,
 			duplicateTab,
@@ -580,12 +821,14 @@ export function useUserBrowser(): UserBrowserController {
 			previewOrganizeTabs,
 			applyTabOrganization,
 			detachTab,
+			reattachTab,
 			findInPage,
 			stopFindInPage,
 			printTab,
 			openDevTools,
 			saveScreenshot,
 			setSitePermission,
+			clearSitePermission,
 			sleepTab,
 			sleepInactiveTabs,
 		],

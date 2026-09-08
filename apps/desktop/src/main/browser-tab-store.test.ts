@@ -44,6 +44,7 @@ function storePath(): string {
 it("defaults new browser settings to Google", () => {
 	const state = freshBrowserState();
 	expect(state.settings.searchEngine).toBe("google");
+	expect(state.settings.tabSizing).toBe("scrolling");
 	expect(state.settings.showBookmarksBar).toBe(true);
 	expect(state.settings.paymentAutofillEnabled).toBe(true);
 	expect(state.settings.newTabGreetingActivity.days).toEqual([]);
@@ -52,6 +53,39 @@ it("defaults new browser settings to Google", () => {
 	expect(UserBrowserSettingsSchema.parse({}).showBookmarksBar).toBe(true);
 	expect(UserBrowserSettingsSchema.parse({}).addressBarSuggestionsEnabled).toBe(true);
 	expect(UserBrowserSettingsSchema.parse({}).paymentAutofillEnabled).toBe(true);
+});
+
+it("preserves the legacy restore-session opt-out during settings migration", () => {
+	const path = storePath();
+	const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+	state.tabs[0]!.url = "https://previous-session.example/";
+	const legacy = JSON.parse(JSON.stringify(state)) as {
+		settings: Record<string, unknown>;
+		tabs: Array<Record<string, unknown>>;
+	};
+	for (const key of [
+		"startupBehavior",
+		"homepageUrl",
+		"startupPages",
+		"defaultZoomPercent",
+		"minimumFontSize",
+		"defaultFontFamily",
+		"spellcheckEnabled",
+		"spellcheckLanguage",
+		"hardwareAccelerationEnabled",
+		"downloadBehavior",
+		"downloadDirectory",
+	])
+		delete legacy.settings[key];
+	legacy.settings.restoreSession = false;
+	writeFileSync(path, `${JSON.stringify(legacy)}\n`);
+
+	const loaded = new BrowserTabStore(path).load(
+		() => new Date("2026-08-11T12:00:00.000Z"),
+	);
+	expect(loaded.settings.startupBehavior).toBe("new_tab");
+	expect(loaded.tabs).toHaveLength(1);
+	expect(loaded.tabs[0]!.url).toBe("");
 });
 
 it("accepts bundled backgrounds and bounded local image data", () => {
@@ -70,6 +104,42 @@ it("accepts bundled backgrounds and bounded local image data", () => {
 		UserBrowserSettingsSchema.safeParse({
 			newTabBackground: "custom",
 			newTabBackgroundCustomDataUrl: "file:///tmp/private.png",
+		}).success,
+	).toBe(false);
+	expect(
+		UserBrowserSettingsSchema.safeParse({
+			customSearchUrl: "javascript:alert(1)",
+		}).success,
+	).toBe(false);
+	expect(
+		UserBrowserSettingsSchema.safeParse({
+			customSearchUrl: "https://search.example/?q=%s",
+		}).success,
+	).toBe(true);
+});
+
+it("keeps native browser settings actions behind typed IPC requests", () => {
+	const settings = UserBrowserSettingsSchema.parse({});
+	for (const request of [
+		{ type: "browser-update-settings", settings },
+		{ type: "browser-reset-settings" },
+		{ type: "browser-select-download-directory" },
+		{ type: "browser-reset-download-directory" },
+		{ type: "browser-export-data" },
+		{ type: "browser-import-data" },
+		{ type: "browser-clear-history" },
+		{
+			type: "browser-clear-site-permission",
+			origin: "https://example.com",
+			permission: "notifications",
+		},
+	])
+		expect(RendererRequestSchema.safeParse(request).success).toBe(true);
+
+	expect(
+		RendererRequestSchema.safeParse({
+			type: "browser-electron-internals",
+			module: "session",
 		}).success,
 	).toBe(false);
 });
@@ -183,22 +253,30 @@ describe("browser address normalization", () => {
 			).toBe(url);
 	});
 
-	it("accepts only supported search engines and tab layouts", () => {
+	it("accepts only supported search engines, tab layouts, and tab sizing modes", () => {
 		const base = {
 			searchEngine: "duckduckgo",
 			tabLayout: "horizontal",
+			tabSizing: "shrinking",
 			restoreSession: true,
 			historyRetentionDays: 90,
 		};
 		const parsed = UserBrowserSettingsSchema.safeParse(base);
 		expect(parsed.success).toBe(true);
-		if (parsed.success) expect(parsed.data.newTabBackground).toBe("graphite");
+		if (parsed.success) {
+			expect(parsed.data.newTabBackground).toBe("graphite");
+			expect(parsed.data.tabSizing).toBe("shrinking");
+		}
 		expect(
 			UserBrowserSettingsSchema.safeParse({ ...base, tabLayout: "stacked" })
 				.success,
 		).toBe(false);
 		expect(
 			UserBrowserSettingsSchema.safeParse({ ...base, searchEngine: "unknown" })
+				.success,
+		).toBe(false);
+		expect(
+			UserBrowserSettingsSchema.safeParse({ ...base, tabSizing: "overflow" })
 				.success,
 		).toBe(false);
 	});
@@ -274,6 +352,88 @@ describe("browser address normalization", () => {
 });
 
 describe("browser tab persistence", () => {
+	it("marks interrupted reputation checks as failed after restart", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() =>
+			new Date("2026-08-11T12:00:00.000Z"),
+		);
+		state.downloads.push({
+			id: "download-00000000-0000-4000-8000-000000000001",
+			tabId: state.tabs[0]!.id,
+			filename: "pending.dmg",
+			sourceUrl: "https://download.example/pending.dmg",
+			receivedBytes: 0,
+			totalBytes: 10,
+			status: "checking",
+			startedAt: "2026-08-11T12:00:00.000Z",
+			canReveal: false,
+		});
+		store.save(state);
+
+		const restored = store.load();
+
+		expect(restored.downloads[0]).toMatchObject({
+			status: "failed",
+			canReveal: false,
+		});
+	});
+
+	it("redacts blocked navigation URLs before persistence and restore", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() =>
+			new Date("2026-08-11T12:00:00.000Z"),
+		);
+		state.tabs[0]!.url = "https://safe.example/";
+		state.tabs[0]!.blockedNavigation = {
+			url: "https://unsafe.example/callback?code=oauth-code#access_token=fragment-secret",
+			source: "navigation",
+			threatTypes: ["malware"],
+			provider: "test-reputation",
+		};
+		store.save(state);
+
+		const persisted = readFileSync(path, "utf8");
+		expect(persisted).not.toContain("oauth-code");
+		expect(persisted).not.toContain("fragment-secret");
+		expect(store.load().tabs[0]?.blockedNavigation?.url).toBe(
+			"https://unsafe.example/callback",
+		);
+	});
+
+	it("persists bookmark presentation choices, folders, and favicon snapshots", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+		const folderId =
+			"bookmark-folder-00000000-0000-4000-8000-000000000001" as const;
+		state.bookmarkFolders = [
+			{
+				id: folderId,
+				name: "Read later",
+				createdAt: "2026-08-11T12:00:00.000Z",
+			},
+		];
+		state.bookmarks = [
+			{
+				id: "bookmark-00000000-0000-4000-8000-000000000001",
+				url: "https://docs.example/guide",
+				title: "A useful guide",
+				displayMode: "icon",
+				folderId,
+				faviconDataUrl: "data:image/png;base64,AAAA",
+				createdAt: "2026-08-11T12:00:00.000Z",
+			},
+		];
+
+		store.save(state);
+
+		const restored = store.load();
+		expect(restored.bookmarkFolders).toEqual(state.bookmarkFolders);
+		expect(restored.bookmarks).toEqual(state.bookmarks);
+	});
+
 	it("persists and restores more than 32 open tabs", () => {
 		const path = storePath();
 		const store = new BrowserTabStore(path);
@@ -457,25 +617,29 @@ describe("browser tab persistence", () => {
 		});
 	});
 
-	it("persists the selected tab layout and migrates legacy settings", () => {
+	it("persists tab layout and sizing and migrates legacy settings", () => {
 		const path = storePath();
 		const store = new BrowserTabStore(path);
 		const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
 		state.settings.tabLayout = "vertical";
+		state.settings.tabSizing = "shrinking";
 		state.settings.searchEngine = "ecosia";
 		store.save(state);
 
 		expect(store.load().settings).toMatchObject({
 			tabLayout: "vertical",
+			tabSizing: "shrinking",
 			searchEngine: "ecosia",
 			showBookmarksBar: true,
 		});
 
 		const legacy = JSON.parse(readFileSync(path, "utf8"));
 		delete legacy.settings.tabLayout;
+		delete legacy.settings.tabSizing;
 		writeFileSync(path, `${JSON.stringify(legacy, null, 2)}\n`, "utf8");
 		expect(store.load().settings).toMatchObject({
 			tabLayout: "horizontal",
+			tabSizing: "scrolling",
 			searchEngine: "ecosia",
 			newTabBackground: "graphite",
 		});

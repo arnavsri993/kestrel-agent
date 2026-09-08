@@ -214,6 +214,57 @@ describe("browser observation diffs", () => {
 		expect(diff.trust).toBe("untrusted_browser");
 	});
 
+	it("redacts values for credential and payment-code fields, including property hints", () => {
+		const before = snapshot("https://example.test", "Before", {
+			nodes: [
+				{
+					nodeId: "password",
+					role: { value: "textbox" },
+					name: { value: "Password" },
+					value: { value: "old-password" },
+					description: { value: "old-password-description" },
+				},
+				{
+					nodeId: "otp",
+					role: { value: "textbox" },
+					name: { value: "Verification" },
+					value: { value: "123456" },
+					properties: [
+						{ name: "autocomplete", value: { value: "one-time-code" } },
+					],
+				},
+			],
+		});
+		const after = snapshot("https://example.test", "After", {
+			nodes: [
+				{
+					nodeId: "password-new",
+					role: { value: "textbox" },
+					name: { value: "Password" },
+					value: { value: "new-password" },
+					description: { value: "new-password-description" },
+				},
+				{
+					nodeId: "otp-new",
+					role: { value: "textbox" },
+					name: { value: "Verification" },
+					value: { value: "654321" },
+					properties: [
+						{ name: "autocomplete", value: { value: "one-time-code" } },
+					],
+				},
+			],
+		});
+
+		const diff = diffBrowserSnapshots(before, after);
+
+		expect(diff.changed).toEqual([]);
+		expect(diff.added).toHaveLength(2);
+		expect(diff.added.every((node) => node.name === "Sensitive field")).toBe(true);
+		expect(diff.added.every((node) => !("value" in node))).toBe(true);
+		expect(JSON.stringify(diff)).not.toMatch(/old-password|new-password|123456|654321/);
+	});
+
 	it("marks truncated when a title exceeds the observation text bound", () => {
 		const diff = diffBrowserSnapshots(
 			snapshot("https://example.test/", "a".repeat(600), { nodes: [] }),

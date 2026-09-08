@@ -137,7 +137,7 @@ async function openTool(
 ) {
 	await page.keyboard.press("Meta+K");
 	await page
-		.getByRole("heading", { name: "Capabilities", exact: true })
+		.getByRole("heading", { name: "Command Center", exact: true })
 		.waitFor();
 	await page
 		.locator(".command-groups button")
@@ -222,11 +222,13 @@ try {
 	await capture(page, "setup-03-choose-model.png");
 
 	await page.getByRole("button", { name: /Use an account/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Connect an account." }).waitFor();
 	await capture(page, "setup-04-account.png");
 
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Try free providers/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page
 		.getByRole("heading", { name: "Set up free provider accounts." })
 		.waitFor();
@@ -247,6 +249,7 @@ try {
 	await page.setViewportSize({ width: 1320, height: 860 });
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Run on this Mac/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
 	await capture(page, "setup-04-local-model.png");
 
@@ -314,7 +317,7 @@ try {
 		await capture(page, "workspace-conversation.png");
 	}
 	await page
-		.getByRole("button", { name: "New task", exact: true })
+		.getByRole("button", { name: "New chat", exact: true })
 		.first()
 		.click();
 
@@ -378,7 +381,7 @@ try {
 
 	await openTool(page, "Settings");
 	await page
-		.getByRole("heading", { name: "Preferences", exact: true })
+		.getByRole("heading", { name: "Settings", exact: true })
 		.waitFor();
 	await assertDistinctVisibleCopy(page, "Settings shell", [
 		".page-header h1",
@@ -394,8 +397,8 @@ try {
 		["Browser", "settings-browser.png"],
 		["General", "settings-general.png"],
 		["Models", "settings-models.png"],
-		["Intelligence & Memory", "settings-memory.png"],
-		["Agent Plugins", "settings-extensions.png"],
+		["Memory", "settings-memory.png"],
+		["Plugins", "settings-extensions.png"],
 		["Privacy", "settings-privacy.png"],
 		["Advanced", "settings-advanced.png"],
 	] as const;
@@ -471,7 +474,7 @@ try {
 
 	const focusTrigger = page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" });
+		.getByRole("button", { name: "New chat" });
 	// Verify focus the way a keyboard user reaches this control. Programmatic
 	// focus intentionally does not always match :focus-visible in Chromium.
 	await focusTrigger.focus();
@@ -490,7 +493,7 @@ try {
 		};
 	});
 	if (
-		focusStyle.label !== "New task" ||
+		focusStyle.label !== "New chat" ||
 		focusStyle.outline === "none" ||
 		focusStyle.width === "0px"
 	)
@@ -501,7 +504,7 @@ try {
 	await page.waitForLoadState("domcontentloaded");
 	await page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
+		.getByRole("button", { name: "New chat" })
 		.waitFor();
 	await page.keyboard.press("Meta+K");
 	await page

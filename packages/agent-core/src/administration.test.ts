@@ -1,4 +1,4 @@
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import {
 	existsSync,
 	mkdirSync,
@@ -48,26 +48,31 @@ describe("reference-product migration", () => {
 		const plan = manager.plan([{ product: "codex", root: source }], target);
 		expect(plan.items.map((item) => item.category).sort()).toEqual([
 			"instructions",
-			"settings",
 			"skill",
 		]);
 		expect(plan.translations).toMatchObject([
 			{
 				product: "codex",
-				values: { preferredModel: "gpt-test", approvalMode: "on-request" },
+				values: { hasPreferredModel: true, hasApprovalConfiguration: true },
 			},
 		]);
 		expect(JSON.stringify(plan.translations)).not.toContain(
 			"must-not-translate",
 		);
+		expect(plan.warnings).toContain(
+			"codex: config.toml is reviewed for non-secret settings only; raw settings files are never imported.",
+		);
 		expect(() => manager.apply(plan, { approved: false })).toThrow(
 			"explicit approval",
 		);
 		const applied = manager.apply(plan, { approved: true });
-		expect(applied.imported).toHaveLength(4);
+		expect(applied.imported).toHaveLength(3);
 		expect(
 			readFileSync(join(target, "imports", "codex", "AGENTS.md"), "utf8"),
 		).toContain("Inspect before editing");
+		expect(existsSync(join(target, "imports", "codex", "config.toml"))).toBe(
+			false,
+		);
 		expect(
 			JSON.parse(
 				readFileSync(
@@ -77,9 +82,177 @@ describe("reference-product migration", () => {
 			),
 		).toMatchObject({
 			schemaVersion: 1,
-			values: { preferredModel: "gpt-test", approvalMode: "on-request" },
+			values: { hasPreferredModel: true, hasApprovalConfiguration: true },
 		});
-		expect(manager.apply(plan, { approved: true }).skipped).toHaveLength(4);
+		expect(manager.apply(plan, { approved: true }).skipped).toHaveLength(3);
+	});
+
+	it("inventories OpenClaw automations, bindings, and plugins without copying their configuration", () => {
+		const source = mkdtempSync(join(tmpdir(), "kestrel-openclaw-import-"));
+		const target = mkdtempSync(join(tmpdir(), "kestrel-openclaw-target-"));
+		directories.push(source, target);
+		mkdirSync(join(source, "cron"), { recursive: true });
+		writeFileSync(join(source, "AGENTS.md"), "Keep source data private.\n");
+		writeFileSync(
+			join(source, "openclaw.json"),
+			JSON.stringify({
+				model: "openclaw-test-model",
+				apiKey: "should-never-appear",
+				cron: { jobs: [{ id: "embedded-job", payload: { text: "private" } }] },
+				bindings: [
+					{ agentId: "main", match: { channel: "discord" } },
+					{ type: "acp", agentId: "editor" },
+				],
+				plugins: {
+					enabled: true,
+					allow: ["plugin-a"],
+					deny: ["plugin-b"],
+					entries: {
+						"plugin-a": { enabled: true, config: { token: "private" } },
+						"plugin-c": { enabled: false },
+					},
+					slots: {
+						memory: "plugin-a",
+						contextEngine: "plugin-c",
+					},
+					load: { paths: ["/private/one", "/private/two"] },
+				},
+			}),
+		);
+		writeFileSync(
+			join(source, "cron", "jobs.json"),
+			JSON.stringify({
+				version: 1,
+				jobs: [
+					{ id: "scheduled-one", payload: { argv: ["private"] } },
+					{ id: "scheduled-two", delivery: { webhook: "private" } },
+				],
+			}),
+		);
+
+		const plan = new MigrationManager().plan(
+			[{ product: "openclaw", root: source }],
+			target,
+		);
+		expect(plan.items.map((item) => item.sourcePath)).toEqual(["AGENTS.md"]);
+		expect(plan.translations).toMatchObject([
+			{
+				sourcePath: "openclaw.json",
+				values: { hasPreferredModel: true },
+			},
+		]);
+		expect(plan.reviewItems).toEqual([
+			{
+				product: "openclaw",
+				sourcePath: "cron/jobs.json",
+				kind: "automation",
+				count: 2,
+				status: "review-required",
+			},
+			{
+				product: "openclaw",
+				sourcePath: "openclaw.json",
+				kind: "automation",
+				count: 1,
+				status: "review-required",
+			},
+			{
+				product: "openclaw",
+				sourcePath: "openclaw.json",
+				kind: "acp-binding",
+				count: 1,
+				status: "review-required",
+			},
+			{
+				product: "openclaw",
+				sourcePath: "openclaw.json",
+				kind: "channel-binding",
+				count: 1,
+				status: "review-required",
+			},
+			{
+				product: "openclaw",
+				sourcePath: "openclaw.json",
+				kind: "plugin",
+				count: 6,
+				status: "review-required",
+			},
+			{
+				product: "openclaw",
+				sourcePath: "openclaw.json",
+				kind: "plugin-load-path",
+				count: 2,
+				status: "review-required",
+			},
+		]);
+		expect(JSON.stringify(plan)).not.toContain("should-never-appear");
+		expect(JSON.stringify(plan)).not.toContain('"private"');
+
+		const result = new MigrationManager().apply(plan, { approved: true });
+		expect(result.imported).toHaveLength(2);
+		expect(existsSync(join(target, "imports", "openclaw", "openclaw.json"))).toBe(
+			false,
+		);
+		expect(existsSync(join(target, "imports", "openclaw", "cron", "jobs.json"))).toBe(
+			false,
+		);
+	});
+
+	it("rejects raw settings and rechecks the source for a sanitized translation", () => {
+		const source = mkdtempSync(join(tmpdir(), "kestrel-settings-import-"));
+		const target = mkdtempSync(join(tmpdir(), "kestrel-settings-target-"));
+		directories.push(source, target);
+		const settingsPath = join(source, "config.toml");
+		writeFileSync(
+			settingsPath,
+			"model = 'sk-source-value-that-must-not-leak'\napi_key = 'private'\n",
+		);
+		const manager = new MigrationManager();
+		const plan = manager.plan([{ product: "codex", root: source }], target);
+		expect(plan.items).toEqual([]);
+		expect(plan.translations).toHaveLength(1);
+		expect(JSON.stringify(plan)).not.toContain("sk-source-value-that-must-not-leak");
+		const forged = structuredClone(plan);
+		forged.translations[0]!.values = {
+			hasPreferredModel: true,
+			unsafeSetting: "private",
+		};
+		const forgedPayload =
+			JSON.stringify(
+				{
+					schemaVersion: 1,
+					sourceProduct: forged.translations[0]!.product,
+					sourcePath: forged.translations[0]!.sourcePath,
+					values: forged.translations[0]!.values,
+				},
+				null,
+				2,
+			) + "\n";
+		forged.translations[0]!.sha256 = createHash("sha256")
+			.update(forgedPayload)
+			.digest("hex");
+		expect(() => manager.apply(forged, { approved: true })).toThrow(
+			"Migration translation changed after planning: config.toml",
+		);
+		writeFileSync(settingsPath, "model = 'changed'\napi_key = 'private'\n");
+		expect(() => manager.apply(plan, { approved: true })).toThrow(
+			"Migration source changed after planning: config.toml",
+		);
+
+		const rawSettingsPlan = structuredClone(plan);
+		rawSettingsPlan.items.push({
+			product: "codex",
+			category: "settings",
+			sourceRoot: source,
+			sourcePath: "config.toml",
+			destinationPath: "imports/codex/config.toml",
+			bytes: 1,
+			sha256: "0".repeat(64),
+			status: "ready",
+		});
+		expect(() => manager.apply(rawSettingsPlan, { approved: true })).toThrow(
+			"may not import raw settings files",
+		);
 	});
 
 	it("rejects a migration source that grows beyond the plan limit", () => {

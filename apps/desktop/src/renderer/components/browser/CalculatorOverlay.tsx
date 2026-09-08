@@ -8,13 +8,11 @@ import {
 import { Icon } from "../Icon";
 import {
 	type CalculatorAngleUnit,
-	type GraphBounds,
 	evaluateCalculatorExpression,
 	formatCalculatorNumber,
-	sampleGraph,
 } from "./calculator";
 
-type CalculatorMode = "basic" | "scientific" | "graphing";
+type CalculatorMode = "basic" | "scientific";
 type CalculatorAction =
 	| "clear"
 	| "backspace"
@@ -74,37 +72,9 @@ const scientificKeys: CalculatorKey[] = [
 	{ label: "Ans", value: "ans", className: "constant", ariaLabel: "Previous answer" },
 ];
 
-const graphKeys: CalculatorKey[] = [
-	{ label: "x", value: "x", className: "constant", ariaLabel: "Variable x" },
-	{ label: "sin", value: "sin(", className: "function", ariaLabel: "Sine" },
-	{ label: "cos", value: "cos(", className: "function", ariaLabel: "Cosine" },
-	{ label: "tan", value: "tan(", className: "function", ariaLabel: "Tangent" },
-	{ label: "π", value: "pi", className: "constant", ariaLabel: "Pi" },
-	{ label: "^", value: "^", className: "function", ariaLabel: "Power" },
-	{ label: "(", value: "(" },
-	{ label: ")", value: ")" },
-	{ label: "7", value: "7" },
-	{ label: "8", value: "8" },
-	{ label: "9", value: "9" },
-	{ label: "÷", value: "/", className: "operator", ariaLabel: "Divide" },
-	{ label: "4", value: "4" },
-	{ label: "5", value: "5" },
-	{ label: "6", value: "6" },
-	{ label: "×", value: "*", className: "operator", ariaLabel: "Multiply" },
-	{ label: "1", value: "1" },
-	{ label: "2", value: "2" },
-	{ label: "3", value: "3" },
-	{ label: "−", value: "-", className: "operator", ariaLabel: "Subtract" },
-	{ label: "0", value: "0" },
-	{ label: ".", value: "." },
-	{ label: "⌫", action: "backspace", className: "utility", ariaLabel: "Backspace" },
-	{ label: "Clear", action: "clear", className: "utility" },
-];
-
 const modeLabels: Array<{ id: CalculatorMode; label: string; detail: string }> = [
 	{ id: "basic", label: "Basic", detail: "Everyday arithmetic" },
 	{ id: "scientific", label: "Scientific", detail: "Functions and constants" },
-	{ id: "graphing", label: "Graphing", detail: "Plot y = f(x)" },
 ];
 
 function closeCalculator(): void {
@@ -126,97 +96,10 @@ function appendToExpression(
 	return { expression: value, result: null };
 }
 
-function GraphPlot({
-	expression,
-	bounds,
-	angleUnit,
-}: {
-	expression: string;
-	bounds: GraphBounds;
-	angleUnit: CalculatorAngleUnit;
-}) {
-	const width = 640;
-	const height = 320;
-	const segments = useMemo(
-		() => sampleGraph(expression, bounds, 420, { angleUnit }),
-		[angleUnit, bounds, expression],
-	);
-	const xTicks = useMemo(() => tickValues(bounds.xMin, bounds.xMax, 8), [bounds.xMin, bounds.xMax]);
-	const yTicks = useMemo(() => tickValues(bounds.yMin, bounds.yMax, 6), [bounds.yMin, bounds.yMax]);
-	const mapX = (value: number) => ((value - bounds.xMin) / (bounds.xMax - bounds.xMin)) * width;
-	const mapY = (value: number) => height - ((value - bounds.yMin) / (bounds.yMax - bounds.yMin)) * height;
-	const paths = segments.map((segment) =>
-		segment
-			.map((point, index) => `${index === 0 ? "M" : "L"}${mapX(point.x).toFixed(2)} ${mapY(point.y).toFixed(2)}`)
-			.join(" "),
-	);
-	const validBounds =
-		Number.isFinite(bounds.xMin) &&
-		Number.isFinite(bounds.xMax) &&
-		Number.isFinite(bounds.yMin) &&
-		Number.isFinite(bounds.yMax) &&
-		bounds.xMin < bounds.xMax &&
-		bounds.yMin < bounds.yMax;
-	if (!validBounds)
-		return <div className="calculator-plot-empty">Set a smaller minimum than maximum for each axis.</div>;
-	const xAxisY = bounds.yMin <= 0 && bounds.yMax >= 0 ? mapY(0) : undefined;
-	const yAxisX = bounds.xMin <= 0 && bounds.xMax >= 0 ? mapX(0) : undefined;
-
-	return (
-		<div className="calculator-plot" role="img" aria-label={`Graph of ${expression || "the entered function"}`}>
-			<svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-				{yTicks.map((tick) => (
-					<line
-						key={`horizontal-${tick}`}
-						x1="0"
-						x2={width}
-						y1={mapY(tick)}
-						y2={mapY(tick)}
-						className="calculator-plot-grid"
-					/>
-				))}
-				{xTicks.map((tick) => (
-					<line
-						key={`vertical-${tick}`}
-						x1={mapX(tick)}
-						x2={mapX(tick)}
-						y1="0"
-						y2={height}
-						className="calculator-plot-grid"
-					/>
-				))}
-				{xAxisY !== undefined && <line x1="0" x2={width} y1={xAxisY} y2={xAxisY} className="calculator-plot-axis" />}
-				{yAxisX !== undefined && <line x1={yAxisX} x2={yAxisX} y1="0" y2={height} className="calculator-plot-axis" />}
-				{paths.map((path, index) => (
-					<path key={`function-${index}`} d={path} className="calculator-plot-function" />
-				))}
-			</svg>
-			<div className="calculator-plot-labels" aria-hidden="true">
-				<span>{formatTick(bounds.xMin)}</span>
-				<span>{formatTick(bounds.xMax)}</span>
-			</div>
-		</div>
-	);
-}
-
-function tickValues(min: number, max: number, count: number): number[] {
-	const step = (max - min) / count;
-	return Array.from({ length: count + 1 }, (_, index) => min + step * index);
-}
-
-function formatTick(value: number): string {
-	return formatCalculatorNumber(value) ?? "—";
-}
-
-function numericBound(value: string, fallback: number): number {
-	const parsed = Number(value);
-	return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 function CalculatorKeypad({
 	keys,
 	onKey,
-	}: {
+}: {
 	keys: CalculatorKey[];
 	onKey(key: CalculatorKey): void;
 }) {
@@ -244,16 +127,7 @@ export function CalculatorOverlay() {
 	const [answer, setAnswer] = useState<number | undefined>();
 	const [error, setError] = useState("");
 	const [angleUnit, setAngleUnit] = useState<CalculatorAngleUnit>("deg");
-	const [graphExpression, setGraphExpression] = useState("sin(x)");
-	const [graphAngleUnit, setGraphAngleUnit] = useState<CalculatorAngleUnit>("rad");
-	const [graphBounds, setGraphBounds] = useState<GraphBounds>({
-		xMin: -10,
-		xMax: 10,
-		yMin: -5,
-		yMax: 5,
-	});
 	const inputRef = useRef<HTMLInputElement | null>(null);
-	const graphInputRef = useRef<HTMLInputElement | null>(null);
 
 	useEffect(() => {
 		inputRef.current?.focus();
@@ -267,8 +141,7 @@ export function CalculatorOverlay() {
 	}, []);
 
 	useEffect(() => {
-		if (mode === "graphing") graphInputRef.current?.focus();
-		else inputRef.current?.focus();
+		inputRef.current?.focus();
 	}, [mode]);
 
 	const expressionOptions = useMemo(
@@ -361,19 +234,7 @@ export function CalculatorOverlay() {
 	function updateMode(nextMode: CalculatorMode) {
 		setMode(nextMode);
 		setError("");
-		if (nextMode === "graphing") graphInputRef.current?.focus();
-		else inputRef.current?.focus();
 	}
-
-	const graphSegments = useMemo(
-		() => sampleGraph(graphExpression, graphBounds, 420, { angleUnit: graphAngleUnit }),
-		[graphAngleUnit, graphBounds, graphExpression],
-	);
-	const graphStatus = !graphExpression.trim()
-		? "Enter a function such as sin(x) or x^2."
-		: graphSegments.length > 0
-			? `${graphSegments.length} curve${graphSegments.length === 1 ? "" : "s"} plotted`
-			: "No real values in this view";
 
 	return (
 		<div className="calculator-overlay">
@@ -383,9 +244,9 @@ export function CalculatorOverlay() {
 						<span className="calculator-icon" aria-hidden="true">
 							<Icon name="calculator" />
 						</span>
-						<span>
+						<span className="calculator-heading-copy">
 							<strong id="calculator-title">Calculator</strong>
-							<small>Drag this bar to move</small>
+							<small>Quick calculations</small>
 						</span>
 					</div>
 					<button
@@ -398,7 +259,8 @@ export function CalculatorOverlay() {
 						<Icon name="close" />
 					</button>
 				</header>
-				<nav className="calculator-modes" aria-label="Calculator mode">
+
+				<div className="calculator-modes" role="group" aria-label="Calculator mode">
 					{modeLabels.map((item) => (
 						<button
 							type="button"
@@ -411,40 +273,60 @@ export function CalculatorOverlay() {
 							{item.label}
 						</button>
 					))}
-				</nav>
+				</div>
 
-				{mode !== "graphing" ? (
-					<div className="calculator-mode-panel">
-						<div className="calculator-display">
-							<div className="calculator-display-topline">
-								<span>{mode === "scientific" ? angleUnit.toUpperCase() : "READY"}</span>
-								{answer !== undefined && <span>Ans {formatCalculatorNumber(answer)}</span>}
-							</div>
-							<label className="sr-only" htmlFor="calculator-expression">
-								Expression
-							</label>
-							<input
-								id="calculator-expression"
-								ref={inputRef}
-								value={expression}
-								placeholder="0"
-								inputMode="decimal"
-								autoComplete="off"
-								autoCapitalize="off"
-								spellCheck={false}
-								aria-describedby="calculator-status"
-								onChange={(event) => {
-									setExpression(event.target.value);
-									setResult(null);
-									setError("");
-								}}
-								onKeyDown={handleExpressionKeyDown}
-							/>
+				<div className="calculator-mode-panel">
+					<div className="calculator-display">
+						<div className="calculator-display-topline">
+							<span>Expression</span>
+							<span>
+								{mode === "scientific" && `${angleUnit.toUpperCase()} · `}
+								{answer === undefined ? "Ready" : `Ans ${formatCalculatorNumber(answer)}`}
+							</span>
+						</div>
+						<label className="sr-only" htmlFor="calculator-expression">
+							Expression
+						</label>
+						<input
+							id="calculator-expression"
+							ref={inputRef}
+							value={expression}
+							placeholder="0"
+							inputMode="decimal"
+							autoComplete="off"
+							autoCapitalize="off"
+							spellCheck={false}
+							aria-describedby="calculator-status"
+							onChange={(event) => {
+								setExpression(event.target.value);
+								setResult(null);
+								setError("");
+							}}
+							onKeyDown={handleExpressionKeyDown}
+						/>
+						<div className={`calculator-result-row ${error ? "is-error" : ""}`}>
+							<span>{error ? "Error" : result ? "Result" : "Ready"}</span>
 							<output id="calculator-status" aria-live="polite">
-								{error || result || "Ready"}
+								{error || result || "—"}
 							</output>
 						</div>
-						{mode === "scientific" && (
+					</div>
+
+					{mode === "scientific" && (
+						<section className="calculator-function-section" aria-label="Scientific functions">
+							<div className="calculator-section-heading">
+								<span>Functions</span>
+								<button
+									type="button"
+									className="calculator-angle-toggle"
+									aria-pressed={angleUnit === "deg"}
+									aria-label={`Angle unit ${angleUnit === "deg" ? "degrees" : "radians"}`}
+									title="Toggle angle unit"
+									onClick={() => handleKey({ action: "angle", label: angleUnit.toUpperCase() })}
+								>
+									{angleUnit.toUpperCase()}
+								</button>
+							</div>
 							<div className="calculator-scientific-keys" role="group" aria-label="Scientific functions">
 								{scientificKeys.map((key, index) => (
 									<button
@@ -457,92 +339,12 @@ export function CalculatorOverlay() {
 										{key.label}
 									</button>
 								))}
-								<button
-									type="button"
-									className="calculator-key utility"
-									aria-label={`Angle unit ${angleUnit === "deg" ? "degrees" : "radians"}`}
-									onClick={() => handleKey({ action: "angle", label: angleUnit.toUpperCase() })}
-								>
-									{angleUnit.toUpperCase()}
-								</button>
 							</div>
-						)}
-						<CalculatorKeypad keys={basicKeys} onKey={handleKey} />
-					</div>
-				) : (
-					<div className="calculator-mode-panel calculator-graph-panel">
-						<div className="calculator-graph-input">
-							<label htmlFor="calculator-graph-expression">y =</label>
-							<input
-								id="calculator-graph-expression"
-								ref={graphInputRef}
-								value={graphExpression}
-								placeholder="sin(x)"
-								autoComplete="off"
-								autoCapitalize="off"
-								spellCheck={false}
-								onChange={(event) => setGraphExpression(event.target.value)}
-								onKeyDown={(event) => {
-									if (event.key === "Enter") graphInputRef.current?.blur();
-								}}
-							/>
-						</div>
-						<div className="calculator-graph-options">
-							{(["xMin", "xMax", "yMin", "yMax"] as const).map((bound) => (
-								<label key={bound}>
-									<span>{bound.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`)}</span>
-									<input
-										type="number"
-										step="any"
-										value={graphBounds[bound]}
-										onChange={(event) =>
-											setGraphBounds((current) => ({
-												...current,
-												[bound]: numericBound(event.target.value, current[bound]),
-											}))
-										}
-									/>
-								</label>
-							))}
-							<button
-								type="button"
-								className="calculator-angle-toggle"
-								aria-pressed={graphAngleUnit === "deg"}
-								onClick={() => setGraphAngleUnit((current) => (current === "deg" ? "rad" : "deg"))}
-							>
-								{graphAngleUnit.toUpperCase()}
-							</button>
-						</div>
-						<GraphPlot expression={graphExpression} bounds={graphBounds} angleUnit={graphAngleUnit} />
-						<p className="calculator-graph-status" role="status">
-							{graphStatus}
-						</p>
-						<div className="calculator-graph-keypad" role="group" aria-label="Graphing calculator keys">
-							{graphKeys.map((key, index) => (
-								<button
-									type="button"
-									key={`${key.label}-${index}`}
-									className={`calculator-key ${key.className ?? ""}`}
-									aria-label={key.ariaLabel ?? key.label}
-									onClick={() => {
-										if (key.action === "clear") {
-											setGraphExpression("");
-											graphInputRef.current?.focus();
-										} else if (key.action === "backspace") {
-											setGraphExpression((current) => current.slice(0, -1));
-											graphInputRef.current?.focus();
-										} else if (key.value) {
-											setGraphExpression((current) => `${current}${key.value}`);
-											graphInputRef.current?.focus();
-										}
-									}}
-								>
-									{key.label}
-								</button>
-							))}
-						</div>
-					</div>
-				)}
+						</section>
+					)}
+
+					<CalculatorKeypad keys={basicKeys} onKey={handleKey} />
+				</div>
 			</section>
 		</div>
 	);

@@ -41,6 +41,21 @@ export function macWidgetsGroupContainerPath(
 	return join(homeDirectory, "Library", "Group Containers", MAC_WIDGETS_GROUP_ID);
 }
 
+/**
+ * Desktop smoke tests use an isolated user-data directory. Keep their widget
+ * snapshots inside that directory instead of writing to the real account's
+ * shared App Group container. The packaged app continues to use the App Group
+ * path when no test directory is supplied.
+ */
+export function macWidgetsSnapshotDirectory(
+	homeDirectory = homedir(),
+	testUserDataDirectory?: string,
+): string {
+	return testUserDataDirectory
+		? join(testUserDataDirectory, "mac-widgets")
+		: macWidgetsGroupContainerPath(homeDirectory);
+}
+
 function boundedText(value: string, fallback: string): string {
 	const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
 	if (!normalized) return fallback;

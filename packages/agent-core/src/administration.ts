@@ -20,6 +20,12 @@ export type MigrationCategory =
 	| "memory"
 	| "skill"
 	| "agent";
+export type MigrationReviewKind =
+	| "automation"
+	| "channel-binding"
+	| "acp-binding"
+	| "plugin"
+	| "plugin-load-path";
 
 export interface MigrationSource {
 	product: MigrationProduct;
@@ -43,14 +49,31 @@ export interface MigrationPlan {
 	items: MigrationItem[];
 	warnings: string[];
 	translations: MigrationTranslation[];
+	reviewItems: MigrationReviewItem[];
 }
 
 export interface MigrationTranslation {
 	product: MigrationProduct;
+	sourceRoot: string;
 	sourcePath: string;
+	sourceSha256: string;
 	destinationPath: string;
 	values: Record<string, string | number | boolean>;
 	sha256: string;
+}
+
+/**
+ * A source-only inventory entry. It deliberately contains no configuration
+ * values, credentials, payloads, or executable paths; it exists solely to
+ * make a person review a consequential OpenClaw setting before recreating it
+ * through Kestrel's own approval and credential boundaries.
+ */
+export interface MigrationReviewItem {
+	product: MigrationProduct;
+	sourcePath: string;
+	kind: MigrationReviewKind;
+	count: number;
+	status: "review-required";
 }
 
 const relevantNames = new Map<string, MigrationCategory>([
@@ -142,35 +165,119 @@ function flattenedSettings(data: Buffer): Record<string, unknown> {
 	}
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
+
+function values(value: unknown): unknown[] {
+	if (Array.isArray(value)) return value;
+	const item = record(value);
+	return item ? Object.values(item) : [];
+}
+
+function stringValues(value: unknown): string[] {
+	return values(value).filter(
+		(item): item is string => typeof item === "string",
+	);
+}
+
+function isOpenClawCronStore(sourcePath: string): boolean {
+	const normalized = sourcePath.split(sep).join("/").toLowerCase();
+	return normalized === "cron/jobs.json" || normalized.endsWith("/cron/jobs.json");
+}
+
+function openClawReviewItems(
+	sourcePath: string,
+	data: Buffer,
+): MigrationReviewItem[] {
+	let parsed: Record<string, unknown> | undefined;
+	try {
+		parsed = record(JSON.parse(data.toString("utf8")));
+	} catch {
+		return [];
+	}
+	if (!parsed) return [];
+	const create = (kind: MigrationReviewKind, count: number) =>
+		count > 0
+			? [
+					{
+						product: "openclaw" as const,
+						sourcePath,
+						kind,
+						count,
+						status: "review-required" as const,
+					},
+				]
+			: [];
+	if (isOpenClawCronStore(sourcePath))
+		return create("automation", values(parsed.jobs).length);
+	if (basename(sourcePath).toLowerCase() !== "openclaw.json") return [];
+
+	const reviewItems: MigrationReviewItem[] = [];
+	const cron = record(parsed.cron);
+	reviewItems.push(...create("automation", values(cron?.jobs).length));
+	const bindings = values(parsed.bindings);
+	const acpBindings = bindings.filter((binding) => {
+		const item = record(binding);
+		return item?.type === "acp" || record(item?.match)?.type === "acp";
+	});
+	reviewItems.push(
+		...create("acp-binding", acpBindings.length),
+		...create("channel-binding", bindings.length - acpBindings.length),
+	);
+	const plugins = record(parsed.plugins);
+	const entries = record(plugins?.entries);
+	const pluginIds = new Set([
+		...stringValues(plugins?.allow),
+		...stringValues(plugins?.deny),
+		...Object.keys(entries ?? {}),
+	]);
+	const slots = record(plugins?.slots);
+	// A global loading switch and slot selections can grant a plugin authority
+	// even when no allow/deny/entry id is present. Count only the decisions, not
+	// their values, so the dry run prompts review without exposing configuration.
+	const pluginDecisionCount =
+		pluginIds.size +
+		(typeof plugins?.enabled === "boolean" ? 1 : 0) +
+		stringValues(slots).length;
+	reviewItems.push(...create("plugin", pluginDecisionCount));
+	const load = record(plugins?.load);
+	reviewItems.push(
+		...create("plugin-load-path", stringValues(load?.paths).length),
+	);
+	return reviewItems;
+}
+
 function translationFor(
 	product: MigrationProduct,
+	sourceRoot: string,
 	sourcePath: string,
 	destinationPath: string,
 	data: Buffer,
 ): MigrationTranslation | undefined {
 	const settings = flattenedSettings(data);
-	const entries = Object.entries(settings).filter(
-		([key, value]) =>
-			!/(api.?key|token|secret|password|credential)/i.test(key) &&
-			["string", "number", "boolean"].includes(typeof value),
-	);
-	const find = (...patterns: RegExp[]) =>
-		entries.find(([key]) =>
-			patterns.some((pattern) => pattern.test(key)),
-		)?.[1] as string | number | boolean | undefined;
+	const keys = Object.entries(settings)
+		.filter(
+			([key, value]) =>
+				!/(api.?key|token|secret|password|credential)/i.test(key) &&
+				["string", "number", "boolean"].includes(typeof value),
+		)
+		.map(([key]) => key);
+	const has = (...patterns: RegExp[]) =>
+		keys.some((key) => patterns.some((pattern) => pattern.test(key)));
 	const values: Record<string, string | number | boolean> = {};
-	const model = find(/(^|\.)model$/i, /default.?model/i);
-	const approval = find(/approval/i, /permission.?mode/i);
-	const sandbox = find(/sandbox/i, /isolation/i);
-	const reasoning = find(/reasoning/i, /thinking/i);
-	const mcp = entries.some(([key]) => /(^|\.)mcp([_.]|$)/i.test(key));
-	const memory = entries.some(([key]) => /memory|memories/i.test(key));
-	if (model !== undefined) values.preferredModel = model;
-	if (approval !== undefined) values.approvalMode = approval;
-	if (sandbox !== undefined) values.sandboxMode = sandbox;
-	if (reasoning !== undefined) values.reasoningEffort = reasoning;
-	if (mcp) values.hasMcpConfiguration = true;
-	if (memory) values.hasMemoryConfiguration = true;
+	// Reference-product settings cannot safely become Kestrel settings. Keep only
+	// fixed capability signals: arbitrary scalar values may be credentials even
+	// when their key looks harmless (for example, a hostile `model` value).
+	if (has(/(^|\.)model$/i, /default.?model/i)) values.hasPreferredModel = true;
+	if (has(/approval/i, /permission.?mode/i))
+		values.hasApprovalConfiguration = true;
+	if (has(/sandbox/i, /isolation/i)) values.hasSandboxConfiguration = true;
+	if (has(/reasoning/i, /thinking/i)) values.hasReasoningConfiguration = true;
+	if (has(/(^|\.)mcp([_.]|$)/i)) values.hasMcpConfiguration = true;
+	if (has(/memory|memories/i)) values.hasMemoryConfiguration = true;
 	if (Object.keys(values).length === 0) return undefined;
 	const payload =
 		JSON.stringify(
@@ -180,11 +287,40 @@ function translationFor(
 		) + "\n";
 	return {
 		product,
+		sourceRoot,
 		sourcePath,
+		sourceSha256: createHash("sha256").update(data).digest("hex"),
 		destinationPath,
 		values,
 		sha256: createHash("sha256").update(payload).digest("hex"),
 	};
+}
+
+function translationDestination(
+	product: MigrationProduct,
+	sourcePath: string,
+): string {
+	return join(
+		"imports",
+		product,
+		".translated",
+		`${sourcePath.replace(/[\\/]/g, "--")}.json`,
+	);
+}
+
+function sameTranslation(
+	actual: MigrationTranslation,
+	expected: MigrationTranslation,
+): boolean {
+	return (
+		actual.product === expected.product &&
+		actual.sourceRoot === expected.sourceRoot &&
+		actual.sourcePath === expected.sourcePath &&
+		actual.sourceSha256 === expected.sourceSha256 &&
+		actual.destinationPath === expected.destinationPath &&
+		actual.sha256 === expected.sha256 &&
+		JSON.stringify(actual.values) === JSON.stringify(expected.values)
+	);
 }
 
 export class MigrationManager {
@@ -195,6 +331,7 @@ export class MigrationManager {
 		const items: MigrationItem[] = [];
 		const warnings: string[] = [];
 		const translations: MigrationTranslation[] = [];
+		const reviewItems: MigrationReviewItem[] = [];
 		for (const source of sources) {
 			if (!existsSync(source.root) || !statSync(source.root).isDirectory()) {
 				warnings.push(`${source.product}: source directory was not found.`);
@@ -205,7 +342,10 @@ export class MigrationManager {
 				const canonical = realpathSync(path);
 				if (!contained(root, canonical)) continue;
 				const category = categoryFor(canonical);
-				if (!category) continue;
+				const sourcePath = relative(root, canonical);
+				const reviewOnly =
+					source.product === "openclaw" && isOpenClawCronStore(sourcePath);
+				if (!category && !reviewOnly) continue;
 				const size = statSync(canonical).size;
 				if (size > MAX_MIGRATION_FILE_BYTES) {
 					warnings.push(
@@ -220,7 +360,28 @@ export class MigrationManager {
 					);
 					continue;
 				}
-				const sourcePath = relative(root, canonical);
+				if (source.product === "openclaw")
+					reviewItems.push(...openClawReviewItems(sourcePath, data));
+				if (category === "settings") {
+					const translated = translationFor(
+						source.product,
+						root,
+						sourcePath,
+						translationDestination(source.product, sourcePath),
+						data,
+					);
+					if (translated) translations.push(translated);
+					else
+						warnings.push(
+							`${source.product}: ${sourcePath} had no recognized non-secret settings to translate.`,
+						);
+					warnings.push(
+						`${source.product}: ${sourcePath} is reviewed for non-secret settings only; raw settings files are never imported.`,
+					);
+					continue;
+				}
+				if (reviewOnly) continue;
+				if (!category) continue;
 				const destinationPath = join("imports", source.product, sourcePath);
 				items.push({
 					product: source.product,
@@ -234,32 +395,18 @@ export class MigrationManager {
 						? "conflict"
 						: "ready",
 				});
-				if (category === "settings") {
-					const translated = translationFor(
-						source.product,
-						sourcePath,
-						join(
-							"imports",
-							source.product,
-							".translated",
-							`${sourcePath.replace(/[\\/]/g, "--")}.json`,
-						),
-						data,
-					);
-					if (translated) translations.push(translated);
-					else
-						warnings.push(
-							`${source.product}: ${sourcePath} had no recognized non-secret settings to translate.`,
-						);
-				}
 			}
 		}
+		reviewItems.sort((left, right) =>
+			left.sourcePath.localeCompare(right.sourcePath),
+		);
 		return {
 			createdAt: this.now().toISOString(),
 			targetRoot: target,
 			items,
 			warnings,
 			translations,
+			reviewItems,
 		};
 	}
 
@@ -274,6 +421,8 @@ export class MigrationManager {
 		const imported: string[] = [];
 		const skipped: string[] = [];
 		for (const item of plan.items) {
+			if (item.category === "settings")
+				throw new Error("Migration plans may not import raw settings files.");
 			const sourceRoot = realpathSync(item.sourceRoot);
 			const source = realpathSync(resolve(sourceRoot, item.sourcePath));
 			if (!contained(sourceRoot, source))
@@ -308,7 +457,45 @@ export class MigrationManager {
 			imported.push(item.destinationPath);
 		}
 		for (const translation of plan.translations ?? []) {
-			const destination = resolve(target, translation.destinationPath);
+			if (!translation.sourceRoot || !translation.sourceSha256)
+				throw new Error(
+					"Migration translation is missing the source integrity record.",
+				);
+			const sourceRoot = realpathSync(translation.sourceRoot);
+			const source = realpathSync(
+				resolve(sourceRoot, translation.sourcePath),
+			);
+			if (!contained(sourceRoot, source))
+				throw new Error("Migration translation source escaped its declared root.");
+			const sourceMetadata = statSync(source);
+			if (
+				!sourceMetadata.isFile() ||
+				sourceMetadata.size > MAX_MIGRATION_FILE_BYTES
+			)
+				throw new Error(
+					`Migration source changed after planning: ${translation.sourcePath}`,
+				);
+			const sourceData = readFileSync(source);
+			if (
+				sourceData.byteLength > MAX_MIGRATION_FILE_BYTES ||
+				createHash("sha256").update(sourceData).digest("hex") !==
+					translation.sourceSha256
+			)
+				throw new Error(
+					`Migration source changed after planning: ${translation.sourcePath}`,
+				);
+			const expected = translationFor(
+				translation.product,
+				sourceRoot,
+				translation.sourcePath,
+				translationDestination(translation.product, translation.sourcePath),
+				sourceData,
+			);
+			if (!expected || !sameTranslation(translation, expected))
+				throw new Error(
+					`Migration translation changed after planning: ${translation.sourcePath}`,
+				);
+			const destination = resolve(target, expected.destinationPath);
 			if (!contained(target, destination))
 				throw new Error(
 					"Migration translation destination escaped its target root.",
@@ -317,27 +504,27 @@ export class MigrationManager {
 				JSON.stringify(
 					{
 						schemaVersion: 1,
-						sourceProduct: translation.product,
-						sourcePath: translation.sourcePath,
-						values: translation.values,
+						sourceProduct: expected.product,
+						sourcePath: expected.sourcePath,
+						values: expected.values,
 					},
 					null,
 					2,
 				) + "\n";
 			if (
 				createHash("sha256").update(payload).digest("hex") !==
-				translation.sha256
+				expected.sha256
 			)
 				throw new Error(
-					`Migration translation changed after planning: ${translation.sourcePath}`,
+					`Migration translation changed after planning: ${expected.sourcePath}`,
 				);
 			if (existsSync(destination) && !options.overwrite) {
-				skipped.push(translation.destinationPath);
+				skipped.push(expected.destinationPath);
 				continue;
 			}
 			mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
 			writeFileSync(destination, payload, { mode: 0o600 });
-			imported.push(translation.destinationPath);
+			imported.push(expected.destinationPath);
 		}
 		return { imported, skipped };
 	}

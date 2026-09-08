@@ -10,6 +10,8 @@ type StartupRequest = { type: "snapshot" } | { type: "runtime-list-sessions" };
 export interface InitialDesktopState {
 	snapshot: WorkspaceSnapshot;
 	sessions: RuntimeSession[];
+	selectedSessionId: string | null;
+	sessionsLoadError?: string;
 }
 
 export async function loadInitialDesktopState(
@@ -24,16 +26,36 @@ export async function loadInitialDesktopState(
 		throw new Error("The local core returned no workspace state.");
 
 	let sessions: RuntimeSession[] = [];
+	let selectedSessionId: string | null = null;
+	let sessionsLoadError: string | undefined;
 	try {
 		const sessionsResponse = await request({ type: "runtime-list-sessions" });
-		if (sessionsResponse.ok && "sessions" in sessionsResponse)
+		if (!sessionsResponse.ok) {
+			sessionsLoadError = sessionsResponse.error || "Session list unavailable.";
+		} else if ("sessions" in sessionsResponse) {
 			sessions = sessionsResponse.sessions ?? [];
-	} catch {
+			const candidate = sessionsResponse.selectedSessionId;
+			if (
+				typeof candidate === "string" &&
+				sessions.some(
+					(session) => session.id === candidate && !session.forgottenAt,
+				)
+			)
+				selectedSessionId = candidate;
+		}
+	} catch (cause) {
 		// A saved-chat list is recoverable; the conversation can still start from
 		// the verified snapshot and create a new session.
+		sessionsLoadError =
+			cause instanceof Error ? cause.message : "Session list unavailable.";
 	}
 
-	return { snapshot: snapshotResponse.snapshot, sessions };
+	return {
+		snapshot: snapshotResponse.snapshot,
+		sessions,
+		selectedSessionId,
+		...(sessionsLoadError ? { sessionsLoadError } : {}),
+	};
 }
 
 export function startupFailureMessage(cause: unknown): string {

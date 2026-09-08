@@ -7,6 +7,7 @@ import { _electron as electron } from "@playwright/test";
 import {
 	dismissDefaultBrowserPrompt,
 	openCommandCenter as openCommandCenterSurface,
+	selectSettingsSection,
 } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-personas-"));
@@ -280,7 +281,11 @@ async function runReturningPersona() {
 
 	await selectDestination(page, "Browser");
 	await page.locator("#new-tab-title").waitFor();
-	assert.equal(await page.locator("[data-app-page]").count(), 0);
+	await page.waitForFunction(
+		() => !document.querySelector("[data-app-page]"),
+		undefined,
+		{ timeout: 5_000 },
+	);
 
 	await selectDestination(page, "Organize tabs");
 	await page.getByRole("dialog", { name: "Organize tabs" }).waitFor();
@@ -309,32 +314,36 @@ async function runReturningPersona() {
 	await selectDestination(page, "Settings");
 	await assertFocusedRoute(page, "settings");
 	await page
-		.getByRole("tab", { name: /Browser Tabs, search, and new tab/ })
+		.getByRole("tab", { name: /Browser Tabs, search, and privacy/ })
 		.click();
-	await page
-		.getByRole("navigation", { name: "Settings sections" })
-		.getByRole("button", { name: "Browser Preferences" })
-		.click();
-	await page.getByRole("heading", { name: "Make the browser feel like yours." }).waitFor();
+	await selectSettingsSection(page, "browser", "Browser");
+	await page.getByRole("heading", { name: "Browser", exact: true }).waitFor();
 
 	await page
-		.getByRole("tab", { name: /Agent Models, memory, and behavior/ })
+		.getByRole("tab", { name: /Agent Models, memory, and work/ })
 		.click();
 	for (const [label, heading] of [
-		["General & Autonomy", "Autonomy and behavior"],
+		["General", "Autonomy and behavior"],
 		["Connections", "Accounts and access"],
-		["Models & Routing", "Routing and providers"],
-		["Intelligence & Memory", "Memory and learning"],
-		["Agent Plugins", "Plugins and publishers"],
-		["Privacy & Safety", "Approvals and recovery"],
-		["Advanced System", "Diagnostics and organization"],
+		["Models", "Routing and providers"],
+		["Memory", "Memory and learning"],
+		["Plugins", "Plugins and publishers"],
+		["Privacy", "Permissions and sandbox"],
+		["Advanced", "Diagnostics and organization"],
 	]) {
-		await page
-			.getByRole("navigation", { name: "Settings sections" })
-			.getByRole("button", { name: label })
-			.click();
+		const value = {
+			General: "general",
+			Connections: "connections",
+			Models: "models",
+			Memory: "intelligence",
+			Plugins: "extensions",
+			Privacy: "privacy",
+			Advanced: "advanced",
+		}[label];
+		assert(value);
+		await selectSettingsSection(page, value, label);
 		await page.getByRole("heading", { name: heading }).waitFor();
-		if (label === "Intelligence & Memory")
+		if (label === "Memory")
 			await page.getByText("Honcho remote memory", { exact: true }).first().waitFor();
 		await assertNoStartupFailure(page, `Settings / ${label}`);
 	}

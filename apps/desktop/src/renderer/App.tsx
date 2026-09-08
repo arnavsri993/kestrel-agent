@@ -1,6 +1,7 @@
 import type {
 	ActionReceipt,
 	AgentRun,
+	AgentPlanetAssetId,
 	AgentState,
 	ApprovalRule,
 	ArtifactRecordContract,
@@ -11,27 +12,31 @@ import type {
 	ExternalIntake,
 	EnterpriseAnalytics,
 	GoalRecordContract,
+	HumanInputRequest,
 	GoogleWorkspaceOAuthStatus,
 	LocalBackupResult,
 	LocalModelSummary,
 	LocalRuntimeProgress,
 	LocalRuntimeStatus,
 	MemoryRecord,
-	MigrationPlanContract,
+	MigrationPlanPreviewContract,
 	MigrationResultContract,
 	ModelProfile,
-	ModelProviderSummary,
+	ProviderAccountSummary,
 	ModelRoutingDecision,
 	OrganizationMemberContract,
 	PluginMutation,
 	PluginSummary,
 	ProviderVerification,
+	Project,
 	ReasoningEffort,
 	RendererRequest,
+	RendererResponse,
 	RoutingPolicy,
 	RoutingTrace,
 	RuntimeEvent,
 	RuntimeMessage,
+	TranscriptSearchResult,
 	RuntimeSession,
 	RuntimeToolExecution,
 	ScheduledJobSummary,
@@ -79,6 +84,7 @@ import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 import { BrandMark } from "./components/BrandMark";
 import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
+import { RuntimeQuestionCard } from "./components/RuntimeQuestionCard";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
 import { ActionReceiptList } from "./components/ActionReceiptList";
 import {
@@ -87,9 +93,21 @@ import {
 } from "./components/browser/agent-sidebar";
 import { KestrelSidebar } from "./components/browser/KestrelSidebar";
 import { ProjectsWorkspace } from "./components/browser/ProjectsWorkspace";
+import { ProjectSettingsDialog } from "./components/browser/ProjectSettingsDialog";
 import { ModelSelector } from "./components/browser/ModelSelector";
-import type { ModelSelectorChoice } from "./components/browser/model-selector";
+import {
+	accountForChoice,
+	type ModelSelectorChoice,
+} from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
+import {
+	AGENT_UNIVERSE_PLANET_ASSETS,
+	agentUniverseBodyAssetFor,
+} from "./components/browser/agent-universe/agent-universe-assets";
+import {
+	appendAgentUniverseActivity,
+	type AgentUniverseActivity,
+} from "./components/browser/agent-universe/agent-universe-model";
 import {
 	BrowserBookmarks,
 	BrowserDownloads,
@@ -111,6 +129,11 @@ import {
 	type CommandDestination,
 } from "./components/browser/CommandCenter";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
+import { ComputerUseSettings } from "./components/ComputerUseSettings";
+import {
+	parseUIPresentationMessage,
+	PresentationCard,
+} from "./components/PresentationCard";
 import { DashboardExtensions } from "./components/DashboardExtensions";
 import { EventApplications } from "./components/EventApplications";
 import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
@@ -122,7 +145,12 @@ import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
-import { EmptyState } from "./components/ui";
+import { ProviderAccountsSettings } from "./components/ProviderAccountsSettings";
+import {
+	EmptyState,
+	PageFrame as SurfacePageFrame,
+	type PageMeasure,
+} from "./components/ui";
 import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
 import { userBrowserRouteForRendererLink } from "./renderer-link-routing";
@@ -135,6 +163,7 @@ import {
 } from "../utility/browser-app-pages";
 import {
 	memoryInGb,
+	recommendedLocalModel,
 	recommendedLocalModelTiers,
 	supportedLocalModels,
 } from "./local-model-catalog";
@@ -158,6 +187,17 @@ import { personalizedConfigurationPrompts } from "./configuration-prompts";
 import { userFacingError } from "./error-copy";
 import { learnedSkillDisplayName } from "./learned-skill-presentation";
 import {
+	SETTINGS_CATALOG,
+	SETTINGS_SECTIONS,
+	normalizeSettingsSection,
+	sectionDefinition,
+	settingsScopeForSection,
+	settingsSectionMatchesQuery,
+	type BrowserSettingsSection,
+	type SettingsSection,
+	type SettingsScope,
+} from "./settings-catalog";
+import {
 	latestRunActionReceipts,
 	policyGateCopy,
 	runRouteLabel,
@@ -165,8 +205,26 @@ import {
 	uncertainExecutionsForRun,
 	verifiedApprovalEvidenceForRun,
 } from "./runtime-evidence";
+import { KESTREL_STATE_TRANSITION } from "./motion-contract";
+import {
+	DEFAULT_PROJECT_APPEARANCE,
+	readProjectAppearances,
+	type ProjectAppearance,
+	type ProjectAppearanceMap,
+	writeProjectAppearances,
+} from "./project-appearance";
 
 const MAX_RENDERER_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+function projectsFromRendererResponse(
+	response: RendererResponse,
+): Project[] | undefined {
+	if (!response.ok || !("workspaceGrants" in response)) return undefined;
+	if ("projects" in response && response.projects) return response.projects;
+	// The main process returns enriched Project records under the legacy
+	// workspaceGrants field so older settings surfaces can keep working.
+	return response.workspaceGrants as Project[];
+}
 
 function attachmentForExternalFile(
 	file: UserBrowserFile,
@@ -207,7 +265,7 @@ const pages = [
 	["history", "History"],
 	["bookmarks", "Bookmarks"],
 	["downloads", "Downloads"],
-	["commands", "Capabilities"],
+	["commands", "Command Center"],
 	["writing", "Writing Studio"],
 	["readiness", "Readiness"],
 	["approvals", "Approvals"],
@@ -221,16 +279,6 @@ const pages = [
 	["settings", "Settings"],
 ] as const;
 type Page = (typeof pages)[number][0];
-type SettingsSection =
-	| "connections"
-	| "browser"
-	| "general"
-	| "models"
-	| "intelligence"
-	| "extensions"
-	| "privacy"
-	| "advanced";
-type SettingsScope = "browser" | "agent";
 type SkillReviewRequest = {
 	proposalId: string;
 	requestId: number;
@@ -239,63 +287,63 @@ const commandDestinations: CommandDestination[] = [
 	{
 		id: "browser",
 		label: "Browser",
-		detail: "Open tabs and browse the web",
+		detail: "Browse the web",
 		icon: "browser",
 		group: "Browse",
 	},
 	{
 		id: "organize-tabs",
 		label: "Organize tabs",
-		detail: "Group related tabs into folders while keeping their order",
+		detail: "Group related tabs",
 		icon: "folder",
 		group: "Browse",
 	},
 	{
 		id: "agent",
 		label: "Agent",
-		detail: "Start, find, and resume your work",
+		detail: "Start or resume work",
 		icon: "agent",
 		group: "Agent",
 	},
 	{
 		id: "projects",
 		label: "Projects",
-		detail: "Keep related chats and local context together",
+		detail: "Keep related work together",
 		icon: "folder",
 		group: "Agent",
 	},
 	{
 		id: "writing",
 		label: "Writing Studio",
-		detail: "Draft with your context and confirmed voice signals",
+		detail: "Draft with your context",
 		icon: "writing",
 		group: "Agent",
 	},
 	{
 		id: "history",
 		label: "History",
-		detail: "Find pages you visited",
+		detail: "Pages you visited",
 		icon: "history",
 		group: "Browse",
 	},
 	{
 		id: "bookmarks",
 		label: "Bookmarks",
-		detail: "Pages you saved in this profile",
+		detail: "Pages you saved",
 		icon: "star",
 		group: "Browse",
 	},
 	{
 		id: "downloads",
 		label: "Downloads",
-		detail: "Track files from browser tabs",
+		detail: "Downloaded files",
 		icon: "downloads",
 		group: "Browse",
 	},
 	{
 		id: "approvals",
 		label: "Approvals",
-		detail: "Review consequential agent actions",
+		detail: "Review agent actions",
 		icon: "approvals",
 		group: "Agent",
 	},
@@ -309,7 +357,7 @@ const commandDestinations: CommandDestination[] = [
 	{
 		id: "events",
 		label: "Opportunities",
-		detail: "Review event applications",
+		detail: "Event applications",
 		icon: "events",
 		group: "Agent",
 	},
@@ -323,49 +371,49 @@ const commandDestinations: CommandDestination[] = [
 	{
 		id: "research",
 		label: "Research",
-		detail: "Saved sources and web findings",
+		detail: "Sources and findings",
 		icon: "research",
 		group: "Context",
 	},
 	{
 		id: "artifacts",
 		label: "Artifacts",
-		detail: "Files and generated results",
+		detail: "Files and results",
 		icon: "artifacts",
 		group: "Context",
 	},
 	{
 		id: "activity",
 		label: "Activity",
-		detail: "Runs, evidence, and audit trail",
+		detail: "Runs and evidence",
 		icon: "activity",
 		group: "Context",
 	},
 	{
 		id: "extensions",
 		label: "Extensions",
-		detail: "Plugin-provided capabilities",
+		detail: "Plugins and tools",
 		icon: "extensions",
 		group: "Build",
 	},
 	{
 		id: "readiness",
 		label: "Readiness",
-		detail: "Runtime and provider health",
+		detail: "Check what is ready",
 		icon: "readiness",
 		group: "System",
 	},
 	{
 		id: "settings",
 		label: "Settings",
-		detail: "Browser, agent, models, and privacy",
+		detail: "Browser, agent, and privacy",
 		icon: "settings",
 		group: "System",
 	},
 	{
 		id: "shortcuts",
 		label: "Keyboard Shortcuts",
-		detail: "View all default shortcuts and hotkeys",
+		detail: "Keyboard shortcuts",
 		icon: "command",
 		group: "System",
 	},
@@ -413,6 +461,24 @@ function setupAssistantState({
 
 function modelLabel(model: ModelRoutingDecision["model"]): string {
 	return model === "local-rules" ? "Local rules" : model.replaceAll("-", " ");
+}
+
+const PROVIDER_CATALOG_REFRESH_MS = 15 * 60_000;
+
+function catalogNeedsBackgroundRefresh(
+	accounts: readonly ProviderAccountSummary[],
+	now = Date.now(),
+): boolean {
+	return accounts.some((account) => {
+		if (!account.enabled || account.discovery.state === "unsupported") return false;
+		const attemptedAt = Date.parse(
+			account.discovery.lastAttemptAt ?? account.discovery.lastSuccessAt ?? "",
+		);
+		return (
+			!Number.isFinite(attemptedAt) ||
+			now - attemptedAt >= PROVIDER_CATALOG_REFRESH_MS
+		);
+	});
 }
 
 function formatConnectionStatus(status: string): string {
@@ -937,7 +1003,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const reduced = useReducedMotion();
 	const [step, setStep] = useState(() => readPersistedSetupStep());
 	const setupStageRef = useRef<HTMLElement | null>(null);
-	const activeSetupStepRef = useRef(step);
 	const focusSetupHeadingRef = useRef(false);
 	const [warningAccepted, setWarningAccepted] = useState(
 		() => localStorage.getItem("kestrel:setup-warning") === "yes",
@@ -945,6 +1010,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const [modelView, setModelView] = useState<"accounts" | "local" | "open">(
 		"accounts",
 	);
+	const [selectedModelAccess, setSelectedModelAccess] = useState<
+		"accounts" | "local" | "open" | null
+	>(null);
 	const [providerQuery, setProviderQuery] = useState("");
 	const [selectedPaidProviderId, setSelectedPaidProviderId] =
 		useState<(typeof paidProviderCatalog)[number]["id"]>("openai");
@@ -1052,19 +1120,23 @@ function Onboarding({ onDone }: { onDone(): void }) {
 		stage
 			?.closest<HTMLElement>(".setup-onboarding")
 			?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+		if (focusSetupHeadingRef.current) {
+			stage
+				?.querySelector<HTMLElement>("h1")
+				?.focus({ preventScroll: true });
+			focusSetupHeadingRef.current = false;
+		}
 	}, [modelView, step]);
 
 	function go(next: number) {
 		const bounded = Math.min(finalSetupStep, Math.max(0, next));
-		activeSetupStepRef.current = bounded;
 		focusSetupHeadingRef.current = bounded !== step;
 		localStorage.setItem("kestrel:setup-step", setupSteps[bounded]!.id);
 		setStep(bounded);
 	}
 
 	function chooseModelAccess(view: "accounts" | "local" | "open") {
-		setModelView(view);
-		go(3);
+		setSelectedModelAccess(view);
 	}
 
 	async function saveCredential(credentialId: BrokeredCredentialSummary["id"]) {
@@ -1174,9 +1246,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				type: "runtime-list-providers",
 			})) as CoreResponse;
 			if (!response.ok) throw new Error(response.error);
-			const providerIds = (response.providers ?? [])
-				.filter((provider) => provider.id !== "auto")
-				.map((provider) => provider.id);
+			const providerIds = (
+				"providerAccounts" in response ? response.providerAccounts ?? [] : []
+			)
+				.filter((account) => account.enabled)
+				.map((account) => account.endpointId);
 			const checked: ProviderVerification[] = [];
 			for (const providerId of providerIds) {
 				const result = (await window.kestrel.request({
@@ -1271,6 +1345,17 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const verifiedModelReady =
 		Boolean(localRuntime?.verifiedModel) ||
 		providerChecks.some((check) => check.ok);
+	const recommendedModel = recommendedLocalModel(systemProfile);
+	const recommendedModelInstalled = Boolean(
+		recommendedModel &&
+		localModels.some(
+			(item) =>
+				item.name === recommendedModel.name ||
+				item.name === `${recommendedModel.name}:latest`,
+		),
+	);
+	const localSetupAvailable =
+		ollamaAvailable || localRuntime?.automaticSupported === true;
 	const recommendedTiers = recommendedLocalModelTiers(systemProfile);
 	const compatibleLocalModels = supportedLocalModels(systemProfile);
 	const matchingPaidProviders = paidProviderCatalog.filter((provider) => {
@@ -1318,7 +1403,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			className="onboarding setup-onboarding"
 			initial={false}
 			animate={{ opacity: 1 }}
-			exit={{ opacity: reduced ? 1 : 0 }}
+			exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 			transition={{ duration: reduced ? 0 : 0.14 }}
 		>
 			<header className="onboarding-bar">
@@ -1355,31 +1440,19 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				</nav>
 			</header>
 			<div className="setup-body">
-				<AnimatePresence mode="wait" initial={false}>
+				<AnimatePresence mode="sync" initial={false}>
 					<motion.section
 						ref={setupStageRef}
 						key={step}
 						className={`setup-stage setup-stage-${step}`}
 						initial={reduced ? false : { opacity: 0, y: 6 }}
 						animate={{ opacity: 1, y: 0 }}
-						exit={{ opacity: reduced ? 1 : 0, y: reduced ? 0 : -6 }}
-						transition={{ duration: reduced ? 0 : 0.14 }}
-						onAnimationComplete={() => {
-							if (
-								activeSetupStepRef.current !== step ||
-								!focusSetupHeadingRef.current
-							)
-								return;
-							const stage = setupStageRef.current;
-							stage?.scrollTo({ top: 0, left: 0, behavior: "auto" });
-							stage
-								?.closest<HTMLElement>(".setup-onboarding")
-								?.scrollTo({ top: 0, left: 0, behavior: "auto" });
-							stage
-								?.querySelector<HTMLElement>("h1")
-								?.focus({ preventScroll: true });
-							focusSetupHeadingRef.current = false;
+						exit={{
+							opacity: reduced ? 1 : 0,
+							y: reduced ? 0 : -6,
+							pointerEvents: "none",
 						}}
+						transition={{ duration: reduced ? 0 : 0.14 }}
 					>
 						{step === 0 && (
 							<div className="setup-welcome">
@@ -1392,8 +1465,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									Kestrel gets it done.
 								</h1>
 								<p>
-									Kestrel is a local agent for your Mac. It browses the web,
-									drafts work, and takes action with your approval.
+									Kestrel helps you browse, draft, and take action on your Mac—with
+									your approval.
 								</p>
 							</div>
 						)}
@@ -1408,14 +1481,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Cloud models receive what you send</strong>
 												<small>
-													Prompts and tool results may leave this Mac.
+													What you send may leave your Mac.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
-											Prompts, selected file excerpts, and tool results may go
-											to the provider under its retention and training terms.
+											Prompts, selected file excerpts, and tool results follow your
+											provider's data terms.
 										</p>
 									</details>
 									<details>
@@ -1424,15 +1497,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Connected services may charge you</strong>
 												<small>
-													API, media, and storage can bill their own accounts.
+											API, media, and storage can charge their own accounts.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
-											API calls, media generation, search, and storage can bill
-											their own accounts. Kestrel budgets do not replace
-											provider controls.
+											Kestrel budgets do not replace provider limits or billing
+											controls.
 										</p>
 									</details>
 									<details>
@@ -1441,15 +1513,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Approval is a pause, not a guarantee</strong>
 												<small>
-													Review still matters for consequential work.
+													Review consequential actions before approving.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
 											Sending, publishing, deleting, purchasing, and permission
-											changes pause for review. Factual, legal, financial, and
-											safety-critical work still needs your judgment.
+											changes pause for review. You remain responsible for legal,
+											financial, and safety-critical decisions.
 										</p>
 									</details>
 									<details>
@@ -1458,15 +1530,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Connections widen access</strong>
 												<small>
-													Approved tools use the folders and accounts you grant.
+													Approved tools use the access you grant.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
-											Approved tools can act through the folders, accounts,
-											microphone, browser, and screen access you grant.
-											Credentials remain protected.
+											Tools can use the folders, accounts, microphone, browser, and
+											screen access you grant. Credentials stay protected.
 										</p>
 									</details>
 								</div>
@@ -1487,7 +1558,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									</span>
 								</label>
 								<small>
-									You can change providers and permissions later in Settings.
+									Change providers and permissions later in Settings.
 								</small>
 							</div>
 						)}
@@ -1504,23 +1575,27 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													? "Set up a local model."
 													: "Set up free provider accounts."}
 									</h1>
-									<p>
-										{step === 2
-											? "Pick one to start — you can change it later."
-											: modelView === "accounts"
-												? "Sign in with the provider, or add a protected API key."
+									{step !== 2 && (
+										<p>
+											{modelView === "accounts"
+												? "Sign in with a provider or add a protected API key."
 												: modelView === "local"
-													? "Balanced is recommended for this Mac."
-													: "Terms and free limits vary by provider."}
-									</p>
+													? recommendedModel
+														? `Kestrel recommends ${recommendedModel.title} for this Mac.`
+														: "Checking this Mac's hardware…"
+													: "Free plans and terms vary by provider."}
+										</p>
+									)}
 								</header>
 								{step === 2 && (
 									<div
 										className="model-source-picker"
+										role="group"
 										aria-label="Model access choices"
 									>
 										<button
 											type="button"
+											aria-pressed={selectedModelAccess === "accounts"}
 											onClick={() => chooseModelAccess("accounts")}
 										>
 											<span className="source-glyph" aria-hidden="true">
@@ -1540,6 +1615,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										<button
 											type="button"
 											className="model-source-option model-source-option-recommended"
+											aria-pressed={selectedModelAccess === "local"}
 											onClick={() => chooseModelAccess("local")}
 										>
 											<span className="source-glyph" aria-hidden="true">
@@ -1559,6 +1635,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											</button>
 										<button
 											type="button"
+											aria-pressed={selectedModelAccess === "open"}
 											onClick={() => chooseModelAccess("open")}
 										>
 											<span className="source-glyph" aria-hidden="true">
@@ -1849,9 +1926,52 @@ function Onboarding({ onDone }: { onDone(): void }) {
 															? `${memoryInGb(systemProfile)} GB ${systemProfile.architecture === "arm64" ? "Apple Silicon Mac" : `${systemProfile.architecture} Mac`}`
 															: "Checking this Mac…"}
 													</strong>
+													<small>
+														{systemProfile
+															? `${systemProfile.logicalCpus} logical CPU${systemProfile.logicalCpus === 1 ? "" : "s"} detected`
+															: "Reading hardware before choosing a model…"}
+													</small>
 												</span>
 											</div>
 										</div>
+										{recommendedModel && (
+											<section
+												className="local-auto-setup"
+												aria-label="Automatic local setup"
+											>
+												<div className="local-auto-setup-copy">
+													<span className="local-auto-setup-label">
+														Best fit for this Mac
+													</span>
+													<strong>{recommendedModel.title}</strong>
+													<code>{recommendedModel.name}</code>
+													<p>
+														One click downloads the pinned Ollama runtime if
+														needed, pulls this {recommendedModel.size} model,
+														verifies a real response, and configures local
+														routing. Inference stays on this Mac.
+													</p>
+												</div>
+												<button
+													className="button primary"
+													disabled={
+														automaticBusy ||
+														Boolean(downloading) ||
+														!localSetupAvailable
+													}
+													onClick={() =>
+														void bootstrapLocal(recommendedModel.name)
+													}
+												>
+													{automaticBusy &&
+													automaticModel === recommendedModel.name
+														? "Setting up…"
+														: recommendedModelInstalled
+															? "Verify local setup again"
+															: "Set up automatically"}
+												</button>
+											</section>
+										)}
 										{recommendedTiers.length > 0 && (
 											<section
 												className="recommended-model-tiers"
@@ -1864,47 +1984,45 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																item.name === model.name ||
 																item.name === `${model.name}:latest`,
 														);
+														const isRecommended =
+															model.name === recommendedModel?.name;
 														const tier =
 															index === 0
 																? { name: "Light" }
 																: index === recommendedTiers.length - 1
 																	? { name: "Power" }
-																	: { name: "Balanced" };
-														return (
-															<article
-																key={model.name}
-																className={
-																	tier.name === "Balanced" ? "preferred" : ""
-																}
-															>
-																<div className="model-tier-name">
-																	<strong>{tier.name}</strong>
-																	{tier.name === "Balanced" && (
-																		<span>Recommended</span>
-																	)}
-																</div>
-																<small>{model.bestFor}</small>
-																<details className="model-tier-details">
-																	<summary>Details</summary>
-																	<dl>
-																		<div>
-																			<dt>Model</dt>
-																			<dd>{model.title}</dd>
-																		</div>
-																		<div>
-																			<dt>Requirements</dt>
-																			<dd>
-																				{model.speed} · {model.minimumMemory}{" "}
-																				GB+ usable memory
-																			</dd>
-																		</div>
-																		<div>
-																			<dt>Download</dt>
-																			<dd>
-																				{model.size} · {model.contextLength}{" "}
-																				context
-																			</dd>
-																		</div>
+																		: { name: "Balanced" };
+													return (
+														<article
+															key={model.name}
+															className={isRecommended ? "preferred" : ""}
+														>
+															<div className="model-tier-name">
+																<strong>{tier.name}</strong>
+																{isRecommended && <span>Best fit</span>}
+															</div>
+															<small>{model.bestFor}</small>
+															<details className="model-tier-details">
+																<summary>Details</summary>
+																<dl>
+																	<div>
+																		<dt>Model</dt>
+																		<dd>{model.title}</dd>
+																	</div>
+																	<div>
+																		<dt>Requirements</dt>
+																		<dd>
+																			{model.speed} · {model.minimumMemory}{" "}
+																			GB+ usable memory
+																		</dd>
+																	</div>
+																	<div>
+																		<dt>Download</dt>
+																		<dd>
+																			{model.size} · {model.contextLength}{" "}
+																			context
+																		</dd>
+																	</div>
 																	</dl>
 																</details>
 																{installed ? (
@@ -1914,33 +2032,25 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																	</span>
 																) : (
 																	<button
-																		className={`button ${tier.name === "Balanced" ? "primary" : "secondary"}`}
+																		className={`button ${isRecommended ? "primary" : "secondary"}`}
 																		disabled={
 																			automaticBusy ||
 																			Boolean(downloading) ||
-																			(!ollamaAvailable &&
-																				localRuntime?.automaticSupported ===
-																					false)
+																			!localSetupAvailable
 																		}
-																		onClick={() =>
-																			ollamaAvailable
-																				? void downloadModel(model.name)
-																				: void bootstrapLocal(model.name)
-																		}
+																		onClick={() => void bootstrapLocal(model.name)}
 																	>
 																		{automaticBusy &&
-																		automaticModel === model.name
+																			automaticModel === model.name
 																			? "Setting up…"
-																			: downloading === model.name
-																				? "Downloading…"
-																				: tier.name === "Balanced"
-																					? `Install recommended · ${model.size}`
-																					: `Install ${tier.name.toLowerCase()} · ${model.size}`}
+																			: isRecommended
+																			? `Set up best fit · ${model.size}`
+																			: `Set up ${tier.name.toLowerCase()} · ${model.size}`}
 																	</button>
 																)}
-															</article>
-														);
-													})}
+														</article>
+													);
+												})}
 												</div>
 											</section>
 										)}
@@ -2226,9 +2336,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											))}
 										</div>
 										<p className="provider-footnote">
-											“Free” availability, quotas, privacy terms, and model
-											lists change. Review the source before sending data. A
-											listing here is not a connection or a Kestrel endorsement.
+											Free plans, quotas, privacy terms, and models change. Review each
+											provider before sharing data. A listing here is not a connection
+											or endorsement.
 										</p>
 									</div>
 								)}
@@ -2331,11 +2441,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				</AnimatePresence>
 			</div>
 			<footer className="onboarding-actions">
-				{step === 2 && (
-					<small className="setup-continue-hint">
-						Choose an option above to continue.
-					</small>
-				)}
 				{step === finalSetupStep && modelReady && !verifiedModelReady && (
 					<small className="setup-continue-hint">
 						Verify one model route before opening Kestrel.
@@ -2382,11 +2487,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						className="button primary"
 						disabled={
 							(step === 1 && !warningAccepted) ||
-							step === 2 ||
+							(step === 2 && !selectedModelAccess) ||
 							(step === finalSetupStep && !onboardingCompleteAllowed)
 						}
 						onClick={() => {
-							if (step === finalSetupStep) {
+							if (step === 2) {
+								if (!selectedModelAccess) return;
+								setModelView(selectedModelAccess);
+								go(3);
+							} else if (step === finalSetupStep) {
 								if (verifiedModelReady) {
 									localStorage.setItem("kestrel:first-task", "yes");
 								}
@@ -2455,7 +2564,7 @@ function Loading() {
 			className="loading-screen"
 			initial={reduced ? false : { opacity: 0 }}
 			animate={{ opacity: 1 }}
-			exit={{ opacity: reduced ? 1 : 0 }}
+			exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 			transition={{ duration: reduced ? 0 : 0.14 }}
 		>
 			<ProductAnchor detail="Starting on this Mac…" />
@@ -2463,156 +2572,451 @@ function Loading() {
 	);
 }
 
+export type ArtifactPreviewState = {
+	mediaType: string;
+	dataUrl?: string;
+	text?: string;
+	truncated: boolean;
+};
+
+const MAX_ARTIFACT_PREVIEW_BYTES = 5_000_000;
+const MAX_WIDGET_EXPORT_BYTES = 10_000_000;
+
+function decodeArtifactBase64(value: string): Uint8Array {
+	const binary = atob(value);
+	return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+export function isTextArtifact(artifact: ArtifactRecordContract): boolean {
+	return (
+		(artifact.mediaType.startsWith("text/") && artifact.mediaType !== "text/html") ||
+		["application/json", "application/xml"].includes(artifact.mediaType)
+	);
+}
+
+export function supportsArtifactPreview(artifact: ArtifactRecordContract): boolean {
+	return (
+		artifact.mediaType.startsWith("image/") ||
+		artifact.mediaType.startsWith("audio/") ||
+		artifact.mediaType.startsWith("video/") ||
+		artifact.mediaType === "application/pdf" ||
+		isTextArtifact(artifact) ||
+		(artifact.mediaType === "text/html" && artifact.artifactKind === "widget")
+	);
+}
+
+export function artifactPreviewState(
+	artifact: ArtifactRecordContract,
+	preview: {
+		mediaType: string;
+		dataBase64: string;
+		truncated: boolean;
+	},
+): ArtifactPreviewState {
+	if (isTextArtifact(artifact))
+		return {
+			mediaType: preview.mediaType,
+			text: new TextDecoder().decode(decodeArtifactBase64(preview.dataBase64)),
+			truncated: preview.truncated,
+		};
+	return {
+		mediaType: preview.mediaType,
+		...(preview.truncated
+			? {}
+			: {
+					dataUrl: `data:${preview.mediaType};base64,${preview.dataBase64}`,
+				}),
+		truncated: preview.truncated,
+	};
+}
+
+function triggerArtifactDownload(download: {
+	filename: string;
+	mediaType: string;
+	dataBase64: string;
+}): void {
+	const bytes = decodeArtifactBase64(download.dataBase64);
+	const url = URL.createObjectURL(
+		new Blob([bytes.slice().buffer as ArrayBuffer], { type: download.mediaType }),
+	);
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = download.filename;
+	document.body.appendChild(anchor);
+	anchor.click();
+	anchor.remove();
+	window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function Artifacts() {
 	const [artifacts, setArtifacts] = useState<ArtifactRecordContract[]>([]);
-	const [previews, setPreviews] = useState<Record<string, string>>({});
+	const [previews, setPreviews] = useState<Record<string, ArtifactPreviewState>>({});
+	const [artifactErrors, setArtifactErrors] = useState<Record<string, string>>({});
+	const [artifactNotices, setArtifactNotices] = useState<Record<string, string>>({});
 	const [error, setError] = useState("");
-	async function load() {
-		const response = (await window.kestrel.request({
-			type: "media-list-artifacts",
-		})) as CoreResponse;
-		if (!response.ok) throw new Error(response.error);
-		const next = response.artifacts ?? [];
-		setArtifacts(next);
-		const visible = next.filter(
-			(artifact) =>
-				artifact.bytes <= 5_000_000 &&
-				(artifact.mediaType.startsWith("image/") ||
-					artifact.mediaType.startsWith("audio/") ||
-					artifact.mediaType.startsWith("video/") ||
-					artifact.mediaType === "text/html"),
-		);
-		const loaded = await Promise.all(
-			visible.map(async (artifact) => {
-				const result = (await window.kestrel.request({
-					type: "media-preview-artifact",
-					artifactId: artifact.id,
-					maximumBytes: 5_000_000,
-				})) as CoreResponse;
-				return result.ok &&
-					result.artifactPreview &&
-					!result.artifactPreview.truncated
-					? ([
-							artifact.id,
-							`data:${result.artifactPreview.mediaType};base64,${result.artifactPreview.dataBase64}`,
-						] as const)
-					: undefined;
-			}),
-		);
-		setPreviews(
-			loaded.reduce<Record<string, string>>((map, entry) => {
-				if (entry) map[entry[0]] = entry[1];
-				return map;
-			}, {}),
-		);
-	}
-	useEffect(() => {
-		void load().catch((cause) =>
-			setError(
-				cause instanceof Error ? cause.message : "Could not load artifacts.",
-			),
-		);
+	const [loading, setLoading] = useState(false);
+	const [busyArtifactId, setBusyArtifactId] = useState<string | null>(null);
+	const loadSequenceRef = useRef(0);
+
+	const load = useCallback(async () => {
+		const sequence = ++loadSequenceRef.current;
+		setLoading(true);
+		setError("");
+		try {
+			const response = (await window.kestrel.request({
+				type: "media-list-artifacts",
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			const next = response.artifacts ?? [];
+			const previewOutcomes = await Promise.all(
+				next.map(async (artifact) => {
+					if (artifact.integrity !== "verified")
+						return {
+							artifact,
+							error:
+								artifact.integrity === "missing"
+									? "The stored file is missing."
+									: "The stored file failed integrity or containment verification.",
+						};
+					if (artifact.bytes > MAX_ARTIFACT_PREVIEW_BYTES)
+						return {
+							artifact,
+							notice: "Preview skipped at 5 MB; download the verified file instead.",
+						};
+					if (!supportsArtifactPreview(artifact))
+						return {
+							artifact,
+							notice: "Preview is unavailable for this media type; the file can still be downloaded.",
+						};
+					try {
+						const result = (await window.kestrel.request({
+							type: "media-preview-artifact",
+							artifactId: artifact.id,
+							maximumBytes: MAX_ARTIFACT_PREVIEW_BYTES,
+						})) as CoreResponse;
+						if (!result.ok) throw new Error(result.error);
+						if (!result.artifactPreview)
+							throw new Error("The artifact returned no preview data.");
+						return {
+							artifact,
+							preview: artifactPreviewState(artifact, result.artifactPreview),
+						};
+					} catch (cause) {
+						return {
+							artifact,
+							error:
+								cause instanceof Error
+									? cause.message
+									: "Could not prepare the artifact preview.",
+						};
+					}
+				}),
+			);
+			if (sequence !== loadSequenceRef.current) return;
+			setArtifacts(next);
+			setPreviews(
+				Object.fromEntries(
+					previewOutcomes.flatMap((outcome) =>
+						outcome.preview ? [[outcome.artifact.id, outcome.preview]] : [],
+					),
+				),
+			);
+			setArtifactErrors(
+				Object.fromEntries(
+					previewOutcomes.flatMap((outcome) =>
+						outcome.error ? [[outcome.artifact.id, outcome.error]] : [],
+					),
+				),
+			);
+			setArtifactNotices(
+				Object.fromEntries(
+					previewOutcomes.flatMap((outcome) =>
+						outcome.notice ? [[outcome.artifact.id, outcome.notice]] : [],
+					),
+				),
+			);
+		} catch (cause) {
+			if (sequence === loadSequenceRef.current)
+				setError(
+					cause instanceof Error ? cause.message : "Could not load artifacts.",
+				);
+		} finally {
+			if (sequence === loadSequenceRef.current) setLoading(false);
+		}
 	}, []);
+
+	useEffect(() => {
+		void load();
+	}, [load]);
+
+	async function setPinned(artifact: ArtifactRecordContract): Promise<void> {
+		if (artifact.integrity !== "verified") return;
+		setBusyArtifactId(artifact.id);
+		setArtifactErrors((current) => {
+			const next = { ...current };
+			delete next[artifact.id];
+			return next;
+		});
+		try {
+			const response = (await window.kestrel.request({
+				type: "media-pin-artifact",
+				artifactId: artifact.id,
+				pinned: artifact.pinned !== true,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			const updated = response.artifacts?.[0];
+			if (!updated) throw new Error("Pin state was not returned.");
+			setArtifacts((current) =>
+				current.map((item) => (item.id === updated.id ? updated : item)),
+			);
+		} catch (cause) {
+			setArtifactErrors((current) => ({
+				...current,
+				[artifact.id]:
+					cause instanceof Error ? cause.message : "Could not update pin state.",
+			}));
+		} finally {
+			setBusyArtifactId(null);
+		}
+	}
+
+	async function downloadArtifact(artifact: ArtifactRecordContract): Promise<void> {
+		if (artifact.integrity !== "verified") return;
+		setBusyArtifactId(artifact.id);
+		setArtifactErrors((current) => {
+			const next = { ...current };
+			delete next[artifact.id];
+			return next;
+		});
+		try {
+			const response = (await window.kestrel.request({
+				type: "media-download-artifact",
+				artifactId: artifact.id,
+				maximumBytes: 32_000_000,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (!response.artifactDownload)
+				throw new Error("The artifact returned no download data.");
+			triggerArtifactDownload(response.artifactDownload);
+			setArtifactNotices((current) => ({
+				...current,
+				[artifact.id]: "Download started.",
+			}));
+		} catch (cause) {
+			setArtifactErrors((current) => ({
+				...current,
+				[artifact.id]:
+					cause instanceof Error ? cause.message : "Could not download this artifact.",
+			}));
+		} finally {
+			setBusyArtifactId(null);
+		}
+	}
+
+	async function exportWidget(artifact: ArtifactRecordContract): Promise<void> {
+		if (artifact.integrity !== "verified" || artifact.artifactKind !== "widget") return;
+		setBusyArtifactId(artifact.id);
+		setArtifactErrors((current) => {
+			const next = { ...current };
+			delete next[artifact.id];
+			return next;
+		});
+		try {
+			const response = (await window.kestrel.request({
+				type: "media-export-artifact",
+				artifactId: artifact.id,
+				maximumBytes: MAX_WIDGET_EXPORT_BYTES,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (!response.exportedArtifact || !response.artifactPreview)
+				throw new Error("The widget export returned no bounded file.");
+			const exported = response.exportedArtifact;
+			setArtifacts((current) => [
+				...current.filter((item) => item.id !== exported.id),
+				exported,
+			]);
+			setPreviews((current) => ({
+				...current,
+				[exported.id]: artifactPreviewState(exported, response.artifactPreview!),
+			}));
+			if (response.artifactPreview.truncated)
+				throw new Error("The widget export exceeded the bounded download preview.");
+			triggerArtifactDownload({
+				filename: exported.filename,
+				mediaType: exported.mediaType,
+				dataBase64: response.artifactPreview.dataBase64,
+			});
+			setArtifactNotices((current) => ({
+				...current,
+				[artifact.id]: `Exported ${exported.filename} and started the download.`,
+				[exported.id]: "Exported from this widget.",
+			}));
+		} catch (cause) {
+			setArtifactErrors((current) => ({
+				...current,
+				[artifact.id]:
+					cause instanceof Error ? cause.message : "Could not export this widget.",
+			}));
+		} finally {
+			setBusyArtifactId(null);
+		}
+	}
+
+	const verifiedCount = artifacts.filter((artifact) => artifact.integrity === "verified").length;
 	return (
-		<PageFrame title="Verified results">
+		<PageFrame
+			title="Artifacts"
+			measure="wide"
+		>
 			<div className="artifact-toolbar">
 				<span>
-					{artifacts.length} verified file{artifacts.length === 1 ? "" : "s"}
+					{verifiedCount} verified · {artifacts.length} retained
 				</span>
 				<button
 					className="button secondary"
-					onClick={() =>
-						void load().catch((cause) =>
-							setError(
-								cause instanceof Error
-									? cause.message
-									: "Could not refresh artifacts.",
-							),
-						)
-					}
+					disabled={loading}
+					onClick={() => void load()}
 				>
-					Refresh
+					{loading ? "Refreshing…" : "Refresh"}
 				</button>
 			</div>
-			{error && <p role="alert">{error}</p>}
-			{artifacts.length === 0 ? (
+			{error && <p className="connection-error" role="alert">{error}</p>}
+			{artifacts.length === 0 && !loading ? (
 				<Empty
 					title="Nothing saved yet"
-					text="Verified files and interactive results will appear here."
 				/>
 			) : (
-				<section className="artifact-grid">
+				<section className="artifact-grid" aria-live="polite">
 					{artifacts
 						.slice()
 						.reverse()
-						.map((artifact) => (
-							<article className="artifact-card" key={artifact.id}>
-								{previews[artifact.id] &&
-								artifact.mediaType.startsWith("image/") ? (
-									<img
-										src={previews[artifact.id]}
-										alt={`Generated artifact ${artifact.filename}`}
-									/>
-								) : previews[artifact.id] &&
-									artifact.mediaType === "text/html" &&
-									artifact.artifactKind === "widget" ? (
-									<div className="artifact-widget">
-										<iframe
-											title={artifact.title ?? artifact.filename}
-											sandbox="allow-scripts"
-											referrerPolicy="no-referrer"
-											src={previews[artifact.id]}
+						.map((artifact) => {
+							const preview = previews[artifact.id];
+							const busy = busyArtifactId === artifact.id;
+							const intact = artifact.integrity === "verified";
+							return (
+								<article
+									className={`artifact-card artifact-card-${artifact.integrity ?? "unknown"}`}
+									key={artifact.id}
+									data-artifact-id={artifact.id}
+								>
+									{preview?.dataUrl && artifact.mediaType.startsWith("image/") ? (
+										<img
+											src={preview.dataUrl}
+											alt={`Generated artifact ${artifact.filename}`}
 										/>
-										<span>Interactive · isolated · network off</span>
+									) : preview?.dataUrl &&
+										artifact.mediaType === "text/html" &&
+										artifact.artifactKind === "widget" ? (
+										<div className="artifact-widget">
+											<iframe
+												title={artifact.title ?? artifact.filename}
+												sandbox="allow-scripts"
+												referrerPolicy="no-referrer"
+												src={preview.dataUrl}
+											/>
+											<span>Interactive · isolated · network off</span>
+										</div>
+									) : preview?.dataUrl && artifact.mediaType === "application/pdf" ? (
+										<div className="artifact-document-pdf">
+											<iframe
+												title={`Preview of ${artifact.filename}`}
+												src={preview.dataUrl}
+											/>
+										</div>
+									) : preview?.text !== undefined ? (
+										<div className="artifact-document-preview">
+											<pre>{preview.text || "(empty document)"}</pre>
+											{preview.truncated && <span>Preview truncated at 5 MB</span>}
+										</div>
+									) : preview?.dataUrl && artifact.mediaType.startsWith("audio/") ? (
+										<div className="artifact-audio">
+											<span>
+												{artifact.providerId === "fal-music"
+													? "AI-generated music"
+													: "AI-generated voice"}
+											</span>
+											<audio controls preload="metadata" src={preview.dataUrl} />
+										</div>
+									) : preview?.dataUrl && artifact.mediaType.startsWith("video/") ? (
+										<div className="artifact-video">
+											<span>Generated video</span>
+											<video controls preload="metadata" src={preview.dataUrl} />
+										</div>
+									) : (
+										<div className="artifact-file">
+											<Icon name="artifacts" />
+											<span>{artifact.mediaType}</span>
+										</div>
+									)}
+									<div className="artifact-card-details">
+										<div className="artifact-card-heading">
+											<strong>{artifact.title ?? artifact.filename}</strong>
+											<button
+												type="button"
+												className={`artifact-pin ${artifact.pinned ? "is-pinned" : ""}`}
+												disabled={!intact || busy}
+												aria-label={artifact.pinned ? "Unpin artifact" : "Pin artifact"}
+												aria-pressed={artifact.pinned === true}
+												onClick={() => void setPinned(artifact)}
+											>
+												<Icon name="pin" />
+												<span>{artifact.pinned ? "Pinned" : "Pin"}</span>
+											</button>
+										</div>
+										<p>
+											{(artifact.bytes / 1024).toFixed(1)} KB
+											{artifact.width && artifact.height
+												? ` · ${artifact.width}×${artifact.height}`
+												: ""}
+										</p>
+										<dl className="artifact-provenance">
+											<div><dt>Source</dt><dd>{artifact.providerId ?? "local"}</dd></div>
+											<div><dt>Model</dt><dd>{artifact.model ?? "verified import"}</dd></div>
+											<div><dt>Session</dt><dd>{artifact.sessionId ?? "unbound"}</dd></div>
+											<div><dt>Integrity</dt><dd>{artifact.integrity ?? "unknown"}</dd></div>
+										</dl>
+										{artifact.exportedFromArtifactId ? (
+											<small className="artifact-lineage" title={artifact.exportedFromArtifactId}>
+												Exported from {artifact.exportedFromArtifactId.slice(0, 20)}…
+											</small>
+										) : null}
+										<small>{new Date(artifact.createdAt).toLocaleString()}</small>
+										<code title={artifact.sha256}>SHA-256 {artifact.sha256.slice(0, 16)}…</code>
+										{artifactErrors[artifact.id] ? (
+											<p className="artifact-integrity-warning" role="alert">
+												{artifactErrors[artifact.id]}
+											</p>
+										) : null}
+										{artifactNotices[artifact.id] ? (
+											<p className="artifact-card-notice" role="status">
+												{artifactNotices[artifact.id]}
+											</p>
+										) : null}
+										<div className="artifact-card-actions">
+											{artifact.artifactKind === "widget" && (
+												<button
+													type="button"
+													className="button secondary"
+													disabled={!intact || busy}
+													onClick={() => void exportWidget(artifact)}
+												>
+													{busy ? "Working…" : "Export widget"}
+												</button>
+											)}
+											<button
+												type="button"
+												className="button secondary"
+												disabled={!intact || busy}
+												onClick={() => void downloadArtifact(artifact)}
+											>
+												{busy ? "Working…" : "Download"}
+											</button>
+										</div>
 									</div>
-								) : previews[artifact.id] &&
-									artifact.mediaType.startsWith("audio/") ? (
-									<div className="artifact-audio">
-										<span>
-											{artifact.providerId === "fal-music"
-												? "AI-generated music"
-												: "AI-generated voice"}
-										</span>
-										<audio
-											controls
-											preload="metadata"
-											src={previews[artifact.id]}
-										/>
-									</div>
-								) : previews[artifact.id] &&
-									artifact.mediaType.startsWith("video/") ? (
-									<div className="artifact-video">
-										<span>Generated video</span>
-										<video
-											controls
-											preload="metadata"
-											src={previews[artifact.id]}
-										/>
-									</div>
-								) : (
-									<div className="artifact-file">
-										<Icon name="artifacts" />
-										<span>{artifact.mediaType}</span>
-									</div>
-								)}
-								<div>
-									<strong>{artifact.title ?? artifact.filename}</strong>
-									<p>
-										{(artifact.bytes / 1024).toFixed(1)} KB
-										{artifact.width && artifact.height
-											? ` · ${artifact.width}×${artifact.height}`
-											: ""}
-									</p>
-									<small>
-										{artifact.providerId ?? "local"} ·{" "}
-										{artifact.model ?? "verified import"}
-									</small>
-									<code title={artifact.sha256}>
-										{artifact.sha256.slice(0, 16)}…
-									</code>
-								</div>
-							</article>
-						))}
+								</article>
+							);
+						})}
 				</section>
 			)}
 		</PageFrame>
@@ -2637,8 +3041,13 @@ function RuntimeConversation({
 	newAgentRequestId,
 	newAgentPrompt,
 	newAgentWorkspace,
+	newAgentProjectId,
 	newAgentFocusTarget,
+	projects,
+	onProjectsChange,
 	refreshRevision,
+	transcriptTarget,
+	onTranscriptTargetHandled,
 	onOpenActivity,
 	onReviewLearnedSkill,
 }: {
@@ -2659,18 +3068,27 @@ function RuntimeConversation({
 	newAgentRequestId: number;
 	newAgentPrompt: string;
 	newAgentWorkspace: string | null;
+	newAgentProjectId: string | null;
 	newAgentFocusTarget: "prompt" | "task-settings";
+	projects: Project[];
+	onProjectsChange(projects: Project[]): void;
 	refreshRevision: number;
+	transcriptTarget?: { sessionId: string; messageId: string } | null;
+	onTranscriptTargetHandled?(): void;
 	onOpenActivity?(executionId: string): void;
 	onReviewLearnedSkill(proposalId: string): void;
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
 	const [loadingEarlierMessages, setLoadingEarlierMessages] = useState(false);
-	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
-	const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
+	const [providerAccounts, setProviderAccounts] = useState<
+		ProviderAccountSummary[]
+	>([]);
 	const [providerId, setProviderId] = useState(
 		() => localStorage.getItem("kestrel:provider-id") ?? "",
+	);
+	const [accountId, setAccountId] = useState(
+		() => localStorage.getItem("kestrel:provider-account-id") ?? "",
 	);
 	const [model, setModel] = useState(
 		() => localStorage.getItem("kestrel:model") ?? "",
@@ -2693,7 +3111,7 @@ function RuntimeConversation({
 			? "manual"
 			: "automatic",
 	);
-	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
+	const grants = projects;
 	const [workspace, setWorkspace] = useState("");
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [mentionFiles, setMentionFiles] = useState<SelectedAttachment[]>([]);
@@ -2722,6 +3140,7 @@ function RuntimeConversation({
 	const [usage, setUsage] = useState<SessionUsageSummary | null>(null);
 	const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
 	const [actionReceipts, setActionReceipts] = useState<ActionReceipt[]>([]);
+	const [humanInputRequests, setHumanInputRequests] = useState<HumanInputRequest[]>([]);
 	const [executions, setExecutions] = useState<RuntimeToolExecution[]>([]);
 	const [skillBusy, setSkillBusy] = useState(false);
 	const [skillNotice, setSkillNotice] =
@@ -2739,8 +3158,10 @@ function RuntimeConversation({
 	const taskSettingsRef = useRef<HTMLDetailsElement>(null);
 	const externalIntakeRequestIdRef = useRef(0);
 	const sessionLoadSequenceRef = useRef(0);
+	const transcriptLoadKeyRef = useRef<string | null>(null);
 	const recorderRef = useRef<MediaRecorder | null>(null);
 	const microphoneStreamRef = useRef<MediaStream | null>(null);
+	const reduced = useReducedMotion();
 
 	useEffect(() => {
 		onRuntimeAgentState(pending ? "waiting_approval" : busy ? "working" : null);
@@ -2786,24 +3207,30 @@ function RuntimeConversation({
 			cancelled = true;
 		};
 	}, [activeMention, taskWorkspace]);
-	const manualRoutingReady = Boolean(providerId && model.trim());
-	const executionReady = executionMode === "automatic" || manualRoutingReady;
-	activeSessionIdRef.current = activeSessionId;
 	const modelChoice: ModelSelectorChoice = {
 		executionMode,
 		providerId,
+		...(accountId ? { accountId } : {}),
 		model,
 		reasoningEffort,
 	};
+	const selectedManualAccount = accountForChoice(providerAccounts, modelChoice);
+	const manualRoutingReady = Boolean(selectedManualAccount && model.trim());
+	const executionReady = executionMode === "automatic" || manualRoutingReady;
+	activeSessionIdRef.current = activeSessionId;
 
 	function applyModelChoice(next: ModelSelectorChoice) {
 		setExecutionMode(next.executionMode);
 		setProviderId(next.providerId);
+		setAccountId(next.accountId ?? "");
 		setModel(next.model);
 		setReasoningEffort(next.reasoningEffort);
 		localStorage.setItem("kestrel:execution-mode", next.executionMode);
 		if (next.providerId)
 			localStorage.setItem("kestrel:provider-id", next.providerId);
+		if (next.accountId)
+			localStorage.setItem("kestrel:provider-account-id", next.accountId);
+		else localStorage.removeItem("kestrel:provider-account-id");
 		if (next.model.trim())
 			localStorage.setItem("kestrel:model", next.model.trim());
 		localStorage.setItem("kestrel:reasoning-effort", next.reasoningEffort);
@@ -2829,7 +3256,7 @@ function RuntimeConversation({
 		activeSessionIdRef.current = null;
 		onActiveSession(null);
 		setInput(newAgentPrompt);
-		if (newAgentWorkspace) setWorkspace(newAgentWorkspace);
+		setWorkspace(newAgentWorkspace ?? "");
 		setAttachments([]);
 		setCheckpointSummary("");
 		setError("");
@@ -2849,6 +3276,7 @@ function RuntimeConversation({
 		busy,
 		newAgentFocusTarget,
 		newAgentPrompt,
+		newAgentProjectId,
 		newAgentRequestId,
 		newAgentWorkspace,
 		onActiveSession,
@@ -2878,17 +3306,21 @@ function RuntimeConversation({
 		onSessions(response.sessions ?? []);
 	}
 
+	async function loadHumanInputRequests(sessionId: string): Promise<boolean> {
+		const response = (await window.kestrel.request({
+			type: "runtime-list-human-input",
+			sessionId,
+		})) as CoreResponse;
+		if (!response.ok) throw new Error(response.error);
+		if (activeSessionIdRef.current !== sessionId) return false;
+		setHumanInputRequests(response.humanInputRequests ?? []);
+		return true;
+	}
+
 	async function loadSession(sessionId: string): Promise<boolean> {
 		if (activeSessionIdRef.current !== sessionId) return false;
 		const loadSequence = ++sessionLoadSequenceRef.current;
-		const [
-			messageResponse,
-			runResponse,
-			executionResponse,
-			receiptResponse,
-			usageResponse,
-		] =
-			await Promise.all([
+		const responses = await Promise.all([
 				window.kestrel.request({
 					type: "runtime-list-messages",
 					sessionId,
@@ -2911,12 +3343,25 @@ function RuntimeConversation({
 					type: "runtime-session-usage",
 					sessionId,
 				}) as Promise<CoreResponse>,
+				window.kestrel.request({
+					type: "runtime-list-human-input",
+					sessionId,
+				}) as Promise<CoreResponse>,
 			]);
+		const [
+			messageResponse,
+			runResponse,
+			executionResponse,
+			receiptResponse,
+			usageResponse,
+			humanInputResponse,
+		] = responses;
 		if (!messageResponse.ok) throw new Error(messageResponse.error);
 		if (!runResponse.ok) throw new Error(runResponse.error);
 		if (!executionResponse.ok) throw new Error(executionResponse.error);
 		if (!receiptResponse.ok) throw new Error(receiptResponse.error);
 		if (!usageResponse.ok) throw new Error(usageResponse.error);
+		if (!humanInputResponse.ok) throw new Error(humanInputResponse.error);
 		if (
 			activeSessionIdRef.current !== sessionId ||
 			sessionLoadSequenceRef.current !== loadSequence
@@ -2926,6 +3371,7 @@ function RuntimeConversation({
 		setHasEarlierMessages(messageResponse.hasMoreMessages === true);
 		setUsage(usageResponse.usage ?? null);
 		setActionReceipts(receiptResponse.receipts ?? []);
+		setHumanInputRequests(humanInputResponse.humanInputRequests ?? []);
 		const runs = runResponse.runs ?? [];
 		const loadedExecutions = executionResponse.executions ?? [];
 		setLatestRun(runs[runs.length - 1] ?? null);
@@ -2997,46 +3443,39 @@ function RuntimeConversation({
 		let cancelled = false;
 		void Promise.all([
 			window.kestrel.request({ type: "runtime-list-providers" }),
-			window.kestrel.request({ type: "get-workspace-grants" }),
-			window.kestrel.request({ type: "local-model-status" }),
 			window.kestrel.request({ type: "runtime-list-sessions" }),
 		])
 			.then(
 				async ([
 					providerResponse,
-					grantResponse,
-					localModelResponse,
 					sessionResponse,
 				]) => {
 					if (cancelled) return;
-					if (providerResponse.ok && "providers" in providerResponse) {
-						const available = providerResponse.providers ?? [];
-						setProviders(available);
-						setProviderId((current) =>
-							available.some((provider) => provider.id === current)
+					const available =
+						providerResponse.ok && "providerAccounts" in providerResponse
+							? (providerResponse.providerAccounts ?? [])
+							: [];
+					if (providerResponse.ok && "providerAccounts" in providerResponse) {
+						setProviderAccounts(available);
+					}
+					const availableGrants = availableWorkspaceGrants(projects);
+					setWorkspace(
+						(current) =>
+							(current &&
+							availableGrants.some((grant) => grant.path === current)
 								? current
-								: available[0]?.id || "",
-						);
-					}
-					if (grantResponse.ok && "workspaceGrants" in grantResponse) {
-						setGrants(grantResponse.workspaceGrants);
-						const availableGrants = availableWorkspaceGrants(
-							grantResponse.workspaceGrants,
-						);
-						setWorkspace(
-							(current) =>
-								(current &&
-								availableGrants.some((grant) => grant.path === current)
-									? current
-									: availableGrants[0]?.path) ?? "",
-						);
-					}
-					if (localModelResponse.ok && "localModels" in localModelResponse)
-						setLocalModels(localModelResponse.localModels);
+								: availableGrants[0]?.path) ?? "",
+					);
 					if (sessionResponse.ok && "sessions" in sessionResponse)
 						onSessions(sessionResponse.sessions ?? []);
 					const visibleSessionId = activeSessionIdRef.current;
 					if (visibleSessionId) await loadSession(visibleSessionId);
+					if (!catalogNeedsBackgroundRefresh(available)) return;
+					const refreshed = await window.kestrel.request({
+						type: "runtime-refresh-provider-models",
+					});
+					if (!cancelled && refreshed.ok && "providerAccounts" in refreshed)
+						setProviderAccounts(refreshed.providerAccounts ?? []);
 				},
 			)
 			.catch((cause) => {
@@ -3050,7 +3489,92 @@ function RuntimeConversation({
 		return () => {
 			cancelled = true;
 		};
-	}, [visible, onSessions]);
+	}, [onSessions, projects, visible]);
+
+	useEffect(() => {
+		const availableGrants = availableWorkspaceGrants(projects);
+		setWorkspace((current) =>
+			current && availableGrants.some((grant) => grant.path === current)
+				? current
+				: availableGrants[0]?.path ?? "",
+		);
+	}, [projects]);
+
+	useEffect(() => {
+		if (!transcriptTarget || transcriptTarget.sessionId !== activeSessionId) return;
+		if (messages.some((message) => message.id === transcriptTarget.messageId)) return;
+		if (!messages[0]) return;
+		const loadKey = `${transcriptTarget.sessionId}:${transcriptTarget.messageId}`;
+		if (transcriptLoadKeyRef.current === loadKey) return;
+		transcriptLoadKeyRef.current = loadKey;
+		let cancelled = false;
+		const sessionId = transcriptTarget.sessionId;
+		const loadSequence = sessionLoadSequenceRef.current;
+		void (async () => {
+			setLoadingEarlierMessages(true);
+			try {
+				let cursor: string | undefined = messages[0]?.id;
+				for (let pageNumber = 0; pageNumber < 100 && cursor; pageNumber += 1) {
+					const response = (await window.kestrel.request({
+						type: "runtime-list-messages",
+						sessionId,
+						beforeMessageId: cursor,
+						limit: 100,
+					})) as CoreResponse;
+					if (!response.ok) throw new Error(response.error);
+					if (
+						cancelled ||
+						activeSessionIdRef.current !== sessionId ||
+						sessionLoadSequenceRef.current !== loadSequence
+					)
+						return;
+					const earlier = response.messages ?? [];
+					if (earlier.length > 0)
+						setMessages((current) => {
+							const existing = new Set(current.map((message) => message.id));
+							return [
+								...earlier.filter((message) => !existing.has(message.id)),
+								...current,
+							];
+						});
+					if (earlier.some((message) => message.id === transcriptTarget.messageId)) return;
+					if (!response.hasMoreMessages || !earlier[0]) return;
+					cursor = earlier[0].id;
+				}
+			} catch (cause) {
+				if (!cancelled && activeSessionIdRef.current === sessionId)
+					setError(
+						cause instanceof Error
+							? cause.message
+							: "Could not load the matching transcript message.",
+					);
+			} finally {
+				if (!cancelled) setLoadingEarlierMessages(false);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [activeSessionId, messages, transcriptTarget]);
+
+	useEffect(() => {
+		if (
+			!transcriptTarget ||
+			transcriptTarget.sessionId !== activeSessionId ||
+			!messages.some((message) => message.id === transcriptTarget.messageId)
+		)
+			return;
+		const frame = window.requestAnimationFrame(() => {
+			const target = document.querySelector<HTMLElement>(
+				`[data-runtime-message-id="${CSS.escape(transcriptTarget.messageId)}"]`,
+			);
+			if (!target) return;
+			target.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
+			target.focus({ preventScroll: true });
+			onTranscriptTargetHandled?.();
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [activeSessionId, messages, onTranscriptTargetHandled, reduced, transcriptTarget]);
 
 	const previousRefreshRevisionRef = useRef(refreshRevision);
 	useEffect(() => {
@@ -3076,19 +3600,6 @@ function RuntimeConversation({
 	}, [refreshRevision, visible]);
 
 	useEffect(() => {
-		if (providerId === "auto") {
-			setModel("auto");
-			return;
-		}
-		if (providerId !== "ollama") return;
-		setModel((current) =>
-			localModels.some((item) => item.name === current)
-				? current
-				: (localModels[0]?.name ?? ""),
-		);
-	}, [providerId, localModels]);
-
-	useEffect(() => {
 		const preserveActiveRun = shouldPreserveActiveRun({
 			streamId: streamIdRef.current,
 			streamSessionId: streamSessionIdRef.current,
@@ -3110,6 +3621,7 @@ function RuntimeConversation({
 		setLatestRun(null);
 		setActionReceipts([]);
 		setExecutions([]);
+		setHumanInputRequests([]);
 		setError("");
 		setSkillNotice(null);
 		if (!activeSessionId) {
@@ -3140,11 +3652,11 @@ function RuntimeConversation({
 	useEffect(
 		() =>
 			window.kestrel.onRuntimeEvent((event) => {
-				if (
-					event.sessionId === activeSessionId &&
-					event.type.startsWith("tool.")
-				)
+				if (event.sessionId !== activeSessionIdRef.current) return;
+				if (event.type.startsWith("tool."))
 					setToolActivity((current) => [...current, event].slice(-12));
+				if (event.type === "question.created" || event.type === "question.updated")
+					void loadHumanInputRequests(event.sessionId).catch(() => undefined);
 			}),
 		[activeSessionId],
 	);
@@ -3304,7 +3816,7 @@ function RuntimeConversation({
 	async function addProject() {
 		if (activeSessionId || busy) return;
 		setError("");
-		const previousPaths = new Set(grants.map((grant) => grant.path));
+		const previousPaths = new Set(projects.map((project) => project.path));
 		try {
 			const response = await window.kestrel.request({
 				type: "select-workspace-folder",
@@ -3313,20 +3825,25 @@ function RuntimeConversation({
 				throw new Error(
 					"error" in response ? response.error : "Could not add the project.",
 				);
-			if (!("workspaceGrants" in response)) return;
-			setGrants(response.workspaceGrants);
-			if (response.cancelled) return;
-			const availableGrants = availableWorkspaceGrants(
-				response.workspaceGrants,
-			);
-			const selectedWorkspacePath =
-				response.selectedWorkspacePath &&
-				availableGrants.some(
-					(grant) => grant.path === response.selectedWorkspacePath,
-				)
+			const responseProjects = projectsFromRendererResponse(response);
+			if (!responseProjects) return;
+			onProjectsChange(responseProjects);
+			if ("cancelled" in response && response.cancelled) return;
+			const selectedPath =
+				"selectedWorkspacePath" in response
 					? response.selectedWorkspacePath
 					: undefined;
-			const added = response.workspaceGrants.find(
+			const availableGrants = availableWorkspaceGrants(
+				responseProjects,
+			);
+			const selectedWorkspacePath =
+				selectedPath &&
+				availableGrants.some(
+					(grant) => grant.path === selectedPath,
+				)
+					? selectedPath
+					: undefined;
+			const added = responseProjects.find(
 				(grant) => grant.available !== false && !previousPaths.has(grant.path),
 			);
 			setWorkspace(
@@ -3377,9 +3894,9 @@ function RuntimeConversation({
 			setOptimisticSteering((current) => [...current, prompt]);
 			return;
 		}
-		if (executionMode === "manual" && !providerId) {
+		if (executionMode === "manual" && !selectedManualAccount) {
 			setError(
-				"Choose a configured provider or switch execution back to Automatic.",
+				"The selected provider account is unavailable. Choose another account or switch execution back to Automatic.",
 			);
 			return;
 		}
@@ -3403,7 +3920,11 @@ function RuntimeConversation({
 				const created = (await window.kestrel.request({
 					type: "runtime-create-session",
 					title: chatTitleFromPrompt(prompt),
-					...(workspace ? { workspaceRoot: workspace } : {}),
+					...(newAgentProjectId
+						? { projectId: newAgentProjectId }
+						: workspace
+							? { workspaceRoot: workspace }
+							: {}),
 				})) as CoreResponse;
 				if (!created.ok || !created.session)
 					throw new Error(
@@ -3845,7 +4366,10 @@ function RuntimeConversation({
 					? `Kestrel needs your approval for ${pending.execution.toolName}.`
 					: latestRun?.status === "completed"
 						? "Kestrel finished the latest response."
-						: "";
+						: humanInputRequests.some((request) => request.status === "waiting")
+							? "Kestrel is waiting for your answer."
+							: "";
+	const hasQuestionSurface = humanInputRequests.length > 0;
 	return (
 		<section
 			className={`conversation-view ${activeSessionId ? "" : "new-task-view"} ${emptySession ? "session-empty-view" : ""}`}
@@ -3873,7 +4397,8 @@ function RuntimeConversation({
 					</button>
 				</div>
 			) : null}
-			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
+			{((!activeSessionId && visibleMessages.length === 0) || emptySession) &&
+				!hasQuestionSurface ? (
 				<div className="chat-welcome" aria-hidden="true">
 					<h1>{emptySession ? "Pick up where you left off." : "How can I help?"}</h1>
 					<p>
@@ -3896,9 +4421,18 @@ function RuntimeConversation({
 								: "Load earlier messages"}
 						</button>
 					)}
-					{visibleMessages.map((message) =>
-						message.role === "user" ? (
-							<div className="user-message" key={message.id}>
+					{visibleMessages.map((message) => {
+						const presentation =
+							message.role === "tool"
+								? parseUIPresentationMessage(message)
+								: undefined;
+						return message.role === "user" ? (
+							<div
+								className="user-message"
+								key={message.id}
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
 								<p>{message.content}</p>
 								{parseExplicitMemoryCapture(message.content) && (
 									<p className="memory-capture-confirmation" role="status">
@@ -3908,7 +4442,12 @@ function RuntimeConversation({
 								)}
 							</div>
 						) : message.role === "assistant" ? (
-							<div className="assistant-message" key={message.id}>
+							<div
+								className="assistant-message"
+								key={message.id}
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
 								<span className="assistant-avatar">K</span>
 								<div>
 									<p>{message.content}</p>
@@ -3920,25 +4459,58 @@ function RuntimeConversation({
 								</div>
 							</div>
 						) : message.toolName?.startsWith("agent.config.") ? (
-							<ConfigurationMessage
+							<div
 								key={message.id}
-								message={message}
-								showDiffs={configurationUi.showConfigurationDiffs}
-								announceVerification={configurationUi.announceVerification}
-								onPrepareUndo={(prompt) => {
-									setInput(prompt);
-									window.setTimeout(() => promptRef.current?.focus(), 0);
-								}}
-							/>
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
+								<ConfigurationMessage
+									message={message}
+									showDiffs={configurationUi.showConfigurationDiffs}
+									announceVerification={configurationUi.announceVerification}
+									onPrepareUndo={(prompt) => {
+										setInput(prompt);
+										window.setTimeout(() => promptRef.current?.focus(), 0);
+									}}
+								/>
+							</div>
+						) : presentation ? (
+							<div
+								key={message.id}
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
+								<PresentationCard presentation={presentation} />
+							</div>
 						) : (
-							<div className="work-summary" key={message.id}>
+							<div
+								className="work-summary"
+								key={message.id}
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
 								<Icon name="check" />
 								<span>
 									{message.toolName ?? "Tool result"}: {message.content}
 								</span>
 							</div>
-						),
-					)}
+						);
+					})}
+					{humanInputRequests.map((request) => (
+						<RuntimeQuestionCard
+							key={request.id}
+							request={request}
+							onResolved={(resolved) => {
+								setHumanInputRequests((current) =>
+									current.map((item) =>
+										item.id === resolved.id ? resolved : item,
+									),
+								);
+								if (resolved.status !== "waiting")
+									window.setTimeout(() => promptRef.current?.focus(), 0);
+							}}
+						/>
+					))}
 					{optimisticUser && (
 						<div className="user-message">
 							<p>{optimisticUser}</p>
@@ -4262,8 +4834,7 @@ function RuntimeConversation({
 								: "Describe the outcome. @ for context."
 						}
 					/>
-					{activeMention !== null && (
-						<ComposerMentionPicker
+					<ComposerMentionPicker
 							query={activeMention}
 							tabs={mentionTabs}
 							bookmarks={mentionBookmarks}
@@ -4277,8 +4848,8 @@ function RuntimeConversation({
 										[...current, mention.attachment!].slice(0, 8),
 									);
 							}}
+							onDismiss={() => setInput((current) => `${current} `)}
 						/>
-					)}
 					<div className="composer-footer">
 						<div className="button-row composer-context-actions">
 							<button
@@ -4294,26 +4865,17 @@ function RuntimeConversation({
 								<Icon name="plus" />
 							</button>
 							<ModelSelector
-								providers={providers}
-								localModels={localModels}
+								accounts={providerAccounts}
 								choice={modelChoice}
 								onChange={applyModelChoice}
 							/>
 							<details className="task-settings" ref={taskSettingsRef}>
 								<summary
+									className="task-settings-trigger"
 									aria-label="Task settings"
-									title={`Model: ${
-										executionMode === "automatic"
-											? "Smart"
-											: model.trim() || "Choose a model"
-									}`}
+									title="Task settings"
 								>
-									<span className="runtime-model-label">
-										{executionMode === "automatic"
-											? "Smart"
-											: model.trim() || "Choose model"}
-									</span>
-									<Icon name="chevron" />
+									<Icon name="sliders" />
 								</summary>
 								<div className="task-settings-panel">
 									<header>
@@ -4631,7 +5193,10 @@ function Memory({
 	}
 
 	return (
-		<PageFrame title="Memory">
+		<PageFrame
+			title="Memory"
+			measure="wide"
+		>
 			<form
 				className="memory-create"
 				onSubmit={(event) => {
@@ -4883,12 +5448,12 @@ function Readiness() {
 			})) as CoreResponse;
 			if (!response.ok) throw new Error(response.error);
 			const checked: ProviderVerification[] = [];
-			for (const provider of (response.providers ?? []).filter(
-				(item) => item.id !== "auto",
-			)) {
+			for (const provider of (
+				"providerAccounts" in response ? response.providerAccounts ?? [] : []
+			).filter((account) => account.enabled)) {
 				const result = (await window.kestrel.request({
 					type: "runtime-verify-provider",
-					providerId: provider.id,
+					providerId: provider.endpointId,
 				})) as CoreResponse;
 				if (!result.ok) throw new Error(result.error);
 				checked.push(...(result.providerVerifications ?? []));
@@ -4988,7 +5553,18 @@ function Readiness() {
 
 	return (
 		<PageFrame
-			title={readiness?.readyForLiveWork ? "Ready for work" : "Needs attention"}
+			eyebrow={readiness?.readyForLiveWork ? "Ready for work" : "Needs attention"}
+			title="Readiness"
+			measure="wide"
+			actions={
+				<button
+					className="button secondary"
+					disabled={Boolean(busy)}
+					onClick={() => void refresh()}
+				>
+					{busy === "refresh" ? "Checking…" : "Run checks"}
+				</button>
+			}
 		>
 			<section
 				className={`readiness-hero ${readiness?.readyForLiveWork ? "ready" : "attention"}`}
@@ -5006,17 +5582,10 @@ function Readiness() {
 					</strong>
 					<p>
 						{readiness
-							? `${warnings} optional item${warnings === 1 ? "" : "s"} can be completed when a task needs them. Last checked ${new Date(readiness.checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
-							: "Reading local status without sending project data anywhere."}
+							? `${warnings} optional setup item${warnings === 1 ? "" : "s"} remain. Checked ${new Date(readiness.checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+							: "Checking this Mac. No project data is sent."}
 					</p>
 				</div>
-				<button
-					className="button secondary"
-					disabled={Boolean(busy)}
-					onClick={() => void refresh()}
-				>
-					{busy === "refresh" ? "Checking…" : "Run checks"}
-				</button>
 			</section>
 
 			<div className="readiness-grid">
@@ -5072,8 +5641,8 @@ function Readiness() {
 						)}
 					</header>
 					<p>
-						This contacts only the configured provider or local model service.
-						It does not send a project prompt.
+						Checks the configured provider or local model. It does not send a
+						project prompt.
 					</p>
 					{providerChecks.length > 0 && (
 							<ul>
@@ -5115,10 +5684,9 @@ function Readiness() {
 							</div>
 						</header>
 						<p>
-							Copies encrypted conversations, settings, protected credentials,
-							installed plugins, and artifacts after safely stopping the local
-							core. Project folders are not duplicated. The snapshot can unlock
-							your local state, so store it like a password.
+						Backs up encrypted conversations, settings, credentials, plugins, and
+						artifacts. Project folders are not copied. Treat the snapshot like a
+						password.
 						</p>
 						{backup && (
 							<div className="backup-result">
@@ -5164,9 +5732,8 @@ function Readiness() {
 							</div>
 						</header>
 						<p>
-							Saves a content-free JSON envelope with version, platform, readiness
-							counts, and failure class only. No prompts, page content,
-							credentials, or personal memory are included. Review before sharing.
+						Saves version, platform, readiness, and failure details—never prompts,
+						page content, credentials, or memory. Review it before sharing.
 						</p>
 						<button
 							className="button secondary"
@@ -5232,7 +5799,12 @@ function Research() {
 		}
 	}
 	return (
-		<PageFrame title="Search with sources">
+		<PageFrame
+			eyebrow="Search with sources"
+			title="Research"
+			text="Search the web and keep sources with your findings."
+			measure="wide"
+		>
 			<form
 				className="research-search"
 				onSubmit={(event) => {
@@ -5263,7 +5835,6 @@ function Research() {
 			{!query.trim() && results.length === 0 && !page && !busy && (
 				<Empty
 					title="Start with a question"
-					text="Enter a query to find web results Kestrel can cite in answers."
 				/>
 			)}
 			{query.trim() && results.length === 0 && !page && !busy && !error && (
@@ -5324,13 +5895,36 @@ function Work({
 	const [teams, setTeams] = useState<TeamRecordContract[]>([]);
 	const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
 	const [routingTraces, setRoutingTraces] = useState<RoutingTrace[]>([]);
-	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
-	const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
+	const [providerAccounts, setProviderAccounts] = useState<
+		ProviderAccountSummary[]
+	>([]);
+	const [providerAccountsLoaded, setProviderAccountsLoaded] = useState(false);
 	const [parentSessionId, setParentSessionId] = useState(sessions[0]?.id ?? "");
-	const [providerId, setProviderId] = useState("auto");
-	const [model, setModel] = useState(
-		() => localStorage.getItem("kestrel:model") ?? "auto",
-	);
+	const [workModelChoice, setWorkModelChoice] =
+		useState<ModelSelectorChoice>(() => {
+			const accountId = localStorage.getItem("kestrel:provider-account-id");
+			const storedReasoningEffort = localStorage.getItem(
+				"kestrel:reasoning-effort",
+			);
+			return {
+				executionMode:
+					localStorage.getItem("kestrel:execution-mode") === "manual"
+						? "manual"
+						: "automatic",
+				providerId: localStorage.getItem("kestrel:provider-id") ?? "",
+				...(accountId ? { accountId } : {}),
+				model: localStorage.getItem("kestrel:model") ?? "auto",
+				reasoningEffort:
+					storedReasoningEffort === "low" ||
+					storedReasoningEffort === "medium" ||
+					storedReasoningEffort === "high" ||
+					storedReasoningEffort === "xhigh" ||
+					storedReasoningEffort === "max" ||
+					storedReasoningEffort === "none"
+						? storedReasoningEffort
+						: "none",
+			};
+		});
 	const [delegationEvidence, setDelegationEvidence] = useState("");
 	const [delegateTitle, setDelegateTitle] = useState("");
 	const [delegatePrompt, setDelegatePrompt] = useState("");
@@ -5365,9 +5959,25 @@ function Work({
 		}
 	}, [parentSessionId, sessions]);
 
+	const workManualAccount = accountForChoice(
+		providerAccounts,
+		workModelChoice,
+	);
+	const manualRoutingReady = Boolean(
+		providerAccountsLoaded && workManualAccount && workModelChoice.model.trim(),
+	);
+	const workRoutingReady =
+		workModelChoice.executionMode === "automatic" || manualRoutingReady;
+	const workRouting =
+		workModelChoice.executionMode === "automatic"
+			? { model: "auto", providerIds: ["auto"] }
+			: {
+					model: workModelChoice.model.trim(),
+					providerIds: [workModelChoice.providerId],
+				};
+
 	async function load() {
-		const [state, providerState, sessionState, localModelState, traceState] =
-			await Promise.all([
+		const [state, providerState, sessionState, traceState] = await Promise.all([
 				window.kestrel.request({
 					type: "orchestration-list",
 				}) as Promise<CoreResponse>,
@@ -5378,9 +5988,6 @@ function Work({
 					type: "runtime-list-sessions",
 				}) as Promise<CoreResponse>,
 				window.kestrel.request({
-					type: "local-model-status",
-				}),
-				window.kestrel.request({
 					type: "orchestration-routing-traces",
 				}) as Promise<CoreResponse>,
 			]);
@@ -5388,18 +5995,10 @@ function Work({
 		setGoals(state.goals ?? []);
 		setTeams(state.teams ?? []);
 		setJobs(state.jobs ?? []);
-		if (providerState.ok) {
-			setProviders(providerState.providers ?? []);
-			setProviderId((current) =>
-				providerState.providers?.some((provider) => provider.id === current)
-					? current
-					: providerState.providers?.some((provider) => provider.id === "auto")
-						? "auto"
-						: providerState.providers?.[0]?.id || "",
-			);
+		if (providerState.ok && "providerAccounts" in providerState) {
+			setProviderAccounts(providerState.providerAccounts ?? []);
+			setProviderAccountsLoaded(true);
 		}
-		if (localModelState.ok && "localModels" in localModelState)
-			setLocalModels(localModelState.localModels);
 		if (traceState.ok) setRoutingTraces(traceState.routingTraces ?? []);
 		if (sessionState.ok) onSessions(sessionState.sessions ?? []);
 	}
@@ -5426,13 +6025,59 @@ function Work({
 	}, []);
 
 	useEffect(() => {
-		if (providerId !== "ollama") return;
-		setModel((current) =>
-			localModels.some((item) => item.name === current)
-				? current
-				: (localModels[0]?.name ?? ""),
+		if (
+			!providerAccountsLoaded ||
+			!catalogNeedsBackgroundRefresh(providerAccounts)
+		)
+			return;
+		let cancelled = false;
+		void window.kestrel
+			.request({ type: "runtime-refresh-provider-models" })
+			.then((raw) => {
+				const response = raw as CoreResponse;
+				if (!cancelled && response.ok && "providerAccounts" in response)
+					setProviderAccounts(response.providerAccounts ?? []);
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [providerAccounts, providerAccountsLoaded]);
+
+	useEffect(() => {
+		if (!providerAccountsLoaded) return;
+		setWorkModelChoice((current) => {
+			if (current.executionMode === "automatic") return current;
+			const account = accountForChoice(providerAccounts, current);
+			if (!account) return current;
+			return {
+				...current,
+				providerId: account.endpointId,
+				accountId: account.id,
+			};
+		});
+	}, [providerAccounts, providerAccountsLoaded]);
+
+	useEffect(() => {
+		localStorage.setItem(
+			"kestrel:execution-mode",
+			workModelChoice.executionMode,
 		);
-	}, [providerId, localModels]);
+		if (workModelChoice.providerId)
+			localStorage.setItem("kestrel:provider-id", workModelChoice.providerId);
+		if (workModelChoice.accountId)
+			localStorage.setItem(
+				"kestrel:provider-account-id",
+				workModelChoice.accountId,
+			);
+		else localStorage.removeItem("kestrel:provider-account-id");
+		if (workModelChoice.model.trim())
+			localStorage.setItem("kestrel:model", workModelChoice.model.trim());
+		localStorage.setItem(
+			"kestrel:reasoning-effort",
+			workModelChoice.reasoningEffort,
+		);
+	}, [workModelChoice]);
 
 	async function mutate(
 		request: RendererRequest,
@@ -5476,7 +6121,10 @@ function Work({
 				: 100;
 
 	return (
-		<PageFrame title="Plan and track">
+		<PageFrame
+			title="Work"
+			measure="wide"
+		>
 			{routedTask && (
 				<section
 					className={`orchestration-status status-${routedTask.status}`}
@@ -5581,15 +6229,18 @@ function Work({
 					className="work-card"
 					onSubmit={(event) => {
 						event.preventDefault();
-						if (!parentSessionId || !providerId || !model.trim()) return;
+						if (!parentSessionId || !workRoutingReady) return;
 						void mutate(
 							{
 								type: "orchestration-delegate",
 								parentSessionId,
 								title: delegateTitle,
 								prompt: delegatePrompt,
-								model: model.trim(),
-								providerIds: [providerId],
+								...workRouting,
+								...(workModelChoice.executionMode === "manual" &&
+								workModelChoice.reasoningEffort !== "none"
+									? { reasoningEffort: workModelChoice.reasoningEffort }
+									: {}),
 								isolateWorktree,
 							},
 							() => {
@@ -5601,8 +6252,8 @@ function Work({
 				>
 				<h2>Delegate a task</h2>
 				<p className="work-card-note">
-					Kestrel picks a verified worker by capability, cost, privacy, and
-					your routing preference.
+					Kestrel selects a verified worker based on capability, cost, privacy,
+					and your preferences.
 				</p>
 				<label>
 					Parent task
@@ -5637,45 +6288,15 @@ function Work({
 					</label>
 					<details className="work-routing-override">
 						<summary>Override automatic routing</summary>
-						<div className="work-inline">
-							<select
-								aria-label="Provider"
-								value={providerId}
-								onChange={(event) => setProviderId(event.target.value)}
-							>
-								{providers.map((provider) => (
-									<option key={provider.id}>{provider.id}</option>
-								))}
-							</select>
-							{providerId === "ollama" ? (
-								<select
-									aria-label="Installed Ollama model"
-									value={model}
-									onChange={(event) => setModel(event.target.value)}
-									disabled={localModels.length === 0}
-								>
-									{localModels.length === 0 ? (
-										<option value="">No installed Ollama models found</option>
-									) : (
-										localModels.map((localModel) => (
-											<option value={localModel.name} key={localModel.name}>
-												{localModel.name} · {compactBytes(localModel.size)}
-											</option>
-										))
-									)}
-								</select>
-							) : (
-								<input
-									aria-label="Model"
-									placeholder={
-										providerId === "auto" ? "Automatically selected" : "Model"
-									}
-									value={model}
-									onChange={(event) => setModel(event.target.value)}
-									readOnly={providerId === "auto"}
-								/>
-							)}
-						</div>
+						<p className="work-card-note">
+							Choose one connected account only when this work must bypass
+							Kestrel's automatic router.
+						</p>
+						<ModelSelector
+							accounts={providerAccounts}
+							choice={workModelChoice}
+							onChange={setWorkModelChoice}
+						/>
 					</details>
 					{delegationEvidence && (
 						<small role="status">{delegationEvidence}</small>
@@ -5694,8 +6315,7 @@ function Work({
 							busy ||
 							!delegateTitle.trim() ||
 							!delegatePrompt.trim() ||
-							!providerId ||
-							!model.trim()
+							!workRoutingReady
 						}
 					>
 						Run delegate
@@ -5751,15 +6371,14 @@ function Work({
 					className="work-card"
 					onSubmit={(event) => {
 						event.preventDefault();
-						if (!parentSessionId || !providerId || !model.trim()) return;
+						if (!parentSessionId || !workRoutingReady) return;
 						void mutate(
 							{
 								type: "orchestration-schedule",
 								sessionId: parentSessionId,
 								title: scheduleTitle,
 								prompt: schedulePrompt,
-								model: model.trim(),
-								providerIds: [providerId],
+								...workRouting,
 								expression: scheduleExpression,
 							},
 							() => {
@@ -5795,8 +6414,7 @@ function Work({
 					/>
 				</label>
 				<small>
-					Natural-language times are interpreted in UTC. Five-field cron is
-					supported.
+					Times are interpreted in UTC. Five-field cron is supported.
 				</small>
 				<button
 					className="button primary"
@@ -5805,8 +6423,7 @@ function Work({
 						!scheduleTitle.trim() ||
 						!schedulePrompt.trim() ||
 						!scheduleExpression.trim() ||
-						!providerId ||
-						!model.trim()
+						!workRoutingReady
 					}
 				>
 					Schedule
@@ -5815,9 +6432,8 @@ function Work({
 				<article className="work-card">
 					<h2>Automation boundary</h2>
 					<p>
-						Scheduled runs stay local and encrypted. Sensitive actions stop in
-						the review queue for approval, and recurring work advances only
-						after a completed run.
+						Runs stay local and encrypted. Sensitive actions wait for approval;
+						recurring work continues only after a run completes.
 					</p>
 				</article>
 			</section>
@@ -6217,6 +6833,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 	return (
 		<section
 			className="settings-panel"
+			id="setting-agent-connections"
 			aria-labelledby="settings-connections-title"
 		>
 			<header className="settings-panel-header">
@@ -6236,8 +6853,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								"Checking for the official Codex runtime on this Mac."}
 						</p>
 						<small>
-							Codex owns the browser callback, credential storage, and token
-							refresh. Kestrel receives account status only.
+					Codex handles sign-in and credentials. Kestrel receives account status
+					only.
 						</small>
 					</div>
 					<span
@@ -6391,8 +7008,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								"Checking whether Kestrel can read the local Messages database."}
 						</p>
 						<small>
-							Read-only and on demand. Kestrel extracts a short code, never the
-							message body, and never sends a message.
+					Read-only and on demand. Kestrel extracts only a short code; it never
+					reads the body or sends messages.
 						</small>
 					</div>
 					<span
@@ -6585,8 +7202,8 @@ function LearnedSkillsSettings({
 			<div>
 				<strong>Experience-to-skill learning</strong>
 				<p>
-					Proposals are credential-scanned and parsed in isolation. Nothing
-					installs without your review.
+					Review proposals before installing them. Nothing installs without your
+					approval.
 				</p>
 				<small>
 					{installed.length} installed · {waiting.length} waiting ·{" "}
@@ -6718,8 +7335,8 @@ function CredentialSettings({
 			<div>
 				<strong>Protected provider credentials</strong>
 				<p>
-					Encrypted with macOS secure storage, sent only to the isolated core,
-					and never displayed again.
+					Encrypted in macOS secure storage, sent only to Kestrel's isolated
+					core, and never shown again.
 				</p>
 				<div className="credential-list">
 						{credentials.map((credential) => (
@@ -6867,8 +7484,8 @@ function SubscriptionCliSettings({
 			<div>
 				<strong>Existing vendor subscriptions</strong>
 				<p>
-					Use the Codex, Claude Code, or OpenCode sign-in already on this
-					Mac. Kestrel never copies vendor OAuth tokens.
+					Use an existing Codex, Claude Code, or OpenCode sign-in. Kestrel never
+					copies vendor OAuth tokens.
 				</p>
 				<ul className="subscription-setting-list">
 					{items
@@ -6919,7 +7536,9 @@ function SubscriptionCliSettings({
 }
 
 function ProviderVerificationSettings() {
-	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
+	const [providerAccounts, setProviderAccounts] = useState<
+		ProviderAccountSummary[]
+	>([]);
 	const [results, setResults] = useState<
 		Record<string, ProviderVerification[]>
 	>({});
@@ -6930,13 +7549,11 @@ function ProviderVerificationSettings() {
 			.request({ type: "runtime-list-providers" })
 			.then((raw) => {
 				const response = raw as CoreResponse;
-				if (response.ok)
-					setProviders(
-						(response.providers ?? []).filter(
-							(provider) => provider.id !== "auto",
-						),
+				if (response.ok && "providerAccounts" in response)
+					setProviderAccounts(
+						(response.providerAccounts ?? []).filter((account) => account.enabled),
 					);
-				else setError(response.error);
+				else if (!response.ok) setError(response.error);
 			});
 	}, []);
 	async function verify(providerId: string) {
@@ -6970,17 +7587,17 @@ function ProviderVerificationSettings() {
 					Probe configured accounts from the isolated core — no credentials
 					exposed, no model prompt sent.
 				</p>
-				{providers.length === 0 ? (
-					<small>No model providers are configured.</small>
+				{providerAccounts.length === 0 ? (
+					<small>No enabled model accounts are configured.</small>
 				) : (
 					<ul className="workspace-grants">
-						{providers.map((provider) => {
-							const checks = results[provider.id];
+						{providerAccounts.map((account) => {
+							const checks = results[account.endpointId];
 							const valid = checks?.every((check) => check.ok);
 							return (
-								<li key={provider.id}>
+								<li key={account.id}>
 									<span>
-										{provider.id} ·{" "}
+										{account.providerId} · {account.displayName} ·{" "}
 										{checks
 											? valid
 												? `${checks.length} credential${checks.length === 1 ? "" : "s"} verified`
@@ -6996,9 +7613,9 @@ function ProviderVerificationSettings() {
 									<button
 										className="quiet-link"
 										disabled={Boolean(busy)}
-										onClick={() => void verify(provider.id)}
+										onClick={() => void verify(account.endpointId)}
 									>
-										{busy === provider.id ? "Checking…" : "Verify"}
+										{busy === account.endpointId ? "Checking…" : "Verify"}
 									</button>
 								</li>
 							);
@@ -7012,11 +7629,29 @@ function ProviderVerificationSettings() {
 	);
 }
 
+function migrationReviewLabel(
+	kind: MigrationPlanPreviewContract["reviewItems"][number]["kind"],
+) {
+	switch (kind) {
+		case "automation":
+			return "automation";
+		case "channel-binding":
+			return "channel binding";
+		case "acp-binding":
+			return "ACP binding";
+		case "plugin":
+			return "plugin decision";
+		case "plugin-load-path":
+			return "plugin load path";
+	}
+}
+
 function MigrationSettings() {
 	const [product, setProduct] = useState<
 		"openclaw" | "hermes" | "codex" | "claude-code"
 	>("codex");
-	const [plan, setPlan] = useState<MigrationPlanContract | null>(null);
+	const [plan, setPlan] = useState<MigrationPlanPreviewContract | null>(null);
+	const [planId, setPlanId] = useState<string | null>(null);
 	const [result, setResult] = useState<MigrationResultContract | null>(null);
 	const [confirmation, setConfirmation] = useState("");
 	const [overwrite, setOverwrite] = useState(false);
@@ -7026,6 +7661,9 @@ function MigrationSettings() {
 		setBusy(true);
 		setError("");
 		setResult(null);
+		setPlan(null);
+		setPlanId(null);
+		setConfirmation("");
 		try {
 			const response = await window.kestrel.request({
 				type: "migration-select-plan",
@@ -7035,8 +7673,10 @@ function MigrationSettings() {
 				throw new Error(
 					"error" in response ? response.error : "Migration inspection failed.",
 				);
-			if ("migrationPlan" in response && !response.cancelled)
+			if ("migrationPlan" in response && !response.cancelled) {
 				setPlan(response.migrationPlan);
+				setPlanId(response.migrationPlanId ?? null);
+			}
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : "Migration inspection failed.",
@@ -7046,13 +7686,13 @@ function MigrationSettings() {
 		}
 	}
 	async function apply() {
-		if (!plan || confirmation !== "IMPORT") return;
+		if (!plan || !planId || confirmation !== "IMPORT") return;
 		setBusy(true);
 		setError("");
 		try {
 			const response = await window.kestrel.request({
 				type: "migration-apply-plan",
-				plan,
+				planId,
 				confirmation: "IMPORT",
 				overwrite,
 			});
@@ -7061,6 +7701,8 @@ function MigrationSettings() {
 					"error" in response ? response.error : "Migration failed.",
 				);
 			if ("migrationResult" in response) setResult(response.migrationResult);
+			setPlan(null);
+			setPlanId(null);
 			setConfirmation("");
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : "Migration failed.");
@@ -7074,7 +7716,8 @@ function MigrationSettings() {
 				<strong>Reference-product migration</strong>
 				<p>
 					Dry-run an import from OpenClaw, Hermes, Codex, or Claude Code.
-					Source files stay untouched.
+					Source files stay untouched; settings become checksum-checked,
+					non-secret translations.
 				</p>
 				<div className="button-row">
 					<select
@@ -7099,15 +7742,15 @@ function MigrationSettings() {
 				{plan && (
 					<details open>
 						<summary>
-							{plan.items.length} source files · {plan.translations.length}{" "}
-							translated settings ·{" "}
+							{plan.items.length} transferable source files ·{" "}
+							{plan.translatedSettings} sanitized settings ·{" "}
 							{plan.items.filter((item) => item.status === "conflict").length}{" "}
 							conflicts
 						</summary>
 						<small>Destination · {plan.targetRoot}</small>
 						<ul className="workspace-grants">
 							{plan.items.slice(0, 12).map((item) => (
-								<li key={`${item.product}:${item.sourcePath}`}>
+								<li key={`${item.category}:${item.sourcePath}`}>
 									<span>
 										{item.category} · {item.sourcePath}
 									</span>
@@ -7115,6 +7758,27 @@ function MigrationSettings() {
 								</li>
 							))}
 						</ul>
+						{plan.reviewItems.length > 0 && (
+							<>
+								<strong>Manual review required</strong>
+								<ul className="workspace-grants">
+									{plan.reviewItems.map((item) => (
+										<li key={`${item.sourcePath}:${item.kind}`}>
+											<span>
+												{item.count} {migrationReviewLabel(item.kind)}
+												{item.count === 1 ? "" : "s"} · {item.sourcePath}
+											</span>
+											<span>{item.status}</span>
+										</li>
+									))}
+								</ul>
+								<small>
+									Schedules, bindings, plugins, and plugin paths are never copied.
+									Recreate only the ones you want through Kestrel's own approvals
+									and protected credential fields.
+								</small>
+							</>
+						)}
 						{plan.warnings.map((warning) => (
 							<small key={warning}>{warning}</small>
 						))}
@@ -7136,7 +7800,10 @@ function MigrationSettings() {
 						<button
 							className="button primary"
 							disabled={
-								busy || confirmation !== "IMPORT" || plan.items.length === 0
+								busy ||
+								confirmation !== "IMPORT" ||
+								!planId ||
+								plan.items.length + plan.translatedSettings === 0
 							}
 							onClick={() => void apply()}
 						>
@@ -7605,6 +8272,17 @@ function RoutingPolicySettings() {
 		);
 
 	const latest = traces.at(-1);
+	const updateProviderIds = (
+		field: "preferredProviderIds" | "avoidedProviderIds",
+		value: string,
+	) =>
+		setPolicy({
+			...policy,
+			[field]: value
+				.split(",")
+				.map((providerId) => providerId.trim())
+				.filter(Boolean),
+		});
 	return (
 		<article className="setting-row routing-policy-setting">
 			<div>
@@ -7660,6 +8338,46 @@ function RoutingPolicySettings() {
 				<details className="routing-advanced">
 					<summary>Advanced routing and latest trace</summary>
 					<div className="routing-advanced-grid">
+						<label className="checkbox-label routing-policy-toggle">
+							<input
+								type="checkbox"
+								checked={policy.allowAutomaticEscalation}
+								onChange={(event) =>
+									setPolicy({
+										...policy,
+										allowAutomaticEscalation: event.target.checked,
+									})
+								}
+							/>{" "}
+							Allow automatic escalation
+							<small>Move to a stronger route only when needed.</small>
+						</label>
+						<label>
+							Maximum escalations
+							<input
+								type="number"
+								min="0"
+								max="8"
+								value={policy.maximumEscalations}
+								onChange={(event) =>
+									setPolicy({
+										...policy,
+										maximumEscalations: Number(event.target.value),
+									})
+								}
+							/>
+						</label>
+						<label className="checkbox-label routing-policy-toggle">
+							<input
+								type="checkbox"
+								checked={policy.allowVerifier}
+								onChange={(event) =>
+									setPolicy({ ...policy, allowVerifier: event.target.checked })
+								}
+							/>{" "}
+							Use independent verification
+							<small>Add a separate reviewer when the route requires it.</small>
+						</label>
 						<label>
 							Maximum parallel agents
 							<input
@@ -7720,6 +8438,28 @@ function RoutingPolicySettings() {
 								}
 							/>
 						</label>
+						<label>
+							Preferred provider IDs
+							<input
+								value={policy.preferredProviderIds.join(", ")}
+								placeholder="comma separated"
+								onChange={(event) =>
+									updateProviderIds("preferredProviderIds", event.target.value)
+								}
+							/>
+							<small>Soft preference. IDs only; never credentials.</small>
+						</label>
+						<label>
+							Avoided provider IDs
+							<input
+								value={policy.avoidedProviderIds.join(", ")}
+								placeholder="comma separated"
+								onChange={(event) =>
+									updateProviderIds("avoidedProviderIds", event.target.value)
+								}
+							/>
+							<small>Hard exclusion. IDs only; never credentials.</small>
+						</label>
 					</div>
 					<button
 						className="button secondary"
@@ -7744,6 +8484,39 @@ function RoutingPolicySettings() {
 									? ` · ${latest.escalationCount} escalation${latest.escalationCount === 1 ? "" : "s"}`
 									: ""}
 							</small>
+							{latest.decisions.length > 0 && (
+								<dl className="routing-trace-context">
+									<div>
+										<dt>Account</dt>
+										<dd>{latest.decisions[0]?.accountAlias ?? "Default account"}</dd>
+									</div>
+									<div>
+										<dt>Execution</dt>
+										<dd>
+											{latest.decisions[0]?.executionPattern?.replaceAll("_", " ") ??
+												"single executor"}
+										</dd>
+									</div>
+									<div>
+										<dt>Why this route</dt>
+										<dd>{latest.decisions[0]?.reasons.join(" · ")}</dd>
+									</div>
+								</dl>
+							)}
+							{latest.candidates?.length ? (
+								<details className="routing-trace-candidates">
+									<summary>Candidate routes ({latest.candidates.length})</summary>
+									<ul>
+										{latest.candidates.map((candidate) => (
+											<li key={`${candidate.modelId}-${candidate.endpointId}`}>
+												<strong>{candidate.model}</strong> via {candidate.providerId}
+												{candidate.accountAlias ? ` · ${candidate.accountAlias}` : ""}
+												{candidate.selected ? " · selected" : ""}
+											</li>
+										))}
+									</ul>
+								</details>
+							) : null}
 						</div>
 					) : (
 						<small>No routed task trace yet.</small>
@@ -8006,6 +8779,481 @@ function ApprovalRulesSettings() {
 	);
 }
 
+function AgentWorkspaceSettings() {
+	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
+	const [sessions, setSessions] = useState<RuntimeSession[]>([]);
+	const [busy, setBusy] = useState(false);
+	const [planetBusySessionId, setPlanetBusySessionId] = useState<string | null>(
+		null,
+	);
+	const [planetError, setPlanetError] = useState("");
+	const [error, setError] = useState("");
+
+	const load = useCallback(async () => {
+		const [grantResponse, sessionResponse] = await Promise.all([
+			window.kestrel.request({ type: "get-workspace-grants" }),
+			window.kestrel.request({ type: "runtime-list-sessions" }),
+		]);
+		if (!grantResponse.ok)
+			throw new Error(
+				"error" in grantResponse
+					? grantResponse.error
+					: "Workspace access could not be loaded.",
+			);
+		if (!sessionResponse.ok)
+			throw new Error(
+				"error" in sessionResponse
+					? sessionResponse.error
+					: "Agent sessions could not be loaded.",
+			);
+		if ("workspaceGrants" in grantResponse)
+			setGrants(grantResponse.workspaceGrants);
+		if ("sessions" in sessionResponse) setSessions(sessionResponse.sessions ?? []);
+	}, []);
+
+	useEffect(() => {
+		void load().catch((cause) =>
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "Workspace and session settings could not be loaded.",
+			),
+		);
+	}, [load]);
+
+	async function addFolder() {
+		setBusy(true);
+		setError("");
+		try {
+			const response = await window.kestrel.request({
+				type: "select-workspace-folder",
+			});
+			if (!response.ok)
+				throw new Error(
+					"error" in response ? response.error : "Folder access could not be added.",
+				);
+			await load();
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Folder access could not be added.",
+			);
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	async function removeFolder(path: string) {
+		setBusy(true);
+		setError("");
+		try {
+			const response = await window.kestrel.request({
+				type: "remove-workspace-folder",
+				path,
+			});
+			if (!response.ok)
+				throw new Error(
+					"error" in response ? response.error : "Folder access could not be removed.",
+				);
+			await load();
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Folder access could not be removed.",
+			);
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	async function updateAgentPlanet(sessionId: string, value: string) {
+		const asset = value
+			? AGENT_UNIVERSE_PLANET_ASSETS.find((candidate) => candidate.id === value)
+			: undefined;
+		if (value && !asset) {
+			setPlanetError("That planet is not available in the local NASA asset set.");
+			return;
+		}
+		setPlanetBusySessionId(sessionId);
+		setPlanetError("");
+		try {
+			const response = (await window.kestrel.request({
+				type: "runtime-update-agent-planet",
+				sessionId,
+				planetAssetId: asset ? (asset.id as AgentPlanetAssetId) : null,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (!response.session)
+				throw new Error("The updated agent session was not returned.");
+			setSessions((current) =>
+				current.map((session) =>
+					session.id === response.session!.id ? response.session! : session,
+				),
+			);
+		} catch (cause) {
+			setPlanetError(
+				cause instanceof Error
+					? cause.message
+					: "The agent planet could not be updated.",
+			);
+		} finally {
+			setPlanetBusySessionId(null);
+		}
+	}
+
+	const persistentAgents = sessions.filter(
+		(session) => session.kind === "agent" && !session.forgottenAt,
+	);
+
+	return (
+		<section
+			className="settings-panel"
+			id="setting-agent-workspace"
+			aria-labelledby="settings-workspace-title"
+		>
+			<header className="settings-panel-header">
+				<h2 id="settings-workspace-title">Workspace and sessions</h2>
+				<p>
+					Approve folder access and review persistent sessions. Removing a folder
+					keeps its files and chats.
+				</p>
+			</header>
+			<section className="settings-stack" aria-label="Workspace and session settings">
+				<article className="setting-row" id="setting-agent-workspace-grants">
+					<div>
+						<strong>Project folder access</strong>
+						<p>
+							Only approved folders are available to workspace tools. Remove access
+							anytime; unavailable folders stay listed so you can reconnect them.
+						</p>
+						{grants.length === 0 ? (
+							<small>No project folders are connected.</small>
+						) : (
+							<ul className="workspace-grants">
+								{grants.map((grant) => (
+									<li key={grant.path}>
+										<span title={grant.path}>
+											{grant.name}
+											{grant.available === false ? " · unavailable" : ""}
+										</span>
+										<button
+											type="button"
+											className="quiet-link"
+											disabled={busy}
+											onClick={() => void removeFolder(grant.path)}
+										>
+											Remove
+										</button>
+									</li>
+								))}
+							</ul>
+						)}
+						{error && <small role="alert">{error}</small>}
+					</div>
+					<button
+						type="button"
+						className="button secondary"
+						disabled={busy}
+						onClick={() => void addFolder()}
+					>
+						{busy ? "Updating…" : "Add folder"}
+					</button>
+				</article>
+				<article className="setting-row agent-planet-settings" id="setting-agent-planets">
+					<div>
+						<strong>Persistent agent planets</strong>
+						<p>
+							Choose a planet for each persistent agent. Automatic selection uses a
+							bundled planet; delegated agents appear as moons.
+						</p>
+						{persistentAgents.length === 0 ? (
+							<small>
+								Create an agent in Agent Universe to choose a planet.
+							</small>
+						) : (
+							<ul className="workspace-grants agent-planet-settings-list">
+								{persistentAgents.map((session) => {
+									const asset = agentUniverseBodyAssetFor(
+										session.id,
+										true,
+										session.planetAssetId,
+									);
+									const updating = planetBusySessionId === session.id;
+									return (
+										<li key={session.id}>
+											<span className="agent-planet-setting-identity">
+												<img src={asset.url} alt="" aria-hidden="true" />
+												<span>
+													<strong>{session.title}</strong>
+													<small>
+														{asset.label} · NASA/JPL-Caltech
+														{session.planetAssetId ? "" : " · automatic"}
+													</small>
+												</span>
+											</span>
+											<label>
+												<span className="sr-only">Planet for {session.title}</span>
+												<select
+													value={session.planetAssetId ?? ""}
+													disabled={Boolean(planetBusySessionId)}
+													onChange={(event) =>
+														void updateAgentPlanet(session.id, event.target.value)
+													}
+												>
+													<option value="">Automatic planet</option>
+													{AGENT_UNIVERSE_PLANET_ASSETS.map((candidate) => (
+														<option key={candidate.id} value={candidate.id}>
+															{candidate.label}
+														</option>
+													))}
+												</select>
+												{updating ? <small>Saving…</small> : null}
+											</label>
+										</li>
+									);
+								})}
+							</ul>
+						)}
+						{planetError ? <small role="alert">{planetError}</small> : null}
+					</div>
+					<span className="status">
+						{persistentAgents.length} agent{persistentAgents.length === 1 ? "" : "s"}
+					</span>
+				</article>
+				<article className="setting-row" id="setting-agent-sessions">
+					<div>
+						<strong>Durable sessions</strong>
+						<p>
+							Sessions, checkpoints, and approval boundaries persist locally so
+							work can be resumed without replaying side effects.
+						</p>
+						{sessions.length === 0 ? (
+							<small>No agent sessions yet.</small>
+						) : (
+							<ul className="workspace-grants">
+								{sessions.map((session) => (
+									<li key={session.id}>
+										<span>
+											{session.title} · {session.status} · {session.checkpoints.length} checkpoint
+											{session.checkpoints.length === 1 ? "" : "s"}
+											{session.workspaceRoot ? ` · ${session.workspaceRoot}` : ""}
+										</span>
+									</li>
+								))}
+							</ul>
+						)}
+					</div>
+					<span className="status">{sessions.length} session{sessions.length === 1 ? "" : "s"}</span>
+				</article>
+			</section>
+		</section>
+	);
+}
+
+function automationScheduleLabel(job: ScheduledJobSummary): string {
+	const schedule = job.schedule;
+	if (schedule.kind === "cron") return `Cron ${schedule.expression}`;
+	if (schedule.kind === "interval")
+		return `Every ${Math.round(schedule.intervalMs / 60_000)} minutes`;
+	return "One time";
+}
+
+function AgentAutomationsSettings() {
+	const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
+	const [busy, setBusy] = useState("");
+	const [error, setError] = useState("");
+
+	const load = useCallback(async () => {
+		const response = (await window.kestrel.request({
+			type: "orchestration-list",
+		})) as CoreResponse;
+		if (!response.ok) throw new Error(response.error);
+		setJobs(response.jobs ?? []);
+	}, []);
+
+	useEffect(() => {
+		void load().catch((cause) =>
+			setError(
+				cause instanceof Error ? cause.message : "Automations could not be loaded.",
+			),
+		);
+	}, [load]);
+
+	async function mutate(job: ScheduledJobSummary, action: "cancel" | "resume") {
+		setBusy(job.id);
+		setError("");
+		try {
+			const response = (await window.kestrel.request({
+				type:
+					action === "cancel"
+						? "orchestration-job-cancel"
+						: "orchestration-job-resume",
+				jobId: job.id,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			await load();
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Automation could not be updated.",
+			);
+		} finally {
+			setBusy("");
+		}
+	}
+
+	return (
+		<section
+			className="settings-panel"
+			id="setting-agent-automations-panel"
+			aria-labelledby="settings-automations-title"
+		>
+			<header className="settings-panel-header">
+				<h2 id="settings-automations-title">Automations</h2>
+				<p>
+					Review scheduled work and its next run. It follows the same provider,
+					workspace, and approval boundaries as an interactive task.
+				</p>
+			</header>
+			<section className="settings-stack" aria-label="Automation settings">
+				<article className="setting-row" id="setting-agent-automations">
+					<div>
+						<strong>Scheduled work</strong>
+						{jobs.length === 0 ? (
+							<p>No scheduled jobs. Create one in Work.</p>
+						) : (
+							<ul className="workspace-grants automation-settings-list">
+								{jobs.map((job) => (
+									<li key={job.id}>
+										<span>
+											<strong>{job.title}</strong>
+											<small>
+												{job.status} · {automationScheduleLabel(job)} · next {new Date(job.schedule.nextRunAt).toLocaleString()}
+												{job.error ? ` · ${job.error}` : ""}
+											</small>
+										</span>
+										<span className="button-row">
+											{job.status === "waiting_approval" && (
+												<button
+													type="button"
+													className="quiet-link"
+													disabled={Boolean(busy)}
+													onClick={() => void mutate(job, "resume")}
+												>
+													Approve & resume
+												</button>
+											)}
+											{["pending", "running", "waiting_approval"].includes(job.status) && (
+												<button
+													type="button"
+													className="quiet-link"
+													disabled={Boolean(busy)}
+													onClick={() => void mutate(job, "cancel")}
+												>
+													Cancel
+												</button>
+											)}
+										</span>
+									</li>
+								))}
+							</ul>
+						)}
+						{error && <small role="alert">{error}</small>}
+					</div>
+					<span className="status">{jobs.length} job{jobs.length === 1 ? "" : "s"}</span>
+				</article>
+			</section>
+		</section>
+	);
+}
+
+function AgentDiagnosticsSettings() {
+	const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
+	const [busy, setBusy] = useState("");
+	const [error, setError] = useState("");
+	const [notice, setNotice] = useState("");
+
+	async function checkReadiness() {
+		setBusy("readiness");
+		setError("");
+		setNotice("");
+		try {
+			const response = await window.kestrel.request({ type: "system-readiness" });
+			if (!response.ok || !("systemReadiness" in response))
+				throw new Error(
+					"error" in response ? response.error : "Readiness check failed.",
+				);
+			setReadiness(response.systemReadiness);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Readiness check failed.");
+		} finally {
+			setBusy("");
+		}
+	}
+
+	async function exportReport() {
+		setBusy("report");
+		setError("");
+		setNotice("");
+		try {
+			const response = await window.kestrel.request({ type: "export-diagnostic-report" });
+			if (!response.ok || !("diagnosticReportPath" in response))
+				throw new Error(
+					"error" in response ? response.error : "Diagnostic report export failed.",
+				);
+			setNotice(`Diagnostic report exported to ${response.diagnosticReportPath}.`);
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Diagnostic report export failed.",
+			);
+		} finally {
+			setBusy("");
+		}
+	}
+
+	return (
+		<article className="setting-row" id="setting-agent-diagnostics">
+			<div>
+				<strong>Health and diagnostic reports</strong>
+				<p>
+					Run a content-free readiness check or export a local report. Reports omit
+					prompts, credentials, and page content.
+				</p>
+				<div className="button-row">
+					<button
+						type="button"
+						className="button secondary"
+						disabled={Boolean(busy)}
+						onClick={() => void checkReadiness()}
+					>
+						{busy === "readiness" ? "Checking…" : "Check readiness"}
+					</button>
+					<button
+						type="button"
+						className="button secondary"
+						disabled={Boolean(busy)}
+						onClick={() => void exportReport()}
+					>
+						{busy === "report" ? "Exporting…" : "Export report"}
+					</button>
+				</div>
+				{readiness && (
+					<div className="diagnostics-readiness" role="status">
+						<strong>{readiness.readyForLiveWork ? "Ready for live work" : "Needs attention"}</strong>
+						<ul className="workspace-grants">
+							{readiness.checks.map((check) => (
+								<li key={check.id}>
+									<span>{check.label} · {check.detail}</span>
+									<span className={`status ${check.status}`}>{check.status}</span>
+								</li>
+							))}
+						</ul>
+					</div>
+				)}
+				{notice && <small role="status">{notice}</small>}
+				{error && <small role="alert">{error}</small>}
+			</div>
+		</article>
+	);
+}
+
 function Settings({
 	snapshot,
 	update,
@@ -8027,6 +9275,7 @@ function Settings({
 	onToggleBrowserContext(): void;
 	onBack?(): void;
 }) {
+	const reduced = useReducedMotion();
 	const [login, setLogin] = useState<{
 		enabled: boolean;
 		status: string;
@@ -8034,16 +9283,59 @@ function Settings({
 	const [confirmation, setConfirmation] = useState("");
 	const [resetError, setResetError] = useState("");
 	const [section, setSection] = useState<SettingsSection>(
-		initialSection ?? "connections",
+		normalizeSettingsSection(initialSection),
 	);
 	const [scope, setScope] = useState<SettingsScope>(
-		initialSection === "browser" ? "browser" : "agent",
+		settingsScopeForSection(initialSection),
 	);
+	const [settingsQuery, setSettingsQuery] = useState("");
+	const [focusAnchor, setFocusAnchor] = useState("");
+	const settingsSearchRef = useRef<HTMLInputElement>(null);
 	useEffect(() => {
 		if (!initialSection) return;
-		setSection(initialSection);
-		setScope(initialSection === "browser" ? "browser" : "agent");
+		const normalized = normalizeSettingsSection(initialSection);
+		setSection(normalized);
+		setScope(settingsScopeForSection(normalized));
 	}, [initialSection, sectionRequestId]);
+	const chooseSection = useCallback(
+		(next: SettingsSection, anchor = "") => {
+			const normalized = normalizeSettingsSection(next);
+			setScope(settingsScopeForSection(normalized));
+			setSection(normalized);
+			if (anchor) setFocusAnchor(anchor);
+		},
+		[],
+	);
+	const visibleSections = useMemo(
+		() => SETTINGS_SECTIONS.filter((candidate) => candidate.scope === scope),
+		[scope],
+	);
+	const searchResults = useMemo(
+		() =>
+			SETTINGS_CATALOG.filter((entry) =>
+				settingsSectionMatchesQuery(entry, settingsQuery),
+			),
+		[settingsQuery],
+	);
+	useEffect(() => {
+		if (!focusAnchor) return;
+		const frame = window.requestAnimationFrame(() => {
+			const target = document.getElementById(focusAnchor);
+			const control =
+				target?.matches("input,select,textarea,button")
+					? target
+					: target?.querySelector<HTMLElement>(
+							"input,select,textarea,button,[tabindex]:not([tabindex='-1'])",
+						);
+			target?.scrollIntoView({
+				block: "center",
+				behavior: reduced ? "auto" : "smooth",
+			});
+			control?.focus({ preventScroll: true });
+			setFocusAnchor("");
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [focusAnchor, reduced]);
 	useEffect(() => {
 		void window.kestrel
 			.request({ type: "get-system-state" })
@@ -8232,20 +9524,20 @@ function Settings({
 		paused: snapshot.agentState === "paused",
 	});
 	const route = snapshot.modelRouting.currentDecision;
-	const browserSections = [
-		["browser", "Browser Preferences"],
-	] as const;
-	const agentSections = [
-		["general", "General & Autonomy"],
-		["connections", "Connections"],
-		["models", "Models & Routing"],
-		["intelligence", "Intelligence & Memory"],
-		["extensions", "Agent Plugins"],
-		["privacy", "Privacy & Safety"],
-		["advanced", "Advanced System"],
-	] as const;
+	const basicSections = visibleSections.filter(
+		(candidate) => candidate.tier === "basic",
+	);
+	const advancedSections = visibleSections.filter(
+		(candidate) => candidate.tier === "advanced",
+	);
+	const activeSection = sectionDefinition(section);
 	return (
-		<PageFrame title="Preferences" {...(onBack ? { onBack } : {})}>
+		<PageFrame
+			title="Settings"
+			measure="wide"
+			className="settings-page-frame"
+			{...(onBack ? { onBack } : {})}
+		>
 			<div
 				className="settings-scope-switcher"
 				role="tablist"
@@ -8256,15 +9548,12 @@ function Settings({
 					role="tab"
 					aria-selected={scope === "browser"}
 					className={scope === "browser" ? "active" : ""}
-					onClick={() => {
-						setScope("browser");
-						setSection("browser");
-					}}
+					onClick={() => chooseSection("browser")}
 				>
 					<Icon name="browser" />
 					<span>
 						<strong>Browser</strong>
-						<small>Tabs, search, and new tab</small>
+						<small>Tabs, search, and privacy</small>
 					</span>
 				</button>
 				<button
@@ -8272,73 +9561,145 @@ function Settings({
 					role="tab"
 					aria-selected={scope === "agent"}
 					className={scope === "agent" ? "active" : ""}
-					onClick={() => {
-						setScope("agent");
-						setSection("general");
-					}}
+					onClick={() => chooseSection("agent-general")}
 				>
 					<Icon name="agent" />
 					<span>
 						<strong>Agent</strong>
-						<small>Models, memory, and behavior</small>
+						<small>Models, memory, and work</small>
 					</span>
 				</button>
+			</div>
+			<label className="settings-section-picker">
+				<span>Settings section</span>
+				<select
+					value={section}
+					onChange={(event) => {
+						const next = event.target.value as SettingsSection;
+						chooseSection(next);
+					}}
+				>
+					<optgroup label="Browser">
+						{SETTINGS_SECTIONS.filter(
+							(candidate) => candidate.scope === "browser",
+						).map((candidate) => (
+							<option key={candidate.id} value={candidate.id}>
+								{candidate.label}
+							</option>
+						))}
+					</optgroup>
+					<optgroup label="Agent">
+						{SETTINGS_SECTIONS.filter(
+							(candidate) => candidate.scope === "agent",
+						).map((candidate) => (
+							<option key={candidate.id} value={candidate.id}>
+								{candidate.label}
+							</option>
+						))}
+					</optgroup>
+				</select>
+			</label>
+			<div className="settings-search" role="search">
+				<label className="settings-search-field">
+					<Icon name="search" />
+					<span className="sr-only">Search settings</span>
+					<input
+						ref={settingsSearchRef}
+						value={settingsQuery}
+						onChange={(event) => setSettingsQuery(event.target.value)}
+						placeholder="Search Browser and Agent settings"
+						aria-label="Search Browser and Agent settings"
+						aria-controls="settings-search-results"
+					/>
+					{settingsQuery && (
+						<button
+							type="button"
+							className="settings-search-clear"
+							aria-label="Clear settings search"
+							onClick={() => {
+								setSettingsQuery("");
+								settingsSearchRef.current?.focus();
+							}}
+						>
+							<Icon name="close" />
+						</button>
+					)}
+				</label>
+				{settingsQuery && (
+					<div
+						id="settings-search-results"
+						className="settings-search-results"
+						aria-live="polite"
+					>
+						{searchResults.length === 0 ? (
+							<p className="settings-search-empty">
+								No settings match “{settingsQuery}”.
+							</p>
+						) : (
+							<>
+								<p className="settings-search-count">
+									{searchResults.length} matching setting
+									{searchResults.length === 1 ? "" : "s"}
+								</p>
+								{searchResults.map((entry) => (
+									<button
+										key={entry.id}
+										type="button"
+										className="settings-search-result"
+										onClick={() => chooseSection(entry.section, entry.anchor)}
+									>
+										<span className="settings-search-result-copy">
+											<strong>{entry.label}</strong>
+											<small>{entry.description}</small>
+										</span>
+										<span className="settings-search-result-category">
+											{sectionDefinition(entry.section).label} · {entry.tier}
+										</span>
+									</button>
+								))}
+							</>
+						)}
+					</div>
+				)}
 			</div>
 			<div className="settings-layout">
 				<nav className="settings-nav" aria-label="Settings sections">
 					<div className="settings-nav-heading">
-						<span>Settings for</span>
 						<strong>{scope === "browser" ? "Browser" : "Agent"}</strong>
-						<small>
-							{scope === "browser"
-								? "Keep browsing controls in one place."
-								: "Configure how Kestrel works with you."}
-						</small>
+						<small>{activeSection.description}</small>
 					</div>
-					{scope === "browser" ? (
-						<>
-							<div className="settings-nav-category-header">
-								<Icon name="browser" />
-								<span>Browser settings</span>
+					{(["basic", "advanced"] as const).map((tier) => {
+						const tierSections = tier === "basic" ? basicSections : advancedSections;
+						return (
+							<div className="settings-nav-group" key={tier}>
+								<h3>{tier === "basic" ? "Basic" : "Advanced"}</h3>
+								{tierSections.map((candidate) => (
+									<button
+										key={candidate.id}
+										type="button"
+										className={section === candidate.id ? "active" : ""}
+										aria-current={section === candidate.id ? "page" : undefined}
+										title={candidate.description}
+										onClick={() => chooseSection(candidate.id)}
+									>
+										<span>{candidate.label}</span>
+									</button>
+								))}
 							</div>
-							{browserSections.map(([id, label]) => (
-								<button
-									key={id}
-									className={section === id ? "active browser-section-btn" : "browser-section-btn"}
-									aria-current={section === id ? "page" : undefined}
-									onClick={() => {
-										setScope("browser");
-										setSection(id);
-									}}
-								>
-									<span>{label}</span>
-								</button>
-							))}
-						</>
-					) : (
-						<>
-							<div className="settings-nav-category-header">
-								<Icon name="agent" />
-								<span>Agent settings</span>
-							</div>
-							{agentSections.map(([id, label]) => (
-								<button
-									key={id}
-									className={section === id ? "active" : ""}
-									aria-current={section === id ? "page" : undefined}
-									onClick={() => {
-										setScope("agent");
-										setSection(id);
-									}}
-								>
-									<span>{label}</span>
-								</button>
-							))}
-						</>
-					)}
+						);
+					})}
 				</nav>
-				<div className="settings-content">
-					{section === "general" && (
+					<div className="settings-content-stage">
+					<AnimatePresence initial={false} mode="popLayout">
+					<motion.div
+						key={section}
+						className="settings-content"
+						initial={reduced ? false : { opacity: 0 }}
+						animate={{ opacity: 1 }}
+						exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
+						transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+					>
+					{section === "agent-general" && (
 						<div className="agent-config-banner" role="region" aria-label="Agent configuration">
 							<div className="agent-config-banner-header">
 								<span className="agent-config-badge">
@@ -8370,42 +9731,38 @@ function Settings({
 								))}
 							</div>
 						</div>
-					)}
-					{section === "browser" && (
-						<BrowserSettings
-							browser={browser}
-							contextEnabled={browserContextEnabled}
-							onToggleContext={onToggleBrowserContext}
-						/>
-					)}
-					{section === "connections" && (
+						)}
+						{(section === "browser" || section.startsWith("browser-")) && (
+							<BrowserSettings
+								browser={browser}
+								contextEnabled={browserContextEnabled}
+								onToggleContext={onToggleBrowserContext}
+								section={section as BrowserSettingsSection}
+							/>
+						)}
+					{section === "agent-connections" && (
 						<>
 							<Connections snapshot={snapshot} />
-							<section
-								className="settings-stack"
-								aria-label="Provider credentials"
-							>
-								<CredentialSettings hideCodexDuplicate />
+							<section className="settings-stack" aria-label="Subscription connections">
+								<SubscriptionCliSettings hideCodexDuplicate />
 							</section>
 						</>
 					)}
-				{section === "general" && (
+				{section === "agent-general" && (
 					<section
 						className="settings-panel"
+						id="setting-agent-general"
 						aria-labelledby="settings-general-title"
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-general-title">Autonomy and behavior</h2>
-							<p>
-								Startup, communication style, and how much initiative Kestrel
-								takes.
-							</p>
+							<p>Set startup, communication, and initiative.</p>
 						</header>
 						<section className="settings-stack" aria-label="General settings">
 						<article className="setting-row">
 							<div>
 								<strong>Setup guide</strong>
-								<p>Reopen the walkthrough. Protected credentials stay in place.</p>
+								<p>Reopen setup without changing saved credentials.</p>
 							</div>
 							<button className="button secondary" onClick={reopenSetup}>
 								Open setup guide
@@ -8414,7 +9771,7 @@ function Settings({
 						<article className="setting-row">
 							<div>
 								<strong>Background work</strong>
-								<p>Pause proactive work without closing Kestrel.</p>
+								<p>Pause background work without closing Kestrel.</p>
 							</div>
 							<button
 								className="button secondary"
@@ -8428,10 +9785,7 @@ function Settings({
 						<article className="setting-row routing-setting">
 							<div>
 								<strong>Communication style</strong>
-								<p>
-									How Kestrel explains work. Safety and capability rules do not
-									change.
-								</p>
+								<p>Choose how Kestrel explains work. Safety settings stay the same.</p>
 							</div>
 								<div
 									className="segmented"
@@ -8475,16 +9829,15 @@ function Settings({
 						</section>
 					</section>
 				)}
-				{section === "models" && (
+				{section === "agent-models" && (
 					<section
 						className="settings-panel"
+						id="setting-agent-models"
 						aria-labelledby="settings-models-title"
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-models-title">Routing and providers</h2>
-							<p>
-								Model routing, live provider checks, and cost guardrails.
-							</p>
+							<p>Set routing priorities, check providers, and limit spend.</p>
 						</header>
 					<section
 						className="settings-stack"
@@ -8498,8 +9851,8 @@ function Settings({
 										<strong>Execution routing</strong>
 										<small>
 											{route.execution === "local"
-												? "No provider request was needed for the current task."
-												: "Live runs can use measured provider health, configured rates, and account pools."}
+												? "No provider request was needed for this task."
+												: "Live runs use provider health, rates, and available accounts."}
 										</small>
 									</div>
 									<div
@@ -8522,33 +9875,29 @@ function Settings({
 											<small>Auto</small>
 										</div>
 									</div>
-								</article>
+									</article>
 							</details>
 						<ProviderVerificationSettings />
+						<ProviderAccountsSettings />
 						<UsagePolicySettings />
 					</section>
 					</section>
 				)}
-				{section === "extensions" && (
+				{section === "agent-tools" && (
 					<section
 						className="settings-panel"
+						id="setting-agent-tools"
 						aria-labelledby="settings-extensions-title"
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-extensions-title">Plugins and publishers</h2>
-							<p>
-								Signed bundles from publishers you explicitly trust — nothing
-								else installs.
-							</p>
+							<p>Install signed plugins only from publishers you trust.</p>
 						</header>
 					<section className="settings-stack" aria-label="Extension settings">
-						<article className="setting-row">
+						<article className="setting-row plugin-supply-setting">
 								<div>
-									<strong>Plugin supply chain</strong>
-									<p>
-										Only Ed25519-signed bundles from publishers you explicitly
-										trust can be installed or updated.
-									</p>
+									<strong>Trusted publishers</strong>
+									<p>Only plugins signed by them can be installed or updated.</p>
 									{publishers.length > 0 ? (
 										<ul className="workspace-grants">
 											{publishers.map((publisher) => (
@@ -8683,19 +10032,24 @@ function Settings({
 								</article>
 							))}
 						</section>
+						<section className="settings-stack" aria-label="Learned skill settings">
+							<LearnedSkillsSettings
+								{...(focusSkillReview
+									? { focusRequest: focusSkillReview }
+									: {})}
+							/>
+						</section>
 					</section>
 					)}
-					{section === "intelligence" && (
+					{section === "agent-memory" && (
 						<section
 							className="settings-panel"
+							id="setting-agent-memory"
 							aria-labelledby="settings-intelligence-title"
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-intelligence-title">Memory and learning</h2>
-								<p>
-									What Kestrel remembers, senses, and learns stays reviewable
-									here.
-								</p>
+								<p>Review memory, context, and learned skills.</p>
 							</header>
 						<section
 							className="settings-stack"
@@ -8704,80 +10058,107 @@ function Settings({
 							<MemoryRecallStatus snapshot={snapshot} />
 							<HonchoMemorySettings />
 							<PresenceSettings />
-							<LearnedSkillsSettings
-								{...(focusSkillReview
-									? { focusRequest: focusSkillReview }
-									: {})}
-							/>
 						</section>
 						</section>
 					)}
-					{section === "privacy" && (
+					{section === "agent-workspace" && (
+						<AgentWorkspaceSettings />
+					)}
+					{section === "agent-automations" && (
+						<AgentAutomationsSettings />
+					)}
+					{section === "agent-permissions" && (
 						<section
 							className="settings-panel"
+							id="setting-agent-permissions"
 							aria-labelledby="settings-privacy-title"
 						>
 							<header className="settings-panel-header">
-								<h2 id="settings-privacy-title">Approvals and recovery</h2>
-								<p>
-									Persistent approval rules, reference imports, and local data
-									reset.
-								</p>
+								<h2 id="settings-privacy-title">Permissions and sandbox</h2>
+								<p>Manage approval rules and desktop access.</p>
 							</header>
 						<section
 							className="settings-stack"
 							aria-label="Privacy and safety settings"
 						>
+							<ComputerUseSettings />
 							<ApprovalRulesSettings />
-							<MigrationSettings />
-							<article className="setting-row danger">
-								<div>
-									<strong>Reset Kestrel and prepare for uninstall</strong>
-									<p>
-										Deletes this preview database and secure key, then
-										relaunches.
-									</p>
-									<label>
-										Type Kestrel to confirm
-										<input
-											value={confirmation}
-											onChange={(event) => setConfirmation(event.target.value)}
-										/>
-									</label>
-									{resetError && <small role="alert">{resetError}</small>}
-								</div>
-								<button
-									className="button danger-button"
-									disabled={confirmation !== "Kestrel"}
-									onClick={() => void reset()}
-								>
-									Reset local data
-								</button>
-							</article>
 						</section>
 						</section>
 					)}
-					{section === "advanced" && (
+					{section === "agent-privacy" && (
 						<section
 							className="settings-panel"
+							id="setting-agent-privacy"
+							aria-labelledby="settings-agent-privacy-title"
+						>
+							<header className="settings-panel-header">
+								<h2 id="settings-agent-privacy-title">Privacy and credentials</h2>
+								<p>Credentials stay in secure storage. Review status or revoke access here.</p>
+							</header>
+							<section className="settings-stack" aria-label="Protected credential settings">
+								<CredentialSettings hideCodexDuplicate />
+								<article className="setting-row danger">
+									<div>
+										<strong>Reset local agent data</strong>
+										<p>Deletes all local data and its secure key, then restarts Kestrel.</p>
+										<label>
+											Type Kestrel to confirm
+											<input
+											value={confirmation}
+											onChange={(event) => setConfirmation(event.target.value)}
+										/>
+										</label>
+										{resetError && <small role="alert">{resetError}</small>}
+									</div>
+									<button
+										className="button danger-button"
+										disabled={confirmation !== "Kestrel"}
+										onClick={() => void reset()}
+									>
+										Reset local data
+									</button>
+								</article>
+							</section>
+						</section>
+					)}
+					{section === "agent-migration" && (
+						<section
+							className="settings-panel"
+							id="setting-agent-migration"
+							aria-labelledby="settings-agent-migration-title"
+						>
+							<header className="settings-panel-header">
+								<h2 id="settings-agent-migration-title">Migration</h2>
+								<p>Review imports before moving files. Credentials stay where they are.</p>
+							</header>
+							<section className="settings-stack" aria-label="Migration settings">
+								<MigrationSettings />
+							</section>
+						</section>
+					)}
+					{section === "agent-diagnostics" && (
+						<section
+							className="settings-panel"
+							id="setting-agent-diagnostics-panel"
 							aria-labelledby="settings-advanced-title"
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-advanced-title">Diagnostics and organization</h2>
-								<p>
-									Content-free diagnostics, managed policy, and custom agents.
-								</p>
+								<p>Check health and organize local agents.</p>
 							</header>
 						<section className="settings-stack" aria-label="Advanced settings">
 							<ObservabilitySettings />
-							<EnterpriseSettings />
-							<CustomAgentsSettings snapshot={snapshot} update={update} />
-						</section>
-						</section>
-					)}
+							<AgentDiagnosticsSettings />
+								<CustomAgentsSettings snapshot={snapshot} update={update} />
+							</section>
+							</section>
+						)}
+						</motion.div>
+					</AnimatePresence>
 				</div>
 			</div>
-		</PageFrame>
+			</PageFrame>
 	);
 }
 
@@ -8786,24 +10167,33 @@ function PageFrame({
 	title,
 	text,
 	onBack,
+	actions,
+	measure = "standard",
+	className,
 	children,
 }: {
 	eyebrow?: string;
 	title: string;
 	text?: string;
 	onBack?(): void;
+	actions?: ReactNode;
+	measure?: PageMeasure;
+	className?: string;
 	children: ReactNode;
 }) {
 	return (
-		<div className="page-frame">
-			{onBack && <SurfaceBackButton onBack={onBack} />}
-			<header className="page-header">
-				{eyebrow && <span className="eyebrow">{eyebrow}</span>}
-				<h1>{title}</h1>
-				{text && <p>{text}</p>}
-			</header>
+		<SurfacePageFrame
+			as="div"
+			eyebrow={eyebrow}
+			title={title}
+			description={text}
+			actions={actions}
+			measure={measure}
+			className={className}
+			navigation={onBack ? <SurfaceBackButton onBack={onBack} /> : undefined}
+		>
 			{children}
-		</div>
+		</SurfacePageFrame>
 	);
 }
 
@@ -8817,6 +10207,9 @@ export function App() {
 	const [runtimeRefreshRevision, setRuntimeRefreshRevision] = useState(0);
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
 		() => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
+	);
+	const [agentUniverseRailOpen, setAgentUniverseRailOpen] = useState(
+		() => localStorage.getItem("kestrel:agent-universe-rail") === "open",
 	);
 	const [settingsSectionRequest, setSettingsSectionRequest] = useState<{
 		section: SettingsSection | null;
@@ -8833,15 +10226,32 @@ export function App() {
 	const pendingToolRouteFocusRef = useRef<KestrelAppPageId | null>(null);
 	const routeFocusFrameRef = useRef<number | null>(null);
 	const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
-	const [workspaceGrants, setWorkspaceGrants] = useState<WorkspaceGrant[]>([]);
+	const [runtimeSessionsLoadState, setRuntimeSessionsLoadState] = useState<
+		"loading" | "ready" | "error"
+	>("loading");
+	const [agentUniverseActivities, setAgentUniverseActivities] = useState<
+		AgentUniverseActivity[]
+	>([]);
+	const [transcriptTarget, setTranscriptTarget] = useState<{
+		sessionId: string;
+		messageId: string;
+	} | null>(null);
+	const [projects, setProjects] = useState<Project[]>([]);
+	const [projectsLoaded, setProjectsLoaded] = useState(false);
+	const [projectAppearances, setProjectAppearances] = useState<ProjectAppearanceMap>(
+		() => readProjectAppearances(window.localStorage),
+	);
+	const [projectSettingsProjectId, setProjectSettingsProjectId] = useState<
+		string | null
+	>(null);
 	const [runtimeAgentState, setRuntimeAgentState] = useState<AgentState | null>(
 		null,
 	);
 	const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState<
 		string | null
 	>(null);
-	const [activeProjectPath, setActiveProjectPath] = useState<string | null>(
-		() => localStorage.getItem("kestrel:active-project"),
+	const [activeProjectId, setActiveProjectId] = useState<string | null>(
+		() => localStorage.getItem("kestrel:active-project-id"),
 	);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
@@ -8853,6 +10263,9 @@ export function App() {
 	);
 	const [externalIntakeRequestId, setExternalIntakeRequestId] = useState(0);
 	const [newAgentWorkspace, setNewAgentWorkspace] = useState<string | null>(
+		null,
+	);
+	const [newAgentProjectId, setNewAgentProjectId] = useState<string | null>(
 		null,
 	);
 	const lastPromptedNewAgentAtRef = useRef(0);
@@ -8868,6 +10281,32 @@ export function App() {
 	const [organizeTabsRequestId, setOrganizeTabsRequestId] = useState(0);
 	const [greetingName, setGreetingName] = useState<string | undefined>();
 	const reduced = useReducedMotion();
+	const refreshRuntimeSessions = useCallback(async () => {
+		setRuntimeSessionsLoadState("loading");
+		try {
+			const raw = await window.kestrel.request({
+				type: "runtime-list-sessions",
+			});
+			const response = raw as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			setRuntimeSessions(response.sessions ?? []);
+			setRuntimeSessionsLoadState("ready");
+		} catch (cause) {
+			setRuntimeSessionsLoadState("error");
+			throw cause;
+		}
+	}, []);
+	const refreshProjects = useCallback(async (): Promise<Project[]> => {
+		const response = await window.kestrel.request({
+			type: "get-workspace-grants",
+		});
+		if (!response.ok) throw new Error(response.error);
+		const next = projectsFromRendererResponse(response);
+		if (!next) throw new Error("Project metadata could not be loaded.");
+		setProjects(next);
+		setProjectsLoaded(true);
+		return next;
+	}, []);
 
 	useEffect(() => {
 		// Setup links keep their provider-owned/system-browser handoff. A managed
@@ -8944,33 +10383,73 @@ export function App() {
 	useEffect(() => {
 		if (!onboarded) return;
 		let active = true;
-		void window.kestrel
-			.request({ type: "get-workspace-grants" })
-			.then((response) => {
-				if (
-					active &&
-					response.ok &&
-					"workspaceGrants" in response
-				) {
-					setWorkspaceGrants(response.workspaceGrants);
-				}
-			})
-			.catch(() => undefined);
+		void refreshProjects()
+			.catch((cause) => {
+				if (active)
+					setDeepLinkNotice(
+						cause instanceof Error
+							? cause.message
+							: "Projects could not be loaded.",
+					);
+			});
 		return () => {
 			active = false;
 		};
-	}, [onboarded]);
+	}, [onboarded, refreshProjects]);
+
+	useEffect(() => {
+		if (!projectsLoaded) return;
+		const storedId = localStorage.getItem("kestrel:active-project-id");
+		const legacyPath = localStorage.getItem("kestrel:active-project");
+		const resolved =
+			projects.find((project) => project.id === storedId) ??
+			projects.find((project) => project.path === legacyPath);
+		if (resolved) {
+			setActiveProjectId(resolved.id);
+			localStorage.setItem("kestrel:active-project-id", resolved.id);
+			localStorage.removeItem("kestrel:active-project");
+			return;
+		}
+		setActiveProjectId(null);
+		localStorage.removeItem("kestrel:active-project-id");
+		localStorage.removeItem("kestrel:active-project");
+	}, [projects, projectsLoaded]);
+	const selectionRequestRef = useRef(0);
 	const openRuntimeSession = useCallback((sessionId: string | null) => {
 		setActiveRuntimeSessionId(sessionId);
+		const requestId = ++selectionRequestRef.current;
+		void window.kestrel
+			.request({ type: "runtime-select-session", sessionId })
+			.then((response) => {
+				if (requestId !== selectionRequestRef.current) return;
+				if (!response.ok) setError(response.error);
+			})
+			.catch((cause) => {
+				if (requestId !== selectionRequestRef.current) return;
+				setError(
+					cause instanceof Error
+						? cause.message
+						: "Could not persist the selected conversation.",
+				);
+			});
 	}, []);
-	const selectProject = useCallback((projectPath: string) => {
-		setActiveProjectPath(projectPath);
-		localStorage.setItem("kestrel:active-project", projectPath);
+	const selectProject = useCallback((projectId: string | null) => {
+		setActiveProjectId(projectId);
+		if (projectId) localStorage.setItem("kestrel:active-project-id", projectId);
+		else localStorage.removeItem("kestrel:active-project-id");
+		localStorage.removeItem("kestrel:active-project");
 	}, []);
 	const revealAgentSidebar = useCallback(() => {
 		setAgentSidebarOpen(true);
 		localStorage.setItem("kestrel:agent-sidebar", "open");
-	}, []);
+		const activeTab = browser.state?.tabs.find(
+			(tab) => tab.id === browser.state?.activeTabId,
+		);
+		if (parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent") {
+			setAgentUniverseRailOpen(true);
+			localStorage.setItem("kestrel:agent-universe-rail", "open");
+		}
+	}, [browser]);
 	const acceptExternalIntake = useCallback(
 		(intake: ExternalIntake) => {
 			setExternalIntake(intake);
@@ -8995,7 +10474,18 @@ export function App() {
 		prompt = "",
 		workspaceRoot?: string,
 		focusTarget: "prompt" | "task-settings" = "prompt",
+		projectId?: string | null,
 	) => {
+		const inheritedProject =
+			projectId === undefined && activeProjectId
+				? projects.find((project) => project.id === activeProjectId)
+				: undefined;
+		const selectedProject =
+			projectId === undefined
+				? inheritedProject
+				: projectId
+					? projects.find((project) => project.id === projectId)
+					: undefined;
 		const trimmed = prompt.trim();
 		if (
 			focusTarget === "prompt" &&
@@ -9006,11 +10496,49 @@ export function App() {
 		}
 		if (trimmed) lastPromptedNewAgentAtRef.current = Date.now();
 		setNewAgentPrompt(prompt);
-		setNewAgentWorkspace(workspaceRoot ?? null);
+		setNewAgentWorkspace(workspaceRoot ?? selectedProject?.path ?? null);
+		setNewAgentProjectId(selectedProject?.id ?? null);
 		setNewAgentFocusTarget(focusTarget);
 		setNewAgentRequestId((current) => current + 1);
 		revealAgentSidebar();
-	}, [revealAgentSidebar]);
+	}, [activeProjectId, projects, revealAgentSidebar]);
+	const createPersistentAgent = useCallback(
+		async (title: string) => {
+			const normalizedTitle = title.trim();
+			if (!normalizedTitle) throw new Error("Enter a name for the agent.");
+			const selectedProject = activeProjectId
+				? projects.find((project) => project.id === activeProjectId)
+				: undefined;
+			const response = (await window.kestrel.request({
+				type: "runtime-create-session",
+				title: normalizedTitle,
+				kind: "agent",
+				...(selectedProject ? { projectId: selectedProject.id } : {}),
+			})) as CoreResponse;
+			if (!response.ok || !response.session)
+				throw new Error(
+					response.ok ? "Agent creation failed." : response.error,
+				);
+
+			const session = response.session;
+			setRuntimeSessions((current) => [
+				session,
+				...current.filter((candidate) => candidate.id !== session.id),
+			]);
+			if (selectedProject) selectProject(selectedProject.id);
+			openRuntimeSession(session.id);
+			revealAgentSidebar();
+			void refreshRuntimeSessions().catch(() => undefined);
+		},
+		[
+			activeProjectId,
+			openRuntimeSession,
+			projects,
+			refreshRuntimeSessions,
+			revealAgentSidebar,
+			selectProject,
+		],
+	);
 	const openTaskSettings = useCallback(() => {
 		startNewAgent("", undefined, "task-settings");
 	}, [startNewAgent]);
@@ -9030,13 +10558,18 @@ export function App() {
 		(sessionId: string) => {
 			revealAgentSidebar();
 			const session = runtimeSessions.find((item) => item.id === sessionId);
-			if (session?.workspaceRoot) selectProject(session.workspaceRoot);
+			if (session) {
+				const project =
+					projects.find((item) => item.id === session.projectId) ??
+					projects.find((item) => item.path === session.workspaceRoot);
+				selectProject(project?.id ?? null);
+			}
 			openRuntimeSession(sessionId);
 			window.requestAnimationFrame(() => {
 				document.getElementById("runtime-prompt")?.focus();
 			});
 		},
-		[openRuntimeSession, runtimeSessions, revealAgentSidebar, selectProject],
+		[openRuntimeSession, projects, runtimeSessions, revealAgentSidebar, selectProject],
 	);
 	const snapshotPendingCount =
 		snapshot?.approvals.filter((approval) => approval.status === "pending")
@@ -9044,6 +10577,14 @@ export function App() {
 	const runtimeWaiting = runtimeAgentState === "waiting_approval";
 	const openAppPage = useCallback(
 		async (id: KestrelAppPageId, section?: SettingsSection) => {
+			if (id === "projects")
+				await refreshProjects().catch((cause) => {
+					setDeepLinkNotice(
+						cause instanceof Error
+							? cause.message
+							: "Projects could not be loaded.",
+					);
+				});
 			if (id === "settings")
 				setSettingsSectionRequest((current) => ({
 					section: section ?? null,
@@ -9061,20 +10602,31 @@ export function App() {
 			}
 			await browser.createTab(kestrelAppPageUrl(id));
 		},
-		[browser],
+		[browser, refreshProjects],
+	);
+	const openTranscriptResult = useCallback(
+		(result: TranscriptSearchResult) => {
+			setTranscriptTarget({
+				sessionId: result.sessionId,
+				messageId: result.messageId,
+			});
+			openSidebarSession(result.sessionId);
+			void openAppPage("agent");
+		},
+		[openAppPage, openSidebarSession],
 	);
 	const openProject = useCallback(
-		(project: WorkspaceGrant) => {
-			selectProject(project.path);
+		(project: Project) => {
+			selectProject(project.id);
 			void openAppPage("projects");
 		},
 		[openAppPage, selectProject],
 	);
 	const startProjectChat = useCallback(
-		(project: WorkspaceGrant) => {
+		(project: Project) => {
 			if (project.available === false) return;
-			selectProject(project.path);
-			startNewAgent("", project.path);
+			selectProject(project.id);
+			startNewAgent("", project.path, "prompt", project.id);
 			void openAppPage("agent");
 		},
 		[openAppPage, selectProject, startNewAgent],
@@ -9085,6 +10637,122 @@ export function App() {
 			void openAppPage("agent");
 		},
 		[openAppPage, openSidebarSession],
+	);
+	const createProject = useCallback(async () => {
+		try {
+			const response = await window.kestrel.request({
+				type: "select-workspace-folder",
+			});
+			if (!response.ok) throw new Error(response.error);
+			const next = projectsFromRendererResponse(response);
+			if (!next) throw new Error("Project metadata could not be loaded.");
+			setProjects(next);
+			if ("cancelled" in response && response.cancelled) return;
+			const selectedWorkspacePath =
+				"selectedWorkspacePath" in response
+					? response.selectedWorkspacePath
+					: undefined;
+			const selected = next.find(
+				(project) => project.path === selectedWorkspacePath,
+			);
+			if (selected) {
+				selectProject(selected.id);
+				void openAppPage("projects");
+			}
+		} catch (cause) {
+			setDeepLinkNotice(
+				cause instanceof Error ? cause.message : "Could not add the project.",
+			);
+		}
+	}, [openAppPage, selectProject]);
+	const openProjectSettings = useCallback((project: Project) => {
+		selectProject(project.id);
+		setProjectSettingsProjectId(project.id);
+	}, [selectProject]);
+	const saveProjectSettings = useCallback(
+		async (
+			projectId: string,
+			input: {
+				name: string;
+				instructions: string;
+				appearance: ProjectAppearance;
+			},
+		) => {
+			const response = await window.kestrel.request({
+				type: "project-update",
+				projectId,
+				name: input.name,
+				instructions: input.instructions,
+			});
+			if (!response.ok) throw new Error(response.error);
+			const next = projectsFromRendererResponse(response);
+			if (next) setProjects(next);
+			const project = projects.find((item) => item.id === projectId);
+			if (project) {
+				setProjectAppearances((current) => {
+					const updated = { ...current, [project.path]: input.appearance };
+					writeProjectAppearances(window.localStorage, updated);
+					return updated;
+				});
+			}
+		},
+		[projects],
+	);
+	const deleteProject = useCallback(
+		async (projectId: string) => {
+			const project = projects.find((item) => item.id === projectId);
+			const response = await window.kestrel.request({
+				type: "project-delete",
+				projectId,
+			});
+			if (!response.ok) throw new Error(response.error);
+			const next = projectsFromRendererResponse(response);
+			if (next) setProjects(next);
+			if (project) {
+				setProjectAppearances((current) => {
+					const updated = { ...current };
+					delete updated[project.path];
+					writeProjectAppearances(window.localStorage, updated);
+					return updated;
+				});
+			}
+			if (activeProjectId === projectId) selectProject(null);
+			await refreshRuntimeSessions();
+		},
+		[activeProjectId, projects, refreshRuntimeSessions, selectProject],
+	);
+	const moveSessionToProject = useCallback(
+		async (sessionId: string, projectId: string | null) => {
+			try {
+				const response = await window.kestrel.request({
+					type: "runtime-update-session-project",
+					sessionId,
+					projectId,
+				});
+				if (!response.ok) throw new Error(response.error);
+				const updatedSession =
+					"session" in response ? response.session : undefined;
+				if (updatedSession) {
+					setRuntimeSessions((current) =>
+						current.map((session) =>
+							session.id === updatedSession.id
+								? updatedSession
+								: session,
+						),
+					);
+				} else {
+					await refreshRuntimeSessions();
+				}
+				selectProject(projectId);
+			} catch (cause) {
+				setDeepLinkNotice(
+					cause instanceof Error
+						? cause.message
+						: "Could not move the conversation.",
+				);
+			}
+		},
+		[refreshRuntimeSessions, selectProject],
 	);
 	const openBrowserWorkspace = useCallback(async () => {
 		const tabs = browser.state?.tabs ?? [];
@@ -9109,6 +10777,26 @@ export function App() {
 		void openAppPage("approvals");
 	}, [focusRuntimeApproval, openAppPage, runtimeWaiting, snapshotPendingCount]);
 	const toggleAgentSidebar = useCallback(() => {
+		const activeTab = browser.state?.tabs.find(
+			(tab) => tab.id === browser.state?.activeTabId,
+		);
+		const onAgentUniverse = parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent";
+		if (onAgentUniverse) {
+			setAgentUniverseRailOpen((current) => {
+				const next = !current;
+				localStorage.setItem(
+					"kestrel:agent-universe-rail",
+					next ? "open" : "collapsed",
+				);
+				window.requestAnimationFrame(() => {
+					document
+						.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
+						?.focus();
+				});
+				return next;
+			});
+			return;
+		}
 		setAgentSidebarOpen((current) => {
 			const next = !current;
 			localStorage.setItem(
@@ -9122,7 +10810,7 @@ export function App() {
 			});
 			return next;
 		});
-	}, []);
+	}, [browser]);
 	const openBrowser = useCallback(() => {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
@@ -9156,7 +10844,7 @@ export function App() {
 				proposalId,
 				requestId: (current?.requestId ?? 0) + 1,
 			}));
-			void openAppPage("settings", "intelligence");
+			void openAppPage("settings", "agent-tools");
 		},
 		[openAppPage],
 	);
@@ -9209,6 +10897,10 @@ export function App() {
 				if (!active) return;
 				setSnapshot(initial.snapshot);
 				setRuntimeSessions(initial.sessions);
+				setRuntimeSessionsLoadState(
+					initial.sessionsLoadError ? "error" : "ready",
+				);
+				setActiveRuntimeSessionId(initial.selectedSessionId);
 			})
 			.catch((cause) => {
 				if (active) setError(startupFailureMessage(cause));
@@ -9221,14 +10913,11 @@ export function App() {
 	useEffect(
 		() =>
 			window.kestrel.onRuntimeEvent((event) => {
-				if (event.type === "session.created")
-					void window.kestrel
-						.request({ type: "runtime-list-sessions" })
-						.then((raw) => {
-							const response = raw as CoreResponse;
-							if (response.ok) setRuntimeSessions(response.sessions ?? []);
-						})
-						.catch(() => undefined);
+				setAgentUniverseActivities((current) =>
+					appendAgentUniverseActivity(current, event),
+				);
+				if (event.type === "session.created" || event.type === "session.updated")
+					void refreshRuntimeSessions().catch(() => undefined);
 				else if (event.type === "message.appended")
 					setRuntimeSessions((current) =>
 						runtimeSessionsAfterEvent(current, event),
@@ -9246,7 +10935,7 @@ export function App() {
 							.catch(() => undefined);
 				}
 			}),
-		[],
+		[refreshRuntimeSessions],
 	);
 	useEffect(() => {
 		if (!snapshot?.configuration) return;
@@ -9413,7 +11102,7 @@ export function App() {
 					className="loading-screen error-screen"
 					initial={reduced ? false : { opacity: 0 }}
 					animate={{ opacity: 1 }}
-					exit={{ opacity: reduced ? 1 : 0 }}
+					exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 				>
 					<span className="error-mark">!</span>
 					<h1>Kestrel could not start.</h1>
@@ -9442,8 +11131,7 @@ export function App() {
 	);
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
 	const showKestrelSidebar =
-		!activeBrowserTab?.url ||
-		isKestrelAppPageUrl(activeBrowserTab.url);
+		(!activeBrowserTab?.url || isKestrelAppPageUrl(activeBrowserTab.url));
 	const activeFileAttachment = activeBrowserTab?.file
 		? attachmentForExternalFile(activeBrowserTab.file)
 		: undefined;
@@ -9486,8 +11174,13 @@ export function App() {
 		localStorage.setItem("kestrel:browser-context", enabled ? "on" : "off");
 	}
 	const appPageId = currentAppPage?.id;
+	const projectSettingsProject = projects.find(
+		(project) => project.id === projectSettingsProjectId,
+	);
+	const presentedAgentSidebarOpen =
+		appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen;
 	const appPage = appPageId ? (
-		<div
+		<motion.div
 			key={appPageId}
 			ref={focusToolRoute}
 			className={`browser-app-page${
@@ -9506,8 +11199,16 @@ export function App() {
 				appPageId === "writing"
 					? " browser-secondary-surface"
 					: ""
-			}${appPageId === "memory" ? " legacy-product-surface" : ""}`}
+			}${appPageId === "memory" ? " life-product-surface" : ""}`}
 			data-app-page={appPageId}
+			initial={reduced ? false : { opacity: 0, y: 3 }}
+			animate={{ opacity: 1, y: 0 }}
+			exit={
+				reduced
+					? { opacity: 1, y: 0, pointerEvents: "none" }
+					: { opacity: 0, y: -3, pointerEvents: "none" }
+			}
+			transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 		>
 			{appPageId === "history" && (
 				<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
@@ -9532,24 +11233,32 @@ export function App() {
 			{appPageId === "agent" && (
 				<AgentWorkspace
 					sessions={runtimeSessions}
-					activeSessionId={activeRuntimeSessionId}
+					sessionLoadState={runtimeSessionsLoadState}
+					activities={agentUniverseActivities}
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
 					onNewTask={() => startNewAgent()}
+					onCreateAgent={createPersistentAgent}
 					onOpenSession={openSidebarSession}
 					onOpenApprovals={() => navigate("approvals")}
 					onOpenWork={() => navigate("work")}
+					onOpenSettings={() => openSettings("agent-workspace")}
+					onToggleAgentSidebar={toggleAgentSidebar}
+					onRetrySessions={() => void refreshRuntimeSessions().catch(() => undefined)}
+					onBack={() => void openBrowserWorkspace()}
 				/>
 			)}
 			{appPageId === "projects" && (
 				<ProjectsWorkspace
-					projects={workspaceGrants}
+					projects={projects}
+					projectAppearances={projectAppearances}
 					sessions={runtimeSessions}
-					activeProjectPath={activeProjectPath}
-					onSelectProject={selectProject}
+					activeProjectId={activeProjectId}
 					onNewChat={startProjectChat}
 					onOpenSession={openProjectSession}
-					onOpenSettings={() => openSettings("connections")}
+					onOpenProjectSettings={openProjectSettings}
+					onOpenConnections={() => openSettings("connections")}
+					onCreateProject={() => void createProject()}
 				/>
 			)}
 			{appPageId === "settings" && (
@@ -9577,7 +11286,11 @@ export function App() {
 				/>
 			)}
 			{appPageId === "memory" && (
-				<LifeContext snapshot={snapshot} update={setSnapshot} />
+				<LifeContext
+					snapshot={snapshot}
+					update={setSnapshot}
+					onOpenTranscriptResult={openTranscriptResult}
+				/>
 			)}
 			{appPageId === "research" && <Research />}
 			{appPageId === "artifacts" && <Artifacts />}
@@ -9600,61 +11313,76 @@ export function App() {
 					onNavigate={navigate}
 				/>
 			)}
-		</div>
+		</motion.div>
+	) : undefined;
+	const kestrelNavigation = showKestrelSidebar ? (
+		<KestrelSidebar
+			activeDestination={
+				activeSidebarDestination === "browser" ||
+				activeSidebarDestination === "scheduled" ||
+				activeSidebarDestination === "agent" ||
+				activeSidebarDestination === "projects" ||
+				activeSidebarDestination === "writing" ||
+				activeSidebarDestination === "approvals" ||
+				activeSidebarDestination === "settings"
+					? activeSidebarDestination
+					: "capabilities"
+			}
+			activeSessionId={activeRuntimeSessionId}
+			activeProjectId={activeProjectId}
+			agentName={activeAgentName}
+			sessions={runtimeSessions}
+			projects={projects}
+			projectAppearances={projectAppearances}
+			onNewTask={() => startNewAgent()}
+			onOpenBrowser={openBrowser}
+			onOpenAgent={openAgent}
+			onOpenCapabilities={openCommandCenter}
+			onOpenSettings={() => openSettings("browser")}
+			onCreateProject={() => void createProject()}
+			onOpenProject={openProject}
+			onOpenProjectChat={startProjectChat}
+			onOpenProjectSettings={openProjectSettings}
+			onOpenSession={openSidebarSession}
+			onMoveSession={moveSessionToProject}
+		/>
 	) : undefined;
 	return (
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${presentedAgentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
-				exit={{ opacity: reduced ? 1 : 0 }}
+				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
-				{showKestrelSidebar && (
-					<KestrelSidebar
-						activeDestination={
-							activeSidebarDestination === "browser" ||
-							activeSidebarDestination === "agent" ||
-							activeSidebarDestination === "projects" ||
-							activeSidebarDestination === "writing" ||
-							activeSidebarDestination === "approvals" ||
-							activeSidebarDestination === "settings"
-								? activeSidebarDestination
-								: "capabilities"
-						}
-						activeSessionId={activeRuntimeSessionId}
-						activeProjectPath={activeProjectPath}
-						agentName={activeAgentName}
-						pendingApprovals={pendingApprovalCount}
-						sessions={runtimeSessions}
-						projects={workspaceGrants}
-						onNewTask={() => startNewAgent()}
-						onOpenBrowser={openBrowser}
-						onOpenAgent={openAgent}
-						onOpenWriting={openWritingStudio}
-						onReviewApprovals={reviewApprovals}
-						onOpenCapabilities={openCommandCenter}
-						onOpenProjects={() => void openAppPage("projects")}
-						onOpenSettings={() => openSettings("browser")}
-						onOpenProject={openProject}
-						onOpenProjectChat={startProjectChat}
-						onOpenSession={openSidebarSession}
-						onOpenTaskHistory={() => void openAppPage("work")}
-					/>
-				)}
-				<section className="browser-main-plane">
-					{deepLinkNotice && (
-						<small className="browser-notice" role="status">
-							{deepLinkNotice}
-						</small>
-					)}
+					<section className="browser-main-plane">
+						<AnimatePresence initial={false}>
+							{deepLinkNotice && (
+								<motion.small
+									key="deep-link-notice"
+									className="browser-notice"
+									role="status"
+									initial={reduced ? false : { opacity: 0, x: "-50%", y: 8 }}
+									animate={{ opacity: 1, x: "-50%", y: 0 }}
+									exit={
+										reduced
+											? { opacity: 1, x: "-50%", y: 0, pointerEvents: "none" }
+											: { opacity: 0, x: "-50%", y: 8, pointerEvents: "none" }
+									}
+									transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+								>
+									{deepLinkNotice}
+								</motion.small>
+							)}
+						</AnimatePresence>
 					<BrowserWorkspace
 						browser={browser}
 						agentName={activeAgentName}
 						greetingName={greetingName}
-						agentOpen={agentSidebarOpen}
+						navigationSidebar={kestrelNavigation}
+						agentOpen={presentedAgentSidebarOpen}
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}
 						onOpenTaskSettings={openTaskSettings}
@@ -9697,7 +11425,7 @@ export function App() {
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
-					collapsed={!agentSidebarOpen}
+					collapsed={!presentedAgentSidebarOpen}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}
@@ -9708,7 +11436,7 @@ export function App() {
 						visible
 						activeSessionId={activeRuntimeSessionId}
 						sessions={runtimeSessions}
-						onActiveSession={setActiveRuntimeSessionId}
+						onActiveSession={openRuntimeSession}
 						onSessions={setRuntimeSessions}
 						onSnapshot={setSnapshot}
 						onRuntimeAgentState={setRuntimeAgentState}
@@ -9719,13 +11447,18 @@ export function App() {
 						newAgentRequestId={newAgentRequestId}
 						newAgentPrompt={newAgentPrompt}
 						newAgentWorkspace={newAgentWorkspace}
+						newAgentProjectId={newAgentProjectId}
 						newAgentFocusTarget={newAgentFocusTarget}
+						projects={projects}
+						onProjectsChange={setProjects}
 						refreshRevision={runtimeRefreshRevision}
 						mentionTabs={browser.state?.tabs ?? []}
 						mentionBookmarks={browser.state?.bookmarks ?? []}
 						{...(browserContextEnabled
 							? { browserContext: () => browser.pageContext() }
 							: {})}
+						transcriptTarget={transcriptTarget}
+						onTranscriptTargetHandled={() => setTranscriptTarget(null)}
 						onOpenActivity={(executionId) => {
 							setActivityFocusExecutionId(executionId);
 							navigate("activity");
@@ -9743,10 +11476,26 @@ export function App() {
 						localStorage.setItem("kestrel:default-browser-prompted", "yes");
 						setShowDefaultBrowserPrompt(false);
 					}}
-				/>
+					/>
+					{projectSettingsProject ? (
+						<ProjectSettingsDialog
+							project={projectSettingsProject}
+							appearance={
+								projectAppearances[projectSettingsProject.path] ??
+								DEFAULT_PROJECT_APPEARANCE
+							}
+							onClose={() => setProjectSettingsProjectId(null)}
+							onSave={(input) =>
+								saveProjectSettings(projectSettingsProject.id, input)
+							}
+							onDelete={() => deleteProject(projectSettingsProject.id)}
+						/>
+					) : null}
+					<AnimatePresence initial={false}>
 				{showShortcuts && (
 					<KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />
 				)}
+				</AnimatePresence>
 			</motion.div>
 		</ProductShellTransition>
 	);

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	readFileSync,
 	realpathSync,
@@ -53,6 +54,9 @@ export interface ArtifactRecord {
 	providerRequestId?: string;
 	estimatedCostUsd?: number;
 	artifactKind?: "media" | "widget";
+	pinned?: boolean;
+	integrity?: "verified" | "missing" | "tampered";
+	exportedFromArtifactId?: string;
 	title?: string;
 	sessionId?: string;
 	createdAt: string;
@@ -79,6 +83,8 @@ function within(root: string, path: string): boolean {
 }
 
 const MAX_GENERATED_ARTIFACT_BYTES = 100_000_000;
+const MAX_EXPORTED_WIDGET_BYTES = 10_000_000;
+const MAX_DOWNLOAD_BYTES = 32_000_000;
 
 function previewLimit(value: number): number {
 	if (!Number.isSafeInteger(value)) return 5_000_000;
@@ -189,7 +195,23 @@ export class ArtifactManager {
 
 	list(): ArtifactRecord[] {
 		const stored = this.database.getPrivateState<unknown>(this.stateKey);
-		return Array.isArray(stored) ? stored.filter(isArtifactRecord) : [];
+		return Array.isArray(stored)
+			? stored.filter(isArtifactRecord).map((record) => this.verifyRecord(record))
+			: [];
+	}
+
+	setPinned(id: string, pinned: boolean): ArtifactRecord {
+		const records = this.list();
+		const artifact = records.find((item) => item.id === id);
+		if (!artifact) throw new Error("Artifact was not found.");
+		if (artifact.integrity !== "verified")
+			throw new Error("Only an intact artifact can be pinned.");
+		const updated = { ...artifact, pinned };
+		this.database.setPrivateState(
+			this.stateKey,
+			records.map((item) => (item.id === id ? updated : item)),
+		);
+		return updated;
 	}
 
 	preview(
@@ -198,16 +220,32 @@ export class ArtifactManager {
 	): { id: string; mediaType: string; dataBase64: string; truncated: boolean } {
 		const artifact = this.list().find((item) => item.id === id);
 		if (!artifact) throw new Error("Artifact was not found.");
-		const path = realpathSync(artifact.path);
-		if (!within(this.root, path) || !statSync(path).isFile())
-			throw new Error("Artifact preview path escapes the artifact root.");
-		const data = readFileSync(path);
+		const data = this.readVerifiedArtifact(artifact).data;
 		const limit = previewLimit(maximumBytes);
 		return {
 			id,
 			mediaType: artifact.mediaType,
 			dataBase64: data.subarray(0, limit).toString("base64"),
 			truncated: data.byteLength > limit,
+		};
+	}
+
+	download(
+		id: string,
+		maximumBytes = 10_000_000,
+	): { id: string; filename: string; mediaType: string; dataBase64: string } {
+		if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > MAX_DOWNLOAD_BYTES)
+			throw new Error("Artifact download byte limit is invalid.");
+		const artifact = this.list().find((item) => item.id === id);
+		if (!artifact) throw new Error("Artifact was not found.");
+		const data = this.readVerifiedArtifact(artifact).data;
+		if (data.byteLength > maximumBytes)
+			throw new Error("Artifact is larger than the bounded download limit.");
+		return {
+			id: artifact.id,
+			filename: artifact.filename,
+			mediaType: artifact.mediaType,
+			dataBase64: data.toString("base64"),
 		};
 	}
 
@@ -241,6 +279,7 @@ export class ArtifactManager {
 			lyrics?: string;
 			instrumental?: boolean;
 			format?: "mp3" | "wav";
+			sessionId?: string;
 		},
 		signal: AbortSignal,
 	): Promise<ArtifactRecord> {
@@ -300,6 +339,10 @@ export class ArtifactManager {
 			...(generated.estimatedCostUsd !== undefined
 				? { estimatedCostUsd: generated.estimatedCostUsd }
 				: {}),
+			artifactKind: "media",
+			pinned: false,
+			integrity: "verified",
+			...(input.sessionId ? { sessionId: input.sessionId } : {}),
 			createdAt: this.now().toISOString(),
 		};
 		this.database.setPrivateState(this.stateKey, [...this.list(), record]);
@@ -353,6 +396,8 @@ export class ArtifactManager {
 			providerId: "local-widget",
 			model: "sandbox-v1",
 			artifactKind: "widget",
+			pinned: false,
+			integrity: "verified",
 			title,
 			sessionId: input.sessionId,
 			createdAt: this.now().toISOString(),
@@ -379,6 +424,83 @@ export class ArtifactManager {
 			record,
 		]);
 		return record;
+	}
+
+	exportWidget(
+		id: string,
+		maximumBytes = MAX_EXPORTED_WIDGET_BYTES,
+	): ArtifactRecord {
+		if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > MAX_EXPORTED_WIDGET_BYTES)
+			throw new Error("Widget export byte limit is invalid.");
+		const source = this.list().find((item) => item.id === id);
+		if (!source || source.artifactKind !== "widget")
+			throw new Error("Only widget artifacts can be exported.");
+		const data = this.readVerifiedArtifact(source).data;
+		if (data.byteLength > maximumBytes)
+			throw new Error("Widget is larger than the bounded export limit.");
+		const filename = `export-${source.filename.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 96)}`;
+		const destination = resolve(this.root, `${filename}-${randomUUID().slice(0, 8)}.html`);
+		if (!within(this.root, destination))
+			throw new Error("Widget export path escapes the artifact root.");
+		const temporary = join(this.root, `.tmp-${randomUUID()}`);
+		writeFileSync(temporary, data, { mode: 0o600, flag: "wx" });
+		renameSync(temporary, destination);
+		const record: ArtifactRecord = {
+			id: `artifact-${randomUUID()}`,
+			filename: basename(destination),
+			path: destination,
+			mediaType: source.mediaType,
+			bytes: data.byteLength,
+			sha256: createHash("sha256").update(data).digest("hex"),
+			...(source.providerId ? { providerId: source.providerId } : {}),
+			...(source.model ? { model: source.model } : {}),
+			artifactKind: "widget",
+			pinned: false,
+			integrity: "verified",
+			exportedFromArtifactId: source.id,
+			title: source.title ? `${source.title} export` : "Widget export",
+			...(source.sessionId ? { sessionId: source.sessionId } : {}),
+			createdAt: this.now().toISOString(),
+		};
+		this.database.setPrivateState(this.stateKey, [...this.list(), record]);
+		return record;
+	}
+
+	private verifyRecord(record: ArtifactRecord): ArtifactRecord {
+		const candidate = resolve(this.root, record.path);
+		if (!within(this.root, candidate))
+			return { ...record, integrity: "tampered" };
+		try {
+			const stat = lstatSync(candidate);
+			if (!stat.isFile()) return { ...record, integrity: "tampered" };
+			const canonical = realpathSync(candidate);
+			if (!within(this.root, canonical))
+				return { ...record, integrity: "tampered" };
+			const data = readFileSync(canonical);
+			return {
+				...record,
+				path: canonical,
+				integrity:
+					data.byteLength === record.bytes &&
+					createHash("sha256").update(data).digest("hex") === record.sha256
+						? "verified"
+						: "tampered",
+			};
+		} catch {
+			return { ...record, integrity: "missing" };
+		}
+	}
+
+	private readVerifiedArtifact(record: ArtifactRecord): { data: Buffer } {
+		const checked = this.verifyRecord(record);
+		if (checked.integrity !== "verified")
+			throw new Error(
+				checked.integrity === "missing"
+					? "Artifact file is missing."
+					: "Artifact failed integrity or containment verification.",
+			);
+		const data = readFileSync(checked.path);
+		return { data };
 	}
 }
 
@@ -470,7 +592,7 @@ function registerMediaGenerateTool(
 			},
 			required: ["providerId", "prompt", "kind"],
 		},
-		execute: async ({ signal }, input) => ({
+		execute: async ({ signal, session }, input) => ({
 			...(await manager.generate(
 				{
 					providerId: String(input.providerId),
@@ -488,6 +610,7 @@ function registerMediaGenerateTool(
 					...(typeof input.maximumBytes === "number"
 						? { maximumBytes: input.maximumBytes }
 						: {}),
+					sessionId: session.id,
 				},
 				signal,
 			)),
@@ -529,7 +652,7 @@ function registerMusicGenerateTool(
 			},
 			additionalProperties: false,
 		},
-		execute: async ({ signal }, input) => {
+		execute: async ({ signal, session }, input) => {
 			if (input.action === "list")
 				return { providers: manager.musicProviders(), paid: true };
 			const providerId =
@@ -558,6 +681,7 @@ function registerMusicGenerateTool(
 						...(typeof input.filename === "string"
 							? { filename: input.filename }
 							: {}),
+						sessionId: session.id,
 					},
 					signal,
 				),

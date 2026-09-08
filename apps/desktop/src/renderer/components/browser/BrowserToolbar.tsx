@@ -1,18 +1,22 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useMemo,
   useState,
   type ChangeEvent,
+  type DragEvent as ReactDragEvent,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type RefObject,
 } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type {
   InstalledExtension,
   UserBrowserBookmark,
+  UserBrowserDownload,
   UserBrowserHistoryEntry,
   UserBrowserOriginFavicon,
   UserBrowserSettings,
@@ -26,8 +30,25 @@ import {
   type AddressBarSuggestionFilter,
 } from "./address-bar-suggestions";
 import { BrowserHistoryPopover } from "./BrowserHistoryPopover";
+import {
+  downloadProgress,
+  downloadSizeLabel,
+  downloadStatusLabel,
+  downloadTimeRemaining,
+} from "./browser-download-format";
+import {
+  KESTREL_MENU_TRANSITION,
+  KESTREL_SELECTION_TRANSITION,
+} from "../../motion-contract";
 
-type ToolbarMenu = "extensions" | "tools" | "screen" | "history" | null;
+type ToolbarMenuName =
+  | "browser"
+  | "extensions"
+  | "tools"
+  | "screen"
+  | "history";
+type ToolbarMenu = ToolbarMenuName | null;
+type VisibleToolbarMenu = ToolbarMenuName | "downloads" | null;
 
 type MenuTriggerEvent = FormEvent | MouseEvent<HTMLButtonElement>;
 
@@ -45,6 +66,162 @@ function readPinnedExtensions(): string[] {
   } catch {
     return [];
   }
+}
+
+function BrowserDownloadsPopover({
+  downloads,
+  closeMenu,
+  onOpenDownload,
+  onRevealDownload,
+  onCancelDownload,
+  onStartDownloadDrag,
+}: {
+  downloads: readonly UserBrowserDownload[];
+  closeMenu(restoreFocus?: boolean): void;
+  onOpenDownload(downloadId: string): void;
+  onRevealDownload(downloadId: string): void;
+  onCancelDownload(downloadId: string): void;
+  onStartDownloadDrag(downloadId: string): void;
+}) {
+  function startNativeDrag(
+    event: ReactDragEvent<HTMLElement>,
+    downloadId: string,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenu(false);
+    onStartDownloadDrag(downloadId);
+  }
+
+  return (
+    <>
+      <header className="browser-toolbar-popover-header">
+        <Icon name="downloads" />
+        <span>
+          <strong>Downloads</strong>
+          <small>Track progress and drag finished files to upload fields.</small>
+        </span>
+      </header>
+      {downloads.length === 0 ? (
+        <p className="browser-toolbar-popover-empty">No downloads yet.</p>
+      ) : (
+        <ul className="browser-download-popover-list">
+          {downloads.slice(0, 30).map((download) => {
+            const progress = downloadProgress(download);
+            const isProgressing = download.status === "progressing";
+            const isCompleted = download.status === "completed";
+            const canDrag =
+              isCompleted && download.canReveal;
+            return (
+              <li
+                key={download.id}
+                className={`browser-download-popover-row${canDrag ? " draggable" : ""}`}
+                draggable={canDrag}
+                onDragStart={(event) => {
+                  if (canDrag) startNativeDrag(event, download.id);
+                }}
+              >
+                <span className={`download-state ${download.status}`}>
+                  <Icon
+                    name={
+                      download.status === "completed"
+                        ? "check"
+                        : download.status === "progressing" ||
+                            download.status === "checking"
+                          ? "downloads"
+                          : "warning"
+                    }
+                  />
+                </span>
+                <div className="browser-download-popover-copy">
+                  <strong title={download.filename}>{download.filename}</strong>
+                  <small className="browser-download-popover-size">
+                    {isCompleted
+                      ? downloadSizeLabel(download)
+                      : `${downloadStatusLabel(download.status)} · ${downloadSizeLabel(download)}`}
+                  </small>
+                  {isProgressing && (
+                    <div className="browser-download-popover-progress">
+                      <progress
+                        {...(progress === undefined
+                          ? {}
+                          : { value: progress, max: 100 })}
+                        aria-label={`Download progress for ${download.filename}`}
+                        aria-valuetext={
+                          progress === undefined
+                            ? "Progress is being calculated"
+                            : `${progress}% complete`
+                        }
+                      />
+                      <span aria-live="polite">
+                        {downloadTimeRemaining(download)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div className="browser-download-popover-actions">
+                  {canDrag && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="browser-download-drag"
+                      draggable
+                      aria-label={`Drag ${download.filename} to a website upload field`}
+                      title="Drag to a website upload field"
+                      onDragStart={(event) =>
+                        startNativeDrag(event, download.id)
+                      }
+                    >
+                      <Icon name="upload" />
+                      <span>Drag</span>
+                    </button>
+                  )}
+                  {download.canReveal && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="browser-download-action"
+                      onClick={() => {
+                        closeMenu();
+                        onOpenDownload(download.id);
+                      }}
+                    >
+                      Open
+                    </button>
+                  )}
+                  {download.canReveal && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="browser-download-action browser-download-reveal"
+                      onClick={() => {
+                        closeMenu();
+                        onRevealDownload(download.id);
+                      }}
+                    >
+                      <Icon name="folder" />
+                      <span>Show in Finder</span>
+                    </button>
+                  )}
+                  {(download.status === "progressing" ||
+                    download.status === "checking") && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="browser-download-action"
+                      onClick={() => onCancelDownload(download.id)}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
 }
 
 export function BrowserToolbar({
@@ -66,6 +243,12 @@ export function BrowserToolbar({
   onToggleAgent,
   onToggleBookmarksBar,
   onToggleSleepingTabs,
+  onNewTab,
+  onOrganizeTabs,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
+  zoomPercent,
   onNavigate,
   onSelectTab,
   onBack,
@@ -75,7 +258,13 @@ export function BrowserToolbar({
   onOpenHistoryFull,
   onClearHistory,
   historyPopoverRequestId = 0,
-  onOpenDownloads,
+  downloads,
+  downloadsOpen,
+  onDownloadsOpenChange,
+  onStartDownloadDrag,
+  onOpenDownload,
+  onRevealDownload,
+  onCancelDownload,
   onOpenBookmarks,
   onOpenFind,
   onPrint,
@@ -83,6 +272,7 @@ export function BrowserToolbar({
   onSaveScreenshot,
   onToggleBookmark,
   onOpenSettings,
+  onOpenExtensionStore,
   onToggleCalculator,
   onOpenMenu,
   onMenuOpenChange,
@@ -105,6 +295,12 @@ export function BrowserToolbar({
   onToggleAgent(): void;
   onToggleBookmarksBar(): void;
   onToggleSleepingTabs(): void;
+  onNewTab(): void;
+  onOrganizeTabs(): void;
+  onZoomIn(): void;
+  onZoomOut(): void;
+  onZoomReset(): void;
+  zoomPercent?: number;
   onNavigate(input: string): void;
   onSelectTab(tabId: string): void;
   onBack(): void;
@@ -114,7 +310,13 @@ export function BrowserToolbar({
   onOpenHistoryFull(): void;
   onClearHistory(): void;
   historyPopoverRequestId?: number;
-  onOpenDownloads(): void;
+  downloads: readonly UserBrowserDownload[];
+  downloadsOpen: boolean;
+  onDownloadsOpenChange(open: boolean): void;
+  onStartDownloadDrag(downloadId: string): void;
+  onOpenDownload(downloadId: string): void;
+  onRevealDownload(downloadId: string): void;
+  onCancelDownload(downloadId: string): void;
   onOpenBookmarks(): void;
   onOpenFind(): void;
   onPrint(): void;
@@ -122,10 +324,12 @@ export function BrowserToolbar({
   onSaveScreenshot(): Promise<string | undefined>;
   onToggleBookmark(): void;
   onOpenSettings(): void;
+  onOpenExtensionStore(): void;
   onToggleCalculator(): void;
   onOpenMenu(): void;
   onMenuOpenChange?(open: boolean): void;
 }) {
+  const reducedMotion = useReducedMotion() ?? false;
   const [address, setAddress] = useState(tab.url);
   const [suggestionQuery, setSuggestionQuery] = useState("");
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -138,11 +342,17 @@ export function BrowserToolbar({
     readPinnedExtensions,
   );
   const [toolNotice, setToolNotice] = useState("");
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  const [menuOrigin, setMenuOrigin] = useState({ x: 0, y: 0 });
   const menuRef = useRef<HTMLDivElement | null>(null);
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
   const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const browserMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const downloadsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const historyPopoverRequestRef = useRef(0);
+  const overlayOpenRef = useRef(false);
   const suggestionsCloseTimerRef = useRef<number | null>(null);
+  const selectAddressAfterPointerRef = useRef(false);
   const inlineCompletionRef = useRef<{ typed: string; completed: string } | null>(
     null,
   );
@@ -197,6 +407,16 @@ export function BrowserToolbar({
     (suggestions.length > 0 ||
       suggestionQuery.trim().length > 0 ||
       suggestionFilter !== "all");
+  const visibleMenu: VisibleToolbarMenu = downloadsOpen
+    ? "downloads"
+    : openMenu;
+  const overlayOpen = Boolean(visibleMenu || showSuggestions);
+  overlayOpenRef.current = overlayOpen;
+  const activeDownloadCount = downloads.reduce(
+    (count, download) =>
+      count + (download.status === "progressing" ? 1 : 0),
+    0,
+  );
 
   function clearSuggestionsCloseTimer() {
     if (suggestionsCloseTimerRef.current === null) return;
@@ -270,15 +490,63 @@ export function BrowserToolbar({
     setOpenMenu("history");
   }, [historyPopoverRequestId]);
 
-  const closeMenu = useCallback(() => {
+  useEffect(() => {
+    if (!downloadsOpen) return;
+    lastTriggerRef.current = downloadsTriggerRef.current;
     setOpenMenu(null);
+  }, [downloadsOpen]);
+
+  const dismissMenu = useCallback(() => {
+    setOpenMenu(null);
+    onDownloadsOpenChange(false);
+  }, [onDownloadsOpenChange]);
+
+  const closeMenu = useCallback((restoreFocus = true) => {
+    dismissMenu();
+    if (!restoreFocus) return;
     window.requestAnimationFrame(() => {
       lastTriggerRef.current?.focus();
     });
+  }, [dismissMenu]);
+
+  const positionMenu = useCallback(() => {
+    const trigger = lastTriggerRef.current;
+    const menu = menuRef.current;
+    if (!trigger || !menu) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const gutter = 12;
+    const top = Math.max(gutter, Math.min(
+      window.innerHeight - menuRect.height - gutter,
+      triggerRect.bottom + 8,
+    ));
+    const left = Math.max(
+      gutter,
+      Math.min(triggerRect.right - menuRect.width, window.innerWidth - menuRect.width - gutter),
+    );
+    setMenuPosition({ top, left });
+    setMenuOrigin({
+      x: Math.max(12, Math.min(menuRect.width - 12, triggerRect.left + triggerRect.width / 2 - left)),
+      y: top < triggerRect.top ? menuRect.height : 0,
+    });
   }, []);
 
+  useLayoutEffect(() => {
+    if (!visibleMenu) return;
+    /* Layout effects run before paint, preventing a one-frame jump from the
+       default origin to the trigger-anchored position. */
+    positionMenu();
+    const reposition = () => positionMenu();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [positionMenu, visibleMenu]);
+
   useEffect(() => {
-    if (!openMenu) return;
+    if (!visibleMenu) return;
     const frame = window.requestAnimationFrame(() => {
       menuRef.current
         ?.querySelector<HTMLElement>(
@@ -293,10 +561,20 @@ export function BrowserToolbar({
         !menuRef.current?.contains(target) &&
         !lastTriggerRef.current?.contains(target)
       )
-        closeMenu();
+        dismissMenu();
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target as Node | null;
+      if (
+        target &&
+        !menuRef.current?.contains(target) &&
+        !lastTriggerRef.current?.contains(target)
+      )
+        dismissMenu();
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (event.defaultPrevented) return;
         event.preventDefault();
         closeMenu();
         return;
@@ -315,20 +593,35 @@ export function BrowserToolbar({
       items[(index + delta + items.length) % items.length]?.focus();
     };
     document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
     document.addEventListener("keydown", onKeyDown);
     return () => {
       window.cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [closeMenu, openMenu]);
+  }, [closeMenu, dismissMenu, visibleMenu]);
 
-  useEffect(() => {
-    // Address suggestions live in the toolbar above the native viewport. Hiding
-    // the page when they open steals focus from the omnibox and makes the tab
-    // flicker without letting the URL be selected or copied.
-    onMenuOpenChange?.(Boolean(openMenu));
-  }, [onMenuOpenChange, openMenu]);
+  useLayoutEffect(() => {
+    // Suggestions extend over the native WebContentsView. Renderer z-index
+    // cannot cover that sibling, so use the same visibility boundary as the
+    // other browser-chrome overlays while keeping the omnibox itself mounted.
+    // The close notification comes from AnimatePresence so the native sibling
+    // stays hidden until the renderer exit has actually finished.
+    if (overlayOpen) onMenuOpenChange?.(true);
+  }, [onMenuOpenChange, overlayOpen]);
+
+  useEffect(
+    () => () => {
+      onMenuOpenChange?.(false);
+    },
+    [onMenuOpenChange],
+  );
+
+  const handleOverlayExitComplete = useCallback(() => {
+    if (!overlayOpenRef.current) onMenuOpenChange?.(false);
+  }, [onMenuOpenChange]);
 
   function chooseSuggestion(suggestion: AddressBarSuggestion) {
     closeSuggestions();
@@ -427,10 +720,25 @@ export function BrowserToolbar({
     if (input.trim()) onNavigate(input);
   }
 
-  function toggleMenu(menu: Exclude<ToolbarMenu, null>, event: MenuTriggerEvent) {
+  function toggleMenu(menu: ToolbarMenuName, event: MenuTriggerEvent) {
     lastTriggerRef.current = event.currentTarget as HTMLButtonElement;
     setToolNotice("");
+    onDownloadsOpenChange(false);
     setOpenMenu((current) => (current === menu ? null : menu));
+  }
+
+  function openDownloads() {
+    lastTriggerRef.current = downloadsTriggerRef.current;
+    setToolNotice("");
+    setOpenMenu(null);
+    onDownloadsOpenChange(true);
+  }
+
+  function toggleDownloads(event: MenuTriggerEvent) {
+    lastTriggerRef.current = event.currentTarget as HTMLButtonElement;
+    setToolNotice("");
+    setOpenMenu(null);
+    onDownloadsOpenChange(!downloadsOpen);
   }
 
   function updatePinnedExtensions(id: string) {
@@ -488,18 +796,22 @@ export function BrowserToolbar({
       host = tab.url;
     }
   }
+  const bookmarkable = /^https?:\/\//i.test(tab.url);
 
   const pinnedExtensions = pinnedExtensionIds
     .map((id) => extensions.find((extension) => extension.id === id))
     .filter((extension): extension is InstalledExtension => Boolean(extension));
 
   return (
-    <div className="browser-toolbar" aria-label="Browser toolbar">
+    <div
+      className="browser-toolbar"
+      aria-label="Browser toolbar"
+    >
       <div
         className="window-controls-clearance no-drag"
         aria-hidden="true"
       />
-      <div className="browser-navigation">
+      <div className="browser-navigation" role="group" aria-label="Navigation">
         <button
           type="button"
           aria-label="Back"
@@ -569,6 +881,14 @@ export function BrowserToolbar({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
+            onPointerDown={(event) => {
+              // The browser's default click placement runs after onFocus and
+              // collapses the selection that onFocus creates. Remember a
+              // first pointer focus so the click handler can restore the
+              // full-URL selection after that default placement.
+              selectAddressAfterPointerRef.current =
+                document.activeElement !== event.currentTarget;
+            }}
             onFocus={(event) => {
               clearSuggestionsCloseTimer();
               const input = event.currentTarget;
@@ -587,11 +907,23 @@ export function BrowserToolbar({
               if (needsUrlReset) window.requestAnimationFrame(selectAll);
               else selectAll();
             }}
+            onClick={(event) => {
+              if (!selectAddressAfterPointerRef.current) return;
+              selectAddressAfterPointerRef.current = false;
+              const input = event.currentTarget;
+              const selectAll = () => {
+                if (document.activeElement === input) input.select();
+              };
+              // Select synchronously so an immediate ⌘C copies the URL, then
+              // repeat after React's controlled-value update settles.
+              selectAll();
+              window.requestAnimationFrame(selectAll);
+            }}
             onBlur={scheduleCloseSuggestions}
             onKeyDown={handleAddressKeyDown}
             onChange={handleAddressChange}
           />
-          {tab.url && (
+          {bookmarkable && (
             <button
               type="button"
               className={`browser-bookmark ${bookmarked ? "active" : ""}`}
@@ -610,11 +942,22 @@ export function BrowserToolbar({
             </span>
           )}
         </form>
+        <AnimatePresence initial={false} onExitComplete={handleOverlayExitComplete}>
         {showSuggestions && (
-          <div
+          <motion.div
+            key="browser-address-suggestions"
             className="browser-address-suggestions"
             id="browser-address-suggestions"
             aria-label="Address suggestions"
+            initial={reducedMotion ? false : { opacity: 0, y: -4, scale: 0.992 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={
+              reducedMotion
+                ? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+                : { opacity: 0, y: -4, scale: 0.992, pointerEvents: "none" }
+            }
+            transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
+            style={{ transformOrigin: "top center" }}
           >
             <div
               className="browser-address-suggestion-list"
@@ -724,10 +1067,43 @@ export function BrowserToolbar({
                 <Icon name="settings" />
               </button>
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
-      <div className="browser-toolbar-actions">
+      <div className="browser-toolbar-actions" role="group" aria-label="Page actions">
+        <AnimatePresence initial={false}>
+          {zoomPercent !== undefined && (
+            <motion.div
+              key={`browser-zoom-feedback-${zoomPercent}`}
+              className="browser-zoom-feedback"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              aria-label={`Page zoom ${zoomPercent} percent`}
+              initial={reducedMotion ? false : { opacity: 0, y: -3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={
+                reducedMotion
+                  ? { opacity: 1, y: 0, pointerEvents: "none" }
+                  : { opacity: 0, y: -3, pointerEvents: "none" }
+              }
+              transition={reducedMotion ? { duration: 0 } : KESTREL_SELECTION_TRANSITION}
+            >
+              <span aria-hidden="true">{zoomPercent}%</span>
+              {zoomPercent !== 100 && (
+                <button
+                  type="button"
+                  aria-label="Reset page zoom to 100 percent"
+                  title="Reset zoom to 100%"
+                  onClick={onZoomReset}
+                >
+                  Reset
+                </button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
         <div className="browser-extension-cluster browser-toolbar-secondary">
           <button
             type="button"
@@ -799,28 +1175,43 @@ export function BrowserToolbar({
           <Icon name="star" />
         </button>
         <button
+          ref={downloadsTriggerRef}
           type="button"
-          className="browser-toolbar-secondary"
-          aria-label="Downloads"
+          className={`browser-toolbar-menu-trigger browser-toolbar-secondary ${downloadsOpen ? "active" : ""}`}
+          aria-label={
+            activeDownloadCount > 0
+              ? `Downloads, ${activeDownloadCount} in progress`
+              : "Downloads"
+          }
+          aria-haspopup="menu"
+          aria-expanded={downloadsOpen}
           aria-keyshortcuts="Meta+J"
           title="Downloads (⌘J)"
-          onClick={onOpenDownloads}
+          onClick={toggleDownloads}
         >
           <Icon name="downloads" />
+          {activeDownloadCount > 0 && (
+            <span className="browser-download-progress-badge" aria-hidden="true">
+              {activeDownloadCount > 9 ? "9+" : activeDownloadCount}
+            </span>
+          )}
         </button>
         <button
+          ref={browserMenuTriggerRef}
           type="button"
-          aria-label="Capabilities and commands"
-          aria-keyshortcuts="Meta+K"
-          title="Capabilities (⌘K)"
-          onClick={onOpenMenu}
+          className={`browser-toolbar-menu-trigger browser-toolbar-overflow-trigger ${openMenu === "browser" ? "active" : ""}`}
+          aria-label="Browser menu"
+          aria-haspopup="menu"
+          aria-expanded={openMenu === "browser"}
+          title="Browser menu"
+          onClick={(event) => toggleMenu("browser", event)}
         >
           <Icon name="more" />
         </button>
         <button
           id="browser-agent-toggle"
           type="button"
-          className={`browser-agent-toggle ${agentOpen ? "active" : ""}`}
+          className={`browser-agent-toggle browser-agent-toggle-quick ${agentOpen ? "active" : ""}`}
           aria-label={agentOpen ? `Hide ${agentName}` : `Show ${agentName}`}
           aria-expanded={agentOpen}
           title={agentOpen ? `Hide ${agentName}` : `Show ${agentName}`}
@@ -829,31 +1220,254 @@ export function BrowserToolbar({
           <span className="pragmatic-logo" aria-hidden="true">
             <Icon name="pragmatic" />
           </span>
-          <span>{agentName}</span>
         </button>
 
-        {openMenu && (
-          <div
+        <AnimatePresence initial={false} onExitComplete={handleOverlayExitComplete}>
+        {visibleMenu && (
+          <motion.div
+            key="browser-toolbar-popover"
             ref={menuRef}
-            className={`browser-toolbar-popover browser-toolbar-popover-${openMenu}`}
+            className={`browser-toolbar-popover browser-toolbar-popover-${visibleMenu}`}
+            style={{
+              top: menuPosition.top,
+              left: menuPosition.left,
+              transformOrigin: `${menuOrigin.x}px ${menuOrigin.y}px`,
+            }}
+            initial={reducedMotion ? false : { opacity: 0, scale: 0.985 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={
+              reducedMotion
+                ? { opacity: 1, scale: 1, pointerEvents: "none" }
+                : { opacity: 0, scale: 0.985, pointerEvents: "none" }
+            }
+            transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
             role="menu"
             aria-label={
-              openMenu === "extensions"
+              visibleMenu === "downloads"
+                ? "Downloads"
+                : visibleMenu === "browser"
+                ? "Browser menu"
+                : visibleMenu === "extensions"
                 ? "Extensions"
-                : openMenu === "tools"
+                : visibleMenu === "tools"
                   ? "Tools"
-                  : openMenu === "history"
-                    ? "History"
-                    : "Page options"
+                  : visibleMenu === "history"
+                  ? "History"
+                  : "Page options"
               }
           >
+            {visibleMenu === "downloads" && (
+              <BrowserDownloadsPopover
+                downloads={downloads}
+                closeMenu={closeMenu}
+                onOpenDownload={onOpenDownload}
+                onRevealDownload={onRevealDownload}
+                onCancelDownload={onCancelDownload}
+                onStartDownloadDrag={onStartDownloadDrag}
+              />
+            )}
+            {openMenu === "browser" && (
+              <>
+                <header className="browser-toolbar-popover-header">
+                  <Icon name="more" />
+                  <span>
+                    <strong>Browser menu</strong>
+                  </span>
+                </header>
+                <div className="browser-toolbar-menu-list">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onNewTab)}
+                  >
+                    <Icon name="plus" />
+                    <span>New tab</span>
+                    <kbd>⌘T</kbd>
+                  </button>
+                </div>
+                <div
+                  className="browser-toolbar-menu-section browser-toolbar-menu-zoom"
+                  aria-label="Zoom"
+                >
+                  <span className="browser-toolbar-menu-section-label">
+                    Zoom
+                  </span>
+                  <div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      aria-label="Zoom out"
+                      onClick={() => runAndClose(onZoomOut)}
+                    >
+                      <span aria-hidden="true">−</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      aria-label="Reset zoom to 100 percent"
+                      onClick={() => runAndClose(onZoomReset)}
+                    >
+                      <span>Reset</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      aria-label="Zoom in"
+                      onClick={() => runAndClose(onZoomIn)}
+                    >
+                      <span aria-hidden="true">+</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="browser-toolbar-menu-list">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenBookmarks)}
+                  >
+                    <Icon name="star" />
+                    <span>Favorites</span>
+                    <kbd>⌘⇧D</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setOpenMenu("history")}
+                  >
+                    <Icon name="history" />
+                    <span>History</span>
+                    <kbd>⌘H</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOrganizeTabs)}
+                  >
+                    <Icon name="folder" />
+                    <span>Tab groups</span>
+                    <Icon name="chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={openDownloads}
+                  >
+                    <Icon name="downloads" />
+                    <span>Downloads</span>
+                    <kbd>⌘J</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setOpenMenu("extensions")}
+                  >
+                    <Icon name="extensions" />
+                    <span>Extensions</span>
+                    <Icon name="chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenSettings)}
+                  >
+                    <Icon name="lock" />
+                    <span>Passwords</span>
+                    <Icon name="chevron" />
+                  </button>
+                </div>
+                <div className="browser-toolbar-menu-list browser-toolbar-menu-list-separated">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenSettings)}
+                  >
+                    <Icon name="trash" />
+                    <span>Clear browsing data…</span>
+                    <Icon name="chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onPrint)}
+                  >
+                    <Icon name="print" />
+                    <span>Print page</span>
+                    <kbd>⌘P</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void saveScreenshot()}
+                  >
+                    <Icon name="screenshot" />
+                    <span>Screenshot</span>
+                    <kbd>⇧⌘S</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpenMenu(null);
+                      onOpenFind();
+                    }}
+                  >
+                    <Icon name="search" />
+                    <span>Find in page…</span>
+                    <kbd>⌘F</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setOpenMenu("tools")}
+                  >
+                    <Icon name="tools" />
+                    <span>More tools</span>
+                    <Icon name="chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setOpenMenu("screen")}
+                  >
+                    <Icon name="sliders" />
+                    <span>Page options</span>
+                    <Icon name="chevron" />
+                  </button>
+                </div>
+                <div className="browser-toolbar-menu-list browser-toolbar-menu-list-separated">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenSettings)}
+                  >
+                    <Icon name="settings" />
+                    <span>Settings</span>
+                    <Icon name="chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenMenu)}
+                  >
+                    <Icon name="command" />
+                    <span>Command Center</span>
+                    <Icon name="chevron" />
+                  </button>
+                </div>
+                {toolNotice && (
+                  <p className="browser-toolbar-popover-notice" role="status">
+                    {toolNotice}
+                  </p>
+                )}
+              </>
+            )}
             {openMenu === "extensions" && (
               <>
                 <header className="browser-toolbar-popover-header">
                   <Icon name="extensions" />
                   <span>
                     <strong>Extensions</strong>
-                    <small>Pin quick actions beside the logo</small>
+					<small>Pin extensions to the toolbar.</small>
                   </span>
                 </header>
                 {extensions.length === 0 ? (
@@ -891,6 +1505,21 @@ export function BrowserToolbar({
                     })}
                   </div>
                 )}
+                <a
+                  href="https://chromewebstore.google.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  role="menuitem"
+                  className="browser-toolbar-menu-link"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    runAndClose(onOpenExtensionStore);
+                  }}
+                >
+                  <Icon name="globe" />
+                  <span>Go to store</span>
+                  <Icon name="expand" />
+                </a>
                 <button
                   type="button"
                   role="menuitem"
@@ -909,7 +1538,6 @@ export function BrowserToolbar({
                   <Icon name="tools" />
                   <span>
                     <strong>Tools</strong>
-                    <small>Common actions for this page</small>
                   </span>
                 </header>
                 <div className="browser-toolbar-tool-grid">
@@ -944,11 +1572,20 @@ export function BrowserToolbar({
                     <Icon name="star" />
                     <span>Bookmarks</span>
                   </button>
-                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenDownloads)}>
+                  <button type="button" role="menuitem" onClick={openDownloads}>
                     <Icon name="downloads" />
                     <span>Downloads</span>
                   </button>
-                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenFind)}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      // Find owns focus as soon as it opens. Do not let the
+                      // closing toolbar menu steal focus back one frame later.
+                      setOpenMenu(null);
+                      onOpenFind();
+                    }}
+                  >
                     <Icon name="search" />
                     <span>Find in page</span>
                     <kbd>⌘F</kbd>
@@ -984,7 +1621,6 @@ export function BrowserToolbar({
                   <Icon name="sliders" />
                   <span>
                     <strong>Page options</strong>
-                    <small>Quick settings for this browser surface</small>
                   </span>
                 </header>
                 <div className="browser-toolbar-settings-list">
@@ -1008,21 +1644,36 @@ export function BrowserToolbar({
                     <span>Sleep inactive tabs</span>
                     <Icon name={sleepingTabsEnabled ? "check" : "close"} />
                   </button>
+                  <button
+                    type="button"
+                    className={`browser-agent-toggle browser-agent-toggle-menu ${agentOpen ? "active" : ""}`}
+                    role="menuitemcheckbox"
+                    aria-checked={agentOpen}
+                    aria-label={agentOpen ? `Hide ${agentName}` : `Show ${agentName}`}
+                    onClick={() => runAndClose(onToggleAgent)}
+                  >
+                    <span className="pragmatic-logo" aria-hidden="true">
+                      <Icon name="pragmatic" />
+                    </span>
+                    <span>{agentOpen ? `Hide ${agentName}` : `Show ${agentName}`}</span>
+                    <Icon name={agentOpen ? "check" : "chevron"} />
+                  </button>
                   <button type="button" role="menuitem" onClick={() => runAndClose(onOpenSettings)}>
                     <Icon name="settings" />
                     <span>All browser settings</span>
                     <Icon name="chevron" />
                   </button>
-                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenMenu)}>
-                    <Icon name="command" />
-                    <span>Capabilities and commands</span>
-                    <Icon name="chevron" />
-                  </button>
+                <button type="button" role="menuitem" onClick={() => runAndClose(onOpenMenu)}>
+                  <Icon name="command" />
+                  <span>Command Center</span>
+                  <Icon name="chevron" />
+                </button>
                 </div>
               </>
             )}
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
       <span className="browser-toolbar-drag-fill" aria-hidden="true" />
     </div>

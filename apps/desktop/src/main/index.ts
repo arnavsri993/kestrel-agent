@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import {
   copyFile,
   lstat,
@@ -40,12 +40,14 @@ import {
 	type BrowserTabFolderName,
 	type BrowserTabFolderNamingGroup,
 	type AgentState,
+	type ComputerUseStatus,
   type BackgroundJobsEvent,
   type CommunicationCodeCandidate,
   type CommunicationCodeScan,
   type CommunicationSourceStatus,
 	type PaymentPrompt,
 	type PasswordPrompt,
+	type Project,
 	type UserBrowserState,
   type UserBrowserTab,
   type WorkspaceGrant,
@@ -53,16 +55,29 @@ import {
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
 import { CredentialBroker } from "./credential-broker";
+import {
+  BrokerCredentialStore,
+  MacOSKeychainCredentialStore,
+} from "./credential-store";
+import { ProviderAccountStore } from "./provider-account-store";
 import { PasswordVault } from "./password-vault";
 import { PaymentCardVault } from "./payment-card-vault";
 import { WorkspaceGrantStore } from "./workspace-grant-store";
 import { MigrationManager, PluginInstaller, readBoundedResponseBytes } from "@kestrel/agent-core";
 import { PluginTrustStore } from "./plugin-trust-store";
+import {
+  migrationPlanPreview,
+  PendingMigrationPlanStore,
+} from "./migration-plan-store";
 import { ElectronBrowserService } from "./electron-browser-service";
 import {
   UserBrowserService,
   isUserBrowserBackendWireRequest,
 } from "./user-browser-service";
+import {
+  defaultBrowserDownloadDirectory,
+  legacyBrowserDownloadDirectory,
+} from "./user-browser-download-path";
 import { LocalRuntimeManager } from "./local-runtime-manager";
 import { listWorkspaceFiles } from "./workspace-file-search";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
@@ -104,7 +119,7 @@ import {
 import { MacMessagesSource } from "./mac-messages-source";
 import {
   MacWidgetsStore,
-  macWidgetsGroupContainerPath,
+  macWidgetsSnapshotDirectory,
   widgetSnapshotFromWorkspace,
 } from "./mac-widgets";
 import {
@@ -133,6 +148,10 @@ import {
 } from "./macos-integration";
 import { installMacFileIconCrashGuard } from "./mac-file-icon-guard";
 import { shouldUseRealKeychain } from "./secure-storage-policy";
+import {
+	COMPUTER_USE_SETTINGS_FILE,
+	ComputerUseManager,
+} from "./computer-use";
 
 // Stable releases use the real Keychain. Development and automated profiles
 // use an isolated mock because ad-hoc signatures cannot retain durable access.
@@ -175,6 +194,7 @@ const pendingExternalIntakes: Array<{
 	targetWindow?: BrowserWindow;
 }> = [];
 const browserService = new ElectronBrowserService();
+let computerUseManagerInstance: ComputerUseManager | null = null;
 let userBrowserService: UserBrowserService | null = null;
 const browserWindowServices = new Map<BrowserWindow, UserBrowserService>();
 interface CalculatorAnchorBounds {
@@ -207,9 +227,11 @@ function passwordOverlaySize(prompt: PasswordPrompt): {
 	width: number;
 	height: number;
 } {
-	return prompt.mode === "field"
-		? { width: 326, height: 158 }
-		: { width: 382, height: 236 };
+	return prompt.mode === "save"
+		? { width: 382, height: 244 }
+		: prompt.mode === "field"
+			? { width: 326, height: 158 }
+			: { width: 382, height: 236 };
 }
 
 function passwordOverlayBounds(
@@ -537,13 +559,21 @@ const DEVELOPMENT_RENDERER_URL = trustedDevelopmentRendererUrl(
   RAW_DEVELOPMENT_RENDERER_URL,
 );
 const isPackagedKestrelApp = isPackagedKestrelRuntime(
-  app.isPackaged,
-  process.env.NODE_ENV_ELECTRON_VITE,
+	app.isPackaged,
+	process.env.NODE_ENV_ELECTRON_VITE,
 );
 const execFileAsync = promisify(execFile);
+
+function computerUseManager(): ComputerUseManager {
+	return (computerUseManagerInstance ??= new ComputerUseManager(
+		join(app.getPath("userData"), COMPUTER_USE_SETTINGS_FILE),
+	));
+}
+
 let localGreetingNamePromise: Promise<string | undefined> | undefined;
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let appCredentialBroker: CredentialBroker | null = null;
+let appProviderAccountStore: ProviderAccountStore | null = null;
 let appPasswordVault: PasswordVault | null = null;
 let appPaymentCardVault: PaymentCardVault | null = null;
 let googleOAuthController: AbortController | null = null;
@@ -560,6 +590,7 @@ const pendingCommunicationScans = new Map<
     expiresAt: number;
   }
 >();
+const pendingMigrationPlans = new PendingMigrationPlanStore();
 
 function safeGreetingName(value: string): string | undefined {
 	const normalized = value.normalize("NFKC").trim();
@@ -624,6 +655,16 @@ function browserServiceForWindow(
   window: BrowserWindow | null,
 ): UserBrowserService | null {
   return window ? browserWindowServices.get(window) ?? null : null;
+}
+
+function sendWindowFocusState(window: BrowserWindow, focused: boolean): void {
+	if (!window.isDestroyed())
+		window.webContents.send("kestrel:window-focus", focused);
+}
+
+function installWindowFocusBridge(window: BrowserWindow): void {
+	window.on("focus", () => sendWindowFocusState(window, true));
+	window.on("blur", () => sendWindowFocusState(window, false));
 }
 
 function calculatorOverlayBounds(
@@ -771,20 +812,6 @@ async function nameBrowserTabFolders(
 	return response.browserTabFolderNames ?? [];
 }
 
-function browserOwnerForDragSender(sender: Electron.WebContents):
-	| { window: BrowserWindow; service: UserBrowserService; mainRenderer: boolean }
-	| undefined {
-	for (const [window, service] of browserWindowServices) {
-		if (window.webContents === sender)
-			return { window, service, mainRenderer: true };
-	}
-	for (const [window, service] of browserWindowServices) {
-		if (service.ownsWebContents(sender))
-			return { window, service, mainRenderer: false };
-	}
-	return undefined;
-}
-
 async function communicationSourceStatuses(): Promise<CommunicationSourceStatus[]> {
   const google = await googleWorkspaceOAuthManager().status();
   const gmail: CommunicationSourceStatus = google.connected
@@ -880,8 +907,20 @@ function credentialBroker(): CredentialBroker {
 	return appCredentialBroker;
 }
 
+function providerAccountStore(): ProviderAccountStore {
+	appProviderAccountStore ??= new ProviderAccountStore(
+		join(app.getPath("userData"), "provider-accounts.json"),
+		credentialBroker(),
+		app.getPath("userData"),
+	);
+	return appProviderAccountStore;
+}
+
 function passwordVault(): PasswordVault {
-	appPasswordVault ??= new PasswordVault(credentialBroker());
+	appPasswordVault ??= new PasswordVault(
+		new MacOSKeychainCredentialStore(app.getPath("userData")),
+		new BrokerCredentialStore(credentialBroker()),
+	);
 	return appPasswordVault;
 }
 
@@ -1374,19 +1413,60 @@ supervisor.on("recovery-failed", (error: Error) => {
 // Keep the runtime name stable so the existing user-data directory continues
 // to resolve without orphaning installed profiles.
 app.setName(PRODUCT_IDENTITY.runtimeApplicationName);
-if (process.env.KESTREL_DISABLE_GPU === "1") {
-  app.commandLine.appendSwitch("disable-gpu");
-  app.commandLine.appendSwitch("disable-gpu-compositing");
-  app.commandLine.appendSwitch("in-process-gpu");
-  app.disableHardwareAcceleration();
-}
 app.setPath(
   "userData",
   process.env.KESTREL_TEST_USER_DATA ??
     join(app.getPath("appData"), PRODUCT_IDENTITY.userDataDirectoryName),
 );
 
-const singleInstance = acquireSingleInstanceLock(app);
+function browserDownloadDirectory(): string {
+  return process.env.KESTREL_TEST_USER_DATA
+    ? join(app.getPath("userData"), "browser-downloads")
+    : defaultBrowserDownloadDirectory(app.getPath("downloads"));
+}
+
+function legacyBrowserDownloadDirectoryForMigration(): string | undefined {
+  if (process.env.KESTREL_TEST_USER_DATA) return undefined;
+  return legacyBrowserDownloadDirectory(
+    app.getPath("downloads"),
+    PRODUCT_IDENTITY.productName,
+  );
+}
+
+function browserHardwareAccelerationDisabled(): boolean {
+	try {
+		const statePath = join(app.getPath("userData"), "browser", "state.json");
+		if (!existsSync(statePath)) return false;
+		const state = JSON.parse(readFileSync(statePath, "utf8")) as {
+			settings?: { hardwareAccelerationEnabled?: unknown };
+		};
+		return state.settings?.hardwareAccelerationEnabled === false;
+	} catch {
+		// A malformed or unreadable browser profile must not disable native
+		// rendering. BrowserTabStore will preserve and archive the bad profile.
+		return false;
+	}
+}
+
+if (
+	process.env.KESTREL_DISABLE_GPU === "1" ||
+	browserHardwareAccelerationDisabled()
+) {
+	app.commandLine.appendSwitch("disable-gpu");
+	app.commandLine.appendSwitch("disable-gpu-compositing");
+	app.commandLine.appendSwitch("in-process-gpu");
+	app.disableHardwareAcceleration();
+}
+
+// macOS scopes Electron's single-instance lock to the application bundle, not
+// its user-data directory. An explicit disposable-profile test run therefore
+// needs an opt-in escape hatch so it cannot attach to a person's live Kestrel
+// instance. Production and ordinary test runs retain the normal lock.
+const singleInstance =
+	process.env.KESTREL_TEST_USER_DATA &&
+	process.env.KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES === "1"
+		? true
+		: acquireSingleInstanceLock(app);
 const developmentHeartbeatPath = process.env.KESTREL_DEV_ELECTRON_HEARTBEAT;
 if (process.env.NODE_ENV_ELECTRON_VITE === "development" && developmentHeartbeatPath) {
   const heartbeatMonitor = setInterval(() => {
@@ -1579,10 +1659,6 @@ async function deliverPendingExternalIntakes(): Promise<void> {
 	}
 }
 
-function handleIncomingFileDrop(paths: string[]): void {
-	queueExternalIntake(paths, { kind: "ask" });
-}
-
 function openIncomingWebUrl(url: string): void {
   if (userBrowserService && mainWindow && !mainWindow.isDestroyed()) {
     showMainWindow();
@@ -1636,15 +1712,18 @@ function publishMacWidgetSnapshot(snapshot: WorkspaceSnapshot): void {
   latestWorkspaceSnapshot = snapshot;
   if (process.platform !== "darwin") return;
   macWidgetsStore ??= new MacWidgetsStore(
-    macWidgetsGroupContainerPath(app.getPath("home")),
+    macWidgetsSnapshotDirectory(
+      app.getPath("home"),
+      process.env.KESTREL_TEST_USER_DATA,
+    ),
   );
   void macWidgetsStore
     .write(widgetSnapshotFromWorkspace(snapshot))
     .catch((error: unknown) => {
-			console.warn(
-				"Kestrel could not update its local macOS widget snapshot.",
-				error instanceof Error ? error.message : String(error),
-			);
+      console.warn(
+        "Kestrel could not update its local macOS widget snapshot.",
+        error instanceof Error ? error.message : String(error),
+      );
     });
 }
 
@@ -1692,13 +1771,16 @@ function finishMacWidgetRun(
 }
 
 function createMainWindow(): BrowserWindow {
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
     width: 1320,
     height: 860,
     minWidth: 920,
     minHeight: 680,
     show: false,
-    titleBarStyle: "hiddenInset",
+    // Windows keeps its opaque native caption buttons. The custom triangular
+    // controls are rendered only on macOS, so this avoids duplicate chrome.
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     // macOS: let AppKit render the real sidebar material behind the rails and
     // browser chrome (the renderer marks matching regions transparent via
     // [data-kestrel-material]). Other platforms stay fully opaque.
@@ -1722,6 +1804,7 @@ function createMainWindow(): BrowserWindow {
     },
   });
   if (process.platform === "darwin") window.setWindowButtonVisibility(false);
+	installWindowFocusBridge(window);
   if (userBrowserService) {
     if (mainWindow) closeCalculatorOverlay(mainWindow);
     if (mainWindow) closePasswordOverlay(mainWindow);
@@ -1738,9 +1821,8 @@ function createMainWindow(): BrowserWindow {
           allowDevTools: !isPackagedKestrelApp,
           allowLocalExtensions: !isPackagedKestrelApp,
           statePath: join(app.getPath("userData"), "browser", "state.json"),
-          downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-            ? join(app.getPath("userData"), "browser-downloads")
-            : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+          downloadDirectory: browserDownloadDirectory(),
+          ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
           passwordVault: passwordVault(),
           paymentCardVault: paymentCardVault(),
           onEvent: (event) => {
@@ -1847,17 +1929,39 @@ function detachedBrowserState(
   return state;
 }
 
+function detachedBrowserWindowBounds(): {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+} {
+	const width = 1320;
+	const height = 860;
+	const cursor = screen.getCursorScreenPoint();
+	const workArea = screen.getDisplayNearestPoint(cursor).workArea;
+	const clamp = (value: number, minimum: number, maximum: number) =>
+		Math.round(Math.max(minimum, Math.min(value, maximum)));
+	return {
+		// Put the new tab strip under the pointer instead of letting the OS pick
+		// an unrelated default window location.
+		x: clamp(cursor.x - 180, workArea.x, workArea.x + workArea.width - width),
+		y: clamp(cursor.y - 20, workArea.y, workArea.y + workArea.height - height),
+		width,
+		height,
+	};
+}
+
 function createDetachedBrowserWindow(
   sourceState: UserBrowserState,
   tab: UserBrowserTab,
 ): BrowserWindow {
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
-    width: 1320,
-    height: 860,
+    ...detachedBrowserWindowBounds(),
     minWidth: 920,
     minHeight: 680,
     show: false,
-    titleBarStyle: "hiddenInset",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     // Keep the detached browser window on the same native-material footing as
     // the main window (see createMainWindow).
     ...(process.platform === "darwin"
@@ -1881,6 +1985,7 @@ function createDetachedBrowserWindow(
     },
   });
   if (process.platform === "darwin") window.setWindowButtonVisibility(false);
+	installWindowFocusBridge(window);
   const statePath = join(
     app.getPath("userData"),
     "browser",
@@ -1893,9 +1998,8 @@ function createDetachedBrowserWindow(
     allowLocalExtensions: !isPackagedKestrelApp,
     statePath,
     initialState: detachedBrowserState(sourceState, tab),
-    downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-      ? join(app.getPath("userData"), "browser-downloads")
-      : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+    downloadDirectory: browserDownloadDirectory(),
+    ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
     passwordVault: passwordVault(),
     paymentCardVault: paymentCardVault(),
     onEvent: (event) => {
@@ -2253,11 +2357,13 @@ async function initializeCore(
     (await new ExternalSecretManager(userData, broker)
       .resolveEnabled()
       .catch(() => ({ values: {}, overrideStoredIds: [] })));
-  const secureEnvironment = await broker.providerEnvironment(
-    process.env,
-    external,
-  );
-  const preferences = await readRuntimePreferences();
+	const secureEnvironment = await broker.providerEnvironment(
+		process.env,
+		external,
+	);
+	const computerUseSettings = await computerUseManager().load();
+	browserService.setComputerUseEnabled(computerUseSettings.enabled);
+	const preferences = await readRuntimePreferences();
   const codexPath = detectedSubscriptionCli("codex");
   if (
     codexPath &&
@@ -2297,11 +2403,36 @@ async function initializeCore(
   } catch {
     // A local model server is optional and must not delay or block startup.
   }
+	// Migrate existing brokered/API and trusted CLI routes as account metadata.
+	// This is additive and reversible: credential bytes remain in their original
+	// protected broker slots until a person removes the legacy account.
+	const accounts = providerAccountStore();
+	await accounts.ensureLegacyAccounts(secureEnvironment);
+	const providerAccounts = (await accounts.runtimeAccounts(secureEnvironment)).flatMap(
+		(account) => {
+			const cliId =
+				account.adapter === "codex-app-server"
+					? "codex"
+					: account.adapter === "opencode-cli"
+						? "opencode"
+						: account.adapter === "claude-cli"
+							? "claude"
+							: undefined;
+			if (!cliId) return [account];
+			const executable = detectedSubscriptionCli(cliId);
+			if (executable) return [{ ...account, executable }];
+			// An account remains visible in Settings, but only a currently detected
+			// trusted executable may become a CLI endpoint. Do not execute a path
+			// persisted in profile metadata or guess a binary name.
+			return [];
+		},
+	);
   const workspaceGrantStore = new WorkspaceGrantStore(
     join(userData, "workspace-grants.json"),
   );
   const configuredWorkspaceRoots =
     await workspaceGrantStore.configuredPaths();
+  const projects = await workspaceGrantStore.statusList();
   const workspaceRoots = (await workspaceGrantStore.list()).map(
     (grant) => grant.path,
   );
@@ -2316,17 +2447,19 @@ async function initializeCore(
       encryptionKeyBase64: key.toString("base64"),
       workspaceRoots,
       configuredWorkspaceRoots,
+      projects,
       pluginRoots,
       managedPluginRoots: [managedPluginRoot],
       learnedSkillRoot: join(userData, "learned-skills"),
       secureEnvironment,
+		providerAccounts,
     });
     const response = await supervisor.request({ type: "snapshot" });
     if (!response.ok)
       throw new Error(response.error || "Agent Core rejected its startup snapshot.");
     if (!response.snapshot)
       throw new Error("Agent Core returned no workspace state during startup.");
-		setAgentState(response.snapshot.agentState);
+    setAgentState(response.snapshot.agentState);
     publishMacWidgetSnapshot(response.snapshot);
   } catch (error) {
     // A bootstrap can fail after the utility process has been created. Tear it
@@ -2380,18 +2513,27 @@ async function selectPluginDirectory(
   return selection.canceled ? undefined : selection.filePaths[0];
 }
 
-async function restartCoreAfterGrantChange(): Promise<WorkspaceGrant[]> {
+async function restartCoreAfterGrantChange(): Promise<Project[]> {
   await supervisor.stop();
   await initializeCore();
   const response = await supervisor.request({ type: "snapshot" });
-	if (response.ok && response.snapshot) {
-		setAgentState(response.snapshot.agentState);
+  if (response.ok && response.snapshot) {
+    setAgentState(response.snapshot.agentState);
     publishMacWidgetSnapshot(response.snapshot);
     mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
   }
   return new WorkspaceGrantStore(
     join(app.getPath("userData"), "workspace-grants.json"),
   ).statusList();
+}
+
+async function synchronizeProjectMetadata(projects: Project[]): Promise<void> {
+  const response = await supervisor.request({
+    type: "runtime-sync-projects",
+    projects,
+  });
+  if (!response.ok)
+    throw new Error(response.error || "Project metadata could not be synchronized.");
 }
 
 function registerIpc(): void {
@@ -2436,11 +2578,11 @@ function registerIpc(): void {
 		void deliverPendingExternalIntakes();
 	};
 	ipcMain.on("kestrel:external-intake-ready", setExternalIntakeReadiness);
-	ipcMain.on("kestrel:user-browser-file-drag", (event, raw) => {
-		const owner = browserOwnerForDragSender(event.sender);
-		if (!owner || owner.window.isDestroyed()) return;
+	const sendCurrentWindowFocusState = (event: Electron.IpcMainEvent) => {
+		const senderWindow = BrowserWindow.fromWebContents(event.sender);
 		if (
-			owner.mainRenderer &&
+			!senderWindow ||
+			!browserWindowServices.has(senderWindow) ||
 			!isTrustedRendererFrame(
 				event.senderFrame,
 				event.sender.mainFrame,
@@ -2448,44 +2590,9 @@ function registerIpc(): void {
 			)
 		)
 			return;
-		const active =
-			raw && typeof raw === "object" && !Array.isArray(raw)
-			? (raw as { active?: unknown }).active
-			: undefined;
-		if (typeof active !== "boolean") return;
-		if (trustedRendererUrl(owner.window.webContents.getURL()))
-			owner.window.webContents.send("kestrel:file-drag", { active });
-	});
-	ipcMain.on("kestrel:user-browser-file-drop", (event, raw) => {
-		const owner = browserOwnerForDragSender(event.sender);
-		if (!owner || owner.window.isDestroyed()) return;
-		if (
-			owner.mainRenderer &&
-			!isTrustedRendererFrame(
-				event.senderFrame,
-				event.sender.mainFrame,
-				trustedRendererUrl,
-			)
-		)
-			return;
-		const paths =
-			raw && typeof raw === "object" && !Array.isArray(raw) &&
-			Array.isArray((raw as { paths?: unknown }).paths)
-				? (raw as { paths: unknown[] }).paths.filter(
-						(value): value is string =>
-							typeof value === "string" &&
-								value.startsWith("/") &&
-								value.length <= 4_096 &&
-								!/[\u0000-\u001f\u007f]/.test(value),
-					  )
-						.slice(0, 8)
-				: [];
-		queueExternalIntake(paths, {
-			kind: "ask",
-			targetService: owner.service,
-			targetWindow: owner.window,
-		});
-	});
+		sendWindowFocusState(senderWindow, senderWindow.isFocused());
+	};
+	ipcMain.on("kestrel:window-focus-ready", sendCurrentWindowFocusState);
 
 	ipcMain.handle("kestrel:request", async (event, raw) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -2523,12 +2630,15 @@ function registerIpc(): void {
     if (
       isPasswordOverlayWindow &&
       ![
+        "password-save-suggestion",
         "password-fill-page",
         "password-fill-field",
+        "password-mark-never-save",
+        "password-generate",
         "password-dismiss",
       ].includes(request.type)
     )
-      throw new Error("Password overlays can only fill or dismiss themselves.");
+      throw new Error("Password overlays can only save, fill, or dismiss themselves.");
     if (
       isPaymentOverlayWindow &&
       ![
@@ -2572,13 +2682,19 @@ function registerIpc(): void {
       return { ok: true };
     }
     if (isPasswordOverlayWindow && passwordService) {
-      if (request.type === "password-fill-page")
+      if (request.type === "password-save-suggestion")
+        await passwordService.savePasswordSuggestion();
+      else if (request.type === "password-fill-page")
         await passwordService.fillPasswordPage(request.passwordId);
       else if (request.type === "password-fill-field")
         await passwordService.fillPasswordField(
           request.passwordId,
           request.fieldId,
         );
+      else if (request.type === "password-mark-never-save")
+        passwordService.markNeverSavePasswordForActiveOrigin();
+      else if (request.type === "password-generate")
+        await passwordService.generatePasswordForActiveForm();
       else passwordService.dismissPasswordPrompt();
       return { ok: true };
     }
@@ -2747,7 +2863,11 @@ function registerIpc(): void {
 	if (request.type === "browser-get-state") {
 		if (!requestBrowserService)
 			throw new Error("The visible user browser is unavailable.");
-		return { ok: true, browserState: requestBrowserService.getState() };
+		return {
+			ok: true,
+			browserState: requestBrowserService.getState(),
+			browserWindowRole: senderWindow === mainWindow ? "main" : "detached",
+		};
 	}
 	if (request.type === "browser-open-file-tabs") {
 		if (!requestBrowserService)
@@ -2815,6 +2935,14 @@ function registerIpc(): void {
           request.tabId,
           request.input,
         ),
+      };
+    }
+    if (request.type === "browser-dismiss-threat") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.dismissThreat(request.tabId),
       };
     }
     if (request.type === "browser-back") {
@@ -2887,20 +3015,109 @@ function registerIpc(): void {
     if (request.type === "browser-set-content-bounds") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      await requestBrowserService.setContentBounds(request.bounds, request.visible);
+      const browserPagePreview = await requestBrowserService.setContentBounds(
+        request.bounds,
+        request.visible,
+      );
       if (request.bounds.width > 0 && request.bounds.height > 0)
         updateCalculatorOverlayAnchor(senderWindow, request.bounds);
-      return { ok: true };
-    }
-    if (request.type === "browser-update-settings") {
-      if (!requestBrowserService)
-        throw new Error("The visible user browser is unavailable.");
       return {
         ok: true,
-        browserState: requestBrowserService.updateSettings(request.settings),
+        ...(browserPagePreview ? { browserPagePreview } : {}),
       };
     }
-    if (request.type === "browser-clear-history") {
+		if (request.type === "browser-update-settings") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			return {
+				ok: true,
+				browserState: requestBrowserService.updateSettings(request.settings),
+			};
+		}
+		if (request.type === "browser-reset-settings") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			return {
+				ok: true,
+				browserState: requestBrowserService.resetSettings(),
+			};
+		}
+		if (request.type === "browser-select-download-directory") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			const result = await dialog.showOpenDialog(senderWindow, {
+				title: "Choose download folder",
+				properties: ["openDirectory", "createDirectory"],
+			});
+			if (result.canceled || !result.filePaths[0])
+				return {
+					ok: true,
+					browserState: requestBrowserService.getState(),
+					cancelled: true,
+				};
+			return {
+				ok: true,
+				browserState: requestBrowserService.setDownloadDirectory(
+					result.filePaths[0],
+				),
+			};
+		}
+		if (request.type === "browser-reset-download-directory") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			return {
+				ok: true,
+				browserState: requestBrowserService.setDownloadDirectory(),
+			};
+		}
+		if (request.type === "browser-export-data") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			const result = await dialog.showSaveDialog(senderWindow, {
+				title: "Export Kestrel browser data",
+				defaultPath: join(
+					app.getPath("downloads"),
+					"kestrel-browser-data.json",
+				),
+				filters: [{ name: "Kestrel browser data", extensions: ["json"] }],
+			});
+			if (result.canceled || !result.filePath)
+				return { ok: true, cancelled: true };
+			const filePath = result.filePath.toLowerCase().endsWith(".json")
+				? result.filePath
+				: `${result.filePath}.json`;
+			await writeFile(
+				filePath,
+				`${JSON.stringify(requestBrowserService.exportBrowserData(), null, 2)}\n`,
+				{ mode: 0o600 },
+			);
+			return { ok: true, browserDataPath: filePath };
+		}
+		if (request.type === "browser-import-data") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			const result = await dialog.showOpenDialog(senderWindow, {
+				title: "Import Kestrel browser data",
+				properties: ["openFile"],
+				filters: [{ name: "Kestrel browser data", extensions: ["json"] }],
+			});
+			const filePath = result.filePaths[0];
+			if (result.canceled || !filePath)
+				return {
+					ok: true,
+					browserState: requestBrowserService.getState(),
+					cancelled: true,
+				};
+			const fileStats = statSync(filePath);
+			if (!fileStats.isFile() || fileStats.size > 10 * 1024 * 1024)
+				throw new Error("Choose a browser data JSON file smaller than 10 MB.");
+			const payload = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+			return {
+				ok: true,
+				browserState: requestBrowserService.importBrowserData(payload),
+			};
+		}
+	    if (request.type === "browser-clear-history") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
       return {
@@ -2932,6 +3149,12 @@ function registerIpc(): void {
       await requestBrowserService.openDownload(request.downloadId);
       return { ok: true };
     }
+    if (request.type === "browser-start-download-drag") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      requestBrowserService.startDownloadDrag(request.downloadId);
+      return { ok: true };
+    }
     if (request.type === "browser-cancel-download") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
@@ -2951,12 +3174,72 @@ function registerIpc(): void {
         ),
       };
     }
+    if (request.type === "browser-save-bookmark") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.saveBookmark({
+          title: request.title,
+          displayMode: request.displayMode,
+          ...(request.folderId !== undefined
+            ? { folderId: request.folderId }
+            : {}),
+        }),
+      };
+    }
+    if (request.type === "browser-update-bookmark") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.updateBookmark({
+          bookmarkId: request.bookmarkId,
+          title: request.title,
+          displayMode: request.displayMode,
+          ...(request.folderId !== undefined
+            ? { folderId: request.folderId }
+            : {}),
+        }),
+      };
+    }
     if (request.type === "browser-remove-bookmark") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
       return {
         ok: true,
         browserState: requestBrowserService.removeBookmark(request.bookmarkId),
+      };
+    }
+    if (request.type === "browser-create-bookmark-folder") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const result = requestBrowserService.createBookmarkFolder(request.name);
+      return {
+        ok: true,
+        browserState: result.state,
+        bookmarkFolderId: result.folder.id,
+      };
+    }
+    if (request.type === "browser-rename-bookmark-folder") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.renameBookmarkFolder(
+          request.folderId,
+          request.name,
+        ),
+      };
+    }
+    if (request.type === "browser-remove-bookmark-folder") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.removeBookmarkFolder(
+          request.folderId,
+        ),
       };
     }
     if (request.type === "browser-pin-tab") {
@@ -3023,14 +3306,12 @@ function registerIpc(): void {
         browserState: await requestBrowserService.applyTabOrganization(request),
       };
     }
-    if (request.type === "browser-detach-tab") {
-      if (!requestBrowserService)
-        throw new Error("The visible user browser is unavailable.");
-      const sourceState = requestBrowserService.getState();
-      const tab = sourceState.tabs.find((candidate) => candidate.id === request.tabId);
-      if (!tab || !tab.url || tab.error || tab.url.startsWith("kestrel://"))
-        throw new Error("Only loaded web pages can open in a separate window.");
-      const detachedWindow = createDetachedBrowserWindow(sourceState, tab);
+	if (request.type === "browser-detach-tab") {
+		if (!requestBrowserService)
+			throw new Error("The visible user browser is unavailable.");
+		const sourceState = requestBrowserService.getState();
+		const tab = requestBrowserService.getTabForTransfer(request.tabId);
+		const detachedWindow = createDetachedBrowserWindow(sourceState, tab);
       try {
         const browserState = await requestBrowserService.detachTab(request.tabId);
         return { ok: true, browserState };
@@ -3038,6 +3319,35 @@ function registerIpc(): void {
         if (!detachedWindow.isDestroyed()) detachedWindow.close();
         throw cause;
       }
+    }
+    if (request.type === "browser-reattach-tab") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      if (senderWindow === mainWindow)
+        throw new Error("This tab is already in the main Kestrel window.");
+      if (!mainWindow || mainWindow.isDestroyed())
+        throw new Error("The main Kestrel window is unavailable.");
+      const targetService = browserServiceForWindow(mainWindow);
+      if (!targetService)
+        throw new Error("The main Kestrel window is unavailable.");
+      const tab = requestBrowserService.getTabForTransfer(request.tabId);
+      let imported = false;
+      try {
+        await targetService.importTabForTransfer(tab);
+        imported = true;
+        await requestBrowserService.removeTabForTransfer(request.tabId);
+      } catch (cause) {
+        if (imported)
+          await targetService.removeTabForTransfer(tab.id).catch(() => undefined);
+        throw cause;
+      }
+      mainWindow.show();
+      mainWindow.focus();
+      return {
+        ok: true,
+        browserState: requestBrowserService.getState(),
+        browserWindowRole: "detached",
+      };
     }
     if (request.type === "browser-find-in-page") {
       if (!requestBrowserService)
@@ -3080,9 +3390,9 @@ function registerIpc(): void {
       };
     }
     if (request.type === "browser-save-screenshot") {
-      if (!userBrowserService)
+      if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      const tab = userBrowserService
+      const tab = requestBrowserService
         .getState()
         .tabs.find((candidate) => candidate.id === request.tabId);
       const title = (tab?.title ?? "Kestrel page")
@@ -3103,23 +3413,34 @@ function registerIpc(): void {
       const filePath = result.filePath.toLowerCase().endsWith(".png")
         ? result.filePath
         : `${result.filePath}.png`;
-      const frame = await userBrowserService.screenshot(request.tabId);
+      const frame = await requestBrowserService.screenshot(request.tabId);
       if (!frame.png) throw new Error("The page screenshot was empty.");
       await writeFile(filePath, frame.png);
       return { ok: true, screenshotPath: filePath };
     }
-    if (request.type === "browser-set-site-permission") {
-      if (!requestBrowserService)
-        throw new Error("The visible user browser is unavailable.");
-      return {
-        ok: true,
-        browserState: requestBrowserService.setSitePermission(
-          request.origin,
-          request.permission,
-          request.decision,
-        ),
-      };
-    }
+		if (request.type === "browser-set-site-permission") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			return {
+				ok: true,
+				browserState: requestBrowserService.setSitePermission(
+					request.origin,
+					request.permission,
+					request.decision,
+				),
+			};
+		}
+		if (request.type === "browser-clear-site-permission") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			return {
+				ok: true,
+				browserState: requestBrowserService.clearSitePermission(
+					request.origin,
+					request.permission,
+				),
+			};
+		}
     if (request.type === "browser-list-extensions") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
@@ -3128,11 +3449,19 @@ function registerIpc(): void {
         extensions: requestBrowserService.listExtensions(),
       };
     }
+    if (request.type === "browser-inspect-extension-url") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const extensionInspection = await requestBrowserService.inspectExtensionUrl(
+        request.urlOrId,
+      );
+      return { ok: true, extensionInspection };
+    }
     if (request.type === "browser-install-extension-url") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      const extension = await requestBrowserService.installExtensionUrl(
-        request.urlOrId,
+      const extension = await requestBrowserService.installReviewedExtension(
+        request.inspectionId,
       );
       return { ok: true, extension };
     }
@@ -3151,6 +3480,14 @@ function registerIpc(): void {
       await requestBrowserService.uninstallExtension(request.extensionId);
       return { ok: true };
     }
+    if (request.type === "browser-reload-extension") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const extension = await requestBrowserService.reloadExtension(
+        request.extensionId,
+      );
+      return { ok: true, extension };
+    }
     if (request.type === "browser-sleep-tab") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
@@ -3166,6 +3503,24 @@ function registerIpc(): void {
         ok: true,
         browserState: requestBrowserService.sleepInactiveTabs(),
       };
+    }
+    if (request.type === "computer-use-status") {
+      const computerUseStatus = await computerUseManager().status();
+      return { ok: true, computerUseStatus };
+    }
+    if (request.type === "computer-use-update") {
+      const settings = await computerUseManager().setEnabled(request.enabled);
+      browserService.setComputerUseEnabled(settings.enabled);
+      const computerUseStatus = await computerUseManager().status();
+      return { ok: true, computerUseStatus };
+    }
+    if (request.type === "computer-use-open-settings") {
+      if (process.platform !== "darwin")
+        throw new Error("macOS Privacy & Security settings are unavailable on this platform.");
+      const settingsUrl = ComputerUseManager.settingsUrl(request.surface);
+      if (!settingsUrl) throw new Error("The requested macOS permission surface is unavailable.");
+      await shell.openExternal(settingsUrl);
+      return { ok: true };
     }
     if (request.type === "get-system-state") {
       const state = app.getLoginItemSettings();
@@ -3323,6 +3678,21 @@ function registerIpc(): void {
             : "warning",
         detail: `Microphone ${microphone}; screen recording ${screen}; Accessibility ${accessibility ? "granted" : "not granted"}. Kestrel asks only when a task needs them.`,
       });
+      const computerUseStatus: ComputerUseStatus = await computerUseManager().status();
+      const computerUseReady =
+        computerUseStatus.enabled &&
+        computerUseStatus.captureReady &&
+        computerUseStatus.controlReady;
+      checks.push({
+        id: "computer-use",
+        label: "Whole-desktop computer use",
+        status: computerUseReady ? "pass" : "warning",
+        detail: !computerUseStatus.enabled
+          ? "Disabled by default. Enable it in Settings → Agent → Permissions & sandbox before Kestrel can capture or control other apps."
+          : computerUseReady
+            ? "Enabled with Screen Recording and Accessibility permission."
+            : `Enabled, but native permissions are incomplete: Screen Recording ${computerUseStatus.screenRecording}; Accessibility ${computerUseStatus.accessibility}.`,
+      });
       const backupMetadataPath = join(
         app.getPath("userData"),
         "last-backup.json",
@@ -3443,6 +3813,78 @@ function registerIpc(): void {
     }
     if (request.type === "subscription-cli-status")
       return { ok: true, subscriptionClis: await subscriptionCliStatuses() };
+	if (request.type === "provider-account-list")
+		return { ok: true, providerAccounts: await providerAccountStore().list() };
+	if (request.type === "provider-account-create") {
+		await providerAccountStore().create(request.account);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-update") {
+		await providerAccountStore().update(request.account);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-remove") {
+		await providerAccountStore().remove(request.accountId);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-connect") {
+		if (chatGptOAuthController)
+			throw new Error("ChatGPT sign-in is already in progress.");
+		const account = await providerAccountStore().account(request.accountId);
+		if (!account) throw new Error("Provider account no longer exists.");
+		if (account.adapter !== "codex-app-server")
+			throw new Error(
+				"This account uses its provider's existing CLI or protected API-key flow.",
+			);
+		const codexPath = detectedSubscriptionCli("codex");
+		if (!codexPath)
+			throw new Error(
+				"Codex was not found in a trusted local installation path.",
+			);
+		if (account.profilePath)
+			await mkdir(account.profilePath, { recursive: true, mode: 0o700 });
+		const controller = new AbortController();
+		const manager = new ChatGptOAuthManager({
+			executable: codexPath,
+			environment: {
+				...process.env,
+				...(account.profilePath ? { CODEX_HOME: account.profilePath } : {}),
+			},
+			openExternal: async (url) => {
+				openExternalSafely((target) => shell.openExternal(target), url);
+			},
+		});
+		chatGptOAuthController = controller;
+		activeChatGptOAuthManager = manager;
+		await supervisor.stop();
+		try {
+			await manager.connect(controller.signal);
+		} finally {
+			if (chatGptOAuthController === controller) chatGptOAuthController = null;
+			if (activeChatGptOAuthManager === manager)
+				activeChatGptOAuthManager = null;
+			await initializeCore();
+		}
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
     if (request.type === "subscription-cli-set") {
       const statuses = await subscriptionCliStatuses();
       const selected = statuses.find((status) => status.id === request.id);
@@ -3545,8 +3987,25 @@ function registerIpc(): void {
     const grantStore = new WorkspaceGrantStore(
       join(app.getPath("userData"), "workspace-grants.json"),
     );
-    if (request.type === "get-workspace-grants")
-      return { ok: true, workspaceGrants: await grantStore.statusList() };
+    if (request.type === "get-workspace-grants") {
+      const projects = await grantStore.statusList();
+      return { ok: true, workspaceGrants: projects, projects };
+    }
+    if (request.type === "project-update") {
+      const projects = await grantStore.update(request.projectId, {
+        ...(request.name !== undefined ? { name: request.name } : {}),
+        ...(request.instructions !== undefined
+          ? { instructions: request.instructions }
+          : {}),
+      });
+      await synchronizeProjectMetadata(projects);
+      return { ok: true, workspaceGrants: projects, projects };
+    }
+    if (request.type === "project-delete") {
+      await grantStore.remove(request.projectId);
+      const projects = await restartCoreAfterGrantChange();
+      return { ok: true, workspaceGrants: projects, projects };
+    }
     if (request.type === "select-workspace-folder") {
       const options = {
         title: `Grant ${PRODUCT_IDENTITY.productName} a project folder`,
@@ -3558,23 +4017,24 @@ function registerIpc(): void {
       const selection = mainWindow
         ? await dialog.showOpenDialog(mainWindow, options)
         : await dialog.showOpenDialog(options);
-      if (selection.canceled || !selection.filePaths[0])
-        return {
-          ok: true,
-          cancelled: true,
-          workspaceGrants: await grantStore.statusList(),
-        };
+      if (selection.canceled || !selection.filePaths[0]) {
+        const projects = await grantStore.statusList();
+        return { ok: true, cancelled: true, workspaceGrants: projects, projects };
+      }
       const selectedWorkspacePath = realpathSync(selection.filePaths[0]);
       await grantStore.add(selectedWorkspacePath);
+      const projects = await restartCoreAfterGrantChange();
       return {
         ok: true,
         selectedWorkspacePath,
-        workspaceGrants: await restartCoreAfterGrantChange(),
+        workspaceGrants: projects,
+        projects,
       };
     }
     if (request.type === "remove-workspace-folder") {
       await grantStore.remove(request.path);
-      return { ok: true, workspaceGrants: await restartCoreAfterGrantChange() };
+      const projects = await restartCoreAfterGrantChange();
+      return { ok: true, workspaceGrants: projects, projects };
     }
     if (request.type === "select-context-files") {
       const workspaceRoot = realpathSync(request.workspaceRoot);
@@ -3651,24 +4111,32 @@ function registerIpc(): void {
     }
     if (
       request.type === "password-list" ||
-      request.type === "password-save" ||
-      request.type === "password-remove"
+      request.type === "password-remove" ||
+      request.type === "password-update-username" ||
+      request.type === "password-copy" ||
+      request.type === "password-reveal"
     ) {
       const service = requestBrowserService ?? userBrowserService;
       if (!service)
         throw new Error("The visible user browser is unavailable.");
       if (request.type === "password-list")
         return { ok: true, passwords: await service.listPasswords() };
-      if (request.type === "password-save")
+      if (request.type === "password-update-username")
         return {
           ok: true,
-          passwords: await service.savePassword({
-            origin: request.origin,
-            ...(request.title ? { title: request.title } : {}),
-            username: request.username,
-            password: request.password,
-          }),
+          passwords: await service.updatePasswordUsername(
+            request.passwordId,
+            request.username,
+          ),
         };
+      if (request.type === "password-copy") {
+        await service.copyPassword(request.passwordId);
+        return { ok: true };
+      }
+      if (request.type === "password-reveal") {
+        await service.revealPassword(request.passwordId);
+        return { ok: true };
+      }
       return {
         ok: true,
         passwords: await service.removePassword(request.passwordId),
@@ -3953,9 +4421,11 @@ function registerIpc(): void {
         return {
           ok: true,
           cancelled: true,
-          migrationPlan: new MigrationManager().plan(
-            [],
-            join(app.getPath("userData"), "migrations"),
+          migrationPlan: migrationPlanPreview(
+            new MigrationManager().plan(
+              [],
+              join(app.getPath("userData"), "migrations"),
+            ),
           ),
         };
       const targetOptions = {
@@ -3973,26 +4443,33 @@ function registerIpc(): void {
         return {
           ok: true,
           cancelled: true,
-          migrationPlan: new MigrationManager().plan(
-            [],
-            join(app.getPath("userData"), "migrations"),
+          migrationPlan: migrationPlanPreview(
+            new MigrationManager().plan(
+              [],
+              join(app.getPath("userData"), "migrations"),
+            ),
           ),
         };
+      const plan = new MigrationManager().plan(
+        [{ product: request.product, root: source.filePaths[0] }],
+        target.filePaths[0],
+      );
       return {
         ok: true,
-        migrationPlan: new MigrationManager().plan(
-          [{ product: request.product, root: source.filePaths[0] }],
-          target.filePaths[0],
-        ),
+        migrationPlan: migrationPlanPreview(plan),
+        migrationPlanId: pendingMigrationPlans.create(event.sender.id, plan),
       };
     }
     if (request.type === "migration-apply-plan")
       return {
         ok: true,
-        migrationResult: new MigrationManager().apply(request.plan, {
-          approved: request.confirmation === "IMPORT",
-          overwrite: request.overwrite,
-        }),
+        migrationResult: new MigrationManager().apply(
+          pendingMigrationPlans.consume(event.sender.id, request.planId),
+          {
+            approved: request.confirmation === "IMPORT",
+            overwrite: request.overwrite,
+          },
+        ),
       };
     if (request.type === "skin-import-file") {
       const options = {
@@ -4185,6 +4662,7 @@ async function initializeCoreForStartup(): Promise<boolean> {
           // The failed attempt cached the old key. A new broker is required so
           // the first-run path creates a fresh protected key after the archive.
           appCredentialBroker = null;
+			appProviderAccountStore = null;
           appPasswordVault = null;
           appPaymentCardVault = null;
           continue;

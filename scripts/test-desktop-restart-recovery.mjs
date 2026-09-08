@@ -174,12 +174,15 @@ try {
 	await page.reload();
 	await page.locator("#runtime-prompt").waitFor();
 	await page.getByRole("button", { name: /^Model:/ }).click();
-	const menu = page.getByRole("menu", {
-		name: "Choose provider, model, and thinking level",
+	const menu = page.getByRole("dialog", {
+		name: "Choose a provider, account, model, and thinking level",
 	});
-	await menu.getByRole("menuitem", { name: /^Nous/ }).click();
-	await menu.getByLabel("Custom model ID").fill("fixture-model");
-	await menu.getByLabel("Custom model ID").press("Enter");
+	await menu
+		.locator('.model-selector-column[aria-label="Provider"]')
+		.getByRole("button", { name: /^Nous/ })
+		.click();
+	await menu.getByLabel("Explicit model ID").fill("fixture-model");
+	await menu.getByLabel("Explicit model ID").press("Enter");
 	await menu.waitFor({ state: "detached" });
 	await page
 		.getByRole("textbox", { name: "Message Kestrel" })

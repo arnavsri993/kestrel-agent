@@ -12,7 +12,10 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	selectSettingsSection,
+} from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-readiness-test-"));
 const userData = join(root, "user-data");
@@ -84,7 +87,7 @@ try {
 	await page.reload();
 
 	await openKestrelDestination(page, "Settings");
-	await page.getByRole("button", { name: /^Agent Plugins/ }).click();
+	await selectSettingsSection(page, "extensions", "Plugins");
 	const readinessPlugin = page
 		.locator("article.setting-row")
 		.filter({ hasText: "Readiness Test" });
@@ -94,15 +97,13 @@ try {
 	await page
 		.getByRole("button", { name: "Open readiness", exact: true })
 		.click();
-	await page
-		.getByRole("heading", { name: /Needs attention|Ready for work/ })
-		.waitFor();
+	await page.locator("h1").filter({ hasText: "Readiness" }).waitFor();
 	await page
 		.getByRole("heading", { name: "What can work right now" })
 		.waitFor();
 	await page
 		.getByText(
-			"This contacts only the configured provider or local model service.",
+			"Checks the configured provider or local model. It does not send a project prompt.",
 			{ exact: false },
 		)
 		.waitFor();
@@ -127,10 +128,7 @@ try {
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.setViewportSize({ width: 1320, height: 860 });
 	await openKestrelDestination(page, "Settings");
-	await page
-		.locator(".settings-nav")
-		.getByRole("button", { name: "Connections", exact: true })
-		.click();
+	await selectSettingsSection(page, "connections", "Connections");
 	const chatGptConnection = page
 		.locator(".oauth-connection")
 		.filter({ has: page.getByText("ChatGPT", { exact: true }) });
@@ -141,17 +139,36 @@ try {
 	await chatGptConnection
 		.getByRole("button", { name: "Disable model route" })
 		.waitFor();
+	const codexAccountEndpointId = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-providers",
+		});
+		if (!response.ok || !response.providerAccounts)
+			throw new Error("The account-aware provider catalog is unavailable.");
+		const account = response.providerAccounts.find(
+			(candidate) =>
+				candidate.providerId === "codex" &&
+				candidate.authTransport === "oauth" &&
+				candidate.enabled,
+		);
+		if (!account)
+			throw new Error("The enabled Codex account is missing from the provider catalog.");
+		return account.endpointId;
+	});
 	await openKestrelDestination(page, "Extensions");
 	await page
 		.getByRole("button", { name: "Open readiness", exact: true })
 		.click();
-	await page.getByRole("heading", { name: "Ready for work" }).waitFor();
+	await page
+		.locator(".ui-page-frame-eyebrow")
+		.getByText("Ready for work", { exact: true })
+		.waitFor();
 	await page.getByRole("button", { name: "Verify model access" }).click();
-	await page.getByText("codex-subscription", { exact: true }).waitFor();
+	await page.getByText(codexAccountEndpointId, { exact: true }).waitFor();
 	const codexCheck = page
 		.locator(".model-check-panel")
 		.getByRole("listitem")
-		.filter({ hasText: "codex-subscription" });
+		.filter({ hasText: codexAccountEndpointId });
 	await codexCheck.waitFor();
 	const codexCheckText = await codexCheck.innerText();
 	assert.match(

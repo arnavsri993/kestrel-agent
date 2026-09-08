@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../Icon";
 import { SurfaceBackButton } from "./SurfaceBackButton";
+import { PageFrame } from "../ui";
+import "./surface-pages.css";
 
 export interface CommandDestination {
   id: string;
@@ -47,23 +49,21 @@ export function CommandCenter({
   }, [onClose]);
 
   return (
-    <main className="command-center" aria-labelledby="command-center-title">
-      <header>
-        {onBack && <SurfaceBackButton onBack={onBack} />}
-        <span className="command-mark">
-          <Icon name="command" />
-        </span>
-        <div>
-          <h1 id="command-center-title">Capabilities</h1>
-        </div>
-      </header>
+    <PageFrame
+      as="main"
+      className="command-center"
+      title="Command Center"
+      titleId="command-center-title"
+      measure="standard"
+      actions={onBack ? <SurfaceBackButton onBack={onBack} /> : undefined}
+    >
       <label className="command-search">
         <Icon name="search" />
         <span className="sr-only">Search Kestrel</span>
         <input
           autoFocus
           value={query}
-          placeholder="Search capabilities"
+          placeholder="Search Kestrel"
           onChange={(event) => setQuery(event.target.value)}
         />
         <kbd>⌘ K</kbd>
@@ -78,7 +78,6 @@ export function CommandCenter({
             <Icon name="agent" />
             <span>
               <strong>New task</strong>
-              <small>Start with an outcome</small>
             </span>
             <Icon name="chevron" />
           </button>
@@ -86,7 +85,7 @@ export function CommandCenter({
             <Icon name="writing" />
             <span>
               <strong>Writing Studio</strong>
-              <small>Draft with context and voice signals</small>
+              <small>Draft with your context</small>
             </span>
             <Icon name="chevron" />
           </button>
@@ -106,7 +105,7 @@ export function CommandCenter({
             <Icon name="readiness" />
             <span>
               <strong>Readiness</strong>
-              <small>Check what can work</small>
+              <small>Check your setup</small>
             </span>
             <Icon name="chevron" />
           </button>
@@ -121,9 +120,7 @@ export function CommandCenter({
         </div>
       </section>
       {visible.length === 0 ? (
-        <p className="command-empty">
-          Nothing matches &ldquo;{query.trim()}&rdquo;. Try a different search.
-        </p>
+        <p className="command-empty">No matches for &ldquo;{query.trim()}&rdquo;.</p>
       ) : (
         <div className="command-groups">
           {(["Browse", "Agent", "Context", "Build", "System"] as const).map(
@@ -157,6 +154,6 @@ export function CommandCenter({
           )}
         </div>
       )}
-    </main>
+    </PageFrame>
   );
 }

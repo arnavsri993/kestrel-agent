@@ -158,6 +158,15 @@ export async function waitForBrowserPostClickFrame(
 export class ElectronBrowserService {
 	private readonly sessions = new Map<string, BrowserRecord>();
 	private readonly elementRefs = new Map<string, Map<string, number>>();
+	private computerUseEnabled = false;
+
+	setComputerUseEnabled(enabled: boolean): void {
+		this.computerUseEnabled = enabled;
+	}
+
+	isComputerUseEnabled(): boolean {
+		return this.computerUseEnabled;
+	}
 
 	async handle(
 		request: AutomationBrowserBackendWireRequest,
@@ -396,6 +405,7 @@ export class ElectronBrowserService {
 		selector: string,
 		signal: AbortSignal,
 		focus = false,
+		rejectSensitive = false,
 	): Promise<{ x: number; y: number }> {
 		if (!selector || selector.length > 2_000)
 			throw new Error("Browser selector is invalid.");
@@ -409,6 +419,7 @@ export class ElectronBrowserService {
 				backendNodeId,
 				focus,
 				signal,
+				rejectSensitive,
 			);
 		}
 		const result = (await window.webContents.executeJavaScript(
@@ -439,6 +450,22 @@ export class ElectronBrowserService {
       ) throw new Error("Browser target is not visible.");
       if (node.matches(":disabled") || node.getAttribute("aria-disabled") === "true") {
         throw new Error("Browser target is disabled.");
+      }
+      const secretHint = [
+        node.tagName,
+        node.getAttribute("type"),
+        node.getAttribute("autocomplete"),
+        node.getAttribute("name"),
+        node.id,
+        node.getAttribute("aria-label"),
+        node.getAttribute("placeholder"),
+        node.labels?.[0]?.innerText,
+      ].filter(Boolean).join(" ").toLowerCase();
+      const isSensitive =
+        (node instanceof HTMLInputElement && node.type === "password") ||
+        /(?:\\b(?:new|current|old|confirm(?:ation)?|repeat)?\\s*password\\b|\\bone[-_\\s]*time[-_\\s]*(?:code|passcode|token)\\b|\\botp\\b|\\b(?:recovery|verification|security)\\s*(?:code|passcode|pin)\\b|\\b(?:cvv|cvc|cc[-_\\s]*csc)\\b|\\bapi[-_\\s]*(?:key|token)\\b|\\baccess[-_\\s]*token\\b|\\bprivate[-_\\s]*key\\b)/i.test(secretHint);
+      if (${rejectSensitive} && isSensitive) {
+        throw new Error("Kestrel will not type into a sensitive browser field. Ask the user to enter that value directly.");
       }
       const left = Math.max(0, box.left);
       const top = Math.max(0, box.top);
@@ -492,7 +519,7 @@ export class ElectronBrowserService {
 				signal,
 			);
 		} else if (action.type === "type") {
-			await this.targetPoint(id, window, action.target, signal, true);
+			await this.targetPoint(id, window, action.target, signal, true, true);
 			if (signal.aborted) throw signal.reason;
 			window.webContents.insertText(action.text);
 		} else if (action.type === "select") {
@@ -578,6 +605,19 @@ export class ElectronBrowserService {
 	): Promise<ScreenshotFrame> {
 		const { window } = this.require(id);
 		if (signal.aborted) throw signal.reason;
+		const snapshot = await this.snapshot(id, signal);
+		if (
+			snapshot.interactive?.some(
+				(item) =>
+					item.name === "Sensitive field" ||
+					/(?:\b(?:new|current|old|confirm(?:ation)?|repeat)?\s*password\b|\b(?:one\s*time|recovery|verification|security)\s*(?:code|passcode|pin)\b|\botp\b|\b(?:cvv|cvc)\b|\bapi\s*(?:key|token)\b|\baccess\s*token\b|\bprivate\s*key\b)/i.test(
+						item.name ?? "",
+					),
+			)
+		)
+			throw new Error(
+				"Kestrel does not share browser screenshots from pages with sensitive input fields.",
+			);
 		const image = await window.webContents.capturePage();
 		const { width, height } = image.getSize();
 		const bgra = image.toBitmap();
@@ -662,8 +702,13 @@ export class ElectronBrowserService {
 	private async desktopScreenshot(
 		signal: AbortSignal,
 	): Promise<ScreenshotFrame> {
+		this.assertComputerUseEnabled();
 		if (signal.aborted) throw signal.reason;
-		if (systemPreferences.getMediaAccessStatus("screen") === "denied")
+		if (process.platform !== "darwin")
+			throw new Error(
+				"Whole-desktop computer use is available only on macOS.",
+			);
+		if (systemPreferences.getMediaAccessStatus("screen") !== "granted")
 			throw new Error(
 				"macOS Screen Recording permission is required for whole-desktop capture.",
 			);
@@ -692,8 +737,13 @@ export class ElectronBrowserService {
 		action: DesktopAction,
 		signal: AbortSignal,
 	): Promise<void> {
+		this.assertComputerUseEnabled();
 		if (signal.aborted) throw signal.reason;
-		if (!systemPreferences.isTrustedAccessibilityClient(true))
+		if (process.platform !== "darwin")
+			throw new Error(
+				"Whole-desktop computer use is available only on macOS.",
+			);
+		if (!systemPreferences.isTrustedAccessibilityClient(false))
 			throw new Error(
 				"macOS Accessibility permission is required for whole-desktop control.",
 			);
@@ -735,6 +785,13 @@ export class ElectronBrowserService {
 			signal.addEventListener("abort", abort, { once: true });
 			child.once("exit", () => signal.removeEventListener("abort", abort));
 		});
+	}
+
+	private assertComputerUseEnabled(): void {
+		if (!this.computerUseEnabled)
+			throw new Error(
+				"Whole-desktop computer use is disabled. Enable it in Settings → Agent → Permissions & sandbox.",
+			);
 	}
 
 	private async close(id: string): Promise<void> {

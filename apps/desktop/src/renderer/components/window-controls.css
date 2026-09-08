@@ -120,24 +120,26 @@
 }
 
 .window-control-close {
-	--window-control-fill: #ff5f57;
-	--window-control-icon-color: #80170e;
+	/* Match the normal traffic-light reference while preserving the custom
+	 * triangular silhouette. */
+	--window-control-fill: #f45146;
+	--window-control-icon-color: #8c0000;
 	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
-	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(255, 95, 87, 0.42));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(244, 81, 70, 0.42));
 }
 
 .window-control-minimize {
-	--window-control-fill: #ffbd2e;
-	--window-control-icon-color: #994219;
+	--window-control-fill: #fcb600;
+	--window-control-icon-color: #a63a00;
 	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
-	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(255, 189, 46, 0.44));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(252, 182, 0, 0.44));
 }
 
 .window-control-zoom {
-	--window-control-fill: #28c840;
-	--window-control-icon-color: #41711e;
+	--window-control-fill: #00bc00;
+	--window-control-icon-color: #2e7300;
 	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
-	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(40, 200, 64, 0.42));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(0, 188, 0, 0.42));
 }
 
 .window-control:focus-visible {

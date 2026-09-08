@@ -3,8 +3,12 @@ import type {
 	CalendarProviderStatus,
 	CoreResponse,
 	MemoryRecord,
+	MemoryTimelineQueryResult,
 	PersonRecord,
+	ProvenanceRecord,
 	RendererRequest,
+	TimelineEvent,
+	TranscriptSearchResult,
 	UnifiedCalendarEvent,
 	UserModelFact,
 	WorkspaceSnapshot,
@@ -14,7 +18,7 @@ import { DreamingPanel } from "./DreamingPanel";
 import { Icon } from "./Icon";
 import { MemoryRecallStatus } from "./MemoryRecallStatus";
 
-type LifeView = "calendar" | "people" | "memory";
+type LifeView = "calendar" | "timeline" | "people" | "memory";
 
 const dayFormatter = new Intl.DateTimeFormat(undefined, {
 	weekday: "short",
@@ -410,10 +414,7 @@ function CalendarView() {
 					) : (
 						<>
 							<h2>Choose a time block</h2>
-							<p>
-								Inspect its source, confidence, people, location, and permission
-								boundary.
-							</p>
+							<p>See its source, details, and access.</p>
 						</>
 					)}
 				</aside>
@@ -425,8 +426,8 @@ function CalendarView() {
 					<div>
 						<h2>No time is mapped this week</h2>
 						<p>
-							Add a confirmed block below, connect Google Calendar, or tell
-							Kestrel a recurring routine in chat.
+							Add a local block, connect Google Calendar, or share a recurring
+							routine in chat.
 						</p>
 					</div>
 				</section>
@@ -467,8 +468,7 @@ function CalendarView() {
 					</button>
 				</form>
 				<small>
-					This creates an explicit local block. It does not write to a connected
-					calendar.
+					Creates a local block; it does not edit connected calendars.
 				</small>
 			</details>
 			{error && (
@@ -476,6 +476,544 @@ function CalendarView() {
 					{error}
 				</p>
 			)}
+		</div>
+	);
+}
+
+type TimelineSelection =
+	| { kind: "activity_block"; id: string }
+	| { kind: "timeline_event"; id: string };
+
+function localDateInputValue(value: Date): string {
+	const year = value.getFullYear();
+	const month = String(value.getMonth() + 1).padStart(2, "0");
+	const day = String(value.getDate()).padStart(2, "0");
+	return `${year}-${month}-${day}`;
+}
+
+function dateFromLocalInput(value: string): Date | undefined {
+	if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return undefined;
+	const date = new Date(`${value}T12:00:00`);
+	return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function dayRange(value: Date): { startAt: string; endAt: string } {
+	const start = new Date(value);
+	start.setHours(0, 0, 0, 0);
+	const end = addDays(start, 1);
+	return { startAt: start.toISOString(), endAt: end.toISOString() };
+}
+
+function timelineTimeLabel(startedAt: string, endedAt?: string): string {
+	const start = new Date(startedAt);
+	if (!endedAt) return timeFormatter.format(start);
+	return `${timeFormatter.format(start)} – ${timeFormatter.format(new Date(endedAt))}`;
+}
+
+function uniqueIds(values: readonly string[]): string[] {
+	return [...new Set(values)].filter(Boolean);
+}
+
+function emptyTimelineResult(): MemoryTimelineQueryResult {
+	return {
+		results: [],
+		events: [],
+		sessions: [],
+		activityBlocks: [],
+		dailySummaries: [],
+		hasMore: false,
+	};
+}
+
+function TimelineView() {
+	const [day, setDay] = useState(() => {
+		const today = new Date();
+		today.setHours(12, 0, 0, 0);
+		return today;
+	});
+	const [query, setQuery] = useState("");
+	const [appliedQuery, setAppliedQuery] = useState("");
+	const [timeline, setTimeline] = useState<MemoryTimelineQueryResult>(() =>
+		emptyTimelineResult(),
+	);
+	const [selection, setSelection] = useState<TimelineSelection | null>(null);
+	const [provenance, setProvenance] = useState<ProvenanceRecord[]>([]);
+	const [busy, setBusy] = useState(false);
+	const [provenanceBusy, setProvenanceBusy] = useState(false);
+	const [error, setError] = useState("");
+	const range = useMemo(() => dayRange(day), [day]);
+	const eventsById = useMemo(
+		() => new Map(timeline.events.map((event) => [event.id, event] as const)),
+		[timeline.events],
+	);
+	const blocks = useMemo(
+		() =>
+			[...timeline.activityBlocks].sort(
+				(left, right) =>
+					new Date(left.startedAt).getTime() -
+						new Date(right.startedAt).getTime(),
+			),
+		[timeline.activityBlocks],
+	);
+	const groupedEventIds = useMemo(
+		() => new Set(blocks.flatMap((block) => block.eventIds)),
+		[blocks],
+	);
+	const standaloneEvents = useMemo(
+		() =>
+			timeline.events
+				.filter((event) => !groupedEventIds.has(event.id))
+				.sort(
+					(left, right) =>
+						new Date(left.startedAt).getTime() -
+							new Date(right.startedAt).getTime(),
+				),
+		[timeline.events, groupedEventIds],
+	);
+	const selectedBlock =
+		selection?.kind === "activity_block"
+			? timeline.activityBlocks.find((block) => block.id === selection.id)
+			: undefined;
+	const selectedEvent =
+		selection?.kind === "timeline_event"
+			? eventsById.get(selection.id)
+			: undefined;
+	const detailEvents = useMemo(() => {
+		if (selectedEvent) return [selectedEvent];
+		if (!selectedBlock) return [];
+		return selectedBlock.eventIds
+			.flatMap((id) => {
+				const event = eventsById.get(id);
+				return event ? [event] : [];
+			})
+			.sort(
+				(left, right) =>
+					new Date(left.startedAt).getTime() -
+						new Date(right.startedAt).getTime(),
+			);
+	}, [eventsById, selectedBlock, selectedEvent]);
+const detailRelatedIds = useMemo(
+		() =>
+			uniqueIds(
+				(selectedBlock
+					? [
+							...selectedBlock.projectIds,
+							...selectedBlock.personIds,
+							...selectedBlock.entityIds,
+						]
+					: detailEvents.flatMap((event) => [
+							...event.projectIds,
+							...event.personIds,
+							...event.entityIds,
+						])) ?? [],
+			),
+		[selectedBlock, detailEvents],
+	);
+	const summary = timeline.dailySummaries.find(
+		(item) => item.day === localDateInputValue(day),
+	);
+
+	async function loadTimeline(search = appliedQuery) {
+		setBusy(true);
+		setError("");
+		try {
+			const response = await request({
+				type: "memory-timeline-query",
+				query: search,
+				startAt: range.startAt,
+				endAt: range.endAt,
+				personIds: [],
+				projectIds: [],
+				entityIds: [],
+				horizons: [],
+				eventTypes: [],
+				includeTimeline: true,
+				includeMemories: false,
+				includeEntities: false,
+				includeAgents: false,
+				includeTasks: false,
+				includeSensitive: false,
+				includeRestricted: false,
+				limit: 100,
+				sort: "chronological",
+			});
+			const next = response.memoryTimeline ?? emptyTimelineResult();
+			setTimeline(next);
+			setSelection((current) => {
+				if (
+					current?.kind === "activity_block" &&
+					next.activityBlocks.some((block) => block.id === current.id)
+				)
+					return current;
+				if (
+					current?.kind === "timeline_event" &&
+					next.events.some((event) => event.id === current.id)
+				)
+					return current;
+				const firstBlock = next.activityBlocks[0];
+				if (firstBlock) return { kind: "activity_block", id: firstBlock.id };
+				const firstEvent = next.events[0];
+				return firstEvent
+					? { kind: "timeline_event", id: firstEvent.id }
+					: null;
+			});
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Could not load the timeline.",
+			);
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	useEffect(() => {
+		void loadTimeline();
+	}, [day.getTime(), appliedQuery]);
+
+	useEffect(() => {
+		const owner = selectedBlock
+			? { ownerType: "activity_block" as const, ownerId: selectedBlock.id }
+			: selectedEvent
+				? { ownerType: "timeline_event" as const, ownerId: selectedEvent.id }
+				: undefined;
+		if (!owner) {
+			setProvenance([]);
+			return;
+		}
+		let current = true;
+		setProvenanceBusy(true);
+		void request({
+			type: "memory-provenance-list",
+			ownerType: owner.ownerType,
+			ownerId: owner.ownerId,
+			limit: 50,
+		})
+			.then((response) => {
+				if (current) setProvenance(response.memoryProvenance ?? []);
+			})
+			.catch((cause) => {
+				if (current)
+					setError(
+						cause instanceof Error
+							? cause.message
+							: "Could not load activity provenance.",
+					);
+			})
+			.finally(() => {
+				if (current) setProvenanceBusy(false);
+			});
+		return () => {
+			current = false;
+		};
+	}, [selectedBlock, selectedEvent]);
+
+	function selectEvent(event: TimelineEvent) {
+		setSelection({ kind: "timeline_event", id: event.id });
+	}
+
+	function renderEvent(event: TimelineEvent) {
+		return (
+			<button
+				key={event.id}
+				className={`timeline-event${selectedEvent?.id === event.id ? " active" : ""}`}
+				aria-pressed={selectedEvent?.id === event.id}
+				onClick={() => selectEvent(event)}
+			>
+				<time dateTime={event.startedAt}>
+					{timelineTimeLabel(event.startedAt, event.endedAt)}
+				</time>
+				<span className="timeline-event-type">
+					{formatDisplayLabel(event.eventType)}
+				</span>
+				<strong>{event.textSummary}</strong>
+				<small>
+					{event.source} · {event.actor}
+				</small>
+			</button>
+		);
+	}
+
+	return (
+		<div className="life-timeline">
+			<section className="timeline-toolbar" aria-label="Timeline controls">
+				<div className="timeline-day-controls">
+					<button
+						className="icon-button"
+						aria-label="Previous day"
+						onClick={() => setDay((current) => addDays(current, -1))}
+					>
+						<Icon name="chevron" className="chevron-back" />
+					</button>
+					<button
+						className="button secondary"
+						onClick={() => {
+							const today = new Date();
+							today.setHours(12, 0, 0, 0);
+							setDay(today);
+						}}
+					>
+						Today
+					</button>
+					<button
+						className="icon-button"
+						aria-label="Next day"
+						onClick={() => setDay((current) => addDays(current, 1))}
+					>
+						<Icon name="chevron" />
+					</button>
+					<strong>{dayFormatter.format(day)}</strong>
+				</div>
+				<label className="timeline-date-picker">
+					<span className="sr-only">Jump to a day</span>
+					<input
+						type="date"
+						value={localDateInputValue(day)}
+						onChange={(event) => {
+							const next = dateFromLocalInput(event.target.value);
+							if (next) setDay(next);
+						}}
+					/>
+				</label>
+			</section>
+
+			<form
+				className="timeline-searchbar"
+				onSubmit={(event) => {
+					event.preventDefault();
+					const next = query.trim();
+					setAppliedQuery(next);
+					if (next === appliedQuery) void loadTimeline(next);
+				}}
+			>
+				<label>
+					<span className="sr-only">Search timeline</span>
+					<Icon name="search" />
+					<input
+						value={query}
+						onChange={(event) => setQuery(event.target.value)}
+						placeholder="Search this day’s activity"
+					/>
+				</label>
+				<button
+					className="button secondary"
+					disabled={busy && !timeline.events.length}
+				>
+					{busy ? "Loading…" : "Search timeline"}
+				</button>
+				{appliedQuery && (
+					<button
+						type="button"
+						className="quiet-link"
+						onClick={() => {
+							setQuery("");
+							setAppliedQuery("");
+						}}
+					>
+						Clear search
+					</button>
+				)}
+			</form>
+
+			<section className="timeline-overview" aria-live="polite">
+				<div>
+					<span className="eyebrow">Personal timeline</span>
+					<h2>{summary?.title ?? "A day in motion"}</h2>
+					<p>
+						{summary?.summary ??
+							"Activity grouped by time, with sources available to inspect."}
+					</p>
+				</div>
+				<dl>
+					<div>
+						<dt>Sessions</dt>
+						<dd>{timeline.sessions.length}</dd>
+					</div>
+					<div>
+						<dt>Blocks</dt>
+						<dd>{blocks.length}</dd>
+					</div>
+					<div>
+						<dt>Events</dt>
+						<dd>{timeline.events.length}</dd>
+					</div>
+				</dl>
+			</section>
+
+			{error && (
+				<p className="connection-error" role="alert">
+					{error}
+				</p>
+			)}
+
+			<div className="timeline-layout">
+				<section className="timeline-stream" aria-busy={busy}>
+					{blocks.map((block) => {
+						const blockEvents = block.eventIds.flatMap((id) => {
+							const event = eventsById.get(id);
+							return event ? [event] : [];
+						});
+						return (
+							<article
+								className={`timeline-block${selectedBlock?.id === block.id ? " active" : ""}`}
+								key={block.id}
+							>
+								<header>
+									<button
+										className="timeline-block-select"
+										aria-pressed={selectedBlock?.id === block.id}
+										onClick={() =>
+											setSelection({ kind: "activity_block", id: block.id })
+										}
+									>
+										<time dateTime={block.startedAt}>
+											{timelineTimeLabel(block.startedAt, block.endedAt)}
+										</time>
+										<strong>{block.title}</strong>
+									</button>
+									<span>{Math.round(block.confidence * 100)}% context</span>
+								</header>
+								<p>{block.summary}</p>
+								<div className="timeline-event-list">
+									{blockEvents.map(renderEvent)}
+									{blockEvents.length === 0 && (
+										<small className="timeline-missing-evidence">
+											The block remains, but its source is not in this view.
+										</small>
+									)}
+								</div>
+							</article>
+						);
+					})}
+					{standaloneEvents.map((event) => (
+						<article className="timeline-block timeline-standalone" key={event.id}>
+							<header>
+								<div>
+									<time dateTime={event.startedAt}>
+										{timelineTimeLabel(event.startedAt, event.endedAt)}
+									</time>
+									<strong>{formatDisplayLabel(event.eventType)}</strong>
+								</div>
+								<span>{event.source}</span>
+							</header>
+							<div className="timeline-event-list">{renderEvent(event)}</div>
+						</article>
+					))}
+					{!blocks.length && !standaloneEvents.length && !busy && (
+						<section className="life-empty timeline-empty">
+							<Icon name="activity" />
+							<div>
+								<h2>
+									{appliedQuery ? "No activity matches" : "Nothing captured this day"}
+								</h2>
+								<p>
+									{appliedQuery
+										? "Try a broader phrase or clear the search to see the full day."
+										: "Captured Kestrel activity appears here. Private and incognito sessions are excluded."}
+								</p>
+							</div>
+						</section>
+					)}
+					{timeline.hasMore && (
+						<small className="timeline-more-note">
+							More than 100 results. Narrow the search.
+						</small>
+					)}
+				</section>
+
+				<aside className="timeline-detail" aria-live="polite">
+					{selectedBlock || selectedEvent ? (
+						<>
+							<span className="eyebrow">
+								{selectedBlock ? "Activity block" : "Timeline event"}
+							</span>
+							<h2>
+								{selectedBlock?.title ??
+									(selectedEvent ? formatDisplayLabel(selectedEvent.eventType) : "Activity")}
+							</h2>
+							<p>
+								{selectedBlock
+									? `${dateTimeFormatter.format(new Date(selectedBlock.startedAt))} · ${selectedBlock.confidence * 100 >= 0 ? `${Math.round(selectedBlock.confidence * 100)}% confidence` : ""}`
+									: selectedEvent
+										? dateTimeFormatter.format(new Date(selectedEvent.startedAt))
+										: ""}
+							</p>
+							{selectedBlock && <p>{selectedBlock.summary}</p>}
+							{selectedEvent && <p>{selectedEvent.textSummary}</p>}
+							{detailEvents.length > 1 && (
+								<section className="timeline-detail-events">
+									<h3>Evidence in this block</h3>
+									{detailEvents.map((event) => (
+										<button
+											key={event.id}
+											className="timeline-detail-event"
+											onClick={() => selectEvent(event)}
+										>
+											<time dateTime={event.startedAt}>
+												{timelineTimeLabel(event.startedAt, event.endedAt)}
+											</time>
+											<span>{event.textSummary}</span>
+										</button>
+									))}
+								</section>
+							)}
+							{detailRelatedIds.length > 0 && (
+								<section className="timeline-detail-section">
+									<h3>Related IDs</h3>
+									<div className="timeline-chip-list">
+										{detailRelatedIds.map((id) => (
+											<code key={id}>{id}</code>
+										))}
+									</div>
+								</section>
+							)}
+							{detailEvents.some((event) => event.url || event.filePath) && (
+								<section className="timeline-detail-section">
+									<h3>Pages and files</h3>
+									{detailEvents.map((event) => (
+										<div className="timeline-reference-list" key={event.id}>
+											{event.url && /^https?:\/\//iu.test(event.url) && (
+												<a href={event.url} target="_blank" rel="noreferrer">
+													{event.url}
+												</a>
+											)}
+											{event.filePath && <code>{event.filePath}</code>}
+										</div>
+									))}
+								</section>
+							)}
+							<section className="timeline-detail-section">
+								<h3>Provenance</h3>
+								{provenanceBusy ? (
+									<small className="timeline-muted">Loading source details…</small>
+								) : provenance.length ? (
+									<div className="timeline-provenance-list">
+										{provenance.map((item) => (
+											<article key={item.id}>
+												<strong>{item.sourceType}</strong>
+												<span>{item.sourceId}</span>
+												<small>
+													{item.actor} · {item.extractionMethod} · {Math.round(item.confidence * 100)}%
+												</small>
+												{item.excerpt && <p>{item.excerpt}</p>}
+											</article>
+										))}
+									</div>
+								) : (
+									<small className="timeline-muted">
+									No additional source details.
+									</small>
+								)}
+							</section>
+						</>
+					) : (
+						<div className="timeline-detail-empty">
+							<Icon name="activity" />
+							<h2>Inspect a moment</h2>
+							<p>Select a block or event to see its source and related work.</p>
+						</div>
+					)}
+				</aside>
+			</div>
 		</div>
 	);
 }
@@ -606,9 +1144,7 @@ function PeopleView() {
 				{people.length === 0 && !busy && (
 					<div className="people-empty">
 						<p>No people are stored yet.</p>
-						<small>
-							Add someone below and their context stays on this Mac.
-						</small>
+						<small>Add someone to keep relationship context on this Mac.</small>
 					</div>
 				)}
 			</section>
@@ -711,10 +1247,7 @@ function PeopleView() {
 				) : (
 					<div className="person-detail-empty">
 						<h2>Select a person</h2>
-						<p>
-							Kestrel uses confirmed relationship and tone context when drafting
-							communication.
-						</p>
+						<p>Use confirmed relationship and tone context when drafting.</p>
 					</div>
 				)}
 			</section>
@@ -791,9 +1324,11 @@ function PeopleView() {
 function MemoryView({
 	snapshot,
 	update,
+	onOpenTranscriptResult,
 }: {
 	snapshot: WorkspaceSnapshot;
 	update(next: WorkspaceSnapshot): void;
+	onOpenTranscriptResult?(result: TranscriptSearchResult): void;
 }) {
 	const [query, setQuery] = useState("");
 	const [layer, setLayer] = useState<
@@ -810,6 +1345,12 @@ function MemoryView({
 	const [facts, setFacts] = useState<UserModelFact[]>([]);
 	const [contextQuery, setContextQuery] = useState("");
 	const [context, setContext] = useState<AgentContextBundle | null>(null);
+	const [transcriptQuery, setTranscriptQuery] = useState("");
+	const [transcriptResults, setTranscriptResults] = useState<
+		TranscriptSearchResult[]
+	>([]);
+	const [transcriptBusy, setTranscriptBusy] = useState(false);
+	const [transcriptError, setTranscriptError] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const selected = snapshot.memories.find((memory) => memory.id === selectedId);
@@ -923,6 +1464,35 @@ function MemoryView({
 		}
 	}
 
+	async function searchTranscripts(event: FormEvent) {
+		event.preventDefault();
+		const value = transcriptQuery.trim();
+		if (!value) {
+			setTranscriptResults([]);
+			setTranscriptError("");
+			return;
+		}
+		setTranscriptBusy(true);
+		setTranscriptError("");
+		try {
+			const response = await request({
+				type: "runtime-search-messages",
+				query: value,
+				limit: 30,
+			});
+			setTranscriptResults(response.transcriptResults ?? []);
+		} catch (cause) {
+			setTranscriptError(
+				cause instanceof Error
+					? cause.message
+					: "Transcript search failed.",
+			);
+			setTranscriptResults([]);
+		} finally {
+			setTranscriptBusy(false);
+		}
+	}
+
 	async function reviewFact(id: string, decision: "confirm" | "reject") {
 		setBusy(true);
 		setError("");
@@ -963,15 +1533,62 @@ function MemoryView({
 				<strong>{visible.length} remembered</strong>
 			</section>
 
+			<section className="transcript-search-panel" aria-labelledby="transcript-search-title">
+				<header>
+					<div>
+						<span className="eyebrow">Local encrypted history</span>
+						<h2 id="transcript-search-title">Search conversations</h2>
+					</div>
+					<small>Standard conversations only · no provider request</small>
+				</header>
+				<p>
+					Search encrypted conversations on this Mac. Private, incognito, and
+					forgotten chats are excluded.
+				</p>
+				<form className="memory-search" onSubmit={(event) => void searchTranscripts(event)}>
+					<label className="sr-only" htmlFor="transcript-search-input">
+						Search conversations
+					</label>
+					<input
+						id="transcript-search-input"
+						value={transcriptQuery}
+						onChange={(event) => setTranscriptQuery(event.target.value)}
+						placeholder="Search encrypted task history"
+					/>
+					<button className="button secondary" disabled={transcriptBusy || !transcriptQuery.trim()}>
+						{transcriptBusy ? "Searching…" : "Search history"}
+					</button>
+				</form>
+				{transcriptError ? <p className="connection-error" role="alert">{transcriptError}</p> : null}
+				{transcriptResults.length > 0 ? (
+					<div className="transcript-search-results" aria-live="polite">
+						{transcriptResults.map((result) => (
+							<button
+								className="transcript-search-result"
+								key={`${result.sessionId}:${result.messageId}`}
+								onClick={() => onOpenTranscriptResult?.(result)}
+							>
+								<span className="eyebrow">
+									{result.sessionTitle} · {result.role} · {new Date(result.createdAt).toLocaleString()}
+								</span>
+								<strong>{result.preview}</strong>
+								<small>Open exact message</small>
+							</button>
+						))}
+					</div>
+				) : transcriptQuery.trim() && !transcriptBusy ? (
+					<p className="memory-no-results">No searchable conversation matches.</p>
+				) : null}
+			</section>
+
 			{activeMemoryCount === 0 && !busy && (
 				<section className="life-empty">
 					<Icon name="memory" />
 					<div>
 						<h2>No memories yet</h2>
 						<p>
-							Say <em>remember that …</em> in chat to store a preference, or add a
-							confirmed fact below. Inspect what Kestrel keeps before it influences
-							a new chat.
+							Say <em>remember that …</em> in chat, or add a confirmed fact below.
+							Review saved memories before they shape a new chat.
 						</p>
 					</div>
 				</section>
@@ -1091,19 +1708,17 @@ function MemoryView({
 							</dl>
 							<details>
 								<summary>Why it was remembered</summary>
-								<p>
-									Kestrel kept this as {memoryState(selected)} {selected.type}{" "}
-									context from {selected.sourceType}. It can be selected only
-									when the task, people, project, or time range make it useful.
-								</p>
+							<p>
+								Saved as {memoryState(selected)} {selected.type} context from{" "}
+								{selected.sourceType}. It is used only when relevant to the task,
+								people, project, or time.
+							</p>
 							</details>
 						</>
 					) : (
 						<div className="memory-inspector-empty">
 							<h2>Select a memory</h2>
-							<p>
-								Inspect its source, authority, confidence, use, and controls.
-							</p>
+						<p>Review its source, confidence, use, and controls.</p>
 						</div>
 					)}
 				</section>
@@ -1232,9 +1847,8 @@ function MemoryView({
 
 			<DreamingPanel memories={snapshot.memories} onMemoryChanged={refresh} />
 			<p className="memory-control-note">
-				Sensitive and restricted fields are excluded from task context unless
-				the action has matching permission. Backups, export, and full data reset
-				remain in Settings.
+				Sensitive and restricted fields enter task context only with matching
+				permission. Manage backups, export, and reset in Settings.
 			</p>
 			{error && (
 				<p className="connection-error" role="alert">
@@ -1248,9 +1862,11 @@ function MemoryView({
 export function LifeContext({
 	snapshot,
 	update,
+	onOpenTranscriptResult,
 }: {
 	snapshot: WorkspaceSnapshot;
 	update(next: WorkspaceSnapshot): void;
+	onOpenTranscriptResult?(result: TranscriptSearchResult): void;
 }) {
 	const [view, setView] = useState<LifeView>("calendar");
 	return (
@@ -1262,6 +1878,7 @@ export function LifeContext({
 				{(
 					[
 						["calendar", "Calendar", "today"],
+						["timeline", "Timeline", "activity"],
 						["people", "People", "chat"],
 						["memory", "Memory", "memory"],
 					] as const
@@ -1278,8 +1895,17 @@ export function LifeContext({
 				))}
 			</nav>
 			{view === "calendar" && <CalendarView />}
+			{view === "timeline" && <TimelineView />}
 			{view === "people" && <PeopleView />}
-			{view === "memory" && <MemoryView snapshot={snapshot} update={update} />}
+			{view === "memory" && (
+				<MemoryView
+					snapshot={snapshot}
+					update={update}
+					{...(onOpenTranscriptResult
+						? { onOpenTranscriptResult }
+						: {})}
+				/>
+			)}
 		</div>
 	);
 }

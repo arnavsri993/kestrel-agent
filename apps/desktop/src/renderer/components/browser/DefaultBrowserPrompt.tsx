@@ -9,6 +9,30 @@ export interface DefaultBrowserPromptProps {
 	onSetDefault?: () => void;
 }
 
+const FOCUSABLE_SELECTOR =
+	"button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+export function focusDialogEdge(
+	event: Pick<KeyboardEvent, "key" | "shiftKey" | "preventDefault">,
+	activeElement: Element | null,
+	focusable: readonly HTMLElement[],
+): void {
+	if (event.key !== "Tab" || focusable.length === 0) return;
+	const first = focusable[0];
+	const last = focusable.at(-1);
+	if (event.shiftKey && activeElement === first) {
+		event.preventDefault();
+		last?.focus();
+	} else if (!event.shiftKey && activeElement === last) {
+		event.preventDefault();
+		first?.focus();
+	}
+}
+
+export function restoreDialogOpener(opener: HTMLElement | null): void {
+	if (opener?.isConnected) opener.focus();
+}
+
 export function DefaultBrowserPrompt({
 	isOpen,
 	onClose,
@@ -17,25 +41,57 @@ export function DefaultBrowserPrompt({
 	const reduced = useReducedMotion() ?? false;
 	const [settingDefault, setSettingDefault] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const dialogRef = useRef<HTMLDivElement | null>(null);
 	const primaryButtonRef = useRef<HTMLButtonElement | null>(null);
+	const returnFocusRef = useRef<HTMLElement | null>(null);
+
+	const restoreFocus = useCallback(() => {
+		restoreDialogOpener(returnFocusRef.current);
+		returnFocusRef.current = null;
+	}, []);
+
+	const finishClose = useCallback(() => {
+		restoreFocus();
+		onClose();
+	}, [onClose, restoreFocus]);
+
+	const close = useCallback(() => {
+		if (settingDefault) return;
+		finishClose();
+	}, [finishClose, settingDefault]);
 
 	useEffect(() => {
-		if (isOpen) {
-			const timer = setTimeout(() => {
-				primaryButtonRef.current?.focus();
-			}, 50);
-			return () => clearTimeout(timer);
+		if (!isOpen) return;
+		if (document.activeElement instanceof HTMLElement) {
+			returnFocusRef.current = document.activeElement;
 		}
-	}, [isOpen]);
+		const frame = window.requestAnimationFrame(() => {
+			primaryButtonRef.current?.focus();
+		});
+		return () => {
+			window.cancelAnimationFrame(frame);
+			restoreFocus();
+		};
+	}, [isOpen, restoreFocus]);
 
 	const handleKeyDown = useCallback(
 		(event: KeyboardEvent) => {
 			if (event.key === "Escape" && isOpen && !settingDefault) {
+				if (event.defaultPrevented) return;
 				event.preventDefault();
-				onClose();
+				close();
+				return;
 			}
+			if (!isOpen || !dialogRef.current) return;
+			focusDialogEdge(
+				event,
+				document.activeElement,
+				Array.from(
+					dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+				),
+			);
 		},
-		[isOpen, settingDefault, onClose],
+		[close, isOpen, settingDefault],
 	);
 
 	useEffect(() => {
@@ -57,7 +113,7 @@ export function DefaultBrowserPrompt({
 				(!("canSetAsDefault" in response) || response.canSetAsDefault)
 			) {
 				onSetDefault?.();
-				onClose();
+				finishClose();
 			} else if (
 				response.ok &&
 				"canSetAsDefault" in response &&
@@ -79,28 +135,35 @@ export function DefaultBrowserPrompt({
 	return (
 		<AnimatePresence initial={false}>
 			{isOpen && (
-				<div
+				<motion.div
 					key="default-browser-prompt"
 					className="default-browser-modal-backdrop"
 					role="presentation"
+					initial={reduced ? false : { opacity: 0 }}
+					animate={{ opacity: 1 }}
+					exit={
+						reduced
+							? { opacity: 1, pointerEvents: "none" }
+							: { opacity: 0, pointerEvents: "none" }
+					}
+					transition={{ duration: reduced ? 0 : 0.14 }}
 					onClick={(e) => {
 						if (e.target === e.currentTarget && !settingDefault) {
-							onClose();
+							close();
 						}
 					}}
 				>
 					<motion.div
+						ref={dialogRef}
 						className="default-browser-modal"
 						role="dialog"
 						aria-modal="true"
 						aria-labelledby="default-browser-prompt-title"
 						aria-describedby="default-browser-prompt-description"
-						initial={
-							reduced ? { opacity: 1 } : { opacity: 0, scale: 0.94, y: 12 }
-						}
+						initial={reduced ? false : { opacity: 0, scale: 0.96, y: 8 }}
 						animate={reduced ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
 						exit={
-							reduced ? { opacity: 1 } : { opacity: 0, scale: 0.96, y: 8 }
+							reduced ? { opacity: 1 } : { opacity: 0, scale: 0.97, y: 6 }
 						}
 						transition={{
 							duration: reduced ? 0 : 0.18,
@@ -111,7 +174,7 @@ export function DefaultBrowserPrompt({
 							type="button"
 							className="default-browser-close-button"
 							aria-label="Dismiss"
-							onClick={onClose}
+							onClick={close}
 							disabled={settingDefault}
 						>
 							<Icon name="close" />
@@ -140,7 +203,7 @@ export function DefaultBrowserPrompt({
 							<button
 								type="button"
 								className="button quiet"
-								onClick={onClose}
+								onClick={close}
 								disabled={settingDefault}
 							>
 								Not Now
@@ -157,7 +220,7 @@ export function DefaultBrowserPrompt({
 							</button>
 						</div>
 					</motion.div>
-				</div>
+				</motion.div>
 			)}
 		</AnimatePresence>
 	);

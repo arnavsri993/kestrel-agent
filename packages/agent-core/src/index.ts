@@ -13,9 +13,12 @@ import type {
 	MemoryRecallStatus,
 	ModelProfile,
 	ModelRoutingDecision,
+	Project,
 	RoutingPolicy,
 	SelectedAttachment,
 	TaskOpportunity,
+	RuntimeSession,
+	WorkingTask,
 	WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import {
@@ -30,7 +33,12 @@ import {
 	type ManagedPolicy,
 	ManagedPolicyStore,
 } from "./administration";
-import { AgentLoop, type AgentLoopResult } from "./agent-loop";
+import {
+	AgentLoop,
+	type AgentAdaptiveEscalationInput,
+	type AgentAdaptiveEscalationUpdate,
+	type AgentLoopResult,
+} from "./agent-loop";
 import { selectBrowserContext } from "./browser-context";
 import {
 	type ChannelEnvelope,
@@ -84,18 +92,31 @@ import {
 } from "./media-artifacts";
 import type { VoiceTranscriptionProvider } from "./media-providers";
 import { installMemoryTools, MemoryManager } from "./memory";
+import { MemorySubstrate } from "./memory-substrate";
+import {
+	AGENT_GROUP_MEMORY_TOOL_NAMES,
+	AgentGroupMemoryManager,
+	installAgentGroupMemoryTools,
+} from "./group-memory";
 import {
 	AdaptiveModelRouter,
 	detectModelRefusal,
 	ModelRegistry,
 	TaskRequirementAnalyzer,
 } from "./model-orchestration";
+import { AccountAvailabilityMonitor } from "./routing/account-availability";
+import {
+	RoutingOutcomeStore,
+	type RoutingCostScarcity,
+	type RoutingVerifierStatus,
+} from "./routing/outcome-store";
 import { WritingAssistant } from "./writing-assistant";
 import { WritingProfileStore } from "./writing-profile";
 import { NativeNodeManager } from "./native-nodes";
 import { ObservabilityManager } from "./observability";
 import { OpportunityEngine } from "./opportunity-engine";
 import {
+	AGENT_COORDINATION_TOOL_NAMES,
 	installOrchestrationTools,
 	parseScheduleExpression,
 	TaskOrchestrator,
@@ -108,8 +129,10 @@ import {
 	CodexAppServerProvider,
 	type CodexBrowserMcpAttachment,
 	createEnvironmentModelProviders,
+	ModelCatalog,
 	type ModelContentPart,
 	type ModelProvider,
+	ModelProviderError,
 	ProviderPool,
 	ProviderPoolError,
 	type ModelResult,
@@ -132,6 +155,15 @@ import {
 	NetworkPolicyWebClient,
 	type WebAccessOptions,
 } from "./web-tools";
+
+const MAIN_AGENT_COORDINATION_INSTRUCTIONS = [
+	"You are the main circle for this agent system, and the user is speaking to you.",
+	"Own the outcome: understand the mission, decide what needs specialist work, and give the user one reconciled answer rather than a pile of disconnected worker replies.",
+	"When there are two or more genuinely independent workstreams, use orchestration.delegate-team to fan them out to real child sessions in parallel; use orchestration.delegate for one focused child task or a reviewer.",
+	"Give each child a bounded prompt with its relevant files, constraints, and output contract. Wait for every delegated result, reconcile contradictions, and validate the integrated result before claiming completion.",
+	"Do not claim work was delegated, completed, or verified unless the orchestration tool returned the corresponding session or result. Do not delegate trivial serial work just to create activity.",
+	"Use group.memory.remember for durable decisions or facts that belong to this agent system. Use shared memory only when the user explicitly asks for a user-wide memory.",
+].join(" ");
 import type { BrowserMcpCallSession } from "./browser-mcp-session";
 import {
 	NEW_TAB_GREETING_SYSTEM_PROMPT,
@@ -152,6 +184,26 @@ function persistedCompactionCount(value: unknown): number {
 		: 0;
 }
 
+/** Parse only the required first-line verifier contract; never retain review text. */
+export function parseIndependentReviewerVerdict(
+	text: string | undefined,
+): Extract<RoutingVerifierStatus, "passed" | "failed" | "unavailable"> {
+	const firstLine = text?.split(/\r?\n/, 1)[0]?.trim() ?? "";
+	if (/^VERDICT:\s*PASS\b/i.test(firstLine)) return "passed";
+	if (/^VERDICT:\s*FAIL\b/i.test(firstLine)) return "failed";
+	return "unavailable";
+}
+
+function reviewerUnavailableError(error: unknown): boolean {
+	if (error instanceof ModelProviderError || error instanceof ProviderPoolError)
+		return true;
+	if (!(error instanceof Error)) return false;
+	return (
+		/^No routed worker endpoint passed its health check\b/.test(error.message) ||
+		/^No configured model (satisfies|fits)\b/.test(error.message)
+	);
+}
+
 export interface AgentCoreDependencies {
 	database: KestrelDatabase;
 	/** Seed the deterministic teacher-scheduling data used by preview and test surfaces. */
@@ -162,6 +214,7 @@ export interface AgentCoreDependencies {
 	now?: () => string;
 	workspaceRoots?: string[];
 	configuredWorkspaceRoots?: string[];
+	projects?: Project[];
 	modelProviders?: ModelProvider[];
 	modelProfiles?: ModelProfile[];
 	routingPolicy?: RoutingPolicy;
@@ -196,6 +249,9 @@ export class AgentCore {
 	readonly modelRouter: AdaptiveModelRouter;
 	readonly runtime: AgentRuntime;
 	readonly providerPool: ProviderPool;
+	readonly modelCatalog: ModelCatalog;
+	readonly accountAvailability: AccountAvailabilityMonitor;
+	readonly routingOutcomes: RoutingOutcomeStore;
 	readonly usageGovernor: UsageGovernor;
 	readonly agentLoop: AgentLoop;
 	readonly skillRegistry?: SkillRegistry;
@@ -207,6 +263,8 @@ export class AgentCore {
 	readonly userModel: UserModelStore;
 	readonly context: PreResponseContextResolver;
 	readonly memory: MemoryManager;
+	readonly memorySubstrate: MemorySubstrate;
+	readonly groupMemory: AgentGroupMemoryManager;
 	readonly lifeContext: LifeContextService;
 	readonly writingProfile: WritingProfileStore;
 	readonly writingAssistant: WritingAssistant;
@@ -296,6 +354,7 @@ export class AgentCore {
 			() => this.now(),
 			this.deps.githubToken,
 			this.deps.configuredWorkspaceRoots ?? this.deps.workspaceRoots ?? [],
+			this.deps.projects ?? [],
 		);
 		this.observability = new ObservabilityManager(
 			this.deps.database,
@@ -321,7 +380,35 @@ export class AgentCore {
 			this.configuration.toolPolicy(tool.name),
 		);
 		this.memory = new MemoryManager(deps.database, () => new Date(this.now()));
+		this.memorySubstrate = new MemorySubstrate({
+			database: deps.database,
+			legacyMemory: this.memory,
+			now: () => new Date(this.now()),
+			projects: deps.projects ?? [],
+			explicitCaptureEnabled: () =>
+				this.configuration.current().memory.captureExplicit,
+		});
+		this.memorySubstrate.attachRuntime(this.runtime);
+		this.memorySubstrate.start();
 		this.userModel = this.memory.userModel;
+		this.groupMemory = new AgentGroupMemoryManager(
+			deps.database,
+			this.runtime,
+			() => new Date(this.now()),
+		);
+		installAgentGroupMemoryTools(
+			this.runtime,
+			this.groupMemory,
+			mainSession.id,
+		);
+		for (const session of this.runtime.listSessions()) {
+			if (!this.isStandardSession(session)) continue;
+			this.runtime.allowTools(
+				session.id,
+				[...AGENT_GROUP_MEMORY_TOOL_NAMES],
+				{ preserveUpdatedAt: true },
+			);
+		}
 		this.lifeContext = new LifeContextService(
 			deps.database,
 			deps.googleWorkspace,
@@ -373,7 +460,7 @@ export class AgentCore {
 			mode: "node",
 			reason: "isolated agent core",
 		});
-		installMemoryTools(this.runtime, this.memory, mainSession.id);
+		installMemoryTools(this.runtime, this.memorySubstrate, mainSession.id);
 		if (deps.artifactRoot) {
 			this.artifacts = new ArtifactManager(
 				deps.database,
@@ -436,6 +523,12 @@ export class AgentCore {
 		}
 		this.providerPool = new ProviderPool(
 			this.deps.modelProviders ?? createEnvironmentModelProviders(),
+			() => new Date(this.now()),
+		);
+		this.modelCatalog = new ModelCatalog(
+			this.deps.database,
+			this.providerPool.list(),
+			() => new Date(this.now()),
 		);
 		this.usageGovernor = new UsageGovernor(
 			this.deps.database,
@@ -445,6 +538,15 @@ export class AgentCore {
 			this.deps.database,
 			this.providerPool.list(),
 			this.deps.modelProfiles ?? [],
+			() => new Date(this.now()),
+			this.modelCatalog,
+		);
+		this.accountAvailability = new AccountAvailabilityMonitor(
+			() => new Date(this.now()),
+		);
+		this.synchronizeAccountAvailability();
+		this.routingOutcomes = new RoutingOutcomeStore(
+			this.deps.database,
 			() => new Date(this.now()),
 		);
 		this.modelRouter = new AdaptiveModelRouter(
@@ -464,6 +566,7 @@ export class AgentCore {
 				}
 			},
 			() => new Date(this.now()),
+			this.accountAvailability,
 		);
 		if (this.deps.routingPolicy)
 			this.modelRouter.setPolicy(this.deps.routingPolicy);
@@ -491,16 +594,17 @@ export class AgentCore {
 			this.providerPool,
 			undefined,
 			(message) => {
-				if (message.role === "user" && this.sharedMemoryCaptureEnabled()) {
-					const captureExplicit =
-						this.configuration.current().memory.captureExplicit;
-					if (captureExplicit)
-						this.memory.captureExplicit(message.content, message.id);
-					if (captureExplicit)
-						this.lifeContext.captureConversation(message.content, message.id);
-				}
-				if (!this.sharedMemoryCaptureEnabled()) return;
+				// Runtime's message.appended observer owns local capture. This callback
+				// is only the optional remote Honcho sink; keeping the two paths
+				// separate prevents duplicate timeline events and legacy memories.
+				if (message.role !== "user" && message.role !== "assistant") return;
 				const session = this.runtime.getSession(message.sessionId);
+				if (
+					!this.isStandardSession(session) ||
+					!this.sharedMemoryCaptureEnabled() ||
+					!this.memorySubstrate.getCaptureConfiguration().enabled
+				)
+					return;
 				this.honchoMemory.captureMessage(message, session.workspaceRoot);
 			},
 			this.usageGovernor,
@@ -515,8 +619,21 @@ export class AgentCore {
 		);
 		this.refreshHonchoTools();
 		this.runtime.on("event", (event) => {
+			if (event.type === "session.created") {
+				const session = this.runtime.getSession(event.sessionId);
+				if (this.isStandardSession(session))
+					this.runtime.allowTools(
+						session.id,
+						[
+							...AGENT_GROUP_MEMORY_TOOL_NAMES,
+							...AGENT_COORDINATION_TOOL_NAMES,
+						],
+						{ preserveUpdatedAt: true },
+					);
+			}
 			if (
 				event.type === "session.created" &&
+				this.isStandardSession(this.runtime.getSession(event.sessionId)) &&
 				this.honchoMemory.configuration().enabled &&
 				this.honchoMemory.configuration().recallMode !== "context"
 			)
@@ -535,8 +652,28 @@ export class AgentCore {
 			this.modelRegistry,
 			undefined,
 			() => this.configuration.current().workflows.maximumTurns,
+			this.groupMemory,
+			this.memorySubstrate,
+			() => {
+				this.modelRegistry.syncProviderCatalog(
+					this.providerPool.list(),
+					this.modelCatalog,
+					false,
+				);
+				this.modelRegistry.applyProviderHealth(this.providerPool.health());
+				this.synchronizeAccountAvailability();
+			},
+			this.routingOutcomes,
 		);
 		installOrchestrationTools(this.runtime, this.orchestrator, mainSession.id);
+		for (const session of this.runtime.listSessions()) {
+			if (!this.isStandardSession(session)) continue;
+			this.runtime.allowTools(
+				session.id,
+				[...AGENT_COORDINATION_TOOL_NAMES],
+				{ preserveUpdatedAt: true },
+			);
+		}
 		this.remote = new RemoteControl(
 			this.deps.database,
 			this.runtime,
@@ -716,6 +853,15 @@ export class AgentCore {
 		return filtered;
 	}
 
+	/** Keep endpoint health, concurrency, and provider-reported capacity together. */
+	private synchronizeAccountAvailability(): void {
+		this.accountAvailability.sync({
+			providerHealth: this.providerPool.health(),
+			profiles: this.modelRegistry.list(),
+			quotaUpdates: this.providerPool.accountQuotaSnapshots(),
+		});
+	}
+
 	private automaticRoute(
 		taskId: string,
 		message: string,
@@ -731,8 +877,21 @@ export class AgentCore {
 		orchestrationInstructions: string;
 		decision: ReturnType<AdaptiveModelRouter["route"]>;
 		requirements: ReturnType<TaskRequirementAnalyzer["analyze"]>;
+		policy: RoutingPolicy;
+		allowedProviderIds: string[];
+		initialSelectedModelId: string;
+		attemptedModelIds: string[];
 	} {
+		// Catalog entries can expire while this core remains running. Synchronize
+		// the registry immediately before an automatic decision so stale account
+		// models cannot remain eligible until a renderer happens to refresh.
+		this.modelRegistry.syncProviderCatalog(
+			this.providerPool.list(),
+			this.modelCatalog,
+			false,
+		);
 		this.modelRegistry.applyProviderHealth(this.providerPool.health());
+		this.synchronizeAccountAvailability();
 		const routedProviderIds = this.providerIdsForAttachments(
 			providerIds,
 			attachments,
@@ -764,25 +923,7 @@ export class AgentCore {
 		if (decision.traceId)
 			this.modelRouter.completeTrace(decision.traceId, { status: "running" });
 		const execution = this.modelRouter.executionPlan(decision);
-		const route: ModelRoutingDecision = {
-			taskId,
-			model: decision.model,
-			providerId: decision.providerId,
-			selectedModelId: decision.selectedModelId,
-			tier: decision.tier,
-			reasoningEffort: decision.reasoningLevel,
-			fastMode: decision.fastMode,
-			serviceTier: decision.fastMode ? "priority" : "standard",
-			execution: this.modelRegistry.get(decision.selectedModelId).local
-				? "local"
-				: "configured_endpoint",
-			rationale: decision.reasons.join(" "),
-			confidence: decision.confidence,
-			...(decision.traceId ? { traceId: decision.traceId } : {}),
-			fallbackModelIds: decision.fallbackModelIds,
-			reviewRequired: decision.settings.reviewRequired,
-			selectedAt: decision.selectedAt,
-		};
+		const route = this.modelRoutingDecision(taskId, decision);
 		this.currentRouting = route;
 		this.deps.database.setState("modelRouting", route);
 		const orchestrationInstructions = requirements.parallelizable
@@ -809,7 +950,202 @@ export class AgentCore {
 			orchestrationInstructions,
 			decision,
 			requirements,
+			policy: taskPolicy,
+			allowedProviderIds: routedProviderIds,
+			initialSelectedModelId: decision.selectedModelId,
+			attemptedModelIds: [decision.selectedModelId],
 		};
+	}
+
+	private modelRoutingDecision(
+		taskId: string,
+		decision: ReturnType<AdaptiveModelRouter["route"]>,
+	): ModelRoutingDecision {
+		return {
+			taskId,
+			model: decision.model,
+			providerId: decision.providerId,
+			selectedModelId: decision.selectedModelId,
+			...(decision.accountId ? { accountId: decision.accountId } : {}),
+			...(decision.accountAlias ? { accountAlias: decision.accountAlias } : {}),
+			tier: decision.tier,
+			reasoningEffort: decision.reasoningLevel,
+			fastMode: decision.fastMode,
+			serviceTier: decision.fastMode ? "priority" : "standard",
+			execution: this.modelRegistry.get(decision.selectedModelId).local
+				? "local"
+				: "configured_endpoint",
+			rationale: decision.reasons.join(" "),
+			confidence: decision.confidence,
+			...(decision.traceId ? { traceId: decision.traceId } : {}),
+			fallbackModelIds: decision.fallbackModelIds,
+			reviewRequired: decision.settings.reviewRequired,
+			...(decision.effectiveCost !== undefined
+				? { effectiveCost: decision.effectiveCost }
+				: {}),
+			...(decision.scarcityPenalty !== undefined
+				? { scarcityPenalty: decision.scarcityPenalty }
+				: {}),
+			...(decision.executionPattern
+				? { executionPattern: decision.executionPattern }
+				: {}),
+			selectedAt: decision.selectedAt,
+		};
+	}
+
+	private adaptiveEscalationFor(
+		automatic: ReturnType<AgentCore["automaticRoute"]>,
+	): (
+		input: AgentAdaptiveEscalationInput,
+	) => Promise<AgentAdaptiveEscalationUpdate | undefined> {
+		return async ({ run, category, attemptedRouteIds }) => {
+			if (!automatic.policy.allowAutomaticEscalation) return undefined;
+			if (
+				category !== "model_reasoning" &&
+				category !== "insufficient_capability" &&
+				category !== "verification"
+			)
+				return undefined;
+			this.modelRegistry.syncProviderCatalog(
+				this.providerPool.list(),
+				this.modelCatalog,
+				false,
+			);
+			this.modelRegistry.applyProviderHealth(this.providerPool.health());
+			this.synchronizeAccountAvailability();
+			const previousDecision = automatic.decision;
+			let decision: ReturnType<AdaptiveModelRouter["route"]>;
+			try {
+				decision = this.modelRouter.route(automatic.requirements, {
+					role: "fallback",
+					allowedProviderIds: automatic.allowedProviderIds,
+					excludeModelIds: [
+						...new Set([
+							...automatic.attemptedModelIds,
+							...attemptedRouteIds,
+						]),
+					],
+					policy: automatic.policy,
+					...(previousDecision.traceId
+						? { parentTraceId: previousDecision.traceId }
+						: {}),
+					escalationReason:
+						category === "verification"
+							? "validation"
+							: category === "insufficient_capability"
+								? "timeout"
+								: "refusal",
+					switchedFromModelId: previousDecision.selectedModelId,
+				});
+			} catch {
+				// Keep the same run alive for its existing, explicit fallback ladder.
+				// Provider details are deliberately not persisted or surfaced here.
+				return undefined;
+			}
+			if (
+				decision.selectedModelId === previousDecision.selectedModelId &&
+				decision.reasoningLevel === previousDecision.reasoningLevel
+			)
+				return undefined;
+			if (previousDecision.traceId)
+				this.modelRouter.completeTrace(previousDecision.traceId, {
+					status: "completed",
+					escalated: true,
+				});
+			if (decision.traceId)
+				this.modelRouter.completeTrace(decision.traceId, { status: "running" });
+			const route = this.modelRoutingDecision(automatic.route.taskId, decision);
+			automatic.route = route;
+			automatic.execution = this.modelRouter.executionPlan(decision);
+			automatic.maximumContextCharacters =
+				decision.settings.maximumContextCharacters;
+			automatic.maximumOutputTokens = decision.settings.maximumOutputTokens;
+			automatic.temperature = decision.settings.temperature;
+			automatic.decision = decision;
+			automatic.attemptedModelIds = [
+				...new Set([...automatic.attemptedModelIds, decision.selectedModelId]),
+			];
+			this.currentRouting = route;
+			this.deps.database.setState("modelRouting", route);
+			return {
+				model: automatic.execution.model,
+				providerIds: automatic.execution.providerIds,
+				providerModels: automatic.execution.providerModels,
+				fallbackModelIds: decision.fallbackModelIds,
+				reasoningEffort: route.reasoningEffort,
+				serviceTier: route.serviceTier,
+				maximumContextCharacters: automatic.maximumContextCharacters,
+				maximumOutputTokens: automatic.maximumOutputTokens,
+				temperature: automatic.temperature,
+				explanation: `Escalated the active reasoning step from ${run.model} to ${decision.model} after a normalized ${category.replaceAll("_", " ")} signal. The existing task, conversation, workspace, and tool state were preserved.`,
+			};
+		};
+	}
+
+	private adaptiveExecutionOptions(
+		automatic: ReturnType<AgentCore["automaticRoute"]>,
+	) {
+		return {
+			maximumRetries: automatic.policy.maximumRetries,
+			maximumEscalations: automatic.policy.allowAutomaticEscalation
+				? automatic.policy.maximumEscalations
+				: 0,
+		};
+	}
+
+	private routingEventHandler(
+		automatic: ReturnType<AgentCore["automaticRoute"]>,
+	): (event: { type: string; detail: string }) => void {
+		return (event) => {
+			const traceId = automatic.decision.traceId;
+			if (!traceId) return;
+			if (event.type === "routing_retry")
+				this.modelRouter.recordTraceEvent(
+					traceId,
+					"ROUTE_RETRIED",
+				);
+			else if (event.type === "routing_escalated")
+				this.modelRouter.recordTraceEvent(
+					traceId,
+					"ROUTE_ESCALATED",
+				);
+		};
+	}
+
+	/**
+	 * Refresh an account-aware catalog and immediately republish the resulting
+	 * endpoint profiles to the router. Desktop bootstrap uses the stale-only
+	 * variant below before Auto becomes available.
+	 */
+	async refreshProviderModels(
+		providerId?: string,
+		signal?: AbortSignal,
+	) {
+		const providerAccounts = await this.modelCatalog.refresh(
+			this.providerPool.list(),
+			providerId,
+			signal,
+		);
+		this.modelRegistry.syncProviderCatalog(
+			this.providerPool.list(),
+			this.modelCatalog,
+		);
+		this.synchronizeAccountAvailability();
+		return providerAccounts;
+	}
+
+	/** Refresh only missing or expired dynamic catalogs at process startup. */
+	async refreshStaleProviderModels(signal?: AbortSignal) {
+		const providerAccounts = await this.modelCatalog.refreshStale(
+			this.providerPool.list(),
+			signal,
+		);
+		this.modelRegistry.syncProviderCatalog(
+			this.providerPool.list(),
+			this.modelCatalog,
+		);
+		this.synchronizeAccountAvailability();
+		return providerAccounts;
 	}
 
 	private providerAllowed(providerId: string, poolId?: string): boolean {
@@ -1062,9 +1398,22 @@ export class AgentCore {
 		}
 	}
 
+	private routingScarcity(
+		penalty: number | undefined,
+	): RoutingCostScarcity {
+		if (penalty === undefined) return "unknown";
+		if (penalty >= 0.28) return "exhausted";
+		if (penalty >= 0.12) return "constrained";
+		if (penalty > 0) return "normal";
+		return "abundant";
+	}
+
 	private recordAutomaticOutcome(
 		automatic: ReturnType<AgentCore["automaticRoute"]>,
 		result: AgentLoopResult,
+		verifierStatus: RoutingVerifierStatus = automatic.route.reviewRequired
+			? "unavailable"
+			: "skipped",
 	): void {
 		if (result.run.status === "waiting_approval") {
 			this.deps.database.setPrivateState(
@@ -1090,11 +1439,16 @@ export class AgentCore {
 		const modelId = winning?.id ?? automatic.decision.selectedModelId;
 		const completed = result.run.status === "completed";
 		const refusal = detectModelRefusal(result.modelResult ?? { text: "" });
+		const escalated =
+			(result.run.refusalRecoveryCount ?? 0) > 0 ||
+			modelId !== automatic.initialSelectedModelId;
+		const verified =
+			!automatic.route.reviewRequired || verifierStatus === "passed";
 		this.modelRegistry.recordOutcome({
 			modelId,
 			capabilities: automatic.requirements.capabilities,
 			succeeded: completed,
-			validationPassed: completed,
+			validationPassed: completed && verified,
 			refused: refusal.refused,
 			...(refusal.reason ? { refusalReason: refusal.reason } : {}),
 			...((result.run.refusalRecoveryCount ?? 0) > 0
@@ -1102,8 +1456,48 @@ export class AgentCore {
 				: {}),
 			latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
 			actualCostUsd,
-			escalated: modelId !== automatic.decision.selectedModelId,
+			escalated,
 			observedAt: this.now(),
+		});
+		const toolFailureCount = this.deps.database
+			.listToolExecutions(result.run.sessionId)
+			.filter(
+				(execution) =>
+					execution.idempotencyKey?.startsWith(`${result.run.id}:`) &&
+					(execution.status === "failed" || execution.status === "cancelled"),
+			).length;
+		this.routingOutcomes.record({
+			taskProfile: automatic.requirements.taskProfile.type,
+			route: {
+				providerId: automatic.decision.providerId,
+				...(automatic.decision.accountId
+					? { accountId: automatic.decision.accountId }
+					: {}),
+				transportId: automatic.decision.endpointId,
+				modelId,
+			},
+			thinkingLevel: automatic.route.reasoningEffort,
+			durationMs: Math.max(
+				0,
+				Date.parse(result.run.updatedAt) - Date.parse(result.run.createdAt),
+			),
+			retryCount: audits.filter((audit) => audit.status === "failed").length,
+			toolFailureCount,
+			escalated,
+			verifierStatus,
+			success: completed,
+			costScarcity: this.routingScarcity(automatic.decision.scarcityPenalty),
+			...(automatic.decision.estimatedCost !== undefined
+				? { estimatedCostUsd: automatic.decision.estimatedCost }
+				: {}),
+			actualCostUsd,
+			...(automatic.decision.effectiveCost !== undefined
+				? { effectiveCost: automatic.decision.effectiveCost }
+				: {}),
+			...(automatic.decision.scarcityPenalty !== undefined
+				? { scarcityPenalty: automatic.decision.scarcityPenalty }
+				: {}),
+			timestamp: this.now(),
 		});
 		if (automatic.decision.traceId) {
 			this.modelRouter.completeTrace(automatic.decision.traceId, {
@@ -1115,7 +1509,7 @@ export class AgentCore {
 							? "failed"
 							: "running",
 				actualCostUsd,
-				escalated: modelId !== automatic.decision.selectedModelId,
+				escalated,
 			});
 		}
 	}
@@ -1124,18 +1518,48 @@ export class AgentCore {
 		automatic: ReturnType<AgentCore["automaticRoute"]>,
 		cancelled: boolean,
 	): void {
+		const escalated =
+			automatic.decision.selectedModelId !== automatic.initialSelectedModelId;
 		this.modelRegistry.recordOutcome({
 			modelId: automatic.decision.selectedModelId,
 			capabilities: automatic.requirements.capabilities,
 			succeeded: false,
 			validationPassed: false,
-			escalated: false,
+			escalated,
 			observedAt: this.now(),
+		});
+		this.routingOutcomes.record({
+			taskProfile: automatic.requirements.taskProfile.type,
+			route: {
+				providerId: automatic.decision.providerId,
+				...(automatic.decision.accountId
+					? { accountId: automatic.decision.accountId }
+					: {}),
+				transportId: automatic.decision.endpointId,
+				modelId: automatic.decision.selectedModelId,
+			},
+			thinkingLevel: automatic.route.reasoningEffort,
+			retryCount: 0,
+			toolFailureCount: 0,
+			escalated,
+			verifierStatus: "unavailable",
+			success: false,
+			costScarcity: this.routingScarcity(automatic.decision.scarcityPenalty),
+			...(automatic.decision.estimatedCost !== undefined
+				? { estimatedCostUsd: automatic.decision.estimatedCost }
+				: {}),
+			...(automatic.decision.effectiveCost !== undefined
+				? { effectiveCost: automatic.decision.effectiveCost }
+				: {}),
+			...(automatic.decision.scarcityPenalty !== undefined
+				? { scarcityPenalty: automatic.decision.scarcityPenalty }
+				: {}),
+			timestamp: this.now(),
 		});
 		if (automatic.decision.traceId) {
 			this.modelRouter.completeTrace(automatic.decision.traceId, {
 				status: cancelled ? "cancelled" : "failed",
-				escalated: false,
+				escalated,
 			});
 		}
 	}
@@ -1144,26 +1568,67 @@ export class AgentCore {
 		automatic: ReturnType<AgentCore["automaticRoute"]>,
 		sessionId: string,
 		result: AgentLoopResult,
-	): Promise<void> {
+	): Promise<{
+		result: AgentLoopResult;
+		verifierStatus: RoutingVerifierStatus;
+	}> {
 		if (!automatic.route.reviewRequired || result.run.status !== "completed")
-			return;
-		const review = await this.orchestrator.delegate({
-			parentSessionId: sessionId,
-			title: "Independent result review",
-			prompt: [
-				"Review the completed agent result below for correctness, safety, and evidence.",
-				"This is an independent review route. Identify any concrete defect or missing validation; do not delegate further.",
-				`Result:\n${result.assistantMessage?.content.slice(0, 50_000) ?? "[No assistant text was returned.]"}`,
-			].join("\n\n"),
-			model: "auto",
-			providerIds: automatic.execution.providerIds,
-			role: "reviewer",
-			allowedTools: [],
-			requiredCapabilities: { code_review: 0.95, reliability: 0.9 },
-			maximumTurns: this.configuration.current().workflows.maximumTurns,
-		});
+			return { result, verifierStatus: "skipped" };
+		let review: Awaited<ReturnType<TaskOrchestrator["delegate"]>>;
+		try {
+			review = await this.orchestrator.delegate({
+				parentSessionId: sessionId,
+				title: "Independent result review",
+				prompt: [
+					"Review the completed agent result below for correctness, safety, and evidence.",
+					"This is an independent review route. Do not delegate further. Your first line must be exactly `VERDICT: PASS` when the result is supported, or `VERDICT: FAIL` when you find a concrete defect, missing validation, or safety concern. Put a short evidence-based explanation after that line.",
+					`Result:\n${result.assistantMessage?.content.slice(0, 50_000) ?? "[No assistant text was returned.]"}`,
+				].join("\n\n"),
+				model: "auto",
+				// Give the independent reviewer the entire policy-allowed pool, rather
+				// than only the executor's fallback ladder. That preserves the user's
+				// provider policy while allowing a genuinely independent specialist.
+				providerIds: automatic.allowedProviderIds,
+				role: "reviewer",
+				allowedTools: [],
+				requiredCapabilities: { code_review: 0.95, reliability: 0.9 },
+				maximumTurns: this.configuration.current().workflows.maximumTurns,
+			});
+		} catch (error) {
+			if (!reviewerUnavailableError(error)) throw error;
+			// Independent review strengthens a completed answer, but an unavailable
+			// reviewer must not retroactively turn that executor result into a failure.
+			return { result, verifierStatus: "unavailable" };
+		}
 		if (review.result.run.status !== "completed")
-			throw new Error("The required independent reviewer did not complete.");
+			return { result, verifierStatus: "unavailable" };
+		const reviewerFeedback = review.result.assistantMessage?.content;
+		const verdict = parseIndependentReviewerVerdict(reviewerFeedback);
+		if (verdict === "unavailable")
+			return { result, verifierStatus: "unavailable" };
+		if (verdict === "passed") {
+			if (automatic.decision.traceId)
+				this.modelRouter.recordTraceEvent(
+					automatic.decision.traceId,
+					"ROUTE_VERIFIED",
+				);
+			return { result, verifierStatus: "passed" };
+		}
+
+		if (automatic.decision.traceId)
+			this.modelRouter.recordTraceEvent(
+				automatic.decision.traceId,
+				"ROUTE_VERIFIED",
+			);
+		const corrected = await this.agentLoop.reworkAfterVerification({
+			runId: result.run.id,
+			maximumTurns: this.configuration.current().workflows.maximumTurns,
+			...(reviewerFeedback ? { verificationFeedback: reviewerFeedback } : {}),
+			adaptiveExecution: this.adaptiveExecutionOptions(automatic),
+			onAdaptiveEscalation: this.adaptiveEscalationFor(automatic),
+			onEvent: this.routingEventHandler(automatic),
+		});
+		return { result: corrected, verifierStatus: "failed" };
 	}
 
 	resolveChannelSession(envelope: ChannelEnvelope): string {
@@ -1403,6 +1868,10 @@ export class AgentCore {
 		);
 	}
 
+	private isStandardSession(session: RuntimeSession): boolean {
+		return (session.privacyMode ?? "standard") === "standard";
+	}
+
 	private sharedMemoryInjectionEnabled(personalityId?: string): boolean {
 		const personality = this.personalities.get(
 			personalityId ?? this.selectedPersonalityId,
@@ -1413,12 +1882,63 @@ export class AgentCore {
 		);
 	}
 
+	private memoryEnabledForSession(
+		session: RuntimeSession,
+		personalityId?: string,
+	): boolean {
+		return this.isStandardSession(session) &&
+			!this.memorySubstrate.isPrivateAgentSession(session.id) &&
+			this.sharedMemoryInjectionEnabled(personalityId);
+	}
+
+	private substrateContextForSession(
+		sessionId: string,
+		query: string,
+		includeSharedMemory: boolean,
+	): ReturnType<MemorySubstrate["getRelevantContext"]> | undefined {
+		const session = this.runtime.getSession(sessionId);
+		if (!this.isStandardSession(session))
+			return undefined;
+		const privateAgent = this.memorySubstrate.isPrivateAgentSession(sessionId);
+		if (!includeSharedMemory && !privateAgent)
+			return undefined;
+		try {
+			return this.memorySubstrate.getRelevantContext({
+				query,
+				agentId: this.memorySubstrate.agentIdForSession(sessionId),
+				sessionId,
+				includeSharedMemory: includeSharedMemory && !privateAgent,
+				includeSensitive: false,
+				includeRestricted: false,
+				...(privateAgent ? { maximumCharacters: 12_000 } : {}),
+			});
+		} catch (error) {
+			this.recordMemoryObserverFailure(error);
+			return undefined;
+		}
+	}
+
+	private recordMemoryObserverFailure(error: unknown): void {
+		try {
+			this.deps.database.setPrivateState("memory.capture.last-error", {
+				message:
+					error instanceof Error && error.message.trim()
+						? error.message.slice(0, 2_000)
+						: "Memory observer failed.",
+				updatedAt: this.now(),
+			});
+		} catch {
+			// Memory is deliberately non-critical to the agent runtime.
+		}
+	}
+
 	private memoryRecallStatus(personalityId?: string): MemoryRecallStatus {
 		const configuration = this.configuration.current();
 		const personality = this.personalities.get(
 			personalityId ?? this.selectedPersonalityId,
 		);
-		const injectionEnabled = this.sharedMemoryInjectionEnabled(personality.id);
+		const injectionEnabled =
+			this.sharedMemoryInjectionEnabled(personality.id);
 		let offReason: string | undefined;
 		if (!injectionEnabled) {
 			if (personality.memoryScope === "isolated")
@@ -1441,6 +1961,40 @@ export class AgentCore {
 				? { honchoLastError: honcho.detail }
 				: {}),
 		};
+	}
+
+	private memoryRecallCount(
+		localContext: ReturnType<LifeContextService["assembleContext"]> | undefined,
+		substrateContext: ReturnType<MemorySubstrate["getRelevantContext"]> | undefined,
+	): number {
+		const legacyIds = new Set<string>(
+			localContext?.memories.map((memory) => memory.id) ?? [],
+		);
+		const substrateResults = [
+			...(substrateContext?.durable ?? []),
+			...(substrateContext?.current ?? []),
+			...(substrateContext?.retrieved ?? []),
+		];
+		for (const result of substrateResults)
+			if (result.kind === "memory") legacyIds.add(result.id);
+
+		const recalled = new Set<string>();
+		for (const memory of localContext?.memories ?? [])
+			recalled.add(`legacy:${memory.id}`);
+		for (const result of substrateResults) {
+			if (result.kind !== "memory" && result.kind !== "agent_memory") continue;
+			const bridgedLegacyId = result.sourceIds.find((sourceId) =>
+				legacyIds.has(sourceId),
+			);
+			recalled.add(
+				bridgedLegacyId
+					? `legacy:${bridgedLegacyId}`
+					: result.kind === "memory"
+						? `legacy:${result.id}`
+						: `agent:${result.id}`,
+			);
+		}
+		return recalled.size;
 	}
 
 	createPersonality(
@@ -1679,17 +2233,65 @@ export class AgentCore {
 					return { ok: true, plugins: this.pluginSummaries() };
 				}
 				case "runtime-list-sessions":
+					return {
+						ok: true,
+						sessions: this.runtime.listSessions(),
+						selectedSessionId: this.runtime.selectedSessionId(),
+					};
+				case "runtime-sync-projects":
+					this.runtime.setProjects(request.projects);
+					this.memorySubstrate.syncProjects(request.projects);
 					return { ok: true, sessions: this.runtime.listSessions() };
+				case "agent-group-memory-list":
+					return {
+						ok: true,
+						groupMemory: this.groupMemory.statusForSession(request.sessionId),
+					};
 				case "runtime-create-session": {
 					const session = this.runtime.createSession({
 						title: request.title,
+						...(request.kind ? { kind: request.kind } : {}),
+						...(request.planetAssetId
+							? { planetAssetId: request.planetAssetId }
+							: {}),
+						...(request.projectId ? { projectId: request.projectId } : {}),
 						...(request.workspaceRoot
 							? { workspaceRoot: request.workspaceRoot }
+							: {}),
+						...(request.privacyMode
+							? { privacyMode: request.privacyMode }
 							: {}),
 					});
 					this.pluginMcpManager?.attachSession(session.id);
 					return { ok: true, session };
 				}
+				case "runtime-update-agent-planet":
+					return {
+						ok: true,
+						session: this.runtime.updateAgentPlanet(
+							request.sessionId,
+							request.planetAssetId,
+						),
+					};
+				case "runtime-update-session-project":
+					return {
+						ok: true,
+						session: this.runtime.updateSessionProject(
+							request.sessionId,
+							request.projectId,
+						),
+					};
+				case "runtime-select-session":
+					return {
+						ok: true,
+						selectedSessionId: this.runtime.selectSession(request.sessionId),
+					};
+				case "runtime-forget-session":
+					return {
+						ok: true,
+						session: this.runtime.forgetSession(request.sessionId),
+						selectedSessionId: this.runtime.selectedSessionId(),
+					};
 				case "runtime-fork-session":
 					return {
 						ok: true,
@@ -1747,8 +2349,14 @@ export class AgentCore {
 						);
 						const configuration = this.configuration.current();
 						const runtimeSession = this.runtime.getSession(request.sessionId);
-						const sharedMemoryEnabled =
-							this.sharedMemoryInjectionEnabled(personality.id);
+						const groupMemoryContext = this.groupMemory.promptContext(
+							request.sessionId,
+							priorMessage,
+						);
+						const sharedMemoryEnabled = this.memoryEnabledForSession(
+							runtimeSession,
+							personality.id,
+						);
 						const honchoContext = sharedMemoryEnabled
 							? await this.honchoMemory.contextFor({
 									sessionId: request.sessionId,
@@ -1763,11 +2371,19 @@ export class AgentCore {
 									query: priorMessage,
 								})
 							: undefined;
-						const userModelContext = this.userModel.promptContext();
+						const substrateContext = this.substrateContextForSession(
+							request.sessionId,
+							priorMessage,
+							sharedMemoryEnabled,
+						);
+						const userModelContext = sharedMemoryEnabled
+							? this.userModel.promptContext()
+							: "";
 						const memoryRecallReceipt = buildMemoryRecallReceipt({
-							...(localContext
-								? { localMemoryCount: localContext.memories.length }
-								: {}),
+							localMemoryCount: this.memoryRecallCount(
+								localContext,
+								substrateContext,
+							),
 							userModelContext,
 							honchoContext,
 						});
@@ -1809,7 +2425,13 @@ export class AgentCore {
 							),
 							instructions: [
 								personality.instructions,
+								...(runtimeSession.parentSessionId
+									? []
+									: [MAIN_AGENT_COORDINATION_INSTRUCTIONS]),
 								this.configuration.instructions(),
+								this.runtime.projectContextForSession(request.sessionId),
+								groupMemoryContext,
+								substrateContext?.prompt ?? "",
 								...(sharedMemoryEnabled
 									? [
 											this.userModel.promptContext(),
@@ -1836,24 +2458,37 @@ export class AgentCore {
 								? { takeSteering: () => active.steering.splice(0) }
 								: {}),
 							...(memoryRecallReceipt ? { memoryRecallReceipt } : {}),
+							...(route
+								? {
+										adaptiveExecution: this.adaptiveExecutionOptions(route),
+										onAdaptiveEscalation: this.adaptiveEscalationFor(route),
+										onEvent: this.routingEventHandler(route),
+									}
+								: {}),
 						});
+						let finalizedResult = result;
 						if (route) {
-							await this.ensureIndependentReview(
+							const review = await this.ensureIndependentReview(
 								route,
 								request.sessionId,
 								result,
 							);
-							this.recordAutomaticOutcome(route, result);
+							finalizedResult = review.result;
+							this.recordAutomaticOutcome(
+								route,
+								finalizedResult,
+								review.verifierStatus,
+							);
 						}
 						return {
 							ok: true,
-							run: result.run,
+							run: finalizedResult.run,
 							...(route ? { routing: route.route } : {}),
-							...(result.assistantMessage
-								? { messages: [result.assistantMessage] }
+							...(finalizedResult.assistantMessage
+								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
-							...(result.pendingExecution
-								? { execution: result.pendingExecution }
+							...(finalizedResult.pendingExecution
+								? { execution: finalizedResult.pendingExecution }
 								: {}),
 						};
 					} catch (error) {
@@ -1870,10 +2505,18 @@ export class AgentCore {
 						session: this.runtime.resumeSession(request.sessionId),
 					};
 				case "runtime-cancel-session":
-					return {
-						ok: true,
-						session: this.runtime.cancelSession(request.sessionId),
-					};
+					{
+						const sessionIds = this.runtime.sessionTree(request.sessionId);
+						this.abortActiveStreamsForSessions(
+							sessionIds,
+							"Cancelled because the owning agent session was cancelled.",
+						);
+						this.orchestrator.cancelForSessions(sessionIds);
+						return {
+							ok: true,
+							session: this.runtime.cancelSession(request.sessionId),
+						};
+					}
 				case "runtime-append-message":
 					return {
 						ok: true,
@@ -2011,14 +2654,61 @@ export class AgentCore {
 					return {
 						ok: true,
 						messages: this.runtime.searchMessages(request.query, request.limit),
+						transcriptResults: this.runtime.searchTranscript(
+							request.query,
+							request.limit,
+						),
 					};
-				case "memory-list":
-					return { ok: true, memories: this.memory.list() };
+				case "runtime-list-human-input":
+					return {
+						ok: true,
+						humanInputRequests: this.runtime.listHumanInputRequests(
+							request.sessionId,
+						),
+					};
+				case "runtime-create-human-input":
+					return {
+						ok: true,
+						humanInput: this.runtime.createHumanInputRequest({
+							sessionId: request.sessionId,
+							runId: request.runId,
+							prompt: request.prompt,
+							...(request.context ? { context: request.context } : {}),
+							options: request.options,
+							...(request.selectionMode
+								? { selectionMode: request.selectionMode }
+								: {}),
+							allowFreeText: request.allowFreeText,
+							allowSkip: request.allowSkip,
+							...(request.timeoutMs !== undefined
+								? { timeoutMs: request.timeoutMs }
+								: {}),
+						}),
+					};
+				case "runtime-answer-human-input":
+					return {
+						ok: true,
+						humanInput: this.runtime.answerHumanInput({
+							requestId: request.requestId,
+							runId: request.runId,
+							answer: request.answer,
+						}),
+					};
+				case "runtime-cancel-human-input":
+					return {
+						ok: true,
+						humanInput: this.runtime.cancelHumanInput(
+							request.requestId,
+							request.runId,
+						),
+					};
+					case "memory-list":
+						return { ok: true, memories: this.memorySubstrate.list() };
 				case "memory-remember":
 					return {
 						ok: true,
 						memories: [
-							this.memory.remember({
+							this.memorySubstrate.remember({
 								type: request.memoryType,
 								content: request.content,
 								structuredData: { capture: "direct-user-control" },
@@ -2040,7 +2730,7 @@ export class AgentCore {
 					return {
 						ok: true,
 						memories: [
-							this.memory.correct(request.id, {
+							this.memorySubstrate.correct(request.id, {
 								content: request.content,
 								...(request.memoryType ? { type: request.memoryType } : {}),
 								...(request.sensitivity
@@ -2051,14 +2741,18 @@ export class AgentCore {
 						],
 					};
 				case "memory-forget":
-					return { ok: true, memories: [this.memory.forget(request.id)] };
-				case "memory-versions":
-					return {
-						ok: true,
-						memoryVersions: this.memory.versions(request.id),
+					return { ok: true, memories: [this.memorySubstrate.forget(request.id)] };
+					case "memory-versions":
+						return {
+							ok: true,
+							memoryVersions: this.memorySubstrate.versions(request.id),
 					};
 				case "memory-run-maintenance":
-					return { ok: true, memories: this.lifeContext.maintain().memories };
+					return {
+						ok: true,
+						memories: this.lifeContext.maintain().memories,
+						memoryMaintenance: await this.memorySubstrate.runMaintenance(),
+					};
 				case "memory-user-model-list":
 					return { ok: true, userModelFacts: this.userModel.list() };
 				case "memory-user-model-review":
@@ -2067,6 +2761,117 @@ export class AgentCore {
 						userModelFacts: [
 							this.userModel.review(request.id, request.decision),
 						],
+					};
+				case "memory-timeline-query": {
+					const { type: _type, ...query } = request;
+					return {
+						ok: true,
+						memoryTimeline: this.memorySubstrate.queryTimeline(query),
+					};
+				}
+				case "memory-capture-status":
+					return {
+						ok: true,
+						memoryCaptureStatus: this.memorySubstrate.captureStatus(),
+					};
+				case "memory-capture-configure":
+					this.memorySubstrate.setCaptureConfiguration({
+						enabled: request.configuration.enabled,
+						defaultRetentionDays: request.configuration.defaultRetentionDays,
+						policies: request.configuration.policies,
+					});
+					return {
+						ok: true,
+						memoryCaptureStatus: this.memorySubstrate.captureStatus(),
+					};
+				case "memory-capture-policy-upsert":
+					this.memorySubstrate.upsertCapturePolicy(request.policy);
+					return {
+						ok: true,
+						memoryCaptureStatus: this.memorySubstrate.captureStatus(),
+					};
+				case "memory-capture-policy-delete":
+					if (!this.memorySubstrate.deleteCapturePolicy(request.id))
+						throw new Error("Capture policy not found.");
+					return {
+						ok: true,
+						memoryCaptureStatus: this.memorySubstrate.captureStatus(),
+					};
+				case "memory-diagnostics":
+					return {
+						ok: true,
+						memoryDiagnostics: this.memorySubstrate.diagnostics(),
+					};
+				case "memory-agent-inspect": {
+					const session = this.memorySubstrate.assertMemorySession(
+						request.sessionId,
+					);
+					const identity = this.memorySubstrate.ensureAgentIdentity(session);
+					return {
+						ok: true,
+						memoryAgentIdentity: identity,
+						memoryAgentMemories: this.deps.database.listAgentMemories(
+							identity.id,
+							{ includeInactive: request.includeInactive, limit: request.limit },
+						),
+						memoryAgentTasks: this.deps.database.listWorkingTasks({
+							agentId: identity.id,
+							includeCompleted: true,
+							limit: 100,
+						}),
+					};
+				}
+				case "memory-agent-correct":
+					this.memorySubstrate.assertMemorySession(request.sessionId);
+					return {
+						ok: true,
+						memoryAgentMemories: [
+							this.memorySubstrate.correctAgentMemory(
+								request.sessionId,
+								request.id,
+								request.content,
+							),
+						],
+					};
+				case "memory-agent-forget":
+					this.memorySubstrate.assertMemorySession(request.sessionId);
+					return {
+						ok: true,
+						memoryAgentMemories: [
+							this.memorySubstrate.forgetAgentMemory(
+								request.sessionId,
+								request.id,
+							),
+						],
+					};
+				case "memory-agent-provenance-list":
+					this.memorySubstrate.assertMemorySession(request.sessionId);
+					return {
+						ok: true,
+						memoryProvenance:
+							this.memorySubstrate.listAgentMemoryProvenance(
+								request.sessionId,
+								request.id,
+								request.limit,
+							),
+					};
+				case "memory-provenance-list":
+					return {
+						ok: true,
+						memoryProvenance: this.deps.database.listMemoryProvenance({
+							...(request.ownerType ? { ownerType: request.ownerType } : {}),
+							...(request.ownerId ? { ownerId: request.ownerId } : {}),
+							...(request.sourceId ? { sourceId: request.sourceId } : {}),
+							...(request.timelineEventId
+								? { timelineEventId: request.timelineEventId }
+								: {}),
+							limit: request.limit,
+						}),
+					};
+				case "memory-source-delete":
+					return {
+						ok: true,
+						memoryDeletion: this.memorySubstrate.forgetSource(request.sourceId),
 					};
 				case "people-list":
 					return { ok: true, people: this.lifeContext.listPeople() };
@@ -2095,12 +2900,15 @@ export class AgentCore {
 							}),
 						],
 					};
-				case "people-delete":
-					return {
-						ok: true,
-						people: [this.lifeContext.deletePerson(request.id)],
-						memories: this.memory.list(),
-					};
+					case "people-delete": {
+						const person = this.lifeContext.deletePerson(request.id);
+						this.memorySubstrate.reconcilePeople();
+						return {
+							ok: true,
+							people: [person],
+							memories: this.memory.list(),
+						};
+					}
 				case "calendar-list":
 					return {
 						ok: true,
@@ -2151,6 +2959,12 @@ export class AgentCore {
 							includeRestricted: request.includeRestricted,
 							persistUsage: false,
 						}),
+						memoryContext: this.memorySubstrate.getRelevantContext({
+							query: request.query,
+							includeSharedMemory: true,
+							includeSensitive: request.includeSensitive,
+							includeRestricted: request.includeRestricted,
+						}),
 					};
 				case "writing-profile-get":
 					return {
@@ -2197,6 +3011,9 @@ export class AgentCore {
 						providerIds: request.providerIds,
 						...(request.providerModels
 							? { providerModels: request.providerModels }
+							: {}),
+						...(request.reasoningEffort
+							? { reasoningEffort: request.reasoningEffort }
 							: {}),
 						...(request.writerModel
 							? { writerModel: request.writerModel }
@@ -2657,6 +3474,43 @@ export class AgentCore {
 				}
 				case "media-list-artifacts":
 					return { ok: true, artifacts: this.artifacts?.list() ?? [] };
+				case "media-pin-artifact": {
+					if (!this.artifacts)
+						throw new Error("Artifact storage is not configured.");
+					return {
+						ok: true,
+						artifacts: [
+							this.artifacts.setPinned(request.artifactId, request.pinned),
+						],
+					};
+				}
+				case "media-export-artifact": {
+					if (!this.artifacts)
+						throw new Error("Artifact storage is not configured.");
+					const exported = this.artifacts.exportWidget(
+						request.artifactId,
+						request.maximumBytes,
+					);
+					return {
+						ok: true,
+						exportedArtifact: exported,
+						artifactPreview: this.artifacts.preview(
+							exported.id,
+							request.maximumBytes,
+						),
+					};
+				}
+				case "media-download-artifact": {
+					if (!this.artifacts)
+						throw new Error("Artifact storage is not configured.");
+					return {
+						ok: true,
+						artifactDownload: this.artifacts.download(
+							request.artifactId,
+							request.maximumBytes,
+						),
+					};
+				}
 				case "media-preview-artifact": {
 					if (!this.artifacts)
 						throw new Error("Artifact storage is not configured.");
@@ -2837,7 +3691,22 @@ export class AgentCore {
 								},
 							]
 						: [];
-					return { ok: true, providers: [...logical, ...auto] };
+					return {
+						ok: true,
+						providers: [...logical, ...auto],
+						providerAccounts: this.modelCatalog.list(),
+					};
+				}
+				case "runtime-refresh-provider-models": {
+					const providerAccounts = await this.refreshProviderModels(
+						request.providerId,
+						AbortSignal.timeout(60_000),
+					);
+					return {
+						ok: true,
+						providerAccounts,
+						modelProfiles: this.modelRegistry.list(),
+					};
 				}
 				case "runtime-verify-provider":
 					return {
@@ -2867,6 +3736,31 @@ export class AgentCore {
 						),
 					]);
 					let route: ReturnType<AgentCore["automaticRoute"]> | undefined;
+					let workingTask: WorkingTask | undefined;
+					try {
+						const taskSession = this.runtime.getSession(request.sessionId);
+						const identity = this.memorySubstrate.ensureAgentIdentity(taskSession);
+						workingTask = this.memorySubstrate.createWorkingTask({
+							sessionId: taskSession.id,
+							agentId: identity.id,
+							sourceIds: [`session:${taskSession.id}`],
+							projectIds: taskSession.projectId ? [taskSession.projectId] : [],
+							personIds: [],
+							entityIds: [],
+							goal: request.message,
+							plan: [],
+								status: "running",
+								startedAt: new Date().toISOString(),
+								evidence: [],
+							artifacts: [],
+							failures: [],
+								unresolvedQuestions: [],
+								subtaskIds: [],
+								dependencyTaskIds: [],
+							});
+					} catch (error) {
+						this.recordMemoryObserverFailure(error);
+					}
 					try {
 						const personality = this.personalities.get(
 							request.personalityId ?? this.selectedPersonalityId,
@@ -2886,7 +3780,12 @@ export class AgentCore {
 									)
 								: undefined;
 						const runtimeSession = this.runtime.getSession(request.sessionId);
-						const sharedMemoryEnabled = this.sharedMemoryInjectionEnabled(
+						const groupMemoryContext = this.groupMemory.promptContext(
+							request.sessionId,
+							request.message,
+						);
+						const sharedMemoryEnabled = this.memoryEnabledForSession(
+							runtimeSession,
 							personality.id,
 						);
 						const honchoContext = sharedMemoryEnabled
@@ -2903,11 +3802,19 @@ export class AgentCore {
 									query: request.message,
 								})
 							: undefined;
-						const userModelContext = this.userModel.promptContext();
+						const substrateContext = this.substrateContextForSession(
+							request.sessionId,
+							request.message,
+							sharedMemoryEnabled,
+						);
+						const userModelContext = sharedMemoryEnabled
+							? this.userModel.promptContext()
+							: "";
 						const memoryRecallReceipt = buildMemoryRecallReceipt({
-							...(localContext
-								? { localMemoryCount: localContext.memories.length }
-								: {}),
+							localMemoryCount: this.memoryRecallCount(
+								localContext,
+								substrateContext,
+							),
 							userModelContext,
 							honchoContext,
 						});
@@ -2975,7 +3882,13 @@ export class AgentCore {
 							instructions: [
 								personality.instructions,
 								route?.orchestrationInstructions,
+								...(runtimeSession.parentSessionId
+									? []
+									: [MAIN_AGENT_COORDINATION_INSTRUCTIONS]),
 								this.configuration.instructions(),
+								this.runtime.projectContextForSession(request.sessionId),
+								groupMemoryContext,
+								substrateContext?.prompt ?? "",
 								...(sharedMemoryEnabled
 									? [
 											this.userModel.promptContext(),
@@ -3008,27 +3921,81 @@ export class AgentCore {
 								? { takeSteering: () => active.steering.splice(0) }
 								: {}),
 							...(memoryRecallReceipt ? { memoryRecallReceipt } : {}),
+							...(route
+								? {
+										adaptiveExecution: this.adaptiveExecutionOptions(route),
+										onAdaptiveEscalation: this.adaptiveEscalationFor(route),
+										onEvent: this.routingEventHandler(route),
+									}
+								: {}),
 						});
+						let finalizedResult = result;
 						if (route) {
-							await this.ensureIndependentReview(
+							const review = await this.ensureIndependentReview(
 								route,
 								request.sessionId,
 								result,
 							);
-							this.recordAutomaticOutcome(route, result);
+							finalizedResult = review.result;
+							this.recordAutomaticOutcome(
+								route,
+								finalizedResult,
+								review.verifierStatus,
+							);
+						}
+						if (workingTask) {
+							try {
+								const taskStatus =
+									finalizedResult.run.status === "completed"
+										? "completed"
+										: finalizedResult.run.status === "cancelled"
+											? "cancelled"
+											: finalizedResult.run.status === "failed"
+												? "failed"
+												: "waiting";
+								this.memorySubstrate.recordTaskOutcome({
+									...workingTask,
+									status: taskStatus,
+									...(taskStatus === "completed" || taskStatus === "failed" || taskStatus === "cancelled"
+										? { completedAt: this.now() }
+										: {}),
+									...(finalizedResult.assistantMessage
+										? { outcomeSummary: finalizedResult.assistantMessage.content }
+										: {}),
+									...(taskStatus === "failed" && finalizedResult.run.error
+										? { failures: [...workingTask.failures, finalizedResult.run.error].slice(-100) }
+										: {}),
+									updatedAt: this.now(),
+								});
+							} catch (error) {
+								this.recordMemoryObserverFailure(error);
+							}
 						}
 						return {
 							ok: true,
-							run: result.run,
+							run: finalizedResult.run,
 							...(route ? { routing: route.route } : {}),
-							...(result.assistantMessage
-								? { messages: [result.assistantMessage] }
+							...(finalizedResult.assistantMessage
+								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
-							...(result.pendingExecution
-								? { execution: result.pendingExecution }
+							...(finalizedResult.pendingExecution
+								? { execution: finalizedResult.pendingExecution }
 								: {}),
 						};
 					} catch (error) {
+						if (workingTask) {
+							try {
+								this.memorySubstrate.recordTaskOutcome({
+									...workingTask,
+									status: executionSignal.aborted ? "cancelled" : "failed",
+									failures: [error instanceof Error ? error.message : "Agent execution failed."],
+									completedAt: this.now(),
+									updatedAt: this.now(),
+								});
+							} catch (taskError) {
+								this.recordMemoryObserverFailure(taskError);
+							}
+						}
 						if (route)
 							this.recordAutomaticFailure(route, executionSignal.aborted);
 						throw error;
@@ -3092,14 +4059,27 @@ export class AgentCore {
 							...(active
 								? { takeSteering: () => active.steering.splice(0) }
 								: {}),
+							...(automatic
+								? {
+										adaptiveExecution: this.adaptiveExecutionOptions(automatic),
+										onAdaptiveEscalation: this.adaptiveEscalationFor(automatic),
+										onEvent: this.routingEventHandler(automatic),
+									}
+								: {}),
 						});
+						let finalizedResult = result;
 						if (automatic && result.run.status !== "waiting_approval") {
-							await this.ensureIndependentReview(
+							const review = await this.ensureIndependentReview(
 								automatic,
 								result.run.sessionId,
 								result,
 							);
-							this.recordAutomaticOutcome(automatic, result);
+							finalizedResult = review.result;
+							this.recordAutomaticOutcome(
+								automatic,
+								finalizedResult,
+								review.verifierStatus,
+							);
 							this.deps.database.setPrivateState(
 								`agent-run-routing.${request.runId}`,
 								null,
@@ -3107,12 +4087,12 @@ export class AgentCore {
 						}
 						return {
 							ok: true,
-							run: result.run,
-							...(result.assistantMessage
-								? { messages: [result.assistantMessage] }
+							run: finalizedResult.run,
+							...(finalizedResult.assistantMessage
+								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
-							...(result.pendingExecution
-								? { execution: result.pendingExecution }
+							...(finalizedResult.pendingExecution
+								? { execution: finalizedResult.pendingExecution }
 								: {}),
 						};
 					} finally {
@@ -3186,6 +4166,8 @@ export class AgentCore {
 						ok: true,
 						approvalRules: [this.runtime.removeApprovalRule(request.id)],
 					};
+				default:
+					throw new Error("Unsupported Agent Core request.");
 			}
 		} catch (error) {
 			return {
@@ -3214,7 +4196,10 @@ export class AgentCore {
 			installHonchoMemoryTools(
 				this.runtime,
 				this.honchoMemory,
-				this.runtime.listSessions().map((session) => session.id),
+				this.runtime
+					.listSessions()
+					.filter((session) => this.isStandardSession(session))
+					.map((session) => session.id),
 			);
 			return;
 		}
@@ -3235,13 +4220,20 @@ export class AgentCore {
 	}
 
 	private abortActiveStreamsForHistoryRollback(sessionId: string): void {
+		this.abortActiveStreamsForSessions(
+			[sessionId],
+			"Active agent stream cancelled because the session history was rolled back.",
+		);
+	}
+
+	private abortActiveStreamsForSessions(
+		sessionIds: readonly string[],
+		reason: string,
+	): void {
+		const ids = new Set(sessionIds);
 		for (const active of this.activeStreams.values()) {
-			if (active.sessionId === sessionId && !active.controller.signal.aborted)
-				active.controller.abort(
-					new Error(
-						"Active agent stream cancelled because the session history was rolled back.",
-					),
-				);
+			if (ids.has(active.sessionId) && !active.controller.signal.aborted)
+				active.controller.abort(new Error(reason));
 		}
 	}
 
@@ -3278,6 +4270,7 @@ export class AgentCore {
 		await this.honchoMemory.flush();
 		await this.observability.shutdown();
 		await this.providerPool.close();
+		await this.memorySubstrate.close();
 		this.runtime.close();
 		this.deps.database.close();
 	}
@@ -3327,6 +4320,10 @@ export {
 	type VisualValidationResult,
 	VisualValidator,
 } from "./browser-automation";
+export {
+	createUIPresentation,
+	installUIPresentationTools,
+} from "./ui-presentation";
 export {
 	annotateAccessibilityTree,
 	ELEMENT_REF_PATTERN,
@@ -3515,6 +4512,21 @@ export {
 	type VoiceTranscriptionProvider,
 } from "./media-providers";
 export { installMemoryTools, type MemoryInput, MemoryManager } from "./memory";
+export {
+	localMemoryEmbeddingProvider,
+	MEMORY_SCORING_DEFAULTS,
+	MemorySubstrate,
+	type CaptureActivityInput,
+	type MemoryEmbeddingProvider,
+	type MemoryRememberInput,
+	type MemorySubstrateOptions,
+} from "./memory-substrate";
+export {
+	AGENT_GROUP_MEMORY_TOOL_NAMES,
+	AgentGroupMemoryManager,
+	installAgentGroupMemoryTools,
+} from "./group-memory";
+export { AGENT_COORDINATION_TOOL_NAMES } from "./orchestration";
 export {
 	AdaptiveModelRouter,
 	DEFAULT_ROUTING_POLICY,

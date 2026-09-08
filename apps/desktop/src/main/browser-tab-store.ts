@@ -22,8 +22,12 @@ import {
 } from "../utility/browser-app-pages";
 
 export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
+	startupBehavior: "restore",
+	homepageUrl: "",
+	startupPages: [],
 	searchEngine: "google",
 	tabLayout: "horizontal",
+	tabSizing: "scrolling",
 	newTabBackground: "graphite",
 	newTabGreetingActivity: emptyNewTabGreetingActivity(),
 	newTabWidgets: {
@@ -40,7 +44,20 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	showBookmarksBar: true,
 	addressBarSuggestionsEnabled: true,
 	passwordAutofillEnabled: true,
+	offerToSavePasswords: true,
+	autofillPasswords: true,
+	autofillUsernames: true,
+	offerStrongPasswords: true,
+	neverSavePasswordOrigins: [],
 	paymentAutofillEnabled: true,
+	defaultZoomPercent: 100,
+	minimumFontSize: 0,
+	defaultFontFamily: "system-ui",
+	spellcheckEnabled: true,
+	spellcheckLanguage: "en-US",
+	hardwareAccelerationEnabled: true,
+	downloadBehavior: "automatic",
+	downloadDirectory: "",
 };
 const SEARCH_ENGINES: Record<
 	Exclude<UserBrowserSettings["searchEngine"], "custom">,
@@ -323,6 +340,7 @@ export function freshBrowserState(
 		originFavicons: [],
 		downloads: [],
 		bookmarks: [],
+		bookmarkFolders: [],
 		recentlyClosedTabs: [],
 		sitePermissions: [],
 		settings: { ...DEFAULT_BROWSER_SETTINGS },
@@ -346,7 +364,23 @@ export class BrowserTabStore {
 
 		let state: UserBrowserState;
 		try {
-			state = UserBrowserStateSchema.parse(JSON.parse(serialized));
+			const parsed = JSON.parse(serialized) as unknown;
+			state = UserBrowserStateSchema.parse(parsed);
+			if (
+				parsed &&
+				typeof parsed === "object" &&
+				"settings" in parsed &&
+				parsed.settings &&
+				typeof parsed.settings === "object" &&
+				!Object.hasOwn(parsed.settings, "startupBehavior") &&
+				(parsed.settings as { restoreSession?: unknown }).restoreSession ===
+					false
+			) {
+				// Profiles written before organized startup settings used only
+				// `restoreSession`. Preserve the old opt-out instead of letting the
+				// new default (`restore`) unexpectedly reopen those tabs.
+				state.settings = { ...state.settings, startupBehavior: "new_tab" };
+			}
 		} catch {
 			// Preserve malformed data for diagnosis or manual recovery rather than
 			// silently overwriting it the next time a fresh session is saved.
@@ -362,7 +396,7 @@ export class BrowserTabStore {
 			return freshBrowserState(now);
 		}
 
-		const tabs = state.settings.restoreSession
+		const restoredTabs = state.settings.startupBehavior === "restore" && state.settings.restoreSession
 			? state.tabs
 					.filter(
 						(tab) =>
@@ -370,17 +404,42 @@ export class BrowserTabStore {
 							/^https?:\/\//.test(tab.url) ||
 							isKestrelAppPageUrl(tab.url),
 					)
-					.map((tab) => ({
-						...tab,
-						faviconDataUrl: undefined,
-						loading: false,
-						canGoBack: false,
-						canGoForward: false,
-						discarded: Boolean(tab.url) && !isKestrelAppPageUrl(tab.url),
-						crashed: false,
-						error: undefined,
-					}))
+					.map(({ blockedNavigation, ...tab }) => {
+						const blockedUrl = blockedNavigation
+							? sanitizeBrowserUrl(blockedNavigation.url)
+							: "";
+						return {
+							...tab,
+							...(blockedNavigation && blockedUrl
+								? {
+										blockedNavigation: {
+											...blockedNavigation,
+											url: blockedUrl,
+										},
+									}
+								: {}),
+							faviconDataUrl: undefined,
+							loading: false,
+							canGoBack: false,
+							canGoForward: false,
+							discarded: Boolean(tab.url) && !isKestrelAppPageUrl(tab.url),
+							crashed: false,
+							error: undefined,
+						};
+					})
 			: [];
+		const startupTabs =
+			state.settings.startupBehavior === "homepage"
+				? [this.startupTab(state.settings.homepageUrl, now)]
+				: state.settings.startupBehavior === "specific_pages"
+					? state.settings.startupPages.map((url) => this.startupTab(url, now))
+					: restoredTabs;
+		const tabs = startupTabs.filter(
+			(tab) =>
+				!tab.url ||
+				/^https?:\/\//.test(tab.url) ||
+				isKestrelAppPageUrl(tab.url),
+		);
 		if (tabs.length === 0)
 			return {
 				...freshBrowserState(now),
@@ -388,12 +447,15 @@ export class BrowserTabStore {
 				history: state.history,
 				originFavicons: state.originFavicons,
 				bookmarks: state.bookmarks,
+				bookmarkFolders: state.bookmarkFolders,
 				recentlyClosedTabs: state.recentlyClosedTabs,
 				sitePermissions: state.sitePermissions,
 				downloads: state.downloads.map((download) => ({
 					...download,
 					status:
-						download.status === "progressing" ? "failed" : download.status,
+						download.status === "progressing" || download.status === "checking"
+							? "failed"
+							: download.status,
 					canReveal: false,
 				})),
 				settings: state.settings,
@@ -421,19 +483,55 @@ export class BrowserTabStore {
 			downloads: state.downloads.map((download) => ({
 				...download,
 				status:
-					download.status === "progressing" ? "failed" : download.status,
+					download.status === "progressing" || download.status === "checking"
+						? "failed"
+						: download.status,
 				canReveal: false,
 			})),
 		};
 	}
 
+	private startupTab(url: string, now: () => Date): UserBrowserState["tabs"][number] {
+		const tab = createEmptyBrowserTab(now);
+		if (url) {
+			tab.url = url;
+			tab.title = new URL(url).hostname || "Startup page";
+			tab.discarded = true;
+		}
+		return tab;
+	}
+
 	save(state: UserBrowserState): void {
+		const bookmarkFolders = state.bookmarkFolders.map((folder) => ({
+			...folder,
+			name: redactUntrustedBrowserText(folder.name, 80).trim(),
+		}));
+		const bookmarkFolderIds = new Set(bookmarkFolders.map((folder) => folder.id));
 		const safe = UserBrowserStateSchema.parse({
 			...state,
-			tabs: state.tabs.map(({ faviconDataUrl: _faviconDataUrl, ...tab }) => ({
-				...tab,
-				url: tab.url ? sanitizeBrowserUrl(tab.url) : "",
-			})),
+			tabs: state.tabs.map(
+				({
+					faviconDataUrl: _faviconDataUrl,
+					blockedNavigation,
+					...tab
+				}) => {
+					const blockedUrl = blockedNavigation
+						? sanitizeBrowserUrl(blockedNavigation.url)
+						: "";
+					return {
+						...tab,
+						url: tab.url ? sanitizeBrowserUrl(tab.url) : "",
+						...(blockedNavigation && blockedUrl
+							? {
+									blockedNavigation: {
+										...blockedNavigation,
+										url: blockedUrl,
+									},
+								}
+							: {}),
+					};
+				},
+			),
 			history: state.history.flatMap((entry) => {
 				const url = sanitizeBrowserUrl(entry.url);
 				return url ? [{ ...entry, url }] : [];
@@ -451,6 +549,25 @@ export class BrowserTabStore {
 					},
 				];
 			}),
+			bookmarks: state.bookmarks.flatMap((bookmark) => {
+				const url = sanitizeBrowserUrl(bookmark.url);
+				if (!url) return [];
+				const title = redactUntrustedBrowserText(bookmark.title, 500).trim();
+				return [
+					{
+						...bookmark,
+						url,
+						title: title || hostnameForUrl(url),
+						...(bookmark.folderId && bookmarkFolderIds.has(bookmark.folderId)
+							? { folderId: bookmark.folderId }
+							: { folderId: undefined }),
+						...(bookmark.faviconDataUrl?.startsWith("data:image/")
+							? { faviconDataUrl: bookmark.faviconDataUrl }
+							: { faviconDataUrl: undefined }),
+					},
+				];
+			}),
+			bookmarkFolders,
 			originFavicons: state.originFavicons.flatMap((item) => {
 				try {
 					const origin = new URL(item.origin).origin;

@@ -2,6 +2,7 @@ import type { RuntimeSession } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import {
 	agentSessionRecency,
+	agentSessionIsRenderable,
 	agentSessionStatusLabel,
 	agentSessionsForWorkspace,
 	agentSessionTreeForWorkspace,
@@ -53,6 +54,48 @@ describe("agent workspace presentation", () => {
 		expect(
 			agentSessionsForWorkspace(sessions, "", "done").map(({ id }) => id),
 		).toEqual(["session-old"]);
+	});
+
+	it("keeps private and forgotten sessions outside the searchable task library", () => {
+		const privateParent: RuntimeSession = {
+			...sessions[1]!,
+			id: "private-parent",
+			title: "Private parent",
+			privacyMode: "private",
+		};
+		const publicChild: RuntimeSession = {
+			...sessions[1]!,
+			id: "public-child",
+			title: "Public child",
+			parentSessionId: privateParent.id,
+		};
+		const forgotten: RuntimeSession = {
+			...sessions[0]!,
+			id: "forgotten",
+			forgottenAt: "2026-08-11T14:00:00.000Z",
+		};
+
+		expect(agentSessionIsRenderable(privateParent)).toBe(false);
+		expect(agentSessionIsRenderable(forgotten)).toBe(false);
+		expect(
+			agentSessionTreeForWorkspace(
+				[privateParent, publicChild, forgotten],
+				"",
+				"all",
+			),
+		).toEqual([
+			expect.objectContaining({
+				session: publicChild,
+				depth: 0,
+			}),
+		]);
+		expect(
+			agentSessionTreeForWorkspace(
+				[privateParent, publicChild, forgotten],
+				"",
+				"all",
+			)[0],
+		).not.toHaveProperty("parentTitle");
 	});
 
 	it("keeps project and recency labels compact", () => {

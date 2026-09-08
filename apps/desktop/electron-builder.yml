@@ -43,6 +43,9 @@ fileAssociations:
 mac:
   category: public.app-category.productivity
   icon: build/icon.icns
+  extendInfo:
+    NSCameraUsageDescription: "Kestrel lets you approve camera access for trusted websites."
+    NSMicrophoneUsageDescription: "Kestrel lets you approve microphone access for trusted websites."
   target:
     - target: dmg
       arch: [arm64]

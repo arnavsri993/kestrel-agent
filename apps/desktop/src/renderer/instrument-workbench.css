@@ -1,0 +1,1556 @@
+/* Instrument Workbench -------------------------------------------------------
+ * Final integration layer for the August 2026 product-wide redesign.
+ * Two quiet structural rails frame one active opaque work plane. This file
+ * intentionally loads last so specialist surfaces consume one hierarchy even
+ * while older component contracts remain compatible. */
+
+:root {
+	--page-gutter: clamp(20px, 4.4vw, 52px);
+	--page-top: clamp(32px, 5vh, 48px);
+	--control-compact: 32px;
+	--control-normal: 40px;
+	--control-decision: 44px;
+}
+
+.browser-app-page,
+.browser-secondary-surface,
+.browser-secondary-surface .browser-app-page,
+.browser-viewport:has(.browser-app-page) {
+	background: var(--workbench);
+}
+
+/* Browser chrome: the selected tab is a surface, while creating a tab is an
+ * explicit control. Keep their shapes and contrast different at a glance. */
+.browser-tab-row-horizontal .browser-tab.active {
+	border: 1px solid var(--line-strong);
+	border-bottom-color: var(--workbench);
+}
+
+.browser-tab-row-horizontal .browser-new-tab {
+	margin-left: 8px;
+	border: 1px solid transparent;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--ink-secondary);
+	box-shadow: none;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.browser-tab-row-horizontal .browser-new-tab:hover,
+.browser-tab-row-horizontal .browser-new-tab:focus-visible {
+	border-color: transparent;
+	background: var(--surface);
+	color: var(--ink);
+	box-shadow: none;
+}
+
+.browser-tab-row-horizontal .browser-new-tab:active {
+	background: var(--overlay);
+}
+
+/* Route continuity is owned by the keyed Motion boundary in BrowserWorkspace;
+ * nested CSS entry animations would double the travel and expose a seam. */
+:where(.browser-secondary-surface, .browser-library, .command-center, .agent-workspace) {
+	animation: none;
+}
+
+/* Shared page architecture ------------------------------------------------- */
+.unified-ui .browser-secondary-surface > .ui-page-frame,
+.unified-ui .browser-secondary-surface .ui-page-frame {
+	width: min(calc(100% - (2 * var(--page-gutter))), 1240px);
+	max-width: none;
+	margin-inline: auto;
+	padding: var(--page-top) 0 72px;
+}
+
+.unified-ui .browser-secondary-surface .ui-page-frame-reading {
+	max-width: 720px;
+}
+
+.unified-ui .browser-secondary-surface .ui-page-frame-standard {
+	max-width: 960px;
+}
+
+.unified-ui .browser-secondary-surface .ui-page-frame-wide {
+	max-width: 1180px;
+}
+
+.unified-ui .browser-secondary-surface .ui-page-frame-full {
+	width: calc(100% - (2 * var(--page-gutter)));
+	max-width: none;
+}
+
+.unified-ui .ui-page-frame-header {
+	gap: 28px;
+	margin-bottom: 28px;
+	padding-bottom: 20px;
+	border-bottom: 1px solid var(--line);
+}
+
+.unified-ui .ui-page-frame-eyebrow {
+	margin-bottom: 5px;
+	color: var(--muted);
+	font: 580 11.5px / 15px var(--sans);
+	letter-spacing: 0.045em;
+	text-transform: uppercase;
+}
+
+.unified-ui .ui-page-frame h1 {
+	font: 680 26px / 32px var(--display);
+	font-optical-sizing: auto;
+	letter-spacing: -0.025em;
+}
+
+.unified-ui .ui-page-frame-description {
+	max-width: 66ch;
+	margin-top: 7px;
+	color: var(--ink-secondary);
+	font: 450 14px / 21px var(--sans);
+}
+
+.unified-ui .ui-page-frame-actions {
+	align-self: center;
+}
+
+/* One control vocabulary. `.button` remains a compatibility selector, but it
+ * now resolves to the exact same geometry and states as shared UI buttons. */
+.unified-ui :is(.button, .ui-button) {
+	min-height: var(--control-normal);
+	padding-inline: 14px;
+	border-radius: var(--radius-control);
+	font: 560 13px / 18px var(--sans);
+	letter-spacing: 0;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel),
+		transform var(--motion-feedback) var(--ease-kestrel),
+		box-shadow var(--motion-feedback) var(--ease-kestrel);
+}
+
+.unified-ui :is(.button.primary, .ui-button-solid) {
+	border-color: transparent;
+	background: var(--solid);
+	color: var(--on-solid);
+	box-shadow: none;
+}
+
+.unified-ui :is(.button.secondary, .ui-button-bordered) {
+	border-color: var(--line-strong);
+	background: var(--raised);
+	color: var(--ink);
+	box-shadow: none;
+}
+
+.unified-ui :is(.button.quiet, .ui-button-quiet) {
+	border-color: transparent;
+	background: transparent;
+	color: var(--ink-secondary);
+	box-shadow: none;
+}
+
+.unified-ui :is(.button.danger-button, .ui-button-destructive) {
+	border-color: color-mix(in srgb, var(--danger) 48%, var(--line));
+	background: transparent;
+	color: var(--danger);
+}
+
+.unified-ui :is(.button, .ui-button):hover:not(:disabled) {
+	transform: none;
+}
+
+.unified-ui :is(.button.primary, .ui-button-solid):hover:not(:disabled) {
+	background: var(--solid-hover);
+	box-shadow: 0 3px 12px rgba(0, 0, 0, 0.22);
+}
+
+.unified-ui :is(.button.secondary, .ui-button-bordered):hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--ink) 26%, transparent);
+	background: var(--overlay);
+}
+
+.unified-ui :is(.button, .ui-button):active:not(:disabled) {
+	transform: scale(0.98);
+}
+
+.unified-ui
+	:is(
+		input:not([type]),
+		input[type="text"],
+		input[type="search"],
+		input[type="email"],
+		input[type="url"],
+		input[type="password"],
+		input[type="tel"],
+		input[type="number"],
+		input[type="datetime-local"]
+	) {
+	border-color: var(--line-strong);
+	border-radius: var(--radius-text-entry);
+	background: var(--surface);
+	color: var(--ink);
+	font: 450 13px / 18px var(--sans);
+}
+
+.unified-ui :is(select, textarea) {
+	border-color: var(--line-strong);
+	border-radius: var(--radius-control);
+	background: var(--surface);
+	color: var(--ink);
+	font: 450 13px / 18px var(--sans);
+}
+
+.unified-ui
+	:is(
+		input:not([type]),
+		input[type="text"],
+		input[type="search"],
+		input[type="email"],
+		input[type="url"],
+		input[type="password"],
+		input[type="tel"],
+		input[type="number"],
+		input[type="datetime-local"],
+		select
+	):not(.browser-address-input) {
+	min-height: var(--control-normal);
+}
+
+.unified-ui :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):focus {
+	border-color: var(--focus);
+	box-shadow: var(--focus-ring);
+	outline: none;
+}
+
+/* Some search and address controls place their text input inside a visual
+ * wrapper. Apply the same true end caps to that wrapper, not the transparent
+ * inner input, so the visible field is consistently capsule-shaped. */
+.unified-ui
+	:is(
+		.browser-address,
+		.browser-tab-tools-search,
+		.browser-library .library-search,
+		.command-search,
+		.agent-task-search,
+		.browser-history-popover-search,
+		.projects-workspace-search
+	) {
+	border-radius: var(--radius-text-entry);
+}
+
+/* Composite fields own their outline, fill, and focus treatment. Their inner
+ * inputs stay transparent so a command, address, or home composer never reads
+ * as a second field nested inside the first. */
+.unified-ui
+	:is(
+		.browser-address input,
+		.browser-tab-tools-search input,
+		.browser-library .library-search input,
+		.command-search input,
+		.agent-task-search input,
+		.browser-history-popover-search input,
+		.projects-workspace-search input,
+		.kestrel-home-composer > input
+	) {
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.unified-ui
+	:is(
+		.browser-address input,
+		.browser-tab-tools-search input,
+		.browser-library .library-search input,
+		.command-search input,
+		.agent-task-search input,
+		.browser-history-popover-search input,
+		.projects-workspace-search input,
+		.kestrel-home-composer > input
+	):focus {
+	border-color: transparent;
+	box-shadow: none;
+}
+/* Settings ---------------------------------------------------------------- */
+.settings-section-picker {
+	display: none;
+}
+
+.unified-ui .settings-page-frame {
+	max-width: 1180px;
+}
+
+.unified-ui .settings-scope-switcher {
+	display: inline-grid;
+	grid-template-columns: repeat(2, minmax(150px, 1fr));
+	width: auto;
+	max-width: 440px;
+	margin: 0 0 24px;
+	padding: 3px;
+	border: 1px solid var(--line);
+	border-radius: 11px;
+	background: var(--rail);
+}
+
+.unified-ui .settings-scope-switcher button {
+	min-height: 44px;
+	padding: 6px 11px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	box-shadow: none;
+}
+
+.unified-ui .settings-scope-switcher button.active {
+	background: var(--raised);
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.unified-ui .settings-scope-switcher button > svg {
+	width: 17px;
+	height: 17px;
+}
+
+.unified-ui .settings-scope-switcher strong {
+	font-size: 12.5px;
+	line-height: 17px;
+}
+
+.unified-ui .settings-scope-switcher small {
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 14px;
+}
+
+.unified-ui .settings-search {
+	position: relative;
+	width: min(100%, 680px);
+	margin: 0 0 24px;
+}
+
+.unified-ui .settings-search-field {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	min-height: 42px;
+	padding: 0 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-text-entry);
+	background: var(--control-fill);
+	color: var(--muted);
+}
+
+.unified-ui .settings-search-field:focus-within {
+	border-color: var(--ink);
+	box-shadow: var(--focus-ring);
+}
+
+.unified-ui .settings-search-field > svg {
+	width: 16px;
+	height: 16px;
+	flex: 0 0 auto;
+}
+
+.unified-ui .settings-search-field input {
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 32px;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+	color: var(--ink);
+}
+
+.unified-ui .settings-search-field input:focus {
+	border: 0;
+	box-shadow: none;
+	outline: 0;
+}
+
+.unified-ui .settings-search-clear {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-control);
+	background: transparent;
+	color: var(--muted);
+}
+
+.unified-ui .settings-search-clear:hover {
+	background: var(--surface);
+	color: var(--ink);
+}
+
+.unified-ui .settings-search-clear svg {
+	width: 14px;
+	height: 14px;
+}
+
+.unified-ui .settings-search-results {
+	display: grid;
+	gap: 2px;
+	max-height: min(420px, 55vh);
+	overflow: auto;
+	margin-top: 8px;
+	padding: 6px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-control);
+	background: var(--surface);
+	box-shadow: var(--shadow-xs);
+}
+
+.unified-ui .settings-search-count,
+.unified-ui .settings-search-empty {
+	margin: 3px 8px 5px;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 16px;
+}
+
+.unified-ui .settings-search-result {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 16px;
+	width: 100%;
+	padding: 9px 10px;
+	border: 0;
+	border-radius: var(--radius-control);
+	background: transparent;
+	color: var(--ink);
+	text-align: left;
+}
+
+.unified-ui .settings-search-result:hover,
+.unified-ui .settings-search-result:focus-visible {
+	background: var(--selected);
+}
+
+.unified-ui .settings-search-result-copy,
+.unified-ui .settings-search-result-category {
+	min-width: 0;
+}
+
+.unified-ui .settings-search-result-copy {
+	display: grid;
+	gap: 2px;
+}
+
+.unified-ui .settings-search-result-copy strong {
+	overflow: hidden;
+	font-size: 12px;
+	font-weight: 620;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.unified-ui .settings-search-result-copy small {
+	overflow: hidden;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 15px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.unified-ui .settings-search-result-category {
+	align-self: start;
+	padding-top: 1px;
+	color: var(--muted);
+	font-size: 10px;
+	line-height: 15px;
+	text-transform: capitalize;
+	white-space: nowrap;
+}
+
+.unified-ui .settings-nav-heading {
+	display: grid;
+	gap: 3px;
+	margin-bottom: 10px;
+	padding: 0 10px 10px;
+	border-bottom: 1px solid var(--line);
+}
+
+.unified-ui .settings-nav-heading strong {
+	font-size: 11px;
+	font-weight: 680;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+}
+
+.unified-ui .settings-nav-heading small {
+	color: var(--muted);
+	font-size: 10.5px;
+	line-height: 14px;
+}
+
+.unified-ui .settings-nav-group {
+	display: grid;
+	gap: 2px;
+	margin-bottom: 12px;
+}
+
+.unified-ui .settings-nav-group h3 {
+	margin: 0 10px 4px;
+	color: var(--faint);
+	font-size: 10px;
+	font-weight: 680;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.unified-ui .browser-settings-save-state,
+.unified-ui .settings-restart-notice,
+.unified-ui .browser-settings-feedback {
+	display: block;
+	margin-top: 8px;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 16px;
+}
+
+.unified-ui .browser-settings-save-state.saved,
+.unified-ui .browser-settings-feedback:not(.error) {
+	color: var(--status-ink, var(--ink-secondary));
+}
+
+.unified-ui .browser-settings-save-state.error,
+.unified-ui .browser-settings-feedback.error {
+	color: var(--danger, #d96b6b);
+}
+
+.unified-ui .browser-inline-control,
+.unified-ui .button-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.unified-ui .browser-inline-control input {
+	min-width: min(260px, 100%);
+}
+
+.unified-ui .browser-settings-list {
+	display: grid;
+	gap: 5px;
+	margin: 10px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.unified-ui .browser-settings-list li {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	min-width: 0;
+	padding: 7px 9px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-control);
+	background: var(--surface);
+	font-size: 11px;
+}
+
+.unified-ui .browser-settings-list li > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.unified-ui .settings-content :is(button, input, select, textarea):focus-visible {
+	outline: 2px solid color-mix(in srgb, var(--solid) 76%, transparent);
+	outline-offset: 2px;
+}
+
+.unified-ui .settings-layout {
+	display: grid;
+	grid-template-columns: 168px minmax(560px, 1fr);
+	gap: 32px;
+	align-items: start;
+}
+
+.unified-ui .settings-nav {
+	position: sticky;
+	top: 20px;
+	display: grid;
+	gap: 2px;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+}
+
+.unified-ui .settings-nav button {
+	position: relative;
+	min-height: 36px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--radius-control);
+	background: transparent;
+	color: var(--muted);
+	font-size: 12.5px;
+	text-align: left;
+}
+
+.unified-ui .settings-nav button:hover {
+	background: var(--surface);
+	color: var(--ink);
+}
+
+.unified-ui .settings-nav button.active {
+	background: var(--selected);
+	color: var(--ink);
+	box-shadow: none;
+}
+
+.unified-ui .settings-nav button.active::before {
+	position: absolute;
+	top: 9px;
+	bottom: 9px;
+	left: 0;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--focus);
+	content: "";
+}
+
+.unified-ui .settings-content-stage,
+.unified-ui .settings-content {
+	min-width: 0;
+}
+
+.unified-ui .settings-content-stage {
+	position: relative;
+}
+
+.unified-ui .settings-panel {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.unified-ui .settings-panel-header {
+	margin: 0;
+	padding: 0 0 16px;
+	border-bottom: 1px solid var(--line-strong);
+}
+
+.unified-ui .settings-panel-header h2 {
+	margin: 0;
+	font: 630 16px / 21px var(--sans);
+	letter-spacing: -0.01em;
+}
+
+.unified-ui .settings-panel-header p {
+	max-width: 68ch;
+	margin: 5px 0 0;
+	color: var(--muted);
+	font: 450 12.5px / 18px var(--sans);
+}
+
+.unified-ui :is(.settings-stack, .connection-list) {
+	gap: 0;
+	background: transparent;
+}
+
+.unified-ui :is(.setting-row, .connection-list article) {
+	min-height: 68px;
+	margin: 0;
+	padding: 16px 0;
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.unified-ui :is(.setting-row, .connection-list article):last-child {
+	border-bottom-color: transparent;
+}
+
+.unified-ui :is(.setting-row, .connection-list article):hover {
+	background: transparent;
+}
+
+.unified-ui .plugin-supply-setting {
+	grid-template-columns: minmax(0, 1fr);
+	align-items: start;
+	gap: 12px;
+}
+
+.unified-ui .plugin-supply-setting .button-row {
+	justify-content: flex-start;
+	flex-wrap: wrap;
+}
+
+.unified-ui .agent-config-banner {
+	margin-bottom: 22px;
+	padding: 14px 16px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--surface);
+	box-shadow: none;
+}
+
+.unified-ui .agent-config-chip {
+	border-radius: var(--radius-control);
+}
+
+/* Native desktop control -------------------------------------------------- */
+.unified-ui .computer-use-setting {
+	grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+	align-items: start;
+	gap: 24px;
+	padding-block: 22px;
+}
+
+.unified-ui .computer-use-content {
+	min-width: 0;
+}
+
+.unified-ui .computer-use-heading {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.unified-ui .computer-use-heading strong {
+	font-size: 13px;
+}
+
+.unified-ui .computer-use-heading .status {
+	padding: 3px 7px;
+	font-size: 10px;
+}
+
+.unified-ui .computer-use-permissions {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	max-width: 600px;
+	margin-top: 16px;
+}
+
+.unified-ui .computer-use-permission {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	min-width: 0;
+	padding: 10px 11px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-control);
+	background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.unified-ui .computer-use-permission > svg {
+	width: 16px;
+	height: 16px;
+	flex: 0 0 auto;
+	color: var(--muted);
+}
+
+.unified-ui .computer-use-permission > span {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+
+.unified-ui .computer-use-permission strong {
+	overflow: hidden;
+	font-size: 11px;
+	font-weight: 600;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.unified-ui .computer-use-permission small {
+	margin: 0;
+	font-size: 10px;
+	line-height: 14px;
+}
+
+.unified-ui .computer-use-permission.granted {
+	border-color: color-mix(in srgb, var(--status-ink) 30%, var(--line));
+}
+
+.unified-ui .computer-use-permission.granted > svg,
+.unified-ui .computer-use-permission.granted small {
+	color: var(--status-ink);
+}
+
+.unified-ui .computer-use-boundary {
+	max-width: 680px;
+	margin-top: 14px;
+	color: var(--faint);
+	font-size: 11px;
+}
+
+.unified-ui .computer-use-loading,
+.unified-ui .computer-use-error {
+	margin-top: 12px;
+}
+
+.unified-ui .computer-use-error {
+	color: var(--status-ink);
+}
+
+.unified-ui .computer-use-actions {
+	display: grid;
+	justify-items: end;
+	align-content: start;
+	gap: 12px;
+	min-width: 220px;
+}
+
+.unified-ui .computer-use-actions > .switch {
+	margin-top: 1px;
+}
+
+.unified-ui .computer-use-button-row {
+	display: flex;
+	justify-content: flex-end;
+	gap: 7px;
+	flex-wrap: wrap;
+}
+
+.unified-ui .computer-use-button-row .button {
+	min-height: 32px;
+	padding-inline: 9px;
+	font-size: 11px;
+}
+
+.unified-ui .computer-use-refresh {
+	padding: 3px 0;
+	font-size: 11px;
+}
+
+/* Structured result views ------------------------------------------------- */
+.unified-ui .presentation-card {
+	max-width: min(820px, 100%);
+	margin: 14px 0;
+	border: 1px solid var(--line-strong);
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--surface) 78%, transparent);
+	box-shadow: var(--shadow-xs);
+	overflow: hidden;
+}
+
+.unified-ui .presentation-card-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 18px;
+	padding: 16px 18px 13px;
+	border-bottom: 1px solid var(--line);
+}
+
+.unified-ui .presentation-card-header > div {
+	min-width: 0;
+}
+
+.unified-ui .presentation-card-header > svg {
+	width: 17px;
+	height: 17px;
+	flex: 0 0 auto;
+	margin-top: 2px;
+	color: var(--muted);
+}
+
+.unified-ui .presentation-eyebrow {
+	display: block;
+	margin-bottom: 5px;
+	color: var(--faint);
+	font: 600 10px / 14px var(--mono);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.unified-ui .presentation-card h3 {
+	margin: 0;
+	font: 630 16px / 21px var(--sans);
+	letter-spacing: -0.01em;
+}
+
+.unified-ui .presentation-description {
+	margin: 0;
+	padding: 13px 18px 0;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.unified-ui .presentation-list,
+.unified-ui .presentation-plan {
+	display: grid;
+	gap: 0;
+	margin: 12px 18px 0;
+	padding: 0;
+	list-style: none;
+}
+
+.unified-ui .presentation-list-item,
+.unified-ui .presentation-plan-step {
+	min-width: 0;
+	padding: 13px 0;
+	border-top: 1px solid var(--line);
+}
+
+.unified-ui .presentation-list-item:first-child,
+.unified-ui .presentation-plan-step:first-child {
+	border-top: 0;
+}
+
+.unified-ui .presentation-list-item-header,
+.unified-ui .presentation-plan-step-heading {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.unified-ui .presentation-list-item-header strong,
+.unified-ui .presentation-plan-step-heading strong {
+	min-width: 0;
+	font-size: 12px;
+	font-weight: 620;
+}
+
+.unified-ui .presentation-list-item p,
+.unified-ui .presentation-plan-step p {
+	margin: 5px 0 0;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 16px;
+}
+
+.unified-ui .presentation-badge,
+.unified-ui .presentation-plan-step-heading > span,
+.unified-ui .presentation-result-summary > span {
+	flex: 0 0 auto;
+	padding: 3px 7px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-pill);
+	color: var(--muted);
+	font: 600 10px / 13px var(--mono);
+	text-transform: capitalize;
+}
+
+.unified-ui .presentation-item-facts,
+.unified-ui .presentation-facts {
+	display: grid;
+	grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+	gap: 4px 12px;
+	margin: 9px 0 0;
+	font-size: 11px;
+}
+
+.unified-ui .presentation-item-facts dt,
+.unified-ui .presentation-facts dt {
+	color: var(--faint);
+}
+
+.unified-ui .presentation-item-facts dd,
+.unified-ui .presentation-facts dd {
+	min-width: 0;
+	margin: 0;
+	color: var(--ink-secondary);
+	font-weight: 560;
+	word-break: break-word;
+}
+
+.unified-ui .presentation-item-details {
+	display: grid;
+	gap: 4px;
+	margin: 9px 0 0;
+	padding-left: 16px;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 16px;
+}
+
+.unified-ui .presentation-links {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+	margin-top: 10px;
+}
+
+.unified-ui .presentation-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-height: 28px;
+	padding: 4px 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-control);
+	background: transparent;
+	color: var(--ink-secondary);
+	font-size: 11px;
+	text-align: left;
+}
+
+.unified-ui .presentation-link:hover {
+	border-color: var(--line-strong);
+	background: var(--selected);
+	color: var(--ink);
+}
+
+.unified-ui .presentation-link > svg {
+	width: 12px;
+	height: 12px;
+}
+
+.unified-ui .presentation-link-error {
+	width: 100%;
+	margin: 0;
+	color: var(--status-ink);
+}
+
+.unified-ui .presentation-table-wrap {
+	overflow-x: auto;
+	margin: 12px 18px 0;
+	border-top: 1px solid var(--line);
+}
+
+.unified-ui .presentation-table {
+	width: 100%;
+	min-width: 460px;
+	border-collapse: collapse;
+	font-size: 11px;
+}
+
+.unified-ui .presentation-table th,
+.unified-ui .presentation-table td {
+	padding: 10px 9px;
+	border-bottom: 1px solid var(--line);
+	text-align: left;
+	vertical-align: top;
+}
+
+.unified-ui .presentation-table thead th {
+	color: var(--faint);
+	font: 600 10px / 14px var(--mono);
+	text-transform: uppercase;
+}
+
+.unified-ui .presentation-table tbody th {
+	min-width: 110px;
+	color: var(--ink-secondary);
+	font-weight: 600;
+}
+
+.unified-ui .presentation-table td {
+	color: var(--muted);
+}
+
+.unified-ui .presentation-plan-step-heading > span {
+	text-transform: capitalize;
+}
+
+.unified-ui .presentation-plan-step-in_progress .presentation-plan-step-heading > span,
+.unified-ui .presentation-plan-step-complete .presentation-plan-step-heading > span {
+	border-color: color-mix(in srgb, var(--status-ink) 32%, var(--line));
+	color: var(--status-ink);
+}
+
+.unified-ui .presentation-plan-step-blocked .presentation-plan-step-heading > span {
+	border-color: color-mix(in srgb, var(--warning) 38%, var(--line));
+	color: var(--warning-ink);
+}
+
+.unified-ui .presentation-result-summary {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	align-items: start;
+	gap: 10px;
+	margin: 12px 18px 0;
+	padding: 11px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-control);
+	background: color-mix(in srgb, var(--raised) 70%, transparent);
+}
+
+.unified-ui .presentation-result-summary p {
+	margin: 1px 0 0;
+	color: var(--ink-secondary);
+	font-size: 11px;
+	line-height: 16px;
+}
+
+.unified-ui .presentation-result-success > span,
+.unified-ui .presentation-result-warning > span {
+	color: var(--status-ink);
+}
+
+.unified-ui .presentation-facts {
+	margin: 14px 18px 0;
+	padding-top: 12px;
+	border-top: 1px solid var(--line);
+}
+
+.unified-ui .presentation-result-summary + .presentation-links,
+.unified-ui .presentation-facts + .presentation-links {
+	margin-inline: 18px;
+}
+
+.unified-ui .presentation-sources {
+	margin: 0 18px 14px;
+	border-top: 1px solid var(--line);
+}
+
+.unified-ui .presentation-sources summary {
+	padding: 10px 0 0;
+	color: var(--muted);
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.unified-ui .presentation-sources .presentation-links {
+	margin-bottom: 2px;
+}
+
+.unified-ui .presentation-card-footer {
+	padding: 10px 18px 12px;
+	border-top: 1px solid var(--line);
+	color: var(--faint);
+	font: 10px / 15px var(--mono);
+}
+
+/* Operational pages: continuous planes, not nested card walls. */
+.unified-ui :is(.work-grid, .readiness-grid) {
+	gap: 0;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--surface);
+	box-shadow: none;
+}
+
+.unified-ui .work-grid {
+	margin-top: 20px;
+}
+
+.unified-ui .work-card {
+	padding: 20px;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.unified-ui .work-card + .work-card {
+	border-left: 1px solid var(--line);
+}
+
+.unified-ui .work-card h2,
+.unified-ui .work-section h2 {
+	font: 630 16px / 21px var(--sans);
+	letter-spacing: -0.01em;
+}
+
+.unified-ui .work-section {
+	margin-top: 28px;
+	padding-top: 18px;
+	border-top: 1px solid var(--line-strong);
+}
+
+.unified-ui .work-row {
+	min-height: 64px;
+	padding: 14px 0;
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	border-radius: 0;
+	background: transparent;
+}
+
+.unified-ui .orchestration-status {
+	border-radius: 12px;
+	background: var(--raised);
+	box-shadow: none;
+}
+
+.unified-ui .readiness-hero {
+	grid-template-columns: 40px minmax(0, 1fr);
+	min-height: 84px;
+	padding: 16px 18px;
+	border: 1px solid var(--line-strong);
+	border-radius: 12px;
+	background: var(--raised);
+	box-shadow: none;
+}
+
+.unified-ui .readiness-hero strong {
+	font: 630 16px / 21px var(--sans);
+}
+
+.unified-ui .readiness-hero p {
+	margin-top: 3px;
+	font-size: 12.5px;
+	line-height: 18px;
+}
+
+.unified-ui .readiness-pulse {
+	width: 34px;
+	height: 34px;
+	border-radius: 10px;
+	background: var(--surface);
+}
+
+.unified-ui .readiness-grid {
+	margin-top: 20px;
+}
+
+.unified-ui :is(.readiness-panel, .readiness-side .readiness-panel) {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.unified-ui .readiness-side {
+	border-left: 1px solid var(--line);
+}
+
+.unified-ui .readiness-panel > header h2 {
+	font: 630 16px / 21px var(--sans);
+}
+
+.unified-ui .readiness-checks li {
+	min-height: 60px;
+	padding: 12px 18px;
+}
+
+/* Research and artifacts keep the selected object distinct, while ordinary
+ * results read as continuous rows. */
+.unified-ui .research-search {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 8px;
+	padding: 0 0 20px;
+	border-bottom: 1px solid var(--line-strong);
+}
+
+.unified-ui .research-layout {
+	gap: 0;
+	margin-top: 20px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--surface);
+	overflow: hidden;
+}
+
+.unified-ui .research-results {
+	gap: 0;
+}
+
+.unified-ui .research-results article {
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	border-radius: 0;
+	background: transparent;
+}
+
+.unified-ui .research-reader {
+	margin: 0;
+	border: 0;
+	border-left: 1px solid var(--line);
+	border-radius: 0;
+	background: var(--raised);
+	box-shadow: none;
+}
+
+.unified-ui .artifact-toolbar {
+	min-height: 36px;
+	padding: 0 0 14px;
+	border-bottom: 1px solid var(--line);
+}
+
+.unified-ui .artifact-grid {
+	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+	gap: 12px;
+	margin-top: 18px;
+}
+
+.unified-ui .artifact-card {
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--surface);
+	box-shadow: none;
+}
+
+/* Life is a primary route, not a compatibility surface. */
+.unified-ui .life-product-surface {
+	padding-top: 0;
+	background: var(--workbench);
+}
+
+.unified-ui .life-product-surface > .life-page {
+	width: min(calc(100% - (2 * var(--page-gutter))), 1180px);
+	margin-inline: auto;
+	padding: var(--page-top) 0 72px;
+}
+
+.unified-ui .life-header {
+	padding-bottom: 20px;
+	border-bottom: 1px solid var(--line);
+}
+
+.unified-ui .life-header h1 {
+	margin: 0;
+	font: 680 26px / 32px var(--display);
+	letter-spacing: -0.025em;
+}
+
+.unified-ui .life-switcher {
+	margin-top: -20px;
+}
+
+.unified-ui .calendar-layout {
+	border-radius: 12px;
+	background: var(--surface);
+}
+
+/* Loading/setup: one focal decision, no decorative panel stack. */
+.loading-screen {
+	background: var(--canvas);
+}
+
+.loading-screen .product-anchor {
+	gap: 12px;
+}
+
+.loading-screen .product-anchor-mark {
+	background: var(--raised);
+	box-shadow: none;
+}
+
+.setup-onboarding {
+	background: var(--canvas);
+}
+
+.setup-onboarding::before {
+	display: none;
+}
+
+/* Keep the safety page anchored below the progress rail. Its disclosures can
+ * grow independently, so centering the whole stage makes the title jump every
+ * time another boundary is opened. The stage already scrolls when the open
+ * content is taller than the viewport. */
+.setup-onboarding .setup-stage-1 {
+	justify-content: flex-start;
+	padding-top: clamp(52px, 10vh, 104px);
+	overflow-anchor: none;
+}
+
+.setup-onboarding .setup-stage {
+	width: 100%;
+	box-sizing: border-box;
+	max-width: 1040px;
+	margin-inline: auto;
+}
+
+.setup-onboarding .setup-rail ol {
+	max-width: 700px;
+}
+
+.setup-onboarding .setup-rail li button {
+	background: transparent;
+	box-shadow: none;
+}
+
+.setup-onboarding .model-source-picker,
+.setup-onboarding .finish-checks {
+	border-radius: 12px;
+	background: var(--surface);
+}
+
+.setup-onboarding .model-source-picker {
+	gap: 24px;
+	background: transparent;
+}
+
+.setup-onboarding .model-source-picker > button {
+	border: 1px solid var(--line);
+}
+
+.setup-onboarding .model-source-picker > button.model-source-option-recommended {
+	border-color: var(--ink);
+}
+
+/* Compact composition ------------------------------------------------------ */
+@container kestrel-browser-viewport (max-width: 860px) {
+	.unified-ui .settings-search {
+		width: 100%;
+		max-width: none;
+	}
+
+	.unified-ui .settings-layout {
+		grid-template-columns: 1fr;
+		gap: 20px;
+	}
+
+	.unified-ui .computer-use-setting {
+		grid-template-columns: 1fr;
+	}
+
+	.unified-ui .computer-use-actions {
+		justify-items: start;
+	}
+
+	.unified-ui .computer-use-button-row {
+		justify-content: flex-start;
+	}
+
+	.unified-ui .settings-nav {
+		display: none;
+	}
+
+	.settings-section-picker {
+		display: grid;
+		gap: 6px;
+		margin: 0 0 22px;
+		color: var(--muted);
+		font: 560 12px / 16px var(--sans);
+	}
+
+	.settings-section-picker select {
+		width: 100%;
+	}
+
+	.unified-ui :is(.readiness-grid, .research-layout) {
+		grid-template-columns: 1fr;
+	}
+
+	.unified-ui .readiness-side,
+	.unified-ui .research-reader {
+		border-top: 1px solid var(--line);
+		border-left: 0;
+	}
+}
+
+@container kestrel-browser-viewport (max-width: 560px) {
+	:root {
+		--page-gutter: 16px;
+		--page-top: 28px;
+	}
+
+	.unified-ui .ui-page-frame-header {
+		display: grid;
+		gap: 14px;
+		padding-bottom: 16px;
+	}
+
+	.unified-ui .ui-page-frame-actions {
+		justify-content: flex-start;
+	}
+
+	.unified-ui .settings-scope-switcher {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		width: 100%;
+		max-width: none;
+	}
+
+	.unified-ui .settings-scope-switcher small {
+		display: none;
+	}
+
+	.unified-ui .settings-search-result {
+		grid-template-columns: 1fr;
+		gap: 3px;
+	}
+
+	.unified-ui .settings-search-result-category {
+		padding-top: 0;
+		white-space: normal;
+	}
+
+	.unified-ui :is(.setting-row, .connection-list article) {
+		grid-template-columns: 1fr;
+		gap: 12px;
+	}
+
+	.unified-ui .computer-use-permissions {
+		grid-template-columns: 1fr;
+	}
+
+	.unified-ui .computer-use-button-row .button {
+		flex: 1 1 180px;
+	}
+
+	.unified-ui .work-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.unified-ui .work-card + .work-card {
+		border-top: 1px solid var(--line);
+		border-left: 0;
+	}
+
+	.unified-ui .research-search {
+		grid-template-columns: 1fr;
+	}
+
+	.unified-ui .artifact-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.unified-ui .presentation-result-summary {
+		grid-template-columns: 1fr;
+	}
+
+	.unified-ui .presentation-card-header,
+	.unified-ui .presentation-description,
+	.unified-ui .presentation-card-footer {
+		padding-inline: 14px;
+	}
+
+	.unified-ui .presentation-list,
+	.unified-ui .presentation-plan,
+	.unified-ui .presentation-table-wrap,
+	.unified-ui .presentation-sources,
+	.unified-ui .presentation-result-summary,
+	.unified-ui .presentation-facts {
+		margin-inline: 14px;
+	}
+
+	.unified-ui .presentation-result-summary + .presentation-links,
+	.unified-ui .presentation-facts + .presentation-links {
+		margin-inline: 14px;
+	}
+}
+
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+	.kestrel-sidebar,
+	.agent-sidebar,
+	.agent-compact-dock,
+	.browser-tab-row-horizontal,
+	.browser-toolbar,
+	.secondary-surface-bar {
+		background: var(--platform-chrome-opaque, var(--rail));
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.unified-ui :is(.button, .ui-button),
+	.unified-ui :is(input, select, textarea),
+	.unified-ui .settings-nav button {
+		transition: none;
+	}
+}

@@ -245,6 +245,7 @@ export function NewTabPage({
 			frequent={frequent}
 			history={history}
 			bookmarks={bookmarks}
+			originFavicons={originFavicons}
 			downloads={downloads}
 			tabs={tabs}
 			sessions={sessions}

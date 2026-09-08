@@ -1,0 +1,139 @@
+/* Workbench route integration: local planes use separators, not nested cards. */
+.agent-workspace .ui-page-frame,
+.projects-workspace .ui-page-frame,
+.writing-studio.ui-page-frame,
+.browser-library.ui-page-frame,
+.command-center.ui-page-frame {
+  padding: 32px clamp(20px, 3vw, 44px) 44px;
+}
+
+.surface-row-group,
+.agent-task-list,
+.projects-workspace-chat-list,
+.history-list,
+.download-list,
+.command-pinned > div,
+.command-groups section > div {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.agent-task-list > li + li,
+.projects-workspace-chat-list > li + li,
+.history-list > li + li,
+.download-list > li + li {
+  border-top: 1px solid var(--line);
+}
+.agent-task-list button,
+.projects-workspace-chat-list button,
+.history-list > li > button,
+.download-list > li,
+.command-pinned > div > button,
+.command-groups section > div > button {
+  border-radius: 0;
+}
+.agent-task-list button:focus-visible,
+.projects-workspace-chat-list button:focus-visible,
+.history-list > li > button:focus-visible,
+.command-pinned > div > button:focus-visible,
+.command-groups section > div > button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.agent-workspace-status {
+  border-block: 1px solid var(--line);
+}
+.agent-workspace-status > * + * {
+  border-left-color: var(--line);
+}
+.projects-workspace-detail,
+.projects-workspace-directory {
+  border-radius: 0;
+  box-shadow: none;
+}
+.projects-workspace-context {
+  border-radius: var(--radius-control);
+  box-shadow: none;
+}
+.writing-studio .writing-studio-header {
+  margin-bottom: 0;
+}
+.writing-studio .writing-brief-panel,
+.writing-studio .writing-context-panel,
+.writing-studio .writing-profile-panel,
+.writing-studio .writing-result-panel {
+  box-shadow: none;
+}
+.command-center .ui-page-frame-header {
+  margin-bottom: 18px;
+}
+.command-center .command-pinned > div,
+.command-center .command-groups section > div {
+	box-shadow: none;
+}
+
+/* Pinned actions share the workbench's continuous-row language rather than
+ * reading as a second collection of raised cards. */
+.command-center .command-pinned {
+  max-width: 760px;
+  margin: 28px auto 0;
+}
+.command-center .command-pinned > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  overflow: hidden;
+}
+.command-center .command-pinned > div > button {
+  min-height: 68px;
+  padding: 11px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  transition: background-color var(--motion-feedback) var(--ease-kestrel), color var(--motion-feedback) var(--ease-kestrel);
+}
+.command-center .command-pinned > div > button:nth-child(odd) {
+  border-right: 1px solid var(--line);
+}
+.command-center .command-pinned > div > button:hover {
+  background: color-mix(in srgb, var(--surface) 48%, transparent);
+  box-shadow: none;
+  transform: none;
+}
+.command-center .command-pinned > div > button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+@media (max-width: 720px) {
+  .command-center .command-pinned > div {
+    grid-template-columns: 1fr;
+  }
+  .command-center .command-pinned > div > button:nth-child(odd) {
+    border-right: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .agent-workspace .ui-page-frame,
+  .projects-workspace .ui-page-frame,
+  .writing-studio.ui-page-frame,
+  .browser-library.ui-page-frame,
+  .command-center.ui-page-frame {
+    padding: 24px 16px 32px;
+  }
+  .agent-workspace-status {
+    grid-template-columns: 1fr;
+  }
+  .agent-workspace-status > * + * {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+}

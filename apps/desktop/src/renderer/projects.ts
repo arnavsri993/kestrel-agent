@@ -1,55 +1,84 @@
-import type { RuntimeSession, WorkspaceGrant } from "@kestrel/shared-types";
+import type { Project, RuntimeSession } from "@kestrel/shared-types";
 
 export const PROJECT_SIDEBAR_CHAT_LIMIT = 5;
+
+type ProjectLike = {
+	path: string;
+	id?: string | undefined;
+};
 
 function byRecentActivity(left: RuntimeSession, right: RuntimeSession): number {
 	return right.updatedAt.localeCompare(left.updatedAt);
 }
 
+function projectReference(project: ProjectLike | string): {
+	id?: string;
+	path: string;
+} {
+	return typeof project === "string"
+		? { path: project }
+		: { path: project.path, ...(project.id ? { id: project.id } : {}) };
+}
+
 /**
- * Local projects are folder-backed in Kestrel. A session keeps the folder it
- * was created with, which gives every project a durable relationship to its
- * chats without introducing a second, competing chat store.
+ * Project membership prefers the stable ID and retains a path fallback for
+ * sessions written before project IDs existed.
  */
 export function projectChats(
 	sessions: RuntimeSession[],
-	projectPath: string,
+	project: ProjectLike | string,
 ): RuntimeSession[] {
+	const reference = projectReference(project);
 	return sessions
-		.filter((session) => session.workspaceRoot === projectPath)
+		.filter(
+			(session) =>
+				(reference.id && session.projectId === reference.id) ||
+				(!session.projectId && session.workspaceRoot === reference.path),
+		)
 		.sort(byRecentActivity);
 }
 
 export function projectChatsForSidebar(
 	sessions: RuntimeSession[],
-	projectPath: string,
+	project: ProjectLike | string,
 	limit = PROJECT_SIDEBAR_CHAT_LIMIT,
 ): RuntimeSession[] {
-	return projectChats(sessions, projectPath).slice(0, Math.max(0, limit));
+	return projectChats(sessions, project).slice(0, Math.max(0, limit));
 }
 
 /**
- * Keep project chats in their project section. Sessions without a configured
- * project remain in Recent tasks, as do sessions whose old folder is no longer
- * present in the configured project list.
+ * Keep assigned chats in their project section. Sessions without a configured
+ * project, and sessions whose old folder is no longer known, remain global.
  */
 export function sessionsWithoutProject(
 	sessions: RuntimeSession[],
-	projects: WorkspaceGrant[],
+	projects: ProjectLike[],
 ): RuntimeSession[] {
+	const projectIds = new Set(
+		projects.flatMap((project) => (project.id ? [project.id] : [])),
+	);
 	const projectPaths = new Set(projects.map((project) => project.path));
 	return sessions
 		.filter(
 			(session) =>
-				!session.workspaceRoot || !projectPaths.has(session.workspaceRoot),
+				!(session.projectId
+					? projectIds.has(session.projectId)
+					: Boolean(session.workspaceRoot && projectPaths.has(session.workspaceRoot))),
 		)
 		.sort(byRecentActivity);
 }
 
 export function projectChatSummary(
 	sessions: RuntimeSession[],
-	projectPath: string,
+	project: ProjectLike | string,
 ): string {
-	const count = projectChats(sessions, projectPath).length;
+	const count = projectChats(sessions, project).length;
 	return `${count} chat${count === 1 ? "" : "s"}`;
+}
+
+export function projectFromPath(
+	projects: Project[],
+	path: string | undefined,
+): Project | undefined {
+	return path ? projects.find((project) => project.path === path) : undefined;
 }

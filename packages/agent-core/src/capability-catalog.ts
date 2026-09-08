@@ -50,6 +50,8 @@ export const PARITY_SOURCE_SNAPSHOT = {
 		"https://code.claude.com/docs/en/how-claude-code-works",
 		"https://code.claude.com/docs/en/features-overview",
 		"https://code.claude.com/docs/en/tools-reference",
+		"https://code.claude.com/docs/en/desktop#let-claude-use-your-computer",
+		"https://claude.com/blog/the-anatomy-of-effective-commerce-agents",
 	],
 } as const;
 
@@ -420,7 +422,7 @@ export const CAPABILITY_CATALOG: CapabilityCatalogEntry[] = [
 	{
 		id: "tool.browser-computer",
 		category: "tools",
-		capability: "Isolated browser automation and computer use",
+		capability: "Isolated browser, visible browser, and whole-desktop computer use",
 		referenceProducts: ["openclaw", "hermes", "codex", "claude-code"],
 		status: "implemented",
 		evidence: [
@@ -429,6 +431,19 @@ export const CAPABILITY_CATALOG: CapabilityCatalogEntry[] = [
 			"apps/desktop/src/main/electron-browser-service.ts",
 			"apps/desktop/src/utility/index.ts",
 			"scripts/smoke-desktop.mjs",
+		],
+	},
+	{
+		id: "tool.ui-presentation",
+		category: "tools",
+		capability: "Bounded commerce-style result presentation",
+		referenceProducts: ["codex", "claude-code"],
+		status: "implemented",
+		evidence: [
+			"packages/agent-core/src/ui-presentation.ts",
+			"packages/agent-core/src/ui-presentation.test.ts",
+			"apps/desktop/src/renderer/components/PresentationCard.tsx",
+			"apps/desktop/src/renderer/components/PresentationCard.test.tsx",
 		],
 	},
 	{

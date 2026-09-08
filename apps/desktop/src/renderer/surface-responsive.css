@@ -276,7 +276,10 @@
 	.ai-browser-app:has(.browser-app-page)
 		.browser-workspace:not(.browser-workspace-vertical)
 		.browser-viewport {
-		width: calc(100% - var(--kestrel-sidebar-space));
+		/* The horizontal workspace now reserves the navigation column in its
+		 * grid, so this item already measures from the rail to the viewport
+		 * edge. Do not subtract the rail a second time. */
+		width: 100%;
 	}
 
 	.ai-browser-app:has(.browser-app-page)

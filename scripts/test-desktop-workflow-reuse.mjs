@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-workflow-reuse-"));
 const userData = join(root, "user-data");
@@ -104,12 +105,15 @@ try {
 	await page.locator("#runtime-prompt").waitFor();
 
 	await page.getByRole("button", { name: /^Model:/ }).click();
-	const modelMenu = page.getByRole("menu", {
-		name: "Choose provider, model, and thinking level",
+	const modelMenu = page.getByRole("dialog", {
+		name: "Choose a provider, account, model, and thinking level",
 	});
-	await modelMenu.getByRole("menuitem", { name: /^Nous/ }).click();
-	await modelMenu.getByLabel("Custom model ID").fill("fixture-model");
-	await modelMenu.getByLabel("Custom model ID").press("Enter");
+	await modelMenu
+		.locator('.model-selector-column[aria-label="Provider"]')
+		.getByRole("button", { name: /^Nous/ })
+		.click();
+	await modelMenu.getByLabel("Explicit model ID").fill("fixture-model");
+	await modelMenu.getByLabel("Explicit model ID").press("Enter");
 	await modelMenu.waitFor({ state: "detached" });
 
 	const task = "Create a concise checklist for reviewing pull requests.";
@@ -133,11 +137,8 @@ try {
 	);
 	await notice.getByRole("button", { name: "Review skill", exact: true }).click();
 
-	await page.getByRole("heading", { name: "Memory and learning", exact: true }).waitFor();
-	await page
-		.getByRole("navigation", { name: "Settings sections" })
-		.getByRole("button", { name: "Intelligence & Memory", exact: true })
-		.waitFor();
+	await page.getByRole("heading", { name: "Plugins and publishers", exact: true }).waitFor();
+	await selectSettingsSection(page, "extensions", "Plugins");
 	const proposalDetails = page.locator(
 		`details[data-skill-proposal-id="${proposalId}"]`,
 	);

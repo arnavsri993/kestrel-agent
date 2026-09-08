@@ -3,7 +3,7 @@ export const KESTREL_APP_PAGES = {
 	history: "History",
 	bookmarks: "Bookmarks",
 	downloads: "Downloads",
-	commands: "Capabilities",
+	commands: "Command Center",
 	writing: "Writing Studio",
 	agent: "Agent",
 	projects: "Projects",

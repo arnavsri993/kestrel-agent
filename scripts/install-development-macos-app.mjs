@@ -17,10 +17,12 @@ import { homedir, tmpdir } from "node:os";
 import {
   defaultSearchRoots,
   isKestrelBundle,
+  markDirectoryUnindexed,
   moveDuplicateKestrelAppsToTrash,
   moveToTrash,
   plistValue,
   preventSpotlightIndexing,
+  removeStaleInstallStagingDirectories,
   register,
   samePath,
   supportedBundleIdentifiers,
@@ -82,10 +84,15 @@ function moveDuplicatesToTrash(excludedPaths) {
 function stageBundle() {
   const stageRoot = mkdtempSync(join(installRoot, ".Kestrel-install-"));
   const stagedBundle = join(stageRoot, "Kestrel.app");
+  // Keep the temporary copy out of Spotlight while ditto is copying it. A
+  // transient registration here otherwise survives the rename into /Applications
+  // and makes Finder show a second Kestrel after a later cleanup.
+  markDirectoryUnindexed(stageRoot);
   try {
     copyBundle(source, stagedBundle);
     return { stageRoot, stagedBundle };
   } catch (error) {
+    unregister(stagedBundle);
     rmSync(stageRoot, { recursive: true, force: true });
     throw error;
   }
@@ -99,22 +106,28 @@ function install() {
     throw new Error(`Refusing to replace a non-Kestrel app at ${destination}`);
   }
 
+  const removedStaging = removeStaleInstallStagingDirectories(installRoot);
   const moved = moveDuplicatesToTrash([source, destination]);
-  let stageRoot;
+  let staged;
   if (!samePath(source, destination)) {
-    const staged = stageBundle();
-    stageRoot = staged.stageRoot;
-    if (existsSync(destination)) {
-      moved.push({
-        from: destination,
-        to: moveToTrash(destination, { trashRoot, reason: "previous" }),
-      });
+    staged = stageBundle();
+    try {
+      if (existsSync(destination)) {
+        moved.push({
+          from: destination,
+          to: moveToTrash(destination, { trashRoot, reason: "previous" }),
+        });
+      }
+      // Unregister the temporary path before the atomic rename so LaunchServices
+      // cannot retain a second path for the same bundle.
+      unregister(staged.stagedBundle);
+      renameSync(staged.stagedBundle, destination);
+      unregister(source);
+    } finally {
+      unregister(staged.stagedBundle);
+      rmSync(staged.stageRoot, { recursive: true, force: true });
     }
-    renameSync(staged.stagedBundle, destination);
-    // Unregister source build bundle so Spotlight/LaunchServices only sees the installed destination
-    unregister(source);
   }
-  if (stageRoot) rmSync(stageRoot, { recursive: true, force: true });
 
   // A second pass catches duplicates that shared the canonical install root.
   // Keep the source build artifact available for packaged smoke tests; it is
@@ -122,9 +135,12 @@ function install() {
   moved.push(...moveDuplicatesToTrash([destination, source]));
   validateSource(destination);
   register(destination);
-  return { destination, moved };
+  return { destination, moved, removedStaging };
 }
 
 const result = install();
 console.log(`Installed Kestrel at ${result.destination}`);
+for (const directory of result.removedStaging) {
+  console.log(`Removed stale Kestrel install staging directory: ${directory}`);
+}
 for (const item of result.moved) console.log(`Moved duplicate to Trash: ${item.from} -> ${item.to}`);

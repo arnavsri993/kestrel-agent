@@ -3,6 +3,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	realpathSync,
 	readFileSync,
 	rmSync,
 	symlinkSync,
@@ -12,7 +13,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import type { RuntimeEvent } from "@kestrel/shared-types";
+import type { Project, RuntimeEvent } from "@kestrel/shared-types";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentRuntime } from "./runtime";
 
@@ -40,12 +41,71 @@ function fixture() {
 	return { root, database, runtime, session };
 }
 
+function projectFixture(path: string, instructions?: string): Project {
+	return {
+		id: "project-fixture",
+		path: realpathSync(path),
+		name: "Fixture project",
+		...(instructions !== undefined ? { instructions } : {}),
+		createdAt: "2026-08-31T10:00:00.000Z",
+		updatedAt: "2026-08-31T10:00:00.000Z",
+		order: 0,
+	};
+}
+
 afterEach(() => {
 	for (const directory of temporaryDirectories.splice(0))
 		rmSync(directory, { recursive: true, force: true });
 });
 
 describe("agent runtime", () => {
+	it("persists the selected conversation and clears stale or forgotten identities", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-selected-session-"));
+		temporaryDirectories.push(root);
+		const databasePath = join(root, "runtime.sqlite");
+		const encryptionKey = createEncryptionKey();
+		const now = () => "2026-08-31T10:00:00.000Z";
+		const database = new KestrelDatabase(databasePath, encryptionKey);
+		const runtime = new AgentRuntime(database, [root], now);
+		const selected = runtime.createSession({
+			title: "Selected project conversation",
+			workspaceRoot: root,
+		});
+		runtime.createSession({ title: "Unselected conversation" });
+
+		expect(runtime.selectSession(selected.id)).toBe(selected.id);
+		expect(runtime.selectedSessionId()).toBe(selected.id);
+		runtime.close();
+		database.close();
+
+		const restartedDatabase = new KestrelDatabase(databasePath, encryptionKey);
+		const restarted = new AgentRuntime(restartedDatabase, [root], now);
+		try {
+			expect(restarted.selectedSessionId()).toBe(selected.id);
+			expect(restarted.getSession(selected.id).workspaceRoot).toBe(
+				realpathSync(root),
+			);
+
+			restarted.forgetSession(selected.id);
+			expect(restarted.selectedSessionId()).toBeNull();
+			expect(
+				restartedDatabase.getState("runtimeSelectedSessionId"),
+			).toBeUndefined();
+
+			restartedDatabase.setState(
+				"runtimeSelectedSessionId",
+				"session-that-no-longer-exists",
+			);
+			expect(restarted.selectedSessionId()).toBeNull();
+			expect(
+				restartedDatabase.getState("runtimeSelectedSessionId"),
+			).toBeUndefined();
+		} finally {
+			restarted.close();
+			restartedDatabase.close();
+		}
+	});
+
 	it("recovers from a malformed persisted background-process journal", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		database.setPrivateState("runtime.background-processes", {
@@ -184,6 +244,55 @@ describe("agent runtime", () => {
 
 		expect(session.title).toBe("Main session");
 		expect(database.getState("runtimeMainSessionId")).toBe(session.id);
+		database.close();
+	});
+
+	it("persists explicit agent kinds and configurable planet assets", () => {
+		const { database, runtime, session } = fixture();
+		const events: RuntimeEvent[] = [];
+		runtime.on("event", (event: RuntimeEvent) => events.push(event));
+		const agent = runtime.createSession({
+			title: "Research lead",
+			kind: "agent",
+			planetAssetId: "saturn",
+		});
+		const child = runtime.createSession({
+			title: "Delegated research",
+			kind: "subagent",
+			parentSessionId: agent.id,
+		});
+
+		expect(agent.kind).toBe("agent");
+		expect(agent.planetAssetId).toBe("saturn");
+		expect(child.kind).toBe("subagent");
+		expect(child.parentSessionId).toBe(agent.id);
+		expect(session.kind).toBe("conversation");
+
+		const updated = runtime.updateAgentPlanet(agent.id, "mars");
+		expect(updated.planetAssetId).toBe("mars");
+		expect(database.getRuntimeSession(agent.id)?.planetAssetId).toBe("mars");
+		expect(events.at(-1)).toMatchObject({
+			type: "session.updated",
+			sessionId: agent.id,
+			payload: { action: "agent-planet-updated", planetAssetId: "mars" },
+		});
+
+		const reset = runtime.updateAgentPlanet(agent.id, null);
+		expect(reset).not.toHaveProperty("planetAssetId");
+		expect(database.getRuntimeSession(agent.id)).not.toHaveProperty("planetAssetId");
+		expect(() =>
+			runtime.createSession({
+				title: "Nested persistent agent",
+				kind: "agent",
+				parentSessionId: agent.id,
+			}),
+		).toThrow("persistent agent must be a top-level session");
+		expect(() =>
+			runtime.createSession({ title: "Unowned moon", kind: "subagent" }),
+		).toThrow("subagent must belong to a parent session");
+		expect(() => runtime.updateAgentPlanet(session.id, "earth")).toThrow(
+			"Only a persistent agent can choose a planet asset",
+		);
 		database.close();
 	});
 
@@ -423,6 +532,127 @@ describe("agent runtime", () => {
 		);
 		expect(restarted.getSession(session.id).workspaceRoot).toBeUndefined();
 		restarted.close();
+		database.close();
+	});
+
+	it("persists project assignment and preserves transcripts when chats are detached", () => {
+		const { root, database, runtime, session } = fixture();
+		const project = projectFixture(root);
+		runtime.setProjects([project]);
+
+		expect(runtime.getSession(session.id)).toMatchObject({
+			projectId: project.id,
+			workspaceRoot: project.path,
+		});
+		const global = runtime.createSession({ title: "Global conversation" });
+		runtime.appendMessage({
+			sessionId: global.id,
+			role: "user",
+			content: "Keep this transcript.",
+		});
+		const assigned = runtime.updateSessionProject(global.id, project.id);
+		expect(assigned).toMatchObject({
+			projectId: project.id,
+			workspaceRoot: project.path,
+		});
+
+		const removed = runtime.updateSessionProject(global.id, null);
+		expect(removed).not.toHaveProperty("projectId");
+		expect(removed).not.toHaveProperty("workspaceRoot");
+		expect(runtime.listMessages(global.id).map(({ content }) => content)).toEqual([
+			"Keep this transcript.",
+		]);
+
+		const projectChat = runtime.createSession({
+			title: "Project conversation",
+			projectId: project.id,
+		});
+		runtime.appendMessage({
+			sessionId: projectChat.id,
+			role: "assistant",
+			content: "Project transcript.",
+		});
+		runtime.setProjects([]);
+		const detached = runtime.getSession(projectChat.id);
+		expect(detached).not.toHaveProperty("projectId");
+		expect(detached).not.toHaveProperty("workspaceRoot");
+		expect(runtime.listMessages(projectChat.id).map(({ content }) => content)).toEqual([
+			"Project transcript.",
+		]);
+
+		runtime.close();
+		database.close();
+	});
+
+	it("resolves project instructions for every project conversation without copying them into history", () => {
+		const { root, database, runtime } = fixture();
+		const project = projectFixture(root, "Use concise, evidence-backed answers.");
+		runtime.setProjects([project]);
+		const session = runtime.createSession({
+			title: "Instruction-aware conversation",
+			projectId: project.id,
+		});
+
+		expect(runtime.projectContextForSession(session.id)).toBe(
+			"Project context for Fixture project:\nUse concise, evidence-backed answers.",
+		);
+		expect(runtime.listMessages(session.id)).toEqual([]);
+
+		runtime.setProjects([{ ...project, instructions: "Updated context." }]);
+		expect(runtime.projectContextForSession(session.id)).toBe(
+			"Project context for Fixture project:\nUpdated context.",
+		);
+		runtime.setProjects([{ ...project, instructions: "   " }]);
+		expect(runtime.projectContextForSession(session.id)).toBe("");
+
+		runtime.close();
+		database.close();
+	});
+
+	it("keeps unavailable project chats addressable without re-enabling workspace access", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-unavailable-project-"));
+		temporaryDirectories.push(root);
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const project = { ...projectFixture(root), available: false };
+		const runtime = new AgentRuntime(
+			database,
+			[],
+			() => "2026-08-31T10:00:00.000Z",
+			undefined,
+			[root],
+			[project],
+		);
+		const session = runtime.createSession({
+			title: "Unavailable project conversation",
+			projectId: project.id,
+		});
+
+		expect(session).toMatchObject({ projectId: project.id });
+		expect(session).not.toHaveProperty("workspaceRoot");
+		const fork = runtime.forkSession(session.id, "Unavailable project fork");
+		expect(fork).toMatchObject({ projectId: project.id });
+		expect(fork).not.toHaveProperty("workspaceRoot");
+		expect(runtime.discoverTools(session.id).filter((tool) => tool.requiresWorkspace)).toEqual([]);
+
+		runtime.close();
+		database.close();
+	});
+
+	it("removes an active workspace root when a project becomes unavailable", () => {
+		const { root, database, runtime } = fixture();
+		const project = projectFixture(root);
+		runtime.setProjects([project]);
+		const session = runtime.createSession({
+			title: "Availability-aware conversation",
+			projectId: project.id,
+		});
+
+		expect(session.workspaceRoot).toBe(project.path);
+		runtime.setProjects([{ ...project, available: false }]);
+		expect(runtime.getSession(session.id)).not.toHaveProperty("workspaceRoot");
+		expect(runtime.discoverTools(session.id).filter((tool) => tool.requiresWorkspace)).toEqual([]);
+
+		runtime.close();
 		database.close();
 	});
 
@@ -1404,6 +1634,34 @@ describe("agent runtime", () => {
 		expect(() => runtime.resumeSession(fork.id)).toThrow(
 			"cancelled session cannot be resumed",
 		);
+		database.close();
+	});
+
+	it("does not let a child override a private or incognito parent privacy boundary", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const privateParent = runtime.createSession({
+			title: "Private parent",
+			privacyMode: "private",
+		});
+		const incognitoParent = runtime.createSession({
+			title: "Incognito parent",
+			privacyMode: "incognito",
+		});
+
+		const privateChild = runtime.createSession({
+			title: "Private child",
+			parentSessionId: privateParent.id,
+			privacyMode: "standard",
+		});
+		const incognitoChild = runtime.createSession({
+			title: "Incognito child",
+			parentSessionId: incognitoParent.id,
+			privacyMode: "standard",
+		});
+
+		expect(privateChild.privacyMode).toBe("private");
+		expect(incognitoChild.privacyMode).toBe("incognito");
 		database.close();
 	});
 

@@ -36,10 +36,13 @@ import {
 	RuntimeMessageSchema,
 	type RuntimeSession,
 	RuntimeSessionSchema,
+	type TranscriptSearchResult,
 	type RuntimeToolDescriptor,
 	RuntimeToolDescriptorSchema,
 	type RuntimeToolExecution,
 	RuntimeToolExecutionSchema,
+	type Project,
+	ProjectSchema,
 	type WorkspaceMutation,
 	WorkspaceMutationSchema,
 } from "@kestrel/shared-types";
@@ -55,6 +58,12 @@ import {
 } from "./command-runner";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
 import { BrowserRecoveryError } from "./browser-recovery";
+import {
+	HumanInputManager,
+	type HumanInputAnswerInput,
+	type HumanInputCreateInput,
+} from "./human-input";
+import type { HumanInputRequest } from "@kestrel/shared-types";
 
 export type RuntimeHookEvent = "pre_tool" | "post_tool" | "tool_error";
 
@@ -107,6 +116,45 @@ export interface DeclarativeRuntimeHook {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+const REDACTED_BROWSER_TYPING_TEXT = "[redacted browser input]";
+
+/**
+ * Browser typing can be refused only after the current accessibility snapshot
+ * identifies the target as sensitive. The runtime journals a pending execution
+ * before that check runs, so do not let its text reach durable journals.
+ */
+function redactBrowserTypingForStorage(
+	execution: RuntimeToolExecution,
+): RuntimeToolExecution {
+	if (
+		execution.toolName !== "browser.act" &&
+		execution.toolName !== "browser.visible-act"
+	)
+		return execution;
+	const action = execution.input.action;
+	if (
+		!isRecord(action) ||
+		action.type !== "type" ||
+		typeof action.text !== "string"
+	)
+		return execution;
+	return RuntimeToolExecutionSchema.parse({
+		...execution,
+		input: {
+			...execution.input,
+			action: { ...action, text: REDACTED_BROWSER_TYPING_TEXT },
+		},
+	});
+}
+
+function sessionAllowsMemory(session: Pick<RuntimeSession, "privacyMode">): boolean {
+	return (session.privacyMode ?? "standard") === "standard";
+}
+
+export function normalizeTranscriptText(value: string): string {
+	return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/gu, " ").trim();
 }
 
 function globPattern(value: string): RegExp {
@@ -469,6 +517,7 @@ export class AgentRuntime extends EventEmitter {
 	private readonly hooks: RuntimeHook[] = [];
 	private readonly workspaceRoots: string[];
 	private readonly configuredWorkspaceRoots: string[];
+	private readonly projects = new Map<string, Project>();
 	private readonly activeExecutions = new Map<
 		string,
 		{ controller: AbortController; sessionId: string }
@@ -493,6 +542,7 @@ export class AgentRuntime extends EventEmitter {
 	>();
 	private readonly approvalRulesKey = "runtime.approval-rules";
 	private readonly processJournalKey = "runtime.background-processes";
+	readonly humanInput: HumanInputManager;
 	private static readonly MAX_APPROVAL_RULES = 500;
 	private toolPolicyResolver:
 		| ((context: RuntimeToolPolicyContext) => RuntimeToolPolicyDecision)
@@ -504,8 +554,23 @@ export class AgentRuntime extends EventEmitter {
 		private readonly now: () => string = () => new Date().toISOString(),
 		private readonly githubToken?: string,
 		configuredWorkspaceRoots: string[] = workspaceRoots,
+		projects: Project[] = [],
 	) {
 		super();
+		this.humanInput = new HumanInputManager(database, {
+			now: () => new Date(this.now()),
+			getRunStatus: (runId) => {
+				const status = this.database.getAgentRun(runId)?.status;
+				return status === "running" ||
+					status === "waiting_approval" ||
+					status === "waiting_input" ||
+					status === "completed" ||
+					status === "cancelled" ||
+					status === "failed"
+					? status
+					: "missing";
+			},
+		});
 		const canonicalWorkspaceRoots: string[] = [];
 		for (const root of workspaceRoots) {
 			try {
@@ -527,6 +592,7 @@ export class AgentRuntime extends EventEmitter {
 				}),
 			]),
 		];
+		this.setProjects(projects);
 		this.reconcilePersistedWorkspaceRoots();
 		this.reconcileIdempotencyClaims();
 		const previousProcesses = this.processJournalRecords();
@@ -569,22 +635,60 @@ export class AgentRuntime extends EventEmitter {
 
 	createSession(input: {
 		title: string;
+		kind?: RuntimeSession["kind"];
+		projectId?: string;
 		workspaceRoot?: string;
 		parentSessionId?: string;
 		allowedTools?: string[];
+		privacyMode?: RuntimeSession["privacyMode"];
+		planetAssetId?: RuntimeSession["planetAssetId"];
 	}): RuntimeSession {
-		const workspaceRoot = input.workspaceRoot
-			? this.resolveGrantedRoot(input.workspaceRoot)
+		if (input.kind === "agent" && input.parentSessionId)
+			throw new Error("A persistent agent must be a top-level session.");
+		if (input.kind === "subagent" && !input.parentSessionId)
+			throw new Error("A subagent must belong to a parent session.");
+		if (input.planetAssetId && input.kind !== "agent")
+			throw new Error("Only a persistent agent can choose a planet asset.");
+		const parent = input.parentSessionId
+			? this.database.getRuntimeSession(input.parentSessionId)
 			: undefined;
+		const inheritedPrivacyMode =
+			(parent?.privacyMode === "private" || parent?.privacyMode === "incognito"
+				? parent.privacyMode
+				: input.privacyMode);
+		const project = input.projectId
+			? this.requireProject(input.projectId)
+			: input.workspaceRoot
+				? this.projectForPath(input.workspaceRoot)
+				: undefined;
+		const workspaceRoot = project
+			? project.available === false
+				? undefined
+				: this.resolveGrantedRoot(project.path)
+			: input.workspaceRoot
+				? this.resolveGrantedRoot(input.workspaceRoot)
+				: undefined;
 		const timestamp = this.now();
+		const requestedTools = input.allowedTools ?? [...this.tools.keys()];
+		const allowedTools = requestedTools.filter(
+			(toolName) =>
+				sessionAllowsMemory({ privacyMode: inheritedPrivacyMode }) ||
+				this.tools.get(toolName)?.descriptor.category !== "memory",
+		);
 		const session = RuntimeSessionSchema.parse({
 			id: `session-${randomUUID()}`,
 			title: input.title,
+			kind: input.kind ?? "conversation",
 			...(input.parentSessionId
 				? { parentSessionId: input.parentSessionId }
 				: {}),
+			...(input.planetAssetId
+				? { planetAssetId: input.planetAssetId }
+				: {}),
+			...(project ? { projectId: project.id } : {}),
 			...(workspaceRoot ? { workspaceRoot } : {}),
-			allowedTools: input.allowedTools ?? [...this.tools.keys()],
+			...(inheritedPrivacyMode ? { privacyMode: inheritedPrivacyMode } : {}),
+			allowedTools,
 			status: "active",
 			checkpoints: [],
 			createdAt: timestamp,
@@ -597,8 +701,283 @@ export class AgentRuntime extends EventEmitter {
 		return session;
 	}
 
+	/**
+	 * Refresh project metadata without restarting the agent core. The desktop
+	 * keeps folder grants and project metadata in one store, then sends the
+	 * enriched records here after every project mutation.
+	 */
+	setProjects(projects: Project[]): void {
+		const parsedProjects = projects.map((project) => ProjectSchema.parse(project));
+		const nextById = new Map<string, Project>();
+		for (const project of parsedProjects) {
+			if (nextById.has(project.id))
+				throw new Error("Project IDs must be unique.");
+			nextById.set(project.id, project);
+		}
+		const previousProjects = new Map(this.projects);
+		this.projects.clear();
+		for (const project of parsedProjects) this.projects.set(project.id, project);
+
+		for (const session of this.database.listRuntimeSessions()) {
+			let next = session;
+			if (session.projectId) {
+				const project = nextById.get(session.projectId);
+				const previous = previousProjects.get(session.projectId);
+				if (project) {
+					const sessionRoot = session.workspaceRoot
+						? this.normalizedProjectPath(session.workspaceRoot)
+						: undefined;
+					if (project.available === false) {
+						if (session.workspaceRoot) {
+							const detached = { ...next };
+							delete detached.workspaceRoot;
+							next = detached;
+						}
+					} else if (project.path !== sessionRoot) {
+						next = {
+							...next,
+							projectId: project.id,
+							workspaceRoot: project.path,
+						};
+					}
+				} else {
+					const detached = { ...next };
+					delete detached.projectId;
+					if (previous) delete detached.workspaceRoot;
+					next = detached;
+				}
+			}
+			if (!next.projectId && next.workspaceRoot) {
+				const project = this.projectForPath(next.workspaceRoot);
+				if (project)
+					next = { ...next, projectId: project.id, workspaceRoot: project.path };
+			}
+			if (next !== session) {
+				this.database.saveRuntimeSession(next);
+				this.emitRuntimeEvent("session.updated", session.id, {
+					action: "project-reconciled",
+					...(next.projectId ? { projectId: next.projectId } : {}),
+					sessionUpdatedAt: next.updatedAt,
+				});
+			}
+		}
+	}
+
+	updateSessionProject(sessionId: string, projectId: string | null): RuntimeSession {
+		const session = this.requireSession(sessionId);
+		if (projectId === null) {
+			const detached = { ...session };
+			delete detached.projectId;
+			delete detached.workspaceRoot;
+			const updated = this.saveSession({
+				...detached,
+				updatedAt: this.now(),
+			});
+			this.emitRuntimeEvent("session.updated", sessionId, {
+				action: "project-removed",
+				sessionUpdatedAt: updated.updatedAt,
+			});
+			return updated;
+		}
+		const project = this.requireProject(projectId);
+		if (project.available === false)
+			throw new Error("The project folder is unavailable.");
+		const workspaceRoot = this.resolveGrantedRoot(project.path);
+		const updated = this.saveSession({
+			...session,
+			projectId: project.id,
+			workspaceRoot,
+			updatedAt: this.now(),
+		});
+		this.emitRuntimeEvent("session.updated", sessionId, {
+			action: "project-assigned",
+			projectId: project.id,
+			sessionUpdatedAt: updated.updatedAt,
+		});
+		return updated;
+	}
+
+	updateAgentPlanet(
+		sessionId: string,
+		planetAssetId: NonNullable<RuntimeSession["planetAssetId"]> | null,
+	): RuntimeSession {
+		const session = this.requireSession(sessionId);
+		if (session.kind !== "agent")
+			throw new Error("Only a persistent agent can choose a planet asset.");
+		const next = { ...session };
+		if (planetAssetId === null) delete next.planetAssetId;
+		else next.planetAssetId = planetAssetId;
+		const updated = this.saveSession({
+			...next,
+			updatedAt: this.now(),
+		});
+		this.emitRuntimeEvent("session.updated", sessionId, {
+			action: "agent-planet-updated",
+			planetAssetId: planetAssetId ?? null,
+			sessionUpdatedAt: updated.updatedAt,
+		});
+		return updated;
+	}
+
+	projectContextForSession(sessionId: string): string {
+		const session = this.requireSession(sessionId);
+		const project = session.projectId
+			? this.projects.get(session.projectId)
+			: session.workspaceRoot
+				? this.projectForPath(session.workspaceRoot)
+				: undefined;
+		const instructions = project?.instructions?.trim();
+		if (!project || !instructions) return "";
+		return `Project context for ${project.name}:\n${instructions}`;
+	}
+
 	listSessions(): RuntimeSession[] {
 		return this.database.listRuntimeSessions();
+	}
+
+	/** Return a stable, breadth-first view of a session and its descendants. */
+	sessionTree(sessionId: string): string[] {
+		this.requireSession(sessionId);
+		const childrenByParent = new Map<string, string[]>();
+		for (const session of this.listSessions()) {
+			if (!session.parentSessionId) continue;
+			const children = childrenByParent.get(session.parentSessionId) ?? [];
+			children.push(session.id);
+			childrenByParent.set(session.parentSessionId, children);
+		}
+		const result: string[] = [];
+		const pending = [sessionId];
+		const visited = new Set<string>();
+		while (pending.length > 0) {
+			const current = pending.shift();
+			if (!current || visited.has(current)) continue;
+			visited.add(current);
+			result.push(current);
+			for (const child of childrenByParent.get(current) ?? []) pending.push(child);
+		}
+		return result;
+	}
+
+	selectedSessionId(): string | null {
+		const stored = this.database.getState<unknown>("runtimeSelectedSessionId");
+		if (typeof stored !== "string" || !stored) return null;
+		const session = this.database.getRuntimeSession(stored);
+		if (!session || session.forgottenAt) {
+			this.database.deleteState("runtimeSelectedSessionId");
+			return null;
+		}
+		return session.id;
+	}
+
+	selectSession(sessionId: string | null): string | null {
+		if (sessionId === null) {
+			this.database.deleteState("runtimeSelectedSessionId");
+			return null;
+		}
+		const session = this.requireSession(sessionId);
+		if (session.forgottenAt)
+			throw new Error("A forgotten conversation cannot be selected.");
+		this.database.setState("runtimeSelectedSessionId", session.id);
+		return session.id;
+	}
+
+	forgetSession(sessionId: string): RuntimeSession {
+		const session = this.requireSession(sessionId);
+		const forgottenAt = this.now();
+		const updated = this.saveSession({ ...session, forgottenAt, updatedAt: forgottenAt });
+		if (this.selectedSessionId() === sessionId)
+			this.database.deleteState("runtimeSelectedSessionId");
+		this.emitRuntimeEvent("session.updated", sessionId, {
+			action: "forget",
+			sessionUpdatedAt: updated.updatedAt,
+		});
+		return updated;
+	}
+
+	createHumanInputRequest(input: HumanInputCreateInput): HumanInputRequest {
+		this.requireSession(input.sessionId);
+		const run = this.database.getAgentRun(input.runId);
+		if (!run || run.sessionId !== input.sessionId)
+			throw new Error("Human input must be owned by an existing run in this session.");
+		if (run.status !== "running")
+			throw new Error("Human input can only pause a running agent.");
+		const request = this.humanInput.create(input);
+		const paused = {
+			...run,
+			status: "waiting_input" as const,
+			updatedAt: this.now(),
+		};
+		if (!this.database.saveAgentRunIfActive(paused))
+			throw new Error("The owning agent run is no longer active.");
+		this.emitRuntimeEvent("question.created", input.sessionId, {
+			requestId: request.id,
+			runId: request.runId,
+			status: request.status,
+		});
+		return request;
+	}
+
+	answerHumanInput(input: HumanInputAnswerInput): HumanInputRequest {
+		// Reconciliation can terminalize an expired request before answer() sees it.
+		// A timed-out question must not leave its owning run claiming to be waiting
+		// for input forever.
+		this.reconcileHumanInputRunStatuses(this.humanInput.list());
+		const request = this.humanInput.answer(input);
+		if (request.status === "answered" || request.status === "skipped") {
+			const run = this.database.getAgentRun(request.runId);
+			if (run?.status === "waiting_input")
+				this.database.saveAgentRunIfActive({
+					...run,
+					status: "running",
+					updatedAt: this.now(),
+				});
+		}
+		this.emitRuntimeEvent("question.updated", request.sessionId, {
+			requestId: request.id,
+			runId: request.runId,
+			status: request.status,
+		});
+		return request;
+	}
+
+	cancelHumanInput(requestId: string, runId: string): HumanInputRequest {
+		const request = this.humanInput.cancel(requestId, runId);
+		const run = this.database.getAgentRun(request.runId);
+		if (run?.status === "waiting_input")
+			this.database.saveAgentRunIfActive({
+				...run,
+				status: "cancelled",
+				error: "The run was cancelled while waiting for human input.",
+				updatedAt: this.now(),
+			});
+		this.emitRuntimeEvent("question.updated", request.sessionId, {
+			requestId: request.id,
+			runId: request.runId,
+			status: request.status,
+		});
+		return request;
+	}
+
+	listHumanInputRequests(sessionId?: string): HumanInputRequest[] {
+		const requests = this.humanInput.list(sessionId);
+		this.reconcileHumanInputRunStatuses(requests);
+		return requests;
+	}
+
+	private reconcileHumanInputRunStatuses(
+		requests: HumanInputRequest[],
+	): void {
+		for (const request of requests) {
+			if (request.status !== "timed_out") continue;
+			const run = this.database.getAgentRun(request.runId);
+			if (run?.status !== "waiting_input") continue;
+			this.database.saveAgentRunIfActive({
+				...run,
+				status: "failed",
+				error: "Human input timed out.",
+				updatedAt: this.now(),
+			});
+		}
 	}
 
 	getSession(sessionId: string): RuntimeSession {
@@ -787,7 +1166,12 @@ export class AgentRuntime extends EventEmitter {
 		const activeWorkspaceRoot = this.resolveActiveWorkspaceRoot(parent);
 		let child = this.createSession({
 			title: title ?? `${parent.title} (fork)`,
+			kind:
+				parent.kind === "agent" || parent.kind === "subagent"
+					? "subagent"
+					: "conversation",
 			parentSessionId: parent.id,
+			...(parent.projectId ? { projectId: parent.projectId } : {}),
 			...(activeWorkspaceRoot ? { workspaceRoot: activeWorkspaceRoot } : {}),
 			allowedTools: parent.allowedTools,
 		});
@@ -841,12 +1225,40 @@ export class AgentRuntime extends EventEmitter {
 
 	cancelSession(sessionId: string): RuntimeSession {
 		const session = this.requireSession(sessionId);
-		const updated = this.saveSession({
-			...session,
-			status: "cancelled",
-			updatedAt: this.now(),
-		});
-		this.emitRuntimeEvent("session.updated", sessionId, { action: "cancel" });
+		const sessionIds = this.sessionTree(sessionId);
+		const cancelledAt = this.now();
+		for (const id of sessionIds) this.abortActiveExecutionsForHistoryRollback(
+			id,
+			"Cancelled because the owning agent session was cancelled.",
+		);
+		for (const process of this.backgroundProcesses.values()) {
+			if (
+				!sessionIds.includes(process.sessionId) ||
+				process.status !== "running"
+			)
+				continue;
+			process.stopRequested = true;
+			process.handle.stop();
+		}
+		let updated: RuntimeSession = session;
+		for (const id of sessionIds) {
+			const current = this.requireSession(id);
+			// A completed child has already delivered its result; cancellation is
+			// for active descendant work and must not rewrite that history.
+			if (id !== sessionId && ["completed", "failed", "cancelled"].includes(current.status))
+				continue;
+			const next = this.saveSession({
+				...current,
+				status: "cancelled",
+				updatedAt: cancelledAt,
+			});
+			if (id === sessionId) updated = next;
+			this.emitRuntimeEvent(id === sessionId ? "session.updated" : "session.updated", id, {
+				action: "cancel",
+				...(id === sessionId ? {} : { ancestorSessionId: sessionId }),
+				sessionUpdatedAt: next.updatedAt,
+			});
+		}
 		return updated;
 	}
 
@@ -889,7 +1301,23 @@ export class AgentRuntime extends EventEmitter {
 		const searchLimit = Number.isFinite(limit)
 			? Math.max(1, Math.min(100, Math.trunc(limit)))
 			: 20;
-		const exact = this.database.searchRuntimeMessages(query, searchLimit);
+		const normalizedQuery = normalizeTranscriptText(query);
+		if (!normalizedQuery) return [];
+		const sessions = this.searchableSessions();
+		const sessionIds = sessions.map((session) => session.id);
+		const exactCandidates = this.database.searchRuntimeMessages(
+			query,
+			Math.max(searchLimit, 100),
+			sessionIds,
+		);
+		const exactPhrase = exactCandidates.filter((message) =>
+			normalizeTranscriptText(message.content).includes(normalizedQuery),
+		);
+		const exactPhraseIds = new Set(exactPhrase.map((message) => message.id));
+		const exact = [
+			...exactPhrase,
+			...exactCandidates.filter((message) => !exactPhraseIds.has(message.id)),
+		];
 		if (exact.length >= searchLimit) return exact;
 		const queryTerms = [
 			...new Set(
@@ -902,8 +1330,7 @@ export class AgentRuntime extends EventEmitter {
 		if (!queryTerms.length) return exact;
 		const queryEmbedding = localSemanticEmbedding(query);
 		const seen = new Set(exact.map((message) => message.id));
-		const ranked = this.database
-			.listRuntimeSessions()
+		const ranked = sessions
 			.flatMap((session) => this.database.listRuntimeMessages(session.id))
 			.filter((message) => !seen.has(message.id))
 			.map((message) => {
@@ -942,6 +1369,41 @@ export class AgentRuntime extends EventEmitter {
 		return [...exact, ...ranked.map(({ message }) => message)].slice(
 			0,
 			searchLimit,
+		);
+	}
+
+	searchTranscript(query: string, limit = 20): TranscriptSearchResult[] {
+		const sessions = new Map(this.searchableSessions().map((session) => [session.id, session]));
+		const messages = this.searchMessages(query, limit);
+		const normalizedQuery = normalizeTranscriptText(query);
+		return messages.flatMap((message) => {
+			const session = sessions.get(message.sessionId);
+			if (!session) return [];
+			const normalizedContent = normalizeTranscriptText(message.content);
+			const matchStart = Math.max(0, normalizedContent.indexOf(normalizedQuery));
+			const center = matchStart < 0 ? 0 : matchStart;
+			const start = Math.max(0, center - 120);
+			const end = Math.min(normalizedContent.length, start + 400);
+			const preview = normalizedContent.slice(start, end).trim();
+			return [{
+				messageId: message.id,
+				sessionId: message.sessionId,
+				sessionTitle: session.title,
+				role: message.role,
+				preview: `${start > 0 ? "…" : ""}${preview}${end < normalizedContent.length ? "…" : ""}`.slice(0, 400),
+				matchStart: center,
+				matchLength: Math.max(1, normalizedQuery.length),
+				createdAt: message.createdAt,
+			} satisfies TranscriptSearchResult];
+		});
+	}
+
+	private searchableSessions(): RuntimeSession[] {
+		return this.database.listRuntimeSessions().filter(
+			(session) =>
+				!session.forgottenAt &&
+				session.privacyMode !== "private" &&
+				session.privacyMode !== "incognito",
 		);
 	}
 
@@ -1286,6 +1748,15 @@ export class AgentRuntime extends EventEmitter {
 		options: { preserveUpdatedAt?: boolean } = {},
 	): RuntimeSession {
 		const session = this.requireSession(sessionId);
+		if (!sessionAllowsMemory(session)) {
+			const memoryTool = toolNames.find(
+				(toolName) => this.tools.get(toolName)?.descriptor.category === "memory",
+			);
+			if (memoryTool)
+				throw new Error(
+					"Memory tools are disabled for private and incognito sessions.",
+				);
+		}
 		const additions = [...new Set(toolNames)].filter(
 			(toolName) => !session.allowedTools.includes(toolName),
 		);
@@ -1307,8 +1778,9 @@ export class AgentRuntime extends EventEmitter {
 		);
 		const terms = query?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
 		return [...this.tools.values()]
-			.map((definition) => definition.descriptor)
-			.filter((tool) => session.allowedTools.includes(tool.name))
+				.map((definition) => definition.descriptor)
+				.filter((tool) => session.allowedTools.includes(tool.name))
+				.filter((tool) => sessionAllowsMemory(session) || tool.category !== "memory")
 			.filter((tool) => !tool.requiresWorkspace || hasActiveWorkspace)
 			.filter(
 				(tool) =>
@@ -1392,6 +1864,10 @@ export class AgentRuntime extends EventEmitter {
 		const definition = this.tools.get(toolName);
 		if (!definition || !session.allowedTools.includes(toolName))
 			throw new Error(`Tool ${toolName} is unavailable in this session.`);
+		if (!sessionAllowsMemory(session) && definition.descriptor.category === "memory")
+			throw new Error(
+				"Memory tools are disabled for private and incognito sessions.",
+			);
 		if (session.status !== "active")
 			throw new Error(`Session ${sessionId} is ${session.status}.`);
 		if (definition.descriptor.requiresWorkspace && !workspaceRoot)
@@ -1886,21 +2362,22 @@ export class AgentRuntime extends EventEmitter {
 		approval?: ActionReceiptApprovalContext,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
-		this.database.saveToolExecution(execution);
+		const persistedExecution = redactBrowserTypingForStorage(execution);
+		this.database.saveToolExecution(persistedExecution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
-			execution.id,
+			persistedExecution.id,
 		);
 		const receiptDescriptor =
-			descriptor ?? this.tools.get(execution.toolName)?.descriptor;
+			descriptor ?? this.tools.get(persistedExecution.toolName)?.descriptor;
 		const receiptApproval = approval ?? previousReceipt?.approval;
 		const receipt = buildActionReceipt({
-			execution,
+			execution: persistedExecution,
 			...(receiptDescriptor ? { descriptor: receiptDescriptor } : {}),
 			...(receiptApproval ? { approval: receiptApproval } : {}),
 		});
 		if (receipt) this.database.saveActionReceipt(receipt);
-		if (execution.status === "running") return;
-		const event = summarizeBrowserActivity(execution);
+		if (persistedExecution.status === "running") return;
+		const event = summarizeBrowserActivity(persistedExecution);
 		if (!event) return;
 		try {
 			this.database.appendBrowserActivity(event);
@@ -1936,11 +2413,12 @@ export class AgentRuntime extends EventEmitter {
 		execution: RuntimeToolExecution,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
+		const persistedExecution = redactBrowserTypingForStorage(execution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
-			execution.id,
+			persistedExecution.id,
 		);
 		const receipt = buildActionReceipt({
-			execution,
+			execution: persistedExecution,
 			...(descriptor ? { descriptor } : {}),
 			...(previousReceipt ? { approval: previousReceipt.approval } : {}),
 		});
@@ -1956,7 +2434,7 @@ export class AgentRuntime extends EventEmitter {
 		const completion = this.database.completeIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
-			execution,
+			redactBrowserTypingForStorage(execution),
 		);
 		const result = RuntimeToolExecutionSchema.parse(completion.result);
 		this.journalToolExecution(result, approval, descriptor);
@@ -1969,11 +2447,14 @@ export class AgentRuntime extends EventEmitter {
 		signal?: AbortSignal,
 	): Promise<RuntimeToolExecution | undefined> {
 		const waitStartedAt = Date.now();
+		const persistedPendingExecution = redactBrowserTypingForStorage(
+			pendingExecution,
+		);
 		const initial = this.database.claimIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
 			process.pid,
-			pendingExecution,
+			persistedPendingExecution,
 		);
 		if (initial.state === "claimed") return undefined;
 		if (initial.state === "completed") {
@@ -2011,7 +2492,7 @@ export class AgentRuntime extends EventEmitter {
 				idempotencyKey,
 				this.idempotencyOwnerToken,
 				process.pid,
-				pendingExecution,
+				persistedPendingExecution,
 			);
 			if (retry.state === "claimed") return undefined;
 			if (retry.state === "completed")
@@ -4135,6 +4616,16 @@ export class AgentRuntime extends EventEmitter {
 		this.emit("event", event);
 	}
 
+	/** Publish a validated runtime event from a durable runtime extension. */
+	publishRuntimeEvent(
+		type: RuntimeEvent["type"],
+		sessionId: string,
+		payload: Record<string, unknown>,
+		references: { executionId?: string; messageId?: string } = {},
+	): void {
+		this.emitRuntimeEvent(type, sessionId, payload, references);
+	}
+
 	private resolveGrantedRoot(requestedRoot: string): string {
 		const candidate = realpathSync(requestedRoot);
 		const granted = this.workspaceRoots.find((root) =>
@@ -4170,6 +4661,28 @@ export class AgentRuntime extends EventEmitter {
 			const detached = { ...session };
 			delete detached.workspaceRoot;
 			this.database.saveRuntimeSession(detached);
+		}
+	}
+
+	private requireProject(projectId: string): Project {
+		const project = this.projects.get(projectId);
+		if (!project) throw new Error("Project was not found.");
+		return project;
+	}
+
+	private projectForPath(path: string): Project | undefined {
+		const normalized = this.normalizedProjectPath(path);
+		return [...this.projects.values()].find(
+			(project) => this.normalizedProjectPath(project.path) === normalized,
+		);
+	}
+
+	private normalizedProjectPath(path: string): string {
+		const resolved = resolve(path);
+		try {
+			return realpathSync(resolved);
+		} catch {
+			return resolved;
 		}
 	}
 

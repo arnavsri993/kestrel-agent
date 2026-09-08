@@ -7,7 +7,7 @@ import {
 	type PasswordEntrySummary,
 } from "@kestrel/shared-types";
 import { z } from "zod";
-import type { CredentialBroker } from "./credential-broker";
+import type { CredentialStore } from "./credential-store";
 
 const PASSWORD_VAULT_SECRET_ID = "browser-password-vault";
 const PASSWORD_VAULT_VERSION = 1 as const;
@@ -56,29 +56,64 @@ function summary(entry: PasswordEntry): PasswordEntrySummary {
 		origin: entry.origin,
 		title: entry.title,
 		username: entry.username,
+		createdAt: entry.createdAt,
 		updatedAt: entry.updatedAt,
+		...(entry.lastUsedAt ? { lastUsedAt: entry.lastUsedAt } : {}),
 	});
 }
 
-export class PasswordVault {
-	private entriesPromise: Promise<PasswordEntry[]> | undefined;
+function summaries(entries: PasswordEntry[]): PasswordEntrySummary[] {
+	return entries
+		.slice()
+		.sort((left, right) => {
+			const leftAt = left.lastUsedAt ?? left.updatedAt;
+			const rightAt = right.lastUsedAt ?? right.updatedAt;
+			return rightAt.localeCompare(leftAt);
+		})
+		.map(summary);
+}
 
-	constructor(private readonly broker: CredentialBroker) {}
+/** Best-effort disposal for copies that were decrypted only to complete one
+ * main-process operation. JavaScript cannot guarantee zeroization of strings,
+ * but keeping no class-level plaintext cache and clearing mutable entry fields
+ * keeps their reachable lifetime bounded. */
+function disposeEntries(entries: Iterable<PasswordEntry>): void {
+	for (const entry of entries) entry.password = "";
+}
+
+/**
+ * Main-process password metadata and secret vault. The supplied CredentialStore
+ * is deliberately narrower than the general credential broker so a browser
+ * password never shares Agent Core's storage or transport path.
+ */
+export class PasswordVault {
+	private mutationQueue: Promise<void> = Promise.resolve();
+
+	constructor(
+		private readonly store: CredentialStore,
+		private readonly legacyStore?: CredentialStore,
+		private readonly now: () => Date = () => new Date(),
+	) {}
 
 	async list(): Promise<PasswordEntrySummary[]> {
-		const entries = await this.entries();
-		return entries
-			.slice()
-			.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-			.map(summary);
+		await this.mutationQueue;
+		const entries = await this.loadEntries();
+		try {
+			return summaries(entries);
+		} finally {
+			disposeEntries(entries);
+		}
 	}
 
 	async listForOrigin(origin: string): Promise<PasswordEntrySummary[]> {
 		const normalized = normalizedOrigin(origin);
-		return (await this.entries())
-			.filter((entry) => entry.origin === normalized)
-			.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-			.map(summary);
+		await this.mutationQueue;
+		const entries = await this.loadEntries();
+		try {
+			return summaries(entries.filter((entry) => entry.origin === normalized));
+		} finally {
+			disposeEntries(entries);
+		}
 	}
 
 	async getForOrigin(
@@ -86,70 +121,169 @@ export class PasswordVault {
 		origin: string,
 	): Promise<PasswordEntry | undefined> {
 		const normalized = normalizedOrigin(origin);
-		return (await this.entries()).find(
-			(entry) => entry.id === id && entry.origin === normalized,
-		);
-	}
-
-	async save(input: SavePasswordInput): Promise<PasswordEntrySummary[]> {
-		const origin = normalizedOrigin(input.origin);
-		const username = input.username.trim();
-		const title = (input.title?.trim() || titleForOrigin(origin)).slice(0, 200);
-		if (username.length > 500)
-			throw new Error("Usernames must be 500 characters or fewer.");
-		if (
-			!input.password ||
-			input.password.length > 100_000 ||
-			input.password.includes("\0")
-		)
-			throw new Error("Passwords must be between 1 and 100,000 characters.");
-
-		const now = new Date().toISOString();
-		const entries = await this.entries();
-		const existing = entries.find(
-			(entry) => entry.origin === origin && entry.username === username,
-		);
-		const next = PasswordEntrySchema.parse({
-			id: existing?.id ?? `password-${randomUUID()}`,
-			origin,
-			title,
-			username,
-			password: input.password,
-			createdAt: existing?.createdAt ?? now,
-			updatedAt: now,
-		});
-		const nextEntries = existing
-			? entries.map((entry) => (entry.id === existing.id ? next : entry))
-			: [...entries, next];
-		if (nextEntries.length > MAX_PASSWORD_ENTRIES)
-			throw new Error("Kestrel can store up to 2,000 saved passwords.");
-		await this.writeEntries(nextEntries);
-		return this.list();
-	}
-
-	async remove(id: PasswordEntryId): Promise<PasswordEntrySummary[]> {
-		const entries = await this.entries();
-		const next = entries.filter((entry) => entry.id !== id);
-		if (next.length !== entries.length) await this.writeEntries(next);
-		return this.list();
-	}
-
-	private async entries(): Promise<PasswordEntry[]> {
-		this.entriesPromise ??= this.loadEntries();
+		await this.mutationQueue;
+		const entries = await this.loadEntries();
 		try {
-			return await this.entriesPromise;
-		} catch (error) {
-			this.entriesPromise = undefined;
-			throw error;
+			const entry = entries.find(
+				(candidate) => candidate.id === id && candidate.origin === normalized,
+			);
+			return entry ? { ...entry } : undefined;
+		} finally {
+			disposeEntries(entries);
 		}
 	}
 
-	private async loadEntries(): Promise<PasswordEntry[]> {
-		const raw = await this.broker.getOpaqueSecret(PASSWORD_VAULT_SECRET_ID);
-		if (!raw) return [];
+	async get(id: PasswordEntryId): Promise<PasswordEntry | undefined> {
+		await this.mutationQueue;
+		const entries = await this.loadEntries();
 		try {
-			const parsed: unknown = JSON.parse(raw);
-			const vault = StoredPasswordVaultSchema.parse(parsed);
+			const entry = entries.find((candidate) => candidate.id === id);
+			return entry ? { ...entry } : undefined;
+		} finally {
+			disposeEntries(entries);
+		}
+	}
+
+	async save(input: SavePasswordInput): Promise<PasswordEntrySummary[]> {
+		return this.mutate(async () => {
+			const origin = normalizedOrigin(input.origin);
+			const username = input.username.trim();
+			const title = (input.title?.trim() || titleForOrigin(origin)).slice(0, 200);
+			if (username.length > 500)
+				throw new Error("Usernames must be 500 characters or fewer.");
+			if (
+				!input.password ||
+				input.password.length > 4_096 ||
+				input.password.includes("\0")
+			)
+				throw new Error("Passwords must be between 1 and 4,096 characters.");
+
+			const now = this.now().toISOString();
+			const entries = await this.loadEntries();
+			let nextEntries: PasswordEntry[] | undefined;
+			try {
+				const existing = entries.find(
+					(entry) => entry.origin === origin && entry.username === username,
+				);
+				const next = PasswordEntrySchema.parse({
+					id: existing?.id ?? `password-${randomUUID()}`,
+					origin,
+					title,
+					username,
+					password: input.password,
+					createdAt: existing?.createdAt ?? now,
+					updatedAt: now,
+					...(existing?.lastUsedAt ? { lastUsedAt: existing.lastUsedAt } : {}),
+				});
+				nextEntries = existing
+					? entries.map((entry) => (entry.id === existing.id ? next : entry))
+					: [...entries, next];
+				if (nextEntries.length > MAX_PASSWORD_ENTRIES)
+					throw new Error("Kestrel can store up to 2,000 saved passwords.");
+				await this.writeEntries(nextEntries);
+				return summaries(nextEntries);
+			} finally {
+				disposeEntries(entries);
+				if (nextEntries && nextEntries !== entries) disposeEntries(nextEntries);
+			}
+		});
+	}
+
+	async updateUsername(
+		id: PasswordEntryId,
+		username: string,
+	): Promise<PasswordEntrySummary[]> {
+		return this.mutate(async () => {
+			const normalizedUsername = username.trim();
+			if (normalizedUsername.length > 500)
+				throw new Error("Usernames must be 500 characters or fewer.");
+			const entries = await this.loadEntries();
+			let nextEntries: PasswordEntry[] | undefined;
+			try {
+				const existing = entries.find((entry) => entry.id === id);
+				if (!existing) throw new Error("That saved login no longer exists.");
+				if (
+					entries.some(
+						(entry) =>
+							entry.id !== id &&
+							entry.origin === existing.origin &&
+							entry.username === normalizedUsername,
+					)
+				)
+					throw new Error(
+						"A saved login with that username already exists for this site.",
+					);
+				const updated = PasswordEntrySchema.parse({
+					...existing,
+					username: normalizedUsername,
+					updatedAt: this.now().toISOString(),
+				});
+				nextEntries = entries.map((entry) =>
+					entry.id === id ? updated : entry,
+				);
+				await this.writeEntries(nextEntries);
+				return summaries(nextEntries);
+			} finally {
+				disposeEntries(entries);
+				if (nextEntries && nextEntries !== entries) disposeEntries(nextEntries);
+			}
+		});
+	}
+
+	async markUsed(id: PasswordEntryId, origin: string): Promise<void> {
+		await this.mutate(async () => {
+			const normalized = normalizedOrigin(origin);
+			const entries = await this.loadEntries();
+			let nextEntries: PasswordEntry[] | undefined;
+			try {
+				const existing = entries.find(
+					(entry) => entry.id === id && entry.origin === normalized,
+				);
+				if (!existing) return;
+				const usedAt = this.now().toISOString();
+				nextEntries = entries.map((entry) =>
+					entry.id === id ? { ...entry, lastUsedAt: usedAt } : entry,
+				);
+				await this.writeEntries(nextEntries);
+			} finally {
+				disposeEntries(entries);
+				if (nextEntries && nextEntries !== entries) disposeEntries(nextEntries);
+			}
+		});
+	}
+
+	async remove(id: PasswordEntryId): Promise<PasswordEntrySummary[]> {
+		return this.mutate(async () => {
+			const entries = await this.loadEntries();
+			try {
+				const nextEntries = entries.filter((entry) => entry.id !== id);
+				if (nextEntries.length !== entries.length)
+					await this.writeEntries(nextEntries);
+				return summaries(nextEntries);
+			} finally {
+				disposeEntries(entries);
+			}
+		});
+	}
+
+	private async loadEntries(): Promise<PasswordEntry[]> {
+		const raw = await this.store.read(PASSWORD_VAULT_SECRET_ID);
+		if (raw) return this.parseEntries(raw);
+		if (!this.legacyStore) return [];
+
+		const legacy = await this.legacyStore.read(PASSWORD_VAULT_SECRET_ID);
+		if (!legacy) return [];
+		const entries = this.parseEntries(legacy);
+		// Copy before deletion so a Keychain failure leaves the existing vault
+		// recoverable through the legacy broker.
+		await this.store.write(PASSWORD_VAULT_SECRET_ID, legacy);
+		await this.legacyStore.remove(PASSWORD_VAULT_SECRET_ID);
+		return entries;
+	}
+
+	private parseEntries(raw: string): PasswordEntry[] {
+		try {
+			const vault = StoredPasswordVaultSchema.parse(JSON.parse(raw) as unknown);
 			return vault.entries.map((entry) => PasswordEntrySchema.parse(entry));
 		} catch (error) {
 			throw new Error("The saved passwords store is malformed.", { cause: error });
@@ -157,15 +291,21 @@ export class PasswordVault {
 	}
 
 	private async writeEntries(entries: PasswordEntry[]): Promise<void> {
-		if (entries.length === 0) {
-			await this.broker.removeOpaqueSecret(PASSWORD_VAULT_SECRET_ID);
-		} else {
-			await this.broker.setOpaqueSecret(
+		if (entries.length === 0) await this.store.remove(PASSWORD_VAULT_SECRET_ID);
+		else
+			await this.store.write(
 				PASSWORD_VAULT_SECRET_ID,
 				JSON.stringify({ version: PASSWORD_VAULT_VERSION, entries }),
 			);
-		}
-		this.entriesPromise = Promise.resolve(entries);
+	}
+
+	private mutate<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.mutationQueue.then(operation, operation);
+		this.mutationQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
 	}
 }
 

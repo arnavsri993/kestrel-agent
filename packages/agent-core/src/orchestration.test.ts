@@ -10,11 +10,13 @@ import { teacherOpportunity } from "./fixtures";
 import { AdaptiveModelRouter, ModelRegistry } from "./model-orchestration";
 import {
 	AutomationDaemon,
+	installOrchestrationTools,
 	nextCronOccurrence,
 	parseScheduleExpression,
 	TaskOrchestrator,
 } from "./orchestration";
 import { type ModelProvider, ProviderPool, textContent } from "./providers";
+import { RoutingOutcomeStore } from "./routing/outcome-store";
 import { AgentRuntime } from "./runtime";
 
 const directories: string[] = [];
@@ -43,6 +45,7 @@ function fixture(
 	);
 	const loop = new AgentLoop(database, runtime, providers, now);
 	const registry = new ModelRegistry(database, providers.list(), [], now);
+	const routingOutcomes = new RoutingOutcomeStore(database, now);
 	const router = new AdaptiveModelRouter(
 		database,
 		registry,
@@ -68,7 +71,12 @@ function fixture(
 			registry,
 			undefined,
 			configuredMaximumTurns,
+			undefined,
+			undefined,
+			undefined,
+			routingOutcomes,
 		),
+		routingOutcomes,
 	};
 }
 
@@ -151,6 +159,73 @@ describe("task orchestration", () => {
 			allowedTools: ["workspace.read"],
 		});
 		expect(delegated.sessionId).not.toBe(item.parent.id);
+		item.database.close();
+	});
+
+	it("inherits the parent privacy boundary for delegated sessions", async () => {
+		const item = fixture(finalProvider());
+		const privateParent = item.runtime.createSession({
+			title: "Private parent",
+			privacyMode: "private",
+		});
+		const delegated = await item.orchestrator.delegate({
+			parentSessionId: privateParent.id,
+			title: "Private child",
+			prompt: "Inspect only.",
+			model: "fake",
+			providerIds: ["fake"],
+		});
+
+		expect(item.runtime.getSession(delegated.sessionId).privacyMode).toBe("private");
+		item.database.close();
+	});
+
+	it("fans out a main-circle team and waits for every child result", async () => {
+		let activeCalls = 0;
+		let maximumActiveCalls = 0;
+		const item = fixture(
+			finalProvider(async () => {
+				activeCalls += 1;
+				maximumActiveCalls = Math.max(maximumActiveCalls, activeCalls);
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				activeCalls -= 1;
+			}),
+		);
+		installOrchestrationTools(item.runtime, item.orchestrator, item.parent.id);
+
+		const execution = await item.runtime.callTool(
+			item.parent.id,
+			"orchestration.delegate-team",
+			{
+				tasks: [
+					{
+						title: "Research",
+						prompt: "Return the research result.",
+						model: "fake",
+						providerIds: ["fake"],
+					},
+					{
+						title: "Review",
+						prompt: "Return the review result.",
+						model: "fake",
+						providerIds: ["fake"],
+					},
+				],
+			},
+			{ idempotencyKey: "delegate-team" },
+		);
+
+		expect(execution.status).toBe("verified");
+		expect(execution.output?.delegated).toMatchObject([
+			{ status: "completed", result: "Done." },
+			{ status: "completed", result: "Done." },
+		]);
+		expect(maximumActiveCalls).toBe(2);
+		expect(
+			item.runtime
+				.listSessions()
+				.filter((session) => session.parentSessionId === item.parent.id),
+		).toHaveLength(2);
 		item.database.close();
 	});
 
@@ -439,6 +514,32 @@ describe("task orchestration", () => {
 			providerId: "independent",
 			model: "critic",
 		});
+		item.database.close();
+	});
+
+	it("records a completed automatic delegated route in the private outcome store", async () => {
+		const item = fixture({
+			...finalProvider(),
+			defaultModel: "local-test-model",
+			probe: async () => undefined,
+		});
+		const delegated = await item.orchestrator.delegate({
+			parentSessionId: item.parent.id,
+			title: "Outcome-backed worker",
+			prompt: "Inspect this TypeScript implementation and report the result.",
+			model: "auto",
+			providerIds: ["auto"],
+		});
+
+		expect(delegated.result.run.status).toBe("completed");
+		expect(item.routingOutcomes.list()).toMatchObject([
+			{
+				taskProfile: "coding",
+				route: { providerId: "fake", transportId: "fake" },
+				success: true,
+				verifierStatus: "skipped",
+			},
+		]);
 		item.database.close();
 	});
 

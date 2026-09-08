@@ -3,6 +3,7 @@ import {
 	bookmarkBarFaviconDataUrl,
 	bookmarkBarGlyph,
 	bookmarkBarLabel,
+	bookmarkBarDisplayLabel,
 	hostnameFromBookmarkUrl,
 } from "./bookmarks-bar";
 
@@ -40,6 +41,23 @@ describe("bookmarks bar labels", () => {
 		expect(bookmarkBarGlyph("", "https://www.example.com")).toBe("E");
 	});
 
+	it("uses the selected presentation mode for the bar label", () => {
+		expect(
+			bookmarkBarDisplayLabel(
+				"Kestrel docs",
+				"https://docs.example/guide",
+				"full",
+			),
+		).toBe("https://docs.example/guide");
+		expect(
+			bookmarkBarDisplayLabel(
+				"Kestrel docs",
+				"https://docs.example/guide",
+				"icon",
+			),
+		).toBe("");
+	});
+
 	it("uses the cached favicon for a bookmarked page origin", () => {
 		expect(
 			bookmarkBarFaviconDataUrl("https://example.com/docs", [
@@ -49,6 +67,18 @@ describe("bookmarks bar labels", () => {
 				},
 			]),
 		).toBe("data:image/png;base64,EXAMPLE");
+		expect(
+			bookmarkBarFaviconDataUrl(
+				"https://example.com/docs",
+				[
+					{
+						origin: "https://example.com",
+						faviconDataUrl: "data:image/png;base64,ORIGIN",
+					},
+				],
+				"data:image/png;base64,BOOKMARK",
+			),
+		).toBe("data:image/png;base64,BOOKMARK");
 	});
 
 	it("does not borrow a favicon from another origin", () => {

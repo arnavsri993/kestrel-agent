@@ -1,16 +1,68 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	revealNewTabControl,
+} from "./desktop-browser-test-helpers.mjs";
+
+function readMacQuarantine(path) {
+	try {
+		return execFileSync(
+			"xattr",
+			["-p", "com.apple.quarantine", path],
+			{ encoding: "utf8" },
+		).trim();
+	} catch (error) {
+		if (
+			error &&
+			typeof error === "object" &&
+			"status" in error &&
+			error.status === 1
+		)
+			return undefined;
+		throw error;
+	}
+}
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
 const userData = join(root, "user-data");
+const heicUploadFixture = join(root, "kestrel-upload.HEIC");
+const heicSourcePng = join(root, "kestrel-upload-source.png");
+writeFileSync(
+	heicSourcePng,
+	Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+		"base64",
+	),
+);
+if (process.platform === "darwin") {
+	execFileSync(
+		"/usr/bin/sips",
+		["-s", "format", "heic", heicSourcePng, "--out", heicUploadFixture],
+		{ stdio: "ignore" },
+	);
+} else {
+	// The desktop smoke also runs where macOS ImageIO is unavailable. The
+	// extension exercises the browser handoff there; macOS validates actual HEIC
+	// decoding through sips above.
+	writeFileSync(
+		heicUploadFixture,
+		Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+			"base64",
+		),
+	);
+}
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
+const verifyRealChromeWebStoreInstall =
+	process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE === "1";
 const executablePath = packagedExecutable
 	? resolve(packagedExecutable)
 	: requireFromDesktop("electron");
@@ -18,8 +70,38 @@ const launchArgs = packagedExecutable
 	? ["--use-mock-keychain"]
 	: [resolve("apps/desktop")];
 
+const postLaunchRequests = [];
 const server = createServer((request, response) => {
 	const url = new URL(request.url ?? "/", "http://127.0.0.1");
+	if (url.pathname === "/favicon.png") {
+		const body = Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+			"base64",
+		);
+		response.writeHead(200, {
+			"content-type": "image/png",
+			"content-length": String(body.byteLength),
+			"cache-control": "no-store",
+		});
+		response.end(body);
+		return;
+	}
+	if (url.pathname === "/lti-launch") {
+		const chunks = [];
+		request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+		request.on("end", () => {
+			postLaunchRequests.push({
+				method: request.method,
+				body: Buffer.concat(chunks).toString("utf8"),
+			});
+			response.writeHead(200, {
+				"content-type": "text/html; charset=utf-8",
+				"cache-control": "no-store",
+			});
+			response.end(`<!doctype html><html><head><title>Math work</title></head><body><h1>Math work</h1></body></html>`);
+		});
+		return;
+	}
 	if (url.pathname === "/download") {
 		const body = Buffer.from("Kestrel visible browser download\n", "utf8");
 		response.writeHead(200, {
@@ -43,7 +125,7 @@ const server = createServer((request, response) => {
 	});
 	response.end(`<!doctype html>
     <html>
-      <head>
+      <head><link rel="icon" type="image/png" href="/favicon.png">
         <title>${pageName}</title>
         <meta name="description" content="Visible browser integration fixture">
       </head>
@@ -54,9 +136,17 @@ const server = createServer((request, response) => {
           <label>Name <input id="name" name="name" autocomplete="off"></label>
           <button id="submit" type="button">Submit</button>
           <output id="result">Waiting</output>
+		  <label>Photo <input id="image-upload" type="file" accept="image/*"></label>
+		  <output id="image-upload-result">Waiting</output>
           <a id="next" href="/two">Next page</a>
           <a id="download" href="/download">Download fixture</a>
           <button id="popup" type="button">Open popup</button>
+          <form id="lti-launch" action="/lti-launch" method="post" target="_blank">
+            <input type="hidden" name="iss" value="https://canvas.example/issuer">
+            <input type="hidden" name="login_hint" value="student">
+            <input type="hidden" name="target_link_uri" value="https://courseware.example/math">
+            <button id="lti-launch-submit" type="submit">Launch math work</button>
+          </form>
         </main>
         <script>
           document.querySelector("#submit").addEventListener("click", () => {
@@ -66,6 +156,22 @@ const server = createServer((request, response) => {
           document.querySelector("#popup").addEventListener("click", () => {
             window.open("/popup", "_blank");
           });
+		  const imageUpload = document.querySelector("#image-upload");
+		  const imageUploadResult = document.querySelector("#image-upload-result");
+		  let imageInputEvents = 0;
+		  let imageChangeEvents = 0;
+		  const renderImageUpload = () => {
+		    const files = [...imageUpload.files].map((file) => file.name + ":" + file.type);
+		    imageUploadResult.textContent = "input=" + imageInputEvents + ", change=" + imageChangeEvents + ", files=" + files.join(",");
+		  };
+		  imageUpload.addEventListener("input", () => {
+		    imageInputEvents += 1;
+		    renderImageUpload();
+		  });
+		  imageUpload.addEventListener("change", () => {
+		    imageChangeEvents += 1;
+		    renderImageUpload();
+		  });
         </script>
       </body>
     </html>`);
@@ -91,9 +197,10 @@ async function launch() {
 			...process.env,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
-			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-			KESTREL_TEST_USER_DATA: userData,
-			KESTREL_REAL_USER_PROFILE: "1",
+		KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+		KESTREL_TEST_USER_DATA: userData,
+		KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
+		KESTREL_REAL_USER_PROFILE: "1",
 		},
 	});
 	page = await application.firstWindow();
@@ -103,6 +210,9 @@ async function launch() {
 	});
 	page.on("pageerror", (error) => runtimeErrors.push(error.message));
 	await page.waitForLoadState("domcontentloaded");
+	// Keep ambient star drift and transition timing deterministic while still
+	// exercising the live Agent Universe surface and its pointer interactions.
+	await page.emulateMedia({ reducedMotion: "reduce" });
 	return page;
 }
 
@@ -137,6 +247,16 @@ async function waitForBrowserState(predicate, label) {
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
 }
 
+async function waitForPostLaunchRequest(label) {
+	const deadline = Date.now() + 30_000;
+	while (Date.now() < deadline) {
+		const request = postLaunchRequests.at(-1);
+		if (request) return request;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	throw new Error(`${label}: no POST request was received`);
+}
+
 async function nativeViewState() {
 	return application.evaluate(({ BrowserWindow }) => {
 		const window = BrowserWindow.getAllWindows().find(
@@ -167,6 +287,33 @@ async function waitForNativeView(predicate, label) {
 		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
 	}
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
+}
+
+async function assertNativeViewHiddenThroughOverlayExit(locator, label) {
+	const reducedMotion = await page.evaluate(
+		() => matchMedia("(prefers-reduced-motion: reduce)").matches,
+	);
+	// Electron/Playwright can yield between the Escape key event and this
+	// assertion. If the short exit has already completed there is no live
+	// renderer surface left to cover; when it is still mounted, the native view
+	// must remain hidden for its whole visible exit interval.
+	if (!reducedMotion && (await locator.count()) > 0) {
+		assert.equal(
+			(await nativeViewState()).views.length,
+			0,
+			`${label} restored the native page before its renderer exit completed`,
+		);
+	}
+	await locator.waitFor({ state: "detached" });
+}
+
+async function assertNativePagePreviewVisible() {
+	const preview = page.locator(".browser-native-page-preview");
+	await preview.waitFor({ state: "visible" });
+	await page.waitForFunction(() => {
+		const image = document.querySelector(".browser-native-page-preview");
+		return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+	});
 }
 
 async function waitForNativeViewportBounds(label) {
@@ -278,8 +425,12 @@ async function assertBrowserChromeLayout({
 			horizontalTabs: bounds(".browser-tab-row-horizontal"),
 			verticalTabs: bounds(".browser-tab-row-vertical"),
 			toolbar: bounds(".browser-toolbar"),
+			navigation: bounds(".browser-navigation"),
+			address: bounds(".browser-address"),
+			actions: bounds(".browser-toolbar-actions"),
 			bookmarks: bounds(".browser-bookmarks-bar"),
 			kestrel: bounds(".kestrel-sidebar"),
+			recommendations: bounds(".kestrel-widget-canvas"),
 			viewport: bounds("#browser-viewport"),
 			agent: bounds(".agent-sidebar"),
 			toolbarDragFill: bounds(".browser-toolbar-drag-fill"),
@@ -295,7 +446,15 @@ async function assertBrowserChromeLayout({
 	assert(layout.app);
 	assert(tabs);
 	assert(layout.toolbar);
+	assert(layout.navigation);
+	assert(layout.address);
+	assert(layout.actions);
 	assert(layout.viewport);
+	assert.equal(
+		layout.toolbar.height,
+		40,
+		"Browser toolbar should use the compact 40px row.",
+	);
 	assert.equal(
 		Boolean(layout.kestrel),
 		sidebarVisible,
@@ -331,9 +490,62 @@ async function assertBrowserChromeLayout({
 	} else {
 		assert.equal(tabs.x, layout.app.x);
 		assert.equal(tabs.width, layout.app.width);
+		assert(
+			layout.address.x >= layout.navigation.right - 1 &&
+			layout.address.x - layout.navigation.right <= 16,
+			`Address field left a dead zone after navigation: ${JSON.stringify({
+				navigation: layout.navigation,
+				address: layout.address,
+			})}`,
+		);
+		assert(
+			layout.actions.x >= layout.address.right - 1 &&
+				layout.actions.x - layout.address.right <= 16,
+			`Address field should end before the trailing browser actions: ${JSON.stringify({
+				address: layout.address,
+				actions: layout.actions,
+			})}`,
+		);
+		assert(
+			layout.address.width >= 240,
+			`Address field did not receive the available toolbar space: ${JSON.stringify({
+				address: layout.address,
+				toolbar: layout.toolbar,
+			})}`,
+		);
 	}
 	assert.equal(layout.toolbar.x, layout.app.x);
 	assert.equal(layout.toolbar.width, layout.app.width);
+	assert.equal(
+		await page.locator('.browser-toolbar-actions button[aria-label="Tools"]').count(),
+		1,
+		"Tools should remain available beside the address field",
+	);
+	assert.equal(
+		await page.locator('.browser-toolbar-actions button[aria-label="Page options"]').count(),
+		1,
+		"Page options should remain available beside the address field",
+	);
+	assert.equal(
+		await page.locator('.browser-toolbar-actions button[aria-label="History"]').count(),
+		1,
+		"History should remain available beside the address field",
+	);
+	if (sidebarVisible) {
+		assert.equal(
+			await page
+				.locator('.kestrel-sidebar')
+				.getByRole("button", { name: "Agent", exact: true })
+				.count(),
+			1,
+			"Kestrel navigation should expose Agent",
+		);
+	}
+	assert.equal(
+		await page.getByRole("button", { name: "Browser menu", exact: true }).count(),
+		1,
+		"Browser menu should remain the single overflow entry point",
+	);
 	if (sidebarVisible) {
 		assert(
 			layout.kestrel.y >= chromeBottom,
@@ -345,6 +557,12 @@ async function assertBrowserChromeLayout({
 			layout.viewport.x >= layout.kestrel.right,
 			"Browser content must begin after the lower Kestrel navigation rail",
 		);
+		if (layout.recommendations) {
+			assert(
+				layout.recommendations.x >= layout.kestrel.right,
+				"New Tab recommendations must sit beside the Kestrel navigation rail",
+			);
+		}
 	} else if (!vertical) {
 		assert.equal(
 			layout.viewport.x,
@@ -374,6 +592,146 @@ async function assertBrowserChromeLayout({
 	}
 }
 
+async function assertKestrelSidebarResize() {
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:navigation-sidebar", "open");
+	});
+	await page.reload();
+	await page.locator("#new-tab-title").waitFor();
+
+	const originalWindowSize = await application.evaluate(({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows().find(
+			(candidate) =>
+				!candidate.isDestroyed() &&
+				!candidate.webContents.getURL().includes("petOverlay=1"),
+		);
+		if (!window) throw new Error("The Kestrel window is unavailable.");
+		return window.getSize();
+	});
+	const handle = page.locator(".kestrel-sidebar-resize-handle");
+	const widenForResizeTest = !(await handle.isVisible().catch(() => false));
+	if (widenForResizeTest) {
+		const viewportWidthBeforeResize = await page.evaluate(() => innerWidth);
+		const resizeTestMinimumViewportWidth = 1200;
+		const resizeTestWidth = Math.max(
+			originalWindowSize[0],
+			Math.ceil(
+				(originalWindowSize[0] * resizeTestMinimumViewportWidth) /
+					Math.max(viewportWidthBeforeResize, 1),
+			) + 64,
+		);
+		await application.evaluate(
+			({ BrowserWindow }, width) => {
+				const window = BrowserWindow.getAllWindows().find(
+					(candidate) =>
+						!candidate.isDestroyed() &&
+						!candidate.webContents.getURL().includes("petOverlay=1"),
+				);
+				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setSize(width, window.getSize()[1]);
+			},
+			resizeTestWidth,
+		);
+		await page.waitForFunction(
+			(minimumWidth) => innerWidth >= minimumWidth,
+			resizeTestMinimumViewportWidth,
+		);
+	}
+
+	await handle.waitFor({ state: "visible" });
+	const initial = await page.locator(".kestrel-sidebar").evaluate((sidebar) => {
+		const resizeHandle = sidebar.querySelector(".kestrel-sidebar-resize-handle");
+		if (!resizeHandle) throw new Error("The Kestrel navigation resize handle is unavailable.");
+		const rect = sidebar.getBoundingClientRect();
+		return {
+			width: rect.width,
+			min: Number(resizeHandle.getAttribute("aria-valuemin")),
+			max: Number(resizeHandle.getAttribute("aria-valuemax")),
+			cursor: getComputedStyle(resizeHandle).cursor,
+		};
+	});
+	assert.equal(initial.cursor, "col-resize");
+	assert(initial.width >= initial.min - 1 && initial.width <= initial.max + 1);
+	assert(initial.max > initial.min);
+
+	const handleBox = await handle.boundingBox();
+	assert(handleBox, "The Kestrel navigation resize handle has no bounds.");
+	const targetWidth = Math.min(initial.max, initial.width + 72);
+	await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 120);
+	await page.mouse.down();
+	await page.mouse.move(
+		handleBox.x + handleBox.width / 2 + (targetWidth - initial.width),
+		handleBox.y + 120,
+		{ steps: 3 },
+	);
+	await page.mouse.up();
+	await page.waitForFunction(
+		({ expected, key }) => {
+			const sidebar = document.querySelector(".kestrel-sidebar");
+			return (
+				sidebar &&
+				Math.abs(sidebar.getBoundingClientRect().width - expected) <= 1 &&
+				Number(localStorage.getItem(key)) === Math.round(expected)
+			);
+		},
+		{ expected: targetWidth, key: "kestrel:navigation-sidebar-width" },
+	);
+
+	const overflow = await page.evaluate(() => {
+		const scroll = document.querySelector(".kestrel-sidebar-scroll");
+		return {
+			document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+			body: document.body.scrollWidth - document.body.clientWidth,
+			sidebar: scroll
+				? {
+					overflowX: getComputedStyle(scroll).overflowX,
+					scrollWidth: scroll.scrollWidth,
+					clientWidth: scroll.clientWidth,
+				}
+				: null,
+		};
+	});
+	assert(overflow.document <= 1, `Kestrel navigation created document overflow: ${JSON.stringify(overflow)}`);
+	assert(overflow.body <= 1, `Kestrel navigation created body overflow: ${JSON.stringify(overflow)}`);
+	assert.equal(overflow.sidebar?.overflowX, "hidden");
+
+	await page.reload();
+	await page.locator("#new-tab-title").waitFor();
+	await page.waitForFunction(
+		(expected) =>
+			Math.abs(
+				(document.querySelector(".kestrel-sidebar")?.getBoundingClientRect().width ?? 0) -
+					expected,
+			) <= 1,
+		targetWidth,
+	);
+
+	await page.evaluate(() => {
+		localStorage.removeItem("kestrel:navigation-sidebar-width");
+	});
+	await page.reload();
+	await page.locator("#new-tab-title").waitFor();
+
+	if (widenForResizeTest) {
+		await application.evaluate(
+			({ BrowserWindow }, [width, height]) => {
+				const window = BrowserWindow.getAllWindows().find(
+					(candidate) =>
+						!candidate.isDestroyed() &&
+						!candidate.webContents.getURL().includes("petOverlay=1"),
+				);
+				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setSize(width, height);
+			},
+			originalWindowSize,
+		);
+		await page.waitForFunction(
+			(expectedWidth) => Math.abs(innerWidth - expectedWidth) <= 2,
+			originalWindowSize[0],
+		);
+	}
+}
+
 async function activeViewScript(source) {
 	return application.evaluate(async ({ BrowserWindow }, script) => {
 		const window = BrowserWindow.getAllWindows().find(
@@ -386,6 +744,62 @@ async function activeViewScript(source) {
 			throw new Error("No active user browser view is attached.");
 		return view.webContents.executeJavaScript(script);
 	}, source);
+}
+
+async function setActiveViewFileInput(selector, files) {
+	return application.evaluate(
+		async ({ BrowserWindow }, { selector: target, files: paths }) => {
+			const window = BrowserWindow.getAllWindows().find(
+				(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+			);
+			const view = window?.contentView.children.find(
+				(child) => "webContents" in child,
+			);
+			if (!view || !("webContents" in view))
+				throw new Error("No active user browser view is attached.");
+			const webContents = view.webContents;
+			const attachedHere = !webContents.debugger.isAttached();
+			if (attachedHere) webContents.debugger.attach("1.3");
+			try {
+				const document = await webContents.debugger.sendCommand("DOM.getDocument", {
+					depth: 0,
+				});
+				const selected = await webContents.debugger.sendCommand(
+					"DOM.querySelector",
+					{ nodeId: document.root.nodeId, selector: target },
+				);
+				if (!selected.nodeId)
+					throw new Error("The native upload fixture was not found.");
+				await webContents.debugger.sendCommand("DOM.setFileInputFiles", {
+					nodeId: selected.nodeId,
+					files: paths,
+				});
+			} finally {
+				if (attachedHere && webContents.debugger.isAttached())
+					webContents.debugger.detach();
+			}
+		},
+		{ selector, files },
+	);
+}
+
+async function assertHeicUploadConversion() {
+	await setActiveViewFileInput("#image-upload", [heicUploadFixture]);
+	const deadline = Date.now() + 30_000;
+	let result = "";
+	while (Date.now() < deadline) {
+		result = await readActiveViewScript(
+			"document.querySelector('#image-upload-result').textContent",
+			"Native image upload fixture was not attached",
+		);
+		if (/files=kestrel-upload\.jpeg:image\/jpeg$/.test(result)) break;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	assert.match(
+		result,
+		/^input=1, change=1, files=kestrel-upload\.jpeg:image\/jpeg$/,
+		"HEIC uploads must be converted locally before the page receives them",
+	);
 }
 
 async function readActiveViewScript(source, label) {
@@ -440,6 +854,7 @@ async function createRuntimeSessionWithVisibleBrowser() {
 		const created = await window.kestrel.request({
 			type: "runtime-create-session",
 			title: "Visible browser test",
+			kind: "agent",
 		});
 		if (!created.ok || !("session" in created) || !created.session)
 			throw new Error("A fresh runtime session could not be created.");
@@ -516,6 +931,45 @@ try {
 	);
 	assert.equal(await page.getByRole("heading", { name: "Frequent tabs" }).count(), 1);
 	await assertBrowserChromeLayout();
+	const browserBeforeHeicUpload = await browserState();
+	const originalHeicUploadTabId = browserBeforeHeicUpload.activeTabId;
+	assert(originalHeicUploadTabId);
+	const heicUploadTabId = await page.evaluate(async (input) => {
+		const response = await window.kestrel.request({
+			type: "browser-create-tab",
+			input,
+			active: true,
+		});
+		if (!response.ok || !("browserState" in response))
+			throw new Error("The HEIC upload fixture tab could not be created.");
+		return response.browserState.activeTabId;
+	}, `${origin}/one`);
+	assert(heicUploadTabId);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"The HEIC upload fixture page did not load",
+	);
+	await assertHeicUploadConversion();
+	await page.evaluate(
+		async ({ uploadTabId, originalTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: uploadTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: originalTabId,
+			});
+		},
+		{ uploadTabId: heicUploadTabId, originalTabId: originalHeicUploadTabId },
+	);
+	await waitForBrowserState(
+		(value) =>
+			value.activeTabId === originalHeicUploadTabId &&
+			value.tabs.length === browserBeforeHeicUpload.tabs.length,
+		"The HEIC upload fixture tab did not close cleanly",
+	);
+	await assertKestrelSidebarResize();
 	const homeSend = page.getByRole("button", {
 		name: "Send message to Pragmatic",
 	});
@@ -564,7 +1018,7 @@ try {
 	assert.equal(homeSessionsAfter, homeSessionIdsBefore.length + 1);
 	await page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
+		.getByRole("button", { name: "New chat" })
 		.click();
 
 	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
@@ -574,7 +1028,7 @@ try {
 		.getByRole("tab", { name: /^Browser/ })
 		.click();
 	await page
-		.getByRole("heading", { name: "Make the browser feel like yours." })
+		.getByRole("heading", { name: "Browser", exact: true })
 		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 	await selectNewTab();
@@ -618,7 +1072,7 @@ try {
 	assert.equal(await page.locator(".runtime-suggestions").count(), 0);
 	await page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
+		.getByRole("button", { name: "New chat" })
 		.click();
 
 	const initialSessions = await page.evaluate(async () => {
@@ -632,13 +1086,52 @@ try {
 	const initialTabs = (await browserState()).tabs.length;
 	const tabList = page.getByRole("tablist", { name: "Browser tabs" });
 	assert.equal(await tabList.getAttribute("aria-orientation"), "horizontal");
-	await page.getByRole("button", { name: "New Tab", exact: true }).click();
+	await (await revealNewTabControl(page)).click();
 	let state = await browserState();
 	assert.equal(state.tabs.length, initialTabs + 1);
+	assert.equal(state.settings.tabSizing, "scrolling");
 	const addedBlankTab = state.activeTabId;
 	assert(addedBlankTab);
 	const horizontalTabs = page.getByRole("tab");
+	const tabRail = page.locator(".browser-tabs");
 	await horizontalTabs.nth(1).waitFor();
+	const lowCountTabWidths = await tabList
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	const lowCountRailMetrics = await tabRail.evaluate((node) => {
+		const tabs = [...node.querySelectorAll(".browser-tab")];
+		const first = tabs[0]?.getBoundingClientRect();
+		const last = tabs.at(-1)?.getBoundingClientRect();
+		const rail = node.getBoundingClientRect();
+		const newTab = document.querySelector(".browser-new-tab")?.getBoundingClientRect();
+		const dragFill = document
+			.querySelector(".browser-tab-drag-fill")
+			?.getBoundingClientRect();
+		return {
+			clientWidth: node.clientWidth,
+			scrollWidth: node.scrollWidth,
+			firstLeft: first?.left ?? null,
+			lastRight: last?.right ?? null,
+			railLeft: rail.left,
+			railRight: rail.right,
+			newTabLeft: newTab?.left ?? null,
+			dragFillWidth: dragFill?.width ?? null,
+		};
+	});
+	assert(
+		lowCountTabWidths.length >= 2 &&
+			lowCountTabWidths.every((width) => width >= 112 && width <= 241) &&
+			lowCountRailMetrics.scrollWidth <= lowCountRailMetrics.clientWidth + 1 &&
+			lowCountRailMetrics.firstLeft !== null &&
+			lowCountRailMetrics.lastRight !== null &&
+			Math.abs(lowCountRailMetrics.firstLeft - lowCountRailMetrics.railLeft) <= 2 &&
+			Math.abs(lowCountRailMetrics.lastRight - lowCountRailMetrics.railRight) <= 2 &&
+			lowCountRailMetrics.newTabLeft !== null &&
+			lowCountRailMetrics.newTabLeft - lowCountRailMetrics.lastRight <= 10 &&
+			lowCountRailMetrics.dragFillWidth !== null &&
+			lowCountRailMetrics.dragFillWidth <= 32,
+		`Low-count tabs did not keep a compact bounded width: ${JSON.stringify({ lowCountTabWidths, lowCountRailMetrics })}`,
+	);
 	const crowdedTabIds = await page.evaluate(async (count) => {
 		const ids = [];
 		for (let index = 0; index < count; index += 1) {
@@ -658,7 +1151,6 @@ try {
 		(value) => value.tabs.length === initialTabs + 1 + crowdedTabIds.length,
 		"crowded tab fixture",
 	);
-	const tabRail = page.locator(".browser-tabs");
 	const newTabControl = page.getByRole("button", {
 		name: "New Tab",
 		exact: true,
@@ -668,9 +1160,89 @@ try {
 		scrollWidth: node.scrollWidth,
 	}));
 	assert(
-		railMetrics.scrollWidth <= railMetrics.clientWidth + 1,
-		`Crowded tabs overflowed their rail: ${railMetrics.scrollWidth}px > ${railMetrics.clientWidth}px`,
+		railMetrics.scrollWidth > railMetrics.clientWidth + 1,
+		`Crowded tabs did not preserve their bounded scroll rail: ${railMetrics.scrollWidth}px <= ${railMetrics.clientWidth}px`,
 	);
+	const crowdedTabWidths = await tabRail
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	assert(
+		crowdedTabWidths.length > lowCountTabWidths.length &&
+			Math.max(...crowdedTabWidths) < Math.min(...lowCountTabWidths),
+		`Crowded tabs did not shrink relative to the low-count layout: ${JSON.stringify({ lowCountTabWidths, crowdedTabWidths })}`,
+	);
+	const horizontalTabToolsTrigger = page.getByRole("button", { name: "Tab tools" });
+	await horizontalTabToolsTrigger.click();
+	const horizontalTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await horizontalTabToolsMenu.waitFor();
+	const shrinkingTabsOption = horizontalTabToolsMenu.getByRole("menuitem", {
+		name: "Turn On Shrinking Tabs",
+		exact: true,
+	});
+	const horizontalScrollingTabsOption = horizontalTabToolsMenu.getByRole("menuitem", {
+		name: "Turn On Horizontal Scrolling Tabs",
+		exact: true,
+	});
+	assert.equal(await shrinkingTabsOption.count(), 1);
+	assert.equal(await horizontalScrollingTabsOption.count(), 0);
+	await shrinkingTabsOption.click();
+	await horizontalTabToolsMenu.waitFor({ state: "detached" });
+	state = await waitForBrowserState(
+		(value) => value.settings.tabSizing === "shrinking",
+		"switching to shrinking tabs",
+	);
+	await page.waitForFunction(() =>
+		document
+			.querySelector(".browser-tab-row-horizontal")
+			?.classList.contains("browser-tab-row-shrinking"),
+	);
+	const shrinkingRailMetrics = await tabRail.evaluate((node) => ({
+		clientWidth: node.clientWidth,
+		scrollWidth: node.scrollWidth,
+	}));
+	const shrinkingTabWidths = await tabRail
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	assert(
+		shrinkingRailMetrics.scrollWidth <= shrinkingRailMetrics.clientWidth + 1 &&
+			shrinkingTabWidths.every((width) => width > 0) &&
+			Math.max(...shrinkingTabWidths) < Math.max(...lowCountTabWidths),
+		`Shrinking tabs did not fit the available rail: ${JSON.stringify({ shrinkingRailMetrics, shrinkingTabWidths })}`,
+	);
+	await horizontalTabToolsTrigger.click();
+	await horizontalTabToolsMenu.waitFor();
+	const restoredHorizontalScrollingTabsOption = horizontalTabToolsMenu.getByRole(
+		"menuitem",
+		{ name: "Turn On Horizontal Scrolling Tabs", exact: true },
+	);
+	assert.equal(await restoredHorizontalScrollingTabsOption.count(), 1);
+	assert.equal(
+		await horizontalTabToolsMenu
+			.getByRole("menuitem", { name: "Turn On Shrinking Tabs", exact: true })
+			.count(),
+		0,
+	);
+	await restoredHorizontalScrollingTabsOption.click();
+	await horizontalTabToolsMenu.waitFor({ state: "detached" });
+	state = await waitForBrowserState(
+		(value) => value.settings.tabSizing === "scrolling",
+		"switching back to scrolling tabs",
+	);
+	await page.waitForFunction(() =>
+		!document
+			.querySelector(".browser-tab-row-horizontal")
+			?.classList.contains("browser-tab-row-shrinking"),
+	);
+	const restoredScrollingRailMetrics = await tabRail.evaluate((node) => ({
+		clientWidth: node.clientWidth,
+		scrollWidth: node.scrollWidth,
+	}));
+	assert(
+		restoredScrollingRailMetrics.scrollWidth > restoredScrollingRailMetrics.clientWidth + 1,
+		`Scrolling tabs did not restore the horizontal rail: ${JSON.stringify(restoredScrollingRailMetrics)}`,
+	);
+	await page.keyboard.press("Escape");
+	await horizontalTabToolsMenu.waitFor({ state: "detached" });
 	const railBounds = await tabRail.boundingBox();
 	const newTabBounds = await newTabControl.boundingBox();
 	const windowWidth = await page.evaluate(() => window.innerWidth);
@@ -714,14 +1286,33 @@ try {
 		.locator(".browser-tab")
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
 	assert(widthsBeforeClose.length >= 5);
-	await tabRail.locator(".browser-tab.active .browser-tab-close").click();
+	assert(
+		widthsBeforeClose.every((width) => width > 0),
+		`Crowded tabs collapsed to zero-width targets: ${JSON.stringify(widthsBeforeClose)}`,
+	);
+	// Dispatch every close click before the first IPC round-trip settles. The tab
+	// rail must keep the same measured width while these requests are queued so
+	// a rapid close burst never turns the next close target into a moving target.
+	const closeBurstTabIds = crowdedTabIds;
+	await page.evaluate((tabIds) => {
+		for (const tabId of tabIds) {
+			const close = document.querySelector(
+				`.browser-tab[data-tab-id="${tabId}"] .browser-tab-close`,
+			);
+			if (!(close instanceof HTMLButtonElement))
+				throw new Error(`Missing close target for ${tabId}.`);
+			close.click();
+		}
+	}, closeBurstTabIds);
 	state = await waitForBrowserState(
-		(value) => value.tabs.length === initialTabs + crowdedTabIds.length,
-		"closing one crowded tab from the tab strip",
+		(value) =>
+			value.tabs.length ===
+				initialTabs + 1 + crowdedTabIds.length - closeBurstTabIds.length,
+		"closing a crowded tab burst from the tab strip",
 	);
 	await page.waitForFunction(
 		(count) => document.querySelectorAll(".browser-tabs .browser-tab").length === count,
-		widthsBeforeClose.length - 1,
+		widthsBeforeClose.length - closeBurstTabIds.length,
 	);
 	const widthsDuringClose = await tabRail
 		.locator(".browser-tab")
@@ -737,11 +1328,13 @@ try {
 		.locator(".browser-tab")
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
 	assert(
-		widthsAfterClose[0] > widthsBeforeClose[0] + 1,
-		`Tabs did not refit after the close burst: ${widthsAfterClose[0]}px vs ${widthsBeforeClose[0]}px`,
+		widthsAfterClose.length ===
+			widthsBeforeClose.length - closeBurstTabIds.length &&
+			widthsAfterClose.every((width) => width > widthsBeforeClose[0] + 1),
+		`The tab strip did not refit after the close settled: ${JSON.stringify({ widthsBeforeClose, widthsAfterClose })}`,
 	);
 	const remainingCrowdedTabIds = crowdedTabIds.filter(
-		(tabId) => tabId !== lastCrowdedTabId,
+		(tabId) => !closeBurstTabIds.includes(tabId),
 	);
 	await page.evaluate(async (tabIds) => {
 		for (const tabId of tabIds)
@@ -750,6 +1343,12 @@ try {
 	await waitForBrowserState(
 		(value) => value.tabs.length === initialTabs + 1,
 		"crowded tab cleanup",
+	);
+	await page.waitForFunction(
+		(before) =>
+			(document.querySelector(".browser-tabs .browser-tab")?.getBoundingClientRect()
+				.width ?? 0) > before + 1,
+		widthsBeforeClose[0],
 	);
 	await horizontalTabs.first().focus();
 	await horizontalTabs.first().press("ArrowRight");
@@ -782,7 +1381,7 @@ try {
 	await page.locator("#runtime-prompt").fill("Draft that must be cleared");
 	await page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
+		.getByRole("button", { name: "New chat" })
 		.click();
 	const clearedDraft = await page.waitForFunction(() => {
 		const prompt = document.querySelector("#runtime-prompt");
@@ -874,6 +1473,49 @@ try {
 	assert.equal(loaded.browserWindowCount, 1);
 	assert.equal(loaded.views[0].title, "Page one");
 	assert.equal(loaded.views[0].destroyed, false);
+	const formSourceTabId = (await browserState()).activeTabId;
+	assert(formSourceTabId);
+	const tabsBeforeFormLaunch = (await browserState()).tabs.length;
+	await readActiveViewScript(
+		"document.querySelector('#lti-launch').requestSubmit()",
+		"Native page was not attached for form POST verification",
+	);
+	state = await waitForBrowserState(
+		(value) =>
+			value.tabs.length === tabsBeforeFormLaunch + 1 &&
+			value.tabs.some((tab) => tab.url === `${origin}/lti-launch`),
+		"target=_blank form did not open a managed tab",
+	);
+	const formLaunchTab = state.tabs.find(
+		(tab) => tab.url === `${origin}/lti-launch`,
+	);
+	assert(formLaunchTab);
+	const formLaunchRequest = await waitForPostLaunchRequest(
+		"target=_blank form POST",
+	);
+	assert.equal(formLaunchRequest.method, "POST");
+	assert.deepEqual(Object.fromEntries(new URLSearchParams(formLaunchRequest.body)), {
+		iss: "https://canvas.example/issuer",
+		login_hint: "student",
+		target_link_uri: "https://courseware.example/math",
+	});
+	await page.evaluate(
+		async ({ formLaunchTabId, sourceTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: formLaunchTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: sourceTabId,
+			});
+		},
+		{ formLaunchTabId: formLaunchTab.id, sourceTabId: formSourceTabId },
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Original tab was not restored after form POST launch",
+	);
 	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
 	await assertBrowserChromeLayout({ sidebarVisible: false });
 	const resized = await waitForNativeViewportBounds(
@@ -895,23 +1537,220 @@ try {
 	// Menus opened from the browser chrome must temporarily release that view;
 	// DOM z-index alone cannot place a renderer menu above a native sibling.
 	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
-	await page.getByRole("menu", { name: "Tab tools" }).waitFor();
+	const initialTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await initialTabToolsMenu.waitFor();
+	await assertNativePagePreviewVisible();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained above the tab tools menu",
 	);
 	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(initialTabToolsMenu, "Tab tools menu");
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing tab tools",
 	);
-	await page.getByRole("button", { name: "Tools", exact: true }).click();
-	await page.getByRole("menu", { name: "Tools" }).waitFor();
+	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
+	const browserMenu = page.getByRole("menu", { name: "Browser menu" });
+	await browserMenu.waitFor();
+	await assertNativePagePreviewVisible();
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the browser menu",
+	);
+	for (const label of [
+		"New tab",
+		"Zoom out",
+		"Reset zoom to 100 percent",
+		"Zoom in",
+		"Favorites",
+		"History",
+		"Tab groups",
+		"Downloads",
+		"Extensions",
+		"Passwords",
+		"Clear browsing data…",
+		"Print page",
+		"Screenshot",
+		"Find in page…",
+		"More tools",
+		"Page options",
+		"Settings",
+		"Command Center",
+	])
+		assert.equal(
+			await browserMenu.getByRole("menuitem", { name: label }).count(),
+			1,
+			`Browser menu is missing ${label}`,
+		);
+	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(browserMenu, "Browser menu");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing browser menu",
+	);
+	await sendInputToActiveView(
+		{ type: "keyDown", keyCode: "=", modifiers: ["control"] },
+		"The browser zoom-in shortcut could not reach the active page",
+	);
+	await page.locator(".browser-zoom-feedback").filter({ hasText: "110%" }).waitFor();
+	assert.equal(
+		await application.evaluate(({ BrowserWindow }) => {
+			const window = BrowserWindow.getAllWindows().find(
+				(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+			);
+			const view = window?.contentView.children.find(
+				(child) => "webContents" in child,
+			);
+			if (!view || !("webContents" in view))
+				throw new Error("No active user browser view is attached.");
+			return Math.round(view.webContents.getZoomFactor() * 100);
+		}),
+		110,
+		"The visible zoom feedback did not match the native page scale",
+	);
+	await sendInputToActiveView(
+		{ type: "keyDown", keyCode: "-", modifiers: ["control"] },
+		"The browser zoom-out shortcut could not reach the active page",
+	);
+	await page.locator(".browser-zoom-feedback").filter({ hasText: "100%" }).waitFor();
+	const extensionsSourceTabId = (await browserState()).activeTabId;
+	assert(extensionsSourceTabId);
+	await page.getByRole("button", { name: "Extensions", exact: true }).click();
+	const extensionsMenu = page.getByRole("menu", { name: "Extensions" });
+	await extensionsMenu.waitFor();
+	await assertNativePagePreviewVisible();
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the extensions menu",
+	);
+	const storeLink = extensionsMenu.getByRole("menuitem", {
+		name: "Go to store",
+		exact: true,
+	});
+	assert.equal(await storeLink.count(), 1);
+	assert.equal(
+		await storeLink.getAttribute("href"),
+		"https://chromewebstore.google.com",
+	);
+	await storeLink.click();
+	state = await waitForBrowserState(
+		(value) =>
+			value.activeTabId !== extensionsSourceTabId &&
+			value.tabs.some(
+				(tab) =>
+					tab.id === value.activeTabId &&
+					tab.url.startsWith("https://chromewebstore.google.com"),
+			),
+		"Go to store did not open the Chrome Web Store in a new tab",
+	);
+	const storeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+	assert(storeTab);
+	const storeExtensionId = "bcjindcccaagfpapjjmafapmmgkkhgoa";
+	const storeListingUrl =
+		`https://chromewebstore.google.com/detail/json-formatter/${storeExtensionId}`;
+	await page.evaluate(
+		async ({ tabId, input }) => {
+			await window.kestrel.request({
+				type: "browser-navigate",
+				tabId,
+				input,
+			});
+		},
+		{ tabId: storeTab.id, input: storeListingUrl },
+	);
+	await waitForBrowserState(
+		(value) =>
+			value.activeTabId === storeTab.id &&
+			value.tabs.some(
+				(tab) => tab.id === storeTab.id && tab.url === storeListingUrl,
+			),
+		"Chrome Web Store listing did not load in the managed tab",
+	);
+	const storeInstallBar = page.getByRole("region", {
+		name: "Chrome Web Store installation",
+	});
+	await storeInstallBar.waitFor();
+	const reviewAndAdd = storeInstallBar.getByRole("button", {
+		name: "Review & add",
+		exact: true,
+	});
+	await reviewAndAdd.waitFor();
+	assert.equal(await reviewAndAdd.isEnabled(), true);
+	if (verifyRealChromeWebStoreInstall) {
+		await reviewAndAdd.click();
+		const compatibilityDialog = page.getByRole("dialog", {
+			name: "Review extension",
+			exact: true,
+		});
+		await compatibilityDialog.waitFor({ timeout: 60_000 });
+		await compatibilityDialog
+			.getByText("Verified Chrome Web Store package", { exact: true })
+			.waitFor();
+		await compatibilityDialog
+			.getByRole("button", {
+				name: "Install reviewed extension",
+				exact: true,
+			})
+			.click();
+		await compatibilityDialog.waitFor({ state: "detached", timeout: 60_000 });
+		await storeInstallBar
+			.getByText("Added to Kestrel", { exact: true })
+			.waitFor({ timeout: 60_000 });
+		const installedExtensions = await page.evaluate(async () => {
+			const response = await window.kestrel.request({
+				type: "browser-list-extensions",
+			});
+			return response.ok && "extensions" in response ? response.extensions : [];
+		});
+		const installedExtension = installedExtensions.find(
+			(extension) => extension.id === storeExtensionId,
+		);
+		assert(installedExtension, "Reviewed Chrome Web Store extension was not registered");
+		assert.equal(installedExtension.source, "chrome_web_store");
+		assert.equal("path" in installedExtension, false);
+		assert(installedExtension.compatibility);
+		assert.notEqual(
+			installedExtension.compatibility.state,
+			"unsupported",
+			"An installed extension must not report an unsupported compatibility state",
+		);
+	} else {
+		// Package inspection downloads and installs are intentionally opt-in so the
+		// default visible-browser smoke stays hermetic.
+		assert.equal(await page.getByRole("dialog").count(), 0);
+	}
+	await page.evaluate(
+		async ({ storeTabId, sourceTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: storeTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: sourceTabId,
+			});
+		},
+		{ storeTabId: storeTab.id, sourceTabId: extensionsSourceTabId },
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Original tab was not restored after opening the Chrome Web Store",
+	);
+	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
+	await page
+		.getByRole("menu", { name: "Browser menu" })
+		.getByRole("menuitem", { name: "More tools", exact: true })
+		.click();
+	const toolbarToolsMenu = page.getByRole("menu", { name: "Tools" });
+	await toolbarToolsMenu.waitFor();
+	await assertNativePagePreviewVisible();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained above the toolbar tools menu",
 	);
 	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(toolbarToolsMenu, "Toolbar tools menu");
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing toolbar tools",
@@ -935,7 +1774,12 @@ try {
 	await page.waitForFunction(
 		() => document.activeElement?.id === "browser-address-input",
 	);
+	await assertNativePagePreviewVisible();
 	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(
+		page.locator("#browser-address-suggestions"),
+		"Address suggestions",
+	);
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after leaving the address bar",
@@ -944,16 +1788,156 @@ try {
 		document.querySelector("#browser-address-input")?.blur();
 	});
 	await page.locator("#browser-address-input").click();
+	await page.waitForFunction(() => {
+		const input = document.querySelector("#browser-address-input");
+		return (
+			input instanceof HTMLInputElement &&
+			document.activeElement === input &&
+			input.selectionStart === 0 &&
+			input.selectionEnd === input.value.length
+		);
+	});
 	await page.waitForFunction(
 		() => document.activeElement?.id === "browser-address-input",
 	);
+	const addressInput = page.locator("#browser-address-input");
+	const currentAddress = `${origin}/one`;
+	assert.equal(await addressInput.inputValue(), currentAddress);
+	const selection = await addressInput.evaluate((node) => ({
+		start: node.selectionStart,
+		end: node.selectionEnd,
+		length: node.value.length,
+	}));
+	assert.deepEqual(selection, {
+		start: 0,
+		end: selection.length,
+		length: selection.length,
+	});
+	await addressInput.press("Meta+C");
 	assert.equal(
-		await page.locator("#browser-address-input").inputValue(),
-		`${origin}/one`,
+		await application.evaluate(({ clipboard }) => clipboard.readText()),
+		currentAddress,
+	);
+	const pastedAddress = `${origin}/two`;
+	await application.evaluate(
+		({ clipboard }, text) => clipboard.writeText(text),
+		pastedAddress,
+	);
+	await addressInput.press("Meta+V");
+	await page.waitForFunction(
+		(expected) =>
+			document.querySelector("#browser-address-input")?.value === expected,
+		pastedAddress,
+	);
+	assert.equal(await addressInput.inputValue(), pastedAddress);
+	await addressInput.fill(currentAddress);
+	await page.locator("#browser-address-suggestions").waitFor();
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the address suggestions",
+	);
+	await page.keyboard.press("Escape");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing address suggestions",
+	);
+
+	state = await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === `${origin}/one` && active.faviconDataUrl?.startsWith("data:image/");
+		},
+		"Fixture favicon did not reach the active browser tab",
+	);
+	const bookmarkTrigger = page.getByRole("button", {
+		name: "Bookmark this page",
+		exact: true,
+	});
+	await bookmarkTrigger.click();
+	const bookmarkDialog = page.getByRole("dialog", { name: "Save bookmark" });
+	await bookmarkDialog.waitFor();
+	assert.deepEqual(
+		await bookmarkDialog.locator(".bookmark-dialog-option-copy strong").allTextContents(),
+		["Full link", "Suggested title", "Icon only"],
+	);
+	assert.equal(await bookmarkDialog.locator(".bookmark-dialog-option-preview").count(), 3);
+	assert.equal(
+		await bookmarkDialog.locator('input[type="radio"][value="full"]').isChecked(),
+		true,
+	);
+	assert(
+		(await bookmarkDialog.locator(".bookmark-dialog-preview-label").first().textContent())?.includes(
+			`${origin}/one`,
+		),
+	);
+	await bookmarkDialog.locator('input[type="radio"][value="title"]').check();
+	assert.equal(
+		(await bookmarkDialog.locator(".bookmark-dialog-preview-label").first().textContent())?.trim(),
+		"Page one",
+	);
+	await bookmarkDialog.locator('input[type="radio"][value="icon"]').check();
+	assert.equal(await bookmarkDialog.locator(".bookmark-dialog-preview-entry.icon-only").count(), 1);
+	await bookmarkDialog.getByRole("button", { name: "New folder", exact: true }).click();
+	await bookmarkDialog.getByPlaceholder("Folder name").fill("Reading");
+	await bookmarkDialog.getByRole("button", { name: "Create", exact: true }).click();
+	const bookmarkFolderSelect = bookmarkDialog.locator("#bookmark-folder-select");
+	await page.waitForFunction(
+		() => document.querySelector("#bookmark-folder-select")?.value !== "",
+	);
+	const createdFolderId = await bookmarkFolderSelect.inputValue();
+	assert(createdFolderId);
+	await bookmarkDialog.getByRole("button", { name: "Save bookmark", exact: true }).click();
+	await bookmarkDialog.waitFor({ state: "detached" });
+	state = await waitForBrowserState(
+		(value) =>
+			value.bookmarks.some(
+				(bookmark) =>
+					bookmark.url === `${origin}/one` &&
+					bookmark.displayMode === "icon" &&
+					bookmark.folderId === createdFolderId &&
+					bookmark.faviconDataUrl?.startsWith("data:image/"),
+			),
+		"Bookmark presentation choice was not persisted",
+	);
+	await page.getByRole("button", { name: "New Tab", exact: true }).click();
+	await page.locator(".browser-bookmarks-bar").waitFor();
+	const folderTrigger = page.getByRole("button", { name: "Reading", exact: true });
+	await folderTrigger.click();
+	const folderMenu = page.getByRole("menu", { name: "Reading bookmarks" });
+	await folderMenu.waitFor();
+	assert.equal(await folderMenu.getByRole("menuitem", { name: "Open Page one" }).count(), 1);
+	assert.equal(await folderMenu.locator("img").count(), 1);
+	await page.keyboard.press("Escape");
+	await page.getByRole("button", { name: "Manage bookmarks", exact: true }).click();
+	await page.getByRole("heading", { name: "Saved pages", exact: true }).waitFor();
+	const savedBookmarkRow = page.locator(`.bookmark-library-list > li`).first();
+	await savedBookmarkRow.getByRole("button", { name: "Edit", exact: true }).click();
+	await savedBookmarkRow.locator(".bookmark-library-edit").waitFor();
+	assert.equal(
+		await savedBookmarkRow.locator('.bookmark-library-edit select').nth(0).inputValue(),
+		"icon",
+	);
+	await savedBookmarkRow.getByRole("button", { name: "Remove", exact: true }).click();
+	await page.waitForFunction(
+		() => document.querySelectorAll(".bookmark-library-list > li").length === 0,
+	);
+	const folderRow = page.locator(".bookmark-library-folders > ul > li").first();
+	await folderRow.getByRole("button", { name: "Delete", exact: true }).click();
+	await folderRow.getByText("Move pages to bar?", { exact: true }).waitFor();
+	await folderRow.getByRole("button", { name: "Delete", exact: true }).click();
+	await page.waitForFunction(
+		() => document.querySelectorAll(".bookmark-library-folders > ul > li").length === 0,
+	);
+	state = await browserState();
+	const pageOneTabId = state.tabs.find((tab) => tab.url === `${origin}/one`)?.id;
+	assert(pageOneTabId);
+	await page.evaluate(
+		async (tabId) => window.kestrel.request({ type: "browser-select-tab", tabId }),
+		pageOneTabId,
 	);
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
-		"Native page detached when the address bar was focused",
+		"Browser did not return to Page one after bookmark management",
 	);
 
 	state = await browserState();
@@ -962,18 +1946,239 @@ try {
 	const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
 	await page.getByRole("button", { name: "Open Agent tab" }).click();
 	await page
-		.getByRole("heading", { name: "Tasks", exact: true })
+		.getByRole("heading", { name: "Agent Universe", exact: true })
+		.waitFor();
+	await page.locator(".kestrel-sidebar").waitFor();
+	assert.equal(
+		await page.getByRole("button", { name: "New agent", exact: true }).count(),
+		1,
+		"Agent Universe should expose an explicit persistent-agent creation control.",
+	);
+	await page.getByRole("button", { name: "Open agent settings", exact: true }).click();
+	await page
+		.getByRole("heading", { name: "Workspace and sessions", exact: true })
+		.waitFor();
+	await page.getByText("Persistent agent planets", { exact: true }).waitFor();
+	await page
+		.getByRole("combobox", { name: "Planet for Visible browser test", exact: true })
+		.waitFor();
+	await openKestrelDestination(page, "Agent");
+	await page
+		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over Agent",
 	);
-	const taskRow = page.getByRole("button", {
-		name: /Visible browser test, Open/,
-	});
-	await taskRow.waitFor();
-	await taskRow.click();
-	assert.equal(await taskRow.getAttribute("aria-current"), "page");
+	const workerSessionId = await page.evaluate(async (parentSessionId) => {
+		const response = await window.kestrel.request({
+			type: "runtime-fork-session",
+			sessionId: parentSessionId,
+			title: "Visible browser worker",
+		});
+		if (!response.ok || !response.session)
+			throw new Error("A delegated runtime session could not be created.");
+		return response.session.id;
+	}, runtimeSessionId);
+	await page.locator(".agent-universe-scene").waitFor();
+	const rootNode = page.locator(`[data-node-id="${runtimeSessionId}"]`);
+	await rootNode.waitFor();
+	await page.locator(`[data-node-id="${workerSessionId}"]`).waitFor();
+	const workerNode = page.locator(`[data-node-id="${workerSessionId}"]`);
+	const workerHit = workerNode.locator(".agent-universe-node-hit");
+	const rootBody = rootNode.locator(".agent-universe-node-body");
+	const workerBody = workerNode.locator(".agent-universe-node-body");
+	await page.waitForFunction((id) => {
+		const body = document.querySelector(
+			`[data-node-id="${id}"] .agent-universe-node-body`,
+		);
+		return (
+			body?.getAttribute("data-physics-dragging") === "false" &&
+			Number(body.getAttribute("data-physics-displacement")) < 0.5
+		);
+	}, runtimeSessionId);
+	await page.waitForFunction((id) => {
+		const body = document.querySelector(
+			`[data-node-id="${id}"] .agent-universe-node-body`,
+		);
+		return (
+			body?.getAttribute("data-physics-dragging") === "false" &&
+			Number(body.getAttribute("data-physics-displacement")) < 0.5
+		);
+	}, workerSessionId);
+
+	const rootBox = await rootNode.locator(".agent-universe-node-hit").boundingBox();
+	assert(rootBox, "The root agent had no visible hit area.");
+	const initialRootX = Number(await rootBody.getAttribute("data-physics-x"));
+	const initialWorkerX = Number(await workerBody.getAttribute("data-physics-x"));
+	const initialWorkerY = Number(await workerBody.getAttribute("data-physics-y"));
+	await page.mouse.move(
+		rootBox.x + rootBox.width / 2,
+		rootBox.y + rootBox.height / 2,
+	);
+	await page.mouse.down();
+	await page.mouse.move(
+		rootBox.x + rootBox.width / 2 + 110,
+		rootBox.y + rootBox.height / 2 + 34,
+		{ steps: 10 },
+	);
+	await page.waitForFunction(
+		(id) =>
+			document
+				.querySelector(`[data-node-id="${id}"] .agent-universe-node-body`)
+				?.getAttribute("data-physics-dragging") === "true",
+		runtimeSessionId,
+	);
+	assert(
+		Math.abs(Number(await rootBody.getAttribute("data-physics-x")) - initialRootX) > 10,
+		"Dragging the root did not move the planet.",
+	);
+	await page.waitForFunction((id) => {
+		const body = document.querySelector(
+			`[data-node-id="${id}"] .agent-universe-node-body`,
+		);
+		return Number(body?.getAttribute("data-physics-displacement")) > 0.5;
+	}, workerSessionId);
+	const currentWorkerX = Number(await workerBody.getAttribute("data-physics-x"));
+	const currentWorkerY = Number(await workerBody.getAttribute("data-physics-y"));
+	assert(
+		Math.hypot(
+			currentWorkerX - initialWorkerX,
+			currentWorkerY - initialWorkerY,
+		) > 0.5,
+		"Dragging the root did not carry its moon.",
+	);
+	await page.mouse.up();
+	await page.waitForFunction((id) => {
+		const body = document.querySelector(
+			`[data-node-id="${id}"] .agent-universe-node-body`,
+		);
+		return (
+			body?.getAttribute("data-physics-dragging") === "false" &&
+			body?.closest("[data-system-positioned]")?.getAttribute("data-system-positioned") ===
+				"true"
+		);
+	}, runtimeSessionId);
+	const placedRootX = Number(await rootBody.getAttribute("data-physics-x"));
+	const placedRootY = Number(await rootBody.getAttribute("data-physics-y"));
+	await page.waitForTimeout(250);
+	assert(
+		Math.hypot(
+			Number(await rootBody.getAttribute("data-physics-x")) - placedRootX,
+			Number(await rootBody.getAttribute("data-physics-y")) - placedRootY,
+		) < 1,
+		"The root planet returned to its generated position instead of staying placed.",
+	);
+	await page.waitForFunction((id) => {
+		const body = document.querySelector(
+			`[data-node-id="${id}"] .agent-universe-node-body`,
+		);
+		return (
+			body?.getAttribute("data-physics-dragging") === "false" &&
+			Number(body.getAttribute("data-physics-displacement")) < 0.5
+		);
+	}, workerSessionId);
+
+	const workerBox = await workerHit.boundingBox();
+	assert(workerBox, "The delegated worker had no visible hit area.");
+	const workerCenter = {
+		x: workerBox.x + workerBox.width / 2,
+		y: workerBox.y + workerBox.height / 2,
+	};
+	await page.mouse.move(workerCenter.x, workerCenter.y);
+	await page.mouse.down();
+	await page.mouse.move(workerCenter.x + 140, workerCenter.y - 28, { steps: 12 });
+	await page.waitForFunction(
+		(id) =>
+			document.querySelector(`[data-node-id="${id}"] .agent-universe-node-body`)
+				?.getAttribute("data-physics-dragging") === "true",
+		workerSessionId,
+	);
+	const draggedDisplacement = await workerBody.getAttribute("data-physics-displacement");
+	assert(
+		Number(draggedDisplacement) > 0,
+		"Dragging a worker did not produce spatial displacement.",
+	);
+	await page.mouse.up();
+	await page.waitForFunction(
+		(id) => {
+			const body = document.querySelector(
+				`[data-node-id="${id}"] .agent-universe-node-body`,
+			);
+			return (
+				body?.getAttribute("data-physics-dragging") === "false" &&
+				Number(body.getAttribute("data-physics-displacement")) < 0.5
+			);
+		},
+		workerSessionId,
+	);
+	await page.locator(`[data-node-id="${workerSessionId}"]`).click();
+	await page
+		.getByRole("heading", { name: "Visible browser worker", exact: true })
+		.waitFor();
+	assert.equal(
+		await page.getByRole("button", { name: "Send message to Visible browser worker", exact: true }).count(),
+		1,
+		"A delegated moon should expose its own conversation composer.",
+	);
+	await page
+		.getByRole("button", { name: "Back to the map from Visible browser worker" })
+		.click();
+	assert.equal(
+		await page.getByRole("button", { name: "List", exact: true }).count(),
+		0,
+		"Agent should have one spatial surface, not a list mode",
+	);
+	await page.getByRole("button", { name: "Back to solar system", exact: true }).click();
+	await page.waitForFunction((id) => {
+		const system = document.querySelector(
+			`[data-node-id="${id}"]`,
+		)?.closest("[data-system-positioned]");
+		return system?.getAttribute("data-system-positioned") === "true";
+	}, runtimeSessionId);
+	assert(
+		Math.abs(Number(await rootBody.getAttribute("data-physics-x")) - placedRootX) < 1,
+		"The planet placement was not preserved when returning to the overview.",
+	);
+	assert.equal(
+		await page.getByRole("button", { name: "Back to solar system", exact: true }).count(),
+		0,
+		"Focused systems should have a clear route back to the solar system.",
+	);
+	await page.locator(".agent-universe-node.is-core").first().click();
+	await page.getByRole("heading", { name: "Visible browser test", exact: true }).waitFor();
+	await page.getByRole("heading", { name: "Conversation", exact: true }).waitFor();
+	assert.equal(
+		await page.getByRole("button", { name: "Visible browser test settings", exact: true }).count(),
+		1,
+		"The selected agent should expose its settings from the chat header.",
+	);
+	assert.equal(
+		await page.locator(".agent-universe-context-surface .agent-universe-context-composer textarea").count(),
+		1,
+		"The main system should expose the primary conversation composer.",
+	);
+	assert.equal(
+		await page.getByText("Kestrel model system", { exact: true }).count(),
+		1,
+		"The Agent Universe composer should use Kestrel's model system label.",
+	);
+	assert.equal(
+		await page.getByRole("button", { name: "Review approvals", exact: true }).count(),
+		0,
+		"The Agent Universe conversation surface should not own approval actions.",
+	);
+	await page.locator(".agent-universe-context-surface textarea").fill(
+		"A short system message that should remain comfortably compact.",
+	);
+	await page.locator(".agent-universe-context-close").click();
+	await workerNode.focus();
+	await workerNode.press("Enter");
+	await page.getByRole("heading", { name: "Visible browser worker", exact: true }).waitFor();
+	await page.getByRole("button", { name: "Open task", exact: true }).click();
+	await page.waitForFunction(
+		() => document.activeElement?.id === "runtime-prompt",
+	);
 	await page.getByRole("tab", { name: /Page one/ }).first().click();
 	await waitForBrowserState(
 		(value) => {
@@ -1000,11 +2205,22 @@ try {
 		),
 		"Waiting",
 	);
+	const typingSnapshot = await callTool(
+		runtimeSessionId,
+		"browser.visible-snapshot",
+		{ tabId },
+		{ approvalStatus: "approved" },
+	);
+	assert.equal(typingSnapshot?.status, "verified");
+	const nameFieldRef = typingSnapshot?.output?.interactive?.find(
+		(target) => target.role === "textbox" && target.name === "Name",
+	)?.ref;
+	assert(nameFieldRef, "The visible browser snapshot did not expose the Name field.");
 
 	const typed = await callTool(
 		runtimeSessionId,
 		"browser.visible-act",
-		{ tabId, action: { type: "type", target: "#name", text: "Kestrel" } },
+		{ tabId, action: { type: "type", target: nameFieldRef, text: "Kestrel" } },
 		{
 			approvalStatus: "approved",
 			idempotencyKey: "visible-browser-approved-type",
@@ -1182,24 +2398,23 @@ try {
 	assert(detachableBounds);
 	const detachX = detachableBounds.x + detachableBounds.width / 2;
 	const detachY = detachableBounds.y + detachableBounds.height / 2;
-	await detachableTab.dispatchEvent("pointerdown", {
-		button: 0,
-		clientX: detachX,
-		clientY: detachY,
-		pointerId: 1,
-		pointerType: "mouse",
-		isPrimary: true,
-	});
+	await page.mouse.move(detachX, detachY);
+	await page.mouse.down();
 	await page.waitForTimeout(50);
-	await page.mouse.move(detachX, detachY + 64, { steps: 8 });
-	await detachableTab.dispatchEvent("pointerup", {
-		button: 0,
-		clientX: detachX,
-		clientY: detachY + 64,
-		pointerId: 1,
-		pointerType: "mouse",
-		isPrimary: true,
-	});
+	// Tear-off should work with the diagonal, slightly outward gesture people
+	// naturally make—not only with a perfectly vertical drag. Keep the tab in
+	// the source window until release so it can be carried to another monitor.
+	await page.mouse.move(detachX + 72, detachY + 28, { steps: 8 });
+	await waitForBrowserState(
+		(value) => value.tabs.some((tab) => tab.id === detachableTabId),
+		"Tab detached before the tear-off gesture was released",
+	);
+	await page.mouse.move(detachX + 190, detachY + 120, { steps: 8 });
+	await waitForBrowserState(
+		(value) => value.tabs.some((tab) => tab.id === detachableTabId),
+		"Tab detached while it was being carried to its drop point",
+	);
+	await page.mouse.up();
 	await waitForBrowserState(
 		(value) => !value.tabs.some((tab) => tab.id === detachableTabId),
 		"Detached tab did not leave the source window",
@@ -1221,16 +2436,133 @@ try {
 	await detachedPage.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	await detachedPage.locator("#browser-address-input").waitFor();
 	assert.equal(await detachedPage.getByRole("tab", { name: "Page two", exact: true }).count(), 1);
-	await detachedPage.close();
+	const detachedPlacement = await application.evaluate(
+		({ BrowserWindow, screen }, expectedUrl) => {
+			const cursor = screen.getCursorScreenPoint();
+			const workArea = screen.getDisplayNearestPoint(cursor).workArea;
+			const detached = BrowserWindow.getAllWindows().find((candidate) =>
+				candidate.contentView.children.some(
+					(child) =>
+						"webContents" in child && child.webContents.getURL() === expectedUrl,
+				),
+			);
+			const bounds = detached?.getBounds() ?? null;
+			const clamp = (value, minimum, maximum) =>
+				Math.round(Math.max(minimum, Math.min(value, maximum)));
+			return {
+				cursor,
+				bounds,
+				workArea,
+				expectedBounds: bounds
+					? {
+						x: clamp(
+							cursor.x - 180,
+							workArea.x,
+							workArea.x + workArea.width - bounds.width,
+						),
+						y: clamp(
+							cursor.y - 20,
+							workArea.y,
+							workArea.y + workArea.height - bounds.height,
+						),
+					}
+					: null,
+			};
+		},
+		`${origin}/two`,
+	);
+	assert(
+		detachedPlacement.bounds &&
+			detachedPlacement.expectedBounds &&
+			Math.abs(detachedPlacement.bounds.x - detachedPlacement.expectedBounds.x) <= 1 &&
+			Math.abs(detachedPlacement.bounds.y - detachedPlacement.expectedBounds.y) <= 1,
+		`Detached window did not open at the pointer-relative, work-area-clamped position: ${JSON.stringify(detachedPlacement)}`,
+	);
+	await detachedPage
+		.getByRole("button", {
+			name: "Move tab back to main window",
+			exact: true,
+		})
+		.click();
 	await waitForBrowserState(
 		(value) =>
-			value.tabs.length === sourceTabIdsBeforeDetach.length &&
+			value.tabs.length === sourceTabIdsBeforeDetach.length + 1 &&
 			sourceTabIdsBeforeDetach.every((id) =>
 				value.tabs.some((tab) => tab.id === id),
 			) &&
-			!value.tabs.some((tab) => tab.id === detachableTabId) &&
-			value.tabs.some((tab) => tab.id === tabId && tab.url === `${origin}/one`),
-		"Source browser did not retain its remaining tab after detachment",
+				value.tabs.some((tab) => tab.id === detachableTabId) &&
+				value.tabs.some((tab) => tab.id === tabId && tab.url === `${origin}/one`),
+		"Reattached tab did not return to the main browser window",
+	);
+	const detachedWindowDeadline = Date.now() + 30_000;
+	let remainingDetachedWindows = 0;
+	while (Date.now() < detachedWindowDeadline) {
+		remainingDetachedWindows = await application.evaluate(
+			({ BrowserWindow }, expectedUrl) =>
+				BrowserWindow.getAllWindows().filter((candidate) =>
+					candidate.contentView.children.some(
+						(child) =>
+							"webContents" in child && child.webContents.getURL() === expectedUrl,
+					),
+				).length,
+			`${origin}/two`,
+		);
+		if (remainingDetachedWindows === 1) break;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	assert.equal(
+		remainingDetachedWindows,
+		1,
+		"Reattaching the tab did not close its detached window",
+	);
+
+	const blankTabId = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "browser-create-tab",
+			active: false,
+		});
+		if (!response.ok || !("browserState" in response))
+			throw new Error("A blank tab could not be created.");
+		return response.browserState.tabs.at(-1)?.id;
+	});
+	assert(blankTabId);
+	const blankTab = page.locator(`.browser-tab[data-tab-id="${blankTabId}"]`);
+	await blankTab.waitFor();
+	await blankTab.scrollIntoViewIfNeeded();
+	const blankBounds = await blankTab.boundingBox();
+	assert(blankBounds);
+	const blankX = blankBounds.x + blankBounds.width / 2;
+	const blankY = blankBounds.y + blankBounds.height / 2;
+	await page.mouse.move(blankX, blankY);
+	await page.mouse.down();
+	await page.waitForTimeout(50);
+	await page.mouse.move(blankX + 180, blankY + 120, { steps: 12 });
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page did not release input for blank New Tab tear-off",
+	);
+	await waitForBrowserState(
+		(value) => value.tabs.some((tab) => tab.id === blankTabId),
+		"Blank New Tab detached before release",
+	);
+	await page.mouse.up();
+	await waitForBrowserState(
+		(value) => !value.tabs.some((tab) => tab.id === blankTabId),
+		"Blank New Tab did not leave the source window",
+	);
+	const blankDetachedPage = await waitForDetachedKestrelWindow(
+		blankTabId,
+		"Blank New Tab did not open in a new Kestrel window",
+	);
+	await blankDetachedPage
+		.getByRole("button", {
+			name: "Move tab back to main window",
+			exact: true,
+		})
+		.click();
+	await waitForBrowserState(
+		(value) => value.tabs.some((tab) => tab.id === blankTabId && tab.url === ""),
+		"Blank New Tab did not return to the main browser window",
 	);
 
 	const tabsBeforeToolPopup = (await browserState()).tabs.length;
@@ -1291,9 +2623,59 @@ try {
 	assert.equal(download.status, "completed");
 	assert.equal(download.filename, "kestrel-browser.txt");
 	assert.equal(download.canReveal, true);
-	assert.equal(
-		existsSync(join(userData, "browser-downloads", download.filename)),
-		true,
+	const downloadPath = join(userData, "browser-downloads", download.filename);
+	assert.equal(existsSync(downloadPath), true);
+	if (process.platform === "darwin") {
+		const quarantine = readMacQuarantine(downloadPath);
+		if (quarantine === undefined) {
+			process.stdout.write(
+				"Visible browser smoke: macOS did not assign quarantine metadata to the loopback fixture; preservation was not asserted.\n",
+			);
+		} else {
+			assert.notEqual(
+				quarantine,
+				"",
+				"Browser downloads must retain assigned macOS quarantine metadata.",
+			);
+		}
+	}
+	const directDownloadCount = state.downloads.filter(
+		(item) => item.sourceUrl === `${origin}/download`,
+	).length;
+	await page.evaluate(
+		async ({ tabId, url }) => {
+			const response = await window.kestrel.request({
+				type: "browser-navigate",
+				tabId,
+				input: url,
+			});
+			if (!response.ok) throw new Error(response.error);
+		},
+		{ tabId, url: `${origin}/download` },
+	);
+	state = await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === tabId);
+			return (
+				value.downloads.filter(
+					(item) => item.sourceUrl === `${origin}/download`,
+				).length > directDownloadCount &&
+				active?.url === `${origin}/one` &&
+				!active.error
+			);
+		},
+		"Direct attachment navigation did not preserve the visible page",
+	);
+	const directDownloadMenu = page.getByRole("menu", { name: "Downloads" });
+	await directDownloadMenu.waitFor();
+	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(
+		directDownloadMenu,
+		"Direct attachment Downloads popover",
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Visible page did not return after direct attachment download",
 	);
 	const historyTool = await callTool(
 		runtimeSessionId,
@@ -1327,14 +2709,55 @@ try {
 		.first()
 		.waitFor();
 
+	const tabIdsBeforeDownloads = (await browserState()).tabs.map(
+		(tab) => tab.id,
+	);
 	await page.keyboard.press("Meta+J");
-	await page
-		.getByRole("heading", { name: "Downloaded files", exact: true })
+	const downloadsMenu = page.getByRole("menu", { name: "Downloads" });
+	await downloadsMenu.waitFor();
+	const expectedDownload = downloadsMenu
+		.getByRole("listitem")
+		.filter({ hasText: "kestrel-browser.txt" });
+	await expectedDownload.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+	await expectedDownload
+		.getByText(`${download.receivedBytes} B`, { exact: true })
 		.waitFor();
-	await page.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+	assert.equal(
+		await downloadsMenu.getByText("Completed", { exact: true }).count(),
+		0,
+		"Completed downloads should not keep a status label",
+	);
+	await expectedDownload
+		.getByRole("menuitem", { name: "Show in Finder", exact: true })
+		.waitFor();
+	const dragDownload = downloadsMenu.getByRole("menuitem", {
+		name: "Drag kestrel-browser.txt to a website upload field",
+	});
+	await dragDownload.waitFor();
+	assert.equal(await dragDownload.getAttribute("draggable"), "true");
+	assert.equal(
+		await page.getByRole("heading", { name: "Downloaded files", exact: true }).count(),
+		0,
+		"Toolbar Downloads opened the full-page library",
+	);
+	assert.deepEqual(
+		(await browserState()).tabs.map((tab) => tab.id),
+		tabIdsBeforeDownloads,
+		"Opening toolbar Downloads changed the tab list",
+	);
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the Downloads popover",
+	);
+	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(downloadsMenu, "Downloads popover");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing Downloads",
+	);
 	await openKestrelDestination(page, "Settings");
 	await page
-		.getByRole("heading", { name: "Preferences", exact: true })
+		.getByRole("heading", { name: "Settings", exact: true })
 		.waitFor();
 	const browserSettings = page
 		.locator(".settings-scope-switcher")
@@ -1342,13 +2765,14 @@ try {
 	await browserSettings.click();
 	assert.equal(await browserSettings.getAttribute("aria-selected"), "true");
 	await page
-		.getByRole("heading", { name: "Make the browser feel like yours.", exact: true })
+		.getByRole("heading", { name: "Browser", exact: true })
 		.waitFor();
 	await page
 		.locator("label.background-option")
 		.filter({ hasText: "Mountain valley" })
 		.click();
 	await page.getByLabel("Search engine", { exact: true }).selectOption("ecosia");
+	await page.getByLabel("Tab sizing", { exact: true }).selectOption("shrinking");
 	const useCurrentPage = page.getByRole("switch", {
 		name: "Use current page context with agent",
 	});
@@ -1361,15 +2785,18 @@ try {
 	await useCurrentPage.click();
 	assert.equal(await useCurrentPage.getAttribute("aria-checked"), "true");
 	await page.getByLabel("Tab layout").selectOption("vertical");
+	await page.getByLabel("Tab sizing", { exact: true }).waitFor({ state: "detached" });
 	state = await waitForBrowserState(
 		(candidate) =>
 			candidate.settings.searchEngine === "ecosia" &&
 			candidate.settings.tabLayout === "vertical" &&
+			candidate.settings.tabSizing === "shrinking" &&
 			candidate.settings.newTabBackground === "mountains",
 		"browser settings update",
 	);
 	assert.equal(state.settings.searchEngine, "ecosia");
 	assert.equal(state.settings.tabLayout, "vertical");
+	assert.equal(state.settings.tabSizing, "shrinking");
 	assert.equal(state.settings.newTabBackground, "mountains");
 
 	await page.getByRole("tab", { name: /Page one/ }).first().click();
@@ -1380,6 +2807,27 @@ try {
 		},
 		"Browser did not return to Page one after leaving Settings",
 	);
+	const verticalTabToolsTrigger = page.getByRole("button", { name: "Tab tools" });
+	await verticalTabToolsTrigger.click();
+	const verticalTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await verticalTabToolsMenu.waitFor();
+	assert.equal(
+		await verticalTabToolsMenu
+			.getByRole("menuitem", { name: "Turn On Shrinking Tabs", exact: true })
+			.count(),
+		0,
+	);
+	assert.equal(
+		await verticalTabToolsMenu
+			.getByRole("menuitem", {
+				name: "Turn On Horizontal Scrolling Tabs",
+				exact: true,
+			})
+			.count(),
+		0,
+	);
+	await page.keyboard.press("Escape");
+	await verticalTabToolsMenu.waitFor({ state: "detached" });
 	await page.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	assert.equal(
 		await page
@@ -1457,7 +2905,10 @@ try {
 			window.kestrel.request({ type: "browser-close-tab", tabId }),
 		inactiveVerticalTabId,
 	);
-	const organizationFixtureUrls = [`${origin}/two`, `${origin}/one`];
+	const organizationFixtureUrls = [
+		`${origin}/organization-two`,
+		`${origin}/organization-one`,
+	];
 	const organizationFixtureTabIds = await page.evaluate(async (urls) => {
 		const ids = [];
 		for (const input of urls) {
@@ -1517,7 +2968,7 @@ try {
 		"Native page remained attached over the organize tabs dialog",
 	);
 	await organizeDialog.getByRole("button", { name: "Close organize tabs" }).click();
-	await organizeDialog.waitFor({ state: "detached" });
+	await assertNativeViewHiddenThroughOverlayExit(organizeDialog, "Organize tabs dialog");
 	assert.deepEqual(
 		(await browserState()).tabs.map((tab) => tab.id),
 		tabOrderBeforeOrganization,
@@ -1532,11 +2983,17 @@ try {
 		.getByRole("menuitem", { name: "Organize tabs", exact: true })
 		.click();
 	await organizeDialog.waitFor();
+	const suggestedCloseCheckboxes = organizeDialog.locator(
+		".organize-tabs-deletion input[type='checkbox']",
+	);
+	for (const checkbox of await suggestedCloseCheckboxes.all()) {
+		if (await checkbox.isChecked()) await checkbox.uncheck();
+	}
 	await organizeDialog.getByRole("button", { name: /^Edit / }).first().click();
 	await organizeDialog.getByLabel("Folder name").fill("Local Pages");
 	await organizeDialog.getByRole("button", { name: "Rose", exact: true }).click();
 	await organizeDialog.getByRole("button", { name: "Save", exact: true }).click();
-	await organizeDialog.getByRole("button", { name: "Group tabs", exact: true }).click();
+	await organizeDialog.locator("button.organize-tabs-primary").click();
 	await organizeDialog.waitFor({ state: "detached" });
 	state = await waitForBrowserState(
 		(value) => value.tabFolders.some((folder) => folder.name === "Local Pages"),
@@ -1590,6 +3047,7 @@ try {
 	assert(state.history.some((entry) => entry.title === "Page two"));
 	assert.equal(state.settings.searchEngine, "ecosia");
 	assert.equal(state.settings.tabLayout, "vertical");
+	assert.equal(state.settings.tabSizing, "shrinking");
 	assert.equal(state.settings.newTabBackground, "mountains");
 	assert.equal(
 		await page
@@ -1606,7 +3064,11 @@ try {
 
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, hidden-view routing, and restart restore.\n",
+		`Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, extension-store navigation and ${
+			verifyRealChromeWebStoreInstall
+				? "reviewed extension installation"
+				: "Review & add affordance"
+		}, hidden-view routing, and restart restore.\n`,
 	);
 } finally {
 	await application?.close();

@@ -12,10 +12,11 @@ import {
 	RuntimeEventSchema,
 	UserBrowserCommandSchema,
 	UserBrowserEventSchema,
+	WindowFocusStateSchema,
 	WorkspaceSnapshotSchema,
 } from "@kestrel/shared-types";
-import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { installFileDragBridge } from "./file-drag";
+import { contextBridge, ipcRenderer } from "electron";
+import { installFileDropGuard } from "./file-drag";
 
 // The main process enables native NSVisualEffectView vibrancy on macOS shell
 // windows and announces it through an additional argument. Mark the document
@@ -38,18 +39,18 @@ if (nativeMaterial === "sidebar") {
 const bridge: RendererBridge = {
 	request: (request) =>
 		ipcRenderer.invoke("kestrel:request", RendererRequestSchema.parse(request)),
-	getPathForFile: (file) => {
-		try {
-			return webUtils.getPathForFile(file as File);
-		} catch {
-			return "";
-		}
-	},
 	onBrowserEvent(callback) {
 		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
 			callback(UserBrowserEventSchema.parse(value));
 		ipcRenderer.on("kestrel:browser-event", listener);
 		return () => ipcRenderer.off("kestrel:browser-event", listener);
+	},
+	onWindowFocus(callback) {
+		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
+			callback(WindowFocusStateSchema.parse(value));
+		ipcRenderer.on("kestrel:window-focus", listener);
+		ipcRenderer.send("kestrel:window-focus-ready");
+		return () => ipcRenderer.off("kestrel:window-focus", listener);
 	},
 	onPasswordPrompt(callback) {
 		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
@@ -85,15 +86,6 @@ const bridge: RendererBridge = {
 		ipcRenderer.on("kestrel:external-intake", listener);
 		ipcRenderer.send("kestrel:external-intake-ready");
 		return () => ipcRenderer.off("kestrel:external-intake", listener);
-	},
-	onFileDrag(callback) {
-		const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
-			if (!value || typeof value !== "object" || Array.isArray(value)) return;
-			const active = (value as { active?: unknown }).active;
-			if (typeof active === "boolean") callback({ active });
-		};
-		ipcRenderer.on("kestrel:file-drag", listener);
-		return () => ipcRenderer.off("kestrel:file-drag", listener);
 	},
 	onSnapshot(callback) {
 		const listener = (_event: Electron.IpcRendererEvent, snapshot: unknown) =>
@@ -133,16 +125,6 @@ const bridge: RendererBridge = {
 	},
 };
 
-installFileDragBridge({
-	getPathForFile: (file) => {
-		try {
-			return webUtils.getPathForFile(file as File);
-		} catch {
-			return "";
-		}
-	},
-	onDrag: (active) => ipcRenderer.send("kestrel:user-browser-file-drag", { active }),
-	onDrop: (paths) => ipcRenderer.send("kestrel:user-browser-file-drop", { paths }),
-});
+installFileDropGuard(window);
 
 contextBridge.exposeInMainWorld("kestrel", bridge);

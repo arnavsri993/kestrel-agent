@@ -1,4 +1,10 @@
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
@@ -32,17 +38,53 @@ const electron = vi.hoisted(() => {
     id = nextWebContentsId++;
     destroyed = false;
     url = "";
+    mainFrame = { url: "" };
+    passwordSnapshot: unknown = { fields: [] };
     title = "";
-    loadURL = vi.fn(async (url: string) => { this.url = url; });
+    loadURL = vi.fn(async (url: string) => {
+      this.url = url;
+      this.mainFrame.url = url;
+    });
+    send = vi.fn((channel: string, payload: unknown) => {
+      if (
+        channel !== "kestrel:user-browser-credential-command" ||
+        !payload ||
+        typeof payload !== "object" ||
+        !["scan", "fill"].includes(String((payload as { type?: unknown }).type))
+      )
+        return;
+      const requestId = (payload as { requestId?: unknown }).requestId;
+      if (typeof requestId !== "string") return;
+      queueMicrotask(() => {
+        this.emit(
+          "ipc-message",
+          { senderFrame: this.mainFrame },
+          "kestrel:user-browser-credential-response",
+				(payload as { type?: unknown }).type === "scan"
+					? { requestId, ok: true, snapshot: this.passwordSnapshot }
+					: { requestId, ok: true, filled: 1 },
+        );
+      });
+    });
     close = vi.fn(() => { this.destroyed = true; });
     reload = vi.fn();
     reloadIgnoringCache = vi.fn();
     zoomLevel = 0;
+    zoomFactor = 1;
     getZoomLevel = vi.fn(() => this.zoomLevel);
-    setZoomLevel = vi.fn((level: number) => { this.zoomLevel = level; });
+    getZoomFactor = vi.fn(() => this.zoomFactor);
+    setZoomLevel = vi.fn((level: number) => {
+      this.zoomLevel = level;
+      this.zoomFactor = Math.pow(1.2, level);
+    });
+    setZoomFactor = vi.fn((factor: number) => {
+      this.zoomFactor = factor;
+      this.zoomLevel = Math.log(factor) / Math.log(1.2);
+    });
     stop = vi.fn();
     focus = vi.fn();
     insertText = vi.fn();
+		sendInputEvent = vi.fn();
     executeJavaScript = vi.fn();
     invalidate = vi.fn();
     capturePage = vi.fn(async () => ({
@@ -50,8 +92,20 @@ const electron = vi.hoisted(() => {
       toBitmap: () => Buffer.from([0, 0, 0, 255]),
       toPNG: () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     }));
+    copyImageAt = vi.fn();
+    copyVideoFrameAt = vi.fn();
+    downloadURL = vi.fn();
     setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = handler; });
-    windowOpenHandler: ((details: { url: string; disposition: "foreground-tab" | "background-tab" | "new-window" }) => { action: string }) | undefined;
+    windowOpenHandler: ((details: {
+      url: string;
+      disposition: "default" | "foreground-tab" | "background-tab" | "new-window" | "other";
+      postBody?: {
+        contentType: string;
+        boundary?: string;
+        data: Array<{ type: string; bytes: Buffer }>;
+      };
+      referrer?: { url: string; policy: string };
+    }) => { action: string }) | undefined;
     isDestroyed = () => this.destroyed;
     getURL = () => this.url;
     getTitle = () => this.title;
@@ -63,6 +117,10 @@ const electron = vi.hoisted(() => {
     navigationHistory = {
       canGoBack: vi.fn(() => false),
       canGoForward: vi.fn(() => false),
+			getActiveIndex: vi.fn(() => 0),
+			getEntryAtIndex: vi.fn(
+				(_index: number): { url: string; title: string } | null => null,
+			),
       goBack: vi.fn(),
       goForward: vi.fn(),
       clear: vi.fn(),
@@ -84,6 +142,8 @@ const electron = vi.hoisted(() => {
     permissionRequestHandler: unknown;
     setPermissionCheckHandler = vi.fn((handler) => { this.permissionCheckHandler = handler; });
     setPermissionRequestHandler = vi.fn((handler) => { this.permissionRequestHandler = handler; });
+    setSpellCheckerEnabled = vi.fn();
+    setSpellCheckerLanguages = vi.fn();
     clearCache = vi.fn(async () => undefined);
     clearStorageData = vi.fn(async () => undefined);
     fetch = vi.fn();
@@ -91,17 +151,27 @@ const electron = vi.hoisted(() => {
   const state: {
     views: MockView[];
     partitions: Array<{ name: string; options: unknown; instance: MockSession }>;
-  } = { views: [], partitions: [] };
+    menus: unknown[][];
+    mediaAccess: ReturnType<typeof vi.fn>;
+  } = { views: [], partitions: [], menus: [], mediaAccess: vi.fn(async () => true) };
+  const buildFromTemplate = vi.fn((template: unknown[]) => {
+    state.menus.push(template);
+    return { popup: vi.fn() };
+  });
   const fromPartition = vi.fn((name: string, options: unknown) => {
     const instance = new MockSession();
     state.partitions.push({ name, options, instance });
     return instance;
   });
-  return { state, MockView, fromPartition, reset: () => {
+  return { state, MockView, fromPartition, buildFromTemplate, reset: () => {
     state.views.length = 0;
     state.partitions.length = 0;
+    state.menus.length = 0;
+    state.mediaAccess.mockReset();
+    state.mediaAccess.mockResolvedValue(true);
     nextWebContentsId = 1;
     fromPartition.mockClear();
+    buildFromTemplate.mockClear();
   } };
 });
 
@@ -109,10 +179,14 @@ vi.mock("electron", () => ({
   BrowserWindow: class {},
   WebContentsView: electron.MockView,
   session: { fromPartition: electron.fromPartition },
-  Menu: { buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })) },
+  Menu: { buildFromTemplate: electron.buildFromTemplate },
   clipboard: { writeText: vi.fn() },
   dialog: {
     showMessageBox: vi.fn(async () => ({ response: 1 })),
+    showSaveDialog: vi.fn(async () => ({ canceled: true })),
+  },
+  systemPreferences: {
+    askForMediaAccess: electron.state.mediaAccess,
   },
   nativeImage: {
     createFromBuffer: vi.fn(() => ({ isEmpty: () => true })),
@@ -121,11 +195,24 @@ vi.mock("electron", () => ({
       resize: () => ({ toDataURL: () => "data:image/png;base64,INLINE" }),
     })),
   },
-  shell: { showItemInFolder: vi.fn(), openPath: vi.fn(async () => "") },
+  shell: {
+    showItemInFolder: vi.fn(),
+    openPath: vi.fn(async () => ""),
+    openExternal: vi.fn(async () => undefined),
+  },
 }));
 
 import { nativeImage } from "electron";
-import { UserBrowserService } from "./user-browser-service";
+import { dialog } from "electron";
+import { shell } from "electron";
+import { BrowserTabStore } from "./browser-tab-store";
+import {
+  isAuthenticationFlowUrl,
+  safeAppStoreUrl,
+  UserBrowserService,
+} from "./user-browser-service";
+import type { BrowserThreatProvider } from "./browser-threat-provider";
+import { UserBrowserSettingsSchema } from "@kestrel/shared-types";
 import type {
   BrowserTabFolderName,
   BrowserTabFolderNamingGroup,
@@ -134,11 +221,13 @@ import type {
 	PaymentCardVault,
 	SavePaymentCardInput,
 } from "./payment-card-vault";
+import type { PasswordVault, SavePasswordInput } from "./password-vault";
 
 const directories: string[] = [];
 
 afterEach(() => {
   electron.reset();
+  vi.clearAllMocks();
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
 });
@@ -147,12 +236,19 @@ function createService(options: {
   partitionName?: string;
   now?: () => Date;
   allowDevTools?: boolean;
-  onLastTabClosed?: () => void;
-  paymentCardVault?: PaymentCardVault;
+	onLastTabClosed?: () => void;
+	passwordVault?: PasswordVault;
+	onPasswordPrompt?: (prompt: unknown) => void;
+	paymentCardVault?: PaymentCardVault;
   onPaymentPrompt?: (prompt: unknown) => void;
+  confirmSitePermission?: (origin: string, permission: string) => Promise<boolean>;
+  requestNativeMediaAccess?: (
+    mediaType: "camera" | "microphone",
+  ) => Promise<boolean>;
   nameTabFolders?: (
     groups: BrowserTabFolderNamingGroup[],
   ) => Promise<BrowserTabFolderName[]>;
+	threatProvider?: BrowserThreatProvider;
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "kestrel-user-browser-"));
   directories.push(directory);
@@ -160,6 +256,7 @@ function createService(options: {
   const window = {
     getContentSize: vi.fn(() => [300, 200]),
     isDestroyed: vi.fn(() => false),
+    webContents: { startDrag: vi.fn() },
     contentView: {
       children,
       addChildView: vi.fn((view: unknown) => children.push(view)),
@@ -171,9 +268,10 @@ function createService(options: {
   };
   const events: unknown[] = [];
   const commands: string[] = [];
+	const statePath = join(directory, "state.json");
 	const service = new UserBrowserService({
 		window: window as never,
-		statePath: join(directory, "state.json"),
+		statePath,
 		downloadDirectory: join(directory, "downloads"),
 		onEvent: (event) => events.push(event),
 		onCommand: (command) => commands.push(command),
@@ -183,8 +281,20 @@ function createService(options: {
 		...(options.onLastTabClosed
 			? { onLastTabClosed: options.onLastTabClosed }
 			: {}),
+		...(options.onPasswordPrompt
+			? { onPasswordPrompt: options.onPasswordPrompt }
+			: {}),
+		...(options.passwordVault
+			? { passwordVault: options.passwordVault }
+			: {}),
 		...(options.onPaymentPrompt
 			? { onPaymentPrompt: options.onPaymentPrompt }
+			: {}),
+		...(options.confirmSitePermission
+			? { confirmSitePermission: options.confirmSitePermission }
+			: {}),
+		...(options.requestNativeMediaAccess
+			? { requestNativeMediaAccess: options.requestNativeMediaAccess }
 			: {}),
 		...(options.paymentCardVault
 			? { paymentCardVault: options.paymentCardVault }
@@ -192,8 +302,11 @@ function createService(options: {
 		...(options.nameTabFolders
 			? { nameTabFolders: options.nameTabFolders }
 			: {}),
+		...(options.threatProvider
+			? { threatProvider: options.threatProvider }
+			: {}),
 	});
-  return { service, window, events, commands };
+	return { service, window, events, commands, statePath };
 }
 
 async function navigateNewTab(service: UserBrowserService, url: string) {
@@ -201,8 +314,456 @@ async function navigateNewTab(service: UserBrowserService, url: string) {
   return state.tabs.at(-1)!;
 }
 
+function threatProvider(
+	checkUrl: BrowserThreatProvider["checkUrl"],
+): BrowserThreatProvider {
+	return { id: "test-reputation", available: true, checkUrl };
+}
+
+function downloadItem(url: string, filename = "report.txt") {
+	return {
+		getFilename: vi.fn(() => filename),
+		getURL: vi.fn(() => url),
+		getReceivedBytes: vi.fn(() => 0),
+		getTotalBytes: vi.fn(() => 10),
+		setSavePath: vi.fn(),
+		pause: vi.fn(),
+		resume: vi.fn(),
+		on: vi.fn(),
+		once: vi.fn(),
+		cancel: vi.fn(),
+	};
+}
+
 describe("UserBrowserService", () => {
-  it("continues creating tabs beyond the legacy 32-tab boundary", async () => {
+	it("applies browser settings to the native session and persists them", async () => {
+		const { service, statePath } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://settings.example");
+		const partition = electron.state.partitions[0]!.instance;
+		const next = UserBrowserSettingsSchema.parse({
+			...service.getState().settings,
+			defaultZoomPercent: 125,
+			minimumFontSize: 14,
+			defaultFontFamily: "Georgia, serif",
+			spellcheckEnabled: false,
+			spellcheckLanguage: "fr-FR",
+			historyRetentionDays: 30,
+		});
+
+		const updated = service.updateSettings(next);
+		expect(updated.settings).toMatchObject({
+			defaultZoomPercent: 125,
+			minimumFontSize: 14,
+			defaultFontFamily: "Georgia, serif",
+			spellcheckEnabled: false,
+			spellcheckLanguage: "fr-FR",
+		});
+		expect(partition.setSpellCheckerEnabled).toHaveBeenLastCalledWith(false);
+		expect(partition.setSpellCheckerLanguages).toHaveBeenLastCalledWith([
+			"fr-FR",
+		]);
+		expect(electron.state.views[0]!.webContents.setZoomFactor).toHaveBeenCalledWith(
+			1.25,
+		);
+		expect(new BrowserTabStore(statePath).load().settings).toMatchObject({
+			defaultZoomPercent: 125,
+			minimumFontSize: 14,
+			defaultFontFamily: "Georgia, serif",
+			spellcheckEnabled: false,
+			spellcheckLanguage: "fr-FR",
+		});
+	});
+
+	it("canonicalizes and revokes site permissions without leaking paths in exports", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com/path");
+		service.setSitePermission("https://example.com/path", "notifications", "allow");
+		expect(service.getState().sitePermissions).toMatchObject([
+			{ origin: "https://example.com", permission: "notifications" },
+		]);
+
+		const exported = service.exportBrowserData();
+		expect(exported.settings.downloadDirectory).toBe("");
+		service.clearSitePermission("https://example.com/other", "notifications");
+		expect(service.getState().sitePermissions).toEqual([]);
+	});
+
+	it("pauses an ask-before-save download until the native location is chosen", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		const partition = electron.state.partitions[0]!.instance;
+		service.updateSettings(
+			UserBrowserSettingsSchema.parse({
+				...service.getState().settings,
+				downloadBehavior: "ask",
+			}),
+		);
+		const chosenPath = join(tmpdir(), "kestrel-chosen-download.txt");
+		vi.mocked(dialog.showSaveDialog).mockResolvedValueOnce({
+			canceled: false,
+			filePath: chosenPath,
+		});
+		const item = {
+			getFilename: vi.fn(() => "report.txt"),
+			getURL: vi.fn(() => "https://example.com/report.txt"),
+			getReceivedBytes: vi.fn(() => 0),
+			getTotalBytes: vi.fn(() => 10),
+			setSavePath: vi.fn(),
+			pause: vi.fn(),
+			resume: vi.fn(),
+			on: vi.fn(),
+			once: vi.fn(),
+			cancel: vi.fn(),
+		};
+
+		partition.emit("will-download", {}, item, contents);
+		expect(item.pause).toHaveBeenCalledOnce();
+		await vi.waitFor(() =>
+			expect(item.setSavePath).toHaveBeenCalledWith(chosenPath),
+		);
+		expect(item.resume).toHaveBeenCalledOnce();
+	});
+
+	it("blocks a malicious typed navigation before loading and hides the native view", async () => {
+		const provider = threatProvider(vi.fn(async () => ({
+			verdict: "malicious" as const,
+			provider: "test-reputation",
+			threatTypes: ["malware" as const],
+		})));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+
+		await service.navigate(tab.id, "https://malware.example/payload");
+		const contents = electron.state.views[0]!.webContents;
+
+		expect(provider.checkUrl).toHaveBeenCalledWith({
+			url: "https://malware.example/payload",
+			context: "navigation",
+		});
+		expect(contents.loadURL).not.toHaveBeenCalled();
+		expect(contents.stop).toHaveBeenCalledOnce();
+		expect(electron.state.views[0]!.setVisible).toHaveBeenLastCalledWith(false);
+		expect(service.getState().tabs[0]?.blockedNavigation).toMatchObject({
+			url: "https://malware.example/payload",
+			source: "navigation",
+			threatTypes: ["malware"],
+		});
+	});
+
+	it("prevents and blocks a malicious page-initiated redirect", async () => {
+		const provider = threatProvider(vi.fn(async ({ url }) => url.includes("malware")
+			? { verdict: "malicious" as const, provider: "test-reputation", threatTypes: ["social-engineering" as const] }
+			: { verdict: "safe" as const, provider: "test-reputation" }));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const contents = electron.state.views[0]!.webContents;
+		const event = { preventDefault: vi.fn() };
+
+		contents.emit("will-redirect", event, "https://malware.example/redirect");
+		await vi.waitFor(() => expect(service.getState().tabs[0]?.blockedNavigation).toMatchObject({
+			url: "https://malware.example/redirect",
+			source: "redirect",
+		}));
+
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(contents.loadURL).not.toHaveBeenCalledWith("https://malware.example/redirect");
+		expect(contents.stop).toHaveBeenCalledOnce();
+	});
+
+	it("blocks a malicious managed popup before its native page loads", async () => {
+		const provider = threatProvider(
+			vi.fn(async ({ url }) =>
+				url.includes("malware")
+					? {
+							verdict: "malicious" as const,
+							provider: "test-reputation",
+							threatTypes: ["social-engineering" as const],
+						}
+					: { verdict: "safe" as const, provider: "test-reputation" },
+			),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const contents = electron.state.views[0]!.webContents;
+
+		const response = contents.windowOpenHandler?.({
+			url: "https://malware.example/popup",
+			disposition: "foreground-tab",
+		});
+
+		expect(response).toEqual({ action: "deny" });
+		await vi.waitFor(() =>
+			expect(
+				service
+					.getState()
+					.tabs.find((candidate) => candidate.blockedNavigation)?.blockedNavigation,
+			).toMatchObject({
+				url: "https://malware.example/popup",
+				source: "popup",
+			}),
+		);
+		expect(electron.state.views.at(-1)?.webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("redacts query and fragment data before an injected provider sees a URL", async () => {
+		const provider = threatProvider(
+			vi.fn(async () => ({
+				verdict: "safe" as const,
+				provider: "test-reputation",
+			})),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		const target =
+			"https://safe.example/callback?code=oauth-code&query=private#access_token=fragment-secret";
+
+		await service.navigate(tab.id, target);
+
+		expect(provider.checkUrl).toHaveBeenCalledWith({
+			url: "https://safe.example/callback",
+			context: "navigation",
+		});
+		expect(electron.state.views[0]!.webContents.loadURL).toHaveBeenCalledWith(
+			target,
+		);
+	});
+
+	it("checks a history target before a programmatic back navigation", async () => {
+		const provider = threatProvider(
+			vi.fn(async ({ url }) =>
+				url.includes("malware")
+					? {
+							verdict: "malicious" as const,
+							provider: "test-reputation",
+							threatTypes: ["malware" as const],
+						}
+					: { verdict: "safe" as const, provider: "test-reputation" },
+			),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example/current");
+		const contents = electron.state.views[0]!.webContents;
+		contents.navigationHistory.canGoBack.mockReturnValue(true);
+		contents.navigationHistory.getActiveIndex.mockReturnValue(1);
+		contents.navigationHistory.getEntryAtIndex.mockReturnValue({
+			url: "https://malware.example/history",
+			title: "Malware history",
+		});
+
+		service.back(tab.id);
+
+		await vi.waitFor(() =>
+			expect(service.getState().tabs[0]?.blockedNavigation).toMatchObject({
+				url: "https://malware.example/history",
+				source: "navigation",
+			}),
+		);
+		expect(contents.navigationHistory.goBack).not.toHaveBeenCalled();
+	});
+
+	it("blocks a malicious download before choosing a destination", async () => {
+		const provider = threatProvider(vi.fn(async () => ({
+			verdict: "malicious" as const,
+			provider: "test-reputation",
+			threatTypes: ["potentially-harmful-application" as const],
+		})));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = downloadItem("https://malware.example/installer.dmg", "installer.dmg");
+
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
+		expect(item.pause).toHaveBeenCalledOnce();
+		expect(item.setSavePath).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(item.cancel).toHaveBeenCalledOnce());
+
+		expect(service.getState().downloads[0]).toMatchObject({
+			status: "blocked",
+			reputation: { verdict: "malicious", provider: "test-reputation", threatTypes: ["potentially-harmful-application"] },
+		});
+	});
+
+	it("blocks a download when a redirect-chain URL is malicious", async () => {
+		const provider = threatProvider(
+			vi.fn(async ({ url }) =>
+				url.includes("malware")
+					? {
+							verdict: "malicious" as const,
+							provider: "test-reputation",
+							threatTypes: ["malware" as const],
+						}
+					: { verdict: "safe" as const, provider: "test-reputation" },
+			),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = {
+			...downloadItem("https://safe.example/installer.dmg", "installer.dmg"),
+			getURLChain: vi.fn(() => ["https://malware.example/redirect"]),
+		};
+
+		electron.state.partitions[0]!.instance.emit(
+			"will-download",
+			{},
+			item,
+			electron.state.views[0]!.webContents,
+		);
+		await vi.waitFor(() => expect(item.cancel).toHaveBeenCalledOnce());
+
+		expect(provider.checkUrl).toHaveBeenCalledWith({
+			url: "https://malware.example/redirect",
+			context: "download",
+		});
+		expect(service.getState().downloads[0]).toMatchObject({
+			status: "blocked",
+			reputation: { verdict: "malicious", threatTypes: ["malware"] },
+		});
+	});
+
+	it("resumes a safe download only after its reputation check", async () => {
+		const provider = threatProvider(vi.fn(async () => ({ verdict: "safe" as const, provider: "test-reputation" })));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = downloadItem("https://safe.example/report.txt");
+
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
+		expect(item.pause).toHaveBeenCalledOnce();
+		await vi.waitFor(() => expect(item.resume).toHaveBeenCalledOnce());
+		expect(item.setSavePath).toHaveBeenCalledOnce();
+		expect(service.getState().downloads[0]).toMatchObject({
+			status: "progressing",
+			reputation: { verdict: "safe", provider: "test-reputation" },
+		});
+	});
+
+	it("does not resume a download cancelled while its reputation check is pending", async () => {
+		let resolveCheck: ((value: Awaited<ReturnType<BrowserThreatProvider["checkUrl"]>>) => void) | undefined;
+		const checkUrl: BrowserThreatProvider["checkUrl"] = ({ context }) => context === "download"
+			? new Promise((resolve) => { resolveCheck = resolve; })
+			: Promise.resolve({ verdict: "safe" as const, provider: "test-reputation" });
+		const provider = threatProvider(vi.fn(checkUrl));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = downloadItem("https://safe.example/report.txt");
+
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
+		const id = service.getState().downloads[0]!.id;
+		service.cancelDownload(id);
+		resolveCheck?.({
+			verdict: "malicious",
+			provider: "test-reputation",
+			threatTypes: ["malware"],
+		});
+		await Promise.resolve();
+
+		expect(item.cancel).toHaveBeenCalledOnce();
+		expect(item.resume).not.toHaveBeenCalled();
+		expect(service.getState().downloads[0]?.status).toBe("cancelled");
+	});
+
+	it("does not resume a canceled download when its Save dialog resolves late", async () => {
+		const provider = threatProvider(
+			vi.fn(async () => ({ verdict: "safe" as const, provider: "test-reputation" })),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		service.updateSettings(
+			UserBrowserSettingsSchema.parse({
+				...service.getState().settings,
+				downloadBehavior: "ask",
+			}),
+		);
+		type SaveDialogResult = Awaited<ReturnType<typeof dialog.showSaveDialog>>;
+		let resolveDialog: ((result: SaveDialogResult) => void) | undefined;
+		vi.mocked(dialog.showSaveDialog).mockImplementationOnce(
+			() =>
+				new Promise<SaveDialogResult>((resolve) => {
+					resolveDialog = resolve;
+				}),
+		);
+		const item = downloadItem("https://safe.example/report.txt");
+
+		electron.state.partitions[0]!.instance.emit(
+			"will-download",
+			{},
+			item,
+			electron.state.views[0]!.webContents,
+		);
+		await vi.waitFor(() => expect(dialog.showSaveDialog).toHaveBeenCalledOnce());
+		const id = service.getState().downloads[0]!.id;
+		service.cancelDownload(id);
+		resolveDialog?.({ canceled: false, filePath: join(tmpdir(), "late-save.txt") });
+		await Promise.resolve();
+
+		expect(item.cancel).toHaveBeenCalledOnce();
+		expect(item.setSavePath).not.toHaveBeenCalled();
+		expect(item.resume).not.toHaveBeenCalled();
+		expect(service.getState().downloads[0]?.status).toBe("cancelled");
+	});
+
+	it("keeps the prior page when an address-bar navigation becomes a download", async () => {
+		const { service, commands } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		contents.url = "https://example.com/";
+		contents.title = "Example";
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		contents.emit("did-stop-loading");
+		const partition = electron.state.partitions[0]!.instance;
+		const downloadUrl = "https://files.example/report.pdf";
+		const item = {
+			getFilename: vi.fn(() => "report.pdf"),
+			getURL: vi.fn(() => downloadUrl),
+			getTotalBytes: vi.fn(() => 10),
+			getReceivedBytes: vi.fn(() => 0),
+			setSavePath: vi.fn(),
+			on: vi.fn(),
+			once: vi.fn(),
+			cancel: vi.fn(),
+		};
+		contents.loadURL.mockImplementationOnce(async () => {
+			throw new Error(`ERR_FAILED (-2) loading '${downloadUrl}'`);
+		});
+
+		const beforeDownloadEvent = await service.navigate(tab.id, downloadUrl);
+		expect(beforeDownloadEvent.tabs[0]).toMatchObject({
+			url: downloadUrl,
+		});
+		expect(beforeDownloadEvent.tabs[0]?.error).toMatch(/could not be opened/i);
+		partition.emit("will-download", {}, item, contents);
+		const state = service.getState();
+
+		expect(state.tabs[0]).toMatchObject({
+			url: "https://example.com/",
+			title: "Example",
+			loading: true,
+			error: undefined,
+		});
+		expect(state.downloads[0]).toMatchObject({
+			filename: "report.pdf",
+			sourceUrl: downloadUrl,
+			status: "progressing",
+		});
+		expect(commands).toContain("open-downloads");
+		expect(contents.close).toHaveBeenCalledOnce();
+		expect(electron.state.views.at(-1)!.webContents.loadURL).toHaveBeenCalledWith(
+			"https://example.com/",
+		);
+	});
+
+	 it("continues creating tabs beyond the legacy 32-tab boundary", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://first.example");
@@ -240,6 +801,42 @@ describe("UserBrowserService", () => {
     expect(state.activeTabId).toBeNull();
     expect(onLastTabClosed).toHaveBeenCalledOnce();
   });
+
+	it("closes other tabs as one state and native-view mutation", async () => {
+		const { service, events, window } = createService();
+		const keeper = service.getState().tabs[0]!;
+		await service.navigate(keeper.id, "https://keeper.example/");
+		const closing = [];
+		for (let index = 0; index < 4; index += 1)
+			closing.push(
+				await navigateNewTab(service, `https://closing-${index}.example/`),
+			);
+
+		const eventCountBeforeClose = events.length;
+		const closed = await service.closeOtherTabs(keeper.id);
+
+		expect(closed.tabs.map((tab) => tab.id)).toEqual([keeper.id]);
+		expect(service.getState().tabs.map((tab) => tab.id)).toEqual([keeper.id]);
+		expect(events).toHaveLength(eventCountBeforeClose + 1);
+		for (const tab of closing) {
+			const view = electron.state.views.find(
+				(candidate) => candidate.webContents.url === tab.url,
+			);
+			expect(view?.webContents.close).toHaveBeenCalledOnce();
+		}
+		expect(window.contentView.addChildView).toHaveBeenCalled();
+	});
+
+	it("ignores a duplicate close while the first close is still in flight", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		const firstClose = service.closeTab(tab.id);
+		const duplicateClose = service.closeTab(tab.id);
+
+		await expect(duplicateClose).resolves.toMatchObject({ tabs: [] });
+		await expect(firstClose).resolves.toMatchObject({ tabs: [] });
+		expect(service.getState().tabs).toHaveLength(0);
+	});
 
 	it("opens kestrel app pages as tabs without creating a web view", async () => {
     const { service } = createService();
@@ -302,6 +899,807 @@ describe("UserBrowserService", () => {
     const loadedAt = view.webContents.loadURL.mock.invocationCallOrder[0]!;
     expect(attachedAt).toBeLessThan(loadedAt);
   });
+
+  it("starts a native drag for a completed download", async () => {
+    const { service, window } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    const partition = electron.state.partitions[0]!.instance;
+    let savePath = "";
+    let done: ((event: unknown, status: string) => void) | undefined;
+    const item = {
+      getFilename: vi.fn(() => "report.txt"),
+      getURL: vi.fn(() => "https://example.com/report.txt"),
+      getReceivedBytes: vi.fn(() => 12),
+      getTotalBytes: vi.fn(() => 12),
+      setSavePath: vi.fn((path: string) => {
+        savePath = path;
+      }),
+      on: vi.fn(),
+      once: vi.fn(
+        (_event: string, callback: (event: unknown, status: string) => void) => {
+          done = callback;
+        },
+      ),
+      cancel: vi.fn(),
+    };
+
+    partition.emit("will-download", {}, item, contents);
+    writeFileSync(savePath, "downloaded file");
+    done?.({}, "completed");
+    const download = service.getState().downloads[0]!;
+
+    service.startDownloadDrag(download.id);
+
+    expect(window.webContents.startDrag).toHaveBeenCalledWith({
+      file: savePath,
+      icon: expect.anything(),
+    });
+  });
+
+	it("locally converts HEIC browser uploads before replacing the file input", async () => {
+		const { service } = createService();
+		const sourceDirectory = mkdtempSync(join(tmpdir(), "kestrel-heic-upload-"));
+		directories.push(sourceDirectory);
+		const source = join(sourceDirectory, "camera-roll.HEIC");
+		writeFileSync(
+			source,
+			Buffer.from(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+				"base64",
+			),
+		);
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://chatgpt.com/");
+		const contents = electron.state.views[0]!.webContents;
+		contents.debugger.sendCommand
+			.mockResolvedValueOnce({ root: { nodeId: 1 } })
+			.mockResolvedValueOnce({ nodeId: 2 })
+			.mockResolvedValueOnce(undefined);
+
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: { url: "https://chatgpt.com/" } },
+			"kestrel:user-browser-heic-upload",
+			{ inputId: "heic-upload-123", paths: [source] },
+		);
+
+		await vi.waitFor(() =>
+			expect(contents.debugger.sendCommand).toHaveBeenLastCalledWith(
+				"DOM.setFileInputFiles",
+				expect.objectContaining({ nodeId: 2 }),
+			),
+		);
+		const replacedPaths = contents.debugger.sendCommand.mock.calls.at(-1)?.[1]
+			?.files as string[];
+		expect(replacedPaths).toHaveLength(1);
+		expect(replacedPaths[0]).toMatch(/camera-roll\.jpeg$/i);
+		expect(replacedPaths[0]).not.toEqual(source);
+		expect(existsSync(replacedPaths[0]!)).toBe(true);
+		expect(contents.send).not.toHaveBeenCalled();
+
+		service.dispose();
+		expect(existsSync(replacedPaths[0]!)).toBe(false);
+	});
+
+	it("offers to save submitted passwords only after a successful-looking navigation without exposing the secret", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save,
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: contents.mainFrame },
+			"kestrel:user-browser-password-submission",
+			{
+				username: "person@example.test",
+				password: "correct horse battery staple",
+				passwordFieldRect: { x: 20, y: 80, width: 260, height: 42 },
+			},
+		);
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(prompts).toEqual([]);
+		contents.url = "https://login.example/home";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() => expect(prompts).toHaveLength(1));
+		expect(prompts[0]).toMatchObject({
+			mode: "save",
+			origin: "https://login.example",
+			candidate: { username: "person@example.test" },
+		});
+		expect(JSON.stringify(prompts[0])).not.toContain(
+			"correct horse battery staple",
+		);
+
+		await service.savePasswordSuggestion();
+		expect(save).toHaveBeenCalledWith({
+			origin: "https://login.example",
+			title: "login.example",
+			username: "person@example.test",
+			password: "correct horse battery staple",
+		});
+		expect(prompts.at(-1)).toBeNull();
+	});
+
+	it("offers a Microsoft-style credential save after the tracked return to its initiating site", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save,
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		const contents = electron.state.views[0]?.webContents;
+		await service.navigate(tab.id, "https://stlcc.example/login");
+		const activeContents = contents ?? electron.state.views[0]!.webContents;
+		activeContents.emit(
+			"did-navigate",
+			{},
+			"https://stlcc.example/login",
+			200,
+			"OK",
+		);
+		await service.navigate(tab.id, "https://login.microsoftonline.com/sign-in");
+		activeContents.emit(
+			"did-navigate",
+			{},
+			"https://login.microsoftonline.com/sign-in",
+			200,
+			"OK",
+		);
+		activeContents.emit(
+			"ipc-message",
+			{ senderFrame: activeContents.mainFrame },
+			"kestrel:user-browser-password-submission",
+			{ username: "student@stlcc.example", password: "not-in-the-prompt" },
+		);
+		expect(
+			(service as unknown as {
+				pendingPasswordSave?: { flowInitiatingOrigin?: string; origin: string };
+			}).pendingPasswordSave,
+		).toMatchObject({
+			origin: "https://login.microsoftonline.com",
+			flowInitiatingOrigin: "https://stlcc.example",
+		});
+		activeContents.url = "https://stlcc.example/portal";
+		activeContents.mainFrame.url = activeContents.url;
+		activeContents.emit("did-navigate", {}, activeContents.url, 200, "OK");
+		await vi.waitFor(() => expect(activeContents.send).toHaveBeenCalled());
+		await vi.waitFor(() => expect(prompts).toHaveLength(1));
+		expect(prompts[0]).toMatchObject({
+			mode: "save",
+			origin: "https://login.microsoftonline.com",
+			candidate: { username: "student@stlcc.example" },
+		});
+		await service.savePasswordSuggestion();
+		expect(save).toHaveBeenCalledWith(
+			expect.objectContaining({
+				origin: "https://login.microsoftonline.com",
+				username: "student@stlcc.example",
+			}),
+		);
+	});
+
+	it("adds an origin to the never-save list from a successful save prompt", async () => {
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			getForOrigin: vi.fn(),
+			save: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: contents.mainFrame },
+			"kestrel:user-browser-password-submission",
+			{ username: "person", password: "not-to-save" },
+		);
+		contents.passwordSnapshot = { fields: [] };
+		contents.url = "https://login.example/home";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() => expect(prompts.at(-1)).toMatchObject({ mode: "save" }));
+
+		service.markNeverSavePasswordForActiveOrigin();
+		expect(service.getState().settings.neverSavePasswordOrigins).toContain(
+			"https://login.example",
+		);
+		expect(prompts.at(-1)).toBeNull();
+	});
+
+	it("continues a selected username-first login with the same opaque credential on the password page", async () => {
+		const entry = {
+			id: "password-00000000-0000-4000-8000-000000000001",
+			origin: "https://login.microsoftonline.com",
+			title: "Microsoft",
+			username: "student@stlcc.example",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+		};
+		const passwordVault = {
+			list: vi.fn(async () => [entry]),
+			listForOrigin: vi.fn(async () => [entry]),
+			getForOrigin: vi.fn(async () => ({ ...entry, password: "privileged-only" })),
+			save: vi.fn(),
+			remove: vi.fn(),
+			markUsed: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.microsoftonline.com/username");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [{
+				id: "field-0",
+				kind: "username",
+				label: "Email, phone, or Skype",
+				type: "email",
+				autocomplete: "username",
+				rect: { x: 10, y: 20, width: 260, height: 42 },
+			}],
+		};
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() =>
+			expect(
+				contents.send.mock.calls.filter(
+					([channel, payload]) =>
+						channel === "kestrel:user-browser-credential-command" &&
+						(payload as { type?: unknown }).type === "fill",
+				).length,
+			).toBe(1),
+		);
+		await vi.waitFor(() => expect(passwordVault.markUsed).toHaveBeenCalledTimes(1));
+
+		contents.passwordSnapshot = {
+			fields: [{
+				id: "field-0",
+				kind: "password",
+				label: "Password",
+				type: "password",
+				autocomplete: "current-password",
+				rect: { x: 10, y: 20, width: 260, height: 42 },
+			}],
+		};
+		contents.url = "https://login.microsoftonline.com/password";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() =>
+			expect(
+				contents.send.mock.calls.filter(
+					([channel, payload]) =>
+						channel === "kestrel:user-browser-credential-command" &&
+						(payload as { type?: unknown }).type === "fill",
+				).length,
+			).toBe(2),
+		);
+		expect(prompts).toEqual([]);
+		expect(contents.sendInputEvent).not.toHaveBeenCalled();
+		expect(passwordVault.getForOrigin).toHaveBeenCalledWith(
+			entry.id,
+			entry.origin,
+		);
+	});
+
+	it("shows a credential picker instead of autofilling when an origin has multiple saved logins", async () => {
+		const entries = [
+			{
+				id: "password-00000000-0000-4000-8000-000000000001",
+				origin: "https://login.example",
+				title: "Example",
+				username: "personal@example.test",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+			},
+			{
+				id: "password-00000000-0000-4000-8000-000000000002",
+				origin: "https://login.example",
+				title: "Example",
+				username: "work@example.test",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+			},
+		];
+		const passwordVault = {
+			list: vi.fn(async () => entries),
+			listForOrigin: vi.fn(async () => entries),
+			getForOrigin: vi.fn(),
+			save: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [
+				{
+					id: "field-0",
+					kind: "username",
+					label: "Email",
+					type: "email",
+					autocomplete: "username",
+					rect: { x: 10, y: 10, width: 260, height: 42 },
+				},
+				{
+					id: "field-1",
+					kind: "password",
+					label: "Password",
+					type: "password",
+					autocomplete: "current-password",
+					rect: { x: 10, y: 60, width: 260, height: 42 },
+				},
+			],
+		};
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+
+		await vi.waitFor(() => expect(prompts.at(-1)).toMatchObject({
+			mode: "page",
+			entries: entries.map((entry) => ({ id: entry.id, username: entry.username })),
+		}));
+		expect(
+			contents.send.mock.calls.filter(
+				([channel, payload]) =>
+					channel === "kestrel:user-browser-credential-command" &&
+					(payload as { type?: unknown }).type === "fill",
+			).length,
+		).toBe(0);
+		expect(passwordVault.getForOrigin).not.toHaveBeenCalled();
+		});
+
+	it("lets an approved agent request an opaque matching-credential autofill", async () => {
+		const entry = {
+			id: "password-00000000-0000-4000-8000-000000000001",
+			origin: "https://login.example",
+			title: "Example",
+			username: "person@example.test",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+		};
+		const passwordVault = {
+			list: vi.fn(async () => [entry]),
+			listForOrigin: vi.fn(async () => [entry]),
+			getForOrigin: vi.fn(async () => ({ ...entry, password: "privileged-only" })),
+			save: vi.fn(),
+			remove: vi.fn(),
+			markUsed: vi.fn(),
+		} as unknown as PasswordVault;
+		const { service } = createService({ passwordVault });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [
+				{
+					id: "field-0",
+					kind: "username",
+					label: "Email",
+					type: "email",
+					autocomplete: "username",
+					rect: { x: 10, y: 10, width: 260, height: 42 },
+				},
+				{
+					id: "field-1",
+					kind: "password",
+					label: "Password",
+					type: "password",
+					autocomplete: "current-password",
+					rect: { x: 10, y: 60, width: 260, height: 42 },
+				},
+			],
+		};
+
+		const result = await service.handleAgentRequest(
+			{ operation: "visible-autofill", tabId: tab.id },
+			new AbortController().signal,
+		);
+
+		expect(result).toEqual({
+			credentialAvailable: true,
+			autofillResult: "filled",
+			trust: "untrusted_browser",
+		});
+		expect(JSON.stringify(result)).not.toContain(entry.id);
+		expect(JSON.stringify(result)).not.toContain(entry.username);
+		expect(JSON.stringify(result)).not.toContain("privileged-only");
+		expect(passwordVault.getForOrigin).toHaveBeenCalledWith(entry.id, entry.origin);
+		expect(
+			contents.send.mock.calls.some(
+				([channel, payload]) =>
+					channel === "kestrel:user-browser-credential-command" &&
+					(payload as { type?: unknown }).type === "fill",
+			),
+		).toBe(true);
+	});
+
+	it("does not let an agent choose between multiple saved credentials", async () => {
+		const entries = [
+			{
+				id: "password-00000000-0000-4000-8000-000000000001",
+				origin: "https://login.example",
+				title: "Example",
+				username: "personal@example.test",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+			},
+			{
+				id: "password-00000000-0000-4000-8000-000000000002",
+				origin: "https://login.example",
+				title: "Example",
+				username: "work@example.test",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+			},
+		];
+		const passwordVault = {
+			list: vi.fn(async () => entries),
+			listForOrigin: vi.fn(async () => entries),
+			getForOrigin: vi.fn(),
+			save: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const { service } = createService({ passwordVault });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [
+				{
+					id: "field-0",
+					kind: "password",
+					label: "Password",
+					type: "password",
+					autocomplete: "current-password",
+					rect: { x: 10, y: 60, width: 260, height: 42 },
+				},
+			],
+		};
+
+		const result = await service.handleAgentRequest(
+			{ operation: "visible-autofill", tabId: tab.id },
+			new AbortController().signal,
+		);
+
+		expect(result).toEqual({
+			credentialAvailable: true,
+			autofillResult: "selection_required",
+			trust: "untrusted_browser",
+		});
+		expect(JSON.stringify(result)).not.toContain(entries[0]!.username);
+		expect(JSON.stringify(result)).not.toContain(entries[1]!.username);
+		expect(passwordVault.getForOrigin).not.toHaveBeenCalled();
+	});
+
+	it("detects a dynamically inserted sign-in form through the preload bridge", async () => {
+		const entry = {
+			id: "password-00000000-0000-4000-8000-000000000001",
+			origin: "https://login.example",
+			title: "Example",
+			username: "person@example.test",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+		};
+		const passwordVault = {
+			list: vi.fn(async () => [entry]),
+			listForOrigin: vi.fn(async () => [entry]),
+			getForOrigin: vi.fn(async () => ({ ...entry, password: "privileged-only" })),
+			save: vi.fn(),
+			remove: vi.fn(),
+			markUsed: vi.fn(),
+		} as unknown as PasswordVault;
+		const { service } = createService({ passwordVault });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [
+				{
+					id: "field-0",
+					kind: "username",
+					label: "Email",
+					type: "email",
+					autocomplete: "username",
+					rect: { x: 10, y: 10, width: 260, height: 42 },
+				},
+				{
+					id: "field-1",
+					kind: "password",
+					label: "Password",
+					type: "password",
+					autocomplete: "current-password",
+					rect: { x: 10, y: 60, width: 260, height: 42 },
+				},
+			],
+		};
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: contents.mainFrame },
+			"kestrel:user-browser-password-form-changed",
+		);
+
+		await vi.waitFor(() =>
+			expect(
+				contents.send.mock.calls.some(
+					([channel, payload]) =>
+						channel === "kestrel:user-browser-credential-command" &&
+						(payload as { type?: unknown }).type === "fill",
+				),
+			).toBe(true),
+		);
+	});
+
+	it("fills a generated password into all new-password fields and stages it only after submit", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			getForOrigin: vi.fn(),
+			save,
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://accounts.example/sign-up");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [
+				{
+					id: "field-0",
+					kind: "username",
+					label: "Email",
+					type: "email",
+					autocomplete: "username",
+					rect: { x: 10, y: 10, width: 260, height: 42 },
+				},
+				{
+					id: "field-1",
+					kind: "new-password",
+					label: "New password",
+					type: "password",
+					autocomplete: "new-password",
+					rect: { x: 10, y: 60, width: 260, height: 42 },
+				},
+				{
+					id: "field-2",
+					kind: "new-password",
+					label: "Confirm password",
+					type: "password",
+					autocomplete: "new-password",
+					rect: { x: 10, y: 110, width: 260, height: 42 },
+				},
+			],
+		};
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() => expect(prompts.at(-1)).toMatchObject({ mode: "generate" }));
+
+		await service.generatePasswordForActiveForm();
+		const fills = contents.send.mock.calls
+			.filter(
+				([channel, payload]) =>
+					channel === "kestrel:user-browser-credential-command" &&
+					(payload as { type?: unknown }).type === "fill",
+			)
+			.map(([, payload]) => payload as { password: string; fieldId: string });
+		expect(fills).toHaveLength(2);
+		expect(fills.map((fill) => fill.fieldId)).toEqual(["field-1", "field-2"]);
+		const generated = fills[0]!.password;
+		expect(fills.every((fill) => fill.password === generated)).toBe(true);
+		expect(generated).toHaveLength(20);
+		expect(generated).toMatch(/[A-Z]/);
+		expect(generated).toMatch(/[a-z]/);
+		expect(generated).toMatch(/[0-9]/);
+		expect(generated).toMatch(/[^A-Za-z0-9]/);
+		expect(JSON.stringify(prompts)).not.toContain(generated);
+
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: contents.mainFrame },
+			"kestrel:user-browser-password-submission",
+			{ username: "person@example.test", password: generated },
+		);
+		contents.passwordSnapshot = { fields: [] };
+		contents.url = "https://accounts.example/welcome";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() => expect(prompts.at(-1)).toMatchObject({ mode: "save" }));
+		await service.savePasswordSuggestion();
+		expect(save).toHaveBeenCalledWith(
+			expect.objectContaining({
+				origin: "https://accounts.example",
+				username: "person@example.test",
+				password: generated,
+			}),
+		);
+	});
+
+	it("does not offer or save a submitted password after a failed login navigation", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save,
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: contents.mainFrame },
+			"kestrel:user-browser-password-submission",
+			{ username: "person", password: "not-saved" },
+		);
+		contents.passwordSnapshot = {
+			fields: [{
+				id: "field-0",
+				kind: "password",
+				label: "Password",
+				type: "password",
+				autocomplete: "current-password",
+				rect: { x: 20, y: 80, width: 260, height: 42 },
+			}],
+		};
+		contents.url = "https://login.example/sign-in?error=invalid";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(prompts).toEqual([]);
+
+		await expect(service.savePasswordSuggestion()).rejects.toThrow(
+			"no longer available",
+		);
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	it("clears a submitted password when the tab goes to an unrelated HTTPS origin", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save,
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: contents.mainFrame },
+			"kestrel:user-browser-password-submission",
+			{ username: "person", password: "not-saved" },
+		);
+		contents.url = "https://unrelated.example/home";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(prompts).toEqual([]);
+		await expect(service.savePasswordSuggestion()).rejects.toThrow(
+			"no longer available",
+		);
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	it("keeps only the latest submitted secret pending until success confirmation", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save,
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		const submission = (password: string) =>
+			contents.emit(
+				"ipc-message",
+				{ senderFrame: contents.mainFrame },
+				"kestrel:user-browser-password-submission",
+				{ username: "person", password },
+			);
+
+		submission("first-secret");
+		submission("second-secret");
+		contents.url = "https://login.example/home";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() => expect(prompts).toHaveLength(1));
+
+		await service.savePasswordSuggestion();
+		expect(save).toHaveBeenCalledWith(
+			expect.objectContaining({ password: "second-secret" }),
+		);
+		expect(prompts).toHaveLength(2);
+	});
+
+	it("does not accept a password submission from another origin", async () => {
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save: vi.fn(),
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: { url: "https://attacker.example/login" } },
+			"kestrel:user-browser-password-submission",
+			{ username: "person", password: "not-saved" },
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(prompts).toEqual([]);
+		expect(passwordVault.listForOrigin).not.toHaveBeenCalled();
+	});
 
   it("offers to save a complete card without exposing its number to the prompt", async () => {
 		const save = vi.fn(async (_input: SavePaymentCardInput) => []);
@@ -459,6 +1857,125 @@ describe("UserBrowserService", () => {
     service.dispose();
   });
 
+  it("requests native camera and microphone access for a website media request", async () => {
+    const confirmSitePermission = vi.fn(async () => true);
+    const requestNativeMediaAccess = vi.fn(async () => true);
+    const { service } = createService({
+      confirmSitePermission,
+      requestNativeMediaAccess,
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/call");
+    const contents = electron.state.views[0]!.webContents;
+    const partition = electron.state.partitions[0]!.instance as unknown as {
+      permissionRequestHandler: (
+        webContents: unknown,
+        permission: string,
+        callback: (isAllowed: boolean) => void,
+        details?: {
+          requestingUrl?: string;
+          securityOrigin?: string;
+          mediaTypes?: string[];
+        },
+      ) => void;
+    };
+    const callback = vi.fn();
+
+    partition.permissionRequestHandler(contents, "media", callback, {
+      requestingUrl: "https://example.com/call",
+      securityOrigin: "https://example.com",
+      mediaTypes: ["audio", "video"],
+    });
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(true));
+    expect(confirmSitePermission).toHaveBeenCalledWith(
+      "https://example.com",
+      "camera and microphone",
+    );
+    expect(requestNativeMediaAccess.mock.calls).toEqual([
+      ["camera"],
+      ["microphone"],
+    ]);
+    expect(service.getState().sitePermissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          origin: "https://example.com",
+          permission: "camera",
+          decision: "allow",
+        }),
+        expect.objectContaining({
+          origin: "https://example.com",
+          permission: "microphone",
+          decision: "allow",
+        }),
+      ]),
+    );
+    service.dispose();
+  });
+
+  it("keeps camera and microphone site decisions separate", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    const partition = electron.state.partitions[0]!.instance as unknown as {
+      permissionCheckHandler: (
+        webContents: unknown,
+        permission: string,
+        requestingOrigin: string,
+        details?: { mediaType?: string },
+      ) => boolean;
+    };
+
+    service.setSitePermission("https://example.com", "camera", "allow");
+    service.setSitePermission("https://example.com", "microphone", "deny");
+
+    expect(
+      partition.permissionCheckHandler(contents, "media", "https://example.com", {
+        mediaType: "video",
+      }),
+    ).toBe(true);
+    expect(
+      partition.permissionCheckHandler(contents, "media", "https://example.com", {
+        mediaType: "audio",
+      }),
+    ).toBe(false);
+    service.dispose();
+  });
+
+  it("does not grant website media when native access is denied", async () => {
+    const confirmSitePermission = vi.fn(async () => true);
+    const requestNativeMediaAccess = vi.fn(async (mediaType: "camera" | "microphone") =>
+      mediaType === "camera",
+    );
+    const { service } = createService({
+      confirmSitePermission,
+      requestNativeMediaAccess,
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/camera");
+    const contents = electron.state.views[0]!.webContents;
+    const partition = electron.state.partitions[0]!.instance as unknown as {
+      permissionRequestHandler: (
+        webContents: unknown,
+        permission: string,
+        callback: (isAllowed: boolean) => void,
+        details?: { requestingUrl?: string; mediaTypes?: string[] },
+      ) => void;
+    };
+    const callback = vi.fn();
+
+    partition.permissionRequestHandler(contents, "media", callback, {
+      requestingUrl: "https://example.com/camera",
+      mediaTypes: ["video", "audio"],
+    });
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(false));
+    expect(requestNativeMediaAccess).toHaveBeenCalledWith("camera");
+    expect(requestNativeMediaAccess).toHaveBeenCalledWith("microphone");
+    service.dispose();
+  });
+
   it("clamps visible content bounds to the BrowserWindow content area", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
@@ -472,6 +1989,127 @@ describe("UserBrowserService", () => {
     await service.setContentBounds({ x: 500, y: 500, width: 100, height: 100 }, true);
     expect(view.bounds).toEqual({ x: 10, y: 0, width: 290, height: 200 });
     expect(view.visible).toBe(false);
+  });
+
+  it("captures the active page before releasing its native view for a menu", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const view = electron.state.views[0]!;
+
+    const preview = await service.setContentBounds(
+      { x: 0, y: 0, width: 300, height: 200 },
+      false,
+    );
+
+    expect(preview).toMatch(/^data:image\/png;base64,/);
+    expect(view.webContents.capturePage).toHaveBeenCalledOnce();
+    expect(view.visible).toBe(false);
+  });
+
+  it("builds an Edge-like image context menu with safe native actions", async () => {
+    const { service, commands } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/article");
+    const contents = electron.state.views[0]!.webContents;
+    const imageURL = "https://cdn.example.test/hero.png";
+    const savePath = join(tmpdir(), "kestrel-context-hero.png");
+
+    contents.emit("context-menu", {}, {
+      x: 42,
+      y: 64,
+      linkURL: "https://example.com/gallery",
+      linkText: "Gallery",
+      pageURL: "https://example.com/article",
+      frameURL: "https://example.com/article",
+      srcURL: imageURL,
+      mediaType: "image",
+      hasImageContents: true,
+      isEditable: false,
+      selectionText: "",
+      titleText: "",
+      altText: "Hero",
+      suggestedFilename: "hero.png",
+      selectionRect: { x: 0, y: 0, width: 0, height: 0 },
+      selectionStartOffset: 0,
+      referrerPolicy: "strict-origin-when-cross-origin",
+      misspelledWord: "",
+      dictionarySuggestions: [],
+      frameCharset: "UTF-8",
+      formControlType: "none",
+      spellcheckEnabled: true,
+      inputFieldType: "none",
+      menuSourceType: "mouse",
+    });
+
+    const template = electron.state.menus.at(-1) as Array<{
+      label?: string;
+      role?: string;
+      type?: string;
+      submenu?: Array<{ label?: string; click?: () => void }>;
+      click?: () => void;
+    }>;
+    const labels = template.map((item) => item.label ?? item.role ?? item.type);
+    expect(labels).toEqual([
+      "Open Image in New Tab",
+      "Save Image As…",
+      "Copy Image",
+      "Copy Image Address",
+      "separator",
+      "Open Link in New Tab",
+      "Save Link As…",
+      "Copy Link",
+      "separator",
+      "Back",
+      "Forward",
+      "reload",
+      "separator",
+      "Bookmark This Page",
+      "Print…",
+      "Screenshot",
+      "More tools",
+      "separator",
+      "Inspect",
+    ]);
+    expect(template.find((item) => item.label === "More tools")?.submenu?.map((item) => item.label)).toEqual([
+      "Find in page",
+      undefined,
+      "Downloads",
+      "Bookmarks",
+      "Settings",
+      "Command Center",
+      "Keyboard shortcuts",
+    ]);
+
+    template.find((item) => item.label === "Copy Image")?.click?.();
+    expect(contents.copyImageAt).toHaveBeenCalledWith(42, 64);
+
+    vi.mocked(dialog.showSaveDialog).mockResolvedValueOnce({
+      canceled: false,
+      filePath: savePath,
+    });
+    template.find((item) => item.label === "Save Image As…")?.click?.();
+    await vi.waitFor(() =>
+      expect(contents.downloadURL).toHaveBeenCalledWith(imageURL),
+    );
+    const item = {
+      getFilename: vi.fn(() => "hero.png"),
+      getURL: vi.fn(() => imageURL),
+      getReceivedBytes: vi.fn(() => 0),
+      getTotalBytes: vi.fn(() => 10),
+      setSavePath: vi.fn(),
+      on: vi.fn(),
+      once: vi.fn(),
+    };
+    electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
+    await vi.waitFor(() => expect(item.setSavePath).toHaveBeenCalledWith(savePath));
+
+    template.find((item) => item.label === "Screenshot")?.click?.();
+    template
+      .find((item) => item.label === "More tools")
+      ?.submenu?.find((item) => item.label === "Find in page")
+      ?.click?.();
+    expect(commands).toEqual(["save-screenshot", "find-in-page"]);
   });
 
   it("removes a detached page from the source browser service", async () => {
@@ -489,6 +2127,59 @@ describe("UserBrowserService", () => {
     expect(secondView.webContents.close).toHaveBeenCalledWith({
       waitForBeforeUnload: false,
     });
+  });
+
+  it("can move a blank New Tab page between browser windows", async () => {
+    const source = createService();
+    const blankTab = source.service.getState().tabs[0]!;
+    const transferred = source.service.getTabForTransfer(blankTab.id);
+
+    expect(transferred).toMatchObject({
+      id: blankTab.id,
+      title: "New Tab",
+      url: "",
+    });
+
+    const sourceState = await source.service.detachTab(blankTab.id);
+    expect(sourceState.tabs).toHaveLength(1);
+    expect(sourceState.tabs[0]?.id).not.toBe(blankTab.id);
+
+    const target = createService();
+    const targetState = await target.service.importTabForTransfer(transferred);
+    expect(targetState.activeTabId).toBe(blankTab.id);
+    expect(targetState.tabs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: blankTab.id,
+          title: "New Tab",
+          url: "",
+        }),
+      ]),
+    );
+  });
+
+  it("moves a web tab back between windows without treating it as closed", async () => {
+    const source = createService();
+    const target = createService();
+    const sourceTab = await navigateNewTab(source.service, "https://second.example");
+    const transferred = source.service.getTabForTransfer(sourceTab.id);
+
+    await target.service.importTabForTransfer(transferred);
+    const sourceState = await source.service.removeTabForTransfer(sourceTab.id);
+
+    expect(sourceState.tabs.some((tab) => tab.id === sourceTab.id)).toBe(false);
+    expect(sourceState.recentlyClosedTabs).toEqual([]);
+    expect(target.service.getState().tabs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: sourceTab.id,
+          url: "https://second.example/",
+        }),
+      ]),
+    );
+
+    source.service.dispose();
+    target.service.dispose();
   });
 
   it("opens user-initiated safe links as a managed tab and denies unsafe urls", async () => {
@@ -512,6 +2203,104 @@ describe("UserBrowserService", () => {
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     expect(service.getState()).toMatchObject({ activeTabId: expect.any(String) });
     expect(service.getState().tabs.at(-1)).toMatchObject({ url: "https://open.example/path" });
+  });
+
+  it("hands off allowlisted App Store links to macOS", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(
+      first.id,
+      "https://apps.apple.com/us/app/speedtest-by-ookla/id113517709?mt=12",
+    );
+    const source = electron.state.views[0]!.webContents;
+    const appStoreUrl =
+      "macappstore://itunes.apple.com/us/app/speedtest-by-ookla/id113517709?mt=12";
+    const preventDefault = vi.fn();
+
+    source.emit("will-navigate", { preventDefault }, appStoreUrl);
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl);
+    expect(service.getState().tabs).toHaveLength(1);
+  });
+
+  it("hands off App Store popup links without creating a browser tab", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://apps.apple.com/");
+    const source = electron.state.views[0]!.webContents;
+    const appStoreUrl = "itms-apps://apps.apple.com/app/id113517709?mt=12";
+
+    expect(
+      source.windowOpenHandler?.({
+        url: appStoreUrl,
+        disposition: "foreground-tab",
+      }),
+    ).toEqual({ action: "deny" });
+    expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl);
+    expect(service.getState().tabs).toHaveLength(1);
+  });
+
+  it("accepts both Apple App Store URL forms and rejects other custom schemes", () => {
+    expect(
+      safeAppStoreUrl("macappstore://itunes.apple.com/app/id113517709?mt=12"),
+    ).toBe("macappstore://itunes.apple.com/app/id113517709?mt=12");
+    expect(
+      safeAppStoreUrl("itms-apps://apps.apple.com/app/id113517709?mt=12"),
+    ).toBe("itms-apps://apps.apple.com/app/id113517709?mt=12");
+    for (const url of [
+      "javascript:alert(1)",
+      "my-app://itunes.apple.com/app/id113517709",
+      "macappstore://evil.example/app/id113517709",
+      "macappstore://itunes.apple.com:8080/app/id113517709",
+      "macappstore://user:secret@itunes.apple.com/app/id113517709",
+    ]) {
+      expect(safeAppStoreUrl(url)).toBeUndefined();
+    }
+  });
+
+  it("preserves target=_blank form POST bodies when opening managed tabs", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://canvas.example/course");
+    const source = electron.state.views[0]!.webContents;
+    const postData = Buffer.from(
+      "iss=https%3A%2F%2Fcanvas.example&login_hint=student&target_link_uri=https%3A%2F%2Fcourseware.example%2Fmath",
+      "utf8",
+    );
+    const postBody = {
+      contentType: "application/x-www-form-urlencoded",
+      data: [{ type: "rawData", bytes: postData }],
+    };
+
+    expect(
+      source.windowOpenHandler?.({
+        url: "https://courseware.example/api/lti/oidc",
+        disposition: "foreground-tab",
+        postBody,
+        referrer: {
+          url: "https://canvas.example/course",
+          policy: "strict-origin-when-cross-origin",
+        },
+      }),
+    ).toEqual({ action: "deny" });
+
+    await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
+    expect(service.getState().tabs.at(-1)).toMatchObject({
+      url: "https://courseware.example/api/lti/oidc",
+    });
+    const popup = electron.state.views.at(-1)!.webContents;
+    expect(popup.loadURL).toHaveBeenCalledWith(
+      "https://courseware.example/api/lti/oidc",
+      {
+        postData: postBody.data,
+        extraHeaders: "Content-Type: application/x-www-form-urlencoded",
+        httpReferrer: {
+          url: "https://canvas.example/course",
+          policy: "strict-origin-when-cross-origin",
+        },
+      },
+    );
   });
 
   it("awaits CDP clicks and opens a managed tab for new window links", async () => {
@@ -917,6 +2706,66 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     ).toMatchObject({ discarded: false });
   });
 
+	it("gates automatic tab sleeping with Memory Saver while retaining manual sleep", async () => {
+		let now = new Date("2026-08-31T12:00:00.000Z");
+		const { service } = createService({ now: () => now });
+		const first = service.getState().tabs[0]!;
+		await service.navigate(first.id, "https://first.example");
+		const second = await navigateNewTab(service, "https://second.example");
+		await service.selectTab(second.id);
+		now = new Date("2026-08-31T13:00:00.000Z");
+
+		service.updateSettings({
+			...service.getState().settings,
+			memorySaverMode: false,
+		});
+		(service as unknown as { checkSleepingTabs: () => void }).checkSleepingTabs();
+		expect(service.getState().tabs.find((tab) => tab.id === first.id)).toMatchObject({
+			discarded: false,
+		});
+
+		service.updateSettings({
+			...service.getState().settings,
+			memorySaverMode: true,
+		});
+		(service as unknown as { checkSleepingTabs: () => void }).checkSleepingTabs();
+		expect(service.getState().tabs.find((tab) => tab.id === first.id)).toMatchObject({
+			discarded: true,
+		});
+	});
+
+	it("keeps authentication tabs alive while sleeping ordinary inactive tabs", async () => {
+		let now = new Date("2026-08-31T12:00:00.000Z");
+		const { service } = createService({ now: () => now });
+		const ordinary = service.getState().tabs[0]!;
+		await service.navigate(ordinary.id, "https://ordinary.example");
+
+		now = new Date("2026-08-31T12:01:00.000Z");
+		const authentication = await navigateNewTab(
+			service,
+			"https://accounts.google.com/o/oauth2/v2/auth?client_id=test-client",
+		);
+		now = new Date("2026-08-31T12:02:00.000Z");
+		const active = await navigateNewTab(service, "https://active.example");
+		await service.selectTab(active.id);
+		now = new Date("2026-08-31T13:00:00.000Z");
+
+		service.updateSettings({
+			...service.getState().settings,
+			memorySaverMode: true,
+			sleepingTabTimeoutMinutes: 30,
+		});
+		(service as unknown as { checkSleepingTabs: () => void }).checkSleepingTabs();
+
+		expect(service.getState().tabs.find((tab) => tab.id === ordinary.id)).toMatchObject({
+			discarded: true,
+		});
+		expect(
+			service.getState().tabs.find((tab) => tab.id === authentication.id),
+		).toMatchObject({ discarded: false });
+		expect(isAuthenticationFlowUrl(authentication.url)).toBe(true);
+	});
+
   it("cleans up crashed views and recreates a destroyed view on the next navigation", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
@@ -936,6 +2785,23 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     await service.navigate(tab.id, "https://third.example");
     expect(electron.state.views.at(-1)).not.toBe(replacement);
   });
+
+	it("recreates a view when its web contents disappear before navigation", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const first = electron.state.views[0]!;
+
+		Object.defineProperty(first, "webContents", {
+			configurable: true,
+			value: undefined,
+		});
+
+		await expect(service.navigate(tab.id, "https://again.example")).resolves.toEqual(
+			expect.anything(),
+		);
+		expect(electron.state.views.at(-1)).not.toBe(first);
+	});
 
   it("retains recent history, prunes expired visits, and clears history when retention is disabled", async () => {
     let now = new Date("2026-08-11T12:00:00.000Z");
@@ -1120,6 +2986,50 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     ).rejects.toThrow("Browser target ref is stale. Take a new snapshot.");
   });
 
+	it("never lets an agent type into a sensitive accessibility ref or a selector", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com/login");
+		const contents = electron.state.views[0]!.webContents;
+		contents.url = "https://example.com/login";
+		contents.mainFrame.url = contents.url;
+		contents.debugger.sendCommand.mockResolvedValue({
+			nodes: [
+				{
+					nodeId: "1",
+					role: { value: "textbox" },
+					name: { value: "Password" },
+					value: { value: "never-share-this" },
+					backendDOMNodeId: 9,
+				},
+			],
+		});
+
+		const snapshot = await service.snapshot(tab.id);
+		expect(JSON.stringify(snapshot)).not.toContain("never-share-this");
+		await expect(
+			service.handleAgentRequest(
+				{
+					operation: "visible-act",
+					tabId: tab.id,
+					action: { type: "type", target: "e1", text: "not-for-agents" },
+				},
+				new AbortController().signal,
+			),
+		).rejects.toThrow("cannot type into a sensitive browser field");
+		await expect(
+			service.handleAgentRequest(
+				{
+					operation: "visible-act",
+					tabId: tab.id,
+					action: { type: "type", target: "#password", text: "not-for-agents" },
+				},
+				new AbortController().signal,
+			),
+		).rejects.toThrow("must use a current accessibility ref");
+		expect(contents.insertText).not.toHaveBeenCalled();
+	});
+
   it("inserts a selected code only into the active page's matching domain", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
@@ -1217,6 +3127,31 @@ it("serializes closeTab behind an in-flight agent act", async () => {
       ),
     ).resolves.toEqual({ navigated: true });
   });
+
+	it("blocks agent screenshots while a password or OTP field is present", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com/login");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [{
+				id: "field-0",
+				kind: "secret",
+				label: "One-time code",
+				type: "text",
+				autocomplete: "one-time-code",
+				rect: { x: 10, y: 20, width: 260, height: 42 },
+			}],
+		};
+
+		await expect(
+			service.handleAgentRequest(
+				{ operation: "visible-screenshot", tabId: tab.id },
+				new AbortController().signal,
+			),
+		).rejects.toThrow("does not share browser screenshots");
+		expect(contents.capturePage).not.toHaveBeenCalled();
+	});
 
   it("rejects oversized accessibility snapshots before returning them", async () => {
     const { service } = createService();
@@ -1355,9 +3290,21 @@ it("serializes closeTab behind an in-flight agent act", async () => {
       type: "keyDown",
       key: "Tab",
     });
+
+    // Electron reports physical keyboard codes independently from characters.
+    // Accept that form so Ctrl+= works on layouts that do not provide `=` here.
+    firstContents.emit("before-input-event", inputEvent, {
+      meta: false,
+      control: true,
+      shift: false,
+      type: "keyDown",
+      key: "Unidentified",
+      code: "Equal",
+    });
     await vi.waitFor(() =>
       expect(service.getState().activeTabId).toBe(second.id),
     );
+    expect(firstContents.zoomLevel).toBe(0.5);
 
     expect(commands).toEqual([
       "focus-address",
@@ -1368,7 +3315,7 @@ it("serializes closeTab behind an in-flight agent act", async () => {
       "open-settings",
       "show-shortcuts",
     ]);
-    expect(inputEvent.preventDefault).toHaveBeenCalledTimes(9);
+    expect(inputEvent.preventDefault).toHaveBeenCalledTimes(10);
   });
 
   it("supports reopening closed tabs and direct tab index switching", async () => {
@@ -1425,8 +3372,8 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     expect(service.getState().recentlyClosedTabs).toEqual([]);
   });
 
-  it("supports zoom in, zoom out, and zoom reset", async () => {
-    const { service } = createService();
+  it("supports zoom in, zoom out, and zoom reset with visible percent feedback", async () => {
+    const { service, events } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://first.example");
 
@@ -1444,9 +3391,25 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 
     service.zoomReset(first.id);
     expect(contents.zoomLevel).toBe(0);
+    expect(
+      events.filter(
+        (
+          event,
+        ): event is { type: "zoom"; zoom: { tabId: string; percent: number } } =>
+          typeof event === "object" &&
+          event !== null &&
+          "type" in event &&
+          event.type === "zoom",
+      ),
+    ).toEqual([
+      { type: "zoom", zoom: { tabId: first.id, percent: 110 } },
+      { type: "zoom", zoom: { tabId: first.id, percent: 120 } },
+      { type: "zoom", zoom: { tabId: first.id, percent: 110 } },
+      { type: "zoom", zoom: { tabId: first.id, percent: 100 } },
+    ]);
   });
 
-  it("bookmarks, pins, and finds in the active page", async () => {
+	it("bookmarks, pins, and finds in the active page", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://docs.example/path");
@@ -1467,8 +3430,66 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     service.openDevTools(first.id);
     expect(contents.openDevTools).toHaveBeenCalled();
     service.printTab(first.id);
-    expect(contents.print).toHaveBeenCalled();
-  });
+		expect(contents.print).toHaveBeenCalled();
+	});
+
+	it("saves bookmark presentation choices and keeps folder operations reversible", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://docs.example/guide");
+
+		const created = service.createBookmarkFolder("Read later");
+		const saved = service.saveBookmark({
+			title: "A useful guide",
+			displayMode: "title",
+			folderId: created.folder.id,
+		});
+		const bookmark = saved.bookmarks[0]!;
+		expect(bookmark).toMatchObject({
+			title: "A useful guide",
+			displayMode: "title",
+			folderId: created.folder.id,
+		});
+
+		const renamed = service.renameBookmarkFolder(created.folder.id, "Reference");
+		expect(renamed.bookmarkFolders[0]?.name).toBe("Reference");
+		const updated = service.updateBookmark({
+			bookmarkId: bookmark.id,
+			title: "Guide icon",
+			displayMode: "icon",
+			folderId: null,
+		});
+		expect(updated.bookmarks[0]).toMatchObject({
+			title: "Guide icon",
+			displayMode: "icon",
+		});
+		expect(updated.bookmarks[0]?.folderId).toBeUndefined();
+
+		const removedFolder = service.removeBookmarkFolder(created.folder.id);
+		expect(removedFolder.bookmarkFolders).toEqual([]);
+		expect(removedFolder.bookmarks[0]?.folderId).toBeUndefined();
+	});
+
+	it("routes Cmd+D through the presentation command for an unsaved page", async () => {
+		const { service, commands } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://docs.example/guide");
+		const contents = electron.state.views[0]!.webContents;
+		const event = { preventDefault: vi.fn() };
+
+		contents.emit("before-input-event", event, {
+			type: "keyDown",
+			key: "d",
+			meta: true,
+			control: false,
+			shift: false,
+			alt: false,
+		});
+
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(commands).toContain("bookmark-page");
+		expect(service.getState().bookmarks).toEqual([]);
+	});
 
   it("does not open devtools when packaged production hardening disables them", async () => {
     const { service } = createService({ allowDevTools: false });

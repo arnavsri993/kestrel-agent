@@ -7,6 +7,7 @@ import {
 	MAC_WIDGETS_GROUP_ID,
 	MacWidgetsStore,
 	macWidgetsGroupContainerPath,
+	macWidgetsSnapshotDirectory,
 	widgetSnapshotFromWorkspace,
 } from "./mac-widgets";
 
@@ -153,5 +154,16 @@ describe("macOS widget bridge", () => {
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	it("keeps isolated desktop test snapshots out of the real App Group", () => {
+		const testUserData = "/tmp/kestrel-isolated-profile";
+
+		expect(macWidgetsSnapshotDirectory("/Users/example", testUserData)).toBe(
+			"/tmp/kestrel-isolated-profile/mac-widgets",
+		);
+		expect(macWidgetsSnapshotDirectory("/Users/example")).toBe(
+			macWidgetsGroupContainerPath("/Users/example"),
+		);
 	});
 });

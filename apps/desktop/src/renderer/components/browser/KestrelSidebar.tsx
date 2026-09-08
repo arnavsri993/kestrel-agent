@@ -1,60 +1,118 @@
-import { useMemo, useState } from "react";
-import type { RuntimeSession, WorkspaceGrant } from "@kestrel/shared-types";
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+	type CSSProperties,
+	type KeyboardEvent as ReactKeyboardEvent,
+	type MouseEvent as ReactMouseEvent,
+	type PointerEvent as ReactPointerEvent,
+	type RefObject,
+} from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import type { Project, RuntimeSession } from "@kestrel/shared-types";
 import { sessionTitleForDisplay } from "../../chat-title";
 import {
-	projectChatSummary,
 	projectChats,
 	projectChatsForSidebar,
 	sessionsWithoutProject,
 } from "../../projects";
+import {
+	DEFAULT_PROJECT_APPEARANCE,
+	projectColorValue,
+	type ProjectAppearance,
+	type ProjectAppearanceMap,
+} from "../../project-appearance";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import type { SidebarDestination } from "./agent-sidebar";
+import {
+	clampKestrelSidebarWidth,
+	KESTREL_SIDEBAR_DEFAULT_WIDTH,
+	KESTREL_SIDEBAR_MIN_WIDTH,
+	maxKestrelSidebarWidth,
+	KESTREL_SIDEBAR_WIDTH_STORAGE_KEY,
+} from "./kestrel-sidebar-layout";
+import {
+	KESTREL_MENU_TRANSITION,
+	KESTREL_SELECTION_TRANSITION,
+} from "../../motion-contract";
 
 const MAX_SIDEBAR_CHATS = 8;
+const PROJECT_EXPANSION_DURATION_MS = KESTREL_SELECTION_TRANSITION.duration * 1_000;
+const PROJECT_EXPANSION_SWITCH_DELAY_MS = PROJECT_EXPANSION_DURATION_MS + 80;
+const PROJECT_EXPANDED_STORAGE_KEY = "kestrel:project-expanded";
 
-function recentChats(
-	sessions: RuntimeSession[],
-	projects: WorkspaceGrant[],
-): RuntimeSession[] {
-	return sessionsWithoutProject(sessions, projects).slice(0, MAX_SIDEBAR_CHATS);
-}
+type ContextMenuState =
+	| { kind: "project"; id: string; top: number; left: number }
+	| { kind: "chat"; id: string; top: number; left: number };
 
-function readExpandedProjects(): Record<string, boolean> {
+function readExpandedProjectId(projects: Project[]): string | null {
 	try {
-		const stored = JSON.parse(
+		const current = localStorage.getItem(PROJECT_EXPANDED_STORAGE_KEY);
+		if (current && projects.some((project) => project.id === current))
+			return current;
+		const legacy = JSON.parse(
 			localStorage.getItem("kestrel:projects-expanded") ?? "{}",
 		) as unknown;
-		if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
-		return Object.fromEntries(
-			Object.entries(stored).filter(
-				(entry): entry is [string, boolean] => typeof entry[1] === "boolean",
-			),
-		);
+		if (!legacy || typeof legacy !== "object" || Array.isArray(legacy))
+			return null;
+		const expandedPath = Object.entries(legacy).find(
+			([path, expanded]) => expanded === true && projects.some((project) => project.path === path),
+		)?.[0];
+		return projects.find((project) => project.path === expandedPath)?.id ?? null;
 	} catch {
-		return {};
+		return null;
 	}
+}
+
+function persistExpandedProjectId(projectId: string | null): void {
+	try {
+		if (projectId) localStorage.setItem(PROJECT_EXPANDED_STORAGE_KEY, projectId);
+		else localStorage.removeItem(PROJECT_EXPANDED_STORAGE_KEY);
+	} catch {
+		// Navigation state is helpful but never blocks a project action.
+	}
+}
+
+function clampContextMenuPosition(top: number, left: number): { top: number; left: number } {
+	return {
+		top: Math.max(8, Math.min(top, window.innerHeight - 280)),
+		left: Math.max(8, Math.min(left, window.innerWidth - 236)),
+	};
+}
+
+function ProjectBadge({ appearance }: { appearance: ProjectAppearance }) {
+	return (
+		<span
+			className="kestrel-sidebar-project-badge"
+			style={{ "--project-color": projectColorValue(appearance.color) } as CSSProperties}
+			aria-hidden="true"
+		>
+			<Icon name={appearance.icon} />
+		</span>
+	);
 }
 
 function SidebarNavItem({
 	icon,
 	label,
 	active,
-	badge,
 	destination,
 	onClick,
 }: {
 	icon: string;
 	label: string;
 	active?: boolean;
-	badge?: number;
-	destination?: SidebarDestination;
+	destination: SidebarDestination;
 	onClick(): void;
 }) {
 	return (
 		<button
 			type="button"
-			className={`kestrel-sidebar-nav-item${active ? " active" : ""}`}
+			className={`kestrel-sidebar-row kestrel-sidebar-nav-item${active ? " active" : ""}`}
 			aria-current={active ? "page" : undefined}
 			aria-label={label}
 			title={label}
@@ -63,87 +121,486 @@ function SidebarNavItem({
 		>
 			<Icon name={icon} />
 			<span>{label}</span>
-			{badge ? (
-				<small aria-label={`${badge} pending`}>
-					{badge > 9 ? "9+" : badge}
-				</small>
-			) : null}
 		</button>
+	);
+}
+
+function SidebarContextMenu({
+	menu,
+	project,
+	chat,
+	projects,
+	projectAppearances,
+	menuRef,
+	onClose,
+	onOpenProject,
+	onNewProjectChat,
+	onOpenProjectSettings,
+	onOpenSession,
+	onMoveSession,
+}: {
+	menu: ContextMenuState;
+	project?: Project;
+	chat?: RuntimeSession;
+	projects: Project[];
+	projectAppearances: ProjectAppearanceMap;
+	menuRef: RefObject<HTMLDivElement | null>;
+	onClose(options?: { restoreFocus?: boolean }): void;
+	onOpenProject(project: Project): void;
+	onNewProjectChat(project: Project): void;
+	onOpenProjectSettings(project: Project): void;
+	onOpenSession(sessionId: string): void;
+	onMoveSession(sessionId: string, projectId: string | null): void;
+}) {
+	const reducedMotion = useReducedMotion() ?? false;
+
+	useEffect(() => {
+		menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+	}, [menu.id, menu.kind, menuRef]);
+
+	function action(run: () => void) {
+		onClose({ restoreFocus: true });
+		run();
+	}
+
+	return (
+		<motion.div
+			ref={menuRef}
+			className="kestrel-sidebar-context-menu"
+			role="menu"
+			initial={reducedMotion ? false : { opacity: 0, y: -2, scale: 0.985 }}
+			animate={{ opacity: 1, y: 0, scale: 1 }}
+			exit={
+				reducedMotion
+					? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+					: { opacity: 0, y: -2, scale: 0.985, pointerEvents: "none" }
+			}
+			transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
+			style={{ top: menu.top, left: menu.left, transformOrigin: "top left" }}
+			onContextMenu={(event) => event.preventDefault()}
+		>
+			{menu.kind === "project" && project ? (
+				<>
+					<button type="button" role="menuitem" onClick={() => action(() => onOpenProject(project))}>
+						<Icon name="folder" />
+						<span>Open project</span>
+					</button>
+					<button
+						type="button"
+						role="menuitem"
+						disabled={project.available === false}
+						onClick={() => action(() => onNewProjectChat(project))}
+					>
+						<Icon name="plus" />
+						<span>New chat</span>
+					</button>
+					<div className="kestrel-sidebar-context-menu-divider" role="separator" />
+					<button type="button" role="menuitem" onClick={() => action(() => onOpenProjectSettings(project))}>
+						<Icon name="settings" />
+						<span>Project settings</span>
+					</button>
+				</>
+			) : chat ? (
+				<>
+					<button type="button" role="menuitem" onClick={() => action(() => onOpenSession(chat.id))}>
+						<Icon name="chat" />
+						<span>Open chat</span>
+					</button>
+					<div className="kestrel-sidebar-context-menu-label">Move to project</div>
+					{projects.length > 0 ? (
+						projects.map((target) => (
+							<button
+								type="button"
+								role="menuitem"
+								key={target.id}
+								disabled={target.id === chat.projectId || target.available === false}
+								onClick={() => action(() => onMoveSession(chat.id, target.id))}
+							>
+								<ProjectBadge
+									appearance={
+										projectAppearances[target.path] ?? DEFAULT_PROJECT_APPEARANCE
+									}
+								/>
+								<span>{target.name}</span>
+							</button>
+						))
+					) : (
+						<span className="kestrel-sidebar-context-menu-empty">No projects yet</span>
+					)}
+					{chat.projectId ? (
+						<button type="button" role="menuitem" onClick={() => action(() => onMoveSession(chat.id, null))}>
+							<Icon name="arrow" />
+							<span>Remove from project</span>
+						</button>
+					) : null}
+				</>
+			) : null}
+		</motion.div>
 	);
 }
 
 export function KestrelSidebar({
 	activeDestination,
 	activeSessionId,
-	activeProjectPath,
+	activeProjectId,
 	agentName,
-	pendingApprovals,
 	sessions,
 	projects,
+	projectAppearances,
 	onNewTask,
 	onOpenBrowser,
 	onOpenAgent,
-	onOpenWriting,
-	onReviewApprovals,
 	onOpenCapabilities,
-	onOpenProjects,
 	onOpenSettings,
+	onCreateProject,
 	onOpenProject,
 	onOpenProjectChat,
+	onOpenProjectSettings,
 	onOpenSession,
-	onOpenTaskHistory,
+	onMoveSession,
 }: {
 	activeDestination: SidebarDestination;
 	activeSessionId: string | null;
-	activeProjectPath: string | null;
+	activeProjectId: string | null;
 	agentName: string;
-	pendingApprovals: number;
 	sessions: RuntimeSession[];
-	projects: WorkspaceGrant[];
+	projects: Project[];
+	projectAppearances: ProjectAppearanceMap;
 	onNewTask(): void;
 	onOpenBrowser(): void;
 	onOpenAgent(): void;
-	onOpenWriting(): void;
-	onReviewApprovals(): void;
 	onOpenCapabilities(): void;
-	onOpenProjects(): void;
 	onOpenSettings(): void;
-	onOpenProject(project: WorkspaceGrant): void;
-	onOpenProjectChat(project: WorkspaceGrant): void;
+	onCreateProject(): void;
+	onOpenProject(project: Project): void;
+	onOpenProjectChat(project: Project): void;
+	onOpenProjectSettings(project: Project): void;
 	onOpenSession(sessionId: string): void;
-	onOpenTaskHistory(): void;
+	onMoveSession(sessionId: string, projectId: string | null): void;
 }) {
+	const reducedMotion = useReducedMotion() ?? false;
 	const [collapsed, setCollapsed] = useState(
 		() => localStorage.getItem("kestrel:navigation-sidebar") === "collapsed",
 	);
-	const [expandedProjects, setExpandedProjects] = useState(readExpandedProjects);
-	const chats = useMemo(() => recentChats(sessions, projects), [projects, sessions]);
+	const [sidebarWidth, setSidebarWidth] = useState(() => {
+		const stored = Number.parseFloat(
+			localStorage.getItem(KESTREL_SIDEBAR_WIDTH_STORAGE_KEY) ?? "",
+		);
+		return clampKestrelSidebarWidth(
+			Number.isFinite(stored) ? stored : KESTREL_SIDEBAR_DEFAULT_WIDTH,
+		);
+	});
+	const sidebarWidthRef = useRef(sidebarWidth);
+	const resizeRef = useRef<{
+		pointerId: number;
+		startX: number;
+		startWidth: number;
+		width: number;
+	} | null>(null);
+	const resizeHandleRef = useRef<HTMLDivElement | null>(null);
+	const [expandedProjectId, setExpandedProjectId] = useState<string | null>(() =>
+		readExpandedProjectId(projects),
+	);
+	const expandedProjectIdRef = useRef(expandedProjectId);
+	const expansionTimerRef = useRef<number | null>(null);
+	const pendingExpandedProjectIdRef = useRef<string | null>(null);
+	const manuallyCollapsedProjectIdRef = useRef<string | null>(null);
+	const [visibleProjectChats, setVisibleProjectChats] = useState<Record<string, number>>({});
+	const [globalChatLimit, setGlobalChatLimit] = useState(MAX_SIDEBAR_CHATS);
+	const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+	const contextMenuRef = useRef<HTMLDivElement>(null);
+	const contextMenuTriggerRef = useRef<HTMLElement | null>(null);
+	const closeContextMenu = useCallback(
+		({ restoreFocus = false }: { restoreFocus?: boolean } = {}) => {
+			setContextMenu(null);
+			if (restoreFocus) contextMenuTriggerRef.current?.focus();
+		},
+		[],
+	);
 
-	function toggleProject(projectPath: string) {
-		setExpandedProjects((current) => {
-			const next = { ...current, [projectPath]: !(current[projectPath] ?? true) };
-			localStorage.setItem("kestrel:projects-expanded", JSON.stringify(next));
-			return next;
+	const chats = useMemo(
+		() => sessionsWithoutProject(sessions, projects).slice(0, globalChatLimit),
+		[globalChatLimit, projects, sessions],
+	);
+	const allChats = useMemo(() => sessionsWithoutProject(sessions, projects), [projects, sessions]);
+
+	function shell() {
+		return document.querySelector<HTMLElement>(".ai-browser-app");
+	}
+
+	function writeSidebarWidth(width: number) {
+		const root = shell();
+		if (!root) return;
+		root.style.setProperty(
+			"--kestrel-sidebar-user-width",
+			String(width.toFixed(2)) + "px",
+		);
+		resizeHandleRef.current?.setAttribute(
+			"aria-valuenow",
+			String(Math.round(width)),
+		);
+	}
+
+	function persistSidebarWidth(width: number) {
+		try {
+			localStorage.setItem(
+				KESTREL_SIDEBAR_WIDTH_STORAGE_KEY,
+				String(Math.round(width)),
+			);
+		} catch {
+			// A saved navigation preference is helpful but never blocks resizing.
+		}
+	}
+
+	function commitSidebarWidth(width: number) {
+		const next = clampKestrelSidebarWidth(width);
+		sidebarWidthRef.current = next;
+		writeSidebarWidth(next);
+		setSidebarWidth(next);
+		persistSidebarWidth(next);
+	}
+
+	function startResize(event: ReactPointerEvent<HTMLDivElement>) {
+		if (event.button !== 0 || collapsed) return;
+		const root = shell();
+		if (!root) return;
+		const width = clampKestrelSidebarWidth(sidebarWidthRef.current);
+		resizeRef.current = {
+			pointerId: event.pointerId,
+			startX: event.clientX,
+			startWidth: width,
+			width,
+		};
+		root.classList.add("kestrel-sidebar-resizing");
+		event.currentTarget.setPointerCapture(event.pointerId);
+		event.preventDefault();
+	}
+
+	function resizeSidebar(event: ReactPointerEvent<HTMLDivElement>) {
+		const drag = resizeRef.current;
+		if (!drag || drag.pointerId !== event.pointerId) return;
+		const width = clampKestrelSidebarWidth(
+			drag.startWidth + event.clientX - drag.startX,
+		);
+		drag.width = width;
+		sidebarWidthRef.current = width;
+		writeSidebarWidth(width);
+	}
+
+	function finishResize(event: ReactPointerEvent<HTMLDivElement>) {
+		const drag = resizeRef.current;
+		if (!drag || drag.pointerId !== event.pointerId) return;
+		resizeRef.current = null;
+		if (event.currentTarget.hasPointerCapture(event.pointerId))
+			event.currentTarget.releasePointerCapture(event.pointerId);
+		shell()?.classList.remove("kestrel-sidebar-resizing");
+		commitSidebarWidth(drag.width);
+	}
+
+	function resizeWithKeyboard(event: ReactKeyboardEvent<HTMLDivElement>) {
+		if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+			return;
+		const current = clampKestrelSidebarWidth(sidebarWidthRef.current);
+		const maximum = maxKestrelSidebarWidth();
+		const next = clampKestrelSidebarWidth(
+			event.key === "Home"
+				? KESTREL_SIDEBAR_MIN_WIDTH
+				: event.key === "End"
+					? maximum
+					: current + (event.key === "ArrowRight" ? 16 : -16),
+		);
+		event.preventDefault();
+		commitSidebarWidth(next);
+	}
+
+	useLayoutEffect(() => {
+		const width = clampKestrelSidebarWidth(sidebarWidthRef.current);
+		sidebarWidthRef.current = width;
+		writeSidebarWidth(width);
+		persistSidebarWidth(width);
+		return () => {
+			resizeRef.current = null;
+			shell()?.classList.remove("kestrel-sidebar-resizing");
+		};
+	}, []);
+
+	function cancelPendingProjectExpansion() {
+		if (expansionTimerRef.current !== null) {
+			window.clearTimeout(expansionTimerRef.current);
+			expansionTimerRef.current = null;
+		}
+		pendingExpandedProjectIdRef.current = null;
+	}
+
+	function commitExpandedProjectId(projectId: string | null) {
+		expandedProjectIdRef.current = projectId;
+		setExpandedProjectId(projectId);
+		persistExpandedProjectId(projectId);
+	}
+
+	function selectExpandedProject(projectId: string) {
+		const current = expandedProjectIdRef.current;
+		const next = current === projectId ? null : projectId;
+		cancelPendingProjectExpansion();
+		manuallyCollapsedProjectIdRef.current = next ? null : projectId;
+		if (current && next && current !== next) {
+			pendingExpandedProjectIdRef.current = next;
+			commitExpandedProjectId(null);
+			// Keep the durable preference aligned with the user's choice while the
+			// outgoing project finishes its short collapse animation.
+			persistExpandedProjectId(next);
+			expansionTimerRef.current = window.setTimeout(
+				finishPendingProjectExpansion,
+				reducedMotion ? 0 : PROJECT_EXPANSION_SWITCH_DELAY_MS,
+			);
+			return;
+		}
+		commitExpandedProjectId(next);
+	}
+
+	function finishPendingProjectExpansion() {
+		expansionTimerRef.current = null;
+		const pending = pendingExpandedProjectIdRef.current;
+		pendingExpandedProjectIdRef.current = null;
+		if (pending && projects.some((project) => project.id === pending))
+			commitExpandedProjectId(pending);
+	}
+
+	useEffect(() => {
+		if (activeProjectId && projects.some((project) => project.id === activeProjectId)) {
+			if (pendingExpandedProjectIdRef.current === activeProjectId) return;
+			if (manuallyCollapsedProjectIdRef.current === activeProjectId) return;
+			if (expandedProjectIdRef.current !== activeProjectId)
+				commitExpandedProjectId(activeProjectId);
+		}
+	}, [activeProjectId, projects]);
+
+	useEffect(() => {
+		if (projects.length === 0) return;
+		if (pendingExpandedProjectIdRef.current) {
+			if (projects.some((project) => project.id === pendingExpandedProjectIdRef.current))
+				return;
+			cancelPendingProjectExpansion();
+		}
+		const current = expandedProjectIdRef.current;
+		if (current && projects.some((project) => project.id === current)) return;
+		const persisted = readExpandedProjectId(projects);
+		if (persisted) commitExpandedProjectId(persisted);
+	}, [projects]);
+
+	useEffect(() => {
+		if (expandedProjectId && !projects.some((project) => project.id === expandedProjectId)) {
+			cancelPendingProjectExpansion();
+			commitExpandedProjectId(null);
+		}
+	}, [expandedProjectId, projects]);
+
+	useEffect(() => () => cancelPendingProjectExpansion(), []);
+
+	useEffect(() => {
+		if (!contextMenu) return;
+		function closeOnOutsidePointer(event: PointerEvent) {
+			if (event.target instanceof Node && contextMenuRef.current?.contains(event.target)) return;
+			closeContextMenu();
+		}
+		function closeOnEscape(event: KeyboardEvent) {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				closeContextMenu({ restoreFocus: true });
+			}
+		}
+		document.addEventListener("pointerdown", closeOnOutsidePointer);
+		document.addEventListener("keydown", closeOnEscape);
+		return () => {
+			document.removeEventListener("pointerdown", closeOnOutsidePointer);
+			document.removeEventListener("keydown", closeOnEscape);
+		};
+	}, [closeContextMenu, contextMenu]);
+
+	function appearanceForProject(project: Project): ProjectAppearance {
+		return projectAppearances[project.path] ?? DEFAULT_PROJECT_APPEARANCE;
+	}
+
+	function openProjectContextMenu(event: ReactMouseEvent, project: Project) {
+		event.preventDefault();
+		contextMenuTriggerRef.current = event.currentTarget as HTMLElement;
+		setContextMenu({
+			kind: "project",
+			id: project.id,
+			...clampContextMenuPosition(event.clientY, event.clientX),
 		});
+	}
+
+	function openChatContextMenu(event: ReactMouseEvent, chat: RuntimeSession) {
+		event.preventDefault();
+		contextMenuTriggerRef.current = event.currentTarget as HTMLElement;
+		setContextMenu({
+			kind: "chat",
+			id: chat.id,
+			...clampContextMenuPosition(event.clientY, event.clientX),
+		});
+	}
+
+	function openContextMenuFromKeyboard(
+		event: ReactKeyboardEvent,
+		kind: ContextMenuState["kind"],
+		id: string,
+		current: HTMLElement,
+	) {
+		if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+		event.preventDefault();
+		contextMenuTriggerRef.current = current;
+		const rect = current.getBoundingClientRect();
+		setContextMenu({
+			kind,
+			id,
+			...clampContextMenuPosition(rect.bottom + 4, rect.left + 8),
+		});
+	}
+
+	function setExpanded(projectId: string) {
+		selectExpandedProject(projectId);
 	}
 
 	function toggleCollapsed() {
 		setCollapsed((current) => {
 			const next = !current;
-			localStorage.setItem(
-				"kestrel:navigation-sidebar",
-				next ? "collapsed" : "open",
-			);
+			localStorage.setItem("kestrel:navigation-sidebar", next ? "collapsed" : "open");
 			return next;
 		});
 	}
+
+	const contextProject = contextMenu?.kind === "project"
+		? projects.find((project) => project.id === contextMenu.id)
+		: undefined;
+	const contextChat = contextMenu?.kind === "chat"
+		? sessions.find((session) => session.id === contextMenu.id)
+		: undefined;
 
 	return (
 		<aside
 			className={`kestrel-sidebar${collapsed ? " is-collapsed" : ""}`}
 			aria-label="Kestrel navigation"
 			data-collapsed={collapsed}
+			data-active-destination={activeDestination}
 		>
+			<div
+				ref={resizeHandleRef}
+				className="kestrel-sidebar-resize-handle"
+				role="separator"
+				aria-label="Resize navigation sidebar"
+				aria-orientation="vertical"
+				aria-valuemin={KESTREL_SIDEBAR_MIN_WIDTH}
+				aria-valuemax={maxKestrelSidebarWidth()}
+				aria-valuenow={Math.round(sidebarWidth)}
+				tabIndex={0}
+				onPointerDown={startResize}
+				onPointerMove={resizeSidebar}
+				onPointerUp={finishResize}
+				onPointerCancel={finishResize}
+				onLostPointerCapture={finishResize}
+				onKeyDown={resizeWithKeyboard}
+			/>
 			<div className="kestrel-sidebar-drag" />
 			<header className="kestrel-sidebar-header">
 				<button
@@ -160,11 +617,20 @@ export function KestrelSidebar({
 					<button
 						type="button"
 						className="kestrel-sidebar-icon-button"
-						aria-label="Search capabilities and shortcuts"
-						title="Search capabilities and shortcuts"
+						aria-label="Open command center"
+						title="Open command center (⌘K)"
 						onClick={onOpenCapabilities}
 					>
 						<Icon name="search" />
+					</button>
+					<button
+						type="button"
+						className="kestrel-sidebar-icon-button"
+						aria-label="Open settings"
+						title="Settings"
+						onClick={onOpenSettings}
+					>
+						<Icon name="settings" />
 					</button>
 					<button
 						type="button"
@@ -179,47 +645,25 @@ export function KestrelSidebar({
 				</div>
 			</header>
 
+			<button
+				type="button"
+				className="kestrel-sidebar-row kestrel-sidebar-new-task"
+				aria-label="New chat"
+				title="New chat"
+				aria-keyshortcuts="Meta+N"
+				onClick={onNewTask}
+			>
+				<Icon name="plus" />
+				<span>New chat</span>
+				<kbd>⌘N</kbd>
+			</button>
 			<nav className="kestrel-sidebar-primary" aria-label="Primary">
-				<button
-					type="button"
-					className="kestrel-sidebar-new-task"
-					aria-label="New task"
-					title="New task"
-					aria-keyshortcuts="Meta+N"
-					onClick={onNewTask}
-				>
-					<Icon name="plus" />
-					<span>New task</span>
-					<kbd>⌘N</kbd>
-				</button>
 				<SidebarNavItem
 					icon="agent"
 					label="Agent"
 					destination="agent"
 					active={activeDestination === "agent"}
 					onClick={onOpenAgent}
-				/>
-				<SidebarNavItem
-					icon="writing"
-					label="Writing Studio"
-					destination="writing"
-					active={activeDestination === "writing"}
-					onClick={onOpenWriting}
-				/>
-				<SidebarNavItem
-					icon="approvals"
-					label="Approvals"
-					destination="approvals"
-					badge={pendingApprovals}
-					active={activeDestination === "approvals"}
-					onClick={onReviewApprovals}
-				/>
-				<SidebarNavItem
-					icon="command"
-					label="Capabilities"
-					destination="capabilities"
-					active={activeDestination === "capabilities"}
-					onClick={onOpenCapabilities}
 				/>
 			</nav>
 
@@ -230,98 +674,96 @@ export function KestrelSidebar({
 						<button
 							type="button"
 							className="kestrel-sidebar-section-action"
-							aria-label="Open all projects"
-							title="Open all projects"
-							onClick={onOpenProjects}
+							aria-label="Create project"
+							title="Create project"
+							onClick={onCreateProject}
 						>
-							<Icon name="chevron" />
+							<Icon name="plus" />
 						</button>
 					</div>
 					{projects.length > 0 ? (
 						<ul className="kestrel-sidebar-project-list">
 							{projects.map((project) => {
-								const previewChats = projectChatsForSidebar(sessions, project.path);
-								const allProjectChats = projectChats(sessions, project.path);
-								const expanded = expandedProjects[project.path] ?? true;
+								const allProjectChats = projectChats(sessions, project);
+								const expanded = expandedProjectId === project.id;
+								const limit = visibleProjectChats[project.id] ?? 5;
+								const previewChats = projectChatsForSidebar(sessions, project, limit);
 								return (
-									<li key={project.path} className="kestrel-sidebar-project">
-										<div className="kestrel-sidebar-project-row">
-											<button
-												type="button"
-												className={`kestrel-sidebar-project-open${activeProjectPath === project.path ? " active" : ""}`}
-												aria-current={activeProjectPath === project.path ? "page" : undefined}
-												aria-label={`Open ${project.name} project`}
-												title={`Open ${project.name} project`}
-												onClick={() => onOpenProject(project)}
-											>
-												<Icon name="folder" />
-												<span>
-													<strong>{project.name}</strong>
-													<small>
-														{project.available === false
-															? "Folder unavailable"
-															: projectChatSummary(sessions, project.path)}
-													</small>
-												</span>
-											</button>
-											<button
-												type="button"
-												className="kestrel-sidebar-project-new"
-												aria-label={`New chat in ${project.name}`}
-												title={
-													project.available === false
-														? "Reconnect this folder in Settings before starting a chat"
-														: `New chat in ${project.name}`
-												}
-												disabled={project.available === false}
-												onClick={() => onOpenProjectChat(project)}
-											>
-												<Icon name="plus" />
-											</button>
-											<button
-												type="button"
-												className={`kestrel-sidebar-project-toggle${expanded ? " expanded" : ""}`}
-												aria-expanded={expanded}
-												aria-label={`${expanded ? "Hide" : "Show"} chats in ${project.name}`}
-												title={`${expanded ? "Hide" : "Show"} chats in ${project.name}`}
-												onClick={() => toggleProject(project.path)}
-											>
-												<Icon name="chevron" />
-											</button>
-										</div>
-										{expanded ? (
-											allProjectChats.length > 0 ? (
-												<ul className="kestrel-sidebar-project-chats">
-													{previewChats.map((session) => (
-														<li key={session.id}>
-															<button
-																type="button"
-																className={`kestrel-sidebar-project-chat${session.id === activeSessionId ? " active" : ""}`}
-																aria-current={session.id === activeSessionId ? "page" : undefined}
-																title={sessionTitleForDisplay(session.title)}
-																onClick={() => onOpenSession(session.id)}
-															>
-																<Icon name="chat" />
-																<span>{sessionTitleForDisplay(session.title)}</span>
-															</button>
-														</li>
-													))}
-													{allProjectChats.length > previewChats.length ? (
-														<li>
-															<button
-																type="button"
-																className="kestrel-sidebar-project-view-all"
-																onClick={() => onOpenProject(project)}
-															>
-																View all {allProjectChats.length} chats
-															</button>
-														</li>
-													) : null}
-												</ul>
-											) : (
-												<p className="kestrel-sidebar-project-no-chats">No chats yet</p>
-											)
-										) : null}
+									<li key={project.id} className="kestrel-sidebar-project">
+										<button
+											type="button"
+											className={`kestrel-sidebar-row kestrel-sidebar-project-open${activeProjectId === project.id ? " active" : ""}`}
+											aria-current={activeProjectId === project.id ? "page" : undefined}
+											aria-expanded={expanded}
+											aria-controls={`kestrel-sidebar-project-chats-${project.id}`}
+											aria-label={`${expanded ? "Collapse" : "Open"} ${project.name} project`}
+											title={`${expanded ? "Collapse" : "Open"} ${project.name}`}
+											onClick={() => {
+												setExpanded(project.id);
+												onOpenProject(project);
+											}}
+											onContextMenu={(event) => openProjectContextMenu(event, project)}
+											onKeyDown={(event) => openContextMenuFromKeyboard(event, "project", project.id, event.currentTarget)}
+										>
+											<ProjectBadge appearance={appearanceForProject(project)} />
+											<span className="kestrel-sidebar-title">{project.name}</span>
+											<Icon name="chevron" />
+										</button>
+										<AnimatePresence initial={false}>
+											{expanded ? (
+												<motion.div
+													key={`${project.id}-chats`}
+													id={`kestrel-sidebar-project-chats-${project.id}`}
+													className="kestrel-sidebar-project-chat-group"
+													role="group"
+													aria-label={`Chats in ${project.name}`}
+													initial={reducedMotion ? false : { height: 0, opacity: 0 }}
+													animate={{ height: "auto", opacity: 1 }}
+													exit={{ height: 0, opacity: 0 }}
+													transition={{
+														...(reducedMotion
+															? { duration: 0 }
+															: KESTREL_SELECTION_TRANSITION),
+													}}
+													style={{ overflow: "hidden" }}
+												>
+													{allProjectChats.length > 0 ? (
+														<ul className="kestrel-sidebar-project-chats">
+															{previewChats.map((session) => (
+																<li key={session.id}>
+																	<button
+																		type="button"
+																		className={`kestrel-sidebar-row kestrel-sidebar-project-chat${session.id === activeSessionId ? " active" : ""}`}
+																		aria-current={session.id === activeSessionId ? "page" : undefined}
+																		title={sessionTitleForDisplay(session.title)}
+																		onClick={() => onOpenSession(session.id)}
+																		onContextMenu={(event) => openChatContextMenu(event, session)}
+																		onKeyDown={(event) => openContextMenuFromKeyboard(event, "chat", session.id, event.currentTarget)}
+																	>
+																		<span className="kestrel-sidebar-title">{sessionTitleForDisplay(session.title)}</span>
+																	</button>
+																</li>
+															))}
+															{allProjectChats.length > previewChats.length ? (
+																<li>
+																	<button
+																		type="button"
+																		className="kestrel-sidebar-project-view-all"
+																		title={`Show more chats in ${project.name}`}
+																		onClick={() => setVisibleProjectChats((current) => ({ ...current, [project.id]: previewChats.length + 5 }))}
+																	>
+																		<span>Show more</span>
+																		<Icon name="chevron" aria-hidden="true" />
+																	</button>
+																</li>
+															) : null}
+														</ul>
+													) : (
+														<p className="kestrel-sidebar-project-no-chats">No chats yet</p>
+													)}
+												</motion.div>
+											) : null}
+										</AnimatePresence>
 									</li>
 								);
 							})}
@@ -329,25 +771,14 @@ export function KestrelSidebar({
 					) : (
 						<div className="kestrel-sidebar-empty">
 							<p>No projects yet</p>
-							<button type="button" onClick={onOpenSettings}>
-								Add folders in Settings
-							</button>
+							<button type="button" onClick={onCreateProject}>Create project</button>
 						</div>
 					)}
 				</section>
 
 				<section className="kestrel-sidebar-section kestrel-sidebar-chats" aria-labelledby="kestrel-sidebar-chats">
 					<div className="kestrel-sidebar-section-heading">
-						<h2 id="kestrel-sidebar-chats">Recent tasks</h2>
-						<button
-							type="button"
-							className="kestrel-sidebar-section-action"
-							aria-label="Open all task history"
-							title="Open all task history"
-							onClick={onOpenTaskHistory}
-						>
-							<Icon name="chevron" />
-						</button>
+						<h2 id="kestrel-sidebar-chats">Chats</h2>
 					</div>
 					{chats.length > 0 ? (
 						<ul>
@@ -355,40 +786,48 @@ export function KestrelSidebar({
 								<li key={session.id}>
 									<button
 										type="button"
-										className={`kestrel-sidebar-list-item${session.id === activeSessionId ? " active" : ""}`}
+										className={`kestrel-sidebar-row kestrel-sidebar-list-item${session.id === activeSessionId ? " active" : ""}`}
 										aria-current={session.id === activeSessionId ? "page" : undefined}
 										title={sessionTitleForDisplay(session.title)}
 										onClick={() => onOpenSession(session.id)}
+										onContextMenu={(event) => openChatContextMenu(event, session)}
+										onKeyDown={(event) => openContextMenuFromKeyboard(event, "chat", session.id, event.currentTarget)}
 									>
-										<Icon name="chat" />
-										<span>{sessionTitleForDisplay(session.title)}</span>
+										<span className="kestrel-sidebar-title">{sessionTitleForDisplay(session.title)}</span>
 									</button>
 								</li>
 							))}
 						</ul>
-					) : (
-						<div className="kestrel-sidebar-empty">
-							<p>No chats yet</p>
-							<button type="button" onClick={onNewTask}>
-								Start a task
-							</button>
-						</div>
+					) : allChats.length > 0 ? null : (
+						<div className="kestrel-sidebar-empty"><p>No chats yet</p></div>
 					)}
+					{allChats.length > chats.length ? (
+						<button type="button" className="kestrel-sidebar-view-more" onClick={() => setGlobalChatLimit((current) => current + MAX_SIDEBAR_CHATS)}>
+							Show more
+						</button>
+					) : null}
 				</section>
 			</div>
 
-			<footer className="kestrel-sidebar-footer">
-				<div className="kestrel-sidebar-local-status" aria-hidden="true">
-					<span />
-				</div>
-				<SidebarNavItem
-					icon="settings"
-					label="Settings"
-					destination="settings"
-					active={activeDestination === "settings"}
-					onClick={onOpenSettings}
-				/>
-			</footer>
+			<AnimatePresence initial={false}>
+				{contextMenu && (contextProject || contextChat) ? (
+					<SidebarContextMenu
+						menu={contextMenu}
+						{...(contextProject ? { project: contextProject } : {})}
+						{...(contextChat ? { chat: contextChat } : {})}
+						projects={projects}
+						projectAppearances={projectAppearances}
+						menuRef={contextMenuRef}
+						onClose={closeContextMenu}
+						onOpenProject={onOpenProject}
+						onNewProjectChat={onOpenProjectChat}
+						onOpenProjectSettings={onOpenProjectSettings}
+						onOpenSession={onOpenSession}
+						onMoveSession={onMoveSession}
+					/>
+				) : null}
+			</AnimatePresence>
+
 		</aside>
 	);
 }

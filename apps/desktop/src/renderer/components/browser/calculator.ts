@@ -5,18 +5,6 @@ export interface CalculatorEvaluationOptions {
 	variables?: Record<string, number>;
 }
 
-export interface GraphBounds {
-	xMin: number;
-	xMax: number;
-	yMin: number;
-	yMax: number;
-}
-
-export interface GraphPoint {
-	x: number;
-	y: number;
-}
-
 type Operator = "+" | "-" | "*" | "/" | "^" | "!" | "%";
 
 type Token =
@@ -356,58 +344,4 @@ export function evaluateCalculatorExpression(
 ): string | null {
 	const value = parseCalculatorNumber(input, options);
 	return value === null ? null : formatCalculatorNumber(value);
-}
-
-function graphExpression(input: string): string {
-	return input
-		.trim()
-		.replace(/^(?:y|f\s*\(\s*x\s*\))\s*=\s*/i, "")
-		.trim();
-}
-
-export function evaluateGraphFunction(
-	input: string,
-	x: number,
-	options: CalculatorEvaluationOptions = {},
-): number | null {
-	if (!isFiniteNumber(x)) return null;
-	return parseCalculatorNumber(graphExpression(input), {
-		...options,
-		variables: { ...options.variables, x },
-	});
-}
-
-export function sampleGraph(
-	input: string,
-	bounds: GraphBounds,
-	sampleCount = 360,
-	options: CalculatorEvaluationOptions = {},
-): GraphPoint[][] {
-	if (
-		!graphExpression(input) ||
-		!isFiniteNumber(bounds.xMin) ||
-		!isFiniteNumber(bounds.xMax) ||
-		!isFiniteNumber(bounds.yMin) ||
-		!isFiniteNumber(bounds.yMax) ||
-		bounds.xMin >= bounds.xMax ||
-		bounds.yMin >= bounds.yMax ||
-		sampleCount < 2
-	)
-		return [];
-
-	const segments: GraphPoint[][] = [];
-	let segment: GraphPoint[] = [];
-	const yLimit = Math.max(1, Math.abs(bounds.yMax - bounds.yMin) * 100);
-	for (let index = 0; index <= sampleCount; index += 1) {
-		const x = bounds.xMin + ((bounds.xMax - bounds.xMin) * index) / sampleCount;
-		const y = evaluateGraphFunction(input, x, options);
-		if (y === null || Math.abs(y) > yLimit) {
-			if (segment.length > 1) segments.push(segment);
-			segment = [];
-			continue;
-		}
-		segment.push({ x, y });
-	}
-	if (segment.length > 1) segments.push(segment);
-	return segments;
 }

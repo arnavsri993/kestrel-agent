@@ -1,7 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
-import { PROVIDER_CONNECT_TIMEOUT_MS, providerFetch } from "./http";
+import {
+	PROVIDER_CONNECT_TIMEOUT_MS,
+	providerFetch,
+	quotaFromResponseHeaders,
+} from "./http";
 
 describe("provider HTTP helpers", () => {
+	it("normalizes only numeric rate-limit headers into bounded quota telemetry", () => {
+		const quota = quotaFromResponseHeaders(
+			new Headers({
+				"x-ratelimit-limit-requests": "100",
+				"x-ratelimit-remaining-requests": "20",
+				"x-ratelimit-limit-tokens": "1000",
+				"x-ratelimit-remaining-tokens": "250",
+				"retry-after": "30",
+				"x-untrusted-header": "token=secret",
+			}),
+			Date.parse("2026-09-07T12:00:00.000Z"),
+		);
+
+		expect(quota).toEqual({
+			confidence: "exact",
+			remainingFraction: 0.2,
+			resetAt: "2026-09-07T12:00:30.000Z",
+		});
+		expect(
+			quotaFromResponseHeaders(
+				new Headers({ "x-ratelimit-remaining-requests": "0" }),
+			),
+		).toBeUndefined();
+	});
+
 	it("fails closed on redirects so provider credentials stay on the configured host", async () => {
 		let requestInit: RequestInit | undefined;
 		const originalFetch = globalThis.fetch;
@@ -19,16 +48,10 @@ describe("provider HTTP helpers", () => {
 		}
 	});
 
-	it("bounds oversized non-success response bodies before creating provider errors", async () => {
-		let pulls = 0;
+	it("discards non-success response bodies without exposing echoed secrets", async () => {
 		let cancellations = 0;
 		const response = new Response(
 			new ReadableStream<Uint8Array>({
-				pull(controller) {
-					pulls += 1;
-					controller.enqueue(new Uint8Array(40_000));
-					if (pulls === 20) controller.close();
-				},
 				cancel() {
 					cancellations += 1;
 				},
@@ -40,9 +63,24 @@ describe("provider HTTP helpers", () => {
 		try {
 			await expect(
 				providerFetch("fixture", "https://provider.example.test", {}),
-			).rejects.toThrow("error body exceeded the 64 KB safety limit");
+			).rejects.toThrow("Provider returned HTTP 502.");
 			expect(cancellations).toBe(1);
-			expect(pulls).toBeLessThan(20);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("does not expose raw transport failures", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async () => {
+			throw new Error("request to https://provider.test/?token=sk-secret failed");
+		};
+		try {
+			await expect(
+				providerFetch("fixture", "https://provider.example.test", {}),
+			).rejects.toMatchObject({
+				message: "Provider request failed before a response was received.",
+			});
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

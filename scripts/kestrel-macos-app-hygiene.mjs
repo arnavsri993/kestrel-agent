@@ -20,6 +20,8 @@ import { homedir } from "node:os";
 
 export const kestrelBundleIdentifier = "com.kestrel.desktop";
 export const kestrelApplicationName = "Kestrel";
+export const developmentInstallStagePrefix = ".Kestrel-install-";
+export const staleInstallStageAgeMs = 10 * 60 * 1000;
 export const supportedBundleIdentifiers = new Set([
 	"com.kestrel.desktop",
 	"com.kestrel.desktop.dev",
@@ -119,6 +121,52 @@ export function preventSpotlightIndexing(repositoryRoot) {
 		}
 	}
 	return marked;
+}
+
+export function staleInstallStageCandidates(
+	installRoot,
+	{ now = Date.now(), maxAgeMs = staleInstallStageAgeMs } = {},
+) {
+	if (!statIsDirectory(installRoot)) return [];
+	let entries;
+	try {
+		entries = readdirSync(installRoot, { withFileTypes: true });
+	} catch (error) {
+		if (error?.code === "EACCES" || error?.code === "EPERM") return [];
+		throw error;
+	}
+	return entries
+		.filter(
+			(entry) =>
+				entry.isDirectory() && entry.name.startsWith(developmentInstallStagePrefix),
+		)
+		.map((entry) => join(installRoot, entry.name))
+		.filter((stageRoot) => {
+			try {
+				return now - statSync(stageRoot).mtimeMs > maxAgeMs;
+			} catch {
+				return false;
+			}
+		});
+}
+
+export function removeStaleInstallStagingDirectories(
+	installRoot,
+	{ now = Date.now(), maxAgeMs = staleInstallStageAgeMs } = {},
+) {
+	const removed = [];
+	for (const stageRoot of staleInstallStageCandidates(installRoot, {
+		now,
+		maxAgeMs,
+	})) {
+		// A crashed install can leave a bundle registered under its temporary
+		// path even after its files disappear. Remove that registration before
+		// deleting the private staging directory.
+		unregister(join(stageRoot, "Kestrel.app"));
+		rmSync(stageRoot, { recursive: true, force: true });
+		removed.push(stageRoot);
+	}
+	return removed;
 }
 
 export function repositoryReleaseBundle(repositoryRoot) {
@@ -316,6 +364,10 @@ export function cleanupDuplicateKestrelApps(options = {}) {
 		...(options.excludedPaths ?? []),
 	]);
 	const marked = preventSpotlightIndexing(repositoryRoot);
+	const removedStaging = removeStaleInstallStagingDirectories(installRoot, {
+		now: options.now,
+		maxAgeMs: options.staleInstallStageAgeMs,
+	});
 	const moved = moveDuplicateKestrelAppsToTrash({
 		excludedPaths,
 		searchRoots,
@@ -324,5 +376,5 @@ export function cleanupDuplicateKestrelApps(options = {}) {
 		skipSpotlight: options.skipSpotlight,
 		documentsRoot: options.documentsRoot,
 	});
-	return { marked, moved, canonicalApp };
+	return { marked, moved, removedStaging, canonicalApp };
 }

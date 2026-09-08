@@ -10,12 +10,19 @@ import type {
 	UserBrowserBookmark,
 	UserBrowserDownload,
 	UserBrowserHistoryEntry,
+	UserBrowserOriginFavicon,
 	UserBrowserTab,
 } from "@kestrel/shared-types";
-import { motion, useReducedMotion, type MotionStyle } from "motion/react";
+import {
+	AnimatePresence,
+	motion,
+	useReducedMotion,
+	type MotionStyle,
+} from "motion/react";
 import {
 	useCallback,
 	useEffect,
+	useId,
 	useMemo,
 	useRef,
 	useState,
@@ -23,6 +30,10 @@ import {
 } from "react";
 import { agentSessionRecency } from "../../agent-workspace";
 import { sessionTitleForDisplay } from "../../chat-title";
+import {
+	KESTREL_CRITICAL_SPRING,
+	KESTREL_STATE_TRANSITION,
+} from "../../motion-contract";
 import { Icon } from "../Icon";
 import type { FrequentBrowserSite, SuggestedAgentAction } from "./new-tab";
 import {
@@ -42,12 +53,17 @@ import {
 	WIDGET_SIZE_LABELS,
 	type NewTabWidgetDefinition,
 } from "./new-tab-widgets";
+import { bookmarkBarFaviconDataUrl } from "./bookmarks-bar";
 import "./new-tab-widgets.css";
 
 type WidgetContext = {
 	frequent: FrequentBrowserSite[];
 	history: UserBrowserHistoryEntry[];
 	bookmarks: UserBrowserBookmark[];
+	originFavicons: readonly Pick<
+		UserBrowserOriginFavicon,
+		"origin" | "faviconDataUrl"
+	>[];
 	downloads: UserBrowserDownload[];
 	tabs: Pick<
 		UserBrowserTab,
@@ -126,6 +142,25 @@ function SiteGlyph({ site }: { site: FrequentBrowserSite }) {
 	);
 }
 
+function BookmarkGlyph({
+	bookmark,
+	originFavicons,
+}: {
+	bookmark: UserBrowserBookmark;
+	originFavicons: WidgetContext["originFavicons"];
+}) {
+	return (
+		<FaviconGlyph
+			faviconDataUrl={bookmarkBarFaviconDataUrl(
+				bookmark.url,
+				originFavicons,
+				bookmark.faviconDataUrl,
+			)}
+			hostname={hostnameForUrl(bookmark.url)}
+		/>
+	);
+}
+
 function EmptyWidgetState({
 	icon,
 	children,
@@ -167,7 +202,7 @@ function FrequentTabsWidget({
 				icon="history"
 				action={{ label: "Open history", onClick: onOpenHistory }}
 			>
-				Your frequent tabs will appear here.
+				Frequent tabs appear here.
 			</EmptyWidgetState>
 		);
 	}
@@ -195,10 +230,17 @@ function FrequentTabsWidget({
 
 function BookmarksWidget({
 	bookmarks,
+	originFavicons,
 	size,
 	onNavigate,
 	onOpenBookmarks,
-}: Pick<WidgetContext, "bookmarks" | "onNavigate" | "onOpenBookmarks"> & {
+}: Pick<
+	WidgetContext,
+	| "bookmarks"
+	| "originFavicons"
+	| "onNavigate"
+	| "onOpenBookmarks"
+> & {
 	size: NewTabWidgetSize;
 }) {
 	const items = bookmarks.slice(0, visibleItemCount(size));
@@ -208,7 +250,7 @@ function BookmarksWidget({
 				icon="star"
 				action={{ label: "Manage bookmarks", onClick: onOpenBookmarks }}
 			>
-			Save a page to start a bookmark shelf.
+				Save a page to get started.
 			</EmptyWidgetState>
 		);
 	}
@@ -221,12 +263,10 @@ function BookmarksWidget({
 						onClick={() => onNavigate(bookmark.url)}
 						title={bookmark.url}
 					>
-						<span className="kestrel-widget-list-icon" aria-hidden="true">
-							<Icon name="star" />
-						</span>
+						<BookmarkGlyph bookmark={bookmark} originFavicons={originFavicons} />
 						<span>
 							<strong>{widgetText(bookmark.title, 38)}</strong>
-							<small>{new URL(bookmark.url).hostname}</small>
+							<small>{hostnameForUrl(bookmark.url)}</small>
 						</span>
 						<Icon name="forward" />
 					</button>
@@ -238,6 +278,8 @@ function BookmarksWidget({
 
 function downloadStatus(download: UserBrowserDownload): string {
 	switch (download.status) {
+		case "checking":
+			return "Checking reputation";
 		case "progressing":
 			return "In progress";
 		case "completed":
@@ -246,6 +288,8 @@ function downloadStatus(download: UserBrowserDownload): string {
 			return "Canceled";
 		case "failed":
 			return "Failed";
+		case "blocked":
+			return "Blocked for safety";
 	}
 }
 
@@ -266,7 +310,7 @@ function DownloadsWidget({
 				icon="downloads"
 				action={{ label: "Open downloads", onClick: onOpenDownloads }}
 			>
-				Downloads will appear here when you save a file.
+				Downloads appear here.
 			</EmptyWidgetState>
 		);
 	}
@@ -309,7 +353,7 @@ function RecentWorkWidget({
 				icon="agent"
 				action={{ label: "Start a task", onClick: () => onNewAgent() }}
 			>
-				Your recent Kestrel conversations will appear here.
+				Recent chats appear here.
 			</EmptyWidgetState>
 		);
 	}
@@ -375,8 +419,8 @@ function RecentMemoriesWidget({
 				{...(emptyAction ? { action: emptyAction } : {})}
 			>
 				{memoryRecall.explicitCapture
-					? "Say remember that … in chat to store a preference on this Mac."
-					: "Explicit memory capture is off in Settings → Memory."}
+					? "Say remember that … in chat."
+					: "Memory capture is off. Turn it on in Settings → Memory."}
 			</EmptyWidgetState>
 		);
 	}
@@ -425,7 +469,7 @@ function QuickActionsWidget({
 				icon="arrow"
 				action={{ label: `Ask ${agentName}`, onClick: () => onNewAgent() }}
 			>
-				Start a task above or browse a little to unlock tailored suggestions.
+				Start a task or browse to see suggestions.
 			</EmptyWidgetState>
 		);
 	}
@@ -466,8 +510,8 @@ function OpenTabsWidget({
 		return (
 			<EmptyWidgetState icon={pinnedOnly ? "pin" : "browser"}>
 				{pinnedOnly
-					? "Pin a tab to keep it ready here."
-					: "Tabs you open will be ready to pick up here."}
+					? "Pin a tab to keep it here."
+					: "Open tabs appear here."}
 			</EmptyWidgetState>
 		);
 	}
@@ -518,7 +562,7 @@ function RecentPagesWidget({
 	if (items.length === 0) {
 		return (
 			<EmptyWidgetState icon="history">
-				Pages you visit will appear here for a quick return.
+				Recent pages appear here.
 			</EmptyWidgetState>
 		);
 	}
@@ -575,6 +619,95 @@ function WidgetBody({
 	}
 }
 
+type WidgetPopover = {
+	open: boolean;
+	menuId: string;
+	rootRef: React.RefObject<HTMLDivElement | null>;
+	triggerRef: React.RefObject<HTMLButtonElement | null>;
+	menuRef: React.RefObject<HTMLDivElement | null>;
+	toggle(): void;
+	close(options?: { restoreFocus?: boolean }): void;
+};
+
+function useWidgetPopover(): WidgetPopover {
+	const [open, setOpen] = useState(false);
+	const rootRef = useRef<HTMLDivElement | null>(null);
+	const triggerRef = useRef<HTMLButtonElement | null>(null);
+	const menuRef = useRef<HTMLDivElement | null>(null);
+	const menuId = useId();
+
+	const close = useCallback(({ restoreFocus = false } = {}) => {
+		setOpen(false);
+		if (restoreFocus)
+			window.requestAnimationFrame(() => triggerRef.current?.focus());
+	}, []);
+
+	const toggle = useCallback(() => {
+		setOpen((current) => !current);
+	}, []);
+
+	useEffect(() => {
+		if (!open) return;
+		const frame = window.requestAnimationFrame(() => {
+			const menu = menuRef.current;
+			const current = menu?.querySelector<HTMLElement>(
+				'[aria-checked="true"]:not(:disabled)',
+			);
+			const first = menu?.querySelector<HTMLElement>(
+				'button:not(:disabled), [tabindex]:not([tabindex="-1"])',
+			);
+			(current ?? first)?.focus();
+		});
+		const isInside = (target: EventTarget | null) =>
+			target instanceof Node && Boolean(rootRef.current?.contains(target));
+		const onPointerDown = (event: PointerEvent) => {
+			if (!isInside(event.target)) close();
+		};
+		const onFocusIn = (event: FocusEvent) => {
+			if (!isInside(event.target)) close();
+		};
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			event.preventDefault();
+			close({ restoreFocus: true });
+		};
+		const onWindowBlur = () => close();
+		window.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("focusin", onFocusIn);
+		window.addEventListener("keydown", onKeyDown);
+		window.addEventListener("blur", onWindowBlur);
+		return () => {
+			window.cancelAnimationFrame(frame);
+			window.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("focusin", onFocusIn);
+			window.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("blur", onWindowBlur);
+		};
+	}, [close, open]);
+
+	return { open, menuId, rootRef, triggerRef, menuRef, toggle, close };
+}
+
+function moveWidgetPopoverFocus(
+	event: React.KeyboardEvent<HTMLDivElement>,
+) {
+	if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+	const items = Array.from(
+		event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
+	);
+	if (items.length === 0) return;
+	const current = items.indexOf(document.activeElement as HTMLButtonElement);
+	const next =
+		event.key === "Home"
+			? 0
+			: event.key === "End"
+				? items.length - 1
+				: (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) %
+					items.length;
+	event.preventDefault();
+	items[next]?.focus();
+}
+
 function SizeMenu({
 	definition,
 	currentSize,
@@ -584,36 +717,67 @@ function SizeMenu({
 	currentSize: NewTabWidgetSize;
 	onChange(size: NewTabWidgetSize): void;
 }) {
+	const reducedMotion = useReducedMotion() ?? false;
+	const popover = useWidgetPopover();
 	return (
-		<details className="kestrel-widget-size-menu">
-			<summary
+		<div
+			ref={popover.rootRef}
+			className="kestrel-widget-size-menu"
+			data-open={popover.open ? "true" : "false"}
+		>
+			<button
+				ref={popover.triggerRef}
+				type="button"
 				aria-label={`Change ${definition.title} size`}
+				aria-haspopup="menu"
+				aria-controls={popover.menuId}
+				aria-expanded={popover.open}
 				title={`Change ${definition.title} size`}
+				onClick={popover.toggle}
 			>
 				<Icon name="sliders" />
-			</summary>
-			<div className="kestrel-widget-size-popover" role="menu">
-				<strong>Widget size</strong>
-				{definition.supportedSizes.map((size) => (
-					<button
-						key={size}
-						type="button"
-						role="menuitemradio"
-						aria-checked={size === currentSize}
-						onClick={(event) => {
-							onChange(size);
-							event.currentTarget.closest("details")?.removeAttribute("open");
-						}}
+			</button>
+			<AnimatePresence initial={false}>
+				{popover.open && (
+					<motion.div
+						id={popover.menuId}
+						ref={popover.menuRef}
+						className="kestrel-widget-size-popover"
+						role="menu"
+						aria-label={`Change ${definition.title} size`}
+						initial={reducedMotion ? false : { opacity: 0, y: -4, scale: 0.98 }}
+						animate={{ opacity: 1, y: 0, scale: 1 }}
+						exit={
+							reducedMotion
+								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+								: { opacity: 0, y: -4, scale: 0.98, pointerEvents: "none" }
+						}
+						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+						onKeyDown={moveWidgetPopoverFocus}
 					>
-						<span>
-							<strong>{WIDGET_SIZE_LABELS[size]}</strong>
-							<small>{WIDGET_SIZE_DESCRIPTIONS[size]}</small>
-						</span>
-						{size === currentSize && <Icon name="check" />}
-					</button>
-				))}
-			</div>
-		</details>
+						<strong>Widget size</strong>
+						{definition.supportedSizes.map((size) => (
+							<button
+								key={size}
+								type="button"
+								role="menuitemradio"
+								aria-checked={size === currentSize}
+								onClick={() => {
+									onChange(size);
+									popover.close({ restoreFocus: true });
+								}}
+							>
+								<span>
+									<strong>{WIDGET_SIZE_LABELS[size]}</strong>
+									<small>{WIDGET_SIZE_DESCRIPTIONS[size]}</small>
+								</span>
+								{size === currentSize && <Icon name="check" />}
+							</button>
+						))}
+					</motion.div>
+				)}
+			</AnimatePresence>
+		</div>
 	);
 }
 
@@ -629,6 +793,8 @@ function WidgetCard({
 	onResize,
 	onRemove,
 	onDragStart,
+	onDragMove,
+	onDragEnd,
 }: {
 	item: NewTabWidgetLayoutItem;
 	definition: NewTabWidgetDefinition;
@@ -641,6 +807,8 @@ function WidgetCard({
 	onResize(id: NewTabWidgetId, size: NewTabWidgetSize): void;
 	onRemove(id: NewTabWidgetId): void;
 	onDragStart(id: NewTabWidgetId, event: ReactPointerEvent<HTMLButtonElement>): void;
+	onDragMove(event: ReactPointerEvent<HTMLButtonElement>): void;
+	onDragEnd(event: ReactPointerEvent<HTMLButtonElement>): void;
 }) {
 	const definitionForItem = definition;
 	const reducedMotion = useReducedMotion() ?? false;
@@ -663,16 +831,12 @@ function WidgetCard({
 			transition={
 				dragging
 					? { duration: 0 }
-					: {
-							default: {
-								duration: reducedMotion ? 0 : 0.18,
-								ease: [0.22, 1, 0.36, 1],
-							},
-							layout: {
-								duration: reducedMotion ? 0 : 0.22,
-								ease: [0.22, 1, 0.36, 1],
-							},
-						}
+					: reducedMotion
+						? { duration: 0 }
+						: {
+								default: KESTREL_CRITICAL_SPRING,
+								layout: KESTREL_CRITICAL_SPRING,
+							}
 			}
 			data-kestrel-widget-id={item.id}
 			style={style}
@@ -692,6 +856,10 @@ function WidgetCard({
 							type="button"
 							className="kestrel-widget-drag-handle"
 							onPointerDown={(event) => onDragStart(item.id, event)}
+							onPointerMove={onDragMove}
+							onPointerUp={onDragEnd}
+							onPointerCancel={onDragEnd}
+							onLostPointerCapture={onDragEnd}
 							onKeyDown={(event) => {
 								if (event.key === "ArrowUp" || event.key === "ArrowDown") {
 									event.preventDefault();
@@ -737,43 +905,75 @@ function AddWidgetMenu({
 	const available = Object.values(NEW_TAB_WIDGET_DEFINITIONS).filter(
 		(definition) => !enabled.includes(definition.id),
 	);
+	const reducedMotion = useReducedMotion() ?? false;
+	const popover = useWidgetPopover();
 	return (
-		<details className="kestrel-widget-add-menu">
-			<summary>
+		<div
+			ref={popover.rootRef}
+			className="kestrel-widget-add-menu"
+			data-open={popover.open ? "true" : "false"}
+		>
+			<button
+				ref={popover.triggerRef}
+				type="button"
+				aria-haspopup="dialog"
+				aria-controls={popover.menuId}
+				aria-expanded={popover.open}
+				onClick={popover.toggle}
+			>
 				<Icon name="plus" />
 				<span>Add widget</span>
-			</summary>
-			<div className="kestrel-widget-add-popover" role="dialog" aria-label="Add widget">
-				<strong>Widgets</strong>
-				<p>Choose what should live beneath your Kestrel input.</p>
-				{available.length > 0 ? (
-					<ul>
-						{available.map((definition) => (
-							<li key={definition.id}>
-								<button
-									type="button"
-									onClick={(event) => {
-										onAdd(definition.id);
-										event.currentTarget.closest("details")?.removeAttribute("open");
-								}}
-								>
-									<span className="kestrel-widget-add-icon" aria-hidden="true">
-										<Icon name={definition.icon} />
-									</span>
-									<span>
-										<strong>{definition.title}</strong>
-										<small>{definition.description}</small>
-									</span>
-									<Icon name="plus" />
-								</button>
-							</li>
-						))}
-					</ul>
-				) : (
-					<span className="kestrel-widget-add-empty">All available widgets are already on your page.</span>
+			</button>
+			<AnimatePresence initial={false}>
+				{popover.open && (
+					<motion.div
+						id={popover.menuId}
+						ref={popover.menuRef}
+						className="kestrel-widget-add-popover"
+						role="dialog"
+						aria-label="Add widget"
+						initial={reducedMotion ? false : { opacity: 0, y: -4, scale: 0.985 }}
+						animate={{ opacity: 1, y: 0, scale: 1 }}
+						exit={
+							reducedMotion
+								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+								: { opacity: 0, y: -4, scale: 0.985, pointerEvents: "none" }
+						}
+						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+						onKeyDown={moveWidgetPopoverFocus}
+					>
+						<strong>Widgets</strong>
+						<p>Choose widgets for New Tab.</p>
+						{available.length > 0 ? (
+							<ul>
+								{available.map((definition) => (
+									<li key={definition.id}>
+										<button
+											type="button"
+											onClick={() => {
+												onAdd(definition.id);
+												popover.close({ restoreFocus: true });
+											}}
+										>
+											<span className="kestrel-widget-add-icon" aria-hidden="true">
+												<Icon name={definition.icon} />
+											</span>
+											<span>
+												<strong>{definition.title}</strong>
+												<small>{definition.description}</small>
+											</span>
+											<Icon name="plus" />
+										</button>
+									</li>
+								))}
+							</ul>
+						) : (
+							<span className="kestrel-widget-add-empty">All widgets are already added.</span>
+						)}
+					</motion.div>
 				)}
-			</div>
-		</details>
+			</AnimatePresence>
+		</div>
 	);
 }
 
@@ -794,6 +994,8 @@ export function NewTabWidgets({
 		id: NewTabWidgetId;
 		startX: number;
 		startY: number;
+		pointerId: number;
+		handle: HTMLButtonElement;
 	} | null>(null);
 	const [dragDelta, setDragDelta] = useState(EMPTY_DRAG_DELTA);
 
@@ -850,19 +1052,24 @@ export function NewTabWidgets({
 		[layoutClass, updateWorkingSettings],
 	);
 
-	const endDrag = useCallback(() => {
-		if (!dragStateRef.current) return;
+	const endDrag = useCallback((pointerId?: number) => {
+		const drag = dragStateRef.current;
+		if (!drag) return;
+		if (pointerId !== undefined && drag.pointerId !== pointerId) return;
+		/* Clear ownership before releasing capture so lostpointercapture cannot
+		 * finish the same gesture twice. */
 		dragStateRef.current = null;
+		if (drag.handle.hasPointerCapture(drag.pointerId))
+			drag.handle.releasePointerCapture(drag.pointerId);
 		setDraggingId(null);
 		setDragDelta(EMPTY_DRAG_DELTA);
 		onSettingsChange(settingsRef.current);
 	}, [onSettingsChange]);
 
-	useEffect(() => {
-		if (!draggingId) return;
-		const onPointerMove = (event: PointerEvent) => {
+	const handleDragMove = useCallback(
+		(event: ReactPointerEvent<HTMLButtonElement>) => {
 			const dragState = dragStateRef.current;
-			if (!dragState) return;
+			if (!dragState || event.pointerId !== dragState.pointerId) return;
 			setDragDelta({
 				x: event.clientX - dragState.startX,
 				y: event.clientY - dragState.startY,
@@ -899,26 +1106,26 @@ export function NewTabWidgets({
 			if (adjustedDestination !== currentIndex) {
 				commitReorder(dragState.id, adjustedDestination, false);
 			}
-		};
-		const onPointerUp = () => endDrag();
-		window.addEventListener("pointermove", onPointerMove);
-		window.addEventListener("pointerup", onPointerUp, { once: true });
-		window.addEventListener("pointercancel", onPointerUp, { once: true });
-		return () => {
-			window.removeEventListener("pointermove", onPointerMove);
-			window.removeEventListener("pointerup", onPointerUp);
-			window.removeEventListener("pointercancel", onPointerUp);
-		};
-	}, [commitReorder, draggingId, endDrag, layoutClass]);
+		},
+		[commitReorder, layoutClass],
+	);
+
+	const handleDragEnd = useCallback(
+		(event: ReactPointerEvent<HTMLButtonElement>) => endDrag(event.pointerId),
+		[endDrag],
+	);
 
 	const handleDragStart = useCallback(
 		(id: NewTabWidgetId, event: ReactPointerEvent<HTMLButtonElement>) => {
-			if (!editing) return;
+			if (!editing || event.button !== 0 || dragStateRef.current) return;
 			event.preventDefault();
+			event.currentTarget.setPointerCapture(event.pointerId);
 			dragStateRef.current = {
 				id,
 				startX: event.clientX,
 				startY: event.clientY,
+				pointerId: event.pointerId,
+				handle: event.currentTarget,
 			};
 			setDraggingId(id);
 			setDragDelta(EMPTY_DRAG_DELTA);
@@ -971,14 +1178,10 @@ export function NewTabWidgets({
 			className={`kestrel-widget-canvas kestrel-widget-canvas-${layoutClass}${
 				editing ? " is-editing" : ""
 			}`}
-			aria-labelledby="new-tab-widgets-title"
+			aria-label="New Tab widgets"
 			data-layout-class={layoutClass}
 		>
-			<header className="kestrel-widget-canvas-header">
-				<div>
-					<span className="kestrel-widget-canvas-kicker">Home</span>
-					<h2 id="new-tab-widgets-title">What to do next</h2>
-				</div>
+			<div className="kestrel-widget-canvas-toolbar">
 				<div className="kestrel-widget-canvas-actions">
 					{editing && (
 						<AddWidgetMenu enabled={workingSettings.enabled} onAdd={handleAdd} />
@@ -993,10 +1196,10 @@ export function NewTabWidgets({
 						<span>{editing ? "Done" : "Customize"}</span>
 					</button>
 				</div>
-			</header>
+			</div>
 
 			{items.length > 0 ? (
-				<div className="kestrel-widget-grid" aria-label="New Tab widgets">
+				<div className="kestrel-widget-grid kestrel-widget-shelves" aria-label="New Tab widgets">
 					{items.map((item) => {
 						const definition = NEW_TAB_WIDGET_DEFINITIONS[item.id];
 						return (
@@ -1013,6 +1216,8 @@ export function NewTabWidgets({
 								onResize={handleResize}
 								onRemove={handleRemove}
 								onDragStart={handleDragStart}
+								onDragMove={handleDragMove}
+								onDragEnd={handleDragEnd}
 							/>
 						);
 					})}
@@ -1023,8 +1228,8 @@ export function NewTabWidgets({
 						<Icon name="sparkle" />
 					</span>
 					<div>
-						<strong>Make New Tab yours.</strong>
-						<p>Add a widget when you want a little more here.</p>
+						<strong>Customize New Tab.</strong>
+						<p>Add a widget.</p>
 						{!editing && (
 							<button type="button" onClick={() => setEditing(true)}>
 								Customize New Tab

@@ -12,6 +12,19 @@ export interface AgentSessionTreeItem {
 	parentTitle?: string;
 }
 
+/**
+ * The runtime list is intentionally broader than the local task library. Keep
+ * private, incognito, and forgotten sessions out of renderer projections that
+ * are meant to be user-searchable or spatially visible.
+ */
+export function agentSessionIsRenderable(session: RuntimeSession): boolean {
+	return (
+		!session.forgottenAt &&
+		session.privacyMode !== "private" &&
+		session.privacyMode !== "incognito"
+	);
+}
+
 const OPEN_SESSION_STATUSES = new Set<RuntimeSessionStatus>([
 	"active",
 	"waiting",
@@ -76,6 +89,7 @@ export function agentSessionsForWorkspace(
 	const needle = query.trim().toLocaleLowerCase();
 	return [...sessions]
 		.filter((session) => {
+			if (!agentSessionIsRenderable(session)) return false;
 			if (filter === "open" && !OPEN_SESSION_STATUSES.has(session.status))
 				return false;
 			if (filter === "done" && OPEN_SESSION_STATUSES.has(session.status))
@@ -101,7 +115,10 @@ export function agentSessionTreeForWorkspace(
 ): AgentSessionTreeItem[] {
 	const visible = agentSessionsForWorkspace(sessions, query, filter);
 	const visibleIds = new Set(visible.map((session) => session.id));
-	const byId = new Map(sessions.map((session) => [session.id, session]));
+	// Only use the already-filtered set for lineage labels. A delegated public
+	// session can outlive a private parent, but the parent title must not cross
+	// the renderer's privacy boundary into the public task library.
+	const byId = new Map(visible.map((session) => [session.id, session]));
 	const children = new Map<string, RuntimeSession[]>();
 	for (const session of visible) {
 		if (!session.parentSessionId || !visibleIds.has(session.parentSessionId))

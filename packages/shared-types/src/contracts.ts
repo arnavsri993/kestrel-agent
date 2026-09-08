@@ -21,6 +21,25 @@ import {
 	BrowserTabFolderNamingGroupSchema,
 	UserBrowserTabDeletionSuggestionSchema,
 } from "./browser-tab-organization";
+import {
+	AgentIdentitySchema,
+	AgentMemoryRecordSchema,
+	CaptureConfigurationSchema,
+	CapturePolicySchema,
+	CaptureStatusSchema,
+	MemoryContextBundleSchema,
+	MemoryDiagnosticsSchema,
+	MemoryDeleteResultSchema,
+	MemoryMaintenanceResultSchema,
+	MemoryQuerySchema,
+	MemoryTimelineQueryResultSchema,
+	ProvenanceRecordSchema,
+	WorkingTaskSchema,
+} from "./memory-architecture";
+import {
+	ChromeWebStoreExtensionInspectionSchema,
+	ExtensionCompatibilityReportSchema,
+} from "./extension-compatibility";
 
 export const SensitivitySchema = z.enum([
 	"public",
@@ -470,12 +489,101 @@ const CapabilityScoresSchema = z.record(
 	z.number().min(0).max(1),
 );
 
+/**
+ * Routing metadata is deliberately constrained to opaque local identifiers.
+ * Keep recognizable credential formats out of policy, traces, and renderer
+ * state even if an upstream provider adapter accidentally supplies one.
+ */
+const ROUTING_SECRET_LABEL_PATTERN =
+	/(?:^|[-_.:])(?:sk|pk|api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|credential|password|secret)(?:[-_.:]|$)/i;
+const ROUTING_KNOWN_SECRET_PATTERN =
+	/^(?:gh[pousr]_|github_pat_|xox[a-z]-|xapp-|gsk_|akia[0-9a-z]{16}|asia[0-9a-z]{16}|aiza[0-9a-z_-]{20,}|glpat-|glrt-|npm_|pypi-)/i;
+const ROUTING_JWT_PATTERN = /^eyj[a-z0-9_-]{8,}\.[a-z0-9_-]+\.[a-z0-9_-]+$/i;
+const ROUTING_EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+const ROUTING_URL_PATTERN = /(?:^|[^A-Z0-9_])[A-Z][A-Z0-9+.-]*:\/\//i;
+
+export function isRoutingSecretLikeValue(value: string): boolean {
+	return (
+		ROUTING_SECRET_LABEL_PATTERN.test(value) ||
+		ROUTING_KNOWN_SECRET_PATTERN.test(value) ||
+		ROUTING_JWT_PATTERN.test(value)
+	);
+}
+
+export function isRoutingUnsafeMetadataValue(value: string): boolean {
+	return (
+		isRoutingSecretLikeValue(value) ||
+		ROUTING_EMAIL_PATTERN.test(value) ||
+		ROUTING_URL_PATTERN.test(value) ||
+		/^www\./i.test(value)
+	);
+}
+
+export const RoutingOpaqueIdentifierSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.max(100)
+	.regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
+	.refine(
+		(value) => !isRoutingUnsafeMetadataValue(value),
+		"Routing identifiers cannot contain credentials, identity data, or URLs.",
+	);
+
+/** Model names can include an optional registry slash, but never identity or URLs. */
+export const RoutingModelIdentifierSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.max(200)
+	.regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
+	.refine(
+		(value) => !isRoutingUnsafeMetadataValue(value),
+		"Model identifiers cannot contain credentials, identity data, or URLs.",
+	);
+
+export const RoutingProfileIdentifierSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.max(300)
+	.regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
+	.refine(
+		(value) => !isRoutingUnsafeMetadataValue(value),
+		"Profile identifiers cannot contain credentials, identity data, or URLs.",
+	);
+
+/** A concise account/model label with no address, URL, or recognizable secret. */
+export const RoutingSafeLabelSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.max(200)
+	.refine(
+		(value) => !isRoutingUnsafeMetadataValue(value),
+		"Routing labels cannot contain credentials, identity data, or URLs.",
+	);
+
+export const RoutingDisplayNameSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.max(300)
+	.refine(
+		(value) => !isRoutingUnsafeMetadataValue(value),
+		"Routing labels cannot contain credentials, identity data, or URLs.",
+	);
+
 export const ModelProfileSchema = z.object({
-	id: z.string().min(1).max(300),
-	provider: z.string().min(1).max(100),
-	endpointId: z.string().min(1).max(100),
-	model: z.string().min(1).max(200),
-	displayName: z.string().min(1).max(300),
+	id: RoutingProfileIdentifierSchema,
+	provider: RoutingOpaqueIdentifierSchema,
+	endpointId: RoutingOpaqueIdentifierSchema,
+	/** Stable non-secret account identity for an account-scoped endpoint. */
+	accountId: RoutingOpaqueIdentifierSchema.optional(),
+	/** Human-readable alias only; never an email address or credential hint. */
+	accountAlias: RoutingSafeLabelSchema.optional(),
+	model: RoutingModelIdentifierSchema,
+	displayName: RoutingDisplayNameSchema,
 	enabled: z.boolean(),
 	local: z.boolean(),
 	tier: ModelTierSchema.optional(),
@@ -514,6 +622,33 @@ export const ModelProfileSchema = z.object({
 	learnedPerformance: CapabilityScoresSchema,
 	observations: z.number().int().nonnegative().default(0),
 	lastEvaluatedAt: z.string().datetime().optional(),
+	/**
+	 * Availability and discovery provenance are intentionally kept alongside a
+	 * profile rather than inferred from a marketing model name. Older persisted
+	 * profiles omit these fields and remain valid while their endpoint is
+	 * refreshed.
+	 */
+	availability: z
+		.enum([
+			"available",
+			"unknown",
+			"stale",
+			"authentication_required",
+			"permission_denied",
+			"unavailable",
+			"unsupported",
+		])
+		.optional(),
+	discoverySource: z
+		.enum(["provider_api", "cli", "protocol", "metadata", "fallback"])
+		.optional(),
+	/**
+	 * Kept separate from availability: an account can advertise a model while
+	 * omitting the model-specific capability metadata needed for auto-routing.
+	 */
+	capabilityProvenance: z
+		.enum(["confirmed", "transport", "unknown"])
+		.optional(),
 });
 export type ModelProfile = z.infer<typeof ModelProfileSchema>;
 
@@ -528,6 +663,9 @@ export const RoutingModeSchema = z.enum([
 	"custom_budget",
 ]);
 export type RoutingMode = z.infer<typeof RoutingModeSchema>;
+
+/** Opaque provider/pool IDs only; routing policy must never become secret storage. */
+export const RoutingProviderIdentifierSchema = RoutingOpaqueIdentifierSchema;
 
 export const RoutingPolicySchema = z.object({
 	mode: RoutingModeSchema,
@@ -545,28 +683,151 @@ export const RoutingPolicySchema = z.object({
 		"sensitive",
 		"high_consequence",
 	]),
+	/** Keep escalation bounded and opt-out-able without changing manual routes. */
+	allowAutomaticEscalation: z.boolean().default(true),
+	maximumEscalations: z.number().int().min(0).max(8).default(2),
+	allowVerifier: z.boolean().default(true),
+	/** Provider identifiers, not account secrets. A preference is soft; avoidance is hard. */
+	preferredProviderIds: z
+		.array(RoutingProviderIdentifierSchema)
+		.max(32)
+		.default([]),
+	avoidedProviderIds: z
+		.array(RoutingProviderIdentifierSchema)
+		.max(32)
+		.default([]),
 });
 export type RoutingPolicy = z.infer<typeof RoutingPolicySchema>;
 
+export const RoutingTaskTypeSchema = z.enum([
+	"conversation",
+	"lookup",
+	"writing",
+	"coding",
+	"debugging",
+	"repository_modification",
+	"frontend",
+	"design",
+	"mathematics",
+	"research",
+	"long_context",
+	"computer_use",
+	"browser_automation",
+	"mcp_tool_execution",
+	"cad_tool_control",
+	"image_understanding",
+	"planning",
+	"agentic_workflow",
+	"general",
+]);
+export type RoutingTaskType = z.infer<typeof RoutingTaskTypeSchema>;
+
+/** A compact, local-only profile of task requirements; it never contains prompt text. */
+export const RoutingTaskProfileSchema = z.object({
+	type: RoutingTaskTypeSchema,
+	difficulty: z.number().min(0).max(1),
+	risk: z.enum(["read_only", "low", "external", "sensitive", "high_consequence"]),
+	toolIntensity: z.number().min(0).max(1),
+	contextCharacters: z.number().int().nonnegative(),
+	verificationRequired: z.boolean(),
+	parallelizable: z.boolean(),
+	decompositionRecommended: z.boolean(),
+	modalities: z
+		.array(z.enum(["text", "image", "audio", "video", "document"]))
+		.min(1)
+		.max(5),
+});
+export type RoutingTaskProfile = z.infer<typeof RoutingTaskProfileSchema>;
+
+export const RoutingExecutionPatternSchema = z.enum([
+	"single_executor",
+	"planner_executor",
+	"executor_verifier",
+	"parallel_workers",
+]);
+export type RoutingExecutionPattern = z.infer<
+	typeof RoutingExecutionPatternSchema
+>;
+
+/** Inspectable score factors, deliberately not hidden reasoning or prompt content. */
+export const RoutingCandidateSchema = z.object({
+	modelId: RoutingProfileIdentifierSchema,
+	providerId: RoutingOpaqueIdentifierSchema,
+	endpointId: RoutingOpaqueIdentifierSchema,
+	accountId: RoutingOpaqueIdentifierSchema.optional(),
+	accountAlias: RoutingSafeLabelSchema.optional(),
+	model: RoutingModelIdentifierSchema,
+	capabilityFit: z.number().min(0).max(1),
+	reliability: z.number().min(0).max(1),
+	estimatedCost: z.number().nonnegative(),
+	effectiveCost: z.number().nonnegative(),
+	latencyPenalty: z.number().min(0).max(1),
+	scarcityPenalty: z.number().min(0).max(1),
+	score: z.number(),
+	selected: z.boolean(),
+});
+export type RoutingCandidate = z.infer<typeof RoutingCandidateSchema>;
+
+export const RoutingEventTypeSchema = z.enum([
+		"TASK_PROFILE_CREATED",
+		"ROUTE_CANDIDATES_GENERATED",
+		"ROUTE_SELECTED",
+		"ROUTE_STARTED",
+		"ROUTE_FAILED",
+		"ROUTE_RETRIED",
+		"ROUTE_ESCALATED",
+		"ROUTE_VERIFIED",
+		"ROUTE_COMPLETED",
+		"ROUTE_ABORTED",
+]);
+export type RoutingEventType = z.infer<typeof RoutingEventTypeSchema>;
+
+export const RoutingEventMessageSchema = z.enum([
+	"Created a compact task requirement profile.",
+	"Generated compatible route candidates.",
+	"Selected the highest utility route within the active policy.",
+	"Route execution started.",
+	"Route execution ended unsuccessfully.",
+	"Retried execution after a normalized transient signal.",
+	"Selected a bounded capability escalation after execution feedback.",
+	"Recorded the independent verification result.",
+	"Route execution completed.",
+	"Route execution was cancelled.",
+]);
+export type RoutingEventMessage = z.infer<typeof RoutingEventMessageSchema>;
+
+export const RoutingEventSchema = z.object({
+	id: RoutingOpaqueIdentifierSchema,
+	type: RoutingEventTypeSchema,
+	message: RoutingEventMessageSchema,
+	createdAt: z.string().datetime(),
+});
+export type RoutingEvent = z.infer<typeof RoutingEventSchema>;
+
 export const RoutingDecisionSchema = z.object({
-	id: z.string().min(1),
-	taskId: z.string().min(1),
-	selectedModelId: z.string().min(1),
-	providerId: z.string().min(1),
-	endpointId: z.string().min(1),
-	model: z.string().min(1),
+	id: RoutingOpaqueIdentifierSchema,
+	taskId: RoutingOpaqueIdentifierSchema,
+	selectedModelId: RoutingProfileIdentifierSchema,
+	providerId: RoutingOpaqueIdentifierSchema,
+	endpointId: RoutingOpaqueIdentifierSchema,
+	accountId: RoutingOpaqueIdentifierSchema.optional(),
+	accountAlias: RoutingSafeLabelSchema.optional(),
+	model: RoutingModelIdentifierSchema,
 	tier: ModelTierSchema.optional(),
 	role: z.enum(["orchestrator", "worker", "reviewer", "fallback"]),
 	reasoningLevel: ReasoningEffortSchema,
 	fastMode: z.boolean(),
 	estimatedCost: z.number().nonnegative().optional(),
+	effectiveCost: z.number().nonnegative().optional(),
+	scarcityPenalty: z.number().min(0).max(1).optional(),
 	confidence: z.number().min(0).max(1),
 	reasons: z.array(z.string().min(1)).min(1).max(12),
-	fallbackModelIds: z.array(z.string().min(1)).max(8),
-	traceId: z.string().min(1).optional(),
+	fallbackModelIds: z.array(RoutingProfileIdentifierSchema).max(8),
+	traceId: RoutingOpaqueIdentifierSchema.optional(),
 	validationStrategy: z.string().min(1).optional(),
 	refusalRecovery: z.boolean().optional(),
 	switchedFromModelId: z.string().min(1).optional(),
+	executionPattern: RoutingExecutionPatternSchema.optional(),
 	settings: z.object({
 		temperature: z.number().min(0).max(2),
 		maximumOutputTokens: z.number().int().positive(),
@@ -580,12 +841,15 @@ export const RoutingDecisionSchema = z.object({
 export type RoutingDecision = z.infer<typeof RoutingDecisionSchema>;
 
 export const RoutingTraceSchema = z.object({
-	id: z.string().min(1),
-	parentTraceId: z.string().min(1).optional(),
-	taskId: z.string().min(1),
+	id: RoutingOpaqueIdentifierSchema,
+	parentTraceId: RoutingOpaqueIdentifierSchema.optional(),
+	taskId: RoutingOpaqueIdentifierSchema,
 	summary: z.string().min(1).max(2_000),
 	status: z.enum(["planned", "running", "completed", "failed", "cancelled"]),
 	policy: RoutingPolicySchema,
+	taskProfile: RoutingTaskProfileSchema.optional(),
+	candidates: z.array(RoutingCandidateSchema).max(32).optional(),
+	events: z.array(RoutingEventSchema).max(128).optional(),
 	decisions: z.array(RoutingDecisionSchema),
 	escalationCount: z.number().int().nonnegative(),
 	estimatedCostUsd: z.number().nonnegative(),
@@ -596,10 +860,12 @@ export const RoutingTraceSchema = z.object({
 export type RoutingTrace = z.infer<typeof RoutingTraceSchema>;
 
 export const ModelRoutingDecisionSchema = z.object({
-	taskId: z.string().min(1),
-	model: ExecutionModelSchema,
-	providerId: z.string().min(1).optional(),
-	selectedModelId: z.string().min(1).optional(),
+	taskId: RoutingOpaqueIdentifierSchema,
+	model: RoutingModelIdentifierSchema,
+	providerId: RoutingOpaqueIdentifierSchema.optional(),
+	accountId: RoutingOpaqueIdentifierSchema.optional(),
+	accountAlias: RoutingSafeLabelSchema.optional(),
+	selectedModelId: RoutingProfileIdentifierSchema.optional(),
 	tier: ModelTierSchema.optional(),
 	reasoningEffort: ReasoningEffortSchema,
 	fastMode: z.boolean(),
@@ -607,8 +873,11 @@ export const ModelRoutingDecisionSchema = z.object({
 	execution: z.enum(["local", "configured_endpoint", "development_adapter"]),
 	rationale: z.string().min(1),
 	confidence: z.number().min(0).max(1).optional(),
-	traceId: z.string().min(1).optional(),
-	fallbackModelIds: z.array(z.string().min(1)).optional(),
+	effectiveCost: z.number().nonnegative().optional(),
+	scarcityPenalty: z.number().min(0).max(1).optional(),
+	executionPattern: RoutingExecutionPatternSchema.optional(),
+	traceId: RoutingOpaqueIdentifierSchema.optional(),
+	fallbackModelIds: z.array(RoutingProfileIdentifierSchema).optional(),
 	reviewRequired: z.boolean().optional(),
 	refusalRecovery: z.boolean().optional(),
 	selectedAt: z.string().datetime(),
@@ -616,9 +885,9 @@ export const ModelRoutingDecisionSchema = z.object({
 export type ModelRoutingDecision = z.infer<typeof ModelRoutingDecisionSchema>;
 
 export const DelegatedWorkerRouteSchema = z.object({
-	providerId: z.string().min(1),
-	model: z.string().min(1),
-	selectedModelId: z.string().min(1).optional(),
+	providerId: RoutingOpaqueIdentifierSchema,
+	model: RoutingModelIdentifierSchema,
+	selectedModelId: RoutingProfileIdentifierSchema.optional(),
 	tier: ModelTierSchema.optional(),
 	role: z.enum(["orchestrator", "worker", "reviewer", "fallback"]).optional(),
 	reasoningEffort: ReasoningEffortSchema,
@@ -626,8 +895,8 @@ export const DelegatedWorkerRouteSchema = z.object({
 	local: z.boolean(),
 	confidence: z.number().min(0).max(1).optional(),
 	estimatedCost: z.number().nonnegative().optional(),
-	fallbackModelIds: z.array(z.string().min(1)).optional(),
-	traceId: z.string().min(1).optional(),
+	fallbackModelIds: z.array(RoutingProfileIdentifierSchema).optional(),
+	traceId: RoutingOpaqueIdentifierSchema.optional(),
 	refusalRecovery: z.boolean().optional(),
 	verifiedAt: z.string().datetime(),
 	verificationLatencyMs: z.number().int().nonnegative(),
@@ -652,6 +921,32 @@ export const RuntimeSessionStatusSchema = z.enum([
 ]);
 export type RuntimeSessionStatus = z.infer<typeof RuntimeSessionStatusSchema>;
 
+/**
+ * Runtime sessions are deliberately typed instead of inferred from their
+ * titles. Only an explicitly created agent owns a planet in Agent Universe;
+ * delegated descendants are the only sessions that can become moons.
+ */
+export const RuntimeSessionKindSchema = z.enum([
+	"conversation",
+	"agent",
+	"subagent",
+]);
+export type RuntimeSessionKind = z.infer<typeof RuntimeSessionKindSchema>;
+
+/** Real, bundled NASA/JPL planet assets available to persistent agents. */
+export const AgentPlanetAssetIdSchema = z.enum([
+	"earth",
+	"mars",
+	"jupiter",
+	"saturn",
+	"venus",
+	"mercury",
+	"uranus",
+	"neptune",
+	"pluto",
+]);
+export type AgentPlanetAssetId = z.infer<typeof AgentPlanetAssetIdSchema>;
+
 export const RuntimeCheckpointSchema = z.object({
 	id: z.string().min(1),
 	sequence: z.number().int().positive(),
@@ -663,8 +958,18 @@ export type RuntimeCheckpoint = z.infer<typeof RuntimeCheckpointSchema>;
 export const RuntimeSessionSchema = z.object({
 	id: z.string().min(1),
 	title: z.string().min(1).max(200),
+	/** Missing on legacy records; new records always persist this explicitly. */
+	kind: RuntimeSessionKindSchema.optional(),
 	parentSessionId: z.string().min(1).optional(),
+	/** Optional persisted choice for an explicit agent's real planet asset. */
+	planetAssetId: AgentPlanetAssetIdSchema.optional(),
+	/** Stable reference to the project that owns this conversation. */
+	projectId: z.string().min(1).optional(),
 	workspaceRoot: z.string().min(1).optional(),
+	/** Standard conversations are locally searchable. Private and incognito
+	 * conversations are deliberately excluded from the local transcript index. */
+	privacyMode: z.enum(["standard", "private", "incognito"]).optional(),
+	forgottenAt: z.string().datetime().optional(),
 	allowedTools: z.array(z.string().min(1)),
 	status: RuntimeSessionStatusSchema,
 	checkpoints: z.array(RuntimeCheckpointSchema),
@@ -672,6 +977,36 @@ export const RuntimeSessionSchema = z.object({
 	updatedAt: z.string().datetime(),
 });
 export type RuntimeSession = z.infer<typeof RuntimeSessionSchema>;
+
+/**
+ * Durable context shared by one root session and its delegated descendants.
+ * This is intentionally a separate contract from Life -> Memory: group
+ * memory belongs to the agent system that created it and must not become
+ * user-wide context by accident.
+ */
+export const AgentGroupMemoryRecordSchema = z.object({
+	id: z.string().min(1),
+	groupId: z.string().min(1),
+	content: z.string().min(1).max(100_000),
+	sourceSessionId: z.string().min(1),
+	sourceType: z.string().min(1).max(200),
+	importance: z.number().min(0).max(1),
+	createdAt: z.string().datetime(),
+	updatedAt: z.string().datetime(),
+});
+export type AgentGroupMemoryRecord = z.infer<
+	typeof AgentGroupMemoryRecordSchema
+>;
+
+export const AgentGroupMemoryStatusSchema = z.object({
+	groupId: z.string().min(1),
+	groupName: z.string().min(1).max(200),
+	memoryCount: z.number().int().nonnegative(),
+	memories: z.array(AgentGroupMemoryRecordSchema).max(200),
+});
+export type AgentGroupMemoryStatus = z.infer<
+	typeof AgentGroupMemoryStatusSchema
+>;
 
 export const MemoryRecallReceiptSchema = z.object({
 	memoryCount: z.number().int().nonnegative(),
@@ -692,6 +1027,7 @@ export const RuntimeMessageSchema = z.object({
 				id: z.string().min(1),
 				name: z.string().min(1),
 				arguments: z.record(z.string(), z.unknown()),
+				thoughtSignature: z.string().min(1).optional(),
 			}),
 		)
 		.optional(),
@@ -702,6 +1038,70 @@ export const RuntimeMessageSchema = z.object({
 	createdAt: z.string().datetime(),
 });
 export type RuntimeMessage = z.infer<typeof RuntimeMessageSchema>;
+
+export const TranscriptSearchResultSchema = z.object({
+	messageId: z.string().min(1),
+	sessionId: z.string().min(1),
+	sessionTitle: z.string().min(1).max(200),
+	role: RuntimeMessageSchema.shape.role,
+	preview: z.string().min(1).max(400),
+	matchStart: z.number().int().nonnegative(),
+	matchLength: z.number().int().positive(),
+	createdAt: z.string().datetime(),
+});
+export type TranscriptSearchResult = z.infer<
+	typeof TranscriptSearchResultSchema
+>;
+
+export const HumanInputOptionSchema = z.object({
+	id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/),
+	label: z.string().min(1).max(200),
+	description: z.string().max(1_000).optional(),
+});
+export type HumanInputOption = z.infer<typeof HumanInputOptionSchema>;
+
+export const HumanInputAnswerSchema = z.discriminatedUnion("kind", [
+	z.object({ kind: z.literal("single_choice"), optionId: z.string().min(1) }),
+	z.object({
+		kind: z.literal("multi_choice"),
+		optionIds: z.array(z.string().min(1)).min(1).max(20),
+	}),
+	z.object({ kind: z.literal("free_text"), text: z.string().min(1).max(20_000) }),
+	z.object({ kind: z.literal("skip") }),
+]);
+export type HumanInputAnswer = z.infer<typeof HumanInputAnswerSchema>;
+
+export const HumanInputRequestStatusSchema = z.enum([
+	"waiting",
+	"answered",
+	"skipped",
+	"timed_out",
+	"cancelled",
+	"replaced",
+	"completed",
+]);
+export type HumanInputRequestStatus = z.infer<
+	typeof HumanInputRequestStatusSchema
+>;
+
+export const HumanInputRequestSchema = z.object({
+	id: z.string().min(1).max(200),
+	sessionId: z.string().min(1),
+	runId: z.string().min(1),
+	prompt: z.string().min(1).max(20_000),
+	context: z.string().max(20_000).optional(),
+	options: z.array(HumanInputOptionSchema).max(20),
+	selectionMode: z.enum(["single", "multiple"]).optional(),
+	allowFreeText: z.boolean(),
+	allowSkip: z.boolean(),
+	status: HumanInputRequestStatusSchema,
+	createdAt: z.string().datetime(),
+	expiresAt: z.string().datetime().optional(),
+	answeredAt: z.string().datetime().optional(),
+	answer: HumanInputAnswerSchema.optional(),
+	terminalReason: z.string().max(2_000).optional(),
+});
+export type HumanInputRequest = z.infer<typeof HumanInputRequestSchema>;
 
 export const WorkspaceMutationSchema = z.object({
 	id: z.string().min(1),
@@ -723,6 +1123,7 @@ export const RuntimeToolCategorySchema = z.enum([
 	"execution",
 	"web",
 	"browser",
+	"ui",
 	"connector",
 	"memory",
 	"session",
@@ -769,6 +1170,218 @@ export const RuntimeToolExecutionSchema = z.object({
 	completedAt: z.string().datetime().optional(),
 });
 export type RuntimeToolExecution = z.infer<typeof RuntimeToolExecutionSchema>;
+
+/**
+ * Whole-desktop computer use is a separate, opt-in capability. Keeping the
+ * preference and the native permission probe in a shared contract lets the
+ * renderer show the exact state enforced by the main process.
+ */
+export const ComputerUseSettingsSchema = z.strictObject({
+	version: z.literal(1).default(1),
+	enabled: z.boolean().default(false),
+});
+export type ComputerUseSettings = z.infer<typeof ComputerUseSettingsSchema>;
+
+export const ComputerUsePermissionStateSchema = z.enum([
+	"granted",
+	"not-determined",
+	"denied",
+	"restricted",
+	"not-granted",
+	"unavailable",
+	"unknown",
+]);
+export type ComputerUsePermissionState = z.infer<
+	typeof ComputerUsePermissionStateSchema
+>;
+
+export const ComputerUseStatusSchema = z.strictObject({
+	enabled: z.boolean(),
+	platform: z.string().min(1).max(100),
+	screenRecording: ComputerUsePermissionStateSchema,
+	accessibility: ComputerUsePermissionStateSchema,
+	captureReady: z.boolean(),
+	controlReady: z.boolean(),
+	checkedAt: z.string().datetime(),
+});
+export type ComputerUseStatus = z.infer<typeof ComputerUseStatusSchema>;
+
+const PresentationTextSchema = z
+	.string()
+	.max(2_000)
+	.refine((value) => !/[\u0000-\u001f\u007f]/.test(value), {
+		message: "Presentation text cannot contain control characters.",
+	});
+
+const SENSITIVE_PRESENTATION_URL_PARAMETER =
+	/(?:access_?token|api_?key|auth(?:entication|orization)?(?:_?token|_?code)?|client_?secret|code|credential|jwt|password|refresh_?token|secret|session(?:_?id|_?token)?|sig(?:nature)?|ticket|token)/i;
+
+function isSensitivePresentationUrlParameter(value: string): boolean {
+	const normalized = value
+		.normalize("NFKC")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "_");
+	return SENSITIVE_PRESENTATION_URL_PARAMETER.test(`_${normalized}_`);
+}
+
+function hasSensitivePresentationUrlData(value: string): boolean {
+	try {
+		const url = new URL(value);
+		if (url.username || url.password) return true;
+		for (const key of url.searchParams.keys()) {
+			if (isSensitivePresentationUrlParameter(key)) return true;
+		}
+		const fragment = url.hash.slice(1);
+		return Boolean(
+			fragment && isSensitivePresentationUrlParameter(fragment),
+		);
+	} catch {
+		return true;
+	}
+}
+
+export const PresentationLinkSchema = z
+	.strictObject({
+		label: z.string().min(1).max(160),
+		url: z
+			.string()
+			.url()
+			.max(8_192)
+			.refine(
+				(value) => {
+					try {
+						const url = new URL(value);
+						return (
+							(url.protocol === "http:" || url.protocol === "https:") &&
+							!hasSensitivePresentationUrlData(value)
+						);
+					} catch {
+						return false;
+					}
+				},
+				"Presentation links must be credential-free HTTP(S) URLs.",
+			),
+	})
+	.refine((value) => !/[\u0000-\u001f\u007f]/.test(value.label), {
+		message: "Presentation link labels cannot contain control characters.",
+	});
+export type PresentationLink = z.infer<typeof PresentationLinkSchema>;
+
+const PresentationSourcesSchema = z.array(PresentationLinkSchema).max(12).default([]);
+
+const UIPresentationListItemSchema = z.strictObject({
+	title: z.string().min(1).max(300),
+	summary: PresentationTextSchema.optional(),
+	details: z.array(PresentationTextSchema.max(500)).max(8).default([]),
+	badge: z.string().min(1).max(80).optional(),
+	price: z.string().min(1).max(120).optional(),
+	availability: z.string().min(1).max(160).optional(),
+	links: z.array(PresentationLinkSchema).max(4).default([]),
+});
+export type UIPresentationListItem = z.infer<typeof UIPresentationListItemSchema>;
+
+export const UIPresentationListRequestSchema = z.strictObject({
+	kind: z.literal("list"),
+	title: z.string().min(1).max(300),
+	description: PresentationTextSchema.optional(),
+	items: z.array(UIPresentationListItemSchema).min(1).max(24),
+	sources: PresentationSourcesSchema,
+});
+
+const UIPresentationComparisonColumnSchema = z.strictObject({
+	key: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+	label: z.string().min(1).max(160),
+});
+const UIPresentationComparisonRowSchema = z.strictObject({
+	label: z.string().min(1).max(200),
+	values: z.array(PresentationTextSchema.max(500)).min(1).max(6),
+});
+
+export const UIPresentationComparisonRequestSchema = z
+	.strictObject({
+		kind: z.literal("comparison"),
+		title: z.string().min(1).max(300),
+		description: PresentationTextSchema.optional(),
+		columns: z.array(UIPresentationComparisonColumnSchema).min(2).max(6),
+		rows: z.array(UIPresentationComparisonRowSchema).min(1).max(24),
+		sources: PresentationSourcesSchema,
+	})
+	.refine(
+		(value) => value.rows.every((row) => row.values.length === value.columns.length),
+		{
+			path: ["rows"],
+			message: "Each comparison row must provide one value per column.",
+		},
+	);
+
+const UIPresentationPlanStepSchema = z.strictObject({
+	title: z.string().min(1).max(300),
+	description: PresentationTextSchema.optional(),
+	status: z.enum(["pending", "in_progress", "complete", "blocked"]),
+	links: z.array(PresentationLinkSchema).max(4).default([]),
+});
+
+export const UIPresentationPlanRequestSchema = z.strictObject({
+	kind: z.literal("plan"),
+	title: z.string().min(1).max(300),
+	description: PresentationTextSchema.optional(),
+	steps: z.array(UIPresentationPlanStepSchema).min(1).max(12),
+	sources: PresentationSourcesSchema,
+});
+
+const UIPresentationFactSchema = z.strictObject({
+	label: z.string().min(1).max(160),
+	value: PresentationTextSchema.max(500),
+});
+
+export const UIPresentationResultRequestSchema = z.strictObject({
+	kind: z.literal("result"),
+	title: z.string().min(1).max(300),
+	description: PresentationTextSchema.optional(),
+	status: z.enum(["info", "success", "warning"]).default("info"),
+	summary: PresentationTextSchema.min(1),
+	facts: z.array(UIPresentationFactSchema).max(12).default([]),
+	links: z.array(PresentationLinkSchema).max(8).default([]),
+	sources: PresentationSourcesSchema,
+});
+
+export const UIPresentationRequestSchema = z.discriminatedUnion("kind", [
+	UIPresentationListRequestSchema,
+	UIPresentationComparisonRequestSchema,
+	UIPresentationPlanRequestSchema,
+	UIPresentationResultRequestSchema,
+]);
+export type UIPresentationRequest = z.infer<typeof UIPresentationRequestSchema>;
+
+const UIPresentationEnvelopeFields = {
+	id: z.string().regex(/^presentation-[a-f0-9-]{36}$/),
+	createdAt: z.string().datetime(),
+	trust: z.literal("local_bounded"),
+};
+
+export const UIPresentationListSchema = UIPresentationListRequestSchema.extend(
+	UIPresentationEnvelopeFields,
+);
+export const UIPresentationComparisonSchema =
+	UIPresentationComparisonRequestSchema.extend(UIPresentationEnvelopeFields);
+export const UIPresentationPlanSchema = UIPresentationPlanRequestSchema.extend(
+	UIPresentationEnvelopeFields,
+);
+export const UIPresentationResultSchema = UIPresentationResultRequestSchema.extend(
+	UIPresentationEnvelopeFields,
+);
+export const UIPresentationSchema = z.discriminatedUnion("kind", [
+	UIPresentationListSchema,
+	UIPresentationComparisonSchema,
+	UIPresentationPlanSchema,
+	UIPresentationResultSchema,
+]);
+export type UIPresentation = z.infer<typeof UIPresentationSchema>;
+
+export const UIPresentationOutputSchema = z.strictObject({
+	presentation: UIPresentationSchema,
+});
+export type UIPresentationOutput = z.infer<typeof UIPresentationOutputSchema>;
 
 export const ActionReceiptSchema = z.strictObject({
 	id: z.string().min(1).max(300),
@@ -849,9 +1462,12 @@ export const RuntimeEventSchema = z.object({
 		"session.created",
 		"session.updated",
 		"message.appended",
+		"question.created",
+		"question.updated",
 		"tool.started",
 		"tool.progress",
 		"tool.completed",
+		"group-memory.updated",
 	]),
 	sessionId: z.string().min(1),
 	executionId: z.string().min(1).optional(),
@@ -885,6 +1501,7 @@ export const AgentRunSchema = z.object({
 	status: z.enum([
 		"running",
 		"waiting_approval",
+		"waiting_input",
 		"completed",
 		"cancelled",
 		"failed",
@@ -920,6 +1537,167 @@ export const ModelProviderSummarySchema = z.object({
 	}),
 });
 export type ModelProviderSummary = z.infer<typeof ModelProviderSummarySchema>;
+
+/**
+ * A provider account is a configured authentication context, not a model
+ * vendor. The endpoint ID is the runtime adapter instance used for execution;
+ * the account ID remains stable when a display name or endpoint URL changes.
+ */
+export const ProviderAccountAuthTransportSchema = z.enum([
+	"api_key",
+	"oauth",
+	"cli_profile",
+	"local",
+]);
+export type ProviderAccountAuthTransport = z.infer<
+	typeof ProviderAccountAuthTransportSchema
+>;
+
+export const ProviderModelAvailabilitySchema = z.enum([
+	"available",
+	"unknown",
+	"stale",
+	"authentication_required",
+	"permission_denied",
+	"unavailable",
+	"unsupported",
+]);
+export type ProviderModelAvailability = z.infer<
+	typeof ProviderModelAvailabilitySchema
+>;
+
+export const ProviderModelDiscoverySourceSchema = z.enum([
+	"provider_api",
+	"cli",
+	"protocol",
+	"metadata",
+	"fallback",
+]);
+export type ProviderModelDiscoverySource = z.infer<
+	typeof ProviderModelDiscoverySourceSchema
+>;
+
+export const ProviderAccountModelCapabilitiesSchema = z.object({
+	/**
+	 * Whether the individual model advertised these capabilities, the adapter
+	 * supplied transport-level defaults, or the listing did not say. A model
+	 * list alone is not evidence that every listed model can call tools or
+	 * accept every attachment type.
+	 */
+	capabilityProvenance: z.enum(["confirmed", "transport", "unknown"]),
+	streaming: z.boolean(),
+	tools: z.boolean(),
+	vision: z.boolean(),
+	audio: z.boolean(),
+	documents: z.boolean(),
+	video: z.boolean(),
+	structuredOutput: z.boolean(),
+	reasoningEfforts: z.array(ReasoningEffortSchema).max(6),
+	contextWindow: z.number().int().positive().optional(),
+	maxOutputTokens: z.number().int().positive().optional(),
+});
+export type ProviderAccountModelCapabilities = z.infer<
+	typeof ProviderAccountModelCapabilitiesSchema
+>;
+
+export const ProviderAccountModelSchema = z.object({
+	id: z.string().min(1).max(200),
+	displayName: z.string().min(1).max(300),
+	availability: ProviderModelAvailabilitySchema,
+	discoverySource: ProviderModelDiscoverySourceSchema,
+	discoveredAt: z.string().datetime().optional(),
+	capabilities: ProviderAccountModelCapabilitiesSchema,
+});
+export type ProviderAccountModel = z.infer<typeof ProviderAccountModelSchema>;
+
+export const ProviderAccountDiscoverySchema = z.object({
+	state: z.enum(["idle", "fresh", "stale", "failed", "unsupported"]),
+	lastAttemptAt: z.string().datetime().optional(),
+	lastSuccessAt: z.string().datetime().optional(),
+	/** A short, secret-free diagnostic suitable for a local settings surface. */
+	error: z.string().min(1).max(500).optional(),
+});
+export type ProviderAccountDiscovery = z.infer<
+	typeof ProviderAccountDiscoverySchema
+>;
+
+export const ProviderAccountSummarySchema = z.object({
+	id: z.string().min(1).max(100),
+	endpointId: z.string().min(1).max(100),
+	providerId: z.string().min(1).max(100),
+	displayName: z.string().min(1).max(200),
+	authTransport: ProviderAccountAuthTransportSchema,
+	enabled: z.boolean(),
+	capabilities: ModelProviderSummarySchema.shape.capabilities,
+	discovery: ProviderAccountDiscoverySchema,
+	models: z.array(ProviderAccountModelSchema).max(2_000),
+});
+export type ProviderAccountSummary = z.infer<
+	typeof ProviderAccountSummarySchema
+>;
+
+export const ProviderAccountAdapterSchema = z.enum([
+	"openai-responses",
+	"anthropic-messages",
+	"gemini-generate-content",
+	"openai-compatible",
+	"ollama",
+	"codex-app-server",
+	"opencode-cli",
+	"claude-cli",
+]);
+export type ProviderAccountAdapter = z.infer<typeof ProviderAccountAdapterSchema>;
+
+/** Public, non-secret input accepted from the renderer when adding an account. */
+export const ProviderAccountInputSchema = z.object({
+	providerId: z.string().regex(/^[a-z][a-z0-9-]{0,79}$/),
+	adapter: ProviderAccountAdapterSchema,
+	displayName: z.string().min(1).max(200),
+	authTransport: ProviderAccountAuthTransportSchema,
+	enabled: z.boolean().default(true),
+	baseUrl: z.string().url().max(2_000).optional(),
+	organization: z.string().max(300).optional(),
+	project: z.string().max(300).optional(),
+	defaultModel: z.string().min(1).max(200).optional(),
+	apiKey: z.string().min(8).max(20_000).optional(),
+	headers: z
+		.array(
+			z.object({
+				name: z.string().min(1).max(120),
+				value: z.string().min(1).max(4_000),
+			}),
+		)
+		.max(20)
+		.default([]),
+});
+export type ProviderAccountInput = z.infer<typeof ProviderAccountInputSchema>;
+
+/**
+ * Updates deliberately omit defaults. In particular, an unrelated rename must
+ * never turn an absent `headers` field into an empty array and clear protected
+ * request headers for the account.
+ */
+export const ProviderAccountUpdateSchema = z.object({
+	id: z.string().min(1).max(100),
+	displayName: z.string().min(1).max(200).optional(),
+	enabled: z.boolean().optional(),
+	baseUrl: z.string().url().max(2_000).optional(),
+	organization: z.string().max(300).optional(),
+	project: z.string().max(300).optional(),
+	defaultModel: z.string().min(1).max(200).optional(),
+	apiKey: z.string().min(8).max(20_000).optional(),
+	headers: z
+		.array(
+			z.object({
+				name: z.string().min(1).max(120),
+				value: z.string().min(1).max(4_000),
+			}),
+		)
+		.max(20)
+		.optional(),
+});
+export type ProviderAccountUpdate = z.infer<typeof ProviderAccountUpdateSchema>;
+
 export const ProviderVerificationSchema = z.object({
 	providerId: z.string().min(1),
 	poolId: z.string().min(1).optional(),
@@ -992,6 +1770,9 @@ export const ArtifactRecordSchema = z.object({
 	providerRequestId: z.string().optional(),
 	estimatedCostUsd: z.number().nonnegative().optional(),
 	artifactKind: z.enum(["media", "widget"]).optional(),
+	pinned: z.boolean().optional(),
+	integrity: z.enum(["verified", "missing", "tampered"]).optional(),
+	exportedFromArtifactId: z.string().min(1).optional(),
 	title: z.string().min(1).max(80).optional(),
 	sessionId: z.string().min(1).max(200).optional(),
 	createdAt: z.string().datetime(),
@@ -1553,19 +2334,51 @@ export const MigrationItemSchema = z.object({
 });
 export const MigrationTranslationSchema = z.object({
 	product: MigrationProductSchema,
+	sourceRoot: z.string().min(1),
 	sourcePath: z.string(),
+	sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
 	destinationPath: z.string().min(1),
 	values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
 	sha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
+export const MigrationReviewItemSchema = z.object({
+	product: MigrationProductSchema,
+	sourcePath: z.string(),
+	kind: z.enum([
+		"automation",
+		"channel-binding",
+		"acp-binding",
+		"plugin",
+		"plugin-load-path",
+	]),
+	count: z.number().int().positive(),
+	status: z.literal("review-required"),
+});
+export type MigrationReviewItem = z.infer<typeof MigrationReviewItemSchema>;
 export const MigrationPlanSchema = z.object({
 	createdAt: z.string().datetime(),
 	targetRoot: z.string().min(1),
 	items: z.array(MigrationItemSchema).max(2_000),
 	warnings: z.array(z.string()),
 	translations: z.array(MigrationTranslationSchema).max(2_000),
+	reviewItems: z.array(MigrationReviewItemSchema).max(2_000),
 });
 export type MigrationPlanContract = z.infer<typeof MigrationPlanSchema>;
+export const MigrationPlanPreviewItemSchema = z.object({
+	category: z.enum(["instructions", "settings", "memory", "skill", "agent"]),
+	sourcePath: z.string(),
+	status: z.enum(["ready", "conflict"]),
+});
+export const MigrationPlanPreviewSchema = z.object({
+	targetRoot: z.string().min(1),
+	items: z.array(MigrationPlanPreviewItemSchema).max(2_000),
+	translatedSettings: z.number().int().nonnegative().max(2_000),
+	warnings: z.array(z.string()),
+	reviewItems: z.array(MigrationReviewItemSchema).max(2_000),
+});
+export type MigrationPlanPreviewContract = z.infer<
+	typeof MigrationPlanPreviewSchema
+>;
 export const MigrationResultSchema = z.object({
 	imported: z.array(z.string()),
 	skipped: z.array(z.string()),
@@ -1847,9 +2660,48 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({ type: z.literal("runtime-list-sessions") }),
 	z.object({
+		type: z.literal("runtime-sync-projects"),
+		projects: z.array(z.object({
+			id: z.string().min(1).max(200),
+			path: z.string().min(1).max(4_096),
+			name: z.string().min(1).max(200),
+			instructions: z.string().max(20_000).optional(),
+			createdAt: z.string().datetime(),
+			updatedAt: z.string().datetime(),
+			order: z.number().int().nonnegative(),
+			available: z.boolean().optional(),
+		})).max(500),
+	}),
+	z.object({
+		type: z.literal("agent-group-memory-list"),
+		sessionId: z.string().min(1),
+	}),
+	z.object({
 		type: z.literal("runtime-create-session"),
 		title: z.string().min(1).max(200),
+		kind: z.enum(["conversation", "agent"]).optional(),
+		planetAssetId: AgentPlanetAssetIdSchema.optional(),
+		projectId: z.string().min(1).optional(),
 		workspaceRoot: z.string().min(1).optional(),
+		privacyMode: z.enum(["standard", "private", "incognito"]).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-update-agent-planet"),
+		sessionId: z.string().min(1),
+		planetAssetId: AgentPlanetAssetIdSchema.nullable(),
+	}),
+	z.object({
+		type: z.literal("runtime-update-session-project"),
+		sessionId: z.string().min(1),
+		projectId: z.string().min(1).nullable(),
+	}),
+	z.object({
+		type: z.literal("runtime-select-session"),
+		sessionId: z.string().min(1).nullable(),
+	}),
+	z.object({
+		type: z.literal("runtime-forget-session"),
+		sessionId: z.string().min(1),
 	}),
 	z.object({
 		type: z.literal("runtime-fork-session"),
@@ -1927,6 +2779,33 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		query: z.string().min(1).max(500),
 		limit: z.number().int().positive().max(100).optional(),
 	}),
+	z.object({
+		type: z.literal("runtime-list-human-input"),
+		sessionId: z.string().min(1).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-create-human-input"),
+		sessionId: z.string().min(1),
+		runId: z.string().min(1),
+		prompt: z.string().min(1).max(20_000),
+		context: z.string().max(20_000).optional(),
+		options: z.array(HumanInputOptionSchema).max(20).default([]),
+		selectionMode: z.enum(["single", "multiple"]).optional(),
+		allowFreeText: z.boolean().default(true),
+		allowSkip: z.boolean().default(true),
+		timeoutMs: z.number().int().positive().max(7 * 24 * 60 * 60 * 1_000).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-answer-human-input"),
+		requestId: z.string().min(1),
+		runId: z.string().min(1),
+		answer: HumanInputAnswerSchema,
+	}),
+	z.object({
+		type: z.literal("runtime-cancel-human-input"),
+		requestId: z.string().min(1),
+		runId: z.string().min(1),
+	}),
 	z.object({ type: z.literal("memory-list") }),
 	z.object({
 		type: z.literal("memory-remember"),
@@ -1960,6 +2839,58 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("memory-user-model-review"),
 		id: z.string().min(1),
 		decision: z.enum(["confirm", "reject"]),
+	}),
+	MemoryQuerySchema.extend({
+		type: z.literal("memory-timeline-query"),
+	}),
+	z.object({ type: z.literal("memory-capture-status") }),
+	z.object({
+		type: z.literal("memory-capture-configure"),
+		configuration: CaptureConfigurationSchema,
+	}),
+	z.object({
+		type: z.literal("memory-capture-policy-upsert"),
+		policy: CapturePolicySchema,
+	}),
+	z.object({
+		type: z.literal("memory-capture-policy-delete"),
+		id: z.string().min(1).max(200),
+	}),
+	z.object({ type: z.literal("memory-diagnostics") }),
+	z.object({
+		type: z.literal("memory-agent-inspect"),
+		sessionId: z.string().min(1),
+		includeInactive: z.boolean().default(false),
+		limit: z.number().int().positive().max(200).default(40),
+	}),
+	z.object({
+		type: z.literal("memory-agent-correct"),
+		sessionId: z.string().min(1),
+		id: z.string().min(1).max(200),
+		content: z.string().min(1).max(100_000),
+	}),
+	z.object({
+		type: z.literal("memory-agent-forget"),
+		sessionId: z.string().min(1),
+		id: z.string().min(1).max(200),
+	}),
+	z.object({
+		type: z.literal("memory-agent-provenance-list"),
+		sessionId: z.string().min(1),
+		id: z.string().min(1).max(200),
+		limit: z.number().int().positive().max(200).default(40),
+	}),
+	z.object({
+		type: z.literal("memory-provenance-list"),
+		ownerType: ProvenanceRecordSchema.shape.ownerType.optional(),
+		ownerId: z.string().min(1).max(200).optional(),
+		sourceId: z.string().min(1).max(2_000).optional(),
+		timelineEventId: z.string().min(1).max(200).optional(),
+		limit: z.number().int().positive().max(200).default(40),
+	}),
+	z.object({
+		type: z.literal("memory-source-delete"),
+		sourceId: z.string().min(1).max(2_000),
 	}),
 	z.object({ type: z.literal("people-list") }),
 	z.object({
@@ -2049,6 +2980,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		includeSensitive: z.boolean().default(false),
 		providerIds: z.array(z.string().min(1).max(100)).min(1).max(8).default(["auto"]),
 		providerModels: z.record(z.string(), z.string().min(1).max(200)).optional(),
+		reasoningEffort: ReasoningEffortSchema.optional(),
 		writerModel: z.string().min(1).max(200).optional(),
 		reviewerModel: z.string().min(1).max(200).optional(),
 	}),
@@ -2257,6 +3189,31 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	z.object({ type: z.literal("observability-test") }),
 	z.object({ type: z.literal("media-list-artifacts") }),
 	z.object({
+		type: z.literal("media-pin-artifact"),
+		artifactId: z.string().min(1).max(200),
+		pinned: z.boolean(),
+	}),
+	z.object({
+		type: z.literal("media-export-artifact"),
+		artifactId: z.string().min(1).max(200),
+		maximumBytes: z
+			.number()
+			.int()
+			.positive()
+			.max(10_000_000)
+			.default(5_000_000),
+	}),
+	z.object({
+		type: z.literal("media-download-artifact"),
+		artifactId: z.string().min(1).max(200),
+		maximumBytes: z
+			.number()
+			.int()
+			.positive()
+			.max(32_000_000)
+			.default(10_000_000),
+	}),
+	z.object({
 		type: z.literal("media-preview-artifact"),
 		artifactId: z.string().min(1).max(200),
 		maximumBytes: z
@@ -2343,6 +3300,11 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({ type: z.literal("runtime-list-providers") }),
 	z.object({
+		type: z.literal("runtime-refresh-provider-models"),
+		/** Omit to refresh every configured account. */
+		providerId: z.string().min(1).max(100).optional(),
+	}),
+	z.object({
 		type: z.literal("runtime-verify-provider"),
 		providerId: z.string().min(1).max(100),
 	}),
@@ -2423,22 +3385,38 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		routing: ModelRoutingDecisionSchema.optional(),
 		delegationRouting: DelegatedWorkerRouteSchema.optional(),
 		sessions: z.array(RuntimeSessionSchema).optional(),
+		selectedSessionId: z.string().min(1).nullable().optional(),
+		groupMemory: AgentGroupMemoryStatusSchema.optional(),
 		session: RuntimeSessionSchema.optional(),
 		tools: z.array(RuntimeToolDescriptorSchema).optional(),
 		execution: RuntimeToolExecutionSchema.optional(),
 		run: AgentRunSchema.optional(),
 		runs: z.array(AgentRunSchema).optional(),
 		messages: z.array(RuntimeMessageSchema).optional(),
+		transcriptResults: z.array(TranscriptSearchResultSchema).optional(),
+		humanInput: HumanInputRequestSchema.optional(),
+		humanInputRequests: z.array(HumanInputRequestSchema).optional(),
 		hasMoreMessages: z.boolean().optional(),
 		executions: z.array(RuntimeToolExecutionSchema).optional(),
 		receipts: z.array(ActionReceiptSchema).optional(),
 		plugins: z.array(PluginSummarySchema).optional(),
 		providers: z.array(ModelProviderSummarySchema).optional(),
+		providerAccounts: z.array(ProviderAccountSummarySchema).optional(),
 		modelProfiles: z.array(ModelProfileSchema).optional(),
 		routingPolicy: RoutingPolicySchema.optional(),
 		routingTraces: z.array(RoutingTraceSchema).optional(),
 		providerVerifications: z.array(ProviderVerificationSchema).optional(),
 		memories: z.array(MemoryRecordSchema).optional(),
+		memoryTimeline: MemoryTimelineQueryResultSchema.optional(),
+		memoryCaptureStatus: CaptureStatusSchema.optional(),
+		memoryDiagnostics: MemoryDiagnosticsSchema.optional(),
+		memoryAgentIdentity: AgentIdentitySchema.optional(),
+		memoryAgentMemories: z.array(AgentMemoryRecordSchema).max(200).optional(),
+		memoryAgentTasks: z.array(WorkingTaskSchema).max(100).optional(),
+		memoryProvenance: z.array(ProvenanceRecordSchema).max(200).optional(),
+		memoryContext: MemoryContextBundleSchema.optional(),
+		memoryMaintenance: MemoryMaintenanceResultSchema.optional(),
+		memoryDeletion: MemoryDeleteResultSchema.optional(),
 		memoryVersions: z.array(MemoryVersionSchema).optional(),
 		userModelFacts: z.array(UserModelFactSchema).optional(),
 		people: z.array(PersonRecordSchema).optional(),
@@ -2482,12 +3460,21 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		presence: z.array(PresenceEntrySchema).optional(),
 		eventApplications: z.array(EventApplicationSchema).optional(),
 		artifacts: z.array(ArtifactRecordSchema).optional(),
+		exportedArtifact: ArtifactRecordSchema.optional(),
 		artifactPreview: z
 			.object({
 				id: z.string(),
 				mediaType: z.string(),
 				dataBase64: z.string(),
 				truncated: z.boolean(),
+			})
+			.optional(),
+		artifactDownload: z
+			.object({
+				id: z.string(),
+				filename: z.string().min(1),
+				mediaType: z.string().min(1),
+				dataBase64: z.string(),
 			})
 			.optional(),
 		transcription: z
@@ -2653,6 +3640,29 @@ export const UserBrowserTabFolderSchema = z.object({
 });
 export type UserBrowserTabFolder = z.infer<typeof UserBrowserTabFolderSchema>;
 
+/**
+ * These are normalized, renderer-safe labels for a reputation provider's
+ * finding. Provider-specific codes stay in the main process.
+ */
+export const UserBrowserThreatTypeSchema = z.enum([
+	"malware",
+	"social-engineering",
+	"unwanted-software",
+	"potentially-harmful-application",
+	"unsafe-site",
+]);
+export type UserBrowserThreatType = z.infer<typeof UserBrowserThreatTypeSchema>;
+
+export const UserBrowserBlockedNavigationSchema = z.object({
+	url: z.string().url().max(8_192),
+	source: z.enum(["navigation", "redirect", "popup"]),
+	threatTypes: z.array(UserBrowserThreatTypeSchema).min(1).max(5),
+	provider: z.string().min(1).max(100),
+});
+export type UserBrowserBlockedNavigation = z.infer<
+	typeof UserBrowserBlockedNavigationSchema
+>;
+
 export const UserBrowserTabSchema = z.object({
 	id: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	title: z.string().min(1).max(500),
@@ -2665,6 +3675,7 @@ export const UserBrowserTabSchema = z.object({
 	discarded: z.boolean(),
 	crashed: z.boolean(),
 	error: z.string().min(1).max(500).optional(),
+	blockedNavigation: UserBrowserBlockedNavigationSchema.optional(),
 	pinned: z.boolean().default(false),
 	muted: z.boolean().default(false),
 	tabFolderId: z.string().regex(/^tab-folder-[a-f0-9-]{36}$/).optional(),
@@ -2714,7 +3725,9 @@ export const PasswordEntrySummarySchema = z.object({
 	origin: z.string().url().max(8_192),
 	title: z.string().min(1).max(200),
 	username: z.string().max(500),
+	createdAt: z.string().datetime(),
 	updatedAt: z.string().datetime(),
+	lastUsedAt: z.string().datetime().optional(),
 });
 export type PasswordEntrySummary = z.infer<typeof PasswordEntrySummarySchema>;
 
@@ -2723,14 +3736,14 @@ export type PasswordEntrySummary = z.infer<typeof PasswordEntrySummarySchema>;
  * next to the public summary so storage and IPC validation cannot drift apart.
  */
 export const PasswordEntrySchema = PasswordEntrySummarySchema.extend({
-	password: z.string().min(1).max(100_000),
-	createdAt: z.string().datetime(),
+	/** Main-process only. This schema must never be used for renderer IPC. */
+	password: z.string().min(1).max(4_096),
 });
 export type PasswordEntry = z.infer<typeof PasswordEntrySchema>;
 
 export const PasswordFormFieldSchema = z.object({
 	id: z.string().regex(/^field-[0-9]+$/),
-	kind: z.enum(["username", "password", "other"]),
+	kind: z.enum(["username", "password", "new-password", "secret", "other"]),
 	label: z.string().max(500),
 	type: z.string().max(100),
 	autocomplete: z.string().max(100),
@@ -2743,14 +3756,21 @@ export const PasswordFormFieldSchema = z.object({
 });
 export type PasswordFormField = z.infer<typeof PasswordFormFieldSchema>;
 
+export const PasswordSaveCandidateSchema = z.object({
+	/** The login name is safe to show in the save-password confirmation. */
+	username: z.string().max(500),
+});
+export type PasswordSaveCandidate = z.infer<typeof PasswordSaveCandidateSchema>;
+
 export const PasswordPromptSchema = z.object({
 	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	origin: z.string().url().max(8_192),
 	title: z.string().min(1).max(500),
-	mode: z.enum(["page", "field"]),
+	mode: z.enum(["save", "page", "field", "generate", "autofilled"]),
 	fields: z.array(PasswordFormFieldSchema).max(32),
 	focusedFieldId: z.string().regex(/^field-[0-9]+$/).optional(),
 	entries: z.array(PasswordEntrySummarySchema).max(24),
+	candidate: PasswordSaveCandidateSchema.optional(),
 	anchor: z.object({
 		x: z.number().int().min(0).max(20_000),
 		y: z.number().int().min(0).max(20_000),
@@ -2867,6 +3887,16 @@ export type UserBrowserHistoryEntry = z.infer<
 	typeof UserBrowserHistoryEntrySchema
 >;
 
+export const UserBrowserDownloadReputationSchema = z.object({
+	verdict: z.enum(["safe", "unknown", "malicious"]),
+	provider: z.string().min(1).max(100),
+	threatTypes: z.array(UserBrowserThreatTypeSchema).max(5).default([]),
+	checkedAt: z.string().datetime(),
+});
+export type UserBrowserDownloadReputation = z.infer<
+	typeof UserBrowserDownloadReputationSchema
+>;
+
 export const UserBrowserDownloadSchema = z.object({
 	id: z.string().regex(/^download-[a-f0-9-]{36}$/),
 	tabId: z
@@ -2877,10 +3907,18 @@ export const UserBrowserDownloadSchema = z.object({
 	sourceUrl: z.string().url().max(8_192),
 	receivedBytes: z.number().int().nonnegative(),
 	totalBytes: z.number().int().nonnegative(),
-	status: z.enum(["progressing", "completed", "cancelled", "failed"]),
+	status: z.enum([
+		"checking",
+		"progressing",
+		"completed",
+		"cancelled",
+		"failed",
+		"blocked",
+	]),
 	startedAt: z.string().datetime(),
 	completedAt: z.string().datetime().optional(),
 	canReveal: z.boolean(),
+	reputation: UserBrowserDownloadReputationSchema.optional(),
 });
 export type UserBrowserDownload = z.infer<typeof UserBrowserDownloadSchema>;
 
@@ -2888,9 +3926,37 @@ export const UserBrowserBookmarkSchema = z.object({
 	id: z.string().regex(/^bookmark-[a-f0-9-]{36}$/),
 	url: z.string().url().max(8_192),
 	title: z.string().min(1).max(500),
+	displayMode: z.enum(["full", "title", "icon"]).optional(),
+	folderId: z.string().regex(/^bookmark-folder-[a-f0-9-]{36}$/).optional(),
+	faviconDataUrl: UserBrowserFaviconDataUrlSchema.optional(),
 	createdAt: z.string().datetime(),
 });
 export type UserBrowserBookmark = z.infer<typeof UserBrowserBookmarkSchema>;
+
+export const UserBrowserBookmarkDisplayModeSchema = z.enum([
+	"full",
+	"title",
+	"icon",
+]);
+export type UserBrowserBookmarkDisplayMode = z.infer<
+	typeof UserBrowserBookmarkDisplayModeSchema
+>;
+
+export const UserBrowserBookmarkFolderIdSchema = z.string().regex(
+	/^bookmark-folder-[a-f0-9-]{36}$/,
+);
+export type UserBrowserBookmarkFolderId = z.infer<
+	typeof UserBrowserBookmarkFolderIdSchema
+>;
+
+export const UserBrowserBookmarkFolderSchema = z.object({
+	id: UserBrowserBookmarkFolderIdSchema,
+	name: z.string().min(1).max(80),
+	createdAt: z.string().datetime(),
+});
+export type UserBrowserBookmarkFolder = z.infer<
+	typeof UserBrowserBookmarkFolderSchema
+>;
 
 export const UserBrowserSitePermissionSchema = z.object({
 	origin: z.string().min(1).max(8_192),
@@ -2988,6 +4054,47 @@ export const UserBrowserFindMatchSchema = z.object({
 export type UserBrowserFindMatch = z.infer<typeof UserBrowserFindMatchSchema>;
 
 export const UserBrowserSettingsSchema = z.object({
+	/**
+	 * Startup preferences are kept separate from restoreSession for backwards
+	 * compatibility with profiles written before the organized settings surface.
+	 * `restoreSession` remains the legacy source of truth when startupBehavior is
+	 * not present in an older profile.
+	 */
+	startupBehavior: z
+		.enum(["new_tab", "restore", "homepage", "specific_pages"])
+		.default("restore"),
+	homepageUrl: z
+		.string()
+		.max(8_192)
+		.refine(
+			(value) => {
+				if (!value.trim()) return true;
+				try {
+					const url = new URL(value);
+					return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+				} catch {
+					return false;
+				}
+			},
+			"Homepage must be an HTTP(S) URL without embedded credentials.",
+		)
+		.default(""),
+	startupPages: z
+		.array(
+			z
+				.string()
+				.max(8_192)
+				.refine((value) => {
+					try {
+						const url = new URL(value);
+						return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+					} catch {
+						return false;
+					}
+				}, "Startup pages must be HTTP(S) URLs without embedded credentials."),
+		)
+		.max(8)
+		.default([]),
 	searchEngine: z
 		.enum([
 			"duckduckgo",
@@ -3005,9 +4112,30 @@ export const UserBrowserSettingsSchema = z.object({
 			"custom",
 		])
 		.default("google"),
-	customSearchUrl: z.string().max(8_192).optional(),
+	customSearchUrl: z
+		.string()
+		.max(8_192)
+		.refine(
+			(value) => {
+				if (!value.trim()) return true;
+				try {
+					const sample = value.trim().replace(/%s/g, "query");
+					const url = new URL(sample);
+					return (
+						["http:", "https:"].includes(url.protocol) &&
+						!url.username &&
+						!url.password
+					);
+				} catch {
+					return false;
+				}
+			},
+			"Custom search URL must be an HTTP(S) URL without embedded credentials.",
+		)
+		.optional(),
 	customSearchName: z.string().max(100).optional(),
 	tabLayout: z.enum(["horizontal", "vertical"]).default("horizontal"),
+	tabSizing: z.enum(["scrolling", "shrinking"]).default("scrolling"),
 	newTabBackground: z
 		.enum(["graphite", "meadow", "dawn", "mountains", "paper", "custom"])
 		.default("graphite"),
@@ -3047,10 +4175,56 @@ export const UserBrowserSettingsSchema = z.object({
 	memorySaverMode: z.boolean().default(true),
 	showBookmarksBar: z.boolean().default(true),
 	addressBarSuggestionsEnabled: z.boolean().default(true),
+	/** Legacy master switch retained for existing profiles. */
 	passwordAutofillEnabled: z.boolean().default(true),
+	offerToSavePasswords: z.boolean().default(true),
+	autofillPasswords: z.boolean().default(true),
+	autofillUsernames: z.boolean().default(true),
+	offerStrongPasswords: z.boolean().default(true),
+	neverSavePasswordOrigins: z
+		.array(z.string().url().max(8_192))
+		.max(500)
+		.default([]),
 	paymentAutofillEnabled: z.boolean().default(true),
+	defaultZoomPercent: z.number().int().min(25).max(500).default(100),
+	minimumFontSize: z.number().int().min(0).max(72).default(0),
+	defaultFontFamily: z
+		.string()
+		.min(1)
+		.max(120)
+		.regex(/^[^\r\n]+$/)
+		.default("system-ui"),
+	spellcheckEnabled: z.boolean().default(true),
+	spellcheckLanguage: z
+		.string()
+		.regex(/^[a-z]{2,3}(?:-[A-Z]{2})?$/)
+		.default("en-US"),
+	hardwareAccelerationEnabled: z.boolean().default(true),
+	downloadBehavior: z.enum(["automatic", "ask"]).default("automatic"),
+	downloadDirectory: z.string().max(4_096).default(""),
 });
 export type UserBrowserSettings = z.infer<typeof UserBrowserSettingsSchema>;
+
+/**
+ * Browser transfers intentionally exclude cookies, password vaults, payment
+ * cards, extension packages, and native session state. Those values are either
+ * device-bound or protected by a separate credential boundary and must not be
+ * portable JSON.
+ */
+export const BrowserDataTransferSchema = z.object({
+	format: z.literal("kestrel-browser-data"),
+	version: z.literal(1),
+	exportedAt: z.string().datetime(),
+	bookmarks: z.array(UserBrowserBookmarkSchema).max(2_000).default([]),
+	bookmarkFolders: z
+		.array(UserBrowserBookmarkFolderSchema)
+		.max(100)
+		.default([]),
+	history: z.array(UserBrowserHistoryEntrySchema).max(5_000).default([]),
+	sitePermissions: z.array(UserBrowserSitePermissionSchema).max(500).default([]),
+	settings: UserBrowserSettingsSchema,
+});
+export type BrowserDataTransfer = z.infer<typeof BrowserDataTransferSchema>;
 
 export const InstalledExtensionSchema = z.object({
 	id: z.string().min(1).max(100),
@@ -3061,8 +4235,8 @@ export const InstalledExtensionSchema = z.object({
 	iconUrl: z.string().optional(),
 	homepageUrl: z.string().optional(),
 	source: z.enum(["chrome_web_store", "unpacked", "file", "other"]),
-	path: z.string().min(1),
 	installedAt: z.string().datetime(),
+	compatibility: ExtensionCompatibilityReportSchema.optional(),
 });
 export type InstalledExtension = z.infer<typeof InstalledExtensionSchema>;
 
@@ -3080,6 +4254,10 @@ export const UserBrowserStateSchema = z.object({
 		.default([]),
 	downloads: z.array(UserBrowserDownloadSchema).max(500),
 	bookmarks: z.array(UserBrowserBookmarkSchema).max(2_000).default([]),
+	bookmarkFolders: z
+		.array(UserBrowserBookmarkFolderSchema)
+		.max(100)
+		.default([]),
 	recentlyClosedTabs: z
 		.array(UserBrowserRecentlyClosedTabSchema)
 		.max(32)
@@ -3184,10 +4362,20 @@ export const BrowserActivityEventSchema = z.strictObject({
 });
 export type BrowserActivityEvent = z.infer<typeof BrowserActivityEventSchema>;
 
+export const UserBrowserZoomSchema = z.object({
+	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	percent: z.number().int().min(25).max(500),
+});
+export type UserBrowserZoom = z.infer<typeof UserBrowserZoomSchema>;
+
 export const UserBrowserEventSchema = z.discriminatedUnion("type", [
 	z.object({
 		type: z.literal("state"),
 		state: UserBrowserStateSchema,
+	}),
+	z.object({
+		type: z.literal("zoom"),
+		zoom: UserBrowserZoomSchema,
 	}),
 	z.object({
 		type: z.literal("find-in-page"),
@@ -3202,14 +4390,22 @@ export const UserBrowserCommandSchema = z.enum([
 	"open-history",
 	"open-downloads",
 	"open-bookmarks",
+	"bookmark-page",
 	"open-settings",
 	"show-shortcuts",
 	"toggle-sidebar",
 	"reopen-closed-tab",
 	"find-in-page",
 	"print-page",
+	"save-screenshot",
 ]);
 export type UserBrowserCommand = z.infer<typeof UserBrowserCommandSchema>;
+
+export const WindowFocusStateSchema = z.boolean();
+export type WindowFocusState = z.infer<typeof WindowFocusStateSchema>;
+
+export const BrowserWindowRoleSchema = z.enum(["main", "detached"]);
+export type BrowserWindowRole = z.infer<typeof BrowserWindowRoleSchema>;
 
 export const KestrelDeepLinkSchema = z
 	.string()
@@ -3285,6 +4481,10 @@ export const RendererRequestSchema = z.union([
 		input: z.string().min(1).max(8_192),
 	}),
 	z.object({
+		type: z.literal("browser-dismiss-threat"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
 		type: z.enum([
 			"browser-back",
 			"browser-forward",
@@ -3324,6 +4524,11 @@ export const RendererRequestSchema = z.union([
 		type: z.literal("browser-update-settings"),
 		settings: UserBrowserSettingsSchema,
 	}),
+	z.object({ type: z.literal("browser-reset-settings") }),
+	z.object({ type: z.literal("browser-select-download-directory") }),
+	z.object({ type: z.literal("browser-reset-download-directory") }),
+	z.object({ type: z.literal("browser-export-data") }),
+	z.object({ type: z.literal("browser-import-data") }),
 	z.object({ type: z.literal("browser-clear-history") }),
 	z.object({
 		type: z.literal("browser-clear-data"),
@@ -3340,6 +4545,10 @@ export const RendererRequestSchema = z.union([
 		downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
 	}),
 	z.object({
+		type: z.literal("browser-start-download-drag"),
+		downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
+	}),
+	z.object({
 		type: z.literal("browser-cancel-download"),
 		downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
 	}),
@@ -3349,8 +4558,34 @@ export const RendererRequestSchema = z.union([
 		title: z.string().max(500).optional(),
 	}),
 	z.object({
+		type: z.literal("browser-save-bookmark"),
+		title: z.string().max(500),
+		displayMode: UserBrowserBookmarkDisplayModeSchema,
+		folderId: UserBrowserBookmarkFolderIdSchema.nullable().optional(),
+	}),
+	z.object({
+		type: z.literal("browser-update-bookmark"),
+		bookmarkId: z.string().regex(/^bookmark-[a-f0-9-]{36}$/),
+		title: z.string().max(500),
+		displayMode: UserBrowserBookmarkDisplayModeSchema,
+		folderId: UserBrowserBookmarkFolderIdSchema.nullable().optional(),
+	}),
+	z.object({
 		type: z.literal("browser-remove-bookmark"),
 		bookmarkId: z.string().regex(/^bookmark-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-create-bookmark-folder"),
+		name: z.string().max(80),
+	}),
+	z.object({
+		type: z.literal("browser-rename-bookmark-folder"),
+		folderId: UserBrowserBookmarkFolderIdSchema,
+		name: z.string().max(80),
+	}),
+	z.object({
+		type: z.literal("browser-remove-bookmark-folder"),
+		folderId: UserBrowserBookmarkFolderIdSchema,
 	}),
 	z.object({
 		type: z.literal("browser-pin-tab"),
@@ -3398,6 +4633,10 @@ export const RendererRequestSchema = z.union([
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	}),
 	z.object({
+		type: z.literal("browser-reattach-tab"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
 		type: z.literal("browser-find-in-page"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 		query: z.string().max(2_000),
@@ -3427,14 +4666,23 @@ export const RendererRequestSchema = z.union([
 		decision: z.enum(["allow", "deny"]),
 	}),
 	z.object({
+		type: z.literal("browser-clear-site-permission"),
+		origin: z.string().min(1).max(8_192),
+		permission: z.string().min(1).max(80),
+	}),
+	z.object({
 		type: z.literal("list-workspace-files"),
 		workspaceRoot: z.string().min(1),
 		query: z.string().max(200).optional(),
 	}),
 	z.object({ type: z.literal("browser-list-extensions") }),
 	z.object({
-		type: z.literal("browser-install-extension-url"),
+		type: z.literal("browser-inspect-extension-url"),
 		urlOrId: z.string().min(1).max(8_192),
+	}),
+	z.object({
+		type: z.literal("browser-install-extension-url"),
+		inspectionId: z.string().uuid(),
 	}),
 	z.object({
 		type: z.literal("browser-toggle-extension"),
@@ -3446,15 +4694,38 @@ export const RendererRequestSchema = z.union([
 		extensionId: z.string().min(1).max(100),
 	}),
 	z.object({
+		type: z.literal("browser-reload-extension"),
+		extensionId: z.string().min(1).max(100),
+	}),
+	z.object({
 		type: z.literal("browser-sleep-tab"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	}),
 	z.object({ type: z.literal("browser-sleep-inactive-tabs") }),
 	z.object({ type: z.literal("get-system-state") }),
+	z.object({ type: z.literal("computer-use-status") }),
+	z.object({
+		type: z.literal("computer-use-update"),
+		enabled: z.boolean(),
+	}),
+	z.object({
+		type: z.literal("computer-use-open-settings"),
+		surface: z.enum(["screen-recording", "accessibility"]),
+	}),
 	z.object({ type: z.literal("get-default-browser-status") }),
 	z.object({ type: z.literal("set-default-browser") }),
 	z.object({ type: z.literal("set-launch-at-login"), enabled: z.boolean() }),
 	z.object({ type: z.literal("get-workspace-grants") }),
+	z.object({
+		type: z.literal("project-update"),
+		projectId: z.string().min(1).max(200),
+		name: z.string().max(200).optional(),
+		instructions: z.string().max(20_000).optional(),
+	}),
+	z.object({
+		type: z.literal("project-delete"),
+		projectId: z.string().min(1).max(200),
+	}),
 	z.object({ type: z.literal("select-workspace-folder") }),
 	z.object({
 		type: z.literal("remove-workspace-folder"),
@@ -3487,6 +4758,23 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("create-local-backup") }),
 	z.object({ type: z.literal("reveal-local-backup"), path: z.string().min(1) }),
 	z.object({ type: z.literal("subscription-cli-status") }),
+	z.object({ type: z.literal("provider-account-list") }),
+	z.object({
+		type: z.literal("provider-account-create"),
+		account: ProviderAccountInputSchema,
+	}),
+	z.object({
+		type: z.literal("provider-account-update"),
+		account: ProviderAccountUpdateSchema,
+	}),
+	z.object({
+		type: z.literal("provider-account-remove"),
+		accountId: z.string().min(1).max(100),
+	}),
+	z.object({
+		type: z.literal("provider-account-connect"),
+		accountId: z.string().min(1).max(100),
+	}),
 	z.object({
 		type: z.literal("subscription-cli-set"),
 		id: z.enum(["codex", "claude", "opencode"]),
@@ -3503,14 +4791,20 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("oauth-google-disconnect") }),
 	z.object({ type: z.literal("password-list") }),
 	z.object({
-		type: z.literal("password-save"),
-		origin: z.string().url().max(8_192),
-		title: z.string().max(200).optional(),
-		username: z.string().max(500),
-		password: z.string().min(1).max(100_000),
+		type: z.literal("password-remove"),
+		passwordId: PasswordEntryIdSchema,
 	}),
 	z.object({
-		type: z.literal("password-remove"),
+		type: z.literal("password-update-username"),
+		passwordId: PasswordEntryIdSchema,
+		username: z.string().max(500),
+	}),
+	z.object({
+		type: z.literal("password-copy"),
+		passwordId: PasswordEntryIdSchema,
+	}),
+	z.object({
+		type: z.literal("password-reveal"),
 		passwordId: PasswordEntryIdSchema,
 	}),
 	z.object({
@@ -3522,6 +4816,9 @@ export const RendererRequestSchema = z.union([
 		passwordId: PasswordEntryIdSchema,
 		fieldId: z.string().regex(/^field-[0-9]+$/),
 	}),
+	z.object({ type: z.literal("password-save-suggestion") }),
+	z.object({ type: z.literal("password-mark-never-save") }),
+	z.object({ type: z.literal("password-generate") }),
 	z.object({ type: z.literal("password-dismiss") }),
 	z.object({ type: z.literal("payment-list") }),
 	z.object({
@@ -3594,7 +4891,7 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({
 		type: z.literal("migration-apply-plan"),
-		plan: MigrationPlanSchema,
+		planId: z.string().uuid(),
 		confirmation: z.literal("IMPORT"),
 		overwrite: z.boolean().default(false),
 	}),
@@ -3606,8 +4903,28 @@ export const WorkspaceGrantSchema = z.object({
 	path: z.string().min(1),
 	name: z.string().min(1),
 	available: z.boolean().optional(),
+	/** Optional project metadata retained here for older workspace consumers. */
+	id: z.string().min(1).max(200).optional(),
+	instructions: z.string().max(20_000).optional(),
+	createdAt: z.string().datetime().optional(),
+	updatedAt: z.string().datetime().optional(),
+	order: z.number().int().nonnegative().optional(),
 });
 export type WorkspaceGrant = z.infer<typeof WorkspaceGrantSchema>;
+
+/**
+ * A folder-backed Kestrel project. The workspace grant remains the source of
+ * truth for filesystem access; this contract adds the durable identity and
+ * conversation context that the navigation/project surfaces need.
+ */
+export const ProjectSchema = WorkspaceGrantSchema.extend({
+	id: z.string().min(1).max(200),
+	instructions: z.string().max(20_000).optional(),
+	createdAt: z.string().datetime(),
+	updatedAt: z.string().datetime(),
+	order: z.number().int().nonnegative(),
+});
+export type Project = z.infer<typeof ProjectSchema>;
 
 export const BrokeredCredentialSummarySchema = z.object({
 	id: BrokeredCredentialIdSchema,
@@ -3720,7 +5037,14 @@ export type GoogleWorkspaceOAuthStatus = z.infer<
 
 export type RendererResponse =
 	| CoreResponse
-	| { ok: true; browserState: UserBrowserState }
+	| {
+			ok: true;
+			browserState: UserBrowserState;
+			browserWindowRole?: BrowserWindowRole;
+			cancelled?: boolean;
+			bookmarkFolderId?: UserBrowserBookmarkFolderId;
+	  }
+	| { ok: true; browserDataPath?: string; cancelled?: boolean }
 	| {
 			ok: true;
 			browserOrganization: UserBrowserTabOrganizationPreview;
@@ -3731,8 +5055,15 @@ export type RendererResponse =
 			selectedAttachments: SelectedAttachment[];
 		}
 	| { ok: true; filePreview: FilePreview }
+	| { ok: true; browserPagePreview?: string }
 	| { ok: true; extensions: InstalledExtension[] }
 	| { ok: true; extension: InstalledExtension }
+	| {
+			ok: true;
+			extensionInspection: z.infer<
+				typeof ChromeWebStoreExtensionInspectionSchema
+			>;
+	  }
 	| { ok: true; screenshotPath?: string; cancelled?: boolean }
 	| { ok: true; browserContext: UserBrowserPageContext }
 	| {
@@ -3751,6 +5082,8 @@ export type RendererResponse =
 	| {
 			ok: true;
 			workspaceGrants: WorkspaceGrant[];
+			/** Enriched project records for project-aware renderer consumers. */
+			projects?: Project[];
 			cancelled?: boolean;
 			selectedWorkspacePath?: string;
 			snapshot?: WorkspaceSnapshot;
@@ -3776,9 +5109,11 @@ export type RendererResponse =
 	  }
 	| { ok: true; localRuntime: LocalRuntimeStatus }
 	| { ok: true; systemReadiness: SystemReadiness }
+	| { ok: true; computerUseStatus: ComputerUseStatus }
 	| { ok: true; diagnosticReportPath: string; cancelled?: boolean }
 	| { ok: true; localBackup: LocalBackupResult; cancelled?: boolean }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }
+	| { ok: true; providerAccounts: ProviderAccountSummary[] }
 	| { ok: true; googleWorkspaceOAuth: GoogleWorkspaceOAuthStatus }
 	| { ok: true; communicationSources: z.infer<typeof CommunicationSourceStatusSchema>[] }
 	| { ok: true; communicationScan: z.infer<typeof CommunicationCodeScanSchema> }
@@ -3794,20 +5129,24 @@ export type RendererResponse =
 			cancelled?: boolean;
 	  }
 	| { ok: true; pluginMutation: PluginMutation; plugins: PluginSummary[] }
-	| { ok: true; migrationPlan: MigrationPlanContract; cancelled?: boolean }
+	| {
+			ok: true;
+			migrationPlan: MigrationPlanPreviewContract;
+			migrationPlanId?: string;
+			cancelled?: boolean;
+	  }
 	| { ok: true; migrationResult: MigrationResultContract }
 	| { ok: true };
 
 export interface RendererBridge {
 	request(request: RendererRequest): Promise<RendererResponse>;
-	getPathForFile(file: unknown): string;
 	onBrowserEvent(callback: (event: UserBrowserEvent) => void): () => void;
+	onWindowFocus(callback: (focused: WindowFocusState) => void): () => void;
 	onPasswordPrompt(callback: (prompt: PasswordPrompt | null) => void): () => void;
 	onPaymentPrompt(callback: (prompt: PaymentPrompt | null) => void): () => void;
 	onBrowserCommand(callback: (command: UserBrowserCommand) => void): () => void;
 	onDeepLink(callback: (deepLink: KestrelDeepLink) => void): () => void;
 	onExternalIntake(callback: (intake: ExternalIntake) => void): () => void;
-	onFileDrag(callback: (event: { active: boolean }) => void): () => void;
 	onSnapshot(callback: (snapshot: WorkspaceSnapshot) => void): () => void;
 	onPetStatus(callback: (status: PetStatus) => void): () => void;
 	onPetActivity(callback: (activity: PetActivityState) => void): () => void;

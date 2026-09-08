@@ -15,6 +15,7 @@ export function PasswordOverlay() {
 	const [selectedEntryId, setSelectedEntryId] = useState("");
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
+	const [generated, setGenerated] = useState(false);
 
 	useEffect(() => window.kestrel.onPasswordPrompt(setPrompt), []);
 
@@ -23,6 +24,7 @@ export function PasswordOverlay() {
 		setSelectedEntryId(prompt?.entries[0]?.id ?? "");
 		setBusy("");
 		setError("");
+		setGenerated(false);
 	}, [prompt]);
 
 	const fillableFields = useMemo(
@@ -34,6 +36,31 @@ export function PasswordOverlay() {
 	);
 
 	if (!prompt) return null;
+	const saveCandidate = prompt.candidate;
+	const updatesExistingLogin = Boolean(
+		saveCandidate &&
+		prompt.entries.some((entry) => entry.username === saveCandidate.username),
+	);
+
+	async function savePassword() {
+		setBusy("save");
+		setError("");
+		try {
+			const response = await window.kestrel.request({
+				type: "password-save-suggestion",
+			});
+			if (!response.ok)
+				throw new Error("The password could not be saved. Try again.");
+		} catch (cause) {
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "The password could not be saved. Try again.",
+			);
+		} finally {
+			setBusy("");
+		}
+	}
 
 	async function fillPage(passwordId: string) {
 		setBusy(passwordId);
@@ -72,19 +99,72 @@ export function PasswordOverlay() {
 		await window.kestrel.request({ type: "password-dismiss" }).catch(() => undefined);
 	}
 
+	async function markNeverSave() {
+		setBusy("never-save");
+		setError("");
+		try {
+			const response = await window.kestrel.request({
+				type: "password-mark-never-save",
+			});
+			if (!response.ok) throw new Error("The never-save setting could not be updated.");
+		} catch (cause) {
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "The never-save setting could not be updated.",
+			);
+		} finally {
+			setBusy("");
+		}
+	}
+
+	async function generatePassword() {
+		setBusy("generate");
+		setError("");
+		try {
+			const response = await window.kestrel.request({ type: "password-generate" });
+			if (!response.ok) throw new Error("Kestrel could not generate a password here.");
+			setGenerated(true);
+		} catch (cause) {
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "Kestrel could not generate a password here.",
+			);
+		} finally {
+			setBusy("");
+		}
+	}
+
 	return (
 		<div className="password-overlay-root">
 			<section
 				className="password-overlay-card"
 				role="dialog"
-				aria-label="Saved password suggestions"
+				aria-label={
+					prompt.mode === "save"
+						? "Save password"
+						: prompt.mode === "generate"
+							? "Strong password suggestion"
+							: "Saved password suggestions"
+				}
 				aria-live="polite"
 			>
 				<header className="password-overlay-header">
 					<div className="password-overlay-heading">
 						<span className="password-overlay-mark" aria-hidden="true">●</span>
 						<span>
-							<strong>{prompt.mode === "field" ? "Saved info" : "Use a saved login?"}</strong>
+							<strong>
+								{prompt.mode === "save"
+									? updatesExistingLogin
+										? "Update saved password?"
+										: "Save password?"
+									: prompt.mode === "generate"
+										? "Use a strong password?"
+										: prompt.mode === "field"
+										? "Saved info"
+										: "Use a saved login?"}
+							</strong>
 							<small>{hostname(prompt.origin)}</small>
 						</span>
 					</div>
@@ -92,15 +172,86 @@ export function PasswordOverlay() {
 						type="button"
 						className="password-overlay-dismiss"
 						onClick={() => void dismiss()}
-						aria-label="Dismiss saved login suggestions"
+						aria-label={
+							prompt.mode === "save"
+								? "Dismiss save password prompt"
+								: prompt.mode === "generate"
+									? "Dismiss strong password suggestion"
+								: "Dismiss saved login suggestions"
+						}
 					>
 						×
 					</button>
 				</header>
 
-				{prompt.mode === "page" && !chooseFields ? (
+				{prompt.mode === "save" && saveCandidate ? (
 					<>
-						<p className="password-overlay-copy">Fill this sign-in form with a saved login.</p>
+						<p className="password-overlay-copy">
+							Save this login securely on this device so Kestrel can offer it next time.
+						</p>
+						<div className="password-save-preview">
+							<span>Login name</span>
+							<strong>{saveCandidate.username || "No login name detected"}</strong>
+						</div>
+						<p className="password-overlay-security-note">
+							Your password stays inside Kestrel and is never shown in this prompt.
+						</p>
+						<div className="password-overlay-actions password-save-actions">
+							<button
+								type="button"
+								className="password-overlay-secondary"
+								onClick={() => void dismiss()}
+							>
+								Not now
+							</button>
+							<button
+								type="button"
+								className="password-overlay-secondary"
+								onClick={() => void markNeverSave()}
+								disabled={Boolean(busy)}
+							>
+								Never for this site
+							</button>
+							<button
+								type="button"
+								className="password-overlay-primary"
+								onClick={() => void savePassword()}
+								disabled={Boolean(busy)}
+							>
+								{busy === "save" ? "Saving…" : updatesExistingLogin ? "Update password" : "Save password"}
+							</button>
+						</div>
+					</>
+				) : prompt.mode === "generate" ? (
+					<>
+						<p className="password-overlay-copy">
+							Generate a unique 20-character password with uppercase, lowercase, numbers, and symbols.
+						</p>
+						<p className="password-overlay-security-note">
+							Kestrel fills it directly into this sign-up form and never displays the value here.
+						</p>
+						<div className="password-overlay-actions password-save-actions">
+							<button
+								type="button"
+								className="password-overlay-secondary"
+								onClick={() => void dismiss()}
+								disabled={Boolean(busy)}
+							>
+								Not now
+							</button>
+							<button
+								type="button"
+								className="password-overlay-primary"
+								onClick={() => void generatePassword()}
+								disabled={Boolean(busy) || generated}
+							>
+								{busy === "generate" ? "Generating…" : generated ? "Generated" : "Generate password"}
+							</button>
+						</div>
+					</>
+				) : prompt.mode === "page" && !chooseFields ? (
+					<>
+						<p className="password-overlay-copy">Choose a saved login.</p>
 						<div className="password-overlay-entries" role="list">
 							{prompt.entries.map((entry) => (
 								<button

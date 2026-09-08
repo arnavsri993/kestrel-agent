@@ -11,8 +11,10 @@ import {
 	type CoreRequest,
 	type CoreResponse,
 	CoreResponseSchema,
+	type Project,
 	RuntimeEventSchema,
 } from "@kestrel/shared-types";
+import type { ProviderAccountRuntimeConfig } from "@kestrel/agent-core";
 import {
 	ProtectedDatabaseError,
 	PROTECTED_DATABASE_ERROR_CODE,
@@ -38,10 +40,13 @@ export interface CoreBootstrapConfig {
 	encryptionKeyBase64: string;
 	workspaceRoots: string[];
 	configuredWorkspaceRoots: string[];
+	projects?: Project[];
 	pluginRoots: string[];
 	managedPluginRoots: string[];
 	learnedSkillRoot: string;
 	secureEnvironment: NodeJS.ProcessEnv;
+	/** Runtime-only protected account credentials for the child bootstrap. */
+	providerAccounts?: ProviderAccountRuntimeConfig[];
 }
 
 interface CoreProcess {
@@ -169,9 +174,18 @@ function cloneBootstrapConfig(
 		...config,
 		workspaceRoots: [...config.workspaceRoots],
 		configuredWorkspaceRoots: [...config.configuredWorkspaceRoots],
+		projects: config.projects?.map((project) => ({ ...project })) ?? [],
 		pluginRoots: [...config.pluginRoots],
 		managedPluginRoots: [...config.managedPluginRoots],
 		secureEnvironment: { ...config.secureEnvironment },
+		...(config.providerAccounts !== undefined
+			? {
+				providerAccounts: config.providerAccounts.map((account) => ({
+					...account,
+					...(account.headers ? { headers: { ...account.headers } } : {}),
+				})),
+			}
+			: {}),
 	};
 }
 

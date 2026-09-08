@@ -1,6 +1,11 @@
-import { providerFetch, readServerSentEvents } from "./http";
+import {
+	providerFetch,
+	quotaFromResponseHeaders,
+	readServerSentEvents,
+} from "./http";
 import {
 	contentText,
+	type DiscoveredModel,
 	type ModelCallOptions,
 	type ModelContentPart,
 	type ModelFinishReason,
@@ -14,12 +19,14 @@ import {
 } from "./types";
 
 export interface OpenAIChatCompletionsProviderOptions {
-	apiKey: string;
+	apiKey?: string;
 	id: string;
 	defaultModel: string;
 	baseUrl: string;
 	headers?: Record<string, string>;
 	images?: boolean;
+	/** A no-auth loopback runtime explicitly configured by the account store. */
+	local?: boolean;
 }
 
 function content(part: ModelContentPart): Record<string, unknown> {
@@ -96,7 +103,8 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
 	private readonly baseUrl: string;
 
 	constructor(private readonly options: OpenAIChatCompletionsProviderOptions) {
-		if (!options.apiKey) throw new Error(`${options.id} API key is required.`);
+		if (!options.apiKey && !options.local)
+			throw new Error(`${options.id} API key is required.`);
 		this.id = options.id;
 		this.defaultModel = options.defaultModel;
 		this.baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -106,15 +114,17 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
 			images: options.images ?? false,
 			audio: false,
 			documents: false,
-			local: false,
+			local: options.local ?? false,
 		} as const;
 	}
 
 	private headers(): Record<string, string> {
 		return {
-			authorization: `Bearer ${this.options.apiKey}`,
 			"content-type": "application/json",
 			...this.options.headers,
+			...(this.options.apiKey
+				? { authorization: `Bearer ${this.options.apiKey}` }
+				: {}),
 		};
 	}
 
@@ -125,6 +135,50 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
 			...(signal ? { signal } : {}),
 		});
 		await response.body?.cancel();
+	}
+
+	async discoverModels(signal?: AbortSignal): Promise<DiscoveredModel[]> {
+		const response = await providerFetch(this.id, `${this.baseUrl}/models`, {
+			method: "GET",
+			headers: this.headers(),
+			...(signal ? { signal } : {}),
+		});
+		let payload: Record<string, unknown>;
+		try {
+			payload = (await response.json()) as Record<string, unknown>;
+		} catch {
+			throw new ModelProviderError(
+				`${this.id} returned malformed model discovery JSON.`,
+				this.id,
+				false,
+			);
+		}
+		return (Array.isArray(payload.data) ? payload.data : []).flatMap((item) => {
+			if (!item || typeof item !== "object") return [];
+			const record = item as Record<string, unknown>;
+			if (typeof record.id !== "string" || !record.id.trim()) return [];
+			return [
+				{
+					id: record.id,
+					displayName:
+						typeof record.name === "string" && record.name.trim()
+							? record.name
+							: record.id,
+					availability: "available" as const,
+					source: "provider_api" as const,
+					capabilities: {
+						// /models is an entitlement list, not a per-model feature
+						// contract for arbitrary OpenAI-compatible gateways.
+						capabilityProvenance: "unknown" as const,
+						...(typeof record.context_window === "number" &&
+						Number.isFinite(record.context_window) &&
+						record.context_window > 0
+							? { contextWindow: Math.floor(record.context_window) }
+							: {}),
+					},
+				},
+			];
+		});
 	}
 
 	async complete(
@@ -165,6 +219,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
 				...(options.signal ? { signal: options.signal } : {}),
 			},
 		);
+		const quota = quotaFromResponseHeaders(response.headers);
 
 		let text = "";
 		let responseId: string | undefined;
@@ -249,6 +304,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
 				outputTokens: usageCount(usage.completion_tokens),
 			},
 			finishReason: finishReason(stopped, toolCalls),
+			...(quota ? { quota } : {}),
 		};
 	}
 }

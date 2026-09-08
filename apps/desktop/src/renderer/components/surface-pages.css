@@ -1,0 +1,25 @@
+/* Operational workbench pages: a continuous evidence plane, not a card wall. */
+.runtime-approval-queue .runtime-approval-card,
+.dashboard-extensions .dashboard-contribution,
+.dashboard-extensions .dashboard-panel,
+.event-applications-page .event-import-form,
+.event-applications-page .event-review {
+	border-radius: 0;
+	box-shadow: none;
+}
+.runtime-approval-queue .runtime-approval-card,
+.runtime-activity-trail .activity-list,
+.dashboard-extensions .dashboard-contribution,
+.event-applications-page .event-application-rail,
+.event-applications-page .event-application-main {
+	border-top: 1px solid var(--line);
+}
+.runtime-approval-queue .runtime-approval-card + .runtime-approval-card,
+.runtime-activity-trail .activity-list > li + li,
+.dashboard-extensions .dashboard-contribution + .dashboard-contribution {
+	border-top: 1px solid var(--line);
+}
+.runtime-activity-trail .activity-list > li { border-radius: 0; }
+.runtime-activity-trail .activity-item-focused { outline: 2px solid var(--focus); outline-offset: -2px; }
+.event-applications-page .event-safety-note { display: contents; }
+.event-applications-page .event-status { border-radius: var(--radius-control); }

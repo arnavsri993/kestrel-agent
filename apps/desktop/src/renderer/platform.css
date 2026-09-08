@@ -1,0 +1,38 @@
+/* Platform-specific presentation tokens stay semantic so product surfaces do
+ * not need their own OS branches. The native title bar owns Windows controls;
+ * Kestrel's bespoke traffic controls remain a macOS-only affordance. */
+:root {
+	--platform-chrome-opaque: #0a0a0a;
+	--platform-font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+	--platform-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+	--platform-font-mono: "SFMono-Regular", ui-monospace, Menlo, monospace;
+	--display: var(--platform-font-display);
+	--sans: var(--platform-font-sans);
+	--mono: var(--platform-font-mono);
+}
+
+:root[data-platform="windows"] {
+	--platform-chrome-opaque: #0a0a0a;
+	--platform-font-display: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+	--platform-font-sans: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+	--platform-font-mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
+}
+
+/* Do not duplicate the Windows caption buttons with macOS-style controls. */
+:root[data-platform="windows"] .window-controls,
+:root[data-platform="other"] .window-controls,
+:root[data-platform="windows"] .window-controls-clearance,
+:root[data-platform="other"] .window-controls-clearance {
+	display: none;
+}
+
+:root[data-platform="windows"] .browser-tab-row-horizontal,
+:root[data-platform="other"] .browser-tab-row-horizontal {
+	padding-left: 8px;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+	:root {
+		--platform-chrome-opaque: #0a0a0a;
+	}
+}

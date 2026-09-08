@@ -4,7 +4,10 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	selectSettingsSection,
+} from "./desktop-browser-test-helpers.mjs";
 
 function canonical(value) {
 	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -74,20 +77,17 @@ try {
 	await page.reload();
 	await page.locator("#runtime-prompt").waitFor();
 	await openKestrelDestination(page, "Settings");
-	await page.getByRole("heading", { name: "Preferences" }).waitFor();
-	await page
-		.locator(".settings-nav button")
-		.filter({ hasText: "Advanced" })
-		.click();
+	await page.getByRole("heading", { name: "Settings" }).waitFor();
+	await selectSettingsSection(page, "advanced", "Advanced");
 
 	const managedCard = page
 		.locator(".setting-row")
 		.filter({ hasText: `${policy.organizationId} organization controls` });
-	await managedCard.waitFor();
-	await managedCard.getByText("Managed", { exact: true }).waitFor();
-	await managedCard.getByText("Signed policy v1", { exact: false }).waitFor();
-	await managedCard.getByText("2 workers", { exact: false }).waitFor();
-	await managedCard.getByText("retention 30 days", { exact: false }).waitFor();
+	assert.equal(
+		await managedCard.count(),
+		0,
+		"Managed enterprise policy must stay out of the user settings UI.",
+	);
 
 	const summary = await page.evaluate(async () => {
 		const response = await window.kestrel.request({
@@ -100,15 +100,9 @@ try {
 	assert.equal(summary.maximumWorkers, policy.maximumWorkers);
 	assert.equal(summary.retentionDays, policy.retentionDays);
 
-	await managedCard
-		.getByRole("button", { name: "Enforce retention now" })
-		.click();
-	await managedCard
-		.getByText(/Retention enforced through/, { exact: false })
-		.waitFor();
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Signed managed-policy desktop bootstrap passed: policy loaded, admin surface managed, policy values visible, and retention action verified.\n",
+		"Signed managed-policy desktop bootstrap passed: policy loaded, enterprise controls stayed out of user Settings, and the policy summary remained available to native enforcement.\n",
 	);
 } finally {
 	await application?.close();
