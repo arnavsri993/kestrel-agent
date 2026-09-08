@@ -2536,6 +2536,10 @@ try {
 	await page.mouse.down();
 	await page.waitForTimeout(50);
 	await page.mouse.move(blankX + 180, blankY + 120, { steps: 12 });
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page did not release input for blank New Tab tear-off",
+	);
 	await waitForBrowserState(
 		(value) => value.tabs.some((tab) => tab.id === blankTabId),
 		"Blank New Tab detached before release",
