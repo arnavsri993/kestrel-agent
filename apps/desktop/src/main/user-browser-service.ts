@@ -2799,8 +2799,8 @@ export class UserBrowserService {
 			);
 		}
 		const tab = this.requireTab(tabId);
-		if (!tab.url || tab.file || tab.error || isKestrelAppPageUrl(tab.url)) {
-			throw new Error("Only loaded web pages can move between windows.");
+		if (tab.file || tab.error) {
+			throw new Error("Only browser tabs can move between windows.");
 		}
 		return structuredClone(tab);
 	}
@@ -2824,7 +2824,8 @@ export class UserBrowserService {
 			this.state.activeTabId = imported.id;
 			this.commit();
 			try {
-				await this.navigate(imported.id, imported.url);
+				if (imported.url) await this.navigate(imported.id, imported.url);
+				else await this.syncActiveView();
 			} catch (cause) {
 				this.closeView(imported.id);
 				this.state.tabs = this.state.tabs.filter(
@@ -3054,8 +3055,8 @@ export class UserBrowserService {
 			);
 		}
 		const tab = this.requireTab(tabId);
-		if (!tab.url || tab.file || tab.error || isKestrelAppPageUrl(tab.url)) {
-			throw new Error("Only loaded web pages can open in a separate window.");
+		if (tab.file || tab.error) {
+			throw new Error("Only browser tabs can open in a separate window.");
 		}
 		this.closeView(tabId);
 		const index = this.state.tabs.findIndex((item) => item.id === tabId);
