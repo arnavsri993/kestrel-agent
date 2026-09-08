@@ -30,6 +30,7 @@ import {
 	corpusSha256,
 	evaluateBenchmarkPredicates,
 	predicatesPassed,
+	redactBenchmarkPredicateResults,
 	summarizeBenchmarkResults,
 	validateBenchmarkCorpus,
 } from "./browser-agent-benchmark-lib.mjs";
@@ -207,6 +208,29 @@ function matchingInteractive(interactive, target) {
 
 async function wait(milliseconds) {
 	await new Promise((resolveWait) => setTimeout(resolveWait, milliseconds));
+}
+
+async function applyUserInput(application, url, target, text) {
+	if (!application)
+		throw new Error("Benchmark user input requires a running Electron application.");
+	const role = String(target?.role ?? "").trim();
+	const name = String(target?.name ?? "").trim();
+	if (!role || !name || typeof text !== "string")
+		throw new Error("Benchmark user input target is invalid.");
+	for (let attempt = 0; attempt < 20; attempt += 1) {
+		const candidate = application
+			.windows()
+			.find((window) => window.url() === url);
+		if (candidate) {
+			const field = candidate.getByRole(role, { name, exact: true });
+			if (await field.count()) {
+				await field.first().fill(text);
+				return;
+			}
+		}
+		if (attempt + 1 < 20) await wait(50);
+	}
+	throw new Error(`Benchmark user input target was not found: ${role}:${name}.`);
 }
 
 async function main() {
@@ -614,6 +638,13 @@ async function main() {
 							{ maximumAttempts: step.maxAttempts ?? 8 },
 						);
 						if (step.recovery) metrics.scriptedRecoveries += 1;
+					} else if (step.op === "user-input") {
+						await applyUserInput(
+							application,
+							fixture.url(fixtureRunId, step.site ?? "primary", step.path ?? "/verify"),
+							step.target,
+							step.text,
+						);
 					} else if (step.op === "select") {
 						await executeAction({
 							type: "select",
@@ -798,7 +829,7 @@ async function main() {
 				...(failureDetail ? { failureDetail } : {}),
 				durationMs: Math.round(performance.now() - workflowStarted),
 				metrics,
-				predicateResults,
+				predicateResults: redactBenchmarkPredicateResults(predicateResults),
 				toolCalls,
 			};
 			results.push(result);

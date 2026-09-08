@@ -34,6 +34,7 @@ export const BENCHMARK_FAILURE_CLASSES = Object.freeze([
 	"verification",
 	"unknown",
 ]);
+export const REDACTED_BENCHMARK_VALUE = "[redacted]";
 
 function isRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -75,6 +76,7 @@ export function validateBenchmarkCorpus(corpus, expectedCount = 50) {
 		"navigate",
 		"click",
 		"type",
+		"user-input",
 		"select",
 		"upload",
 		"observe-text",
@@ -237,10 +239,15 @@ export function validateBenchmarkCorpus(corpus, expectedCount = 50) {
 						`${label} step ${stepIndex + 1} must have a bounded select value.`,
 					);
 				if (
-					["click", "type", "select"].includes(step.op) &&
+					["click", "type", "user-input", "select"].includes(step.op) &&
 					!isBoundedTarget(step.target)
 				)
 					errors.push(`${label} step ${stepIndex + 1} has an invalid target.`);
+				if (
+					["type", "user-input"].includes(step.op) &&
+					(typeof step.text !== "string" || step.text.length > 20_000)
+				)
+					errors.push(`${label} step ${stepIndex + 1} has invalid input text.`);
 				if (
 					step.op === "navigate" &&
 					!pageKeys.has(`${step.site ?? "primary"}:${step.path}`)
@@ -318,7 +325,7 @@ export function validateBenchmarkCorpus(corpus, expectedCount = 50) {
 			!workflowSteps.some(
 				(step) =>
 					isRecord(step) &&
-					["click", "type", "select", "upload"].includes(step.op),
+					["click", "type", "user-input", "select", "upload"].includes(step.op),
 			)
 		)
 			errors.push(`${label} completed workflow must exercise a mutating browser action.`);
@@ -404,6 +411,27 @@ export function evaluateBenchmarkPredicates(state, predicates) {
 
 export function predicatesPassed(results) {
 	return results.every((result) => result.passed);
+}
+
+export function redactBenchmarkPredicateResults(results) {
+	return results.map((result) => {
+		if (!result?.predicate?.sensitive) return result;
+		const predicate = { ...result.predicate };
+		for (const key of ["equals", "includes"])
+			if (Object.hasOwn(predicate, key)) predicate[key] = REDACTED_BENCHMARK_VALUE;
+		const expected = Object.fromEntries(
+			Object.keys(result.expected ?? {}).map((key) => [
+				key,
+				REDACTED_BENCHMARK_VALUE,
+			]),
+		);
+		return {
+			...result,
+			predicate,
+			actual: REDACTED_BENCHMARK_VALUE,
+			expected,
+		};
+	});
 }
 
 export function classifyBenchmarkFailure(error) {
