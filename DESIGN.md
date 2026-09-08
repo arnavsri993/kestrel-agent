@@ -148,6 +148,29 @@ Engineer repositories. The full evidence and decision record is in
   inspector routing details, approvals, and persistent agent conversation all
   remain reachable through the same product shell.
 
+### Magical starfield refinement — September 7, 2026
+
+- **Thesis:** keep the Universe usable as a daily work surface while giving its
+  depth plane the photographic magic of a long-exposure night sky: countless
+  fine stars, a very small crisp bright tail, cold-white light with sparse warm
+  and violet temperatures, faint blue dust, and occasional broad star-cloud
+  regions rather than uniform wallpaper.
+- **Motion roles:** slow depth drift is the single focal ambient beat; existing
+  camera parallax remains the spatial state transition. The field never uses
+  warp speed, shooting stars, randomized flashes, or movement that implies an
+  agent is working. Reduced Motion freezes time while retaining the same rich
+  spatial composition.
+- **Performance:** star geometry, haze, and cluster texture are rendered into
+  cached tiles. Animation only recomposites those tiles at a capped cadence,
+  pauses when the document is hidden, and does not regenerate points per frame.
+- **Avoid:** broad milky overlays, bloom on every point, high-frequency flicker,
+  obvious tile repetition, ornamental constellations, moving planets, or a
+  bright cluster that competes with task labels and controls.
+- **Why this is not generic:** the reference-like star clouds live inside the
+  same camera-attached depth model as Kestrel's real agent topology, so the
+  atmosphere strengthens the spatial product rather than acting as a generic
+  particle backdrop.
+
 ## New Tab widget shelf — August 2026
 
 - Thesis: New Tab should offer a calm starting surface, not a dashboard. The
