@@ -113,7 +113,7 @@ export function BrowserWorkspace({
     tab: false,
     toolbar: false,
   });
-  const [detachDragActive, setDetachDragActive] = useState(false);
+  const [tabDragActive, setTabDragActive] = useState(false);
   const [organizeTabsPreview, setOrganizeTabsPreview] =
     useState<UserBrowserTabOrganizationPreview | null>(null);
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
@@ -309,9 +309,9 @@ export function BrowserWorkspace({
   );
   const nativePageVisible =
     nativePageEligible &&
-    // Keep the renderer in the input path until a tear-off is released;
+    // Keep the renderer in the input path while a tab is being dragged;
     // native WebContentsView siblings sit above the renderer surface.
-    !detachDragActive &&
+    !tabDragActive &&
     !openChromeMenus.tab &&
     !openChromeMenus.toolbar &&
     !organizeTabsOpening &&
@@ -849,7 +849,7 @@ export function BrowserWorkspace({
         onDuplicate={(tabId) => void duplicateTab(tabId)}
         onCloseOthers={(tabId) => closeOtherTabs(tabId)}
         onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
-        onDetachDragStateChange={setDetachDragActive}
+        onTabDragStateChange={setTabDragActive}
         {...(!isDetachedWindow
           ? { onDetachTab: (tabId: string) => detachTab(tabId) }
           : {})}

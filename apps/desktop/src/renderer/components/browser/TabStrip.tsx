@@ -111,7 +111,7 @@ export function TabStrip({
 	onCloseOthers,
 	onMoveTab,
 	onDetachTab,
-	onDetachDragStateChange,
+	onTabDragStateChange,
 	onReattachTab,
 	onReopenClosedTab,
 	onOrganizeTabs,
@@ -139,7 +139,7 @@ export function TabStrip({
 	onCloseOthers?(tabId: string): void | Promise<void>;
 	onMoveTab?(tabId: string, toIndex: number): void | Promise<void>;
 	onDetachTab?(tabId: string): void | Promise<void>;
-	onDetachDragStateChange?(detaching: boolean): void;
+	onTabDragStateChange?(dragging: boolean): void;
 	onReattachTab?(tabId: string): void | Promise<void>;
 	onReopenClosedTab?(index?: number): void;
 	onOrganizeTabs?(): void | Promise<void>;
@@ -176,14 +176,14 @@ export function TabStrip({
 	const [dragIntent, setDragIntent] = useState<"none" | "reorder" | "detach">(
 		"none",
 	);
-	const detachDragActiveRef = useRef(false);
-	const updateDetachDragState = useCallback(
-		(detaching: boolean) => {
-			if (detachDragActiveRef.current === detaching) return;
-			detachDragActiveRef.current = detaching;
-			onDetachDragStateChange?.(detaching);
+	const tabDragActiveRef = useRef(false);
+	const updateTabDragState = useCallback(
+		(dragging: boolean) => {
+			if (tabDragActiveRef.current === dragging) return;
+			tabDragActiveRef.current = dragging;
+			onTabDragStateChange?.(dragging);
 		},
-		[onDetachDragStateChange],
+		[onTabDragStateChange],
 	);
 	const draggingTabIdRef = useRef<string | null>(null);
 	// Pointer tracking stays outside React state. Reordering still renders when
@@ -567,7 +567,7 @@ export function TabStrip({
 		dragY.set(0);
 		setDraggingTabId(null);
 		setDragIntent("none");
-		updateDetachDragState(false);
+		updateTabDragState(false);
 		if (!preserveProvisional) {
 			provisionalTabOrderRef.current = null;
 			setProvisionalTabOrder(null);
@@ -694,9 +694,12 @@ export function TabStrip({
 		drag.lastAt = event.timeStamp;
 		dragX.set(dx);
 		dragY.set(dy);
+		// Release the native page as soon as movement proves this is a drag. A
+		// WebContentsView sibling can otherwise swallow the final pointerup.
+		if (Math.max(Math.abs(dx), Math.abs(dy)) >= 2)
+			updateTabDragState(true);
 		if (orientation === "horizontal") {
 			if (Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX) {
-				updateDetachDragState(true);
 				setDragIntent("detach");
 				return;
 			}
@@ -707,7 +710,6 @@ export function TabStrip({
 			return;
 		}
 		if (Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX) {
-			updateDetachDragState(true);
 			setDragIntent("detach");
 			return;
 		}
@@ -772,8 +774,8 @@ export function TabStrip({
 
 	useEffect(() => () => resetDrag(), []);
 	useEffect(
-		() => () => updateDetachDragState(false),
-		[updateDetachDragState],
+		() => () => updateTabDragState(false),
+		[updateTabDragState],
 	);
 
 	useEffect(() => {

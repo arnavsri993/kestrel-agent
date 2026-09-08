@@ -2981,7 +2981,7 @@ try {
 	await organizeDialog.getByLabel("Folder name").fill("Local Pages");
 	await organizeDialog.getByRole("button", { name: "Rose", exact: true }).click();
 	await organizeDialog.getByRole("button", { name: "Save", exact: true }).click();
-	await organizeDialog.getByRole("button", { name: "Group tabs", exact: true }).click();
+	await organizeDialog.locator("button.organize-tabs-primary").click();
 	await organizeDialog.waitFor({ state: "detached" });
 	state = await waitForBrowserState(
 		(value) => value.tabFolders.some((folder) => folder.name === "Local Pages"),
