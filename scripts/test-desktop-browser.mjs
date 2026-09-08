@@ -2528,13 +2528,19 @@ try {
 	assert(blankTabId);
 	const blankTab = page.locator(`.browser-tab[data-tab-id="${blankTabId}"]`);
 	await blankTab.waitFor();
+	await blankTab.scrollIntoViewIfNeeded();
 	const blankBounds = await blankTab.boundingBox();
 	assert(blankBounds);
 	const blankX = blankBounds.x + blankBounds.width / 2;
 	const blankY = blankBounds.y + blankBounds.height / 2;
 	await page.mouse.move(blankX, blankY);
 	await page.mouse.down();
+	await page.waitForTimeout(50);
 	await page.mouse.move(blankX + 180, blankY + 120, { steps: 12 });
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page did not release input for blank New Tab tear-off",
+	);
 	await waitForBrowserState(
 		(value) => value.tabs.some((tab) => tab.id === blankTabId),
 		"Blank New Tab detached before release",
@@ -2977,11 +2983,17 @@ try {
 		.getByRole("menuitem", { name: "Organize tabs", exact: true })
 		.click();
 	await organizeDialog.waitFor();
+	const suggestedCloseCheckboxes = organizeDialog.locator(
+		".organize-tabs-deletion input[type='checkbox']",
+	);
+	for (const checkbox of await suggestedCloseCheckboxes.all()) {
+		if (await checkbox.isChecked()) await checkbox.uncheck();
+	}
 	await organizeDialog.getByRole("button", { name: /^Edit / }).first().click();
 	await organizeDialog.getByLabel("Folder name").fill("Local Pages");
 	await organizeDialog.getByRole("button", { name: "Rose", exact: true }).click();
 	await organizeDialog.getByRole("button", { name: "Save", exact: true }).click();
-	await organizeDialog.getByRole("button", { name: "Group tabs", exact: true }).click();
+	await organizeDialog.locator("button.organize-tabs-primary").click();
 	await organizeDialog.waitFor({ state: "detached" });
 	state = await waitForBrowserState(
 		(value) => value.tabFolders.some((folder) => folder.name === "Local Pages"),

@@ -8272,6 +8272,17 @@ function RoutingPolicySettings() {
 		);
 
 	const latest = traces.at(-1);
+	const updateProviderIds = (
+		field: "preferredProviderIds" | "avoidedProviderIds",
+		value: string,
+	) =>
+		setPolicy({
+			...policy,
+			[field]: value
+				.split(",")
+				.map((providerId) => providerId.trim())
+				.filter(Boolean),
+		});
 	return (
 		<article className="setting-row routing-policy-setting">
 			<div>
@@ -8327,6 +8338,46 @@ function RoutingPolicySettings() {
 				<details className="routing-advanced">
 					<summary>Advanced routing and latest trace</summary>
 					<div className="routing-advanced-grid">
+						<label className="checkbox-label routing-policy-toggle">
+							<input
+								type="checkbox"
+								checked={policy.allowAutomaticEscalation}
+								onChange={(event) =>
+									setPolicy({
+										...policy,
+										allowAutomaticEscalation: event.target.checked,
+									})
+								}
+							/>{" "}
+							Allow automatic escalation
+							<small>Move to a stronger route only when needed.</small>
+						</label>
+						<label>
+							Maximum escalations
+							<input
+								type="number"
+								min="0"
+								max="8"
+								value={policy.maximumEscalations}
+								onChange={(event) =>
+									setPolicy({
+										...policy,
+										maximumEscalations: Number(event.target.value),
+									})
+								}
+							/>
+						</label>
+						<label className="checkbox-label routing-policy-toggle">
+							<input
+								type="checkbox"
+								checked={policy.allowVerifier}
+								onChange={(event) =>
+									setPolicy({ ...policy, allowVerifier: event.target.checked })
+								}
+							/>{" "}
+							Use independent verification
+							<small>Add a separate reviewer when the route requires it.</small>
+						</label>
 						<label>
 							Maximum parallel agents
 							<input
@@ -8387,6 +8438,28 @@ function RoutingPolicySettings() {
 								}
 							/>
 						</label>
+						<label>
+							Preferred provider IDs
+							<input
+								value={policy.preferredProviderIds.join(", ")}
+								placeholder="comma separated"
+								onChange={(event) =>
+									updateProviderIds("preferredProviderIds", event.target.value)
+								}
+							/>
+							<small>Soft preference. IDs only; never credentials.</small>
+						</label>
+						<label>
+							Avoided provider IDs
+							<input
+								value={policy.avoidedProviderIds.join(", ")}
+								placeholder="comma separated"
+								onChange={(event) =>
+									updateProviderIds("avoidedProviderIds", event.target.value)
+								}
+							/>
+							<small>Hard exclusion. IDs only; never credentials.</small>
+						</label>
 					</div>
 					<button
 						className="button secondary"
@@ -8411,6 +8484,39 @@ function RoutingPolicySettings() {
 									? ` · ${latest.escalationCount} escalation${latest.escalationCount === 1 ? "" : "s"}`
 									: ""}
 							</small>
+							{latest.decisions.length > 0 && (
+								<dl className="routing-trace-context">
+									<div>
+										<dt>Account</dt>
+										<dd>{latest.decisions[0]?.accountAlias ?? "Default account"}</dd>
+									</div>
+									<div>
+										<dt>Execution</dt>
+										<dd>
+											{latest.decisions[0]?.executionPattern?.replaceAll("_", " ") ??
+												"single executor"}
+										</dd>
+									</div>
+									<div>
+										<dt>Why this route</dt>
+										<dd>{latest.decisions[0]?.reasons.join(" · ")}</dd>
+									</div>
+								</dl>
+							)}
+							{latest.candidates?.length ? (
+								<details className="routing-trace-candidates">
+									<summary>Candidate routes ({latest.candidates.length})</summary>
+									<ul>
+										{latest.candidates.map((candidate) => (
+											<li key={`${candidate.modelId}-${candidate.endpointId}`}>
+												<strong>{candidate.model}</strong> via {candidate.providerId}
+												{candidate.accountAlias ? ` · ${candidate.accountAlias}` : ""}
+												{candidate.selected ? " · selected" : ""}
+											</li>
+										))}
+									</ul>
+								</details>
+							) : null}
 						</div>
 					) : (
 						<small>No routed task trace yet.</small>

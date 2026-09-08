@@ -1,7 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
-import { PROVIDER_CONNECT_TIMEOUT_MS, providerFetch } from "./http";
+import {
+	PROVIDER_CONNECT_TIMEOUT_MS,
+	providerFetch,
+	quotaFromResponseHeaders,
+} from "./http";
 
 describe("provider HTTP helpers", () => {
+	it("normalizes only numeric rate-limit headers into bounded quota telemetry", () => {
+		const quota = quotaFromResponseHeaders(
+			new Headers({
+				"x-ratelimit-limit-requests": "100",
+				"x-ratelimit-remaining-requests": "20",
+				"x-ratelimit-limit-tokens": "1000",
+				"x-ratelimit-remaining-tokens": "250",
+				"retry-after": "30",
+				"x-untrusted-header": "token=secret",
+			}),
+			Date.parse("2026-09-07T12:00:00.000Z"),
+		);
+
+		expect(quota).toEqual({
+			confidence: "exact",
+			remainingFraction: 0.2,
+			resetAt: "2026-09-07T12:00:30.000Z",
+		});
+		expect(
+			quotaFromResponseHeaders(
+				new Headers({ "x-ratelimit-remaining-requests": "0" }),
+			),
+		).toBeUndefined();
+	});
+
 	it("fails closed on redirects so provider credentials stay on the configured host", async () => {
 		let requestInit: RequestInit | undefined;
 		const originalFetch = globalThis.fetch;

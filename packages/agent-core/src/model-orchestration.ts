@@ -8,8 +8,18 @@ import {
 	ModelTierSchema,
 	type ReasoningEffort,
 	type RiskLevel,
+	type RoutingCandidate,
+	type RoutingExecutionPattern,
+	type RoutingEvent,
+	type RoutingTaskProfile,
+	RoutingTaskProfileSchema,
 	type RoutingDecision,
 	RoutingDecisionSchema,
+	RoutingOpaqueIdentifierSchema,
+	RoutingModelIdentifierSchema,
+	RoutingProfileIdentifierSchema,
+	RoutingSafeLabelSchema,
+	RoutingDisplayNameSchema,
 	type RoutingPolicy,
 	RoutingPolicySchema,
 	type RoutingTrace,
@@ -26,6 +36,7 @@ import {
 	type ModelCatalog,
 	type CatalogModelRecord,
 } from "./providers";
+import type { AccountAvailabilityMonitor } from "./routing/account-availability";
 
 const CAPABILITIES: ModelCapability[] = [
 	"complex_reasoning",
@@ -61,9 +72,49 @@ const DEFAULT_POLICY: RoutingPolicy = RoutingPolicySchema.parse({
 	requireReviewAboveRisk: "sensitive",
 });
 
+const ROUTING_EVENT_MESSAGES: Readonly<
+	Record<RoutingEvent["type"], RoutingEvent["message"]>
+> = {
+	TASK_PROFILE_CREATED: "Created a compact task requirement profile.",
+	ROUTE_CANDIDATES_GENERATED: "Generated compatible route candidates.",
+	ROUTE_SELECTED: "Selected the highest utility route within the active policy.",
+	ROUTE_STARTED: "Route execution started.",
+	ROUTE_FAILED: "Route execution ended unsuccessfully.",
+	ROUTE_RETRIED: "Retried execution after a normalized transient signal.",
+	ROUTE_ESCALATED:
+		"Selected a bounded capability escalation after execution feedback.",
+	ROUTE_VERIFIED: "Recorded the independent verification result.",
+	ROUTE_COMPLETED: "Route execution completed.",
+	ROUTE_ABORTED: "Route execution was cancelled.",
+};
+
+function routingEventMessage(type: RoutingEvent["type"]): RoutingEvent["message"] {
+	return ROUTING_EVENT_MESSAGES[type];
+}
+
+type RoutingPolicySeed = Omit<
+	RoutingPolicy,
+	| "allowAutomaticEscalation"
+	| "maximumEscalations"
+	| "allowVerifier"
+	| "preferredProviderIds"
+	| "avoidedProviderIds"
+> &
+	Partial<
+		Pick<
+			RoutingPolicy,
+			| "allowAutomaticEscalation"
+			| "maximumEscalations"
+			| "allowVerifier"
+			| "preferredProviderIds"
+			| "avoidedProviderIds"
+		>
+	>;
+
 export interface TaskRequirements {
 	taskId: string;
 	summary: string;
+	taskProfile: RoutingTaskProfile;
 	capabilities: Partial<Record<ModelCapability, number>>;
 	riskLevel: RiskLevel;
 	complexity: number;
@@ -111,6 +162,8 @@ export interface RouteOptions {
 
 export interface RefusalDetectionResult {
 	refused: boolean;
+	/** True only when retrying or reframing could circumvent a safety boundary. */
+	safetyPolicy: boolean;
 	reason?: string;
 	confidence: number;
 }
@@ -126,7 +179,11 @@ export function detectModelRefusal(
 	if (result.finishReason === "refusal") {
 		return {
 			refused: true,
-			reason: "Model finish reason reported refusal",
+			// A provider's explicit refusal finish reason is intentionally treated as
+			// a safety boundary. We cannot safely infer that a fallback model should
+			// override it from routing metadata alone.
+			safetyPolicy: true,
+			reason: "Model reported a safety refusal",
 			confidence: 1.0,
 		};
 	}
@@ -134,18 +191,21 @@ export function detectModelRefusal(
 	if (errorMessage && isRefusalErrorMessage(errorMessage)) {
 		return {
 			refused: true,
-			reason: `Provider safety error: ${errorMessage}`,
+			safetyPolicy: true,
+			// Provider errors can echo headers, URLs, or request content. Routing
+			// traces retain only this categorical explanation.
+			reason: "Provider safety refusal",
 			confidence: 0.95,
 		};
 	}
 
 	if (result.toolCalls && result.toolCalls.length > 0) {
-		return { refused: false, confidence: 1.0 };
+		return { refused: false, safetyPolicy: false, confidence: 1.0 };
 	}
 
 	const text = (result.text ?? "").trim();
 	if (!text) {
-		return { refused: false, confidence: 0.5 };
+		return { refused: false, safetyPolicy: false, confidence: 0.5 };
 	}
 
 	const normalized = text.toLowerCase();
@@ -179,7 +239,11 @@ export function detectModelRefusal(
 			) {
 				return {
 					refused: true,
-					reason: `Semantic refusal detected: ${text.slice(0, 140)}`,
+					safetyPolicy:
+						/\b(safety|policy|harmful|malicious|exploit|malware|illegal|dangerous)\b/.test(
+							normalized,
+						),
+					reason: "Semantic refusal detected",
 					confidence: 0.92,
 				};
 			}
@@ -199,13 +263,14 @@ export function detectModelRefusal(
 		if (normalized.includes(phrase)) {
 			return {
 				refused: true,
-				reason: `Safety block phrase detected: ${phrase}`,
+				safetyPolicy: true,
+				reason: "Safety-policy refusal detected",
 				confidence: 0.95,
 			};
 		}
 	}
 
-	return { refused: false, confidence: 0.9 };
+	return { refused: false, safetyPolicy: false, confidence: 0.9 };
 }
 
 export function reframePromptForNeutrality(
@@ -460,8 +525,17 @@ function profileFromProvider(
 	provider: ModelProvider,
 	model?: CatalogModelRecord,
 ): ModelProfile | undefined {
-	const modelId = model?.id ?? provider.defaultModel;
-	if (!modelId) return undefined;
+	const rawModelId = model?.id ?? provider.defaultModel;
+	if (!rawModelId) return undefined;
+	const endpoint = RoutingOpaqueIdentifierSchema.safeParse(provider.id);
+	const modelId = RoutingModelIdentifierSchema.safeParse(rawModelId);
+	if (!endpoint.success || !modelId.success) return undefined;
+	const pool = provider.poolId
+		? RoutingOpaqueIdentifierSchema.safeParse(provider.poolId)
+		: undefined;
+	const providerId = pool?.success ? pool.data : endpoint.data;
+	const profileId = `${endpoint.data}:${modelId.data}`;
+	if (!RoutingProfileIdentifierSchema.safeParse(profileId).success) return undefined;
 	const capabilities = baselineCapabilities(provider, model);
 	const modelCapabilitiesAreConfirmed =
 		model?.capabilities.capabilityProvenance === "confirmed";
@@ -473,19 +547,37 @@ function profileFromProvider(
 		model && (provider.account || !model.isFallback),
 	);
 	const tier = inferModelTier(
-		modelId,
-		provider.id,
+		modelId.data,
+		endpoint.data,
 		provider.capabilities.local,
 		capabilities,
 		model?.isFallback ? provider.profileHints : undefined,
 	);
+	const accountAlias = provider.account?.displayName
+		? RoutingSafeLabelSchema.safeParse(provider.account.displayName)
+		: undefined;
+	const safeAccountAlias = accountAlias?.success ? accountAlias.data : undefined;
+	const accountId = provider.account?.id
+		? RoutingOpaqueIdentifierSchema.safeParse(provider.account.id)
+		: undefined;
+	const safeAccountId = accountId?.success ? accountId.data : undefined;
+	const displayName = [
+		model?.displayName,
+		provider.profileHints?.displayName,
+		modelId.data,
+	]
+		.map((value) => RoutingDisplayNameSchema.safeParse(value))
+		.find((parsed) => parsed.success);
 	return ModelProfileSchema.parse({
-		id: `${provider.id}:${modelId}`,
-		provider: provider.poolId ?? provider.id,
-		endpointId: provider.id,
-		model: modelId,
-		displayName:
-			model?.displayName ?? provider.profileHints?.displayName ?? modelId,
+		id: profileId,
+		provider: providerId,
+		endpointId: endpoint.data,
+		...(safeAccountId ? { accountId: safeAccountId } : {}),
+		...(safeAccountAlias
+			? { accountAlias: safeAccountAlias }
+			: {}),
+		model: modelId.data,
+		displayName: displayName?.success ? displayName.data : modelId.data,
 		enabled:
 			model?.availability !== "authentication_required" &&
 			model?.availability !== "permission_denied" &&
@@ -774,8 +866,75 @@ export class ModelRegistry {
 	}
 }
 
+function classifyTaskType(input: {
+	normalized: string;
+	capabilities: Partial<Record<ModelCapability, number>>;
+	words: number;
+	promptLength: number;
+	requiresVision: boolean;
+}): RoutingTaskProfile["type"] {
+	const { normalized, capabilities, words, promptLength, requiresVision } = input;
+	if (
+		/\b(onshape|solidworks|autocad|cad|sketch|extrude|constraint|geometry)\b/.test(
+			normalized,
+		)
+	)
+		return "cad_tool_control";
+	if (/\b(mcp|model context protocol)\b/.test(normalized))
+		return "mcp_tool_execution";
+	if (/\b(browser automation|web automation|navigate|click|fill form)\b/.test(normalized))
+		return "browser_automation";
+	if (/\b(computer use|desktop app|screen|mouse|keyboard)\b/.test(normalized))
+		return "computer_use";
+	if (
+		/\b(repository|repo|pull request|refactor|migration)\b/.test(normalized) &&
+		(capabilities.coding ?? 0) >= 0.8
+	)
+		return "repository_modification";
+	if (requiresVision || (capabilities.image_understanding ?? 0) >= 0.8)
+		return "image_understanding";
+	if (
+		/\b(react|css|html|frontend|ui component|responsive)\b/.test(normalized) ||
+		(capabilities.frontend_implementation ?? 0) >= 0.8
+	)
+		return "frontend";
+	if ((capabilities.debugging ?? 0) >= 0.8) return "debugging";
+	if ((capabilities.coding ?? 0) >= 0.8) return "coding";
+	if (promptLength > 40_000 || (capabilities.long_context ?? 0) >= 0.8)
+		return "long_context";
+	if ((capabilities.mathematical_reasoning ?? 0) >= 0.8) return "mathematics";
+	if ((capabilities.research ?? 0) >= 0.8) return "research";
+	if (
+		/\b(delegate|subtask|parallel|workflow|orchestrate)\b/.test(normalized) &&
+		(capabilities.planning ?? 0) >= 0.7
+	)
+		return "agentic_workflow";
+	if ((capabilities.planning ?? 0) >= 0.8) return "planning";
+	if ((capabilities.ui_visual_design ?? 0) >= 0.75) return "design";
+	if (
+		(capabilities.technical_writing ?? 0) >= 0.75 ||
+		(capabilities.creative_writing ?? 0) >= 0.7
+	)
+		return "writing";
+	if (/\b(look up|lookup|find|search|what is|who is)\b/.test(normalized))
+		return "lookup";
+	return words < 40 ? "conversation" : "general";
+}
+
+function routingSummary(profile: RoutingTaskProfile): string {
+	return [
+		`${profile.type.replaceAll("_", " ")} task`,
+		`${profile.risk.replaceAll("_", " ")} risk`,
+		`difficulty ${profile.difficulty.toFixed(2)}`,
+		profile.verificationRequired ? "verification required" : "standard verification",
+		profile.parallelizable ? "parallelizable" : "single-path",
+	]
+		.join("; ")
+		.slice(0, 240);
+}
+
 export class TaskRequirementAnalyzer {
-	routingPolicy(prompt: string, base: RoutingPolicy): RoutingPolicy {
+	routingPolicy(prompt: string, base: RoutingPolicySeed): RoutingPolicy {
 		const normalized = prompt.toLowerCase();
 		const amount = normalized.match(
 			/\b(?:under|below|no more than|budget(?: of)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\b/,
@@ -840,6 +999,11 @@ export class TaskRequirementAnalyzer {
 			requiresReview?: boolean;
 		} = {},
 	): TaskRequirements {
+		const parsedTaskId = RoutingOpaqueIdentifierSchema.safeParse(taskId);
+		if (!parsedTaskId.success)
+			throw new Error(
+				"Routing task IDs must be opaque, non-secret identifiers.",
+			);
 		const normalized = prompt.toLowerCase();
 		const words = prompt.trim().split(/\s+/).filter(Boolean).length;
 		const capabilities: Partial<Record<ModelCapability, number>> = {
@@ -1027,9 +1191,38 @@ export class TaskRequirementAnalyzer {
 				complexity * 0.2 -
 				(riskLevel === "high_consequence" ? 0.2 : 0),
 		);
+		const taskType = classifyTaskType({
+			normalized,
+			capabilities,
+			words,
+			promptLength: prompt.length,
+			requiresVision: input.requiresVision === true,
+		});
+		const parallelizable = distinctSpecialties >= 2 && complexity >= 0.55;
+		const verificationRequired =
+			input.requiresReview === true ||
+			riskLevel === "high_consequence" ||
+			complexity >= 0.82 ||
+			qualitySensitivity >= 0.86;
+		const taskProfile = RoutingTaskProfileSchema.parse({
+			type: taskType,
+			difficulty: complexity,
+			risk: riskLevel,
+			toolIntensity: (capabilities.tool_use ?? 0) > 0
+				? Math.max(capabilities.tool_use ?? 0, input.requiresTools ? 0.9 : 0)
+				: 0,
+			contextCharacters: Math.max(24_000, prompt.length * 3),
+			verificationRequired,
+			parallelizable,
+			decompositionRecommended: parallelizable && complexity >= 0.68,
+			modalities: ["text", ...(input.requiresVision ? ["image" as const] : [])],
+		});
 		return {
-			taskId,
-			summary: prompt.replace(/\s+/g, " ").trim().slice(0, 240) || "Agent task",
+			taskId: parsedTaskId.data,
+			// Routing traces are private diagnostic state, but they must never become
+			// a second prompt store. Keep an explainable profile-only summary instead.
+			summary: routingSummary(taskProfile),
+			taskProfile,
 			capabilities,
 			riskLevel,
 			complexity,
@@ -1042,7 +1235,7 @@ export class TaskRequirementAnalyzer {
 			requiresTools: (capabilities.tool_use ?? 0) > 0,
 			requiresVision: (capabilities.image_understanding ?? 0) > 0,
 			requiresStructuredOutput: (capabilities.structured_output ?? 0) > 0,
-			parallelizable: distinctSpecialties >= 2 && complexity >= 0.55,
+			parallelizable,
 			creative:
 				(capabilities.creative_writing ?? 0) >= 0.7 ||
 				(capabilities.ui_visual_design ?? 0) >= 0.75,
@@ -1056,8 +1249,11 @@ interface ScoredProfile {
 	profile: ModelProfile;
 	score: number;
 	estimatedCost: number;
+	effectiveCost: number;
 	capabilityFit: number;
 	reliability: number;
+	latencyPenalty: number;
+	scarcityPenalty: number;
 }
 
 export class AdaptiveModelRouter {
@@ -1078,6 +1274,7 @@ export class AdaptiveModelRouter {
 			endpointId: string,
 		) => boolean = () => true,
 		private readonly now: () => Date = () => new Date(),
+		private readonly accountAvailability?: AccountAvailabilityMonitor,
 	) {}
 
 	policy(): RoutingPolicy {
@@ -1132,6 +1329,8 @@ export class AdaptiveModelRouter {
 						profile.capabilityProvenance === "confirmed") &&
 					!excluded.has(profile.id) &&
 					this.providerAllowed(profile.provider, profile.endpointId) &&
+					!policy.avoidedProviderIds.includes(profile.provider) &&
+					!policy.avoidedProviderIds.includes(profile.endpointId) &&
 					(allowed.size === 0 ||
 						allowed.has("auto") ||
 						allowed.has(profile.provider) ||
@@ -1160,22 +1359,62 @@ export class AdaptiveModelRouter {
 			throw new Error(
 				"No configured model satisfies the task features, context, provider policy, and privacy constraints.",
 			);
-		const scored = candidates
+		const availableScored = candidates
 			.map((profile) => this.score(profile, requirements, policy, options))
-			.filter(
-				(candidate) =>
-					policy.maximumTaskCostUsd === undefined ||
-					candidate.estimatedCost <= policy.maximumTaskCostUsd,
-			)
-			.filter(
-				(candidate) =>
-					policy.maximumLatencyMs === undefined ||
-					estimatedLatencyMs(candidate.profile) <= policy.maximumLatencyMs,
-			);
-		if (scored.length === 0)
+			.flatMap((candidate) => {
+				const availability = this.accountAvailability?.adjustCandidate({
+					endpointId: candidate.profile.endpointId,
+					profileId: candidate.profile.id,
+					score: candidate.score,
+				});
+				if (availability && !availability.eligible) return [];
+				const scarcityPenalty = availability?.scarcityPenalty ?? 0;
+				return [
+					{
+						...candidate,
+						score: availability?.score ?? candidate.score,
+						scarcityPenalty,
+						// This is a relative routing cost, not a dollar amount. It makes
+						// subscription scarcity visible even where an API price is zero.
+						effectiveCost:
+							candidate.estimatedCost + scarcityPenalty * 0.01,
+					},
+				];
+			});
+		if (availableScored.length === 0)
 			throw new Error(
-				"No configured model fits the task budget and latency limits.",
+				"No configured model fits the task budget, latency, account health, and quota constraints.",
 			);
+		const withinCost = availableScored.filter(
+			(candidate) =>
+				policy.maximumTaskCostUsd === undefined ||
+				candidate.estimatedCost <= policy.maximumTaskCostUsd,
+		);
+		if (withinCost.length === 0)
+			throw new Error("No configured model fits the task cost budget.");
+		const withinLatency = withinCost.filter(
+			(candidate) =>
+				policy.maximumLatencyMs === undefined ||
+				estimatedLatencyMs(candidate.profile) <= policy.maximumLatencyMs,
+		);
+		if (withinLatency.length === 0)
+			throw new Error("No configured model fits the task latency limits.");
+		const scoredCandidates = withinLatency;
+		const minimumQuality = bounded(
+			0.45 +
+				requirements.complexity * 0.3 +
+				requirements.qualitySensitivity * 0.25 +
+				(requirements.riskLevel === "high_consequence" ? 0.12 : 0),
+		);
+		const adequate = scoredCandidates.filter(
+			(candidate) =>
+				candidate.capabilityFit * 0.72 + candidate.reliability * 0.28 >=
+				minimumQuality,
+		);
+		const scored =
+			policy.mode === "best_quality" || adequate.length === 0
+				? scoredCandidates
+				: adequate;
 		scored.sort(
 			(left, right) =>
 				right.score - left.score ||
@@ -1196,10 +1435,44 @@ export class AdaptiveModelRouter {
 			options.escalationReason,
 		);
 		const reviewRequired =
-			riskRank(requirements.riskLevel) >=
+			policy.allowVerifier &&
+			(riskRank(requirements.riskLevel) >=
 				riskRank(policy.requireReviewAboveRisk) ||
-			requirements.qualitySensitivity >= 0.86 ||
-			confidence < 0.68;
+				requirements.qualitySensitivity >= 0.86 ||
+				confidence < 0.68);
+		const executionPattern: RoutingExecutionPattern = requirements.parallelizable
+			? "parallel_workers"
+			: reviewRequired
+				? "executor_verifier"
+				: options.role === "orchestrator"
+					? "planner_executor"
+					: "single_executor";
+		const candidateSummaries: RoutingCandidate[] = [...scoredCandidates]
+			.sort(
+				(left, right) =>
+					right.score - left.score || left.profile.id.localeCompare(right.profile.id),
+			)
+			.slice(0, 32)
+			.map((candidate) => ({
+				modelId: candidate.profile.id,
+				providerId: candidate.profile.provider,
+				endpointId: candidate.profile.endpointId,
+				...(candidate.profile.accountId
+					? { accountId: candidate.profile.accountId }
+					: {}),
+				...(candidate.profile.accountAlias
+					? { accountAlias: candidate.profile.accountAlias }
+					: {}),
+				model: candidate.profile.model,
+				capabilityFit: candidate.capabilityFit,
+				reliability: candidate.reliability,
+				estimatedCost: candidate.estimatedCost,
+				effectiveCost: candidate.effectiveCost,
+				latencyPenalty: candidate.latencyPenalty,
+				scarcityPenalty: candidate.scarcityPenalty,
+				score: candidate.score,
+				selected: candidate.profile.id === selected.profile.id,
+			}));
 		const selectedAt = this.now().toISOString();
 		const reasons = [
 			`${Math.round(selected.capabilityFit * 100)}% capability fit for the requested work.`,
@@ -1210,7 +1483,14 @@ export class AdaptiveModelRouter {
 			selected.profile.local
 				? "Keeps this model step on the configured local endpoint."
 				: "Uses a configured external endpoint because it offers the best policy-adjusted fit.",
+			selected.profile.accountAlias
+				? `Uses the available ${selected.profile.accountAlias} account.`
+				: "",
+			selected.scarcityPenalty > 0
+				? "Applied the current account scarcity signal to conserve limited usage."
+				: "",
 			`Sets thinking to ${reasoningLevel} from complexity ${requirements.complexity.toFixed(2)}, risk ${requirements.riskLevel}, and ${selected.profile.features.reasoningLevels ? "this model's reasoning controls" : "no reasoning controls on this model"}.`,
+			`Selected the ${executionPattern.replaceAll("_", " ")} execution pattern.`,
 			policy.mode === "balanced"
 				? "Balanced quality, reliability, latency, and cost."
 				: `Applied the ${policy.mode.replaceAll("_", " ")} routing mode.`,
@@ -1253,12 +1533,20 @@ export class AdaptiveModelRouter {
 			selectedModelId: selected.profile.id,
 			providerId: selected.profile.provider,
 			endpointId: selected.profile.endpointId,
+			...(selected.profile.accountId
+				? { accountId: selected.profile.accountId }
+				: {}),
+			...(selected.profile.accountAlias
+				? { accountAlias: selected.profile.accountAlias }
+				: {}),
 			model: selected.profile.model,
 			tier: selected.profile.tier,
 			role: options.role,
 			reasoningLevel,
 			fastMode: priorityEligible(selected.profile, requirements, policy),
 			estimatedCost: selected.estimatedCost,
+			effectiveCost: selected.effectiveCost,
+			scarcityPenalty: selected.scarcityPenalty,
 			confidence,
 			reasons,
 			fallbackModelIds: fallbackCandidates.slice(
@@ -1272,6 +1560,7 @@ export class AdaptiveModelRouter {
 			...(options.switchedFromModelId
 				? { switchedFromModelId: options.switchedFromModelId }
 				: {}),
+			executionPattern,
 			settings: {
 				temperature: requirements.creative ? 0.65 : 0.2,
 				maximumOutputTokens: Math.min(
@@ -1295,7 +1584,13 @@ export class AdaptiveModelRouter {
 			},
 			selectedAt,
 		});
-		this.recordTrace(requirements, policy, decision, options.parentTraceId);
+		this.recordTrace(
+			requirements,
+			policy,
+			decision,
+			options.parentTraceId,
+			candidateSummaries,
+		);
 		return decision;
 	}
 
@@ -1334,11 +1629,53 @@ export class AdaptiveModelRouter {
 		const index = traces.findIndex((trace) => trace.id === traceId);
 		const current = traces[index];
 		if (!current) return;
+		const eventType = input.escalated
+			? "ROUTE_ESCALATED"
+			: input.status === "completed"
+				? "ROUTE_COMPLETED"
+				: input.status === "failed"
+					? "ROUTE_FAILED"
+					: input.status === "cancelled"
+						? "ROUTE_ABORTED"
+						: "ROUTE_STARTED";
 		traces[index] = RoutingTraceSchema.parse({
 			...current,
 			status: input.status,
 			actualCostUsd: input.actualCostUsd ?? current.actualCostUsd,
 			escalationCount: current.escalationCount + (input.escalated ? 1 : 0),
+			events: [
+				...(current.events ?? []),
+				{
+					id: `routing-event-${randomUUID()}`,
+					type: eventType,
+					message: routingEventMessage(eventType),
+					createdAt: this.now().toISOString(),
+				},
+			].slice(-128),
+			updatedAt: this.now().toISOString(),
+		});
+		this.database.setPrivateState(this.tracesKey, traces.slice(-200));
+	}
+
+	recordTraceEvent(
+		traceId: string,
+		type: RoutingEvent["type"],
+	): void {
+		const traces = this.traces();
+		const index = traces.findIndex((trace) => trace.id === traceId);
+		const current = traces[index];
+		if (!current) return;
+		traces[index] = RoutingTraceSchema.parse({
+			...current,
+			events: [
+				...(current.events ?? []),
+				{
+					id: `routing-event-${randomUUID()}`,
+					type,
+					message: routingEventMessage(type),
+					createdAt: this.now().toISOString(),
+				},
+			].slice(-128),
 			updatedAt: this.now().toISOString(),
 		});
 		this.database.setPrivateState(this.tracesKey, traces.slice(-200));
@@ -1446,6 +1783,11 @@ export class AdaptiveModelRouter {
 		};
 		const weights = weightSets[policy.mode];
 		const localPreferenceBonus = policy.preferLocal && profile.local ? 0.25 : 0;
+		const providerPreferenceBonus = policy.preferredProviderIds.includes(
+			profile.provider,
+		)
+			? 0.06
+			: 0;
 		const score =
 			capabilityFit * weights[0] +
 			reliability * weights[1] +
@@ -1453,8 +1795,18 @@ export class AdaptiveModelRouter {
 			costScore * weights[3] +
 			localScore * weights[4] +
 			localPreferenceBonus +
+			providerPreferenceBonus +
 			tierBonus;
-		return { profile, score, estimatedCost, capabilityFit, reliability };
+		return {
+			profile,
+			score,
+			estimatedCost,
+			effectiveCost: estimatedCost,
+			capabilityFit,
+			reliability,
+			latencyPenalty: bounded(1 - latencyScore),
+			scarcityPenalty: 0,
+		};
 	}
 
 	private reasoningLevel(
@@ -1515,15 +1867,38 @@ export class AdaptiveModelRouter {
 		policy: RoutingPolicy,
 		decision: RoutingDecision,
 		parentTraceId?: string,
+		candidates: RoutingCandidate[] = [],
 	): void {
 		const timestamp = this.now().toISOString();
 		const trace = RoutingTraceSchema.parse({
 			id: `trace-${randomUUID()}`,
 			...(parentTraceId ? { parentTraceId } : {}),
 			taskId: requirements.taskId,
-			summary: requirements.summary,
+			summary: routingSummary(requirements.taskProfile),
 			status: "planned",
 			policy,
+			taskProfile: requirements.taskProfile,
+			candidates,
+			events: [
+				{
+					id: `routing-event-${randomUUID()}`,
+					type: "TASK_PROFILE_CREATED",
+					message: routingEventMessage("TASK_PROFILE_CREATED"),
+					createdAt: timestamp,
+				},
+				{
+					id: `routing-event-${randomUUID()}`,
+					type: "ROUTE_CANDIDATES_GENERATED",
+					message: routingEventMessage("ROUTE_CANDIDATES_GENERATED"),
+					createdAt: timestamp,
+				},
+				{
+					id: `routing-event-${randomUUID()}`,
+					type: "ROUTE_SELECTED",
+					message: routingEventMessage("ROUTE_SELECTED"),
+					createdAt: timestamp,
+				},
+			],
 			decisions: [decision],
 			escalationCount: 0,
 			estimatedCostUsd: decision.estimatedCost ?? 0,

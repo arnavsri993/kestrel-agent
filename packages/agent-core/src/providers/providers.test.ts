@@ -298,6 +298,54 @@ describe("model provider adapters", () => {
 		).rejects.toMatchObject({ attempts: [] });
 	});
 
+	it("reports in-flight endpoint requests for account-aware routing", async () => {
+		let reportStarted: () => void = () => undefined;
+		let release: () => void = () => undefined;
+		const started = new Promise<void>((resolvePromise) => {
+			reportStarted = resolvePromise;
+		});
+		const gate = new Promise<void>((resolvePromise) => {
+			release = resolvePromise;
+		});
+		const provider: ModelProvider = {
+			id: "busy-account",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				reportStarted();
+				await gate;
+				return {
+					providerId: "busy-account",
+					model: request.model,
+					text: "completed",
+					toolCalls: [],
+					usage: { inputTokens: 1, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const pool = new ProviderPool([provider]);
+		const pending = pool.complete({
+			model: "fixture",
+			messages: [{ role: "user", content: textContent("hello") }],
+		});
+		await started;
+		expect(pool.health()).toMatchObject([
+			{ providerId: "busy-account", activeRequests: 1 },
+		]);
+		release();
+		await pending;
+		expect(pool.health()).toMatchObject([
+			{ providerId: "busy-account", activeRequests: 0 },
+		]);
+	});
+
 	it("stops provider verification when cancellation wins", async () => {
 		const capabilities = {
 			streaming: false,
@@ -855,6 +903,63 @@ describe("model provider adapters", () => {
 			["failing", "failed"],
 			["succeeding", "completed"],
 		]);
+	});
+
+	it("keeps only normalized endpoint quota observations for account-aware routing", async () => {
+		let exposesQuota = true;
+		const provider: ModelProvider = {
+			id: "account-endpoint",
+			poolId: "logical-provider",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			complete: async (request) => ({
+				providerId: "account-endpoint",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 1, outputTokens: 1 },
+				finishReason: "stop",
+				...(exposesQuota
+					? {
+						quota: {
+							confidence: "exact" as const,
+							remainingFraction: 0.2,
+							resetAt: "2026-09-08T12:00:00.000Z",
+						},
+					}
+					: {}),
+			}),
+		};
+		const pool = new ProviderPool([provider], () =>
+			new Date("2026-09-07T12:00:00.000Z"),
+		);
+		await pool.complete({
+			model: "test",
+			messages: [{ role: "user", content: textContent("hello") }],
+		});
+
+		expect(pool.accountQuotaSnapshots()).toEqual([
+			{
+				endpointId: "account-endpoint",
+				providerId: "account-endpoint",
+				poolId: "logical-provider",
+				confidence: "exact",
+				remainingFraction: 0.2,
+				resetAt: "2026-09-08T12:00:00.000Z",
+			},
+		]);
+		exposesQuota = false;
+		await pool.complete({
+			model: "test",
+			messages: [{ role: "user", content: textContent("hello again") }],
+		});
+		expect(pool.accountQuotaSnapshots()).toEqual([]);
 	});
 
 	it("rotates nonretryable credential failures inside one logical provider pool", async () => {

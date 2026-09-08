@@ -1,4 +1,8 @@
-import { providerFetch, readServerSentEvents } from "./http";
+import {
+	providerFetch,
+	quotaFromResponseHeaders,
+	readServerSentEvents,
+} from "./http";
 import {
 	contentText,
 	type DiscoveredModel,
@@ -243,6 +247,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
 				...(options.signal ? { signal: options.signal } : {}),
 			},
 		);
+		const quota = quotaFromResponseHeaders(response.headers);
 
 		let text = "";
 		let responseId: string | undefined;
@@ -344,6 +349,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
 			toolCalls,
 			usage: { inputTokens, outputTokens, cachedInputTokens },
 			finishReason: mapStopReason(stopReason, toolCalls.length > 0),
+			...(quota ? { quota } : {}),
 		};
 		options.onEvent?.({ type: "completed", result });
 		return result;

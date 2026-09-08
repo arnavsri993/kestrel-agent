@@ -111,6 +111,7 @@ export function TabStrip({
 	onCloseOthers,
 	onMoveTab,
 	onDetachTab,
+	onTabDragStateChange,
 	onReattachTab,
 	onReopenClosedTab,
 	onOrganizeTabs,
@@ -138,6 +139,7 @@ export function TabStrip({
 	onCloseOthers?(tabId: string): void | Promise<void>;
 	onMoveTab?(tabId: string, toIndex: number): void | Promise<void>;
 	onDetachTab?(tabId: string): void | Promise<void>;
+	onTabDragStateChange?(dragging: boolean): void;
 	onReattachTab?(tabId: string): void | Promise<void>;
 	onReopenClosedTab?(index?: number): void;
 	onOrganizeTabs?(): void | Promise<void>;
@@ -173,6 +175,15 @@ export function TabStrip({
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragIntent, setDragIntent] = useState<"none" | "reorder" | "detach">(
 		"none",
+	);
+	const tabDragActiveRef = useRef(false);
+	const updateTabDragState = useCallback(
+		(dragging: boolean) => {
+			if (tabDragActiveRef.current === dragging) return;
+			tabDragActiveRef.current = dragging;
+			onTabDragStateChange?.(dragging);
+		},
+		[onTabDragStateChange],
 	);
 	const draggingTabIdRef = useRef<string | null>(null);
 	// Pointer tracking stays outside React state. Reordering still renders when
@@ -556,6 +567,7 @@ export function TabStrip({
 		dragY.set(0);
 		setDraggingTabId(null);
 		setDragIntent("none");
+		updateTabDragState(false);
 		if (!preserveProvisional) {
 			provisionalTabOrderRef.current = null;
 			setProvisionalTabOrder(null);
@@ -682,6 +694,10 @@ export function TabStrip({
 		drag.lastAt = event.timeStamp;
 		dragX.set(dx);
 		dragY.set(dy);
+		// Release the native page as soon as movement proves this is a drag. A
+		// WebContentsView sibling can otherwise swallow the final pointerup.
+		if (Math.max(Math.abs(dx), Math.abs(dy)) >= 2)
+			updateTabDragState(true);
 		if (orientation === "horizontal") {
 			if (Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX) {
 				setDragIntent("detach");
@@ -757,6 +773,10 @@ export function TabStrip({
 	}
 
 	useEffect(() => () => resetDrag(), []);
+	useEffect(
+		() => () => updateTabDragState(false),
+		[updateTabDragState],
+	);
 
 	useEffect(() => {
 		if (draggingTabId || !provisionalTabOrder) return;

@@ -47,6 +47,38 @@ export interface ModelUsage {
   reasoningTokens?: number;
 }
 
+/**
+ * Normalized, non-secret capacity telemetry returned by an upstream provider.
+ * It is intentionally limited to a fraction and optional reset timestamp so
+ * raw response headers never reach routing state, logs, or the renderer.
+ */
+export interface ProviderQuotaSnapshot {
+  confidence: "exact" | "estimated" | "inferred";
+  remainingFraction: number;
+  resetAt?: string;
+}
+
+export function normalizeProviderQuotaSnapshot(
+  value: ProviderQuotaSnapshot | undefined,
+): ProviderQuotaSnapshot | undefined {
+  if (!value || !Number.isFinite(value.remainingFraction)) return undefined;
+  if (
+    value.confidence !== "exact" &&
+    value.confidence !== "estimated" &&
+    value.confidence !== "inferred"
+  )
+    return undefined;
+  const remainingFraction = Math.max(0, Math.min(1, value.remainingFraction));
+  const resetAt = value.resetAt ? Date.parse(value.resetAt) : Number.NaN;
+  return {
+    confidence: value.confidence,
+    remainingFraction,
+    ...(Number.isFinite(resetAt)
+      ? { resetAt: new Date(resetAt).toISOString() }
+      : {}),
+  };
+}
+
 export type ModelFinishReason = "stop" | "tool_calls" | "length" | "refusal" | "cancelled" | "unknown";
 
 export interface ModelResult {
@@ -57,6 +89,7 @@ export interface ModelResult {
   toolCalls: ModelToolCall[];
   usage: ModelUsage;
   finishReason: ModelFinishReason;
+  quota?: ProviderQuotaSnapshot;
 }
 
 export type ModelStreamEvent =
@@ -194,6 +227,7 @@ import { KestrelError } from "@kestrel/error-handling";
 export class ModelProviderError extends KestrelError {
   readonly isRefusal: boolean;
   readonly retryAfterMs?: number;
+	readonly quota?: ProviderQuotaSnapshot | undefined;
 
   constructor(
     message: string,
@@ -202,6 +236,7 @@ export class ModelProviderError extends KestrelError {
     readonly status?: number,
     isRefusal = false,
     retryAfterMs?: number,
+    quota?: ProviderQuotaSnapshot,
   ) {
     super({
       code: isRefusal ? "model_refusal_error" : "model_provider_error",
@@ -214,6 +249,7 @@ export class ModelProviderError extends KestrelError {
     if (retryAfterMs !== undefined && Number.isFinite(retryAfterMs)) {
       this.retryAfterMs = Math.max(0, Math.trunc(retryAfterMs));
     }
+    this.quota = normalizeProviderQuotaSnapshot(quota);
   }
 }
 

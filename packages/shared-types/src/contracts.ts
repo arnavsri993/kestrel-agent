@@ -489,12 +489,101 @@ const CapabilityScoresSchema = z.record(
 	z.number().min(0).max(1),
 );
 
+/**
+ * Routing metadata is deliberately constrained to opaque local identifiers.
+ * Keep recognizable credential formats out of policy, traces, and renderer
+ * state even if an upstream provider adapter accidentally supplies one.
+ */
+const ROUTING_SECRET_LABEL_PATTERN =
+	/(?:^|[-_.:])(?:sk|pk|api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|credential|password|secret)(?:[-_.:]|$)/i;
+const ROUTING_KNOWN_SECRET_PATTERN =
+	/^(?:gh[pousr]_|github_pat_|xox[a-z]-|xapp-|gsk_|akia[0-9a-z]{16}|asia[0-9a-z]{16}|aiza[0-9a-z_-]{20,}|glpat-|glrt-|npm_|pypi-)/i;
+const ROUTING_JWT_PATTERN = /^eyj[a-z0-9_-]{8,}\.[a-z0-9_-]+\.[a-z0-9_-]+$/i;
+const ROUTING_EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+const ROUTING_URL_PATTERN = /(?:^|[^A-Z0-9_])[A-Z][A-Z0-9+.-]*:\/\//i;
+
+export function isRoutingSecretLikeValue(value: string): boolean {
+	return (
+		ROUTING_SECRET_LABEL_PATTERN.test(value) ||
+		ROUTING_KNOWN_SECRET_PATTERN.test(value) ||
+		ROUTING_JWT_PATTERN.test(value)
+	);
+}
+
+export function isRoutingUnsafeMetadataValue(value: string): boolean {
+	return (
+		isRoutingSecretLikeValue(value) ||
+		ROUTING_EMAIL_PATTERN.test(value) ||
+		ROUTING_URL_PATTERN.test(value) ||
+		/^www\./i.test(value)
+	);
+}
+
+export const RoutingOpaqueIdentifierSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.max(100)
+	.regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
+	.refine(
+		(value) => !isRoutingUnsafeMetadataValue(value),
+		"Routing identifiers cannot contain credentials, identity data, or URLs.",
+	);
+
+/** Model names can include an optional registry slash, but never identity or URLs. */
+export const RoutingModelIdentifierSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.max(200)
+	.regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
+	.refine(
+		(value) => !isRoutingUnsafeMetadataValue(value),
+		"Model identifiers cannot contain credentials, identity data, or URLs.",
+	);
+
+export const RoutingProfileIdentifierSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.max(300)
+	.regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
+	.refine(
+		(value) => !isRoutingUnsafeMetadataValue(value),
+		"Profile identifiers cannot contain credentials, identity data, or URLs.",
+	);
+
+/** A concise account/model label with no address, URL, or recognizable secret. */
+export const RoutingSafeLabelSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.max(200)
+	.refine(
+		(value) => !isRoutingUnsafeMetadataValue(value),
+		"Routing labels cannot contain credentials, identity data, or URLs.",
+	);
+
+export const RoutingDisplayNameSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.max(300)
+	.refine(
+		(value) => !isRoutingUnsafeMetadataValue(value),
+		"Routing labels cannot contain credentials, identity data, or URLs.",
+	);
+
 export const ModelProfileSchema = z.object({
-	id: z.string().min(1).max(300),
-	provider: z.string().min(1).max(100),
-	endpointId: z.string().min(1).max(100),
-	model: z.string().min(1).max(200),
-	displayName: z.string().min(1).max(300),
+	id: RoutingProfileIdentifierSchema,
+	provider: RoutingOpaqueIdentifierSchema,
+	endpointId: RoutingOpaqueIdentifierSchema,
+	/** Stable non-secret account identity for an account-scoped endpoint. */
+	accountId: RoutingOpaqueIdentifierSchema.optional(),
+	/** Human-readable alias only; never an email address or credential hint. */
+	accountAlias: RoutingSafeLabelSchema.optional(),
+	model: RoutingModelIdentifierSchema,
+	displayName: RoutingDisplayNameSchema,
 	enabled: z.boolean(),
 	local: z.boolean(),
 	tier: ModelTierSchema.optional(),
@@ -575,6 +664,9 @@ export const RoutingModeSchema = z.enum([
 ]);
 export type RoutingMode = z.infer<typeof RoutingModeSchema>;
 
+/** Opaque provider/pool IDs only; routing policy must never become secret storage. */
+export const RoutingProviderIdentifierSchema = RoutingOpaqueIdentifierSchema;
+
 export const RoutingPolicySchema = z.object({
 	mode: RoutingModeSchema,
 	maximumTaskCostUsd: z.number().nonnegative().optional(),
@@ -591,28 +683,151 @@ export const RoutingPolicySchema = z.object({
 		"sensitive",
 		"high_consequence",
 	]),
+	/** Keep escalation bounded and opt-out-able without changing manual routes. */
+	allowAutomaticEscalation: z.boolean().default(true),
+	maximumEscalations: z.number().int().min(0).max(8).default(2),
+	allowVerifier: z.boolean().default(true),
+	/** Provider identifiers, not account secrets. A preference is soft; avoidance is hard. */
+	preferredProviderIds: z
+		.array(RoutingProviderIdentifierSchema)
+		.max(32)
+		.default([]),
+	avoidedProviderIds: z
+		.array(RoutingProviderIdentifierSchema)
+		.max(32)
+		.default([]),
 });
 export type RoutingPolicy = z.infer<typeof RoutingPolicySchema>;
 
+export const RoutingTaskTypeSchema = z.enum([
+	"conversation",
+	"lookup",
+	"writing",
+	"coding",
+	"debugging",
+	"repository_modification",
+	"frontend",
+	"design",
+	"mathematics",
+	"research",
+	"long_context",
+	"computer_use",
+	"browser_automation",
+	"mcp_tool_execution",
+	"cad_tool_control",
+	"image_understanding",
+	"planning",
+	"agentic_workflow",
+	"general",
+]);
+export type RoutingTaskType = z.infer<typeof RoutingTaskTypeSchema>;
+
+/** A compact, local-only profile of task requirements; it never contains prompt text. */
+export const RoutingTaskProfileSchema = z.object({
+	type: RoutingTaskTypeSchema,
+	difficulty: z.number().min(0).max(1),
+	risk: z.enum(["read_only", "low", "external", "sensitive", "high_consequence"]),
+	toolIntensity: z.number().min(0).max(1),
+	contextCharacters: z.number().int().nonnegative(),
+	verificationRequired: z.boolean(),
+	parallelizable: z.boolean(),
+	decompositionRecommended: z.boolean(),
+	modalities: z
+		.array(z.enum(["text", "image", "audio", "video", "document"]))
+		.min(1)
+		.max(5),
+});
+export type RoutingTaskProfile = z.infer<typeof RoutingTaskProfileSchema>;
+
+export const RoutingExecutionPatternSchema = z.enum([
+	"single_executor",
+	"planner_executor",
+	"executor_verifier",
+	"parallel_workers",
+]);
+export type RoutingExecutionPattern = z.infer<
+	typeof RoutingExecutionPatternSchema
+>;
+
+/** Inspectable score factors, deliberately not hidden reasoning or prompt content. */
+export const RoutingCandidateSchema = z.object({
+	modelId: RoutingProfileIdentifierSchema,
+	providerId: RoutingOpaqueIdentifierSchema,
+	endpointId: RoutingOpaqueIdentifierSchema,
+	accountId: RoutingOpaqueIdentifierSchema.optional(),
+	accountAlias: RoutingSafeLabelSchema.optional(),
+	model: RoutingModelIdentifierSchema,
+	capabilityFit: z.number().min(0).max(1),
+	reliability: z.number().min(0).max(1),
+	estimatedCost: z.number().nonnegative(),
+	effectiveCost: z.number().nonnegative(),
+	latencyPenalty: z.number().min(0).max(1),
+	scarcityPenalty: z.number().min(0).max(1),
+	score: z.number(),
+	selected: z.boolean(),
+});
+export type RoutingCandidate = z.infer<typeof RoutingCandidateSchema>;
+
+export const RoutingEventTypeSchema = z.enum([
+		"TASK_PROFILE_CREATED",
+		"ROUTE_CANDIDATES_GENERATED",
+		"ROUTE_SELECTED",
+		"ROUTE_STARTED",
+		"ROUTE_FAILED",
+		"ROUTE_RETRIED",
+		"ROUTE_ESCALATED",
+		"ROUTE_VERIFIED",
+		"ROUTE_COMPLETED",
+		"ROUTE_ABORTED",
+]);
+export type RoutingEventType = z.infer<typeof RoutingEventTypeSchema>;
+
+export const RoutingEventMessageSchema = z.enum([
+	"Created a compact task requirement profile.",
+	"Generated compatible route candidates.",
+	"Selected the highest utility route within the active policy.",
+	"Route execution started.",
+	"Route execution ended unsuccessfully.",
+	"Retried execution after a normalized transient signal.",
+	"Selected a bounded capability escalation after execution feedback.",
+	"Recorded the independent verification result.",
+	"Route execution completed.",
+	"Route execution was cancelled.",
+]);
+export type RoutingEventMessage = z.infer<typeof RoutingEventMessageSchema>;
+
+export const RoutingEventSchema = z.object({
+	id: RoutingOpaqueIdentifierSchema,
+	type: RoutingEventTypeSchema,
+	message: RoutingEventMessageSchema,
+	createdAt: z.string().datetime(),
+});
+export type RoutingEvent = z.infer<typeof RoutingEventSchema>;
+
 export const RoutingDecisionSchema = z.object({
-	id: z.string().min(1),
-	taskId: z.string().min(1),
-	selectedModelId: z.string().min(1),
-	providerId: z.string().min(1),
-	endpointId: z.string().min(1),
-	model: z.string().min(1),
+	id: RoutingOpaqueIdentifierSchema,
+	taskId: RoutingOpaqueIdentifierSchema,
+	selectedModelId: RoutingProfileIdentifierSchema,
+	providerId: RoutingOpaqueIdentifierSchema,
+	endpointId: RoutingOpaqueIdentifierSchema,
+	accountId: RoutingOpaqueIdentifierSchema.optional(),
+	accountAlias: RoutingSafeLabelSchema.optional(),
+	model: RoutingModelIdentifierSchema,
 	tier: ModelTierSchema.optional(),
 	role: z.enum(["orchestrator", "worker", "reviewer", "fallback"]),
 	reasoningLevel: ReasoningEffortSchema,
 	fastMode: z.boolean(),
 	estimatedCost: z.number().nonnegative().optional(),
+	effectiveCost: z.number().nonnegative().optional(),
+	scarcityPenalty: z.number().min(0).max(1).optional(),
 	confidence: z.number().min(0).max(1),
 	reasons: z.array(z.string().min(1)).min(1).max(12),
-	fallbackModelIds: z.array(z.string().min(1)).max(8),
-	traceId: z.string().min(1).optional(),
+	fallbackModelIds: z.array(RoutingProfileIdentifierSchema).max(8),
+	traceId: RoutingOpaqueIdentifierSchema.optional(),
 	validationStrategy: z.string().min(1).optional(),
 	refusalRecovery: z.boolean().optional(),
 	switchedFromModelId: z.string().min(1).optional(),
+	executionPattern: RoutingExecutionPatternSchema.optional(),
 	settings: z.object({
 		temperature: z.number().min(0).max(2),
 		maximumOutputTokens: z.number().int().positive(),
@@ -626,12 +841,15 @@ export const RoutingDecisionSchema = z.object({
 export type RoutingDecision = z.infer<typeof RoutingDecisionSchema>;
 
 export const RoutingTraceSchema = z.object({
-	id: z.string().min(1),
-	parentTraceId: z.string().min(1).optional(),
-	taskId: z.string().min(1),
+	id: RoutingOpaqueIdentifierSchema,
+	parentTraceId: RoutingOpaqueIdentifierSchema.optional(),
+	taskId: RoutingOpaqueIdentifierSchema,
 	summary: z.string().min(1).max(2_000),
 	status: z.enum(["planned", "running", "completed", "failed", "cancelled"]),
 	policy: RoutingPolicySchema,
+	taskProfile: RoutingTaskProfileSchema.optional(),
+	candidates: z.array(RoutingCandidateSchema).max(32).optional(),
+	events: z.array(RoutingEventSchema).max(128).optional(),
 	decisions: z.array(RoutingDecisionSchema),
 	escalationCount: z.number().int().nonnegative(),
 	estimatedCostUsd: z.number().nonnegative(),
@@ -642,10 +860,12 @@ export const RoutingTraceSchema = z.object({
 export type RoutingTrace = z.infer<typeof RoutingTraceSchema>;
 
 export const ModelRoutingDecisionSchema = z.object({
-	taskId: z.string().min(1),
-	model: ExecutionModelSchema,
-	providerId: z.string().min(1).optional(),
-	selectedModelId: z.string().min(1).optional(),
+	taskId: RoutingOpaqueIdentifierSchema,
+	model: RoutingModelIdentifierSchema,
+	providerId: RoutingOpaqueIdentifierSchema.optional(),
+	accountId: RoutingOpaqueIdentifierSchema.optional(),
+	accountAlias: RoutingSafeLabelSchema.optional(),
+	selectedModelId: RoutingProfileIdentifierSchema.optional(),
 	tier: ModelTierSchema.optional(),
 	reasoningEffort: ReasoningEffortSchema,
 	fastMode: z.boolean(),
@@ -653,8 +873,11 @@ export const ModelRoutingDecisionSchema = z.object({
 	execution: z.enum(["local", "configured_endpoint", "development_adapter"]),
 	rationale: z.string().min(1),
 	confidence: z.number().min(0).max(1).optional(),
-	traceId: z.string().min(1).optional(),
-	fallbackModelIds: z.array(z.string().min(1)).optional(),
+	effectiveCost: z.number().nonnegative().optional(),
+	scarcityPenalty: z.number().min(0).max(1).optional(),
+	executionPattern: RoutingExecutionPatternSchema.optional(),
+	traceId: RoutingOpaqueIdentifierSchema.optional(),
+	fallbackModelIds: z.array(RoutingProfileIdentifierSchema).optional(),
 	reviewRequired: z.boolean().optional(),
 	refusalRecovery: z.boolean().optional(),
 	selectedAt: z.string().datetime(),
@@ -662,9 +885,9 @@ export const ModelRoutingDecisionSchema = z.object({
 export type ModelRoutingDecision = z.infer<typeof ModelRoutingDecisionSchema>;
 
 export const DelegatedWorkerRouteSchema = z.object({
-	providerId: z.string().min(1),
-	model: z.string().min(1),
-	selectedModelId: z.string().min(1).optional(),
+	providerId: RoutingOpaqueIdentifierSchema,
+	model: RoutingModelIdentifierSchema,
+	selectedModelId: RoutingProfileIdentifierSchema.optional(),
 	tier: ModelTierSchema.optional(),
 	role: z.enum(["orchestrator", "worker", "reviewer", "fallback"]).optional(),
 	reasoningEffort: ReasoningEffortSchema,
@@ -672,8 +895,8 @@ export const DelegatedWorkerRouteSchema = z.object({
 	local: z.boolean(),
 	confidence: z.number().min(0).max(1).optional(),
 	estimatedCost: z.number().nonnegative().optional(),
-	fallbackModelIds: z.array(z.string().min(1)).optional(),
-	traceId: z.string().min(1).optional(),
+	fallbackModelIds: z.array(RoutingProfileIdentifierSchema).optional(),
+	traceId: RoutingOpaqueIdentifierSchema.optional(),
 	refusalRecovery: z.boolean().optional(),
 	verifiedAt: z.string().datetime(),
 	verificationLatencyMs: z.number().int().nonnegative(),
