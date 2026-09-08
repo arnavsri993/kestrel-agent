@@ -1633,10 +1633,12 @@ body:has(.ai-browser-app),
 }
 .browser-tab.active::after,
 .browser-tab:hover::after,
-.browser-tab:last-child::after,
 .browser-tab:has(+ .browser-tab.active)::after,
 .browser-tab:has(+ .browser-tab:hover)::after {
 	opacity: 0;
+}
+.browser-tab:last-child::after {
+	opacity: 1;
 }
 .browser-tab:hover:not(.active) {
 	background: color-mix(in srgb, var(--surface) 55%, transparent);
