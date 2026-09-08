@@ -94,7 +94,7 @@ export interface UserBrowserController {
 		organization: UserBrowserTabOrganizationApply,
 	): Promise<void>;
 	detachTab(tabId: string): Promise<void>;
-	reattachTab(tabId: string): Promise<void>;
+	reattachTab(tabId: string, transferToken?: string): Promise<void>;
 	findInPage(
 		tabId: string,
 		query: string,
@@ -634,7 +634,12 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 	const reattachTab = useCallback(
-		(tabId: string) => requestState({ type: "browser-reattach-tab", tabId }),
+		(tabId: string, transferToken?: string) =>
+			requestState({
+				type: "browser-reattach-tab",
+				tabId,
+				...(transferToken ? { transferToken } : {}),
+			}),
 		[requestState],
 	);
 	const findInPage = useCallback(

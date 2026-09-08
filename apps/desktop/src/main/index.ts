@@ -70,6 +70,7 @@ import {
   PendingMigrationPlanStore,
 } from "./migration-plan-store";
 import { ElectronBrowserService } from "./electron-browser-service";
+import { BrowserTabTransferAccess } from "./browser-tab-transfer-access";
 import {
   UserBrowserService,
   isUserBrowserBackendWireRequest,
@@ -197,6 +198,7 @@ const browserService = new ElectronBrowserService();
 let computerUseManagerInstance: ComputerUseManager | null = null;
 let userBrowserService: UserBrowserService | null = null;
 const browserWindowServices = new Map<BrowserWindow, UserBrowserService>();
+const browserTabTransfers = new BrowserTabTransferAccess<BrowserWindow>();
 interface CalculatorAnchorBounds {
   x: number;
   y: number;
@@ -2028,6 +2030,7 @@ function createDetachedBrowserWindow(
   window.on("closed", () => {
     closePasswordOverlay(window);
     closePaymentOverlay(window);
+    browserTabTransfers.revokeOwner(window);
     service.dispose();
     browserWindowServices.delete(window);
     void rm(statePath, { force: true }).catch(() => undefined);
@@ -3320,22 +3323,42 @@ function registerIpc(): void {
         throw cause;
       }
     }
+    if (request.type === "browser-prepare-tab-transfer") {
+      if (!requestBrowserService || senderWindow === mainWindow)
+        throw new Error("Only a detached browser tab can begin this transfer.");
+      requestBrowserService.getTabForTransfer(request.tabId);
+      return {
+        ok: true,
+        browserTabTransferToken: browserTabTransfers.issue(
+          senderWindow,
+          request.tabId,
+        ),
+      };
+    }
     if (request.type === "browser-reattach-tab") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      if (senderWindow === mainWindow)
-        throw new Error("This tab is already in the main Kestrel window.");
       if (!mainWindow || mainWindow.isDestroyed())
         throw new Error("The main Kestrel window is unavailable.");
       const targetService = browserServiceForWindow(mainWindow);
       if (!targetService)
         throw new Error("The main Kestrel window is unavailable.");
-      const tab = requestBrowserService.getTabForTransfer(request.tabId);
+      const sourceWindow =
+        senderWindow === mainWindow && request.transferToken
+          ? browserTabTransfers.consume(request.transferToken, request.tabId)
+          : null;
+      const sourceService =
+        senderWindow === mainWindow
+          ? browserServiceForWindow(sourceWindow)
+          : requestBrowserService;
+      if (!sourceService || sourceService === targetService)
+        throw new Error("That detached browser tab is unavailable.");
+      const tab = sourceService.getTabForTransfer(request.tabId);
       let imported = false;
       try {
         await targetService.importTabForTransfer(tab);
         imported = true;
-        await requestBrowserService.removeTabForTransfer(request.tabId);
+        await sourceService.removeTabForTransfer(request.tabId);
       } catch (cause) {
         if (imported)
           await targetService.removeTabForTransfer(tab.id).catch(() => undefined);
@@ -3345,8 +3368,11 @@ function registerIpc(): void {
       mainWindow.focus();
       return {
         ok: true,
-        browserState: requestBrowserService.getState(),
-        browserWindowRole: "detached",
+        browserState:
+          senderWindow === mainWindow
+            ? targetService.getState()
+            : sourceService.getState(),
+        browserWindowRole: senderWindow === mainWindow ? "main" : "detached",
       };
     }
     if (request.type === "browser-find-in-page") {

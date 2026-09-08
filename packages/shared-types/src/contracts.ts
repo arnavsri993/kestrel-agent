@@ -4633,8 +4633,13 @@ export const RendererRequestSchema = z.union([
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	}),
 	z.object({
+		type: z.literal("browser-prepare-tab-transfer"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
 		type: z.literal("browser-reattach-tab"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+		transferToken: z.string().uuid().optional(),
 	}),
 	z.object({
 		type: z.literal("browser-find-in-page"),
@@ -5049,6 +5054,7 @@ export type RendererResponse =
 			ok: true;
 			browserOrganization: UserBrowserTabOrganizationPreview;
 	  }
+	| { ok: true; browserTabTransferToken: string }
 	| {
 			ok: true;
 			browserState: UserBrowserState;

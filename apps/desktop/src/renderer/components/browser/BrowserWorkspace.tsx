@@ -209,6 +209,15 @@ export function BrowserWorkspace({
   }, [openOrganizeTabs, organizeTabsRequestId]);
 
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
+  const prepareTabTransfer = useCallback(async (tabId: string) => {
+    const response = await window.kestrel.request({
+      type: "browser-prepare-tab-transfer",
+      tabId,
+    });
+    if (!response.ok || !("browserTabTransferToken" in response))
+      throw new Error("Kestrel could not authorize this tab transfer.");
+    return response.browserTabTransferToken;
+  }, []);
   const zoomFeedback = browser.zoomFeedback;
   const activeZoomPercent =
     zoomFeedback && zoomFeedback.tabId === activeTab?.id
@@ -860,10 +869,17 @@ export function BrowserWorkspace({
         onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
         onTabDragStateChange={handleTabDragStateChange}
         {...(!isDetachedWindow
-          ? { onDetachTab: (tabId: string) => detachTab(tabId) }
+          ? {
+              onDetachTab: (tabId: string) => detachTab(tabId),
+              onTabDrop: (tabId: string, transferToken: string) =>
+                reattachTab(tabId, transferToken),
+            }
           : {})}
         {...(isDetachedWindow
-          ? { onReattachTab: (tabId: string) => reattachTab(tabId) }
+          ? {
+              onReattachTab: (tabId: string) => reattachTab(tabId),
+              onPrepareTabTransfer: prepareTabTransfer,
+            }
           : {})}
         onReopenClosedTab={(index) => void reopenClosedTab(index)}
         recentlyClosedTabs={state.recentlyClosedTabs}
