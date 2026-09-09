@@ -1,0 +1,49 @@
+export function coreEnvironment(): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(process.env).filter(
+			([key, value]) =>
+				value !== undefined &&
+				![
+					"OPENAI_API_KEY",
+					"OPENAI_API_KEY_SECONDARY",
+					"ANTHROPIC_API_KEY",
+					"ANTHROPIC_API_KEY_SECONDARY",
+					"GEMINI_API_KEY",
+					"NOUS_API_KEY",
+					"GROQ_API_KEY",
+					"MISTRAL_API_KEY",
+					"OPENROUTER_API_KEY",
+					"CLOUDFLARE_API_KEY",
+					"XAI_API_KEY",
+					"DEEPSEEK_API_KEY",
+					"TOGETHER_API_KEY",
+					"FIREWORKS_API_KEY",
+					"NVIDIA_API_KEY",
+					"HUGGINGFACE_API_KEY",
+					"PERPLEXITY_API_KEY",
+					"GITHUB_MODELS_TOKEN",
+					"COHERE_API_KEY",
+					"TOKENROUTER_API_KEY",
+					"BAI_API_KEY",
+					"INFERX_API_KEY",
+					"ZENMUX_API_KEY",
+					"OPENCODE_API_KEY",
+					"SENSENOVA_API_KEY",
+					"GMICLOUD_API_KEY",
+					"TOKENHARBOR_API_KEY",
+					"CLINE_API_KEY",
+					"COMMAND_CODE_API_KEY",
+					"KILO_API_KEY",
+					"ORCAROUTER_API_KEY",
+					"AIHUBMIX_API_KEY",
+					"BRAVE_SEARCH_API_KEY",
+					"GITHUB_TOKEN",
+					"HONCHO_API_KEY",
+					"FAL_KEY",
+					"KESTREL_REMOTE_TARGETS",
+					"KESTREL_GOOGLE_WORKSPACE_OAUTH",
+				].includes(key),
+		),
+	) as Record<string, string>;
+}
+

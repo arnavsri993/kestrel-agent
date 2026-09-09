@@ -29,6 +29,7 @@
     "generate:openclaw2": "node scripts/generate-openclaw2-register.mjs",
     "verify:openclaw2": "node scripts/verify-openclaw2.mjs",
     "test:packaged-cli": "node scripts/smoke-packaged-cli.mjs",
+    "test:node-core": "tsx scripts/smoke-node-core.ts",
     "test:desktop-smoke": "node scripts/smoke-desktop.mjs",
     "test:desktop-single-instance": "node scripts/test-desktop-single-instance.mjs",
     "test:desktop-browser": "node scripts/test-desktop-browser.mjs",
