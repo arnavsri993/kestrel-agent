@@ -1,5 +1,29 @@
 # Kestrel design system
 
+## macOS coherence — September 2026
+
+Kestrel is a browser with adjacent local agent work: browse, ask, inspect,
+approve, and resume. This refinement keeps that working structure and gives
+navigation, forms, and local context a consistent Mac rhythm.
+
+- Dense application chrome, SF system text, 13px controls, 12px support text,
+  4px spacing rhythm, 9px fields, and 14px independent surfaces.
+- Quiet semantic graphite surfaces; opaque reading areas remain legible over
+  user-selected wallpaper. No new accent palette or wallpaper changes.
+- Selection uses a filled rounded row; keyboard focus remains an explicit ring.
+- Home has one elevated composer and a continuous, readable context shelf.
+- Existing feedback and direct manipulation remain; no new motion or libraries.
+- Avoid capsule-shaped forms, tracked uppercase navigation, decorative rules,
+  card hover effects that suggest whole cards are clickable, and nested glass.
+- Why this is not generic: the hierarchy follows real browser tabs, folder-backed
+  chats, local context, and agent controls rather than a dashboard template.
+
+Observed baseline: Home shelves compete with wallpaper, field shapes vary from
+buttons, and sidebar section labels are tiny and widely tracked. These are the
+three primary refinement targets. The automated classifier suggested marketing
+structure; live desktop evidence establishes an existing product redesign.
+
+
 ## Instrument Workbench — August 2026
 
 This is the authoritative desktop system for the product-wide redesign based

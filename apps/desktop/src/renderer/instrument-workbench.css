@@ -224,9 +224,8 @@
 	outline: none;
 }
 
-/* Some search and address controls place their text input inside a visual
- * wrapper. Apply the same true end caps to that wrapper, not the transparent
- * inner input, so the visible field is consistently capsule-shaped. */
+/* Composite search fields share the same geometry as ordinary controls.
+ * Their wrapper owns the boundary; the inner input stays transparent. */
 .unified-ui
 	:is(
 		.browser-address,
@@ -613,16 +612,7 @@
 	box-shadow: none;
 }
 
-.unified-ui .settings-nav button.active::before {
-	position: absolute;
-	top: 9px;
-	bottom: 9px;
-	left: 0;
-	width: 2px;
-	border-radius: 1px;
-	background: var(--focus);
-	content: "";
-}
+
 
 .unified-ui .settings-content-stage,
 .unified-ui .settings-content {

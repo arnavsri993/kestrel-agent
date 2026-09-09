@@ -730,9 +730,9 @@
 
 .kestrel-widget-shelves {
 	gap: 0;
-	border-top: 1px solid var(--line);
-	border-bottom: 1px solid var(--line);
-	background: color-mix(in srgb, var(--surface) 28%, transparent);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-surface);
+	background: var(--panel);
 }
 
 .kestrel-widget-shelves .kestrel-widget-card {
@@ -745,7 +745,7 @@
 
 .kestrel-widget-shelves .kestrel-widget-card:hover {
 	border-color: transparent;
-	background: color-mix(in srgb, var(--surface) 48%, transparent);
+	background: transparent;
 	box-shadow: none;
 }
 
@@ -778,7 +778,7 @@
 .kestrel-widget-list strong,
 .kestrel-widget-action-list li button,
 .kestrel-widget-empty strong {
-	font-size: 11.5px;
+	font-size: 12.5px;
 }
 
 .kestrel-widget-card-body {
