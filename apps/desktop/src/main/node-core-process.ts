@@ -45,4 +45,3 @@ export function nodeCoreProcess(options: {
 		kill: () => child.kill(),
 	};
 }
-

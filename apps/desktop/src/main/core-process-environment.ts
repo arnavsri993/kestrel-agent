@@ -46,4 +46,3 @@ export function coreEnvironment(): Record<string, string> {
 		),
 	) as Record<string, string>;
 }
-

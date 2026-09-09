@@ -6,4 +6,3 @@ export interface CoreProcess {
 	postMessage(message: unknown): void;
 	kill(): boolean;
 }
-
