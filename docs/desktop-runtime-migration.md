@@ -26,28 +26,38 @@ a runtime from PATH or inherit the supervisor's environment implicitly.
 With a supported Node runtime and Node-compatible native dependencies:
 
 ```sh
-corepack pnpm build:desktop
+corepack pnpm build:core
 corepack pnpm test:node-core
 ```
 
 The smoke runner imports the real supervisor without mocking Electron, launches
-the built Agent Core with Node, opens a disposable database, requests a validated
-workspace snapshot, kills the child, waits for automatic recovery, reads another
+the standalone Agent Core build with Node, opens a disposable database, requests
+a validated workspace snapshot, kills the child, waits for automatic recovery, reads another
 snapshot, and shuts down. It uses a temporary home and empty provider configuration;
 it does not open the user's profile or require a model account.
 
-The build command still uses the existing Electron-oriented bundler. Passing the
-Node smoke proves that supervision and the core process can run without an
-Electron host; it does not prove a replacement browser window, packaging system,
-credential store or renderer bridge. Packaging may rebuild native dependencies
-for Electron, so run the Node smoke before packaging or restore Node-compatible
-native dependencies before repeating it.
+## Standalone service
+
+`apps/core-service` owns core bootstrap and the Node parent-port transport. Its
+esbuild build bundles JavaScript dependencies, leaves native SQLite and Sharp
+modules external, copies database migrations, and rejects Electron imports. The
+build is independent of electron-vite and emits `apps/core-service/out/index.js`.
+The Node host uses that entry with the current workspace's Node-compatible native
+dependencies. This is a runnable service artifact, not a self-contained installer.
+
+The desktop utility entry only selects its Electron parent port or Node adapter
+and calls the same service bootstrap. No duplicate core implementation exists.
+CI runs the Node smoke after the workspace build, before desktop packaging can
+rebuild native dependencies for Electron. Packaging may change native module ABI;
+restore Node-compatible native dependencies before repeating a Node smoke if needed.
+
+Passing the Node smoke proves core bootstrap, requests and recovery work without
+Electron. It does not prove a replacement browser window, credential store or
+renderer bridge.
 
 ## Next boundaries
 
-A following slice should separate the utility entry point's parent-port adapter
-from core bootstrap, then provide a standalone Node build. A Chromium host still
-needs implementations for visible browser views, window lifecycle, secure
+A Chromium host still needs implementations for visible browser views, window lifecycle, secure
 storage, permission prompts and renderer transport. Keep each transition backed
 by the current desktop adapter and real process tests until its replacement has
 been exercised.

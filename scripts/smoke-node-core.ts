@@ -10,7 +10,10 @@ import { nodeCoreProcess } from "../apps/desktop/src/main/node-core-process";
 
 // Uses the real built core with a disposable profile, no provider credentials,
 // and no Electron process or mocked transport.
+const entryPath = resolve("apps/core-service/out/index.js");
+const previousDirectory = process.cwd();
 const root = await mkdtemp(join(tmpdir(), "kestrel-node-core-"));
+process.chdir(root);
 let child: CoreProcess;
 let launches = 0;
 const recoveryTimeout = new AbortController();
@@ -21,7 +24,7 @@ const supervisor = new CoreSupervisor(undefined, undefined, {
 		launches++;
 		child = nodeCoreProcess({
 			executable: process.execPath,
-			entryPath: resolve("apps/desktop/out/main/utility.js"),
+			entryPath,
 			env: { HOME: root, PATH: process.env.PATH, KESTREL_DATA_DIR: root },
 		});
 		return child;
@@ -52,5 +55,6 @@ try {
 } finally {
 	clearTimeout(watchdog);
 	await supervisor.stop();
+	process.chdir(previousDirectory);
 	await rm(root, { recursive: true, force: true });
 }

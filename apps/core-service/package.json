@@ -1,0 +1,28 @@
+{
+  "name": "@kestrel/core-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./service": "./src/service.ts",
+    "./node-port": "./src/node-port.ts",
+    "./transport": "./src/transport.ts",
+    "./ipc-codec": "./src/ipc-codec.ts"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@kestrel/agent-core": "workspace:*",
+    "@kestrel/database": "workspace:*",
+    "@kestrel/shared-types": "workspace:*",
+    "better-sqlite3": "13.0.1",
+    "sharp": "0.35.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3",
+    "esbuild": "0.28.1"
+  }
+}
