@@ -2316,6 +2316,40 @@ describe("UserBrowserService", () => {
     );
   });
 
+  it("preserves UTF-8-qualified Microsoft sign-in POSTs when opening managed tabs", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://contoso.example/sign-in");
+    const source = electron.state.views[0]!.webContents;
+    const postBody = {
+      contentType: "application/x-www-form-urlencoded; charset=UTF-8",
+      data: [
+        {
+          type: "rawData",
+          bytes: Buffer.from("login_hint=student%40contoso.example", "utf8"),
+        },
+      ],
+    };
+    const signInUrl =
+      "https://login.microsoftonline.com/4cd64bfe-a7a1-4304-947b-1393797262a2/login";
+
+    expect(
+      source.windowOpenHandler?.({
+        url: signInUrl,
+        disposition: "foreground-tab",
+        postBody,
+      }),
+    ).toEqual({ action: "deny" });
+
+    await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
+    const popup = electron.state.views.at(-1)!.webContents;
+    expect(popup.loadURL).toHaveBeenCalledWith(signInUrl, {
+      postData: postBody.data,
+      extraHeaders:
+        "Content-Type: application/x-www-form-urlencoded; charset=UTF-8",
+    });
+  });
+
   it("awaits CDP clicks and opens a managed tab for new window links", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
