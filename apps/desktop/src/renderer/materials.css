@@ -3,9 +3,9 @@
 
    When the main process enables NSVisualEffectView vibrancy on a shell
    window, the preload marks <html data-kestrel-material="native"> before
-   first paint. The rules below let the real OS material through exactly where
-   chrome belongs — the navigation rail, the agent rail, and the browser
-   chrome — while every content surface keeps painting the opaque graphite
+   first paint. Only the tab bars let the real OS material through. Navigation
+   rails, the toolbar, and bookmarks use a solid soft charcoal gray, while
+   every content surface keeps painting the opaque graphite
    canvas. Windows/Linux and the overlay windows never get the attribute, so
    their rendering is untouched.
    ========================================================================== */
@@ -23,26 +23,22 @@
 	background: transparent;
 }
 
-/* Rails: graphite tint over the OS sidebar material. The tint keeps Kestrel's
-   ramp identity while wallpaper light still modulates the surface. */
+/* Keep navigation and page controls calm and independent of the wallpaper. */
 :root[data-kestrel-material="native"] .kestrel-sidebar,
-:root[data-kestrel-material="native"] .agent-sidebar {
-	background: var(--material-rail);
+:root[data-kestrel-material="native"] .agent-sidebar,
+:root[data-kestrel-material="native"] .browser-toolbar,
+:root[data-kestrel-material="native"] .browser-bookmarks-bar {
+	background: #252628;
 	backdrop-filter: none;
 	-webkit-backdrop-filter: none;
 }
 
-/* Browser chrome: tab strip, toolbar, and bookmarks bar sit on the same
-   material, the way Safari unifies its chrome. */
-:root[data-kestrel-material="native"] .browser-tab-row-horizontal,
-:root[data-kestrel-material="native"] .browser-toolbar,
-:root[data-kestrel-material="native"] .browser-bookmarks-bar {
+/* Preserve the native material on the tab strip. */
+:root[data-kestrel-material="native"] .browser-tab-row-horizontal {
 	background: var(--material-chrome);
 }
 
-/* Vertical tab layouts put the tab rail beside the content; give it the rail
-   material so it reads as one continuous source list with the navigation
-   rail. */
+/* Vertical tabs retain the same native material treatment. */
 :root[data-kestrel-material="native"] .browser-tab-row-vertical {
 	background: var(--material-rail);
 }
@@ -56,15 +52,9 @@
 /* macOS "Reduce transparency" renders the material opaque at the OS level;
    match it exactly so contrast stays deterministic. */
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-	:root[data-kestrel-material="native"] .kestrel-sidebar,
-	:root[data-kestrel-material="native"] .agent-sidebar,
 	:root[data-kestrel-material="native"] .browser-tab-row-vertical,
 	:root[data-kestrel-material="native"] .browser-tab-row-horizontal {
 		background: var(--sidebar);
 	}
 
-	:root[data-kestrel-material="native"] .browser-toolbar,
-	:root[data-kestrel-material="native"] .browser-bookmarks-bar {
-		background: var(--canvas);
-	}
 }
