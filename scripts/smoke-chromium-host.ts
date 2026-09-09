@@ -11,7 +11,7 @@ const pending = new Set<import("node:http").ServerResponse>();
 const server = createServer(async (request, response) => {
   if (request.url === "/page") {
     response.setHeader("Content-Type", "text/html");
-    response.end('<!doctype html><title>Chromium browser fixture</title><h1>Real browser tab</h1><a href="/next">Next page</a>'); return;
+    response.end('<!doctype html><title>Chromium browser fixture</title><h1>Real browser tab</h1><a href="/next">Next page</a><a href="/next" target="_blank">Open popup</a>'); return;
   }
   if (request.url === "/next") { response.end('<!doctype html><title>Next fixture page</title><h1>Navigation works</h1>'); return; }
   if (request.url === "/v1/models") { response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify({ data: [{ id: "fixture-model", object: "model" }] })); return; }
@@ -57,7 +57,16 @@ try {
   await expect(remote.getByRole("heading", { name: "Navigation works" })).toBeVisible();
   await remote.goBack();
   await expect(remote.getByRole("heading", { name: "Real browser tab" })).toBeVisible();
+  const popupPromise = remote.waitForEvent("popup");
+  await remote.getByRole("link", { name: "Open popup" }).click();
+  const popup = await popupPromise;
+  await expect(popup.getByRole("heading", { name: "Navigation works" })).toBeVisible();
+  assert.equal(await popup.evaluate(() => typeof (window as any).kestrelHost), "undefined");
   await page.bringToFront();
+  await expect(page.getByRole("button", { name: "Switch to Next fixture page", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close Next fixture page", exact: true }).click();
+  await expect.poll(() => popup.isClosed()).toBe(true);
+  await expect(page.getByRole("button", { name: "Switch to Next fixture page", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "＋ New conversation" }).click();
   await expect(page.getByRole("heading", { name: "New conversation", exact: true })).toBeVisible();
   await page.getByLabel("Message", { exact: true }).fill("Hold this response");

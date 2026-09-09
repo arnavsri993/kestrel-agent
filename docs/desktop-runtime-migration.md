@@ -91,3 +91,10 @@ local model fixture. It verifies conversation replies, reload, cancellation,
 web navigation, bridge rejection, draft isolation and narrow layout. Set
 `KESTREL_CHROMIUM_HEADED=1` to run the same checks visibly. Fixture responses
 prove integration, not a live provider login or model-quality claim.
+
+The Chromium tab manager owns both explicitly opened tabs and page-created
+popups (`target=_blank` / `window.open`). Context page events register each page
+once, excluding the privileged shell; navigation and close events refresh the
+sidebar. A shared 16-tab limit also applies to popups, and excess pages close.
+Closing a tab releases capacity. Remote pages and their popups never receive the
+shell binding. Browser history and document navigation remain Chromium-owned.
