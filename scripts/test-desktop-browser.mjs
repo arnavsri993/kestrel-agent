@@ -9,6 +9,7 @@ import { _electron as electron } from "@playwright/test";
 import {
 	openKestrelDestination,
 	revealNewTabControl,
+	selectSettingsSection,
 } from "./desktop-browser-test-helpers.mjs";
 
 function readMacQuarantine(path) {
@@ -1028,7 +1029,7 @@ try {
 		.getByRole("tab", { name: /^Browser/ })
 		.click();
 	await page
-		.getByRole("heading", { name: "Browser", exact: true })
+		.getByRole("heading", { name: "Startup", exact: true })
 		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 	await selectNewTab();
@@ -2813,14 +2814,18 @@ try {
 	await browserSettings.click();
 	assert.equal(await browserSettings.getAttribute("aria-selected"), "true");
 	await page
-		.getByRole("heading", { name: "Browser", exact: true })
+		.getByRole("heading", { name: "Startup", exact: true })
 		.waitFor();
+	await selectSettingsSection(page, "browser-appearance", "Appearance & new tab");
 	await page
 		.locator("label.background-option")
 		.filter({ hasText: "Mountain valley" })
 		.click();
+	await selectSettingsSection(page, "browser-search", "Search & address bar");
 	await page.getByLabel("Search engine", { exact: true }).selectOption("ecosia");
+	await selectSettingsSection(page, "browser-appearance", "Appearance & new tab");
 	await page.getByLabel("Tab sizing", { exact: true }).selectOption("shrinking");
+	await selectSettingsSection(page, "browser-privacy", "Privacy & permissions");
 	const useCurrentPage = page.getByRole("switch", {
 		name: "Use current page context with agent",
 	});
@@ -2832,6 +2837,7 @@ try {
 	);
 	await useCurrentPage.click();
 	assert.equal(await useCurrentPage.getAttribute("aria-checked"), "true");
+	await selectSettingsSection(page, "browser-appearance", "Appearance & new tab");
 	await page.getByLabel("Tab layout").selectOption("vertical");
 	await page.getByLabel("Tab sizing", { exact: true }).waitFor({ state: "detached" });
 	state = await waitForBrowserState(

@@ -183,7 +183,6 @@ import {
 	loadInitialDesktopState,
 	startupFailureMessage,
 } from "./startup-state";
-import { personalizedConfigurationPrompts } from "./configuration-prompts";
 import { userFacingError } from "./error-copy";
 import { learnedSkillDisplayName } from "./learned-skill-presentation";
 import {
@@ -9283,7 +9282,7 @@ function Settings({
 	const [confirmation, setConfirmation] = useState("");
 	const [resetError, setResetError] = useState("");
 	const [section, setSection] = useState<SettingsSection>(
-		normalizeSettingsSection(initialSection),
+		normalizeSettingsSection(initialSection) === "browser" ? "browser-startup" : normalizeSettingsSection(initialSection),
 	);
 	const [scope, setScope] = useState<SettingsScope>(
 		settingsScopeForSection(initialSection),
@@ -9293,21 +9292,22 @@ function Settings({
 	const settingsSearchRef = useRef<HTMLInputElement>(null);
 	useEffect(() => {
 		if (!initialSection) return;
-		const normalized = normalizeSettingsSection(initialSection);
+		const normalized = initialSection === "browser" ? "browser-startup" : normalizeSettingsSection(initialSection);
 		setSection(normalized);
 		setScope(settingsScopeForSection(normalized));
 	}, [initialSection, sectionRequestId]);
 	const chooseSection = useCallback(
 		(next: SettingsSection, anchor = "") => {
-			const normalized = normalizeSettingsSection(next);
+			const normalized = next === "browser" ? "browser-startup" : normalizeSettingsSection(next);
 			setScope(settingsScopeForSection(normalized));
 			setSection(normalized);
+			setSettingsQuery("");
 			if (anchor) setFocusAnchor(anchor);
 		},
 		[],
 	);
 	const visibleSections = useMemo(
-		() => SETTINGS_SECTIONS.filter((candidate) => candidate.scope === scope),
+		() => SETTINGS_SECTIONS.filter((candidate) => candidate.scope === scope && candidate.id !== "browser"),
 		[scope],
 	);
 	const searchResults = useMemo(
@@ -9507,30 +9507,7 @@ function Settings({
 		localStorage.setItem("kestrel:setup-step", setupSteps[0]!.id);
 		location.reload();
 	}
-	const configurationPrompts = personalizedConfigurationPrompts({
-		density: snapshot.configuration.ui.density,
-		showToolActivity: snapshot.configuration.ui.showToolActivity,
-		showConfigurationDiffs: snapshot.configuration.ui.showConfigurationDiffs,
-		...(browser.state?.settings.searchEngine
-			? { searchEngine: browser.state.settings.searchEngine }
-			: {}),
-		...(browser.state?.settings.tabLayout
-			? { tabLayout: browser.state.settings.tabLayout }
-			: {}),
-		contextEnabled: browserContextEnabled,
-		...(typeof login?.enabled === "boolean"
-			? { launchAtLogin: login.enabled }
-			: {}),
-		paused: snapshot.agentState === "paused",
-	});
 	const route = snapshot.modelRouting.currentDecision;
-	const basicSections = visibleSections.filter(
-		(candidate) => candidate.tier === "basic",
-	);
-	const advancedSections = visibleSections.filter(
-		(candidate) => candidate.tier === "advanced",
-	);
-	const activeSection = sectionDefinition(section);
 	return (
 		<PageFrame
 			title="Settings"
@@ -9538,200 +9515,146 @@ function Settings({
 			className="settings-page-frame"
 			{...(onBack ? { onBack } : {})}
 		>
-			<div
-				className="settings-scope-switcher"
-				role="tablist"
-				aria-label="Settings category"
-			>
-				<button
-					type="button"
-					role="tab"
-					aria-selected={scope === "browser"}
-					className={scope === "browser" ? "active" : ""}
-					onClick={() => chooseSection("browser")}
+			<div className="settings-toolbar">
+				<div
+					className="settings-scope-switcher"
+					role="tablist"
+					aria-label="Settings category"
 				>
-					<Icon name="browser" />
-					<span>
-						<strong>Browser</strong>
-						<small>Tabs, search, and privacy</small>
-					</span>
-				</button>
-				<button
-					type="button"
-					role="tab"
-					aria-selected={scope === "agent"}
-					className={scope === "agent" ? "active" : ""}
-					onClick={() => chooseSection("agent-general")}
-				>
-					<Icon name="agent" />
-					<span>
-						<strong>Agent</strong>
-						<small>Models, memory, and work</small>
-					</span>
-				</button>
-			</div>
-			<label className="settings-section-picker">
-				<span>Settings section</span>
-				<select
-					value={section}
-					onChange={(event) => {
-						const next = event.target.value as SettingsSection;
-						chooseSection(next);
-					}}
-				>
-					<optgroup label="Browser">
-						{SETTINGS_SECTIONS.filter(
-							(candidate) => candidate.scope === "browser",
-						).map((candidate) => (
-							<option key={candidate.id} value={candidate.id}>
-								{candidate.label}
-							</option>
-						))}
-					</optgroup>
-					<optgroup label="Agent">
-						{SETTINGS_SECTIONS.filter(
-							(candidate) => candidate.scope === "agent",
-						).map((candidate) => (
-							<option key={candidate.id} value={candidate.id}>
-								{candidate.label}
-							</option>
-						))}
-					</optgroup>
-				</select>
-			</label>
-			<div className="settings-search" role="search">
-				<label className="settings-search-field">
-					<Icon name="search" />
-					<span className="sr-only">Search settings</span>
-					<input
-						ref={settingsSearchRef}
-						value={settingsQuery}
-						onChange={(event) => setSettingsQuery(event.target.value)}
-						placeholder="Search Browser and Agent settings"
-						aria-label="Search Browser and Agent settings"
-						aria-controls="settings-search-results"
-					/>
-					{settingsQuery && (
-						<button
-							type="button"
-							className="settings-search-clear"
-							aria-label="Clear settings search"
-							onClick={() => {
-								setSettingsQuery("");
-								settingsSearchRef.current?.focus();
-							}}
-						>
-							<Icon name="close" />
-						</button>
-					)}
-				</label>
-				{settingsQuery && (
-					<div
-						id="settings-search-results"
-						className="settings-search-results"
-						aria-live="polite"
+					<button
+						type="button"
+						role="tab"
+						aria-selected={scope === "browser"}
+						className={scope === "browser" ? "active" : ""}
+						onClick={() => chooseSection("browser")}
 					>
-						{searchResults.length === 0 ? (
-							<p className="settings-search-empty">
-								No settings match “{settingsQuery}”.
-							</p>
-						) : (
-							<>
-								<p className="settings-search-count">
-									{searchResults.length} matching setting
-									{searchResults.length === 1 ? "" : "s"}
-								</p>
-								{searchResults.map((entry) => (
-									<button
-										key={entry.id}
-										type="button"
-										className="settings-search-result"
-										onClick={() => chooseSection(entry.section, entry.anchor)}
-									>
-										<span className="settings-search-result-copy">
-											<strong>{entry.label}</strong>
-											<small>{entry.description}</small>
-										</span>
-										<span className="settings-search-result-category">
-											{sectionDefinition(entry.section).label} · {entry.tier}
-										</span>
-									</button>
-								))}
-							</>
+						<Icon name="browser" />
+						<span>
+							<strong>Browser</strong>
+						</span>
+					</button>
+					<button
+						type="button"
+						role="tab"
+						aria-selected={scope === "agent"}
+						className={scope === "agent" ? "active" : ""}
+						onClick={() => chooseSection("agent-general")}
+					>
+						<Icon name="agent" />
+						<span>
+							<strong>Agent</strong>
+						</span>
+					</button>
+				</div>
+				<label className="settings-section-picker">
+					<span>Settings section</span>
+					<select
+						value={section}
+						onChange={(event) => {
+							const next = event.target.value as SettingsSection;
+							chooseSection(next);
+						}}
+					>
+						<optgroup label="Browser">
+							{SETTINGS_SECTIONS.filter(
+								(candidate) => candidate.scope === "browser" && candidate.id !== "browser",
+							).map((candidate) => (
+								<option key={candidate.id} value={candidate.id}>
+									{candidate.label}
+								</option>
+							))}
+						</optgroup>
+						<optgroup label="Agent">
+							{SETTINGS_SECTIONS.filter(
+								(candidate) => candidate.scope === "agent",
+							).map((candidate) => (
+								<option key={candidate.id} value={candidate.id}>
+									{candidate.label}
+								</option>
+							))}
+						</optgroup>
+					</select>
+				</label>
+				<div className="settings-search" role="search">
+					<label className="settings-search-field">
+						<Icon name="search" />
+						<span className="sr-only">Search settings</span>
+						<input
+							ref={settingsSearchRef}
+							value={settingsQuery}
+							onChange={(event) => setSettingsQuery(event.target.value)}
+							placeholder="Search Browser and Agent settings"
+							aria-label="Search Browser and Agent settings"
+							aria-controls="settings-search-results"
+						/>
+						{settingsQuery && (
+							<button
+								type="button"
+								className="settings-search-clear"
+								aria-label="Clear settings search"
+								onClick={() => {
+									setSettingsQuery("");
+									settingsSearchRef.current?.focus();
+								}}
+							>
+								<Icon name="close" />
+							</button>
 						)}
-					</div>
-				)}
+					</label>
+					{settingsQuery && (
+						<div
+							id="settings-search-results"
+							className="settings-search-results"
+							aria-live="polite"
+						>
+							{searchResults.length === 0 ? (
+								<p className="settings-search-empty">
+									No settings match “{settingsQuery}”.
+								</p>
+							) : (
+								<>
+									<p className="settings-search-count">
+										{searchResults.length} matching setting
+										{searchResults.length === 1 ? "" : "s"}
+									</p>
+									{searchResults.map((entry) => (
+										<button
+											key={entry.id}
+											type="button"
+											className="settings-search-result"
+											onClick={() => chooseSection(entry.section, entry.anchor)}
+										>
+											<span className="settings-search-result-copy">
+												<strong>{entry.label}</strong>
+												<small>{entry.description}</small>
+											</span>
+											<span className="settings-search-result-category">
+												{sectionDefinition(entry.section).label} · {entry.tier}
+											</span>
+										</button>
+									))}
+								</>
+							)}
+						</div>
+					)}
+				</div>
 			</div>
 			<div className="settings-layout">
 				<nav className="settings-nav" aria-label="Settings sections">
-					<div className="settings-nav-heading">
-						<strong>{scope === "browser" ? "Browser" : "Agent"}</strong>
-						<small>{activeSection.description}</small>
-					</div>
-					{(["basic", "advanced"] as const).map((tier) => {
-						const tierSections = tier === "basic" ? basicSections : advancedSections;
-						return (
-							<div className="settings-nav-group" key={tier}>
-								<h3>{tier === "basic" ? "Basic" : "Advanced"}</h3>
-								{tierSections.map((candidate) => (
-									<button
-										key={candidate.id}
-										type="button"
-										className={section === candidate.id ? "active" : ""}
-										aria-current={section === candidate.id ? "page" : undefined}
-										title={candidate.description}
-										onClick={() => chooseSection(candidate.id)}
-									>
-										<span>{candidate.label}</span>
-									</button>
-								))}
-							</div>
-						);
-					})}
+					{visibleSections.map((candidate) => (
+						<button
+							key={candidate.id}
+							type="button"
+							className={section === candidate.id ? "active" : ""}
+							aria-current={section === candidate.id ? "page" : undefined}
+							onClick={() => chooseSection(candidate.id)}
+						>
+							{candidate.label}
+						</button>
+					))}
 				</nav>
 					<div className="settings-content-stage">
-					<AnimatePresence initial={false} mode="popLayout">
-					<motion.div
-						key={section}
-						className="settings-content"
-						initial={reduced ? false : { opacity: 0 }}
-						animate={{ opacity: 1 }}
-						exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
-						transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
-					>
-					{section === "agent-general" && (
-						<div className="agent-config-banner" role="region" aria-label="Agent configuration">
-							<div className="agent-config-banner-header">
-								<span className="agent-config-badge">
-									<Icon name="agent" />
-									<span>Ask in chat</span>
-								</span>
-								<strong>Ask Kestrel to change supported settings</strong>
-							</div>
-							<div className="agent-config-chips" aria-label="Personalized configuration requests">
-								<span className="chips-label">Try asking:</span>
-								{configurationPrompts.map((prompt) => (
-									<button
-										key={prompt}
-										type="button"
-										className="agent-config-chip"
-										onClick={() => {
-											const textarea = document.querySelector<HTMLTextAreaElement>(
-												".agent-conversation-host textarea",
-											);
-											if (textarea) {
-												textarea.value = prompt;
-												textarea.dispatchEvent(new Event("input", { bubbles: true }));
-												textarea.focus();
-											}
-										}}
-									>
-										<span>{prompt}</span>
-									</button>
-								))}
-							</div>
-						</div>
-						)}
+					<div key={section} className="settings-content">
 						{(section === "browser" || section.startsWith("browser-")) && (
 							<BrowserSettings
 								browser={browser}
@@ -9756,7 +9679,7 @@ function Settings({
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-general-title">Autonomy and behavior</h2>
-							<p>Set startup, communication, and initiative.</p>
+
 						</header>
 						<section className="settings-stack" aria-label="General settings">
 						<article className="setting-row">
@@ -9785,7 +9708,7 @@ function Settings({
 						<article className="setting-row routing-setting">
 							<div>
 								<strong>Communication style</strong>
-								<p>Choose how Kestrel explains work. Safety settings stay the same.</p>
+
 							</div>
 								<div
 									className="segmented"
@@ -9837,7 +9760,7 @@ function Settings({
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-models-title">Routing and providers</h2>
-							<p>Set routing priorities, check providers, and limit spend.</p>
+
 						</header>
 					<section
 						className="settings-stack"
@@ -10049,7 +9972,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-intelligence-title">Memory and learning</h2>
-								<p>Review memory, context, and learned skills.</p>
+
 							</header>
 						<section
 							className="settings-stack"
@@ -10075,7 +9998,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-privacy-title">Permissions and sandbox</h2>
-								<p>Manage approval rules and desktop access.</p>
+
 							</header>
 						<section
 							className="settings-stack"
@@ -10145,7 +10068,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-advanced-title">Diagnostics and organization</h2>
-								<p>Check health and organize local agents.</p>
+
 							</header>
 						<section className="settings-stack" aria-label="Advanced settings">
 							<ObservabilitySettings />
@@ -10154,8 +10077,7 @@ function Settings({
 							</section>
 							</section>
 						)}
-						</motion.div>
-					</AnimatePresence>
+					</div>
 				</div>
 			</div>
 			</PageFrame>

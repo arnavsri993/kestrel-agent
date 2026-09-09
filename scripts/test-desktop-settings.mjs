@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -18,6 +18,8 @@ const executablePath = packagedExecutable
 const launchArgs = packagedExecutable
   ? ["--use-mock-keychain"]
   : [resolve("apps/desktop")];
+const evidence = process.env.KESTREL_SETTINGS_EVIDENCE;
+if (evidence) mkdirSync(evidence, { recursive: true });
 let application;
 
 async function waitForStableSearchResult(page) {
@@ -75,8 +77,19 @@ try {
   await page.reload();
   await page.locator("#runtime-prompt").waitFor();
 
+  await page.setViewportSize({ width: 1800, height: 1000 });
   await openKestrelDestination(page, "Settings");
   await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+  await page.getByRole("tab", { name: "Browser", exact: true }).click();
+  await page.locator('[data-settings-panel="browser-startup"]').waitFor();
+  assert.equal(await page.locator(".browser-settings-panel").count(), 1,
+    "Browser entry must show one focused category");
+  assert.equal(await page.locator(".settings-nav").getByRole("button", { name: "Browser", exact: true }).count(), 0);
+  if (evidence) await page.screenshot({ path: join(evidence, "startup-desktop.png") });
+  await page.getByRole("tab", { name: "Agent", exact: true }).click();
+  await page.getByRole("heading", { name: "Autonomy and behavior" }).waitFor();
+  assert.equal(await page.locator(".agent-config-banner").count(), 0);
+  if (evidence) await page.screenshot({ path: join(evidence, "agent-desktop.png") });
   const search = page.getByLabel("Search Browser and Agent settings");
   await search.fill("sleeping tab timeout");
   const result = page
@@ -89,6 +102,7 @@ try {
 
   const timeout = page.getByLabel("Sleeping tab timeout", { exact: true });
   await timeout.waitFor();
+  assert.equal(await search.inputValue(), "", "Choosing a result should dismiss search results");
   await page.waitForFunction(
     () => document.activeElement?.getAttribute("aria-label") === "Sleeping tab timeout",
   );
@@ -133,6 +147,24 @@ try {
     narrowLayout.documentWidth <= narrowLayout.width + 1,
     `Settings overflowed narrow layout: ${JSON.stringify(narrowLayout)}`,
   );
+
+  if (evidence) await page.screenshot({ path: join(evidence, "extensions-narrow.png") });
+
+  const sections = await page.locator(".settings-section-picker option").evaluateAll(
+    (options) => options.map((option) => ({ value: option.value, label: option.textContent.trim() })),
+  );
+  for (const width of [1800, 1000, 600]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const section of sections) {
+      await selectSettingsSection(page, section.value, section.label);
+      const overflow = await page.locator(".settings-content").evaluate((element) => ({
+        width: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      }));
+      assert.ok(overflow.scrollWidth <= overflow.width + 1,
+        `${section.value} overflows at ${width}px: ${JSON.stringify(overflow)}`);
+    }
+  }
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   const reducedMotion = await page.locator(".settings-search-field").evaluate((element) => {
