@@ -68,6 +68,43 @@ function readPinnedExtensions(): string[] {
   }
 }
 
+function BrowserDownloadProgressRing({
+  progress,
+}: {
+  progress: number | undefined;
+}) {
+  const isIndeterminate = progress === undefined;
+
+  return (
+    <svg
+      className={`browser-download-progress-ring${isIndeterminate ? " is-indeterminate" : ""}`}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <g transform="rotate(-90 12 12)">
+        <circle
+          className="browser-download-progress-ring-track"
+          cx="12"
+          cy="12"
+          r="10"
+          pathLength="100"
+        />
+        <circle
+          className="browser-download-progress-ring-value"
+          cx="12"
+          cy="12"
+          r="10"
+          pathLength="100"
+          strokeDasharray={isIndeterminate ? "28 72" : "100"}
+          {...(isIndeterminate
+            ? {}
+            : { strokeDashoffset: 100 - Math.max(0, Math.min(100, progress)) })}
+        />
+      </g>
+    </svg>
+  );
+}
+
 function BrowserDownloadsPopover({
   downloads,
   closeMenu,
@@ -417,6 +454,12 @@ export function BrowserToolbar({
       count + (download.status === "progressing" ? 1 : 0),
     0,
   );
+  const activeDownload = downloads.find(
+    (download) => download.status === "progressing",
+  );
+  const activeDownloadProgress = activeDownload
+    ? downloadProgress(activeDownload)
+    : undefined;
 
   function clearSuggestionsCloseTimer() {
     if (suggestionsCloseTimerRef.current === null) return;
@@ -1180,7 +1223,9 @@ export function BrowserToolbar({
           className={`browser-toolbar-menu-trigger browser-toolbar-secondary ${downloadsOpen ? "active" : ""}`}
           aria-label={
             activeDownloadCount > 0
-              ? `Downloads, ${activeDownloadCount} in progress`
+              ? activeDownloadProgress === undefined
+                ? `Downloads, ${activeDownloadCount} in progress`
+                : `Downloads, ${activeDownloadCount} in progress, ${activeDownloadProgress}% complete`
               : "Downloads"
           }
           aria-haspopup="menu"
@@ -1189,12 +1234,12 @@ export function BrowserToolbar({
           title="Downloads (⌘J)"
           onClick={toggleDownloads}
         >
-          <Icon name="downloads" />
-          {activeDownloadCount > 0 && (
-            <span className="browser-download-progress-badge" aria-hidden="true">
-              {activeDownloadCount > 9 ? "9+" : activeDownloadCount}
-            </span>
-          )}
+          <span className="browser-download-trigger-icon">
+            <Icon name="downloads" />
+            {activeDownload && (
+              <BrowserDownloadProgressRing progress={activeDownloadProgress} />
+            )}
+          </span>
         </button>
         <button
           ref={browserMenuTriggerRef}
