@@ -5,10 +5,6 @@ import {
 } from "@kestrel/database";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("electron", () => ({
-	utilityProcess: { fork: vi.fn() },
-}));
-
 import { type CoreBootstrapConfig, CoreSupervisor } from "./core-supervisor";
 
 class FakeCoreProcess extends EventEmitter {

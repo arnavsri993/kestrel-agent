@@ -16,6 +16,7 @@
     "package:mac:mdm": "pnpm build && MACOSX_DEPLOYMENT_TARGET=13.0 npm_config_arch=arm64 npm_config_target_arch=arm64 electron-builder --mac pkg --arm64 --config electron-builder.yml"
   },
   "dependencies": {
+    "@kestrel/core-service": "workspace:*",
     "@kestrel/agent-core": "workspace:*",
     "@kestrel/database": "workspace:*",
     "@kestrel/encryption": "workspace:*",
