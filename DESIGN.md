@@ -20,7 +20,9 @@ navigation, forms, and local context a consistent Mac rhythm.
 
 Observed baseline: Home shelves compete with wallpaper, field shapes vary from
 buttons, and sidebar section labels are tiny and widely tracked. These are the
-three primary refinement targets. The automated classifier suggested marketing
+three primary refinement targets. Installed review also identified URL entry
+actions wrapping too early; flexible fields now keep the action adjacent when
+space permits and wrap at narrow widths. The automated classifier suggested marketing
 structure; live desktop evidence establishes an existing product redesign.
 
 
