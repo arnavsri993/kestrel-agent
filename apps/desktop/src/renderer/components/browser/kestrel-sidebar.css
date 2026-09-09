@@ -607,12 +607,12 @@
 	min-width: 0;
 	margin: 0;
 	padding: 0 var(--kestrel-sidebar-content-inset) 8px;
-	color: var(--faint);
-	font-size: 11px;
-	font-weight: 650;
-	letter-spacing: 0.1em;
-	line-height: 15px;
-	text-transform: uppercase;
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0;
+	line-height: 16px;
+	text-transform: none;
 }
 
 .kestrel-sidebar-section-heading {
