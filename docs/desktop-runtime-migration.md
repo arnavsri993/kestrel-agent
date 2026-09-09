@@ -1,11 +1,12 @@
 # Incremental desktop runtime migration
 
 Kestrel's installed desktop still uses Electron. Chromium is the target browser
-engine; a replacement desktop host has not yet been implemented or validated.
+engine; a thin Chromium preview host now runs independently, but is not the replacement
+for the full desktop yet.
 
 ## Agent Core supervision boundary
 
-`apps/desktop/src/main/core-supervisor.ts` no longer imports Electron or chooses
+`apps/core-service/src/core-supervisor.ts` no longer imports Electron or chooses
 how to launch a process. Its required `processFactory` supplies the small
 `CoreProcess` contract from `core-process.ts`. The supervisor retains bootstrap,
 validated messages, request deadlines, browser cancellation, crash recovery and
@@ -61,3 +62,32 @@ A Chromium host still needs implementations for visible browser views, window li
 storage, permission prompts and renderer transport. Keep each transition backed
 by the current desktop adapter and real process tests until its replacement has
 been exercised.
+
+## Chromium preview host
+
+`apps/chromium-host` launches sandboxed Chromium through Playwright and the shared
+Node core, without Electron. Run:
+
+```sh
+corepack pnpm exec playwright install chromium
+corepack pnpm dev:chromium
+```
+
+The preview has conversations, provider/model selection, cancellation, and real
+web tabs. It uses a temporary database and Chromium context; closing its Kestrel
+tab deletes the preview data. It never imports the installed desktop profile,
+Keychain, or provider login caches. Supported provider environment variables are
+explicitly selected in `src/index.ts`; do not enter secrets in chat. With no
+provider configured, the shell and web tabs work and Send is disabled.
+
+The conversation bridge is scoped to the local main frame of the original shell
+page, with an explicit command allowlist. Remote web pages receive no binding.
+The model receives no tools; tools, approvals, browser context, durable profiles,
+secure credential setup, download management and native app packaging still need
+migration. This is a development preview, not a second installed Kestrel app.
+
+`corepack pnpm test:chromium-host` runs real Chromium and Agent Core against a
+local model fixture. It verifies conversation replies, reload, cancellation,
+web navigation, bridge rejection, draft isolation and narrow layout. Set
+`KESTREL_CHROMIUM_HEADED=1` to run the same checks visibly. Fixture responses
+prove integration, not a live provider login or model-quality claim.

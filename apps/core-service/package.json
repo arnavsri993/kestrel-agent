@@ -7,7 +7,12 @@
     "./service": "./src/service.ts",
     "./node-port": "./src/node-port.ts",
     "./transport": "./src/transport.ts",
-    "./ipc-codec": "./src/ipc-codec.ts"
+    "./ipc-codec": "./src/ipc-codec.ts",
+    "./core-supervisor": "./src/core-supervisor.ts",
+    "./core-process": "./src/core-process.ts",
+    "./node-core-process": "./src/node-core-process.ts",
+    "./core-request-lifecycle": "./src/core-request-lifecycle.ts",
+    "./browser-backend-wire": "./src/browser-backend-wire.ts"
   },
   "scripts": {
     "build": "node build.mjs",
@@ -18,7 +23,8 @@
     "@kestrel/database": "workspace:*",
     "@kestrel/shared-types": "workspace:*",
     "better-sqlite3": "13.0.1",
-    "sharp": "0.35.3"
+    "sharp": "0.35.3",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

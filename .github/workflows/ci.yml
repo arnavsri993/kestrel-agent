@@ -38,6 +38,7 @@ jobs:
       - run: corepack pnpm audit:market
       - run: corepack pnpm build
       - run: corepack pnpm test:node-core
+      - run: corepack pnpm test:chromium-host
       - run: corepack pnpm test:e2e
       - run: corepack pnpm test:packaged-cli
       - run: corepack pnpm test:editors

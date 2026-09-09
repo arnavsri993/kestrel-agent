@@ -10,6 +10,8 @@
   },
   "scripts": {
     "dev": "pnpm --filter @kestrel/desktop dev",
+    "dev:chromium": "pnpm build:core && pnpm --filter @kestrel/chromium-host dev",
+    "test:chromium-host": "tsx scripts/smoke-chromium-host.ts",
     "dev:desktop": "pnpm --filter @kestrel/desktop dev",
     "dev:website": "pnpm --filter @kestrel/website dev",
     "cli": "tsx apps/cli/src/index.ts",
