@@ -4,6 +4,10 @@ import { useEffect } from "react";
 const actions = [
 	".browser-navigation button",
 	".browser-new-tab",
+	".browser-toolbar-actions > button",
+	".kestrel-widget-customize",
+	".kestrel-widget-add-menu > button",
+	".kestrel-widget-size-menu > button",
 	".browser-bookmark",
 	".kestrel-sidebar-header-actions button",
 	".kestrel-sidebar-new-task",

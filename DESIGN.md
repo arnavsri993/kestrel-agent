@@ -648,3 +648,14 @@ approval/destructive actions, and broad hover bounce. These would add task cost
 or suggest unverified work. This is specific to Kestrel's existing tactile
 chrome, not a new animation theme. Verify rapid reversal, exit/cancellation,
 disabled controls, keyboard, reduced motion, and the canonical installed app.
+
+### Expanded tactile feedback
+
+Page-action toolbar and widget customize/add/size controls share pointer lean.
+Open toolbar icons retain a small tilted pose that reflects aria-expanded.
+New Tab shortcut glyphs lift 2px and tilt 4 degrees while their destination
+arrows nudge 3px; row text and hit areas remain fixed. Keyboard focus gets lift
+without tilt. Customize's actual active state gives a single 280ms check flourish.
+These are feedback/state roles; existing menu and widget-layout animations remain
+their owners. Hover effects require a fine pointer and every addition is gated
+by reduced motion. No new continuous animation or background work.

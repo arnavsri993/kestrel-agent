@@ -57,6 +57,18 @@ try {
 	assert.equal(await button.evaluate(element => document.activeElement === element), true);
 	await page.keyboard.press("Enter");
 	await page.locator("#runtime-prompt").waitFor();
+	await page.locator(".browser-new-tab").click();
+	const customize = page.locator(".kestrel-widget-customize");
+	await customize.waitFor();
+	await page.emulateMedia({ reducedMotion: "no-preference" });
+	await customize.click();
+	assert.equal(await customize.getAttribute("aria-pressed"), "true");
+	assert.equal(await customize.locator("svg").evaluate(icon => getComputedStyle(icon).animationName), "action-confirm");
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	assert.equal(await customize.locator("svg").evaluate(icon => getComputedStyle(icon).animationName), "none");
+	await customize.click();
+	assert.equal(await customize.getAttribute("aria-pressed"), "false");
+	console.log("Widget customize: state flourish and reduced-motion equivalence passed.");
 	console.log("Action motion: bounds, reversal, stable targets, cancellation, exit, touch, disabled, reduced motion and keyboard activation passed.");
 } finally {
 	await application?.close();
