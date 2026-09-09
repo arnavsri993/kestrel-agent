@@ -626,3 +626,25 @@ renderer.
   readiness, or public distribution.
 
 Reference parity is deliberately layered, not a claim that every named vendor adapter ships in core. The 1,117-page Hermes/OpenClaw audit separates bundled capability families, signed extension contracts, and operational documentation. Native-node behavior is represented by a tested paired-device extension protocol rather than a bundled mobile app; Kestrel itself is a direct-download Apple Silicon Mac application.
+
+## Tactile action feedback — September 2026
+
+Extend the traffic lights' pointer-responsive feel to a bounded set of everyday
+icon actions. Preserve the dense desktop layout, system typography, graphite
+surfaces, spacing, focus rings, and existing Agent Universe focal motion.
+Motion roles remain continuity (existing tabs/rail), state (existing disclosures),
+and feedback (this change). No new library or visual material.
+
+Navigation, New Tab/New Chat, sidebar tools, bookmarks and send icons lean at
+most 2px and 6 degrees toward the pointer inside stationary button hit boxes.
+Press compresses the icon; release/exit returns continuously from its current
+pose. Feedback never waits before invoking an action. Keyboard presses retain
+native activation and focus; reduced motion keeps color/focus feedback without
+movement. Touch does not receive hover tracking. Only the active control is
+measured and updated at most once per frame, with no idle frame loop.
+
+Reject moving text rows, magnetic hit boxes, looping reload decoration, animated
+approval/destructive actions, and broad hover bounce. These would add task cost
+or suggest unverified work. This is specific to Kestrel's existing tactile
+chrome, not a new animation theme. Verify rapid reversal, exit/cancellation,
+disabled controls, keyboard, reduced motion, and the canonical installed app.

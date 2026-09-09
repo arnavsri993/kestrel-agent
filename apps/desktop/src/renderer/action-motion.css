@@ -1,0 +1,23 @@
+/* Individual transform properties preserve state-driven icon rotation (sidebar,
+   send arrow) and keep the button's hit area fixed. No perpetual animation. */
+@media (prefers-reduced-motion: no-preference) {
+	:is(.browser-navigation button, .browser-new-tab, .browser-bookmark,
+	.kestrel-sidebar-header-actions button, .kestrel-sidebar-new-task,
+	.kestrel-home-send):not(:disabled):not([aria-disabled="true"]) > svg {
+		translate: var(--action-x, 0px) var(--action-y, 0px);
+		rotate: var(--action-tilt, 0deg);
+		scale: 1;
+		transition: translate 180ms cubic-bezier(.2,.8,.2,1),
+			rotate 220ms cubic-bezier(.2,.8,.2,1),
+			scale 180ms cubic-bezier(.2,.8,.2,1),
+			transform var(--motion-feedback) var(--ease-smooth);
+	}
+	:is(.browser-navigation button, .browser-new-tab, .browser-bookmark,
+	.kestrel-sidebar-header-actions button, .kestrel-sidebar-new-task,
+	.kestrel-home-send):not(:disabled):not([aria-disabled="true"]):active > svg {
+		translate: 0px 1px;
+		rotate: 0deg;
+		scale: .86;
+		transition-duration: 65ms;
+	}
+}
