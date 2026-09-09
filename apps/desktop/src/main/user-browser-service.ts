@@ -217,6 +217,10 @@ const AUTHENTICATION_PATH_PATTERN =
 	/(?:^|\/)(?:auth|authenticate|authentication|authorize|authorization|challenge|consent|log[-_]?in|oauth\d*|sign[-_]?in|sign[-_]?up|signin|signup|sso|verify|verification)(?:\/|$)/i;
 const APP_STORE_PROTOCOLS = new Set(["itms-apps:", "macappstore:"]);
 const APP_STORE_HOSTS = new Set(["apps.apple.com", "itunes.apple.com"]);
+const ZOOM_JOIN_PROTOCOL = "zoommtg:";
+const ZOOM_JOIN_HOST = "zoom.us";
+const ZOOM_JOIN_PATH = "/join";
+const ZOOM_MEETING_NUMBER = /^\d{9,11}$/;
 const ALWAYS_ALLOW_PERMISSIONS = new Set([
 	"fullscreen",
 	"clipboard-sanitized-write",
@@ -527,8 +531,37 @@ export function safeAppStoreUrl(value: string): string | undefined {
 	}
 }
 
-function openAppStoreUrl(value: string): boolean {
-	const url = safeAppStoreUrl(value);
+/** Allow only a standard Zoom desktop meeting-join link to leave the browser. */
+export function safeZoomJoinUrl(value: string): string | undefined {
+	if (!value || value.length > 8_192) return undefined;
+	try {
+		const url = new URL(value);
+		const meetingNumbers = url.searchParams.getAll("confno");
+		const actions = url.searchParams.getAll("action");
+		const passwords = url.searchParams.getAll("pwd");
+		if (
+			url.protocol !== ZOOM_JOIN_PROTOCOL ||
+			url.hostname.toLowerCase() !== ZOOM_JOIN_HOST ||
+			url.pathname !== ZOOM_JOIN_PATH ||
+			url.port ||
+			url.username ||
+			url.password ||
+			url.hash ||
+			meetingNumbers.length !== 1 ||
+			!ZOOM_MEETING_NUMBER.test(meetingNumbers[0] ?? "") ||
+			actions.length > 1 ||
+			(actions.length === 1 && actions[0] !== "join") ||
+			passwords.length > 1
+		)
+			return undefined;
+		return url.toString();
+	} catch {
+		return undefined;
+	}
+}
+
+function openSystemAppUrl(value: string): boolean {
+	const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value);
 	if (!url) return false;
 	void Promise.resolve(shell.openExternal(url)).catch(() => undefined);
 	return true;
@@ -5647,7 +5680,7 @@ export class UserBrowserService {
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents) return;
 		webContents.setWindowOpenHandler(({ url, disposition, postBody, referrer }) => {
-			if (openAppStoreUrl(url)) return { action: "deny" };
+			if (openSystemAppUrl(url)) return { action: "deny" };
 			if (safePageUrl(url)) {
 				const loadOptions = loadOptionsForWindowOpen(postBody, referrer);
 				void this.createTab(
@@ -5686,7 +5719,7 @@ export class UserBrowserService {
 				event.preventDefault();
 				return;
 			}
-			if (openAppStoreUrl(url)) {
+			if (openSystemAppUrl(url)) {
 				event.preventDefault();
 				return;
 			}
@@ -5707,7 +5740,7 @@ export class UserBrowserService {
 				event.preventDefault();
 				return;
 			}
-			if (openAppStoreUrl(url)) {
+			if (openSystemAppUrl(url)) {
 				event.preventDefault();
 				return;
 			}
