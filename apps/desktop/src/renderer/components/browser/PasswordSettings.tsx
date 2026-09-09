@@ -168,7 +168,7 @@ export function PasswordSettings({
 		[
 			"offerStrongPasswords",
 			"Offer strong passwords",
-			"Suggest a cryptographically generated password during sign-up.",
+			"Suggest a strong password during sign-up.",
 		],
 	] as const;
 
@@ -182,8 +182,7 @@ export function PasswordSettings({
 					<Icon name="lock" /> Passwords
 				</h2>
 				<p>
-					Manage saved login metadata and privacy controls. Password secrets stay
-					in Kestrel’s protected macOS Keychain-backed store.
+					Passwords stay in protected storage on this Mac.
 				</p>
 			</header>
 
@@ -345,8 +344,7 @@ export function PasswordSettings({
 			</div>
 
 			<p className="password-settings-footnote">
-				Kestrel never sends saved password values to the renderer. Copy and reveal
-				actions are handled by the protected credential boundary.
+				Saved passwords are never shared with the agent.
 			</p>
 		</section>
 	);

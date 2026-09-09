@@ -684,8 +684,8 @@ export function BrowserSettings({
 
   return (
     <div className="browser-settings-wrapper" data-settings-section={section}>
-      <header className="browser-settings-intro">
-        <h2>Browser</h2>
+      <header className="browser-settings-intro" hidden={section !== "browser" && !statusCopy}>
+        {section === "browser" && <h2>Browser</h2>}
         {statusCopy && (
           <small
             className={`browser-settings-save-state ${saveState}`}
@@ -706,7 +706,7 @@ export function BrowserSettings({
             <h2 id="browser-startup-title">
               <Icon name="reload" /> Startup
             </h2>
-            <p>Choose what opens at launch.</p>
+
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -714,7 +714,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>When Kestrel starts</strong>
-              <p>Keeps your tabs and folders.</p>
+
             </div>
             <select
               aria-label="Startup behavior"
@@ -763,7 +763,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Specific startup pages</strong>
-              <p>Open these pages in order.</p>
+
             </div>
             <div className="browser-startup-pages-control">
               <div className="browser-inline-control">
@@ -824,8 +824,7 @@ export function BrowserSettings({
                 <Icon name="artifacts" /> New tab background
               </h2>
               <p>
-                Start with Kestrel’s light default, choose a bundled scene, or
-                add a local image. Your upload stays in this Kestrel profile.
+                Choose a background or upload an image stored on this Mac.
               </p>
             </header>
             <div
@@ -962,7 +961,7 @@ export function BrowserSettings({
               >
                 <div className="browser-setting-copy">
                   <strong>Tab sizing</strong>
-                  <p>Choose scrolling or shrinking tabs.</p>
+
                 </div>
                 <select
                   aria-label="Tab sizing"
@@ -1005,7 +1004,7 @@ export function BrowserSettings({
             >
               <div className="browser-setting-copy">
                 <strong>Default page zoom</strong>
-                <p>Updates new and open pages.</p>
+
               </div>
               <select
                 aria-label="Default page zoom"
@@ -1194,7 +1193,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Remembered site permissions</strong>
-              <p>Review what each site can access.</p>
+
               {sitePermissions.length === 0 ? (
                 <small>No remembered site permissions.</small>
               ) : (
@@ -1686,8 +1685,7 @@ export function BrowserSettings({
             </a>
           </div>
           <p className="honest-status">
-            Kestrel verifies each package before showing its declared access and
-            compatibility evidence. Electron does not implement every Chrome API.
+            Review extension access before installing. Some Chrome APIs are unsupported.
           </p>
           <div className="installed-extensions-section">
             <h4>Installed extensions ({extensions.length})</h4>
@@ -1853,7 +1851,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Default browser</strong>
-              <p>Open supported web links in Kestrel.</p>
+
             </div>
             {isDefaultBrowser ? (
               <Status tone="verified">Default browser</Status>
@@ -2020,12 +2018,6 @@ export function BrowserSettings({
         </section>
       )}
 
-      {section === "browser" && (
-        <p className="browser-settings-compatibility" role="note">
-          This overview keeps existing deep links working. Use the Basic and
-          Advanced sections in the settings rail for the focused layout.
-        </p>
-      )}
       {extensionInspection && (
         <ExtensionCompatibilityDialog
           inspection={extensionInspection}

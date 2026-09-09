@@ -1554,3 +1554,115 @@
 		transition: none;
 	}
 }
+
+/* One compact settings shell shared by browser and agent preferences. */
+.unified-ui .settings-page-frame > .ui-page-frame-header {
+	margin-bottom: 20px;
+	padding-bottom: 16px;
+}
+.unified-ui .settings-toolbar {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 12px 24px;
+	margin-bottom: 24px;
+}
+.unified-ui .settings-toolbar .settings-scope-switcher {
+	grid-template-columns: repeat(2, minmax(96px, 1fr));
+	margin: 0;
+	flex: 0 0 auto;
+}
+.unified-ui .settings-toolbar .settings-scope-switcher button {
+	min-height: 34px;
+}
+.unified-ui .settings-toolbar .settings-search {
+	flex: 1 1 280px;
+	width: auto;
+	min-width: 0;
+	max-width: none;
+	margin: 0;
+}
+.unified-ui .settings-toolbar .settings-search-field input {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+.unified-ui .settings-layout {
+	grid-template-columns: 208px minmax(0, 1fr);
+	gap: 24px;
+}
+.unified-ui .settings-nav {
+	gap: 3px;
+}
+.unified-ui .settings-nav button {
+	padding: 9px 12px;
+	line-height: 18px;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+.unified-ui .settings-nav button:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+.unified-ui .settings-content {
+	display: grid;
+	gap: 24px;
+}
+.unified-ui .settings-content .browser-settings-wrapper {
+	gap: 24px;
+}
+.unified-ui .settings-content .browser-settings-panel {
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+.unified-ui .settings-content .setting-row {
+	min-height: 56px;
+	padding-block: 12px;
+	gap: 12px 20px;
+}
+.unified-ui .settings-content .setting-row > * {
+	min-width: 0;
+}
+.unified-ui .settings-content .setting-row :is(input, select, textarea) {
+	max-width: 100%;
+}
+.unified-ui .settings-content .button-row {
+	flex-wrap: wrap;
+}
+.unified-ui .settings-content .settings-panel-header {
+	padding-bottom: 12px;
+}
+@container kestrel-browser-viewport (max-width: 860px) {
+	.unified-ui .settings-layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.unified-ui .settings-toolbar .settings-section-picker {
+		order: 3;
+		width: 100%;
+		margin: 0;
+	}
+}
+@container kestrel-browser-viewport (max-width: 600px) {
+	.unified-ui .settings-content .setting-row {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.unified-ui .settings-content .setting-row > :last-child {
+		justify-self: start;
+	}
+}
+.unified-ui .settings-content .settings-stack {
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+.unified-ui .settings-content .extension-install-bar {
+	flex-wrap: wrap;
+}
+.unified-ui .settings-content .extension-url-input {
+	min-width: 0;
+	flex: 1 1 220px;
+}

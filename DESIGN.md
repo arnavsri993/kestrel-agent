@@ -626,3 +626,21 @@ renderer.
   readiness, or public distribution.
 
 Reference parity is deliberately layered, not a claim that every named vendor adapter ships in core. The 1,117-page Hermes/OpenClaw audit separates bundled capability families, signed extension contracts, and operational documentation. Native-node behavior is represented by a tested paired-device extension protocol rather than a bundled mobile app; Kestrel itself is a direct-download Apple Silicon Mac application.
+
+
+## Unified settings
+
+Existing React desktop redesign; compact utility density, low visual intensity.
+One searchable Browser/Agent toolbar and one category rail lead to focused pages.
+The browser entry opens Startup rather than duplicating every category in an overview.
+Keep existing system typography, neutral surface tokens, 13px row labels, 16px section headings,
+8/12/16/24px spacing, and visible keyboard focus. No new imagery or animation.
+Category changes are immediate so outgoing and incoming settings never overlap.
+Remove repeated marketing and implementation copy in JSX; retain decision-critical
+privacy, permission, destructive-action, validation, and live-status text.
+At narrow container widths the same catalog drives a native section picker.
+Avoid repeated titles, nested rounded cards, clipped category names, and unsupported controls.
+Why this is not generic: the navigation reflects Kestrel's actual browser preferences
+and agent models, memory, tools, workspace, permissions, and recovery boundaries.
+Reference use is inspiration-only: familiar browser categories and explicit agent
+configuration boundaries; no third-party code or visual assets copied.
