@@ -75,3 +75,4 @@ publish:
   releaseType: release
   channel: latest
 afterPack: build/after-pack.cjs
+afterSign: build/after-sign.cjs

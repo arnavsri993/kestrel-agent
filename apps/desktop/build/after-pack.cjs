@@ -10,6 +10,7 @@ const {
 } = require("node:fs");
 const { join } = require("node:path");
 const { auditPackagedMacApp } = require("../../../scripts/macos-architecture-audit.cjs");
+const { verifyAgentCoreSidecar } = require("./agent-core-sidecar.cjs");
 
 exports.default = async function architectureAudit(context) {
 	if (process.platform !== "darwin") return;
@@ -17,6 +18,7 @@ exports.default = async function architectureAudit(context) {
 		context.appOutDir,
 		`${context.packager.appInfo.productFilename}.app`,
 	);
+	installAgentCoreSidecar(appPath);
 	installAskKestrelService(appPath);
 	const configuredIdentity = context.packager?.platformSpecificBuildOptions?.identity;
 	const identity =
@@ -57,6 +59,18 @@ exports.default = async function architectureAudit(context) {
 		}
 	}
 };
+
+function installAgentCoreSidecar(appPath) {
+	const source = join(__dirname, "../../../.tmp/agent-core-sidecar");
+	const target = join(appPath, "Contents", "Resources", "agent-core");
+	if (!existsSync(source))
+		throw new Error(
+			"Standalone Agent Core sidecar is missing. Run scripts/prepare-agent-core-sidecar.mjs before packaging.",
+		);
+	rmSync(target, { recursive: true, force: true });
+	cpSync(source, target, { recursive: true, dereference: true });
+	verifyAgentCoreSidecar(appPath);
+}
 
 function copyDatabaseMigrations(appPath) {
 	const source = join(__dirname, "../../../packages/database/migrations");

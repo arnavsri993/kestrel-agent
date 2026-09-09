@@ -1,8 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { auditPackagedMacApp } from "./macos-architecture-audit.cjs";
+
+const require = createRequire(import.meta.url);
+const { verifyAgentCoreSidecar } = require("../apps/desktop/build/agent-core-sidecar.cjs");
 
 const appArgument = process.argv[2];
 if (process.platform !== "darwin")
@@ -108,6 +112,7 @@ auditPackagedMacApp(appPath);
 runCodesign(["--verify", "--deep", "--strict", "--verbose=2", appPath], {
 	stdio: "inherit",
 });
+verifyAgentCoreSidecar(appPath, { verifySignature: true });
 
 const evidence = runCodesign(["-dv", "--verbose=4", appPath]);
 const signature = `${evidence.stdout}${evidence.stderr}`;

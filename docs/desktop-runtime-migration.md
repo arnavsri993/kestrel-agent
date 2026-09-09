@@ -1,8 +1,11 @@
 # Incremental desktop runtime migration
 
-Kestrel's installed desktop still uses Electron. Chromium is the target browser
-engine; a thin Chromium preview host now runs independently, but is not the replacement
-for the full desktop yet.
+Kestrel's installed desktop still uses Electron for its window and browser host.
+Chromium is the target browser engine, but migration is now happening on the
+shipping process path as well as in the thin Chromium host: packaged Kestrel
+launches Agent Core as a standalone Node sidecar rather than an Electron utility
+process. That removes Electron from the long-running agent/core failure domain;
+it does not yet replace the desktop window or browser surface.
 
 ## Agent Core supervision boundary
 
@@ -13,14 +16,40 @@ validated messages, request deadlines, browser cancellation, crash recovery and
 shutdown. A future host can use it without loading Electron.
 
 The current desktop entry point supplies `desktopCoreProcess` from
-`electron-core-process.ts`. Packaged apps still launch an Electron utility
-process; development and the existing explicit Node opt-in still use Node.
-Credential filtering stays at that desktop composition boundary. Credentials
-needed by Agent Core continue to arrive through protected bootstrap IPC.
+`electron-core-process.ts`. Packaged apps launch the signed Node executable at
+`Contents/Resources/agent-core/node/bin/node` with the built service at
+`Contents/Resources/agent-core/service/index.js`. Development retains the
+existing explicit Node opt-in or Electron utility adapter so normal source
+iteration stays fast. Credential filtering stays at that desktop composition
+boundary. Credentials needed by Agent Core continue to arrive through protected
+bootstrap IPC.
 
 `node-core-process.ts` takes an executable, entry path and environment explicitly.
 It uses Node child-process IPC with the existing binary codec. It does not choose
 a runtime from PATH or inherit the supervisor's environment implicitly.
+
+## Packaged Agent Core sidecar
+
+`scripts/prepare-agent-core-sidecar.mjs` builds the Electron-free service,
+downloads one pinned and checksummed Node 22 Apple-Silicon distribution, and
+creates a symlink-free Node dependency tree. Native SQLite and Sharp artifacts
+are copied from the Node-compatible workspace installation, never from
+electron-builder's Electron-ABI rebuild output. The sidecar carries Node's
+license and a provenance manifest. Packaging refuses to continue if that tree
+is missing; post-sign verification runs the sidecar's Node executable and checks
+that it reports no Electron runtime.
+
+Run the source-level sidecar smoke with:
+
+```sh
+corepack pnpm test:agent-core-sidecar
+```
+
+It starts the actual bundled Node runtime and service with a disposable profile,
+requests a snapshot, kills the child, observes automatic recovery, and reads a
+second snapshot. The packaged restart-recovery smoke additionally asserts that
+the live Kestrel child command is the resource Node executable and service entry.
+Neither check opens or mutates a person's profile.
 
 ## Reproducible non-Electron proof
 
@@ -52,16 +81,20 @@ CI runs the Node smoke after the workspace build, before desktop packaging can
 rebuild native dependencies for Electron. Packaging may change native module ABI;
 restore Node-compatible native dependencies before repeating a Node smoke if needed.
 
-Passing the Node smoke proves core bootstrap, requests and recovery work without
-Electron. It does not prove a replacement browser window, credential store or
-renderer bridge.
+Passing the Node sidecar smoke proves core bootstrap, requests and recovery work
+without Electron in the same executable shape that the packaged app uses. It
+does not prove a replacement browser window, credential store or renderer bridge.
 
 ## Next boundaries
 
-A Chromium host still needs implementations for visible browser views, window lifecycle, secure
-storage, permission prompts and renderer transport. Keep each transition backed
-by the current desktop adapter and real process tests until its replacement has
-been exercised.
+A Chromium host still needs implementations for visible browser views, window
+lifecycle, secure storage, permission prompts and renderer transport. The next
+host cutover must be a real native macOS Chromium host with the browser,
+renderer, GPU, network, and utility process model enabled—not a second preview
+app or a Playwright-only shell. It must first prove read-only compatibility with
+the existing Kestrel profile and Keychain identity before it is allowed to write
+or migrate profile data. Keep each transition backed by the current desktop
+adapter and real process tests until its replacement has been exercised.
 
 ## Chromium preview host
 
