@@ -2,8 +2,12 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { auditPackagedMacApp } from "./macos-architecture-audit.cjs";
+
+const require = createRequire(import.meta.url);
+const { verifyAgentCoreSidecar } = require("../apps/desktop/build/agent-core-sidecar.cjs");
 
 const appArgument = process.argv[2];
 if (process.platform !== "darwin")
@@ -95,4 +99,5 @@ if (signature.status !== 0)
 	throw new Error(`codesign verification failed for ${appPath}.`);
 
 auditPackagedMacApp(appPath);
+verifyAgentCoreSidecar(appPath, { verifySignature: true });
 console.log(`Verified local installable Kestrel app: ${appPath}`);
