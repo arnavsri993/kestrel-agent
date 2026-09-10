@@ -209,6 +209,7 @@ import { BrowserTabStore } from "./browser-tab-store";
 import {
   isAuthenticationFlowUrl,
   safeAppStoreUrl,
+  safeZoomJoinUrl,
   UserBrowserService,
 } from "./user-browser-service";
 import type { BrowserThreatProvider } from "./browser-threat-provider";
@@ -2269,6 +2270,59 @@ describe("UserBrowserService", () => {
       "macappstore://user:secret@itunes.apple.com/app/id113517709",
     ]) {
       expect(safeAppStoreUrl(url)).toBeUndefined();
+    }
+  });
+
+  it("hands off a validated Zoom join link from navigation, redirects, and popups", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://zoom.us/join");
+    const source = electron.state.views[0]!.webContents;
+    const zoomJoinUrl =
+      "zoommtg://zoom.us/join?confno=1234567890&action=join";
+    const navigationPreventDefault = vi.fn();
+    const redirectPreventDefault = vi.fn();
+
+    expect(
+      source.windowOpenHandler?.({
+        url: zoomJoinUrl,
+        disposition: "foreground-tab",
+      }),
+    ).toEqual({ action: "deny" });
+    source.emit("will-navigate", { preventDefault: navigationPreventDefault }, zoomJoinUrl);
+    source.emit("will-redirect", { preventDefault: redirectPreventDefault }, zoomJoinUrl);
+
+    expect(navigationPreventDefault).toHaveBeenCalledOnce();
+    expect(redirectPreventDefault).toHaveBeenCalledOnce();
+    expect(shell.openExternal).toHaveBeenCalledTimes(3);
+    expect(shell.openExternal).toHaveBeenNthCalledWith(1, zoomJoinUrl);
+    expect(shell.openExternal).toHaveBeenNthCalledWith(2, zoomJoinUrl);
+    expect(shell.openExternal).toHaveBeenNthCalledWith(3, zoomJoinUrl);
+    expect(service.getState().tabs).toHaveLength(1);
+  });
+
+  it("accepts validated Zoom meeting join URLs", () => {
+    const zoomJoinUrl =
+      "zoommtg://zoom.us/join?confno=1234567890&action=join";
+    expect(safeZoomJoinUrl(zoomJoinUrl)).toBe(zoomJoinUrl);
+    expect(
+      safeZoomJoinUrl(
+        "zoommtg://zoom.us/join?confno=1234567890&pwd=example",
+      ),
+    ).toBe("zoommtg://zoom.us/join?confno=1234567890&pwd=example");
+    for (const url of [
+      "zoomus://zoom.us/join?confno=1234567890",
+      "zoommtg://evil.example/join?confno=1234567890",
+      "zoommtg://zoom.us:8080/join?confno=1234567890",
+      "zoommtg://user:secret@zoom.us/join?confno=1234567890",
+      "zoommtg://zoom.us/start?confno=1234567890",
+      "zoommtg://zoom.us/join?confno=not-a-meeting-number",
+      "zoommtg://zoom.us/join?confno=1234567890&action=start",
+      "zoommtg://zoom.us/join?confno=1234567890&confno=1234567891",
+      "zoommtg://zoom.us/join?confno=1234567890&pwd=one&pwd=two",
+      "zoommtg://zoom.us/join?confno=1234567890#unexpected",
+    ]) {
+      expect(safeZoomJoinUrl(url)).toBeUndefined();
     }
   });
 
