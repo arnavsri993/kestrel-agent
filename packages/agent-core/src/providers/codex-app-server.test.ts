@@ -1,11 +1,15 @@
+import { execFile as execFileCallback } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 import { CodexAppServerProvider } from "./codex-app-server";
 import { textContent } from "./types";
 
 const roots: string[] = [];
+const executeFile = promisify(execFileCallback);
 
 async function fakeAppServer(): Promise<{
 	executable: string;
@@ -41,6 +45,12 @@ input.on("line", line => {
   if (message.method === "initialize") return send({ id: message.id, result: { userAgent: "fake", codexHome: "/fake", platformFamily: "unix", platformOs: "macos" } });
   if (message.method === "initialized") return;
   if (message.method === "account/read") return send({ id: message.id, result: { account: { type: "chatgpt" }, requiresOpenaiAuth: true } });
+  if (message.method === "model/list") {
+    if (message.params && message.params.cursor === "page-2") {
+      return send({ id: message.id, result: { data: [{ id: "gpt-hidden", model: "gpt-hidden", displayName: "Hidden model", supportedReasoningEfforts: [{ reasoningEffort: "minimal" }], hidden: true }], nextCursor: null } });
+    }
+    return send({ id: message.id, result: { data: [{ id: "gpt-catalog", model: "gpt-catalog", displayName: "Catalog model", inputModalities: ["text", "image"], supportedReasoningEfforts: [{ reasoningEffort: "minimal" }, { reasoningEffort: "low" }, { reasoningEffort: "high" }] }], nextCursor: "page-2" } });
+  }
   if (message.method === "thread/start") return send({ id: message.id, result: { thread: { id: "thread-1" }, model: message.params.model } });
   if (message.method === "thread/resume") return send({ id: message.id, result: { thread: { id: message.params.threadId } } });
   if (message.method === "turn/start") {
@@ -135,6 +145,48 @@ async function readCapture(path: string): Promise<CaptureRecord[]> {
 }
 
 describe("persistent Codex app-server provider", () => {
+	it("discovers the signed-in account's stable app-server model catalog", async () => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({
+			executable: fake.executable,
+			requestTimeoutMs: 10_000,
+		});
+
+		await expect(provider.discoverModels()).resolves.toEqual([
+			{
+				id: "gpt-catalog",
+				displayName: "Catalog model",
+				availability: "available",
+				source: "protocol",
+				capabilities: {
+					capabilityProvenance: "confirmed",
+					streaming: true,
+					tools: false,
+					images: true,
+					audio: false,
+					documents: false,
+					video: false,
+					structuredOutput: false,
+					reasoningEfforts: ["low", "high"],
+				},
+			},
+		]);
+		await provider.close();
+
+		const records = await readCapture(fake.capture);
+		const modelListRequests = records.filter(
+			(record) => record.value.method === "model/list",
+		);
+		expect(modelListRequests).toHaveLength(2);
+		expect(modelListRequests[0]?.value.params).toMatchObject({
+			limit: 100,
+			includeHidden: false,
+		});
+		expect(modelListRequests[1]?.value.params).toMatchObject({
+			cursor: "page-2",
+		});
+	});
+
 	it("restarts after initialization failure instead of reusing an uninitialized process", async () => {
 		const fake = await retryableFakeAppServer();
 		const provider = new CodexAppServerProvider({
@@ -182,7 +234,18 @@ describe("persistent Codex app-server provider", () => {
 				metadata: { session_id: "session-1", workspace_root: process.cwd() },
 				messages: [
 					{ role: "system", content: textContent("Private system context") },
-					{ role: "user", content: textContent("First prompt") },
+					{
+						role: "user",
+						content: [
+							...textContent("First prompt"),
+							{
+								type: "image",
+								data: "aW1hZ2U=",
+								mediaType: "image/png",
+								source: "base64",
+							},
+						],
+					},
 				],
 			},
 			{
@@ -243,6 +306,14 @@ describe("persistent Codex app-server provider", () => {
 		expect(
 			(turns[0]!.value.params!.input as Array<{ text: string }>)[0]!.text,
 		).toContain("Private system context");
+		expect(turns[0]!.value.params!.input).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					type: "image",
+					url: "data:image/png;base64,aW1hZ2U=",
+				}),
+			]),
+		);
 		expect(
 			(turns[1]!.value.params!.input as Array<{ text: string }>)[0]!.text,
 		).toBe("Second prompt");
@@ -258,6 +329,98 @@ describe("persistent Codex app-server provider", () => {
 			),
 		).toBe(false);
 	});
+
+	it("rejects remote image URLs before starting a Codex turn", async () => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({
+			executable: fake.executable,
+			requestTimeoutMs: 10_000,
+		});
+		await expect(
+			provider.complete({
+				model: "gpt-test",
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "image",
+								data: "https://example.com/not-forwarded.png",
+								mediaType: "image/png",
+								source: "url",
+							},
+						],
+					},
+				],
+			}),
+		).rejects.toThrow("remote image URLs");
+		await provider.close();
+
+		const records = await readCapture(fake.capture);
+		expect(
+			records.filter((record) => record.value.method === "turn/start"),
+		).toHaveLength(0);
+	});
+
+	if (process.platform === "darwin")
+		it("converts HEIC images locally before starting a Codex turn", async () => {
+			const fake = await fakeAppServer();
+			const root = await mkdtemp(join(tmpdir(), "kestrel-codex-heic-test-"));
+			roots.push(root);
+			const png = join(root, "fixture.png");
+			const heic = join(root, "fixture.heic");
+			await sharp({
+				create: {
+					width: 2,
+					height: 2,
+					channels: 3,
+					background: { r: 10, g: 20, b: 30 },
+				},
+			})
+				.png()
+				.toFile(png);
+			await executeFile("/usr/bin/sips", [
+				"-s",
+				"format",
+				"heic",
+				png,
+				"--out",
+				heic,
+			]);
+			const provider = new CodexAppServerProvider({
+				executable: fake.executable,
+				requestTimeoutMs: 10_000,
+			});
+			await provider.complete({
+				model: "gpt-test",
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "image",
+								data: (await readFile(heic)).toString("base64"),
+								mediaType: "image/heic",
+								source: "base64",
+							},
+						],
+					},
+				],
+			});
+			await provider.close();
+
+			const turn = (await readCapture(fake.capture)).find(
+				(record) => record.value.method === "turn/start",
+			)?.value.params as { input?: Array<{ type?: string; url?: string }> };
+			expect(turn.input).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: "image",
+						url: expect.stringMatching(/^data:image\/jpeg;base64,/),
+					}),
+				]),
+			);
+		});
 
 	it("attaches a loopback browser MCP through overlay CODEX_HOME", async () => {
 		const fake = await fakeAppServer();

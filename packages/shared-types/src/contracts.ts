@@ -1645,6 +1645,7 @@ export const ProviderAccountAdapterSchema = z.enum([
 	"codex-app-server",
 	"opencode-cli",
 	"claude-cli",
+	"cursor-cli",
 ]);
 export type ProviderAccountAdapter = z.infer<typeof ProviderAccountAdapterSchema>;
 
@@ -4782,11 +4783,13 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({
 		type: z.literal("subscription-cli-set"),
-		id: z.enum(["codex", "claude", "opencode"]),
+		id: z.enum(["codex", "claude", "opencode", "cursor"]),
 		enabled: z.boolean(),
 	}),
 	z.object({ type: z.literal("oauth-chatgpt-connect") }),
 	z.object({ type: z.literal("oauth-chatgpt-cancel") }),
+	z.object({ type: z.literal("oauth-cursor-connect") }),
+	z.object({ type: z.literal("oauth-cursor-cancel") }),
 	z.object({ type: z.literal("oauth-google-status") }),
 	z.object({
 		type: z.literal("oauth-google-connect"),
@@ -5015,7 +5018,7 @@ export const LocalBackupResultSchema = z.object({
 export type LocalBackupResult = z.infer<typeof LocalBackupResultSchema>;
 
 export const SubscriptionCliStatusSchema = z.object({
-	id: z.enum(["codex", "claude", "opencode"]),
+	id: z.enum(["codex", "claude", "opencode", "cursor"]),
 	label: z.string().min(1),
 	detected: z.boolean(),
 	enabled: z.boolean(),

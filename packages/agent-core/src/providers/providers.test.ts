@@ -66,6 +66,9 @@ describe("model provider adapters", () => {
 			KESTREL_ENABLE_OPENCODE_SUBSCRIPTION: "1",
 			KESTREL_OPENCODE_PATH: "/opt/opencode",
 			KESTREL_OPENCODE_SUBSCRIPTION_MODEL: "opencode-claude",
+			KESTREL_ENABLE_CURSOR_SUBSCRIPTION: "1",
+			KESTREL_CURSOR_PATH: "/opt/cursor",
+			KESTREL_CURSOR_SUBSCRIPTION_MODEL: "cursor-auto",
 		});
 		expect(
 			providers.map((provider) => ({
@@ -77,6 +80,7 @@ describe("model provider adapters", () => {
 			{ id: "codex-subscription", model: "gpt-subscription", tools: false },
 			{ id: "claude-subscription", model: "opus", tools: false },
 			{ id: "opencode-subscription", model: "opencode-claude", tools: false },
+			{ id: "cursor-subscription", model: "cursor-auto", tools: false },
 		]);
 	});
 
