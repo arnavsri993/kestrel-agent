@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import {
 	existsSync,
 	mkdtempSync,
@@ -447,6 +448,34 @@ describe("UserBrowserService", () => {
 			expect(item.setSavePath).toHaveBeenCalledWith(chosenPath),
 		);
 		expect(item.resume).toHaveBeenCalledOnce();
+		expect(service.getState().downloads[0]?.filename).toBe("kestrel-chosen-download.txt");
+	});
+
+	it("reserves simultaneous download names and releases cancelled destinations", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		const partition = electron.state.partitions[0]!.instance;
+		const startDownload = () => {
+			const item = Object.assign(new EventEmitter(), {
+				getFilename: () => "report.txt",
+				getURL: () => "https://example.com/report.txt",
+				getReceivedBytes: () => 0,
+				getTotalBytes: () => 10,
+				setSavePath: vi.fn(),
+				cancel: vi.fn(),
+			});
+			partition.emit("will-download", {}, item, contents);
+			return item;
+		};
+		const first = startDownload();
+		const second = startDownload();
+		expect(first.setSavePath).toHaveBeenCalledWith(expect.stringMatching(/\/report\.txt$/));
+		expect(second.setSavePath).toHaveBeenCalledWith(expect.stringMatching(/\/report 2\.txt$/));
+		first.emit("done", {}, "cancelled");
+		const third = startDownload();
+		expect(third.setSavePath).toHaveBeenCalledWith(first.setSavePath.mock.calls[0]![0]);
 	});
 
 	it("blocks a malicious typed navigation before loading and hides the native view", async () => {

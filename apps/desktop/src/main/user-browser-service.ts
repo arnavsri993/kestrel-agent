@@ -5436,7 +5436,7 @@ export class UserBrowserService {
 					.analyze({
 						downloadId: id,
 						filePath: path,
-						filename,
+						filename: record.filename,
 						sourceUrl: record.sourceUrl,
 						reputation: {
 							verdict: "unknown",
@@ -5470,6 +5470,8 @@ export class UserBrowserService {
 				path = destination;
 				this.downloadPaths.set(id, path);
 				item.setSavePath(path);
+				current.filename = basename(path);
+				this.commit();
 				if (resume && typeof item.resume === "function") item.resume();
 			};
 			if (!askForLocation) {
@@ -6784,7 +6786,16 @@ export class UserBrowserService {
 		const stem = cleaned.slice(0, cleaned.length - extension.length);
 		let candidate = cleaned;
 		let index = 2;
-		while (existsSync(join(this.downloadDirectory, candidate))) {
+		// Chromium may not have created the file yet for an in-flight download.
+		const reservedPaths = new Set(
+			[...this.activeDownloads.keys()].map((downloadId) =>
+				this.downloadPaths.get(downloadId),
+			),
+		);
+		while (
+			existsSync(join(this.downloadDirectory, candidate)) ||
+			reservedPaths.has(join(this.downloadDirectory, candidate))
+		) {
 			candidate = `${stem} ${index}${extension}`;
 			index += 1;
 		}
