@@ -95,7 +95,11 @@ const electron = vi.hoisted(() => {
     copyImageAt = vi.fn();
     copyVideoFrameAt = vi.fn();
     downloadURL = vi.fn();
-    setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = handler; });
+    setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = (details) => {
+      const result = handler(details);
+      if (result.action === "allow") result.createWindow?.({ webPreferences: {} });
+      return result;
+    }; });
     windowOpenHandler: ((details: {
       url: string;
       disposition: "default" | "foreground-tab" | "background-tab" | "new-window" | "other";
@@ -138,6 +142,8 @@ const electron = vi.hoisted(() => {
     setVisible = vi.fn((visible: boolean) => { this.visible = visible; });
   }
   class MockSession extends Emitter {
+    requestHandler: ((details: {webContentsId: number; resourceType: string; url: string}, callback: (result: {cancel: boolean}) => void) => void) | undefined;
+    webRequest = {onBeforeRequest: vi.fn((_filter, handler) => { this.requestHandler = handler; })};
     permissionCheckHandler: unknown;
     permissionRequestHandler: unknown;
     setPermissionCheckHandler = vi.fn((handler) => { this.permissionCheckHandler = handler; });
@@ -210,6 +216,7 @@ import {
   isAuthenticationFlowUrl,
   safeAppStoreUrl,
   safeZoomJoinUrl,
+  safeTeamsUrl,
   UserBrowserService,
 } from "./user-browser-service";
 import type { BrowserThreatProvider } from "./browser-threat-provider";
@@ -479,12 +486,15 @@ describe("UserBrowserService", () => {
 		const event = { preventDefault: vi.fn() };
 
 		contents.emit("will-redirect", event, "https://malware.example/redirect");
+		const callback = vi.fn();
+		electron.state.partitions[0]!.instance.requestHandler?.({webContentsId: contents.id, resourceType: "mainFrame", url: "https://malware.example/redirect"}, callback);
 		await vi.waitFor(() => expect(service.getState().tabs[0]?.blockedNavigation).toMatchObject({
 			url: "https://malware.example/redirect",
 			source: "redirect",
 		}));
 
-		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(event.preventDefault).not.toHaveBeenCalled();
+		expect(callback).toHaveBeenCalledWith({cancel: true});
 		expect(contents.loadURL).not.toHaveBeenCalledWith("https://malware.example/redirect");
 		expect(contents.stop).toHaveBeenCalledOnce();
 	});
@@ -511,7 +521,10 @@ describe("UserBrowserService", () => {
 			disposition: "foreground-tab",
 		});
 
-		expect(response).toEqual({ action: "deny" });
+		expect(response).toMatchObject({ action: "allow" });
+		const child = electron.state.views.at(-1)!.webContents;
+		const callback = vi.fn();
+		electron.state.partitions[0]!.instance.requestHandler?.({webContentsId: child.id, resourceType: "mainFrame", url: "https://malware.example/popup"}, callback);
 		await vi.waitFor(() =>
 			expect(
 				service
@@ -792,7 +805,7 @@ describe("UserBrowserService", () => {
     expect(firstView?.windowOpenHandler?.({
       url: "https://opened-after-32.example/",
       disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
+    })).toMatchObject({ action: "allow" });
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(34));
   });
 
@@ -2213,7 +2226,7 @@ describe("UserBrowserService", () => {
     expect(source.windowOpenHandler?.({
       url: "https://open.example/path",
       disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
+    })).toMatchObject({ action: "allow" });
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     expect(service.getState()).toMatchObject({ activeTabId: expect.any(String) });
     expect(service.getState().tabs.at(-1)).toMatchObject({ url: "https://open.example/path" });
@@ -2326,6 +2339,58 @@ describe("UserBrowserService", () => {
     }
   });
 
+  it("hands off Teams meeting and team invitations and rejects unrelated schemes", async () => {
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://teams.microsoft.com");
+    const source = electron.state.views[0]!.webContents;
+    for (const url of [
+      "msteams://teams.microsoft.com/l/meetup-join/19%3afixture/0?context=example",
+      "msteams://teams.microsoft.com/l/team/19%3afixture/conversations?groupId=example",
+      "msteams://teams.live.com/l/channel/fixture/general",
+    ]) {
+      expect(safeTeamsUrl(url)).toBe(url);
+      const event = {preventDefault: vi.fn()};
+      source.emit("will-navigate", event, url);
+      expect(event.preventDefault).toHaveBeenCalledOnce();
+      expect(shell.openExternal).toHaveBeenCalledWith(url);
+    }
+    for (const url of [
+      "msteams://evil.example/l/team/fixture", "msteams://teams.microsoft.com.evil.example/l/team/fixture",
+      "msteams://user@teams.microsoft.com/l/team/fixture", "msteams://teams.microsoft.com:8000/l/team/fixture",
+      "msteams://teams.microsoft.com/l/call/fixture", "file:///tmp/test", "msteams://teams.microsoft.com/l/team/",
+    ]) expect(safeTeamsUrl(url)).toBeUndefined();
+  });
+
+  it("allows native navigation and redirects without replaying requests", async () => {
+    const {service} = createService({threatProvider: threatProvider(vi.fn(async () => ({verdict: "safe" as const, provider: "test"})))});
+    await service.navigate(service.getState().tabs[0]!.id, "https://safe.example");
+    const contents = electron.state.views[0]!.webContents;
+    contents.loadURL.mockClear();
+    for (const eventName of ["will-navigate", "will-redirect"]) {
+      const event = {preventDefault: vi.fn()};
+      contents.emit(eventName, event, "https://safe.example/callback");
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      const callback = vi.fn();
+      electron.state.partitions[0]!.instance.requestHandler?.({webContentsId: contents.id,resourceType:"mainFrame",url:"https://safe.example/callback"}, callback);
+      await vi.waitFor(() => expect(callback).toHaveBeenCalledExactlyOnceWith({cancel:false}));
+    }
+    expect(contents.loadURL).not.toHaveBeenCalled();
+  });
+
+  it("cancels a pending reputation request when its tab closes", async () => {
+    let resolveVerdict!: (value: {verdict:"safe";provider:string}) => void;
+    const checkUrl = vi.fn(async () => ({verdict:"safe" as const,provider:"test"}));
+    const {service} = createService({threatProvider: threatProvider(checkUrl)});
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://safe.example");
+    checkUrl.mockImplementationOnce(() => new Promise(resolve => {resolveVerdict=resolve;}));
+    const callback = vi.fn();
+    electron.state.partitions[0]!.instance.requestHandler?.({webContentsId:electron.state.views[0]!.webContents.id,resourceType:"mainFrame",url:"https://safe.example/callback"},callback);
+    await service.closeTab(tab.id);
+    resolveVerdict({verdict:"safe",provider:"test"});
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledExactlyOnceWith({cancel:true}));
+  });
+
   it("preserves target=_blank form POST bodies when opening managed tabs", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
@@ -2350,24 +2415,14 @@ describe("UserBrowserService", () => {
           policy: "strict-origin-when-cross-origin",
         },
       }),
-    ).toEqual({ action: "deny" });
+    ).toMatchObject({ action: "allow", createWindow: expect.any(Function) });
 
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     expect(service.getState().tabs.at(-1)).toMatchObject({
       url: "https://courseware.example/api/lti/oidc",
     });
     const popup = electron.state.views.at(-1)!.webContents;
-    expect(popup.loadURL).toHaveBeenCalledWith(
-      "https://courseware.example/api/lti/oidc",
-      {
-        postData: postBody.data,
-        extraHeaders: "Content-Type: application/x-www-form-urlencoded",
-        httpReferrer: {
-          url: "https://canvas.example/course",
-          policy: "strict-origin-when-cross-origin",
-        },
-      },
-    );
+    expect(popup.loadURL).not.toHaveBeenCalled();
   });
 
   it("preserves UTF-8-qualified Microsoft sign-in POSTs when opening managed tabs", async () => {
@@ -2393,15 +2448,11 @@ describe("UserBrowserService", () => {
         disposition: "foreground-tab",
         postBody,
       }),
-    ).toEqual({ action: "deny" });
+    ).toMatchObject({ action: "allow", createWindow: expect.any(Function) });
 
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     const popup = electron.state.views.at(-1)!.webContents;
-    expect(popup.loadURL).toHaveBeenCalledWith(signInUrl, {
-      postData: postBody.data,
-      extraHeaders:
-        "Content-Type: application/x-www-form-urlencoded; charset=UTF-8",
-    });
+    expect(popup.loadURL).not.toHaveBeenCalled();
   });
 
   it("awaits CDP clicks and opens a managed tab for new window links", async () => {
@@ -2452,7 +2503,7 @@ describe("UserBrowserService", () => {
       })],
     ]);
     expect(contents.executeJavaScript).toHaveBeenCalledTimes(1);
-    expect(popupResult).toEqual({ action: "deny" });
+    expect(popupResult).toMatchObject({ action: "allow" });
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     expect(service.getState().tabs.at(-1)).toMatchObject({
       url: "https://opened.example/path",
@@ -3744,7 +3795,7 @@ it("serializes closeTab behind an in-flight agent act", async () => {
         url: googleAuthUrl,
         disposition: "foreground-tab",
       }),
-    ).toEqual({ action: "deny" });
+    ).toMatchObject({ action: "allow", createWindow: expect.any(Function) });
 
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     const createdTab = service.getState().tabs.at(-1);

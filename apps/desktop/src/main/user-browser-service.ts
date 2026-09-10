@@ -344,6 +344,9 @@ interface ViewRecord {
 	view: WebContentsView;
 	navigatingTo?: string;
 	navigationGeneration: number;
+	requestGeneration?: number;
+	nextNavigationSource?: UserBrowserBlockedNavigation["source"];
+	openerTabId?: string;
 	approvedNavigationUrl?: string;
 	pendingDownloadNavigation?: {
 		targetUrl: string;
@@ -577,8 +580,21 @@ export function safeZoomJoinUrl(value: string): string | undefined {
 	}
 }
 
+/** Microsoft Teams navigation/join links; never arbitrary application commands. */
+export function safeTeamsUrl(value: string): string | undefined {
+	if (!value || value.length > 8_192) return undefined;
+	try {
+		const url = new URL(value);
+		if (url.protocol !== "msteams:" ||
+			!["teams.microsoft.com", "teams.live.com"].includes(url.hostname.toLowerCase()) ||
+			url.username || url.password || url.port || url.hash ||
+			!/^\/l\/(?:meetup-join|team|channel)\/[^/]+/.test(url.pathname)) return undefined;
+		return url.toString();
+	} catch { return undefined; }
+}
+
 function openSystemAppUrl(value: string): boolean {
-	const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value);
+	const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value);
 	if (!url) return false;
 	void Promise.resolve(shell.openExternal(url)).catch(() => undefined);
 	return true;
@@ -1151,6 +1167,8 @@ function paymentFillScript(
 
 interface BrowserPartitionParticipant {
 	ownsWebContents(webContents: WebContents): boolean;
+	ownsRequest(webContentsId: number): boolean;
+	checkRequest(webContentsId: number, url: string): Promise<boolean>;
 	isPermissionAllowed(
 		origin: string,
 		permission: string,
@@ -1180,6 +1198,17 @@ class BrowserPartitionCoordinator {
 	private readonly participants = new Set<BrowserPartitionParticipant>();
 
 	constructor(private readonly partition: Session) {
+		// Pause the original request instead of cancelling and replaying it with
+		// loadURL: Chromium must retain POST bodies, redirects and referrers.
+		partition.webRequest.onBeforeRequest({ urls: ["http://*/*", "https://*/*"] }, (details, callback) => {
+			if (details.resourceType !== "mainFrame" || details.webContentsId === undefined) return callback({ cancel: false });
+			const contentsId = details.webContentsId;
+			const participant = [...this.participants].find((owner) => owner.ownsRequest(contentsId));
+			if (!participant) return callback({ cancel: false });
+			void participant.checkRequest(contentsId, details.url)
+				.then((allowed) => callback({ cancel: !allowed }))
+				.catch(() => callback({ cancel: true }));
+		});
 		partition.setPermissionCheckHandler(
 			(webContents, permission, requestingOrigin, details) => {
 				const participant = this.find(webContents);
@@ -1463,6 +1492,8 @@ export class UserBrowserService {
 		}
 		this.partitionCoordinator = browserPartitionCoordinator(this.partition);
 		this.partitionParticipant = {
+			ownsRequest: (id) => this.webContentsToTab.has(id),
+			checkRequest: (id, url) => this.checkNativeRequest(id, url),
 			ownsWebContents: (webContents) =>
 				this.webContentsToTab.has(webContents.id),
 			isPermissionAllowed: (origin, permission, mediaType) =>
@@ -1743,6 +1774,7 @@ export class UserBrowserService {
 			});
 			this.state.recentlyClosedTabs = this.state.recentlyClosedTabs.slice(0, 32);
 		}
+		const openerTabId = this.views.get(tabId)?.openerTabId;
 		const index = this.state.tabs.findIndex((item) => item.id === tabId);
 		this.closeView(tabId);
 		this.agentTabPinCounts.delete(tabId);
@@ -1751,6 +1783,7 @@ export class UserBrowserService {
 			this.state.activeTabId = null;
 		} else if (this.state.activeTabId === tabId) {
 			this.state.activeTabId =
+				this.state.tabs.find((candidate) => candidate.id === openerTabId)?.id ??
 				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
 		}
 		this.pruneEmptyTabFolders();
@@ -2139,16 +2172,32 @@ export class UserBrowserService {
 		}
 	}
 
-	private interceptPageNavigation(
-		tab: UserBrowserTab,
-		record: ViewRecord,
-		url: string,
-		source: Exclude<UserBrowserBlockedNavigation["source"], "popup">,
-	): void {
-		const normalized = safePageUrl(url)?.toString();
-		if (!normalized) return;
-		const generation = this.beginNavigationCheck(record);
-		void this.checkAndLoadNavigation(tab, record, normalized, source, generation);
+	private async checkNativeRequest(webContentsId: number, url: string): Promise<boolean> {
+		const tabId = this.webContentsToTab.get(webContentsId);
+		const tab = this.state.tabs.find((candidate) => candidate.id === tabId);
+		const record = tabId ? this.views.get(tabId) : undefined;
+		if (!tab || !record || this.disposed || this.passwordSaveCommitTabId === tabId) return false;
+		const source = record.nextNavigationSource ?? "navigation";
+		delete record.nextNavigationSource;
+		const generation = record.navigationGeneration;
+		const requestGeneration = (record.requestGeneration ?? 0) + 1;
+		record.requestGeneration = requestGeneration;
+		const verdict = await this.reputationForUrl(url, "navigation");
+		if (!this.navigationCheckIsCurrent(tab, record, generation) || record.requestGeneration !== requestGeneration) return false;
+		if (verdict?.verdict === "malicious") {
+			this.blockNavigation(tab, record, url, source, verdict);
+			return false;
+		}
+		delete tab.blockedNavigation;
+		if (!record.pendingDownloadNavigation) {
+			record.pendingDownloadNavigation = {
+				targetUrl: url,
+				previousTab: this.snapshotTabBeforeNavigation(tab),
+				requestedAt: Date.now(),
+				generation,
+			};
+		}
+		return true;
 	}
 
 	back(tabId: string): UserBrowserState {
@@ -5064,6 +5113,11 @@ export class UserBrowserService {
 		}
 	}
 
+	private hasPopupRelationship(tabId: string): boolean {
+		return Boolean(this.views.get(tabId)?.openerTabId) ||
+			[...this.views.values()].some((record) => record.openerTabId === tabId);
+	}
+
 	sleepTab(tabId: string): UserBrowserState {
 		if (tabId === this.state.activeTabId || this.isAgentTabPinned(tabId))
 			return this.getState();
@@ -5071,7 +5125,7 @@ export class UserBrowserService {
 		if (
 			!tab.url ||
 			isKestrelAppPageUrl(tab.url) ||
-			isAuthenticationFlowUrl(tab.url)
+			isAuthenticationFlowUrl(tab.url) || this.hasPopupRelationship(tab.id)
 		)
 			return this.getState();
 		this.closeView(tabId);
@@ -5088,7 +5142,7 @@ export class UserBrowserService {
 				!tab.url ||
 				tab.discarded ||
 				isKestrelAppPageUrl(tab.url) ||
-				isAuthenticationFlowUrl(tab.url)
+				isAuthenticationFlowUrl(tab.url) || this.hasPopupRelationship(tab.id)
 			)
 				continue;
 			const record = this.views.get(tab.id);
@@ -5132,7 +5186,7 @@ export class UserBrowserService {
 				!tab.url ||
 				tab.discarded ||
 				isKestrelAppPageUrl(tab.url) ||
-				isAuthenticationFlowUrl(tab.url)
+				isAuthenticationFlowUrl(tab.url) || this.hasPopupRelationship(tab.id)
 			)
 				continue;
 			const lastActive = Date.parse(tab.lastActiveAt);
@@ -5636,6 +5690,7 @@ export class UserBrowserService {
 	private ensureView(
 		tab: UserBrowserTab,
 		loadStoredUrl = true,
+		popupOptions?: Electron.BrowserWindowConstructorOptions & { webContents?: WebContents },
 	): ViewRecord {
 		if (tab.file || isKestrelAppPageUrl(tab.url))
 			throw new Error("App pages do not use a web view.");
@@ -5643,7 +5698,9 @@ export class UserBrowserService {
 		if (existing && liveWebContents(existing?.view?.webContents)) return existing;
 		if (existing) this.closeView(tab.id, false);
 		const view = new WebContentsView({
+			...(popupOptions?.webContents ? { webContents: popupOptions.webContents } : {}),
 			webPreferences: {
+				...popupOptions?.webPreferences,
 				preload: join(__dirname, "../preload/userBrowser.cjs"),
 				partition: this.partitionName,
 				sandbox: true,
@@ -5696,18 +5753,40 @@ export class UserBrowserService {
 	private configureView(tab: UserBrowserTab, record: ViewRecord): void {
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents) return;
-		webContents.setWindowOpenHandler(({ url, disposition, postBody, referrer }) => {
+		webContents.setWindowOpenHandler(({ url, disposition }) => {
 			if (openSystemAppUrl(url)) return { action: "deny" };
-			if (safePageUrl(url)) {
-				const loadOptions = loadOptionsForWindowOpen(postBody, referrer);
-				void this.createTab(
-					url,
-					disposition !== "background-tab",
-					loadOptions,
-					"popup",
-				).catch(() => undefined);
-			}
-			return { action: "deny" };
+			if (url !== "about:blank" && !safePageUrl(url)) return { action: "deny" };
+			return {
+				action: "allow",
+				outlivesOpener: true,
+				overrideBrowserWindowOptions: {
+					webPreferences: {
+						preload: join(__dirname, "../preload/userBrowser.cjs"),
+						partition: this.partitionName,
+						sandbox: true,
+						contextIsolation: true,
+						nodeIntegration: false,
+						webSecurity: true,
+						devTools: false,
+					},
+				},
+				createWindow: (options) => {
+					const popup = createEmptyBrowserTab(this.now);
+					popup.url = sanitizeBrowserUrl(url);
+					popup.title = popup.url ? hostnameTitle(url) : "Sign-in window";
+					this.state.tabs.push(popup);
+					const child = this.ensureView(popup, false, options);
+					child.openerTabId = tab.id;
+					child.nextNavigationSource = "popup";
+					if (disposition !== "background-tab") this.state.activeTabId = popup.id;
+					child.view.webContents.on("destroyed", () => {
+						if (this.views.get(popup.id) === child) void this.closeTab(popup.id);
+					});
+					this.commit();
+					this.attachActiveWebView();
+					return child.view.webContents;
+				},
+			};
 		});
 		webContents.on("ipc-message", (event, channel, ...args) => {
 			if (channel === PASSWORD_SUBMISSION_CHANNEL) {
@@ -5731,6 +5810,11 @@ export class UserBrowserService {
 					() => undefined,
 				);
 		});
+		webContents.on("will-frame-navigate", (event) => {
+			// Meeting launchers may navigate a hidden iframe to their app scheme.
+			// Main-frame handoffs are handled below so each link opens only once.
+			if (!event.isMainFrame && openSystemAppUrl(event.url)) event.preventDefault();
+		});
 		webContents.on("will-navigate", (event, url) => {
 			if (this.passwordSaveCommitTabId === tab.id) {
 				event.preventDefault();
@@ -5749,8 +5833,7 @@ export class UserBrowserService {
 				delete record.approvedNavigationUrl;
 				return;
 			}
-			event.preventDefault();
-			this.interceptPageNavigation(tab, record, normalized, "navigation");
+			record.nextNavigationSource = "navigation";
 		});
 		webContents.on("will-redirect", (event, url) => {
 			if (this.passwordSaveCommitTabId === tab.id) {
@@ -5761,10 +5844,11 @@ export class UserBrowserService {
 				event.preventDefault();
 				return;
 			}
-			const normalized = safePageUrl(url)?.toString();
-			event.preventDefault();
-			if (!normalized) return;
-			this.interceptPageNavigation(tab, record, normalized, "redirect");
+			if (!safePageUrl(url)) {
+				event.preventDefault();
+				return;
+			}
+			record.nextNavigationSource = "redirect";
 		});
 		webContents.on("did-start-loading", () => {
 			tab.loading = true;
@@ -6384,6 +6468,7 @@ export class UserBrowserService {
 					tab.id !== this.state.activeTabId &&
 					!this.isAgentTabPinned(tab.id) &&
 					!isAuthenticationFlowUrl(tab.url) &&
+					!this.hasPopupRelationship(tab.id) &&
 					this.views.has(tab.id),
 			)
 			.sort((left, right) =>

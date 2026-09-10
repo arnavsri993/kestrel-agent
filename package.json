@@ -38,6 +38,7 @@
     "test:desktop-smoke": "node scripts/smoke-desktop.mjs",
     "test:desktop-single-instance": "node scripts/test-desktop-single-instance.mjs",
     "test:desktop-browser": "node scripts/test-desktop-browser.mjs",
+    "test:desktop-auth-links": "node scripts/test-desktop-auth-links.mjs",
     "test:desktop-layout": "node scripts/test-desktop-layout.mjs",
     "test:desktop-project-system": "node scripts/test-desktop-project-system.mjs",
     "test:desktop-settings": "node scripts/test-desktop-settings.mjs",
