@@ -9,6 +9,7 @@ import {
 } from "./vite-plugins/renderer-csp-nonce";
 
 const workspacePackages = [
+	"@kestrel/core-service",
 	"@kestrel/agent-core",
 	"@kestrel/database",
 	"@kestrel/encryption",

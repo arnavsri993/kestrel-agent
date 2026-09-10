@@ -72,9 +72,6 @@ export function PaymentSettings({
 				<h2 id="payment-settings-title">
 					<Icon name="card" /> Payment cards
 				</h2>
-				<p>
-					Save a card from a secure checkout, then fill payment details without retyping them.
-				</p>
 			</header>
 
 			<div className="setting-row browser-setting-row payment-autofill-toggle">
@@ -129,7 +126,7 @@ export function PaymentSettings({
 			</div>
 
 			<p className="payment-settings-footnote">
-				Card numbers are encrypted by Kestrel’s protected credential broker. The renderer receives only the card brand, last four digits, and expiration; security codes are never stored or autofilled.
+				Card numbers stay encrypted on this Mac. Security codes are never stored or autofilled.
 			</p>
 		</section>
 	);

@@ -1,5 +1,31 @@
 # Kestrel design system
 
+## macOS coherence — September 2026
+
+Kestrel is a browser with adjacent local agent work: browse, ask, inspect,
+approve, and resume. This refinement keeps that working structure and gives
+navigation, forms, and local context a consistent Mac rhythm.
+
+- Dense application chrome, SF system text, 13px controls, 12px support text,
+  4px spacing rhythm, 9px fields, and 14px independent surfaces.
+- Quiet semantic graphite surfaces; opaque reading areas remain legible over
+  user-selected wallpaper. No new accent palette or wallpaper changes.
+- Selection uses a filled rounded row; keyboard focus remains an explicit ring.
+- Home has one elevated composer and a continuous, readable context shelf.
+- Existing feedback and direct manipulation remain; no new motion or libraries.
+- Avoid capsule-shaped forms, tracked uppercase navigation, decorative rules,
+  card hover effects that suggest whole cards are clickable, and nested glass.
+- Why this is not generic: the hierarchy follows real browser tabs, folder-backed
+  chats, local context, and agent controls rather than a dashboard template.
+
+Observed baseline: Home shelves compete with wallpaper, field shapes vary from
+buttons, and sidebar section labels are tiny and widely tracked. These are the
+three primary refinement targets. Installed review also identified URL entry
+actions wrapping too early; flexible fields now keep the action adjacent when
+space permits and wrap at narrow widths. The automated classifier suggested marketing
+structure; live desktop evidence establishes an existing product redesign.
+
+
 ## Instrument Workbench — August 2026
 
 This is the authoritative desktop system for the product-wide redesign based
@@ -626,6 +652,24 @@ renderer.
   readiness, or public distribution.
 
 Reference parity is deliberately layered, not a claim that every named vendor adapter ships in core. The 1,117-page Hermes/OpenClaw audit separates bundled capability families, signed extension contracts, and operational documentation. Native-node behavior is represented by a tested paired-device extension protocol rather than a bundled mobile app; Kestrel itself is a direct-download Apple Silicon Mac application.
+
+
+## Unified settings
+
+Existing React desktop redesign; compact utility density, low visual intensity.
+One searchable Browser/Agent toolbar and one category rail lead to focused pages.
+The browser entry opens Startup rather than duplicating every category in an overview.
+Keep existing system typography, neutral surface tokens, 13px row labels, 16px section headings,
+8/12/16/24px spacing, and visible keyboard focus. No new imagery or animation.
+Category changes are immediate so outgoing and incoming settings never overlap.
+Remove repeated marketing and implementation copy in JSX; retain decision-critical
+privacy, permission, destructive-action, validation, and live-status text.
+At narrow container widths the same catalog drives a native section picker.
+Avoid repeated titles, nested rounded cards, clipped category names, and unsupported controls.
+Why this is not generic: the navigation reflects Kestrel's actual browser preferences
+and agent models, memory, tools, workspace, permissions, and recovery boundaries.
+Reference use is inspiration-only: familiar browser categories and explicit agent
+configuration boundaries; no third-party code or visual assets copied.
 
 ## Tactile action feedback — September 2026
 

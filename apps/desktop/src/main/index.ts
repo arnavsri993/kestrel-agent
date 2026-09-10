@@ -54,6 +54,7 @@ import {
   type WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
+import { desktopCoreProcess } from "./electron-core-process";
 import { CredentialBroker } from "./credential-broker";
 import {
   BrokerCredentialStore,
@@ -534,6 +535,7 @@ const supervisor = new CoreSupervisor(
     return browserService.handle(request, signal);
   },
   () => browserService.closeAll(),
+  { processFactory: desktopCoreProcess },
 );
 const providerAuthMonitor = new ProviderAuthMonitor({
   request: (request) => supervisor.request(request),

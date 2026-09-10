@@ -70,9 +70,8 @@
 	--radius-surface: 14px;
 	--radius-stage: 20px;
 	--radius-pill: 999px;
-	/* Text entry is intentionally a capsule: the browser and agent use the
-	 * fully rounded ends to make editable fields immediately recognizable. */
-	--radius-text-entry: var(--radius-pill);
+	/* Fields share control geometry; larger composers own their surface radius. */
+	--radius-text-entry: var(--radius-control);
 
 	/* Motion — named by interaction weight, not component ownership. */
 	--motion-instant: 60ms;

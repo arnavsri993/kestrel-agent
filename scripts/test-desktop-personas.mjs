@@ -314,13 +314,13 @@ async function runReturningPersona() {
 	await selectDestination(page, "Settings");
 	await assertFocusedRoute(page, "settings");
 	await page
-		.getByRole("tab", { name: /Browser Tabs, search, and privacy/ })
+		.locator(".settings-scope-switcher").getByRole("tab", { name: /^Browser$/ })
 		.click();
-	await selectSettingsSection(page, "browser", "Browser");
-	await page.getByRole("heading", { name: "Browser", exact: true }).waitFor();
+	await selectSettingsSection(page, "browser-startup", "Startup");
+	await page.getByRole("heading", { name: "Startup", exact: true }).waitFor();
 
 	await page
-		.getByRole("tab", { name: /Agent Models, memory, and work/ })
+		.locator(".settings-scope-switcher").getByRole("tab", { name: /^Agent$/ })
 		.click();
 	for (const [label, heading] of [
 		["General", "Autonomy and behavior"],

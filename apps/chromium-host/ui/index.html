@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Kestrel — Chromium preview</title>
+<link rel="stylesheet" href="./shell.css">
+<script src="./shell.js" defer></script>
+</head>
+<body>
+<aside>
+  <header><strong>Kestrel</strong><span>Chromium preview</span></header>
+  <button id="new-conversation" class="wide">＋ New conversation</button>
+  <h2>Conversations</h2><nav id="conversations" aria-label="Conversations"></nav>
+  <details id="browser-tools" open><summary id="browser-summary">Browser tabs</summary>
+  <form id="browser-form"><label for="url">Web address</label><div class="row"><input id="url" type="url" placeholder="https://example.com" required><button type="submit">Open tab</button></div></form>
+  <nav id="tabs" aria-label="Browser tabs"></nav>
+  <p class="note">Web pages open in real Chromium tabs. They cannot access this conversation’s host connection.</p>
+  </details>
+  <footer>Temporary profile · Cleared on exit</footer>
+</aside>
+<main>
+  <div class="heading"><div><p class="eyebrow">CONVERSATION</p><h1 id="title">New conversation</h1></div><span id="status" role="status">Connecting…</span></div>
+  <section id="transcript" aria-label="Conversation messages" aria-live="polite"><div id="empty"><h2>A conversation, on Chromium.</h2><p>Send a message to your configured model, or open a web tab from the sidebar.</p><p class="note">This preview supports conversation only. Agent tools and browser context are not connected yet.</p></div></section>
+  <div id="error" role="alert" hidden></div>
+  <form id="composer">
+    <label for="message">Message</label><textarea id="message" rows="3" maxlength="20000" placeholder="Ask Kestrel…" required></textarea>
+    <div class="composer-bottom"><div class="routing"><label for="provider">Provider</label><select id="provider"></select><label for="model">Model</label><input id="model" value="auto" maxlength="200" required></div><div class="row"><button id="cancel" type="button" hidden>Stop</button><button id="send" class="primary" type="submit" disabled>Send</button></div></div>
+    <p id="provider-note" class="note"></p>
+  </form>
+</main>
+</body>
+</html>
