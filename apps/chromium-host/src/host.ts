@@ -3,11 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, type Browser } from "playwright";
 import { CoreSupervisor } from "@kestrel/core-service/core-supervisor";
 import { nodeCoreProcess } from "@kestrel/core-service/node-core-process";
 import type { CoreRequest } from "@kestrel/shared-types";
-import { assertTrustedShell, browserUrl, HostCommandSchema } from "./bridge-policy";
+import { ChromiumTabManager } from "./tab-manager";
+import { assertTrustedShell, HostCommandSchema } from "./bridge-policy";
 
 const hostRoot = fileURLToPath(new URL("../", import.meta.url));
 const shellUrl = pathToFileURL(join(hostRoot, "ui/index.html")).href;
@@ -61,7 +62,6 @@ export async function launchChromiumHost(options: {
     const sessions: { id: string; title: string }[] = [];
     let sessionId = "";
     let activeStream: string | undefined;
-    const tabs = new Map<string, Page>();
     const newConversation = async () => {
       const result = await request({ type: "runtime-create-session", title: "New conversation", kind: "conversation" });
       if (!result.session) throw new Error("Agent Core did not create a conversation.");
@@ -72,12 +72,15 @@ export async function launchChromiumHost(options: {
     browser = await chromium.launch({ headless: options.headless ?? false, chromiumSandbox: true });
     const context = await browser.newContext({ viewport: { width: 1180, height: 800 } });
     const shell = await context.newPage();
+    const tabs = new ChromiumTabManager(context, shell, () => {
+      if (shell.url() === shellUrl && !shell.isClosed()) {
+        void shell.evaluate(() => window.dispatchEvent(new Event("kestrel-tabs-changed"))).catch(() => {});
+      }
+    });
     const state = async () => {
       const messages = await request({ type: "runtime-list-messages", sessionId });
       const providers = await request({ type: "runtime-list-providers" });
-      const browserTabs = await Promise.all([...tabs].map(async ([id, page]) => ({
-        id, url: page.url(), title: await page.title().catch(() => "Browser tab"),
-      })));
+      const browserTabs = await tabs.snapshot();
       return {
         sessionId, sessions, messages: messages.messages ?? [],
         providers: providers.providers?.filter((provider) => provider.id !== "auto").map((provider) => provider.id) ?? [],
@@ -113,24 +116,9 @@ export async function launchChromiumHost(options: {
         case "cancel":
           if (activeStream) await request({ type: "runtime-cancel-stream", streamId: activeStream });
           return { ok: true };
-        case "open-tab": {
-          if (tabs.size >= 16) throw new Error("Close a browser tab before opening another.");
-          const url = browserUrl(command.url);
-          const page = await context.newPage();
-          const id = randomUUID();
-          tabs.set(id, page);
-          page.on("close", () => tabs.delete(id));
-          try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 }); }
-          catch { await page.close(); throw new Error("Could not open that URL."); }
-          await page.bringToFront();
-          return { id };
-        }
-        case "focus-tab": {
-          const tab = tabs.get(command.id);
-          if (!tab) throw new Error("This tab is closed.");
-          await tab.bringToFront(); return { ok: true };
-        }
-        case "close-tab": await tabs.get(command.id)?.close(); return { ok: true };
+        case "open-tab": return { id: await tabs.open(command.url) };
+        case "focus-tab": await tabs.focus(command.id); return { ok: true };
+        case "close-tab": await tabs.close(command.id); return { ok: true };
       }
     });
     // The binding belongs to this page only and checks the exact main-frame URL
