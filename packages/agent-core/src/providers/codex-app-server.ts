@@ -1,20 +1,28 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import {
+	execFile as execFileCallback,
+	type ChildProcessWithoutNullStreams,
+	spawn,
+} from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
 	access,
 	chmod,
 	mkdir,
 	mkdtemp,
+	readFile,
 	rm,
 	symlink,
 	writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import sharp from "sharp";
 import {
 	contentText,
 	type DiscoveredModel,
 	type ModelCallOptions,
+	type ModelContentPart,
 	type ModelMessage,
 	ModelProviderError,
 	type ModelRequest,
@@ -33,6 +41,15 @@ const TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_TIMER_MS = 2_147_483_647;
 const MODEL_LIST_PAGE_SIZE = 100;
 const MAX_MODEL_LIST_PAGES = 20;
+// App-server exchanges one JSON line per request. Keep inline image payloads
+// below the line guard with space left for the surrounding turn and transcript.
+const MAX_INLINE_IMAGE_DATA_URL_BYTES = 6 * 1024 * 1024;
+const MAX_HEIF_SOURCE_BYTES = 10 * 1024 * 1024;
+const MAX_HEIF_SOURCE_PIXELS = 75_000_000;
+const HEIF_CONVERSION_TIMEOUT_MS = 30_000;
+const MEDIA_TYPE_PATTERN = /^[a-z][a-z0-9!#$&^_.+-]*\/[a-z0-9!#$&^_.+-]*$/i;
+const HEIF_MEDIA_TYPES = new Set(["image/heic", "image/heif"]);
+const executeFile = promisify(execFileCallback);
 type SupportedReasoningEffort =
 	| "none"
 	| "low"
@@ -116,6 +133,17 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 			? [effort as SupportedReasoningEffort]
 			: [];
 	});
+	// The current app-server schema defaults omitted modality metadata to text and
+	// image. Preserve that documented default for older Codex installations, but
+	// never infer audio, documents, video, or tool execution from a catalog row.
+	const inputModalities = new Set(
+		(Array.isArray(record?.inputModalities)
+			? record.inputModalities
+			: ["text", "image"]
+		)
+			.filter((value): value is string => typeof value === "string")
+			.map((value) => value.trim().toLowerCase()),
+	);
 	return {
 		id: model,
 		displayName:
@@ -125,13 +153,13 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 		availability: "available",
 		source: "protocol",
 		capabilities: {
-			// `model/list` confirms account entitlement and each advertised reasoning
-			// level. The Kestrel adapter remains a text-only, read-only route, so
-			// advertise only the capabilities it can execute for this exact model.
+			// `model/list` confirms account entitlement, input modality, and each
+			// advertised reasoning level. This remains a read-only Kestrel route;
+			// image input does not grant shell, file-editing, or tool capability.
 			capabilityProvenance: "confirmed",
 			streaming: true,
 			tools: false,
-			images: false,
+			images: inputModalities.has("image"),
 			audio: false,
 			documents: false,
 			video: false,
@@ -168,20 +196,147 @@ function textPrompt(messages: ModelMessage[]): string {
 					: message.role[0]!.toUpperCase() + message.role.slice(1);
 			const text = contentText(message.content);
 			const omitted = message.content
-				.filter((part) => part.type !== "text")
-				.map((part) => `[${part.type} content omitted by this text-only route]`)
+				.filter((part) => part.type !== "text" && part.type !== "image")
+				.map((part) => `[${part.type} content unavailable to this route]`)
 				.join("\n");
 			return `${label}:\n${[text, omitted].filter(Boolean).join("\n")}`;
 		})
 		.join("\n\n");
 }
 
-function latestUserText(messages: ModelMessage[]): string {
+function latestUserContent(messages: ModelMessage[]): ModelContentPart[] {
 	for (let index = messages.length - 1; index >= 0; index -= 1) {
 		const message = messages[index];
-		if (message?.role === "user") return contentText(message.content);
+		if (message?.role === "user") return message.content;
 	}
-	return textPrompt(messages);
+	return [];
+}
+
+function base64Data(value: string): Buffer {
+	const normalized = value.replaceAll(/\s/g, "");
+	if (!normalized || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized))
+		throw new Error("Codex image input is not valid base64 data.");
+	return Buffer.from(normalized, "base64");
+}
+
+function inlineImageSource(
+	part: Extract<ModelContentPart, { type: "image" }>,
+): { mediaType: string; bytes: Buffer } {
+	if (part.source === "base64") {
+		const mediaType = part.mediaType.trim().toLowerCase();
+		if (!MEDIA_TYPE_PATTERN.test(mediaType))
+			throw new Error("Codex image input has an invalid media type.");
+		return { mediaType, bytes: base64Data(part.data) };
+	}
+	const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(
+		part.data,
+	);
+	if (!match)
+		throw new Error(
+			"Codex image input must use an inline base64 data URL; remote image URLs are not accepted by this route.",
+		);
+	const rawMediaType = match[1];
+	const rawData = match[2];
+	if (!rawMediaType || !rawData)
+		throw new Error("Codex image input is missing media data.");
+	const mediaType = rawMediaType.trim().toLowerCase();
+	if (!MEDIA_TYPE_PATTERN.test(mediaType))
+		throw new Error("Codex image input has an invalid media type.");
+	return { mediaType, bytes: base64Data(rawData) };
+}
+
+async function convertHeifToJpeg(bytes: Buffer): Promise<Buffer> {
+	if (bytes.byteLength > MAX_HEIF_SOURCE_BYTES)
+		throw new Error("This HEIC or HEIF image is too large to convert safely.");
+	let sharpError: unknown;
+	try {
+		return await sharp(bytes, {
+			failOn: "none",
+			limitInputPixels: MAX_HEIF_SOURCE_PIXELS,
+		})
+			.rotate()
+			.jpeg({ quality: 92, progressive: true })
+			.toBuffer();
+	} catch (error) {
+		sharpError = error;
+		if (process.platform !== "darwin")
+			throw new Error(
+				"Kestrel could not convert this HEIC or HEIF image for Codex.",
+			);
+	}
+
+	const directory = await mkdtemp(join(tmpdir(), "kestrel-codex-heif-"));
+	const source = join(directory, "source.heif");
+	const destination = join(directory, "converted.jpeg");
+	try {
+		await writeFile(source, bytes, { mode: 0o600 });
+		await executeFile(
+			"/usr/bin/sips",
+			["-s", "format", "jpeg", source, "--out", destination],
+			{ timeout: HEIF_CONVERSION_TIMEOUT_MS, maxBuffer: 64 * 1024 },
+		);
+		const converted = await readFile(destination);
+		if (converted.byteLength === 0)
+			throw new Error("macOS did not produce a JPEG image.");
+		return converted;
+	} catch {
+		throw new Error(
+			sharpError instanceof Error
+				? "Kestrel could not convert this HEIC or HEIF image for Codex."
+				: "Kestrel could not create a usable JPEG from this HEIC or HEIF image.",
+		);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+}
+
+async function inlineImageDataUrl(
+	part: Extract<ModelContentPart, { type: "image" }>,
+): Promise<string> {
+	const { mediaType, bytes } = inlineImageSource(part);
+	const output = HEIF_MEDIA_TYPES.has(mediaType)
+		? await convertHeifToJpeg(bytes)
+		: bytes;
+	const outputMediaType = HEIF_MEDIA_TYPES.has(mediaType)
+		? "image/jpeg"
+		: mediaType;
+	return `data:${outputMediaType};base64,${output.toString("base64")}`;
+}
+
+type AppServerTurnInput =
+	| { type: "text"; text: string; text_elements: [] }
+	| { type: "image"; url: string };
+
+async function turnInput(
+	messages: ModelMessage[],
+	includeTranscript: boolean,
+): Promise<AppServerTurnInput[]> {
+	const userContent = latestUserContent(messages);
+	const imageParts = userContent.filter(
+		(part): part is Extract<ModelContentPart, { type: "image" }> =>
+			part.type === "image",
+	);
+	const text = (
+		includeTranscript ? textPrompt(messages) : contentText(userContent)
+	).trim();
+	const input: AppServerTurnInput[] = [
+		{
+			type: "text",
+			text: text || (imageParts.length ? "[Image attachment]" : "[Empty message]"),
+			text_elements: [],
+		},
+	];
+	let imageBytes = 0;
+	for (const part of imageParts) {
+		const url = await inlineImageDataUrl(part);
+		imageBytes += Buffer.byteLength(url, "utf8");
+		if (imageBytes > MAX_INLINE_IMAGE_DATA_URL_BYTES)
+			throw new Error(
+				"Codex image attachments are limited to 6 MB per message in this route.",
+			);
+		input.push({ type: "image", url });
+	}
+	return input;
 }
 
 function usageFrom(value: unknown): ModelUsage {
@@ -262,7 +417,7 @@ export class CodexAppServerProvider {
 	readonly capabilities = {
 		streaming: true,
 		tools: false,
-		images: false,
+		images: true,
 		audio: false,
 		documents: false,
 		video: false,
@@ -825,16 +980,7 @@ export class CodexAppServerProvider {
 					"turn/start",
 					{
 						threadId,
-						input: [
-							{
-								type: "text",
-								text:
-									binding.turns > 0
-										? latestUserText(request.messages)
-										: textPrompt(request.messages),
-								text_elements: [],
-							},
-						],
+						input: await turnInput(request.messages, binding.turns === 0),
 						model: request.model,
 						approvalPolicy: "never",
 						sandboxPolicy: { type: "readOnly", networkAccess: false },

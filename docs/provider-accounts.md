@@ -51,10 +51,12 @@ behavior until they are migrated into an account catalog.
 The official Codex app-server adapter uses its stable `model/list` protocol
 call for each isolated ChatGPT/Codex profile. Those protocol records reflect
 the models the signed-in account currently exposes, rather than Kestrel's
-fallback default. Kestrel records the advertised reasoning levels while still
-describing this adapter as its actual read-only text route: it does not claim
-shell, file-editing, browser mutation, or model tool capabilities that the
-adapter cannot execute.
+fallback default. Kestrel records the advertised reasoning levels and image
+modality. It forwards current-message images as bounded inline data URLs only
+when the selected model advertises image input; it does not claim shell,
+file-editing, browser mutation, raw document/video input, or model tool
+capabilities that the adapter cannot execute. HEIC and HEIF image attachments
+are normalized locally to JPEG for the Codex image-input format.
 
 ## UI and routing boundary
 
