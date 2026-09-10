@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-restart-recovery-smoke-"));
@@ -13,6 +13,27 @@ const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 const executablePath = packagedExecutable
 	? resolve(packagedExecutable)
 	: requireFromDesktop("electron");
+const packagedCoreNode = packagedExecutable
+	? resolve(
+			dirname(executablePath),
+			"..",
+			"Resources",
+			"agent-core",
+			"node",
+			"bin",
+			"node",
+		)
+	: undefined;
+const packagedCoreEntry = packagedExecutable
+	? resolve(
+			dirname(executablePath),
+			"..",
+			"Resources",
+			"agent-core",
+			"service",
+			"index.js",
+		)
+	: undefined;
 const launchArgs = packagedExecutable
 	? ["--use-mock-keychain"]
 	: [resolve("apps/desktop/out/main/index.js")];
@@ -107,13 +128,19 @@ function corePid(rootPid) {
 			}
 		}
 	}
-	const candidates = rows.filter(
-		(row) =>
-			descendants.has(row.pid) &&
-			(/out\/main\/utility\.js/.test(row.command) ||
-				(/--type=utility/.test(row.command) &&
-					/--utility-sub-type=node\.mojom\.NodeService/.test(row.command))),
-	);
+	const candidates = rows.filter((row) => {
+		if (!descendants.has(row.pid)) return false;
+		if (packagedCoreNode && packagedCoreEntry)
+			return (
+				row.command.includes(packagedCoreNode) &&
+				row.command.includes(packagedCoreEntry)
+			);
+		return (
+			/out\/main\/utility\.js/.test(row.command) ||
+			(/--type=utility/.test(row.command) &&
+				/--utility-sub-type=node\.mojom\.NodeService/.test(row.command))
+		);
+	});
 	assert.equal(
 		candidates.length,
 		1,
@@ -146,6 +173,15 @@ async function recoveredRuns(page) {
 }
 
 try {
+	if (packagedCoreNode) {
+		assert.equal(
+			execFileSync(packagedCoreNode, ["-p", "process.versions.electron ?? ''"], {
+				encoding: "utf8",
+			}).trim(),
+			"",
+			"Packaged Agent Core must run under standalone Node, not Electron.",
+		);
+	}
 	application = await electron.launch({
 		executablePath,
 		args: launchArgs,

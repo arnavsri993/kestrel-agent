@@ -1,5 +1,6 @@
 import { AnthropicMessagesProvider } from "./anthropic-messages";
 import { CodexAppServerProvider } from "./codex-app-server";
+import { CursorSubscriptionProvider } from "./cursor-cli";
 import { GeminiGenerateContentProvider } from "./gemini-generate-content";
 import { OllamaChatProvider } from "./ollama-chat";
 import { OpenAIChatCompletionsProvider } from "./openai-chat-completions";
@@ -409,6 +410,18 @@ export function createEnvironmentModelProviders(
 					: {}),
 				...(environment.KESTREL_OPENCODE_SUBSCRIPTION_MODEL
 					? { defaultModel: environment.KESTREL_OPENCODE_SUBSCRIPTION_MODEL }
+					: {}),
+				environment,
+			}),
+		);
+	if (environment.KESTREL_ENABLE_CURSOR_SUBSCRIPTION === "1")
+		providers.push(
+			new CursorSubscriptionProvider({
+				...(environment.KESTREL_CURSOR_PATH
+					? { executable: environment.KESTREL_CURSOR_PATH }
+					: {}),
+				...(environment.KESTREL_CURSOR_SUBSCRIPTION_MODEL
+					? { defaultModel: environment.KESTREL_CURSOR_SUBSCRIPTION_MODEL }
 					: {}),
 				environment,
 			}),

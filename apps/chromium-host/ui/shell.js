@@ -82,5 +82,6 @@ $("composer").addEventListener("submit", async (event) => {
   finally { clearInterval(timer); sending = false; $("message").readOnly = false; $("cancel").hidden = true; await refresh().catch(error); }
 });
 $("message").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!$("send").disabled) $("composer").requestSubmit(); } });
+window.addEventListener("kestrel-tabs-changed", () => refresh().catch(error));
 window.addEventListener("focus", () => refresh().catch(error));
 refresh().catch(error);

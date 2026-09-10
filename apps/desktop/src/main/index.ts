@@ -64,7 +64,12 @@ import { ProviderAccountStore } from "./provider-account-store";
 import { PasswordVault } from "./password-vault";
 import { PaymentCardVault } from "./payment-card-vault";
 import { WorkspaceGrantStore } from "./workspace-grant-store";
-import { MigrationManager, PluginInstaller, readBoundedResponseBytes } from "@kestrel/agent-core";
+import {
+  CursorCliManager,
+  MigrationManager,
+  PluginInstaller,
+  readBoundedResponseBytes,
+} from "@kestrel/agent-core";
 import { PluginTrustStore } from "./plugin-trust-store";
 import {
   migrationPlanPreview,
@@ -583,6 +588,8 @@ let appPaymentCardVault: PaymentCardVault | null = null;
 let googleOAuthController: AbortController | null = null;
 let chatGptOAuthController: AbortController | null = null;
 let activeChatGptOAuthManager: ChatGptOAuthManager | null = null;
+let cursorLoginController: AbortController | null = null;
+let activeCursorCliManager: CursorCliManager | null = null;
 const macMessagesSource = new MacMessagesSource();
 const pendingCommunicationScans = new Map<
   string,
@@ -885,7 +892,7 @@ interface BackupManifestFile {
   sha256: string;
 }
 
-type SubscriptionCliId = "codex" | "claude" | "opencode";
+type SubscriptionCliId = "codex" | "claude" | "opencode" | "cursor";
 interface RuntimePreferences {
   subscriptions?: Partial<
     Record<SubscriptionCliId, { enabled: boolean; path: string }>
@@ -981,7 +988,9 @@ function detectedSubscriptionCli(id: SubscriptionCliId): string | undefined {
       ? process.env.KESTREL_CODEX_PATH
       : id === "claude"
         ? process.env.KESTREL_CLAUDE_PATH
-        : process.env.KESTREL_OPENCODE_PATH;
+        : id === "opencode"
+          ? process.env.KESTREL_OPENCODE_PATH
+          : process.env.KESTREL_CURSOR_PATH;
   const candidates =
     id === "codex"
       ? [
@@ -1000,14 +1009,24 @@ function detectedSubscriptionCli(id: SubscriptionCliId): string | undefined {
             join(home, ".local", "bin", "claude"),
             join(home, ".npm-global", "bin", "claude"),
           ]
-        : [
-            configured,
-            "/opt/homebrew/bin/opencode",
-            "/usr/local/bin/opencode",
-            join(home, ".local", "bin", "opencode"),
-            join(home, ".npm-global", "bin", "opencode"),
-            join(home, "bin", "opencode"),
-          ];
+        : id === "opencode"
+          ? [
+              configured,
+              "/opt/homebrew/bin/opencode",
+              "/usr/local/bin/opencode",
+              join(home, ".local", "bin", "opencode"),
+              join(home, ".npm-global", "bin", "opencode"),
+              join(home, "bin", "opencode"),
+            ]
+          : [
+              configured,
+              "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+              "/opt/homebrew/bin/cursor",
+              "/usr/local/bin/cursor",
+              join(home, ".local", "bin", "cursor"),
+              join(home, ".npm-global", "bin", "cursor"),
+              join(home, "bin", "cursor"),
+            ];
   for (const candidate of candidates) {
     if (!candidate || !existsSync(candidate)) continue;
     try {
@@ -1021,74 +1040,102 @@ function detectedSubscriptionCli(id: SubscriptionCliId): string | undefined {
   return undefined;
 }
 
+function subscriptionCliName(id: SubscriptionCliId): string {
+  return id === "codex"
+    ? "Codex"
+    : id === "claude"
+      ? "Claude Code"
+      : id === "opencode"
+        ? "OpenCode"
+        : "Cursor";
+}
+
 async function subscriptionCliStatuses() {
   const preferences = await readRuntimePreferences();
-  const statuses = await Promise.all((["codex", "claude", "opencode"] as const).map(async (id) => {
-    const path = detectedSubscriptionCli(id);
-    const enabled = Boolean(
-      path &&
-        preferences.subscriptions?.[id]?.enabled &&
-        preferences.subscriptions[id]?.path === path,
-    );
-    const label =
-      id === "codex"
-        ? "ChatGPT plan through Codex"
-        : id === "claude"
-          ? "Claude plan through Claude Code"
-          : "OpenCode AI runtime";
-    const chatGptStatus =
-      id === "codex" && path
-        ? await new ChatGptOAuthManager({
-            executable: path,
-            openExternal: async (url) => {
-      openExternalSafely((target) => shell.openExternal(target), url);
-    },
-          })
-            .status()
-            .catch((): ChatGptOAuthStatus => ({ connected: false }))
-        : undefined;
-    const chatGptAccount =
-      chatGptStatus?.connected === true ? chatGptStatus : undefined;
-    return {
-      id,
-      label,
-      detected: Boolean(path),
-      enabled,
-      ...(path ? { path } : {}),
-      ...(chatGptStatus
-        ? {
-            authenticated: chatGptStatus.connected,
-            ...(chatGptAccount?.accountType
-              ? { accountType: chatGptAccount.accountType }
-              : {}),
-            ...(chatGptAccount?.email ? { email: chatGptAccount.email } : {}),
-            ...(chatGptAccount?.planType
-              ? { planType: chatGptAccount.planType }
-              : {}),
-          }
-        : {}),
-      detail: enabled
-        ? id === "codex"
-          ? chatGptStatus?.connected
-            ? `Enabled with ChatGPT${chatGptAccount?.email ? ` as ${chatGptAccount.email}` : ""}${chatGptAccount?.planType ? ` · ${chatGptAccount.planType} plan` : ""}. Codex owns and refreshes the OAuth session.`
-            : "Enabled, but Codex is not signed in with ChatGPT. Connect ChatGPT before running this route."
-          : id === "claude"
-            ? "Enabled. Authentication remains in the vendor CLI and is checked without copying tokens."
-            : "Enabled. Runs prompts and tasks through your local OpenCode environment."
-        : path
+  return Promise.all(
+    (["codex", "claude", "opencode", "cursor"] as const).map(
+      async (id) => {
+        const path = detectedSubscriptionCli(id);
+        const enabled = Boolean(
+          path &&
+            preferences.subscriptions?.[id]?.enabled &&
+            preferences.subscriptions[id]?.path === path,
+        );
+        const chatGptStatus =
+          id === "codex" && path
+            ? await new ChatGptOAuthManager({
+                executable: path,
+                openExternal: async (url) => {
+                  openExternalSafely((target) => shell.openExternal(target), url);
+                },
+              })
+                .status()
+                .catch((): ChatGptOAuthStatus => ({ connected: false }))
+            : undefined;
+        const cursorStatus =
+          id === "cursor" && path
+            ? await new CursorCliManager({ executable: path })
+                .status()
+                .catch(() => ({ connected: false }))
+            : undefined;
+        const chatGptAccount =
+          chatGptStatus?.connected === true ? chatGptStatus : undefined;
+        const authenticated =
+          chatGptStatus?.connected ?? cursorStatus?.connected;
+        const label =
+          id === "codex"
+            ? "ChatGPT plan through Codex"
+            : id === "claude"
+              ? "Claude plan through Claude Code"
+              : id === "opencode"
+                ? "OpenCode AI runtime"
+                : "Cursor account through Cursor Agent";
+        const detail = enabled
           ? id === "codex"
             ? chatGptStatus?.connected
-              ? `ChatGPT connected${chatGptAccount?.email ? ` as ${chatGptAccount.email}` : ""}${chatGptAccount?.planType ? ` · ${chatGptAccount.planType} plan` : ""}. Enable the persistent read-only Codex route when ready.`
-              : chatGptStatus && "accountType" in chatGptStatus && chatGptStatus.accountType === "apiKey"
-                ? "Codex is using an API key. Sign in with ChatGPT to use plan access instead."
-                : "Codex found. Sign in with ChatGPT through the official browser OAuth flow."
+              ? `Enabled with ChatGPT${chatGptAccount?.email ? ` as ${chatGptAccount.email}` : ""}${chatGptAccount?.planType ? ` · ${chatGptAccount.planType} plan` : ""}. Codex owns and refreshes the OAuth session.`
+              : "Enabled, but Codex is not signed in with ChatGPT. Connect ChatGPT before running this route."
             : id === "claude"
-              ? "CLI found. Enable it to use the vendor's existing on-device sign-in for text-only tasks."
-              : "OpenCode CLI found. Enable it to use your local OpenCode models and configuration."
-          : `Install and sign in to the official ${id === "codex" ? "Codex" : id === "claude" ? "Claude Code" : "OpenCode"} CLI to make this route available.`,
-    };
-  }));
-  return statuses;
+              ? "Enabled. Authentication remains in the vendor CLI and is checked without copying tokens."
+              : id === "opencode"
+                ? "Enabled. Runs prompts and tasks through your local OpenCode environment."
+                : cursorStatus?.connected
+                  ? "Enabled through the official Cursor CLI for isolated text reasoning. Kestrel keeps browser control, tools, and approvals."
+                  : "Enabled, but Cursor is not signed in. Connect Cursor before running this route."
+          : path
+            ? id === "codex"
+              ? chatGptStatus?.connected
+                ? `ChatGPT connected${chatGptAccount?.email ? ` as ${chatGptAccount.email}` : ""}${chatGptAccount?.planType ? ` · ${chatGptAccount.planType} plan` : ""}. Enable the persistent read-only Codex route when ready.`
+                : chatGptStatus && "accountType" in chatGptStatus && chatGptStatus.accountType === "apiKey"
+                  ? "Codex is using an API key. Sign in with ChatGPT to use plan access instead."
+                  : "Codex found. Sign in with ChatGPT through the official browser OAuth flow."
+              : id === "claude"
+                ? "CLI found. Enable it to use the vendor's existing on-device sign-in for text-only tasks."
+                : id === "opencode"
+                  ? "OpenCode CLI found. Enable it to use your local OpenCode models and configuration."
+                  : cursorStatus?.connected
+                    ? "Cursor connected. Enable it to add Cursor Auto to plain-text routing."
+                    : "Cursor found. Sign in through the official Cursor browser flow."
+            : `Install and sign in to the official ${subscriptionCliName(id)} CLI to make this route available.`;
+        return {
+          id,
+          label,
+          detected: Boolean(path),
+          enabled,
+          ...(path ? { path } : {}),
+          ...(authenticated !== undefined ? { authenticated } : {}),
+          ...(chatGptAccount?.accountType
+            ? { accountType: chatGptAccount.accountType }
+            : {}),
+          ...(chatGptAccount?.email ? { email: chatGptAccount.email } : {}),
+          ...(chatGptAccount?.planType
+            ? { planType: chatGptAccount.planType }
+            : {}),
+          detail,
+        };
+      },
+    ),
+  );
 }
 
 async function copyBackupEntry(
@@ -2396,6 +2443,15 @@ async function initializeCore(
     secureEnvironment.KESTREL_ENABLE_OPENCODE_SUBSCRIPTION = "1";
     secureEnvironment.KESTREL_OPENCODE_PATH = opencodePath;
   }
+  const cursorPath = detectedSubscriptionCli("cursor");
+  if (
+    cursorPath &&
+    preferences.subscriptions?.cursor?.enabled &&
+    preferences.subscriptions.cursor.path === cursorPath
+  ) {
+    secureEnvironment.KESTREL_ENABLE_CURSOR_SUBSCRIPTION = "1";
+    secureEnvironment.KESTREL_CURSOR_PATH = cursorPath;
+  }
   try {
     const localRuntime = localRuntimeManager();
     await localRuntime.startManagedIfInstalled();
@@ -2422,7 +2478,9 @@ async function initializeCore(
 						? "opencode"
 						: account.adapter === "claude-cli"
 							? "claude"
-							: undefined;
+							: account.adapter === "cursor-cli"
+								? "cursor"
+								: undefined;
 			if (!cliId) return [account];
 			const executable = detectedSubscriptionCli(cliId);
 			if (executable) return [{ ...account, executable }];
@@ -3918,7 +3976,7 @@ function registerIpc(): void {
       const selected = statuses.find((status) => status.id === request.id);
       if (!selected?.path && request.enabled)
         throw new Error(
-          `${request.id === "codex" ? "Codex" : request.id === "claude" ? "Claude Code" : "OpenCode"} CLI was not found in a trusted local installation path.`,
+          `${subscriptionCliName(request.id)} CLI was not found in a trusted local installation path.`,
         );
       const preferences = await readRuntimePreferences();
       const subscriptions = { ...(preferences.subscriptions ?? {}) };
@@ -3972,6 +4030,41 @@ function registerIpc(): void {
         new Error("ChatGPT sign-in was cancelled."),
       );
       await activeChatGptOAuthManager?.cancel();
+      return { ok: true, subscriptionClis: await subscriptionCliStatuses() };
+    }
+    if (request.type === "oauth-cursor-connect") {
+      if (cursorLoginController)
+        throw new Error("Cursor sign-in is already in progress.");
+      const cursorPath = detectedSubscriptionCli("cursor");
+      if (!cursorPath)
+        throw new Error(
+          "Cursor was not found in a trusted local installation path.",
+        );
+      const controller = new AbortController();
+      const manager = new CursorCliManager({ executable: cursorPath });
+      cursorLoginController = controller;
+      activeCursorCliManager = manager;
+      await supervisor.stop();
+      try {
+        await manager.connect(controller.signal);
+        const preferences = await readRuntimePreferences();
+        await writeRuntimePreferences({
+          ...preferences,
+          subscriptions: {
+            ...(preferences.subscriptions ?? {}),
+            cursor: { enabled: true, path: cursorPath },
+          },
+        });
+      } finally {
+        if (cursorLoginController === controller) cursorLoginController = null;
+        if (activeCursorCliManager === manager) activeCursorCliManager = null;
+        await initializeCore();
+      }
+      return { ok: true, subscriptionClis: await subscriptionCliStatuses() };
+    }
+    if (request.type === "oauth-cursor-cancel") {
+      cursorLoginController?.abort(new Error("Cursor sign-in was cancelled."));
+      await activeCursorCliManager?.cancel();
       return { ok: true, subscriptionClis: await subscriptionCliStatuses() };
     }
     if (request.type === "oauth-google-status")
@@ -4760,10 +4853,14 @@ app.on("open-url", (event, url) => {
 async function cancelActiveOAuthFlows(): Promise<void> {
   googleOAuthController?.abort(new Error("Kestrel is shutting down."));
   chatGptOAuthController?.abort(new Error("Kestrel is shutting down."));
+  cursorLoginController?.abort(new Error("Kestrel is shutting down."));
   await activeChatGptOAuthManager?.cancel().catch(() => undefined);
+  await activeCursorCliManager?.cancel().catch(() => undefined);
   googleOAuthController = null;
   chatGptOAuthController = null;
   activeChatGptOAuthManager = null;
+  cursorLoginController = null;
+  activeCursorCliManager = null;
 }
 
 async function performAppShutdown(): Promise<void> {

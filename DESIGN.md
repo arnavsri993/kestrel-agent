@@ -670,3 +670,36 @@ Why this is not generic: the navigation reflects Kestrel's actual browser prefer
 and agent models, memory, tools, workspace, permissions, and recovery boundaries.
 Reference use is inspiration-only: familiar browser categories and explicit agent
 configuration boundaries; no third-party code or visual assets copied.
+
+## Tactile action feedback — September 2026
+
+Extend the traffic lights' pointer-responsive feel to a bounded set of everyday
+icon actions. Preserve the dense desktop layout, system typography, graphite
+surfaces, spacing, focus rings, and existing Agent Universe focal motion.
+Motion roles remain continuity (existing tabs/rail), state (existing disclosures),
+and feedback (this change). No new library or visual material.
+
+Navigation, New Tab/New Chat, sidebar tools, bookmarks and send icons lean at
+most 2px and 6 degrees toward the pointer inside stationary button hit boxes.
+Press compresses the icon; release/exit returns continuously from its current
+pose. Feedback never waits before invoking an action. Keyboard presses retain
+native activation and focus; reduced motion keeps color/focus feedback without
+movement. Touch does not receive hover tracking. Only the active control is
+measured and updated at most once per frame, with no idle frame loop.
+
+Reject moving text rows, magnetic hit boxes, looping reload decoration, animated
+approval/destructive actions, and broad hover bounce. These would add task cost
+or suggest unverified work. This is specific to Kestrel's existing tactile
+chrome, not a new animation theme. Verify rapid reversal, exit/cancellation,
+disabled controls, keyboard, reduced motion, and the canonical installed app.
+
+### Expanded tactile feedback
+
+Page-action toolbar and widget customize/add/size controls share pointer lean.
+Open toolbar icons retain a small tilted pose that reflects aria-expanded.
+New Tab shortcut glyphs lift 2px and tilt 4 degrees while their destination
+arrows nudge 3px; row text and hit areas remain fixed. Keyboard focus gets lift
+without tilt. Customize's actual active state gives a single 280ms check flourish.
+These are feedback/state roles; existing menu and widget-layout animations remain
+their owners. Hover effects require a fine pointer and every addition is gated
+by reduced motion. No new continuous animation or background work.

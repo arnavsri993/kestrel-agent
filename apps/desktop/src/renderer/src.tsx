@@ -17,6 +17,8 @@ import "./components/browser/payment-overlay.css";
 import "./surface-responsive.css";
 import "./materials.css";
 import "./instrument-workbench.css";
+import "./action-motion.css";
+import { ActionMotion } from "./components/ActionMotion";
 import { App } from "./App";
 import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";
 import { PasswordOverlay } from "./components/browser/PasswordOverlay";
@@ -58,6 +60,7 @@ ReactDOM.createRoot(root).render(
 			<PaymentOverlay />
 		) : (
 			<>
+				<ActionMotion />
 				<WindowControls />
 				<App />
 			</>

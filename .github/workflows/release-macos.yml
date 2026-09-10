@@ -91,7 +91,9 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "13.0"
           npm_config_arch: arm64
           npm_config_target_arch: arm64
-        run: corepack pnpm --filter @kestrel/desktop exec electron-builder --mac dmg zip pkg --arm64 --publish never --config electron-builder.yml
+        run: |
+          corepack pnpm prepare:agent-core-sidecar
+          corepack pnpm --filter @kestrel/desktop exec electron-builder --mac dmg zip pkg --arm64 --publish never --config electron-builder.yml
       - name: Verify signature and Gatekeeper
         shell: bash
         run: |

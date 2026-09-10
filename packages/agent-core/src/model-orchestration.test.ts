@@ -235,6 +235,79 @@ describe("adaptive model orchestration", () => {
 		database.close();
 	});
 
+	it("rotates equally ranked account endpoints in balanced mode", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const accounts: ModelProvider[] = ["a", "b", "c", "d"].map((suffix) => ({
+			id: `codex-account-${suffix}`,
+			poolId: "codex",
+			account: {
+				id: `account-${suffix}`,
+				providerId: "codex",
+				displayName: `Account ${suffix}`,
+				authTransport: "oauth",
+				enabled: true,
+			},
+			defaultModel: "gpt-catalog",
+			capabilities: {
+				streaming: true,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			profileHints: {
+				features: { structuredOutput: false, reasoningLevels: true },
+			},
+			discoverModels: async () => [
+				{
+					id: "gpt-catalog",
+					availability: "available",
+					source: "protocol",
+					capabilities: {
+						capabilityProvenance: "confirmed",
+						streaming: true,
+						tools: false,
+						images: false,
+						audio: false,
+						documents: false,
+						structuredOutput: false,
+						reasoningEfforts: ["low", "high"],
+					},
+				},
+			],
+			complete: async (request) => ({
+				providerId: `codex-account-${suffix}`,
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 0, outputTokens: 0 },
+				finishReason: "stop",
+			}),
+		}));
+		const catalog = new ModelCatalog(database, accounts);
+		await catalog.refresh(accounts);
+		const registry = new ModelRegistry(database, accounts, [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+		const requirements = new TaskRequirementAnalyzer().analyze(
+			"account-rotation",
+			"Summarize this small note.",
+		);
+
+		expect(
+			Array.from({ length: 5 }, () =>
+				router.route(requirements, { role: "worker" }).endpointId,
+			),
+		).toEqual([
+			"codex-account-a",
+			"codex-account-b",
+			"codex-account-c",
+			"codex-account-d",
+			"codex-account-a",
+		]);
+		database.close();
+	});
+
 	it("does not automatically route through an unverified fallback model", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const endpoint: ModelProvider = {

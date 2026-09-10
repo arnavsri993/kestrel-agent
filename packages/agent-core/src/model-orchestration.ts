@@ -1259,6 +1259,8 @@ interface ScoredProfile {
 export class AdaptiveModelRouter {
 	private readonly policyKey = "orchestration.routing-policy.v1";
 	private readonly tracesKey = "orchestration.routing-traces.v1";
+	private readonly balancedAccountCursorKey =
+		"orchestration.balanced-account-cursors.v1";
 
 	constructor(
 		private readonly database: KestrelDatabase,
@@ -1421,8 +1423,11 @@ export class AdaptiveModelRouter {
 				left.estimatedCost - right.estimatedCost ||
 				left.profile.id.localeCompare(right.profile.id),
 		);
-		const selected = scored[0]!;
-		const second = scored[1];
+		const selected = this.selectBalancedAccountCandidate(scored, policy);
+		const remaining = scored.filter(
+			(candidate) => candidate.profile.id !== selected.profile.id,
+		);
+		const second = remaining[0];
 		const confidence = bounded(
 			0.5 +
 				selected.capabilityFit * 0.28 +
@@ -1499,7 +1504,6 @@ export class AdaptiveModelRouter {
 		// Multi-tier diversity in fallback ladder
 		const fallbackCandidates: string[] = [];
 		const seenEndpoints = new Set<string>([selected.profile.endpointId]);
-		const remaining = scored.slice(1);
 
 		for (const item of remaining) {
 			if (!seenEndpoints.has(item.profile.endpointId)) {
@@ -1679,6 +1683,54 @@ export class AdaptiveModelRouter {
 			updatedAt: this.now().toISOString(),
 		});
 		this.database.setPrivateState(this.tracesKey, traces.slice(-200));
+	}
+
+	private selectBalancedAccountCandidate(
+		scored: readonly ScoredProfile[],
+		policy: RoutingPolicy,
+	): ScoredProfile {
+		const first = scored[0]!;
+		if (policy.mode !== "balanced" || !first.profile.accountId) return first;
+
+		// Keep the highest-utility route authoritative. Rotation applies only when
+		// account-scoped endpoints expose the same model at the same score and cost.
+		const interchangeable = scored
+			.filter(
+				(candidate) =>
+					Boolean(candidate.profile.accountId) &&
+					candidate.profile.provider === first.profile.provider &&
+					candidate.profile.model === first.profile.model &&
+					Math.abs(candidate.score - first.score) < 0.000_001 &&
+					Math.abs(candidate.effectiveCost - first.effectiveCost) < 0.000_001,
+			)
+			.sort((left, right) =>
+				left.profile.endpointId.localeCompare(right.profile.endpointId),
+			);
+		if (interchangeable.length < 2) return first;
+
+		const selectionKey = `${first.profile.provider}:${first.profile.model}`;
+		const stored = this.database.getPrivateState<unknown>(
+			this.balancedAccountCursorKey,
+		);
+		const cursors = Object.fromEntries(
+			stored && typeof stored === "object" && !Array.isArray(stored)
+				? Object.entries(stored).flatMap(([key, value]) =>
+						typeof value === "string" && key.length <= 400 && value.length <= 100
+							? [[key, value]]
+							: [],
+					)
+				: [],
+		) as Record<string, string>;
+		const previousIndex = interchangeable.findIndex(
+			(candidate) => candidate.profile.endpointId === cursors[selectionKey],
+		);
+		const selected =
+			interchangeable[(previousIndex + 1) % interchangeable.length]!;
+		this.database.setPrivateState(this.balancedAccountCursorKey, {
+			...cursors,
+			[selectionKey]: selected.profile.endpointId,
+		});
+		return selected;
 	}
 
 	private score(

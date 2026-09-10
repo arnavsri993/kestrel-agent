@@ -4208,22 +4208,57 @@ body:has(.ai-browser-app),
 	background: color-mix(in srgb, var(--solid) 12%, transparent);
 	color: var(--ink);
 }
-.browser-download-progress-badge {
-	position: absolute;
-	top: 1px;
-	right: 1px;
+.browser-download-trigger-icon {
+	position: relative;
 	display: grid;
 	place-items: center;
-	min-width: 13px;
-	height: 13px;
-	padding: 0 3px;
-	border: 1px solid var(--canvas);
-	border-radius: 7px;
-	background: var(--solid);
-	color: var(--canvas);
-	font-size: 8px;
-	font-weight: 700;
-	line-height: 1;
+	width: 24px;
+	height: 24px;
+}
+.browser-download-trigger-icon > svg:not(.browser-download-progress-ring) {
+	position: relative;
+	z-index: 1;
+}
+.browser-toolbar-actions .browser-download-progress-ring {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	width: 24px;
+	height: 24px;
+	overflow: visible;
+	color: var(--solid);
+}
+.browser-download-progress-ring-track,
+.browser-download-progress-ring-value {
+	fill: none;
+}
+.browser-download-progress-ring-track {
+	stroke: color-mix(in srgb, var(--solid) 24%, transparent);
+	stroke-width: 1.35;
+}
+.browser-download-progress-ring-value {
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: round;
+	transition: stroke-dashoffset var(--motion-feedback) var(--ease-kestrel);
+}
+@media (prefers-reduced-motion: no-preference) {
+	.browser-download-progress-ring.is-indeterminate
+		.browser-download-progress-ring-value {
+		animation: browser-download-progress-ring-spin var(--motion-loading) linear infinite;
+		transform-box: fill-box;
+		transform-origin: center;
+	}
+}
+@keyframes browser-download-progress-ring-spin {
+	to {
+		transform: rotate(1turn);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.browser-download-progress-ring-value {
+		transition: none;
+	}
 }
 .browser-pinned-extension {
 	width: 28px !important;

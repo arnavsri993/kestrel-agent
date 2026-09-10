@@ -681,6 +681,7 @@ function parseStore(value: unknown): StoredProviderAccountFile {
 			"codex-app-server",
 			"opencode-cli",
 			"claude-cli",
+			"cursor-cli",
 		].includes(account.adapter)
 			? (account.adapter as ProviderAccountAdapter)
 			: undefined;
@@ -760,6 +761,7 @@ function supportsTransport(
 		"codex-app-server": "oauth",
 		"opencode-cli": "cli_profile",
 		"claude-cli": "cli_profile",
+		"cursor-cli": "cli_profile",
 	};
 	return expected[adapter] === authTransport;
 }
@@ -921,6 +923,16 @@ export class ProviderAccountStore {
 				enabledKey: "KESTREL_ENABLE_OPENCODE_SUBSCRIPTION",
 				pathKey: "KESTREL_OPENCODE_PATH",
 				modelKey: "KESTREL_OPENCODE_SUBSCRIPTION_MODEL",
+			},
+			{
+				id: "legacy-cursor",
+				providerId: "cursor",
+				adapter: "cursor-cli",
+				displayName: "Cursor",
+				authTransport: "cli_profile",
+				enabledKey: "KESTREL_ENABLE_CURSOR_SUBSCRIPTION",
+				pathKey: "KESTREL_CURSOR_PATH",
+				modelKey: "KESTREL_CURSOR_SUBSCRIPTION_MODEL",
 			},
 		];
 		for (const subscription of subscriptions) {

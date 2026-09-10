@@ -32,7 +32,7 @@ not opt into experimental API fields or network transports.
   restores the isolated core without persisting a partial Kestrel preference.
 - One durable Codex thread is mapped to each Kestrel session. The first turn
   receives the bounded Kestrel transcript; later turns send only the new user
-  text so history is not duplicated.
+  text and any current image attachments so history is not duplicated.
 - The process is shared across concurrent Kestrel sessions. If it exits,
   in-flight requests fail rather than being silently replayed; the next request
   starts a fresh process and resumes its durable thread.
@@ -48,7 +48,12 @@ reasoning usage for the existing audit and budget system.
 An abort sends `turn/interrupt` when the turn ID is known. Requests and turns
 have separate hard timeouts. Individual protocol lines, retained stderr, and
 all error text are bounded. Malformed or oversized output terminates the child
-instead of entering renderer or prompt state.
+instead of entering renderer or prompt state. For models that advertise image
+input through `model/list`, Kestrel sends the current message's images as
+inline data URLs, bounded to 6 MB per message. Remote image URLs are rejected;
+Kestrel never asks the Codex child to fetch arbitrary URLs. HEIC and HEIF
+images are converted locally to JPEG before handoff, because the documented
+vision formats are JPEG, PNG, GIF, and WebP.
 
 ## Approval and workspace boundary
 

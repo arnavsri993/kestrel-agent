@@ -104,6 +104,36 @@ describe("provider account store", () => {
 		});
 	});
 
+	it("registers an enabled Cursor CLI route as a non-secret legacy account", async () => {
+		const { root, store } = createStore();
+		await store.ensureLegacyAccounts({
+			KESTREL_ENABLE_CURSOR_SUBSCRIPTION: "1",
+			KESTREL_CURSOR_PATH: "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+		});
+
+		expect(await store.list()).toEqual([
+			expect.objectContaining({
+				id: "legacy-cursor",
+				providerId: "cursor",
+				displayName: "Cursor",
+				authTransport: "cli_profile",
+			}),
+		]);
+		const runtime = await store.runtimeAccounts({
+			KESTREL_ENABLE_CURSOR_SUBSCRIPTION: "1",
+			KESTREL_CURSOR_PATH: "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+		});
+		expect(runtime).toEqual([
+			expect.objectContaining({
+				id: "legacy-cursor",
+				adapter: "cursor-cli",
+				executable: "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+			}),
+		]);
+		const file = readFileSync(join(root, "provider-accounts.json"), "utf8");
+		expect(file).not.toContain("CURSOR_API_KEY");
+	});
+
 	it("keeps a removed legacy account disconnected across later migrations", async () => {
 		const { store } = createStore();
 		const environment = { OPENAI_API_KEY: "sk-legacy-disconnect-123456" };
