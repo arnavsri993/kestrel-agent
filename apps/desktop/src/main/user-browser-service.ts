@@ -405,24 +405,41 @@ const WINDOW_OPEN_POST_CONTENT_TYPES = new Set([
 	"application/x-www-form-urlencoded",
 	"multipart/form-data",
 ]);
+const WINDOW_OPEN_UTF8_CHARSET = /^charset\s*=\s*(?:utf-8|"utf-8")$/i;
 
 function loadOptionsForWindowOpen(
 	postBody: PostBody | null | undefined,
 	referrer?: LoadURLOptions["httpReferrer"],
 ): BrowserNavigationLoadOptions | undefined {
 	if (!postBody) return undefined;
-	const contentType = postBody.contentType.trim();
-	if (!WINDOW_OPEN_POST_CONTENT_TYPES.has(contentType.toLowerCase()))
+	const [rawMediaType = "", ...rawParameters] = postBody.contentType
+		.trim()
+		.split(";");
+	const contentType = rawMediaType.trim().toLowerCase();
+	if (!WINDOW_OPEN_POST_CONTENT_TYPES.has(contentType)) return undefined;
+	const parameters = rawParameters.map((parameter) => parameter.trim());
+	const isFormUrlEncoded =
+		contentType === "application/x-www-form-urlencoded";
+	const charset = parameters[0];
+	if (
+		parameters.some((parameter) => !parameter) ||
+		(isFormUrlEncoded
+			? parameters.length > 1 ||
+				(charset !== undefined && !WINDOW_OPEN_UTF8_CHARSET.test(charset))
+			: parameters.length > 0)
+	)
 		return undefined;
 	const boundary = postBody.boundary?.trim();
 	if (
-		contentType.toLowerCase() === "multipart/form-data" &&
+		contentType === "multipart/form-data" &&
 		(!boundary || /[\r\n]/.test(boundary))
 	)
 		return undefined;
 	return {
 		postData: postBody.data,
-		extraHeaders: `Content-Type: ${contentType}${boundary ? `; boundary=${boundary}` : ""}`,
+		extraHeaders: `Content-Type: ${contentType}${
+			isFormUrlEncoded && charset ? "; charset=UTF-8" : ""
+		}${boundary ? `; boundary=${boundary}` : ""}`,
 		...(referrer &&
 		(typeof referrer === "string" ? referrer : referrer.url)
 			? { httpReferrer: referrer }
