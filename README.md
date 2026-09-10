@@ -94,6 +94,16 @@ send, read-only code lookup, and Calendar event access. See
 
 Kestrel’s default desktop destination is a local user browser beside a stable agent conversation. Browser and Agent are equal top-level destinations: the Browser owns tabs and pages, while the Agent workspace starts, finds, filters, and resumes durable tasks with project, status, approval, and recovery context. Tabs, History, Downloads, session restore, configurable local history retention, address/search navigation, and browser settings are implemented. The optional **Use current page** handoff sends bounded visible-page reference material to the conversation; page content remains untrusted and cannot authorize actions. User tabs use their own persistent browser profile, while autonomous agent browser sessions are isolated and origin-scoped. Consequential browser actions continue through Kestrel’s existing policy/approval path. See [AI-native browser](docs/ai-native-browser.md) for implemented boundaries and follow-up scope, and [browser-agent reliability benchmark](docs/browser-agent-benchmark.md) for the reproducible deterministic evidence boundary.
 
+## FTC team operations
+
+FTC teams can use Kestrel's existing local agentic workflow for the
+computer-based work around a robotics season: turning team notes, source
+control, tests, observations, and approved research into reviewable work plans,
+engineering logs, scouting preparation, portfolio evidence, and outreach
+drafts. This is not a separate FTC product or dashboard, and it does not claim
+to build, wire, drive, test, or judge a robot. See [FTC team operations](docs/ftc-team-operations.md)
+for the evidence-backed use case and its verification boundary.
+
 ## Architecture and research evidence
 
 Kestrel is the finalized human-visible product name. Privileged runtime compatibility identity—app ID, protocol, Keychain service, storage directory, and update channel—is centralized in `packages/shared-types/src/identity.ts` and intentionally remains stable so existing encrypted data, credentials, integrations, and update behavior continue to work.
