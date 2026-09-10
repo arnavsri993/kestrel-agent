@@ -82,11 +82,18 @@ Kestrel must not scrape browser profiles, tokens, cookies, or private vendor
 endpoints. If a CLI has no documented isolated-profile flow, expose its
 existing detected profile honestly instead of inventing an isolation mechanism.
 
-## Explicitly unsupported subscription connectors
+## Subscription connectors
 
-This build does not expose Cursor or Google AI subscription profiles as account
-connection types. There is no tested, account-isolated Kestrel transport for
-those subscriptions yet, so the settings screen marks them unsupported rather
-than accepting a browser profile, copied token, cookie, or an undocumented
-endpoint. A Gemini API account remains supported through Google's public API;
-a self-hosted service can use the OpenAI-compatible loopback or HTTPS adapter.
+Cursor is available through the trusted official Cursor CLI path on macOS. The
+setup action invokes Cursor's own browser sign-in and checks only its
+non-secret authenticated status; Kestrel never imports a browser profile,
+cookie, or token. Once enabled, **Cursor Auto** joins plain-text routing as a
+confirmed CLI route. It runs from a temporary workspace in Cursor's read-only
+ask mode with its sandbox enabled. Cursor plugins, MCP servers, browser
+actions, shell commands, and file edits are not exposed through this adapter;
+Kestrel retains its own tool and approval boundary for agent work.
+
+Google AI subscription profiles remain unsupported because this build has no
+tested, account-isolated Kestrel transport for them. A Gemini API account is
+supported through Google's public API; a self-hosted service can use the
+OpenAI-compatible loopback or HTTPS adapter.

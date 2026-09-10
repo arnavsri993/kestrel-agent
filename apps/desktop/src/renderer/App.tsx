@@ -7478,12 +7478,36 @@ function SubscriptionCliSettings({
 			setBusy("");
 		}
 	}
+	async function connectCursor() {
+		if (busy === "cursor-oauth") {
+			await window.kestrel.request({ type: "oauth-cursor-cancel" });
+			return;
+		}
+		setBusy("cursor-oauth");
+		setError("");
+		try {
+			const response = await window.kestrel.request({
+				type: "oauth-cursor-connect",
+			});
+			if (!response.ok)
+				throw new Error(
+					"error" in response ? response.error : "Cursor sign-in failed.",
+				);
+			if ("subscriptionClis" in response) setItems(response.subscriptionClis);
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Cursor sign-in failed.",
+			);
+		} finally {
+			setBusy("");
+		}
+	}
 	return (
 		<article className="setting-row subscription-setting">
 			<div>
 				<strong>Existing vendor subscriptions</strong>
 				<p>
-					Use an existing Codex, Claude Code, or OpenCode sign-in. Kestrel never
+					Use an existing Codex, Claude Code, OpenCode, or Cursor sign-in. Kestrel never
 					copies vendor OAuth tokens.
 				</p>
 				<ul className="subscription-setting-list">
@@ -7506,6 +7530,16 @@ function SubscriptionCliSettings({
 									{busy === "chatgpt-oauth"
 										? "Cancel sign-in"
 										: "Sign in with ChatGPT"}
+								</button>
+							) : item.id === "cursor" && item.detected && !item.authenticated ? (
+								<button
+									className="button primary"
+									disabled={Boolean(busy) && busy !== "cursor-oauth"}
+									onClick={() => void connectCursor()}
+								>
+									{busy === "cursor-oauth"
+										? "Cancel sign-in"
+										: "Sign in with Cursor"}
 								</button>
 							) : (
 								<button

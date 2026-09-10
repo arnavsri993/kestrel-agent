@@ -583,10 +583,10 @@ export function ProviderAccountsSettings() {
 				<aside className="provider-account-unsupported" aria-label="Unsupported subscription connectors">
 					<strong>Unsupported subscription connectors</strong>
 					<p>
-						Cursor and Google AI subscription profiles do not yet have a tested,
-						account-isolated Kestrel transport. They are intentionally not shown as
-						connection types. Use a supported API account or a local compatible
-						endpoint instead; Kestrel never imports browser cookies or copied login state.
+						Cursor is available in Existing vendor subscriptions through its official
+						CLI sign-in. Google AI subscription profiles do not yet have a tested,
+						account-isolated Kestrel transport. Kestrel never imports browser cookies
+						or copied login state.
 					</p>
 				</aside>
 

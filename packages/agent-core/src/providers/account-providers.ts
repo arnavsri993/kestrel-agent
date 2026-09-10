@@ -1,5 +1,6 @@
 import { AnthropicMessagesProvider } from "./anthropic-messages";
 import { CodexAppServerProvider } from "./codex-app-server";
+import { CursorSubscriptionProvider } from "./cursor-cli";
 import { GeminiGenerateContentProvider } from "./gemini-generate-content";
 import { OllamaChatProvider } from "./ollama-chat";
 import { OpenAIChatCompletionsProvider } from "./openai-chat-completions";
@@ -30,7 +31,8 @@ export interface ProviderAccountRuntimeConfig {
 		| "ollama"
 		| "codex-app-server"
 		| "opencode-cli"
-		| "claude-cli";
+		| "claude-cli"
+		| "cursor-cli";
 	displayName: string;
 	authTransport: "api_key" | "oauth" | "cli_profile" | "local";
 	enabled: boolean;
@@ -236,6 +238,16 @@ export function createAccountModelProviders(
 				break;
 			case "claude-cli":
 				provider = new ClaudeSubscriptionProvider({
+					id: account.id,
+					poolId: account.providerId,
+					...(account.executable ? { executable: account.executable } : {}),
+					...(account.defaultModel
+						? { defaultModel: account.defaultModel }
+						: {}),
+				});
+				break;
+			case "cursor-cli":
+				provider = new CursorSubscriptionProvider({
 					id: account.id,
 					poolId: account.providerId,
 					...(account.executable ? { executable: account.executable } : {}),
