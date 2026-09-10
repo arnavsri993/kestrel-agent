@@ -41,6 +41,12 @@ input.on("line", line => {
   if (message.method === "initialize") return send({ id: message.id, result: { userAgent: "fake", codexHome: "/fake", platformFamily: "unix", platformOs: "macos" } });
   if (message.method === "initialized") return;
   if (message.method === "account/read") return send({ id: message.id, result: { account: { type: "chatgpt" }, requiresOpenaiAuth: true } });
+  if (message.method === "model/list") {
+    if (message.params && message.params.cursor === "page-2") {
+      return send({ id: message.id, result: { data: [{ id: "gpt-hidden", model: "gpt-hidden", displayName: "Hidden model", supportedReasoningEfforts: [{ reasoningEffort: "minimal" }], hidden: true }], nextCursor: null } });
+    }
+    return send({ id: message.id, result: { data: [{ id: "gpt-catalog", model: "gpt-catalog", displayName: "Catalog model", supportedReasoningEfforts: [{ reasoningEffort: "minimal" }, { reasoningEffort: "low" }, { reasoningEffort: "high" }] }], nextCursor: "page-2" } });
+  }
   if (message.method === "thread/start") return send({ id: message.id, result: { thread: { id: "thread-1" }, model: message.params.model } });
   if (message.method === "thread/resume") return send({ id: message.id, result: { thread: { id: message.params.threadId } } });
   if (message.method === "turn/start") {
@@ -135,6 +141,48 @@ async function readCapture(path: string): Promise<CaptureRecord[]> {
 }
 
 describe("persistent Codex app-server provider", () => {
+	it("discovers the signed-in account's stable app-server model catalog", async () => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({
+			executable: fake.executable,
+			requestTimeoutMs: 10_000,
+		});
+
+		await expect(provider.discoverModels()).resolves.toEqual([
+			{
+				id: "gpt-catalog",
+				displayName: "Catalog model",
+				availability: "available",
+				source: "protocol",
+				capabilities: {
+					capabilityProvenance: "confirmed",
+					streaming: true,
+					tools: false,
+					images: false,
+					audio: false,
+					documents: false,
+					video: false,
+					structuredOutput: false,
+					reasoningEfforts: ["low", "high"],
+				},
+			},
+		]);
+		await provider.close();
+
+		const records = await readCapture(fake.capture);
+		const modelListRequests = records.filter(
+			(record) => record.value.method === "model/list",
+		);
+		expect(modelListRequests).toHaveLength(2);
+		expect(modelListRequests[0]?.value.params).toMatchObject({
+			limit: 100,
+			includeHidden: false,
+		});
+		expect(modelListRequests[1]?.value.params).toMatchObject({
+			cursor: "page-2",
+		});
+	});
+
 	it("restarts after initialization failure instead of reusing an uninitialized process", async () => {
 		const fake = await retryableFakeAppServer();
 		const provider = new CodexAppServerProvider({

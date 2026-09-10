@@ -48,12 +48,26 @@ silently chosen for a task requiring a capability Kestrel cannot verify.
 Pre-account static provider configurations retain their existing compatibility
 behavior until they are migrated into an account catalog.
 
+The official Codex app-server adapter uses its stable `model/list` protocol
+call for each isolated ChatGPT/Codex profile. Those protocol records reflect
+the models the signed-in account currently exposes, rather than Kestrel's
+fallback default. Kestrel records the advertised reasoning levels while still
+describing this adapter as its actual read-only text route: it does not claim
+shell, file-editing, browser mutation, or model tool capabilities that the
+adapter cannot execute.
+
 ## UI and routing boundary
 
 Model selectors group entries as Provider -> Account -> Model and retain the
 account ID beside the executable endpoint ID. Automatic routing resolves from
 the dynamic catalog. An explicit manual selection pins the exact account and
 model; it never turns a provider-wide display label into a routing target.
+
+When **Balanced** sees the same available model at equal score and cost on two
+or more account-specific endpoints, it rotates those endpoints. Health,
+concurrency, quota, capability, latency, and cost differences remain more
+important than rotation, so an account under pressure is not selected merely
+to keep the count even.
 
 When adding a new surface that runs a model, consume `providerAccounts` from
 `runtime-list-providers` and use the same account-aware selector utilities.

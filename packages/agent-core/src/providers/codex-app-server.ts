@@ -13,6 +13,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	contentText,
+	type DiscoveredModel,
 	type ModelCallOptions,
 	type ModelMessage,
 	ModelProviderError,
@@ -30,6 +31,23 @@ const MAX_STDERR_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_TIMER_MS = 2_147_483_647;
+const MODEL_LIST_PAGE_SIZE = 100;
+const MAX_MODEL_LIST_PAGES = 20;
+type SupportedReasoningEffort =
+	| "none"
+	| "low"
+	| "medium"
+	| "high"
+	| "xhigh"
+	| "max";
+const REASONING_EFFORTS = new Set<SupportedReasoningEffort>([
+	"none",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+] as const);
 const READ_ONLY_INSTRUCTIONS =
 	"You are operating as a read-only model runtime inside Kestrel. Answer the user in plain text. Do not execute commands, edit files, browse, invoke MCP, or request approvals; Kestrel owns tools and approvals.";
 const BROWSER_MCP_INSTRUCTIONS =
@@ -77,6 +95,50 @@ function object(value: unknown): JsonObject | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value)
 		? (value as JsonObject)
 		: undefined;
+}
+
+function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
+	const record = object(value);
+	if (record?.hidden === true) return undefined;
+	const model =
+		typeof record?.model === "string" && record.model.trim()
+			? record.model.trim()
+			: typeof record?.id === "string" && record.id.trim()
+				? record.id.trim()
+				: undefined;
+	if (!model) return undefined;
+	const reasoningEfforts: SupportedReasoningEffort[] = (Array.isArray(record?.supportedReasoningEfforts)
+		? record.supportedReasoningEfforts
+		: []
+	).flatMap((value) => {
+		const effort = object(value)?.reasoningEffort;
+		return typeof effort === "string" && REASONING_EFFORTS.has(effort as SupportedReasoningEffort)
+			? [effort as SupportedReasoningEffort]
+			: [];
+	});
+	return {
+		id: model,
+		displayName:
+			typeof record?.displayName === "string" && record.displayName.trim()
+				? record.displayName.trim()
+				: model,
+		availability: "available",
+		source: "protocol",
+		capabilities: {
+			// `model/list` confirms account entitlement and each advertised reasoning
+			// level. The Kestrel adapter remains a text-only, read-only route, so
+			// advertise only the capabilities it can execute for this exact model.
+			capabilityProvenance: "confirmed",
+			streaming: true,
+			tools: false,
+			images: false,
+			audio: false,
+			documents: false,
+			video: false,
+			structuredOutput: false,
+			reasoningEfforts,
+		},
+	};
 }
 
 function safeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -265,6 +327,52 @@ export class CodexAppServerProvider {
 		if (!result?.account) {
 			throw new Error(
 				"Codex is not signed in. Complete authentication in the official Codex or ChatGPT surface.",
+			);
+		}
+	}
+
+	async discoverModels(signal?: AbortSignal): Promise<DiscoveredModel[]> {
+		try {
+			// Do not infer a catalog from the fallback default. The stable app-server
+			// protocol exposes the signed-in account's actual model list.
+			await this.probe(signal);
+			const models = new Map<string, DiscoveredModel>();
+			const seenCursors = new Set<string>();
+			let cursor: string | undefined;
+			for (let page = 0; page < MAX_MODEL_LIST_PAGES; page += 1) {
+				signal?.throwIfAborted();
+				const result = object(
+					await this.request(
+						"model/list",
+						{
+							...(cursor ? { cursor } : {}),
+							limit: MODEL_LIST_PAGE_SIZE,
+							includeHidden: false,
+						},
+						signal,
+					),
+				);
+				if (!result || !Array.isArray(result.data))
+					throw new Error("Codex app-server returned a malformed model catalog.");
+				for (const value of result.data) {
+					const model = modelFromCatalog(value);
+					if (model) models.set(model.id, model);
+				}
+				const nextCursor =
+					typeof result.nextCursor === "string" && result.nextCursor.trim()
+						? result.nextCursor.trim()
+						: undefined;
+				if (!nextCursor || seenCursors.has(nextCursor)) break;
+				seenCursors.add(nextCursor);
+				cursor = nextCursor;
+			}
+			return [...models.values()];
+		} catch (error) {
+			if (signal?.aborted) throw error;
+			throw new ModelProviderError(
+				"Codex app-server model discovery failed.",
+				this.id,
+				true,
 			);
 		}
 	}
