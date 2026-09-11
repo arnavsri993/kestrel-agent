@@ -17,7 +17,7 @@ function button(text, action, label) {
   if (label) node.setAttribute("aria-label", label);
   node.addEventListener("click", () => run(action)); return node;
 }
-async function run(action) { clearError(); try { await action(); await refresh(); } catch (cause) { error(cause); } }
+async function run(action) { clearError(); try { await action(); } catch (cause) { error(cause); } finally { await refresh().catch(error); } }
 async function refresh() {
   const ticket = ++refreshNumber;
   const state = await call({ type: "state" });
@@ -27,7 +27,8 @@ async function refresh() {
     currentSession = state.sessionId;
     $("message").value = drafts.get(currentSession) || "";
   }
-  $("status").textContent = state.busy ? "Responding…" : "Core connected";
+  $("status").textContent = state.busy ? "Responding…" : state.approval ? "Approval needed" : "Core connected";
+  $("cancel").hidden = !state.busy;
   $("title").textContent = state.sessions.find((session) => session.id === state.sessionId)?.title || "Conversation";
   $("conversations").replaceChildren(...state.sessions.map((session) => {
     const node = button(session.title, () => call({ type: "select-conversation", id: session.id }));
@@ -49,7 +50,24 @@ async function refresh() {
   if (state.providers.includes(selection)) $("provider").value = selection;
   if (!initialized) { $("model").value = state.model; initialized = true; }
   $("provider-note").textContent = state.providers.length ? "Browser reading is optional · Enter to send, Shift+Enter for a new line." : "No model provider configured. Start the preview with supported provider environment settings; existing desktop logins are not imported.";
-  $("send").disabled = sending || !state.providers.length;
+  $("send").disabled = sending || state.busy || !!state.approval || !state.providers.length;
+  $("approval").hidden = !state.approval;
+  $("approval").replaceChildren();
+  if (state.approval) {
+    const approval = state.approval;
+    const heading = document.createElement("h2"); heading.textContent = "Approve navigation?";
+    const detail = document.createElement("p"); detail.textContent = `From ${approval.sourceUrl} to ${approval.input}`;
+    const resolve = async (decision) => {
+      sending = true;
+      const timer = setInterval(() => refresh().catch(error), 700);
+      try { await call({ type: "resolve-approval", runId: approval.runId, executionId: approval.executionId, decision }); }
+      finally { sending = false; clearInterval(timer); }
+    };
+    const approve = button("Approve once", () => resolve("approved"));
+    const reject = button("Reject", () => resolve("rejected"));
+    approve.disabled = reject.disabled = sending || state.busy;
+    $("approval").append(heading, detail, approve, reject);
+  }
   $("new-conversation").disabled = sending;
   const messages = state.messages.filter((message) => message.role === "user" || message.role === "assistant");
   const signature = JSON.stringify([state.sessionId, messages]);
@@ -77,9 +95,9 @@ $("composer").addEventListener("submit", async (event) => {
   clearError(); sending = true; $("message").readOnly = true; $("send").disabled = true; $("cancel").hidden = false;
   const message = $("message").value;
   const timer = setInterval(() => refresh().catch(error), 700);
-  try { await call({ type: "send", message, provider: $("provider").value, model: $("model").value, readBrowser: $("read-browser").checked }); $("message").value = ""; drafts.set(currentSession, ""); }
+  try { await call({ type: "send", message, provider: $("provider").value, model: $("model").value, readBrowser: $("read-browser").checked, navigateBrowser: $("navigate-browser").checked }); $("message").value = ""; drafts.set(currentSession, ""); }
   catch (cause) { error(cause); }
-  finally { $("read-browser").checked = false; clearInterval(timer); sending = false; $("message").readOnly = false; $("cancel").hidden = true; await refresh().catch(error); }
+  finally { $("navigate-browser").checked = false; $("read-browser").checked = false; clearInterval(timer); sending = false; $("message").readOnly = false; $("cancel").hidden = true; await refresh().catch(error); }
 });
 $("message").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!$("send").disabled) $("composer").requestSubmit(); } });
 window.addEventListener("kestrel-tabs-changed", () => refresh().catch(error));

@@ -22,11 +22,13 @@
 </aside>
 <main>
   <div class="heading"><div><p class="eyebrow">CONVERSATION</p><h1 id="title">New conversation</h1></div><span id="status" role="status">Connecting…</span></div>
-  <section id="transcript" aria-label="Conversation messages" aria-live="polite"><div id="empty"><h2>A conversation, on Chromium.</h2><p>Send a message to your configured model, or open a web tab from the sidebar.</p><p class="note">Enable “Read open browser tabs” to ask questions about pages you have opened. Browser actions are not available in this preview.</p></div></section>
+  <section id="transcript" aria-label="Conversation messages" aria-live="polite"><div id="empty"><h2>A conversation, on Chromium.</h2><p>Send a message to your configured model, or open a web tab from the sidebar.</p><p class="note">Enable “Read open browser tabs” to ask questions about pages you have opened. Enable navigation to propose a destination for your approval.</p></div></section>
+  <section id="approval" aria-label="Navigation approval" hidden></section>
   <div id="error" role="alert" hidden></div>
   <form id="composer">
     <label for="message">Message</label><textarea id="message" rows="3" maxlength="20000" placeholder="Ask Kestrel…" required></textarea>
     <label class="browser-reading"><input id="read-browser" type="checkbox"> Read open browser tabs for this message</label>
+    <label class="browser-reading"><input id="navigate-browser" type="checkbox"> Allow navigation requests for this message</label>
     <div class="composer-bottom"><div class="routing"><label for="provider">Provider</label><select id="provider"></select><label for="model">Model</label><input id="model" value="auto" maxlength="200" required></div><div class="row"><button id="cancel" type="button" hidden>Stop</button><button id="send" class="primary" type="submit" disabled>Send</button></div></div>
     <p id="provider-note" class="note"></p>
   </form>

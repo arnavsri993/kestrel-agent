@@ -41,3 +41,11 @@ Node transport semantics: [official child-process documentation](https://nodejs.
 - Validate representative real provider/tool workflows beyond the no-tool live response; existing deterministic benchmarks do not measure autonomous model quality on live sites.
 
 Chromium now re-hosts read-only browser tools through the existing core contracts, protected by a host-owned tool ceiling. The next slice is one approved write flow with durable approvals. Removing the working desktop host before those boundaries are proven would reduce shipping readiness.
+
+## Resumed navigation slice
+
+The non-Electron Chromium host now supports a per-message navigation proposal through `browser.navigate-tab`, the existing core approval execution, and `runtime-resume-agent`. The user sees the source/destination and approves once or rejects. The host consumes a matching grant before dispatch, rejects replay, and rejects a changed document even at the same URL. Other browser mutations remain unavailable. Shell reload retains pending approval; full host restart remains unsupported with this temporary profile.
+
+The scripted browser smoke verifies no navigation before approval, successful navigation followed by actual page evidence, rejection, replay denial, and a same-URL reload invalidating approval. A stale-action error refreshes the shell so a dead approval does not block the composer. This is integration evidence, not a real-model competitive benchmark.
+
+The desktop rail continuity check now samples closing in the same click event, as reopening already did. This avoids mistaking spring movement during CI/CDP latency for a layout jump while retaining continuity, settling, direction and endpoint checks.

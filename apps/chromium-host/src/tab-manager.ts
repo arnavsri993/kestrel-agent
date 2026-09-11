@@ -14,6 +14,7 @@ export function browserEvidenceUrl(value: string): string {
 /** Owns every web page in the context, including target=_blank and window.open. */
 export class ChromiumTabManager {
   private readonly pages = new Map<string, Page>();
+  private readonly revisions = new WeakMap<Page, number>();
   private readonly ids = new WeakMap<Page, string>();
   constructor(private readonly context: BrowserContext, private readonly shell: Page, private readonly changed: () => void, private readonly limit = 16) {
     context.on("page", this.register);
@@ -24,15 +25,16 @@ export class ChromiumTabManager {
     if (this.pages.size >= this.limit) { void page.close().catch(() => {}); return; }
     const id = `tab-${randomUUID()}`;
     this.ids.set(page, id);
+    this.revisions.set(page, 0);
     this.pages.set(id, page);
     page.on("close", () => { this.pages.delete(id); this.changed(); });
     page.on("domcontentloaded", this.changed);
-    page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) this.changed(); });
+    page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) { this.revisions.set(page, (this.revisions.get(page) ?? 0) + 1); this.changed(); } });
     this.changed();
   };
   async snapshot() {
     return Promise.all([...this.pages].map(async ([id, page]) => ({
-      id, url: page.url(), title: await page.title().catch(() => "Browser tab"),
+      id, revision: this.revisions.get(page) ?? 0, url: page.url(), title: await page.title().catch(() => "Browser tab"),
     })));
   }
   async open(value: string): Promise<string> {
@@ -79,6 +81,18 @@ export class ChromiumTabManager {
       }
       return { url: browserEvidenceUrl(url), title: title.slice(0, 500), accessibilityTree: tree, truncated, trust: "untrusted_browser" as const };
     } finally { await client.detach().catch(() => {}); }
+  }
+
+  async navigate(id: string, input: string, expectedUrl: string, expectedRevision: number, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const url = browserUrl(input);
+    const page = this.pages.get(id);
+    if (!page || page.isClosed() || page.url() !== expectedUrl || this.revisions.get(page) !== expectedRevision) throw new Error("The approved tab changed. Request a new navigation approval.");
+    browserUrl(page.url());
+    // Navigation is dispatched once. Failure after dispatch is not a retry grant.
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    signal.throwIfAborted();
+    browserUrl(page.url());
   }
 
   async focus(id: string): Promise<void> {

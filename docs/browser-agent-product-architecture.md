@@ -35,9 +35,11 @@ The migration runs vertically: move a complete user capability through the same 
 - Packaged desktop already uses a real Node sidecar. This is runtime separation, not a non-Electron desktop.
 - The original Chromium preview could open tabs but explicitly disabled all tools and page context. Its model could not inspect those tabs. This change connects `browser.tabs` and `browser.visible-snapshot` through the ordinary core tool loop.
 - A new immutable host-owned tool ceiling is enforced in AgentRuntime discovery and execution. This is necessary because personality filtering can include protected configuration tools; a persona is not a host capability boundary. The ceiling is copied at bootstrap and preserved across core recovery.
-- Browser reading is off by default and selected per message. A browser-enabled run receives only those two tools. Host dispatch also rejects every mutation and denies reads outside that run; restrictions are enforced beyond prompt wording.
+- Browser reading is off by default and selected per message. A browser-enabled run receives only those two tools. The reader still receives only those two tools; a separate per-message navigation option adds `browser.navigate-tab`. Host dispatch denies reads outside the active run and requires a matching one-time grant for navigation.
 - The reader uses native Chromium accessibility observations, returns bounded names/roles, omits input values and strips URL query/fragment metadata. The shell is excluded from tab ownership. Reading changes neither navigation nor page state.
-- The Chromium profile is still temporary. There is no durable-profile migration, protected-account setup, approved write flow, or full task workspace in this host. Those remain explicit missing capabilities.
+- The Chromium profile is still temporary. There is no durable-profile migration, protected-account setup, form-editing flow, or full task workspace in this host. Those remain explicit missing capabilities.
+
+The navigation slice reuses the core's pending tool execution and resume decision. The shell displays the source and proposed destination; approval is bound to the conversation, run, execution, tab, destination and document revision. Rejection and replay perform no navigation. A same-URL reload invalidates the proposal. After dispatch, the model can inspect the resulting page using the ordinary snapshot tool. Scripted-provider smoke covers the observed destination; this does not establish real-model task competence. Pending cards survive shell reload within the temporary host process, not a full host restart.
 
 ## Acceptance sequence
 

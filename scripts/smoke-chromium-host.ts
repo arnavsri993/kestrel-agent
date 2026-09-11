@@ -22,6 +22,23 @@ const server = createServer(async (request, response) => {
   const body = JSON.parse(Buffer.concat(chunks).toString());
   toolsExposed ||= !!body.tools?.length;
   completions++;
+  if (JSON.stringify(body.messages.filter((message: any) => message.role === "user").at(-1)).includes("Navigate the browser")) {
+    const previous = body.messages.filter((message: any) => message.role === "tool");
+    const tools = body.tools ?? [];
+    const emitTool = (pattern: RegExp, args: object, id: string) => ({ tool_calls: [{ index: 0, id, type: "function", function: { name: tools.find((tool: any) => pattern.test(tool.function.name)).function.name, arguments: JSON.stringify(args) } }] });
+    let delta;
+    if (!previous.length) delta = emitTool(/tabs/, {}, "navigate-tabs");
+    else {
+      const id = JSON.stringify(previous[0]).match(/tab-[a-f0-9-]{36}/)?.[0];
+      assert(id);
+      if (previous.length === 1) delta = emitTool(/navigate/, { tabId: id, input: `${origin}/next` }, "navigate-page");
+      else if (previous.length === 2) delta = emitTool(/snapshot/, { tabId: id }, "verify-page");
+      else delta = { content: JSON.stringify(previous.at(-1)).includes("Navigation works") ? "Verified navigation: Navigation works." : "Navigation was not completed." };
+    }
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end(`data: ${JSON.stringify({ id: "navigation-response", model: "fixture-model", choices: [{ index: 0, delta, finish_reason: "tool_calls" in delta ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`);
+    return;
+  }
   if (JSON.stringify(body.messages.filter((message: any) => message.role === "user").at(-1)).includes("Inspect the open browser tab")) {
     const tools = body.tools ?? [];
     assert.equal(tools.length, 2, "Only the two read-only browser tools may be exposed");
@@ -108,6 +125,49 @@ try {
   assert(deniedRead.ok && "execution" in deniedRead && deniedRead.execution.status === "failed", "Browser reads must fail after the opted-in run finishes");
   const deniedMutation = await host.supervisor.request({ type: "runtime-call-tool", sessionId: readerSession, toolName: "browser.visible-act", input: {}, approvalStatus: "approved", idempotencyKey: "denied-host-action" });
   assert.equal(deniedMutation.ok, false, "Host ceiling must deny even explicitly approved mutation calls");
+  // Approval is tied to this conversation and execution, survives shell reload,
+  // and cannot be replayed after the one navigation has been dispatched.
+  await page.getByRole("button", { name: "＋ New conversation" }).click();
+  await page.getByLabel("Allow navigation requests for this message").check();
+  await page.getByLabel("Message", { exact: true }).fill("Navigate the browser to the next page");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Approve once", exact: true })).toBeEnabled();
+  assert.equal(remote.url(), `${origin}/page`, "No navigation before approval");
+  const { approval } = await page.evaluate(() => (window as any).kestrelHost({ type: "state" }));
+  await page.reload();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("button", { name: "Approve once", exact: true })).toBeEnabled();
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await mkdir(".tmp/chromium-host", { recursive: true });
+  await page.screenshot({ path: resolve(".tmp/chromium-host/approval.png"), fullPage: true });
+  await page.setViewportSize({ width: 1180, height: 800 });
+  await page.getByRole("button", { name: "Approve once", exact: true }).click();
+  await expect(page.getByText("Verified navigation: Navigation works.", { exact: true })).toBeVisible();
+  assert.equal(remote.url(), `${origin}/next`);
+  const replay = await page.evaluate(async (approval) => {
+    try { await (window as any).kestrelHost({ type: "resolve-approval", runId: approval.runId, executionId: approval.executionId, decision: "approved" }); return "allowed"; }
+    catch { return "denied"; }
+  }, approval);
+  assert.equal(replay, "denied");
+  await remote.goto(`${origin}/page`);
+  await page.getByRole("button", { name: "＋ New conversation" }).click();
+  await page.getByLabel("Allow navigation requests for this message").check();
+  await page.getByLabel("Message", { exact: true }).fill("Navigate the browser but reject this proposal");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page.getByRole("button", { name: "Reject", exact: true }).click();
+  await expect(page.getByText("Navigation was not completed.", { exact: true })).toBeVisible();
+  assert.equal(remote.url(), `${origin}/page`, "Rejection must not navigate");
+  await page.getByRole("button", { name: "＋ New conversation" }).click();
+  await page.getByLabel("Allow navigation requests for this message").check();
+  await page.getByLabel("Message", { exact: true }).fill("Navigate the browser with a stale proposal");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Approve once", exact: true })).toBeEnabled();
+  await remote.reload(); // The URL is unchanged, but the approved document is gone.
+  await page.getByRole("button", { name: "Approve once", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("The approved tab changed");
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Approve once", exact: true })).toHaveCount(0);
+  assert.equal(remote.url(), `${origin}/page`, "A stale approval must not navigate even at the same URL");
   await page.getByRole("button", { name: "＋ New conversation" }).click();
   await expect(page.getByRole("heading", { name: "New conversation", exact: true })).toBeVisible();
   await page.getByLabel("Message", { exact: true }).fill("Hold this response");
@@ -136,7 +196,7 @@ try {
   await expect(host.shell.getByRole("status")).toHaveText("Core connected");
   await expect(host.shell.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
   await expect(host.shell.getByText(/No model provider configured/)).toBeVisible();
-  console.log("Chromium host passed: real Node conversation, reload, cancellation, native web navigation, opt-in core browser tools, isolated bridge and narrow layout.");
+  console.log("Chromium host passed: real Node conversation, reload, cancellation, native web navigation, opt-in core browser tools, approved navigation with page verification, rejection, stale approval and replay denial, isolated bridge and narrow layout.");
 } finally {
   await host?.close();
   for (const response of pending) response.destroy();

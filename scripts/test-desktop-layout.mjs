@@ -194,7 +194,7 @@ async function armAgentRailClickContinuityProbe(page) {
 			document.removeEventListener("click", captureClick, true);
 			const before = readState();
 			const observer = new MutationObserver(() => {
-				if (target.getAttribute("aria-label") !== "Hide Pragmatic") return;
+				if (target.getAttribute("aria-label") === before.ariaLabel) return;
 				observer.disconnect();
 				window.__kestrelAgentRailClickContinuity = {
 					before,
@@ -622,20 +622,18 @@ async function assertAgentRailInterruption(page) {
 		},
 		expectedWidth,
 	);
-	const openingWidth = await readWidth();
-
-	// Reverse while the spring is live. The rail may briefly carry its incoming
-	// velocity, but it must not jump to either endpoint or lock the toggle.
-	await clickAfterHitTest(page, toggle, "#browser-agent-toggle");
-	await afterTwoFrames();
-	const reversedWidth = await readWidth();
+	// Sample both sides of the actual input event: CDP round trips may span
+	// several animation frames on a busy CI runner.
+	await waitForHitTestTarget(page, "#browser-agent-toggle");
+	await armAgentRailClickContinuityProbe(page);
+	await toggle.click();
+	const { before: openingState, after: closingStart } =
+		await readAgentRailClickContinuityProbe(page);
+	const openingWidth = openingState.width;
+	assert.ok(closingStart.settling, "Interrupted close did not start settling.");
 	assert.ok(
-		reversedWidth > 0 && reversedWidth < expectedWidth,
-		`Rail reversal jumped to an endpoint (${reversedWidth}px).`,
-	);
-	assert.ok(
-		Math.abs(reversedWidth - openingWidth) < expectedWidth * 0.36,
-		`Rail reversal jumped from ${openingWidth}px to ${reversedWidth}px.`,
+		Math.abs(closingStart.width - openingWidth) <= Math.max(24, expectedWidth * 0.16),
+		`Rail reversal jumped from ${openingWidth}px to ${closingStart.width}px.`,
 	);
 	await page.waitForFunction(
 		(before) =>

@@ -3,3 +3,5 @@
 summary{font-size:12px;color:#c0c0c8;font-weight:600;cursor:pointer;margin:18px 0 16px}summary:focus-visible{outline:2px solid #a8c7fa;outline-offset:3px}#tabs{margin-top:12px}.tab-title,.tab-url{display:block;overflow:hidden;text-overflow:ellipsis}.tab-url{font-size:11px;color:#b2b2bb;margin-top:4px}@media(max-width:760px){aside{gap:8px}aside h2{margin-top:8px}summary{margin:6px 0}#browser-tools[open] summary{margin-bottom:12px}}
 
 .browser-reading{display:flex;gap:8px;align-items:center;margin-top:10px}.browser-reading input{width:auto}
+
+#approval{border:1px solid #666671;border-radius:7px;padding:12px;margin-bottom:12px;overflow-wrap:anywhere}#approval h2{margin:0}#approval p{font-size:12px;line-height:1.5}#approval button{margin-right:8px}
