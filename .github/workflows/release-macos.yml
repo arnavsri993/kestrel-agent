@@ -30,7 +30,7 @@ jobs:
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm exec playwright install chromium
       - run: corepack pnpm verify
-      - run: corepack pnpm audit --prod
+      - run: corepack pnpm audit
       - name: Verify real managed local AI on Apple Silicon
         shell: bash
         run: |

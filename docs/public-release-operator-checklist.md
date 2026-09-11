@@ -1,7 +1,8 @@
 # Public release operator checklist
 
 Use this after merging the public-release preparation PR. The repository gate
-(`pnpm verify`, `pnpm audit:market`) must pass before any distribution step.
+(`pnpm verify`, `pnpm audit:market`) and the full dependency audit
+(`pnpm audit`, including build/signing dependencies) must pass before distribution.
 
 ## 1. Apple Developer ID signing and notarization
 
