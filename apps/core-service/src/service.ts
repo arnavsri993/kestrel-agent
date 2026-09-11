@@ -230,6 +230,7 @@ export function startCoreService(port: CoreParentPort): void {
 		const message = data as {
 			type?: string;
 			config?: {
+				hostToolNames?: string[];
 				databasePath: string;
 				encryptionKeyBase64: string;
 				workspaceRoots: string[];
@@ -307,6 +308,7 @@ export function startCoreService(port: CoreParentPort): void {
 					join(artifactRoot, "remote"),
 				);
 				core = new AgentCore({
+					...(message.config.hostToolNames !== undefined ? { hostToolNames: message.config.hostToolNames } : {}),
 					database,
 					seedDevelopmentFixtures:
 						Boolean(process.env.KESTREL_TEST_USER_DATA) &&

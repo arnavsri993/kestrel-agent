@@ -17,7 +17,7 @@
 		"@kestrel/database": "workspace:*",
 		"@kestrel/encryption": "workspace:*",
 		"better-sqlite3": "13.0.1",
-		"sharp": "0.35.3"
+		"sharp": "0.35.4"
 	},
 	"devDependencies": {
 		"@types/node": "24.10.1",

@@ -26,6 +26,8 @@ import {
 } from "./core-request-lifecycle";
 
 export interface CoreBootstrapConfig {
+	/** Host-owned immutable runtime tool ceiling, preserved during recovery. */
+	hostToolNames?: string[];
 	databasePath: string;
 	encryptionKeyBase64: string;
 	workspaceRoots: string[];
@@ -65,6 +67,7 @@ function cloneBootstrapConfig(
 ): CoreBootstrapConfig {
 	return {
 		...config,
+		...(config.hostToolNames !== undefined ? { hostToolNames: [...config.hostToolNames] } : {}),
 		workspaceRoots: [...config.workspaceRoots],
 		configuredWorkspaceRoots: [...config.configuredWorkspaceRoots],
 		projects: config.projects?.map((project) => ({ ...project })) ?? [],
@@ -220,7 +223,7 @@ export class CoreSupervisor extends EventEmitter {
 		for (const controller of this.browserRequests.values())
 			controller.abort(new Error("Agent Core is stopping."));
 		this.browserRequests.clear();
-		await this.closeBrowsers?.();
+		await this.cleanupBrowsers();
 		const child = this.child;
 		if (!child) return;
 		const exited = new Promise<void>((resolve) => {
@@ -410,7 +413,8 @@ export class CoreSupervisor extends EventEmitter {
 			}
 			const controller = new AbortController();
 			this.browserRequests.set(requestId, controller);
-			void this.browserHandler(parsed.data.request, controller.signal)
+			void Promise.resolve()
+				.then(() => this.browserHandler!(parsed.data.request, controller.signal))
 				.then((result) =>
 					this.safePost(child, {
 						type: "browser-backend-response",
@@ -471,16 +475,7 @@ export class CoreSupervisor extends EventEmitter {
 		for (const controller of this.browserRequests.values())
 			controller.abort(new Error("Agent Core stopped."));
 		this.browserRequests.clear();
-		this.browserCleanup = Promise.resolve(this.closeBrowsers?.()).catch(
-			(error) => {
-				this.emit(
-					"automation-error",
-					error instanceof Error
-						? error
-						: new Error("Browser cleanup failed after Agent Core stopped."),
-				);
-			},
-		);
+		this.browserCleanup = this.cleanupBrowsers();
 		if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
 		this.stabilityTimer = undefined;
 		if (this.stopping) return;
@@ -490,6 +485,15 @@ export class CoreSupervisor extends EventEmitter {
 				`Agent Core exited unexpectedly${code === null ? "" : ` with code ${code}`}.`,
 			),
 		);
+	}
+
+	private async cleanupBrowsers(): Promise<void> {
+		try {
+			await this.closeBrowsers?.();
+		} catch (error) {
+			this.emit("automation-error", error instanceof Error
+				? error : new Error("Browser cleanup failed after Agent Core stopped."));
+		}
 	}
 
 	private scheduleRecovery(code: number | null, cause: Error): void {
