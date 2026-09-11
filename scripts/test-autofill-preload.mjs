@@ -43,7 +43,7 @@ try {
  assert.equal(await page.locator('#password').inputValue(),'fixture-secret');
  await page.getByRole('button',{name:'Sign in'}).click();
  assert.equal(await app.evaluate(()=>globalThis.messages.some(m=>m.channel.endsWith('password-submission') && m.data.username==='edited-user' && m.data.password==='fixture-secret')),true);
- await page.evaluate((html) => { document.body.innerHTML = html; }, `<form onsubmit="event.preventDefault()"><input id="first" autocomplete="section-shipping given-name"><input id="street" autocomplete="shipping address-line1"><input id="birthday" type="date" autocomplete="bday"><select id="country" autocomplete="country"><option value="">Choose</option><option value="US">United States</option></select><input id="readonly" autocomplete="family-name" readonly><input id="hidden" autocomplete="email" style="display:none"><input id="otp" autocomplete="one-time-code"><div style="height:900px"></div><input id="city" autocomplete="address-level2"><button>Save details</button></form>`);
+ await page.evaluate((html) => { document.body.innerHTML = html; }, `<form onsubmit="event.preventDefault()"><input id="first" autocomplete="shipping given-name"><input id="street" autocomplete="shipping address-line1"><input id="birthday" type="date" autocomplete="shipping bday"><select id="country" autocomplete="shipping country"><option value="">Choose</option><option value="US">United States</option></select><input id="readonly" autocomplete="family-name" readonly><input id="hidden" autocomplete="email" style="display:none"><input id="otp" autocomplete="one-time-code"><div style="height:900px"></div><input id="city" autocomplete="shipping address-level2"><button>Save details</button></form>`);
  await page.locator('#first').focus();
  scan=await command({type:'scan'});
  assert.equal(scan.snapshot.fields.some(f=>f.label==='readonly'),false);
@@ -68,5 +68,47 @@ try {
  scan=await command({type:'scan'});
  await command({type:'fill',fieldId:scan.snapshot.fields[0].id,password:'generated-fixture'});
  assert.equal(await page.locator('#new').inputValue(),'generated-fixture');
+ await page.evaluate(() => {
+  document.body.innerHTML = '<form><input id="shipping" autocomplete="shipping name"><input id="billing" autocomplete="billing name"></form><form><input id="other" autocomplete="shipping name"></form>';
+ });
+ await page.locator('#shipping').focus();
+ await command({type:'fill',profile:{name:'Shipping Fixture'}});
+ assert.equal(await page.locator('#shipping').inputValue(),'Shipping Fixture');
+ assert.equal(await page.locator('#billing').inputValue(),'');
+ assert.equal(await page.locator('#other').inputValue(),'');
+ await page.evaluate(() => {
+  document.body.innerHTML = '<div id="host"></div>';
+  document.querySelector('#host').attachShadow({mode:'open'}).innerHTML = '<form><input id="shadowName" autocomplete="name"><input id="shadowDate" autocomplete="bday" type="date"><input id="shadowPassword" type="password" style="display:none"></form>';
+ });
+ await page.locator('#shadowName').focus();
+ scan=await command({type:'scan'});
+ assert.equal(scan.snapshot.hasPasswordControls,true);
+ assert.equal(scan.snapshot.fields.find(f=>f.id===scan.snapshot.focusedFieldId).kind,'profile');
+ await command({type:'fill',profile:{name:'Shadow Fixture',bday:'2001-04-05'}});
+ assert.equal(await page.locator('#shadowName').inputValue(),'Shadow Fixture');
+ assert.equal(await page.locator('#shadowDate').inputValue(),'2001-04-05');
+ await page.evaluate(() => { document.body.innerHTML='<div style="opacity:0"><input autocomplete="name"></div><fieldset disabled><input autocomplete="name"></fieldset>'; });
+ scan=await command({type:'scan'});
+ assert.equal(scan.snapshot.fields.length,0);
+ await page.evaluate(() => {
+  document.body.innerHTML = '<form id="externalForm"><button>Submit external</button></form><input id="externalUser" form="externalForm" autocomplete="username"><input id="externalPass" form="externalForm" type="password">';
+ });
+ await page.locator('#externalUser').fill('external-fixture');
+ await page.locator('#externalPass').fill('external-secret');
+ await page.evaluate(()=>document.querySelector('form').addEventListener('submit',event=>event.preventDefault()));
+ await page.getByRole('button',{name:'Submit external'}).click();
+ assert.equal(await app.evaluate(()=>globalThis.messages.some(m=>m.channel.endsWith('password-submission') && m.data.username==='external-fixture')),true);
+ await page.evaluate(() => {
+  document.body.innerHTML = '<input id="unboundUser" autocomplete="username"><input id="unboundPass" type="password"><button type="button">Log in</button>';
+ });
+ await page.locator('#unboundUser').fill('unbound-fixture');
+ await page.locator('#unboundPass').fill('unbound-secret');
+ await page.getByRole('button',{name:'Log in'}).click();
+ assert.equal(await app.evaluate(()=>globalThis.messages.some(m=>m.channel.endsWith('password-submission') && m.data.username==='unbound-fixture')),true);
+ await page.evaluate(()=>{document.body.innerHTML='<form><input id="reject" autocomplete="name" oninput="this.value=\'\'"></form>';});
+ await page.locator('#reject').focus();
+ assert.equal((await command({type:'fill',profile:{name:'Rejected fixture'}})).filled,0);
+ console.log('PASS: form-associated external controls, formless login, and rejected value detection.');
+ console.log('PASS: section isolation, open Shadow DOM, hidden password detection, inherited visibility/disabled state.');
  console.log('PASS: real isolated preload login, SPA capture, profile fill, offscreen fields, select/date, stable IDs, typed-value preservation, capture allowlist, and signup separation.');
 } finally { if(app) await app.close(); rmSync(root,{recursive:true,force:true}); }

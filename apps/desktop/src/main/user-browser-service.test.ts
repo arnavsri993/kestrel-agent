@@ -3998,3 +3998,27 @@ describe("reliable autofill", () => {
   service.dispose();
  });
 });
+
+describe("autofill save confirmation stability", () => {
+ it("does not save when password controls are hidden or a same-document form returns during loading", async()=>{
+  const save=vi.fn(async()=>[]);
+  const vault={save,listForOrigin:vi.fn(async()=>[])} as unknown as PasswordVault;
+  const {service}=createService({passwordVault:vault});
+  const tab=service.getState().tabs[0]!;
+  await service.navigate(tab.id,"https://login.example/sign-in");
+  const contents=electron.state.views[0]!.webContents;
+  const changed=()=>contents.emit("ipc-message",{senderFrame:contents.mainFrame},"kestrel:user-browser-password-form-changed");
+  contents.emit("ipc-message",{senderFrame:contents.mainFrame},"kestrel:user-browser-password-submission",{username:"fixture",password:"failed-fixture"});
+  contents.passwordSnapshot={fields:[],hasPasswordControls:true};
+  changed();
+  await new Promise(resolve=>setTimeout(resolve,20));
+  expect(save).not.toHaveBeenCalled();
+  contents.passwordSnapshot={fields:[],hasPasswordControls:false};
+  changed();
+  await new Promise(resolve=>setTimeout(resolve,30));
+  contents.passwordSnapshot={fields:[],hasPasswordControls:true};
+  await new Promise(resolve=>setTimeout(resolve,700));
+  expect(save).not.toHaveBeenCalled();
+  service.dispose();
+ });
+});

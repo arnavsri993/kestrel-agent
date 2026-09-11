@@ -195,6 +195,7 @@ const PasswordBridgeResponseSchema = z.object({
 		.object({
 			fields: z.array(PasswordFormFieldSchema).max(32),
 			focusedFieldId: z.string().regex(/^field-[0-9]+$/).optional(),
+			hasPasswordControls: z.boolean().optional(),
 		})
 		.optional(),
 });
@@ -751,6 +752,7 @@ function cloneState(state: UserBrowserState): UserBrowserState {
 }
 
 interface PasswordFormSnapshot {
+	hasPasswordControls?: boolean;
 	fields: PasswordFormField[];
 	focusedFieldId?: string;
 }
@@ -765,7 +767,7 @@ interface PendingPasswordBridgeRequest {
 
 function parsePasswordFormSnapshot(raw: unknown): PasswordFormSnapshot {
 	if (!raw || typeof raw !== "object") return { fields: [] };
-	const candidate = raw as { fields?: unknown; focusedFieldId?: unknown };
+	const candidate = raw as { fields?: unknown; focusedFieldId?: unknown; hasPasswordControls?: boolean };
 	const fields = Array.isArray(candidate.fields)
 		? candidate.fields.flatMap((field) => {
 			const parsed = PasswordFormFieldSchema.safeParse(field);
@@ -777,7 +779,7 @@ function parsePasswordFormSnapshot(raw: unknown): PasswordFormSnapshot {
 		fields.some((field) => field.id === candidate.focusedFieldId)
 			? candidate.focusedFieldId
 			: undefined;
-	return { fields, ...(focusedFieldId ? { focusedFieldId } : {}) };
+	return { fields, ...(candidate.hasPasswordControls !== undefined ? { hasPasswordControls: candidate.hasPasswordControls } : {}), ...(focusedFieldId ? { focusedFieldId } : {}) };
 }
 
 function isSensitiveAgentFieldName(value: string | undefined): boolean {
@@ -1376,6 +1378,7 @@ export class UserBrowserService {
 			anchor: PasswordPrompt["anchor"];
 			confirmedUrl?: string;
 			confirmedAt?: number;
+			formAbsentSince?: number;
 		}
 		| undefined;
 	private readonly submittedUsernames = new Map<string, { origin: string; username: string; at: number }>();
@@ -4269,7 +4272,22 @@ export class UserBrowserService {
 			const snapshot = await this.readPasswordFormSnapshot(webContents, url.origin);
 			// A destination that still contains a current-password field usually
 			// signals an unsuccessful login. Do not offer to save in that case.
-			if (snapshot.fields.some((field) => field.kind === "password" || field.kind === "new-password")) return;
+			if (snapshot.hasPasswordControls || snapshot.fields.some((field) => field.kind === "password" || field.kind === "new-password")) {
+				delete pending.formAbsentSince;
+				return;
+			}
+			// Same-document forms can briefly disappear during loading. Require a
+			// second observation after they have stayed absent before saving.
+			if (url.toString() === pending.submittedUrl && pending.formAbsentSince === undefined) {
+				pending.formAbsentSince = this.now().getTime();
+				const retry = setTimeout(() => {
+					if (!this.disposed && this.pendingPasswordSave === pending)
+						void this.maybeOfferPasswordSaveAfterNavigation(tab, webContents, navigationUrl);
+				}, 650);
+				retry.unref?.();
+				return;
+			}
+			if (url.toString() === pending.submittedUrl && this.now().getTime() - (pending.formAbsentSince ?? 0) < 600) return;
 			if (
 				this.pendingPasswordSave !== pending ||
 				safePageUrl(webContents.getURL())?.toString() !== url.toString()

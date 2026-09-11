@@ -20,6 +20,16 @@ export function PasswordOverlay() {
 	useEffect(() => window.kestrel.onPasswordPrompt(setPrompt), []);
 
 	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			event.preventDefault();
+			void window.kestrel.request({ type: "password-dismiss" }).catch(() => undefined);
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, []);
+
+	useEffect(() => {
 		setChooseFields(false);
 		setSelectedEntryId(prompt?.entries[0]?.id ?? "");
 		setBusy("");

@@ -32,6 +32,35 @@ function controlId(node: Element): string {
 	if (!id) { id = `field-${nextFieldId++}`; fieldIds.set(node, id); }
 	return id;
 }
+function deepActiveElement(): Element | null {
+	let active = document.activeElement;
+	while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+	return active;
+}
+
+function controls(root: ParentNode = document): PasswordFieldElement[] {
+	const result: PasswordFieldElement[] = [];
+	const pending: ParentNode[] = [root];
+	while (pending.length && result.length < 512) {
+		const scope = pending.shift()!;
+		for (const node of scope.querySelectorAll("*")) {
+			if (/^(INPUT|SELECT|TEXTAREA)$/.test(node.tagName)) result.push(node as PasswordFieldElement);
+			if (node.shadowRoot) { observeRoot(node.shadowRoot); pending.push(node.shadowRoot); }
+			if (result.length >= 512) break;
+		}
+	}
+	return result;
+}
+
+function sectionKey(node: PasswordFieldElement): string {
+	return String(node.autocomplete || "").toLowerCase().split(/\s+/)
+		.filter((token) => token.startsWith("section-") || token === "shipping" || token === "billing").join(" ");
+}
+
+function formOwner(node: PasswordFieldElement): Element | Document | ShadowRoot {
+	return node.form ?? node.closest('[role="form"]') ?? node.getRootNode() as Document | ShadowRoot;
+}
+
 function autocompleteToken(node: PasswordFieldElement): string {
 	return String(node.autocomplete || "").toLowerCase().trim().split(/\s+/).filter((token) => token !== "webauthn").at(-1) || "";
 }
@@ -81,6 +110,12 @@ function visible(element: Element, includeOffscreen = false): boolean {
 	const node = element as HTMLElement;
 	const rect = node.getBoundingClientRect();
 	const style = getComputedStyle(node);
+	let ancestor: Element | null = node;
+	while (ancestor) {
+		const ancestorStyle = getComputedStyle(ancestor);
+		if (Number(ancestorStyle.opacity) === 0 || ancestorStyle.visibility === "hidden" || ancestorStyle.display === "none" || ancestor.hasAttribute("inert")) return false;
+		ancestor = ancestor.parentElement ?? (ancestor.getRootNode() as ShadowRoot).host ?? null;
+	}
 	return (
 		rect.width > 0 &&
 		rect.height > 0 &&
@@ -109,7 +144,7 @@ function fieldKind(node: PasswordFieldElement): FieldKind | undefined {
 	const type = String(node.type || node.tagName || "").toLowerCase();
 	const autocomplete = autocompleteToken(node);
 	const hint = fieldHint(node);
-	if (node.disabled || ("readOnly" in node && node.readOnly) || ["hidden", "file", "checkbox", "radio", "submit", "button"].includes(type)) return undefined;
+	if (node.matches(":disabled") || node.disabled || ("readOnly" in node && node.readOnly) || ["hidden", "file", "checkbox", "radio", "submit", "button"].includes(type)) return undefined;
 	if (autocomplete === "new-password") return "new-password";
 	if (
 		autocomplete === "one-time-code" ||
@@ -132,11 +167,7 @@ function fieldKind(node: PasswordFieldElement): FieldKind | undefined {
 }
 
 function describeFields(root: ParentNode = document, includeOffscreen = false): DescribedField[] {
-	return Array.from(
-		root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
-			"input,select,textarea",
-		),
-	)
+	return controls(root)
 		.filter((node) => visible(node, includeOffscreen))
 		.flatMap((node) => {
 			const kind = fieldKind(node);
@@ -215,7 +246,7 @@ function isBridgeCommand(value: unknown): value is PasswordBridgeCommand {
 	return true;
 }
 
-function setControlValue(node: PasswordFieldElement, value: string): void {
+function setControlValue(node: PasswordFieldElement, value: string): boolean {
 	const prototype =
 		node.tagName === "INPUT"
 			? HTMLInputElement.prototype
@@ -225,25 +256,29 @@ function setControlValue(node: PasswordFieldElement, value: string): void {
 	const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
 	if (node.tagName === "SELECT") {
 		const option = Array.from((node as HTMLSelectElement).options).find((item) => !item.disabled && [item.value, item.textContent?.trim()].some((text) => text?.toLowerCase() === value.toLowerCase() || (/^\d+$/.test(text || "") && /^\d+$/.test(value) && Number(text) === Number(value))));
-		if (!option) return;
+		if (!option) return false;
 		value = option.value;
 	}
 	if (setter) setter.call(node, value);
 	else node.value = value;
-	node.dispatchEvent(new Event("input", { bubbles: true }));
-	node.dispatchEvent(new Event("change", { bubbles: true }));
+	node.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+	node.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+	return node.isConnected && node.value === value;
 }
 
 function fill(command: PasswordBridgeCommand): number {
 	const fields = describeFields(document, Boolean(command.profile));
-	const active = fields.find((field) => field.node === document.activeElement);
-	const focusedForm = active?.node.form ?? (!command.profile ? fields.find((field) => field.kind === "password")?.node.form ?? fields.find((field) => field.kind === "username")?.node.form : undefined);
+	const active = fields.find((field) => field.node === deepActiveElement());
+	const anchor = active ?? (!command.profile ? fields.find((field) => field.kind === "password") ?? fields.find((field) => field.kind === "username") : undefined);
+	const focusedForm = anchor ? formOwner(anchor.node) : undefined;
+	const section = anchor ? sectionKey(anchor.node) : "";
 	const requested = command.fieldId
 		? fields.filter((field) => field.id === command.fieldId)
-		: focusedForm ? fields.filter((field) => field.node.form === focusedForm) : fields;
+		: focusedForm ? fields.filter((field) => formOwner(field.node) === focusedForm && (!command.profile || sectionKey(field.node) === section)) : [];
 	let filled = 0;
 	let focusTarget: PasswordFieldElement | undefined;
 	for (const field of requested) {
+		if (!field.node.isConnected || !visible(field.node, Boolean(command.profile)) || fieldKind(field.node) !== field.kind || currentOrigin() !== command.expectedOrigin) continue;
 		if (command.onlyEmpty && (field.node.value || editedControls.has(field.node))) continue;
 		if (command.profile) {
 			const key = profileKey(field.node);
@@ -256,7 +291,7 @@ function fill(command: PasswordBridgeCommand): number {
 				const date = command.profile.bday?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
 				if (date) value = date[{ "bday-year": 1, "bday-month": 2, "bday-day": 3 }[key]!];
 			}
-			if (value) { setControlValue(field.node, value); if (field.node.value) filled += 1; }
+			if (value && setControlValue(field.node, value)) filled += 1;
 			continue;
 		}
 		if (
@@ -264,16 +299,14 @@ function fill(command: PasswordBridgeCommand): number {
 			command.includeUsername !== false &&
 			command.username !== undefined
 		) {
-			setControlValue(field.node, command.username);
-			filled += 1;
+			if (setControlValue(field.node, command.username)) filled += 1;
 			focusTarget = field.node;
 		} else if (
 			(field.kind === "password" || (field.kind === "new-password" && Boolean(command.fieldId))) &&
 			command.includePassword !== false &&
 			command.password !== undefined
 		) {
-			setControlValue(field.node, command.password);
-			filled += 1;
+			if (setControlValue(field.node, command.password)) filled += 1;
 			focusTarget = field.node;
 		}
 	}
@@ -283,8 +316,9 @@ function fill(command: PasswordBridgeCommand): number {
 
 function scanSnapshot() {
 	const fields = describeFields();
-	const focusedFieldId = fields.find((field) => field.node === document.activeElement)?.id;
+	const focusedFieldId = fields.find((field) => field.node === deepActiveElement())?.id;
 	return {
+		hasPasswordControls: controls().some((node) => node.type === "password" || ["current-password", "new-password"].includes(autocompleteToken(node))),
 		fields: fields.map(({ node: _node, ...field }) => field),
 		...(focusedFieldId ? { focusedFieldId } : {}),
 	};
@@ -292,20 +326,21 @@ function scanSnapshot() {
 
 function passwordFormSubmission(event: Event): void {
 	const target = event.target as { tagName?: unknown } | null;
-	if (!target || String(target.tagName).toUpperCase() !== "FORM") return;
+	if (!target || !("querySelectorAll" in target)) return;
 	const form = target as HTMLFormElement;
-	const fields = describeFields(form, true);
+	const fields = describeFields(form.tagName === "FORM" ? document : form, true).filter((field) => formOwner(field.node) === form);
 	if (event.isTrusted) {
 		const profile: Record<string, string> = {};
+		const sections = new Set(fields.filter((field) => field.kind === "profile" && editedControls.has(field.node)).map((field) => sectionKey(field.node)));
 		for (const field of fields) {
 			const key = profileKey(field.node);
 			if (field.kind === "profile" && key && editedControls.has(field.node) && field.node.value.trim()) profile[key] = field.node.value.trim().slice(0, 500);
 		}
-		if (Object.keys(profile).length) ipcRenderer.send("kestrel:user-browser-profile-submission", profile);
+		if (sections.size <= 1 && Object.keys(profile).length) ipcRenderer.send("kestrel:user-browser-profile-submission", profile);
 	}
 	const passwordField = fields.find(
 		(field) =>
-			(field.kind === "password" || field.kind === "new-password") && visible(field.node),
+			(field.kind === "password" || field.kind === "new-password") && visible(field.node, true),
 	);
 	if (!passwordField) {
 		const username = fields.find((field) => field.kind === "username" || (field.kind === "profile" && profileKey(field.node) === "email"));
@@ -326,16 +361,18 @@ function passwordFormSubmission(event: Event): void {
 let formChangeTimer: ReturnType<typeof setTimeout> | undefined;
 function notifyFormChanged(): void {
 	if (!process.isMainFrame) return;
-	if (formChangeTimer) clearTimeout(formChangeTimer);
+	if (formChangeTimer) return;
 	formChangeTimer = setTimeout(() => {
 		formChangeTimer = undefined;
 		ipcRenderer.send(PASSWORD_FORM_CHANGED_CHANNEL);
 	}, 180);
 }
 
-function observePasswordForms(): void {
-	const root = document.documentElement;
-	if (!root) return;
+const observedRoots = new WeakSet<Node>();
+function observeRoot(root: Node): void {
+	if (observedRoots.has(root)) return;
+	observedRoots.add(root);
+	if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE) root.addEventListener("submit", passwordFormSubmission, true);
 	new MutationObserver(notifyFormChanged).observe(root, {
 		childList: true,
 		subtree: true,
@@ -354,17 +391,24 @@ function observePasswordForms(): void {
 	});
 }
 
+function observePasswordForms(): void {
+	if (document.documentElement) observeRoot(document.documentElement);
+	controls();
+}
+
 if (process.isMainFrame) {
 	document.addEventListener("submit", passwordFormSubmission, true);
 	document.addEventListener("focusin", notifyFormChanged, true);
-	document.addEventListener("input", (event) => { if (event.isTrusted && event.target) editedControls.add(event.target as Element); }, true);
+	document.addEventListener("scroll", notifyFormChanged, true);
+	window.addEventListener("resize", notifyFormChanged);
+	document.addEventListener("input", (event) => { if (event.isTrusted && event.composedPath()[0]) editedControls.add(event.composedPath()[0] as Element); }, true);
 	// Scripted sign-in buttons often never emit a native submit event.
 	document.addEventListener("click", (event) => {
 		if (!event.isTrusted) return;
-		const target = event.target as Element | null;
+		const target = event.composedPath()[0] as Element | null;
 		const button = target?.closest?.('button,input[type="submit"],[role="button"]');
 		if (!button || !/sign.?in|log.?in|continue|next|submit/i.test(button.textContent || button.getAttribute("value") || "")) return;
-		const form = button.closest("form");
+		const form = button.closest('form,[role="form"]') ?? button.getRootNode();
 		if (form) passwordFormSubmission({ target: form, isTrusted: true } as unknown as Event);
 	}, true);
 	if (document.documentElement) observePasswordForms();
