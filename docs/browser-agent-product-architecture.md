@@ -37,9 +37,17 @@ The migration runs vertically: move a complete user capability through the same 
 - A new immutable host-owned tool ceiling is enforced in AgentRuntime discovery and execution. This is necessary because personality filtering can include protected configuration tools; a persona is not a host capability boundary. The ceiling is copied at bootstrap and preserved across core recovery.
 - Browser reading is off by default and selected per message. A browser-enabled run receives only those two tools. The reader still receives only those two tools; a separate per-message navigation option adds `browser.navigate-tab`. Host dispatch denies reads outside the active run and requires a matching one-time grant for navigation.
 - The reader uses native Chromium accessibility observations, returns bounded names/roles, omits input values and strips URL query/fragment metadata. The shell is excluded from tab ownership. Reading changes neither navigation nor page state.
-- The Chromium profile is still temporary. There is no durable-profile migration, protected-account setup, form-editing flow, or full task workspace in this host. Those remain explicit missing capabilities.
+- The Chromium profile is still temporary. There is no durable-profile migration, protected-account setup, full task workspace or supported persistent browser setup in this host. Those remain explicit missing capabilities.
 
 The navigation slice reuses the core's pending tool execution and resume decision. The shell displays the source and proposed destination; approval is bound to the conversation, run, execution, tab, destination and document revision. Rejection and replay perform no navigation. A same-URL reload invalidates the proposal. After dispatch, the model can inspect the resulting page using the ordinary snapshot tool. Scripted-provider smoke covers the observed destination; this does not establish real-model task competence. Pending cards survive shell reload within the temporary host process, not a full host restart.
+
+## Approved form workflow
+
+The Chromium worker can now inspect ordinary text fields and buttons, propose exact text entry or a button click, and resume each operation through the existing core approval. Stable host refs resolve to inspected DOM nodes, never model selectors or scripts. Before dispatch the host rechecks document identity and target metadata. Credentials, payment inputs, unsupported controls and changed targets are refused. Each action consumes one grant; typing approval does not authorize saving.
+
+A real Chromium fixture enters a draft, verifies its preview, obtains a second approval, saves it and inspects the resulting page text. Rejection and changing an approved field to a password field leave it untouched. This uses a scripted model and proves integration, not general model competence.
+
+The shared core retains pending typing input only in bounded process memory for ten minutes. Journals and approval previews redact the text; the trusted host can retrieve a transient exact review. Approval resumes that exact input, while expiry or core restart requires a new proposal rather than executing a redaction placeholder. Chromium accessibility field descendants are omitted because they can contain input values even when the AX value property is excluded.
 
 ## Acceptance sequence
 

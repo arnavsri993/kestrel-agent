@@ -578,6 +578,7 @@ export class AgentLoop {
 			if (!blocked) throw new Error("Pending tool execution was not found.");
 			let execution: RuntimeToolExecution;
 			if (input.approvalDecision === "rejected") {
+				this.runtime.discardApprovalInput(blocked.id);
 				execution = {
 					...blocked,
 					status: "cancelled",
@@ -589,7 +590,7 @@ export class AgentLoop {
 				execution = await this.runtime.callTool(
 					run.sessionId,
 					run.pendingToolName,
-					blocked.input,
+					this.runtime.approvalInput(blocked),
 					{
 						approvalStatus: "approved",
 						approvalGrantExecutionId: blocked.id,
@@ -597,6 +598,7 @@ export class AgentLoop {
 						...(input.signal ? { signal: input.signal } : {}),
 					},
 				);
+				this.runtime.discardApprovalInput(blocked.id);
 				if (execution.status !== "verified")
 					throw new Error(
 						execution.error ?? "Approved tool execution did not complete.",

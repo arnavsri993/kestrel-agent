@@ -2573,13 +2573,13 @@ export class AgentCore {
 							ok: true,
 							executions: this.deps.database.listToolExecutions(
 								request.sessionId,
-							),
+							).map((execution) => this.runtime.approvalReview(execution)),
 						};
 					const executions = this.deps.database.listAllToolExecutions();
 					const limit = request.limit ?? 80;
 					return {
 						ok: true,
-						executions: executions.slice(-limit),
+						executions: executions.slice(-limit).map((execution) => this.runtime.approvalReview(execution)),
 					};
 				}
 				case "runtime-list-action-receipts":

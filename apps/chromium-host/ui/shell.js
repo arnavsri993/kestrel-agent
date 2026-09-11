@@ -55,8 +55,8 @@ async function refresh() {
   $("approval").replaceChildren();
   if (state.approval) {
     const approval = state.approval;
-    const heading = document.createElement("h2"); heading.textContent = "Approve navigation?";
-    const detail = document.createElement("p"); detail.textContent = `From ${approval.sourceUrl} to ${approval.input}`;
+    const heading = document.createElement("h2"); heading.textContent = approval.action ? "Approve browser action?" : "Approve navigation?";
+    const detail = document.createElement("p"); detail.textContent = approval.action ? `${approval.sourceUrl} — ${approval.action.type === "type" ? `Enter ${JSON.stringify(approval.action.text)} into` : "Click"} ${approval.target.name} (${approval.action.target})` : `From ${approval.sourceUrl} to ${approval.input}`;
     const resolve = async (decision) => {
       sending = true;
       const timer = setInterval(() => refresh().catch(error), 700);
@@ -95,9 +95,9 @@ $("composer").addEventListener("submit", async (event) => {
   clearError(); sending = true; $("message").readOnly = true; $("send").disabled = true; $("cancel").hidden = false;
   const message = $("message").value;
   const timer = setInterval(() => refresh().catch(error), 700);
-  try { await call({ type: "send", message, provider: $("provider").value, model: $("model").value, readBrowser: $("read-browser").checked, navigateBrowser: $("navigate-browser").checked }); $("message").value = ""; drafts.set(currentSession, ""); }
+  try { await call({ type: "send", message, provider: $("provider").value, model: $("model").value, readBrowser: $("read-browser").checked, navigateBrowser: $("navigate-browser").checked, actBrowser: $("act-browser").checked }); $("message").value = ""; drafts.set(currentSession, ""); }
   catch (cause) { error(cause); }
-  finally { $("navigate-browser").checked = false; $("read-browser").checked = false; clearInterval(timer); sending = false; $("message").readOnly = false; $("cancel").hidden = true; await refresh().catch(error); }
+  finally { $("act-browser").checked = false; $("navigate-browser").checked = false; $("read-browser").checked = false; clearInterval(timer); sending = false; $("message").readOnly = false; $("cancel").hidden = true; await refresh().catch(error); }
 });
 $("message").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!$("send").disabled) $("composer").requestSubmit(); } });
 window.addEventListener("kestrel-tabs-changed", () => refresh().catch(error));

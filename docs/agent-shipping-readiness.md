@@ -49,3 +49,11 @@ The non-Electron Chromium host now supports a per-message navigation proposal th
 The scripted browser smoke verifies no navigation before approval, successful navigation followed by actual page evidence, rejection, replay denial, and a same-URL reload invalidating approval. A stale-action error refreshes the shell so a dead approval does not block the composer. This is integration evidence, not a real-model competitive benchmark.
 
 The desktop rail continuity check now samples closing in the same click event, as reopening already did. This avoids mistaking spring movement during CI/CDP latency for a layout jump while retaining continuity, settling, direction and endpoint checks.
+
+## Browser form workflow
+
+Chromium now supports separately approved ordinary text entry and button clicks using inspected refs. The integrated fixture covers entry, visible draft evidence, separately approved save, observed saved content, rejection and changed sensitive targets. Shared core approval resume preserves exact text in bounded expiring memory while redacting durable input and preview records. Restarted or expired typing proposals fail closed.
+
+This is still a temporary-profile preview. Persistent browser/account setup, native packaging and representative real-model task evaluation remain release gates. No new competitive score is claimed. Work was recovered into a persistent worktree after the temporary directory disappeared; validation is rerun on the recovered files.
+
+Recovered-worktree validation: all 209 test files / 1,458 tests and workspace typecheck passed; headed and headless Chromium workflow smoke passed. The typing retention expiry received an additional focused regression pass after review. These checks use fixture data and a scripted provider.
