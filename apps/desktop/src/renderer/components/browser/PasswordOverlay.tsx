@@ -20,7 +20,7 @@ export function PasswordOverlay() {
 	useEffect(() => window.kestrel.onPasswordPrompt(setPrompt), []);
 
 	useEffect(() => {
-		setChooseFields(prompt?.mode === "field");
+		setChooseFields(false);
 		setSelectedEntryId(prompt?.entries[0]?.id ?? "");
 		setBusy("");
 		setError("");
@@ -95,6 +95,15 @@ export function PasswordOverlay() {
 		}
 	}
 
+	async function fillProfile(fieldId?: string) {
+		setBusy("profile"); setError("");
+		try {
+			const response = await window.kestrel.request({ type: "autofill-profile-fill", ...(fieldId ? { fieldId } : {}) });
+			if (!response.ok) throw new Error(response.error || "Form info could not be filled.");
+		} catch (cause) { setError(cause instanceof Error ? cause.message : "Form info could not be filled."); }
+		finally { setBusy(""); }
+	}
+
 	async function dismiss() {
 		await window.kestrel.request({ type: "password-dismiss" }).catch(() => undefined);
 	}
@@ -142,7 +151,7 @@ export function PasswordOverlay() {
 				className="password-overlay-card"
 				role="dialog"
 				aria-label={
-					prompt.mode === "save"
+					prompt.mode === "profile" ? "Saved personal info" : prompt.mode === "save"
 						? "Save password"
 						: prompt.mode === "generate"
 							? "Strong password suggestion"
@@ -155,7 +164,7 @@ export function PasswordOverlay() {
 						<span className="password-overlay-mark" aria-hidden="true">●</span>
 						<span>
 							<strong>
-								{prompt.mode === "save"
+								{prompt.mode === "profile" ? "Fill with saved info?" : prompt.mode === "save"
 									? updatesExistingLogin
 										? "Update saved password?"
 										: "Save password?"
@@ -184,7 +193,15 @@ export function PasswordOverlay() {
 					</button>
 				</header>
 
-				{prompt.mode === "save" && saveCandidate ? (
+				{prompt.mode === "profile" ? (
+					<>
+						<p className="password-overlay-copy">Use your saved name, address, contact details, and birthday on this site.</p>
+						<div className="password-overlay-actions">
+							<button className="password-overlay-primary" type="button" disabled={Boolean(busy)} onClick={() => void fillProfile()}>{busy ? "Filling…" : "Fill form"}</button>
+							<button className="password-overlay-secondary" type="button" disabled={Boolean(busy)} onClick={() => void fillProfile(prompt.focusedFieldId)}>Fill this field</button>
+						</div>
+					</>
+				) : prompt.mode === "save" && saveCandidate ? (
 					<>
 						<p className="password-overlay-copy">
 							Save this login securely on this device so Kestrel can offer it next time.
@@ -249,7 +266,7 @@ export function PasswordOverlay() {
 							</button>
 						</div>
 					</>
-				) : prompt.mode === "page" && !chooseFields ? (
+				) : (prompt.mode === "page" || prompt.mode === "field") && !chooseFields ? (
 					<>
 						<p className="password-overlay-copy">Choose a saved login.</p>
 						<div className="password-overlay-entries" role="list">

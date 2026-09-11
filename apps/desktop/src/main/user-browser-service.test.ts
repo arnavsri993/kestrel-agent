@@ -1024,6 +1024,7 @@ describe("UserBrowserService", () => {
 			passwordVault,
 			onPasswordPrompt: (prompt) => prompts.push(prompt),
 		});
+		service.updateSettings({ ...service.getState().settings, autoSavePasswords: false });
 		const tab = service.getState().tabs[0]!;
 		await service.navigate(tab.id, "https://login.example/sign-in");
 		const contents = electron.state.views[0]!.webContents;
@@ -1078,6 +1079,7 @@ describe("UserBrowserService", () => {
 			passwordVault,
 			onPasswordPrompt: (prompt) => prompts.push(prompt),
 		});
+		service.updateSettings({ ...service.getState().settings, autoSavePasswords: false });
 		const tab = service.getState().tabs[0]!;
 		const contents = electron.state.views[0]?.webContents;
 		await service.navigate(tab.id, "https://stlcc.example/login");
@@ -1143,6 +1145,7 @@ describe("UserBrowserService", () => {
 			passwordVault,
 			onPasswordPrompt: (prompt) => prompts.push(prompt),
 		});
+		service.updateSettings({ ...service.getState().settings, autoSavePasswords: false });
 		const tab = service.getState().tabs[0]!;
 		await service.navigate(tab.id, "https://login.example/sign-in");
 		const contents = electron.state.views[0]!.webContents;
@@ -1507,6 +1510,7 @@ describe("UserBrowserService", () => {
 			passwordVault,
 			onPasswordPrompt: (prompt) => prompts.push(prompt),
 		});
+		service.updateSettings({ ...service.getState().settings, autoSavePasswords: false });
 		const tab = service.getState().tabs[0]!;
 		await service.navigate(tab.id, "https://accounts.example/sign-up");
 		const contents = electron.state.views[0]!.webContents;
@@ -1674,6 +1678,7 @@ describe("UserBrowserService", () => {
 			passwordVault,
 			onPasswordPrompt: (prompt) => prompts.push(prompt),
 		});
+		service.updateSettings({ ...service.getState().settings, autoSavePasswords: false });
 		const tab = service.getState().tabs[0]!;
 		await service.navigate(tab.id, "https://login.example/sign-in");
 		const contents = electron.state.views[0]!.webContents;
@@ -3937,4 +3942,59 @@ it("serializes closeTab behind an in-flight agent act", async () => {
       }),
     ]);
   });
+});
+
+describe("reliable autofill", () => {
+ it("automatically saves a same-document sign-in with the previously submitted username exactly once", async () => {
+  const save = vi.fn(async () => []);
+  const passwordVault = {listForOrigin:vi.fn(async()=>[]),save} as unknown as PasswordVault;
+  const {service} = createService({passwordVault});
+  const tab=service.getState().tabs[0]!;
+  await service.navigate(tab.id,"https://login.example/sign-in");
+  const contents=electron.state.views[0]!.webContents;
+  contents.emit("ipc-message",{senderFrame:contents.mainFrame},"kestrel:user-browser-username-submission","fixture-user");
+  contents.emit("ipc-message",{senderFrame:contents.mainFrame},"kestrel:user-browser-password-submission",{username:"",password:"fixture-password"});
+  contents.passwordSnapshot={fields:[]};
+  contents.emit("ipc-message",{senderFrame:contents.mainFrame},"kestrel:user-browser-password-form-changed");
+  contents.emit("ipc-message",{senderFrame:contents.mainFrame},"kestrel:user-browser-password-form-changed");
+  await vi.waitFor(()=>expect(save).toHaveBeenCalledTimes(1));
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({origin:"https://login.example",username:"fixture-user",password:"fixture-password"}));
+  service.dispose();
+ });
+ it("offers a profile on focus and rejects a stale fill after navigation", async () => {
+  const profile={name:"Fixture Person",bday:"2000-02-03"};
+  const passwordVault={getProfile:vi.fn(async()=>profile),listForOrigin:vi.fn(async()=>[])} as unknown as PasswordVault;
+  const prompts: unknown[]=[];
+  const {service}=createService({passwordVault,onPasswordPrompt:prompt=>prompts.push(prompt)});
+  const tab=service.getState().tabs[0]!;
+  await service.navigate(tab.id,"https://form.example/profile");
+  const contents=electron.state.views[0]!.webContents;
+  contents.passwordSnapshot={focusedFieldId:"field-3",fields:[{id:"field-3",kind:"profile",label:"Name",type:"text",autocomplete:"name",rect:{x:10,y:10,width:200,height:30}}]};
+  contents.emit("ipc-message",{senderFrame:contents.mainFrame},"kestrel:user-browser-password-form-changed");
+  await vi.waitFor(()=>expect(prompts.at(-1)).toMatchObject({mode:"profile"}));
+  expect(JSON.stringify(prompts)).not.toContain(profile.name);
+  await service.fillAutofillProfile();
+  expect(contents.send).toHaveBeenCalledWith("kestrel:user-browser-credential-command",expect.objectContaining({type:"fill",profile,onlyEmpty:true,expectedOrigin:"https://form.example"}));
+  contents.url="https://unrelated.example";contents.mainFrame.url=contents.url;
+  await expect(service.fillAutofillProfile()).rejects.toThrow("no longer available");
+  service.dispose();
+ });
+ it("accepts profile learning only from the active HTTPS top frame and honors disable", async()=>{
+  const saveProfile=vi.fn(async()=>({}));
+  const passwordVault={saveProfile,listForOrigin:vi.fn(async()=>[])} as unknown as PasswordVault;
+  const {service}=createService({passwordVault});
+  const tab=service.getState().tabs[0]!;
+  await service.navigate(tab.id,"https://form.example");
+  const contents=electron.state.views[0]!.webContents;
+  const emit=(frame:unknown,value:unknown)=>contents.emit("ipc-message",{senderFrame:frame},"kestrel:user-browser-profile-submission",value);
+  emit({url:contents.url},{name:"Rejected"});
+  emit(contents.mainFrame,{password:"Rejected"});
+  expect(saveProfile).not.toHaveBeenCalled();
+  emit(contents.mainFrame,{name:"Fixture"});
+  expect(saveProfile).toHaveBeenCalledExactlyOnceWith({name:"Fixture"},true);
+  service.updateSettings({...service.getState().settings,autoSaveFormInfo:false});
+  emit(contents.mainFrame,{name:"Rejected"});
+  expect(saveProfile).toHaveBeenCalledTimes(1);
+  service.dispose();
+ });
 });

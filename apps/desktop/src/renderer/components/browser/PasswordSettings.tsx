@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { PasswordEntrySummary } from "@kestrel/shared-types";
+import type { AutofillProfile, PasswordEntrySummary } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import { Icon } from "../Icon";
 
@@ -19,6 +19,7 @@ export function PasswordSettings({
 	browser: UserBrowserController;
 }) {
 	const settings = browser.state?.settings;
+	const [profile, setProfile] = useState<AutofillProfile>({});
 	const [entries, setEntries] = useState<PasswordEntrySummary[]>([]);
 	const [usernameDrafts, setUsernameDrafts] = useState<Record<string, string>>(
 		{},
@@ -40,6 +41,8 @@ export function PasswordSettings({
 	}, []);
 
 	const loadEntries = useCallback(async () => {
+		const profileResponse = await window.kestrel.request({ type: "autofill-profile-get" });
+		if (profileResponse.ok && "autofillProfile" in profileResponse) setProfile(profileResponse.autofillProfile);
 		const response = await window.kestrel.request({ type: "password-list" });
 		if (!response.ok) throw new Error(responseError(response));
 		if ("passwords" in response) syncEntries(response.passwords);
@@ -148,12 +151,26 @@ export function PasswordSettings({
 		}
 	}
 
+	async function saveProfile(clear = false) {
+		setBusy("profile"); setError(""); setNotice("");
+		try {
+			const response = await window.kestrel.request({ type: "autofill-profile-save", profile: clear ? {} : profile });
+			if (!response.ok) throw new Error(responseError(response));
+			if ("autofillProfile" in response) setProfile(response.autofillProfile);
+			setNotice(clear ? "Saved form info removed." : "Form info saved securely on this Mac.");
+		} catch (cause) { setError(cause instanceof Error ? cause.message : "Form info could not be saved."); }
+		finally { setBusy(""); }
+	}
+
 	if (!settings) return null;
 	const toggles = [
+		["autoSavePasswords", "Save passwords automatically", "Save after the sign-in form disappears. Turn off to ask each time."],
+		["autofillProfileEnabled", "Autofill personal info", "Offer your saved name, address, contact details, and birthday when you select a field."],
+		["autoSaveFormInfo", "Remember submitted form info", "Keep details you type into supported forms in protected storage on this Mac."],
 		[
 			"offerToSavePasswords",
 			"Offer to save passwords",
-			"Ask before Kestrel saves a new or changed login.",
+			"Save new or changed logins after sign-in. Turn off to stop saving.",
 		],
 		[
 			"autofillPasswords",
@@ -179,7 +196,7 @@ export function PasswordSettings({
 		>
 			<header className="settings-panel-header">
 				<h2 id="password-settings-title">
-					<Icon name="lock" /> Passwords
+					<Icon name="lock" /> Passwords and autofill
 				</h2>
 				<p>
 					Passwords stay in protected storage on this Mac.
@@ -221,12 +238,29 @@ export function PasswordSettings({
 				</p>
 			) : null}
 
+			<details className="password-entry-card">
+				<summary>Saved personal info</summary>
+				<p>Edit the details Kestrel uses to fill forms. Blank fields are skipped.</p>
+				<form onSubmit={(event) => { event.preventDefault(); void saveProfile(); }} className="autofill-profile-grid">
+					{([
+						["name", "Full name"], ["given-name", "First name"], ["additional-name", "Middle name"], ["family-name", "Last name"],
+						["email", "Email"], ["tel", "Phone"], ["organization", "Company"], ["bday", "Birthday"],
+						["address-line1", "Street address"], ["address-line2", "Apartment / suite"], ["address-level2", "City"],
+						["address-level1", "State / province"], ["postal-code", "ZIP / postal code"], ["country", "Country code"], ["country-name", "Country"],
+						["street-address", "Full address"], ["address-line3", "Address line 3"], ["bday-day", "Birth day"], ["bday-month", "Birth month"], ["bday-year", "Birth year"],
+					] as const).map(([key, label]) => (
+						<label key={key}><span>{label}</span><input type={key === "bday" ? "date" : key === "email" ? "email" : "text"} autoComplete="off" maxLength={500} value={profile[key] || ""} onChange={(event) => setProfile((previous) => ({ ...previous, [key]: event.target.value }))} /></label>
+					))}
+					<button type="submit" disabled={Boolean(busy)}>Save info</button>
+					<button type="button" disabled={Boolean(busy)} onClick={() => void saveProfile(true)}>Clear saved info</button>
+				</form>
+			</details>
 			<div className="password-entry-list" aria-label="Saved logins">
 				<h3>Saved passwords</h3>
 				{entries.length === 0 ? (
 					<div className="password-empty-state">
 						<strong>No saved logins yet</strong>
-						<span>Save a login when Kestrel asks after you sign in.</span>
+						<span>Kestrel saves supported logins after you sign in when automatic saving is enabled.</span>
 					</div>
 				) : (
 					entries.map((entry) => {

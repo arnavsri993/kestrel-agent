@@ -37,6 +37,8 @@ import {
 	type PaymentCardEntrySummary,
 	type PaymentFormField,
 	type PaymentPrompt,
+	AutofillProfileSchema,
+	type AutofillProfile,
 	PasswordFormFieldSchema,
 	PasswordPromptSchema,
 	type PasswordEntryId,
@@ -1376,6 +1378,7 @@ export class UserBrowserService {
 			confirmedAt?: number;
 		}
 		| undefined;
+	private readonly submittedUsernames = new Map<string, { origin: string; username: string; at: number }>();
 	private readonly passwordPromptSuppressedUntil = new Map<string, number>();
 	private readonly passwordAutofilledUntil = new Map<string, number>();
 	private paymentScanInFlight = false;
@@ -3368,6 +3371,31 @@ export class UserBrowserService {
 		});
 	}
 
+	async getAutofillProfile(): Promise<AutofillProfile> {
+		return await this.passwordVault?.getProfile() ?? {};
+	}
+
+	async saveAutofillProfile(profile: AutofillProfile): Promise<AutofillProfile> {
+		if (!this.passwordVault) throw new Error("Protected storage is unavailable.");
+		return this.passwordVault.saveProfile(profile);
+	}
+
+	async fillAutofillProfile(fieldId?: string): Promise<void> {
+		const prompt = this.passwordPrompt;
+		const tab = this.requireActiveTab();
+		const webContents = liveWebContents(this.requireView(tab.id)?.view?.webContents);
+		if (!this.state.settings.autofillProfileEnabled || !webContents || !prompt || prompt.mode !== "profile" || prompt.tabId !== tab.id || safePageUrl(webContents.getURL())?.origin !== prompt.origin || (fieldId && !prompt.fields.some((field) => field.id === fieldId)))
+			throw new Error("That form suggestion is no longer available.");
+		const generation = this.passwordPromptGeneration;
+		const profile = await this.getAutofillProfile();
+		if (this.passwordPrompt !== prompt || generation !== this.passwordPromptGeneration || this.state.activeTabId !== tab.id || safePageUrl(webContents.getURL())?.origin !== prompt.origin)
+			throw new Error("The page changed before filling.");
+		const response = await this.requestPasswordBridge(webContents, prompt.origin, { type: "fill", profile, ...(fieldId ? { fieldId } : {}), onlyEmpty: !fieldId });
+		if (!response.ok || !response.filled) throw new Error("No matching empty fields could be filled.");
+		this.suppressPasswordPrompt(tab.id, prompt.origin, 1_000);
+		this.clearPasswordPrompt();
+	}
+
 	async listPasswords(): Promise<PasswordEntrySummary[]> {
 		return this.passwordVault?.list() ?? [];
 	}
@@ -3827,6 +3855,7 @@ export class UserBrowserService {
 			fieldId?: string;
 			includeUsername?: boolean;
 			includePassword?: boolean;
+			onlyEmpty?: boolean;
 		},
 	): Promise<number> {
 		const response = await this.requestPasswordBridge(webContents, origin, {
@@ -3843,8 +3872,10 @@ export class UserBrowserService {
 			| { type: "scan" }
 			| {
 					type: "fill";
-					username: string;
-					password: string;
+					username?: string;
+					password?: string;
+					profile?: AutofillProfile;
+					onlyEmpty?: boolean;
 					fieldId?: string;
 					includeUsername?: boolean;
 					includePassword?: boolean;
@@ -4171,6 +4202,7 @@ export class UserBrowserService {
 					width: 348,
 					height: Math.min(96, Math.max(1, pageHeight - 32)),
 				};
+		const submittedUsername = this.submittedUsernames.get(tab.id);
 		const loginFlow = this.loginFlows.readContext(tab.id);
 		const flowMatchesOrigin = loginFlow?.authOrigin === pageUrl.origin;
 		const flowUsername = flowMatchesOrigin
@@ -4186,6 +4218,7 @@ export class UserBrowserService {
 			title: hostnameTitle(pageUrl.toString()),
 			username:
 				parsed.data.username.trim().slice(0, 500) ||
+					(submittedUsername?.origin === pageUrl.origin && this.now().getTime() - submittedUsername.at < 120_000 ? submittedUsername.username : "") ||
 					flowUsername ||
 					"",
 			password: parsed.data.password,
@@ -4210,7 +4243,6 @@ export class UserBrowserService {
 			pending.tabId !== tab.id ||
 			!url ||
 			url.protocol !== "https:" ||
-			url.toString() === pending.submittedUrl ||
 			this.now().getTime() - pending.submittedAt > 30_000
 		) {
 			if (pending && this.now().getTime() - pending.submittedAt > 30_000)
@@ -4221,6 +4253,7 @@ export class UserBrowserService {
 			this.discardPendingPasswordSave();
 			return;
 		}
+		if (pending.confirmedAt) return;
 		const expectedLoginDestination =
 			url.origin === pending.origin ||
 			(pending.flowInitiatingOrigin !== undefined &&
@@ -4236,13 +4269,15 @@ export class UserBrowserService {
 			const snapshot = await this.readPasswordFormSnapshot(webContents, url.origin);
 			// A destination that still contains a current-password field usually
 			// signals an unsuccessful login. Do not offer to save in that case.
-			if (snapshot.fields.some((field) => field.kind === "password")) return;
+			if (snapshot.fields.some((field) => field.kind === "password" || field.kind === "new-password")) return;
 			if (
 				this.pendingPasswordSave !== pending ||
 				safePageUrl(webContents.getURL())?.toString() !== url.toString()
 			)
 				return;
+			if (this.pendingPasswordSave !== pending || this.state.activeTabId !== tab.id || this.state.settings.offerToSavePasswords === false) return;
 			const entries = (await this.passwordVault?.listForOrigin(pending.origin) ?? []).slice(0, 24);
+			if (this.pendingPasswordSave !== pending || pending.confirmedAt || this.disposed || this.state.activeTabId !== tab.id || safePageUrl(webContents.getURL())?.toString() !== url.toString()) return;
 			pending.confirmedUrl = url.toString();
 			pending.confirmedAt = this.now().getTime();
 			this.setPasswordPrompt(
@@ -4257,6 +4292,7 @@ export class UserBrowserService {
 					anchor: pending.anchor,
 				}),
 			);
+			if (this.state.settings.autoSavePasswords) await this.savePasswordSuggestion();
 		} catch {
 			// The destination may still be constructing its preload document. Its
 			// did-stop-loading event will make one more bounded attempt.
@@ -4290,30 +4326,17 @@ export class UserBrowserService {
 			this.clearPasswordPrompt();
 			return;
 		}
-		if (
-			this.pendingPasswordSave?.tabId === tab.id &&
-			!this.pendingPasswordSave.confirmedAt
-		)
-			return;
 		const suppressionKey = `${tab.id}:${url.origin}`;
 		if (
 			(this.passwordPromptSuppressedUntil.get(suppressionKey) ?? 0) >
 			this.now().getTime()
 		) {
-			this.clearPasswordPrompt();
+			this.clearPasswordPrompt({ preservePending: this.pendingPasswordSave?.tabId === tab.id });
 			return;
 		}
 		const automaticFillKey = `${tab.id}:${url.toString()}`;
-		if (
-			(this.passwordAutofilledUntil.get(automaticFillKey) ?? 0) >
-			this.now().getTime()
-		) {
-			this.clearPasswordPrompt();
-			return;
-		}
-		// A submitted credential is held only in the main process until the user
-		// explicitly confirms the save. Do not let the regular fill scan replace
-		// that confirmation while the page is still settling.
+		// Keep a confirmed save prompt stable while the protected write or the
+		// optional user confirmation is pending.
 		if (this.passwordPrompt?.mode === "save") {
 			if (
 				this.passwordPrompt.tabId === tab.id &&
@@ -4338,9 +4361,22 @@ export class UserBrowserService {
 				});
 				return;
 			}
+			const focusedProfile = snapshot.fields.find((field) => field.id === snapshot.focusedFieldId && field.kind === "profile");
+			if (focusedProfile && this.state.settings.autofillProfileEnabled && typeof this.passwordVault.getProfile === "function") {
+				const profile = await this.passwordVault.getProfile();
+				if (scanGeneration !== this.passwordPromptGeneration) return;
+				if (Object.keys(profile).length) {
+					this.setPasswordPrompt(PasswordPromptSchema.parse({
+						tabId: tab.id, origin: url.origin, title: "Saved form info", mode: "profile",
+						fields: snapshot.fields.filter((field) => field.kind === "profile"), focusedFieldId: focusedProfile.id,
+						entries: [], anchor: this.passwordPromptAnchor(snapshot, focusedProfile),
+					}));
+					return;
+				}
+			}
 			const credentialFields = snapshot.fields.filter(
 				(field) =>
-					field.kind === "username" ||
+					field.kind === "username" || (field.kind === "profile" && (field.autocomplete === "email" || field.type === "email")) ||
 					field.kind === "password" ||
 					field.kind === "new-password",
 			);
@@ -4401,7 +4437,7 @@ export class UserBrowserService {
 					? entries.find((entry) => entry.id === flow.selectedCredentialId)
 					: undefined;
 			const automaticEntry = selectedFlowEntry ?? (entries.length === 1 ? entries[0] : undefined);
-			if (automaticEntry) {
+			if (automaticEntry && !focused && (this.passwordAutofilledUntil.get(automaticFillKey) ?? 0) <= this.now().getTime()) {
 				const candidate = await this.passwordVault.getForOrigin(automaticEntry.id, url.origin);
 				if (candidate) {
 					try {
@@ -4409,6 +4445,7 @@ export class UserBrowserService {
 						const filled = await this.fillPasswordFields(webContents, url.origin, {
 							username: candidate.username,
 							password: candidate.password,
+							onlyEmpty: true,
 							includeUsername: this.state.settings.autofillUsernames,
 							includePassword: this.state.settings.autofillPasswords,
 						});
@@ -5330,6 +5367,7 @@ export class UserBrowserService {
 		if (this.paymentPollInterval) clearInterval(this.paymentPollInterval);
 		this.paymentPollInterval = undefined;
 		this.rejectPasswordBridgeRequests("The browser tab is no longer available.");
+		this.submittedUsernames.clear();
 		this.loginFlows.clearAll();
 		this.clearPasswordPrompt();
 		this.clearPaymentPrompt();
@@ -5789,6 +5827,20 @@ export class UserBrowserService {
 			};
 		});
 		webContents.on("ipc-message", (event, channel, ...args) => {
+			if (channel === "kestrel:user-browser-username-submission") {
+				const url = safePageUrl(webContents.getURL());
+				if (typeof args[0] === "string" && args[0].length <= 500 && event.senderFrame === webContents.mainFrame && url?.protocol === "https:" && safePageUrl(event.senderFrame.url)?.origin === url.origin && this.state.activeTabId === tab.id && this.state.settings.offerToSavePasswords)
+					this.submittedUsernames.set(tab.id, { origin: url.origin, username: args[0], at: this.now().getTime() });
+				return;
+			}
+			if (channel === "kestrel:user-browser-profile-submission") {
+				const profile = AutofillProfileSchema.safeParse(args[0]);
+				const url = safePageUrl(webContents.getURL());
+				if (profile.success && this.state.activeTabId === tab.id && event.senderFrame === webContents.mainFrame && url?.protocol === "https:" && safePageUrl(event.senderFrame.url)?.origin === url.origin && this.state.settings.autofillProfileEnabled && this.state.settings.autoSaveFormInfo && !this.state.settings.neverSavePasswordOrigins.includes(url.origin)) {
+					void this.passwordVault?.saveProfile(profile.data, true).catch(() => undefined);
+				}
+				return;
+			}
 			if (channel === PASSWORD_SUBMISSION_CHANNEL) {
 				void this.handlePasswordSubmission(tab, webContents, event, args[0]).catch(
 					() => undefined,
@@ -5803,6 +5855,7 @@ export class UserBrowserService {
 				channel === PASSWORD_FORM_CHANGED_CHANNEL &&
 				event.senderFrame === webContents.mainFrame
 			) {
+				void this.maybeOfferPasswordSaveAfterNavigation(tab, webContents, webContents.getURL());
 				void this.refreshPasswordPrompt(tab.id);
 			}
 			if (channel === HEIC_UPLOAD_CHANNEL)
@@ -6484,6 +6537,7 @@ export class UserBrowserService {
 
 	private closeView(tabId: string, closeWebContents = true): void {
 		if (tabId === this.state.activeTabId) this.clearPasswordPrompt();
+		this.submittedUsernames.delete(tabId);
 		this.loginFlows.clearTab(tabId);
 		const record = this.views.get(tabId);
 		if (!record) return;

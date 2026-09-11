@@ -23,7 +23,36 @@ type PasswordFieldElement =
 	| HTMLSelectElement
 	| HTMLTextAreaElement;
 
-type FieldKind = "username" | "password" | "new-password" | "secret";
+const PROFILE_KEYS = new Set(["name", "given-name", "additional-name", "family-name", "email", "tel", "organization", "street-address", "address-line1", "address-line2", "address-line3", "address-level2", "address-level1", "postal-code", "country", "country-name", "bday", "bday-day", "bday-month", "bday-year"]);
+const editedControls = new WeakSet<Element>();
+const fieldIds = new WeakMap<Element, string>();
+let nextFieldId = 0;
+function controlId(node: Element): string {
+	let id = fieldIds.get(node);
+	if (!id) { id = `field-${nextFieldId++}`; fieldIds.set(node, id); }
+	return id;
+}
+function autocompleteToken(node: PasswordFieldElement): string {
+	return String(node.autocomplete || "").toLowerCase().trim().split(/\s+/).filter((token) => token !== "webauthn").at(-1) || "";
+}
+function profileKey(node: PasswordFieldElement): string | undefined {
+	const token = autocompleteToken(node);
+	if (PROFILE_KEYS.has(token)) return token;
+	if (token && token !== "on") return undefined;
+	const hint = [node.name, node.id, node.getAttribute("aria-label"), node.labels?.[0]?.innerText].filter(Boolean).join(" ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+	const rules: [RegExp, string][] = [
+		[/\b(first|given)[-_ ]?name\b/, "given-name"], [/\b(last|family|sur)[-_ ]?name\b/, "family-name"],
+		[/\bmiddle[-_ ]?name\b/, "additional-name"], [/\b(full[-_ ]?name|your name)\b|^name$/, "name"],
+		[/\b(e[-_ ]?mail)\b/, "email"], [/\b(phone|telephone|mobile)\b/, "tel"],
+		[/\b(address[-_ ]?(2|line[-_ ]?2)|apartment|suite)\b/, "address-line2"],
+		[/\b(street|address[-_ ]?(1|line[-_ ]?1)|address)\b/, "address-line1"],
+		[/\b(city|town)\b/, "address-level2"], [/\b(state|province|region)\b/, "address-level1"],
+		[/\b(zip|postal)[-_ ]?(code)?\b/, "postal-code"], [/\bcountry\b/, "country-name"],
+		[/\b(birthday|birthdate|dob|date of birth)\b/, "bday"], [/\b(company|organization)\b/, "organization"],
+	];
+	return rules.find(([pattern]) => pattern.test(hint))?.[1];
+}
+type FieldKind = "username" | "password" | "new-password" | "secret" | "profile";
 
 interface DescribedField {
 	id: string;
@@ -44,19 +73,18 @@ interface PasswordBridgeCommand {
 	password?: string;
 	includeUsername?: boolean;
 	includePassword?: boolean;
+	profile?: Record<string, string>;
+	onlyEmpty?: boolean;
 }
 
-function visible(element: Element): boolean {
+function visible(element: Element, includeOffscreen = false): boolean {
 	const node = element as HTMLElement;
 	const rect = node.getBoundingClientRect();
 	const style = getComputedStyle(node);
 	return (
 		rect.width > 0 &&
 		rect.height > 0 &&
-		rect.bottom >= 0 &&
-		rect.right >= 0 &&
-		rect.top <= innerHeight &&
-		rect.left <= innerWidth &&
+		(includeOffscreen || (rect.bottom >= 0 && rect.right >= 0 && rect.top <= innerHeight && rect.left <= innerWidth)) &&
 		style.visibility !== "hidden" &&
 		style.display !== "none" &&
 		Number(style.opacity) > 0
@@ -79,10 +107,10 @@ function fieldHint(node: PasswordFieldElement): string {
 
 function fieldKind(node: PasswordFieldElement): FieldKind | undefined {
 	const type = String(node.type || node.tagName || "").toLowerCase();
-	const autocomplete = String(node.autocomplete || "").toLowerCase();
+	const autocomplete = autocompleteToken(node);
 	const hint = fieldHint(node);
+	if (node.disabled || ("readOnly" in node && node.readOnly) || ["hidden", "file", "checkbox", "radio", "submit", "button"].includes(type)) return undefined;
 	if (autocomplete === "new-password") return "new-password";
-	if (type === "password" || autocomplete === "current-password") return "password";
 	if (
 		autocomplete === "one-time-code" ||
 		/(?:\botp\b|one[-_ ]time[-_ ]code|recovery[-_ ]code|verification[-_ ]code|security[-_ ]code|\b(?:cvv|cvc)\b|api[-_ ]key|access[-_ ]token|private[-_ ]key)/i.test(
@@ -90,6 +118,8 @@ function fieldKind(node: PasswordFieldElement): FieldKind | undefined {
 		)
 	)
 		return "secret";
+	if (type === "password" || autocomplete === "current-password") return "password";
+	if (profileKey(node) && autocomplete !== "username" && !(profileKey(node) === "email" && (node.form || document).querySelector('input[type="password"],input[autocomplete="current-password"]'))) return "profile";
 	if (
 		type === "email" ||
 		autocomplete === "username" ||
@@ -101,19 +131,19 @@ function fieldKind(node: PasswordFieldElement): FieldKind | undefined {
 		return "username";
 }
 
-function describeFields(root: ParentNode = document): DescribedField[] {
+function describeFields(root: ParentNode = document, includeOffscreen = false): DescribedField[] {
 	return Array.from(
 		root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
 			"input,select,textarea",
 		),
 	)
-		.filter(visible)
+		.filter((node) => visible(node, includeOffscreen))
 		.flatMap((node) => {
 			const kind = fieldKind(node);
 			if (!kind) return [];
 			const rect = node.getBoundingClientRect();
 			const type = String(node.type || node.tagName || "").toLowerCase();
-			const autocomplete = String(node.autocomplete || "").toLowerCase();
+			const autocomplete = autocompleteToken(node);
 			const label = String(
 				node.labels?.[0]?.innerText ||
 					node.getAttribute("aria-label") ||
@@ -123,14 +153,14 @@ function describeFields(root: ParentNode = document): DescribedField[] {
 						? "Username"
 						: kind === "secret"
 							? "Sensitive field"
-							: "Password"),
+							: kind === "profile" ? "Personal info" : "Password"),
 			)
 				.replace(/\s+/g, " ")
 				.trim()
 				.slice(0, 500);
 			return [
 				{
-					id: "field-pending",
+					id: controlId(node),
 					kind,
 					label,
 					type: type.slice(0, 100),
@@ -145,8 +175,7 @@ function describeFields(root: ParentNode = document): DescribedField[] {
 				},
 			];
 		})
-		.slice(0, 32)
-		.map((field, index) => ({ ...field, id: `field-${index}` }));
+		.slice(0, 32);
 }
 
 function currentOrigin(): string | undefined {
@@ -182,17 +211,23 @@ function isBridgeCommand(value: unknown): value is PasswordBridgeCommand {
 			command.password.includes("\0"))
 	)
 		return false;
+	if (command.profile !== undefined && (!command.profile || typeof command.profile !== "object" || Array.isArray(command.profile) || Object.entries(command.profile).some(([key, value]) => !PROFILE_KEYS.has(key) || typeof value !== "string" || value.length > 500))) return false;
 	return true;
 }
 
 function setControlValue(node: PasswordFieldElement, value: string): void {
 	const prototype =
-		node instanceof HTMLInputElement
+		node.tagName === "INPUT"
 			? HTMLInputElement.prototype
-			: node instanceof HTMLTextAreaElement
+			: node.tagName === "TEXTAREA"
 				? HTMLTextAreaElement.prototype
 				: HTMLSelectElement.prototype;
 	const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+	if (node.tagName === "SELECT") {
+		const option = Array.from((node as HTMLSelectElement).options).find((item) => !item.disabled && [item.value, item.textContent?.trim()].some((text) => text?.toLowerCase() === value.toLowerCase() || (/^\d+$/.test(text || "") && /^\d+$/.test(value) && Number(text) === Number(value))));
+		if (!option) return;
+		value = option.value;
+	}
 	if (setter) setter.call(node, value);
 	else node.value = value;
 	node.dispatchEvent(new Event("input", { bubbles: true }));
@@ -200,15 +235,32 @@ function setControlValue(node: PasswordFieldElement, value: string): void {
 }
 
 function fill(command: PasswordBridgeCommand): number {
-	const fields = describeFields();
+	const fields = describeFields(document, Boolean(command.profile));
+	const active = fields.find((field) => field.node === document.activeElement);
+	const focusedForm = active?.node.form ?? (!command.profile ? fields.find((field) => field.kind === "password")?.node.form ?? fields.find((field) => field.kind === "username")?.node.form : undefined);
 	const requested = command.fieldId
 		? fields.filter((field) => field.id === command.fieldId)
-		: fields;
+		: focusedForm ? fields.filter((field) => field.node.form === focusedForm) : fields;
 	let filled = 0;
 	let focusTarget: PasswordFieldElement | undefined;
 	for (const field of requested) {
+		if (command.onlyEmpty && (field.node.value || editedControls.has(field.node))) continue;
+		if (command.profile) {
+			const key = profileKey(field.node);
+			if (!key || field.kind !== "profile") continue;
+			let value = command.profile[key];
+			if (!value && key === "name") value = [command.profile["given-name"], command.profile["additional-name"], command.profile["family-name"]].filter(Boolean).join(" ");
+			if (!value && key === "street-address") value = [command.profile["address-line1"], command.profile["address-line2"], command.profile["address-line3"]].filter(Boolean).join("\n");
+			if (!value && key === "address-line1") value = command.profile["street-address"]?.split("\n")[0];
+			if (!value && /^bday-(year|month|day)$/.test(key)) {
+				const date = command.profile.bday?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+				if (date) value = date[{ "bday-year": 1, "bday-month": 2, "bday-day": 3 }[key]!];
+			}
+			if (value) { setControlValue(field.node, value); if (field.node.value) filled += 1; }
+			continue;
+		}
 		if (
-			field.kind === "username" &&
+			(field.kind === "username" || (field.kind === "profile" && profileKey(field.node) === "email")) &&
 			command.includeUsername !== false &&
 			command.username !== undefined
 		) {
@@ -216,7 +268,7 @@ function fill(command: PasswordBridgeCommand): number {
 			filled += 1;
 			focusTarget = field.node;
 		} else if (
-			(field.kind === "password" || field.kind === "new-password") &&
+			(field.kind === "password" || (field.kind === "new-password" && Boolean(command.fieldId))) &&
 			command.includePassword !== false &&
 			command.password !== undefined
 		) {
@@ -225,7 +277,7 @@ function fill(command: PasswordBridgeCommand): number {
 			focusTarget = field.node;
 		}
 	}
-	focusTarget?.focus();
+	if (!command.onlyEmpty) focusTarget?.focus();
 	return filled;
 }
 
@@ -242,15 +294,28 @@ function passwordFormSubmission(event: Event): void {
 	const target = event.target as { tagName?: unknown } | null;
 	if (!target || String(target.tagName).toUpperCase() !== "FORM") return;
 	const form = target as HTMLFormElement;
-	const fields = describeFields(form);
+	const fields = describeFields(form, true);
+	if (event.isTrusted) {
+		const profile: Record<string, string> = {};
+		for (const field of fields) {
+			const key = profileKey(field.node);
+			if (field.kind === "profile" && key && editedControls.has(field.node) && field.node.value.trim()) profile[key] = field.node.value.trim().slice(0, 500);
+		}
+		if (Object.keys(profile).length) ipcRenderer.send("kestrel:user-browser-profile-submission", profile);
+	}
 	const passwordField = fields.find(
 		(field) =>
 			(field.kind === "password" || field.kind === "new-password") && visible(field.node),
 	);
-	if (!passwordField) return;
+	if (!passwordField) {
+		const username = fields.find((field) => field.kind === "username" || (field.kind === "profile" && profileKey(field.node) === "email"));
+		if (event.isTrusted && username && editedControls.has(username.node) && username.node.value.trim())
+			ipcRenderer.send("kestrel:user-browser-username-submission", username.node.value.trim().slice(0, 500));
+		return;
+	}
 	const password = passwordField.node.value;
 	if (!password || password.length > MAX_PASSWORD_LENGTH || password.includes("\0")) return;
-	const usernameField = fields.find((field) => field.kind === "username");
+	const usernameField = fields.find((field) => field.kind === "username" || (field.kind === "profile" && profileKey(field.node) === "email"));
 	ipcRenderer.send(PASSWORD_SUBMISSION_CHANNEL, {
 		username: (usernameField?.node.value ?? "").trim().slice(0, 500),
 		password,
@@ -292,6 +357,16 @@ function observePasswordForms(): void {
 if (process.isMainFrame) {
 	document.addEventListener("submit", passwordFormSubmission, true);
 	document.addEventListener("focusin", notifyFormChanged, true);
+	document.addEventListener("input", (event) => { if (event.isTrusted && event.target) editedControls.add(event.target as Element); }, true);
+	// Scripted sign-in buttons often never emit a native submit event.
+	document.addEventListener("click", (event) => {
+		if (!event.isTrusted) return;
+		const target = event.target as Element | null;
+		const button = target?.closest?.('button,input[type="submit"],[role="button"]');
+		if (!button || !/sign.?in|log.?in|continue|next|submit/i.test(button.textContent || button.getAttribute("value") || "")) return;
+		const form = button.closest("form");
+		if (form) passwordFormSubmission({ target: form, isTrusted: true } as unknown as Event);
+	}, true);
 	if (document.documentElement) observePasswordForms();
 	else
 		document.addEventListener("DOMContentLoaded", observePasswordForms, {

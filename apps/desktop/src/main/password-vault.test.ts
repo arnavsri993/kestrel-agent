@@ -197,3 +197,17 @@ describe("password vault", () => {
 		).toThrow();
 	});
 });
+
+describe("protected form profile", () => {
+ it("persists encrypted profile info, merges serially, and clears without deleting passwords", async () => {
+  const {vault,root} = createVault();
+  await vault.save({origin:"https://example.test",username:"fixture",password:"fixture-secret"});
+  await Promise.all([vault.saveProfile({name:"Fixture Person"},true),vault.saveProfile({bday:"2000-02-03"},true)]);
+  expect(await vault.getProfile()).toEqual({name:"Fixture Person",bday:"2000-02-03"});
+  expect(readFileSync(join(root,"secure","passwords","browser-autofill-profile.bin"),"utf8")).not.toContain("Fixture Person");
+  await expect(vault.saveProfile({password:"never-store"} as never)).rejects.toThrow();
+  await vault.saveProfile({});
+  expect(await vault.getProfile()).toEqual({});
+  expect(await vault.list()).toHaveLength(1);
+ });
+});
