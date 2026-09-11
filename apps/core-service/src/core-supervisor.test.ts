@@ -61,6 +61,38 @@ afterEach(() => {
 });
 
 describe("CoreSupervisor recovery", () => {
+	it.each(["throw", "reject"])("survives %s from browser cleanup on crash and stop", async (mode) => {
+		vi.useFakeTimers();
+		const processes: FakeCoreProcess[] = [];
+		const cleanup = () => {
+			if (mode === "throw") throw new Error("cleanup failed");
+			return Promise.reject(new Error("cleanup failed"));
+		};
+		const supervisor = new CoreSupervisor(undefined, cleanup, {
+			processFactory: () => {
+				const child = new FakeCoreProcess();
+				child.exitOnShutdown = true;
+				processes.push(child);
+				return child;
+			}, restartDelaysMs: [10],
+		});
+		const errors = vi.fn();
+		supervisor.on("automation-error", errors);
+		const started = supervisor.start(config);
+		processes[0]!.ready();
+		await started;
+		expect(() => processes[0]!.crash()).not.toThrow();
+		await vi.advanceTimersByTimeAsync(10);
+		expect(processes).toHaveLength(2);
+		const recovered = once(supervisor, "recovered");
+		processes[1]!.ready();
+		await recovered;
+		await supervisor.stop();
+		expect(processes[1]!.messages).toContainEqual({ type: "shutdown" });
+		expect(errors).toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
 	it("keeps agent work alive past the control timeout and requests cancellation at its own deadline", async () => {
 		vi.useFakeTimers();
 		const child = new FakeCoreProcess();
@@ -453,6 +485,25 @@ describe("CoreSupervisor recovery", () => {
 });
 
 describe("CoreSupervisor browser backend IPC", () => {
+	it("returns a failed response when a browser adapter throws synchronously", async () => {
+		const child = new FakeCoreProcess();
+		child.exitOnShutdown = true;
+		const supervisor = new CoreSupervisor(() => { throw new Error("adapter failed"); }, undefined, {
+			processFactory: () => child,
+		});
+		const started = supervisor.start(config);
+		child.ready();
+		await started;
+		expect(() => child.emit("message", {
+			type: "browser-backend-request", requestId: "sync-failure",
+			request: { operation: "snapshot", sessionId: "browser-1" },
+		})).not.toThrow();
+		await vi.waitFor(() => expect(child.messages).toContainEqual({
+			type: "browser-backend-response", requestId: "sync-failure", ok: false, error: "adapter failed",
+		}));
+		await supervisor.stop();
+	});
+
 	it("forwards a valid snapshot request and rejects hostile desktop-act payloads", async () => {
 		const child = new FakeCoreProcess();
 		const handler = vi.fn(async () => ({ ok: true }));
