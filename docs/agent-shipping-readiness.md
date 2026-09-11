@@ -2,17 +2,13 @@
 
 Scope: current main (`3fc8f3eb`) plus this change, Apple Silicon local desktop and the standalone agent boundary. This is an engineering assessment, not a measured reliability percentage or an independent security audit. Uncommitted work in the original checkout is excluded.
 
-## Score: 72/100 before, 82/100 after
+## Score withdrawn
 
-| Dimension | Maximum | Before | After | Evidence and remaining deduction |
-| --- | ---: | ---: | ---: | --- |
-| Policy, privacy, execution authority | 20 | 17 | 17 | Encrypted database, schema-validated broker, approvals and idempotency remain authoritative. No independent penetration assessment in this pass. |
-| Recovery and lifecycle | 20 | 12 | 16 | Cleanup exceptions no longer bypass shutdown/recovery; adapter throws return failures. Real child crash and durable-session restoration pass. A never-settling cleanup can still delay recovery. |
-| Node transport correctness | 15 | 9 | 13 | Queued sends are no longer reported as failed merely because send returns false. Spawn/send errors terminate safely, with recovery after close and no request replay. No prolonged load/soak evidence. |
-| Independence from Electron | 15 | 11 | 11 | Packaged agent already uses pinned standalone Node; shared lifecycle tests now live with core-service, and smoke imports no desktop modules. Desktop UI, native browser and OS integration still depend on Electron. |
-| Verification coverage | 15 | 13 | 14 | 1,450 unit tests and workspace typecheck pass; real Node, sidecar and Chromium flows pass. Fixture tests cannot establish general live-site agent success. |
-| Delivery proof | 15 | 10 | 11 | Canonical app refreshed, matching hashes and real Node process observed, live harmless agent response succeeded. Development ad-hoc signing does not prove notarized release or updater delivery. |
-| **Total** | **100** | **72** | **82** | **A stronger development build; unrestricted public release is not certified.** |
+The initial 72/100 and 82/100 scores overweighted infrastructure and deterministic tests. They did not measure whether a person can finish useful work, or establish competitive readiness against OpenClaw. They are withdrawn rather than replaced with another unsupported number.
+
+This report documents a verified infrastructure improvement only. Product readiness must be assessed using end-to-end outcomes, intervention count, false completion, recovery, setup effort, and repeatability. The existing 50-workflow deterministic benchmark explicitly does not call a model. Its success cannot establish autonomous agent competence.
+
+The product target and next capability sequence are in [browser-agent product architecture](browser-agent-product-architecture.md).
 
 ## Changes and failure modes
 
@@ -23,13 +19,16 @@ Scope: current main (`3fc8f3eb`) plus this change, Apple Silicon local desktop a
 
 Node transport semantics: [official child-process documentation](https://nodejs.org/api/child_process.html#subprocesssendmessage-sendhandle-options-callback).
 
+5. Production audit identified critical Next.js and high-severity Sharp/js-yaml advisories. Upgrade Next.js to 16.3.3, Sharp to 0.35.4 across all hosts, and the js-yaml override to 4.3.2. Add `pnpm audit --prod` to the local verification gate (CI already checked it) so a locally green verify cannot omit dependency auditing.
+
 ## Verified locally
 
-- Complete `corepack pnpm verify` passed: workspace typecheck, all 207 unit-test files / 1,450 tests, audits, builds, browser benchmark, 50 website end-to-end tests, desktop flows, packaged CLI, editor integration and secret scanning.
-- Focused supervisor and Node transport tests: 19 passed.
+- Production dependency audit: no known vulnerabilities after the patched dependency updates.
+- Original complete `corepack pnpm verify` passed. After dependency updates, its browser smoke exposed an about:blank/localStorage startup race; the smoke now waits for the real shell URL and that check plus all remaining stages passed. Together, the final validation covers: workspace typecheck, all 207 unit-test files / 1,450 tests, audits, builds, browser benchmark, 50 website end-to-end tests, desktop flows, packaged CLI, editor integration and secret scanning.
+- After the Chromium-reader and host-ceiling changes, workspace typecheck and all 208 test files / 1,454 tests passed. Focused supervisor and Node transport tests: 19 passed.
 - Standalone core build rejects Electron imports; real Node bootstrap, request, crash recovery and durable session restoration passed.
 - Packaged pinned-Node sidecar smoke passed. Missing Node executable is also exercised as a real spawn failure without crashing the host.
-- Chromium host smoke passed: conversation, reload, cancellation, native web tabs, bridge isolation and narrow layout.
+- Chromium host smoke passed headed and headless: conversation, reload, cancellation, native web tabs, opt-in model/tool/page round trip, denial after run completion, host mutation denial, bridge isolation and narrow layout. The provider is scripted; this does not measure model reasoning quality.
 - Installed-executable packaged desktop smoke passed, including native Sharp, isolated browser tools and action receipts.
 - Canonical `/Applications/Kestrel.app` rebuilt, installed and reopened with existing profile. App archive and core bundle hashes match the worktree's packaged output.
 - Running child is `/Applications/Kestrel.app/Contents/Resources/agent-core/node/bin/node`; the installed app visibly returned `Agent runtime verification passed.` from a harmless no-tool request.
@@ -41,4 +40,4 @@ Node transport semantics: [official child-process documentation](https://nodejs.
 - Treat the Chromium host as a preview until durable profile handling, approved tools, protected credentials, native integration, packaging and browser feature parity are proven there. Never copy the user's encrypted profile into it implicitly.
 - Validate representative real provider/tool workflows beyond the no-tool live response; existing deterministic benchmarks do not measure autonomous model quality on live sites.
 
-The next Electron migration slice should re-host one approved tool flow with durable approvals in Chromium, using the existing core contracts. Removing the working desktop host before those boundaries are proven would reduce shipping readiness.
+Chromium now re-hosts read-only browser tools through the existing core contracts, protected by a host-owned tool ceiling. The next slice is one approved write flow with durable approvals. Removing the working desktop host before those boundaries are proven would reduce shipping readiness.

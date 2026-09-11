@@ -19,7 +19,7 @@ The renderer owns presentation state only. Main owns OS lifecycle, notifications
 
 - `apps/desktop`: Electron main, preload, development utility adapter, and React renderer.
 - `apps/core-service`: host-independent service, supervisor, Node IPC transport, and standalone bootstrap. Packaged desktops run the pinned Node sidecar; Electron is not its runtime.
-- `apps/chromium-host`: experimental Chromium conversation and web-tab host. Its temporary profile and conversation-only bridge do not provide desktop feature parity.
+- `apps/chromium-host`: experimental Chromium conversation and web-tab host. Its temporary profile and opt-in read-only browser tools do not provide desktop feature parity.
 - `apps/website`: static Next.js marketing and download site. It imports no desktop or fal runtime.
 - `packages/shared-types`: Zod contracts and product identity.
 - `packages/database`: migrations, encrypted record persistence, and query adapters.

@@ -7,11 +7,12 @@ import { launchChromiumHost } from "../apps/chromium-host/src/host";
 
 let completions = 0;
 let toolsExposed = false;
+let browserToolReads = 0;
 const pending = new Set<import("node:http").ServerResponse>();
 const server = createServer(async (request, response) => {
   if (request.url === "/page") {
     response.setHeader("Content-Type", "text/html");
-    response.end('<!doctype html><title>Chromium browser fixture</title><h1>Real browser tab</h1><a href="/next">Next page</a><a href="/next" target="_blank">Open popup</a>'); return;
+    response.end('<!doctype html><title>Chromium browser fixture</title><h1>Real browser tab</h1><input type="password" value="fixture-password-value"><a href="/next">Next page</a><a href="/next" target="_blank">Open popup</a>'); return;
   }
   if (request.url === "/next") { response.end('<!doctype html><title>Next fixture page</title><h1>Navigation works</h1>'); return; }
   if (request.url === "/v1/models") { response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify({ data: [{ id: "fixture-model", object: "model" }] })); return; }
@@ -21,6 +22,34 @@ const server = createServer(async (request, response) => {
   const body = JSON.parse(Buffer.concat(chunks).toString());
   toolsExposed ||= !!body.tools?.length;
   completions++;
+  if (JSON.stringify(body.messages.filter((message: any) => message.role === "user").at(-1)).includes("Inspect the open browser tab")) {
+    const tools = body.tools ?? [];
+    assert.equal(tools.length, 2, "Only the two read-only browser tools may be exposed");
+    const previous = body.messages.filter((message: { role: string }) => message.role === "tool");
+    let delta;
+    if (!previous.length) {
+      const tool = tools.find((tool: any) => /tabs/.test(tool.function.name));
+      assert(tool);
+      delta = { tool_calls: [{ index: 0, id: "read-tabs", type: "function", function: { name: tool.function.name, arguments: "{}" } }] };
+    } else if (previous.length === 1) {
+      const result = JSON.parse(previous[0].content);
+      const serialized = JSON.stringify(result);
+      const id = serialized.match(/tab-[a-f0-9-]{36}/)?.[0];
+      assert(id, `Tab discovery did not return a real tab: ${serialized}`);
+      const tool = tools.find((tool: any) => /snapshot/.test(tool.function.name));
+      assert(tool);
+      delta = { tool_calls: [{ index: 0, id: "read-page", type: "function", function: { name: tool.function.name, arguments: JSON.stringify({ tabId: id }) } }] };
+    } else {
+      const evidence = JSON.stringify(previous.at(-1));
+      assert(evidence.includes("Real browser tab"), "Model must receive actual page evidence");
+      assert(!evidence.includes("fixture-password-value"), "Input values must not reach the model");
+      browserToolReads++;
+      delta = { content: "The open page is titled Chromium browser fixture and contains Real browser tab." };
+    }
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end(`data: ${JSON.stringify({ id: "browser-read-response", model: "fixture-model", choices: [{ index: 0, delta, finish_reason: "tool_calls" in delta ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`);
+    return;
+  }
   if (JSON.stringify(body.messages).includes("Hold this response")) {
     pending.add(response); response.once("close", () => pending.delete(response)); return;
   }
@@ -67,6 +96,18 @@ try {
   await page.getByRole("button", { name: "Close Next fixture page", exact: true }).click();
   await expect.poll(() => popup.isClosed()).toBe(true);
   await expect(page.getByRole("button", { name: "Switch to Next fixture page", exact: true })).toHaveCount(0);
+  await page.getByLabel("Read open browser tabs for this message").check();
+  await page.getByLabel("Message", { exact: true }).fill("Inspect the open browser tab");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByText("The open page is titled Chromium browser fixture and contains Real browser tab.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+  assert.equal(browserToolReads, 1);
+  await expect(page.getByLabel("Read open browser tabs for this message")).not.toBeChecked();
+  const { sessionId: readerSession } = await page.evaluate(() => (window as any).kestrelHost({ type: "state" }));
+  const deniedRead = await host.supervisor.request({ type: "runtime-call-tool", sessionId: readerSession, toolName: "browser.tabs", input: {} });
+  assert(deniedRead.ok && "execution" in deniedRead && deniedRead.execution.status === "failed", "Browser reads must fail after the opted-in run finishes");
+  const deniedMutation = await host.supervisor.request({ type: "runtime-call-tool", sessionId: readerSession, toolName: "browser.visible-act", input: {}, approvalStatus: "approved", idempotencyKey: "denied-host-action" });
+  assert.equal(deniedMutation.ok, false, "Host ceiling must deny even explicitly approved mutation calls");
   await page.getByRole("button", { name: "＋ New conversation" }).click();
   await expect(page.getByRole("heading", { name: "New conversation", exact: true })).toBeVisible();
   await page.getByLabel("Message", { exact: true }).fill("Hold this response");
@@ -95,7 +136,7 @@ try {
   await expect(host.shell.getByRole("status")).toHaveText("Core connected");
   await expect(host.shell.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
   await expect(host.shell.getByText(/No model provider configured/)).toBeVisible();
-  console.log("Chromium host passed: real Node conversation, reload, cancellation, native web navigation, no tools, isolated bridge and narrow layout.");
+  console.log("Chromium host passed: real Node conversation, reload, cancellation, native web navigation, opt-in core browser tools, isolated bridge and narrow layout.");
 } finally {
   await host?.close();
   for (const response of pending) response.destroy();

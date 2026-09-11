@@ -2,6 +2,15 @@ import { randomUUID } from "node:crypto";
 import type { BrowserContext, Page } from "playwright";
 import { browserUrl } from "./bridge-policy";
 
+export function browserEvidenceUrl(value: string): string {
+  try {
+    const url = new URL(browserUrl(value));
+    url.search = "";
+    url.hash = "";
+    return url.href;
+  } catch { return ""; }
+}
+
 /** Owns every web page in the context, including target=_blank and window.open. */
 export class ChromiumTabManager {
   private readonly pages = new Map<string, Page>();
@@ -13,7 +22,7 @@ export class ChromiumTabManager {
   private readonly register = (page: Page): void => {
     if (page === this.shell || this.ids.has(page) || page.isClosed()) return;
     if (this.pages.size >= this.limit) { void page.close().catch(() => {}); return; }
-    const id = randomUUID();
+    const id = `tab-${randomUUID()}`;
     this.ids.set(page, id);
     this.pages.set(id, page);
     page.on("close", () => { this.pages.delete(id); this.changed(); });
@@ -38,6 +47,40 @@ export class ChromiumTabManager {
     await page.bringToFront();
     return id;
   }
+  async readSnapshot(id: string | undefined, signal: AbortSignal) {
+    signal.throwIfAborted();
+    if (!id) throw new Error("Choose a tab ID from browser.tabs before reading a page.");
+    const page = this.pages.get(id);
+    if (!page || page.isClosed()) throw new Error("This tab is closed.");
+    const url = page.url();
+    browserUrl(url); // Never read shell, file, browser-internal, or data pages.
+    const client = await this.context.newCDPSession(page);
+    try {
+      const { nodes } = await client.send("Accessibility.getFullAXTree");
+      signal.throwIfAborted();
+      const title = await page.title();
+      signal.throwIfAborted();
+      if (page.url() !== url) throw new Error("The tab navigated while being read. Read it again.");
+      // Return accessible names and roles only: no input values, DOM, cookies,
+      // hidden nodes, backend IDs, or executable page handles cross this boundary.
+      const tree: { role: string; name: string }[] = [];
+      let remaining = 60_000;
+      let truncated = false;
+      for (const node of nodes) {
+        if (node.ignored || node.properties?.some((property) => String(property.name) === "protected" && property.value.value)) continue;
+        const role = String(node.role?.value ?? "");
+        const name = String(node.name?.value ?? "");
+        if (!name || ["RootWebArea", "WebArea", "textbox", "searchbox", "combobox"].includes(role)) continue;
+        if (tree.length >= 500 || remaining <= 0) { truncated = true; break; }
+        const bounded = name.slice(0, Math.min(2_000, remaining));
+        if (bounded.length < name.length) truncated = true;
+        tree.push({ role: role.slice(0, 80), name: bounded });
+        remaining -= bounded.length;
+      }
+      return { url: browserEvidenceUrl(url), title: title.slice(0, 500), accessibilityTree: tree, truncated, trust: "untrusted_browser" as const };
+    } finally { await client.detach().catch(() => {}); }
+  }
+
   async focus(id: string): Promise<void> {
     const page = this.pages.get(id);
     if (!page) throw new Error("This tab is closed.");

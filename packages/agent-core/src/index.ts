@@ -205,6 +205,8 @@ function reviewerUnavailableError(error: unknown): boolean {
 }
 
 export interface AgentCoreDependencies {
+	/** Host-owned capability ceiling. Omitted preserves the full existing runtime. */
+	hostToolNames?: readonly string[];
 	database: KestrelDatabase;
 	/** Seed the deterministic teacher-scheduling data used by preview and test surfaces. */
 	seedDevelopmentFixtures?: boolean;
@@ -355,6 +357,7 @@ export class AgentCore {
 			this.deps.githubToken,
 			this.deps.configuredWorkspaceRoots ?? this.deps.workspaceRoots ?? [],
 			this.deps.projects ?? [],
+			this.deps.hostToolNames,
 		);
 		this.observability = new ObservabilityManager(
 			this.deps.database,

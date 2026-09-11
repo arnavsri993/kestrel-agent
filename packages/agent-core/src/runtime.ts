@@ -548,6 +548,8 @@ export class AgentRuntime extends EventEmitter {
 		| ((context: RuntimeToolPolicyContext) => RuntimeToolPolicyDecision)
 		| undefined;
 
+	private readonly hostToolNames: ReadonlySet<string> | undefined;
+
 	constructor(
 		private readonly database: KestrelDatabase,
 		workspaceRoots: string[] = [],
@@ -555,8 +557,10 @@ export class AgentRuntime extends EventEmitter {
 		private readonly githubToken?: string,
 		configuredWorkspaceRoots: string[] = workspaceRoots,
 		projects: Project[] = [],
+		hostToolNames?: readonly string[],
 	) {
 		super();
+		this.hostToolNames = hostToolNames === undefined ? undefined : new Set(hostToolNames);
 		this.humanInput = new HumanInputManager(database, {
 			now: () => new Date(this.now()),
 			getRunStatus: (runId) => {
@@ -1780,6 +1784,7 @@ export class AgentRuntime extends EventEmitter {
 		return [...this.tools.values()]
 				.map((definition) => definition.descriptor)
 				.filter((tool) => session.allowedTools.includes(tool.name))
+			.filter((tool) => !this.hostToolNames || this.hostToolNames.has(tool.name))
 				.filter((tool) => sessionAllowsMemory(session) || tool.category !== "memory")
 			.filter((tool) => !tool.requiresWorkspace || hasActiveWorkspace)
 			.filter(
@@ -1862,7 +1867,7 @@ export class AgentRuntime extends EventEmitter {
 		const session = this.requireSession(sessionId);
 		const workspaceRoot = this.resolveActiveWorkspaceRoot(session);
 		const definition = this.tools.get(toolName);
-		if (!definition || !session.allowedTools.includes(toolName))
+		if (!definition || !session.allowedTools.includes(toolName) || (this.hostToolNames && !this.hostToolNames.has(toolName)))
 			throw new Error(`Tool ${toolName} is unavailable in this session.`);
 		if (!sessionAllowsMemory(session) && definition.descriptor.category === "memory")
 			throw new Error(

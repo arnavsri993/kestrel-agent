@@ -26,6 +26,8 @@ import {
 } from "./core-request-lifecycle";
 
 export interface CoreBootstrapConfig {
+	/** Host-owned immutable runtime tool ceiling, preserved during recovery. */
+	hostToolNames?: string[];
 	databasePath: string;
 	encryptionKeyBase64: string;
 	workspaceRoots: string[];
@@ -65,6 +67,7 @@ function cloneBootstrapConfig(
 ): CoreBootstrapConfig {
 	return {
 		...config,
+		...(config.hostToolNames !== undefined ? { hostToolNames: [...config.hostToolNames] } : {}),
 		workspaceRoots: [...config.workspaceRoots],
 		configuredWorkspaceRoots: [...config.configuredWorkspaceRoots],
 		projects: config.projects?.map((project) => ({ ...project })) ?? [],

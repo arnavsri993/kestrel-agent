@@ -210,6 +210,9 @@ async function launch() {
 		if (message.type() === "error") runtimeErrors.push(message.text());
 	});
 	page.on("pageerror", (error) => runtimeErrors.push(error.message));
+	// firstWindow can still be about:blank, whose load state is already complete.
+	// Wait for the actual shell before touching origin-bound localStorage.
+	await page.waitForURL((url) => url.protocol === "file:" && url.pathname.endsWith("/renderer/index.html"));
 	await page.waitForLoadState("domcontentloaded");
 	// Keep ambient star drift and transition timing deterministic while still
 	// exercising the live Agent Universe surface and its pointer interactions.
