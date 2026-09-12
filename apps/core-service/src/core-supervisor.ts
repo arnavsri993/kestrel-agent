@@ -220,7 +220,7 @@ export class CoreSupervisor extends EventEmitter {
 		for (const controller of this.browserRequests.values())
 			controller.abort(new Error("Agent Core is stopping."));
 		this.browserRequests.clear();
-		await this.closeBrowsers?.();
+		await this.cleanupBrowsers();
 		const child = this.child;
 		if (!child) return;
 		const exited = new Promise<void>((resolve) => {
@@ -471,16 +471,7 @@ export class CoreSupervisor extends EventEmitter {
 		for (const controller of this.browserRequests.values())
 			controller.abort(new Error("Agent Core stopped."));
 		this.browserRequests.clear();
-		this.browserCleanup = Promise.resolve(this.closeBrowsers?.()).catch(
-			(error) => {
-				this.emit(
-					"automation-error",
-					error instanceof Error
-						? error
-						: new Error("Browser cleanup failed after Agent Core stopped."),
-				);
-			},
-		);
+		this.browserCleanup = this.cleanupBrowsers();
 		if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
 		this.stabilityTimer = undefined;
 		if (this.stopping) return;
@@ -490,6 +481,20 @@ export class CoreSupervisor extends EventEmitter {
 				`Agent Core exited unexpectedly${code === null ? "" : ` with code ${code}`}.`,
 			),
 		);
+	}
+
+	private async cleanupBrowsers(): Promise<void> {
+		try {
+			await this.closeBrowsers?.();
+		} catch (error) {
+			// Keep cleanup failures visible without blocking teardown or recovery.
+			this.emit(
+				"automation-error",
+				error instanceof Error
+					? error
+					: new Error("Browser cleanup failed after Agent Core stopped."),
+			);
+		}
 	}
 
 	private scheduleRecovery(code: number | null, cause: Error): void {
