@@ -18,7 +18,10 @@ try {
  const request=(input)=>page.evaluate((input)=>window.kestrel.request(input),input);
  await app.evaluate(async ({session})=>{
   await session.fromPartition('persist:kestrel-user-browser-v1').protocol.handle('https',(request)=>{
-   const login=new URL(request.url).pathname==='/login';
+   const path=new URL(request.url).pathname;
+   if(path==='/embedded') return new Response('<!doctype html><title>Embedded autofill verification</title><h1>Embedded form</h1><iframe src="/form" style="width:750px;height:500px;margin:30px;border:2px solid"></iframe>',{headers:{'content-type':'text/html'}});
+   if(path==='/payment') return new Response('<!doctype html><title>Payment autofill verification</title><style>input{display:block;margin:12px}</style><form><input id="company" name="company"><input id="card" autocomplete="billing cc-number"><input id="expiry" autocomplete="billing cc-exp"><input id="cardName" autocomplete="billing cc-name"><input id="securityCode" name="card-number-security-code" autocomplete="billing cc-csc"></form>',{headers:{'content-type':'text/html'}});
+   const login=path==='/login';
    return new Response(`<!doctype html><title>Autofill verification</title><style>body{font:18px system-ui;padding:30px}input{display:block;margin:15px;padding:10px}</style>${login?'<form><input id="user" autocomplete="username"><input id="pass" type="password" autocomplete="current-password"><button type="button" onclick="this.form.remove();document.body.insertAdjacentHTML(\'beforeend\',\'<h1>Signed in fixture</h1>\')">Sign in</button></form>':'<form><label>First name<input id="name" autocomplete="given-name"></label><label>Street address<input id="address" autocomplete="street-address"></label><label>Birthday<input id="birth" type="date" autocomplete="bday"></label></form>'}`,{headers:{'content-type':'text/html'}});
   });
  });
@@ -52,5 +55,33 @@ try {
  await overlay.getByRole('button').filter({hasText:'fixture-user'}).click();
  await expect(remote.locator('#pass')).toHaveValue('fixture-password');
  await expect(remote.locator('#user')).toHaveValue('fixture-user');
+ await request({type:'browser-create-tab',input:'https://autofill.example.test/embedded',active:true});
+ await expect.poll(()=>{remote=app.context().pages().find(p=>p.url()==='https://autofill.example.test/embedded');return Boolean(remote);}).toBe(true);
+ const frame=remote.frameLocator('iframe');
+ await frame.locator('#name').focus();
+ await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ await overlay.getByRole('button',{name:'Fill form',exact:true}).click();
+ await expect(frame.locator('#name')).toHaveValue('Fixture');
+ await expect(frame.locator('#address')).toHaveValue('12 Test Lane');
+ await expect(frame.locator('#birth')).toHaveValue('2000-02-03');
+ await request({type:'browser-create-tab',input:'https://payment.example.test/payment',active:true});
+ await expect.poll(()=>{remote=app.context().pages().find(p=>p.url()==='https://payment.example.test/payment');return Boolean(remote);}).toBe(true);
+ await remote.locator('#card').fill('4111111111111111');
+ await remote.locator('#expiry').fill('02/30');
+ await remote.locator('#cardName').fill('Fixture Card');
+ await remote.locator('#securityCode').fill('987');
+ assert.equal((await request({type:'payment-save',origin:'https://payment.example.test'})).ok,true);
+ await request({type:'browser-create-tab',input:'https://payment.example.test/payment',active:true});
+ await expect.poll(()=>{const pages=app.context().pages().filter(p=>p.url()==='https://payment.example.test/payment');remote=pages.at(-1);return pages.length;}).toBe(2);
+ await remote.locator('#card').focus();
+ await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('paymentOverlay'));return Boolean(overlay);}).toBe(true);
+ await overlay.getByRole('button').filter({hasText:'Fill details'}).click();
+ await expect(remote.locator('#card')).toHaveValue('4111111111111111');
+ await expect(remote.locator('#expiry')).toHaveValue('02/30');
+ await expect(remote.locator('#cardName')).toHaveValue('Fixture Card');
+ await expect(remote.locator('#securityCode')).toHaveValue('');
+ await expect(remote.locator('#company')).toHaveValue('');
+ console.log('PASS: complete desktop protected payment save and native popup fill without CVV/company leakage.');
+ console.log('PASS: native popup fills a same-origin embedded form in the complete desktop app.');
  console.log('PASS: full desktop protected profile settings, native profile popup fill, automatic SPA login saving, and saved-login focus popup fill.');
 } finally { if(app)await app.close();rmSync(root,{recursive:true,force:true}); }

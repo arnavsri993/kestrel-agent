@@ -1,3 +1,4 @@
+import { PAYMENT_AUTOFILL_WORLD_ID, PAYMENT_FORM_SCAN_SCRIPT, PAYMENT_FORM_VALUES_SCRIPT, paymentFillScript } from '../apps/desktop/src/main/payment-form-scripts.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -108,6 +109,107 @@ try {
  await page.evaluate(()=>{document.body.innerHTML='<form><input id="reject" autocomplete="name" oninput="this.value=\'\'"></form>';});
  await page.locator('#reject').focus();
  assert.equal((await command({type:'fill',profile:{name:'Rejected fixture'}})).filled,0);
+ // Focus in a login form must not offer generation from an unrelated signup.
+ await page.evaluate(()=>{document.body.innerHTML='<form><input autocomplete="new-password" type="password"></form><form><input id="loginSelected" autocomplete="current-password" type="password"></form>';});
+ await page.locator('#loginSelected').focus();
+ assert.deepEqual((await command({type:'scan'})).snapshot.fields.map(field=>field.kind),['password']);
+ await page.evaluate(()=>{document.body.innerHTML='<form>'+Array.from({length:50},(_,index)=>'<input id="large'+index+'" autocomplete="name">').join('')+'</form>';});
+ await page.locator('#large49').focus();
+ scan=await command({type:'scan'});
+ assert.ok(scan.snapshot.focusedFieldId);
+ await command({type:'fill',fieldId:scan.snapshot.focusedFieldId,profile:{name:'Large form fixture'}});
+ assert.equal(await page.locator('#large49').inputValue(),'Large form fixture');
+ // Field semantics changing after the popup opened invalidates its old ID.
+ await page.evaluate(()=>{document.body.innerHTML='<form><input id="mutable" autocomplete="given-name"></form>';});
+ await page.locator('#mutable').focus();
+ scan=await command({type:'scan'});
+ const oldId=scan.snapshot.focusedFieldId;
+ await page.locator('#mutable').evaluate(node=>node.autocomplete='email');
+ assert.equal((await command({type:'fill',fieldId:oldId,profile:{email:'must-not-fill@example.test'}})).filled,0);
+ assert.equal(await page.locator('#mutable').inputValue(),'');
+ // Synchronous website handlers cannot move a later field to a different form.
+ await page.evaluate(()=>{document.body.innerHTML='<form id="source"><input id="firstSafe" autocomplete="given-name"><input id="moved" autocomplete="family-name"></form><form id="destination"></form>';document.querySelector('#firstSafe').addEventListener('input',()=>document.querySelector('#destination').append(document.querySelector('#moved')));});
+ await page.locator('#firstSafe').focus();
+ await command({type:'fill',profile:{'given-name':'Safe','family-name':'Must stay private'}});
+ assert.equal(await page.locator('#moved').inputValue(),'');
+ // Password-change forms must capture the new value, not the existing password.
+ await page.evaluate(()=>{document.body.innerHTML='<form onsubmit="event.preventDefault()"><input autocomplete="username" value="change-fixture"><input type="password" autocomplete="current-password" value="old-fixture"><input type="password" autocomplete="new-password" value="new-fixture"><button>Submit change</button></form>';});
+ await page.getByRole('button',{name:'Submit change'}).click();
+ assert.equal(await app.evaluate(()=>globalThis.messages.filter(m=>m.channel.endsWith('password-submission')).at(-1).data.password),'new-fixture');
+ // The real isolated preload discovers nested same-origin frames, maps focus and
+ // popup coordinates, and never crosses into a different or opaque origin.
+ await page.evaluate(()=>{document.body.innerHTML='<style>iframe{width:650px;height:400px;margin:20px;border:4px solid}</style><iframe id="same" src="/embedded"></iframe><iframe id="foreign" src="https://other.example.test/"></iframe><iframe id="opaque" sandbox="allow-scripts" src="/sandboxed"></iframe>';});
+ const embedded=page.frameLocator('#same');
+ await embedded.locator('body').waitFor({state:'attached'});
+ await embedded.locator('body').evaluate(node=>node.innerHTML='<form><input id="embeddedUser" autocomplete="username"><input id="embeddedPassword" type="password" autocomplete="current-password"><button type="button" onclick="this.form.remove()">Sign in embedded</button></form>');
+ await page.frameLocator('#foreign').locator('body').evaluate(node=>node.innerHTML='<input autocomplete="username"><input type="password">');
+ await page.frameLocator('#opaque').locator('body').evaluate(node=>node.innerHTML='<input autocomplete="username"><input type="password">');
+ await embedded.locator('#embeddedPassword').focus();
+ scan=await command({type:'scan'});
+ assert.equal(scan.snapshot.fields.length,2);
+ assert.equal(scan.snapshot.fields.find(f=>f.id===scan.snapshot.focusedFieldId).kind,'password');
+ const frameBounds=await page.locator('#same').boundingBox();
+ assert.ok(scan.snapshot.fields[1].rect.x>=frameBounds.x+4);
+ assert.ok(scan.snapshot.fields[1].rect.y>=frameBounds.y+4);
+ await command({type:'fill',username:'embedded-fixture',password:'embedded-secret'});
+ assert.equal(await embedded.locator('#embeddedPassword').inputValue(),'embedded-secret');
+ assert.equal(await page.frameLocator('#foreign').locator('input[type=password]').inputValue(),'');
+ assert.equal(await page.frameLocator('#opaque').locator('input[type=password]').inputValue(),'');
+ await embedded.getByRole('button',{name:'Sign in embedded'}).click();
+ assert.equal(await app.evaluate(()=>globalThis.messages.filter(m=>m.channel.endsWith('password-submission')).at(-1).data.username),'embedded-fixture');
+ assert.equal((await command({type:'scan'})).snapshot.hasPasswordControls,false);
+ await embedded.locator('body').evaluate(node=>node.innerHTML='<iframe id="nested" src="/nested" style="width:500px;height:250px"></iframe>');
+ const nested=embedded.frameLocator('#nested');
+ await nested.locator('body').evaluate(node=>node.innerHTML='<div id="host"></div>');
+ await nested.locator('#host').evaluate(node=>node.attachShadow({mode:'open'}).innerHTML='<form><input id="nestedName" autocomplete="name"></form>');
+ await nested.locator('#nestedName').focus();
+ scan=await command({type:'scan'});
+ const nestedId=scan.snapshot.focusedFieldId;
+ assert.ok(nestedId);
+ await command({type:'fill',profile:{name:'Nested Fixture'}});
+ assert.equal(await nested.locator('#nestedName').inputValue(),'Nested Fixture');
+ await page.locator('#same').evaluate(node=>node.style.opacity='0');
+ assert.equal((await command({type:'scan'})).snapshot.fields.length,0);
+ await page.locator('#same').evaluate(node=>node.style.opacity='1');
+ await embedded.locator('#nested').evaluate(node=>node.src='/replacement');
+ await nested.locator('#nestedName').waitFor({state:'detached'});
+ await nested.locator('body').evaluate(node=>node.innerHTML='<input id="replacement" autocomplete="name">');
+ assert.equal((await command({type:'fill',fieldId:nestedId,profile:{name:'Stale fixture'}})).filled,0);
+ assert.equal(await nested.locator('#replacement').inputValue(),'');
+ // Exercise the production payment scripts in a real page, including the
+ // previously ambiguous PAN/company and card-number/security-code hints.
+ const runPayment = code => app.evaluate(({BrowserWindow},{code,worldId})=>BrowserWindow.getAllWindows()[0].webContents.executeJavaScriptInIsolatedWorld(worldId,[{code}]),{code,worldId:PAYMENT_AUTOFILL_WORLD_ID});
+ const card = {cardNumber:'4111111111111111',expirationMonth:'02',expirationYear:'30',cardholderName:'Fixture Card',postalCode:'60601'};
+ await page.evaluate(()=>{document.body.innerHTML=`<form><input id="company" name="company"><input id="number" autocomplete="section-pay billing cc-number"><input id="cvv" name="card-number-security-code" autocomplete="section-pay billing cc-csc" value="987"><input id="masked" type="password" name="card-number"><select id="month" autocomplete="section-pay billing cc-exp-month"><option value="">Month</option><option value="2">February</option></select><select id="year" autocomplete="section-pay billing cc-exp-year"><option value="">Year</option><option value="2030">2030</option></select><input id="holder" autocomplete="section-pay billing cc-name" value="Typed name"><input id="shipping" autocomplete="shipping cc-number"><input id="readOnlyCard" autocomplete="cc-number" readonly><fieldset disabled><input autocomplete="cc-number"></fieldset><div style="opacity:0"><input autocomplete="cc-number"></div></form><form><input id="otherCard" autocomplete="cc-number"></form>`;});
+ await page.locator('#number').focus();
+ const paymentScan=await runPayment(PAYMENT_FORM_SCAN_SCRIPT);
+ assert.deepEqual(paymentScan.fields.map(field=>field.kind),['card-number','security-code','expiration-month','expiration-year','cardholder-name']);
+ assert.equal(await runPayment(paymentFillScript(card,undefined,'https://autofill.example.test')),true);
+ assert.equal(await page.locator('#number').inputValue(),card.cardNumber);
+ assert.equal(await page.locator('#month').inputValue(),'2');
+ assert.equal(await page.locator('#year').inputValue(),'2030');
+ assert.equal(await page.locator('#holder').inputValue(),'Typed name');
+ for(const id of ['company','masked','shipping','readOnlyCard','otherCard']) assert.equal(await page.locator('#'+id).inputValue(),'');
+ assert.equal(await page.locator('#cvv').inputValue(),'987');
+ const paymentValues=await runPayment(PAYMENT_FORM_VALUES_SCRIPT);
+ assert.equal(paymentValues.fields.find(field=>field.kind==='security-code').value,'');
+ assert.equal(JSON.stringify(paymentValues).includes('987'),false);
+ assert.equal(await runPayment(paymentFillScript(card,paymentScan.fields.find(field=>field.kind==='security-code').id,'https://autofill.example.test')),false);
+ assert.equal(await runPayment(paymentFillScript(card,undefined,'https://different.example.test')),false);
+ // Field references survive insertions but expire on semantic changes. The
+ // registry is not exposed to the website's JavaScript world.
+ assert.equal(await page.evaluate(()=>typeof globalThis.__kestrelPaymentFieldRegistry),'undefined');
+ const numberId=paymentScan.fields.find(field=>field.kind==='card-number').id;
+ await page.locator('#number').evaluate(node=>{node.value='';node.insertAdjacentHTML('beforebegin','<input autocomplete="cc-number" id="insertedCard">');});
+ assert.equal(await runPayment(paymentFillScript(card,numberId,'https://autofill.example.test')),true);
+ assert.equal(await page.locator('#insertedCard').inputValue(),'');
+ await page.locator('#number').evaluate(node=>{node.value='';node.autocomplete='cc-csc';});
+ assert.equal(await runPayment(paymentFillScript(card,numberId,'https://autofill.example.test')),false);
+ assert.equal(await page.locator('#number').inputValue(),'');
+ await page.evaluate(()=>{document.body.innerHTML='<input id="rejectedCard" autocomplete="cc-number" oninput="this.value=\'\'">';});
+ assert.equal(await runPayment(paymentFillScript(card,undefined,'https://autofill.example.test')),false);
+ console.log('PASS: payment token parsing, company/PAN disambiguation, security-code exclusion in scan/save/fill, masked/hidden/disabled/read-only fields, form and shipping/billing isolation, dropdown month/year, typed-value preservation, and rejected-value reporting.');
+ console.log('PASS: same-origin and nested frame fill/capture, cross-origin and opaque exclusion, popup coordinates, hidden frames, stale documents, changed field semantics, reentrant form changes, password-change capture.');
  console.log('PASS: form-associated external controls, formless login, and rejected value detection.');
  console.log('PASS: section isolation, open Shadow DOM, hidden password detection, inherited visibility/disabled state.');
  console.log('PASS: real isolated preload login, SPA capture, profile fill, offscreen fields, select/date, stable IDs, typed-value preservation, capture allowlist, and signup separation.');

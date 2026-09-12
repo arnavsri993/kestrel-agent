@@ -38,7 +38,7 @@
     "test:desktop-smoke": "node scripts/smoke-desktop.mjs",
     "test:desktop-single-instance": "node scripts/test-desktop-single-instance.mjs",
     "test:desktop-browser": "node scripts/test-desktop-browser.mjs",
-    "test:desktop-autofill": "node scripts/test-autofill-preload.mjs && node scripts/test-autofill-desktop.mjs",
+    "test:desktop-autofill": "node --import tsx scripts/test-autofill-preload.mjs && node scripts/test-autofill-desktop.mjs",
     "test:desktop-auth-links": "node scripts/test-desktop-auth-links.mjs",
     "test:desktop-layout": "node scripts/test-desktop-layout.mjs",
     "test:desktop-project-system": "node scripts/test-desktop-project-system.mjs",

@@ -86,6 +86,7 @@ const electron = vi.hoisted(() => {
     insertText = vi.fn();
 		sendInputEvent = vi.fn();
     executeJavaScript = vi.fn();
+    executeJavaScriptInIsolatedWorld = vi.fn((_worldId: number, scripts: Array<{ code: string }>) => this.executeJavaScript(scripts[0]!.code));
     invalidate = vi.fn();
     capturePage = vi.fn(async () => ({
       getSize: () => ({ width: 1, height: 1 }),
@@ -1166,6 +1167,30 @@ describe("UserBrowserService", () => {
 			"https://login.example",
 		);
 		expect(prompts.at(-1)).toBeNull();
+	});
+
+	it("rejects a saved-login fill dismissed while protected storage is unlocking", async () => {
+		const entry = { id: "password-00000000-0000-4000-8000-000000000001" as const, origin: "https://login.example", title: "Fixture", username: "fixture", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+		const secret = { ...entry, password: "fixture-secret" };
+		let unlock!: (value: typeof secret) => void;
+		const getForOrigin = vi.fn(() => new Promise<typeof secret>(resolve => { unlock = resolve; }));
+		const passwordVault = { listForOrigin: vi.fn(async () => [entry]), getForOrigin } as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({ passwordVault, onPasswordPrompt: prompt => prompts.push(prompt) });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = { focusedFieldId: "field-0", fields: [{ id: "field-0", kind: "password", label: "Password", type: "password", autocomplete: "current-password", rect: { x: 10, y: 10, width: 200, height: 40 } }] };
+		contents.emit("did-stop-loading");
+		await vi.waitFor(() => expect(prompts.at(-1)).toMatchObject({ entries: [entry] }));
+		const filling = service.fillPasswordPage(entry.id);
+		const rejected = expect(filling).rejects.toThrow("The page changed before filling");
+		await vi.waitFor(() => expect(getForOrigin).toHaveBeenCalledOnce());
+		service.dismissPasswordPrompt();
+		unlock(secret);
+		await rejected;
+		expect(secret.password).toBe("");
+		expect(contents.send.mock.calls.some(([, payload]) => (payload as { type?: string }).type === "fill")).toBe(false);
 	});
 
 	it("continues a selected username-first login with the same opaque credential on the password page", async () => {

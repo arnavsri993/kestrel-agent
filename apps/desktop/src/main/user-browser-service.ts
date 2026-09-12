@@ -1,3 +1,4 @@
+import { PAYMENT_AUTOFILL_WORLD_ID, PAYMENT_FORM_SCAN_SCRIPT, PAYMENT_FORM_VALUES_SCRIPT, paymentFillScript } from "./payment-form-scripts";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
@@ -829,182 +830,6 @@ export function generateStrongPassword(length = STRONG_PASSWORD_LENGTH): string 
 	return characters.join("");
 }
 
-const PAYMENT_FORM_SCAN_SCRIPT = String.raw`(() => {
-  const visible = (node) => {
-    const rect = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    return rect.width > 0 && rect.height > 0 &&
-      rect.bottom >= 0 && rect.right >= 0 &&
-      rect.top <= innerHeight && rect.left <= innerWidth &&
-      style.visibility !== "hidden" && style.display !== "none" &&
-      Number(style.opacity) > 0;
-  };
-  const text = (node) => [
-    node.autocomplete,
-    node.name,
-    node.id,
-    node.placeholder,
-    node.getAttribute("aria-label"),
-    node.labels?.[0]?.innerText,
-  ].filter(Boolean).join(" ").toLowerCase();
-  const describe = (node) => {
-    const type = String(node.type || node.tagName || "").toLowerCase();
-    const autocomplete = String(node.autocomplete || "").toLowerCase();
-    const hint = text(node);
-    let kind = null;
-    if (autocomplete === "cc-number" ||
-      /(?:cc[-_ ]?number|card[-_ ]?(?:number|no)|cardnumber|pan)/i.test(hint))
-      kind = "card-number";
-    else if (autocomplete === "cc-exp-month" ||
-      /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*month|month.*(?:exp|expiry|expiration)/i.test(hint))
-      kind = "expiration-month";
-    else if (autocomplete === "cc-exp-year" ||
-      /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*year|year.*(?:exp|expiry|expiration)/i.test(hint))
-      kind = "expiration-year";
-    else if (autocomplete === "cc-exp" ||
-      /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)|expir(?:y|ation))/i.test(hint))
-      kind = "expiration";
-    else if (autocomplete === "cc-name" ||
-      /(?:cardholder|card[-_ ]?name|name[-_ ]?on[-_ ]?card)/i.test(hint))
-      kind = "cardholder-name";
-    else if (autocomplete === "cc-csc" || autocomplete === "cc-cvv" ||
-      /(?:security|verification|cvv|cvc|csc|card[-_ ]?code)/i.test(hint))
-      kind = "security-code";
-    else if (autocomplete === "postal-code" ||
-      /(?:billing[-_ ]?)?(?:postal|post[-_ ]?code|zip)/i.test(hint))
-      kind = "postal-code";
-    if (!kind) return null;
-    const rect = node.getBoundingClientRect();
-    const label = String(
-      node.labels?.[0]?.innerText || node.getAttribute("aria-label") ||
-      node.placeholder || node.name || kind
-    ).replace(/\s+/g, " ").trim().slice(0, 500);
-    return {
-      kind,
-      label,
-      type: type.slice(0, 100),
-      autocomplete: autocomplete.slice(0, 100),
-      rect: {
-        x: Math.max(0, Math.round(rect.left)),
-        y: Math.max(0, Math.round(rect.top)),
-        width: Math.max(0, Math.round(rect.width)),
-        height: Math.max(0, Math.round(rect.height)),
-      },
-      node,
-    };
-  };
-  const rawFields = Array.from(document.querySelectorAll("input,select,textarea"))
-    .filter(visible)
-    .map(describe)
-    .filter(Boolean)
-    .slice(0, 32)
-    .map((field, index) => ({ id: "payment-field-" + index, ...field }));
-  const numberField = rawFields.find((field) => field.kind === "card-number");
-  if (!numberField) return { fields: [] };
-  const valueOf = (field) => String(field?.node?.value || "").trim();
-  const cardDigits = valueOf(numberField).replace(/\D/g, "");
-  const brand = (digits) => {
-    if (/^4/.test(digits)) return "Visa";
-    if (/^(5[1-5]|2(2[2-9]|[3-6]\d))/.test(digits)) return "Mastercard";
-    if (/^3[47]/.test(digits)) return "American Express";
-    if (/^(6011|65|64[4-9])/.test(digits)) return "Discover";
-    if (/^(35|2131|1800)/.test(digits)) return "JCB";
-    if (/^3(?:0[0-5]|[68])/.test(digits)) return "Diners Club";
-    return "Card";
-  };
-  const expirationField = rawFields.find((field) => field.kind === "expiration");
-  const monthField = rawFields.find((field) => field.kind === "expiration-month");
-  const yearField = rawFields.find((field) => field.kind === "expiration-year");
-  const normalizeMonth = (value) => {
-    const digits = value.replace(/\D/g, "");
-    return digits.length === 1 ? digits.padStart(2, "0") : digits.slice(-2);
-  };
-  const normalizeYear = (value) => value.replace(/\D/g, "").slice(-2);
-  const expirationValue = valueOf(expirationField);
-  let month = normalizeMonth(valueOf(monthField));
-  let year = normalizeYear(valueOf(yearField));
-  if ((!month || !year) && /^\d{4}-\d{2}$/.test(expirationValue)) {
-    month ||= expirationValue.slice(5, 7);
-    year ||= expirationValue.slice(2, 4);
-  }
-  if (!month || !year) {
-    const combinedDigits = expirationValue.replace(/\D/g, "");
-    if (combinedDigits.length === 3) {
-      month ||= normalizeMonth(combinedDigits.slice(0, 1));
-      year ||= combinedDigits.slice(-2);
-    } else if (combinedDigits.length >= 4) {
-      month ||= normalizeMonth(combinedDigits.slice(0, 2));
-      year ||= combinedDigits.slice(-2);
-    }
-  }
-  const passesLuhn = (digits) => {
-    let sum = 0;
-    let doubleDigit = false;
-    for (let index = digits.length - 1; index >= 0; index -= 1) {
-      let digit = Number(digits[index]);
-      if (doubleDigit) {
-        digit *= 2;
-        if (digit > 9) digit -= 9;
-      }
-      sum += digit;
-      doubleDigit = !doubleDigit;
-    }
-    return sum % 10 === 0;
-  };
-  const active = document.activeElement;
-  const focusedFieldId = rawFields.find((field) => field.node === active)?.id;
-  const candidate = cardDigits.length >= 12 && cardDigits.length <= 19 &&
-    passesLuhn(cardDigits) && /^(0[1-9]|1[0-2])$/.test(month) && /^\d{2}$/.test(year) ? {
-    brand: brand(cardDigits),
-    last4: cardDigits.slice(-4),
-    ...(month && /^(0[1-9]|1[0-2])$/.test(month) ? { expirationMonth: month } : {}),
-    ...(year && /^\d{2}$/.test(year) ? { expirationYear: year } : {}),
-  } : undefined;
-  return {
-    fields: rawFields.map(({ node, ...field }) => field),
-    ...(focusedFieldId ? { focusedFieldId } : {}),
-    ...(candidate ? { candidate } : {}),
-  };
-})()`;
-
-const PAYMENT_FORM_VALUES_SCRIPT = String.raw`(() => {
-  const visible = (node) => {
-    const rect = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    return rect.width > 0 && rect.height > 0 &&
-      rect.bottom >= 0 && rect.right >= 0 &&
-      rect.top <= innerHeight && rect.left <= innerWidth &&
-      style.visibility !== "hidden" && style.display !== "none" &&
-      Number(style.opacity) > 0;
-  };
-  const text = (node) => [
-    node.autocomplete, node.name, node.id, node.placeholder,
-    node.getAttribute("aria-label"), node.labels?.[0]?.innerText,
-  ].filter(Boolean).join(" ").toLowerCase();
-  const describe = (node) => {
-    const type = String(node.type || node.tagName || "").toLowerCase();
-    const autocomplete = String(node.autocomplete || "").toLowerCase();
-    const hint = text(node);
-    let kind = null;
-    if (autocomplete === "cc-number" || /(?:cc[-_ ]?number|card[-_ ]?(?:number|no)|cardnumber|pan)/i.test(hint)) kind = "card-number";
-    else if (autocomplete === "cc-exp-month" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*month|month.*(?:exp|expiry|expiration)/i.test(hint)) kind = "expiration-month";
-    else if (autocomplete === "cc-exp-year" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*year|year.*(?:exp|expiry|expiration)/i.test(hint)) kind = "expiration-year";
-    else if (autocomplete === "cc-exp" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)|expir(?:y|ation))/i.test(hint)) kind = "expiration";
-    else if (autocomplete === "cc-name" || /(?:cardholder|card[-_ ]?name|name[-_ ]?on[-_ ]?card)/i.test(hint)) kind = "cardholder-name";
-    else if (autocomplete === "cc-csc" || autocomplete === "cc-cvv" || /(?:security|verification|cvv|cvc|csc|card[-_ ]?code)/i.test(hint)) kind = "security-code";
-    else if (autocomplete === "postal-code" || /(?:billing[-_ ]?)?(?:postal|post[-_ ]?code|zip)/i.test(hint)) kind = "postal-code";
-    if (!kind) return null;
-    const rect = node.getBoundingClientRect();
-    const label = String(node.labels?.[0]?.innerText || node.getAttribute("aria-label") || node.placeholder || node.name || kind).replace(/\s+/g, " ").trim().slice(0, 500);
-    return { kind, label, type: type.slice(0, 100), autocomplete: autocomplete.slice(0, 100), rect: { x: Math.max(0, Math.round(rect.left)), y: Math.max(0, Math.round(rect.top)), width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)) }, node };
-  };
-  const fields = Array.from(document.querySelectorAll("input,select,textarea"))
-    .filter(visible).map(describe).filter(Boolean).slice(0, 32)
-    .map((field, index) => ({ id: "payment-field-" + index, ...field }));
-  if (!fields.some((field) => field.kind === "card-number")) return { fields: [] };
-  return { fields: fields.map(({ node, ...field }) => ({ ...field, value: field.kind === "security-code" ? "" : String(node.value || "").slice(0, 2_000) })) };
-})()`;
-
 interface PaymentFormSnapshot {
 	fields: PaymentFormField[];
 	focusedFieldId?: string;
@@ -1095,78 +920,6 @@ function paymentCardInputFromForm(
 		cardholderName: valueFor("cardholder-name"),
 		postalCode: valueFor("postal-code"),
 	};
-}
-
-function paymentFillScript(
-	card: {
-		cardNumber: string;
-		expirationMonth: string;
-		expirationYear: string;
-		cardholderName: string;
-		postalCode: string;
-	},
-	fieldIndex?: number,
-	expectedOrigin?: string,
-): string {
-	const cardLiteral = JSON.stringify(card);
-	const targetIndex = fieldIndex === undefined ? "undefined" : String(fieldIndex);
-	const originLiteral = JSON.stringify(expectedOrigin ?? "");
-	return String.raw`(() => {
-  if (${originLiteral} && location.origin !== ${originLiteral}) return false;
-  const visible = (node) => {
-    const rect = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.right >= 0 && rect.top <= innerHeight && rect.left <= innerWidth && style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0;
-  };
-  const hint = (node) => [node.autocomplete, node.name, node.id, node.placeholder, node.getAttribute("aria-label"), node.labels?.[0]?.innerText].filter(Boolean).join(" ").toLowerCase();
-  const describe = (node) => {
-    const autocomplete = String(node.autocomplete || "").toLowerCase();
-    const value = hint(node);
-    if (autocomplete === "cc-number" || /(?:cc[-_ ]?number|card[-_ ]?(?:number|no)|cardnumber|pan)/i.test(value)) return "card-number";
-    if (autocomplete === "cc-exp-month" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*month|month.*(?:exp|expiry|expiration)/i.test(value)) return "expiration-month";
-    if (autocomplete === "cc-exp-year" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*year|year.*(?:exp|expiry|expiration)/i.test(value)) return "expiration-year";
-    if (autocomplete === "cc-exp" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)|expir(?:y|ation))/i.test(value)) return "expiration";
-    if (autocomplete === "cc-name" || /(?:cardholder|card[-_ ]?name|name[-_ ]?on[-_ ]?card)/i.test(value)) return "cardholder-name";
-    if (autocomplete === "cc-csc" || autocomplete === "cc-cvv" || /(?:security|verification|cvv|cvc|csc|card[-_ ]?code)/i.test(value)) return "security-code";
-    if (autocomplete === "postal-code" || /(?:billing[-_ ]?)?(?:postal|post[-_ ]?code|zip)/i.test(value)) return "postal-code";
-    return null;
-  };
-  const fields = Array.from(document.querySelectorAll("input,select,textarea")).filter(visible).map((node) => ({ node, kind: describe(node) })).filter((field) => field.kind).slice(0, 32);
-  const setValue = (node, value) => {
-    const prototype = Object.getPrototypeOf(node);
-    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-    if (setter) setter.call(node, value); else node.value = value;
-    node.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-    node.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  };
-  const formattedExpiry = ${cardLiteral}.expirationMonth + "/" + ${cardLiteral}.expirationYear;
-  const valueFor = (kind) => {
-    if (kind === "card-number") return ${cardLiteral}.cardNumber;
-    if (kind === "expiration") return formattedExpiry;
-    if (kind === "expiration-month") return ${cardLiteral}.expirationMonth;
-    if (kind === "expiration-year") return ${cardLiteral}.expirationYear;
-    if (kind === "cardholder-name") return ${cardLiteral}.cardholderName;
-    if (kind === "postal-code") return ${cardLiteral}.postalCode;
-    return "";
-  };
-  const index = ${targetIndex};
-  if (index !== undefined) {
-    const target = fields[index];
-    if (!target || target.kind === "security-code") return false;
-    setValue(target.node, valueFor(target.kind));
-    target.node.focus();
-    return true;
-  }
-  let filled = 0;
-  for (const field of fields) {
-    if (field.kind === "security-code") continue;
-    const value = valueFor(field.kind);
-    if (!value) continue;
-    setValue(field.node, value);
-    filled += 1;
-  }
-  return filled > 0;
-})()`;
 }
 
 interface BrowserPartitionParticipant {
@@ -3586,8 +3339,10 @@ export class UserBrowserService {
 		if (expectedOrigin && expectedOrigin !== url.origin)
 			throw new Error("The payment page changed before the card was saved.");
 		const snapshot = parsePaymentFormValues(
-			await webContents.executeJavaScript(PAYMENT_FORM_VALUES_SCRIPT),
+			await webContents.executeJavaScriptInIsolatedWorld(PAYMENT_AUTOFILL_WORLD_ID, [{ code: PAYMENT_FORM_VALUES_SCRIPT }]),
 		);
+		if (this.disposed || this.state.activeTabId !== tab.id || !liveWebContents(webContents) || webContents.getURL() !== url.toString())
+			throw new Error("The payment page changed before the card was saved.");
 		const card = paymentCardInputFromForm(snapshot);
 		const summaries = await this.paymentCardVault.save(card);
 		this.suppressPaymentPrompt(tab.id, url.origin, 4_000);
@@ -3608,9 +3363,7 @@ export class UserBrowserService {
 	async fillPaymentCardPage(id: PaymentCardEntryId): Promise<void> {
 		const { tab, webContents, entry, origin } =
 			await this.paymentCardForActiveTab(id);
-		const filled = await webContents.executeJavaScript(
-			paymentFillScript(entry, undefined, origin),
-		);
+		const filled = await webContents.executeJavaScriptInIsolatedWorld(PAYMENT_AUTOFILL_WORLD_ID, [{ code: paymentFillScript(entry, undefined, origin) }]);
 		if (filled !== true)
 			throw new Error("Kestrel could not find a payment field on this page.");
 		this.suppressPaymentPrompt(tab.id, origin, 4_000);
@@ -3627,10 +3380,7 @@ export class UserBrowserService {
 		const field = snapshot.fields.find((candidate) => candidate.id === fieldId);
 		if (!field || field.kind === "security-code")
 			throw new Error("That payment field is no longer available.");
-		const fieldIndex = Number(field.id.slice("payment-field-".length));
-		const filled = await webContents.executeJavaScript(
-			paymentFillScript(entry, fieldIndex, origin),
-		);
+		const filled = await webContents.executeJavaScriptInIsolatedWorld(PAYMENT_AUTOFILL_WORLD_ID, [{ code: paymentFillScript(entry, field.id, origin) }]);
 		if (filled !== true)
 			throw new Error("Kestrel could not fill that payment field.");
 		this.suppressPaymentPrompt(tab.id, origin, 4_000);
@@ -3806,9 +3556,14 @@ export class UserBrowserService {
 			!this.passwordPrompt.entries.some((entry) => entry.id === id)
 		)
 			throw new Error("That saved login suggestion is no longer available.");
+		const prompt = this.passwordPrompt;
 		const entry = await this.passwordVault.getForOrigin(id, url.origin);
 		if (!entry)
 			throw new Error("That saved login is not available for this website.");
+		if (this.disposed || this.state.activeTabId !== tab.id || this.passwordPrompt !== prompt || !liveWebContents(webContents) || webContents.getURL() !== url.toString()) {
+			discardPasswordEntry(entry);
+			throw new Error("The page changed before filling the saved login.");
+		}
 		return { tab, webContents, entry, origin: url.origin };
 	}
 
@@ -3985,8 +3740,11 @@ export class UserBrowserService {
 			!this.paymentPrompt.entries.some((entry) => entry.id === id)
 		)
 			throw new Error("That payment suggestion is no longer available.");
+		const prompt = this.paymentPrompt;
 		const entry = await this.paymentCardVault.get(id);
 		if (!entry) throw new Error("That saved payment card is not available.");
+		if (this.disposed || this.state.activeTabId !== tab.id || this.paymentPrompt !== prompt || !liveWebContents(webContents) || webContents.getURL() !== url.toString())
+			throw new Error("The page changed before filling the saved card.");
 		return { tab, webContents, entry, origin: url.origin };
 	}
 
@@ -3994,7 +3752,7 @@ export class UserBrowserService {
 		webContents: WebContents,
 	): Promise<PaymentFormSnapshot> {
 		return parsePaymentFormSnapshot(
-			await webContents.executeJavaScript(PAYMENT_FORM_SCAN_SCRIPT),
+			await webContents.executeJavaScriptInIsolatedWorld(PAYMENT_AUTOFILL_WORLD_ID, [{ code: PAYMENT_FORM_SCAN_SCRIPT }]),
 		);
 	}
 
@@ -4459,7 +4217,7 @@ export class UserBrowserService {
 				const candidate = await this.passwordVault.getForOrigin(automaticEntry.id, url.origin);
 				if (candidate) {
 					try {
-						if (scanGeneration !== this.passwordPromptGeneration) return;
+						if (scanGeneration !== this.passwordPromptGeneration || this.state.activeTabId !== tab.id || webContents.getURL() !== url.toString()) return;
 						const filled = await this.fillPasswordFields(webContents, url.origin, {
 							username: candidate.username,
 							password: candidate.password,
