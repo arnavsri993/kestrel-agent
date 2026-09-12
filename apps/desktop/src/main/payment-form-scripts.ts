@@ -232,4 +232,3 @@ export function paymentFillScript(
   return filled > 0;
 })()`;
 }
-
