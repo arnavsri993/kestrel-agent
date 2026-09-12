@@ -61,6 +61,56 @@ afterEach(() => {
 });
 
 describe("CoreSupervisor recovery", () => {
+	it.each(["throw", "reject"])("stops the core even when browser cleanup fails via %s", async (failure) => {
+		const child = new FakeCoreProcess();
+		child.exitOnShutdown = true;
+		const cleanupError = new Error("Browser cleanup failed");
+		const supervisor = new CoreSupervisor(undefined, () => {
+			if (failure === "throw") throw cleanupError;
+			return Promise.reject(cleanupError);
+		}, { processFactory: () => child });
+		const errors = vi.fn();
+		supervisor.on("automation-error", errors);
+		const started = supervisor.start(config);
+		child.ready();
+		await started;
+		await expect(supervisor.stop()).resolves.toBeUndefined();
+		expect(child.messages).toContainEqual({ type: "shutdown" });
+		expect(errors).toHaveBeenCalledWith(cleanupError);
+		await expect(supervisor.request({ type: "snapshot" })).rejects.toThrow("unavailable");
+	});
+
+	it.each(["throw", "reject"])("recovers after a crash when browser cleanup fails via %s", async (failure) => {
+		vi.useFakeTimers();
+		const children: FakeCoreProcess[] = [];
+		const cleanupError = new Error("Browser cleanup failed");
+		const supervisor = new CoreSupervisor(undefined, () => {
+			if (failure === "throw") throw cleanupError;
+			return Promise.reject(cleanupError);
+		}, {
+			processFactory: () => {
+				const child = new FakeCoreProcess();
+				child.exitOnShutdown = true;
+				children.push(child);
+				return child;
+			},
+			restartDelaysMs: [10],
+		});
+		const errors = vi.fn();
+		supervisor.on("automation-error", errors);
+		const started = supervisor.start(config);
+		children[0]!.ready();
+		await started;
+		expect(() => children[0]!.crash()).not.toThrow();
+		await vi.advanceTimersByTimeAsync(10);
+		expect(children).toHaveLength(2);
+		const recovered = once(supervisor, "recovered");
+		children[1]!.ready();
+		await recovered;
+		expect(errors).toHaveBeenCalledWith(cleanupError);
+		await supervisor.stop();
+	});
+
 	it("keeps agent work alive past the control timeout and requests cancellation at its own deadline", async () => {
 		vi.useFakeTimers();
 		const child = new FakeCoreProcess();
