@@ -1220,7 +1220,7 @@ export function BrowserToolbar({
         <button
           ref={downloadsTriggerRef}
           type="button"
-          className={`browser-toolbar-menu-trigger browser-toolbar-secondary ${downloadsOpen ? "active" : ""}`}
+          className={`browser-toolbar-menu-trigger browser-toolbar-secondary browser-download-trigger ${downloadsOpen ? "active" : ""}`}
           aria-label={
             activeDownloadCount > 0
               ? activeDownloadProgress === undefined

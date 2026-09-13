@@ -1,3 +1,30 @@
+# New Tab glass refinement — September 2026
+
+This section supersedes the older Home shelf and square-control guidance below.
+Thesis: a wallpaper-led browser home with one compact, expandable task composer,
+recognizable local site shortcuts, and independently movable glass widgets.
+
+- Existing React/Motion desktop app; dense chrome, calm Home, SF system typography.
+- 4px spacing rhythm; 20px widget gaps, 28px surfaces, capsule short controls,
+  circular icon buttons. Keep 12–14px readable control text and explicit focus.
+- Neutral translucent material samples the wallpaper using bounded backdrop blur,
+  a thin light rim, and a quiet shadow. Reading and approval details stay legible.
+  User-requested glass/pills are intentional exceptions to the old matte system.
+- First viewport: top-right customization, greeting, focus-expanding composer,
+  automatic/pinned icon shortcuts, independent widgets. No fabricated activity.
+- Motion roles: focus expansion, existing widget rearrangement, button feedback.
+  State owns animations; reversal and reduced motion preserve all controls.
+- Preserve profile data, approval authority, actual model capabilities and local
+  history privacy. Shortcuts use stored origin favicons, never third-party fetches.
+- Inspiration only: supplied screenshots and Apple Materials guidance
+  (https://developer.apple.com/design/human-interface-guidelines/materials).
+  No external source code, dependencies, or branded assets copied.
+- Verify narrow/short layouts, large paste removal and handoff, keyboard controls,
+  wallpaper persistence, shortcut add/remove and deduplication, contrast fallbacks,
+  installed runtime, and the combined authorized PR stack.
+- Why this is not generic: the composition follows Kestrel's real local browsing,
+  task configuration, and resumable work, shaped around the supplied references.
+
 # Kestrel design system
 
 ## macOS coherence — September 2026

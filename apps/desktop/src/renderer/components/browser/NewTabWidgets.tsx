@@ -87,6 +87,7 @@ type WidgetContext = {
 type WidgetRenderContext = WidgetContext & { size: NewTabWidgetSize };
 
 type NewTabWidgetsProps = WidgetContext & {
+	customizeRequestId?: number;
 	settings: NewTabWidgetSettings;
 	onSettingsChange(next: NewTabWidgetSettings): void;
 };
@@ -207,7 +208,7 @@ function FrequentTabsWidget({
 		);
 	}
 	return (
-		<ul className="kestrel-widget-list">
+		<ul className="kestrel-widget-list kestrel-widget-frequent-icons">
 			{items.map((site) => (
 				<li key={site.origin}>
 					<button
@@ -217,10 +218,10 @@ function FrequentTabsWidget({
 					>
 						<SiteGlyph site={site} />
 						<span>
-							<strong>{widgetText(site.title || site.hostname, 34)}</strong>
-							<small>{site.hostname}</small>
+							<strong>{site.hostname.replace(/^www\./, "")}</strong>
+
 						</span>
-						<Icon name="forward" />
+
 					</button>
 				</li>
 			))}
@@ -978,6 +979,7 @@ function AddWidgetMenu({
 }
 
 export function NewTabWidgets({
+	customizeRequestId = 0,
 	settings,
 	onSettingsChange,
 	...context
@@ -985,6 +987,7 @@ export function NewTabWidgets({
 	const canvasRef = useRef<HTMLDivElement | null>(null);
 	const [width, setWidth] = useState(0);
 	const [editing, setEditing] = useState(false);
+	useEffect(() => { if (customizeRequestId > 0) setEditing(true); }, [customizeRequestId]);
 	const [workingSettings, setWorkingSettings] = useState(() =>
 		normalizedWidgetSettings(settings),
 	);
@@ -1181,7 +1184,7 @@ export function NewTabWidgets({
 			aria-label="New Tab widgets"
 			data-layout-class={layoutClass}
 		>
-			<div className="kestrel-widget-canvas-toolbar">
+			<div className="kestrel-widget-canvas-toolbar" hidden={!editing}>
 				<div className="kestrel-widget-canvas-actions">
 					{editing && (
 						<AddWidgetMenu enabled={workingSettings.enabled} onAdd={handleAdd} />

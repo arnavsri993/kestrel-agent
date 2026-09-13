@@ -14,6 +14,7 @@ import {
 	type FilePreview,
 	type MemoryRecord,
 	type MemoryRecallStatus,
+	type Project,
 	type InstalledExtension,
 	type RuntimeSession,
 	type UserBrowserFile,
@@ -33,6 +34,7 @@ import { ChromeWebStoreInstallBar } from "./ChromeWebStoreInstallBar";
 import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
 import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
 import { NewTabPage } from "./NewTabPage";
+import type { NewTabComposerDraft } from "./new-tab-composer";
 import { OrganizeTabsDialog } from "./OrganizeTabsDialog";
 import { TabStrip } from "./TabStrip";
 import { recordNewTabGreetingVisit } from "./new-tab";
@@ -75,6 +77,9 @@ export function BrowserWorkspace({
 	memories = [],
 	memoryRecall,
 	onOpenLifeMemory,
+	projects = [],
+	onProjectsChange,
+	onSubmitNewTabDraft,
 }: {
   browser: UserBrowserController;
   agentName: string;
@@ -100,6 +105,9 @@ export function BrowserWorkspace({
 	memories?: MemoryRecord[];
 	memoryRecall: MemoryRecallStatus;
 	onOpenLifeMemory?(): void;
+	projects?: Project[];
+	onProjectsChange(projects: Project[]): void;
+	onSubmitNewTabDraft(draft: NewTabComposerDraft): boolean;
 }) {
   const reducedMotion = useReducedMotion() ?? false;
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -1203,6 +1211,11 @@ export function BrowserWorkspace({
 			onOpenTab={(tabId) => void selectTab(tabId)}
             onNewAgent={onNewAgent}
 			onOpenTaskSettings={onOpenTaskSettings}
+			projects={projects}
+			onProjectsChange={onProjectsChange}
+			onSubmitDraft={onSubmitNewTabDraft}
+			shortcutSettings={state.settings.newTabShortcuts}
+			onUpdateHomeSettings={(next) => updateSettings(next)}
             {...(onOpenLifeMemory ? { onOpenLifeMemory } : {})}
             onOpenHistory={openHistoryPopover}
             onOpenDownloads={onOpenDownloads}

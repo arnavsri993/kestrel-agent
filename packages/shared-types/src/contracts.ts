@@ -4147,6 +4147,13 @@ export const UserBrowserSettingsSchema = z.object({
 			/^data:image\/(?:avif|gif|jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/,
 		)
 		.optional(),
+	newTabShortcuts: z.array(z.object({
+		title: z.string().trim().min(1).max(80),
+		url: z.string().url().max(8192).refine((value) => {
+			const url = new URL(value);
+			return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+		}, "Use an HTTP(S) address without embedded credentials."),
+	})).max(12).optional(),
 	newTabGreetingActivity: NewTabGreetingActivitySchema,
 	newTabWidgets: NewTabWidgetSettingsSchema,
 	restoreSession: z.boolean().default(true),
@@ -4740,6 +4747,14 @@ export const RendererRequestSchema = z.union([
 	z.object({
 		type: z.literal("select-context-files"),
 		workspaceRoot: z.string().min(1),
+	}),
+	z.object({
+		type: z.literal("create-pasted-text-attachment"),
+		text: z.string().min(1).max(250_000),
+	}),
+	z.object({
+		type: z.literal("remove-pasted-text-attachment"),
+		path: z.string().min(1).max(4096),
 	}),
 	z.object({ type: z.literal("request-microphone-access") }),
 	z.object({ type: z.literal("local-model-status") }),

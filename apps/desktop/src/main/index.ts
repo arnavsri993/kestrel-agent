@@ -103,6 +103,7 @@ import { ExternalSecretManager } from "./external-secret-manager";
 import type { ResolvedExternalCredentials } from "./credential-broker";
 import { fileDigest } from "./file-digest";
 import { mediaTypeForPath } from "./file-tabs";
+import { PastedTextAttachmentStore } from "./pasted-text-attachment-store";
 import { startAutomaticUpdates } from "./update-channel";
 import {
   isTrustedRendererFrame,
@@ -203,6 +204,22 @@ const pendingExternalIntakes: Array<{
 const browserService = new ElectronBrowserService();
 let computerUseManagerInstance: ComputerUseManager | null = null;
 let userBrowserService: UserBrowserService | null = null;
+let pastedTextAttachmentStore: PastedTextAttachmentStore | null = null;
+let pastedTextAttachmentCleanupRegistered = false;
+
+function pastedTextStore(): PastedTextAttachmentStore {
+	if (!pastedTextAttachmentStore)
+		pastedTextAttachmentStore = new PastedTextAttachmentStore(
+			join(app.getPath("userData"), "composer-attachments", randomUUID()),
+		);
+	if (!pastedTextAttachmentCleanupRegistered) {
+		pastedTextAttachmentCleanupRegistered = true;
+		app.once("will-quit", () => {
+			void pastedTextAttachmentStore?.dispose();
+		});
+	}
+	return pastedTextAttachmentStore;
+}
 const browserWindowServices = new Map<BrowserWindow, UserBrowserService>();
 const browserTabTransfers = new BrowserTabTransferAccess<BrowserWindow>();
 interface CalculatorAnchorBounds {
@@ -4660,6 +4677,16 @@ function registerIpc(): void {
       }
       return { ok: true };
     }
+		if (request.type === "create-pasted-text-attachment") {
+			return {
+				ok: true,
+				selectedAttachments: [await pastedTextStore().create(request.text)],
+			};
+		}
+		if (request.type === "remove-pasted-text-attachment") {
+			await pastedTextStore().remove(request.path);
+			return { ok: true };
+		}
     if (request.type === "reset-local-data") {
       if (request.confirmation !== PRODUCT_IDENTITY.productName)
         return {
@@ -4675,10 +4702,11 @@ function registerIpc(): void {
       return { ok: true };
     }
 		if (request.type === "runtime-run-agent" && request.attachments?.some((attachment) => attachment.source === "external")) {
-			if (!requestBrowserService)
-				throw new Error("The selected file is no longer open in Kestrel.");
 			for (const attachment of request.attachments) {
-				if (attachment.source === "external" && !requestBrowserService.knownFilePath(attachment.path))
+				const isTrustedPaste =
+					attachment.source === "external" &&
+					(await pastedTextStore().owns(attachment.path));
+				if (attachment.source === "external" && !isTrustedPaste && !requestBrowserService?.knownFilePath(attachment.path))
 					throw new Error(
 						"Kestrel only sends files that were explicitly opened or dropped into a file tab.",
 					);
