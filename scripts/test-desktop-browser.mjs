@@ -973,6 +973,7 @@ try {
 		"The HEIC upload fixture tab did not close cleanly",
 	);
 	await assertKestrelSidebarResize();
+	await page.locator("#new-tab-chat-input").focus();
 	const homeSend = page.getByRole("button", {
 		name: "Send message to Pragmatic",
 	});

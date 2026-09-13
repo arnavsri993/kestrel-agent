@@ -34,7 +34,7 @@ export function NewTabPersonalization({ frequent, shortcuts, background, onUpdat
    <summary aria-label="Customize New Tab"><Icon name="sliders" /><span>Customize</span></summary>
    <div className="home-personalize-panel">
     <strong>Make this space yours</strong>
-    <label>Wallpaper<select value={background} disabled={saving} onChange={(event) => void save({ newTabBackground: event.target.value as Props["background"] })}>
+    <label>Wallpaper<select aria-label="Wallpaper" value={background} disabled={saving} onChange={(event) => void save({ newTabBackground: event.target.value as Props["background"] })}>
      {NEW_TAB_BACKGROUND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
      {background === "custom" && <option value="custom">Your photo</option>}
     </select></label>

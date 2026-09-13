@@ -53,12 +53,15 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 		}).catch(() => undefined);
 		return () => { active = false; };
 	}, []);
-	useEffect(() => () => {
+	useEffect(() => {
+		aliveRef.current = true;
+		return () => {
 		aliveRef.current = false;
 		if (voiceTimeoutRef.current !== null) window.clearTimeout(voiceTimeoutRef.current);
 		if (recorderRef.current) recorderRef.current.onstop = null;
 		if (recorderRef.current?.state === "recording") recorderRef.current.stop();
 		streamRef.current?.getTracks().forEach((track) => track.stop());
+		};
 	}, []);
 	useEffect(() => {
 		const prompt = inputRef.current;
@@ -69,11 +72,12 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	}, [expanded, input]);
 	useEffect(() => {
 		if (!accessOpen) return;
+		accessRef.current?.querySelector<HTMLButtonElement>("[role=menu] button")?.focus();
 		function closeOnOutside(event: PointerEvent) {
 			if (!accessRef.current?.contains(event.target as Node)) setAccessOpen(false);
 		}
 		function closeOnEscape(event: KeyboardEvent) {
-			if (event.key === "Escape") setAccessOpen(false);
+			if (event.key === "Escape") { setAccessOpen(false); accessRef.current?.querySelector<HTMLButtonElement>(".new-tab-access-trigger")?.focus(); }
 		}
 		window.addEventListener("pointerdown", closeOnOutside);
 		window.addEventListener("keydown", closeOnEscape);
@@ -229,11 +233,17 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 					<button type="button" className="new-tab-composer-icon" aria-label="Add files" title={workspaceRoot ? "Add files from this project" : "Choose a project to add files"} disabled={busy} onClick={() => void addFiles()}><Icon name="plus" /></button>
 					<div className="new-tab-access" ref={accessRef}>
 						<button type="button" className="new-tab-access-trigger" aria-haspopup="menu" aria-expanded={accessOpen} onClick={() => setAccessOpen((current) => !current)}><Icon name="lock" /><span>{selectedProject?.name ?? "Conversation only"}</span><Icon name="chevron" /></button>
-						{accessOpen && <div className="new-tab-access-menu" role="menu" aria-label="Task access"><button type="button" role="menuitemradio" aria-checked={!workspaceRoot} onClick={() => { setWorkspaceRoot(""); setAttachments([]); setAccessOpen(false); }}>Conversation only <small>No project files or workspace tools</small></button>{availableProjects.map((project) => <button type="button" role="menuitemradio" aria-checked={workspaceRoot === project.path} key={project.id} onClick={() => { setWorkspaceRoot(project.path); setAttachments([]); setAccessOpen(false); }}>{project.name}<small>Use files and tools in this project</small></button>)}<button type="button" role="menuitem" onClick={() => void chooseProject()}>Choose project folder…</button></div>}
+						{accessOpen && <div className="new-tab-access-menu" role="menu" aria-label="Task access" onKeyDown={(event) => {
+                            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+                            event.preventDefault();
+                            const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button")];
+                            const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+                            const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+                            buttons[next]?.focus();
+                        }}><button type="button" role="menuitemradio" aria-checked={!workspaceRoot} onClick={() => { setWorkspaceRoot(""); setAttachments([]); setAccessOpen(false); }}>Conversation only <small>No project files or workspace tools</small></button>{availableProjects.map((project) => <button type="button" role="menuitemradio" aria-checked={workspaceRoot === project.path} key={project.id} onClick={() => { setWorkspaceRoot(project.path); setAttachments([]); setAccessOpen(false); }}>{project.name}<small>Use files and tools in this project</small></button>)}<button type="button" role="menuitem" onClick={() => void chooseProject()}>Choose project folder…</button></div>}
 					</div>
-					<ModelSelector accounts={accounts} choice={choice} onChange={applyChoice} />
 				</div>
-				<div className="new-tab-composer-send-actions"><button type="button" className={`new-tab-composer-icon${voiceState === "recording" ? " is-recording" : ""}`} aria-label={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} title={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} disabled={busy || voiceState === "transcribing"} onClick={() => voiceState === "recording" ? recorderRef.current?.stop() : void startVoice()}><Icon name="voice" /></button><button type="submit" className="kestrel-home-send" aria-label={`Send message to ${agentName}`} title={`Send message to ${agentName}`} disabled={!canSend || busy || voiceState !== "idle"}><Icon name="arrow" /></button></div>
+				<div className="new-tab-composer-send-actions"><ModelSelector accounts={accounts} choice={choice} onChange={applyChoice} /><button type="button" className={`new-tab-composer-icon${voiceState === "recording" ? " is-recording" : ""}`} aria-label={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} title={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} disabled={busy || voiceState === "transcribing"} onClick={() => voiceState === "recording" ? recorderRef.current?.stop() : void startVoice()}><Icon name="voice" /></button><button type="submit" className="kestrel-home-send" aria-label={`Send message to ${agentName}`} title={`Send message to ${agentName}`} disabled={!canSend || busy || voiceState !== "idle"}><Icon name="arrow" /></button></div>
 			</div>
 		</form>
 		{voiceState !== "idle" && <span className="new-tab-composer-status" role="status">{voiceState === "recording" ? "Microphone live · tap to transcribe" : "Transcribing voice…"}</span>}

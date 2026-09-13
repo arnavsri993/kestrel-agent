@@ -7934,3 +7934,10 @@ body:has(.calculator-overlay),
 		-webkit-backdrop-filter: none;
 	}
 }
+/* The progress wrapper is larger than the glyph. Remove inherited button
+   padding and center that wrapper explicitly instead of centering its baseline. */
+.browser-toolbar-actions button.browser-download-trigger {
+ display: grid; place-items: center; padding: 0; line-height: 0;
+ min-width: 28px; width: 28px; height: 28px; border-radius: 50%;
+}
+.browser-download-trigger-icon { margin: 0; padding: 0; flex: 0 0 24px; }

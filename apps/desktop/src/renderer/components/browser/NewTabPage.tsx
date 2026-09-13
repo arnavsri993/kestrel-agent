@@ -30,6 +30,7 @@ import {
 import { NewTabPersonalization } from "./NewTabPersonalization";
 import { NewTabWidgets } from "./NewTabWidgets";
 import "./new-tab.css";
+import "./liquid-glass.css";
 import "./new-tab-composer.css";
 
 export function NewTabPage({

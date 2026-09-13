@@ -205,19 +205,13 @@ const browserService = new ElectronBrowserService();
 let computerUseManagerInstance: ComputerUseManager | null = null;
 let userBrowserService: UserBrowserService | null = null;
 let pastedTextAttachmentStore: PastedTextAttachmentStore | null = null;
-let pastedTextAttachmentCleanupRegistered = false;
 
 function pastedTextStore(): PastedTextAttachmentStore {
 	if (!pastedTextAttachmentStore)
 		pastedTextAttachmentStore = new PastedTextAttachmentStore(
 			join(app.getPath("userData"), "composer-attachments", randomUUID()),
 		);
-	if (!pastedTextAttachmentCleanupRegistered) {
-		pastedTextAttachmentCleanupRegistered = true;
-		app.once("will-quit", () => {
-			void pastedTextAttachmentStore?.dispose();
-		});
-	}
+
 	return pastedTextAttachmentStore;
 }
 const browserWindowServices = new Map<BrowserWindow, UserBrowserService>();
@@ -4911,6 +4905,7 @@ async function performAppShutdown(): Promise<void> {
     supervisor.stop().catch(() => undefined),
     (managedLocalRuntime?.stop() ?? Promise.resolve()).catch(() => undefined),
   ]);
+  await pastedTextAttachmentStore?.dispose().catch(() => undefined);
 }
 
 function disposeAppResources(): void {

@@ -742,3 +742,15 @@ without tilt. Customize's actual active state gives a single 280ms check flouris
 These are feedback/state roles; existing menu and widget-layout animations remain
 their owners. Hover effects require a fine pointer and every addition is gated
 by reduced motion. No new continuous animation or background work.
+
+### Clear refraction follow-up
+
+The final material uses a static SVG displacement map in backdrop-filter to bend
+wallpaper detail, a 0.5px finishing blur, and clear tinted surfaces. This is a
+Chromium-rendered interpretation, not the native Apple Liquid Glass API. No
+continuous wave animation or new runtime library is required. Reading widgets
+have more tint than short controls. Reduced transparency and increased contrast
+restore opaque surfaces. MDN backdrop-filter guidance was used as documentation,
+not copied source. Runtime screenshots caught and corrected a doubled textarea
+focus border, narrow-rail clipping, and the initially over-frosted material.
+Download centering is verified from both button and glyph bounding boxes.

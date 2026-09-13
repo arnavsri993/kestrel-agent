@@ -1362,3 +1362,9 @@
    own box rather than beyond the parent's overflow clip. */
 .kestrel-sidebar-section ul > li { min-width: 0; max-width: 100%; }
 .kestrel-sidebar-title { max-width: 100%; }
+@media (max-width: 1120px) {
+ .kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-header-actions {
+  display: flex; flex-direction: column; gap: 4px; width: 32px;
+ }
+ .kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-icon-button { border-radius: 50%; }
+}

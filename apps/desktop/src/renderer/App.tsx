@@ -3266,6 +3266,7 @@ function RuntimeConversation({
 		setInput(newAgentPrompt);
 		setWorkspace(newAgentWorkspace ?? "");
 		setAttachments(newAgentDraft?.attachments ?? []);
+		if (newAgentDraft) applyModelChoice(newAgentDraft.modelChoice);
 		setCheckpointSummary("");
 		setError("");
 		window.setTimeout(() => {
@@ -3946,7 +3947,7 @@ function RuntimeConversation({
 		setPending(null);
 		setOptimisticUser(prompt);
 		setInput("");
-		let sessionId = activeSessionId;
+		let sessionId = activeSessionIdRef.current;
 		let streamId: string | null = null;
 		try {
 			if (!sessionId) {

@@ -55,17 +55,24 @@ try {
  await page.getByLabel("Wallpaper", { exact: true }).selectOption("dawn");
  await page.locator(".new-tab-page-dawn").waitFor();
  await page.getByRole("button", { name: "Arrange widgets" }).click();
- assert(await page.locator(".kestrel-widget-canvas.is-editing").isVisible());
+ await page.locator(".kestrel-widget-canvas.is-editing").waitFor({ state: "visible" });
  await page.getByRole("button", { name: "Done", exact: true }).click();
  const gap = await page.locator(".kestrel-widget-shelves").evaluate((node) => parseFloat(getComputedStyle(node).gap));
  assert(gap >= 16, "Widgets must be separated");
- await page.screenshot({ path: join(evidence, "desktop.png") });
+ const download = await page.locator(".browser-download-trigger").evaluate((button) => {
+  const b = button.getBoundingClientRect(); const i = button.querySelector(".browser-download-trigger-icon > svg").getBoundingClientRect();
+  return { x: Math.abs(b.x + b.width / 2 - i.x - i.width / 2), y: Math.abs(b.y + b.height / 2 - i.y - i.height / 2), radius: getComputedStyle(button).borderRadius };
+ });
+ assert(download.x < 0.6 && download.y < 0.6, `Download icon must be centered: ${JSON.stringify(download)}`);
+ assert.equal(download.radius, "50%");
+ assert((await composer.evaluate((node) => getComputedStyle(node).backdropFilter)).includes("kestrel-glass-refraction"));
+ await page.screenshot({ animations: "disabled", path: join(evidence, "desktop.png") });
  await input.focus();
- await page.screenshot({ path: join(evidence, "composer.png") });
+ await page.screenshot({ animations: "disabled", path: join(evidence, "composer.png") });
  await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows().find((win) => !win.webContents.getURL().includes("petOverlay")); win.setMinimumSize(400, 500); win.setSize(760, 760); });
  await page.emulateMedia({ reducedMotion: "reduce" });
- await page.screenshot({ path: join(evidence, "narrow.png") });
+ await page.screenshot({ animations: "disabled", path: join(evidence, "narrow.png") });
  assert.equal(await page.locator(".new-tab-page").evaluate((node) => node.scrollWidth > node.clientWidth + 1), false, "Home must not overflow horizontally");
  assert.deepEqual(errors, []);
  console.log("New Tab glass smoke passed: expansion, paste, shortcuts, wallpaper, widgets, narrow layout.");
-} finally { await application?.close(); rmSync(root, { recursive: true, force: true }); }
+} catch (error) { const page = application ? await application.firstWindow() : null; await page?.screenshot({ animations: "disabled", path: join(evidence, "failure.png") }).catch(() => {}); throw error; } finally { await application?.close(); rmSync(root, { recursive: true, force: true }); }

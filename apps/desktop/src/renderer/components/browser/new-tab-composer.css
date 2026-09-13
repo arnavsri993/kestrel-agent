@@ -95,3 +95,27 @@
 .kestrel-home-composer :is(button, textarea):focus-visible { outline: 2px solid var(--solid); outline-offset: 2px; }
 @media (max-width: 560px) { .new-tab-composer-actions { gap: 1px; } .new-tab-access-trigger { max-width: 132px; } }
 @media (prefers-reduced-motion: reduce) { .kestrel-home .kestrel-home-composer, .kestrel-home .kestrel-home-composer textarea, .new-tab-composer-footer { transition: none; } }
+/* The composite owns focus, so the editor never paints a second box. */
+.unified-ui .kestrel-home .kestrel-home-composer textarea:focus,
+.unified-ui .kestrel-home .kestrel-home-composer textarea:focus-visible {
+ outline: none; box-shadow: none; border: 0;
+}
+.kestrel-home .kestrel-home-composer {
+ border: 1px solid rgb(255 255 255 / 24%);
+ box-shadow: inset 0 1px 0 rgb(255 255 255 / 16%), 0 8px 28px rgb(0 0 0 / 16%);
+}
+.kestrel-home .kestrel-home-composer:focus-within {
+ border-color: rgb(255 255 255 / 58%);
+ box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%), 0 0 0 2px rgb(255 255 255 / 12%), 0 12px 32px rgb(0 0 0 / 16%);
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+ .kestrel-home .kestrel-home-composer { background: var(--raised, var(--overlay)); backdrop-filter: none; -webkit-backdrop-filter: none; }
+ .kestrel-home .kestrel-home-composer:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+}
+.new-tab-composer-send-actions .model-selector-trigger { border-radius: 999px; background: transparent; }
+.new-tab-composer-send-actions { flex-shrink: 0; }
+@media (max-width: 480px) {
+ .new-tab-composer-footer { flex-wrap: wrap; gap: 8px; }
+ .kestrel-home-composer.is-expanded .new-tab-composer-footer { max-height: 90px; }
+ .new-tab-composer-send-actions { margin-left: auto; }
+}
