@@ -2691,6 +2691,7 @@ try {
 			);
 		}
 	}
+	process.stdout.write("Browser smoke: direct attachment\n");
 	const directDownloadCount = state.downloads.filter(
 		(item) => item.sourceUrl === `${origin}/download`,
 	).length;
@@ -2729,6 +2730,7 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Visible page did not return after direct attachment download",
 	);
+	process.stdout.write("Browser smoke: history tool\n");
 	const historyTool = await callTool(
 		runtimeSessionId,
 		"browser.search-history",
@@ -2740,6 +2742,7 @@ try {
 	assert(
 		historyTool?.output?.entries?.some((entry) => entry.title === "Page one"),
 	);
+	process.stdout.write("Browser smoke: downloads tool\n");
 	const downloadsTool = await callTool(
 		runtimeSessionId,
 		"browser.visible-downloads",
@@ -2753,6 +2756,7 @@ try {
 		"kestrel-browser.txt",
 	);
 
+	process.stdout.write("Browser smoke: history overlay\n");
 	await page.keyboard.press("Meta+H");
 	await page.getByPlaceholder("Search history").waitFor();
 	await page.getByPlaceholder("Search history").fill("Page one");
@@ -3127,6 +3131,9 @@ try {
 				: "Review & add affordance"
 		}, hidden-view routing, and restart restore.\n`,
 	);
+} catch (error) {
+	console.error("Visible browser smoke failed:", error);
+	throw error;
 } finally {
 	await application?.close();
 	await new Promise((resolveClose) => server.close(resolveClose));
