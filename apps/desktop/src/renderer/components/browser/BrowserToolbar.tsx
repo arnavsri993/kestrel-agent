@@ -360,7 +360,7 @@ export function BrowserToolbar({
   onOpenDevTools(): void;
   onSaveScreenshot(): Promise<string | undefined>;
   onToggleBookmark(): void;
-  onOpenSettings(): void;
+  onOpenSettings(section?: "browser-autofill"): void;
   onOpenExtensionStore(): void;
   onToggleCalculator(): void;
   onOpenMenu(): void;
@@ -386,6 +386,7 @@ export function BrowserToolbar({
   const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
   const browserMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const downloadsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const historyPopoverRequestRef = useRef(0);
   const overlayOpenRef = useRef(false);
   const suggestionsCloseTimerRef = useRef<number | null>(null);
@@ -501,6 +502,34 @@ export function BrowserToolbar({
     () => () => clearSuggestionsCloseTimer(),
     [],
   );
+
+  useLayoutEffect(() => {
+    const trigger = toolsTriggerRef.current;
+    if (!trigger) return;
+    const reportAnchor = () => {
+      const rect = trigger.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      void window.kestrel
+        .request({
+          type: "browser-set-password-overlay-anchor",
+          anchor: {
+            x: Math.max(0, Math.round(rect.left)),
+            y: Math.max(0, Math.round(rect.top)),
+            width: Math.max(0, Math.round(rect.width)),
+            height: Math.max(0, Math.round(rect.height)),
+          },
+        })
+        .catch(() => undefined);
+    };
+    reportAnchor();
+    const observer = new ResizeObserver(reportAnchor);
+    observer.observe(trigger);
+    window.addEventListener("resize", reportAnchor);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", reportAnchor);
+    };
+  }, []);
 
   const loadExtensions = useCallback(async () => {
     try {
@@ -1173,6 +1202,7 @@ export function BrowserToolbar({
           ))}
         </div>
         <button
+          ref={toolsTriggerRef}
           type="button"
           className={`browser-toolbar-menu-trigger ${openMenu === "tools" ? "active" : ""}`}
           aria-label="Tools"
@@ -1413,7 +1443,7 @@ export function BrowserToolbar({
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={() => runAndClose(onOpenSettings)}
+                    onClick={() => runAndClose(() => onOpenSettings("browser-autofill"))}
                   >
                     <Icon name="lock" />
                     <span>Passwords</span>
@@ -1643,6 +1673,14 @@ export function BrowserToolbar({
                   <button type="button" role="menuitem" onClick={() => runAndClose(onOpenDevTools)}>
                     <Icon name="devtools" />
                     <span>Developer tools</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(() => onOpenSettings("browser-autofill"))}
+                  >
+                    <Icon name="lock" />
+                    <span>Passwords</span>
                   </button>
                 </div>
                 {toolNotice && (

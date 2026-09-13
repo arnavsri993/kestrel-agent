@@ -158,6 +158,21 @@ export function TabStrip({
 	onTabSizingChange?(tabSizing: UserBrowserSettings["tabSizing"]): void;
 	onMenuOpenChange?(open: boolean): void;
 }) {
+	const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const hidePreview = useCallback(() => {
+		if (previewTimer.current) clearTimeout(previewTimer.current);
+		previewTimer.current = null;
+		void window.kestrel.request({ type: "browser-show-tab-preview" }).catch(() => undefined);
+	}, []);
+	useEffect(() => { hidePreview(); return hidePreview; }, [activeTabId, hidePreview]);
+	const showPreview = (tabId: string, element: HTMLElement) => {
+		hidePreview();
+		if (tabId === activeTabId) return;
+		const rect = element.getBoundingClientRect();
+		previewTimer.current = setTimeout(() => {
+			void window.kestrel.request({ type: "browser-show-tab-preview", tabId, anchor: { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.round(rect.width), height: Math.round(rect.height) } }).catch(() => undefined);
+		}, 250);
+	};
 	const reducedMotion = useReducedMotion() ?? false;
 	const [lockedWidth, setLockedWidth] = useState<number | null>(null);
 	const lockedWidthRef = useRef<number | null>(null);
@@ -1335,6 +1350,10 @@ export function TabStrip({
 										y: isDragging ? dragY : 0,
 									}}
 									data-tab-id={tab.id}
+									onMouseEnter={(event) => showPreview(tab.id, event.currentTarget)}
+									onMouseLeave={() => { if (previewTimer.current) clearTimeout(previewTimer.current); }}
+									onFocus={(event) => showPreview(tab.id, event.currentTarget)}
+									onKeyDown={(event) => { if (event.key === "Escape") hidePreview(); }}
 									data-drag-intent={isDragging ? dragIntent : undefined}
 									onAuxClick={(event) => handleTabAuxClick(event, tab.id)}
 									onContextMenu={(event) => openMenu(event, tab.id)}
@@ -1346,7 +1365,7 @@ export function TabStrip({
 										}
 										onSelect(tab.id);
 									}}
-									onPointerDown={(event) => handleTabPointerDown(event, tab.id)}
+									onPointerDown={(event) => { hidePreview(); handleTabPointerDown(event, tab.id); }}
 									onPointerCancel={() => resetDrag()}
 								>
 									<button
@@ -1359,7 +1378,7 @@ export function TabStrip({
 										aria-controls="browser-viewport"
 										tabIndex={active ? 0 : -1}
 										aria-label={`${tab.title}${folder ? `, ${folder.name} folder` : ""}${isSleeping ? " (Sleeping)" : ""}`}
-										title={`${tab.title}${isSleeping ? " (Sleeping — click to wake)" : ""}${tab.url ? ` — ${tab.url}` : ""}`}
+
 										onDragStart={(event) => handleTabDragStart(event, tab.id)}
 										onDragEnd={() => { nativeDragActive.current = false; }}
 									>

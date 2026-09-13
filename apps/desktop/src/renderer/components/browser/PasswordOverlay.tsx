@@ -69,6 +69,9 @@ export function PasswordOverlay() {
 		? prompt.entries.find((entry) => entry.username === saveUsername)
 		: undefined;
 	const updatesExistingLogin = Boolean(updatedEntry);
+	const saveActionLabel = updatesExistingLogin
+		? "Update password"
+		: "Save password";
 
 	async function savePassword() {
 		setBusy("save");
@@ -195,7 +198,7 @@ export function PasswordOverlay() {
 							<strong>
 								{prompt.mode === "profile" ? "Your saved info" : prompt.mode === "save"
 									? updatesExistingLogin
-									? "Update saved password?"
+										? "Update saved password?"
 										: "Save password?"
 									: prompt.mode === "generate"
 										? "Use a strong password?"
@@ -240,7 +243,7 @@ export function PasswordOverlay() {
 					<>
 						<p className="password-overlay-copy">
 							{updatesExistingLogin
-								? "A saved login matches this account. Saving replaces its stored password."
+								? "Kestrel detected a changed password for this saved login. Update it securely on this Mac."
 								: "Save this login securely on this device so Kestrel can offer it next time."}
 						</p>
 						<div className="password-save-preview">
@@ -281,7 +284,7 @@ export function PasswordOverlay() {
 								onClick={() => void savePassword()}
 								disabled={Boolean(busy)}
 							>
-								{busy === "save" ? "Saving…" : updatesExistingLogin ? "Update password" : "Save password"}
+								{busy === "save" ? "Saving…" : saveActionLabel}
 							</button>
 						</div>
 					</>

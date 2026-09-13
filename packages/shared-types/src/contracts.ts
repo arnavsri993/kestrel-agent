@@ -3737,6 +3737,10 @@ export type UserBrowserBlockedNavigation = z.infer<
 >;
 
 export const UserBrowserTabSchema = z.object({
+	// Runtime-only chrome metadata; the browser store receives undecorated state.
+	preview: z.object({ image: z.string().max(250_000).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/), capturedAt: z.string().datetime() }).optional(),
+	activity: z.object({ playing: z.boolean().optional(), microphone: z.boolean().optional(), camera: z.boolean().optional(), screen: z.boolean().optional(), location: z.boolean().optional(), busy: z.boolean().optional(), dirty: z.boolean().optional(), downloading: z.boolean().optional() }).optional(),
+	estimatedSavedMemoryBytes: z.number().finite().positive().optional(),
 	id: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	title: z.string().min(1).max(500),
 	url: z.string().max(8_192),
@@ -4611,6 +4615,8 @@ export const RendererRequestSchema = z.union([
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 		ignoreCache: z.boolean().optional(),
 	}),
+	z.object({ type: z.literal("browser-show-tab-preview"), tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/).optional(), anchor: z.object({ x: z.number().int().min(0).max(20_000), y: z.number().int().min(0).max(20_000), width: z.number().int().min(0).max(20_000), height: z.number().int().min(0).max(20_000) }).optional() }),
+	z.object({ type: z.literal("browser-set-password-overlay-anchor"), anchor: z.object({ x: z.number().int().min(0).max(20_000), y: z.number().int().min(0).max(20_000), width: z.number().int().min(0).max(20_000), height: z.number().int().min(0).max(20_000) }) }),
 	z.object({
 		type: z.literal("browser-set-content-bounds"),
 		bounds: z.object({
