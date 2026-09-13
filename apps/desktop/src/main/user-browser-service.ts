@@ -65,6 +65,8 @@ import {
 	validateBrowserTabFolderName,
 } from "@kestrel/shared-types";
 import {
+	app,
+	webContents as electronWebContents,
 	BrowserWindow,
 	clipboard,
 	dialog,
@@ -377,7 +379,11 @@ function mediaPermissionLabel(
 	return "camera and microphone";
 }
 
+type TabActivity = Partial<Record<"playing" | "microphone" | "camera" | "screen" | "location" | "busy" | "dirty", boolean>>;
+
 interface ViewRecord {
+	activity?: TabActivity;
+	mediaPlaying?: boolean;
 	view: WebContentsView;
 	navigatingTo?: string;
 	navigationGeneration: number;
@@ -1400,8 +1406,76 @@ export class UserBrowserService {
 		if (changed) this.commit();
 	}
 
+	private passwordOverlayAnchor?: Rectangle;
+	setPasswordOverlayAnchor(anchor: Rectangle): void {
+		this.passwordOverlayAnchor = anchor;
+		if (this.passwordPrompt) this.onPasswordPrompt?.({ ...this.passwordPrompt, anchor });
+	}
+
+	private readonly tabPreviews = new Map<string, { image: string; capturedAt: string }>();
+	private readonly sleepingMemory = new Map<string, number>();
+
 	getState(): UserBrowserState {
-		return cloneState(this.state);
+		const state = cloneState(this.state);
+		for (const tab of state.tabs) {
+			const preview = this.tabPreviews.get(tab.id);
+			if (preview) tab.preview = preview;
+			const activity = this.tabActivity(tab.id);
+			if (Object.values(activity).some(Boolean)) tab.activity = activity;
+			const saved = this.sleepingMemory.get(tab.id);
+			if (tab.discarded && saved) tab.estimatedSavedMemoryBytes = saved;
+		}
+		return state;
+	}
+
+	private tabActivity(tabId: string): TabActivity & { downloading?: boolean } {
+		const record = this.views.get(tabId);
+		const wc = liveWebContents(record?.view.webContents);
+		return {
+			...record?.activity,
+			playing: Boolean(record?.mediaPlaying || record?.activity?.playing || wc?.isCurrentlyAudible()),
+			screen: Boolean(record?.activity?.screen || wc?.isBeingCaptured?.()),
+			downloading: this.state.downloads.some((download) => download.tabId === tabId && this.activeDownloads.has(download.id)),
+		};
+	}
+
+	private isSleepProtected(tab: UserBrowserTab): boolean {
+		return tab.id === this.state.activeTabId || this.isAgentTabPinned(tab.id) ||
+			this.hasPopupRelationship(tab.id) || Boolean(liveWebContents(this.views.get(tab.id)?.view.webContents)?.isLoadingMainFrame?.()) ||
+			Object.values(this.tabActivity(tab.id)).some(Boolean);
+	}
+
+	private captureTabPreview(tabId: string): void {
+		const tab = this.state.tabs.find((item) => item.id === tabId);
+		const record = this.views.get(tabId);
+		const wc = liveWebContents(record?.view.webContents);
+		if (!tab || !wc || !/^https?:/.test(tab.url) || isAuthenticationFlowUrl(tab.url)) return;
+		const generation = record!.navigationGeneration;
+		// Start while the outgoing view is still visible. Never delay tab switching.
+		void wc.capturePage().then((image) => {
+			if (this.disposed || this.views.get(tabId) !== record || record!.navigationGeneration !== generation || image.isEmpty()) return;
+			const bytes = image.resize({ width: 400 }).toJPEG(65);
+			if (bytes.length > 180_000) return;
+			this.tabPreviews.delete(tabId);
+			this.tabPreviews.set(tabId, { image: `data:image/jpeg;base64,${bytes.toString("base64")}`, capturedAt: this.now().toISOString() });
+			while (this.tabPreviews.size > 40) this.tabPreviews.delete(this.tabPreviews.keys().next().value!);
+			this.emit();
+		}).catch(() => undefined);
+	}
+
+	private discardTabView(tab: UserBrowserTab): void {
+		this.sleepingMemory.delete(tab.id);
+		const wc = liveWebContents(this.views.get(tab.id)?.view.webContents);
+		try {
+			const pid = wc?.getOSProcessId();
+			// Shared renderers do not yield a defensible per-tab saving.
+			if (pid && electronWebContents.getAllWebContents().filter((item) => !item.isDestroyed() && item.getOSProcessId() === pid).length === 1) {
+				const kb = app.getAppMetrics().find((item) => item.pid === pid)?.memory.workingSetSize;
+				if (kb && Number.isFinite(kb)) this.sleepingMemory.set(tab.id, kb * 1024);
+			}
+		} catch { /* Missing metrics means no number, never a fabricated estimate. */ }
+		this.closeView(tab.id);
+		tab.discarded = Boolean(tab.url);
 	}
 
 	/**
@@ -1501,7 +1575,10 @@ export class UserBrowserService {
 		const timestamp = this.now().toISOString();
 		const tab = createEmptyBrowserTab(() => new Date(timestamp));
 		this.state.tabs.push(tab);
-		if (active || !this.state.activeTabId) this.state.activeTabId = tab.id;
+		if (active || !this.state.activeTabId) {
+			if (this.state.activeTabId) this.captureTabPreview(this.state.activeTabId);
+			this.state.activeTabId = tab.id;
+		}
 		this.commit();
 		if (input) await this.navigate(tab.id, input, loadOptions, threatSource);
 		else await this.syncActiveView();
@@ -1510,6 +1587,8 @@ export class UserBrowserService {
 
 	async selectTab(tabId: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
+		if (this.state.activeTabId !== tabId) this.captureTabPreview(this.state.activeTabId!);
+		this.sleepingMemory.delete(tabId);
 		this.clearPasswordPrompt();
 		this.clearPaymentPrompt();
 		this.state.activeTabId = tabId;
@@ -1569,6 +1648,8 @@ export class UserBrowserService {
 		}
 		const openerTabId = this.views.get(tabId)?.openerTabId;
 		const index = this.state.tabs.findIndex((item) => item.id === tabId);
+		this.tabPreviews.delete(tabId);
+		this.sleepingMemory.delete(tabId);
 		this.closeView(tabId);
 		this.agentTabPinCounts.delete(tabId);
 		this.state.tabs.splice(index, 1);
@@ -4349,7 +4430,7 @@ export class UserBrowserService {
 		if (key === this.passwordPromptKey) return;
 		this.passwordPromptKey = key;
 		this.passwordPrompt = prompt;
-		this.onPasswordPrompt?.(prompt);
+		this.onPasswordPrompt?.(this.passwordOverlayAnchor ? { ...prompt, anchor: this.passwordOverlayAnchor } : prompt);
 	}
 
 	private passwordPromptAnchor(
@@ -5008,11 +5089,10 @@ export class UserBrowserService {
 		if (
 			!tab.url ||
 			isKestrelAppPageUrl(tab.url) ||
-			isAuthenticationFlowUrl(tab.url) || this.hasPopupRelationship(tab.id)
+			isAuthenticationFlowUrl(tab.url) || this.isSleepProtected(tab)
 		)
 			return this.getState();
-		this.closeView(tabId);
-		tab.discarded = true;
+		this.discardTabView(tab);
 		this.commit();
 		return this.getState();
 	}
@@ -5025,19 +5105,10 @@ export class UserBrowserService {
 				!tab.url ||
 				tab.discarded ||
 				isKestrelAppPageUrl(tab.url) ||
-				isAuthenticationFlowUrl(tab.url) || this.hasPopupRelationship(tab.id)
+				isAuthenticationFlowUrl(tab.url) || this.isSleepProtected(tab)
 			)
 				continue;
-			const record = this.views.get(tab.id);
-			const webContents = liveWebContents(record?.view?.webContents);
-			if (
-				webContents &&
-				webContents.isCurrentlyAudible()
-			) {
-				continue;
-			}
-			this.closeView(tab.id);
-			tab.discarded = true;
+			this.discardTabView(tab);
 		}
 		this.commit();
 		return this.getState();
@@ -5069,21 +5140,12 @@ export class UserBrowserService {
 				!tab.url ||
 				tab.discarded ||
 				isKestrelAppPageUrl(tab.url) ||
-				isAuthenticationFlowUrl(tab.url) || this.hasPopupRelationship(tab.id)
+				isAuthenticationFlowUrl(tab.url) || this.isSleepProtected(tab)
 			)
 				continue;
 			const lastActive = Date.parse(tab.lastActiveAt);
 			if (isNaN(lastActive) || nowTime - lastActive < timeoutMs) continue;
 
-			// Do not sleep tabs that are playing audio
-			const record = this.views.get(tab.id);
-			const webContents = liveWebContents(record?.view?.webContents);
-			if (
-				webContents &&
-				webContents.isCurrentlyAudible()
-			) {
-				continue;
-			}
 
 			// Do not sleep tabs matching excluded domains
 			try {
@@ -5099,8 +5161,7 @@ export class UserBrowserService {
 				// Ignore parse error
 			}
 
-			this.closeView(tab.id);
-			tab.discarded = true;
+			this.discardTabView(tab);
 			changed = true;
 		}
 
@@ -5674,7 +5735,18 @@ export class UserBrowserService {
 				},
 			};
 		});
+		webContents.on("media-started-playing", () => { record.mediaPlaying = true; this.emit(); });
+		webContents.on("media-paused", () => { record.mediaPlaying = false; this.emit(); });
 		webContents.on("ipc-message", (event, channel, ...args) => {
+			if (channel === "kestrel:user-browser-activity") {
+				if (event.senderFrame !== webContents.mainFrame || !args[0] || typeof args[0] !== "object") return;
+				const data = args[0] as Record<string, unknown>;
+				const activity: TabActivity = {};
+				for (const key of ["playing", "microphone", "camera", "screen", "location", "busy", "dirty"] as const) activity[key] = data[key] === true;
+				record.activity = activity;
+				this.emit();
+				return;
+			}
 			if (channel === "kestrel:user-browser-username-submission") {
 				const url = safePageUrl(webContents.getURL());
 				if (typeof args[0] === "string" && args[0].length <= 500 && event.senderFrame === webContents.mainFrame && url?.protocol === "https:" && safePageUrl(event.senderFrame.url)?.origin === url.origin && this.state.activeTabId === tab.id && this.state.settings.offerToSavePasswords)
@@ -5799,6 +5871,10 @@ export class UserBrowserService {
 					});
 					this.clearPaymentPrompt();
 				}
+				delete record.activity;
+				record.mediaPlaying = false;
+				this.tabPreviews.delete(tab.id);
+				this.tabPreviews.delete(tab.id);
 				this.didNavigate(tab, webContents, url);
 				this.loginFlows.recordNavigation(tab.id, url);
 				void this.maybeOfferPasswordSaveAfterNavigation(tab, webContents, url);
@@ -5815,6 +5891,7 @@ export class UserBrowserService {
 					});
 					this.clearPaymentPrompt();
 				}
+				this.tabPreviews.delete(tab.id);
 				this.didNavigate(tab, webContents, url);
 				this.loginFlows.recordNavigation(tab.id, url);
 				void this.maybeOfferPasswordSaveAfterNavigation(tab, webContents, url);
@@ -5847,8 +5924,7 @@ export class UserBrowserService {
 			tab.loading = false;
 			tab.crashed = true;
 			tab.error = "This tab stopped responding. Reload it to continue.";
-			this.closeView(tab.id);
-			tab.discarded = Boolean(tab.url);
+			this.discardTabView(tab);
 			this.commit();
 		});
 		webContents.on("found-in-page", (_event, result) => {
@@ -6369,7 +6445,7 @@ export class UserBrowserService {
 					tab.id !== this.state.activeTabId &&
 					!this.isAgentTabPinned(tab.id) &&
 					!isAuthenticationFlowUrl(tab.url) &&
-					!this.hasPopupRelationship(tab.id) &&
+					!this.isSleepProtected(tab) &&
 					this.views.has(tab.id),
 			)
 			.sort((left, right) =>
@@ -6377,8 +6453,7 @@ export class UserBrowserService {
 			);
 		while (this.views.size > MAX_LIVE_TABS && candidates.length) {
 			const tab = candidates.shift()!;
-			this.closeView(tab.id);
-			tab.discarded = Boolean(tab.url);
+			this.discardTabView(tab);
 		}
 		this.commit();
 	}

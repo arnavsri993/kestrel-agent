@@ -184,6 +184,8 @@ const electron = vi.hoisted(() => {
 });
 
 vi.mock("electron", () => ({
+  app: { getAppMetrics: () => [] },
+  webContents: { getAllWebContents: () => [] },
   BrowserWindow: class {},
   WebContentsView: electron.MockView,
   session: { fromPartition: electron.fromPartition },
@@ -2642,6 +2644,76 @@ describe("UserBrowserService", () => {
         { objectId: "country-select" },
       ),
     );
+  });
+
+  it("keeps active downloads awake and permits sleep after completion", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://download.example");
+    const wc = electron.state.views.at(-1)!.webContents;
+    const item = downloadItem("https://download.example/report.txt");
+    electron.state.partitions[0]!.instance.emit("will-download", {}, item, wc);
+    const second = await navigateNewTab(service, "https://idle.example");
+    await service.selectTab(second.id);
+    service.sleepInactiveTabs();
+    expect(service.getState().tabs.find(tab => tab.id === first.id)).toMatchObject({ discarded: false, activity: { downloading: true } });
+    (item.once.mock.calls.find((call) => call[0] === "done")?.[1] as unknown as (...args: unknown[]) => void)({}, "completed");
+    service.sleepTab(first.id);
+    expect(service.getState().tabs.find(tab => tab.id === first.id)?.discarded).toBe(true);
+  });
+
+  it("captures the outgoing tab and keeps its snapshot out of persisted state", async () => {
+    const { service, statePath } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://preview.example");
+    const wc = electron.state.views.at(-1)!.webContents;
+    wc.capturePage.mockResolvedValueOnce({ isEmpty: () => false, resize: () => ({ toJPEG: () => Buffer.from("preview") }) } as never);
+    await service.createTab();
+    await vi.waitFor(() => expect(service.getState().tabs.find(tab => tab.id === first.id)?.preview?.image).toBe("data:image/jpeg;base64,cHJldmlldw=="));
+    const serialized = JSON.parse((await import("node:fs")).readFileSync(statePath, "utf8"));
+    expect(serialized.tabs.find((tab: { id: string }) => tab.id === first.id)).not.toHaveProperty("preview");
+    wc.emit("did-navigate", {}, "https://preview.example/next", 200, "OK");
+    expect(service.getState().tabs.find(tab => tab.id === first.id)?.preview).toBeUndefined();
+  });
+
+  it.each(["playing", "microphone", "camera", "screen", "location", "busy", "dirty"])("keeps %s activity awake for all sleep paths then permits idle sleep", async (key) => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://activity.example");
+    const wc = electron.state.views.at(-1)!.webContents;
+    const second = await navigateNewTab(service, "https://idle.example");
+    await service.selectTab(second.id);
+    wc.emit("ipc-message", { senderFrame: wc.mainFrame }, "kestrel:user-browser-activity", { [key]: true });
+    service.sleepTab(first.id);
+    service.sleepInactiveTabs();
+    expect(service.getState().tabs.find(tab => tab.id === first.id)).toMatchObject({ discarded: false, activity: { [key]: true } });
+    wc.emit("ipc-message", { senderFrame: wc.mainFrame }, "kestrel:user-browser-activity", { [key]: false });
+    service.sleepTab(first.id);
+    expect(service.getState().tabs.find(tab => tab.id === first.id)?.discarded).toBe(true);
+  });
+
+  it("protects muted media through native playback events and clears on pause", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://video.example");
+    const wc = electron.state.views.at(-1)!.webContents;
+    const second = await navigateNewTab(service, "https://idle.example");
+    await service.selectTab(second.id);
+    wc.emit("media-started-playing");
+    service.sleepTab(first.id);
+    expect(service.getState().tabs.find(tab => tab.id === first.id)?.discarded).toBe(false);
+    wc.emit("media-paused");
+    service.sleepTab(first.id);
+    expect(service.getState().tabs.find(tab => tab.id === first.id)?.discarded).toBe(true);
+  });
+
+  it("ignores activity messages from stale or child frames", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://idle.example");
+    const wc = electron.state.views.at(-1)!.webContents;
+    wc.emit("ipc-message", { senderFrame: { url: wc.url } }, "kestrel:user-browser-activity", { microphone: true });
+    expect(service.getState().tabs.find(tab => tab.id === first.id)?.activity).toBeUndefined();
   });
 
   it("discards the least-recent inactive live view once more than eight are open", async () => {
