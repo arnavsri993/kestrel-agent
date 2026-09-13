@@ -135,7 +135,29 @@ try {
   await page.setViewportSize({ width: 600, height: 800 });
   const picker = page.locator(".settings-section-picker");
   await picker.waitFor({ state: "visible" });
-  await picker.locator("select").selectOption("browser-extensions");
+  const pickerSelect = picker.locator("select");
+  const readPickerScope = () =>
+    pickerSelect.evaluate((select) => ({
+      groups: [...select.querySelectorAll("optgroup")].map((group) => group.label),
+      values: [...select.options].map((option) => option.value),
+    }));
+  const browserPicker = await readPickerScope();
+  assert.equal(await pickerSelect.getAttribute("aria-label"), "Browser settings section");
+  assert.deepEqual(browserPicker.groups, ["Browser"]);
+  assert.ok(browserPicker.values.length > 0);
+  assert.ok(browserPicker.values.every((value) => value === "browser" || value.startsWith("browser-")));
+
+  await page.getByRole("tab", { name: "Agent", exact: true }).click();
+  await page.getByRole("heading", { name: "Autonomy and behavior" }).waitFor();
+  const agentPicker = await readPickerScope();
+  assert.equal(await pickerSelect.getAttribute("aria-label"), "Agent settings section");
+  assert.deepEqual(agentPicker.groups, ["Agent"]);
+  assert.ok(agentPicker.values.length > 0);
+  assert.ok(agentPicker.values.every((value) => value.startsWith("agent-")));
+
+  await page.getByRole("tab", { name: "Browser", exact: true }).click();
+  await page.locator('[data-settings-panel="browser-startup"]').waitFor();
+  await pickerSelect.selectOption("browser-extensions");
   await page.locator("#setting-browser-extensions").waitFor();
   const narrowLayout = await page.evaluate(() => ({
     width: innerWidth,

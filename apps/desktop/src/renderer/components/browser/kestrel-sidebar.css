@@ -1264,6 +1264,16 @@
 	padding: 0;
 }
 
+/* The compact rail reads as a light control layer instead of a second opaque
+ * pane. The full sidebar remains deliberately quiet and solid for long-form
+ * navigation. */
+.kestrel-sidebar.is-collapsed {
+	background: color-mix(in srgb, var(--sidebar) 76%, transparent);
+	border-right-color: color-mix(in srgb, var(--line) 68%, transparent);
+	backdrop-filter: blur(20px) saturate(125%);
+	-webkit-backdrop-filter: blur(20px) saturate(125%);
+}
+
 @media (max-width: 1120px) {
 	.ai-browser-app,
 	.ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
@@ -1338,4 +1348,23 @@
 	.kestrel-sidebar-project-open > svg:last-child {
 		transition: none;
 	}
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+	.kestrel-sidebar.is-collapsed {
+		background: var(--sidebar);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+	}
+}
+
+/* Grid items must shrink with the rail so the title's fade occurs inside its
+   own box rather than beyond the parent's overflow clip. */
+.kestrel-sidebar-section ul > li { min-width: 0; max-width: 100%; }
+.kestrel-sidebar-title { max-width: 100%; }
+@media (max-width: 1120px) {
+ .kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-header-actions {
+  display: flex; flex-direction: column; gap: 4px; width: 32px;
+ }
+ .kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-icon-button { border-radius: 50%; }
 }

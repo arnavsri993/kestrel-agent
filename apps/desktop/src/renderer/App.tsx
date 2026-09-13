@@ -69,6 +69,7 @@ import {
 } from "motion/react";
 import {
 	type ReactNode,
+	type ClipboardEvent,
 	useCallback,
 	useEffect,
 	useLayoutEffect,
@@ -118,8 +119,14 @@ import {
 	mentionQuery,
 	replaceMention,
 } from "./components/browser/composer-mentions";
+import {
+	createPastedTextAttachment,
+	LARGE_PASTE_MIN_LENGTH,
+	removePastedTextAttachment,
+} from "./components/browser/composer-paste";
 import { BrowserSettings } from "./components/browser/BrowserSettings";
 import { BrowserWorkspace } from "./components/browser/BrowserWorkspace";
+import type { NewTabComposerDraft } from "./components/browser/new-tab-composer";
 import { CommunicationCodeAssistant } from "./components/browser/CommunicationCodeAssistant";
 import { DefaultBrowserPrompt } from "./components/browser/DefaultBrowserPrompt";
 import { WritingStudio } from "./components/browser/WritingStudio";
@@ -3042,6 +3049,7 @@ function RuntimeConversation({
 	newAgentWorkspace,
 	newAgentProjectId,
 	newAgentFocusTarget,
+	newAgentDraft,
 	projects,
 	onProjectsChange,
 	refreshRevision,
@@ -3069,6 +3077,7 @@ function RuntimeConversation({
 	newAgentWorkspace: string | null;
 	newAgentProjectId: string | null;
 	newAgentFocusTarget: "prompt" | "task-settings";
+	newAgentDraft: NewTabComposerDraft | null;
 	projects: Project[];
 	onProjectsChange(projects: Project[]): void;
 	refreshRevision: number;
@@ -3256,7 +3265,8 @@ function RuntimeConversation({
 		onActiveSession(null);
 		setInput(newAgentPrompt);
 		setWorkspace(newAgentWorkspace ?? "");
-		setAttachments([]);
+		setAttachments(newAgentDraft?.attachments ?? []);
+		if (newAgentDraft) applyModelChoice(newAgentDraft.modelChoice);
 		setCheckpointSummary("");
 		setError("");
 		window.setTimeout(() => {
@@ -3270,7 +3280,7 @@ function RuntimeConversation({
 			}
 			promptRef.current?.focus();
 		}, 0);
-		if (newAgentPrompt.trim()) void submit(newAgentPrompt);
+		if (newAgentPrompt.trim()) void submit(newAgentPrompt, newAgentDraft ?? undefined);
 	}, [
 		busy,
 		newAgentFocusTarget,
@@ -3278,6 +3288,7 @@ function RuntimeConversation({
 		newAgentProjectId,
 		newAgentRequestId,
 		newAgentWorkspace,
+		newAgentDraft,
 		onActiveSession,
 	]);
 
@@ -3775,6 +3786,27 @@ function RuntimeConversation({
 		if (recorderRef.current?.state === "recording") recorderRef.current.stop();
 	}
 
+	async function attachLargePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+		const text = event.clipboardData.getData("text/plain");
+		if (busy || text.length < LARGE_PASTE_MIN_LENGTH) return;
+		event.preventDefault();
+		if (attachments.length >= 8) {
+			setError("Remove an attachment before pasting more text.");
+			return;
+		}
+		setError("");
+		try {
+			const attachment = await createPastedTextAttachment(text);
+			setAttachments((current) => mergeAttachments(current, [attachment]));
+		} catch (cause) {
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "Could not attach pasted text.",
+			);
+		}
+	}
+
 	async function addContext() {
 		if (!taskWorkspace) return;
 		setError("");
@@ -3862,9 +3894,14 @@ function RuntimeConversation({
 		}
 	}
 
-	async function submit(promptOverride?: string) {
+	async function submit(promptOverride?: string, draft?: NewTabComposerDraft) {
 		const prompt = (promptOverride ?? input).trim();
 		if (!prompt) return;
+		const runChoice = draft?.modelChoice ?? modelChoice;
+		const runApprovalPolicy = draft?.approvalPolicy ?? "auto";
+		const runWorkspace = draft ? (draft.workspaceRoot ?? "") : workspace;
+		const runProjectId = draft ? (draft.projectId ?? null) : newAgentProjectId;
+		const runAttachments = draft?.attachments ?? promptAttachments;
 		if (busy) {
 			const streamId = streamIdRef.current;
 			if (
@@ -3893,13 +3930,13 @@ function RuntimeConversation({
 			setOptimisticSteering((current) => [...current, prompt]);
 			return;
 		}
-		if (executionMode === "manual" && !selectedManualAccount) {
+		if (runChoice.executionMode === "manual" && !accountForChoice(providerAccounts, runChoice)) {
 			setError(
 				"The selected provider account is unavailable. Choose another account or switch execution back to Automatic.",
 			);
 			return;
 		}
-		if (executionMode === "manual" && !model.trim()) {
+		if (runChoice.executionMode === "manual" && !runChoice.model.trim()) {
 			setError("Enter a model ID or switch execution back to Automatic.");
 			return;
 		}
@@ -3911,7 +3948,7 @@ function RuntimeConversation({
 		setPending(null);
 		setOptimisticUser(prompt);
 		setInput("");
-		let sessionId = activeSessionId;
+		let sessionId = activeSessionIdRef.current;
 		let streamId: string | null = null;
 		try {
 			if (!sessionId) {
@@ -3919,11 +3956,12 @@ function RuntimeConversation({
 				const created = (await window.kestrel.request({
 					type: "runtime-create-session",
 					title: chatTitleFromPrompt(prompt),
-					...(newAgentProjectId
-						? { projectId: newAgentProjectId }
-						: workspace
-							? { workspaceRoot: workspace }
+					...(runProjectId
+						? { projectId: runProjectId }
+						: runWorkspace
+							? { workspaceRoot: runWorkspace }
 							: {}),
+					approvalPolicy: runApprovalPolicy,
 				})) as CoreResponse;
 				if (!created.ok || !created.session)
 					throw new Error(
@@ -3945,23 +3983,23 @@ function RuntimeConversation({
 				streamIdRef.current = streamId;
 				streamSessionIdRef.current = sessionId;
 			}
-			localStorage.setItem("kestrel:execution-mode", executionMode);
-			if (executionMode === "manual") {
-				localStorage.setItem("kestrel:model", model.trim());
-				if (providerId) localStorage.setItem("kestrel:provider-id", providerId);
-				localStorage.setItem("kestrel:reasoning-effort", reasoningEffort);
+			localStorage.setItem("kestrel:execution-mode", runChoice.executionMode);
+			if (runChoice.executionMode === "manual") {
+				localStorage.setItem("kestrel:model", runChoice.model.trim());
+				if (runChoice.providerId) localStorage.setItem("kestrel:provider-id", runChoice.providerId);
+				localStorage.setItem("kestrel:reasoning-effort", runChoice.reasoningEffort);
 			}
 			const activeBrowserContext = await browserContext?.();
 			const response = (await window.kestrel.request({
 				type: "runtime-run-agent",
 				sessionId,
 				message: prompt,
-				model: executionMode === "automatic" ? "auto" : model.trim(),
-				providerIds: executionMode === "automatic" ? ["auto"] : [providerId],
+				model: runChoice.executionMode === "automatic" ? "auto" : runChoice.model.trim(),
+				providerIds: runChoice.executionMode === "automatic" ? ["auto"] : [runChoice.providerId],
 				streamId,
-					attachments: promptAttachments,
-				...(executionMode === "manual" && reasoningEffort !== "none"
-					? { reasoningEffort }
+				attachments: runAttachments,
+				...(runChoice.executionMode === "manual" && runChoice.reasoningEffort !== "none"
+					? { reasoningEffort: runChoice.reasoningEffort }
 					: {}),
 				...(activeBrowserContext
 					? { browserContext: activeBrowserContext }
@@ -4781,9 +4819,9 @@ function RuntimeConversation({
 								aria-label={`Remove ${attachment.name}`}
 								title={`Remove ${attachment.name}`}
 								onClick={() =>
-									setAttachments((current) =>
+									{ removePastedTextAttachment(attachment); setAttachments((current) =>
 										current.filter((item) => item.path !== attachment.path),
-									)
+									); }
 								}
 							>
 								<span>{attachment.name}</span>
@@ -4819,6 +4857,7 @@ function RuntimeConversation({
 						rows={2}
 						value={input}
 						onChange={(event) => setInput(event.target.value)}
+						onPaste={(event) => void attachLargePaste(event)}
 						onKeyDown={(event) => {
 							if (activeMention !== null && ["ArrowDown", "ArrowUp", "Tab"].includes(event.key))
 								return;
@@ -9542,6 +9581,7 @@ function Settings({
 		location.reload();
 	}
 	const route = snapshot.modelRouting.currentDecision;
+	const scopeLabel = scope === "browser" ? "Browser" : "Agent";
 	return (
 		<PageFrame
 			title="Settings"
@@ -9581,27 +9621,17 @@ function Settings({
 					</button>
 				</div>
 				<label className="settings-section-picker">
-					<span>Settings section</span>
+					<span>{scopeLabel} settings section</span>
 					<select
+						aria-label={`${scopeLabel} settings section`}
 						value={section}
 						onChange={(event) => {
 							const next = event.target.value as SettingsSection;
 							chooseSection(next);
 						}}
 					>
-						<optgroup label="Browser">
-							{SETTINGS_SECTIONS.filter(
-								(candidate) => candidate.scope === "browser" && candidate.id !== "browser",
-							).map((candidate) => (
-								<option key={candidate.id} value={candidate.id}>
-									{candidate.label}
-								</option>
-							))}
-						</optgroup>
-						<optgroup label="Agent">
-							{SETTINGS_SECTIONS.filter(
-								(candidate) => candidate.scope === "agent",
-							).map((candidate) => (
+						<optgroup label={scopeLabel}>
+							{visibleSections.map((candidate) => (
 								<option key={candidate.id} value={candidate.id}>
 									{candidate.label}
 								</option>
@@ -9719,7 +9749,6 @@ function Settings({
 						<article className="setting-row">
 							<div>
 								<strong>Setup guide</strong>
-								<p>Reopen setup without changing saved credentials.</p>
 							</div>
 							<button className="button secondary" onClick={reopenSetup}>
 								Open setup guide
@@ -9728,7 +9757,6 @@ function Settings({
 						<article className="setting-row">
 							<div>
 								<strong>Background work</strong>
-								<p>Pause background work without closing Kestrel.</p>
 							</div>
 							<button
 								className="button secondary"
@@ -10211,6 +10239,7 @@ export function App() {
 	);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
+	const [newAgentDraft, setNewAgentDraft] = useState<NewTabComposerDraft | null>(null);
 	const [newAgentFocusTarget, setNewAgentFocusTarget] = useState<
 		"prompt" | "task-settings"
 	>("prompt");
@@ -10431,6 +10460,7 @@ export function App() {
 		workspaceRoot?: string,
 		focusTarget: "prompt" | "task-settings" = "prompt",
 		projectId?: string | null,
+		draft?: NewTabComposerDraft,
 	) => {
 		const inheritedProject =
 			projectId === undefined && activeProjectId
@@ -10452,12 +10482,18 @@ export function App() {
 		}
 		if (trimmed) lastPromptedNewAgentAtRef.current = Date.now();
 		setNewAgentPrompt(prompt);
+		setNewAgentDraft(draft ?? null);
 		setNewAgentWorkspace(workspaceRoot ?? selectedProject?.path ?? null);
 		setNewAgentProjectId(selectedProject?.id ?? null);
 		setNewAgentFocusTarget(focusTarget);
 		setNewAgentRequestId((current) => current + 1);
 		revealAgentSidebar();
 	}, [activeProjectId, projects, revealAgentSidebar]);
+	const submitNewTabDraft = useCallback((draft: NewTabComposerDraft) => {
+		if (runtimeAgentState !== null) return false;
+		startNewAgent(draft.prompt, draft.workspaceRoot, "prompt", draft.projectId ?? null, draft);
+		return true;
+	}, [runtimeAgentState, startNewAgent]);
 	const createPersistentAgent = useCallback(
 		async (title: string) => {
 			const normalizedTitle = title.trim();
@@ -11350,6 +11386,9 @@ export function App() {
 						onOpenMenu={openCommandCenter}
 						onShowShortcuts={() => setShowShortcuts(true)}
 						onAskFile={askFileFromTab}
+						projects={projects}
+						onProjectsChange={setProjects}
+						onSubmitNewTabDraft={submitNewTabDraft}
 						sessions={runtimeSessions}
 						onOpenSession={openSidebarSession}
 						organizeTabsRequestId={organizeTabsRequestId}
@@ -11405,6 +11444,7 @@ export function App() {
 						newAgentWorkspace={newAgentWorkspace}
 						newAgentProjectId={newAgentProjectId}
 						newAgentFocusTarget={newAgentFocusTarget}
+						newAgentDraft={newAgentDraft}
 						projects={projects}
 						onProjectsChange={setProjects}
 						refreshRevision={runtimeRefreshRevision}

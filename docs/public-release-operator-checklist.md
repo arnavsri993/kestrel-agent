@@ -1,7 +1,8 @@
 # Public release operator checklist
 
 Use this after merging the public-release preparation PR. The repository gate
-(`pnpm verify`, `pnpm audit:market`) must pass before any distribution step.
+(`pnpm verify`, `pnpm audit:market`) and the full dependency audit
+(`pnpm audit`, including build/signing dependencies) must pass before distribution.
 
 ## 1. Apple Developer ID signing and notarization
 
@@ -88,19 +89,60 @@ On a clean Apple Silicon Mac:
 
 1. Download the DMG through a browser (not a developer copy).
 2. Open through Gatekeeper and install to `/Applications`.
-3. Run `corepack pnpm test:packaged-desktop:arm64` against the installed build.
+3. From a checkout of the candidate commit, run
+   `KESTREL_DESKTOP_EXECUTABLE=/Applications/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-smoke`.
+   The `test:packaged-desktop:arm64` shortcut targets the repository artifact,
+   not the installed app. Keep automated test data isolated from the real profile.
 4. Complete first-run setup and one verified read-only task.
 5. Export a local diagnostic report from **Readiness** and confirm it contains
    no prompts, credentials, or personal memory.
 
-## 6. Publish
+## 6. Candidate, update verification, and publication
 
-1. Push a stable tag matching `apps/desktop/package.json` version (for example
-   `v0.x.y`).
-2. Run the **macOS release** workflow on that tag.
-3. Make the GitHub release public after artifact verification.
-4. Set `NEXT_PUBLIC_RELEASE_STATUS=verified` and redeploy the website.
-5. Run `pnpm audit:market` in distribution mode against the live URLs.
+1. Merge the reviewed preparation PR only after explicit merge approval and
+   green CI. Freeze the resulting full commit SHA and the stable desktop version.
+2. Manually dispatch **macOS release** against a ref pinned to that commit.
+   A manual dispatch signs and uploads artifacts but does not publish a release.
+   Ensure the `macos-release` environment permits that candidate ref explicitly;
+   do not remove signing protection to get a preview build through.
+3. Download the workflow artifact and record its SHA256SUMS, manifest commit,
+   signatures, notarization/Gatekeeper results, and clean-machine checks above.
+4. Before replacing a development installation with stable, test with disposable
+   profiles and non-secret fixture credentials. Both channels intentionally use
+   `Kestrel` as their runtime/profile name and `Kestrel Safe Storage` as their
+   Keychain service, but the bundle IDs differ. Source equality does not prove
+   macOS Keychain access across signing identities. If access fails, leave the
+   real profile untouched and require an explicit reversible migration plan.
+5. Exercise a signed previous-version-to-candidate update on an isolated test
+   Mac using the real updater: verify settings/history/fixture credentials,
+   interrupted downloads, corrupted artifacts, and installation only after
+   normal quit. Keep the production GitHub feed pinned; do not publish a test
+   update to customers. Capture the signed source and destination versions and
+   proof from a controlled release-feed test environment. A mocked updater test
+   is not sufficient. Missing signed predecessor or test environment blocks this gate.
+6. Obtain release approval, then push the stable `v<version>` tag at the frozen
+   commit. **A tag push automatically publishes after workflow checks pass**;
+   do not push it before the candidate and upgrade evidence is accepted. The
+   tagged job rebuilds artifacts; verify the actual published bytes again.
+7. Derive download URLs from the verified manifest version, using
+   `https://github.com/arnavsri993/kestrel-agent/releases/download/v<version>/`
+   plus `Kestrel-Apple-Silicon-<version>.dmg`, `release-manifest.json`, and
+   `SHA256SUMS`. Set `PUBLIC_RELEASE_COMMIT` to the manifest's exact commit and
+   `NEXT_PUBLIC_RELEASE_VERSION` to its version.
+8. Run `corepack pnpm audit:market -- --distribution` with the public release
+   variables against the published artifacts. Supply `PUBLIC_RELEASE_VERSION`,
+   `PUBLIC_DOWNLOAD_URL`, `PUBLIC_RELEASE_MANIFEST_URL`, and
+   `PUBLIC_RELEASE_CHECKSUMS_URL` from their corresponding `NEXT_PUBLIC_*`
+   repository variables. Require all URLs, metadata, and checksums to agree.
+9. Only after that passes, set `NEXT_PUBLIC_RELEASE_STATUS=verified`, dispatch
+   **Deploy product website**, and check the deployed download/support/privacy
+   links. Verify the final artifact installed at `/Applications/Kestrel.app`,
+   not just the build directory.
+
+If post-publication validation fails, keep the website in development state,
+stop further rollout, and investigate before changing the update feed. Retain
+previous signed artifacts and recoverable profile backups. Never overwrite
+release assets or downgrade an existing database as an implicit rollback.
 
 ## What remains honest without operator input
 

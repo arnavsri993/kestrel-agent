@@ -1,4 +1,43 @@
+# New Tab glass refinement — September 2026
+
+This section supersedes the older Home shelf and square-control guidance below.
+Thesis: a wallpaper-led browser home with one compact, expandable task composer,
+recognizable local site shortcuts, and independently movable glass widgets.
+
+- Existing React/Motion desktop app; dense chrome, calm Home, SF system typography.
+- 4px spacing rhythm; 20px widget gaps, 28px surfaces, capsule short controls,
+  circular icon buttons. Keep 12–14px readable control text and explicit focus.
+- Neutral translucent material samples the wallpaper using bounded backdrop blur,
+  a thin light rim, and a quiet shadow. Reading and approval details stay legible.
+  User-requested glass/pills are intentional exceptions to the old matte system.
+- First viewport: top-right customization, greeting, focus-expanding composer,
+  automatic/pinned icon shortcuts, independent widgets. No fabricated activity.
+- Motion roles: focus expansion, existing widget rearrangement, button feedback.
+  State owns animations; reversal and reduced motion preserve all controls.
+- Preserve profile data, approval authority, actual model capabilities and local
+  history privacy. Shortcuts use stored origin favicons, never third-party fetches.
+- Inspiration only: supplied screenshots and Apple Materials guidance
+  (https://developer.apple.com/design/human-interface-guidelines/materials).
+  No external source code, dependencies, or branded assets copied.
+- Verify narrow/short layouts, large paste removal and handoff, keyboard controls,
+  wallpaper persistence, shortcut add/remove and deduplication, contrast fallbacks,
+  installed runtime, and the combined authorized PR stack.
+- Why this is not generic: the composition follows Kestrel's real local browsing,
+  task configuration, and resumable work, shaped around the supplied references.
+
 # Kestrel design system
+
+## Passwords and autofill — September 12, 2026
+
+The login page stays primary; a compact anchored suggestion offers the matching
+account, and a stable save/update prompt lets the person correct its username.
+Password settings use the existing dense graphite Mac controls and system type,
+with searchable site/account rows, explicit save and fill controls, and protected
+add/edit/reveal/copy actions. Keep website origins visible when approving a save.
+Reuse the 4px rhythm, opaque surfaces, focus rings and existing feedback motion.
+No marketing cards, decorative animation, new fonts, or new motion dependencies.
+Verify first save, return visit, username-first sign-in, changed password, failed
+login, SSO return, manual edits, and section-scoped whole-form fill with fixtures.
 
 ## macOS coherence — September 2026
 
@@ -703,3 +742,15 @@ without tilt. Customize's actual active state gives a single 280ms check flouris
 These are feedback/state roles; existing menu and widget-layout animations remain
 their owners. Hover effects require a fine pointer and every addition is gated
 by reduced motion. No new continuous animation or background work.
+
+### Clear refraction follow-up
+
+The final material uses a static SVG displacement map in backdrop-filter to bend
+wallpaper detail, a 0.5px finishing blur, and clear tinted surfaces. This is a
+Chromium-rendered interpretation, not the native Apple Liquid Glass API. No
+continuous wave animation or new runtime library is required. Reading widgets
+have more tint than short controls. Reduced transparency and increased contrast
+restore opaque surfaces. MDN backdrop-filter guidance was used as documentation,
+not copied source. Runtime screenshots caught and corrected a doubled textarea
+focus border, narrow-rail clipping, and the initially over-frosted material.
+Download centering is verified from both button and glyph bounding boxes.

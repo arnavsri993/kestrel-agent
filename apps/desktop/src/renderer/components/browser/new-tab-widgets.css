@@ -718,99 +718,32 @@
 	}
 }
 
-/* Instrument Workbench shelves: widgets remain independently configurable,
- * but read as continuous rows of useful local context instead of card walls. */
-.kestrel-widget-canvas {
-	gap: 14px;
-}
 
-.kestrel-widget-canvas-toolbar {
-	padding-bottom: 2px;
-}
-
-.kestrel-widget-shelves {
-	gap: 0;
-	border: 1px solid var(--line);
-	border-radius: var(--radius-surface);
-	background: var(--panel);
-}
-
+/* Independent wallpaper-backed objects retain their own layout and controls. */
+.kestrel-widget-shelves { gap: 20px; border: 0; background: transparent; }
 .kestrel-widget-shelves .kestrel-widget-card {
-	min-height: 142px;
-	border: 0;
-	border-radius: 0;
-	background: transparent;
-	box-shadow: none;
+ min-height: 170px;
+ border: 1px solid rgb(255 255 255 / 18%);
+ border-radius: 28px;
+ background: color-mix(in srgb, var(--panel) 58%, transparent);
+ backdrop-filter: blur(22px) saturate(140%);
+ -webkit-backdrop-filter: blur(22px) saturate(140%);
+ box-shadow: inset 0 1px 0 rgb(255 255 255 / 9%), 0 8px 28px rgb(0 0 0 / 12%);
 }
-
 .kestrel-widget-shelves .kestrel-widget-card:hover {
-	border-color: transparent;
-	background: transparent;
-	box-shadow: none;
+ background: color-mix(in srgb, var(--panel) 65%, transparent);
 }
-
-.kestrel-widget-shelves .kestrel-widget-card:not(:last-child) {
-	border-right: 1px solid var(--line);
+.kestrel-widget-card-header { padding: 18px 18px 10px; }
+.kestrel-widget-card-body { padding: 0 14px 16px; }
+.kestrel-widget-customize { border-radius: 999px; }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+ .kestrel-widget-shelves .kestrel-widget-card {
+  background: var(--panel); backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-color: var(--line-strong);
+ }
 }
-
-.kestrel-widget-shelves .kestrel-widget-card:nth-child(n + 5) {
-	border-top: 1px solid var(--line);
-}
-
-.kestrel-widget-card-header {
-	padding: 13px 14px 6px;
-}
-
-.kestrel-widget-card-heading h3 {
-	font-size: 13px;
-	line-height: 18px;
-}
-
-.kestrel-widget-card-heading p,
-.kestrel-widget-add-popover small,
-.kestrel-widget-size-popover small,
-.kestrel-widget-list small,
-.kestrel-widget-empty button,
-.kestrel-widget-canvas-empty button {
-	font-size: 11px;
-}
-
-.kestrel-widget-list strong,
-.kestrel-widget-action-list li button,
-.kestrel-widget-empty strong {
-	font-size: 12.5px;
-}
-
-.kestrel-widget-card-body {
-	padding: 0 12px 12px;
-}
-
-.kestrel-widget-list li button,
-.kestrel-widget-action-list li button {
-	border-radius: 7px;
-}
-
-.kestrel-widget-canvas.is-editing .kestrel-widget-shelves {
-	border-color: color-mix(in srgb, var(--solid) 38%, var(--line));
-}
-
-@media (max-width: 920px) {
-	.kestrel-widget-shelves .kestrel-widget-card:nth-child(n) {
-		border-top: 0;
-	}
-	.kestrel-widget-shelves .kestrel-widget-card:nth-child(2n + 1) {
-		border-right: 1px solid var(--line);
-	}
-	.kestrel-widget-shelves .kestrel-widget-card:nth-child(n + 3) {
-		border-top: 1px solid var(--line);
-	}
-}
-
-@media (max-width: 560px) {
-	.kestrel-widget-shelves .kestrel-widget-card:nth-child(n) {
-		min-height: 128px;
-		border-right: 0;
-		border-top: 1px solid var(--line);
-	}
-	.kestrel-widget-shelves .kestrel-widget-card:first-child { border-top: 0; }
-}
+.kestrel-widget-frequent-icons { display: grid; grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); gap: 10px; }
+.kestrel-widget-frequent-icons li button { display: flex; flex-direction: column; gap: 8px; padding: 8px 2px; text-align: center; }
+.kestrel-widget-frequent-icons li button > span:first-child { width: 42px; height: 42px; border-radius: 50%; }
+.kestrel-widget-frequent-icons li button > span:nth-child(2) { max-width: 100%; }
+.kestrel-widget-frequent-icons strong { font-size: 11px; }

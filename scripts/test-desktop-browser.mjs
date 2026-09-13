@@ -210,6 +210,9 @@ async function launch() {
 		if (message.type() === "error") runtimeErrors.push(message.text());
 	});
 	page.on("pageerror", (error) => runtimeErrors.push(error.message));
+	// firstWindow can still be about:blank, whose load state is already complete.
+	// Wait for the actual shell before touching origin-bound localStorage.
+	await page.waitForURL((url) => url.protocol === "file:" && url.pathname.endsWith("/renderer/index.html"));
 	await page.waitForLoadState("domcontentloaded");
 	// Keep ambient star drift and transition timing deterministic while still
 	// exercising the live Agent Universe surface and its pointer interactions.
@@ -897,7 +900,9 @@ async function waitForRuntimeRunsToSettle(sessionId) {
 }
 
 async function callTool(sessionId, toolName, input, options = {}) {
-	return page.evaluate(
+	let timeout;
+	try {
+	return await Promise.race([page.evaluate(
 		async ({ sessionId, toolName, input, options }) => {
 			const response = await window.kestrel.request({
 				type: "runtime-call-tool",
@@ -910,7 +915,10 @@ async function callTool(sessionId, toolName, input, options = {}) {
 			return response.execution;
 		},
 		{ sessionId, toolName, input, options },
-	);
+	), new Promise((_, reject) => {
+		timeout = setTimeout(() => reject(new Error(`Browser tool ${toolName} did not settle within 45 seconds.`)), 45_000);
+	})]);
+	} finally { clearTimeout(timeout); }
 }
 
 try {
@@ -926,10 +934,9 @@ try {
 	await page.locator("#new-tab-title").waitFor();
 	await page.locator("#runtime-prompt").waitFor();
 	await page.locator("#new-tab-chat-input").waitFor();
-	assert.equal(
-		await page.getByRole("button", { name: "Open task settings" }).count(),
-		1,
-	);
+	await page.locator("#new-tab-chat-input").focus();
+	assert.equal(await page.getByRole("button", { name: "Add files", exact: true }).count(), 1);
+	assert.equal(await page.locator(".new-tab-access-trigger").count(), 1);
 	assert.equal(await page.getByRole("heading", { name: "Frequent tabs" }).count(), 1);
 	await assertBrowserChromeLayout();
 	const browserBeforeHeicUpload = await browserState();
@@ -971,6 +978,7 @@ try {
 		"The HEIC upload fixture tab did not close cleanly",
 	);
 	await assertKestrelSidebarResize();
+	await page.locator("#new-tab-chat-input").focus();
 	const homeSend = page.getByRole("button", {
 		name: "Send message to Pragmatic",
 	});
@@ -2688,6 +2696,7 @@ try {
 			);
 		}
 	}
+	process.stdout.write("Browser smoke: direct attachment\n");
 	const directDownloadCount = state.downloads.filter(
 		(item) => item.sourceUrl === `${origin}/download`,
 	).length;
@@ -2726,6 +2735,7 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Visible page did not return after direct attachment download",
 	);
+	process.stdout.write("Browser smoke: history tool\n");
 	const historyTool = await callTool(
 		runtimeSessionId,
 		"browser.search-history",
@@ -2737,6 +2747,7 @@ try {
 	assert(
 		historyTool?.output?.entries?.some((entry) => entry.title === "Page one"),
 	);
+	process.stdout.write("Browser smoke: downloads tool\n");
 	const downloadsTool = await callTool(
 		runtimeSessionId,
 		"browser.visible-downloads",
@@ -2750,6 +2761,7 @@ try {
 		"kestrel-browser.txt",
 	);
 
+	process.stdout.write("Browser smoke: history overlay\n");
 	await page.keyboard.press("Meta+H");
 	await page.getByPlaceholder("Search history").waitFor();
 	await page.getByPlaceholder("Search history").fill("Page one");
@@ -3124,6 +3136,9 @@ try {
 				: "Review & add affordance"
 		}, hidden-view routing, and restart restore.\n`,
 	);
+} catch (error) {
+	console.error("Visible browser smoke failed:", error);
+	throw error;
 } finally {
 	await application?.close();
 	await new Promise((resolveClose) => server.close(resolveClose));

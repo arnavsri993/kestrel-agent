@@ -4,11 +4,11 @@ import {
 	useRef,
 	useState,
 	type CSSProperties,
-	type FormEvent,
 } from "react";
 import type {
 	MemoryRecord,
 	MemoryRecallStatus,
+	Project,
 	RuntimeSession,
 	UserBrowserBookmark,
 	UserBrowserDownload,
@@ -17,7 +17,8 @@ import type {
 	UserBrowserSettings,
 	UserBrowserTab,
 } from "@kestrel/shared-types";
-import { Icon } from "../Icon";
+import { NewTabComposer } from "./NewTabComposer";
+import type { NewTabComposerDraft } from "./new-tab-composer";
 import {
 	frequentBrowserSites,
 	newTabGreetingContext,
@@ -26,24 +27,11 @@ import {
 	originFaviconMap,
 	suggestedAgentActions,
 } from "./new-tab";
+import { NewTabPersonalization } from "./NewTabPersonalization";
 import { NewTabWidgets } from "./NewTabWidgets";
 import "./new-tab.css";
-
-function homeInputLooksLikeBrowse(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed || /\s/.test(trimmed)) return false;
-  if (/^(https?:\/\/|localhost(:\d+)?(\/|$))/i.test(trimmed)) return true;
-  try {
-    const parsed = new URL(
-      /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`,
-    );
-    return (
-      ["http:", "https:"].includes(parsed.protocol) && parsed.hostname.includes(".")
-    );
-  } catch {
-    return false;
-  }
-}
+import "./liquid-glass.css";
+import "./new-tab-composer.css";
 
 export function NewTabPage({
 	tabId,
@@ -66,12 +54,16 @@ export function NewTabPage({
 	onNavigate,
 	onOpenTab,
 	onNewAgent,
-	onOpenTaskSettings,
 	onOpenLifeMemory,
 	onOpenHistory,
 	onOpenDownloads,
 	onOpenBookmarks,
 	onOpenSession,
+	projects = [],
+	onProjectsChange,
+	onSubmitDraft,
+	shortcutSettings,
+	onUpdateHomeSettings,
 }: {
 	tabId: string;
 	history: UserBrowserHistoryEntry[];
@@ -104,9 +96,13 @@ export function NewTabPage({
 	onOpenDownloads(): void;
 	onOpenBookmarks(): void;
 	onOpenSession?: ((sessionId: string) => void) | undefined;
+	projects?: Project[];
+	onProjectsChange(projects: Project[]): void;
+	onSubmitDraft(draft: NewTabComposerDraft): boolean;
+	shortcutSettings?: UserBrowserSettings["newTabShortcuts"];
+	onUpdateHomeSettings(next: Partial<UserBrowserSettings>): Promise<unknown>;
 }) {
-	const [input, setInput] = useState("");
-	const inputRef = useRef<HTMLInputElement | null>(null);
+	const [customizeRequestId, setCustomizeRequestId] = useState(0);
 	const greetingSessionRef = useRef<{
 		tabId: string;
 		now: Date;
@@ -174,18 +170,6 @@ export function NewTabPage({
       ? { backgroundImage: `url("${backgroundCustomDataUrl}")` }
       : undefined;
 
-  function submitChat(event: FormEvent) {
-    event.preventDefault();
-    const prompt = input.trim();
-    if (!prompt) return;
-    setInput("");
-    if (homeInputLooksLikeBrowse(prompt)) {
-      onNavigate(prompt);
-      return;
-    }
-    onNewAgent(prompt);
-  }
-
   function chooseAction(prompt: string) {
     onNewAgent(prompt);
   }
@@ -204,44 +188,14 @@ export function NewTabPage({
         <header className="kestrel-home-hero">
           <h1 id="new-tab-title">{greeting}</h1>
 
-          <form className="kestrel-home-composer" onSubmit={submitChat}>
-            <button
-              type="button"
-              className="kestrel-home-model-selector"
-              aria-label="Open task settings"
-              title="Open task settings"
-              onClick={onOpenTaskSettings}
-            >
-              <span>Task settings</span>
-              <Icon name="chevron" />
-            </button>
-
-            <label className="sr-only" htmlFor="new-tab-chat-input">
-              Message {agentName} or enter a URL
-            </label>
-            <input
-              ref={inputRef}
-              id="new-tab-chat-input"
-              value={input}
-              placeholder={`Ask ${agentName} or enter a URL`}
-              autoCapitalize="sentences"
-              autoCorrect="on"
-              spellCheck
-              onChange={(event) => setInput(event.target.value)}
-            />
-            <button
-              type="submit"
-              className="kestrel-home-send"
-              aria-label={`Send message to ${agentName}`}
-              title={`Send message to ${agentName}`}
-              disabled={!input.trim()}
-            >
-              <Icon name="arrow" />
-            </button>
-          </form>
+          <NewTabComposer agentName={agentName} projects={projects} onProjectsChange={onProjectsChange} onNavigate={onNavigate} onSubmitDraft={onSubmitDraft} />
         </header>
 
+        <NewTabPersonalization frequent={frequent} shortcuts={shortcutSettings ?? []}
+          background={background} onUpdate={onUpdateHomeSettings} onNavigate={onNavigate}
+          onEditWidgets={() => setCustomizeRequestId((value) => value + 1)} />
 		<NewTabWidgets
+            customizeRequestId={customizeRequestId}
 			frequent={frequent}
 			history={history}
 			bookmarks={bookmarks}

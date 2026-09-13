@@ -263,12 +263,15 @@ async function runReturningPersona() {
 		await search.evaluate((element) => document.activeElement === element),
 		true,
 	);
-	await page.keyboard.press("Tab");
-	assert.equal(
-		await page.evaluate(() => document.activeElement?.tagName),
-		"BUTTON",
-		"Keyboard navigation did not move from search to an actionable command.",
-	);
+	// Native macOS window focus and DOM focus are separate. Target the input
+	// after foregrounding the window, then wait for the keyboard result rather
+	// than sampling it before the renderer has processed the event.
+	await page.bringToFront();
+	await search.press("Tab");
+	await page.waitForFunction(() => {
+		const active = document.activeElement;
+		return active?.tagName === "BUTTON" && active.closest(".command-center");
+	});
 	const reducedMotion = await page.locator(".command-center").evaluate((element) => ({
 		matches: matchMedia("(prefers-reduced-motion: reduce)").matches,
 		transitionDuration: getComputedStyle(element).transitionDuration,

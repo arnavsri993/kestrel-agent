@@ -1,6 +1,6 @@
 # System architecture
 
-Kestrel is a local-first Electron application with a separately built static website. The product runtime and marketing runtime never share privileged code.
+Kestrel is a local-first application with an Electron desktop shell, a standalone Node agent service, an experimental Chromium host, and a separately built static website. The product runtime and marketing runtime never share privileged code.
 
 ## Process boundaries
 
@@ -9,15 +9,17 @@ Renderer (sandboxed React)
   -> validated preload API
   -> Electron main process
   -> typed request broker
-  -> Agent Core utility process
+  -> standalone Node Agent Core sidecar (packaged desktop)
   -> encrypted SQLite / connector adapters / tools
 ```
 
-The renderer owns presentation state only. Main owns OS lifecycle, notifications, launch-at-login, deep links, secure storage, updates, and narrow IPC. The utility process owns memory, schedules, opportunity scoring, policy evaluation, provider adapters, and audit records. Untrusted content never crosses into tool execution without schema and policy validation.
+The renderer owns presentation state only. Main owns OS lifecycle, notifications, launch-at-login, deep links, secure storage, updates, and narrow IPC. The host-independent core service owns memory, schedules, opportunity scoring, policy evaluation, provider adapters, and audit records. Untrusted content never crosses into tool execution without schema and policy validation.
 
 ## Monorepo boundaries
 
-- `apps/desktop`: Electron main, preload, utility entry, and React renderer.
+- `apps/desktop`: Electron main, preload, development utility adapter, and React renderer.
+- `apps/core-service`: host-independent service, supervisor, Node IPC transport, and standalone bootstrap. Packaged desktops run the pinned Node sidecar; Electron is not its runtime.
+- `apps/chromium-host`: experimental Chromium conversation and web-tab host. Its temporary profile and opt-in browser reading and individually approved form/navigation actions do not provide desktop feature parity.
 - `apps/website`: static Next.js marketing and download site. It imports no desktop or fal runtime.
 - `packages/shared-types`: Zod contracts and product identity.
 - `packages/database`: migrations, encrypted record persistence, and query adapters.
@@ -75,3 +77,9 @@ The runtime still lacks true PTY/restart-persistent processes, full Git publishi
 ## Honest boundaries
 
 The first repository version uses development adapters for Gmail, Calendar, notifications, model routing, and update publishing. Model routing is deterministic and independently selects a model role, reasoning effort, and Fast-mode service tier from task complexity, quality sensitivity, latency, risk, tool use, deterministic coverage, and budget headroom. Local rules win when they fully cover a task. Hosted/local model wire adapters exist, but no provider may be labeled connected until a configured credential or local server passes a live read-back check. Real OAuth and subscription authentication remain later milestones.
+
+## Host-independent lifecycle checks
+
+The core service owns supervisor recovery tests and Node transport tests. The Node smoke imports it directly, boots a real process, creates a durable session, kills the process, and verifies the session after recovery. Browser cleanup failures are surfaced without preventing shutdown or restart; synchronous adapter failures become failed browser responses. Node IPC backpressure does not imply a failed dispatch. Actual asynchronous transport failures terminate the child before recovery, reject uncertain pending work, and never replay it.
+
+See [agent shipping assessment](agent-shipping-readiness.md) for the scoped shipping score, evidence, and remaining release gates.

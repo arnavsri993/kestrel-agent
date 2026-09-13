@@ -827,6 +827,43 @@ describe("agent runtime", () => {
 		database.close();
 	});
 
+	it("enforces the selected per-session approval policy", async () => {
+		const { root, database, runtime } = fixture();
+		const cautious = runtime.createSession({
+			title: "Cautious",
+			workspaceRoot: root,
+			approvalPolicy: "ask",
+		});
+		const cautiousWrite = await runtime.callTool(
+			cautious.id,
+			"workspace.mkdir",
+			{ path: "needs-approval" },
+			{ idempotencyKey: "cautious-write" },
+		);
+		expect(cautiousWrite).toMatchObject({
+			status: "blocked",
+			output: { approvalRequired: true, persistentApprovalAllowed: false },
+		});
+		expect(existsSync(join(root, "needs-approval"))).toBe(false);
+
+		writeFileSync(join(root, "full-access.txt"), "remove me\n");
+		const fullAccess = runtime.createSession({
+			title: "Full access",
+			workspaceRoot: root,
+			approvalPolicy: "full_access",
+		});
+		expect(
+			await runtime.callTool(
+				fullAccess.id,
+				"workspace.delete",
+				{ path: "full-access.txt" },
+				{ idempotencyKey: "full-access-delete" },
+			),
+		).toMatchObject({ status: "verified" });
+		expect(existsSync(join(root, "full-access.txt"))).toBe(false);
+		database.close();
+	});
+
 	it("searches and approval-loads deferred tools without eagerly exposing their schemas", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);

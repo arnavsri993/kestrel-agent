@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	type BrowserAction,
 	type BrowserAutomationBackend,
@@ -605,6 +605,38 @@ describe("isolated browser automation and visual validation", () => {
 		);
 		expect(backend.snapshotCalls).toBe(afterExplicit + 1);
 		expect(backend.actions).toEqual([{ type: "click", target: "#buy" }]);
+	});
+
+	it("resumes the exact private typing input without persisting it, and fails closed after expiry or restart", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const backend = new FakeBrowser();
+		backend.interactive = [{ ref: "e1", role: "textbox", name: "Draft title" }];
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Private approval" });
+		installBrowserTools(runtime, new BrowserController(backend), session.id);
+		const input = { tabId: backend.visibleTabId, action: { type: "type", target: "e1", text: "Only the approved draft text" } };
+		const pending = await runtime.callTool(session.id, "browser.visible-act", input, { idempotencyKey: "pending-private-text" });
+		expect(pending.status).toBe("blocked");
+		const stored = database.getToolExecution(pending.id)!;
+		expect(JSON.stringify(stored)).not.toContain(input.action.text);
+		expect(runtime.approvalInput(stored)).toEqual(input);
+		expect(runtime.approvalReview(stored).input).toEqual(input);
+		const copy = runtime.approvalInput(stored);
+		(copy.action as Record<string, unknown>).text = "tampered";
+		expect(runtime.approvalInput(stored)).toEqual(input);
+		const approved = await runtime.callTool(session.id, "browser.visible-act", runtime.approvalInput(stored), { approvalStatus: "approved", approvalGrantExecutionId: stored.id, idempotencyKey: "approved-private-text" });
+		expect(approved.status).toBe("verified");
+		expect(backend.visibleActions).toEqual([input.action]);
+		expect(JSON.stringify(database.listToolExecutions(session.id))).not.toContain(input.action.text);
+		expect(() => new AgentRuntime(database).approvalInput(stored)).toThrow("fresh approval");
+		runtime.discardApprovalInput(stored.id);
+		expect(() => runtime.approvalInput(stored)).toThrow("fresh approval");
+		vi.useFakeTimers();
+		try {
+			const expires = await runtime.callTool(session.id, "browser.visible-act", input, { idempotencyKey: "expires-private-text" });
+			await vi.advanceTimersByTimeAsync(10 * 60_000);
+			expect(() => runtime.approvalInput(database.getToolExecution(expires.id)!)).toThrow("fresh approval");
+		} finally { vi.useRealTimers(); database.close(); }
 	});
 
 	it("refuses secret typing into accessibility-identified fields without exposing the attempted text", async () => {
