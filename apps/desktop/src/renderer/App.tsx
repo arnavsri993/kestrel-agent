@@ -9710,7 +9710,6 @@ function Settings({
 						<article className="setting-row">
 							<div>
 								<strong>Setup guide</strong>
-								<p>Reopen setup without changing saved credentials.</p>
 							</div>
 							<button className="button secondary" onClick={reopenSetup}>
 								Open setup guide
@@ -9719,7 +9718,6 @@ function Settings({
 						<article className="setting-row">
 							<div>
 								<strong>Background work</strong>
-								<p>Pause background work without closing Kestrel.</p>
 							</div>
 							<button
 								className="button secondary"

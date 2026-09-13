@@ -737,7 +737,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Homepage URL</strong>
-              <p>Use an HTTP(S) address, or leave blank for New Tab.</p>
+              <p>Leave blank for New Tab.</p>
             </div>
             <div className="browser-inline-control">
               <input
@@ -823,9 +823,6 @@ export function BrowserSettings({
               <h2 id="browser-background-title">
                 <Icon name="artifacts" /> New tab background
               </h2>
-              <p>
-                Choose a background or upload an image stored on this Mac.
-              </p>
             </header>
             <div
               id="setting-browser-new-tab-background"
@@ -857,7 +854,6 @@ export function BrowserSettings({
                   </span>
                   <span className="background-option-copy">
                     <strong>{option.label}</strong>
-                    <small>{option.description}</small>
                   </span>
                 </label>
               ))}
@@ -983,7 +979,6 @@ export function BrowserSettings({
             >
               <div className="browser-setting-copy">
                 <strong>Show bookmarks bar</strong>
-                <p>Show below the address bar. ⌘⇧B toggles it.</p>
               </div>
               <button
                 type="button"
@@ -1108,7 +1103,6 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Address bar suggestions</strong>
-              <p>Suggest only local history, favorites, and open tabs.</p>
             </div>
             <button
               type="button"
@@ -1167,7 +1161,6 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Keep browsing history</strong>
-              <p>Stored on this Mac.</p>
             </div>
             <select
               aria-label="Browser history retention"
@@ -1461,9 +1454,6 @@ export function BrowserSettings({
             <h2>
               <Icon name="downloads" /> Downloads
             </h2>
-            <p>
-              Choose a folder, or ask where to save each file before it starts.
-            </p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1536,7 +1526,6 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Spellcheck</strong>
-              <p>Use your system spellchecker where available.</p>
             </div>
             <button
               type="button"
@@ -1874,7 +1863,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Hardware acceleration</strong>
-              <p>Uses your Mac's graphics hardware. Restart to apply changes.</p>
+              <p>Restart to apply changes.</p>
             </div>
             <button
               type="button"
@@ -1917,7 +1906,6 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Import and export browser data</strong>
-              <p>Import or export bookmarks, history, permissions, and preferences.</p>
               <small>Passwords, cards, cookies, and active sessions are never included.</small>
             </div>
             <div className="button-row">
