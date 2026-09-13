@@ -1240,7 +1240,7 @@ export function BrowserSettings({
             <h2>
               <Icon name="lock" /> Autofill
             </h2>
-            <p>Passwords and cards stay in your Mac's secure storage and are not exported.</p>
+            <p>Passwords, personal info, and cards stay in protected storage on this Mac.</p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1248,7 +1248,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Password autofill and save prompts</strong>
-              <p>Fill saved passwords on matching HTTPS sites and ask before saving new ones.</p>
+              <p>Fill saved logins on matching HTTPS sites and remember new logins after sign-in.</p>
             </div>
             <button
               type="button"

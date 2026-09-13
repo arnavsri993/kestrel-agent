@@ -236,9 +236,9 @@ function passwordOverlaySize(prompt: PasswordPrompt): {
 	height: number;
 } {
 	return prompt.mode === "save"
-		? { width: 382, height: 244 }
+		? { width: 382, height: 320 }
 		: prompt.mode === "field"
-			? { width: 326, height: 158 }
+			? { width: 382, height: Math.min(420, 236 + Math.max(0, prompt.entries.length - 1) * 56) }
 			: { width: 382, height: 236 };
 }
 
@@ -2693,6 +2693,7 @@ function registerIpc(): void {
     if (
       isPasswordOverlayWindow &&
       ![
+        "autofill-profile-fill",
         "password-save-suggestion",
         "password-fill-page",
         "password-fill-field",
@@ -2745,8 +2746,10 @@ function registerIpc(): void {
       return { ok: true };
     }
     if (isPasswordOverlayWindow && passwordService) {
-      if (request.type === "password-save-suggestion")
-        await passwordService.savePasswordSuggestion();
+      if (request.type === "autofill-profile-fill")
+        await passwordService.fillAutofillProfile(request.fieldId);
+      else if (request.type === "password-save-suggestion")
+        await passwordService.savePasswordSuggestion(request.username);
       else if (request.type === "password-fill-page")
         await passwordService.fillPasswordPage(request.passwordId);
       else if (request.type === "password-fill-field")
@@ -4230,10 +4233,16 @@ function registerIpc(): void {
         }),
       };
     }
+    if (request.type === "autofill-profile-get" || request.type === "autofill-profile-save") {
+      if (!requestBrowserService) throw new Error("The visible browser is unavailable.");
+      return { ok: true, autofillProfile: request.type === "autofill-profile-get" ? await requestBrowserService.getAutofillProfile() : await requestBrowserService.saveAutofillProfile(request.profile) };
+    }
     if (
       request.type === "password-list" ||
+      request.type === "password-add" ||
       request.type === "password-remove" ||
       request.type === "password-update-username" ||
+      request.type === "password-update" ||
       request.type === "password-copy" ||
       request.type === "password-reveal"
     ) {
@@ -4242,6 +4251,10 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       if (request.type === "password-list")
         return { ok: true, passwords: await service.listPasswords() };
+      if (request.type === "password-add")
+        return { ok: true, passwords: await service.addPassword(request.origin, request.username, request.password) };
+      if (request.type === "password-update")
+        return { ok: true, passwords: await service.updatePassword(request.passwordId, request.username, request.password) };
       if (request.type === "password-update-username")
         return {
           ok: true,
