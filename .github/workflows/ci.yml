@@ -31,7 +31,7 @@ jobs:
       - run: corepack pnpm exec playwright install chromium
       - run: corepack pnpm typecheck
       - run: corepack pnpm test
-      - run: corepack pnpm audit --prod
+      - run: corepack pnpm audit
       - run: corepack pnpm assets:verify
       - run: corepack pnpm audit:references
       - run: corepack pnpm verify:openclaw2

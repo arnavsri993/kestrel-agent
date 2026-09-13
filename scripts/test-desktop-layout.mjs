@@ -194,7 +194,7 @@ async function armAgentRailClickContinuityProbe(page) {
 			document.removeEventListener("click", captureClick, true);
 			const before = readState();
 			const observer = new MutationObserver(() => {
-				if (target.getAttribute("aria-label") !== "Hide Pragmatic") return;
+				if (target.getAttribute("aria-label") === before.ariaLabel) return;
 				observer.disconnect();
 				window.__kestrelAgentRailClickContinuity = {
 					before,
@@ -622,20 +622,23 @@ async function assertAgentRailInterruption(page) {
 		},
 		expectedWidth,
 	);
-	const openingWidth = await readWidth();
-
-	// Reverse while the spring is live. The rail may briefly carry its incoming
-	// velocity, but it must not jump to either endpoint or lock the toggle.
-	await clickAfterHitTest(page, toggle, "#browser-agent-toggle");
-	await afterTwoFrames();
-	const reversedWidth = await readWidth();
+	// Measure both sides of the same click. A CDP round trip can span most of
+	// the spring, so comparing an earlier frame to two frames after the click
+	// confuses elapsed animation with a discontinuity.
+	await waitForHitTestTarget(page, "#browser-agent-toggle");
+	await armAgentRailClickContinuityProbe(page);
+	await toggle.click();
+	const { before: openingState, after: reversedStart } =
+		await readAgentRailClickContinuityProbe(page);
+	const openingWidth = openingState.width;
+	assert.ok(reversedStart.settling, "Rail reversal did not start a settling transition.");
 	assert.ok(
-		reversedWidth > 0 && reversedWidth < expectedWidth,
-		`Rail reversal jumped to an endpoint (${reversedWidth}px).`,
+		reversedStart.width > 0 && reversedStart.width < expectedWidth,
+		`Rail reversal jumped to an endpoint (${reversedStart.width}px).`,
 	);
 	assert.ok(
-		Math.abs(reversedWidth - openingWidth) < expectedWidth * 0.36,
-		`Rail reversal jumped from ${openingWidth}px to ${reversedWidth}px.`,
+		Math.abs(reversedStart.width - openingWidth) <= Math.max(24, expectedWidth * 0.16),
+		`Rail reversal jumped from ${openingWidth}px to ${reversedStart.width}px.`,
 	);
 	await page.waitForFunction(
 		(before) =>
