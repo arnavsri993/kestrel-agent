@@ -142,6 +142,7 @@ function redactBrowserTypingForStorage(
 		return execution;
 	return RuntimeToolExecutionSchema.parse({
 		...execution,
+		...(execution.output && typeof execution.output.preview === "string" ? { output: { ...execution.output, preview: "Browser typing request (text redacted)." } } : {}),
 		input: {
 			...execution.input,
 			action: { ...action, text: REDACTED_BROWSER_TYPING_TEXT },
@@ -508,6 +509,33 @@ function parsePersistedCheckpointState(
 }
 
 export class AgentRuntime extends EventEmitter {
+	// Typing text must not enter journals, but approval must execute the exact
+	// original input. Keep a bounded, expiring in-process copy only.
+	private readonly pendingBrowserInputs = new Map<string, { input: Record<string, unknown>; expiresAt: number }>();
+
+	approvalInput(execution: RuntimeToolExecution): Record<string, unknown> {
+		if (redactBrowserTypingForStorage(execution) === execution) return execution.input;
+		const pending = this.pendingBrowserInputs.get(execution.id);
+		if (pending && pending.expiresAt <= Date.now()) this.pendingBrowserInputs.delete(execution.id);
+		if (!pending || pending.expiresAt <= Date.now()) throw new Error("The private browser typing request expired or the core restarted. Request a fresh approval; redacted text will not be executed.");
+		return structuredClone(pending.input);
+	}
+
+	/** Transient trusted-host review projection; never written back to storage. */
+	approvalReview(execution: RuntimeToolExecution): RuntimeToolExecution {
+		if (execution.status !== "blocked" || redactBrowserTypingForStorage(execution) === execution) return execution;
+		try {
+			const input = this.approvalInput(execution);
+			return { ...execution, input, output: { ...execution.output, preview: JSON.stringify(input, null, 2) } };
+		} catch {
+			return { ...execution, output: { ...execution.output, preview: "Typing request expired. Request a fresh approval." } };
+		}
+	}
+
+	discardApprovalInput(executionId: string): void {
+		this.pendingBrowserInputs.delete(executionId);
+	}
+
 	private readonly tools = new Map<string, RuntimeToolDefinition>();
 	private readonly deferredCatalogs = new Map<string, DeferredToolCatalog>();
 	private readonly deferredTools = new Map<
@@ -548,6 +576,8 @@ export class AgentRuntime extends EventEmitter {
 		| ((context: RuntimeToolPolicyContext) => RuntimeToolPolicyDecision)
 		| undefined;
 
+	private readonly hostToolNames: ReadonlySet<string> | undefined;
+
 	constructor(
 		private readonly database: KestrelDatabase,
 		workspaceRoots: string[] = [],
@@ -555,8 +585,10 @@ export class AgentRuntime extends EventEmitter {
 		private readonly githubToken?: string,
 		configuredWorkspaceRoots: string[] = workspaceRoots,
 		projects: Project[] = [],
+		hostToolNames?: readonly string[],
 	) {
 		super();
+		this.hostToolNames = hostToolNames === undefined ? undefined : new Set(hostToolNames);
 		this.humanInput = new HumanInputManager(database, {
 			now: () => new Date(this.now()),
 			getRunStatus: (runId) => {
@@ -1780,6 +1812,7 @@ export class AgentRuntime extends EventEmitter {
 		return [...this.tools.values()]
 				.map((definition) => definition.descriptor)
 				.filter((tool) => session.allowedTools.includes(tool.name))
+			.filter((tool) => !this.hostToolNames || this.hostToolNames.has(tool.name))
 				.filter((tool) => sessionAllowsMemory(session) || tool.category !== "memory")
 			.filter((tool) => !tool.requiresWorkspace || hasActiveWorkspace)
 			.filter(
@@ -1862,7 +1895,7 @@ export class AgentRuntime extends EventEmitter {
 		const session = this.requireSession(sessionId);
 		const workspaceRoot = this.resolveActiveWorkspaceRoot(session);
 		const definition = this.tools.get(toolName);
-		if (!definition || !session.allowedTools.includes(toolName))
+		if (!definition || !session.allowedTools.includes(toolName) || (this.hostToolNames && !this.hostToolNames.has(toolName)))
 			throw new Error(`Tool ${toolName} is unavailable in this session.`);
 		if (!sessionAllowsMemory(session) && definition.descriptor.category === "memory")
 			throw new Error(
@@ -2363,6 +2396,14 @@ export class AgentRuntime extends EventEmitter {
 		descriptor?: RuntimeToolDescriptor,
 	): void {
 		const persistedExecution = redactBrowserTypingForStorage(execution);
+		if (persistedExecution !== execution && execution.status === "blocked" && execution.output?.approvalRequired === true) {
+			if (this.pendingBrowserInputs.size >= 64) this.pendingBrowserInputs.delete(this.pendingBrowserInputs.keys().next().value!);
+			const pending = { input: structuredClone(execution.input), expiresAt: Date.now() + 10 * 60_000 };
+			this.pendingBrowserInputs.set(execution.id, pending);
+			const executionId = execution.id;
+			// Timer captures the ID only, not the private input or execution.
+			setTimeout(() => this.pendingBrowserInputs.delete(executionId), 10 * 60_000).unref();
+		} else if (execution.status !== "blocked") this.discardApprovalInput(execution.id);
 		this.database.saveToolExecution(persistedExecution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
 			persistedExecution.id,
@@ -4476,7 +4517,7 @@ export class AgentRuntime extends EventEmitter {
 			blocked.status === "blocked" &&
 			blocked.output?.approvalRequired === true &&
 			blocked.output?.persistentApprovalAllowed === false &&
-			JSON.stringify(blocked.input) === JSON.stringify(input)
+			JSON.stringify(this.approvalInput(blocked)) === JSON.stringify(input)
 			? blocked
 			: undefined;
 	}

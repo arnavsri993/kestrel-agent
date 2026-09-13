@@ -16,6 +16,12 @@ describe("Chromium host authority", () => {
     expect(HostCommandSchema.safeParse({ type: "send", message: "hi", provider: "nous", model: "fixture", approvalStatus: "approved" }).success).toBe(false);
     expect(HostCommandSchema.safeParse({ type: "send", message: " ", provider: "nous", model: "fixture" }).success).toBe(false);
   });
+  it("defaults browser reading off and requires a boolean opt-in", () => {
+    const command = { type: "send", message: "hello", provider: "nous", model: "fixture" };
+    expect(HostCommandSchema.parse(command)).toMatchObject({ readBrowser: false, navigateBrowser: false });
+    expect(HostCommandSchema.safeParse({ ...command, readBrowser: "yes" }).success).toBe(false);
+    expect(HostCommandSchema.safeParse({ ...command, navigateBrowser: "yes" }).success).toBe(false);
+  });
   it("opens only ordinary web URLs without embedded credentials", () => {
     expect(browserUrl("https://example.com")).toBe("https://example.com/");
     for (const url of ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,hello", "https://user:secret@example.com", "chrome://settings"]) {

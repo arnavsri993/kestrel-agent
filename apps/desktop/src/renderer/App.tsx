@@ -9578,6 +9578,7 @@ function Settings({
 		location.reload();
 	}
 	const route = snapshot.modelRouting.currentDecision;
+	const scopeLabel = scope === "browser" ? "Browser" : "Agent";
 	return (
 		<PageFrame
 			title="Settings"
@@ -9617,27 +9618,17 @@ function Settings({
 					</button>
 				</div>
 				<label className="settings-section-picker">
-					<span>Settings section</span>
+					<span>{scopeLabel} settings section</span>
 					<select
+						aria-label={`${scopeLabel} settings section`}
 						value={section}
 						onChange={(event) => {
 							const next = event.target.value as SettingsSection;
 							chooseSection(next);
 						}}
 					>
-						<optgroup label="Browser">
-							{SETTINGS_SECTIONS.filter(
-								(candidate) => candidate.scope === "browser" && candidate.id !== "browser",
-							).map((candidate) => (
-								<option key={candidate.id} value={candidate.id}>
-									{candidate.label}
-								</option>
-							))}
-						</optgroup>
-						<optgroup label="Agent">
-							{SETTINGS_SECTIONS.filter(
-								(candidate) => candidate.scope === "agent",
-							).map((candidate) => (
+						<optgroup label={scopeLabel}>
+							{visibleSections.map((candidate) => (
 								<option key={candidate.id} value={candidate.id}>
 									{candidate.label}
 								</option>
@@ -9755,7 +9746,6 @@ function Settings({
 						<article className="setting-row">
 							<div>
 								<strong>Setup guide</strong>
-								<p>Reopen setup without changing saved credentials.</p>
 							</div>
 							<button className="button secondary" onClick={reopenSetup}>
 								Open setup guide
@@ -9764,7 +9754,6 @@ function Settings({
 						<article className="setting-row">
 							<div>
 								<strong>Background work</strong>
-								<p>Pause background work without closing Kestrel.</p>
 							</div>
 							<button
 								className="button secondary"

@@ -648,6 +648,9 @@ try {
 		});
 	assert.ok(compactCommands.bottom <= compactCommands.viewport);
 	assert.equal(compactCommands.scrollable, true);
+	// Keep the compact destination in view, as for Settings below. Nested
+	// scroll restoration can otherwise move it beneath the browser viewport.
+	await page.getByLabel("Search Kestrel").fill("Readiness");
 	await page
 		.locator(".command-groups button")
 		.filter({ hasText: "Readiness" })

@@ -21,6 +21,8 @@ Editor integration tracks [ACP stable v1](https://agentclientprotocol.com/protoc
 - **Partial**: a tested foundation or narrow vertical slice exists, but the reference-product behavior is not complete.
 - **Planned**: no honest runtime implementation exists yet. UI copy must not present it as available.
 
+**Product-readiness limitation:** this catalog records implementation families and extension contracts, not measured task success or competitiveness. Use the [browser-agent product architecture](browser-agent-product-architecture.md) acceptance sequence and real-provider outcome evaluation before making a shipping or superiority claim.
+
 Current catalog: **59 capability families — 59 implemented, 0 partial, 0 planned**.
 
 That family-level result is not treated as proof that every reference page is complete. The page-level snapshot classifies 588 pages as implemented core-family evidence, 375 vendor-specific pages as supported through the signed extension contract, and 154 as operational/reference material, with zero known unmapped pages. Native-node pages map to the tested paired-node extension protocol; they do not imply that Kestrel ships a mobile application.

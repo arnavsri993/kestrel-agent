@@ -67,6 +67,8 @@ describe("macOS release workflow security contract", () => {
 		expect(verifyJobHeader).not.toContain("contents: write");
 		expect(verifyJob).toContain("persist-credentials: false");
 		expect(verifyJob).not.toContain("secrets.");
+		expect(verifyJob.indexOf("playwright install chromium")).toBeGreaterThan(0);
+		expect(verifyJob.indexOf("playwright install chromium")).toBeLessThan(verifyJob.indexOf("pnpm verify"));
 
 		const signingJob = between("  sign-and-package:", "\n  publish:");
 		expect(signingJob).toContain("needs: verify-source");
@@ -98,6 +100,24 @@ describe("macOS release workflow security contract", () => {
 
 		expect(workflow.split("GH_TOKEN: ${{ github.token }}")).toHaveLength(3);
 		expect(between("\n  publish:")).toContain("GH_TOKEN: ${{ github.token }}");
+	});
+
+	it("builds the exact stable source and sidecar before credentials and packaging", () => {
+		const signingJob = between("  sign-and-package:", "\n  publish:");
+		expect(signingJob).toContain("ref: ${{ github.sha }}");
+		const sourceBuild = signingJob.indexOf("name: Build stable application and stage Agent Core");
+		const credentials = signingJob.indexOf("name: Require release credentials");
+		const packaging = signingJob.indexOf("name: Build signed Apple Silicon");
+		expect(sourceBuild).toBeGreaterThan(signingJob.indexOf("pnpm install --frozen-lockfile"));
+		expect(credentials).toBeGreaterThan(sourceBuild);
+		expect(packaging).toBeGreaterThan(credentials);
+		const buildStep = signingJob.slice(sourceBuild, credentials);
+		expect(buildStep).toContain("KESTREL_RELEASE_CHANNEL: stable");
+		expect(buildStep).toContain("KESTREL_GOOGLE_OAUTH_CLIENT_ID: ${{ vars.KESTREL_GOOGLE_OAUTH_CLIENT_ID }}");
+		expect(buildStep).toContain("node scripts/prepare-agent-core-sidecar.mjs");
+		expect(buildStep).toContain("corepack pnpm build:desktop");
+		expect(buildStep.indexOf("prepare-agent-core-sidecar.mjs")).toBeLessThan(buildStep.indexOf("corepack pnpm build:desktop"));
+		expect(buildStep).not.toContain("secrets.");
 	});
 
 	it("serializes each ref and never publishes a manual dispatch", () => {

@@ -9,7 +9,8 @@ const macSuite = process.platform === "darwin" ? describe : describe.skip;
 macSuite("macOS widget packaging", () => {
 	it(
 		"builds a signed WidgetKit extension inside an app bundle",
-		{ timeout: 20_000 },
+		// A cold Swift/SDK compilation on shared macOS runners can exceed 20s.
+		{ timeout: 60_000 },
 		() => {
 			const root = mkdtempSync(join(tmpdir(), "kestrel-widget-bundle-test-"));
 			try {
