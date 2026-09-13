@@ -36,8 +36,11 @@ try {
  assert(expanded.height > compact.height + 20, "Focus should expand the composer vertically");
  assert(await page.getByRole("button", { name: "Add files", exact: true }).isVisible());
  await page.locator(".new-tab-access-trigger").click();
- assert(await page.getByRole("menu", { name: "Task access" }).isVisible());
- await page.keyboard.press("Escape");
+ assert(await page.getByRole("menu", { name: "Approval policy" }).isVisible());
+ await page.getByRole("menuitemradio", { name: /^Ask for approval/ }).click();
+ assert(await page.getByRole("button", { name: "Approval policy: Ask for approval" }).isVisible());
+ await page.locator(".new-tab-access-trigger").click();
+ await page.getByRole("menuitemradio", { name: /^Approve for me/ }).click();
  await input.focus();
  await input.evaluate((node) => { const data = new DataTransfer(); data.setData("text/plain", "Synthetic pasted context.\n".repeat(400)); node.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true })); });
  await page.locator(".new-tab-composer-attachments button").waitFor();
