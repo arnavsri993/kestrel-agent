@@ -246,6 +246,39 @@ function screenshotCancellationError(signal: AbortSignal): Error {
 		: new Error("Screenshot capture was cancelled.");
 }
 
+// Electron can leave executeJavaScript pending when a download replaces its
+// WebContents. A read must never hold the shared tab mutation queue indefinitely.
+function readPageContextWithDeadline(
+ webContents: WebContents,
+ script: string,
+ signal?: AbortSignal,
+): Promise<unknown> {
+ return new Promise((resolve, reject) => {
+  let settled = false;
+  const finish = (operation: () => void) => {
+   if (settled) return;
+   settled = true;
+   clearTimeout(timer);
+   webContents.off("destroyed", destroyed);
+   signal?.removeEventListener("abort", aborted);
+   operation();
+  };
+  const destroyed = () => finish(() => reject(new Error("The page closed while reading its context.")));
+  const aborted = () => finish(() => reject(signal?.reason ?? new Error("Page context reading was cancelled.")));
+  const timer = setTimeout(() => finish(() => reject(new Error("Page context reading timed out. Try again after the page finishes loading."))), 5_000);
+  webContents.once("destroyed", destroyed);
+  signal?.addEventListener("abort", aborted, { once: true });
+  if (webContents.isDestroyed()) { destroyed(); return; }
+  if (signal?.aborted) { aborted(); return; }
+  try {
+   void webContents.executeJavaScript(script).then(
+    value => finish(() => resolve(value)),
+    error => finish(() => reject(error)),
+   );
+  } catch (error) { finish(() => reject(error)); }
+ });
+}
+
 function capturePageWithDeadline(
 	webContents: WebContents,
 	signal?: AbortSignal,
@@ -3020,6 +3053,7 @@ export class UserBrowserService {
 
 	private async pageContextWhilePinned(
 		tabId?: string,
+		signal?: AbortSignal,
 	): Promise<UserBrowserPageContext> {
 		const resolvedTabId = tabId ?? this.requireActiveTab().id;
 		return this.withAgentTabPin(resolvedTabId, async () => {
@@ -3030,7 +3064,7 @@ export class UserBrowserService {
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents)
 			throw new Error("The selected page is still waking up. Try again.");
-		const raw = (await webContents.executeJavaScript(`(() => {
+		const raw = (await readPageContextWithDeadline(webContents, `(() => {
       const limit = (value, maximum) => String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, maximum);
       const visible = (node) => {
         const rect = node.getBoundingClientRect();
@@ -3063,7 +3097,7 @@ export class UserBrowserService {
         forms,
         viewport: { width: Math.max(1, Math.round(innerWidth)), height: Math.max(1, Math.round(innerHeight)), scrollX, scrollY }
       };
-    })()`)) as Omit<
+    })()`, signal)) as Omit<
 			UserBrowserPageContext,
 			"tabId" | "url" | "title" | "capturedAt" | "trust"
 		>;
@@ -4920,7 +4954,7 @@ export class UserBrowserService {
 					trust: "untrusted_browser" as const,
 				}));
 			case "visible-context":
-				return this.pageContextWhilePinned(request.tabId);
+				return this.pageContextWhilePinned(request.tabId, signal);
 			case "visible-snapshot":
 				return {
 					...(await this.snapshotWhilePinned(request.tabId, signal)),

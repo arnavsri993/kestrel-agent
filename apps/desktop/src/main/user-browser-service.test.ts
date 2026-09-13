@@ -2771,6 +2771,39 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     ).toBe(false);
   });
 
+  it("releases queued browser work when page context never settles", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.executeJavaScript.mockImplementation(() => new Promise(() => {}));
+    vi.useFakeTimers();
+    try {
+      const context = service.pageContext(tab.id);
+      const rejected = expect(context).rejects.toThrow("Page context reading timed out");
+      await vi.advanceTimersByTimeAsync(0);
+      const history = service.handleAgentRequest({ operation: "visible-history", query: "Example", limit: 10 }, new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await rejected;
+      await expect(history).resolves.toHaveProperty("entries");
+      await expect(service.closeTab(tab.id)).resolves.toBeDefined();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("rejects context promptly when its WebContents is replaced", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.executeJavaScript.mockImplementation(() => new Promise(() => {}));
+    const context = service.pageContext(tab.id);
+    const rejected = expect(context).rejects.toThrow("page closed");
+    await vi.waitFor(() => expect(contents.executeJavaScript).toHaveBeenCalled());
+    contents.emit("destroyed");
+    await rejected;
+    await expect(service.handleAgentRequest({ operation: "visible-downloads" }, new AbortController().signal)).resolves.toHaveProperty("downloads");
+  });
+
   it("serializes closeTab behind an in-flight pageContext", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;

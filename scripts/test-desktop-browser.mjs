@@ -900,7 +900,9 @@ async function waitForRuntimeRunsToSettle(sessionId) {
 }
 
 async function callTool(sessionId, toolName, input, options = {}) {
-	return page.evaluate(
+	let timeout;
+	try {
+	return await Promise.race([page.evaluate(
 		async ({ sessionId, toolName, input, options }) => {
 			const response = await window.kestrel.request({
 				type: "runtime-call-tool",
@@ -913,7 +915,10 @@ async function callTool(sessionId, toolName, input, options = {}) {
 			return response.execution;
 		},
 		{ sessionId, toolName, input, options },
-	);
+	), new Promise((_, reject) => {
+		timeout = setTimeout(() => reject(new Error(`Browser tool ${toolName} did not settle within 45 seconds.`)), 45_000);
+	})]);
+	} finally { clearTimeout(timeout); }
 }
 
 try {
