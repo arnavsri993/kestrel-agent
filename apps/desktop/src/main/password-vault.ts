@@ -25,6 +25,7 @@ export interface SavePasswordInput {
 	title?: string;
 	username: string;
 	password: string;
+	rejectExisting?: boolean;
 }
 
 function normalizedOrigin(value: string): string {
@@ -186,6 +187,8 @@ export class PasswordVault {
 				const existing = entries.find(
 					(entry) => entry.origin === origin && entry.username === username,
 				);
+				if (existing && input.rejectExisting)
+					throw new Error("This login is already saved. Edit the existing login to change its password.");
 				const next = PasswordEntrySchema.parse({
 					id: existing?.id ?? `password-${randomUUID()}`,
 					origin,
@@ -214,10 +217,20 @@ export class PasswordVault {
 		id: PasswordEntryId,
 		username: string,
 	): Promise<PasswordEntrySummary[]> {
+		return this.update(id, username);
+	}
+
+	async update(
+		id: PasswordEntryId,
+		username: string,
+		password?: string,
+	): Promise<PasswordEntrySummary[]> {
 		return this.mutate(async () => {
 			const normalizedUsername = username.trim();
 			if (normalizedUsername.length > 500)
 				throw new Error("Usernames must be 500 characters or fewer.");
+			if (password !== undefined && (!password || password.length > 4096 || password.includes("\0")))
+				throw new Error("Passwords must be between 1 and 4,096 characters.");
 			const entries = await this.loadEntries();
 			let nextEntries: PasswordEntry[] | undefined;
 			try {
@@ -237,6 +250,7 @@ export class PasswordVault {
 				const updated = PasswordEntrySchema.parse({
 					...existing,
 					username: normalizedUsername,
+					...(password !== undefined ? { password } : {}),
 					updatedAt: this.now().toISOString(),
 				});
 				nextEntries = entries.map((entry) =>

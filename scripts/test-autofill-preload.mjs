@@ -14,7 +14,7 @@ app.setPath('userData', ${JSON.stringify(join(root,'profile'))});
 app.whenReady().then(async()=>{
  await session.defaultSession.protocol.handle('https',()=>new Response('<!doctype html><title>Autofill fixture</title><body></body>',{headers:{'content-type':'text/html'}}));
  globalThis.messages=[];
- for(const channel of ['kestrel:user-browser-password-submission','kestrel:user-browser-profile-submission']) ipcMain.on(channel,(_e,data)=>globalThis.messages.push({channel,data}));
+	for(const channel of ['kestrel:user-browser-password-submission','kestrel:user-browser-username-submission','kestrel:user-browser-profile-submission']) ipcMain.on(channel,(_e,data)=>globalThis.messages.push({channel,data}));
  const win=new BrowserWindow({show:false,width:900,height:600,webPreferences:{preload:${JSON.stringify(preload)},sandbox:true,contextIsolation:true,nodeIntegration:false}});
  await win.loadURL('https://autofill.example.test/');
 });`);
@@ -105,7 +105,28 @@ try {
  await page.locator('#unboundUser').fill('unbound-fixture');
  await page.locator('#unboundPass').fill('unbound-secret');
  await page.getByRole('button',{name:'Log in'}).click();
- assert.equal(await app.evaluate(()=>globalThis.messages.some(m=>m.channel.endsWith('password-submission') && m.data.username==='unbound-fixture')),true);
+	assert.equal(await app.evaluate(()=>globalThis.messages.some(m=>m.channel.endsWith('password-submission') && m.data.username==='unbound-fixture')),true);
+	// A username-first step is captured on Enter before site JavaScript replaces it.
+	await page.evaluate(() => {
+	 document.body.innerHTML = '<div role="form"><input id="microsoftUser" name="loginfmt"><button type="button">Next</button></div>';
+	 document.querySelector('#microsoftUser').addEventListener('keydown',event=>{if(event.key==='Enter') document.body.innerHTML='<div role="form"><input type="hidden" name="loginfmt" value="microsoft-fixture@example.test"><input id="microsoftPassword" type="password"><button type="button">Sign in</button></div>';});
+	});
+	await page.locator('#microsoftUser').fill('microsoft-fixture@example.test');
+	await page.locator('#microsoftUser').press('Enter');
+	assert.equal(await app.evaluate(()=>globalThis.messages.some(m=>m.channel.endsWith('username-submission') && m.data==='microsoft-fixture@example.test')),true);
+	await page.locator('#microsoftPassword').fill('microsoft-secret');
+	await page.getByRole('button',{name:'Sign in'}).click();
+	assert.deepEqual(await app.evaluate(()=>{const data=globalThis.messages.filter(m=>m.channel.endsWith('password-submission')).at(-1).data;return {username:data.username,password:data.password};}),{username:'microsoft-fixture@example.test',password:'microsoft-secret'});
+	// A hidden, form-owned username beats a prior step's cached value.
+	await page.evaluate(()=>{document.body.innerHTML='<form><input type="hidden" name="loginfmt" value="hidden-fixture@example.test"><input id="hiddenUserPassword" type="password"><button>Sign in hidden</button></form>';});
+	await page.locator('#hiddenUserPassword').fill('hidden-user-secret');
+	await page.getByRole('button',{name:'Sign in hidden'}).click();
+	assert.equal(await app.evaluate(()=>globalThis.messages.filter(m=>m.channel.endsWith('password-submission')).at(-1).data.username),'hidden-fixture@example.test');
+	// Whole-form fill includes visible controls below the viewport.
+	await page.evaluate(()=>{document.body.innerHTML='<form><input id="wholeUser" autocomplete="username"><div style="height:900px"></div><input id="wholePassword" type="password"></form>';});
+	await page.locator('#wholeUser').focus();
+	assert.equal((await command({type:'fill',username:'whole-fixture',password:'whole-secret'})).filled,2);
+	assert.equal(await page.locator('#wholePassword').inputValue(),'whole-secret');
  await page.evaluate(()=>{document.body.innerHTML='<form><input id="reject" autocomplete="name" oninput="this.value=\'\'"></form>';});
  await page.locator('#reject').focus();
  assert.equal((await command({type:'fill',profile:{name:'Rejected fixture'}})).filled,0);
@@ -132,10 +153,19 @@ try {
  await page.locator('#firstSafe').focus();
  await command({type:'fill',profile:{'given-name':'Safe','family-name':'Must stay private'}});
  assert.equal(await page.locator('#moved').inputValue(),'');
- // Password-change forms must capture the new value, not the existing password.
- await page.evaluate(()=>{document.body.innerHTML='<form onsubmit="event.preventDefault()"><input autocomplete="username" value="change-fixture"><input type="password" autocomplete="current-password" value="old-fixture"><input type="password" autocomplete="new-password" value="new-fixture"><button>Submit change</button></form>';});
- await page.getByRole('button',{name:'Submit change'}).click();
- assert.equal(await app.evaluate(()=>globalThis.messages.filter(m=>m.channel.endsWith('password-submission')).at(-1).data.password),'new-fixture');
+	// Password-change forms must capture a confirmed new value, never the existing password.
+	await page.evaluate(()=>{document.body.innerHTML='<form onsubmit="event.preventDefault()"><input autocomplete="username" value="change-fixture"><input type="password" autocomplete="current-password" value="old-fixture"><input type="password" autocomplete="new-password" value="new-fixture"><input id="confirmPassword" type="password" autocomplete="new-password" value="mismatch-fixture" aria-label="Confirm password"><button>Submit change</button></form>';});
+	const beforeMismatch=await app.evaluate(()=>globalThis.messages.filter(m=>m.channel.endsWith('password-submission')).length);
+	await page.getByRole('button',{name:'Submit change'}).click();
+	assert.equal(await app.evaluate(()=>globalThis.messages.filter(m=>m.channel.endsWith('password-submission')).length),beforeMismatch);
+	await page.locator('#confirmPassword').fill('new-fixture');
+	await page.getByRole('button',{name:'Submit change'}).click();
+	assert.equal(await app.evaluate(()=>globalThis.messages.filter(m=>m.channel.endsWith('password-submission')).at(-1).data.password),'new-fixture');
+	// A failed form stays visible; a submitted form hidden by the app is complete
+	// even when its stale password input remains connected.
+	assert.equal((await command({type:'scan'})).snapshot.hasPasswordControls,true);
+	await page.locator('form').evaluate(node=>node.style.display='none');
+	assert.equal((await command({type:'scan'})).snapshot.hasPasswordControls,false);
  // The real isolated preload discovers nested same-origin frames, maps focus and
  // popup coordinates, and never crosses into a different or opaque origin.
  await page.evaluate(()=>{document.body.innerHTML='<style>iframe{width:650px;height:400px;margin:20px;border:4px solid}</style><iframe id="same" src="/embedded"></iframe><iframe id="foreign" src="https://other.example.test/"></iframe><iframe id="opaque" sandbox="allow-scripts" src="/sandboxed"></iframe>';});

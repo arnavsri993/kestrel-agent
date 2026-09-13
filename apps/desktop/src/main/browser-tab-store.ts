@@ -45,7 +45,7 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	addressBarSuggestionsEnabled: true,
 	passwordAutofillEnabled: true,
 	offerToSavePasswords: true,
-	autoSavePasswords: true,
+	autoSavePasswords: false,
 	autofillProfileEnabled: true,
 	autoSaveFormInfo: true,
 	autofillPasswords: true,

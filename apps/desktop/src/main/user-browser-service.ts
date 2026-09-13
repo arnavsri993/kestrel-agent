@@ -1118,6 +1118,7 @@ export class UserBrowserService {
 	>();
 	private readonly loginFlows = new LoginFlowTracker();
 	private passwordSaveCommitTabId: string | undefined;
+	private passwordSaveExpiryTimer: ReturnType<typeof setTimeout> | undefined;
 	private pendingPasswordSave:
 		| {
 			tabId: string;
@@ -3156,7 +3157,13 @@ export class UserBrowserService {
 		return this.passwordVault?.list() ?? [];
 	}
 
-	async savePasswordSuggestion(): Promise<PasswordEntrySummary[]> {
+	async addPassword(origin: string, username: string, password: string): Promise<PasswordEntrySummary[]> {
+		if (!this.passwordVault) throw new Error("The protected password store is unavailable.");
+		await this.requirePasswordUserPresence("Add saved login");
+		return this.passwordVault.save({ origin, username, password, rejectExisting: true });
+	}
+
+	async savePasswordSuggestion(username?: string): Promise<PasswordEntrySummary[]> {
 		if (!this.passwordVault)
 			throw new Error("The protected password store is unavailable.");
 		const pending = this.pendingPasswordSave;
@@ -3169,7 +3176,7 @@ export class UserBrowserService {
 		if (
 			!pending.confirmedAt ||
 			!pending.confirmedUrl ||
-			this.now().getTime() - pending.confirmedAt > 30_000
+			this.now().getTime() - pending.confirmedAt > 120_000
 		)
 			throw new Error("That password suggestion is no longer available.");
 		const record = this.requireView(tab.id);
@@ -3179,12 +3186,14 @@ export class UserBrowserService {
 		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
 		if (!url || url.protocol !== "https:" || url.toString() !== pending.confirmedUrl)
 			throw new Error("The login page changed before the password was saved.");
+		if (username !== undefined && (username.length > 500 || username.includes("\0")))
+			throw new Error("Enter a valid username of 500 characters or fewer.");
 		this.passwordSaveCommitTabId = tab.id;
 		try {
 			const summaries = await this.passwordVault.save({
 				origin: pending.origin,
 				title: pending.title,
-				username: pending.username,
+				username: username?.trim() ?? pending.username,
 				password: pending.password,
 			});
 			// will-navigate/will-redirect are held while the encrypted vault write is
@@ -3205,6 +3214,12 @@ export class UserBrowserService {
 		if (!this.passwordVault)
 			throw new Error("The protected password store is unavailable.");
 		return this.passwordVault.updateUsername(id, username);
+	}
+
+	async updatePassword(id: PasswordEntryId, username: string, password?: string): Promise<PasswordEntrySummary[]> {
+		if (!this.passwordVault) throw new Error("The protected password store is unavailable.");
+		await this.requirePasswordUserPresence("Edit saved login");
+		return this.passwordVault.update(id, username, password);
 	}
 
 	async copyPassword(id: PasswordEntryId): Promise<void> {
@@ -3929,12 +3944,9 @@ export class UserBrowserService {
 		)
 			return;
 		if (this.state.settings.neverSavePasswordOrigins.includes(pageUrl.origin)) return;
-		const suppressionKey = `${tab.id}:${pageUrl.origin}`;
-		if (
-			(this.passwordPromptSuppressedUntil.get(suppressionKey) ?? 0) >
-			this.now().getTime()
-		)
-			return;
+		// Fill-popup suppression must not swallow a quick sign-in or password
+		// correction immediately after choosing a saved login.
+		this.passwordPromptSuppressedUntil.delete(`${tab.id}:${pageUrl.origin}`);
 		// Keep only the most recent submission for this tab while the login page
 		// remains unconfirmed. This matters when a person corrects a failed
 		// password attempt: a later successful navigation must never save the
@@ -3988,6 +4000,10 @@ export class UserBrowserService {
 			...(flowInitiatingOrigin ? { flowInitiatingOrigin } : {}),
 			anchor,
 		};
+		this.passwordSaveExpiryTimer = setTimeout(() => {
+			this.clearPasswordPrompt();
+		}, 300_000);
+		this.passwordSaveExpiryTimer.unref?.();
 	}
 
 	private async maybeOfferPasswordSaveAfterNavigation(
@@ -4004,9 +4020,9 @@ export class UserBrowserService {
 			pending.tabId !== tab.id ||
 			!url ||
 			url.protocol !== "https:" ||
-			this.now().getTime() - pending.submittedAt > 30_000
+			this.now().getTime() - pending.submittedAt > 300_000
 		) {
-			if (pending && this.now().getTime() - pending.submittedAt > 30_000)
+			if (pending && this.now().getTime() - pending.submittedAt > 300_000)
 				this.discardPendingPasswordSave();
 			return;
 		}
@@ -4030,7 +4046,7 @@ export class UserBrowserService {
 			const snapshot = await this.readPasswordFormSnapshot(webContents, url.origin);
 			// A destination that still contains a current-password field usually
 			// signals an unsuccessful login. Do not offer to save in that case.
-			if (snapshot.hasPasswordControls || snapshot.fields.some((field) => field.kind === "password" || field.kind === "new-password")) {
+			if (snapshot.hasPasswordControls || snapshot.fields.some((field) => field.kind === "password" || field.kind === "new-password" || field.kind === "secret")) {
 				delete pending.formAbsentSince;
 				return;
 			}
@@ -4054,6 +4070,23 @@ export class UserBrowserService {
 			if (this.pendingPasswordSave !== pending || this.state.activeTabId !== tab.id || this.state.settings.offerToSavePasswords === false) return;
 			const entries = (await this.passwordVault?.listForOrigin(pending.origin) ?? []).slice(0, 24);
 			if (this.pendingPasswordSave !== pending || pending.confirmedAt || this.disposed || this.state.activeTabId !== tab.id || safePageUrl(webContents.getURL())?.toString() !== url.toString()) return;
+			// A normal return visit must not keep asking to save the same password.
+			// Compare only inside the protected main process; no password or comparison
+			// token is sent to the suggestion renderer.
+			const existing = entries.find((entry) => entry.username === pending.username);
+			if (existing) {
+				const saved = await this.passwordVault?.getForOrigin(existing.id, pending.origin);
+				try {
+					if (this.pendingPasswordSave !== pending || pending.confirmedAt || this.disposed || this.state.activeTabId !== tab.id || safePageUrl(webContents.getURL())?.toString() !== url.toString()) return;
+					if (saved?.password === pending.password) {
+						void this.markPasswordUsed(existing.id, pending.origin);
+						this.clearPasswordPrompt();
+						return;
+					}
+				} finally {
+					if (saved) discardPasswordEntry(saved);
+				}
+			}
 			pending.confirmedUrl = url.toString();
 			pending.confirmedAt = this.now().getTime();
 			this.setPasswordPrompt(
@@ -4068,7 +4101,8 @@ export class UserBrowserService {
 					anchor: pending.anchor,
 				}),
 			);
-			if (this.state.settings.autoSavePasswords) await this.savePasswordSuggestion();
+			// Replacing an existing credential always gets an explicit Update prompt.
+			if (this.state.settings.autoSavePasswords && !existing && pending.username) await this.savePasswordSuggestion();
 		} catch {
 			// The destination may still be constructing its preload document. Its
 			// did-stop-loading event will make one more bounded attempt.
@@ -4116,7 +4150,7 @@ export class UserBrowserService {
 		if (this.passwordPrompt?.mode === "save") {
 			if (
 				this.passwordPrompt.tabId === tab.id &&
-				this.passwordPrompt.origin === url.origin
+				this.pendingPasswordSave?.confirmedUrl === url.toString()
 			)
 				return;
 			this.clearPasswordPrompt();
@@ -4319,6 +4353,8 @@ export class UserBrowserService {
 	}
 
 	private discardPendingPasswordSave(): void {
+		if (this.passwordSaveExpiryTimer) clearTimeout(this.passwordSaveExpiryTimer);
+		this.passwordSaveExpiryTimer = undefined;
 		if (this.pendingPasswordSave) this.pendingPasswordSave.password = "";
 		this.pendingPasswordSave = undefined;
 	}

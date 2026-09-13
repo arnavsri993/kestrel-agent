@@ -47,7 +47,11 @@ try {
  await remote.locator('#user').fill('fixture-user');
  await remote.locator('#pass').fill('fixture-password');
  await remote.getByRole('button',{name:'Sign in'}).click();
+ await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ await overlay.getByRole('button',{name:'Save password',exact:true}).click();
  await expect.poll(async()=>{const response=await request({type:'password-list'});return response.ok && response.passwords?.some(p=>p.username==='fixture-user');}).toBe(true);
+ const savedLogin=(await request({type:'password-list'})).passwords.find(p=>p.username==='fixture-user');
+ assert.equal('password' in savedLogin,false);
  await request({type:'browser-create-tab',input:'https://autofill.example.test/login',active:true});
  await expect.poll(()=>{const pages=app.context().pages().filter(p=>p.url()==='https://autofill.example.test/login');remote=pages.at(-1);return pages.length;}).toBe(2);
  await remote.locator('#pass').focus();
@@ -55,6 +59,20 @@ try {
  await overlay.getByRole('button').filter({hasText:'fixture-user'}).click();
  await expect(remote.locator('#pass')).toHaveValue('fixture-password');
  await expect(remote.locator('#user')).toHaveValue('fixture-user');
+ // A changed password must update the same stored record after confirmation.
+ await remote.locator('#pass').fill('updated-fixture-password');
+ await remote.getByRole('button',{name:'Sign in'}).click();
+ await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ await overlay.getByRole('button',{name:'Update password',exact:true}).click();
+ const updatedLogins=(await request({type:'password-list'})).passwords;
+ assert.equal(updatedLogins.length,1);
+ assert.equal(updatedLogins[0].id,savedLogin.id);
+ await request({type:'browser-create-tab',input:'https://autofill.example.test/login',active:true});
+ await expect.poll(()=>{const pages=app.context().pages().filter(p=>p.url()==='https://autofill.example.test/login');remote=pages.at(-1);return pages.length;}).toBe(3);
+ await remote.locator('#pass').focus();
+ await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ await overlay.getByRole('button').filter({hasText:'fixture-user'}).click();
+ await expect(remote.locator('#pass')).toHaveValue('updated-fixture-password');
  await request({type:'browser-create-tab',input:'https://autofill.example.test/embedded',active:true});
  await expect.poll(()=>{remote=app.context().pages().find(p=>p.url()==='https://autofill.example.test/embedded');return Boolean(remote);}).toBe(true);
  const frame=remote.frameLocator('iframe');
@@ -81,7 +99,32 @@ try {
  await expect(remote.locator('#cardName')).toHaveValue('Fixture Card');
  await expect(remote.locator('#securityCode')).toHaveValue('');
  await expect(remote.locator('#company')).toHaveValue('');
+ // Device presence is stubbed only inside this disposable fixture process.
+ await app.evaluate(({systemPreferences})=>{systemPreferences.promptTouchID=async()=>{};});
+ await openKestrelDestination(page,'Settings');
+ await selectSettingsSection(page,'browser-autofill','Autofill');
+ await page.getByRole('searchbox',{name:'Search saved passwords'}).fill('fixture-user');
+ const loginRow=page.locator('.password-login-card').first();
+ await expect(loginRow).toHaveCount(1);
+ await page.getByRole('searchbox',{name:'Search saved passwords'}).fill('');
+ await loginRow.getByRole('button',{name:'Edit',exact:true}).click();
+ await loginRow.getByLabel('Login name',{exact:true}).fill('renamed-fixture');
+ await loginRow.getByLabel(/^New password/).fill('manually-updated-fixture');
+ await loginRow.getByRole('button',{name:'Update login and password',exact:true}).click();
+ await expect.poll(async()=>{const r=await request({type:'password-list'});return r.passwords?.find(p=>p.id===savedLogin.id)?.username;}).toBe('renamed-fixture');
+ await page.getByRole('searchbox',{name:'Search saved passwords'}).fill('');
+ await page.getByText('Add a saved login',{exact:true}).click();
+ const addForm=page.locator('.password-add-form');
+ await addForm.getByLabel('Website',{exact:true}).fill('https://manual.example.test');
+ await addForm.getByLabel('Login name',{exact:true}).fill('manual-fixture');
+ await addForm.getByLabel('Password',{exact:true}).fill('manual-fixture-secret');
+ await addForm.getByRole('button',{name:'Add login',exact:true}).click();
+ await expect(page.locator('.password-login-card')).toHaveCount(2);
+ await expect(addForm.getByLabel('Password',{exact:true})).toHaveValue('');
+ await page.getByRole('searchbox',{name:'Search saved passwords'}).scrollIntoViewIfNeeded();
+ await page.screenshot({path:'/tmp/kestrel-password-settings-fixture.png'});
+ console.log('PASS: saved login search, authenticated edit/add, stable record ID and cleared secret input.');
  console.log('PASS: complete desktop protected payment save and native popup fill without CVV/company leakage.');
  console.log('PASS: native popup fills a same-origin embedded form in the complete desktop app.');
- console.log('PASS: full desktop protected profile settings, native profile popup fill, automatic SPA login saving, and saved-login focus popup fill.');
-} finally { if(app)await app.close();rmSync(root,{recursive:true,force:true}); }
+ console.log('PASS: full desktop protected profile settings, native form fill, first-save confirmation, returning suggestions and password update without duplicates.');
+} catch(error) { console.error(error); throw error; } finally { if(app)await app.close();rmSync(root,{recursive:true,force:true}); }

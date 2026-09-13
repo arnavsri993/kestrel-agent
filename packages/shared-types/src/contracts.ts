@@ -4203,7 +4203,7 @@ export const UserBrowserSettingsSchema = z.object({
 	/** Legacy master switch retained for existing profiles. */
 	passwordAutofillEnabled: z.boolean().default(true),
 	offerToSavePasswords: z.boolean().default(true),
-	autoSavePasswords: z.boolean().default(true),
+	autoSavePasswords: z.boolean().default(false),
 	autofillProfileEnabled: z.boolean().default(true),
 	autoSaveFormInfo: z.boolean().default(true),
 	autofillPasswords: z.boolean().default(true),
@@ -4829,6 +4829,12 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("autofill-profile-fill"), fieldId: z.string().regex(/^field-[0-9]+$/).optional() }),
 	z.object({ type: z.literal("password-list") }),
 	z.object({
+		type: z.literal("password-add"),
+		origin: z.string().url().max(8192),
+		username: z.string().max(500),
+		password: z.string().min(1).max(4096).refine((value) => !value.includes("\0")),
+	}),
+	z.object({
 		type: z.literal("password-remove"),
 		passwordId: PasswordEntryIdSchema,
 	}),
@@ -4836,6 +4842,12 @@ export const RendererRequestSchema = z.union([
 		type: z.literal("password-update-username"),
 		passwordId: PasswordEntryIdSchema,
 		username: z.string().max(500),
+	}),
+	z.object({
+		type: z.literal("password-update"),
+		passwordId: PasswordEntryIdSchema,
+		username: z.string().max(500),
+		password: z.string().min(1).max(4096).refine((value) => !value.includes("\0")).optional(),
 	}),
 	z.object({
 		type: z.literal("password-copy"),
@@ -4854,7 +4866,7 @@ export const RendererRequestSchema = z.union([
 		passwordId: PasswordEntryIdSchema,
 		fieldId: z.string().regex(/^field-[0-9]+$/),
 	}),
-	z.object({ type: z.literal("password-save-suggestion") }),
+	z.object({ type: z.literal("password-save-suggestion"), username: z.string().max(500).optional() }),
 	z.object({ type: z.literal("password-mark-never-save") }),
 	z.object({ type: z.literal("password-generate") }),
 	z.object({ type: z.literal("password-dismiss") }),

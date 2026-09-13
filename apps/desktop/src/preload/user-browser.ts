@@ -29,7 +29,9 @@ const fieldIds = new WeakMap<Element, { id: string; signature: string; owner: No
 // Keep IDs distinct across full document navigations as well as DOM edits.
 const fieldIdSeed = crypto.getRandomValues(new Uint32Array(2));
 let nextFieldId = (fieldIdSeed[0]! & 0xfffff) * 0x100000000 + fieldIdSeed[1]!;
-let submittedDocument: Document | undefined;
+let submittedPasswordInCurrentPage = false;
+let lastSubmittedUsername = "";
+let lastSubmittedUsernameAt = 0;
 function controlId(node: PasswordFieldElement): string {
 	const signature = [node.type, node.autocomplete, fieldHint(node), sectionKey(node)].join("\0");
 	const owner = formOwner(node);
@@ -233,6 +235,46 @@ function fieldKind(node: PasswordFieldElement): FieldKind | undefined {
 		return "username";
 }
 
+function usernameCapturePriority(node: PasswordFieldElement): number {
+	const type = String(node.type || node.tagName || "").toLowerCase();
+	const autocomplete = autocompleteToken(node);
+	if (
+		node.matches(":disabled") ||
+		node.disabled ||
+		["password", "file", "checkbox", "radio", "submit", "button", "reset", "image"].includes(type) ||
+		autocomplete === "one-time-code"
+	)
+		return 0;
+	if (autocomplete === "username") return 4;
+	if (type === "email" || autocomplete === "email") return 3;
+	const identifiers = [node.name, node.id]
+		.filter(Boolean)
+		.map((value) => value.replace(/[^a-z0-9]+/gi, "").toLowerCase());
+	if (identifiers.some((value) => /^(?:loginfmt|login|user|username|email|emailaddress)$/.test(value))) return 2;
+	return /(?:^|[-_ ])(?:user|username|email|login|account)(?:$|[-_ ])/i.test(fieldHint(node)) ? 1 : 0;
+}
+
+function validUsernameValue(node: PasswordFieldElement): string | undefined {
+	if (!documentIsCurrent(node.ownerDocument) || usernameCapturePriority(node) === 0) return;
+	const value = node.value.trim();
+	if (!value || value.length > 500 || value.includes("\0")) return;
+	return value;
+}
+
+function usernameForSubmission(owner: Element | Document | ShadowRoot): string {
+	const scope =
+		owner.nodeType === Node.DOCUMENT_NODE || owner.nodeType === Node.DOCUMENT_FRAGMENT_NODE
+			? owner
+			: owner.ownerDocument;
+	const owned = controls(scope ?? document)
+		.filter((node) => formOwner(node) === owner)
+		.map((node) => ({ node, priority: usernameCapturePriority(node), value: validUsernameValue(node) }))
+		.filter((item): item is { node: PasswordFieldElement; priority: number; value: string } => Boolean(item.priority && item.value))
+		.sort((left, right) => right.priority - left.priority || Number(visible(right.node, true)) - Number(visible(left.node, true)));
+	if (owned[0]) return owned[0].value.slice(0, 500);
+	return Date.now() - lastSubmittedUsernameAt < 120_000 ? lastSubmittedUsername : "";
+}
+
 function describeFields(root: ParentNode = document, includeOffscreen = false): DescribedField[] {
 	return controls(root)
 		.filter((node) => visible(node, includeOffscreen))
@@ -333,7 +375,9 @@ function setControlValue(node: PasswordFieldElement, value: string): boolean {
 }
 
 function fill(command: PasswordBridgeCommand): number {
-	const fields = describeFields(document, Boolean(command.profile));
+	// A password manager action applies to the complete owning form, including
+	// controls below the fold. CSS-hidden controls remain excluded by visible().
+	const fields = describeFields(document, true);
 	const active = fields.find((field) => field.node === deepActiveElement());
 	const anchor = active ?? (!command.profile ? fields.find((field) => field.kind === "password") ?? fields.find((field) => field.kind === "username") : undefined);
 	const focusedForm = anchor ? formOwner(anchor.node) : undefined;
@@ -344,7 +388,7 @@ function fill(command: PasswordBridgeCommand): number {
 	let filled = 0;
 	let focusTarget: PasswordFieldElement | undefined;
 	for (const field of requested) {
-		if (controlId(field.node) !== field.id || !field.node.isConnected || !visible(field.node, Boolean(command.profile)) || fieldKind(field.node) !== field.kind || currentOrigin() !== command.expectedOrigin) continue;
+		if (controlId(field.node) !== field.id || !field.node.isConnected || !visible(field.node, true) || fieldKind(field.node) !== field.kind || currentOrigin() !== command.expectedOrigin) continue;
 		if (focusedForm && formOwner(field.node) !== focusedForm) continue;
 		if (command.profile && sectionKey(field.node) !== sectionKey(anchor?.node ?? field.node)) continue;
 		if (command.onlyEmpty && (field.node.value || editedControls.has(field.node))) continue;
@@ -390,11 +434,53 @@ function scanSnapshot() {
 	const fields = group.slice(0, 32);
 	if (active && !fields.includes(active)) fields[31] = active;
 	const focusedFieldId = active?.id;
+	const passwordControls = controls().filter((node) =>
+		node.type === "password" || ["current-password", "new-password"].includes(autocompleteToken(node)),
+	);
 	return {
-		hasPasswordControls: Boolean(submittedDocument && !documentIsCurrent(submittedDocument)) || controls().some((node) => node.type === "password" || ["current-password", "new-password"].includes(autocompleteToken(node))),
+		// Before submission, keep detecting dynamically revealed password fields.
+		// Afterwards, a removed or CSS-hidden form is a completion signal, while a
+		// still-visible password form is a bounded failure signal.
+		hasPasswordControls: submittedPasswordInCurrentPage
+			? passwordControls.some((node) => visible(node, true))
+			: passwordControls.length > 0,
 		fields: fields.map(({ node: _node, ...field }) => field),
 		...(focusedFieldId ? { focusedFieldId } : {}),
 	};
+}
+
+function submittedPasswordField(fields: DescribedField[]): DescribedField | undefined {
+	const passwords = fields.filter((field) => field.kind === "password" || field.kind === "new-password");
+	if (!passwords.length) return;
+	const confirmationPattern = /\b(?:confirm|confirmation|repeat|retype|re-enter|verify)\b/i;
+	const currentPattern = /\b(?:current|old|existing)\b/i;
+	const newPattern = /\bnew\b/i;
+	const explicitlyNew = passwords.filter(
+		(field) => field.kind === "new-password" || newPattern.test(fieldHint(field.node)),
+	);
+	const confirmations = passwords.filter((field) => confirmationPattern.test(fieldHint(field.node)));
+	if (explicitlyNew.length) {
+		const primary = explicitlyNew.find((field) => !confirmations.includes(field)) ?? explicitlyNew[0]!;
+		const requiredMatches = [...new Set([...explicitlyNew, ...confirmations])].filter((field) => field !== primary);
+		if (requiredMatches.some((field) => field.node.value !== primary.node.value)) return;
+		return primary;
+	}
+	if (confirmations.length) {
+		const primary = passwords.find(
+			(field) => !confirmations.includes(field) && !currentPattern.test(fieldHint(field.node)),
+		);
+		if (!primary || confirmations.some((field) => field.node.value !== primary.node.value)) return;
+		return primary;
+	}
+	if (
+		passwords.length >= 3 &&
+		passwords[1]!.node.value &&
+		passwords[1]!.node.value === passwords[2]!.node.value &&
+		passwords[0]!.node.value !== passwords[1]!.node.value
+	)
+		return passwords[1];
+	if (passwords.length >= 2 && currentPattern.test(fieldHint(passwords[0]!.node))) return passwords[1];
+	return passwords[0];
 }
 
 function passwordFormSubmission(event: Event): void {
@@ -412,24 +498,41 @@ function passwordFormSubmission(event: Event): void {
 		}
 		if (sections.size <= 1 && Object.keys(profile).length) ipcRenderer.send("kestrel:user-browser-profile-submission", profile);
 	}
-	// Password changes must save the new value, never the old-password input.
-	const passwordField = fields.find((field) => field.kind === "new-password") ??
-		fields.find((field) => field.kind === "password");
+	// Password changes must save the new value, never the old-password input,
+	// and must wait until every identified confirmation agrees.
+	const passwordField = submittedPasswordField(fields);
 	if (!passwordField) {
-		const username = fields.find((field) => field.kind === "username" || (field.kind === "profile" && profileKey(field.node) === "email"));
-		if (event.isTrusted && username && editedControls.has(username.node) && username.node.value.trim())
-			ipcRenderer.send("kestrel:user-browser-username-submission", username.node.value.trim().slice(0, 500));
+		const username = usernameForSubmission(form);
+		if (event.isTrusted && username) {
+			lastSubmittedUsername = username;
+			lastSubmittedUsernameAt = Date.now();
+			submittedPasswordInCurrentPage = false;
+			ipcRenderer.send("kestrel:user-browser-username-submission", username);
+		}
 		return;
 	}
 	const password = passwordField.node.value;
 	if (!password || password.length > MAX_PASSWORD_LENGTH || password.includes("\0")) return;
-	const usernameField = fields.find((field) => field.kind === "username" || (field.kind === "profile" && profileKey(field.node) === "email"));
-	submittedDocument = passwordField.node.ownerDocument;
+	const username = usernameForSubmission(form);
+	if (username) { lastSubmittedUsername = username; lastSubmittedUsernameAt = Date.now(); }
+	submittedPasswordInCurrentPage = true;
 	ipcRenderer.send(PASSWORD_SUBMISSION_CHANNEL, {
-		username: (usernameField?.node.value ?? "").trim().slice(0, 500),
+		username,
 		password,
 		passwordFieldRect: passwordField.rect,
 	});
+}
+
+function actionOwner(action: Element): Element | Document | ShadowRoot | undefined {
+	const button = action.closest?.('button,input[type="submit"],input[type="image"],[role="button"]') as HTMLButtonElement | HTMLInputElement | null;
+	if (!button) return;
+	const tag = button.tagName;
+	const nativeSubmit =
+		(tag === "BUTTON" && (button as HTMLButtonElement).type !== "button" && (button as HTMLButtonElement).type !== "reset") ||
+		(tag === "INPUT" && ["submit", "image"].includes((button as HTMLInputElement).type));
+	const label = button.textContent || button.getAttribute("value") || button.getAttribute("aria-label") || "";
+	if (!nativeSubmit && !/sign.?in|log.?in|continue|next|submit|save|change|update/i.test(label)) return;
+	return button.form ?? button.closest('form,[role="form"]') ?? button.getRootNode() as Document | ShadowRoot;
 }
 
 let formChangeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -491,10 +594,18 @@ function observeDocument(doc: Document): void {
 	doc.addEventListener("click", (event) => {
 		if (!event.isTrusted || !documentIsCurrent(doc)) return;
 		const target = event.composedPath()[0] as Element | null;
-		const button = target?.closest?.('button,input[type="submit"],[role="button"]');
-		if (!button || !/sign.?in|log.?in|continue|next|submit/i.test(button.textContent || button.getAttribute("value") || "")) return;
-		const form = (button as HTMLButtonElement).form ?? button.closest('form,[role="form"]') ?? button.getRootNode();
-		if (form) passwordFormSubmission({ target: form, isTrusted: true } as unknown as Event);
+		const owner = target ? actionOwner(target) : undefined;
+		if (owner) passwordFormSubmission({ target: owner, isTrusted: true } as unknown as Event);
+	}, true);
+	// Enter can let a site's key handler navigate or replace a username-first or
+	// formless sign-in surface before submit/click observers get a stable view.
+	doc.addEventListener("keydown", (event) => {
+		if (!event.isTrusted || event.key !== "Enter" || event.isComposing || event.repeat || !documentIsCurrent(doc)) return;
+		const target = event.composedPath()[0] as Element | null;
+		if (!target || target.tagName === "TEXTAREA") return;
+		const control = target.closest?.("input,select") as PasswordFieldElement | null;
+		if (!control || (!fieldKind(control) && usernameCapturePriority(control) === 0)) return;
+		passwordFormSubmission({ target: formOwner(control), isTrusted: true } as unknown as Event);
 	}, true);
 	if (doc.documentElement) observeRoot(doc.documentElement);
 }

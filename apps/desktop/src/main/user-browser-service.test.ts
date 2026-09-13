@@ -1124,11 +1124,16 @@ describe("UserBrowserService", () => {
 			origin: "https://login.microsoftonline.com",
 			candidate: { username: "student@stlcc.example" },
 		});
-		await service.savePasswordSuggestion();
+		// Later focus/load scans on the college destination must not erase the
+		// prompt just because the credential belongs to the identity provider.
+		activeContents.emit("did-stop-loading");
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(prompts.at(-1)).toMatchObject({ mode: "save" });
+		await service.savePasswordSuggestion("corrected@stlcc.example");
 		expect(save).toHaveBeenCalledWith(
 			expect.objectContaining({
 				origin: "https://login.microsoftonline.com",
-				username: "student@stlcc.example",
+				username: "corrected@stlcc.example",
 			}),
 		);
 	});
@@ -3974,6 +3979,7 @@ describe("reliable autofill", () => {
   const save = vi.fn(async () => []);
   const passwordVault = {listForOrigin:vi.fn(async()=>[]),save} as unknown as PasswordVault;
   const {service} = createService({passwordVault});
+  service.updateSettings({...service.getState().settings,autoSavePasswords:true});
   const tab=service.getState().tabs[0]!;
   await service.navigate(tab.id,"https://login.example/sign-in");
   const contents=electron.state.views[0]!.webContents;
@@ -4025,6 +4031,55 @@ describe("reliable autofill", () => {
 });
 
 describe("autofill save confirmation stability", () => {
+ it("waits through MFA before offering the first save", async () => {
+  const save=vi.fn(async()=>[]);
+  const prompts: unknown[]=[];
+  const {service}=createService({passwordVault:{save,listForOrigin:vi.fn(async()=>[])} as unknown as PasswordVault,onPasswordPrompt:p=>prompts.push(p)});
+  expect(service.getState().settings.autoSavePasswords).toBe(false);
+  const tab=service.getState().tabs[0]!;
+  await service.navigate(tab.id,"https://login.example/sign-in");
+  const contents=electron.state.views[0]!.webContents;
+  contents.emit("ipc-message",{senderFrame:contents.mainFrame},"kestrel:user-browser-password-submission",{username:"fixture",password:"fixture-secret"});
+  contents.passwordSnapshot={fields:[{id:"field-3",kind:"secret",label:"Verification code",type:"text",autocomplete:"one-time-code",rect:{x:10,y:10,width:200,height:30}}]};
+  contents.url="https://login.example/challenge"; contents.mainFrame.url=contents.url;
+  contents.emit("did-navigate",{},contents.url,200,"OK");
+  await new Promise(resolve=>setTimeout(resolve,20));
+  expect(prompts.some(p=>(p as {mode?:string})?.mode==="save")).toBe(false);
+  expect(save).not.toHaveBeenCalled();
+  contents.passwordSnapshot={fields:[]};
+  contents.url="https://login.example/home"; contents.mainFrame.url=contents.url;
+  contents.emit("did-navigate",{},contents.url,200,"OK");
+  await vi.waitFor(()=>expect(prompts.at(-1)).toMatchObject({mode:"save",candidate:{username:"fixture"}}));
+  expect(save).not.toHaveBeenCalled();
+  await service.savePasswordSuggestion();
+  expect(save).toHaveBeenCalledTimes(1);
+  service.dispose();
+ });
+ it.each([false,true])("does not repeat unchanged saves and requires consent to update (changed=%s)", async changed => {
+  const entry={id:"password-00000000-0000-4000-8000-000000000001",origin:"https://login.example",username:"fixture",title:"Fixture",createdAt:"2026-01-01T00:00:00.000Z",updatedAt:"2026-01-01T00:00:00.000Z"};
+  const secret={...entry,password:"old-fixture"};
+  const save=vi.fn(async()=>[entry]);
+  const getForOrigin=vi.fn(async()=>secret);
+  const prompts:unknown[]=[];
+  const {service}=createService({passwordVault:{save,listForOrigin:vi.fn(async()=>[entry]),getForOrigin} as unknown as PasswordVault,onPasswordPrompt:p=>prompts.push(p)});
+  service.updateSettings({...service.getState().settings,autoSavePasswords:true});
+  const tab=service.getState().tabs[0]!;
+  await service.navigate(tab.id,"https://login.example/sign-in");
+  const contents=electron.state.views[0]!.webContents;
+  contents.emit("ipc-message",{senderFrame:contents.mainFrame},"kestrel:user-browser-password-submission",{username:"fixture",password:changed?"new-fixture":"old-fixture"});
+  contents.url="https://login.example/home"; contents.mainFrame.url=contents.url;
+  contents.passwordSnapshot={fields:[]};
+  contents.emit("did-navigate",{},contents.url,200,"OK");
+  await vi.waitFor(()=>expect(getForOrigin).toHaveBeenCalled());
+  await vi.waitFor(()=>expect(secret.password).toBe(""));
+  expect(save).not.toHaveBeenCalled();
+  if(changed) {
+   expect(prompts.at(-1)).toMatchObject({mode:"save",candidate:{username:"fixture"},entries:[entry]});
+   await service.savePasswordSuggestion();
+   expect(save).toHaveBeenCalledWith(expect.objectContaining({username:"fixture",password:"new-fixture"}));
+  } else expect(prompts.some(p=>(p as {mode?:string})?.mode==="save")).toBe(false);
+  service.dispose();
+ });
  it("does not save when password controls are hidden or a same-document form returns during loading", async()=>{
   const save=vi.fn(async()=>[]);
   const vault={save,listForOrigin:vi.fn(async()=>[])} as unknown as PasswordVault;
