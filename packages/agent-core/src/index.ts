@@ -205,6 +205,8 @@ function reviewerUnavailableError(error: unknown): boolean {
 }
 
 export interface AgentCoreDependencies {
+	/** Host-owned capability ceiling. Omitted preserves the full existing runtime. */
+	hostToolNames?: readonly string[];
 	database: KestrelDatabase;
 	/** Seed the deterministic teacher-scheduling data used by preview and test surfaces. */
 	seedDevelopmentFixtures?: boolean;
@@ -355,6 +357,7 @@ export class AgentCore {
 			this.deps.githubToken,
 			this.deps.configuredWorkspaceRoots ?? this.deps.workspaceRoots ?? [],
 			this.deps.projects ?? [],
+			this.deps.hostToolNames,
 		);
 		this.observability = new ObservabilityManager(
 			this.deps.database,
@@ -2570,13 +2573,13 @@ export class AgentCore {
 							ok: true,
 							executions: this.deps.database.listToolExecutions(
 								request.sessionId,
-							),
+							).map((execution) => this.runtime.approvalReview(execution)),
 						};
 					const executions = this.deps.database.listAllToolExecutions();
 					const limit = request.limit ?? 80;
 					return {
 						ok: true,
-						executions: executions.slice(-limit),
+						executions: executions.slice(-limit).map((execution) => this.runtime.approvalReview(execution)),
 					};
 				}
 				case "runtime-list-action-receipts":
