@@ -3742,9 +3742,33 @@ export const PasswordEntrySchema = PasswordEntrySummarySchema.extend({
 });
 export type PasswordEntry = z.infer<typeof PasswordEntrySchema>;
 
+export const AutofillProfileSchema = z.object({
+	"name": z.string().max(500).optional(),
+	"given-name": z.string().max(500).optional(),
+	"additional-name": z.string().max(500).optional(),
+	"family-name": z.string().max(500).optional(),
+	"email": z.string().max(500).optional(),
+	"tel": z.string().max(500).optional(),
+	"organization": z.string().max(500).optional(),
+	"street-address": z.string().max(500).optional(),
+	"address-line1": z.string().max(500).optional(),
+	"address-line2": z.string().max(500).optional(),
+	"address-line3": z.string().max(500).optional(),
+	"address-level2": z.string().max(500).optional(),
+	"address-level1": z.string().max(500).optional(),
+	"postal-code": z.string().max(500).optional(),
+	"country": z.string().max(500).optional(),
+	"country-name": z.string().max(500).optional(),
+	"bday": z.string().max(500).optional(),
+	"bday-day": z.string().max(500).optional(),
+	"bday-month": z.string().max(500).optional(),
+	"bday-year": z.string().max(500).optional(),
+}).strict();
+export type AutofillProfile = z.infer<typeof AutofillProfileSchema>;
+
 export const PasswordFormFieldSchema = z.object({
 	id: z.string().regex(/^field-[0-9]+$/),
-	kind: z.enum(["username", "password", "new-password", "secret", "other"]),
+	kind: z.enum(["username", "password", "new-password", "secret", "other", "profile"]),
 	label: z.string().max(500),
 	type: z.string().max(100),
 	autocomplete: z.string().max(100),
@@ -3767,7 +3791,7 @@ export const PasswordPromptSchema = z.object({
 	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	origin: z.string().url().max(8_192),
 	title: z.string().min(1).max(500),
-	mode: z.enum(["save", "page", "field", "generate", "autofilled"]),
+	mode: z.enum(["save", "page", "field", "generate", "autofilled", "profile"]),
 	fields: z.array(PasswordFormFieldSchema).max(32),
 	focusedFieldId: z.string().regex(/^field-[0-9]+$/).optional(),
 	entries: z.array(PasswordEntrySummarySchema).max(24),
@@ -4179,6 +4203,9 @@ export const UserBrowserSettingsSchema = z.object({
 	/** Legacy master switch retained for existing profiles. */
 	passwordAutofillEnabled: z.boolean().default(true),
 	offerToSavePasswords: z.boolean().default(true),
+	autoSavePasswords: z.boolean().default(false),
+	autofillProfileEnabled: z.boolean().default(true),
+	autoSaveFormInfo: z.boolean().default(true),
 	autofillPasswords: z.boolean().default(true),
 	autofillUsernames: z.boolean().default(true),
 	offerStrongPasswords: z.boolean().default(true),
@@ -4797,7 +4824,16 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({ type: z.literal("oauth-google-cancel") }),
 	z.object({ type: z.literal("oauth-google-disconnect") }),
+	z.object({ type: z.literal("autofill-profile-get") }),
+	z.object({ type: z.literal("autofill-profile-save"), profile: AutofillProfileSchema }),
+	z.object({ type: z.literal("autofill-profile-fill"), fieldId: z.string().regex(/^field-[0-9]+$/).optional() }),
 	z.object({ type: z.literal("password-list") }),
+	z.object({
+		type: z.literal("password-add"),
+		origin: z.string().url().max(8192),
+		username: z.string().max(500),
+		password: z.string().min(1).max(4096).refine((value) => !value.includes("\0")),
+	}),
 	z.object({
 		type: z.literal("password-remove"),
 		passwordId: PasswordEntryIdSchema,
@@ -4806,6 +4842,12 @@ export const RendererRequestSchema = z.union([
 		type: z.literal("password-update-username"),
 		passwordId: PasswordEntryIdSchema,
 		username: z.string().max(500),
+	}),
+	z.object({
+		type: z.literal("password-update"),
+		passwordId: PasswordEntryIdSchema,
+		username: z.string().max(500),
+		password: z.string().min(1).max(4096).refine((value) => !value.includes("\0")).optional(),
 	}),
 	z.object({
 		type: z.literal("password-copy"),
@@ -4824,7 +4866,7 @@ export const RendererRequestSchema = z.union([
 		passwordId: PasswordEntryIdSchema,
 		fieldId: z.string().regex(/^field-[0-9]+$/),
 	}),
-	z.object({ type: z.literal("password-save-suggestion") }),
+	z.object({ type: z.literal("password-save-suggestion"), username: z.string().max(500).optional() }),
 	z.object({ type: z.literal("password-mark-never-save") }),
 	z.object({ type: z.literal("password-generate") }),
 	z.object({ type: z.literal("password-dismiss") }),
@@ -5100,6 +5142,7 @@ export type RendererResponse =
 	| { ok: true; selectedAttachments: SelectedAttachment[]; cancelled?: boolean }
 	| { ok: true; workspaceFiles: SelectedAttachment[] }
 	| { ok: true; microphoneAccess: boolean }
+	| { ok: true; autofillProfile: AutofillProfile }
 	| { ok: true; passwords: PasswordEntrySummary[] }
 	| { ok: true; paymentCards: PaymentCardEntrySummary[] }
 	| { ok: true; credentials: BrokeredCredentialSummary[] }

@@ -72,6 +72,7 @@ jobs:
       - run: corepack pnpm test:desktop-workflow-reuse
       - run: corepack pnpm test:desktop-writing-studio
       - run: corepack pnpm test:desktop-browser
+      - run: corepack pnpm test:desktop-autofill
       - run: corepack pnpm test:desktop-setup
       - run: corepack pnpm test:desktop-fresh-profile
       - run: corepack pnpm test:desktop-personas

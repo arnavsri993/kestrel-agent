@@ -1,5 +1,17 @@
 # Kestrel design system
 
+## Passwords and autofill — September 12, 2026
+
+The login page stays primary; a compact anchored suggestion offers the matching
+account, and a stable save/update prompt lets the person correct its username.
+Password settings use the existing dense graphite Mac controls and system type,
+with searchable site/account rows, explicit save and fill controls, and protected
+add/edit/reveal/copy actions. Keep website origins visible when approving a save.
+Reuse the 4px rhythm, opaque surfaces, focus rings and existing feedback motion.
+No marketing cards, decorative animation, new fonts, or new motion dependencies.
+Verify first save, return visit, username-first sign-in, changed password, failed
+login, SSO return, manual edits, and section-scoped whole-form fill with fixtures.
+
 ## macOS coherence — September 2026
 
 Kestrel is a browser with adjacent local agent work: browse, ask, inspect,

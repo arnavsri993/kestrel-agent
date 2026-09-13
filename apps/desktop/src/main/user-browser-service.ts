@@ -1,3 +1,4 @@
+import { PAYMENT_AUTOFILL_WORLD_ID, PAYMENT_FORM_SCAN_SCRIPT, PAYMENT_FORM_VALUES_SCRIPT, paymentFillScript } from "./payment-form-scripts";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
@@ -37,6 +38,8 @@ import {
 	type PaymentCardEntrySummary,
 	type PaymentFormField,
 	type PaymentPrompt,
+	AutofillProfileSchema,
+	type AutofillProfile,
 	PasswordFormFieldSchema,
 	PasswordPromptSchema,
 	type PasswordEntryId,
@@ -193,6 +196,7 @@ const PasswordBridgeResponseSchema = z.object({
 		.object({
 			fields: z.array(PasswordFormFieldSchema).max(32),
 			focusedFieldId: z.string().regex(/^field-[0-9]+$/).optional(),
+			hasPasswordControls: z.boolean().optional(),
 		})
 		.optional(),
 });
@@ -749,6 +753,7 @@ function cloneState(state: UserBrowserState): UserBrowserState {
 }
 
 interface PasswordFormSnapshot {
+	hasPasswordControls?: boolean;
 	fields: PasswordFormField[];
 	focusedFieldId?: string;
 }
@@ -763,7 +768,7 @@ interface PendingPasswordBridgeRequest {
 
 function parsePasswordFormSnapshot(raw: unknown): PasswordFormSnapshot {
 	if (!raw || typeof raw !== "object") return { fields: [] };
-	const candidate = raw as { fields?: unknown; focusedFieldId?: unknown };
+	const candidate = raw as { fields?: unknown; focusedFieldId?: unknown; hasPasswordControls?: boolean };
 	const fields = Array.isArray(candidate.fields)
 		? candidate.fields.flatMap((field) => {
 			const parsed = PasswordFormFieldSchema.safeParse(field);
@@ -775,7 +780,7 @@ function parsePasswordFormSnapshot(raw: unknown): PasswordFormSnapshot {
 		fields.some((field) => field.id === candidate.focusedFieldId)
 			? candidate.focusedFieldId
 			: undefined;
-	return { fields, ...(focusedFieldId ? { focusedFieldId } : {}) };
+	return { fields, ...(candidate.hasPasswordControls !== undefined ? { hasPasswordControls: candidate.hasPasswordControls } : {}), ...(focusedFieldId ? { focusedFieldId } : {}) };
 }
 
 function isSensitiveAgentFieldName(value: string | undefined): boolean {
@@ -824,182 +829,6 @@ export function generateStrongPassword(length = STRONG_PASSWORD_LENGTH): string 
 	}
 	return characters.join("");
 }
-
-const PAYMENT_FORM_SCAN_SCRIPT = String.raw`(() => {
-  const visible = (node) => {
-    const rect = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    return rect.width > 0 && rect.height > 0 &&
-      rect.bottom >= 0 && rect.right >= 0 &&
-      rect.top <= innerHeight && rect.left <= innerWidth &&
-      style.visibility !== "hidden" && style.display !== "none" &&
-      Number(style.opacity) > 0;
-  };
-  const text = (node) => [
-    node.autocomplete,
-    node.name,
-    node.id,
-    node.placeholder,
-    node.getAttribute("aria-label"),
-    node.labels?.[0]?.innerText,
-  ].filter(Boolean).join(" ").toLowerCase();
-  const describe = (node) => {
-    const type = String(node.type || node.tagName || "").toLowerCase();
-    const autocomplete = String(node.autocomplete || "").toLowerCase();
-    const hint = text(node);
-    let kind = null;
-    if (autocomplete === "cc-number" ||
-      /(?:cc[-_ ]?number|card[-_ ]?(?:number|no)|cardnumber|pan)/i.test(hint))
-      kind = "card-number";
-    else if (autocomplete === "cc-exp-month" ||
-      /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*month|month.*(?:exp|expiry|expiration)/i.test(hint))
-      kind = "expiration-month";
-    else if (autocomplete === "cc-exp-year" ||
-      /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*year|year.*(?:exp|expiry|expiration)/i.test(hint))
-      kind = "expiration-year";
-    else if (autocomplete === "cc-exp" ||
-      /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)|expir(?:y|ation))/i.test(hint))
-      kind = "expiration";
-    else if (autocomplete === "cc-name" ||
-      /(?:cardholder|card[-_ ]?name|name[-_ ]?on[-_ ]?card)/i.test(hint))
-      kind = "cardholder-name";
-    else if (autocomplete === "cc-csc" || autocomplete === "cc-cvv" ||
-      /(?:security|verification|cvv|cvc|csc|card[-_ ]?code)/i.test(hint))
-      kind = "security-code";
-    else if (autocomplete === "postal-code" ||
-      /(?:billing[-_ ]?)?(?:postal|post[-_ ]?code|zip)/i.test(hint))
-      kind = "postal-code";
-    if (!kind) return null;
-    const rect = node.getBoundingClientRect();
-    const label = String(
-      node.labels?.[0]?.innerText || node.getAttribute("aria-label") ||
-      node.placeholder || node.name || kind
-    ).replace(/\s+/g, " ").trim().slice(0, 500);
-    return {
-      kind,
-      label,
-      type: type.slice(0, 100),
-      autocomplete: autocomplete.slice(0, 100),
-      rect: {
-        x: Math.max(0, Math.round(rect.left)),
-        y: Math.max(0, Math.round(rect.top)),
-        width: Math.max(0, Math.round(rect.width)),
-        height: Math.max(0, Math.round(rect.height)),
-      },
-      node,
-    };
-  };
-  const rawFields = Array.from(document.querySelectorAll("input,select,textarea"))
-    .filter(visible)
-    .map(describe)
-    .filter(Boolean)
-    .slice(0, 32)
-    .map((field, index) => ({ id: "payment-field-" + index, ...field }));
-  const numberField = rawFields.find((field) => field.kind === "card-number");
-  if (!numberField) return { fields: [] };
-  const valueOf = (field) => String(field?.node?.value || "").trim();
-  const cardDigits = valueOf(numberField).replace(/\D/g, "");
-  const brand = (digits) => {
-    if (/^4/.test(digits)) return "Visa";
-    if (/^(5[1-5]|2(2[2-9]|[3-6]\d))/.test(digits)) return "Mastercard";
-    if (/^3[47]/.test(digits)) return "American Express";
-    if (/^(6011|65|64[4-9])/.test(digits)) return "Discover";
-    if (/^(35|2131|1800)/.test(digits)) return "JCB";
-    if (/^3(?:0[0-5]|[68])/.test(digits)) return "Diners Club";
-    return "Card";
-  };
-  const expirationField = rawFields.find((field) => field.kind === "expiration");
-  const monthField = rawFields.find((field) => field.kind === "expiration-month");
-  const yearField = rawFields.find((field) => field.kind === "expiration-year");
-  const normalizeMonth = (value) => {
-    const digits = value.replace(/\D/g, "");
-    return digits.length === 1 ? digits.padStart(2, "0") : digits.slice(-2);
-  };
-  const normalizeYear = (value) => value.replace(/\D/g, "").slice(-2);
-  const expirationValue = valueOf(expirationField);
-  let month = normalizeMonth(valueOf(monthField));
-  let year = normalizeYear(valueOf(yearField));
-  if ((!month || !year) && /^\d{4}-\d{2}$/.test(expirationValue)) {
-    month ||= expirationValue.slice(5, 7);
-    year ||= expirationValue.slice(2, 4);
-  }
-  if (!month || !year) {
-    const combinedDigits = expirationValue.replace(/\D/g, "");
-    if (combinedDigits.length === 3) {
-      month ||= normalizeMonth(combinedDigits.slice(0, 1));
-      year ||= combinedDigits.slice(-2);
-    } else if (combinedDigits.length >= 4) {
-      month ||= normalizeMonth(combinedDigits.slice(0, 2));
-      year ||= combinedDigits.slice(-2);
-    }
-  }
-  const passesLuhn = (digits) => {
-    let sum = 0;
-    let doubleDigit = false;
-    for (let index = digits.length - 1; index >= 0; index -= 1) {
-      let digit = Number(digits[index]);
-      if (doubleDigit) {
-        digit *= 2;
-        if (digit > 9) digit -= 9;
-      }
-      sum += digit;
-      doubleDigit = !doubleDigit;
-    }
-    return sum % 10 === 0;
-  };
-  const active = document.activeElement;
-  const focusedFieldId = rawFields.find((field) => field.node === active)?.id;
-  const candidate = cardDigits.length >= 12 && cardDigits.length <= 19 &&
-    passesLuhn(cardDigits) && /^(0[1-9]|1[0-2])$/.test(month) && /^\d{2}$/.test(year) ? {
-    brand: brand(cardDigits),
-    last4: cardDigits.slice(-4),
-    ...(month && /^(0[1-9]|1[0-2])$/.test(month) ? { expirationMonth: month } : {}),
-    ...(year && /^\d{2}$/.test(year) ? { expirationYear: year } : {}),
-  } : undefined;
-  return {
-    fields: rawFields.map(({ node, ...field }) => field),
-    ...(focusedFieldId ? { focusedFieldId } : {}),
-    ...(candidate ? { candidate } : {}),
-  };
-})()`;
-
-const PAYMENT_FORM_VALUES_SCRIPT = String.raw`(() => {
-  const visible = (node) => {
-    const rect = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    return rect.width > 0 && rect.height > 0 &&
-      rect.bottom >= 0 && rect.right >= 0 &&
-      rect.top <= innerHeight && rect.left <= innerWidth &&
-      style.visibility !== "hidden" && style.display !== "none" &&
-      Number(style.opacity) > 0;
-  };
-  const text = (node) => [
-    node.autocomplete, node.name, node.id, node.placeholder,
-    node.getAttribute("aria-label"), node.labels?.[0]?.innerText,
-  ].filter(Boolean).join(" ").toLowerCase();
-  const describe = (node) => {
-    const type = String(node.type || node.tagName || "").toLowerCase();
-    const autocomplete = String(node.autocomplete || "").toLowerCase();
-    const hint = text(node);
-    let kind = null;
-    if (autocomplete === "cc-number" || /(?:cc[-_ ]?number|card[-_ ]?(?:number|no)|cardnumber|pan)/i.test(hint)) kind = "card-number";
-    else if (autocomplete === "cc-exp-month" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*month|month.*(?:exp|expiry|expiration)/i.test(hint)) kind = "expiration-month";
-    else if (autocomplete === "cc-exp-year" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*year|year.*(?:exp|expiry|expiration)/i.test(hint)) kind = "expiration-year";
-    else if (autocomplete === "cc-exp" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)|expir(?:y|ation))/i.test(hint)) kind = "expiration";
-    else if (autocomplete === "cc-name" || /(?:cardholder|card[-_ ]?name|name[-_ ]?on[-_ ]?card)/i.test(hint)) kind = "cardholder-name";
-    else if (autocomplete === "cc-csc" || autocomplete === "cc-cvv" || /(?:security|verification|cvv|cvc|csc|card[-_ ]?code)/i.test(hint)) kind = "security-code";
-    else if (autocomplete === "postal-code" || /(?:billing[-_ ]?)?(?:postal|post[-_ ]?code|zip)/i.test(hint)) kind = "postal-code";
-    if (!kind) return null;
-    const rect = node.getBoundingClientRect();
-    const label = String(node.labels?.[0]?.innerText || node.getAttribute("aria-label") || node.placeholder || node.name || kind).replace(/\s+/g, " ").trim().slice(0, 500);
-    return { kind, label, type: type.slice(0, 100), autocomplete: autocomplete.slice(0, 100), rect: { x: Math.max(0, Math.round(rect.left)), y: Math.max(0, Math.round(rect.top)), width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)) }, node };
-  };
-  const fields = Array.from(document.querySelectorAll("input,select,textarea"))
-    .filter(visible).map(describe).filter(Boolean).slice(0, 32)
-    .map((field, index) => ({ id: "payment-field-" + index, ...field }));
-  if (!fields.some((field) => field.kind === "card-number")) return { fields: [] };
-  return { fields: fields.map(({ node, ...field }) => ({ ...field, value: field.kind === "security-code" ? "" : String(node.value || "").slice(0, 2_000) })) };
-})()`;
 
 interface PaymentFormSnapshot {
 	fields: PaymentFormField[];
@@ -1091,78 +920,6 @@ function paymentCardInputFromForm(
 		cardholderName: valueFor("cardholder-name"),
 		postalCode: valueFor("postal-code"),
 	};
-}
-
-function paymentFillScript(
-	card: {
-		cardNumber: string;
-		expirationMonth: string;
-		expirationYear: string;
-		cardholderName: string;
-		postalCode: string;
-	},
-	fieldIndex?: number,
-	expectedOrigin?: string,
-): string {
-	const cardLiteral = JSON.stringify(card);
-	const targetIndex = fieldIndex === undefined ? "undefined" : String(fieldIndex);
-	const originLiteral = JSON.stringify(expectedOrigin ?? "");
-	return String.raw`(() => {
-  if (${originLiteral} && location.origin !== ${originLiteral}) return false;
-  const visible = (node) => {
-    const rect = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.right >= 0 && rect.top <= innerHeight && rect.left <= innerWidth && style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0;
-  };
-  const hint = (node) => [node.autocomplete, node.name, node.id, node.placeholder, node.getAttribute("aria-label"), node.labels?.[0]?.innerText].filter(Boolean).join(" ").toLowerCase();
-  const describe = (node) => {
-    const autocomplete = String(node.autocomplete || "").toLowerCase();
-    const value = hint(node);
-    if (autocomplete === "cc-number" || /(?:cc[-_ ]?number|card[-_ ]?(?:number|no)|cardnumber|pan)/i.test(value)) return "card-number";
-    if (autocomplete === "cc-exp-month" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*month|month.*(?:exp|expiry|expiration)/i.test(value)) return "expiration-month";
-    if (autocomplete === "cc-exp-year" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*year|year.*(?:exp|expiry|expiration)/i.test(value)) return "expiration-year";
-    if (autocomplete === "cc-exp" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)|expir(?:y|ation))/i.test(value)) return "expiration";
-    if (autocomplete === "cc-name" || /(?:cardholder|card[-_ ]?name|name[-_ ]?on[-_ ]?card)/i.test(value)) return "cardholder-name";
-    if (autocomplete === "cc-csc" || autocomplete === "cc-cvv" || /(?:security|verification|cvv|cvc|csc|card[-_ ]?code)/i.test(value)) return "security-code";
-    if (autocomplete === "postal-code" || /(?:billing[-_ ]?)?(?:postal|post[-_ ]?code|zip)/i.test(value)) return "postal-code";
-    return null;
-  };
-  const fields = Array.from(document.querySelectorAll("input,select,textarea")).filter(visible).map((node) => ({ node, kind: describe(node) })).filter((field) => field.kind).slice(0, 32);
-  const setValue = (node, value) => {
-    const prototype = Object.getPrototypeOf(node);
-    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-    if (setter) setter.call(node, value); else node.value = value;
-    node.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-    node.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  };
-  const formattedExpiry = ${cardLiteral}.expirationMonth + "/" + ${cardLiteral}.expirationYear;
-  const valueFor = (kind) => {
-    if (kind === "card-number") return ${cardLiteral}.cardNumber;
-    if (kind === "expiration") return formattedExpiry;
-    if (kind === "expiration-month") return ${cardLiteral}.expirationMonth;
-    if (kind === "expiration-year") return ${cardLiteral}.expirationYear;
-    if (kind === "cardholder-name") return ${cardLiteral}.cardholderName;
-    if (kind === "postal-code") return ${cardLiteral}.postalCode;
-    return "";
-  };
-  const index = ${targetIndex};
-  if (index !== undefined) {
-    const target = fields[index];
-    if (!target || target.kind === "security-code") return false;
-    setValue(target.node, valueFor(target.kind));
-    target.node.focus();
-    return true;
-  }
-  let filled = 0;
-  for (const field of fields) {
-    if (field.kind === "security-code") continue;
-    const value = valueFor(field.kind);
-    if (!value) continue;
-    setValue(field.node, value);
-    filled += 1;
-  }
-  return filled > 0;
-})()`;
 }
 
 interface BrowserPartitionParticipant {
@@ -1361,6 +1118,7 @@ export class UserBrowserService {
 	>();
 	private readonly loginFlows = new LoginFlowTracker();
 	private passwordSaveCommitTabId: string | undefined;
+	private passwordSaveExpiryTimer: ReturnType<typeof setTimeout> | undefined;
 	private pendingPasswordSave:
 		| {
 			tabId: string;
@@ -1374,8 +1132,10 @@ export class UserBrowserService {
 			anchor: PasswordPrompt["anchor"];
 			confirmedUrl?: string;
 			confirmedAt?: number;
+			formAbsentSince?: number;
 		}
 		| undefined;
+	private readonly submittedUsernames = new Map<string, { origin: string; username: string; at: number }>();
 	private readonly passwordPromptSuppressedUntil = new Map<string, number>();
 	private readonly passwordAutofilledUntil = new Map<string, number>();
 	private paymentScanInFlight = false;
@@ -3368,11 +3128,42 @@ export class UserBrowserService {
 		});
 	}
 
+	async getAutofillProfile(): Promise<AutofillProfile> {
+		return await this.passwordVault?.getProfile() ?? {};
+	}
+
+	async saveAutofillProfile(profile: AutofillProfile): Promise<AutofillProfile> {
+		if (!this.passwordVault) throw new Error("Protected storage is unavailable.");
+		return this.passwordVault.saveProfile(profile);
+	}
+
+	async fillAutofillProfile(fieldId?: string): Promise<void> {
+		const prompt = this.passwordPrompt;
+		const tab = this.requireActiveTab();
+		const webContents = liveWebContents(this.requireView(tab.id)?.view?.webContents);
+		if (!this.state.settings.autofillProfileEnabled || !webContents || !prompt || prompt.mode !== "profile" || prompt.tabId !== tab.id || safePageUrl(webContents.getURL())?.origin !== prompt.origin || (fieldId && !prompt.fields.some((field) => field.id === fieldId)))
+			throw new Error("That form suggestion is no longer available.");
+		const generation = this.passwordPromptGeneration;
+		const profile = await this.getAutofillProfile();
+		if (this.passwordPrompt !== prompt || generation !== this.passwordPromptGeneration || this.state.activeTabId !== tab.id || safePageUrl(webContents.getURL())?.origin !== prompt.origin)
+			throw new Error("The page changed before filling.");
+		const response = await this.requestPasswordBridge(webContents, prompt.origin, { type: "fill", profile, ...(fieldId ? { fieldId } : {}), onlyEmpty: !fieldId });
+		if (!response.ok || !response.filled) throw new Error("No matching empty fields could be filled.");
+		this.suppressPasswordPrompt(tab.id, prompt.origin, 1_000);
+		this.clearPasswordPrompt();
+	}
+
 	async listPasswords(): Promise<PasswordEntrySummary[]> {
 		return this.passwordVault?.list() ?? [];
 	}
 
-	async savePasswordSuggestion(): Promise<PasswordEntrySummary[]> {
+	async addPassword(origin: string, username: string, password: string): Promise<PasswordEntrySummary[]> {
+		if (!this.passwordVault) throw new Error("The protected password store is unavailable.");
+		await this.requirePasswordUserPresence("Add saved login");
+		return this.passwordVault.save({ origin, username, password, rejectExisting: true });
+	}
+
+	async savePasswordSuggestion(username?: string): Promise<PasswordEntrySummary[]> {
 		if (!this.passwordVault)
 			throw new Error("The protected password store is unavailable.");
 		const pending = this.pendingPasswordSave;
@@ -3385,7 +3176,7 @@ export class UserBrowserService {
 		if (
 			!pending.confirmedAt ||
 			!pending.confirmedUrl ||
-			this.now().getTime() - pending.confirmedAt > 30_000
+			this.now().getTime() - pending.confirmedAt > 120_000
 		)
 			throw new Error("That password suggestion is no longer available.");
 		const record = this.requireView(tab.id);
@@ -3395,12 +3186,14 @@ export class UserBrowserService {
 		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
 		if (!url || url.protocol !== "https:" || url.toString() !== pending.confirmedUrl)
 			throw new Error("The login page changed before the password was saved.");
+		if (username !== undefined && (username.length > 500 || username.includes("\0")))
+			throw new Error("Enter a valid username of 500 characters or fewer.");
 		this.passwordSaveCommitTabId = tab.id;
 		try {
 			const summaries = await this.passwordVault.save({
 				origin: pending.origin,
 				title: pending.title,
-				username: pending.username,
+				username: username?.trim() ?? pending.username,
 				password: pending.password,
 			});
 			// will-navigate/will-redirect are held while the encrypted vault write is
@@ -3421,6 +3214,12 @@ export class UserBrowserService {
 		if (!this.passwordVault)
 			throw new Error("The protected password store is unavailable.");
 		return this.passwordVault.updateUsername(id, username);
+	}
+
+	async updatePassword(id: PasswordEntryId, username: string, password?: string): Promise<PasswordEntrySummary[]> {
+		if (!this.passwordVault) throw new Error("The protected password store is unavailable.");
+		await this.requirePasswordUserPresence("Edit saved login");
+		return this.passwordVault.update(id, username, password);
 	}
 
 	async copyPassword(id: PasswordEntryId): Promise<void> {
@@ -3555,8 +3354,10 @@ export class UserBrowserService {
 		if (expectedOrigin && expectedOrigin !== url.origin)
 			throw new Error("The payment page changed before the card was saved.");
 		const snapshot = parsePaymentFormValues(
-			await webContents.executeJavaScript(PAYMENT_FORM_VALUES_SCRIPT),
+			await webContents.executeJavaScriptInIsolatedWorld(PAYMENT_AUTOFILL_WORLD_ID, [{ code: PAYMENT_FORM_VALUES_SCRIPT }]),
 		);
+		if (this.disposed || this.state.activeTabId !== tab.id || !liveWebContents(webContents) || webContents.getURL() !== url.toString())
+			throw new Error("The payment page changed before the card was saved.");
 		const card = paymentCardInputFromForm(snapshot);
 		const summaries = await this.paymentCardVault.save(card);
 		this.suppressPaymentPrompt(tab.id, url.origin, 4_000);
@@ -3577,9 +3378,7 @@ export class UserBrowserService {
 	async fillPaymentCardPage(id: PaymentCardEntryId): Promise<void> {
 		const { tab, webContents, entry, origin } =
 			await this.paymentCardForActiveTab(id);
-		const filled = await webContents.executeJavaScript(
-			paymentFillScript(entry, undefined, origin),
-		);
+		const filled = await webContents.executeJavaScriptInIsolatedWorld(PAYMENT_AUTOFILL_WORLD_ID, [{ code: paymentFillScript(entry, undefined, origin) }]);
 		if (filled !== true)
 			throw new Error("Kestrel could not find a payment field on this page.");
 		this.suppressPaymentPrompt(tab.id, origin, 4_000);
@@ -3596,10 +3395,7 @@ export class UserBrowserService {
 		const field = snapshot.fields.find((candidate) => candidate.id === fieldId);
 		if (!field || field.kind === "security-code")
 			throw new Error("That payment field is no longer available.");
-		const fieldIndex = Number(field.id.slice("payment-field-".length));
-		const filled = await webContents.executeJavaScript(
-			paymentFillScript(entry, fieldIndex, origin),
-		);
+		const filled = await webContents.executeJavaScriptInIsolatedWorld(PAYMENT_AUTOFILL_WORLD_ID, [{ code: paymentFillScript(entry, field.id, origin) }]);
 		if (filled !== true)
 			throw new Error("Kestrel could not fill that payment field.");
 		this.suppressPaymentPrompt(tab.id, origin, 4_000);
@@ -3775,9 +3571,14 @@ export class UserBrowserService {
 			!this.passwordPrompt.entries.some((entry) => entry.id === id)
 		)
 			throw new Error("That saved login suggestion is no longer available.");
+		const prompt = this.passwordPrompt;
 		const entry = await this.passwordVault.getForOrigin(id, url.origin);
 		if (!entry)
 			throw new Error("That saved login is not available for this website.");
+		if (this.disposed || this.state.activeTabId !== tab.id || this.passwordPrompt !== prompt || !liveWebContents(webContents) || webContents.getURL() !== url.toString()) {
+			discardPasswordEntry(entry);
+			throw new Error("The page changed before filling the saved login.");
+		}
 		return { tab, webContents, entry, origin: url.origin };
 	}
 
@@ -3827,6 +3628,7 @@ export class UserBrowserService {
 			fieldId?: string;
 			includeUsername?: boolean;
 			includePassword?: boolean;
+			onlyEmpty?: boolean;
 		},
 	): Promise<number> {
 		const response = await this.requestPasswordBridge(webContents, origin, {
@@ -3843,8 +3645,10 @@ export class UserBrowserService {
 			| { type: "scan" }
 			| {
 					type: "fill";
-					username: string;
-					password: string;
+					username?: string;
+					password?: string;
+					profile?: AutofillProfile;
+					onlyEmpty?: boolean;
 					fieldId?: string;
 					includeUsername?: boolean;
 					includePassword?: boolean;
@@ -3951,8 +3755,11 @@ export class UserBrowserService {
 			!this.paymentPrompt.entries.some((entry) => entry.id === id)
 		)
 			throw new Error("That payment suggestion is no longer available.");
+		const prompt = this.paymentPrompt;
 		const entry = await this.paymentCardVault.get(id);
 		if (!entry) throw new Error("That saved payment card is not available.");
+		if (this.disposed || this.state.activeTabId !== tab.id || this.paymentPrompt !== prompt || !liveWebContents(webContents) || webContents.getURL() !== url.toString())
+			throw new Error("The page changed before filling the saved card.");
 		return { tab, webContents, entry, origin: url.origin };
 	}
 
@@ -3960,7 +3767,7 @@ export class UserBrowserService {
 		webContents: WebContents,
 	): Promise<PaymentFormSnapshot> {
 		return parsePaymentFormSnapshot(
-			await webContents.executeJavaScript(PAYMENT_FORM_SCAN_SCRIPT),
+			await webContents.executeJavaScriptInIsolatedWorld(PAYMENT_AUTOFILL_WORLD_ID, [{ code: PAYMENT_FORM_SCAN_SCRIPT }]),
 		);
 	}
 
@@ -4137,12 +3944,9 @@ export class UserBrowserService {
 		)
 			return;
 		if (this.state.settings.neverSavePasswordOrigins.includes(pageUrl.origin)) return;
-		const suppressionKey = `${tab.id}:${pageUrl.origin}`;
-		if (
-			(this.passwordPromptSuppressedUntil.get(suppressionKey) ?? 0) >
-			this.now().getTime()
-		)
-			return;
+		// Fill-popup suppression must not swallow a quick sign-in or password
+		// correction immediately after choosing a saved login.
+		this.passwordPromptSuppressedUntil.delete(`${tab.id}:${pageUrl.origin}`);
 		// Keep only the most recent submission for this tab while the login page
 		// remains unconfirmed. This matters when a person corrects a failed
 		// password attempt: a later successful navigation must never save the
@@ -4171,6 +3975,7 @@ export class UserBrowserService {
 					width: 348,
 					height: Math.min(96, Math.max(1, pageHeight - 32)),
 				};
+		const submittedUsername = this.submittedUsernames.get(tab.id);
 		const loginFlow = this.loginFlows.readContext(tab.id);
 		const flowMatchesOrigin = loginFlow?.authOrigin === pageUrl.origin;
 		const flowUsername = flowMatchesOrigin
@@ -4186,6 +3991,7 @@ export class UserBrowserService {
 			title: hostnameTitle(pageUrl.toString()),
 			username:
 				parsed.data.username.trim().slice(0, 500) ||
+					(submittedUsername?.origin === pageUrl.origin && this.now().getTime() - submittedUsername.at < 120_000 ? submittedUsername.username : "") ||
 					flowUsername ||
 					"",
 			password: parsed.data.password,
@@ -4194,6 +4000,10 @@ export class UserBrowserService {
 			...(flowInitiatingOrigin ? { flowInitiatingOrigin } : {}),
 			anchor,
 		};
+		this.passwordSaveExpiryTimer = setTimeout(() => {
+			this.clearPasswordPrompt();
+		}, 300_000);
+		this.passwordSaveExpiryTimer.unref?.();
 	}
 
 	private async maybeOfferPasswordSaveAfterNavigation(
@@ -4210,10 +4020,9 @@ export class UserBrowserService {
 			pending.tabId !== tab.id ||
 			!url ||
 			url.protocol !== "https:" ||
-			url.toString() === pending.submittedUrl ||
-			this.now().getTime() - pending.submittedAt > 30_000
+			this.now().getTime() - pending.submittedAt > 300_000
 		) {
-			if (pending && this.now().getTime() - pending.submittedAt > 30_000)
+			if (pending && this.now().getTime() - pending.submittedAt > 300_000)
 				this.discardPendingPasswordSave();
 			return;
 		}
@@ -4221,6 +4030,7 @@ export class UserBrowserService {
 			this.discardPendingPasswordSave();
 			return;
 		}
+		if (pending.confirmedAt) return;
 		const expectedLoginDestination =
 			url.origin === pending.origin ||
 			(pending.flowInitiatingOrigin !== undefined &&
@@ -4236,13 +4046,47 @@ export class UserBrowserService {
 			const snapshot = await this.readPasswordFormSnapshot(webContents, url.origin);
 			// A destination that still contains a current-password field usually
 			// signals an unsuccessful login. Do not offer to save in that case.
-			if (snapshot.fields.some((field) => field.kind === "password")) return;
+			if (snapshot.hasPasswordControls || snapshot.fields.some((field) => field.kind === "password" || field.kind === "new-password" || field.kind === "secret")) {
+				delete pending.formAbsentSince;
+				return;
+			}
+			// Same-document forms can briefly disappear during loading. Require a
+			// second observation after they have stayed absent before saving.
+			if (url.toString() === pending.submittedUrl && pending.formAbsentSince === undefined) {
+				pending.formAbsentSince = this.now().getTime();
+				const retry = setTimeout(() => {
+					if (!this.disposed && this.pendingPasswordSave === pending)
+						void this.maybeOfferPasswordSaveAfterNavigation(tab, webContents, navigationUrl);
+				}, 650);
+				retry.unref?.();
+				return;
+			}
+			if (url.toString() === pending.submittedUrl && this.now().getTime() - (pending.formAbsentSince ?? 0) < 600) return;
 			if (
 				this.pendingPasswordSave !== pending ||
 				safePageUrl(webContents.getURL())?.toString() !== url.toString()
 			)
 				return;
+			if (this.pendingPasswordSave !== pending || this.state.activeTabId !== tab.id || this.state.settings.offerToSavePasswords === false) return;
 			const entries = (await this.passwordVault?.listForOrigin(pending.origin) ?? []).slice(0, 24);
+			if (this.pendingPasswordSave !== pending || pending.confirmedAt || this.disposed || this.state.activeTabId !== tab.id || safePageUrl(webContents.getURL())?.toString() !== url.toString()) return;
+			// A normal return visit must not keep asking to save the same password.
+			// Compare only inside the protected main process; no password or comparison
+			// token is sent to the suggestion renderer.
+			const existing = entries.find((entry) => entry.username === pending.username);
+			if (existing) {
+				const saved = await this.passwordVault?.getForOrigin(existing.id, pending.origin);
+				try {
+					if (this.pendingPasswordSave !== pending || pending.confirmedAt || this.disposed || this.state.activeTabId !== tab.id || safePageUrl(webContents.getURL())?.toString() !== url.toString()) return;
+					if (saved?.password === pending.password) {
+						void this.markPasswordUsed(existing.id, pending.origin);
+						this.clearPasswordPrompt();
+						return;
+					}
+				} finally {
+					if (saved) discardPasswordEntry(saved);
+				}
+			}
 			pending.confirmedUrl = url.toString();
 			pending.confirmedAt = this.now().getTime();
 			this.setPasswordPrompt(
@@ -4257,6 +4101,8 @@ export class UserBrowserService {
 					anchor: pending.anchor,
 				}),
 			);
+			// Replacing an existing credential always gets an explicit Update prompt.
+			if (this.state.settings.autoSavePasswords && !existing && pending.username) await this.savePasswordSuggestion();
 		} catch {
 			// The destination may still be constructing its preload document. Its
 			// did-stop-loading event will make one more bounded attempt.
@@ -4290,34 +4136,21 @@ export class UserBrowserService {
 			this.clearPasswordPrompt();
 			return;
 		}
-		if (
-			this.pendingPasswordSave?.tabId === tab.id &&
-			!this.pendingPasswordSave.confirmedAt
-		)
-			return;
 		const suppressionKey = `${tab.id}:${url.origin}`;
 		if (
 			(this.passwordPromptSuppressedUntil.get(suppressionKey) ?? 0) >
 			this.now().getTime()
 		) {
-			this.clearPasswordPrompt();
+			this.clearPasswordPrompt({ preservePending: this.pendingPasswordSave?.tabId === tab.id });
 			return;
 		}
 		const automaticFillKey = `${tab.id}:${url.toString()}`;
-		if (
-			(this.passwordAutofilledUntil.get(automaticFillKey) ?? 0) >
-			this.now().getTime()
-		) {
-			this.clearPasswordPrompt();
-			return;
-		}
-		// A submitted credential is held only in the main process until the user
-		// explicitly confirms the save. Do not let the regular fill scan replace
-		// that confirmation while the page is still settling.
+		// Keep a confirmed save prompt stable while the protected write or the
+		// optional user confirmation is pending.
 		if (this.passwordPrompt?.mode === "save") {
 			if (
 				this.passwordPrompt.tabId === tab.id &&
-				this.passwordPrompt.origin === url.origin
+				this.pendingPasswordSave?.confirmedUrl === url.toString()
 			)
 				return;
 			this.clearPasswordPrompt();
@@ -4338,9 +4171,22 @@ export class UserBrowserService {
 				});
 				return;
 			}
+			const focusedProfile = snapshot.fields.find((field) => field.id === snapshot.focusedFieldId && field.kind === "profile");
+			if (focusedProfile && this.state.settings.autofillProfileEnabled && typeof this.passwordVault.getProfile === "function") {
+				const profile = await this.passwordVault.getProfile();
+				if (scanGeneration !== this.passwordPromptGeneration) return;
+				if (Object.keys(profile).length) {
+					this.setPasswordPrompt(PasswordPromptSchema.parse({
+						tabId: tab.id, origin: url.origin, title: "Saved form info", mode: "profile",
+						fields: snapshot.fields.filter((field) => field.kind === "profile"), focusedFieldId: focusedProfile.id,
+						entries: [], anchor: this.passwordPromptAnchor(snapshot, focusedProfile),
+					}));
+					return;
+				}
+			}
 			const credentialFields = snapshot.fields.filter(
 				(field) =>
-					field.kind === "username" ||
+					field.kind === "username" || (field.kind === "profile" && (field.autocomplete === "email" || field.type === "email")) ||
 					field.kind === "password" ||
 					field.kind === "new-password",
 			);
@@ -4401,14 +4247,15 @@ export class UserBrowserService {
 					? entries.find((entry) => entry.id === flow.selectedCredentialId)
 					: undefined;
 			const automaticEntry = selectedFlowEntry ?? (entries.length === 1 ? entries[0] : undefined);
-			if (automaticEntry) {
+			if (automaticEntry && !focused && (this.passwordAutofilledUntil.get(automaticFillKey) ?? 0) <= this.now().getTime()) {
 				const candidate = await this.passwordVault.getForOrigin(automaticEntry.id, url.origin);
 				if (candidate) {
 					try {
-						if (scanGeneration !== this.passwordPromptGeneration) return;
+						if (scanGeneration !== this.passwordPromptGeneration || this.state.activeTabId !== tab.id || webContents.getURL() !== url.toString()) return;
 						const filled = await this.fillPasswordFields(webContents, url.origin, {
 							username: candidate.username,
 							password: candidate.password,
+							onlyEmpty: true,
 							includeUsername: this.state.settings.autofillUsernames,
 							includePassword: this.state.settings.autofillPasswords,
 						});
@@ -4506,6 +4353,8 @@ export class UserBrowserService {
 	}
 
 	private discardPendingPasswordSave(): void {
+		if (this.passwordSaveExpiryTimer) clearTimeout(this.passwordSaveExpiryTimer);
+		this.passwordSaveExpiryTimer = undefined;
 		if (this.pendingPasswordSave) this.pendingPasswordSave.password = "";
 		this.pendingPasswordSave = undefined;
 	}
@@ -5330,6 +5179,7 @@ export class UserBrowserService {
 		if (this.paymentPollInterval) clearInterval(this.paymentPollInterval);
 		this.paymentPollInterval = undefined;
 		this.rejectPasswordBridgeRequests("The browser tab is no longer available.");
+		this.submittedUsernames.clear();
 		this.loginFlows.clearAll();
 		this.clearPasswordPrompt();
 		this.clearPaymentPrompt();
@@ -5789,6 +5639,20 @@ export class UserBrowserService {
 			};
 		});
 		webContents.on("ipc-message", (event, channel, ...args) => {
+			if (channel === "kestrel:user-browser-username-submission") {
+				const url = safePageUrl(webContents.getURL());
+				if (typeof args[0] === "string" && args[0].length <= 500 && event.senderFrame === webContents.mainFrame && url?.protocol === "https:" && safePageUrl(event.senderFrame.url)?.origin === url.origin && this.state.activeTabId === tab.id && this.state.settings.offerToSavePasswords)
+					this.submittedUsernames.set(tab.id, { origin: url.origin, username: args[0], at: this.now().getTime() });
+				return;
+			}
+			if (channel === "kestrel:user-browser-profile-submission") {
+				const profile = AutofillProfileSchema.safeParse(args[0]);
+				const url = safePageUrl(webContents.getURL());
+				if (profile.success && this.state.activeTabId === tab.id && event.senderFrame === webContents.mainFrame && url?.protocol === "https:" && safePageUrl(event.senderFrame.url)?.origin === url.origin && this.state.settings.autofillProfileEnabled && this.state.settings.autoSaveFormInfo && !this.state.settings.neverSavePasswordOrigins.includes(url.origin)) {
+					void this.passwordVault?.saveProfile(profile.data, true).catch(() => undefined);
+				}
+				return;
+			}
 			if (channel === PASSWORD_SUBMISSION_CHANNEL) {
 				void this.handlePasswordSubmission(tab, webContents, event, args[0]).catch(
 					() => undefined,
@@ -5803,6 +5667,7 @@ export class UserBrowserService {
 				channel === PASSWORD_FORM_CHANGED_CHANNEL &&
 				event.senderFrame === webContents.mainFrame
 			) {
+				void this.maybeOfferPasswordSaveAfterNavigation(tab, webContents, webContents.getURL());
 				void this.refreshPasswordPrompt(tab.id);
 			}
 			if (channel === HEIC_UPLOAD_CHANNEL)
@@ -6484,6 +6349,7 @@ export class UserBrowserService {
 
 	private closeView(tabId: string, closeWebContents = true): void {
 		if (tabId === this.state.activeTabId) this.clearPasswordPrompt();
+		this.submittedUsernames.delete(tabId);
 		this.loginFlows.clearTab(tabId);
 		const record = this.views.get(tabId);
 		if (!record) return;

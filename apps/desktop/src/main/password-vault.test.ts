@@ -36,10 +36,10 @@ function memoryStore(): CredentialStore {
 	};
 }
 
-function createVault() {
+function createVault(now: () => Date = () => new Date()) {
 	const root = mkdtempSync(join(tmpdir(), "kestrel-password-vault-"));
 	roots.push(root);
-	return { vault: new PasswordVault(testProtectedStore(root)), root };
+	return { vault: new PasswordVault(testProtectedStore(root), undefined, now), root };
 }
 
 describe("password vault", () => {
@@ -110,6 +110,97 @@ describe("password vault", () => {
 		expect(
 			await vault.getForOrigin(first[0]!.id, "https://example.test"),
 		).toMatchObject({ password: "second-password" });
+	});
+
+	it("updates a saved login without changing its identity or exposing its password in summaries", async () => {
+		let now = new Date("2026-01-01T00:00:00.000Z");
+		const { vault } = createVault(() => now);
+		const [saved] = await vault.save({
+			origin: "https://accounts.example.test/login",
+			title: "Accounts",
+			username: "before@example.test",
+			password: "before-secret",
+		});
+		now = new Date("2026-01-02T00:00:00.000Z");
+
+		const summaries = await vault.update(
+			saved!.id,
+			"after@example.test",
+			"after-secret",
+		);
+		const [updated] = summaries;
+
+		expect(updated).toMatchObject({
+			id: saved!.id,
+			origin: "https://accounts.example.test",
+			username: "after@example.test",
+			createdAt: saved!.createdAt,
+			updatedAt: "2026-01-02T00:00:00.000Z",
+		});
+		expect(updated).not.toHaveProperty("password");
+		expect(
+			await vault.getForOrigin(saved!.id, "https://accounts.example.test"),
+		).toMatchObject({ password: "after-secret" });
+	});
+
+	it("keeps the current password when an update supplies only a username", async () => {
+		const { vault } = createVault();
+		const [saved] = await vault.save({
+			origin: "https://accounts.example.test",
+			username: "before",
+			password: "unchanged-secret",
+		});
+
+		const summaries = await vault.update(saved!.id, "after");
+		expect(summaries[0]).toMatchObject({ id: saved!.id, username: "after" });
+		expect(summaries[0]).not.toHaveProperty("password");
+		expect(
+			await vault.getForOrigin(saved!.id, "https://accounts.example.test"),
+		).toMatchObject({ password: "unchanged-secret" });
+	});
+
+	it("rejects colliding and stale login updates without changing the vault", async () => {
+		const { vault } = createVault();
+		const [first] = await vault.save({
+			origin: "https://accounts.example.test",
+			username: "first",
+			password: "first-secret",
+		});
+		const added = await vault.save({
+			origin: "https://accounts.example.test",
+			username: "second",
+			password: "second-secret",
+		});
+		const second = added.find((entry) => entry.username === "second")!;
+
+		await expect(vault.update(first!.id, "second")).rejects.toThrow(
+			"already exists",
+		);
+		await expect(
+			vault.update("password-00000000-0000-4000-8000-000000000000", "stale"),
+		).rejects.toThrow("no longer exists");
+		expect(await vault.list()).toEqual(expect.arrayContaining([
+			expect.objectContaining({ id: first!.id, username: "first" }),
+			expect.objectContaining({ id: second!.id, username: "second" }),
+		]));
+	});
+
+	it("rejects invalid replacement passwords without changing the stored login", async () => {
+		const { vault } = createVault();
+		const [saved] = await vault.save({
+			origin: "https://accounts.example.test",
+			username: "person",
+			password: "original-secret",
+		});
+
+		for (const password of ["", "contains\0nul", "x".repeat(4_097)]) {
+			await expect(vault.update(saved!.id, "changed", password)).rejects.toThrow(
+				"Passwords must be between 1 and 4,096 characters.",
+			);
+			expect(
+				await vault.getForOrigin(saved!.id, "https://accounts.example.test"),
+			).toMatchObject({ username: "person", password: "original-secret" });
+		}
 	});
 
 	it("persists through a vault restart without returning a secret from list metadata", async () => {
@@ -196,4 +287,18 @@ describe("password vault", () => {
 			),
 		).toThrow();
 	});
+});
+
+describe("protected form profile", () => {
+ it("persists encrypted profile info, merges serially, and clears without deleting passwords", async () => {
+  const {vault,root} = createVault();
+  await vault.save({origin:"https://example.test",username:"fixture",password:"fixture-secret"});
+  await Promise.all([vault.saveProfile({name:"Fixture Person"},true),vault.saveProfile({bday:"2000-02-03"},true)]);
+  expect(await vault.getProfile()).toEqual({name:"Fixture Person",bday:"2000-02-03"});
+  expect(readFileSync(join(root,"secure","passwords","browser-autofill-profile.bin"),"utf8")).not.toContain("Fixture Person");
+  await expect(vault.saveProfile({password:"never-store"} as never)).rejects.toThrow();
+  await vault.saveProfile({});
+  expect(await vault.getProfile()).toEqual({});
+  expect(await vault.list()).toHaveLength(1);
+ });
 });

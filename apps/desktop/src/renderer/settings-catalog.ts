@@ -377,9 +377,9 @@ export const SETTINGS_CATALOG: readonly SettingSearchEntry[] = [
 		section: "browser-autofill",
 		scope: "browser",
 		tier: "basic",
-		label: "Password autofill and save prompts",
+		label: "Passwords and personal info autofill",
 		description: "Manage password autofill and save prompts.",
-		keywords: ["password", "login", "autofill", "credential"],
+		keywords: ["password", "login", "autofill", "credential", "address", "birthday", "name", "phone", "email"],
 		anchor: "setting-browser-password-autofill",
 	},
 	{

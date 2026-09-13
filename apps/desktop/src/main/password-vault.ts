@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
+	AutofillProfileSchema,
+	type AutofillProfile,
 	PasswordEntrySchema,
 	PasswordEntrySummarySchema,
 	type PasswordEntry,
@@ -23,6 +25,7 @@ export interface SavePasswordInput {
 	title?: string;
 	username: string;
 	password: string;
+	rejectExisting?: boolean;
 }
 
 function normalizedOrigin(value: string): string {
@@ -95,6 +98,25 @@ export class PasswordVault {
 		private readonly now: () => Date = () => new Date(),
 	) {}
 
+	async getProfile(): Promise<AutofillProfile> {
+		await this.mutationQueue;
+		const raw = await this.store.read("browser-autofill-profile");
+		return raw ? AutofillProfileSchema.parse(JSON.parse(raw)) : {};
+	}
+
+	async saveProfile(profile: AutofillProfile, merge = false): Promise<AutofillProfile> {
+		return this.mutate(async () => {
+			const raw = merge ? await this.store.read("browser-autofill-profile") : undefined;
+			const previous = raw ? AutofillProfileSchema.parse(JSON.parse(raw)) : {};
+			const next = AutofillProfileSchema.parse({ ...previous, ...profile });
+			for (const key of Object.keys(next) as (keyof AutofillProfile)[])
+				if (!next[key]?.trim()) delete next[key];
+			if (Object.keys(next).length) await this.store.write("browser-autofill-profile", JSON.stringify(next));
+			else await this.store.remove("browser-autofill-profile");
+			return next;
+		});
+	}
+
 	async list(): Promise<PasswordEntrySummary[]> {
 		await this.mutationQueue;
 		const entries = await this.loadEntries();
@@ -165,6 +187,8 @@ export class PasswordVault {
 				const existing = entries.find(
 					(entry) => entry.origin === origin && entry.username === username,
 				);
+				if (existing && input.rejectExisting)
+					throw new Error("This login is already saved. Edit the existing login to change its password.");
 				const next = PasswordEntrySchema.parse({
 					id: existing?.id ?? `password-${randomUUID()}`,
 					origin,
@@ -193,10 +217,20 @@ export class PasswordVault {
 		id: PasswordEntryId,
 		username: string,
 	): Promise<PasswordEntrySummary[]> {
+		return this.update(id, username);
+	}
+
+	async update(
+		id: PasswordEntryId,
+		username: string,
+		password?: string,
+	): Promise<PasswordEntrySummary[]> {
 		return this.mutate(async () => {
 			const normalizedUsername = username.trim();
 			if (normalizedUsername.length > 500)
 				throw new Error("Usernames must be 500 characters or fewer.");
+			if (password !== undefined && (!password || password.length > 4096 || password.includes("\0")))
+				throw new Error("Passwords must be between 1 and 4,096 characters.");
 			const entries = await this.loadEntries();
 			let nextEntries: PasswordEntry[] | undefined;
 			try {
@@ -216,6 +250,7 @@ export class PasswordVault {
 				const updated = PasswordEntrySchema.parse({
 					...existing,
 					username: normalizedUsername,
+					...(password !== undefined ? { password } : {}),
 					updatedAt: this.now().toISOString(),
 				});
 				nextEntries = entries.map((entry) =>
