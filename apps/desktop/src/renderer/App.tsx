@@ -3898,6 +3898,7 @@ function RuntimeConversation({
 		const prompt = (promptOverride ?? input).trim();
 		if (!prompt) return;
 		const runChoice = draft?.modelChoice ?? modelChoice;
+		const runApprovalPolicy = draft?.approvalPolicy ?? "auto";
 		const runWorkspace = draft ? (draft.workspaceRoot ?? "") : workspace;
 		const runProjectId = draft ? (draft.projectId ?? null) : newAgentProjectId;
 		const runAttachments = draft?.attachments ?? promptAttachments;
@@ -3958,8 +3959,9 @@ function RuntimeConversation({
 					...(runProjectId
 						? { projectId: runProjectId }
 						: runWorkspace
-						? { workspaceRoot: runWorkspace }
+							? { workspaceRoot: runWorkspace }
 							: {}),
+					approvalPolicy: runApprovalPolicy,
 				})) as CoreResponse;
 				if (!created.ok || !created.session)
 					throw new Error(

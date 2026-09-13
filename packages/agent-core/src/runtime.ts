@@ -674,6 +674,7 @@ export class AgentRuntime extends EventEmitter {
 		allowedTools?: string[];
 		privacyMode?: RuntimeSession["privacyMode"];
 		planetAssetId?: RuntimeSession["planetAssetId"];
+		approvalPolicy?: RuntimeSession["approvalPolicy"];
 	}): RuntimeSession {
 		if (input.kind === "agent" && input.parentSessionId)
 			throw new Error("A persistent agent must be a top-level session.");
@@ -720,6 +721,9 @@ export class AgentRuntime extends EventEmitter {
 			...(project ? { projectId: project.id } : {}),
 			...(workspaceRoot ? { workspaceRoot } : {}),
 			...(inheritedPrivacyMode ? { privacyMode: inheritedPrivacyMode } : {}),
+			...(input.approvalPolicy ?? parent?.approvalPolicy
+				? { approvalPolicy: input.approvalPolicy ?? parent?.approvalPolicy }
+				: {}),
 			allowedTools,
 			status: "active",
 			checkpoints: [],
@@ -1982,8 +1986,12 @@ export class AgentRuntime extends EventEmitter {
 		const alwaysRequireApproval =
 			definition.descriptor.approvalMode === "always" ||
 			configuredPolicy.requireApproval === true;
+		const sessionApprovalPolicy = session.approvalPolicy ?? "auto";
+		const requiresExplicitApproval =
+			alwaysRequireApproval ||
+			(sessionApprovalPolicy === "ask" && !definition.descriptor.readOnly);
 		const oneTimeApprovalGrant =
-			options.approvalStatus === "approved" && alwaysRequireApproval
+			options.approvalStatus === "approved" && requiresExplicitApproval
 				? this.validOneTimeApprovalGrant(
 						session.id,
 						toolName,
@@ -1993,9 +2001,9 @@ export class AgentRuntime extends EventEmitter {
 				: undefined;
 		const oneTimeApprovalValid =
 			options.approvalStatus === "approved" &&
-			(!alwaysRequireApproval || Boolean(oneTimeApprovalGrant));
+			(!requiresExplicitApproval || Boolean(oneTimeApprovalGrant));
 		const effectiveRisk =
-			alwaysRequireApproval &&
+			requiresExplicitApproval &&
 			(definition.descriptor.riskLevel === "read_only" ||
 				definition.descriptor.riskLevel === "low")
 				? "sensitive"
@@ -2022,11 +2030,13 @@ export class AgentRuntime extends EventEmitter {
 					}
 				: mayExecute({
 						risk: effectiveRisk,
-						...(alwaysRequireApproval
+						...(requiresExplicitApproval
 							? oneTimeApprovalValid
 								? { approvalStatus: "approved" }
 								: {}
-							: approvalRule?.decision === "allow"
+							: sessionApprovalPolicy === "full_access"
+								? { approvalStatus: "approved" }
+								: approvalRule?.decision === "allow"
 								? { approvalStatus: "approved" }
 								: options.approvalStatus
 									? { approvalStatus: options.approvalStatus }
@@ -2038,7 +2048,7 @@ export class AgentRuntime extends EventEmitter {
 		if (!policy.allowed && policy.approvalRequired && configuredPolicy.reason)
 			policy.reason = configuredPolicy.reason;
 		const receiptApprovalRequired =
-			alwaysRequireApproval ||
+			requiresExplicitApproval ||
 			effectiveRisk === "external" ||
 			effectiveRisk === "sensitive" ||
 			effectiveRisk === "high_consequence";
@@ -2083,7 +2093,7 @@ export class AgentRuntime extends EventEmitter {
 							preview: this.approvalPreview(session, toolName, input),
 							approvalRequired: policy.approvalRequired,
 							persistentApprovalAllowed:
-								!options.executionBlock && !alwaysRequireApproval,
+								!options.executionBlock && !requiresExplicitApproval,
 						},
 					}
 				: {}),
