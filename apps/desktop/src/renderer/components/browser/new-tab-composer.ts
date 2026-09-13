@@ -1,4 +1,4 @@
-import type { SelectedAttachment } from "@kestrel/shared-types";
+import type { RuntimeApprovalPolicy, SelectedAttachment } from "@kestrel/shared-types";
 import type { ModelSelectorChoice } from "./model-selector";
 
 export type NewTabComposerDraft = {
@@ -6,5 +6,6 @@ export type NewTabComposerDraft = {
 	workspaceRoot?: string;
 	projectId?: string;
 	modelChoice: ModelSelectorChoice;
+	approvalPolicy: RuntimeApprovalPolicy;
 	attachments: SelectedAttachment[];
 };

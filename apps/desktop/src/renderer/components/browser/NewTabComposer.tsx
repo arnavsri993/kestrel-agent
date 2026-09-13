@@ -1,4 +1,4 @@
-import type { Project, ProviderAccountSummary, SelectedAttachment } from "@kestrel/shared-types";
+import type { Project, ProviderAccountSummary, RuntimeApprovalPolicy, SelectedAttachment } from "@kestrel/shared-types";
 import { useEffect, useRef, useState, type ClipboardEvent, type FormEvent } from "react";
 import { Icon } from "../Icon";
 import { ModelSelector } from "./ModelSelector";
@@ -29,6 +29,10 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	const [input, setInput] = useState("");
 	const [expanded, setExpanded] = useState(false);
 	const [accessOpen, setAccessOpen] = useState(false);
+	const [approvalPolicy, setApprovalPolicy] = useState<RuntimeApprovalPolicy>(() => {
+		const saved = localStorage.getItem("kestrel:approval-policy");
+		return saved === "ask" || saved === "full_access" ? saved : "auto";
+	});
 	const [workspaceRoot, setWorkspaceRoot] = useState("");
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [accounts, setAccounts] = useState<ProviderAccountSummary[]>([]);
@@ -45,6 +49,7 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	const availableProjects = projects.filter((project) => project.available !== false);
 	const selectedProject = availableProjects.find((project) => project.path === workspaceRoot);
 	const canSend = Boolean(input.trim() || attachments.length);
+	const approvalLabel = approvalPolicy === "ask" ? "Ask for approval" : approvalPolicy === "full_access" ? "Full access" : "Approve for me";
 
 	useEffect(() => {
 		let active = true;
@@ -95,6 +100,12 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 		else localStorage.removeItem("kestrel:provider-account-id");
 		if (next.model.trim()) localStorage.setItem("kestrel:model", next.model.trim());
 		localStorage.setItem("kestrel:reasoning-effort", next.reasoningEffort);
+	}
+
+	function applyApprovalPolicy(next: RuntimeApprovalPolicy) {
+		setApprovalPolicy(next);
+		localStorage.setItem("kestrel:approval-policy", next);
+		setAccessOpen(false);
 	}
 
 	async function chooseProject(): Promise<string | undefined> {
@@ -158,7 +169,7 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 			setInput("");
 			return;
 		}
-		const accepted = onSubmitDraft({ prompt, ...(workspaceRoot ? { workspaceRoot } : {}), ...(selectedProject ? { projectId: selectedProject.id } : {}), modelChoice: choice, attachments });
+		const accepted = onSubmitDraft({ prompt, ...(workspaceRoot ? { workspaceRoot } : {}), ...(selectedProject ? { projectId: selectedProject.id } : {}), modelChoice: choice, approvalPolicy, attachments });
 		if (!accepted) {
 			setError("Finish or stop the active task before starting this one.");
 			return;
@@ -231,16 +242,16 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 			<div className="new-tab-composer-footer" inert={isExpanded ? undefined : true} aria-hidden={!isExpanded}>
 				<div className="new-tab-composer-actions">
 					<button type="button" className="new-tab-composer-icon" aria-label="Add files" title={workspaceRoot ? "Add files from this project" : "Choose a project to add files"} disabled={busy} onClick={() => void addFiles()}><Icon name="plus" /></button>
-					<div className="new-tab-access" ref={accessRef}>
-						<button type="button" className="new-tab-access-trigger" aria-haspopup="menu" aria-expanded={accessOpen} onClick={() => setAccessOpen((current) => !current)}><Icon name="lock" /><span>{selectedProject?.name ?? "Conversation only"}</span><Icon name="chevron" /></button>
-						{accessOpen && <div className="new-tab-access-menu" role="menu" aria-label="Task access" onKeyDown={(event) => {
+					<div className={`new-tab-access${approvalPolicy === "full_access" ? " is-full-access" : ""}`} ref={accessRef}>
+						<button type="button" className="new-tab-access-trigger" aria-haspopup="menu" aria-expanded={accessOpen} aria-label={`Approval policy: ${approvalLabel}`} onClick={() => setAccessOpen((current) => !current)}><Icon name={approvalPolicy === "full_access" ? "shield" : "lock"} /><span>{approvalLabel}</span><Icon name="chevron" /></button>
+						{accessOpen && <div className="new-tab-access-menu" role="menu" aria-label="Approval policy" onKeyDown={(event) => {
                             if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
                             event.preventDefault();
                             const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button")];
                             const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
                             const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
                             buttons[next]?.focus();
-                        }}><button type="button" role="menuitemradio" aria-checked={!workspaceRoot} onClick={() => { setWorkspaceRoot(""); setAttachments([]); setAccessOpen(false); }}>Conversation only <small>No project files or workspace tools</small></button>{availableProjects.map((project) => <button type="button" role="menuitemradio" aria-checked={workspaceRoot === project.path} key={project.id} onClick={() => { setWorkspaceRoot(project.path); setAttachments([]); setAccessOpen(false); }}>{project.name}<small>Use files and tools in this project</small></button>)}<button type="button" role="menuitem" onClick={() => void chooseProject()}>Choose project folder…</button></div>}
+						}}><div className="new-tab-access-heading">How should Kestrel actions be approved?</div><button type="button" role="menuitemradio" aria-checked={approvalPolicy === "ask"} onClick={() => applyApprovalPolicy("ask")}>Ask for approval<small>Ask before every action that changes data</small></button><button type="button" role="menuitemradio" aria-checked={approvalPolicy === "auto"} onClick={() => applyApprovalPolicy("auto")}>Approve for me<small>Only ask for sensitive or external actions</small></button><button type="button" className="new-tab-access-full" role="menuitemradio" aria-checked={approvalPolicy === "full_access"} onClick={() => applyApprovalPolicy("full_access")}>Full access<small>Skip routine prompts; hard safety boundaries still apply</small></button></div>}
 					</div>
 				</div>
 				<div className="new-tab-composer-send-actions"><ModelSelector accounts={accounts} choice={choice} onChange={applyChoice} /><button type="button" className={`new-tab-composer-icon${voiceState === "recording" ? " is-recording" : ""}`} aria-label={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} title={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} disabled={busy || voiceState === "transcribing"} onClick={() => voiceState === "recording" ? recorderRef.current?.stop() : void startVoice()}><Icon name="voice" /></button><button type="submit" className="kestrel-home-send" aria-label={`Send message to ${agentName}`} title={`Send message to ${agentName}`} disabled={!canSend || busy || voiceState !== "idle"}><Icon name="arrow" /></button></div>

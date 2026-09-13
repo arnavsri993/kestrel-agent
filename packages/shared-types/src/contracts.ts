@@ -955,6 +955,13 @@ export const RuntimeCheckpointSchema = z.object({
 });
 export type RuntimeCheckpoint = z.infer<typeof RuntimeCheckpointSchema>;
 
+export const RuntimeApprovalPolicySchema = z.enum([
+	"ask",
+	"auto",
+	"full_access",
+]);
+export type RuntimeApprovalPolicy = z.infer<typeof RuntimeApprovalPolicySchema>;
+
 export const RuntimeSessionSchema = z.object({
 	id: z.string().min(1),
 	title: z.string().min(1).max(200),
@@ -969,6 +976,8 @@ export const RuntimeSessionSchema = z.object({
 	/** Standard conversations are locally searchable. Private and incognito
 	 * conversations are deliberately excluded from the local transcript index. */
 	privacyMode: z.enum(["standard", "private", "incognito"]).optional(),
+	/** Per-session approval posture. Missing legacy values retain the safe automatic policy. */
+	approvalPolicy: RuntimeApprovalPolicySchema.optional(),
 	forgottenAt: z.string().datetime().optional(),
 	allowedTools: z.array(z.string().min(1)),
 	status: RuntimeSessionStatusSchema,
@@ -2685,6 +2694,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		projectId: z.string().min(1).optional(),
 		workspaceRoot: z.string().min(1).optional(),
 		privacyMode: z.enum(["standard", "private", "incognito"]).optional(),
+		approvalPolicy: RuntimeApprovalPolicySchema.optional(),
 	}),
 	z.object({
 		type: z.literal("runtime-update-agent-planet"),

@@ -2264,6 +2264,9 @@ export class AgentCore {
 						...(request.privacyMode
 							? { privacyMode: request.privacyMode }
 							: {}),
+						...(request.approvalPolicy
+							? { approvalPolicy: request.approvalPolicy }
+							: {}),
 					});
 					this.pluginMcpManager?.attachSession(session.id);
 					return { ok: true, session };

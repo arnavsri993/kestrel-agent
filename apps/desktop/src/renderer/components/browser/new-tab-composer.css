@@ -66,6 +66,7 @@
 .new-tab-access-trigger { gap: 6px; max-width: 190px; font-size: 12px; }
 .new-tab-access-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .new-tab-access-trigger svg:last-child { width: 12px; height: 12px; }
+.new-tab-access.is-full-access .new-tab-access-trigger { color: var(--warning, #f08345); }
 .new-tab-access-menu {
 	position: absolute;
 	z-index: 20;
@@ -82,6 +83,8 @@
 }
 .new-tab-access-menu button { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .new-tab-access-menu button:hover, .new-tab-access-menu button[aria-checked="true"] { background: var(--surface-strong); }
+.new-tab-access-heading { padding: 7px 10px 8px; color: var(--muted); font-size: 12px; }
+.new-tab-access-menu .new-tab-access-full { color: var(--warning, #f08345); }
 .new-tab-access-menu small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
 .new-tab-composer-attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 6px 8px; }
 .new-tab-composer-attachments button { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-strong); color: var(--ink); font-size: 12px; cursor: pointer; }
