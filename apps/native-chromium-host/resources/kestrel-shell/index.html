@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kestrel native Chromium host</title>
+    <style>
+      :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #121416; }
+      body { align-items: center; background: radial-gradient(circle at 18% 8%, #27323d, transparent 36%), #121416; color: #f3f5f6; display: flex; margin: 0; min-height: 100vh; }
+      main { margin: auto; max-width: 43rem; padding: 3rem; }
+      h1 { font-size: clamp(2rem, 7vw, 4rem); letter-spacing: -.05em; margin: 0 0 1rem; }
+      p { color: #b7c1cb; font-size: 1.08rem; line-height: 1.6; }
+      code { background: #1c2228; border: 1px solid #323c47; border-radius: .45rem; color: #d6e9ff; padding: .15rem .38rem; }
+      [role=status] { color: #83e6b8; font-weight: 650; margin-top: 1.6rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Kestrel, native Chromium</h1>
+      <p>This is the production-host foundation: a native macOS app embedding CEF's Chromium browser process, renderer, GPU, network, and utility helpers.</p>
+      <p>It deliberately does not open or rewrite the existing Electron profile. The bundled renderer now reaches the native host through a local-only CEF bridge; Core, browser, and profile transports still migrate independently.</p>
+      <p id="bridge-status" role="status">Establishing the native Chromium bridge…</p>
+    </main>
+    <script>
+      const status = document.getElementById("bridge-status");
+      window.kestrel
+        .request({ type: "native-host-status" })
+        .then(async (result) => {
+          if (!result.ok) throw new Error("The native bridge rejected its status check.");
+          const snapshot = await window.kestrel.request({ type: "snapshot" });
+          if (!snapshot.ok || !snapshot.snapshot)
+            throw new Error("The native Core relay rejected its snapshot.");
+          const nativeBrowserSmoke = new URLSearchParams(location.search).get(
+            "native-browser-smoke",
+          );
+          if (nativeBrowserSmoke) {
+            const browser = await window.kestrel.request({
+              type: "browser-create-tab",
+              input: nativeBrowserSmoke,
+              active: true,
+            });
+            if (!browser.ok || !("browserState" in browser))
+              throw new Error("The native browser bridge rejected its smoke tab.");
+            const visible = await window.kestrel.request({
+              type: "browser-set-content-bounds",
+              bounds: { x: 0, y: 0, width: 1180, height: 780 },
+              visible: true,
+            });
+            if (!visible.ok)
+              throw new Error("The native browser bridge rejected its content bounds.");
+            document.body.dataset.kestrelNativeBrowser = "ready";
+          }
+          document.body.dataset.kestrelNativeBridge = "ready";
+          status.textContent = "Native Chromium bridge and Core ready";
+        })
+        .catch(() => {
+          document.body.dataset.kestrelNativeBridge = "failed";
+          status.textContent = "Native Chromium bridge could not start";
+        });
+    </script>
+  </body>
+</html>

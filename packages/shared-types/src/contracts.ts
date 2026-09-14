@@ -5057,6 +5057,8 @@ export const LocalRuntimeStatusSchema = z.object({
 	localModels: z.array(LocalModelSummarySchema),
 	verifiedModel: z.string().min(1).max(200).optional(),
 	verifiedAt: z.string().datetime().optional(),
+	/** A host can explicitly defer local-runtime ownership without pretending it is a device limitation. */
+	unavailableReason: z.string().min(1).max(2_000).optional(),
 });
 export type LocalRuntimeStatus = z.infer<typeof LocalRuntimeStatusSchema>;
 

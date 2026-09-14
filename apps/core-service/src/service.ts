@@ -476,9 +476,19 @@ export function startCoreService(port: CoreParentPort): void {
 			return;
 		}
 		if (message.type === "request" && message.requestId) {
-			const response = core
-				? await core.handle(CoreRequestSchema.parse(message.request))
-				: { ok: false as const, error: "Agent Core is not initialized." };
+			// Electron's IPC handler validated renderer requests before this
+			// process. Native hosts have a separate, authenticated bridge, so
+			// treat every request at this boundary as untrusted. An unsupported
+			// host request must receive a typed rejection, never terminate Core.
+			const request = CoreRequestSchema.safeParse(message.request);
+			const response = !request.success
+				? {
+						ok: false as const,
+						error: "Agent Core rejected an unsupported request.",
+					}
+				: core
+					? await core.handle(request.data)
+					: { ok: false as const, error: "Agent Core is not initialized." };
 			port.postMessage({ requestId: message.requestId, response });
 			return;
 		}
