@@ -129,6 +129,7 @@ try {
 	await page.setViewportSize({ width: 1320, height: 860 });
 	await openKestrelDestination(page, "Settings");
 	await selectSettingsSection(page, "connections", "Connections");
+	await page.locator("summary").filter({ hasText: "Model provider · ChatGPT" }).click();
 	const chatGptConnection = page
 		.locator(".oauth-connection")
 		.filter({ has: page.getByText("ChatGPT", { exact: true }) });
