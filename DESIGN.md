@@ -1,3 +1,16 @@
+## Tab previews and password tools — September 13, 2026
+
+Preserve the existing compact macOS system type and neutral glass. An inactive
+ tab opens a small native preview under its tab, with the last local snapshot,
+ title, and host. Only active resources appear as icons with hover descriptions;
+ measured memory estimates appear only while sleeping. No invented savings or
+ permission-granted-as-current-use indicators. Native overlays preserve the
+ running page beneath them. Password suggestions attach to toolbar Tools, retain
+ protected main-process comparisons, and use short save/update actions.
+Snapshots stay in a bounded in-memory cache and are invalidated on navigation.
+Verify playing muted video, ongoing transfers/work, capture, edits, idle sleep,
+ navigation freshness, hover dismissal, icon tooltips, and unchanged passwords.
+
 # New Tab glass refinement — September 2026
 
 This section supersedes the older Home shelf and square-control guidance below.
