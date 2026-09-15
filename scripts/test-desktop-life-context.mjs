@@ -134,10 +134,10 @@ try {
 	await page.reload();
 
 	await page.setViewportSize({ width: 1320, height: 900 });
-	await openKestrelDestination(page, "Life Context");
+	await openKestrelDestination(page, "Memory");
 	const life = page.locator(".life-product-surface");
 	await life
-		.getByRole("heading", { name: "Life", exact: true })
+		.getByRole("heading", { name: "Memory", exact: true })
 		.waitFor();
 
 	await life.getByText("Deep work · Kestrel", { exact: true }).waitFor();

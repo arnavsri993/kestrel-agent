@@ -7,6 +7,13 @@ export * from "./browser-tab-organization";
 export * from "./identity";
 export * from "./memory-capture";
 export * from "./memory-architecture";
+export * from "./memory-recovery";
 export * from "./memory-recall-receipt";
 export * from "./new-tab-greeting";
 export * from "./writing";
+
+export * from "./agent-templates";
+
+export * from "./resource-access";
+
+export * from "./source-observations";

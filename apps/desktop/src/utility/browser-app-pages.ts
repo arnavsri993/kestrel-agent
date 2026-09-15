@@ -9,7 +9,8 @@ export const KESTREL_APP_PAGES = {
 	projects: "Projects",
 	readiness: "Readiness",
 	approvals: "Approvals",
-	memory: "Life",
+	memory: "Memory",
+	connections: "Connections",
 	research: "Research",
 	artifacts: "Artifacts",
 	work: "Work",
@@ -21,6 +22,7 @@ export const KESTREL_APP_PAGES = {
 export type KestrelAppPageId = keyof typeof KESTREL_APP_PAGES;
 
 export interface KestrelAppPage {
+	scopeSessionId?: string;
 	id: KestrelAppPageId;
 	url: string;
 	title: string;
@@ -35,8 +37,10 @@ export function isKestrelAppPageId(value: string): value is KestrelAppPageId {
 	return Object.hasOwn(KESTREL_APP_PAGES, value);
 }
 
-export function kestrelAppPageUrl(id: KestrelAppPageId): string {
-	return `kestrel://${id}`;
+export function kestrelAppPageUrl(id: KestrelAppPageId, scopeSessionId?: string): string {
+	if (scopeSessionId && (id !== "memory" && id !== "connections" || !/^session-[a-zA-Z0-9-]{1,160}$/.test(scopeSessionId)))
+		throw new Error("Invalid app page scope.");
+	return `kestrel://${id}${scopeSessionId ? `?scope=${encodeURIComponent(scopeSessionId)}` : ""}`;
 }
 
 export function parseKestrelAppPage(value: string): KestrelAppPage | undefined {
@@ -48,15 +52,19 @@ export function parseKestrelAppPage(value: string): KestrelAppPage | undefined {
 			url.username ||
 			url.password ||
 			url.port ||
-			url.search ||
 			url.hash ||
 			(url.pathname !== "" && url.pathname !== "/")
 		)
 			return undefined;
 		if (!isKestrelAppPageId(url.hostname)) return undefined;
+		const scopeSessionId = url.searchParams.get("scope") ?? undefined;
+		if (url.search && (!scopeSessionId || [...url.searchParams.keys()].length !== 1 ||
+			(url.hostname !== "memory" && url.hostname !== "connections") ||
+			!/^session-[a-zA-Z0-9-]{1,160}$/.test(scopeSessionId))) return undefined;
 		return {
 			id: url.hostname,
-			url: kestrelAppPageUrl(url.hostname),
+			url: kestrelAppPageUrl(url.hostname, scopeSessionId),
+			...(scopeSessionId ? { scopeSessionId } : {}),
 			title: KESTREL_APP_PAGES[url.hostname],
 		};
 	} catch {

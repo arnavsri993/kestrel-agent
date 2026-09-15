@@ -1,3 +1,7 @@
+import { SourceSelectionSchema, SourceObservationSchema } from "./source-observations";
+import { MemoryRecoveryPreviewSchema } from "./memory-recovery";
+import { ResourceScopeSchema } from "./resource-access";
+import { AgentTemplateSchema, SpecialistDefinitionSchema } from "./agent-templates";
 import { z } from "zod";
 import {
 	CommunicationCodeScanSchema,
@@ -22,6 +26,7 @@ import {
 	UserBrowserTabDeletionSuggestionSchema,
 } from "./browser-tab-organization";
 import {
+	TimelineEventSchema,
 	AgentIdentitySchema,
 	AgentMemoryRecordSchema,
 	CaptureConfigurationSchema,
@@ -161,6 +166,8 @@ export const PersonFactSchema = z.object({
 export type PersonFact = z.infer<typeof PersonFactSchema>;
 
 export const PersonRecordSchema = z.object({
+ agentId: z.string().min(1).optional(),
+ identityStatus: z.enum(["observed", "ambiguous", "confirmed"]).optional(),
 	id: z.string().min(1),
 	displayName: z.string().min(1).max(300),
 	nicknames: z.array(z.string().min(1).max(200)).max(40),
@@ -209,6 +216,7 @@ export const CalendarAttendeeSchema = z.object({
 export type CalendarAttendee = z.infer<typeof CalendarAttendeeSchema>;
 
 export const UnifiedCalendarEventSchema = z.object({
+ agentId: z.string().min(1).optional(),
 	id: z.string().min(1),
 	externalId: z.string().max(1_024).optional(),
 	providerId: z
@@ -963,6 +971,8 @@ export const RuntimeApprovalPolicySchema = z.enum([
 export type RuntimeApprovalPolicy = z.infer<typeof RuntimeApprovalPolicySchema>;
 
 export const RuntimeSessionSchema = z.object({
+	agentInstructions: z.string().max(20_000).optional(),
+	specialistDefinition: SpecialistDefinitionSchema.optional(),
 	id: z.string().min(1),
 	title: z.string().min(1).max(200),
 	/** Missing on legacy records; new records always persist this explicitly. */
@@ -1487,6 +1497,8 @@ export const RuntimeEventSchema = z.object({
 export type RuntimeEvent = z.infer<typeof RuntimeEventSchema>;
 
 export const AgentRunSchema = z.object({
+	workingTaskId: z.string().min(1).max(200).optional(),
+ resourceScope: ResourceScopeSchema.optional(),
 	id: z.string().min(1),
 	sessionId: z.string().min(1),
 	model: z.string().min(1),
@@ -2606,6 +2618,14 @@ export type ChannelInteractionConfiguration = z.infer<
 >;
 
 export const CoreRequestSchema = z.discriminatedUnion("type", [
+ z.object({ type: z.literal("source-queue-review"), sessionId: z.string().min(1), observationId: z.string().min(1).max(200) }),
+ z.object({ type: z.literal("source-list"), sessionId: z.string().min(1) }),
+ z.object({ type: z.literal("source-select"), selection: SourceSelectionSchema }),
+ z.object({ type: z.literal("onshape-status") }),
+ z.object({ type: z.literal("onshape-assign"), sessionId: z.string().min(1), documentUrl: z.string().max(1000) }),
+ z.object({ type: z.literal("onshape-inspect"), sessionId: z.string().min(1), documentUrl: z.string().max(1000) }),
+ z.object({ type: z.literal("source-page"), sessionId: z.string().min(1), connectionId: z.string().min(1), resourceId: z.string().min(1), query: z.string().max(1000).optional(), offset: z.number().int().min(0).max(10_000_000).optional(), limit: z.number().int().min(1).max(100).optional() }),
+ z.object({ type: z.literal("source-ingest"), sessionId: z.string().min(1), connectionId: z.string().min(1), resourceId: z.string().min(1), captureId: z.string().max(200), observations: z.array(SourceObservationSchema).max(200) }),
 	z.object({ type: z.literal("snapshot") }),
 	z.object({
 		type: z.literal("communication-code-search"),
@@ -2688,6 +2708,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({
 		type: z.literal("runtime-create-session"),
+	agentTemplate: AgentTemplateSchema.optional(),
 		title: z.string().min(1).max(200),
 		kind: z.enum(["conversation", "agent"]).optional(),
 		planetAssetId: AgentPlanetAssetIdSchema.optional(),
@@ -2695,6 +2716,20 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		workspaceRoot: z.string().min(1).optional(),
 		privacyMode: z.enum(["standard", "private", "incognito"]).optional(),
 		approvalPolicy: RuntimeApprovalPolicySchema.optional(),
+	}),
+ z.object({ type: z.literal("runtime-get-resource-grants"), sessionId: z.string().min(1) }),
+ z.object({ type: z.literal("runtime-set-resource-grants"), sessionId: z.string().min(1), grants: ResourceScopeSchema }),
+	z.object({
+		type: z.literal("runtime-configure-agent"),
+		sessionId: z.string().min(1),
+		title: z.string().min(1).max(200),
+		instructions: z.string().max(20_000),
+		specialistDefinition: SpecialistDefinitionSchema.optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-add-specialist"),
+		parentSessionId: z.string().min(1),
+		definition: SpecialistDefinitionSchema,
 	}),
 	z.object({
 		type: z.literal("runtime-update-agent-planet"),
@@ -2868,10 +2903,16 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		id: z.string().min(1).max(200),
 	}),
 	z.object({ type: z.literal("memory-diagnostics") }),
+	z.object({ type: z.literal("memory-recovery-export"), sessionId: z.string().min(1) }),
+	z.object({ type: z.literal("memory-recovery-preview"), sessionId: z.string().min(1), encoded: z.string().max(16_000_000) }),
+	z.object({ type: z.literal("memory-recovery-apply"), sessionId: z.string().min(1), planId: z.string().uuid(), approved: z.literal(true) }),
 	z.object({
 		type: z.literal("memory-agent-inspect"),
 		sessionId: z.string().min(1),
 		includeInactive: z.boolean().default(false),
+		includeSpecialists: z.boolean().optional(),
+		memoryOffset: z.number().int().min(0).max(10_000_000).optional(),
+		taskOffset: z.number().int().min(0).max(10_000_000).optional(),
 		limit: z.number().int().positive().max(200).default(40),
 	}),
 	z.object({
@@ -2903,9 +2944,10 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("memory-source-delete"),
 		sourceId: z.string().min(1).max(2_000),
 	}),
-	z.object({ type: z.literal("people-list") }),
+	z.object({ type: z.literal("people-list"), sessionId: z.string().min(1).optional() }),
 	z.object({
 		type: z.literal("people-upsert"),
+ sessionId: z.string().min(1).optional(),
 		id: z.string().min(1).optional(),
 		displayName: z.string().min(1).max(300),
 		nicknames: z.array(z.string().min(1).max(200)).max(40).default([]),
@@ -2924,10 +2966,12 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({
 		type: z.literal("people-delete"),
+ sessionId: z.string().min(1).optional(),
 		id: z.string().min(1),
 	}),
 	z.object({
 		type: z.literal("calendar-list"),
+ sessionId: z.string().min(1).optional(),
 		startsAt: z.string().datetime(),
 		endsAt: z.string().datetime(),
 	}),
@@ -2938,6 +2982,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({
 		type: z.literal("calendar-create-local"),
+ sessionId: z.string().min(1).optional(),
 		title: z.string().min(1).max(2_000),
 		startsAt: z.string().datetime(),
 		endsAt: z.string().datetime(),
@@ -2949,6 +2994,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({
 		type: z.literal("calendar-delete-local"),
+ sessionId: z.string().min(1).optional(),
 		id: z.string().min(1),
 	}),
 	z.object({
@@ -3386,6 +3432,11 @@ export type CoreRequest = z.infer<typeof CoreRequestSchema>;
 
 export const CoreResponseSchema = z.discriminatedUnion("ok", [
 	z.object({
+ onshapeStatus: z.object({ configured: z.boolean(), connectionId: z.string().optional() }).optional(),
+ resourceGrants: ResourceScopeSchema.optional(),
+ sourceSelections: z.array(SourceSelectionSchema).optional(),
+ sourcePage: z.object({ events: z.array(TimelineEventSchema).max(100), nextOffset: z.number().int().optional() }).optional(),
+ sourceIngestion: z.object({ inserted: z.number().int(), repeated: z.number().int(), interrupted: z.boolean(), coverage: z.enum(["partial", "interrupted"]) }).optional(),
 		ok: z.literal(true),
 		snapshot: WorkspaceSnapshotSchema.optional(),
 		answer: z.string().optional(),
@@ -3424,6 +3475,12 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		memoryAgentIdentity: AgentIdentitySchema.optional(),
 		memoryAgentMemories: z.array(AgentMemoryRecordSchema).max(200).optional(),
 		memoryAgentTasks: z.array(WorkingTaskSchema).max(100).optional(),
+		memoryTaskOwners: z.array(z.object({ sessionId: z.string(), name: z.string() })).max(33).optional(),
+		memoryNextOffset: z.number().int().nonnegative().optional(),
+		memoryRecoveryData: z.string().max(16_000_000).optional(),
+		memoryRecoveryPreview: MemoryRecoveryPreviewSchema.optional(),
+		memoryRecoveryRestored: z.number().int().nonnegative().optional(),
+		taskNextOffset: z.number().int().nonnegative().optional(),
 		memoryProvenance: z.array(ProvenanceRecordSchema).max(200).optional(),
 		memoryContext: MemoryContextBundleSchema.optional(),
 		memoryMaintenance: MemoryMaintenanceResultSchema.optional(),
@@ -3570,6 +3627,8 @@ export const BrokeredCredentialIdSchema = z.enum([
 	"github",
 	"honcho",
 	"fal",
+	"onshape-access",
+	"onshape-secret",
 ]);
 export type BrokeredCredentialId = z.infer<typeof BrokeredCredentialIdSchema>;
 const ExternalCredentialIdSchema = BrokeredCredentialIdSchema;
@@ -4470,6 +4529,12 @@ export const KestrelDeepLinkSchema = z
 export type KestrelDeepLink = z.infer<typeof KestrelDeepLinkSchema>;
 
 export const RendererRequestSchema = z.union([
+	z.object({ type: z.literal("memory-recovery-save-file"), sessionId: z.string().min(1) }),
+	z.object({ type: z.literal("memory-recovery-open-file"), sessionId: z.string().min(1) }),
+ z.object({ type: z.literal("whatsapp-open") }),
+ z.object({ type: z.literal("whatsapp-inspect") }),
+ z.object({ type: z.literal("whatsapp-select"), sessionId: z.string().min(1), resourceId: z.string().min(1), processingConsent: z.literal(true), modelProcessingConsent: z.boolean(), dateOrder: z.enum(["MDY", "DMY"]), timezone: z.string().min(1).max(100) }),
+ z.object({ type: z.literal("whatsapp-sync"), sessionId: z.string().min(1), resourceId: z.string().min(1) }),
 	CoreRequestSchema,
 	z.object({ type: z.literal("communication-sources") }),
 	z.object({
@@ -5111,11 +5176,13 @@ export type GoogleWorkspaceOAuthStatus = z.infer<
 >;
 
 export type RendererResponse =
+ | { ok: true; whatsapp: { state: string; reason?: string; name?: string; resourceId?: string } }
 	| CoreResponse
 	| {
 			ok: true;
 			browserState: UserBrowserState;
 			browserWindowRole?: BrowserWindowRole;
+			browserConnectionMode?: "whatsapp";
 			cancelled?: boolean;
 			bookmarkFolderId?: UserBrowserBookmarkFolderId;
 	  }

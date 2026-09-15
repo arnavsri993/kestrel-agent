@@ -1872,15 +1872,15 @@ export function LifeContext({
 	return (
 		<div className="life-page">
 			<header className="page-header life-header">
-				<h1>Life</h1>
+				<h1>Memory</h1>
 			</header>
-			<nav className="life-switcher" aria-label="Life views">
+			<nav className="life-switcher" aria-label="Memory views">
 				{(
 					[
 						["calendar", "Calendar", "today"],
 						["timeline", "Timeline", "activity"],
 						["people", "People", "chat"],
-						["memory", "Memory", "memory"],
+						["memory", "Knowledge", "memory"],
 					] as const
 				).map(([id, label, icon]) => (
 					<button

@@ -869,7 +869,7 @@ export class MemorySubstrate {
 		// fell outside the page's ORDER BY/LIMIT window.
 		const eventById = new Map(timelineEvents.map((event) => [event.id, event]));
 		for (const match of timelineMatches) eventById.set(match.event.id, match.event);
-		const eventCandidates = [...eventById.values()].flatMap((event) => {
+		const eventCandidates = [...eventById.values()].filter(event => event.source !== "connected-source").flatMap((event) => {
 			const lexical = lexicalById.get(event.id) ?? this.lexicalScore(query.query, event.textSummary);
 			const semantic = queryEmbedding
 				? this.semanticScore(queryEmbedding, "timeline_event", event.id, event.textSummary, readyEmbeddings)
@@ -1100,7 +1100,12 @@ export class MemorySubstrate {
 		includeRestricted?: boolean;
 		maximumCharacters?: number;
 	}): MemoryContextBundle {
-		if (this.runtime && input.sessionId) this.assertMemorySession(input.sessionId);
+		if (this.runtime && input.sessionId) {
+			const identity = this.ensureAgentIdentity(this.assertMemorySession(input.sessionId));
+			if (input.agentId && input.agentId !== identity.id)
+				throw new Error("A session cannot retrieve another agent's context.");
+			input = { ...input, agentId: identity.id };
+		}
 		this.syncLegacyMemories();
 		const query = input.query.slice(0, 10_000);
 		const agentIdentity = input.agentId
@@ -1108,7 +1113,7 @@ export class MemorySubstrate {
 			: undefined;
 		const allowSharedMemory =
 			input.includeSharedMemory !== false &&
-			!(agentIdentity?.kind === "subagent" && agentIdentity.memoryScope === "private");
+			!(agentIdentity && this.isPrivateAgent(agentIdentity));
 		const timeline = this.queryTimeline(MemoryQuerySchema.parse({
 			query,
 			...(input.includeSensitive !== undefined ? { includeSensitive: input.includeSensitive } : {}),
@@ -1410,7 +1415,11 @@ export class MemorySubstrate {
 	}
 
 	private isPrivateAgent(identity: AgentIdentity): boolean {
-		return identity.kind === "subagent" && identity.memoryScope === "private";
+		// Explicit parent agents are isolated too. Ordinary personal conversations
+		// retain their existing shared-memory behavior.
+		const session = identity.sessionId ? this.runtime?.getSession(identity.sessionId) : undefined;
+		return identity.memoryScope === "private" &&
+			(identity.kind === "subagent" || session?.kind === "agent");
 	}
 
 	private memoriesVisibleTo(
@@ -2181,7 +2190,7 @@ export class MemorySubstrate {
 	}
 
 	private sessionize(): number {
-		const events = this.database.listTimelineEvents({ limit: 2_000, ascending: true });
+		const events = this.database.listTimelineEvents({ limit: 2_000, ascending: true }).filter(event => event.source !== "connected-source");
 		if (!events.length) return 0;
 		const groups: TimelineEvent[][] = [];
 		for (const event of events) {
@@ -2488,6 +2497,8 @@ export class MemorySubstrate {
 		let deleted = 0;
 		for (const event of this.database.listTimelineEvents({
 			limit: 2_000,
+ includeSensitive: true,
+ includeRestricted: true,
 			ascending: true,
 		})) {
 			let shouldDelete = false;
@@ -2506,7 +2517,7 @@ export class MemorySubstrate {
 				case "days": {
 					const retentionDays = event.retentionDays ?? defaultRetentionDays;
 					const retainedUntil =
-						timestampValue(event.endedAt ?? event.startedAt) +
+						timestampValue(event.source === "connected-source" ? event.createdAt : event.endedAt ?? event.startedAt) +
 						Math.max(1, retentionDays) * DAY_MS;
 					shouldDelete = retainedUntil < now.getTime();
 					break;
@@ -2775,7 +2786,7 @@ export class MemorySubstrate {
 		const identity = task.agentId
 			? this.database.getAgentIdentity(task.agentId)
 			: undefined;
-		if (identity?.kind === "subagent" && identity.memoryScope === "private")
+		if (identity && this.isPrivateAgent(identity))
 			return query.agentId === task.agentId &&
 				(!query.sessionId || query.sessionId === task.sessionId);
 		return true;

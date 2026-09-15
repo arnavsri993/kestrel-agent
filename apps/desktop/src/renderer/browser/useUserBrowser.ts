@@ -26,6 +26,7 @@ export interface UserBrowserController {
 	state: UserBrowserState | null;
 	error: string;
 	isDetachedWindow: boolean;
+	isConnectionWindow?: boolean;
 	refresh(): Promise<void>;
 	findMatch: UserBrowserFindMatch | null;
 	zoomFeedback: UserBrowserZoom | null;
@@ -125,6 +126,7 @@ export function useUserBrowser(): UserBrowserController {
 	const [state, setState] = useState<UserBrowserState | null>(null);
 	const [error, setError] = useState("");
 	const [isDetachedWindow, setIsDetachedWindow] = useState(false);
+	const [isConnectionWindow, setIsConnectionWindow] = useState(false);
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
 	const [zoomFeedback, setZoomFeedback] = useState<UserBrowserZoom | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
@@ -147,6 +149,7 @@ export function useUserBrowser(): UserBrowserController {
 				throw new Error(responseError(response));
 			if ("browserWindowRole" in response)
 				setIsDetachedWindow(response.browserWindowRole === "detached");
+			setIsConnectionWindow("browserConnectionMode" in response && response.browserConnectionMode === "whatsapp");
 			applyState(response.browserState);
 			setError("");
 		} catch (cause) {
@@ -711,6 +714,7 @@ export function useUserBrowser(): UserBrowserController {
 			state,
 			error,
 			isDetachedWindow,
+			isConnectionWindow,
 			refresh,
 			findMatch,
 			zoomFeedback,
@@ -776,6 +780,7 @@ export function useUserBrowser(): UserBrowserController {
 			state,
 			error,
 			isDetachedWindow,
+			isConnectionWindow,
 			refresh,
 			findMatch,
 			zoomFeedback,

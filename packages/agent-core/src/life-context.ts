@@ -108,6 +108,7 @@ function emailFact(
 }
 
 export interface PersonInput {
+ agentId?: string;
 	id?: string;
 	displayName: string;
 	nicknames?: string[];
@@ -135,13 +136,14 @@ export class LifeContextService {
 		this.memory = memory ?? new MemoryManager(database, now);
 	}
 
-	listPeople(): PersonRecord[] {
-		return this.database.listPeople();
+	listPeople(agentId?: string): PersonRecord[] {
+		return this.database.listPeople(true, agentId);
 	}
 
 	upsertPerson(input: PersonInput): PersonRecord {
 		const timestamp = this.now().toISOString();
 		const existing = input.id ? this.database.getPerson(input.id) : undefined;
+ if (existing && existing.agentId !== input.agentId) throw new Error("Person belongs to another scope.");
 		const facts = [...(existing?.facts ?? [])];
 		if (input.email)
 			this.upsertPersonFact(
@@ -155,6 +157,8 @@ export class LifeContextService {
 				key: "phone",
 			});
 		const person = PersonRecordSchema.parse({
+ ...(input.agentId ? { agentId: input.agentId } : {}),
+ identityStatus: "confirmed",
 			id: existing?.id ?? `person-${randomUUID()}`,
 			displayName: input.displayName.trim(),
 			nicknames: [
@@ -228,9 +232,9 @@ export class LifeContextService {
 			)[0]?.person;
 	}
 
-	deletePerson(id: string): PersonRecord {
+	deletePerson(id: string, agentId?: string): PersonRecord {
 		const person = this.database.getPerson(id);
-		if (!person) throw new Error("Person not found.");
+		if (!person || person.agentId !== agentId) throw new Error("Person not found in this scope.");
 		const timestamp = this.now().toISOString();
 		const deleted: PersonRecord = {
 			...person,
@@ -263,17 +267,18 @@ export class LifeContextService {
 		return deleted;
 	}
 
-	listCalendar(startsAt: string, endsAt: string): UnifiedCalendarEvent[] {
+	listCalendar(startsAt: string, endsAt: string, agentId?: string): UnifiedCalendarEvent[] {
 		const start = Date.parse(startsAt);
 		const end = Date.parse(endsAt);
 		if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
 			throw new Error("Calendar range is invalid.");
 		return this.database
-			.listCalendarEvents()
+			.listCalendarEvents(agentId)
 			.filter((event) => this.eventTouchesRange(event, start, end));
 	}
 
 	createLocalEvent(input: {
+ agentId?: string;
 		title: string;
 		startsAt: string;
 		endsAt: string;
@@ -287,7 +292,7 @@ export class LifeContextService {
 		if (Date.parse(input.endsAt) <= Date.parse(input.startsAt))
 			throw new Error("Calendar event must end after it starts.");
 		const eventId = `calendar-event-${randomUUID()}`;
-		const memory = this.memory.remember({
+		const memory = input.agentId ? undefined : this.memory.remember({
 			type: "episodic",
 			subject: input.title.trim(),
 			content: `${input.title.trim()} from ${input.startsAt} to ${input.endsAt}`,
@@ -315,10 +320,11 @@ export class LifeContextService {
 			validUntil: input.endsAt,
 		});
 		const event = UnifiedCalendarEventSchema.parse({
+ ...(input.agentId ? { agentId: input.agentId } : {}),
 			id: eventId,
 			providerId: input.origin === "explicit" ? "local" : "agent",
 			origin: input.origin,
-			status: input.origin === "suggested" ? "suggested" : "confirmed",
+			status: input.origin === "explicit" ? "confirmed" : input.origin === "suggested" ? "suggested" : "tentative",
 			title: input.title.trim(),
 			...(input.description ? { description: input.description } : {}),
 			startsAt: new Date(input.startsAt).toISOString(),
@@ -330,7 +336,7 @@ export class LifeContextService {
 					? "Created directly by the user."
 					: "Proposed by the agent and not promoted to a provider event.",
 			sourceIds: [input.sourceId],
-			relatedMemoryIds: [memory.id],
+			relatedMemoryIds: memory ? [memory.id] : [],
 			userConfirmed: input.origin === "explicit",
 			externalReadOnly: false,
 			createdAt: timestamp,
@@ -340,9 +346,9 @@ export class LifeContextService {
 		return event;
 	}
 
-	deleteLocalEvent(id: string): UnifiedCalendarEvent {
+	deleteLocalEvent(id: string, agentId?: string): UnifiedCalendarEvent {
 		const event = this.database.getCalendarEvent(id);
-		if (!event) throw new Error("Calendar event not found.");
+		if (!event || event.agentId !== agentId) throw new Error("Calendar event not found in this scope.");
 		if (event.providerId !== "local" && event.providerId !== "agent")
 			throw new Error(
 				"Connected calendar events must be deleted through an approval-gated provider action.",

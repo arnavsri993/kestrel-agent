@@ -1,12 +1,14 @@
+import { normalizeWhatsAppTimestamp } from "./whatsapp-source";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import {
   copyFile,
   lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
@@ -36,6 +38,7 @@ import {
 	isLoginCodeChallenge,
 	PRODUCT_IDENTITY,
 	RendererRequestSchema,
+	UserBrowserStateSchema,
 	SelectedAttachmentSchema,
 	type BrowserTabFolderName,
 	type BrowserTabFolderNamingGroup,
@@ -527,7 +530,7 @@ const supervisor = new CoreSupervisor(
     if (isUserBrowserBackendWireRequest(request)) {
       if (request.operation === "visible-tabs") {
         return Promise.resolve(
-          [...new Set(browserWindowServices.values())].flatMap((service) => {
+          [...new Set(browserWindowServices.values())].filter(service => !service.connectionMode).flatMap((service) => {
             const state = service.getState();
             return state.tabs.map((tab) => ({
               id: tab.id,
@@ -817,7 +820,7 @@ function toggleCalculatorOverlay(
 function browserServiceForTab(tabId?: string): UserBrowserService | null {
   if (tabId) {
     for (const service of new Set(browserWindowServices.values())) {
-      if (service.getState().tabs.some((tab) => tab.id === tabId)) return service;
+      if (!service.connectionMode && service.getState().tabs.some((tab) => tab.id === tabId)) return service;
     }
   }
   return userBrowserService;
@@ -2016,6 +2019,8 @@ function detachedBrowserWindowBounds(): {
 function createDetachedBrowserWindow(
   sourceState: UserBrowserState,
   tab: UserBrowserTab,
+  connectionMode?: "whatsapp",
+  restoredStatePath?: string,
 ): BrowserWindow {
   const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
@@ -2048,22 +2053,21 @@ function createDetachedBrowserWindow(
   });
   if (process.platform === "darwin") window.setWindowButtonVisibility(false);
 	installWindowFocusBridge(window);
-  const statePath = join(
+  const statePath = restoredStatePath ?? join(
     app.getPath("userData"),
     "browser",
     "detached",
-    `window-${randomUUID()}.json`,
+    connectionMode ? "whatsapp-connection.json" : `window-${randomUUID()}.json`,
   );
   const service = new UserBrowserService({
     window,
     allowDevTools: !isPackagedKestrelApp,
     allowLocalExtensions: !isPackagedKestrelApp,
     statePath,
-    initialState: detachedBrowserState(sourceState, tab),
+    ...(connectionMode ? { connectionMode, partitionName: "persist:kestrel-connection-whatsapp" } : { initialState: detachedBrowserState(sourceState, tab) }),
     downloadDirectory: browserDownloadDirectory(),
     ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
-    passwordVault: passwordVault(),
-    paymentCardVault: paymentCardVault(),
+    ...(!connectionMode ? { passwordVault: passwordVault(), paymentCardVault: paymentCardVault() } : {}),
     onEvent: (event) => {
       if (!window.isDestroyed())
         window.webContents.send("kestrel:browser-event", event);
@@ -2079,9 +2083,10 @@ function createDetachedBrowserWindow(
     onLastTabClosed: () => {
       if (!window.isDestroyed()) window.close();
     },
-    nameTabFolders: nameBrowserTabFolders,
+    ...(!connectionMode ? { nameTabFolders: nameBrowserTabFolders } : {}),
   });
   browserWindowServices.set(window, service);
+  if (connectionMode && !service.getState().tabs.some(item => item.url.startsWith("https://web.whatsapp.com"))) void service.createTab("https://web.whatsapp.com", true);
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternalSafely((target) => shell.openExternal(target), url);
     return { action: "deny" };
@@ -2093,13 +2098,28 @@ function createDetachedBrowserWindow(
     browserTabTransfers.revokeOwner(window);
     service.dispose();
     browserWindowServices.delete(window);
-    void rm(statePath, { force: true }).catch(() => undefined);
+    if (!connectionMode && !quitting) void rm(statePath, { force: true }).catch(() => undefined);
   });
   if (DEVELOPMENT_RENDERER_URL)
     void window.loadURL(DEVELOPMENT_RENDERER_URL);
   else void window.loadFile(RENDERER_ENTRY_PATH);
   window.once("ready-to-show", () => window.show());
   return window;
+}
+
+async function restoreDetachedBrowserWindows(): Promise<void> {
+ const directory = join(app.getPath("userData"), "browser", "detached");
+ const names = await readdir(directory).catch(() => [] as string[]);
+ for (const name of names.filter(value => /^window-[a-f0-9-]+\.json$/.test(value)).slice(0, 20)) {
+  try {
+   const path = join(directory, name); const metadata = await lstat(path);
+   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 5_000_000) continue;
+   const state = UserBrowserStateSchema.parse(JSON.parse(await readFile(path, "utf8")));
+   if (!state.settings.restoreSession || state.settings.startupBehavior !== "restore") continue;
+   const tab = state.tabs.find(item => item.id === state.activeTabId) ?? state.tabs[0];
+   if (tab) createDetachedBrowserWindow(state, tab, undefined, path);
+  } catch { /* Preserve malformed or incompatible state for recovery. */ }
+ }
 }
 
 async function petOverlayPosition(): Promise<{ x?: number; y?: number }> {
@@ -2944,6 +2964,7 @@ function registerIpc(): void {
 			ok: true,
 			browserState: requestBrowserService.getState(),
 			browserWindowRole: senderWindow === mainWindow ? "main" : "detached",
+			...(requestBrowserService.connectionMode ? { browserConnectionMode: requestBrowserService.connectionMode } : {}),
 		};
 	}
 	if (request.type === "browser-open-file-tabs") {
@@ -2968,6 +2989,53 @@ function registerIpc(): void {
 		await requestBrowserService.openFileDefault(request.tabId);
 		return { ok: true };
 	}
+ if (["whatsapp-open", "whatsapp-inspect", "whatsapp-select", "whatsapp-sync"].includes(request.type)) {
+  let connection = [...browserWindowServices.entries()].find(([, service]) => service.connectionMode === "whatsapp");
+  if (request.type === "whatsapp-open") {
+   if (connection) { connection[0].show(); connection[0].focus(); }
+   else {
+    if (!userBrowserService) throw new Error("The browser is unavailable.");
+    const state = userBrowserService.getState();
+    const seed = state.tabs[0];
+    if (!seed) throw new Error("The browser is not ready.");
+    createDetachedBrowserWindow(state, seed, "whatsapp");
+   }
+   return { ok: true, whatsapp: { state: "login_required", reason: "Link WhatsApp, open your team group, then open Group info to verify privacy settings." } };
+  }
+  if (!connection) throw new Error("Open the WhatsApp connection first.");
+  const service = connection[1];
+  if (request.type === "whatsapp-inspect") {
+   const result = await service.inspectWhatsApp({ capture: false });
+   return { ok: true, whatsapp: { state: result.state, ...(result.reason ? { reason: result.reason } : {}), ...(result.name ? { name: result.name } : {}), ...(result.resourceId ? { resourceId: result.resourceId } : {}) } };
+  }
+  if (request.type === "whatsapp-select") {
+   new Intl.DateTimeFormat("en-US", { timeZone: request.timezone });
+   const result = await service.inspectWhatsApp({ capture: false, resourceId: request.resourceId });
+   if (result.state !== "ready" || !result.name || result.resourceId !== request.resourceId) throw new Error(result.reason ?? "Selected group is not ready.");
+   const grants = await supervisor.request({ type: "runtime-get-resource-grants", sessionId: request.sessionId });
+   if (!grants.ok) throw new Error(grants.error);
+   const next = [...(grants.resourceGrants ?? []).filter(item => item.connectionId !== "whatsapp-browser" || item.resourceId !== request.resourceId || item.capability !== "read"), { connectionId: "whatsapp-browser", resourceId: request.resourceId, capability: "read" as const }];
+   const granted = await supervisor.request({ type: "runtime-set-resource-grants", sessionId: request.sessionId, grants: next });
+   if (!granted.ok) throw new Error(granted.error);
+   return supervisor.request({ type: "source-select", selection: { sessionId: request.sessionId, connectionId: "whatsapp-browser", resourceId: request.resourceId, label: result.name, processingConsent: true, modelProcessingConsent: request.modelProcessingConsent, dateOrder: request.dateOrder, timezone: request.timezone, privacy: "permitted", status: "ready", coverage: "unknown", updatedAt: new Date().toISOString() } });
+  }
+  if (request.type === "whatsapp-sync") {
+   const listed = await supervisor.request({ type: "source-list", sessionId: request.sessionId });
+   if (!listed.ok) throw new Error(listed.error);
+   const selected = listed.sourceSelections?.find(item => item.connectionId === "whatsapp-browser" && item.resourceId === request.resourceId);
+   if (!selected || selected.status !== "ready" || !selected.dateOrder || !selected.timezone) throw new Error("Select and consent to the group before syncing.");
+   const grants = await supervisor.request({ type: "runtime-get-resource-grants", sessionId: request.sessionId });
+   if (!grants.ok || !grants.resourceGrants?.some(item => item.connectionId === selected.connectionId && item.resourceId === selected.resourceId && item.capability === "read")) throw new Error("The source grant is no longer active.");
+   const capture = await service.inspectWhatsApp({ capture: true, resourceId: selected.resourceId });
+   if (capture.state !== "ready") {
+    const status = ["login_required", "unavailable", "privacy_blocked", "structure_changed"].includes(capture.state) ? capture.state as "login_required" | "unavailable" | "privacy_blocked" | "structure_changed" : "unavailable";
+    await supervisor.request({ type: "source-select", selection: { ...selected, status, coverage: "interrupted", ...(status === "privacy_blocked" ? { privacy: "unknown" as const } : {}), updatedAt: new Date().toISOString() } });
+    throw new Error(capture.reason ?? "The source capture did not complete.");
+   }
+   const observations = capture.observations.map((item: { providerMessageId: string; originalTimestamp: string; text: string }) => ({ ...item, ...normalizeWhatsAppTimestamp(item.originalTimestamp, selected.dateOrder!, selected.timezone!), timezone: selected.timezone!, attachments: [], state: "observed" as const }));
+   return supervisor.request({ type: "source-ingest", sessionId: request.sessionId, connectionId: selected.connectionId, resourceId: selected.resourceId, captureId: `capture-${randomUUID()}`, observations });
+  }
+ }
 	if (request.type === "browser-create-tab") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
@@ -3146,6 +3214,30 @@ function registerIpc(): void {
 				ok: true,
 				browserState: requestBrowserService.setDownloadDirectory(),
 			};
+		}
+		if (request.type === "memory-recovery-save-file") {
+			const snapshot = await supervisor.request({ type: "memory-recovery-export", sessionId: request.sessionId });
+			if (!snapshot.ok) return snapshot;
+			if (!snapshot.memoryRecoveryData) throw new Error("Knowledge backup is unavailable.");
+			const result = await dialog.showSaveDialog(senderWindow, { title: "Save encrypted knowledge backup", defaultPath: "kestrel-knowledge.kestrel-memory", filters: [{ name: "Encrypted Kestrel knowledge", extensions: ["kestrel-memory"] }] });
+			if (result.canceled || !result.filePath) return { ok: true, cancelled: true };
+			await writeFile(result.filePath, snapshot.memoryRecoveryData, { mode: 0o600, flag: "wx" });
+			return { ok: true };
+		}
+		if (request.type === "memory-recovery-open-file") {
+			const result = await dialog.showOpenDialog(senderWindow, { title: "Preview encrypted knowledge recovery", properties: ["openFile"], filters: [{ name: "Encrypted Kestrel knowledge", extensions: ["kestrel-memory"] }] });
+			if (result.canceled || !result.filePaths[0]) return { ok: true, cancelled: true };
+			const file = await open(result.filePaths[0], constants.O_RDONLY | constants.O_NOFOLLOW);
+			let encoded: string;
+			try {
+				const stat = await file.stat();
+				if (!stat.isFile() || stat.size > 16_000_000) throw new Error("Select a knowledge backup smaller than 16 MB.");
+				const buffer = Buffer.alloc(stat.size + 1);
+				const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+				if (bytesRead !== stat.size) throw new Error("The backup changed while being read. Choose it again.");
+				encoded = buffer.subarray(0, bytesRead).toString("utf8");
+			} finally { await file.close(); }
+			return supervisor.request({ type: "memory-recovery-preview", sessionId: request.sessionId, encoded });
 		}
 		if (request.type === "browser-export-data") {
 			if (!requestBrowserService)
@@ -3384,6 +3476,7 @@ function registerIpc(): void {
       };
     }
 	if (request.type === "browser-detach-tab") {
+ if (requestBrowserService?.connectionMode) throw new Error("Connection tabs remain in their dedicated window.");
 		if (!requestBrowserService)
 			throw new Error("The visible user browser is unavailable.");
 		const sourceState = requestBrowserService.getState();
@@ -3410,6 +3503,7 @@ function registerIpc(): void {
       };
     }
     if (request.type === "browser-reattach-tab") {
+ if (requestBrowserService?.connectionMode) throw new Error("Connection tabs remain in their dedicated window.");
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
       if (!mainWindow || mainWindow.isDestroyed())
@@ -4986,6 +5080,7 @@ void app
 		initializeDock();
 		const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
 		if (!mainWindow) mainWindow = createMainWindow();
+		await restoreDetachedBrowserWindows();
 		for (const deepLink of initialExternalIntakeLinks)
 			handleIncomingUrl(deepLink);
 		deliverPendingWebUrls();

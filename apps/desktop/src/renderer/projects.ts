@@ -30,6 +30,7 @@ export function projectChats(
 ): RuntimeSession[] {
 	const reference = projectReference(project);
 	return sessions
+		.filter(session => !session.specialistDefinition)
 		.filter(
 			(session) =>
 				(reference.id && session.projectId === reference.id) ||
@@ -59,6 +60,7 @@ export function sessionsWithoutProject(
 	);
 	const projectPaths = new Set(projects.map((project) => project.path));
 	return sessions
+		.filter(session => !session.specialistDefinition)
 		.filter(
 			(session) =>
 				!(session.projectId

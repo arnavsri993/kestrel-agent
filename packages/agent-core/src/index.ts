@@ -1,3 +1,7 @@
+import { SourceIngestion } from "./source-ingestion";
+import { OnshapeClient, installOnshapeTools, parseOnshapeDocument } from "./onshape";
+export { OnshapeClient } from "./onshape";
+import { AgentMemoryRecovery } from "./memory-recovery";
 import { randomUUID } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, sep } from "node:path";
@@ -213,6 +217,7 @@ export interface AgentCoreDependencies {
 	email?: EmailConnector;
 	calendar?: CalendarConnector;
 	googleWorkspace?: GoogleWorkspaceClient;
+	onshape?: OnshapeClient;
 	now?: () => string;
 	workspaceRoots?: string[];
 	configuredWorkspaceRoots?: string[];
@@ -266,6 +271,8 @@ export class AgentCore {
 	readonly context: PreResponseContextResolver;
 	readonly memory: MemoryManager;
 	readonly memorySubstrate: MemorySubstrate;
+ readonly sourceIngestion: SourceIngestion;
+	readonly memoryRecovery: AgentMemoryRecovery;
 	readonly groupMemory: AgentGroupMemoryManager;
 	readonly lifeContext: LifeContextService;
 	readonly writingProfile: WritingProfileStore;
@@ -392,6 +399,9 @@ export class AgentCore {
 				this.configuration.current().memory.captureExplicit,
 		});
 		this.memorySubstrate.attachRuntime(this.runtime);
+ this.sourceIngestion = new SourceIngestion(deps.database, this.runtime, this.memorySubstrate);
+	this.memoryRecovery = new AgentMemoryRecovery(deps.database, this.memorySubstrate);
+ this.sourceIngestion.installTools();
 		this.memorySubstrate.start();
 		this.userModel = this.memory.userModel;
 		this.groupMemory = new AgentGroupMemoryManager(
@@ -437,6 +447,7 @@ export class AgentCore {
 			this.eventApplications,
 			mainSession.id,
 		);
+		installOnshapeTools(this.runtime, deps.onshape);
 		this.skins = new SkinManager(deps.database);
 		this.pets = deps.petRoot
 			? new PetManager(deps.database, deps.petRoot)
@@ -1567,6 +1578,22 @@ export class AgentCore {
 		}
 	}
 
+	private recordWorkingTaskResult(result: AgentLoopResult): void {
+		if (!result.run.workingTaskId) return;
+		const task = this.deps.database.getWorkingTask(result.run.workingTaskId);
+		if (!task || task.sessionId !== result.run.sessionId) return;
+		try {
+			const status = result.run.status === "running" ? "running"
+				: result.run.status === "waiting_approval" || result.run.status === "waiting_input" ? "waiting" : result.run.status;
+			this.memorySubstrate.recordTaskOutcome({ ...task, status,
+				...(["completed", "failed", "cancelled"].includes(status) ? { completedAt: this.now() } : {}),
+				...(result.assistantMessage ? { outcomeSummary: result.assistantMessage.content } : {}),
+				...(status === "failed" && result.run.error ? { failures: [...new Set([...task.failures, result.run.error])].slice(-100) } : {}),
+				evidence: [...task.evidence.filter(item => !(item.type === "run" && item.id === result.run.id)), { type: "run", id: result.run.id, label: "Agent execution" }].slice(-500),
+				updatedAt: this.now() });
+		} catch (error) { this.recordMemoryObserverFailure(error); }
+	}
+
 	private async ensureIndependentReview(
 		automatic: ReturnType<AgentCore["automaticRoute"]>,
 		sessionId: string,
@@ -1892,6 +1919,17 @@ export class AgentCore {
 		return this.isStandardSession(session) &&
 			!this.memorySubstrate.isPrivateAgentSession(session.id) &&
 			this.sharedMemoryInjectionEnabled(personalityId);
+	}
+
+	private persistentAgentInstructions(sessionId: string): string {
+		const session = this.runtime.getSession(sessionId);
+		const specialists = this.runtime.listSessions().filter(candidate =>
+			candidate.parentSessionId === sessionId && candidate.specialistDefinition?.enabled);
+		return [session.agentInstructions ?? "", `Current session identity: ${session.id}. For orchestration.delegate omit parentSessionId; the runtime supplies your identity. Use the listed specialistSessionId exactly, never a display name.`,
+ session.kind === "agent" ? "Assigned resource grants (use only these exact identities; delegates also require resourceScope and their own grants):\n" + JSON.stringify(this.runtime.getResourceGrants(session.id)) : "", specialists.length ?
+			"Available persistent specialists (delegate with specialistSessionId; only run relevant work):\n" +
+			JSON.stringify(specialists.map(item => ({ specialistSessionId: item.id,
+				name: item.title, purpose: item.specialistDefinition?.purpose }))) : ""].filter(Boolean).join("\n\n");
 	}
 
 	private substrateContextForSession(
@@ -2251,8 +2289,11 @@ export class AgentCore {
 						groupMemory: this.groupMemory.statusForSession(request.sessionId),
 					};
 				case "runtime-create-session": {
+					if (request.agentTemplate && request.kind !== "agent")
+						throw new Error("Templates require a persistent agent.");
 					const session = this.runtime.createSession({
 						title: request.title,
+						...(request.agentTemplate ? { agentInstructions: request.agentTemplate.instructions } : {}),
 						...(request.kind ? { kind: request.kind } : {}),
 						...(request.planetAssetId
 							? { planetAssetId: request.planetAssetId }
@@ -2268,7 +2309,66 @@ export class AgentCore {
 							? { approvalPolicy: request.approvalPolicy }
 							: {}),
 					});
+					for (const definition of request.agentTemplate?.specialists ?? []) {
+						const specialist = this.runtime.createSession({
+							title: definition.name, kind: "subagent", parentSessionId: session.id,
+							specialistDefinition: definition,
+							agentInstructions: `${definition.purpose}\n${definition.instructions}`,
+							allowedTools: session.allowedTools.filter(name => !name.startsWith("orchestration.")),
+							...(session.workspaceRoot ? { workspaceRoot: session.workspaceRoot } : {}),
+						});
+						this.memorySubstrate.ensureAgentIdentity(specialist);
+					}
 					this.pluginMcpManager?.attachSession(session.id);
+					return { ok: true, session };
+				}
+    case "onshape-status":
+     return { ok: true, onshapeStatus: { configured: Boolean(this.deps.onshape), ...(this.deps.onshape ? { connectionId: this.deps.onshape.connectionId } : {}) } };
+    case "onshape-assign": {
+     const session = this.memorySubstrate.assertMemorySession(request.sessionId);
+     if (session.kind !== "agent" || !this.deps.onshape) throw new Error("Select a parent agent and configure Onshape first.");
+     const resource = parseOnshapeDocument(request.documentUrl);
+     const grant = { connectionId: this.deps.onshape.connectionId, resourceId: resource.resourceId, capability: "read" as const };
+     this.runtime.allowTool(session.id, "onshape.inspect");
+     const grants = this.runtime.getResourceGrants(session.id).filter(item => !(item.connectionId === grant.connectionId && item.resourceId === grant.resourceId && item.capability === grant.capability));
+     return { ok: true, resourceGrants: this.runtime.setResourceGrants(session.id, [...grants, grant]) };
+    }
+    case "onshape-inspect": {
+     const session = this.memorySubstrate.assertMemorySession(request.sessionId);
+     if (session.kind !== "agent") throw new Error("Inspect from the parent agent scope.");
+     return { ok: true, execution: await this.runtime.callTool(session.id, "onshape.inspect", { documentUrl: request.documentUrl }) };
+    }
+    case "source-list":
+     this.memorySubstrate.assertMemorySession(request.sessionId);
+     return { ok: true, sourceSelections: this.sourceIngestion.selections(request.sessionId) };
+    case "source-queue-review":
+     return { ok: true, memoryAgentTasks: [this.sourceIngestion.queueReview(request.sessionId, request.observationId)] };
+    case "source-select":
+     return { ok: true, sourceSelections: [this.sourceIngestion.select(request.selection)] };
+    case "source-page":
+     return { ok: true, sourcePage: this.sourceIngestion.page(request) };
+    case "source-ingest":
+     return { ok: true, sourceIngestion: await this.sourceIngestion.ingest(request) };
+    case "runtime-get-resource-grants":
+     return { ok: true, resourceGrants: this.runtime.getResourceGrants(request.sessionId) };
+    case "runtime-set-resource-grants":
+     return { ok: true, resourceGrants: this.runtime.setResourceGrants(request.sessionId, request.grants) };
+				case "runtime-configure-agent": {
+					const session = this.runtime.configureAgent(request.sessionId, request);
+					this.memorySubstrate.ensureAgentIdentity(session);
+					return { ok: true, session };
+				}
+				case "runtime-add-specialist": {
+					const parent = this.runtime.getSession(request.parentSessionId);
+					if (parent.kind !== "agent" || parent.forgottenAt) throw new Error("Select a persistent parent agent.");
+					const children = this.runtime.listSessions().filter(item => item.parentSessionId === parent.id && item.specialistDefinition);
+					if (children.length >= 32 || children.some(item => item.specialistDefinition?.key === request.definition.key))
+						throw new Error("Specialist limit reached or key already exists.");
+					const session = this.runtime.createSession({ title: request.definition.name, kind: "subagent",
+						parentSessionId: parent.id, specialistDefinition: request.definition,
+						agentInstructions: `${request.definition.purpose}\n${request.definition.instructions}`,
+						allowedTools: parent.allowedTools.filter(name => !name.startsWith("orchestration.")),
+						...(parent.workspaceRoot ? { workspaceRoot: parent.workspaceRoot } : {}) });
 					return { ok: true, session };
 				}
 				case "runtime-update-agent-planet":
@@ -2436,6 +2536,7 @@ export class AgentCore {
 									: [MAIN_AGENT_COORDINATION_INSTRUCTIONS]),
 								this.configuration.instructions(),
 								this.runtime.projectContextForSession(request.sessionId),
+								this.persistentAgentInstructions(request.sessionId),
 								groupMemoryContext,
 								substrateContext?.prompt ?? "",
 								...(sharedMemoryEnabled
@@ -2808,23 +2909,30 @@ export class AgentCore {
 						ok: true,
 						memoryDiagnostics: this.memorySubstrate.diagnostics(),
 					};
+				case "memory-recovery-export": return { ok: true, memoryRecoveryData: this.memoryRecovery.export(request.sessionId) };
+				case "memory-recovery-preview": return { ok: true, memoryRecoveryPreview: this.memoryRecovery.preview(request.sessionId, request.encoded) };
+				case "memory-recovery-apply": return { ok: true, memoryRecoveryRestored: this.memoryRecovery.apply(request.sessionId, request.planId) };
 				case "memory-agent-inspect": {
 					const session = this.memorySubstrate.assertMemorySession(
 						request.sessionId,
 					);
 					const identity = this.memorySubstrate.ensureAgentIdentity(session);
+					// This is an explicit user management projection, never a model
+					// retrieval scope or an implicit share of specialist knowledge.
+					const owners = [session, ...(request.includeSpecialists && session.kind === "agent"
+						? this.runtime.listSessions().filter(item => item.parentSessionId === session.id && item.specialistDefinition && !item.forgottenAt).slice(0, 32) : [])];
+					const tasks = this.deps.database.listWorkingTasks({ agentIds: owners.map(owner => this.memorySubstrate.ensureAgentIdentity(owner).id),
+						includeCompleted: true, limit: 101, offset: request.taskOffset ?? 0 });
+					const memories = this.deps.database.listAgentMemories(identity.id,
+						{ includeInactive: request.includeInactive, limit: request.limit + 1, offset: request.memoryOffset ?? 0 });
 					return {
 						ok: true,
 						memoryAgentIdentity: identity,
-						memoryAgentMemories: this.deps.database.listAgentMemories(
-							identity.id,
-							{ includeInactive: request.includeInactive, limit: request.limit },
-						),
-						memoryAgentTasks: this.deps.database.listWorkingTasks({
-							agentId: identity.id,
-							includeCompleted: true,
-							limit: 100,
-						}),
+						memoryAgentMemories: memories.slice(0, request.limit),
+						memoryAgentTasks: tasks.slice(0, 100),
+						...(memories.length > request.limit ? { memoryNextOffset: (request.memoryOffset ?? 0) + request.limit } : {}),
+						...(tasks.length > 100 ? { taskNextOffset: (request.taskOffset ?? 0) + 100 } : {}),
+						memoryTaskOwners: owners.map(owner => ({ sessionId: owner.id, name: owner.title })),
 					};
 				}
 				case "memory-agent-correct":
@@ -2880,12 +2988,13 @@ export class AgentCore {
 						memoryDeletion: this.memorySubstrate.forgetSource(request.sourceId),
 					};
 				case "people-list":
-					return { ok: true, people: this.lifeContext.listPeople() };
+					return { ok: true, people: this.lifeContext.listPeople(request.sessionId ? this.memorySubstrate.ensureAgentIdentity(this.memorySubstrate.assertMemorySession(request.sessionId)).id : undefined) };
 				case "people-upsert":
 					return {
 						ok: true,
 						people: [
 							this.lifeContext.upsertPerson({
+ ...(request.sessionId ? { agentId: this.memorySubstrate.ensureAgentIdentity(this.memorySubstrate.assertMemorySession(request.sessionId)).id } : {}),
 								...(request.id ? { id: request.id } : {}),
 								displayName: request.displayName,
 								nicknames: request.nicknames,
@@ -2907,7 +3016,7 @@ export class AgentCore {
 						],
 					};
 					case "people-delete": {
-						const person = this.lifeContext.deletePerson(request.id);
+						const person = this.lifeContext.deletePerson(request.id, request.sessionId ? this.memorySubstrate.ensureAgentIdentity(this.memorySubstrate.assertMemorySession(request.sessionId)).id : undefined);
 						this.memorySubstrate.reconcilePeople();
 						return {
 							ok: true,
@@ -2921,6 +3030,7 @@ export class AgentCore {
 						calendarEvents: this.lifeContext.listCalendar(
 							request.startsAt,
 							request.endsAt,
+ request.sessionId ? this.memorySubstrate.ensureAgentIdentity(this.memorySubstrate.assertMemorySession(request.sessionId)).id : undefined,
 						),
 						calendarProviders: this.lifeContext.providerStatuses(),
 					};
@@ -2938,6 +3048,7 @@ export class AgentCore {
 						ok: true,
 						calendarEvents: [
 							this.lifeContext.createLocalEvent({
+ ...(request.sessionId ? { agentId: this.memorySubstrate.ensureAgentIdentity(this.memorySubstrate.assertMemorySession(request.sessionId)).id } : {}),
 								title: request.title,
 								startsAt: request.startsAt,
 								endsAt: request.endsAt,
@@ -2954,7 +3065,7 @@ export class AgentCore {
 				case "calendar-delete-local":
 					return {
 						ok: true,
-						calendarEvents: [this.lifeContext.deleteLocalEvent(request.id)],
+						calendarEvents: [this.lifeContext.deleteLocalEvent(request.id, request.sessionId ? this.memorySubstrate.ensureAgentIdentity(this.memorySubstrate.assertMemorySession(request.sessionId)).id : undefined)],
 					};
 				case "life-context-preview":
 					return {
@@ -3825,6 +3936,7 @@ export class AgentCore {
 							honchoContext,
 						});
 						const result = await this.agentLoop.run({
+							...(workingTask ? { workingTaskId: workingTask.id } : {}),
 							sessionId: request.sessionId,
 							model: route?.execution.model ?? selectedModel,
 							providerIds: route?.execution.providerIds ?? selectedProviderIds,
@@ -3893,6 +4005,7 @@ export class AgentCore {
 									: [MAIN_AGENT_COORDINATION_INSTRUCTIONS]),
 								this.configuration.instructions(),
 								this.runtime.projectContextForSession(request.sessionId),
+								this.persistentAgentInstructions(request.sessionId),
 								groupMemoryContext,
 								substrateContext?.prompt ?? "",
 								...(sharedMemoryEnabled
@@ -3949,34 +4062,7 @@ export class AgentCore {
 								review.verifierStatus,
 							);
 						}
-						if (workingTask) {
-							try {
-								const taskStatus =
-									finalizedResult.run.status === "completed"
-										? "completed"
-										: finalizedResult.run.status === "cancelled"
-											? "cancelled"
-											: finalizedResult.run.status === "failed"
-												? "failed"
-												: "waiting";
-								this.memorySubstrate.recordTaskOutcome({
-									...workingTask,
-									status: taskStatus,
-									...(taskStatus === "completed" || taskStatus === "failed" || taskStatus === "cancelled"
-										? { completedAt: this.now() }
-										: {}),
-									...(finalizedResult.assistantMessage
-										? { outcomeSummary: finalizedResult.assistantMessage.content }
-										: {}),
-									...(taskStatus === "failed" && finalizedResult.run.error
-										? { failures: [...workingTask.failures, finalizedResult.run.error].slice(-100) }
-										: {}),
-									updatedAt: this.now(),
-								});
-							} catch (error) {
-								this.recordMemoryObserverFailure(error);
-							}
-						}
+						this.recordWorkingTaskResult(finalizedResult);
 						return {
 							ok: true,
 							run: finalizedResult.run,
@@ -4091,6 +4177,7 @@ export class AgentCore {
 								null,
 							);
 						}
+						this.recordWorkingTaskResult(result);
 						return {
 							ok: true,
 							run: finalizedResult.run,

@@ -90,3 +90,13 @@ describe("project chat grouping", () => {
 		).toEqual(["old-folder", "standalone"]);
 	});
 });
+
+
+it("keeps persistent specialists in their agent instead of flooding chat lists", () => {
+	const base: RuntimeSession = { id: "parent", title: "Robotics", kind: "agent", allowedTools: [], status: "active", checkpoints: [],
+		createdAt: "2026-09-14T00:00:00.000Z", updatedAt: "2026-09-14T00:00:00.000Z", projectId: "team" };
+	const child: RuntimeSession = { ...base, id: "child", kind: "subagent", parentSessionId: base.id,
+		specialistDefinition: { key: "code", name: "Code", purpose: "Code", instructions: "", enabled: true } };
+	expect(projectChats([base, child], { id: "team", path: "/team" }).map(item => item.id)).toEqual(["parent"]);
+	expect(sessionsWithoutProject([base, child], []).map(item => item.id)).toEqual(["parent"]);
+});

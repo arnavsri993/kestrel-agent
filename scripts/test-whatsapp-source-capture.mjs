@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import ts from "typescript";
+import { chromium } from "@playwright/test";
+const code = ts.transpileModule(readFileSync("apps/desktop/src/main/whatsapp-source.ts", "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
+const { whatsappDomSnapshot } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+const browser = await chromium.launch({ headless: true });
+try {
+ const page = await browser.newPage();
+ const fixture = (privacy = "Off", extra = "") => `<aside id="pane-side">UNRELATED PRIVATE INBOX MUST NEVER APPEAR</aside><div id="main"><header><span title="Robotics team">Robotics team</span></header><div data-id="false_12345@g.us_MSG1"><div data-pre-plain-text="[15:30, 9/10/2026] Rishi: "><span class="selectable-text">Please inspect the autonomous path.</span></div></div>${extra}</div><section aria-label="Group info"><h2 title="Robotics team">Robotics team</h2><div role="button">Advanced chat privacy ${privacy}</div><div role="button">Disappearing messages Off</div></section>`;
+ const read = input => page.evaluate(whatsappDomSnapshot, input);
+ await page.setContent(fixture());
+ let result = await read({ capture: false });
+ assert.equal(result.state, "ready"); assert.deepEqual(result.observations, []);
+ assert.equal(result.resourceId, "whatsapp:group:12345@g.us");
+ assert(!JSON.stringify(result).includes("UNRELATED"));
+ result = await read({ capture: true, resourceId: "whatsapp:group:12345@g.us" });
+ assert.equal(result.observations.length, 1); assert(!JSON.stringify(result).includes("UNRELATED"));
+ result = await read({ capture: true, resourceId: "whatsapp:group:54321@g.us" });
+ assert.equal(result.state, "unavailable"); assert.deepEqual(result.observations, []);
+ await page.setContent(fixture("On")); result = await read({ capture: true });
+ assert.equal(result.state, "privacy_blocked"); assert.deepEqual(result.observations, []);
+ await page.setContent(fixture().replace('aria-label="Group info"', 'aria-label="Unknown layout"'));
+ result = await read({ capture: true }); assert.equal(result.state, "privacy_blocked");
+ await page.setContent(fixture("Off", '<div data-id="false_12345@g.us_MSG2">Unsupported media row</div>'));
+ result = await read({ capture: true }); assert.equal(result.state, "structure_changed"); assert.deepEqual(result.observations, []);
+ await page.setContent('<div>Link your account</div>'); result = await read({ capture: true }); assert.equal(result.state, "login_required");
+ await page.setContent('<h1>WhatsApp works with Google Chrome 100+</h1>'); result = await read({ capture: true }); assert.equal(result.state, "unavailable"); assert.deepEqual(result.observations, []);
+ console.log("Fixture-only WhatsApp capture passed: metadata-only selection, inbox exclusion, group mismatch, privacy block, changed layout, unsupported messages and login required.");
+} finally { await browser.close(); }

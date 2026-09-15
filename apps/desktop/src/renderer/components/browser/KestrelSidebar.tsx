@@ -250,6 +250,8 @@ export function KestrelSidebar({
 	onNewTask,
 	onOpenBrowser,
 	onOpenAgent,
+	onOpenConnections,
+	onOpenMemory,
 	onOpenCapabilities,
 	onOpenSettings,
 	onCreateProject,
@@ -269,6 +271,8 @@ export function KestrelSidebar({
 	onNewTask(): void;
 	onOpenBrowser(): void;
 	onOpenAgent(): void;
+	onOpenConnections(): void;
+	onOpenMemory(): void;
 	onOpenCapabilities(): void;
 	onOpenSettings(): void;
 	onCreateProject(): void;
@@ -665,6 +669,10 @@ export function KestrelSidebar({
 					active={activeDestination === "agent"}
 					onClick={onOpenAgent}
 				/>
+				<SidebarNavItem icon="connections" label="Connections" destination="connections"
+					active={activeDestination === "connections"} onClick={onOpenConnections} />
+				<SidebarNavItem icon="memory" label="Memory" destination="memory"
+					active={activeDestination === "memory"} onClick={onOpenMemory} />
 			</nav>
 
 			<div className="kestrel-sidebar-scroll">

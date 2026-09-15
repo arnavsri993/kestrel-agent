@@ -51,7 +51,9 @@ export type BrokeredCredentialId =
 	| "brave-search"
 	| "github"
 	| "honcho"
-	| "fal";
+	| "fal"
+	| "onshape-access"
+	| "onshape-secret";
 
 export const BROKERED_CREDENTIALS: Record<
 	BrokeredCredentialId,
@@ -150,6 +152,8 @@ export const BROKERED_CREDENTIALS: Record<
 	github: { environmentKey: "GITHUB_TOKEN", label: "GitHub token" },
 	honcho: { environmentKey: "HONCHO_API_KEY", label: "Honcho API key" },
 	fal: { environmentKey: "FAL_KEY", label: "fal media API key" },
+	"onshape-access": { environmentKey: "ONSHAPE_ACCESS_KEY", label: "Onshape access key" },
+	"onshape-secret": { environmentKey: "ONSHAPE_SECRET_KEY", label: "Onshape secret key" },
 };
 
 const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [

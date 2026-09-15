@@ -889,6 +889,33 @@ describe("core agent request path", () => {
 		await core.close();
 	});
 
+	it("updates the same durable working task after an approval resume", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let calls = 0;
+		const core = new AgentCore({ database, seedDevelopmentFixtures: false, modelProviders: [{
+			id: "resume-fixture", capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: true },
+			complete: async request => ({ providerId: "resume-fixture", model: request.model, text: ++calls === 1 ? "" : "Fixture action completed.",
+				toolCalls: calls === 1 ? [{ id: "fixture-call", name: "fixture.write", arguments: {} }] : [],
+				usage: { inputTokens: 1, outputTokens: 1 }, finishReason: calls === 1 ? "tool_calls" : "stop" }),
+		}] });
+		try {
+			core.runtime.registerExternalTool({ descriptor: { name: "fixture.write", title: "Synthetic action", description: "An in-memory test action", category: "memory", riskLevel: "sensitive", readOnly: false, requiresWorkspace: false, source: "builtin", tags: [] }, inputSchema: { type: "object", properties: {}, additionalProperties: false }, execute: () => ({ changed: true }) });
+			const session = core.runtime.createSession({ title: "Resume fixture", kind: "agent", allowedTools: ["fixture.write"] });
+			const waiting = await core.handle({ type: "runtime-run-agent", sessionId: session.id, message: "Use fixture.write once.", model: "fixture-model", providerIds: ["resume-fixture"] });
+			expect(waiting).toMatchObject({ ok: true, run: { status: "waiting_approval" } });
+			if (!waiting.ok || !waiting.run?.workingTaskId) throw new Error("Run/task link missing");
+			const taskId = waiting.run.workingTaskId;
+			expect(database.getWorkingTask(taskId)?.status).toBe("waiting");
+			const other = core.runtime.createSession({ title: "Other owner", kind: "agent" });
+			await expect(core.agentLoop.run({ sessionId: other.id, workingTaskId: taskId, model: "fixture-model", providerIds: ["resume-fixture"], userContent: [{ type: "text", text: "Use another task" }] })).rejects.toThrow(/does not belong/);
+			const resumed = await core.handle({ type: "runtime-resume-agent", runId: waiting.run.id, approvalDecision: "approved" });
+			expect(resumed).toMatchObject({ ok: true, run: { status: "completed", workingTaskId: taskId } });
+			expect(database.getWorkingTask(taskId)).toMatchObject({ status: "completed", outcomeSummary: "Fixture action completed.", evidence: expect.arrayContaining([{ type: "run", id: waiting.run.id, label: "Agent execution" }]) });
+			expect(database.listWorkingTasks({ sessionId: session.id, includeCompleted: true })).toHaveLength(1);
+			expect(calls).toBe(2);
+		} finally { await core.close(); }
+	});
+
 	it("creates natural-language schedules through the public request contract", async () => {
 		const { core } = createCore();
 		const session = core.runtime.ensureMainSession();

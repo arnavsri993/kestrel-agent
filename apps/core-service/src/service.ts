@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import {
 	AgentCore,
+	OnshapeClient,
 	createAccountModelProviders,
 	type BrowserAction,
 	type BrowserAutomationBackend,
@@ -308,6 +309,7 @@ export function startCoreService(port: CoreParentPort): void {
 					join(artifactRoot, "remote"),
 				);
 				core = new AgentCore({
+ ...(message.config.secureEnvironment.ONSHAPE_ACCESS_KEY && message.config.secureEnvironment.ONSHAPE_SECRET_KEY ? { onshape: new OnshapeClient({ accessKey: message.config.secureEnvironment.ONSHAPE_ACCESS_KEY, secretKey: message.config.secureEnvironment.ONSHAPE_SECRET_KEY }) } : {}),
 					...(message.config.hostToolNames !== undefined ? { hostToolNames: message.config.hostToolNames } : {}),
 					database,
 					seedDevelopmentFixtures:

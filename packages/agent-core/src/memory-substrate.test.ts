@@ -217,6 +217,30 @@ describe("memory substrate", () => {
 		}
 	});
 
+	it("isolates persistent parents from personal memory and each other", async () => {
+		const state = fixture();
+		try {
+			const first = state.runtime.createSession({ title: "Engineering", kind: "agent" });
+			const second = state.runtime.createSession({ title: "School", kind: "agent" });
+			state.substrate.remember(memoryInput("Personal private preference", "personal"));
+			const remembered = state.substrate.rememberForSession(first.id,
+				memoryInput("Engineering mechanism decision", "engineering"));
+			expect(state.substrate.listForSession(first.id)).toContainEqual(remembered);
+			expect(state.substrate.listForSession(second.id)).toEqual([]);
+			expect(state.substrate.listForSession(state.main.id).map(item => item.content))
+				.not.toContain("Engineering mechanism decision");
+			const identity = state.substrate.ensureAgentIdentity(first);
+			const context = state.substrate.getRelevantContext({ query: "private preference mechanism",
+				sessionId: first.id, agentId: identity.id, includeSharedMemory: true });
+			expect(context.prompt).not.toContain("Personal private preference");
+			expect(context.prompt).toContain("Engineering mechanism decision");
+			expect(state.substrate.getRelevantContext({ query: "private preference", sessionId: first.id }).prompt)
+				.not.toContain("Personal private preference");
+			expect(() => state.substrate.getRelevantContext({ query: "mechanism", sessionId: second.id, agentId: identity.id }))
+				.toThrow(/another agent/);
+		} finally { await state.close(); }
+	});
+
 	it("keeps private agent memory separate from global context and tasks", async () => {
 		const state = fixture();
 		try {

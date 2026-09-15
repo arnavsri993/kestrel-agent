@@ -20,6 +20,7 @@ export interface AgentSessionTreeItem {
 export function agentSessionIsRenderable(session: RuntimeSession): boolean {
 	return (
 		!session.forgottenAt &&
+		!session.specialistDefinition?.archived &&
 		session.privacyMode !== "private" &&
 		session.privacyMode !== "incognito"
 	);

@@ -1347,6 +1347,7 @@ export function installGoogleWorkspaceTools(
 	sessionId: string,
 ): void {
 	runtime.registerExternalTool({
+ resourceAccess: () => [{ connectionId: `google-workspace:${client.email}`, resourceId: "calendar:primary", capability: "read" }],
 		descriptor: {
 			name: "google.calendar.list-events",
 			title: "List Google Calendar events",
@@ -1377,6 +1378,7 @@ export function installGoogleWorkspaceTools(
 			}),
 	});
 	runtime.registerExternalTool({
+ resourceAccess: () => [{ connectionId: `google-workspace:${client.email}`, resourceId: "calendar:primary", capability: "read" }],
 		descriptor: {
 			name: "google.calendar.check-availability",
 			title: "Check Google Calendar availability",
@@ -1420,6 +1422,7 @@ export function installGoogleWorkspaceTools(
 			}),
 	});
 	runtime.registerExternalTool({
+ resourceAccess: () => [{ connectionId: `google-workspace:${client.email}`, resourceId: "calendar:primary", capability: "write" }],
 		descriptor: {
 			name: "google.calendar.create-event",
 			title: "Create Google Calendar event",
@@ -1505,6 +1508,7 @@ export function installGoogleWorkspaceTools(
 			}),
 	});
 	runtime.registerExternalTool({
+ resourceAccess: input => client.canReadMessages && typeof input.threadId === "string" && /^[a-zA-Z0-9_-]{1,200}$/.test(input.threadId) ? [{ connectionId: `google-workspace:${client.email}`, resourceId: `gmail:thread:${input.threadId}`, capability: "read" }] : [],
 		descriptor: {
 			name: "google.gmail.get-thread",
 			title: "Get Gmail thread",
@@ -1541,6 +1545,7 @@ export function installGoogleWorkspaceTools(
 			}),
 	});
 	runtime.registerExternalTool({
+ resourceAccess: input => client.canReadMessages && typeof input.messageId === "string" && /^[a-zA-Z0-9_-]{1,200}$/.test(input.messageId) ? [{ connectionId: `google-workspace:${client.email}`, resourceId: `gmail:message:${input.messageId}`, capability: "read" }] : [],
 		descriptor: {
 			name: "google.gmail.get-attachment",
 			title: "Get Gmail attachment",
@@ -1570,6 +1575,7 @@ export function installGoogleWorkspaceTools(
 			}),
 	});
 	runtime.registerExternalTool({
+ resourceAccess: input => typeof input.to === "string" && /^[^\s,;<>]+@[^\s,;<>]+$/.test(input.to) && !input.threadId && !input.inReplyTo && !input.references ? [{ connectionId: `google-workspace:${client.email}`, resourceId: `gmail:recipient:${input.to.toLowerCase()}`, capability: "draft" }] : [],
 		descriptor: {
 			name: "google.gmail.create-draft",
 			title: "Create Gmail draft",

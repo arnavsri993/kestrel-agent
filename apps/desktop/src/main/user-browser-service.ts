@@ -1,3 +1,4 @@
+import { whatsappDomSnapshot } from "./whatsapp-source";
 import { PAYMENT_AUTOFILL_WORLD_ID, PAYMENT_FORM_SCAN_SCRIPT, PAYMENT_FORM_VALUES_SCRIPT, paymentFillScript } from "./payment-form-scripts";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -329,6 +330,7 @@ export interface UserBrowserServiceOptions {
 	legacyDownloadDirectory?: string;
 	initialState?: UserBrowserState;
 	partitionName?: string;
+ connectionMode?: "whatsapp";
 	now?: () => Date;
 	passwordVault?: PasswordVault;
 	paymentCardVault?: PaymentCardVault;
@@ -1096,7 +1098,7 @@ export class UserBrowserService {
 	private readonly partition: Session;
 	private readonly extensionManager: BrowserExtensionManager;
 	private readonly extensionRuntime: ElectronExtensionRuntime;
-	private readonly extensionStartup: Promise<void>;
+	private readonly extensionStartup: Promise<void> = Promise.resolve();
 	private readonly views = new Map<string, ViewRecord>();
 	private readonly elementRefs = new Map<string, Map<string, number>>();
 	private readonly sensitiveElementRefs = new Map<string, Set<string>>();
@@ -1121,6 +1123,7 @@ export class UserBrowserService {
 	private readonly legacyDownloadDirectory: string | undefined;
 	private downloadDirectory: string;
 	private readonly partitionName: string;
+ readonly connectionMode: "whatsapp" | undefined;
 	private readonly partitionCoordinator: BrowserPartitionCoordinator;
 	private readonly partitionParticipant: BrowserPartitionParticipant;
 	private readonly threatProvider: BrowserThreatProvider;
@@ -1185,10 +1188,14 @@ export class UserBrowserService {
 		this.window = options.window;
 		this.allowDevTools = options.allowDevTools ?? true;
 		this.store = new BrowserTabStore(options.statePath);
+		const initialState = !existsSync(options.statePath) ? options.initialState : undefined;
 		this.state =
-			options.initialState && !existsSync(options.statePath)
-				? cloneState(options.initialState)
+			initialState
+				? cloneState(initialState)
 				: this.store.load(options.now);
+		// Persist the handoff before the source window removes its tab. A newly
+		// detached window can quit before navigation emits its first state update.
+		if (initialState) this.store.save(this.state);
 		this.now = options.now ?? (() => new Date());
 		this.defaultDownloadDirectory = options.downloadDirectory;
 		this.legacyDownloadDirectory = options.legacyDownloadDirectory;
@@ -1261,6 +1268,7 @@ export class UserBrowserService {
 		this.extensionManager = new BrowserExtensionManager(dirname(options.statePath), {
 			allowLocalExtensions: options.allowLocalExtensions === true,
 		});
+		this.connectionMode = options.connectionMode;
 		this.partitionName = options.partitionName ?? USER_BROWSER_PARTITION;
 		if (!/^persist:[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(this.partitionName))
 			throw new Error(
@@ -1271,7 +1279,7 @@ export class UserBrowserService {
 		});
 		this.extensionRuntime = new ElectronExtensionRuntime(this.partition);
 		this.applySessionBrowserPreferences();
-		this.extensionStartup = this.extensionManager
+		if (!this.connectionMode) this.extensionStartup = this.extensionManager
 			.loadAll(this.extensionRuntime)
 			.catch((error) => {
 				console.warn("[Extension] Failed to restore browser extensions:", error);
@@ -3047,7 +3055,21 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
+ async inspectWhatsApp(input: { resourceId?: string; capture: boolean }) {
+  if (this.connectionMode !== "whatsapp") throw new Error("Use the dedicated WhatsApp connection tab.");
+  return this.runExclusiveTabMutation(async () => {
+   const tab = this.requireActiveTab();
+   const webContents = this.ensureView(tab).view.webContents;
+   const url = webContents.getURL();
+   if (new URL(url).origin !== "https://web.whatsapp.com") throw new Error("Open WhatsApp Web in its connection tab.");
+   const result = await webContents.executeJavaScript(`(${whatsappDomSnapshot.toString()})(${JSON.stringify(input)})`);
+   if (webContents.isDestroyed() || webContents.getURL() !== url || this.requireActiveTab().id !== tab.id) throw new Error("The connection page changed during capture.");
+   return result;
+  });
+ }
+
 	async pageContext(tabId?: string): Promise<UserBrowserPageContext> {
+ if (this.connectionMode) throw new Error("Connection tabs require their scoped capture path.");
 		return this.runExclusiveTabMutation(() => this.pageContextWhilePinned(tabId));
 	}
 
@@ -4610,6 +4632,7 @@ export class UserBrowserService {
 		tabId?: string,
 		signal?: AbortSignal,
 	): Promise<BrowserSnapshot> {
+		if (this.connectionMode) throw new Error("Connection tabs do not expose general snapshots.");
 		return this.runExclusiveTabMutation(
 			() => this.snapshotWhilePinned(tabId, signal),
 			signal,
@@ -4921,6 +4944,7 @@ export class UserBrowserService {
 		request: UserBrowserBackendWireRequest,
 		signal: AbortSignal,
 	): Promise<unknown> {
+ if (this.connectionMode) throw new Error("Connection tabs do not expose general browser-agent access.");
 		return this.runExclusiveTabMutation(async () => {
 			if (signal.aborted) throw signal.reason;
 			const tabId = "tabId" in request ? request.tabId : undefined;
