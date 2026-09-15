@@ -204,4 +204,6 @@ it("measures 50,000 encrypted source records, indexed retrieval, pagination, can
   if (process.env.KESTREL_SOURCE_BENCHMARK_REPORT) writeFileSync(process.env.KESTREL_SOURCE_BENCHMARK_REPORT, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
  } finally { if (!closed) await f.core.close(); rmSync(root, { recursive: true, force: true }); }
-}, 120_000);
+// Keep the full dataset on shared CI runners, where encrypted disk writes compete
+// with the rest of the suite. This is a correctness test, not a two-minute SLA.
+}, 300_000);

@@ -17,10 +17,10 @@ The delivery branch starts at main a0eaeaa6. Only the task delta against the ori
 ## Validation
 
 - Full typecheck passed after resolving dedicated-window initialization.
-- Full unit suite: 219 files / 1,518 tests passed, including synthetic encrypted 50,000-record ingestion, retrieval, cancellation, and restart.
+- Full unit suite: 220 files / 1,522 tests passed, including synthetic encrypted 50,000-record ingestion, retrieval, cancellation, and restart.
 - Packaged persistent-agent fixture passed: creation of eight specialists, scoped memory, source ingestion/revocation, dedicated partition, and detached-window restart.
 - Broad verification passed through build, benchmarks, browser end-to-end tests, desktop startup, single-instance, layout, New Tab, settings, Writing Studio and file-icon checks. Browser smoke initially used a persistent agent for personal browser actions; its fixture now separates an agent for Universe assertions and a conversation for personal browser assertions, and the rerun passed. Later verify gates are not represented as passed.
-- Installed at /Applications/Kestrel.app through install:mac:dev. Installed/package app.asar SHA256: 9a2a1ea3597988a9c7b328fc78555cedf4efcb3377cb0d3eed6ee29b8a047898. Final native accessibility inspection timed out; packaged UI proof does not establish the current user-visible window.
+- Installed at /Applications/Kestrel.app through install:mac:dev. Installed/package app.asar SHA256: 543a73c7fcf48bff6a3b036b2d89ffc41c9a7f1f7a8cba8f672612c1113fe73e. Final native accessibility inspection timed out; packaged UI proof does not establish the current user-visible window.
 
 ## Remaining work
 
@@ -38,4 +38,8 @@ These checks do not establish complete retention closure: copied cross-session s
 
 Memory Sources now provides Review now and Stop review. Review requires model-processing consent and current resource access, reads one selected observation through sources.read, and stores analysis in the existing source-linked WorkingTask. Duplicate attempts are rejected. Limits are four model turns (or the lower configured limit), 2,000 output tokens per turn, and 60 seconds. No external-write tools are supplied. Required independent verification routes fail closed rather than bypassing their requirement. Completion requires a verified source-read receipt for this run. Proposed work remains explicitly unexecuted and unverified.
 
-Fixture coverage checks consent, actual retrieval, task/source links, duplicate starts, cancellation, and source deletion. Full typecheck and 39 core regression tests passed before the final receipt check; the final focused review tests and Core typecheck also passed. This is user-triggered analysis, not automatic source scheduling or specialist execution. Retry/recovery UX and complete provider-backed live proof remain outstanding.
+Fixture coverage checks consent, actual retrieval, task/source links, duplicate starts, cancellation, and source deletion. Full typecheck and 39 core regression tests passed before the final receipt check; the final focused review tests and Core typecheck also passed. This is user-triggered analysis, not automatic source scheduling or specialist execution. Failed or stopped reviews can be retried explicitly while preserving task identity and prior evidence; retry rechecks consent and source access. Complete provider-backed live proof remains outstanding.
+
+## Merge validation
+
+The final local suite passed all 1,522 tests in 220 files. The installed canonical app passed the persistent-agent/source/restart fixture again. Both prior CI jobs stopped only because the synthetic 50,000-record test exceeded its two-minute harness timeout; that test now allows five minutes on shared runners without changing its dataset or assertions. This is a bounded manual-review increment; the remaining architecture above is follow-up work.
