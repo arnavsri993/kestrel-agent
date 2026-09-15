@@ -1330,8 +1330,14 @@ export class AgentRuntime extends EventEmitter {
 		input: Omit<RuntimeMessage, "id" | "createdAt">,
 	): RuntimeMessage {
 		this.requireSession(input.sessionId);
+        const sourceToolExecutionIds = input.role === "assistant"
+            ? [...new Set(this.listMessages(input.sessionId).flatMap(message => [
+                ...(message.sourceToolExecutionIds ?? []),
+                ...(message.toolName === "sources.read" && message.toolExecutionId ? [message.toolExecutionId] : [])
+            ]))] : input.sourceToolExecutionIds;
 		const message = RuntimeMessageSchema.parse({
 			...input,
+            ...(sourceToolExecutionIds?.length ? { sourceToolExecutionIds } : {}),
 			id: `message-${randomUUID()}`,
 			createdAt: this.now(),
 		});
@@ -1345,7 +1351,7 @@ export class AgentRuntime extends EventEmitter {
 			},
 			{ messageId: message.id },
 		);
-		return message;
+		return this.database.listRuntimeMessages(input.sessionId).find(stored => stored.id === message.id)!;
 	}
 
 	listMessages(sessionId: string): RuntimeMessage[] {

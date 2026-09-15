@@ -713,6 +713,7 @@ export class MemorySubstrate {
 
 	captureUserMessage(message: RuntimeMessage, session?: RuntimeSession): TimelineEvent | undefined {
 		if (message.role !== "user" && message.role !== "assistant") return undefined;
+        if (message.sourceToolExecutionIds?.length) return undefined;
 		const runtimeSession = session ?? this.runtime?.getSession(message.sessionId);
 		if (runtimeSession?.privacyMode === "private" || runtimeSession?.privacyMode === "incognito") return undefined;
 		const activeTaskId = this.activeTaskIds.get(message.sessionId);

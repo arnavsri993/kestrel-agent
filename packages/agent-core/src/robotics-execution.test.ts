@@ -46,6 +46,10 @@ it("runs a persistent specialist against authorized source evidence and returns 
   const sourceReceipt = database.listToolExecutions(specialist.id).find(receipt => receipt.toolName === "sources.read")!;
   database.deleteTimelineEvent(sourceEvent.id);
   expect(database.getToolExecution(sourceReceipt.id)?.output).toEqual({ sourceEvidenceRemoved: true });
+  expect(core.runtime.listMessages(specialist.id).some(message => message.content.includes("hardware dimensions"))).toBe(false);
+  const lateAssistant = core.runtime.appendMessage({ sessionId: specialist.id, role: "assistant", content: "Late derived private answer" });
+  expect(lateAssistant.content).toBe("Source evidence was deleted or expired.");
+  expect(lateAssistant.sourceToolExecutionIds).toContain(sourceReceipt.id);
   expect(core.runtime.listMessages(specialist.id).filter(message => message.toolExecutionId === sourceReceipt.id).every(message => !message.content.includes("Please inspect autonomous paths"))).toBe(true);
   database.saveToolExecution(sourceReceipt);
   expect(database.getToolExecution(sourceReceipt.id)?.output).toEqual({ sourceEvidenceRemoved: true });

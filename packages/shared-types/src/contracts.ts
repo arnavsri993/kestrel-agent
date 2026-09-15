@@ -1040,6 +1040,7 @@ export const RuntimeMessageSchema = z.object({
 	role: z.enum(["system", "user", "assistant", "tool"]),
 	content: z.string().min(1).max(1_000_000),
 	memoryRecallReceipt: MemoryRecallReceiptSchema.optional(),
+    sourceToolExecutionIds: z.array(z.string().min(1)).optional(),
 	modelToolCalls: z
 		.array(
 			z.object({

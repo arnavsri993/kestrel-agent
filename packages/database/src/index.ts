@@ -778,12 +778,13 @@ export class KestrelDatabase {
 	}
 
 	saveRuntimeMessage(message: RuntimeMessage): RuntimeSession {
-		const parsed = RuntimeMessageSchema.parse(message.toolExecutionId && this.getPrivateState(this.sourceReceiptDeletionKey(message.toolExecutionId))
+		const parsed = RuntimeMessageSchema.parse([...(message.sourceToolExecutionIds ?? []), ...(message.toolExecutionId ? [message.toolExecutionId] : [])].some(id => this.getPrivateState(this.sourceReceiptDeletionKey(id)))
             ? { ...message, content: "Source evidence was deleted or expired.", modelToolCalls: undefined, memoryRecallReceipt: undefined } : message);
 		const encrypted = encryptText(
 			JSON.stringify({
 				version: 2,
 				content: parsed.content,
+                ...(parsed.sourceToolExecutionIds ? { sourceToolExecutionIds: parsed.sourceToolExecutionIds } : {}),
 				...(parsed.modelToolCalls
 					? { modelToolCalls: parsed.modelToolCalls }
 					: {}),
@@ -981,9 +982,14 @@ export class KestrelDatabase {
             if (!Array.isArray(events) || !events.some(event => event && typeof event === "object" && event.id === eventId)) continue;
             this.setPrivateState(this.sourceReceiptDeletionKey(receipt.id), { deleted: true });
             this.saveToolExecution(receipt);
-            const messages = this.db.prepare("SELECT id FROM runtime_messages WHERE tool_execution_id = ?").all(receipt.id) as Array<{ id: string }>;
-            const encrypted = encryptText(JSON.stringify({ version: 2, content: "Source evidence was deleted or expired.", toolName: receipt.toolName }), this.encryptionKey);
+            const messages = this.listRuntimeMessages(receipt.sessionId).filter(message =>
+                message.toolExecutionId === receipt.id || message.sourceToolExecutionIds?.includes(receipt.id) ||
+                (message.role === "assistant" && !message.sourceToolExecutionIds && message.createdAt >= receipt.startedAt));
             for (const message of messages) {
+                const encrypted = encryptText(JSON.stringify({ version: 2, content: "Source evidence was deleted or expired.",
+                    ...(message.toolName ? { toolName: message.toolName } : {}),
+                    sourceToolExecutionIds: [...new Set([...(message.sourceToolExecutionIds ?? []), receipt.id])]
+                }), this.encryptionKey);
                 this.db.prepare("UPDATE runtime_messages SET content_ciphertext = ?, content_iv = ?, content_auth_tag = ? WHERE id = ?")
                     .run(encrypted.ciphertext, encrypted.iv, encrypted.authTag, message.id);
                 this.db.prepare("DELETE FROM runtime_message_terms WHERE message_id = ?").run(message.id);
@@ -4472,6 +4478,7 @@ export class KestrelDatabase {
 			providerToolCallId?: unknown;
 			toolName?: unknown;
 			memoryRecallReceipt?: unknown;
+            sourceToolExecutionIds?: unknown;
 		} = { content: decrypted };
 		try {
 			const candidate = JSON.parse(decrypted) as Record<string, unknown>;
@@ -4485,6 +4492,7 @@ export class KestrelDatabase {
 			sessionId: row.session_id,
 			role: row.role,
 			content: stored.content,
+            ...(stored.sourceToolExecutionIds ? { sourceToolExecutionIds: stored.sourceToolExecutionIds } : {}),
 			...(stored.modelToolCalls
 				? { modelToolCalls: stored.modelToolCalls }
 				: {}),

@@ -27,3 +27,9 @@ The delivery branch starts at main a0eaeaa6. Only the task delta against the ori
 The full architecture is not yet live. Automatic source extraction/planning/execution, comprehensive source-derived task/conversation deletion, full knowledge/work indexed search, richer correction/people identity controls, complete backup and connection registry coverage, and overlapping workspace mutation protection remain incomplete.
 
 Live WhatsApp showed an unsupported browser page; no authenticated capture is claimed. Onshape and Google were not connected. A prior live specialist text response proves only that bounded model route, not CAD execution, source ingestion, or independent reviewer readiness. No credentials or profile data were copied or reset.
+
+## Retention follow-up
+
+Source receipts now use encrypted payloads, with legacy source receipts upgraded on reopen. Source deletion redacts matching receipts and tool messages, clears their transcript search terms, and blocks stale receipt/message writes. Assistant messages carry encrypted source-receipt provenance; directly affected answers are redacted and excluded from generic automatic memory capture. Legacy assistant answers after the read are conservatively redacted. Late writes for deleted task/knowledge IDs are rejected across restart, and explicitly linked task/knowledge graphs are removed on source expiry.
+
+These checks do not establish complete retention closure: copied cross-session summaries, prior automatically derived timeline records, new records with lost provenance, external artifacts, historical backups, and streamed text already delivered to a provider are not covered by these changes. Automatic processing remains disabled pending the remaining pipeline work and verification.
