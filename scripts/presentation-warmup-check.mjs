@@ -107,11 +107,12 @@ function queryProfileCounts(databasePath) {
 	}
 }
 
-function isRecent(isoTimestamp, windowMs) {
+function isRecent(isoTimestamp, windowMs, now) {
 	if (!isoTimestamp || typeof isoTimestamp !== "string") return false;
 	const ms = Date.parse(isoTimestamp);
 	if (!Number.isFinite(ms)) return false;
-	return Date.now() - ms <= windowMs;
+	const ageMs = now - ms;
+	return ageMs >= 0 && ageMs <= windowMs;
 }
 
 function countWorkspaceGrants(grantsPath) {
@@ -169,7 +170,7 @@ export function evaluatePresentationWarmup({
 		),
 		check(
 			"Recent model activity (within warm-up window; optional before T−10)",
-			!database.error && isRecent(latestActivity, warmWindowMs),
+			!database.error && isRecent(latestActivity, warmWindowMs, now),
 			database.error ??
 				(latestActivity
 					? `latest activity ${latestActivity}`
