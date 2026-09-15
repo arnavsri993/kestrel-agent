@@ -13,7 +13,13 @@ const require = createRequire(
 const Database = require("better-sqlite3");
 
 describe("presentation warmup check", () => {
-	it("passes when profile has browser history, grants, memory, and runtime activity", () => {
+	it.each([
+		{ label: "recent activity", ageMs: 60_000, expected: true },
+		{ label: "activity at the window boundary", ageMs: 600_000, expected: true },
+		{ label: "stale activity", ageMs: 600_001, expected: false },
+		{ label: "future activity", ageMs: -1, expected: false },
+		{ label: "invalid activity", ageMs: null, expected: false },
+	])("evaluates $label against the supplied clock", ({ ageMs, expected }) => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-warmup-check-"));
 
 		try {
@@ -52,7 +58,8 @@ describe("presentation warmup check", () => {
       created_at TEXT NOT NULL
     );
   `);
-			const now = new Date().toISOString();
+			const clock = Date.parse("2020-01-01T12:00:00.000Z");
+			const now = ageMs === null ? "invalid" : new Date(clock - ageMs).toISOString();
 			db.prepare(
 				"INSERT INTO memories (id, status, user_confirmed) VALUES (?, ?, ?)",
 			).run("m1", "active", 1);
@@ -66,12 +73,12 @@ describe("presentation warmup check", () => {
 
 			const evaluation = evaluatePresentationWarmup({
 				profileDir: root,
-				now: Date.now(),
+				now: clock,
 			});
-			assert.equal(evaluation.pass, true);
+			assert.equal(evaluation.pass, expected);
 			assert.equal(
 				evaluation.results.filter((result) => result.ok).length,
-				evaluation.results.length,
+				evaluation.results.length - (expected ? 0 : 1),
 			);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
