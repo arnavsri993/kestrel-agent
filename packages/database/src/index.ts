@@ -982,9 +982,9 @@ export class KestrelDatabase {
             if (!Array.isArray(events) || !events.some(event => event && typeof event === "object" && event.id === eventId)) continue;
             this.setPrivateState(this.sourceReceiptDeletionKey(receipt.id), { deleted: true });
             this.saveToolExecution(receipt);
-            const messages = this.listRuntimeMessages(receipt.sessionId).filter(message =>
+            const messages = (this.db.prepare("SELECT * FROM runtime_messages").all() as RuntimeMessageRow[]).map(row => this.parseRuntimeMessage(row)).filter(message =>
                 message.toolExecutionId === receipt.id || message.sourceToolExecutionIds?.includes(receipt.id) ||
-                (message.role === "assistant" && !message.sourceToolExecutionIds && message.createdAt >= receipt.startedAt));
+                (message.sessionId === receipt.sessionId && message.role === "assistant" && !message.sourceToolExecutionIds && message.createdAt >= receipt.startedAt));
             for (const message of messages) {
                 const encrypted = encryptText(JSON.stringify({ version: 2, content: "Source evidence was deleted or expired.",
                     ...(message.toolName ? { toolName: message.toolName } : {}),

@@ -44,7 +44,12 @@ it("runs a persistent specialist against authorized source evidence and returns 
   core.runtime.setResourceGrants(parent.id, [access]);
   const sourceEvent = core.sourceIngestion.page({ sessionId: parent.id, connectionId: access.connectionId, resourceId: access.resourceId }).events[0]!;
   const sourceReceipt = database.listToolExecutions(specialist.id).find(receipt => receipt.toolName === "sources.read")!;
+  const fork = core.runtime.forkSession(specialist.id, "Source context fork");
+  expect(core.runtime.listMessages(fork.id).some(message => message.sourceToolExecutionIds?.includes(sourceReceipt.id))).toBe(true);
+  await expect(core.agentLoop.run({ sessionId: fork.id, model: "fixture-model", providerIds: [provider.id], userContent: [{ type: "text", text: "Continue the copied context" }] })).rejects.toThrow("authorization checks");
+  expect(calls).toBe(2);
   database.deleteTimelineEvent(sourceEvent.id);
+  expect(core.runtime.listMessages(fork.id).some(message => message.content.includes("hardware dimensions") || message.content.includes("Please inspect autonomous paths"))).toBe(false);
   expect(database.getToolExecution(sourceReceipt.id)?.output).toEqual({ sourceEvidenceRemoved: true });
   expect(core.runtime.listMessages(specialist.id).some(message => message.content.includes("hardware dimensions"))).toBe(false);
   const lateAssistant = core.runtime.appendMessage({ sessionId: specialist.id, role: "assistant", content: "Late derived private answer" });

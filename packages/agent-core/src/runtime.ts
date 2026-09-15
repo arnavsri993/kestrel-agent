@@ -1261,6 +1261,8 @@ export class AgentRuntime extends EventEmitter {
 					? { providerToolCallId: message.providerToolCallId }
 					: {}),
 				...(message.toolName ? { toolName: message.toolName } : {}),
+                ...(message.toolExecutionId ? { toolExecutionId: message.toolExecutionId } : {}),
+                ...(message.sourceToolExecutionIds ? { sourceToolExecutionIds: message.sourceToolExecutionIds } : {}),
 			});
 			messageIds.set(message.id, cloned.id);
 		}
@@ -1331,10 +1333,10 @@ export class AgentRuntime extends EventEmitter {
 	): RuntimeMessage {
 		this.requireSession(input.sessionId);
         const sourceToolExecutionIds = input.role === "assistant"
-            ? [...new Set(this.listMessages(input.sessionId).flatMap(message => [
+            ? [...new Set([...(input.sourceToolExecutionIds ?? []), ...this.listMessages(input.sessionId).flatMap(message => [
                 ...(message.sourceToolExecutionIds ?? []),
                 ...(message.toolName === "sources.read" && message.toolExecutionId ? [message.toolExecutionId] : [])
-            ]))] : input.sourceToolExecutionIds;
+            ])])] : input.sourceToolExecutionIds;
 		const message = RuntimeMessageSchema.parse({
 			...input,
             ...(sourceToolExecutionIds?.length ? { sourceToolExecutionIds } : {}),
