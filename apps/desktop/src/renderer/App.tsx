@@ -199,7 +199,7 @@ import { userFacingError } from "./error-copy";
 import { learnedSkillDisplayName } from "./learned-skill-presentation";
 import {
 	SETTINGS_CATALOG,
-	SETTINGS_SECTIONS,
+	SETTINGS_NAVIGATION_GROUPS,
 	normalizeSettingsSection,
 	sectionDefinition,
 	settingsScopeForSection,
@@ -9398,8 +9398,8 @@ function Settings({
 		},
 		[],
 	);
-	const visibleSections = useMemo(
-		() => SETTINGS_SECTIONS.filter((candidate) => candidate.scope === scope && candidate.id !== "browser"),
+	const navigationGroups = useMemo(
+		() => SETTINGS_NAVIGATION_GROUPS.filter((group) => group.scope === scope),
 		[scope],
 	);
 	const searchResults = useMemo(
@@ -9649,13 +9649,15 @@ function Settings({
 							chooseSection(next);
 						}}
 					>
-						<optgroup label={scopeLabel}>
-							{visibleSections.map((candidate) => (
-								<option key={candidate.id} value={candidate.id}>
-									{candidate.label}
-								</option>
-							))}
-						</optgroup>
+						{navigationGroups.map((group) => (
+							<optgroup key={group.id} label={group.label}>
+								{group.sections.map((id) => (
+									<option key={id} value={id}>
+										{sectionDefinition(id).label}
+									</option>
+								))}
+							</optgroup>
+						))}
 					</select>
 				</label>
 				<div className="settings-search" role="search">
@@ -9712,7 +9714,7 @@ function Settings({
 												<small>{entry.description}</small>
 											</span>
 											<span className="settings-search-result-category">
-												{sectionDefinition(entry.section).label} · {entry.tier}
+												{entry.scope === "browser" ? "Browser" : "Agent"} · {sectionDefinition(entry.section).label}
 											</span>
 										</button>
 									))}
@@ -9724,16 +9726,26 @@ function Settings({
 			</div>
 			<div className="settings-layout">
 				<nav className="settings-nav" aria-label="Settings sections">
-					{visibleSections.map((candidate) => (
-						<button
-							key={candidate.id}
-							type="button"
-							className={section === candidate.id ? "active" : ""}
-							aria-current={section === candidate.id ? "page" : undefined}
-							onClick={() => chooseSection(candidate.id)}
+					{navigationGroups.map((group) => (
+						<div
+							className="settings-nav-group"
+							key={group.id}
+							role="group"
+							aria-labelledby={`settings-group-${group.id}`}
 						>
-							{candidate.label}
-						</button>
+							<h3 id={`settings-group-${group.id}`}>{group.label}</h3>
+							{group.sections.map((id) => (
+								<button
+									key={id}
+									type="button"
+									className={section === id ? "active" : ""}
+									aria-current={section === id ? "page" : undefined}
+									onClick={() => chooseSection(id)}
+								>
+									{sectionDefinition(id).label}
+								</button>
+							))}
+						</div>
 					))}
 				</nav>
 					<div className="settings-content-stage">
