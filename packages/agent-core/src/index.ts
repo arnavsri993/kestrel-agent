@@ -298,6 +298,7 @@ export class AgentCore {
 	private currentRouting: ModelRoutingDecision;
 	private selectedPersonalityId: string;
 	private readonly customPersonalitiesKey = "runtime.custom-personalities";
+	private readonly sourceReviews = new Map<string, AbortController>();
 	private readonly activeStreams = new Map<
 		string,
 		{ controller: AbortController; sessionId: string; steering: string[] }
@@ -2343,6 +2344,39 @@ export class AgentCore {
      return { ok: true, sourceSelections: this.sourceIngestion.selections(request.sessionId) };
     case "source-queue-review":
      return { ok: true, memoryAgentTasks: [this.sourceIngestion.queueReview(request.sessionId, request.observationId)] };
+    case "source-stop-review": {
+     this.sourceReviews.get(request.sessionId)?.abort(new Error("Source review stopped."));
+     return { ok: true };
+    }
+    case "source-run-review": {
+     if (this.sourceReviews.has(request.sessionId)) throw new Error("A source review is already running for this agent.");
+     const prepared = this.sourceIngestion.prepareReview(request.sessionId, request.observationId);
+     const controller = new AbortController(); this.sourceReviews.set(request.sessionId, controller);
+     const task = { ...prepared.task, status: "running" as const, updatedAt: this.now() };
+     this.deps.database.upsertWorkingTask(task);
+     try {
+      const route = request.model === "auto" ? this.automaticRoute(task.id, prepared.prompt, request.providerIds) : undefined;
+      if (route?.route.reviewRequired) throw new Error("This route requires independent verification. Source review cannot bypass that requirement.");
+      const result = await this.agentLoop.run({ sessionId: request.sessionId, workingTaskId: task.id,
+       model: route?.execution.model ?? request.model, providerIds: route?.execution.providerIds ?? request.providerIds,
+       ...(route?.execution.providerModels ? { providerModels: route.execution.providerModels } : {}),
+       userContent: [{ type: "text", text: prepared.prompt }], allowedTools: ["sources.read"], resourceScope: [prepared.access],
+       maximumTurns: Math.min(4, this.configuration.current().workflows.maximumTurns), maximumOutputTokens: Math.min(route?.maximumOutputTokens ?? 2000, 2000),
+       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]) });
+      this.sourceIngestion.page(prepared.reference, true);
+      const receipts = this.deps.database.listToolExecutions(request.sessionId).filter(execution => execution.toolName === "sources.read" && execution.status === "verified" && execution.idempotencyKey?.startsWith(`${result.run.id}:`));
+      if (result.run.status === "completed" && !receipts.some(receipt => Array.isArray(receipt.output?.events) && receipt.output.events.some((event: { id?: string }) => event.id === request.observationId)))
+       throw new Error("Review returned without reading the selected source evidence.");
+      this.deps.database.upsertWorkingTask({ ...task, status: result.run.status === "completed" ? "completed" : result.run.status === "cancelled" ? "cancelled" : "failed",
+       updatedAt: this.now(), completedAt: this.now(), outcomeSummary: result.assistantMessage?.content ?? "No review result returned.",
+       evidence: [{ type: "run", id: result.run.id }], failures: result.run.error ? [result.run.error] : [],
+       unresolvedQuestions: ["Analysis only. Proposed specialist work has not been executed or independently verified."] });
+      return { ok: true, run: result.run, memoryAgentTasks: [this.deps.database.getWorkingTask(task.id)!] };
+     } catch (error) {
+      if (this.deps.database.getWorkingTask(task.id)) this.deps.database.upsertWorkingTask({ ...task, status: controller.signal.aborted ? "cancelled" : "failed", completedAt: this.now(), updatedAt: this.now(), failures: [error instanceof Error ? error.message : "Review failed."] });
+      throw error;
+     } finally { this.sourceReviews.delete(request.sessionId); }
+    }
     case "source-select":
      return { ok: true, sourceSelections: [this.sourceIngestion.select(request.selection)] };
     case "source-page":
@@ -4356,6 +4390,7 @@ export class AgentCore {
 	}
 
 	async close(): Promise<void> {
+        for (const controller of this.sourceReviews.values()) controller.abort(new Error("Agent Core is shutting down."));
 		for (const active of this.activeStreams.values())
 			active.controller.abort(new Error("Agent Core is shutting down."));
 		this.activeStreams.clear();

@@ -9,6 +9,22 @@ export function SourceMemoryView({ sessionId, onQueued }: { sessionId: string; o
  const [offset, setOffset] = useState(0); const [page, setPage] = useState<{ events: TimelineEvent[]; nextOffset?: number | undefined }>();
  const [error, setError] = useState(""); const [view, setView] = useState<"timeline" | "people">("timeline");
  const [queued, setQueued] = useState<string[]>([]);
+ const [running, setRunning] = useState<string>();
+ const [reviewed, setReviewed] = useState<string[]>([]);
+ async function runReview(observationId: string) {
+  setRunning(observationId); setError("");
+  try {
+   const result = await window.kestrel.request({ type: "source-run-review", sessionId, observationId, model: "auto", providerIds: ["auto"] });
+   if (!result.ok) throw new Error(result.error);
+   setReviewed(ids => [...new Set([...ids, observationId])]); onQueued?.();
+  } catch (cause) { setError(cause instanceof Error ? cause.message : "Review failed."); onQueued?.(); }
+  finally { setRunning(undefined); }
+ }
+ async function stopReview() {
+  const result = await window.kestrel.request({ type: "source-stop-review", sessionId });
+  if (!result.ok) setError(result.error);
+ }
+
  async function queueReview(observationId: string) {
   try {
    const result = await window.kestrel.request({ type: "source-queue-review", sessionId, observationId });
@@ -53,7 +69,11 @@ export function SourceMemoryView({ sessionId, onQueued }: { sessionId: string; o
     <p>Original time: {observation?.originalTimestamp ?? event.startedAt}{observation?.timezone ? ` (${observation.timezone})` : " · source time zone unavailable"}</p>
     <p>Imported: {new Date(event.createdAt).toLocaleString()}</p>
     <button disabled={queued.includes(event.id)} onClick={() => void queueReview(event.id)}>{queued.includes(event.id) ? "Review queued" : "Queue for review"}</button>
-    {queued.includes(event.id) && <p role="status">Saved in Work history as planned. No model run or external action has started.</p>}
+    <button disabled={Boolean(running) || reviewed.includes(event.id) || !source?.modelProcessingConsent || source.status !== "ready"} onClick={() => void runReview(event.id)}>{running === event.id ? "Reviewing…" : reviewed.includes(event.id) ? "Review attempted" : "Review now"}</button>
+    {running === event.id && <button onClick={() => void stopReview()}>Stop review</button>}
+    {reviewed.includes(event.id) && <p role="status">See Work history for the analysis or failure. No specialist work or external action was executed.</p>}
+    <p>Review limit: 4 model turns, up to 2,000 output tokens per turn, 60 seconds.</p>
+    {queued.includes(event.id) && !running && !reviewed.includes(event.id) && <p role="status">Saved in Work history as planned. No model run or external action has started.</p>}
     <details><summary>Evidence and revisions</summary><p>Source: {source?.label}. {observation?.providerMessageId ? "Provider message identity retained." : "Capture-local identity only; distinct rereads may be duplicates."}</p><p>Record: {event.id}</p><p>Edits are preserved as separate observations. Deleted and expired source content is removed when observed. Attachments have not been processed.</p></details>
    </details>;
   })}

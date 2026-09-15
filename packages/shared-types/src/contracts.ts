@@ -2619,6 +2619,8 @@ export type ChannelInteractionConfiguration = z.infer<
 >;
 
 export const CoreRequestSchema = z.discriminatedUnion("type", [
+ z.object({ type: z.literal("source-run-review"), sessionId: z.string().min(1), observationId: z.string().min(1).max(200), model: z.string().min(1).default("auto"), providerIds: z.array(z.string().min(1)).min(1).default(["auto"]) }),
+ z.object({ type: z.literal("source-stop-review"), sessionId: z.string().min(1) }),
  z.object({ type: z.literal("source-queue-review"), sessionId: z.string().min(1), observationId: z.string().min(1).max(200) }),
  z.object({ type: z.literal("source-list"), sessionId: z.string().min(1) }),
  z.object({ type: z.literal("source-select"), selection: SourceSelectionSchema }),

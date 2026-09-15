@@ -94,6 +94,7 @@ try {
  await page.getByRole("searchbox", { name: "Search imported source history" }).fill("autonomous");
  await page.getByText(/Synthetic request: inspect the autonomous path/).first().waitFor();
  await page.locator('section[aria-label="Source memory"] > details > summary').first().click();
+ await expect(page.getByRole("button", { name: "Review now", exact: true })).toBeDisabled();
  await page.getByRole("button", { name: "Queue for review", exact: true }).click();
  await page.getByRole("button", { name: "Review queued", exact: true }).waitFor();
  await page.getByRole("button", { name: "Work history", exact: true }).click();
