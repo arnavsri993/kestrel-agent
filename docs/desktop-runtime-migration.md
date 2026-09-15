@@ -85,16 +85,49 @@ Passing the Node sidecar smoke proves core bootstrap, requests and recovery work
 without Electron in the same executable shape that the packaged app uses. It
 does not prove a replacement browser window, credential store or renderer bridge.
 
+## Native Chromium desktop host
+
+`apps/native-chromium-host` is the native macOS desktop-host migration lane. It
+packages the existing Kestrel renderer with a CEF Chromium browser process and
+its renderer, GPU, network, and utility helpers, plus the standalone Node Agent
+Core sidecar. It is not a Playwright shell or a second renderer: the full
+Kestrel renderer reaches the host through a local-only CEF bridge, and user
+browser tabs run as sibling native `CefBrowserView`s in the same window.
+
+Use the native lane directly during development:
+
+```sh
+corepack pnpm build:native-chromium-host
+corepack pnpm dev:native-chromium-host
+corepack pnpm test:native-chromium-host
+corepack pnpm test:native-chromium-core-relay
+```
+
+The foreground launcher builds the app into `.tmp`, gives it one newly-created
+temporary profile, starts an ephemeral Core, and removes only that temporary
+profile after the app exits. It never reads, copies, migrates, or writes the
+installed Electron profile. Chromium runs with mock Keychain storage and its
+background account/update paths disabled, so native startup does not request
+Keychain access or launch an authentication flow. Remote pages receive no
+Kestrel bridge. Native popup adoption, durable profile/credential storage,
+permissions, downloads, extensions, and automation remain deliberately
+unmigrated or fail closed.
+
+`build:native-chromium-host` produces an ad-hoc-signed development bundle with
+a separate development identity. It does not call `install:mac:dev`, replace
+`/Applications/Kestrel.app`, or change the canonical desktop app. A canonical
+cutover still requires a separately reviewed profile/credential compatibility
+design, production signing/notarization, and proof of the remaining desktop
+capabilities. Keep the Electron adapter in place until those replacement
+boundaries have been exercised.
+
 ## Next boundaries
 
-A Chromium host still needs implementations for visible browser views, window
-lifecycle, secure storage, permission prompts and renderer transport. The next
-host cutover must be a real native macOS Chromium host with the browser,
-renderer, GPU, network, and utility process model enabled—not a second preview
-app or a Playwright-only shell. It must first prove read-only compatibility with
-the existing Kestrel profile and Keychain identity before it is allowed to write
-or migrate profile data. Keep each transition backed by the current desktop
-adapter and real process tests until its replacement has been exercised.
+The next native-host slices are durable profile ownership without Keychain
+prompt spam, popup/adoption semantics, user-approved permission flows,
+downloads/extensions, and the remaining desktop command surface. Each needs a
+real process test and an explicit user-data boundary before the canonical app
+can move.
 
 ## Chromium preview host
 
