@@ -28,10 +28,18 @@ it.each(["expired", "delete-source"] as const)("removes transitive and mixed-sou
   f.database.upsertAgentMemory({ ...base, id: "derived-second", sourceIds: ["memory:derived-first"], status: "superseded" });
   f.database.upsertAgentMemory({ ...base, id: "derived-third", sourceIds: ["agent_memory:derived-second", "derived-third"] });
   f.database.upsertAgentMemory({ ...base, id: "unrelated", sourceIds: ["unrelated-evidence"] });
+  const review = f.core.sourceIngestion.queueReview(f.parent.id, event.id);
+  f.database.upsertWorkingTask({ ...review, status: "completed", outcomeSummary: "Sensitive source-derived result", sourceIds: [event.id, "other-evidence"] });
+  f.database.upsertWorkingTask({ ...review, id: "indirect-task", status: "completed", sourceIds: ["task:" + review.id], outcomeSummary: "Indirect source-derived result" });
+  f.database.upsertWorkingTask({ ...review, id: "unrelated-task", sourceIds: ["other-evidence"] });
+  f.database.upsertAgentMemory({ ...base, id: "task-derived-memory", sourceIds: ["other-evidence"], taskIds: ["indirect-task"] });
   if (mode === "expired") await f.core.sourceIngestion.ingest({ ...f.base, captureId: "expire-derived", observations: [{ ...message, state: "expired" }] });
-  else expect(f.database.deleteMemoryArtifactsForSource(event.sourceSessionId!).agentMemories).toBe(3);
-  for (const id of ["derived-first", "derived-second", "derived-third"]) expect(f.database.getAgentMemory(id)).toBeUndefined();
+  else expect(f.database.deleteMemoryArtifactsForSource(event.sourceSessionId!).agentMemories).toBe(4);
+  for (const id of ["derived-first", "derived-second", "derived-third", "task-derived-memory"]) expect(f.database.getAgentMemory(id)).toBeUndefined();
   expect(f.database.getAgentMemory("unrelated")).toBeDefined();
+  expect(f.database.getWorkingTask(review.id)).toBeUndefined();
+  expect(f.database.getWorkingTask("indirect-task")).toBeUndefined();
+  expect(f.database.getWorkingTask("unrelated-task")).toBeDefined();
  } finally { await f.core.close(); }
 });
 it("queues one durable review per observation without copying untrusted content or granting execution", async () => {

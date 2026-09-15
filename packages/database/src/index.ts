@@ -3339,6 +3339,7 @@ export class KestrelDatabase {
 			let provenance = 0;
 			let deletedMemoryCount = 0;
 			let deletedAgentMemoryCount = 0;
+            let deletedSourceTaskCount = 0;
 			const deletedMemoryIds = new Set<string>();
 			for (const event of events) {
 				const removed = this.deleteTimelineEventInternal(
@@ -3352,6 +3353,7 @@ export class KestrelDatabase {
 				jobs += removed.jobs;
 				provenance += removed.provenance;
 				deletedAgentMemoryCount += removed.agentMemories;
+                deletedSourceTaskCount += removed.tasks;
 			}
 
 			for (const memory of memories) {
@@ -3438,7 +3440,7 @@ export class KestrelDatabase {
 				}
 			}
 
-			let tasks = 0;
+			let tasks = deletedSourceTaskCount;
 			const deletedTaskIds = new Set<string>();
 			for (const task of this.listAllWorkingTasksForDeletion()) {
 				const remainingSourceIds = task.sourceIds.filter(
@@ -3610,6 +3612,7 @@ export class KestrelDatabase {
 	): {
 		event?: TimelineEvent;
 		agentMemories: number;
+		tasks: number;
 		sessions: number;
 		activityBlocks: number;
 		dailySummaries: number;
@@ -3621,6 +3624,7 @@ export class KestrelDatabase {
 		if (!event)
 			return {
 				agentMemories: 0,
+				tasks: 0,
 				sessions: 0,
 				activityBlocks: 0,
 				dailySummaries: 0,
@@ -3668,6 +3672,7 @@ export class KestrelDatabase {
 		);
 		const summaryIds = new Set(summaries.map((summary) => summary.id));
 		let deletedAgentMemories = 0;
+		let deletedTasks = 0;
 		const remainingEvents = (eventIds: readonly string[]): TimelineEvent[] =>
 			eventIds
 				.filter((eventId) => eventId !== id)
@@ -3711,24 +3716,36 @@ export class KestrelDatabase {
 			// Mixed-source summaries cannot be safely redacted by dropping a link.
 			// Remove their dependent knowledge graph, including superseded records,
 			// so source expiry cannot leave the same text in a derived summary.
-			const dependents = new Map<string, string[]>();
-			for (const memory of this.listAllAgentMemories()) {
-				for (const sourceId of memory.sourceIds) {
-					const ids = dependents.get(sourceId) ?? [];
-					ids.push(memory.id); dependents.set(sourceId, ids);
-				}
-			}
-			const pending = [id]; const removed = new Set<string>();
-			for (let index = 0; index < pending.length; index++) {
-				for (const memoryId of dependents.get(pending[index]!) ?? []) {
-					if (removed.has(memoryId)) continue;
-					removed.add(memoryId);
-					const result = this.deleteAgentMemoryWithCounts(memoryId);
-					if (result.memory) deletedAgentMemories++;
-					embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;
-					pending.push(memoryId, `memory:${memoryId}`, `agent_memory:${memoryId}`);
-				}
-			}
+            const dependents = new Map<string, Array<{ kind: "memory" | "task"; id: string }>>();
+            const link = (source: string, kind: "memory" | "task", id: string) => {
+                const rows = dependents.get(source) ?? [];
+                rows.push({ kind, id }); dependents.set(source, rows);
+            };
+            for (const memory of this.listAllAgentMemories()) {
+                for (const source of [...memory.sourceIds, ...memory.taskIds]) link(source, "memory", memory.id);
+            }
+            for (const task of this.listAllWorkingTasksForDeletion()) {
+                for (const source of [...task.sourceIds, ...task.evidence.map(item => item.id)]) link(source, "task", task.id);
+            }
+            const pending = [id, `timeline_event:${id}`]; const removed = new Set<string>();
+            for (let index = 0; index < pending.length; index++) {
+                for (const owner of dependents.get(pending[index]!) ?? []) {
+                    const key = `${owner.kind}:${owner.id}`;
+                    if (removed.has(key)) continue;
+                    removed.add(key);
+                    if (owner.kind === "task") {
+                        const result = this.deleteWorkingTaskWithCounts(owner.id);
+                        if (result.deleted) deletedTasks++;
+                        embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;
+                        pending.push(owner.id, `task:${owner.id}`);
+                    } else {
+                        const result = this.deleteAgentMemoryWithCounts(owner.id);
+                        if (result.memory) deletedAgentMemories++;
+                        embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;
+                        pending.push(owner.id, `memory:${owner.id}`, `agent_memory:${owner.id}`);
+                    }
+                }
+            }
 		}
 		const embeddingOwners: Array<{
 			ownerType: EmbeddingRecord["ownerType"];
@@ -3832,6 +3849,7 @@ export class KestrelDatabase {
 		return {
 			event,
 			agentMemories: deletedAgentMemories,
+            tasks: deletedTasks,
 			sessions: deletedSessions,
 			activityBlocks: deletedBlocks,
 			dailySummaries: deletedSummaries,
