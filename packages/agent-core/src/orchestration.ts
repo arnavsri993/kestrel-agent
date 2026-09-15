@@ -1825,6 +1825,10 @@ export class TaskOrchestrator {
 			sessionId: child.parentSessionId,
 			role: "system",
 			content: `[Delegated handoff from ${child.id}; evidence ${evidence.join(", ") || "none"}]\n${summary.trim()}`,
+            sourceToolExecutionIds: [...new Set(this.runtime.listMessages(child.id).flatMap(message => [
+                ...(message.sourceToolExecutionIds ?? []),
+                ...(message.toolName === "sources.read" && message.toolExecutionId ? [message.toolExecutionId] : [])
+            ]))],
 		});
 	}
 

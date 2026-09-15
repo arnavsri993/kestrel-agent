@@ -37,7 +37,11 @@ it("runs a persistent specialist against authorized source evidence and returns 
   expect(core.runtime.listMessages(specialist.id).some(message => message.content.includes("hardware dimensions"))).toBe(true);
   expect(core.runtime.listSessions().filter(session => session.parentSessionId === parent.id)).toHaveLength(8);
   expect(calls).toBe(2);
+  const handoff = core.orchestrator.handoff(specialist.id, "Private source-derived handoff");
+  expect(handoff.sourceToolExecutionIds?.length).toBeGreaterThan(0);
   core.runtime.setResourceGrants(parent.id, []);
+  await expect(core.agentLoop.run({ sessionId: parent.id, model: "fixture-model", providerIds: [provider.id], userContent: [{ type: "text", text: "Review the delegated handoff" }] })).rejects.toThrow("revoked");
+  expect(calls).toBe(2);
   await expect(core.agentLoop.run({ sessionId: specialist.id, model: "fixture-model", providerIds: [provider.id], resourceScope: [access], userContent: [{ type: "text", text: "Continue reviewing the previous source." }] })).rejects.toThrow("revoked");
   expect(database.listAgentRuns(specialist.id).some(run => run.status === "failed" && run.error?.includes("revoked"))).toBe(true);
   expect(calls).toBe(2);
@@ -49,6 +53,7 @@ it("runs a persistent specialist against authorized source evidence and returns 
   await expect(core.agentLoop.run({ sessionId: fork.id, model: "fixture-model", providerIds: [provider.id], userContent: [{ type: "text", text: "Continue the copied context" }] })).rejects.toThrow("authorization checks");
   expect(calls).toBe(2);
   database.deleteTimelineEvent(sourceEvent.id);
+  expect(core.runtime.listMessages(parent.id).some(message => message.content.includes("Private source-derived handoff"))).toBe(false);
   expect(core.runtime.listMessages(fork.id).some(message => message.content.includes("hardware dimensions") || message.content.includes("Please inspect autonomous paths"))).toBe(false);
   expect(database.getToolExecution(sourceReceipt.id)?.output).toEqual({ sourceEvidenceRemoved: true });
   expect(core.runtime.listMessages(specialist.id).some(message => message.content.includes("hardware dimensions"))).toBe(false);

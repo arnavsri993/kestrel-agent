@@ -1946,13 +1946,17 @@ export class AgentRuntime extends EventEmitter {
   * its authorization before another provider call, including after revocation. */
  assertConversationResourceAccess(sessionId: string, runId: string): void {
   const checked = new Set<string>();
-  for (const message of this.listMessages(sessionId)) {
-   if (message.role !== "tool" || !message.toolName || !message.toolExecutionId || checked.has(message.toolExecutionId)) continue;
+  const references = this.listMessages(sessionId).flatMap(message => [
+   ...(message.role === "tool" && message.toolName && message.toolExecutionId ? [{ toolName: message.toolName, toolExecutionId: message.toolExecutionId, inherited: false }] : []),
+   ...(message.sourceToolExecutionIds ?? []).map(toolExecutionId => ({ toolName: "sources.read", toolExecutionId, inherited: true }))
+  ]);
+  for (const message of references) {
+   if (checked.has(message.toolExecutionId)) continue;
    const definition = this.tools.get(message.toolName);
    if (!definition) throw new Error("Prior tool context cannot be authorized because its adapter is unavailable. Start a new scoped conversation.");
    if (!definition.resourceAccess) continue;
    const execution = this.database.getToolExecution(message.toolExecutionId);
-   if (!execution || execution.sessionId !== sessionId) throw new Error("Prior connected context is unavailable for authorization checks.");
+   if (!execution || execution.toolName !== message.toolName || (!message.inherited && execution.sessionId !== sessionId)) throw new Error("Prior connected context is unavailable for authorization checks.");
    if (execution.output === undefined) continue;
    this.assertResourceAccess(sessionId, definition, execution.input, { runId });
    if (message.toolName === "sources.read") {
