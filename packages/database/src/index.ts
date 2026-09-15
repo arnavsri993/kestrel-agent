@@ -778,7 +778,8 @@ export class KestrelDatabase {
 	}
 
 	saveRuntimeMessage(message: RuntimeMessage): RuntimeSession {
-		const parsed = RuntimeMessageSchema.parse(message);
+		const parsed = RuntimeMessageSchema.parse(message.toolExecutionId && this.getPrivateState(this.sourceReceiptDeletionKey(message.toolExecutionId))
+            ? { ...message, content: "Source evidence was deleted or expired.", modelToolCalls: undefined, memoryRecallReceipt: undefined } : message);
 		const encrypted = encryptText(
 			JSON.stringify({
 				version: 2,
@@ -968,6 +969,28 @@ export class KestrelDatabase {
 		).map((row) => this.parseRuntimeMessage(row));
 	}
 
+    private sourceReceiptDeletionKey(id: string): string {
+        return `source-receipt-deleted.${createHash("sha256").update(id).digest("hex")}`;
+    }
+
+    private redactSourceReceipts(eventId: string): void {
+        const rows = this.db.prepare("SELECT payload FROM tool_executions WHERE tool_name = 'sources.read'").all() as Array<{ payload: string }>;
+        for (const row of rows) {
+            const receipt = this.decodeToolExecution(row.payload);
+            const events = receipt.output?.events;
+            if (!Array.isArray(events) || !events.some(event => event && typeof event === "object" && event.id === eventId)) continue;
+            this.setPrivateState(this.sourceReceiptDeletionKey(receipt.id), { deleted: true });
+            this.saveToolExecution(receipt);
+            const messages = this.db.prepare("SELECT id FROM runtime_messages WHERE tool_execution_id = ?").all(receipt.id) as Array<{ id: string }>;
+            const encrypted = encryptText(JSON.stringify({ version: 2, content: "Source evidence was deleted or expired.", toolName: receipt.toolName }), this.encryptionKey);
+            for (const message of messages) {
+                this.db.prepare("UPDATE runtime_messages SET content_ciphertext = ?, content_iv = ?, content_auth_tag = ? WHERE id = ?")
+                    .run(encrypted.ciphertext, encrypted.iv, encrypted.authTag, message.id);
+                this.db.prepare("DELETE FROM runtime_message_terms WHERE message_id = ?").run(message.id);
+            }
+        }
+    }
+
     private protectLegacySourceReceipts(): void {
         this.db.transaction(() => {
             const update = this.db.prepare("UPDATE tool_executions SET payload = ? WHERE id = ?");
@@ -992,7 +1015,8 @@ export class KestrelDatabase {
     }
 
 	saveToolExecution(execution: RuntimeToolExecution): void {
-		const parsed = RuntimeToolExecutionSchema.parse(execution);
+		const parsed = RuntimeToolExecutionSchema.parse(this.getPrivateState(this.sourceReceiptDeletionKey(execution.id))
+            ? { ...execution, output: { sourceEvidenceRemoved: true }, error: "Source evidence was deleted or expired.", status: "failed" } : execution);
 		this.db
 			.prepare(`INSERT INTO tool_executions (id, session_id, tool_name, payload, status, started_at) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, status=excluded.status`)
@@ -3661,6 +3685,7 @@ export class KestrelDatabase {
 		// Source-derived identities must not outlive their retained evidence.
 		// Explicitly confirmed user records survive, with stale references removed.
 		if (event.source === "connected-source") {
+            this.redactSourceReceipts(event.id);
 			// A reference-only review is no longer actionable after its evidence
 			// disappears. Keep the receipt, without retaining the removed content.
 			const reviewId = `source-review-${createHash("sha256").update(JSON.stringify([event.agentId, event.id])).digest("hex")}`;

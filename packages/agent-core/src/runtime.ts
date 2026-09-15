@@ -1948,7 +1948,8 @@ export class AgentRuntime extends EventEmitter {
    if (execution.output === undefined) continue;
    this.assertResourceAccess(sessionId, definition, execution.input, { runId });
    if (message.toolName === "sources.read") {
-    const output = execution.output as { events?: Array<{ id?: unknown }> };
+    const output = execution.output as { events?: Array<{ id?: unknown }>; sourceEvidenceRemoved?: boolean };
+    if (output.sourceEvidenceRemoved) throw new Error("Previously retrieved source evidence was deleted or expired. Start a new scoped conversation.");
     if (!Array.isArray(output.events)) throw new Error("Prior source result cannot be revalidated.");
     for (const reference of output.events) {
      const event = typeof reference.id === "string" ? this.database.getTimelineEvent(reference.id) : undefined;

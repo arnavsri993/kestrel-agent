@@ -43,7 +43,14 @@ it("runs a persistent specialist against authorized source evidence and returns 
   expect(calls).toBe(2);
   core.runtime.setResourceGrants(parent.id, [access]);
   const sourceEvent = core.sourceIngestion.page({ sessionId: parent.id, connectionId: access.connectionId, resourceId: access.resourceId }).events[0]!;
+  const sourceReceipt = database.listToolExecutions(specialist.id).find(receipt => receipt.toolName === "sources.read")!;
   database.deleteTimelineEvent(sourceEvent.id);
+  expect(database.getToolExecution(sourceReceipt.id)?.output).toEqual({ sourceEvidenceRemoved: true });
+  expect(core.runtime.listMessages(specialist.id).filter(message => message.toolExecutionId === sourceReceipt.id).every(message => !message.content.includes("Please inspect autonomous paths"))).toBe(true);
+  database.saveToolExecution(sourceReceipt);
+  expect(database.getToolExecution(sourceReceipt.id)?.output).toEqual({ sourceEvidenceRemoved: true });
+  core.runtime.appendMessage({ sessionId: specialist.id, role: "tool", toolName: "sources.read", toolExecutionId: sourceReceipt.id, content: "Late private source text" });
+  expect(core.runtime.listMessages(specialist.id).some(message => message.content.includes("Late private source text"))).toBe(false);
   await expect(core.agentLoop.run({ sessionId: specialist.id, model: "fixture-model", providerIds: [provider.id], resourceScope: [access], userContent: [{ type: "text", text: "Continue after source deletion." }] })).rejects.toThrow("deleted or expired");
   expect(calls).toBe(2);
   core.runtime.unregisterExternalTool("sources.read");
