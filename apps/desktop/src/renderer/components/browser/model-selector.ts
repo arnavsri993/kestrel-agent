@@ -23,12 +23,14 @@ export type ProviderGroup = {
 export const THINKING_LEVELS: readonly {
 	id: ReasoningEffort;
 	label: string;
+	description: string;
 }[] = [
-	{ id: "low", label: "Low" },
-	{ id: "medium", label: "Med" },
-	{ id: "high", label: "High" },
-	{ id: "xhigh", label: "Extra high" },
-	{ id: "max", label: "Max" },
+	{ id: "none", label: "Default", description: "Use the provider default" },
+	{ id: "low", label: "Low", description: "Less deliberation" },
+	{ id: "medium", label: "Medium", description: "Balanced deliberation" },
+	{ id: "high", label: "High", description: "More thorough reasoning" },
+	{ id: "xhigh", label: "Extra high", description: "Extended reasoning" },
+	{ id: "max", label: "Max", description: "Largest reasoning budget" },
 ];
 
 export function providerGroups(
@@ -151,19 +153,18 @@ export function selectModel(
 	model: ProviderAccountModel,
 	current: ModelSelectorChoice,
 ): ModelSelectorChoice {
-	const supportsThinking =
-		model.capabilities.capabilityProvenance === "confirmed" &&
-		model.capabilities.reasoningEfforts.length > 1;
+	const efforts = model.capabilities.capabilityProvenance === "confirmed"
+		? model.capabilities.reasoningEfforts
+		: [];
+	const reasoningEffort = efforts.includes(current.reasoningEffort)
+		? current.reasoningEffort
+		: efforts.includes("medium") ? "medium" : efforts[0] ?? "none";
 	return {
 		executionMode: "manual",
 		providerId: account.endpointId,
 		accountId: account.id,
 		model: model.id,
-		reasoningEffort: supportsThinking
-			? current.reasoningEffort === "none"
-				? "medium"
-				: current.reasoningEffort
-			: "none",
+		reasoningEffort,
 	};
 }
 
@@ -213,4 +214,18 @@ export function matchesCatalogSearch(
 					model.displayName.toLocaleLowerCase().includes(normalized),
 			),
 	);
+}
+
+/** Keep search results inside the matching account; provider/account matches show all its models. */
+export function searchProviderGroups(accounts: readonly ProviderAccountSummary[], query: string): ProviderGroup[] {
+	const normalized = query.trim().toLocaleLowerCase();
+	return providerGroups(accounts).map((group) => ({
+		...group,
+		accounts: group.accounts.map((account) => ({
+			...account,
+			models: !normalized || [account.providerId, account.displayName].some((value) => value.toLocaleLowerCase().includes(normalized))
+				? account.models
+				: account.models.filter((model) => [model.id, model.displayName].some((value) => value.toLocaleLowerCase().includes(normalized))),
+		})).filter((account) => !normalized || account.models.length > 0 || [account.providerId, account.displayName].some((value) => value.toLocaleLowerCase().includes(normalized))),
+	})).filter((group) => group.accounts.length > 0);
 }

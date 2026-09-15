@@ -74,7 +74,8 @@
 }
 
 .model-selector-menu-accounts {
-	display: block;
+	display: flex;
+	flex-direction: column;
 	width: min(760px, calc(100vw - 24px));
 	max-width: min(760px, calc(100vw - 24px));
 }
@@ -104,15 +105,16 @@
 .model-selector-columns {
 	display: flex;
 	align-items: stretch;
-	min-height: 258px;
+	min-height: 0;
+	overflow: auto;
 	max-height: min(368px, calc(100vh - 92px));
 }
 
 .model-selector-column {
 	display: flex;
 	flex-direction: column;
-	min-width: 148px;
-	max-width: 208px;
+	flex: 1 0 148px;
+	min-width: 0;
 	background: var(--panel);
 }
 
@@ -334,4 +336,22 @@
 
 .model-selector-menu[data-placement="below"] {
 	transform-origin: top left;
+}
+
+.model-selector-context {
+	margin: 0;
+	padding: 0 12px 6px;
+	color: var(--ink-secondary);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
+.model-selector-item:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+	.model-selector-column { flex: 0 0 auto; }
+	.model-selector-list { overflow: visible; }
 }

@@ -1,3 +1,12 @@
+## Model and reasoning picker — September 15, 2026
+
+Component refinement: explicit clicks choose the provider, account, and model.
+Pointer movement never retargets reasoning. Search resolves matching accounts and
+models together. Reasoning uses confirmed model capabilities and labels its target.
+Keep dense graphite surfaces, system type, 4px spacing, existing focus rings and
+menu motion. No new fonts, colors, or motion. Verify search, account isolation,
+unsupported effort fallback, keyboard reopening, and narrow/short viewport scrolling.
+
 # New Tab glass refinement — September 2026
 
 This section supersedes the older Home shelf and square-control guidance below.
