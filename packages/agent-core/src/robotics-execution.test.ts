@@ -46,6 +46,9 @@ it("runs a persistent specialist against authorized source evidence and returns 
   database.deleteTimelineEvent(sourceEvent.id);
   await expect(core.agentLoop.run({ sessionId: specialist.id, model: "fixture-model", providerIds: [provider.id], resourceScope: [access], userContent: [{ type: "text", text: "Continue after source deletion." }] })).rejects.toThrow("deleted or expired");
   expect(calls).toBe(2);
+  core.runtime.unregisterExternalTool("sources.read");
+  await expect(core.agentLoop.run({ sessionId: specialist.id, model: "fixture-model", providerIds: [provider.id], resourceScope: [access], userContent: [{ type: "text", text: "Continue after adapter removal." }] })).rejects.toThrow("adapter is unavailable");
+  expect(calls).toBe(2);
   const ownOnly = await core.handle({ type: "memory-agent-inspect", sessionId: parent.id, includeInactive: false, limit: 100 });
   expect(ownOnly.ok && ownOnly.memoryAgentTasks?.some(task => task.id === result.taskId)).toBe(false);
   core.runtime.configureAgent(specialist.id, { title: specialist.title, instructions: "", specialistDefinition: { ...specialist.specialistDefinition!, archived: true, enabled: false } });

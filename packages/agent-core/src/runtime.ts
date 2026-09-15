@@ -1941,7 +1941,8 @@ export class AgentRuntime extends EventEmitter {
   for (const message of this.listMessages(sessionId)) {
    if (message.role !== "tool" || !message.toolName || !message.toolExecutionId || checked.has(message.toolExecutionId)) continue;
    const definition = this.tools.get(message.toolName);
-   if (!definition?.resourceAccess) continue;
+   if (!definition) throw new Error("Prior tool context cannot be authorized because its adapter is unavailable. Start a new scoped conversation.");
+   if (!definition.resourceAccess) continue;
    const execution = this.database.getToolExecution(message.toolExecutionId);
    if (!execution || execution.sessionId !== sessionId) throw new Error("Prior connected context is unavailable for authorization checks.");
    if (execution.output === undefined) continue;
