@@ -434,6 +434,7 @@ export class KestrelDatabase {
 			this.db.pragma("secure_delete = ON");
 			this.assertDatabaseIntegrity();
 			this.lastMigrationBackupPath = this.migrate();
+            this.protectLegacySourceReceipts();
 		} catch (error) {
 			try {
 				database?.close();
@@ -967,6 +968,29 @@ export class KestrelDatabase {
 		).map((row) => this.parseRuntimeMessage(row));
 	}
 
+    private protectLegacySourceReceipts(): void {
+        this.db.transaction(() => {
+            const update = this.db.prepare("UPDATE tool_executions SET payload = ? WHERE id = ?");
+            for (const row of this.db.prepare("SELECT id, payload FROM tool_executions WHERE tool_name = 'sources.read'").all() as Array<{ id: string; payload: string }>) {
+                if (JSON.parse(row.payload).kestrelEncryptedTool === 1) continue;
+                update.run(this.encodeToolExecution(this.decodeToolExecution(row.payload)), row.id);
+            }
+        })();
+    }
+
+    private encodeToolExecution(execution: RuntimeToolExecution): string {
+        const payload = JSON.stringify(execution);
+        return execution.toolName === "sources.read"
+            ? JSON.stringify({ kestrelEncryptedTool: 1, ...encryptText(payload, this.encryptionKey) })
+            : payload;
+    }
+
+    private decodeToolExecution(payload: string): RuntimeToolExecution {
+        const value = JSON.parse(payload);
+        return RuntimeToolExecutionSchema.parse(value.kestrelEncryptedTool === 1
+            ? JSON.parse(decryptText(value, this.encryptionKey)) : value);
+    }
+
 	saveToolExecution(execution: RuntimeToolExecution): void {
 		const parsed = RuntimeToolExecutionSchema.parse(execution);
 		this.db
@@ -976,7 +1000,7 @@ export class KestrelDatabase {
 				parsed.id,
 				parsed.sessionId,
 				parsed.toolName,
-				JSON.stringify(parsed),
+				this.encodeToolExecution(parsed),
 				parsed.status,
 				parsed.startedAt,
 			);
@@ -989,7 +1013,7 @@ export class KestrelDatabase {
 					"SELECT payload FROM tool_executions WHERE session_id = ? ORDER BY started_at ASC",
 				)
 				.all(sessionId) as Array<{ payload: string }>
-		).map((row) => RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)));
+		).map((row) => this.decodeToolExecution(row.payload));
 	}
 
 	saveActionReceipt(receipt: ActionReceipt): void {
@@ -1088,7 +1112,7 @@ export class KestrelDatabase {
 						.all(startedAt)
 		) as Array<{ payload: string }>;
 		return rows.map((row) =>
-			RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)),
+			this.decodeToolExecution(row.payload),
 		);
 	}
 
@@ -1124,7 +1148,7 @@ export class KestrelDatabase {
 			.prepare("SELECT payload FROM tool_executions WHERE id = ?")
 			.get(id) as { payload: string } | undefined;
 		return row
-			? RuntimeToolExecutionSchema.parse(JSON.parse(row.payload))
+			? this.decodeToolExecution(row.payload)
 			: undefined;
 	}
 
@@ -1364,7 +1388,7 @@ export class KestrelDatabase {
 					.all(run.sessionId) as Array<{ payload: string }>
 			)
 				.map((executionRow) =>
-					RuntimeToolExecutionSchema.parse(JSON.parse(executionRow.payload)),
+					this.decodeToolExecution(executionRow.payload),
 				)
 				.filter((execution) =>
 					execution.idempotencyKey?.startsWith(`${run.id}:`),
@@ -1378,7 +1402,7 @@ export class KestrelDatabase {
 						completedAt: input.interruptedAt,
 					});
 					const saved = saveExecution.run(
-						JSON.stringify(interrupted),
+						this.encodeToolExecution(interrupted),
 						interrupted.status,
 						interrupted.id,
 						interrupted.sessionId,
@@ -4574,7 +4598,7 @@ export class KestrelDatabase {
 				)
 				.all(sessionId) as Array<{ payload: string }>
 		)
-			.map((row) => RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)))
+			.map((row) => this.decodeToolExecution(row.payload))
 			.filter(
 				(execution) =>
 					pendingExecutionIds.has(execution.id) ||
@@ -4603,7 +4627,7 @@ export class KestrelDatabase {
 				completedAt,
 			});
 			const saved = saveExecution.run(
-				JSON.stringify(retired),
+				this.encodeToolExecution(retired),
 				retired.status,
 				retired.id,
 				retired.sessionId,

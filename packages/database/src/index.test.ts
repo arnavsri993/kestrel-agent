@@ -1109,3 +1109,28 @@ describe("browser activity ledger", () => {
 		database.close();
 	});
 });
+
+it("encrypts source tool receipts and upgrades legacy payloads on reopen", () => {
+ const root = mkdtempSync(join(tmpdir(), "kestrel-source-receipt-"));
+ const path = join(root, "fixture.sqlite"); const key = createEncryptionKey();
+ const timestamp = "2026-09-15T12:00:00.000Z";
+ const receipt = { id: "source-receipt", sessionId: "fixture-session", toolName: "sources.read", status: "verified" as const, riskLevel: "low" as const, input: {}, output: { text: "PRIVATE SOURCE RECEIPT" }, startedAt: timestamp };
+ let database = new KestrelDatabase(path, key);
+ try {
+  database.saveRuntimeSession({ id: receipt.sessionId, title: "Fixture", allowedTools: [], status: "active", checkpoints: [], createdAt: timestamp, updatedAt: timestamp });
+  database.saveToolExecution(receipt);
+  expect(database.getToolExecution(receipt.id)?.output).toEqual(receipt.output);
+  database.close();
+  const raw = new Database(path);
+  try {
+   const row = raw.prepare("SELECT payload FROM tool_executions WHERE id = ?").get(receipt.id) as { payload: string };
+   expect(row.payload).not.toContain("PRIVATE SOURCE RECEIPT");
+   raw.prepare("UPDATE tool_executions SET payload = ? WHERE id = ?").run(JSON.stringify(receipt), receipt.id);
+  } finally { raw.close(); }
+  database = new KestrelDatabase(path, key);
+  expect(database.listToolExecutions(receipt.sessionId)[0]?.output).toEqual(receipt.output);
+  const rawAfter = new Database(path, { readonly: true });
+  try { expect(JSON.stringify(rawAfter.prepare("SELECT payload FROM tool_executions").all())).not.toContain("PRIVATE SOURCE RECEIPT"); }
+  finally { rawAfter.close(); }
+ } finally { database.close(); rmSync(root, { recursive: true, force: true }); }
+});
