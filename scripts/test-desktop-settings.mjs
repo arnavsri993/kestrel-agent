@@ -85,10 +85,19 @@ try {
   assert.equal(await page.locator(".browser-settings-panel").count(), 1,
     "Browser entry must show one focused category");
   assert.equal(await page.locator(".settings-nav").getByRole("button", { name: "Browser", exact: true }).count(), 0);
+  assert.deepEqual(await page.locator(".settings-nav-group h3").allTextContents(),
+    ["Everyday browsing", "Privacy & personal data", "Manage browser"]);
+  await page.locator(".settings-nav").getByRole("button", { name: "Downloads", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await page.locator('[data-settings-panel="browser-downloads"]').waitFor();
+  assert.equal(await page.locator('.settings-nav [aria-current="page"]').textContent(), "Downloads");
+  await selectSettingsSection(page, "browser-startup", "Startup");
   if (evidence) await page.screenshot({ path: join(evidence, "startup-desktop.png") });
   await page.getByRole("tab", { name: "Agent", exact: true }).click();
   await page.getByRole("heading", { name: "Autonomy and behavior" }).waitFor();
   assert.equal(await page.locator(".agent-config-banner").count(), 0);
+  assert.deepEqual(await page.locator(".settings-nav-group h3").allTextContents(),
+    ["Setup & intelligence", "Work & tools", "Safety & maintenance"]);
   if (evidence) await page.screenshot({ path: join(evidence, "agent-desktop.png") });
   const search = page.getByLabel("Search Browser and Agent settings");
   await search.fill("sleeping tab timeout");
@@ -96,7 +105,7 @@ try {
     .locator(".settings-search-result")
     .filter({ hasText: "Sleeping tab timeout" });
   await result.waitFor();
-  assert.match(await result.textContent(), /Performance/);
+  assert.match(await result.textContent(), /Browser · Performance/);
   await waitForStableSearchResult(page);
   await result.click();
 
@@ -143,7 +152,7 @@ try {
     }));
   const browserPicker = await readPickerScope();
   assert.equal(await pickerSelect.getAttribute("aria-label"), "Browser settings section");
-  assert.deepEqual(browserPicker.groups, ["Browser"]);
+  assert.deepEqual(browserPicker.groups, ["Everyday browsing", "Privacy & personal data", "Manage browser"]);
   assert.ok(browserPicker.values.length > 0);
   assert.ok(browserPicker.values.every((value) => value === "browser" || value.startsWith("browser-")));
 
@@ -151,7 +160,7 @@ try {
   await page.getByRole("heading", { name: "Autonomy and behavior" }).waitFor();
   const agentPicker = await readPickerScope();
   assert.equal(await pickerSelect.getAttribute("aria-label"), "Agent settings section");
-  assert.deepEqual(agentPicker.groups, ["Agent"]);
+  assert.deepEqual(agentPicker.groups, ["Setup & intelligence", "Work & tools", "Safety & maintenance"]);
   assert.ok(agentPicker.values.length > 0);
   assert.ok(agentPicker.values.every((value) => value.startsWith("agent-")));
 

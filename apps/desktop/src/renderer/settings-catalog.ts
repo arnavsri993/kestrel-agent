@@ -241,6 +241,33 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
 	},
 ] as const;
 
+/** Shared by the sidebar and compact picker; every visible section appears once. */
+export const SETTINGS_NAVIGATION_GROUPS: readonly {
+	id: string;
+	scope: SettingsScope;
+	label: string;
+	sections: readonly CanonicalSettingsSection[];
+}[] = [
+	{ id: "browser-everyday", scope: "browser", label: "Everyday browsing", sections: [
+		"browser-startup", "browser-appearance", "browser-search", "browser-downloads",
+	] },
+	{ id: "browser-personal", scope: "browser", label: "Privacy & personal data", sections: [
+		"browser-privacy", "browser-autofill",
+	] },
+	{ id: "browser-manage", scope: "browser", label: "Manage browser", sections: [
+		"browser-performance", "browser-languages", "browser-extensions", "browser-system", "browser-reset",
+	] },
+	{ id: "agent-setup", scope: "agent", label: "Setup & intelligence", sections: [
+		"agent-general", "agent-connections", "agent-models", "agent-memory",
+	] },
+	{ id: "agent-work", scope: "agent", label: "Work & tools", sections: [
+		"agent-workspace", "agent-tools", "agent-automations",
+	] },
+	{ id: "agent-safety", scope: "agent", label: "Safety & maintenance", sections: [
+		"agent-permissions", "agent-privacy", "agent-diagnostics", "agent-migration",
+	] },
+];
+
 export const SETTINGS_CATALOG: readonly SettingSearchEntry[] = [
 	{
 		id: "browser.startup.behavior",
