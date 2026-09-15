@@ -40,6 +40,9 @@ it.each(["expired", "delete-source"] as const)("removes transitive and mixed-sou
   expect(f.database.getWorkingTask(review.id)).toBeUndefined();
   expect(f.database.getWorkingTask("indirect-task")).toBeUndefined();
   expect(f.database.getWorkingTask("unrelated-task")).toBeDefined();
+  expect(() => f.database.upsertWorkingTask({ ...review, status: "completed", outcomeSummary: "Late private result" })).toThrow("stale result");
+  expect(() => f.database.upsertAgentMemory({ ...base, id: "task-derived-memory", sourceIds: ["other-evidence"] })).toThrow("stale result");
+  expect(f.database.getWorkingTask(review.id)).toBeUndefined();
  } finally { await f.core.close(); }
 });
 it("queues one durable review per observation without copying untrusted content or granting execution", async () => {
@@ -87,11 +90,19 @@ it("retains queued source review identity across restart", async () => {
   const event = f.core.sourceIngestion.page(f.base).events[0]!;
   const task = f.core.sourceIngestion.queueReview(f.parent.id, event.id);
   await f.core.close(); closed = true;
-  const reopened = new AgentCore({ database: new KestrelDatabase(path, key), seedDevelopmentFixtures: false });
+  const reopenedDatabase = new KestrelDatabase(path, key);
+  const reopened = new AgentCore({ database: reopenedDatabase, seedDevelopmentFixtures: false });
   try {
    const retained = reopened.sourceIngestion.queueReview(f.parent.id, event.id);
    expect(retained.id).toBe(task.id); expect(retained.status).toBe("planned");
+   reopenedDatabase.upsertWorkingTask({ ...retained, status: "running" });
+   reopenedDatabase.deleteTimelineEvent(event.id);
   } finally { await reopened.close(); }
+  const afterDeletion = new KestrelDatabase(path, key);
+  try {
+   expect(afterDeletion.getWorkingTask(task.id)).toBeUndefined();
+   expect(() => afterDeletion.upsertWorkingTask({ ...task, status: "completed", outcomeSummary: "Late result after restart" })).toThrow("stale result");
+  } finally { afterDeletion.close(); }
  } finally { if (!closed) await f.core.close(); rmSync(root, { recursive: true, force: true }); }
 });
 it("preserves dates, uncertain identical messages, idempotency, revisions, consent and privacy deletion", async () => {

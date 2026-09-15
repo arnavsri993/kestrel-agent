@@ -2690,6 +2690,7 @@ export class KestrelDatabase {
 
 	upsertAgentMemory(memory: AgentMemoryRecord): void {
 		const parsed = AgentMemoryRecordSchema.parse(memory);
+        this.assertSourceDerivedOwnerWritable("memory", parsed.id);
 		this.upsertMemoryPayload(
 			"memory_agent_memories",
 			parsed.id,
@@ -2808,6 +2809,7 @@ export class KestrelDatabase {
 
 	upsertWorkingTask(task: WorkingTask): void {
 		const parsed = WorkingTaskSchema.parse(task);
+        this.assertSourceDerivedOwnerWritable("task", parsed.id);
 		this.upsertMemoryPayload(
 			"memory_working_tasks",
 			parsed.id,
@@ -3733,6 +3735,7 @@ export class KestrelDatabase {
                     const key = `${owner.kind}:${owner.id}`;
                     if (removed.has(key)) continue;
                     removed.add(key);
+                    this.setPrivateState(this.sourceDerivedTombstoneKey(owner.kind, owner.id), { deleted: true });
                     if (owner.kind === "task") {
                         const result = this.deleteWorkingTaskWithCounts(owner.id);
                         if (result.deleted) deletedTasks++;
@@ -3858,6 +3861,15 @@ export class KestrelDatabase {
 			provenance,
 		};
 	}
+
+    private sourceDerivedTombstoneKey(kind: "task" | "memory", id: string): string {
+        return `source-derived-deleted.${createHash("sha256").update(JSON.stringify([kind, id])).digest("hex")}`;
+    }
+
+    private assertSourceDerivedOwnerWritable(kind: "task" | "memory", id: string): void {
+        if (this.getPrivateState(this.sourceDerivedTombstoneKey(kind, id)))
+            throw new Error("Source-derived record was deleted and cannot be restored by a stale result.");
+    }
 
 	private deleteWorkingTaskWithCounts(id: string): {
 		deleted: boolean;
