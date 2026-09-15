@@ -108,7 +108,25 @@ export class PasswordVault {
 		return this.mutate(async () => {
 			const raw = merge ? await this.store.read("browser-autofill-profile") : undefined;
 			const previous = raw ? AutofillProfileSchema.parse(JSON.parse(raw)) : {};
-			const next = AutofillProfileSchema.parse({ ...previous, ...profile });
+			// A newly learned address supersedes its alternate representation.
+			// Otherwise fill prefers an older street-address over new split lines.
+			const incoming = AutofillProfileSchema.parse(profile);
+			if (merge) {
+				if (incoming["street-address"]?.trim()) {
+					delete previous["address-line1"];
+					delete previous["address-line2"];
+					delete previous["address-line3"];
+				} else if (["address-line1", "address-line2", "address-line3"].some((key) => incoming[key as keyof AutofillProfile]?.trim())) {
+					const lines = previous["street-address"]?.split("\n");
+					if (lines) {
+						if (lines[0]) previous["address-line1"] = lines[0];
+						if (lines[1]) previous["address-line2"] = lines[1];
+						if (lines[2]) previous["address-line3"] = lines.slice(2).join("\n");
+					}
+					delete previous["street-address"];
+				}
+			}
+			const next = AutofillProfileSchema.parse({ ...previous, ...incoming });
 			for (const key of Object.keys(next) as (keyof AutofillProfile)[])
 				if (!next[key]?.trim()) delete next[key];
 			if (Object.keys(next).length) await this.store.write("browser-autofill-profile", JSON.stringify(next));

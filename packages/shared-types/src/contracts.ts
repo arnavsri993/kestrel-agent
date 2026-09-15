@@ -4918,6 +4918,7 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("oauth-google-cancel") }),
 	z.object({ type: z.literal("oauth-google-disconnect") }),
 	z.object({ type: z.literal("autofill-profile-get") }),
+	z.object({ type: z.literal("autofill-profile-preview") }),
 	z.object({ type: z.literal("autofill-profile-save"), profile: AutofillProfileSchema }),
 	z.object({ type: z.literal("autofill-profile-fill"), fieldId: z.string().regex(/^field-[0-9]+$/).optional() }),
 	z.object({ type: z.literal("password-list") }),

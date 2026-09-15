@@ -3193,6 +3193,22 @@ export class UserBrowserService {
 		return this.passwordVault.saveProfile(profile);
 	}
 
+	async previewAutofillProfile(): Promise<AutofillProfile> {
+		const prompt = this.passwordPrompt;
+		const tab = this.requireActiveTab();
+		const webContents = liveWebContents(this.requireView(tab.id)?.view?.webContents);
+		const url = webContents?.getURL();
+		const current = () => !this.disposed && this.state.settings.autofillProfileEnabled &&
+			prompt?.mode === "profile" && this.passwordPrompt === prompt &&
+			this.state.activeTabId === tab.id && prompt.tabId === tab.id &&
+			webContents && !webContents.isDestroyed() && webContents.getURL() === url &&
+			safePageUrl(url ?? "")?.protocol === "https:" && safePageUrl(url ?? "")?.origin === prompt.origin;
+		if (!current()) throw new Error("That form suggestion is no longer available.");
+		const profile = await this.getAutofillProfile();
+		if (!current()) throw new Error("The page changed before previewing saved info.");
+		return profile;
+	}
+
 	async fillAutofillProfile(fieldId?: string): Promise<void> {
 		const prompt = this.passwordPrompt;
 		const tab = this.requireActiveTab();
