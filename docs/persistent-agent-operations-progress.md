@@ -19,7 +19,7 @@ The delivery branch starts at main a0eaeaa6. Only the task delta against the ori
 - Full typecheck passed after resolving dedicated-window initialization.
 - Full unit suite: 219 files / 1,518 tests passed, including synthetic encrypted 50,000-record ingestion, retrieval, cancellation, and restart.
 - Packaged persistent-agent fixture passed: creation of eight specialists, scoped memory, source ingestion/revocation, dedicated partition, and detached-window restart.
-- Broad verification passed through build, benchmarks, browser end-to-end tests, desktop startup, single-instance, layout, New Tab, settings, Writing Studio and file-icon checks. Browser smoke initially used a persistent agent for personal browser actions; its fixture is being separated into an agent for Universe assertions and a chat for personal browser assertions. Later verify gates are not represented as passed.
+- Broad verification passed through build, benchmarks, browser end-to-end tests, desktop startup, single-instance, layout, New Tab, settings, Writing Studio and file-icon checks. Browser smoke initially used a persistent agent for personal browser actions; its fixture now separates an agent for Universe assertions and a conversation for personal browser assertions, and the rerun passed. Later verify gates are not represented as passed.
 - Installed at /Applications/Kestrel.app through install:mac:dev. Installed/package app.asar SHA256: 9a2a1ea3597988a9c7b328fc78555cedf4efcb3377cb0d3eed6ee29b8a047898. Final native accessibility inspection timed out; packaged UI proof does not establish the current user-visible window.
 
 ## Remaining work
