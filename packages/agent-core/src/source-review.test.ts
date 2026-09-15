@@ -24,7 +24,7 @@ it("runs one consented bounded review and preserves the observation/task link", 
   core.sourceIngestion.select(selection);
   await core.sourceIngestion.ingest({ ...selection, captureId: "review", observations: [{ providerMessageId: "one", occurredAt: new Date().toISOString(), text: "Inspect CAD", state: "observed", attachments: [] }] });
   observationId = core.sourceIngestion.page(selection).events[0]!.id;
-  const request = { type: "source-run-review" as const, sessionId: session.id, observationId, model: "fixture", providerIds: ["review-fixture"] };
+  const request = { type: "source-run-review" as const, retry: false, sessionId: session.id, observationId, model: "fixture", providerIds: ["review-fixture"] };
   expect(await core.handle(request)).toMatchObject({ ok: false }); expect(calls).toBe(0);
   core.sourceIngestion.select({ ...selection, modelProcessingConsent: true });
   const result = await core.handle(request);
@@ -38,9 +38,9 @@ it("runs one consented bounded review and preserves the observation/task link", 
 
 it("stops a review without starting another run", async () => {
  const database = new KestrelDatabase(":memory:", createEncryptionKey());
- let entered = false;
+ let entered = 0;
  const core = new AgentCore({ database, seedDevelopmentFixtures: false, modelProviders: [{ id: "stop-fixture", capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: true },
-  complete: async (_request, options) => { entered = true; return await new Promise<never>((_resolve, reject) => { const stop = () => reject(new Error("Stopped fixture")); if (options?.signal?.aborted) stop(); else options?.signal?.addEventListener("abort", stop, { once: true }); }); }
+  complete: async (_request, options) => { entered++; return await new Promise<never>((_resolve, reject) => { const stop = () => reject(new Error("Stopped fixture")); if (options?.signal?.aborted) stop(); else options?.signal?.addEventListener("abort", stop, { once: true }); }); }
  }] });
  try {
   const session = core.runtime.createSession({ title: "Stop review", kind: "agent", allowedTools: ["sources.read"] });
@@ -48,12 +48,23 @@ it("stops a review without starting another run", async () => {
   core.runtime.setResourceGrants(session.id, [{ connectionId: "fixture", resourceId: "group", capability: "read" }]); core.sourceIngestion.select(selection);
   await core.sourceIngestion.ingest({ ...selection, captureId: "stop", observations: [{ providerMessageId: "one", occurredAt: new Date().toISOString(), text: "Review this", state: "observed", attachments: [] }] });
   const observationId = core.sourceIngestion.page(selection).events[0]!.id;
-  const request = { type: "source-run-review" as const, sessionId: session.id, observationId, model: "fixture", providerIds: ["stop-fixture"] };
+  const request = { type: "source-run-review" as const, retry: false, sessionId: session.id, observationId, model: "fixture", providerIds: ["stop-fixture"] };
   const pending = core.handle(request);
-  await vi.waitFor(() => expect(entered).toBe(true));
+  await vi.waitFor(() => expect(entered).toBe(1));
   expect(await core.handle(request)).toMatchObject({ ok: false });
   expect(await core.handle({ type: "source-stop-review", sessionId: session.id })).toMatchObject({ ok: true });
   await pending;
   expect(core.sourceIngestion.queueReview(session.id, observationId).status).toBe("cancelled");
+  const taskId = core.sourceIngestion.queueReview(session.id, observationId).id;
+  expect(() => core.sourceIngestion.prepareReview(session.id, observationId)).toThrow("already been attempted");
+  expect(core.sourceIngestion.prepareReview(session.id, observationId, true).task.id).toBe(taskId);
+  const retry = core.handle({ ...request, retry: true });
+  await vi.waitFor(() => expect(entered).toBe(2));
+  await core.handle({ type: "source-stop-review", sessionId: session.id });
+  await retry;
+  expect(core.sourceIngestion.queueReview(session.id, observationId).id).toBe(taskId);
+  expect(database.listWorkingTasks({ sessionId: session.id, includeCompleted: true })).toHaveLength(1);
+  core.runtime.setResourceGrants(session.id, []);
+  expect(() => core.sourceIngestion.prepareReview(session.id, observationId, true)).toThrow("revoked");
  } finally { await core.close(); }
 });

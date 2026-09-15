@@ -2350,7 +2350,7 @@ export class AgentCore {
     }
     case "source-run-review": {
      if (this.sourceReviews.has(request.sessionId)) throw new Error("A source review is already running for this agent.");
-     const prepared = this.sourceIngestion.prepareReview(request.sessionId, request.observationId);
+     const prepared = this.sourceIngestion.prepareReview(request.sessionId, request.observationId, request.retry);
      const controller = new AbortController(); this.sourceReviews.set(request.sessionId, controller);
      const task = { ...prepared.task, status: "running" as const, updatedAt: this.now() };
      this.deps.database.upsertWorkingTask(task);
@@ -2369,7 +2369,7 @@ export class AgentCore {
        throw new Error("Review returned without reading the selected source evidence.");
       this.deps.database.upsertWorkingTask({ ...task, status: result.run.status === "completed" ? "completed" : result.run.status === "cancelled" ? "cancelled" : "failed",
        updatedAt: this.now(), completedAt: this.now(), outcomeSummary: result.assistantMessage?.content ?? "No review result returned.",
-       evidence: [{ type: "run", id: result.run.id }], failures: result.run.error ? [result.run.error] : [],
+       evidence: [...task.evidence, { type: "run", id: result.run.id }].slice(-500), failures: result.run.error ? [...task.failures, result.run.error].slice(-100) : task.failures,
        unresolvedQuestions: ["Analysis only. Proposed specialist work has not been executed or independently verified."] });
       return { ok: true, run: result.run, memoryAgentTasks: [this.deps.database.getWorkingTask(task.id)!] };
      } catch (error) {

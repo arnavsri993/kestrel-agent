@@ -53,9 +53,11 @@ export class SourceIngestion {
    plan: ["Recheck source consent and access before retrieval.", "Identify reported requests and missing context before planning specialist work."],
    evidence: [], artifacts: [], failures: [], unresolvedQuestions: ["Awaiting source review; no source request has been accepted or executed."], subtaskIds: [], dependencyTaskIds: [] });
  }
- prepareReview(sessionId: string, observationId: string) {
+ prepareReview(sessionId: string, observationId: string, retry = false) {
   const task = this.queueReview(sessionId, observationId);
-  if (task.status !== "planned") throw new Error("This review has already been attempted. Inspect Work history.");
+  const activeRun = this.database.listAgentRuns(sessionId).some(run => run.workingTaskId === task.id && ["running", "waiting_approval", "waiting_input"].includes(run.status));
+  const retryable = retry && (["failed", "cancelled"].includes(task.status) || (task.status === "running" && !activeRun));
+  if (activeRun || (task.status !== "planned" && !retryable)) throw new Error("This review has already been attempted. Inspect Work history or explicitly retry a stopped review.");
   const event = this.database.getTimelineEvent(observationId)!;
   const selection = this.selections(sessionId).find(item => item.connectionId === event.structuredData.connectionId && item.resourceId === event.structuredData.resourceId)!;
   this.assertReadable(selection, true);

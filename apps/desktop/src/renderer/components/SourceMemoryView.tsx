@@ -11,10 +11,10 @@ export function SourceMemoryView({ sessionId, onQueued }: { sessionId: string; o
  const [queued, setQueued] = useState<string[]>([]);
  const [running, setRunning] = useState<string>();
  const [reviewed, setReviewed] = useState<string[]>([]);
- async function runReview(observationId: string) {
+ async function runReview(observationId: string, retry = false) {
   setRunning(observationId); setError("");
   try {
-   const result = await window.kestrel.request({ type: "source-run-review", sessionId, observationId, model: "auto", providerIds: ["auto"] });
+   const result = await window.kestrel.request({ type: "source-run-review", sessionId, observationId, retry, model: "auto", providerIds: ["auto"] });
    if (!result.ok) throw new Error(result.error);
    setReviewed(ids => [...new Set([...ids, observationId])]); onQueued?.();
   } catch (cause) { setError(cause instanceof Error ? cause.message : "Review failed."); onQueued?.(); }
@@ -70,6 +70,7 @@ export function SourceMemoryView({ sessionId, onQueued }: { sessionId: string; o
     <p>Imported: {new Date(event.createdAt).toLocaleString()}</p>
     <button disabled={queued.includes(event.id)} onClick={() => void queueReview(event.id)}>{queued.includes(event.id) ? "Review queued" : "Queue for review"}</button>
     <button disabled={Boolean(running) || reviewed.includes(event.id) || !source?.modelProcessingConsent || source.status !== "ready"} onClick={() => void runReview(event.id)}>{running === event.id ? "Reviewing…" : reviewed.includes(event.id) ? "Review attempted" : "Review now"}</button>
+    <details><summary>Review recovery</summary><button disabled={Boolean(running) || !source?.modelProcessingConsent} onClick={() => void runReview(event.id, true)}>Retry stopped review</button><p>Retries failed or cancelled analysis using the same work item. Completed reviews are not repeated.</p></details>
     {running === event.id && <button onClick={() => void stopReview()}>Stop review</button>}
     {reviewed.includes(event.id) && <p role="status">See Work history for the analysis or failure. No specialist work or external action was executed.</p>}
     <p>Review limit: 4 model turns, up to 2,000 output tokens per turn, 60 seconds.</p>
