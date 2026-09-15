@@ -4068,10 +4068,19 @@ describe("reliable autofill", () => {
   contents.emit("ipc-message",{senderFrame:contents.mainFrame},"kestrel:user-browser-password-form-changed");
   await vi.waitFor(()=>expect(prompts.at(-1)).toMatchObject({mode:"profile"}));
   expect(JSON.stringify(prompts)).not.toContain(profile.name);
+  expect(await service.previewAutofillProfile()).toEqual(profile);
+  const readProfile = passwordVault.getProfile as ReturnType<typeof vi.fn>;
+  readProfile.mockImplementationOnce(async () => {
+   contents.url="https://unrelated.example"; contents.mainFrame.url=contents.url;
+   return profile;
+  });
+  await expect(service.previewAutofillProfile()).rejects.toThrow("page changed");
+  contents.url="https://form.example/profile"; contents.mainFrame.url=contents.url;
   await service.fillAutofillProfile();
   expect(contents.send).toHaveBeenCalledWith("kestrel:user-browser-credential-command",expect.objectContaining({type:"fill",profile,onlyEmpty:true,expectedOrigin:"https://form.example"}));
   contents.url="https://unrelated.example";contents.mainFrame.url=contents.url;
   await expect(service.fillAutofillProfile()).rejects.toThrow("no longer available");
+  await expect(service.previewAutofillProfile()).rejects.toThrow("no longer available");
   service.dispose();
  });
  it("accepts profile learning only from the active HTTPS top frame and honors disable", async()=>{

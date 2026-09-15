@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import type { PasswordPrompt } from "@kestrel/shared-types";
+import { Icon } from "../Icon";
+import type { AutofillProfile, PasswordPrompt } from "@kestrel/shared-types";
 
 function hostname(origin: string): string {
 	try {
@@ -16,6 +17,7 @@ export function PasswordOverlay() {
 	const [saveUsername, setSaveUsername] = useState("");
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
+	const [profilePreview, setProfilePreview] = useState<AutofillProfile | null>(null);
 	const [generated, setGenerated] = useState(false);
 
 	useEffect(() => window.kestrel.onPasswordPrompt(setPrompt), []);
@@ -37,6 +39,20 @@ export function PasswordOverlay() {
 		setBusy("");
 		setError("");
 		setGenerated(false);
+	}, [prompt]);
+
+	useEffect(() => {
+		setProfilePreview(null);
+		if (prompt?.mode !== "profile") return;
+		let cancelled = false;
+		void window.kestrel.request({ type: "autofill-profile-preview" }).then((response) => {
+			if (cancelled) return;
+			if (!response.ok || !("autofillProfile" in response)) throw new Error("Saved info could not be loaded. Reopen the suggestion to retry.");
+			setProfilePreview(response.autofillProfile);
+		}).catch(() => {
+			if (!cancelled) setError("Saved info could not be loaded. Reopen the suggestion to retry.");
+		});
+		return () => { cancelled = true; };
 	}, [prompt]);
 
 	const fillableFields = useMemo(
@@ -174,7 +190,7 @@ export function PasswordOverlay() {
 			>
 				<header className="password-overlay-header">
 					<div className="password-overlay-heading">
-						<span className="password-overlay-mark" aria-hidden="true">●</span>
+						<span className="password-overlay-mark" aria-hidden="true"><Icon name={prompt.mode === "profile" ? "person" : "lock"} width={15} height={15} /></span>
 						<span>
 							<strong>
 								{prompt.mode === "profile" ? "Fill with saved info?" : prompt.mode === "save"
@@ -199,7 +215,7 @@ export function PasswordOverlay() {
 								? "Dismiss save password prompt"
 								: prompt.mode === "generate"
 									? "Dismiss strong password suggestion"
-								: "Dismiss saved login suggestions"
+								: prompt.mode === "profile" ? "Dismiss saved personal info" : "Dismiss saved login suggestions"
 						}
 					>
 						×
@@ -208,10 +224,16 @@ export function PasswordOverlay() {
 
 				{prompt.mode === "profile" ? (
 					<>
-						<p className="password-overlay-copy">Use your saved name, address, contact details, and birthday on this site.</p>
+						<p className="password-overlay-copy">Preview your saved info. Fill form keeps existing values.</p>
+						{profilePreview ? <dl className="autofill-preview" aria-label="Saved information preview">
+							{profilePreviewRows(profilePreview).map(({ label, value, icon }) => <div className="autofill-preview-row" key={label}>
+								<Icon name={icon} width={17} height={17} />
+								<div><dt>{label}</dt><dd>{value}</dd></div>
+							</div>)}
+						</dl> : <p className="password-overlay-copy" role="status">{error ? "Preview unavailable" : "Loading saved info…"}</p>}
 						<div className="password-overlay-actions">
-							<button className="password-overlay-primary" type="button" disabled={Boolean(busy)} onClick={() => void fillProfile()}>{busy ? "Filling…" : "Fill form"}</button>
-							<button className="password-overlay-secondary" type="button" disabled={Boolean(busy)} onClick={() => void fillProfile(prompt.focusedFieldId)}>Fill this field</button>
+							<button className="password-overlay-primary" type="button" disabled={Boolean(busy) || !profilePreview} onClick={() => void fillProfile()}>{busy ? "Filling…" : "Fill form"}</button>
+							<button className="password-overlay-secondary" type="button" disabled={Boolean(busy) || !profilePreview} onClick={() => void fillProfile(prompt.focusedFieldId)}>Fill this field</button>
 						</div>
 					</>
 				) : prompt.mode === "save" && saveCandidate ? (
@@ -372,4 +394,16 @@ export function PasswordOverlay() {
 			</section>
 		</div>
 	);
+}
+
+function profilePreviewRows(profile: AutofillProfile) {
+	const joined = (keys: (keyof AutofillProfile)[], separator = " ") => keys.map((key) => profile[key]).filter(Boolean).join(separator);
+	return [
+		{ label: "Name", icon: "person", value: profile.name || joined(["given-name", "additional-name", "family-name"]) },
+		{ label: "Email", icon: "mail", value: profile.email },
+		{ label: "Phone", icon: "phone", value: profile.tel },
+		{ label: "Address", icon: "address", value: [profile["street-address"] || joined(["address-line1", "address-line2", "address-line3"], "\n"), joined(["address-level2", "address-level1", "postal-code"], ", "), profile["country-name"] || profile.country].filter(Boolean).join("\n") },
+		{ label: "Birthday", icon: "today", value: profile.bday || joined(["bday-year", "bday-month", "bday-day"], " / ") },
+		{ label: "Organization", icon: "work", value: profile.organization },
+	].filter((row) => Boolean(row.value));
 }

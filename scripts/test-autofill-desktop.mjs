@@ -38,10 +38,33 @@ try {
  await remote.locator('#name').focus();
  let overlay;
  await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ await expect(overlay.getByRole('definition').filter({hasText:'Fixture'})).toHaveCount(1);
+ await expect(overlay.locator('.autofill-preview')).toContainText('12 Test Lane');
+ await expect(overlay.locator('.autofill-preview')).toContainText('2000-02-03');
+ await expect(overlay.locator('.autofill-preview-row > svg')).toHaveCount(3);
+ await overlay.screenshot({path:'/tmp/kestrel-autofill-preview-fixture.png'});
  await overlay.getByRole('button',{name:'Fill form',exact:true}).click();
  await expect(remote.locator('#name')).toHaveValue('Fixture');
  await expect(remote.locator('#address')).toHaveValue('12 Test Lane');
  await expect(remote.locator('#birth')).toHaveValue('2000-02-03');
+ // Learn a new split address, then fill it into a combined street field.
+ await remote.evaluate(() => {
+  document.querySelector('#address').autocomplete='address-line1';
+  const form=document.querySelector('form');
+  form.addEventListener('submit',event=>event.preventDefault());
+  form.insertAdjacentHTML('beforeend','<button>Save details</button>');
+ });
+ await remote.locator('#address').fill('34 New Lane');
+ await remote.getByRole('button',{name:'Save details'}).click();
+ await expect.poll(async()=>{const r=await request({type:'autofill-profile-get'});return r.autofillProfile?.['address-line1'];}).toBe('34 New Lane');
+ assert.equal((await request({type:'autofill-profile-get'})).autofillProfile['street-address'],undefined);
+ await request({type:'browser-create-tab',input:'https://autofill.example.test/updated-address',active:true});
+ await expect.poll(()=>{remote=app.context().pages().find(p=>p.url()==='https://autofill.example.test/updated-address');return Boolean(remote);}).toBe(true);
+ await remote.locator('#address').focus();
+ await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ await expect(overlay.locator('.autofill-preview')).toContainText('34 New Lane');
+ await overlay.getByRole('button',{name:'Fill form',exact:true}).click();
+ await expect(remote.locator('#address')).toHaveValue('34 New Lane');
  await request({type:'browser-create-tab',input:'https://autofill.example.test/login',active:true});
  await expect.poll(()=>{remote=app.context().pages().find(p=>p.url()==='https://autofill.example.test/login');return Boolean(remote);}).toBe(true);
  await remote.locator('#user').fill('fixture-user');
@@ -80,7 +103,7 @@ try {
  await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
  await overlay.getByRole('button',{name:'Fill form',exact:true}).click();
  await expect(frame.locator('#name')).toHaveValue('Fixture');
- await expect(frame.locator('#address')).toHaveValue('12 Test Lane');
+ await expect(frame.locator('#address')).toHaveValue('34 New Lane');
  await expect(frame.locator('#birth')).toHaveValue('2000-02-03');
  await request({type:'browser-create-tab',input:'https://payment.example.test/payment',active:true});
  await expect.poll(()=>{remote=app.context().pages().find(p=>p.url()==='https://payment.example.test/payment');return Boolean(remote);}).toBe(true);

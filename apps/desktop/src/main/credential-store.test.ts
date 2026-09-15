@@ -52,6 +52,21 @@ describe("MacOSKeychainCredentialStore", () => {
 		expect(await store.read("browser-password-vault")).toBeUndefined();
 	});
 
+	it("recovers password and profile writes after Keychain becomes available", async () => {
+		let available = false;
+		const store = new MacOSKeychainCredentialStore(root(), {
+			isEncryptionAvailable: () => available,
+			encryptString: (value) => Buffer.from(value),
+			decryptString: (value) => value.toString(),
+		});
+		await expect(store.write("browser-password-vault", "fixture-login")).rejects.toBeInstanceOf(CredentialStoreUnavailableError);
+		available = true;
+		await store.write("browser-password-vault", "fixture-login");
+		await store.write("browser-autofill-profile", "fixture-profile");
+		expect(await store.read("browser-password-vault")).toBe("fixture-login");
+		expect(await store.read("browser-autofill-profile")).toBe("fixture-profile");
+	});
+
 	it("fails closed when the platform credential service is unavailable", async () => {
 		const store = new MacOSKeychainCredentialStore(root(), {
 			isEncryptionAvailable: () => false,
