@@ -576,3 +576,19 @@ describe("memory substrate", () => {
 		}
 	});
 });
+
+ it("does not embed a source-linked task even when the source row is gone", async () => {
+  const embedded: string[] = [];
+  const state = fixture({ embeddingProvider: { provider: "fixture", model: "fixture", embed: async text => { embedded.push(text); return [1]; } } });
+  try {
+   const identity = state.substrate.ensureAgentIdentity(state.main);
+   state.substrate.createWorkingTask({ id: "source-task", sessionId: state.main.id, agentId: identity.id,
+    sourceIds: ["observation-deleted-fixture"], projectIds: [], personIds: [], entityIds: [], goal: "Private source-derived request", outcomeSummary: "Private source-derived result", status: "completed", plan: [], evidence: [], artifacts: [], failures: [], unresolvedQuestions: [], subtaskIds: [], dependencyTaskIds: [], startedAt: "2026-07-22T12:00:00.000Z" });
+   const sourceTask = state.database.getWorkingTask("source-task")!;
+   state.substrate.createWorkingTask({ ...sourceTask, id: "ordinary-task", sourceIds: [], goal: "Ordinary permitted task", outcomeSummary: "Ordinary result" });
+   await state.substrate.runMaintenance(200);
+   expect(embedded.some(text => text.includes("Ordinary permitted task"))).toBe(true);
+   expect(embedded.some(text => text.includes("Private source-derived"))).toBe(false);
+   expect(state.database.getWorkingTask("source-task")).toBeDefined();
+  } finally { await state.close(); }
+ });
