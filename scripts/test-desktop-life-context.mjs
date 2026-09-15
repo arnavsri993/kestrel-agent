@@ -186,7 +186,7 @@ try {
 	});
 	await page.screenshot({ path: peopleScreenshot });
 
-	await life.getByRole("button", { name: "Memory", exact: true }).click();
+	await life.getByRole("button", { name: "Knowledge", exact: true }).click();
 	await life
 		.getByText(
 			"The Kestrel capstone review is the highest-priority project this month.",
