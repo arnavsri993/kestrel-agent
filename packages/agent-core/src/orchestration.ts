@@ -1,3 +1,4 @@
+import { ResourceScopeSchema, type ResourceAccess } from "@kestrel/shared-types";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
@@ -57,6 +58,8 @@ export interface DelegatedWorkerRoute {
 }
 
 export interface DelegatedTaskInput {
+	specialistSessionId?: string;
+ resourceScope?: ResourceAccess[];
 	parentSessionId: string;
 	/** Supply this when a caller already has a durable root task. */
 	parentTaskId?: string;
@@ -746,6 +749,13 @@ export class TaskOrchestrator {
 
 	async delegate(input: DelegatedTaskInput): Promise<DelegatedTaskResult> {
 		const parent = this.runtime.getSession(input.parentSessionId);
+		const specialist = input.specialistSessionId ? this.runtime.getSession(input.specialistSessionId) : undefined;
+		if (specialist && (specialist.parentSessionId !== parent.id || !specialist.specialistDefinition?.enabled || specialist.forgottenAt))
+			throw new Error("The specialist is unavailable or belongs to another agent.");
+		if (specialist && input.isolateWorktree)
+			throw new Error("Persistent specialist worktree assignment is not supported yet; use an isolated one-off task.");
+		if (specialist && [...this.activeDelegations.values()].some(item => item.sessionId === specialist.id))
+			throw new Error("This specialist already has active work.");
 		const taskId = input.taskId ?? `task-${randomUUID()}`;
 		const parentTask = input.parentTaskId
 			? this.database.getWorkingTask(input.parentTaskId)
@@ -796,20 +806,21 @@ export class TaskOrchestrator {
 					);
 				workspaceRoot = resolve(parent.workspaceRoot, worktree.output.path);
 			}
-			const inheritedTools = input.allowedTools ?? parent.allowedTools;
+			const inheritedTools = (input.allowedTools ?? parent.allowedTools).filter(name =>
+				parent.allowedTools.includes(name) && (!specialist || specialist.allowedTools.includes(name)));
 			const groupMemoryAllowed =
 				Boolean(this.groupMemory) &&
 				parent.privacyMode !== "private" &&
 				parent.privacyMode !== "incognito";
 			const allowedTools = groupMemoryAllowed
-				? [...new Set([...inheritedTools, ...AGENT_GROUP_MEMORY_TOOL_NAMES])]
+				? inheritedTools
 				: inheritedTools.filter(
 						(toolName) =>
 							!AGENT_GROUP_MEMORY_TOOL_NAMES.some(
 									(memoryToolName) => memoryToolName === toolName,
 							),
 						);
-			session = this.runtime.createSession({
+			session = specialist ?? this.runtime.createSession({
 				title: input.title,
 				kind: "subagent",
 				parentSessionId: parent.id,
@@ -878,6 +889,9 @@ export class TaskOrchestrator {
 						)
 					: undefined;
 			const result = await this.loop.run({
+				workingTaskId: workingTask.id,
+ resourceScope: input.resourceScope ?? [],
+				allowedTools: allowedTools.filter(name => parent.allowedTools.includes(name)),
 				sessionId: session.id,
 				model: selected?.execution.model ?? input.model,
 				providerIds: selected?.execution.providerIds ?? input.providerIds,
@@ -920,13 +934,16 @@ export class TaskOrchestrator {
 						}
 					: {}),
 				userContent: textContent(input.prompt),
-				...(input.instructions || selected?.instructions || this.groupMemory || privateMemoryContext
+				...(session.agentInstructions || input.instructions || selected?.instructions || this.groupMemory || privateMemoryContext
 					? {
 							instructions: [
+								session.agentInstructions,
+								"Return findings, proposed changes, changes actually performed, evidence/artifacts, blockers/uncertainty, and verification still required as distinct sections.",
 								input.instructions,
 								selected?.instructions,
 								privateMemoryContext,
-								this.groupMemory?.promptContext(session.id, input.prompt),
+								allowedTools.includes("group.memory.search") || allowedTools.includes("group.memory.list")
+									? this.groupMemory?.promptContext(session.id, input.prompt) : "",
 							]
 								.filter(Boolean)
 									.join("\n\n"),
@@ -1808,6 +1825,10 @@ export class TaskOrchestrator {
 			sessionId: child.parentSessionId,
 			role: "system",
 			content: `[Delegated handoff from ${child.id}; evidence ${evidence.join(", ") || "none"}]\n${summary.trim()}`,
+            sourceToolExecutionIds: [...new Set(this.runtime.listMessages(child.id).flatMap(message => [
+                ...(message.sourceToolExecutionIds ?? []),
+                ...(message.toolName === "sources.read" && message.toolExecutionId ? [message.toolExecutionId] : [])
+            ]))],
 		});
 	}
 
@@ -2303,7 +2324,23 @@ export function installOrchestrationTools(
 				tags: ["goal", "team", "orchestration"],
 			},
 			inputSchema: schema,
-			execute,
+			execute: async (context, input) => {
+				// Model-supplied IDs are references, never authority to impersonate
+				// another parent or mutate another agent's durable work.
+				for (const field of ["sessionId", "parentSessionId", "childSessionId", "fromSessionId"])
+					if (input[field] !== undefined && input[field] !== context.session.id)
+						throw new Error("This operation belongs to another agent session.");
+				if (input.goalId !== undefined && !orchestrator.listGoals(context.session.id).some(goal => goal.id === input.goalId))
+					throw new Error("This goal belongs to another agent session.");
+				if (input.teamId !== undefined) {
+					const team = orchestrator.listTeams().find(team => team.id === input.teamId);
+					const permitted = team && (name === "team.message"
+						? team.memberSessionIds.includes(context.session.id)
+						: team.parentSessionId === context.session.id);
+					if (!permitted) throw new Error("This team is unavailable to this agent session.");
+				}
+				return execute(context, input);
+			},
 		});
 		runtime.allowTool(sessionId, name);
 	};
@@ -2312,7 +2349,7 @@ export function installOrchestrationTools(
 		"List durable goals",
 		true,
 		{ type: "object", properties: {}, additionalProperties: false },
-		async () => ({ goals: orchestrator.listGoals() }),
+		async (context) => ({ goals: orchestrator.listGoals(context.session.id) }),
 	);
 	add(
 		"goal.create",
@@ -2381,7 +2418,9 @@ export function installOrchestrationTools(
 		{
 			type: "object",
 			properties: {
-				parentSessionId: { type: "string" },
+				parentSessionId: { type: "string", description: "Optional legacy field. Omit it: the runtime uses the calling session identity." },
+				specialistSessionId: { type: "string" },
+ resourceScope: { type: "array", maxItems: 500, items: { type: "object", properties: { connectionId: { type: "string" }, resourceId: { type: "string" }, capability: { type: "string", enum: ["read", "draft", "write", "send"] } }, required: ["connectionId", "resourceId", "capability"], additionalProperties: false } },
 				parentTaskId: { type: "string" },
 				dependencyTaskIds: { type: "array", items: { type: "string" }, maxItems: 100 },
 				taskId: { type: "string" },
@@ -2405,12 +2444,14 @@ export function installOrchestrationTools(
 				allowedTools: { type: "array", items: { type: "string" } },
 				isolateWorktree: { type: "boolean" },
 			},
-			required: ["parentSessionId", "title", "prompt"],
+			required: ["title", "prompt"],
 			additionalProperties: false,
 		},
 		async (context, input) => ({
 			delegated: await orchestrator.delegate({
-				parentSessionId: String(input.parentSessionId),
+				parentSessionId: context.session.id,
+				...(input.specialistSessionId ? { specialistSessionId: String(input.specialistSessionId) } : {}),
+ resourceScope: ResourceScopeSchema.parse(input.resourceScope ?? []),
 				...(input.parentTaskId ? { parentTaskId: String(input.parentTaskId) } : {}),
 				...(Array.isArray(input.dependencyTaskIds)
 					? { dependencyTaskIds: input.dependencyTaskIds.map(String) }
@@ -2477,6 +2518,8 @@ export function installOrchestrationTools(
 								additionalProperties: { type: "number", minimum: 0, maximum: 1 },
 							},
 							allowedTools: { type: "array", items: { type: "string" } },
+							specialistSessionId: { type: "string" },
+							resourceScope: { type: "array", maxItems: 500, items: { type: "object", properties: { connectionId: { type: "string" }, resourceId: { type: "string" }, capability: { type: "string", enum: ["read", "draft", "write", "send"] } }, required: ["connectionId", "resourceId", "capability"], additionalProperties: false } },
 							isolateWorktree: { type: "boolean" },
 						},
 						required: ["title", "prompt"],
@@ -2496,6 +2539,8 @@ export function installOrchestrationTools(
 				const task = candidate as Record<string, unknown>;
 				return {
 					parentSessionId: context.session.id,
+					...(task.specialistSessionId ? { specialistSessionId: String(task.specialistSessionId) } : {}),
+					resourceScope: ResourceScopeSchema.parse(task.resourceScope ?? []),
 					...(task.taskId ? { taskId: String(task.taskId) } : {}),
 					...(task.parentTaskId ? { parentTaskId: String(task.parentTaskId) } : {}),
 					...(Array.isArray(task.dependencyTaskIds)
@@ -2568,7 +2613,7 @@ export function installOrchestrationTools(
 		"List durable agent teams",
 		true,
 		{ type: "object", properties: {}, additionalProperties: false },
-		async () => ({ teams: orchestrator.listTeams() }),
+		async (context) => ({ teams: orchestrator.listTeams().filter(team => team.parentSessionId === context.session.id || team.memberSessionIds.includes(context.session.id)) }),
 	);
 	add(
 		"team.create",

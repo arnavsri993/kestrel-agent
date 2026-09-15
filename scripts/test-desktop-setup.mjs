@@ -677,6 +677,7 @@ try {
 	assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
 	assert.equal(await page.locator(".page-header > p").count(), 0);
 	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
+	await page.locator("summary").filter({ hasText: "Model provider · ChatGPT" }).click();
 	const chatGptConnection = page
 		.locator(".oauth-connection")
 		.filter({ hasText: "ChatGPT" });

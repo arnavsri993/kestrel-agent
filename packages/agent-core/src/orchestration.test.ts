@@ -1,3 +1,4 @@
+import { AgentGroupMemoryManager } from "./group-memory";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -106,6 +107,70 @@ function finalProvider(onCall?: () => Promise<void>): ModelProvider {
 }
 
 describe("task orchestration", () => {
+	it("delegates with runtime-owned parent identity when the model omits it", async () => {
+		const item = fixture(finalProvider());
+		try {
+			installOrchestrationTools(item.runtime, item.orchestrator, item.parent.id);
+			const execution = await item.runtime.callTool(item.parent.id, "orchestration.delegate", { title: "Bounded check", prompt: "Return a text result", model: "fake", providerIds: ["fake"], allowedTools: [], resourceScope: [] }, { idempotencyKey: "runtime-parent-fixture" });
+			expect(execution.status).toBe("verified");
+			expect(JSON.stringify(execution.output)).toContain("Done.");
+			expect(item.runtime.listSessions().filter(session => session.parentSessionId === item.parent.id)).toHaveLength(1);
+		} finally { item.database.close(); }
+	});
+	it("does not expand an empty delegated grant with group tools or group context", async () => {
+		let requestText = "";
+		const provider = finalProvider();
+		const complete = provider.complete;
+		provider.complete = async request => { requestText = JSON.stringify(request); return complete(request); };
+		const item = fixture(provider);
+		const groups = new AgentGroupMemoryManager(item.database, item.runtime);
+		groups.remember(item.parent.id, { content: "Private group context sentinel" });
+		const orchestrator = new TaskOrchestrator(item.database, item.runtime, item.loop,
+			undefined, 3, undefined, undefined, undefined, undefined, undefined, groups);
+		const result = await orchestrator.delegate({ parentSessionId: item.parent.id, title: "Bounded",
+			prompt: "Report uncertainty", model: "fake-model", providerIds: ["fake"], allowedTools: [] });
+		expect(item.runtime.getSession(result.sessionId).allowedTools).toEqual([]);
+		expect(requestText).not.toContain("Private group context sentinel");
+		item.database.close();
+	});
+
+	it("binds model-facing coordination to the caller and hides other parents' goals", async () => {
+		const item = fixture(finalProvider());
+		installOrchestrationTools(item.runtime, item.orchestrator, item.parent.id);
+		const other = item.runtime.createSession({ title: "Other parent", kind: "agent" });
+		const privateGoal = item.orchestrator.createGoal(other.id, "Private goal", "Private objective");
+		const listed = await item.runtime.callTool(item.parent.id, "goal.list", {});
+		expect(JSON.stringify(listed.output)).not.toContain(privateGoal.id);
+		const spoofed = await item.runtime.callTool(item.parent.id, "orchestration.delegate", {
+			parentSessionId: other.id, title: "Spoofed", prompt: "Act as another parent", model: "fake-model", providerIds: ["fake"],
+		}, { approvalStatus: "approved", idempotencyKey: "spoof-test" });
+		expect(spoofed.status).not.toBe("verified");
+		expect(spoofed.error).toMatch(/another agent session/);
+		item.database.close();
+	});
+
+	it("reuses a persistent specialist across separate runs and rejects another parent", async () => {
+		const item = fixture(finalProvider());
+		const specialist = item.runtime.createSession({ title: "Code", kind: "subagent",
+			parentSessionId: item.parent.id,
+			specialistDefinition: { key: "code", name: "Code", purpose: "Inspect code", instructions: "", enabled: true },
+			allowedTools: [],
+		});
+		const input = { parentSessionId: item.parent.id, specialistSessionId: specialist.id,
+			title: "Inspect", prompt: "Inspect the task and report uncertainty", model: "fake-model", providerIds: ["fake"] };
+		const first = await item.orchestrator.delegate(input);
+		const second = await item.orchestrator.delegate(input);
+		expect(first.sessionId).toBe(specialist.id);
+		expect(second.sessionId).toBe(specialist.id);
+		expect(first.taskId).not.toBe(second.taskId);
+		expect(item.runtime.listMessages(specialist.id).length).toBeGreaterThanOrEqual(4);
+		const other = item.runtime.createSession({ title: "Other", kind: "agent" });
+		await expect(item.orchestrator.delegate({ ...input, parentSessionId: other.id })).rejects.toThrow(/another agent/);
+		item.runtime.configureAgent(specialist.id, { title: specialist.title, instructions: "", specialistDefinition: { ...specialist.specialistDefinition!, archived: true, enabled: false } });
+		await expect(item.orchestrator.delegate(input)).rejects.toThrow(/unavailable/);
+		item.database.close();
+	});
+
 	it("rejects malformed persisted workflows before execution", () => {
 		const item = fixture(finalProvider());
 		item.database.setPrivateState("orchestrator.workflow.corrupted", {

@@ -754,3 +754,7 @@ restore opaque surfaces. MDN backdrop-filter guidance was used as documentation,
 not copied source. Runtime screenshots caught and corrected a doubled textarea
 focus border, narrow-rail clipping, and the initially over-frosted material.
 Download centering is verified from both button and glyph bounding boxes.
+
+## Persistent operations simplification
+
+Preserve the established native graphite material, type scale, compact sidebar widths and universe scene. Organize recurring work under Agent, account/resource access under Connections, and retained knowledge/people/time under Memory. Keep projects and chats in place. Use existing controls and contextual disclosure; avoid another dashboard, decorative cards, new fonts or motion libraries. State and feedback transitions reuse the existing reduced-motion-aware system. Primary pages lead with their task and show advanced details on demand. Verify routing, focus, scope isolation and visible canonical app behavior separately.

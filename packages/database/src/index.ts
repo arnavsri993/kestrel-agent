@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { decryptText, encryptText } from "@kestrel/encryption";
@@ -40,6 +40,8 @@ import {
 	AgentIdentitySchema,
 	type AgentMemoryRecord,
 	AgentMemoryRecordSchema,
+	AgentKnowledgeBackupSchema,
+	MemoryRecoveryEnvelopeSchema,
 	type MemoryJob,
 	MemoryJobSchema,
 	type MemoryJobKind,
@@ -322,6 +324,7 @@ interface MemoryMetadataRow extends EncryptedPayloadRow {
 }
 
 export interface TimelineEventListOptions {
+ sourceId?: string;
 	startAt?: string;
 	endAt?: string;
 	sessionId?: string;
@@ -431,6 +434,7 @@ export class KestrelDatabase {
 			this.db.pragma("secure_delete = ON");
 			this.assertDatabaseIntegrity();
 			this.lastMigrationBackupPath = this.migrate();
+            this.protectLegacySourceReceipts();
 		} catch (error) {
 			try {
 				database?.close();
@@ -774,11 +778,13 @@ export class KestrelDatabase {
 	}
 
 	saveRuntimeMessage(message: RuntimeMessage): RuntimeSession {
-		const parsed = RuntimeMessageSchema.parse(message);
+		const parsed = RuntimeMessageSchema.parse([...(message.sourceToolExecutionIds ?? []), ...(message.toolExecutionId ? [message.toolExecutionId] : [])].some(id => this.getPrivateState(this.sourceReceiptDeletionKey(id)))
+            ? { ...message, content: "Source evidence was deleted or expired.", modelToolCalls: undefined, memoryRecallReceipt: undefined } : message);
 		const encrypted = encryptText(
 			JSON.stringify({
 				version: 2,
 				content: parsed.content,
+                ...(parsed.sourceToolExecutionIds ? { sourceToolExecutionIds: parsed.sourceToolExecutionIds } : {}),
 				...(parsed.modelToolCalls
 					? { modelToolCalls: parsed.modelToolCalls }
 					: {}),
@@ -964,8 +970,59 @@ export class KestrelDatabase {
 		).map((row) => this.parseRuntimeMessage(row));
 	}
 
+    private sourceReceiptDeletionKey(id: string): string {
+        return `source-receipt-deleted.${createHash("sha256").update(id).digest("hex")}`;
+    }
+
+    private redactSourceReceipts(eventId: string): void {
+        const rows = this.db.prepare("SELECT payload FROM tool_executions WHERE tool_name = 'sources.read'").all() as Array<{ payload: string }>;
+        for (const row of rows) {
+            const receipt = this.decodeToolExecution(row.payload);
+            const events = receipt.output?.events;
+            if (!Array.isArray(events) || !events.some(event => event && typeof event === "object" && event.id === eventId)) continue;
+            this.setPrivateState(this.sourceReceiptDeletionKey(receipt.id), { deleted: true });
+            this.saveToolExecution(receipt);
+            const messages = (this.db.prepare("SELECT * FROM runtime_messages").all() as RuntimeMessageRow[]).map(row => this.parseRuntimeMessage(row)).filter(message =>
+                message.toolExecutionId === receipt.id || message.sourceToolExecutionIds?.includes(receipt.id) ||
+                (message.sessionId === receipt.sessionId && message.role === "assistant" && !message.sourceToolExecutionIds && message.createdAt >= receipt.startedAt));
+            for (const message of messages) {
+                const encrypted = encryptText(JSON.stringify({ version: 2, content: "Source evidence was deleted or expired.",
+                    ...(message.toolName ? { toolName: message.toolName } : {}),
+                    sourceToolExecutionIds: [...new Set([...(message.sourceToolExecutionIds ?? []), receipt.id])]
+                }), this.encryptionKey);
+                this.db.prepare("UPDATE runtime_messages SET content_ciphertext = ?, content_iv = ?, content_auth_tag = ? WHERE id = ?")
+                    .run(encrypted.ciphertext, encrypted.iv, encrypted.authTag, message.id);
+                this.db.prepare("DELETE FROM runtime_message_terms WHERE message_id = ?").run(message.id);
+            }
+        }
+    }
+
+    private protectLegacySourceReceipts(): void {
+        this.db.transaction(() => {
+            const update = this.db.prepare("UPDATE tool_executions SET payload = ? WHERE id = ?");
+            for (const row of this.db.prepare("SELECT id, payload FROM tool_executions WHERE tool_name = 'sources.read'").all() as Array<{ id: string; payload: string }>) {
+                if (JSON.parse(row.payload).kestrelEncryptedTool === 1) continue;
+                update.run(this.encodeToolExecution(this.decodeToolExecution(row.payload)), row.id);
+            }
+        })();
+    }
+
+    private encodeToolExecution(execution: RuntimeToolExecution): string {
+        const payload = JSON.stringify(execution);
+        return execution.toolName === "sources.read"
+            ? JSON.stringify({ kestrelEncryptedTool: 1, ...encryptText(payload, this.encryptionKey) })
+            : payload;
+    }
+
+    private decodeToolExecution(payload: string): RuntimeToolExecution {
+        const value = JSON.parse(payload);
+        return RuntimeToolExecutionSchema.parse(value.kestrelEncryptedTool === 1
+            ? JSON.parse(decryptText(value, this.encryptionKey)) : value);
+    }
+
 	saveToolExecution(execution: RuntimeToolExecution): void {
-		const parsed = RuntimeToolExecutionSchema.parse(execution);
+		const parsed = RuntimeToolExecutionSchema.parse(this.getPrivateState(this.sourceReceiptDeletionKey(execution.id))
+            ? { ...execution, output: { sourceEvidenceRemoved: true }, error: "Source evidence was deleted or expired.", status: "failed" } : execution);
 		this.db
 			.prepare(`INSERT INTO tool_executions (id, session_id, tool_name, payload, status, started_at) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, status=excluded.status`)
@@ -973,7 +1030,7 @@ export class KestrelDatabase {
 				parsed.id,
 				parsed.sessionId,
 				parsed.toolName,
-				JSON.stringify(parsed),
+				this.encodeToolExecution(parsed),
 				parsed.status,
 				parsed.startedAt,
 			);
@@ -986,7 +1043,7 @@ export class KestrelDatabase {
 					"SELECT payload FROM tool_executions WHERE session_id = ? ORDER BY started_at ASC",
 				)
 				.all(sessionId) as Array<{ payload: string }>
-		).map((row) => RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)));
+		).map((row) => this.decodeToolExecution(row.payload));
 	}
 
 	saveActionReceipt(receipt: ActionReceipt): void {
@@ -1085,7 +1142,7 @@ export class KestrelDatabase {
 						.all(startedAt)
 		) as Array<{ payload: string }>;
 		return rows.map((row) =>
-			RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)),
+			this.decodeToolExecution(row.payload),
 		);
 	}
 
@@ -1121,7 +1178,7 @@ export class KestrelDatabase {
 			.prepare("SELECT payload FROM tool_executions WHERE id = ?")
 			.get(id) as { payload: string } | undefined;
 		return row
-			? RuntimeToolExecutionSchema.parse(JSON.parse(row.payload))
+			? this.decodeToolExecution(row.payload)
 			: undefined;
 	}
 
@@ -1361,7 +1418,7 @@ export class KestrelDatabase {
 					.all(run.sessionId) as Array<{ payload: string }>
 			)
 				.map((executionRow) =>
-					RuntimeToolExecutionSchema.parse(JSON.parse(executionRow.payload)),
+					this.decodeToolExecution(executionRow.payload),
 				)
 				.filter((execution) =>
 					execution.idempotencyKey?.startsWith(`${run.id}:`),
@@ -1375,7 +1432,7 @@ export class KestrelDatabase {
 						completedAt: input.interruptedAt,
 					});
 					const saved = saveExecution.run(
-						JSON.stringify(interrupted),
+						this.encodeToolExecution(interrupted),
 						interrupted.status,
 						interrupted.id,
 						interrupted.sessionId,
@@ -2143,6 +2200,7 @@ export class KestrelDatabase {
 				conditions.push("e.session_id = ?");
 				parameters.push(options.sessionId);
 			}
+  if (options.sourceId) { conditions.push("e.source_id = ?"); parameters.push(options.sourceId); }
 			if (options.sourceSessionId) {
 				conditions.push("e.source_session_id = ?");
 				parameters.push(options.sourceSessionId);
@@ -2209,6 +2267,7 @@ export class KestrelDatabase {
 				conditions.push("e.session_id = ?");
 				parameters.push(options.sessionId);
 			}
+  if (options.sourceId) { conditions.push("e.source_id = ?"); parameters.push(options.sourceId); }
 			if (options.sourceSessionId) {
 				conditions.push("e.source_session_id = ?");
 				parameters.push(options.sourceSessionId);
@@ -2685,6 +2744,7 @@ export class KestrelDatabase {
 
 	upsertAgentMemory(memory: AgentMemoryRecord): void {
 		const parsed = AgentMemoryRecordSchema.parse(memory);
+        this.assertSourceDerivedOwnerWritable("memory", parsed.id);
 		this.upsertMemoryPayload(
 			"memory_agent_memories",
 			parsed.id,
@@ -2710,9 +2770,53 @@ export class KestrelDatabase {
 		return row ? AgentMemoryRecordSchema.parse(this.decryptPayload(row)) : undefined;
 	}
 
+	/** A same-profile recovery envelope; never includes accounts or browser state. */
+	exportAgentKnowledge(agentId: string): string {
+		const count = (this.db.prepare("SELECT COUNT(*) AS count FROM memory_agent_memories WHERE agent_id = ? AND status = 'active'").get(agentId) as { count: number }).count;
+		if (count > 1000) throw new Error("Knowledge recovery supports at most 1,000 active records per scope. No partial backup was created.");
+		const records = this.listAgentMemories(agentId, { limit: 1000 }).filter(memory => this.knowledgeRecoveryEligible(memory));
+		const payload = JSON.stringify(AgentKnowledgeBackupSchema.parse({ format: "kestrel-agent-knowledge-v1", agentId, createdAt: new Date().toISOString(), records }));
+		if (Buffer.byteLength(payload) > 10_000_000) throw new Error("Knowledge backup exceeds the 10 MB limit.");
+		return JSON.stringify(encryptText(payload, this.encryptionKey));
+	}
+
+	readAgentKnowledgeBackup(encoded: string, agentId: string): AgentMemoryRecord[] {
+		if (Buffer.byteLength(encoded) > 16_000_000) throw new Error("Knowledge backup exceeds the supported size.");
+		try {
+			const envelope = MemoryRecoveryEnvelopeSchema.parse(JSON.parse(encoded));
+			const payload = AgentKnowledgeBackupSchema.parse(JSON.parse(decryptText(envelope, this.encryptionKey)));
+			if (payload.agentId !== agentId || payload.records.some(record => record.agentId !== agentId)) throw new Error("Wrong scope");
+			if (new Set(payload.records.map(record => record.id)).size !== payload.records.length) throw new Error("Duplicate records");
+			return payload.records.filter(memory => this.knowledgeRecoveryEligible(memory));
+		} catch { throw new Error("This backup is damaged, belongs to another profile or scope, or uses an unsupported format. Nothing was restored."); }
+	}
+
+	restoreAgentKnowledge(records: AgentMemoryRecord[], expected: Array<string | null>): number {
+		if (records.length > 1000 || records.length !== expected.length) throw new Error("Invalid recovery plan.");
+		return this.db.transaction(() => {
+			for (const [index, record] of records.entries()) {
+				const current = this.getAgentMemory(record.id);
+				if ((current ? JSON.stringify(current) : null) !== expected[index]) throw new Error("Knowledge changed after the preview. Preview the backup again.");
+			}
+			let restored = 0;
+			for (const [index, record] of records.entries()) {
+				if (expected[index] !== null || !this.knowledgeRecoveryEligible(record)) continue;
+				this.upsertAgentMemory(record); restored++;
+			}
+			return restored;
+		})();
+	}
+
+	private knowledgeRecoveryEligible(memory: AgentMemoryRecord): boolean {
+		return memory.status === "active" && ["public", "personal"].includes(memory.sensitivity)
+			&& memory.taskIds.length === 0
+			&& !memory.sourceIds.some(id => /^(observation-|source-|task[:\-]|session:)/.test(id))
+			&& (!memory.validUntil || Date.parse(memory.validUntil) > Date.now());
+	}
+
 	listAgentMemories(
 		agentId: string,
-		options: { includeInactive?: boolean; limit?: number } = {},
+		options: { includeInactive?: boolean; limit?: number; offset?: number } = {},
 	): AgentMemoryRecord[] {
 		const status = options.includeInactive
 			? "status != 'deleted'"
@@ -2723,9 +2827,9 @@ export class KestrelDatabase {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM memory_agent_memories WHERE agent_id = ? AND ${status}
-				 ORDER BY importance DESC, updated_at DESC, id ASC LIMIT ?`,
+				 ORDER BY importance DESC, updated_at DESC, id ASC LIMIT ? OFFSET ?`,
 			)
-			.all(agentId, limit) as MemorySubstrateRow[];
+			.all(agentId, limit, Math.max(0, Math.min(10_000_000, Math.trunc(options.offset ?? 0)))) as MemorySubstrateRow[];
 		return rows.map((row) => AgentMemoryRecordSchema.parse(this.decryptPayload(row)));
 	}
 
@@ -2759,6 +2863,7 @@ export class KestrelDatabase {
 
 	upsertWorkingTask(task: WorkingTask): void {
 		const parsed = WorkingTaskSchema.parse(task);
+        this.assertSourceDerivedOwnerWritable("task", parsed.id);
 		this.upsertMemoryPayload(
 			"memory_working_tasks",
 			parsed.id,
@@ -2786,11 +2891,19 @@ export class KestrelDatabase {
 	listWorkingTasks(options: {
 		sessionId?: string;
 		agentId?: string;
+		agentIds?: string[];
 		includeCompleted?: boolean;
 		limit?: number;
+		offset?: number;
 	} = {}): WorkingTask[] {
 		const conditions = ["1 = 1"];
 		const parameters: Array<string | number> = [];
+		if (options.agentIds) {
+			if (!options.agentIds.length) return [];
+			if (options.agentIds.length > 33) throw new Error("Too many task owners.");
+			conditions.push(`agent_id IN (${options.agentIds.map(() => "?").join(",")})`);
+			parameters.push(...options.agentIds);
+		}
 		if (options.sessionId) {
 			conditions.push("session_id = ?");
 			parameters.push(options.sessionId);
@@ -2807,9 +2920,9 @@ export class KestrelDatabase {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM memory_working_tasks WHERE ${conditions.join(" AND ")}
-				 ORDER BY updated_at DESC, id ASC LIMIT ?`,
+				 ORDER BY updated_at DESC, id ASC LIMIT ? OFFSET ?`,
 			)
-			.all(...parameters, limit) as MemorySubstrateRow[];
+			.all(...parameters, limit, Math.max(0, Math.min(10_000_000, Math.trunc(options.offset ?? 0)))) as MemorySubstrateRow[];
 		return rows.map((row) => WorkingTaskSchema.parse(this.decryptPayload(row)));
 	}
 
@@ -3282,6 +3395,7 @@ export class KestrelDatabase {
 			let provenance = 0;
 			let deletedMemoryCount = 0;
 			let deletedAgentMemoryCount = 0;
+            let deletedSourceTaskCount = 0;
 			const deletedMemoryIds = new Set<string>();
 			for (const event of events) {
 				const removed = this.deleteTimelineEventInternal(
@@ -3294,6 +3408,8 @@ export class KestrelDatabase {
 				embeddings += removed.embeddings;
 				jobs += removed.jobs;
 				provenance += removed.provenance;
+				deletedAgentMemoryCount += removed.agentMemories;
+                deletedSourceTaskCount += removed.tasks;
 			}
 
 			for (const memory of memories) {
@@ -3380,7 +3496,7 @@ export class KestrelDatabase {
 				}
 			}
 
-			let tasks = 0;
+			let tasks = deletedSourceTaskCount;
 			const deletedTaskIds = new Set<string>();
 			for (const task of this.listAllWorkingTasksForDeletion()) {
 				const remainingSourceIds = task.sourceIds.filter(
@@ -3551,6 +3667,8 @@ export class KestrelDatabase {
 		timestamp: string,
 	): {
 		event?: TimelineEvent;
+		agentMemories: number;
+		tasks: number;
 		sessions: number;
 		activityBlocks: number;
 		dailySummaries: number;
@@ -3561,6 +3679,8 @@ export class KestrelDatabase {
 		const event = this.getTimelineEvent(id);
 		if (!event)
 			return {
+				agentMemories: 0,
+				tasks: 0,
 				sessions: 0,
 				activityBlocks: 0,
 				dailySummaries: 0,
@@ -3568,6 +3688,31 @@ export class KestrelDatabase {
 				jobs: 0,
 				provenance: 0,
 			};
+		// Source-derived identities must not outlive their retained evidence.
+		// Explicitly confirmed user records survive, with stale references removed.
+		if (event.source === "connected-source") {
+            this.redactSourceReceipts(event.id);
+			// A reference-only review is no longer actionable after its evidence
+			// disappears. Keep the receipt, without retaining the removed content.
+			const reviewId = `source-review-${createHash("sha256").update(JSON.stringify([event.agentId, event.id])).digest("hex")}`;
+			const review = this.getWorkingTask(reviewId);
+			if (review?.status === "planned" && review.sourceIds.includes(event.id)) {
+				this.upsertWorkingTask({ ...review, status: "cancelled", completedAt: timestamp, updatedAt: timestamp,
+					unresolvedQuestions: ["Source evidence was removed; review cancelled."], sourceIds: [] });
+			}
+			for (const personId of event.personIds) {
+				const person = this.getPerson(personId);
+				if (!person || person.agentId !== event.agentId) continue;
+				const retainedEvidence = this.listTimelineEvents({ ...(event.agentId ? { agentId: event.agentId } : {}), personIds: [person.id], includeSensitive: true, limit: 3 })
+					.filter(candidate => candidate.id !== id && candidate.source === "connected-source");
+				const sourceIds = [...new Set([...person.sourceIds.filter(sourceId => sourceId !== id && Boolean(this.getTimelineEvent(sourceId))), ...retainedEvidence.map(candidate => candidate.id)])].slice(-3);
+				if (!sourceIds.length && person.identityStatus === "observed") {
+					this.db.prepare("DELETE FROM people WHERE id = ?").run(person.id);
+				} else {
+					this.upsertPerson({ ...person, sourceIds, updatedAt: timestamp });
+				}
+			}
+		}
 		const blocks = this.listAllActivityBlocksForDeletion().filter((block) =>
 			block.eventIds.includes(id),
 		);
@@ -3583,6 +3728,8 @@ export class KestrelDatabase {
 				sessions.some((session) => session.eventIds.includes(id)),
 		);
 		const summaryIds = new Set(summaries.map((summary) => summary.id));
+		let deletedAgentMemories = 0;
+		let deletedTasks = 0;
 		const remainingEvents = (eventIds: readonly string[]): TimelineEvent[] =>
 			eventIds
 				.filter((eventId) => eventId !== id)
@@ -3622,6 +3769,42 @@ export class KestrelDatabase {
 				 OR timeline_event_id = ?`,
 			)
 			.run(id, id).changes;
+		if (event.source === "connected-source") {
+			// Mixed-source summaries cannot be safely redacted by dropping a link.
+			// Remove their dependent knowledge graph, including superseded records,
+			// so source expiry cannot leave the same text in a derived summary.
+            const dependents = new Map<string, Array<{ kind: "memory" | "task"; id: string }>>();
+            const link = (source: string, kind: "memory" | "task", id: string) => {
+                const rows = dependents.get(source) ?? [];
+                rows.push({ kind, id }); dependents.set(source, rows);
+            };
+            for (const memory of this.listAllAgentMemories()) {
+                for (const source of [...memory.sourceIds, ...memory.taskIds]) link(source, "memory", memory.id);
+            }
+            for (const task of this.listAllWorkingTasksForDeletion()) {
+                for (const source of [...task.sourceIds, ...task.evidence.map(item => item.id)]) link(source, "task", task.id);
+            }
+            const pending = [id, `timeline_event:${id}`]; const removed = new Set<string>();
+            for (let index = 0; index < pending.length; index++) {
+                for (const owner of dependents.get(pending[index]!) ?? []) {
+                    const key = `${owner.kind}:${owner.id}`;
+                    if (removed.has(key)) continue;
+                    removed.add(key);
+                    this.setPrivateState(this.sourceDerivedTombstoneKey(owner.kind, owner.id), { deleted: true });
+                    if (owner.kind === "task") {
+                        const result = this.deleteWorkingTaskWithCounts(owner.id);
+                        if (result.deleted) deletedTasks++;
+                        embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;
+                        pending.push(owner.id, `task:${owner.id}`);
+                    } else {
+                        const result = this.deleteAgentMemoryWithCounts(owner.id);
+                        if (result.memory) deletedAgentMemories++;
+                        embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;
+                        pending.push(owner.id, `memory:${owner.id}`, `agent_memory:${owner.id}`);
+                    }
+                }
+            }
+		}
 		const embeddingOwners: Array<{
 			ownerType: EmbeddingRecord["ownerType"];
 			ownerId: string;
@@ -3723,6 +3906,8 @@ export class KestrelDatabase {
 		this.db.prepare("DELETE FROM memory_timeline_events WHERE id = ?").run(id);
 		return {
 			event,
+			agentMemories: deletedAgentMemories,
+            tasks: deletedTasks,
 			sessions: deletedSessions,
 			activityBlocks: deletedBlocks,
 			dailySummaries: deletedSummaries,
@@ -3731,6 +3916,15 @@ export class KestrelDatabase {
 			provenance,
 		};
 	}
+
+    private sourceDerivedTombstoneKey(kind: "task" | "memory", id: string): string {
+        return `source-derived-deleted.${createHash("sha256").update(JSON.stringify([kind, id])).digest("hex")}`;
+    }
+
+    private assertSourceDerivedOwnerWritable(kind: "task" | "memory", id: string): void {
+        if (this.getPrivateState(this.sourceDerivedTombstoneKey(kind, id)))
+            throw new Error("Source-derived record was deleted and cannot be restored by a stale result.");
+    }
 
 	private deleteWorkingTaskWithCounts(id: string): {
 		deleted: boolean;
@@ -3917,7 +4111,7 @@ export class KestrelDatabase {
 		return row ? PersonRecordSchema.parse(this.decryptPayload(row)) : undefined;
 	}
 
-	listPeople(includeArchived = true): PersonRecord[] {
+	listPeople(includeArchived = true, agentId?: string): PersonRecord[] {
 		const rows = this.db
 			.prepare(
 				`SELECT payload_ciphertext, payload_iv, payload_auth_tag
@@ -3927,7 +4121,7 @@ export class KestrelDatabase {
 			.all() as EncryptedPayloadRow[];
 		return rows
 			.map((row) => PersonRecordSchema.parse(this.decryptPayload(row)))
-			.filter((person) => includeArchived || person.status === "active")
+			.filter((person) => person.agentId === agentId && (includeArchived || person.status === "active"))
 			.sort(
 				(left, right) =>
 					right.relevanceScore - left.relevanceScore ||
@@ -3958,7 +4152,7 @@ export class KestrelDatabase {
 			: undefined;
 	}
 
-	listCalendarEvents(): UnifiedCalendarEvent[] {
+	listCalendarEvents(agentId?: string): UnifiedCalendarEvent[] {
 		return (
 			this.db
 				.prepare(
@@ -3969,6 +4163,7 @@ export class KestrelDatabase {
 				.all() as EncryptedPayloadRow[]
 		)
 			.map((row) => UnifiedCalendarEventSchema.parse(this.decryptPayload(row)))
+ .filter(event => event.agentId === agentId)
 			.sort((left, right) => left.startsAt.localeCompare(right.startsAt));
 	}
 
@@ -4283,6 +4478,7 @@ export class KestrelDatabase {
 			providerToolCallId?: unknown;
 			toolName?: unknown;
 			memoryRecallReceipt?: unknown;
+            sourceToolExecutionIds?: unknown;
 		} = { content: decrypted };
 		try {
 			const candidate = JSON.parse(decrypted) as Record<string, unknown>;
@@ -4296,6 +4492,7 @@ export class KestrelDatabase {
 			sessionId: row.session_id,
 			role: row.role,
 			content: stored.content,
+            ...(stored.sourceToolExecutionIds ? { sourceToolExecutionIds: stored.sourceToolExecutionIds } : {}),
 			...(stored.modelToolCalls
 				? { modelToolCalls: stored.modelToolCalls }
 				: {}),
@@ -4434,7 +4631,7 @@ export class KestrelDatabase {
 				)
 				.all(sessionId) as Array<{ payload: string }>
 		)
-			.map((row) => RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)))
+			.map((row) => this.decodeToolExecution(row.payload))
 			.filter(
 				(execution) =>
 					pendingExecutionIds.has(execution.id) ||
@@ -4463,7 +4660,7 @@ export class KestrelDatabase {
 				completedAt,
 			});
 			const saved = saveExecution.run(
-				JSON.stringify(retired),
+				this.encodeToolExecution(retired),
 				retired.status,
 				retired.id,
 				retired.sessionId,

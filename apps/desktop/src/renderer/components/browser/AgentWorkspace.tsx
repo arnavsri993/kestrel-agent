@@ -1,3 +1,5 @@
+import { AgentSettingsDialog } from "./AgentSettingsDialog";
+import { ROBOTICS_AGENT_TEMPLATE, type AgentTemplate } from "@kestrel/shared-types";
 import type {
 	AgentRun,
 	AgentState,
@@ -35,10 +37,11 @@ function AgentUniverseCreateAgentForm({
 	onCreateAgent,
 	onCancel,
 }: {
-	onCreateAgent(title: string): Promise<void> | void;
+	onCreateAgent(title: string, template?: AgentTemplate): Promise<void> | void;
 	onCancel(): void;
 }) {
 	const [agentName, setAgentName] = useState("");
+	const [templateId, setTemplateId] = useState("custom");
 	const [createError, setCreateError] = useState("");
 	const [submitting, setSubmitting] = useState(false);
 
@@ -49,7 +52,7 @@ function AgentUniverseCreateAgentForm({
 		setSubmitting(true);
 		setCreateError("");
 		try {
-			await onCreateAgent(title);
+			await onCreateAgent(title, templateId === "robotics" ? ROBOTICS_AGENT_TEMPLATE : undefined);
 			onCancel();
 		} catch (cause) {
 			setCreateError(
@@ -65,6 +68,16 @@ function AgentUniverseCreateAgentForm({
 			className="agent-universe-create-agent-form"
 			onSubmit={(event) => void submitAgent(event)}
 		>
+			<label>
+				<span>Template</span>
+				<select aria-label="Agent template" value={templateId} disabled={submitting} onChange={event => {
+					setTemplateId(event.target.value);
+					if (!agentName.trim() && event.target.value === "robotics") setAgentName("Robotics");
+				}}>
+					<option value="custom">Custom agent</option>
+					<option value="robotics">Robotics team</option>
+				</select>
+			</label>
 			<label>
 				<span>Agent name</span>
 				<input
@@ -113,7 +126,7 @@ function AgentUniverseEmptyState({
 	onCreateAgent,
 }: {
 	onNewTask(): void;
-	onCreateAgent(title: string): Promise<void> | void;
+	onCreateAgent(title: string, template?: AgentTemplate): Promise<void> | void;
 }) {
 	const [creatingAgent, setCreatingAgent] = useState(false);
 
@@ -162,7 +175,7 @@ function AgentUniverseEmptyState({
 function AgentUniverseCreateAgentMenu({
 	onCreateAgent,
 }: {
-	onCreateAgent(title: string): Promise<void> | void;
+	onCreateAgent(title: string, template?: AgentTemplate): Promise<void> | void;
 }) {
 	const [open, setOpen] = useState(false);
 	return (
@@ -306,7 +319,7 @@ export function AgentWorkspace({
 	activities?: AgentUniverseActivity[];
 	sessionLoadState?: SessionLoadState;
 	onNewTask(): void;
-	onCreateAgent(title: string): Promise<void> | void;
+	onCreateAgent(title: string, template?: AgentTemplate): Promise<void> | void;
 	onOpenSession(sessionId: string): void;
 	onOpenApprovals(): void;
 	onOpenWork(): void;
@@ -316,6 +329,7 @@ export function AgentWorkspace({
 	onBack?(): void;
 }) {
 	const [query, setQuery] = useState("");
+	const [settingsSessionId, setSettingsSessionId] = useState<string | null>(null);
 	const [focusedSystemId, setFocusedSystemId] = useState<string | null>(null);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [runsBySession, setRunsBySession] = useState<Record<string, AgentRun[]>>({});
@@ -683,6 +697,9 @@ export function AgentWorkspace({
 			<h1 id="agent-workspace-title" className="sr-only">
 				Agent Universe
 			</h1>
+			{settingsSessionId && sessions.find(item => item.id === settingsSessionId) && <AgentSettingsDialog
+				session={sessions.find(item => item.id === settingsSessionId)!} sessions={sessions}
+				onClose={() => setSettingsSessionId(null)} onSaved={() => onRetrySessions?.()} />}
 			<div className="agent-universe-stage">
 				<div className="agent-universe-visual-plane">
 					{!hasSystems ? (
@@ -819,7 +836,7 @@ export function AgentWorkspace({
 							className="agent-universe-settings"
 							aria-label="Open agent settings"
 							title="Open agent settings"
-							onClick={onOpenSettings}
+							onClick={() => { const id = selectedNode?.id ?? focusedGroupId; if (id) setSettingsSessionId(id); else onOpenSettings(); }}
 						>
 							<Icon name="settings" />
 						</button>

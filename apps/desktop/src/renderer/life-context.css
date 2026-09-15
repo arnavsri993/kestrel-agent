@@ -1738,3 +1738,27 @@
 		text-align: left;
 	}
 }
+
+
+.memory-destination { align-content: start; }
+.memory-scope-selector, .scoped-memory-search {
+  display: grid;
+  gap: 8px;
+  color: var(--ink-secondary);
+  font-size: 13px;
+}
+.memory-scope-selector { max-width: 320px; }
+.scoped-memory-search { max-width: 600px; }
+.scoped-agent-memory { align-content: start; gap: 20px; }
+.scoped-agent-memory .page-header { margin: 0; }
+.scoped-agent-memory details { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.scoped-agent-memory form, .scoped-agent-memory form label { display: grid; gap: 8px; }
+.scoped-agent-memory textarea { width: 100%; min-height: 100px; resize: vertical; }
+
+.agent-resource-access { margin-bottom: 24px; }
+.agent-resource-access ul { list-style: none; padding: 0; }
+.agent-resource-access li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.agent-resource-access li span { min-width: 0; overflow-wrap: anywhere; }
+.agent-resource-access small { display: block; opacity: .7; }
+.agent-resource-access form { display: grid; gap: 12px; margin-top: 12px; }
+.agent-resource-access label { display: grid; gap: 6px; }

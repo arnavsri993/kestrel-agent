@@ -1,3 +1,8 @@
+import { WhatsAppConnection } from "./components/WhatsAppConnection";
+import { AgentResourceAccess } from "./components/AgentResourceAccess";
+import { OnshapeConnection } from "./components/OnshapeConnection";
+import { ScopedAgentMemory } from "./components/ScopedAgentMemory";
+import type { AgentTemplate } from "@kestrel/shared-types";
 import type {
 	ActionReceipt,
 	AgentRun,
@@ -275,7 +280,8 @@ const pages = [
 	["writing", "Writing Studio"],
 	["readiness", "Readiness"],
 	["approvals", "Approvals"],
-	["memory", "Life"],
+	["memory", "Memory"],
+	["connections", "Connections"],
 	["research", "Research"],
 	["artifacts", "Artifacts"],
 	["work", "Work"],
@@ -368,8 +374,15 @@ const commandDestinations: CommandDestination[] = [
 		group: "Agent",
 	},
 	{
+		id: "connections",
+		label: "Connections",
+		detail: "Manage connected accounts and access",
+		icon: "connections",
+		group: "Context",
+	},
+	{
 		id: "memory",
-		label: "Life Context",
+		label: "Memory",
 		detail: "Calendar, people, and memory",
 		icon: "memory",
 		group: "Context",
@@ -6663,7 +6676,7 @@ function Work({
 	);
 }
 
-function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
+function Connections({ snapshot, standalone = false, scopeSession }: { snapshot: WorkspaceSnapshot; standalone?: boolean; scopeSession?: RuntimeSession | undefined }) {
 	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
 	const [channels, setChannels] = useState<ChannelSummary[]>([]);
 	const [communicationSources, setCommunicationSources] = useState<
@@ -6872,16 +6885,21 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 		<section
 			className="settings-panel"
 			id="setting-agent-connections"
-			aria-labelledby="settings-connections-title"
+			aria-label={standalone ? "Connected accounts" : undefined}
+			aria-labelledby={standalone ? undefined : "settings-connections-title"}
 		>
-			<header className="settings-panel-header">
+			{!standalone && <header className="settings-panel-header">
 				<h2 id="settings-connections-title">Accounts and access</h2>
 				<p>
 					Sign-ins stay with their providers. Project folders and external
 					access remain explicit and revocable.
 				</p>
-			</header>
+			</header>}
+			<WhatsAppConnection session={scopeSession} />
+			<OnshapeConnection key={scopeSession?.id ?? "global"} session={scopeSession} />
+			{scopeSession && <AgentResourceAccess key={scopeSession.id} session={scopeSession} {...(googleStatus.connected && googleStatus.email ? { googleEmail: googleStatus.email } : {})} />}
 			<div className="connection-list">
+				<details className="connection-advanced"><summary>Model provider · ChatGPT</summary>
 				<article className="oauth-connection">
 					<div className="connection-monogram">CG</div>
 					<div>
@@ -6929,6 +6947,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 						)}
 					</div>
 				</article>
+				</details>
 				<article className="oauth-connection">
 					<div className="connection-monogram">GW</div>
 					<div>
@@ -10495,7 +10514,7 @@ export function App() {
 		return true;
 	}, [runtimeAgentState, startNewAgent]);
 	const createPersistentAgent = useCallback(
-		async (title: string) => {
+		async (title: string, agentTemplate?: AgentTemplate) => {
 			const normalizedTitle = title.trim();
 			if (!normalizedTitle) throw new Error("Enter a name for the agent.");
 			const selectedProject = activeProjectId
@@ -10505,6 +10524,7 @@ export function App() {
 				type: "runtime-create-session",
 				title: normalizedTitle,
 				kind: "agent",
+				...(agentTemplate ? { agentTemplate } : {}),
 				...(selectedProject ? { projectId: selectedProject.id } : {}),
 			})) as CoreResponse;
 			if (!response.ok || !response.session)
@@ -10568,7 +10588,7 @@ export function App() {
 			.length ?? 0;
 	const runtimeWaiting = runtimeAgentState === "waiting_approval";
 	const openAppPage = useCallback(
-		async (id: KestrelAppPageId, section?: SettingsSection) => {
+		async (id: KestrelAppPageId, section?: SettingsSection, scopeSessionId?: string) => {
 			if (id === "projects")
 				await refreshProjects().catch((cause) => {
 					setDeepLinkNotice(
@@ -10585,14 +10605,14 @@ export function App() {
 			pendingToolRouteFocusRef.current = id;
 			const tabs = browser.state?.tabs ?? [];
 			const existing = tabs.find(
-				(tab) => parseKestrelAppPage(tab.url)?.id === id,
+				(tab) => parseKestrelAppPage(tab.url)?.url === kestrelAppPageUrl(id, scopeSessionId),
 			);
 			if (existing) {
 				if (existing.id !== browser.state?.activeTabId)
 					await browser.selectTab(existing.id);
 				return;
 			}
-			await browser.createTab(kestrelAppPageUrl(id));
+			await browser.createTab(kestrelAppPageUrl(id, scopeSessionId));
 		},
 		[browser, refreshProjects],
 	);
@@ -11154,7 +11174,7 @@ export function App() {
 			return;
 		}
 		if (destination === "connections") {
-			void openAppPage("settings", "connections");
+			void openAppPage("connections", undefined, currentAppPage?.scopeSessionId);
 			return;
 		}
 		if (!isKestrelAppPageId(destination)) return;
@@ -11176,6 +11196,7 @@ export function App() {
 			key={appPageId}
 			ref={focusToolRoute}
 			className={`browser-app-page${
+				appPageId === "connections" ||
 				appPageId === "settings" ||
 				appPageId === "readiness" ||
 				appPageId === "approvals" ||
@@ -11194,7 +11215,7 @@ export function App() {
 			}${appPageId === "memory" ? " life-product-surface" : ""}`}
 			data-app-page={appPageId}
 			initial={reduced ? false : { opacity: 0, y: 3 }}
-			animate={{ opacity: 1, y: 0 }}
+			animate={{ opacity: 1, y: 0, pointerEvents: "auto" }}
 			exit={
 				reduced
 					? { opacity: 1, y: 0, pointerEvents: "none" }
@@ -11249,9 +11270,23 @@ export function App() {
 					onNewChat={startProjectChat}
 					onOpenSession={openProjectSession}
 					onOpenProjectSettings={openProjectSettings}
-					onOpenConnections={() => openSettings("connections")}
+					onOpenConnections={() => navigate("connections")}
 					onCreateProject={() => void createProject()}
 				/>
+			)}
+			{appPageId === "connections" && (
+				<PageFrame title="Connections" text="Manage connected accounts and access.">
+					<label className="memory-scope-selector">Access for
+      <select aria-label="Connection scope" value={currentAppPage?.scopeSessionId ?? ""} onChange={event => {
+       const tabId = browser.state?.activeTabId;
+       if (tabId) void browser.navigate(tabId, kestrelAppPageUrl("connections", event.target.value || undefined));
+      }}>
+       <option value="">Personal / global accounts</option>
+       {runtimeSessions.filter(session => session.kind === "agent" || session.specialistDefinition).map(session => <option key={session.id} value={session.id}>{session.parentSessionId ? "↳ " : ""}{session.title}</option>)}
+      </select>
+     </label>
+     <Connections snapshot={snapshot} standalone scopeSession={runtimeSessions.find(session => session.id === currentAppPage?.scopeSessionId)} />
+				</PageFrame>
 			)}
 			{appPageId === "settings" && (
 				<Settings
@@ -11278,11 +11313,23 @@ export function App() {
 				/>
 			)}
 			{appPageId === "memory" && (
-				<LifeContext
+				<div className="life-page memory-destination">
+				<label className="memory-scope-selector">Memory scope
+					<select aria-label="Memory scope" value={currentAppPage?.scopeSessionId ?? ""} onChange={event => {
+						const tabId = browser.state?.activeTabId;
+						if (tabId) void browser.navigate(tabId, kestrelAppPageUrl("memory", event.target.value || undefined));
+					}}>
+						<option value="">Personal</option>
+						{runtimeSessions.filter(session => session.kind === "agent" || session.specialistDefinition).map(session =>
+							<option key={session.id} value={session.id}>{session.parentSessionId ? "↳ " : ""}{session.title}</option>)}
+					</select>
+				</label>
+				{currentAppPage?.scopeSessionId ? <ScopedAgentMemory key={currentAppPage.scopeSessionId} sessionId={currentAppPage.scopeSessionId} /> : <LifeContext
 					snapshot={snapshot}
 					update={setSnapshot}
 					onOpenTranscriptResult={openTranscriptResult}
-				/>
+				/>}
+				</div>
 			)}
 			{appPageId === "research" && <Research />}
 			{appPageId === "artifacts" && <Artifacts />}
@@ -11316,6 +11363,8 @@ export function App() {
 				activeSidebarDestination === "projects" ||
 				activeSidebarDestination === "writing" ||
 				activeSidebarDestination === "approvals" ||
+				activeSidebarDestination === "connections" ||
+				activeSidebarDestination === "memory" ||
 				activeSidebarDestination === "settings"
 					? activeSidebarDestination
 					: "capabilities"
@@ -11329,6 +11378,11 @@ export function App() {
 			onNewTask={() => startNewAgent()}
 			onOpenBrowser={openBrowser}
 			onOpenAgent={openAgent}
+			onOpenConnections={() => navigate("connections")}
+			onOpenMemory={() => {
+				const session = runtimeSessions.find(item => item.id === activeRuntimeSessionId);
+				void openAppPage("memory", undefined, session?.kind === "agent" || session?.specialistDefinition ? session.id : undefined);
+			}}
 			onOpenCapabilities={openCommandCenter}
 			onOpenSettings={() => openSettings("browser")}
 			onCreateProject={() => void createProject()}
@@ -11414,7 +11468,7 @@ export function App() {
 						<CommunicationCodeAssistant
 							browser={browser}
 							enabled={!currentAppPage}
-							onOpenConnections={() => openSettings("connections")}
+							onOpenConnections={() => navigate("connections")}
 						/>
 					}
 					sessions={runtimeSessions}

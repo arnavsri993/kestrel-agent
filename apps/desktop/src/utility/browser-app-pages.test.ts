@@ -8,6 +8,9 @@ import {
 
 describe("kestrel app page URLs", () => {
 	it("accepts the product pages used as browser tabs", () => {
+		for (const [id, title] of [["connections", "Connections"], ["memory", "Memory"]]) {
+			expect(parseKestrelAppPage(`kestrel://${id}`)).toEqual({id, title, url: `kestrel://${id}`});
+		}
 		expect(parseKestrelAppPage("kestrel://settings")).toEqual({
 			id: "settings",
 			url: "kestrel://settings",
@@ -30,6 +33,13 @@ describe("kestrel app page URLs", () => {
 			url: "kestrel://bookmarks",
 			title: "Bookmarks",
 		});
+	});
+
+	it("retains an opaque memory scope and rejects arbitrary routing parameters", () => {
+		expect(parseKestrelAppPage("kestrel://memory?scope=session-abc")).toEqual({
+			id: "memory", title: "Memory", url: "kestrel://memory?scope=session-abc", scopeSessionId: "session-abc" });
+		for (const url of ["kestrel://settings?scope=session-abc", "kestrel://memory?scope=session-abc&scope=session-def", "kestrel://memory?scope=/etc/passwd", "kestrel://memory?other=x"])
+			expect(parseKestrelAppPage(url)).toBeUndefined();
 	});
 
 	it("rejects unknown, privileged, or credential-bearing kestrel URLs", () => {

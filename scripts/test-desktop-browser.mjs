@@ -853,12 +853,12 @@ async function sendInputToActiveView(input, label) {
 	);
 }
 
-async function createRuntimeSessionWithVisibleBrowser() {
-	return page.evaluate(async () => {
+async function createRuntimeSessionWithVisibleBrowser(kind = "agent") {
+	return page.evaluate(async (kind) => {
 		const created = await window.kestrel.request({
 			type: "runtime-create-session",
 			title: "Visible browser test",
-			kind: "agent",
+			kind,
 		});
 		if (!created.ok || !("session" in created) || !created.session)
 			throw new Error("A fresh runtime session could not be created.");
@@ -878,7 +878,7 @@ async function createRuntimeSessionWithVisibleBrowser() {
 		])
 			if (!names.has(name)) throw new Error(`${name} was not installed.`);
 		return created.session.id;
-	});
+	}, kind);
 }
 
 async function waitForRuntimeRunsToSettle(sessionId) {
@@ -1952,7 +1952,7 @@ try {
 	state = await browserState();
 	const tabId = state.activeTabId;
 	assert(tabId);
-	const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
+	let runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
 	await page.getByRole("button", { name: "Open Agent tab" }).click();
 	await page
 		.getByRole("heading", { name: "Agent Universe", exact: true })
@@ -2200,6 +2200,8 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not reattach after returning from Agent",
 	);
+	// Personal browser tools belong to a chat, not the persistent agent used above for Universe assertions.
+	runtimeSessionId = await createRuntimeSessionWithVisibleBrowser("conversation");
 	const blocked = await callTool(
 		runtimeSessionId,
 		"browser.visible-act",

@@ -184,6 +184,7 @@ export function BrowserWorkspace({
     detachTab,
     reattachTab,
     isDetachedWindow,
+    isConnectionWindow,
     previewOrganizeTabs,
   } = browser;
 
@@ -876,14 +877,14 @@ export function BrowserWorkspace({
         onCloseOthers={(tabId) => closeOtherTabs(tabId)}
         onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
         onTabDragStateChange={handleTabDragStateChange}
-        {...(!isDetachedWindow
+        {...(!isDetachedWindow && !isConnectionWindow
           ? {
               onDetachTab: (tabId: string) => detachTab(tabId),
               onTabDrop: (tabId: string, transferToken: string) =>
                 reattachTab(tabId, transferToken),
             }
           : {})}
-        {...(isDetachedWindow
+        {...(isDetachedWindow && !isConnectionWindow
           ? {
               onReattachTab: (tabId: string) => reattachTab(tabId),
               onPrepareTabTransfer: prepareTabTransfer,

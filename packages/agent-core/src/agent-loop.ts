@@ -1,3 +1,4 @@
+import type { ResourceAccess } from "@kestrel/shared-types";
 import { randomUUID } from "node:crypto";
 import type { KestrelDatabase } from "@kestrel/database";
 import type {
@@ -80,6 +81,8 @@ export const CHAT_CONFIGURATION_INSTRUCTIONS =
 	"Treat conversational self-configuration as a reviewable transaction. For behavior, personality, prompt, tool, permission, workflow, UI, memory, integration, or setting changes, inspect the agent.config catalog first, stage an exact patch with agent.config.plan, explain the proposed live effect, risk, diff, isolated checks, and protected boundaries, then use agent.config.apply only after the staged result is available so the user receives a fresh one-time approval. Never claim a staged plan changed the live agent. Never place secrets in configuration. Never weaken or reinterpret protected safety, authentication, approval enforcement, isolation, verification, history, or recovery controls. A self-improvement suggestion is evidence, not authorization, and follows the same plan, diff, test, approval, verification, and rollback path. If the request requires source code rather than registered data configuration, use the isolated worktree, test, diff, and unmerged pull-request workflow; do not patch the running protected core in place. If a request is unsafe or unsupported, explain the exact boundary and offer the closest safe editable alternative.";
 
 export interface AgentLoopInput {
+	workingTaskId?: string;
+ resourceScope?: ResourceAccess[];
 	sessionId: string;
 	model: string;
 	providerIds: string[];
@@ -420,6 +423,10 @@ export class AgentLoop {
 		input: AgentLoopInput,
 		session: RuntimeSession,
 	): Promise<AgentLoopResult> {
+		if (input.workingTaskId) {
+			const task = this.database.getWorkingTask(input.workingTaskId);
+			if (!task || task.sessionId !== session.id) throw new Error("The working task does not belong to this session.");
+		}
 		this.supersedeWaitingApprovalRuns(session.id);
 		const messageCountBefore = this.runtime.listMessages(session.id).length;
 		const mutationIdsBefore = this.database.listWorkspaceMutationIds(
@@ -428,6 +435,7 @@ export class AgentLoop {
 		const createdAt = this.now().toISOString();
 		const maximumTurns = boundedMaximumTurns(input.maximumTurns);
 		const run: AgentRun = {
+			...(input.workingTaskId ? { workingTaskId: input.workingTaskId } : {}),
 			id: `run-${randomUUID()}`,
 			sessionId: session.id,
 			model: input.model,
@@ -448,6 +456,7 @@ export class AgentLoop {
 				? { temperature: input.temperature }
 				: {}),
 			...(input.allowedTools ? { toolScope: input.allowedTools } : {}),
+ ...(input.resourceScope ? { resourceScope: input.resourceScope } : {}),
 			...(input.fallbackModelIds
 				? { fallbackModelIds: input.fallbackModelIds }
 				: {}),
@@ -592,6 +601,7 @@ export class AgentLoop {
 					run.pendingToolName,
 					this.runtime.approvalInput(blocked),
 					{
+						runId: run.id,
 						approvalStatus: "approved",
 						approvalGrantExecutionId: blocked.id,
 						idempotencyKey: `${run.id}:${run.pendingProviderToolCallId}`,
@@ -1022,6 +1032,7 @@ export class AgentLoop {
 				let poolResult;
 				const lease = this.usageGovernor.acquire();
 				try {
+					this.runtime.assertConversationResourceAccess(run.sessionId, run.id);
 					poolResult = await this.providers.complete(
 						{
 							model: run.model,
@@ -1307,6 +1318,7 @@ export class AgentLoop {
 						call.name,
 						call.arguments,
 						{
+							runId: run.id,
 							approvalStatus: options.approvalStatus,
 							idempotencyKey: `${run.id}:${call.id}`,
 							...(!descriptor.readOnly && untrustedExternalContent

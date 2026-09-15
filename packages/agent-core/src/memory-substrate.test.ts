@@ -217,6 +217,30 @@ describe("memory substrate", () => {
 		}
 	});
 
+	it("isolates persistent parents from personal memory and each other", async () => {
+		const state = fixture();
+		try {
+			const first = state.runtime.createSession({ title: "Engineering", kind: "agent" });
+			const second = state.runtime.createSession({ title: "School", kind: "agent" });
+			state.substrate.remember(memoryInput("Personal private preference", "personal"));
+			const remembered = state.substrate.rememberForSession(first.id,
+				memoryInput("Engineering mechanism decision", "engineering"));
+			expect(state.substrate.listForSession(first.id)).toContainEqual(remembered);
+			expect(state.substrate.listForSession(second.id)).toEqual([]);
+			expect(state.substrate.listForSession(state.main.id).map(item => item.content))
+				.not.toContain("Engineering mechanism decision");
+			const identity = state.substrate.ensureAgentIdentity(first);
+			const context = state.substrate.getRelevantContext({ query: "private preference mechanism",
+				sessionId: first.id, agentId: identity.id, includeSharedMemory: true });
+			expect(context.prompt).not.toContain("Personal private preference");
+			expect(context.prompt).toContain("Engineering mechanism decision");
+			expect(state.substrate.getRelevantContext({ query: "private preference", sessionId: first.id }).prompt)
+				.not.toContain("Personal private preference");
+			expect(() => state.substrate.getRelevantContext({ query: "mechanism", sessionId: second.id, agentId: identity.id }))
+				.toThrow(/another agent/);
+		} finally { await state.close(); }
+	});
+
 	it("keeps private agent memory separate from global context and tasks", async () => {
 		const state = fixture();
 		try {
@@ -552,3 +576,19 @@ describe("memory substrate", () => {
 		}
 	});
 });
+
+ it("does not embed a source-linked task even when the source row is gone", async () => {
+  const embedded: string[] = [];
+  const state = fixture({ embeddingProvider: { provider: "fixture", model: "fixture", embed: async text => { embedded.push(text); return [1]; } } });
+  try {
+   const identity = state.substrate.ensureAgentIdentity(state.main);
+   state.substrate.createWorkingTask({ id: "source-task", sessionId: state.main.id, agentId: identity.id,
+    sourceIds: ["observation-deleted-fixture"], projectIds: [], personIds: [], entityIds: [], goal: "Private source-derived request", outcomeSummary: "Private source-derived result", status: "completed", plan: [], evidence: [], artifacts: [], failures: [], unresolvedQuestions: [], subtaskIds: [], dependencyTaskIds: [], startedAt: "2026-07-22T12:00:00.000Z" });
+   const sourceTask = state.database.getWorkingTask("source-task")!;
+   state.substrate.createWorkingTask({ ...sourceTask, id: "ordinary-task", sourceIds: [], goal: "Ordinary permitted task", outcomeSummary: "Ordinary result" });
+   await state.substrate.runMaintenance(200);
+   expect(embedded.some(text => text.includes("Ordinary permitted task"))).toBe(true);
+   expect(embedded.some(text => text.includes("Private source-derived"))).toBe(false);
+   expect(state.database.getWorkingTask("source-task")).toBeDefined();
+  } finally { await state.close(); }
+ });

@@ -95,6 +95,7 @@ describe("agent universe projection", () => {
 	it("keeps delegated depth and real parent edges", () => {
 		const result = projectAgentUniverse([
 			baseSession,
+			{ ...baseSession, id: "archived", kind: "subagent", parentSessionId: baseSession.id, specialistDefinition: { key: "old", name: "Old", purpose: "Past work", instructions: "", enabled: false, archived: true } },
 			session("session-child", "Research", "session-root"),
 			session("session-grandchild", "Notes", "session-child"),
 		]);

@@ -137,7 +137,9 @@ describe("sidebar footer destination", () => {
 		expect(sidebarActiveDestination("history")).toBe("browser");
 		expect(sidebarActiveDestination("downloads")).toBe("browser");
 		expect(sidebarActiveDestination("commands")).toBe("capabilities");
-		expect(sidebarActiveDestination("memory")).toBe("browser");
+		expect(sidebarActiveDestination("memory")).toBe("memory");
+		expect(sidebarActiveDestination("kestrel://memory")).toBe("memory");
+		expect(sidebarActiveDestination("kestrel://connections")).toBe("connections");
 	});
 
 	it("keeps the global sidebar destination in sync", () => {

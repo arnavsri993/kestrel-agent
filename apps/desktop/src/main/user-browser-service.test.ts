@@ -244,6 +244,7 @@ afterEach(() => {
 
 function createService(options: {
   partitionName?: string;
+ connectionMode?: "whatsapp";
   now?: () => Date;
   allowDevTools?: boolean;
 	onLastTabClosed?: () => void;
@@ -286,6 +287,7 @@ function createService(options: {
 		onEvent: (event) => events.push(event),
 		onCommand: (command) => commands.push(command),
 		...(options.partitionName ? { partitionName: options.partitionName } : {}),
+ ...(options.connectionMode ? { connectionMode: options.connectionMode } : {}),
 		...(options.now ? { now: options.now } : {}),
 		...(options.allowDevTools === false ? { allowDevTools: false } : {}),
 		...(options.onLastTabClosed
@@ -4163,4 +4165,11 @@ describe("autofill save confirmation stability", () => {
   expect(save).not.toHaveBeenCalled();
   service.dispose();
  });
+});
+
+it("keeps dedicated connection tabs out of general browser-agent capture", async () => {
+ const { service } = createService({ partitionName: "persist:kestrel-connection-whatsapp", connectionMode: "whatsapp" });
+ await expect(service.snapshot()).rejects.toThrow("general snapshots");
+ await expect(service.pageContext()).rejects.toThrow("scoped capture");
+ await expect(service.handleAgentRequest({ operation: "visible-tabs" } as never, new AbortController().signal)).rejects.toThrow("general browser-agent");
 });

@@ -161,9 +161,10 @@ export function NewTabPage({
 		() => frequentBrowserSites(history, 7, faviconByOrigin),
 		[faviconByOrigin, history],
 	);
+	const primarySessions = useMemo(() => sessions.filter(session => !session.parentSessionId), [sessions]);
 	const suggestedActions = useMemo(
-		() => suggestedAgentActions(history, 5, sessions),
-		[history, sessions],
+		() => suggestedAgentActions(history, 5, primarySessions),
+		[history, primarySessions],
 	);
   const customBackgroundStyle: CSSProperties | undefined =
     background === "custom" && backgroundCustomDataUrl
@@ -202,7 +203,7 @@ export function NewTabPage({
 			originFavicons={originFavicons}
 			downloads={downloads}
 			tabs={tabs}
-			sessions={sessions}
+			sessions={primarySessions}
 			suggestedActions={suggestedActions}
 			memories={memories}
 			memoryRecall={memoryRecall}

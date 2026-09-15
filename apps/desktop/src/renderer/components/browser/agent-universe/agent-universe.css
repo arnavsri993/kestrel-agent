@@ -2327,3 +2327,21 @@
     display: none;
   }
 }
+
+
+.persistent-agent-settings {
+  width: min(38rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 3rem);
+  overflow: auto;
+  color: var(--text-primary, #eee);
+  background: var(--surface, #252628);
+  border: 1px solid var(--border, #555);
+  border-radius: 12px;
+  padding: 24px;
+}
+.persistent-agent-settings::backdrop { background: rgb(0 0 0 / 55%); }
+.persistent-agent-settings header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.persistent-agent-settings form { display: grid; gap: 12px; padding-block: 12px; }
+.persistent-agent-settings label { display: grid; gap: 6px; }
+.persistent-agent-settings textarea { min-height: 80px; resize: vertical; }
+.persistent-agent-settings details { padding-block: 10px; border-top: 1px solid var(--border, #555); }

@@ -63,6 +63,7 @@ export const MIGRATION_SQL_FILES: Record<number, string> = {
 	14: "014_memory_entity_ambiguity.sql",
 	15: "015_memory_provenance_updated_at.sql",
 	16: "016_memory_timeline_source_metadata.sql",
+ 17: "017_source_observation_lookup.sql",
 };
 
 export const LATEST_SCHEMA_VERSION = Math.max(

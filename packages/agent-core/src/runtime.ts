@@ -1,3 +1,4 @@
+import { ResourceScopeSchema, includesResource, type ResourceAccess } from "@kestrel/shared-types";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
@@ -194,6 +195,7 @@ interface RuntimeToolContext {
 }
 
 interface RuntimeToolDefinition {
+ resourceAccess?: (input: Record<string, unknown>, session: RuntimeSession) => ResourceAccess[];
 	descriptor: RuntimeToolDescriptor;
 	inputSchema: z.ZodType<Record<string, unknown>>;
 	jsonSchema?: Record<string, unknown>;
@@ -212,6 +214,7 @@ interface RuntimeToolDefinition {
 }
 
 export interface ToolCallOptions {
+ runId?: string;
 	approvalStatus?: "pending" | "approved";
 	approvalGrantExecutionId?: string;
 	idempotencyKey?: string;
@@ -229,6 +232,8 @@ export interface RuntimeModelTool {
 }
 
 export interface ExternalRuntimeTool {
+ /** Trusted adapter mapping; absence denies connector access for persistent agents. */
+ resourceAccess?: (input: Record<string, unknown>, session: RuntimeSession) => ResourceAccess[];
 	descriptor: RuntimeToolDescriptor;
 	inputSchema: Record<string, unknown>;
 	execute(
@@ -550,6 +555,7 @@ export class AgentRuntime extends EventEmitter {
 		string,
 		{ controller: AbortController; sessionId: string }
 	>();
+	private readonly mutationResourceOwners = new Map<string, string>();
 	private readonly inFlightIdempotentExecutions = new Map<
 		string,
 		Promise<RuntimeToolExecution>
@@ -667,6 +673,8 @@ export class AgentRuntime extends EventEmitter {
 
 	createSession(input: {
 		title: string;
+		agentInstructions?: string;
+		specialistDefinition?: RuntimeSession["specialistDefinition"];
 		kind?: RuntimeSession["kind"];
 		projectId?: string;
 		workspaceRoot?: string;
@@ -676,6 +684,8 @@ export class AgentRuntime extends EventEmitter {
 		planetAssetId?: RuntimeSession["planetAssetId"];
 		approvalPolicy?: RuntimeSession["approvalPolicy"];
 	}): RuntimeSession {
+		if (input.specialistDefinition && (input.kind !== "subagent" || !input.parentSessionId))
+			throw new Error("A specialist definition requires a child agent.");
 		if (input.kind === "agent" && input.parentSessionId)
 			throw new Error("A persistent agent must be a top-level session.");
 		if (input.kind === "subagent" && !input.parentSessionId)
@@ -710,6 +720,8 @@ export class AgentRuntime extends EventEmitter {
 		);
 		const session = RuntimeSessionSchema.parse({
 			id: `session-${randomUUID()}`,
+			agentInstructions: input.agentInstructions,
+			specialistDefinition: input.specialistDefinition,
 			title: input.title,
 			kind: input.kind ?? "conversation",
 			...(input.parentSessionId
@@ -1016,6 +1028,22 @@ export class AgentRuntime extends EventEmitter {
 		}
 	}
 
+	configureAgent(sessionId: string, input: { title: string; instructions: string; specialistDefinition?: RuntimeSession["specialistDefinition"] }): RuntimeSession {
+		const current = this.requireSession(sessionId);
+		if (current.kind !== "agent" && !current.specialistDefinition)
+			throw new Error("Only persistent agents and specialists have editable definitions.");
+		if (input.specialistDefinition && (!current.specialistDefinition || input.specialistDefinition.key !== current.specialistDefinition.key))
+			throw new Error("A specialist's stable key cannot change.");
+		if (this.database.listAgentRuns(sessionId).some(run => ["running", "waiting_approval", "waiting_input"].includes(run.status)))
+			throw new Error("Stop the current run before changing this agent's definition.");
+		const updated = RuntimeSessionSchema.parse({ ...current, title: input.title,
+			agentInstructions: input.specialistDefinition ? `${input.specialistDefinition.purpose}\n${input.instructions}` : input.instructions,
+			...(input.specialistDefinition ? { specialistDefinition: input.specialistDefinition } : {}), updatedAt: this.now() });
+		this.database.saveRuntimeSession(updated);
+		this.emitRuntimeEvent("session.updated", sessionId, {});
+		return updated;
+	}
+
 	getSession(sessionId: string): RuntimeSession {
 		return this.requireSession(sessionId);
 	}
@@ -1233,6 +1261,8 @@ export class AgentRuntime extends EventEmitter {
 					? { providerToolCallId: message.providerToolCallId }
 					: {}),
 				...(message.toolName ? { toolName: message.toolName } : {}),
+                ...(message.toolExecutionId ? { toolExecutionId: message.toolExecutionId } : {}),
+                ...(message.sourceToolExecutionIds ? { sourceToolExecutionIds: message.sourceToolExecutionIds } : {}),
 			});
 			messageIds.set(message.id, cloned.id);
 		}
@@ -1302,8 +1332,14 @@ export class AgentRuntime extends EventEmitter {
 		input: Omit<RuntimeMessage, "id" | "createdAt">,
 	): RuntimeMessage {
 		this.requireSession(input.sessionId);
+        const sourceToolExecutionIds = input.role === "assistant"
+            ? [...new Set([...(input.sourceToolExecutionIds ?? []), ...this.listMessages(input.sessionId).flatMap(message => [
+                ...(message.sourceToolExecutionIds ?? []),
+                ...(message.toolName === "sources.read" && message.toolExecutionId ? [message.toolExecutionId] : [])
+            ])])] : input.sourceToolExecutionIds;
 		const message = RuntimeMessageSchema.parse({
 			...input,
+            ...(sourceToolExecutionIds?.length ? { sourceToolExecutionIds } : {}),
 			id: `message-${randomUUID()}`,
 			createdAt: this.now(),
 		});
@@ -1317,7 +1353,7 @@ export class AgentRuntime extends EventEmitter {
 			},
 			{ messageId: message.id },
 		);
-		return message;
+		return this.database.listRuntimeMessages(input.sessionId).find(stored => stored.id === message.id)!;
 	}
 
 	listMessages(sessionId: string): RuntimeMessage[] {
@@ -1660,6 +1696,7 @@ export class AgentRuntime extends EventEmitter {
 	registerExternalTool(tool: ExternalRuntimeTool): void {
 		this.registerTool({
 			descriptor: tool.descriptor,
+ ...(tool.resourceAccess ? { resourceAccess: tool.resourceAccess } : {}),
 			inputSchema: z.record(z.string(), z.unknown()),
 			jsonSchema: tool.inputSchema,
 			outputSchema: z.record(z.string(), z.unknown()),
@@ -1890,6 +1927,87 @@ export class AgentRuntime extends EventEmitter {
 		});
 	}
 
+ getResourceGrants(sessionId: string): ResourceAccess[] {
+  this.requireSession(sessionId);
+  return ResourceScopeSchema.parse(this.database.getPrivateState(`resource-grants.${sessionId}`) ?? []);
+ }
+
+ /** User-management operation. Deliberately not registered as a model tool. */
+ setResourceGrants(sessionId: string, grants: ResourceAccess[]): ResourceAccess[] {
+  const session = this.requireSession(sessionId);
+  if (session.forgottenAt) throw new Error("Forgotten agents cannot receive grants.");
+  const parsed = ResourceScopeSchema.parse(grants);
+  this.database.setPrivateState(`resource-grants.${sessionId}`, parsed);
+  this.emitRuntimeEvent("session.updated", sessionId, { resourceGrantsChanged: true });
+  return parsed;
+ }
+
+ /** Previously retrieved connector text remains in the conversation. Recheck
+  * its authorization before another provider call, including after revocation. */
+ assertConversationResourceAccess(sessionId: string, runId: string): void {
+  const checked = new Set<string>();
+  const references = this.listMessages(sessionId).flatMap(message => [
+   ...(message.role === "tool" && message.toolName && message.toolExecutionId ? [{ toolName: message.toolName, toolExecutionId: message.toolExecutionId, inherited: false }] : []),
+   ...(message.sourceToolExecutionIds ?? []).map(toolExecutionId => ({ toolName: "sources.read", toolExecutionId, inherited: true }))
+  ]);
+  for (const message of references) {
+   if (checked.has(message.toolExecutionId)) continue;
+   const definition = this.tools.get(message.toolName);
+   if (!definition) throw new Error("Prior tool context cannot be authorized because its adapter is unavailable. Start a new scoped conversation.");
+   if (!definition.resourceAccess) continue;
+   const execution = this.database.getToolExecution(message.toolExecutionId);
+   if (!execution || execution.toolName !== message.toolName || (!message.inherited && execution.sessionId !== sessionId)) throw new Error("Prior connected context is unavailable for authorization checks.");
+   if (execution.output === undefined) continue;
+   this.assertResourceAccess(sessionId, definition, execution.input, { runId });
+   if (message.toolName === "sources.read") {
+    const output = execution.output as { events?: Array<{ id?: unknown }>; sourceEvidenceRemoved?: boolean };
+    if (output.sourceEvidenceRemoved) throw new Error("Previously retrieved source evidence was deleted or expired. Start a new scoped conversation.");
+    if (!Array.isArray(output.events)) throw new Error("Prior source result cannot be revalidated.");
+    for (const reference of output.events) {
+     const event = typeof reference.id === "string" ? this.database.getTimelineEvent(reference.id) : undefined;
+     if (!event || event.source !== "connected-source" || (event.retentionPolicy === "days" && Date.parse(event.createdAt) + (event.retentionDays ?? 30) * 86400000 <= Date.parse(this.now()))) throw new Error("Previously retrieved source evidence was deleted or expired. Start a new scoped conversation.");
+    }
+   }
+   checked.add(message.toolExecutionId);
+  }
+ }
+
+ private assertResourceAccess(sessionId: string, definition: RuntimeToolDefinition,
+  input: Record<string, unknown>, options: ToolCallOptions): void {
+  const session = this.requireSession(sessionId);
+  const run = options.runId ? this.database.getAgentRun(options.runId) : undefined;
+  if (options.runId && (!run || run.sessionId !== sessionId)) throw new Error("Tool run identity does not match its session.");
+  if (run?.toolScope && !run.toolScope.includes(definition.descriptor.name)) throw new Error("Tool exceeds the delegated task scope.");
+  const chain: RuntimeSession[] = [];
+  let current: RuntimeSession | undefined = session;
+  while (current) {
+   if (chain.some(item => item.id === current!.id)) throw new Error("Invalid agent ancestry.");
+   chain.push(current);
+   current = current.parentSessionId ? this.requireSession(current.parentSessionId) : undefined;
+  }
+  const isolated = chain.some(item => item.kind === "agent" || Boolean(item.specialistDefinition));
+  if (!isolated && !run?.resourceScope) return;
+  if (chain.some(item => item.forgottenAt || item.status !== "active" || item.specialistDefinition?.enabled === false)) throw new Error("Agent access is inactive.");
+  if (chain.some(item => !item.allowedTools.includes(definition.descriptor.name))) throw new Error("Tool exceeds the parent agent scope.");
+  if (isolated && definition.descriptor.name.startsWith("browser.visible")) throw new Error("Persistent agents use assigned connection resources, not the personal browser session.");
+  const connected = definition.descriptor.source === "connector" || definition.descriptor.source === "mcp" || definition.descriptor.category === "connector";
+  if (!definition.resourceAccess) {
+   if (connected) throw new Error("This connector has no resource boundary for persistent agents yet.");
+   return;
+  }
+  const resources = ResourceScopeSchema.parse(definition.resourceAccess(input, session));
+  if (!resources.length) throw new Error("Select an explicit supported resource before using this connector.");
+  for (const resource of resources) {
+   for (const ancestor of chain.slice(1)) {
+    const ancestorRuns = this.database.listAgentRuns(ancestor.id).filter(item => item.status === "running" || item.status === "waiting_approval" || item.status === "waiting_input");
+    if (ancestorRuns.some(item => item.resourceScope && !includesResource(item.resourceScope, resource))) throw new Error("Resource exceeds the parent task scope.");
+   }
+   if (chain.some(item => !includesResource(this.getResourceGrants(item.id), resource))) throw new Error("Resource access is not granted to this agent and its parent.");
+   if (session.parentSessionId && !run) throw new Error("Specialist resource access requires a bounded task.");
+   if (run && !includesResource(run.resourceScope ?? (session.parentSessionId ? [] : this.getResourceGrants(session.id)), resource)) throw new Error("Resource exceeds the delegated task scope.");
+  }
+ }
+
 	async callTool(
 		sessionId: string,
 		toolName: string,
@@ -1912,6 +2030,8 @@ export class AgentRuntime extends EventEmitter {
 		if (!definition.descriptor.readOnly && !options.idempotencyKey)
 			throw new Error("Mutating tools require an idempotency key.");
 
+		this.assertResourceAccess(sessionId, definition, rawInput, options);
+
 		const idempotencyKey = options.idempotencyKey
 			? `runtime-tool:${sessionId}:${toolName}:${options.idempotencyKey}`
 			: undefined;
@@ -1920,6 +2040,7 @@ export class AgentRuntime extends EventEmitter {
 			: undefined;
 		if (repeated) {
 			const execution = RuntimeToolExecutionSchema.parse(repeated);
+ this.assertResourceAccess(sessionId, definition, execution.input, options);
 			this.ensureActionReceipt(execution, definition.descriptor);
 			return execution;
 		}
@@ -1927,8 +2048,11 @@ export class AgentRuntime extends EventEmitter {
 		const activeExecution = idempotencyKey
 			? this.inFlightIdempotentExecutions.get(idempotencyKey)
 			: undefined;
-		if (activeExecution)
-			return this.waitForPromise(activeExecution, options.signal);
+		if (activeExecution) {
+   const completed = await this.waitForPromise(activeExecution, options.signal);
+   this.assertResourceAccess(sessionId, definition, completed.input, options);
+   return completed;
+  }
 
 		const pendingExecution = this.executeToolCall(
 			session,
@@ -2201,6 +2325,7 @@ export class AgentRuntime extends EventEmitter {
 
 		const activeExecutionId = execution.id;
 		let claimOwned = Boolean(idempotencyKey);
+		const heldResources: string[] = [];
 		let effectStarted = false;
 		let effectVerified = false;
 		let controller: AbortController | undefined;
@@ -2246,10 +2371,20 @@ export class AgentRuntime extends EventEmitter {
 				...(workspaceRoot ? { workspaceRoot } : {}),
 			};
 			if (controller.signal.aborted) throw abortReason(controller.signal);
+			this.assertResourceAccess(session.id, definition, input, options);
+   if (!definition.descriptor.readOnly) {
+    const resources = [
+     ...(definition.descriptor.requiresWorkspace && workspaceRoot ? [`workspace:${workspaceRoot}`] : []),
+     ...(definition.resourceAccess ? definition.resourceAccess(input, session).filter(item => item.capability !== "read").map(item => `connection:${item.connectionId}:${item.resourceId}`) : []),
+    ];
+    if (resources.some(key => this.mutationResourceOwners.has(key))) throw new Error("Another action is editing this resource. Wait for its result before retrying.");
+    for (const key of resources) { this.mutationResourceOwners.set(key, activeExecutionId); heldResources.push(key); }
+   }
 			effectStarted = true;
 			const output = definition.outputSchema.parse(
 				await definition.execute(context, input),
 			);
+			if (definition.descriptor.readOnly) this.assertResourceAccess(session.id, definition, input, options);
 			const verificationResult = definition.descriptor.readOnly
 				? undefined
 				: await this.verifyMutation(definition, context, input, output);
@@ -2368,6 +2503,7 @@ export class AgentRuntime extends EventEmitter {
 			}
 			return execution;
 		} finally {
+			for (const key of heldResources) if (this.mutationResourceOwners.get(key) === activeExecutionId) this.mutationResourceOwners.delete(key);
 			options.signal?.removeEventListener("abort", abortFromCaller);
 			this.activeExecutions.delete(activeExecutionId);
 			if (idempotencyKey && claimOwned) {

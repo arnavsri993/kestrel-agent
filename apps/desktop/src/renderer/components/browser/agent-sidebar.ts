@@ -11,7 +11,9 @@ export type SidebarDestination =
 	| "projects"
 	| "approvals"
 	| "capabilities"
-	| "settings";
+	| "settings"
+	| "connections"
+	| "memory";
 export type SidebarApprovalSurface = "thread" | "approvals";
 
 export function recentSidebarSessions(
@@ -50,6 +52,8 @@ export function sidebarApprovalsNavTarget(input: {
 export function sidebarActiveDestination(page: string): SidebarDestination {
 	const appPage = parseKestrelAppPage(page)?.id ?? page;
 	if (
+		appPage === "connections" ||
+		appPage === "memory" ||
 		appPage === "agent" ||
 		appPage === "writing" ||
 		appPage === "projects" ||
