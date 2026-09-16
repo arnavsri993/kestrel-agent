@@ -143,6 +143,8 @@ describe("New Tab widget layout model", () => {
 
 	it("keeps route-usage optional and normalizes show/hide prefs", () => {
 		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].id).toBe("route-usage");
+		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].title).toBe("Codex usage");
+		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].defaultSize).toBe("large");
 		expect(DEFAULT_NEW_TAB_WIDGET_IDS).not.toContain("route-usage");
 
 		const withRoute = addWidget(baseSettings, "standard", "route-usage");

@@ -132,8 +132,9 @@ async function probeStatus(
 }
 
 export class ProviderUsageCollector {
-	private lastCodexPollAt = 0;
-	private lastCodexSnapshot: CodexAccountUsageSnapshot | undefined;
+	/** Per Codex endpoint — never share one home's meters across accounts. */
+	private lastCodexPollAt = new Map<string, number>();
+	private lastCodexSnapshot = new Map<string, CodexAccountUsageSnapshot>();
 
 	constructor(
 		private readonly pool: ProviderPool,
@@ -141,11 +142,22 @@ export class ProviderUsageCollector {
 	) {}
 
 	async collect(signal?: AbortSignal): Promise<ProviderUsageSnapshot[]> {
-		const snapshots: ProviderUsageSnapshot[] = [];
-		for (const provider of this.pool.list()) {
-			snapshots.push(await this.snapshotFor(provider, signal));
-		}
-		return snapshots;
+		const snapshots = await Promise.all(
+			this.pool.list().map((provider) => this.snapshotFor(provider, signal)),
+		);
+		return snapshots.sort((left, right) => {
+			const rank = (row: ProviderUsageSnapshot): number => {
+				if (row.windows && row.windows.length > 0) return 0;
+				const id = row.providerId.toLowerCase();
+				const label = row.label.toLowerCase();
+				if (id.includes("codex") || label.includes("codex") || label.includes("@"))
+					return 1;
+				return 2;
+			};
+			const delta = rank(left) - rank(right);
+			if (delta !== 0) return delta;
+			return left.label.localeCompare(right.label);
+		});
 	}
 
 	private async snapshotFor(
@@ -223,17 +235,16 @@ export class ProviderUsageCollector {
 		signal?: AbortSignal,
 	): Promise<CodexAccountUsageSnapshot> {
 		const nowMs = this.now().getTime();
-		const cached = provider.lastRateLimits() ?? this.lastCodexSnapshot;
-		if (
-			cached &&
-			nowMs - this.lastCodexPollAt < CODEX_USAGE_THROTTLE_MS
-		) {
+		const lastPoll = this.lastCodexPollAt.get(provider.id) ?? 0;
+		const cached =
+			provider.lastRateLimits() ?? this.lastCodexSnapshot.get(provider.id);
+		if (cached && nowMs - lastPoll < CODEX_USAGE_THROTTLE_MS) {
 			return cached;
 		}
 		try {
 			const snapshot = await provider.readRateLimits(signal);
-			this.lastCodexPollAt = nowMs;
-			this.lastCodexSnapshot = snapshot;
+			this.lastCodexPollAt.set(provider.id, nowMs);
+			this.lastCodexSnapshot.set(provider.id, snapshot);
 			return snapshot;
 		} catch (error) {
 			if (signal?.aborted) throw error;

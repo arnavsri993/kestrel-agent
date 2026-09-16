@@ -107,6 +107,13 @@ function visibleItemCount(size: NewTabWidgetSize): number {
 	return 6;
 }
 
+/** Route usage needs room for several Codex accounts plus status-only routes. */
+function routeUsageVisibleItemCount(size: NewTabWidgetSize): number {
+	if (size === "small") return 4;
+	if (size === "medium") return 6;
+	return 10;
+}
+
 function widgetText(value: string, maxLength = 46): string {
 	const normalized = value.replace(/\s+/g, " ").trim();
 	if (normalized.length <= maxLength) return normalized;
@@ -681,7 +688,7 @@ function RouteUsageWidget({
 	const shownIds = new Set(
 		visibleRouteUsageProviderIds(widgetSettings, configuredIds),
 	);
-	const limit = visibleItemCount(size);
+	const limit = routeUsageVisibleItemCount(size);
 	const visibleRows = rows
 		.filter((row) => shownIds.has(row.providerId))
 		.slice(0, limit);

@@ -138,12 +138,12 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	},
 	"route-usage": {
 		id: "route-usage",
-		title: "Model routes",
-		description: "Configured routes and Codex usage",
+		title: "Codex usage",
+		description: "Per-account 5h and weekly Codex meters",
 		icon: "activity",
 		supportedSizes: ["small", "medium", "large"],
-		defaultSize: "medium",
-		priority: 55,
+		defaultSize: "large",
+		priority: 40,
 	},
 };
 

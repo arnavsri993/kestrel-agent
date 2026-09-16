@@ -3858,7 +3858,7 @@ export class AgentCore {
 					return {
 						ok: true,
 						providerUsage: await this.providerUsage.collect(
-							AbortSignal.timeout(20_000),
+							AbortSignal.timeout(45_000),
 						),
 					};
 				case "runtime-refresh-provider-models": {
