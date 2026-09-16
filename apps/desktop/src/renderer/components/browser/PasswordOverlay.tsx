@@ -177,7 +177,7 @@ export function PasswordOverlay() {
 	return (
 		<div className="password-overlay-root">
 			<section
-				className="password-overlay-card"
+				className={`password-overlay-card${prompt.mode === "profile" ? " password-overlay-card--profile" : ""}`}
 				role="dialog"
 				aria-label={
 					prompt.mode === "profile" ? "Saved personal info" : prompt.mode === "save"
@@ -193,7 +193,7 @@ export function PasswordOverlay() {
 						<span className="password-overlay-mark" aria-hidden="true"><Icon name={prompt.mode === "profile" ? "person" : "lock"} width={15} height={15} /></span>
 						<span>
 							<strong>
-								{prompt.mode === "profile" ? "Fill with saved info?" : prompt.mode === "save"
+								{prompt.mode === "profile" ? "Your saved info" : prompt.mode === "save"
 									? updatesExistingLogin
 									? "Update saved password?"
 										: "Save password?"
@@ -224,7 +224,7 @@ export function PasswordOverlay() {
 
 				{prompt.mode === "profile" ? (
 					<>
-						<p className="password-overlay-copy">Preview your saved info. Fill form keeps existing values.</p>
+						<p className="password-overlay-copy">Fill form keeps the information you’ve already entered.</p>
 						{profilePreview ? <dl className="autofill-preview" aria-label="Saved information preview">
 							{profilePreviewRows(profilePreview).map(({ label, value, icon }) => <div className="autofill-preview-row" key={label}>
 								<Icon name={icon} width={17} height={17} />
@@ -232,8 +232,8 @@ export function PasswordOverlay() {
 							</div>)}
 						</dl> : <p className="password-overlay-copy" role="status">{error ? "Preview unavailable" : "Loading saved info…"}</p>}
 						<div className="password-overlay-actions">
-							<button className="password-overlay-primary" type="button" disabled={Boolean(busy) || !profilePreview} onClick={() => void fillProfile()}>{busy ? "Filling…" : "Fill form"}</button>
 							<button className="password-overlay-secondary" type="button" disabled={Boolean(busy) || !profilePreview} onClick={() => void fillProfile(prompt.focusedFieldId)}>Fill this field</button>
+							<button className="password-overlay-primary" type="button" disabled={Boolean(busy) || !profilePreview} onClick={() => void fillProfile()}><Icon name="context" width={15} height={15} />{busy ? "Filling…" : "Fill form"}</button>
 						</div>
 					</>
 				) : prompt.mode === "save" && saveCandidate ? (
