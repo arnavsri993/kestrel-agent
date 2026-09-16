@@ -659,9 +659,9 @@
  display: flex;
  flex-direction: column;
  justify-content: flex-start;
- gap: 32px;
+ gap: 28px;
  width: min(1180px, calc(100% - 64px));
- padding-top: clamp(84px, 12vh, 130px);
+ padding-top: clamp(72px, 9vh, 104px);
 }
 .kestrel-home-hero { flex: 0 0 auto; width: min(740px, 100%); gap: 28px; }
 .kestrel-home-hero h1 { font-size: clamp(26px, 3vw, 36px); font-weight: 650; }
@@ -692,7 +692,7 @@
 }
 .home-upload input { max-width: 100%; font-size: 12px; }
 .home-site-shortcuts { display: flex; flex-wrap: wrap; justify-content: center; gap: 18px; width: min(800px, 100%); margin: 0 auto; }
-.home-site-shortcut { position: relative; width: 72px; }
+.home-site-shortcut { position: relative; width: 96px; }
 .home-site-shortcut > button:first-child { display: grid; justify-items: center; gap: 9px; width: 100%; border: 0; background: transparent; color: var(--ink); cursor: pointer; padding: 4px 0; }
 .home-site-glyph { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; border: 1px solid rgb(255 255 255 / 20%); background: color-mix(in srgb, var(--panel) 65%, transparent); backdrop-filter: blur(18px); box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%); font-size: 20px; }
 .home-site-glyph img, .home-site-glyph svg { width: 24px; height: 24px; object-fit: contain; }
@@ -715,3 +715,16 @@
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
  .home-personalize > summary, .home-personalize-panel, .home-site-glyph { background: var(--panel); backdrop-filter: none; border-color: var(--line-strong); }
 }
+
+/* An empty shortcut row is a quiet action, not an empty destination tile. */
+.home-site-shortcuts.is-empty .home-site-shortcut { width: auto; }
+.home-site-shortcuts.is-empty .home-site-shortcut > button:first-child {
+ display: flex; align-items: center; gap: 6px; padding: 6px 12px;
+ border: 1px solid var(--line); border-radius: var(--radius-control);
+ background: var(--panel); min-height: 34px;
+}
+.home-site-shortcuts.is-empty .home-site-glyph {
+ width: 16px; height: 16px; border: 0; background: none;
+ backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none;
+}
+.home-site-shortcuts.is-empty .home-site-glyph svg { width: 14px; height: 14px; }

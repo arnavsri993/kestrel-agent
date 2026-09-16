@@ -208,7 +208,7 @@ function FrequentTabsWidget({
 		);
 	}
 	return (
-		<ul className="kestrel-widget-list kestrel-widget-frequent-icons">
+		<ul className="kestrel-widget-list kestrel-widget-frequent-list">
 			{items.map((site) => (
 				<li key={site.origin}>
 					<button
@@ -372,7 +372,7 @@ function RecentWorkWidget({
 							<Icon name="agent" />
 						</span>
 						<span>
-							<strong>{widgetText(sessionTitleForDisplay(session.title), 38)}</strong>
+							<strong>{sessionTitleForDisplay(session.title)}</strong>
 							<small>{agentSessionRecency(session.updatedAt)}</small>
 						</span>
 						<Icon name="forward" />
@@ -460,7 +460,8 @@ function QuickActionsWidget({
 	size,
 	agentName,
 	onNewAgent,
-}: Pick<WidgetContext, "suggestedActions" | "agentName" | "onNewAgent"> & {
+	onOpenSession,
+}: Pick<WidgetContext, "suggestedActions" | "agentName" | "onNewAgent" | "onOpenSession"> & {
 	size: NewTabWidgetSize;
 }) {
 	const items = suggestedActions.slice(0, visibleItemCount(size));
@@ -480,7 +481,8 @@ function QuickActionsWidget({
 				<li key={action.id}>
 					<button
 						type="button"
-						onClick={() => onNewAgent(action.prompt)}
+						disabled={Boolean(action.sessionId && !onOpenSession)}
+						onClick={() => action.sessionId ? onOpenSession?.(action.sessionId) : onNewAgent(action.prompt)}
 						aria-label={`Open ${action.title} in ${agentName}`}
 						title={action.description}
 					>

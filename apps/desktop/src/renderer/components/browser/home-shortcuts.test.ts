@@ -10,6 +10,12 @@ describe("home shortcuts", () => {
   const result = homeShortcuts([{ title: "Work", url: "https://example.com/work" }], [{ origin: "https://example.com", url: "https://example.com/", title: "Example", hostname: "example.com", visits: 20, lastVisitedAt: "2026-09-12" }]);
   expect(result).toHaveLength(1); expect(result[0]?.title).toBe("Work");
  });
+ it("keeps pinned shortcuts and their favicons when frequent sites are already shown in a widget", () => {
+  const frequent = [{ origin: "https://example.com", url: "https://example.com/", title: "Example", hostname: "example.com", visits: 20, lastVisitedAt: "2026-09-12", faviconDataUrl: "data:image/png;base64,AA==" }];
+  expect(homeShortcuts([], frequent, false)).toEqual([]);
+  expect(homeShortcuts([], frequent, true)).toHaveLength(1);
+  expect(homeShortcuts([{ title: "Work", url: "https://example.com/work" }], frequent, false)).toEqual([expect.objectContaining({ title: "Work", pinned: true, faviconDataUrl: frequent[0]!.faviconDataUrl })]);
+ });
  it("preserves compatibility and validates persisted shortcuts", () => {
   expect(UserBrowserSettingsSchema.parse({}).newTabShortcuts).toBeUndefined();
   expect(UserBrowserSettingsSchema.safeParse({ newTabShortcuts: [{ title: "Bad", url: "javascript:alert(1)" }] }).success).toBe(false);
