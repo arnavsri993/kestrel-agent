@@ -700,24 +700,8 @@
 	display: block;
 	min-width: 0;
 	overflow: hidden;
-	text-overflow: clip;
+	text-overflow: ellipsis;
 	white-space: nowrap;
-	-webkit-mask-image: linear-gradient(
-		to right,
-		#000 0,
-		#000 calc(100% - var(--kestrel-sidebar-title-fade-width)),
-		transparent 100%
-	);
-	-webkit-mask-repeat: no-repeat;
-	-webkit-mask-size: 100% 100%;
-	mask-image: linear-gradient(
-		to right,
-		#000 0,
-		#000 calc(100% - var(--kestrel-sidebar-title-fade-width)),
-		transparent 100%
-	);
-	mask-repeat: no-repeat;
-	mask-size: 100% 100%;
 }
 
 .kestrel-sidebar-project-open > svg:last-child {

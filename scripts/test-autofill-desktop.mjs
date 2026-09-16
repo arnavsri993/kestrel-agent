@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -8,6 +8,32 @@ import { openKestrelDestination, selectSettingsSection } from './desktop-browser
 const root=mkdtempSync(join(tmpdir(),'kestrel-autofill-desktop-'));
 const packaged=process.env.KESTREL_DESKTOP_EXECUTABLE;
 let app;
+const evidence = process.env.KESTREL_AUTOFILL_EVIDENCE_DIR;
+if (evidence) mkdirSync(evidence, { recursive: true });
+async function inspectPopup(page, name) {
+ await page.locator('[role="dialog"]').waitFor();
+ await page.waitForFunction(() => document.getAnimations().every(animation => animation.playState === 'finished'));
+ const layout = await page.evaluate(() => {
+  const dialog = document.querySelector('[role="dialog"]');
+  const style = getComputedStyle(dialog);
+  const buttons = [...dialog.querySelectorAll('button')];
+  return { background: style.backgroundImage, overflow: dialog.scrollWidth > dialog.clientWidth || document.documentElement.scrollWidth > innerWidth,
+   visibleActions: buttons.filter(button => /^(Fill form|Save card|Save password|Update password)$/.test(button.textContent.trim())).every(button => {
+    const rect = button.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight;
+   }) };
+ });
+ assert.equal(layout.background, 'none', `${name}: no decorative gradients`);
+ assert.equal(layout.overflow, false, `${name}: no horizontal clipping`);
+ assert.equal(layout.visibleActions, true, `${name}: primary action is visible without scrolling`);
+ if (evidence) await page.screenshot({path: join(evidence, `${name}.png`)});
+ await page.emulateMedia({reducedMotion:'reduce'});
+ assert.equal(await page.locator('[role="dialog"]').evaluate(node => getComputedStyle(node).animationName), 'none');
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await page.emulateMedia({contrast:'more'});
+ assert.equal(await page.locator('[role="dialog"]').evaluate(node => getComputedStyle(node).backdropFilter), 'none');
+ await page.emulateMedia({contrast:'no-preference'});
+}
+
 try {
  app=await electron.launch({executablePath:packaged || createRequire(resolve('apps/desktop/package.json'))('electron'),args:packaged?['--use-mock-keychain']:[resolve('apps/desktop'),'--use-mock-keychain'],env:{...process.env,KESTREL_TEST_USER_DATA:root,KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES:'1',KESTREL_DISABLE_UPDATES:'1',KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY:'1',KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY:'1'}});
  const page=await app.firstWindow();
@@ -16,11 +42,18 @@ try {
  await page.evaluate(()=>{localStorage.setItem('kestrel:onboarded','yes');localStorage.setItem('kestrel:default-browser-prompted','yes');});
  await page.reload();
  const request=(input)=>page.evaluate((input)=>window.kestrel.request(input),input);
+ await page.getByRole('button', {name: /^Model:/}).click();
+ await expect(page.locator('.model-selector-menu')).toBeVisible();
+ assert.equal(await page.locator('.model-selector-menu').evaluate(node=>getComputedStyle(node).backgroundImage),'none');
+ if (evidence) await page.screenshot({path:join(evidence,'model-menu.png')});
+ await page.keyboard.press('Escape');
+
  await app.evaluate(async ({session})=>{
   await session.fromPartition('persist:kestrel-user-browser-v1').protocol.handle('https',(request)=>{
    const path=new URL(request.url).pathname;
    if(path==='/embedded') return new Response('<!doctype html><title>Embedded autofill verification</title><h1>Embedded form</h1><iframe src="/form" style="width:750px;height:500px;margin:30px;border:2px solid"></iframe>',{headers:{'content-type':'text/html'}});
    if(path==='/payment') return new Response('<!doctype html><title>Payment autofill verification</title><style>input{display:block;margin:12px}</style><form><input id="company" name="company"><input id="card" autocomplete="billing cc-number"><input id="expiry" autocomplete="billing cc-exp"><input id="cardName" autocomplete="billing cc-name"><input id="securityCode" name="card-number-security-code" autocomplete="billing cc-csc"></form>',{headers:{'content-type':'text/html'}});
+   if(path==='/signup') return new Response('<!doctype html><title>New account fixture</title><label>New password<input id="newPassword" type="password" autocomplete="new-password"></label>',{headers:{'content-type':'text/html'}});
    const login=path==='/login';
    return new Response(`<!doctype html><title>Autofill verification</title><style>body{font:18px system-ui;padding:30px}input{display:block;margin:15px;padding:10px}</style>${login?'<form><input id="user" autocomplete="username"><input id="pass" type="password" autocomplete="current-password"><button type="button" onclick="this.form.remove();document.body.insertAdjacentHTML(\'beforeend\',\'<h1>Signed in fixture</h1>\')">Sign in</button></form>':'<form><label>First name<input id="name" autocomplete="given-name"></label><label>Street address<input id="address" autocomplete="street-address"></label><label>Birthday<input id="birth" type="date" autocomplete="bday"></label></form>'}`,{headers:{'content-type':'text/html'}});
   });
@@ -42,11 +75,27 @@ try {
  await expect(overlay.locator('.autofill-preview')).toContainText('12 Test Lane');
  await expect(overlay.locator('.autofill-preview')).toContainText('2000-02-03');
  await expect(overlay.locator('.autofill-preview-row > svg')).toHaveCount(3);
- await overlay.screenshot({path:'/tmp/kestrel-autofill-preview-fixture.png'});
+ await inspectPopup(overlay, 'personal-info');
+ const originalPopupSize = await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().includes('passwordOverlay')).getSize());
+ await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().includes('passwordOverlay')).setSize(280,352));
+ await inspectPopup(overlay, 'personal-info-narrow');
+ await app.evaluate(({BrowserWindow}, size) => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().includes('passwordOverlay')).setSize(...size), originalPopupSize);
+
  await overlay.getByRole('button',{name:'Fill form',exact:true}).click();
  await expect(remote.locator('#name')).toHaveValue('Fixture');
  await expect(remote.locator('#address')).toHaveValue('12 Test Lane');
  await expect(remote.locator('#birth')).toHaveValue('2000-02-03');
+
+ // Long saved data must scroll independently, keeping the actions reachable.
+ await request({type:'autofill-profile-save',profile:{'given-name':'Fixture','street-address':'12 Test Lane',bday:'2000-02-03',email:'long.fixture.address@example.test',tel:'+1 555 010 1234',organization:'Example Organization With A Long Department Name For Layout Verification'}});
+ await request({type:'browser-create-tab',input:'https://autofill.example.test/long-info',active:true});
+ await expect.poll(()=>{remote=app.context().pages().find(p=>p.url()==='https://autofill.example.test/long-info');return Boolean(remote);}).toBe(true);
+ await remote.locator('#name').focus();
+ await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ await expect(overlay.locator('.autofill-preview-row')).toHaveCount(6);
+ await inspectPopup(overlay, 'personal-info-long');
+ assert.equal(await overlay.locator('.autofill-preview').evaluate(node=>node.scrollHeight>node.clientHeight),true);
+ await overlay.getByRole('button',{name:'Fill form',exact:true}).click();
  // Learn a new split address, then fill it into a combined street field.
  await remote.evaluate(() => {
   document.querySelector('#address').autocomplete='address-line1';
@@ -71,6 +120,7 @@ try {
  await remote.locator('#pass').fill('fixture-password');
  await remote.getByRole('button',{name:'Sign in'}).click();
  await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ await inspectPopup(overlay, 'save-password');
  await overlay.getByRole('button',{name:'Save password',exact:true}).click();
  await expect.poll(async()=>{const response=await request({type:'password-list'});return response.ok && response.passwords?.some(p=>p.username==='fixture-user');}).toBe(true);
  const savedLogin=(await request({type:'password-list'})).passwords.find(p=>p.username==='fixture-user');
@@ -79,6 +129,11 @@ try {
  await expect.poll(()=>{const pages=app.context().pages().filter(p=>p.url()==='https://autofill.example.test/login');remote=pages.at(-1);return pages.length;}).toBe(2);
  await remote.locator('#pass').focus();
  await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ await inspectPopup(overlay, 'saved-login');
+ await overlay.getByRole('button',{name:'Choose fields',exact:true}).click();
+ await expect(overlay.getByRole('group',{name:'Form fields'})).toBeVisible();
+ await inspectPopup(overlay, 'choose-password-fields');
+ await overlay.getByRole('button',{name:'Fill page instead',exact:true}).click();
  await overlay.getByRole('button').filter({hasText:'fixture-user'}).click();
  await expect(remote.locator('#pass')).toHaveValue('fixture-password');
  await expect(remote.locator('#user')).toHaveValue('fixture-user');
@@ -86,8 +141,7 @@ try {
  await remote.locator('#pass').fill('updated-fixture-password');
  await remote.getByRole('button',{name:'Sign in'}).click();
  await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
- mkdirSync(resolve('artifacts/tab-activity'),{recursive:true});
- await overlay.screenshot({path:resolve('artifacts/tab-activity/password-update.png')});
+ await inspectPopup(overlay, 'update-password');
  await overlay.getByRole('button',{name:'Update password',exact:true}).click();
  const updatedLogins=(await request({type:'password-list'})).passwords;
  assert.equal(updatedLogins.length,1);
@@ -107,17 +161,30 @@ try {
  await expect(frame.locator('#name')).toHaveValue('Fixture');
  await expect(frame.locator('#address')).toHaveValue('34 New Lane');
  await expect(frame.locator('#birth')).toHaveValue('2000-02-03');
+ await request({type:'browser-create-tab',input:'https://autofill.example.test/signup',active:true});
+ await expect.poll(()=>{remote=app.context().pages().find(p=>p.url()==='https://autofill.example.test/signup');return Boolean(remote);}).toBe(true);
+ await remote.locator('#newPassword').focus();
+ await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ await inspectPopup(overlay, 'generate-password');
+ await overlay.getByRole('button',{name:'Generate password',exact:true}).click();
+ await expect(overlay.getByRole('button',{name:'Generated',exact:true})).toBeDisabled();
+ assert.equal(await remote.locator('#newPassword').inputValue().then(value=>value.length),20);
+ await overlay.keyboard.press('Escape').catch(error => { if (!overlay.isClosed()) throw error; });
+ await expect.poll(()=>app.context().pages().filter(p=>p.url().includes('passwordOverlay')).length).toBe(0);
  await request({type:'browser-create-tab',input:'https://payment.example.test/payment',active:true});
  await expect.poll(()=>{remote=app.context().pages().find(p=>p.url()==='https://payment.example.test/payment');return Boolean(remote);}).toBe(true);
  await remote.locator('#card').fill('4111111111111111');
  await remote.locator('#expiry').fill('02/30');
  await remote.locator('#cardName').fill('Fixture Card');
  await remote.locator('#securityCode').fill('987');
- assert.equal((await request({type:'payment-save',origin:'https://payment.example.test'})).ok,true);
+ await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('paymentOverlay'));return Boolean(overlay);}).toBe(true);
+ await inspectPopup(overlay, 'save-payment');
+ await overlay.getByRole('button',{name:'Save card',exact:true}).click();
  await request({type:'browser-create-tab',input:'https://payment.example.test/payment',active:true});
  await expect.poll(()=>{const pages=app.context().pages().filter(p=>p.url()==='https://payment.example.test/payment');remote=pages.at(-1);return pages.length;}).toBe(2);
  await remote.locator('#card').focus();
  await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('paymentOverlay'));return Boolean(overlay);}).toBe(true);
+ await inspectPopup(overlay, 'saved-payment');
  await overlay.getByRole('button').filter({hasText:'Fill details'}).click();
  await expect(remote.locator('#card')).toHaveValue('4111111111111111');
  await expect(remote.locator('#expiry')).toHaveValue('02/30');

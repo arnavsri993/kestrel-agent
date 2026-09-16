@@ -203,8 +203,8 @@ export function PasswordOverlay() {
 									: prompt.mode === "generate"
 										? "Use a strong password?"
 										: prompt.mode === "field"
-										? "Saved info"
-										: "Use a saved login?"}
+										? "Passwords"
+										: "Passwords"}
 							</strong>
 							<small>{hostname(prompt.origin)}</small>
 						</span>
@@ -243,8 +243,8 @@ export function PasswordOverlay() {
 					<>
 						<p className="password-overlay-copy">
 							{updatesExistingLogin
-								? "Kestrel detected a changed password for this saved login. Update it securely on this Mac."
-								: "Save this login securely on this device so Kestrel can offer it next time."}
+								? "Replace the password for this saved login."
+								: "Save this login on this device for next time."}
 						</p>
 						<div className="password-save-preview">
 							<label htmlFor="password-save-username">Login name</label>
@@ -260,7 +260,7 @@ export function PasswordOverlay() {
 							/>
 						</div>
 						<p id="password-save-security-note" className="password-overlay-security-note">
-							Your password stays inside Kestrel and is never shown in this prompt.
+							Your password is stored securely and hidden here.
 						</p>
 						<div className="password-overlay-actions password-save-actions">
 							<button
@@ -291,10 +291,10 @@ export function PasswordOverlay() {
 				) : prompt.mode === "generate" ? (
 					<>
 						<p className="password-overlay-copy">
-							Generate a unique 20-character password with uppercase, lowercase, numbers, and symbols.
+							Create a unique 20-character password for this site.
 						</p>
 						<p className="password-overlay-security-note">
-							Kestrel fills it directly into this sign-up form and never displays the value here.
+							Fills this form directly. The password stays hidden here.
 						</p>
 						<div className="password-overlay-actions password-save-actions">
 							<button
@@ -318,7 +318,7 @@ export function PasswordOverlay() {
 				) : (prompt.mode === "page" || prompt.mode === "field") && !chooseFields ? (
 					<>
 						<p className="password-overlay-copy">Choose a saved login.</p>
-						<div className="password-overlay-entries" role="list">
+						<div className="password-overlay-entries" role="group">
 							{prompt.entries.map((entry) => (
 								<button
 									key={entry.id}
@@ -328,8 +328,8 @@ export function PasswordOverlay() {
 									disabled={Boolean(busy)}
 								>
 									<span>
-										<strong>{entry.title}</strong>
-										<small>{entry.username || "No username"}</small>
+										<strong>{entry.username || "No username"}</strong>
+										<small>{entry.title}</small>
 									</span>
 									<em>{busy === entry.id ? "Filling…" : "Fill page"}</em>
 								</button>
@@ -357,6 +357,7 @@ export function PasswordOverlay() {
 									key={entry.id}
 									type="button"
 									className={entry.id === selectedEntryId ? "selected" : ""}
+									aria-pressed={entry.id === selectedEntryId}
 									onClick={() => setSelectedEntryId(entry.id)}
 									disabled={Boolean(busy)}
 								>
@@ -364,7 +365,7 @@ export function PasswordOverlay() {
 								</button>
 							))}
 						</div>
-						<div className="password-overlay-fields" role="list" aria-label="Form fields">
+						<div className="password-overlay-fields" role="group" aria-label="Form fields">
 							{fillableFields.map((field) => {
 								const actionKey = `${selectedEntryId}:${field.id}`;
 								return (
@@ -382,7 +383,7 @@ export function PasswordOverlay() {
 							})}
 						</div>
 						<div className="password-overlay-actions">
-							{prompt.mode === "page" && (
+							{(prompt.mode === "page" || prompt.mode === "field") && (
 								<button type="button" className="password-overlay-link" onClick={() => setChooseFields(false)}>
 									Fill page instead
 								</button>
