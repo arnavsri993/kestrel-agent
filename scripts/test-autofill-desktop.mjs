@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -86,6 +86,8 @@ try {
  await remote.locator('#pass').fill('updated-fixture-password');
  await remote.getByRole('button',{name:'Sign in'}).click();
  await expect.poll(()=>{overlay=app.context().pages().find(p=>p.url().includes('passwordOverlay'));return Boolean(overlay);}).toBe(true);
+ mkdirSync(resolve('artifacts/tab-activity'),{recursive:true});
+ await overlay.screenshot({path:resolve('artifacts/tab-activity/password-update.png')});
  await overlay.getByRole('button',{name:'Update password',exact:true}).click();
  const updatedLogins=(await request({type:'password-list'})).passwords;
  assert.equal(updatedLogins.length,1);
