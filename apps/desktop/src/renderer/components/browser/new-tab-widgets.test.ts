@@ -12,9 +12,11 @@ import {
 	moveWidget,
 	NEW_TAB_WIDGET_DEFINITIONS,
 	normalizedWidgetSettings,
+	prioritizeCodexUsageRows,
 	removeWidget,
 	reorderWidget,
 	resizeWidget,
+	rowSpanForSize,
 	saveLayout,
 	setRouteUsageProviderVisible,
 	visibleRouteUsageProviderIds,
@@ -146,6 +148,9 @@ describe("New Tab widget layout model", () => {
 		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].title).toBe("Codex usage");
 		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].defaultSize).toBe("large");
 		expect(DEFAULT_NEW_TAB_WIDGET_IDS).not.toContain("route-usage");
+		expect(rowSpanForSize("large", "route-usage")).toBe(4);
+		expect(rowSpanForSize("medium", "route-usage")).toBe(3);
+		expect(rowSpanForSize("large")).toBe(2);
 
 		const withRoute = addWidget(baseSettings, "standard", "route-usage");
 		expect(withRoute.enabled).toContain("route-usage");
@@ -175,5 +180,42 @@ describe("New Tab widget layout model", () => {
 				"cursor-subscription",
 			]),
 		).toEqual(["codex-subscription", "cursor-subscription"]);
+	});
+
+	it("dedupes legacy Codex mirrors and keeps metered accounts first", () => {
+		const ranked = prioritizeCodexUsageRows([
+			{
+				providerId: "legacy-openrouter",
+				label: "OpenRouter",
+				status: "ready",
+			},
+			{
+				providerId: "legacy-codex",
+				label: "Codex",
+				email: "arnavsri992@gmail.com",
+				windows: [{ label: "5-hour", usedPercent: 100 }],
+			},
+			{
+				providerId: "account-a",
+				label: "arnavsri993@gmail.com — Main",
+				email: "arnavsri993@gmail.com",
+				windows: [{ label: "5-hour", usedPercent: 40 }],
+			},
+			{
+				providerId: "account-b",
+				label: "arnavsri992@gmail.com — Main",
+				email: "arnavsri992@gmail.com",
+				windows: [{ label: "5-hour", usedPercent: 80 }],
+			},
+			{
+				providerId: "legacy-cursor",
+				label: "Cursor",
+				status: "ready",
+			},
+		]);
+		expect(ranked.map((row) => row.providerId)).toEqual([
+			"account-a",
+			"account-b",
+		]);
 	});
 });

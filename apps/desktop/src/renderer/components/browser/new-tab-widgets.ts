@@ -178,7 +178,17 @@ export function columnSpanForSize(
 	return Math.min(2, columnsForLayoutClass(layoutClass));
 }
 
-export function rowSpanForSize(size: NewTabWidgetSize): number {
+export function rowSpanForSize(
+	size: NewTabWidgetSize,
+	widgetId?: NewTabWidgetId,
+): number {
+	// Codex usage needs room for several isolated account meters; a normal
+	// large card (~2 rows) clips after the first account with overflow:hidden.
+	if (widgetId === "route-usage") {
+		if (size === "large") return 4;
+		if (size === "medium") return 3;
+		return 2;
+	}
 	return size === "large" ? 2 : 1;
 }
 
@@ -343,6 +353,68 @@ export function visibleRouteUsageProviderIds(
 	if (allowlist.length === 0) return [...providerIds];
 	const allowed = new Set(allowlist);
 	return providerIds.filter((id) => allowed.has(id));
+}
+
+type RouteUsageRowLike = {
+	providerId: string;
+	label: string;
+	email?: string;
+	windows?: readonly unknown[];
+};
+
+function isLegacyCodexRow(row: RouteUsageRowLike): boolean {
+	return (
+		row.providerId === "legacy-codex" ||
+		row.providerId === "codex-subscription" ||
+		(row.label.trim().toLowerCase() === "codex" && !row.providerId.startsWith("account-"))
+	);
+}
+
+/**
+ * Prefer real per-account Codex meters. Drop the legacy ~/.codex mirror when a
+ * profile-backed account already publishes the same email, and keep status-only
+ * non-Codex routes after the metered accounts.
+ */
+export function prioritizeCodexUsageRows<T extends RouteUsageRowLike>(
+	rows: readonly T[],
+): T[] {
+	const metered = rows.filter((row) => (row.windows?.length ?? 0) > 0);
+	const profileEmails = new Set(
+		metered
+			.filter((row) => !isLegacyCodexRow(row) && row.email)
+			.map((row) => row.email!.trim().toLowerCase()),
+	);
+	const droppedIds = new Set<string>();
+	const dedupedMetered = metered.filter((row) => {
+		if (!isLegacyCodexRow(row)) return true;
+		const email = row.email?.trim().toLowerCase();
+		if (email && profileEmails.has(email)) {
+			droppedIds.add(row.providerId);
+			return false;
+		}
+		return true;
+	});
+	const meteredIds = new Set(dedupedMetered.map((row) => row.providerId));
+	const remainder = rows.filter(
+		(row) => !meteredIds.has(row.providerId) && !droppedIds.has(row.providerId),
+	);
+	const codexRemainder = remainder.filter((row) => {
+		const id = row.providerId.toLowerCase();
+		const label = row.label.toLowerCase();
+		return (
+			id.includes("codex") ||
+			label.includes("codex") ||
+			label.includes("@") ||
+			Boolean(row.email)
+		);
+	});
+	const otherRemainder = remainder.filter((row) => !codexRemainder.includes(row));
+	// The New Tab card is titled Codex usage: once real meters exist, keep the
+	// focus on Codex accounts instead of padding with unrelated status-only routes.
+	if (dedupedMetered.length > 0) {
+		return [...dedupedMetered, ...codexRemainder];
+	}
+	return [...dedupedMetered, ...codexRemainder, ...otherRemainder];
 }
 
 export function setRouteUsageProviderVisible(

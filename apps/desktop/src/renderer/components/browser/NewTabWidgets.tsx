@@ -50,6 +50,7 @@ import {
 	resizeWidget,
 	rowSpanForSize,
 	saveLayout,
+	prioritizeCodexUsageRows,
 	setRouteUsageProviderVisible,
 	visibleRouteUsageProviderIds,
 	WIDGET_SIZE_DESCRIPTIONS,
@@ -684,15 +685,18 @@ function RouteUsageWidget({
 		};
 	}, []);
 
-	const configuredIds = rows.map((row) => row.providerId);
+	const rankedRows = prioritizeCodexUsageRows(rows);
+	const configuredIds = rankedRows.map((row) => row.providerId);
 	const shownIds = new Set(
 		visibleRouteUsageProviderIds(widgetSettings, configuredIds),
 	);
 	const limit = routeUsageVisibleItemCount(size);
-	const visibleRows = rows
+	const visibleRows = rankedRows
 		.filter((row) => shownIds.has(row.providerId))
 		.slice(0, limit);
-	const hiddenConfigured = rows.filter((row) => !shownIds.has(row.providerId));
+	const hiddenConfigured = rankedRows.filter(
+		(row) => !shownIds.has(row.providerId),
+	);
 
 	return (
 		<div className="kestrel-widget-route-usage">
@@ -1044,7 +1048,7 @@ function WidgetCard({
 	const reducedMotion = useReducedMotion() ?? false;
 	const style = {
 		"--kestrel-widget-column-span": columnSpanForSize(item.size, layoutClass),
-		"--kestrel-widget-row-span": rowSpanForSize(item.size),
+		"--kestrel-widget-row-span": rowSpanForSize(item.size, item.id),
 	} as MotionStyle;
 
 	return (

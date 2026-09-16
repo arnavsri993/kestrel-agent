@@ -424,6 +424,10 @@
 	overflow: hidden;
 }
 
+.kestrel-widget-card-body:has(.kestrel-widget-route-usage) {
+	overflow: auto;
+}
+
 .kestrel-widget-list,
 .kestrel-widget-action-list {
 	margin: 0;
