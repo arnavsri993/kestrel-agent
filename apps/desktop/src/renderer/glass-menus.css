@@ -92,7 +92,8 @@
  -webkit-backdrop-filter: blur(24px) saturate(120%);
  box-shadow: 0 12px 36px rgb(0 0 0 / 24%), inset 0 1px 0 rgb(255 255 255 / 7%);
 }
-.browser-toolbar-popover { animation: kestrel-menu-arrive var(--menu-duration) var(--menu-ease) both; }
+/* Renderer menus already use interruptible Motion presence transitions.
+ * Do not put a second CSS animation over their inline opacity/transform. */
 :is(.browser-toolbar-popover, .model-selector-menu, .new-tab-access-menu, .agent-history-popover, .browser-tab-tools-menu, .browser-tab-menu, .browser-bookmarks-bar-folder-menu, .kestrel-sidebar-context-menu, .kestrel-widget-add-popover, .kestrel-widget-size-popover, .agent-universe-create-agent-popover) button { transition: background-color 120ms ease, color 120ms ease; }
 :is(.browser-toolbar-popover, .model-selector-menu, .new-tab-access-menu, .agent-history-popover, .browser-tab-tools-menu, .browser-tab-menu, .browser-bookmarks-bar-folder-menu, .kestrel-sidebar-context-menu, .kestrel-widget-add-popover, .kestrel-widget-size-popover, .agent-universe-create-agent-popover) button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 @keyframes kestrel-menu-arrive {
