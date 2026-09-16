@@ -16,12 +16,15 @@ import {
 	reorderWidget,
 	resizeWidget,
 	saveLayout,
+	setRouteUsageProviderVisible,
+	visibleRouteUsageProviderIds,
 } from "./new-tab-widgets";
 
 const baseSettings: NewTabWidgetSettings = {
 	version: 1,
-	enabled: [...NEW_TAB_WIDGET_IDS],
+	enabled: NEW_TAB_WIDGET_IDS.filter((id) => id !== "route-usage"),
 	layouts: {},
+	routeUsageVisible: [],
 };
 
 describe("New Tab widget layout model", () => {
@@ -136,5 +139,39 @@ describe("New Tab widget layout model", () => {
 			id: "quick-actions",
 			size: "medium",
 		});
+	});
+
+	it("keeps route-usage optional and normalizes show/hide prefs", () => {
+		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].id).toBe("route-usage");
+		expect(DEFAULT_NEW_TAB_WIDGET_IDS).not.toContain("route-usage");
+
+		const withRoute = addWidget(baseSettings, "standard", "route-usage");
+		expect(withRoute.enabled).toContain("route-usage");
+		expect(withRoute.routeUsageVisible).toEqual([]);
+
+		const hidden = setRouteUsageProviderVisible(
+			withRoute,
+			"codex-subscription",
+			false,
+			["codex-subscription", "cursor-subscription"],
+		);
+		expect(visibleRouteUsageProviderIds(hidden, [
+			"codex-subscription",
+			"cursor-subscription",
+		])).toEqual(["cursor-subscription"]);
+
+		const restored = setRouteUsageProviderVisible(
+			hidden,
+			"codex-subscription",
+			true,
+			["codex-subscription", "cursor-subscription"],
+		);
+		expect(restored.routeUsageVisible).toEqual([]);
+		expect(
+			visibleRouteUsageProviderIds(restored, [
+				"codex-subscription",
+				"cursor-subscription",
+			]),
+		).toEqual(["codex-subscription", "cursor-subscription"]);
 	});
 });

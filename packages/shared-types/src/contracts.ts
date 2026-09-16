@@ -2016,6 +2016,37 @@ export const SessionUsageSummarySchema = z.object({
 });
 export type SessionUsageSummary = z.infer<typeof SessionUsageSummarySchema>;
 
+export const ProviderUsageStatusSchema = z.enum([
+	"ready",
+	"rate_limited",
+	"unhealthy",
+	"not_signed_in",
+	"unknown",
+]);
+export type ProviderUsageStatus = z.infer<typeof ProviderUsageStatusSchema>;
+
+export const ProviderUsageWindowSchema = z.object({
+	/** Display label derived from the real window duration (for example "5-hour"). */
+	label: z.string().min(1).max(40),
+	usedPercent: z.number().min(0).max(100),
+	windowDurationMins: z.number().int().positive().optional(),
+	resetsAt: z.string().datetime().optional(),
+});
+export type ProviderUsageWindow = z.infer<typeof ProviderUsageWindowSchema>;
+
+export const ProviderUsageSnapshotSchema = z.object({
+	providerId: z.string().min(1).max(100),
+	label: z.string().min(1).max(120),
+	email: z.string().max(320).optional(),
+	plan: z.string().max(80).optional(),
+	status: ProviderUsageStatusSchema,
+	statusDetail: z.string().max(400).optional(),
+	windows: z.array(ProviderUsageWindowSchema).max(4).optional(),
+	ordinaryUsageAllowed: z.boolean().optional(),
+	updatedAt: z.string().datetime(),
+});
+export type ProviderUsageSnapshot = z.infer<typeof ProviderUsageSnapshotSchema>;
+
 export const ModelTokenRateSchema = z.object({
 	inputPerMillionUsd: z.number().nonnegative().max(100_000),
 	outputPerMillionUsd: z.number().nonnegative().max(100_000),
@@ -3359,6 +3390,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		description: z.string().max(500).default(""),
 	}),
 	z.object({ type: z.literal("runtime-list-providers") }),
+	z.object({ type: z.literal("runtime-provider-usage") }),
 	z.object({
 		type: z.literal("runtime-refresh-provider-models"),
 		/** Omit to refresh every configured account. */
@@ -3466,6 +3498,7 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		receipts: z.array(ActionReceiptSchema).optional(),
 		plugins: z.array(PluginSummarySchema).optional(),
 		providers: z.array(ModelProviderSummarySchema).optional(),
+		providerUsage: z.array(ProviderUsageSnapshotSchema).max(64).optional(),
 		providerAccounts: z.array(ProviderAccountSummarySchema).optional(),
 		modelProfiles: z.array(ModelProfileSchema).optional(),
 		routingPolicy: RoutingPolicySchema.optional(),
@@ -4079,6 +4112,7 @@ export const NEW_TAB_WIDGET_IDS = [
 	"open-tabs",
 	"pinned-tabs",
 	"recent-pages",
+	"route-usage",
 ] as const;
 
 export const DEFAULT_NEW_TAB_WIDGET_IDS = [
@@ -4118,6 +4152,7 @@ const DEFAULT_NEW_TAB_WIDGET_SETTINGS = {
 	version: 1 as const,
 	enabled: [...DEFAULT_NEW_TAB_WIDGET_IDS],
 	layouts: {},
+	routeUsageVisible: [] as string[],
 };
 
 /**
@@ -4141,6 +4176,14 @@ export const NewTabWidgetSettingsSchema = z
 				ultrawide: NewTabWidgetLayoutSchema.optional(),
 			})
 			.default({}),
+		/**
+		 * Provider ids shown in the route-usage widget. Empty / missing means
+		 * show every configured route; a non-empty list is an explicit allowlist.
+		 */
+		routeUsageVisible: z
+			.array(z.string().min(1).max(100))
+			.max(64)
+			.default([]),
 	})
 	.default(DEFAULT_NEW_TAB_WIDGET_SETTINGS)
 	.catch(DEFAULT_NEW_TAB_WIDGET_SETTINGS);

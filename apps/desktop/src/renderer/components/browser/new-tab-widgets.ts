@@ -136,6 +136,15 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 		defaultSize: "medium",
 		priority: 80,
 	},
+	"route-usage": {
+		id: "route-usage",
+		title: "Model routes",
+		description: "Configured routes and Codex usage",
+		icon: "activity",
+		supportedSizes: ["small", "medium", "large"],
+		defaultSize: "medium",
+		priority: 55,
+	},
 };
 
 export function layoutClassForWidth(width: number): NewTabWidgetLayoutClass {
@@ -303,7 +312,60 @@ export function normalizedWidgetSettings(
 			];
 		}),
 	) as NewTabWidgetSettings["layouts"];
-	return { version: 1, enabled, layouts };
+	const routeUsageVisible = normalizeRouteUsageVisible(settings.routeUsageVisible);
+	return { version: 1, enabled, layouts, routeUsageVisible };
+}
+
+function normalizeRouteUsageVisible(
+	ids: readonly string[] | undefined,
+): string[] {
+	const seen = new Set<string>();
+	const normalized: string[] = [];
+	for (const id of ids ?? []) {
+		const trimmed = id.trim();
+		if (!trimmed || trimmed.length > 100 || seen.has(trimmed)) continue;
+		seen.add(trimmed);
+		normalized.push(trimmed);
+		if (normalized.length >= 64) break;
+	}
+	return normalized;
+}
+
+/**
+ * Empty / missing means show every configured route. A non-empty allowlist is
+ * an explicit show/hide preference for the route-usage widget.
+ */
+export function visibleRouteUsageProviderIds(
+	settings: NewTabWidgetSettings,
+	providerIds: readonly string[],
+): string[] {
+	const allowlist = normalizeRouteUsageVisible(settings.routeUsageVisible);
+	if (allowlist.length === 0) return [...providerIds];
+	const allowed = new Set(allowlist);
+	return providerIds.filter((id) => allowed.has(id));
+}
+
+export function setRouteUsageProviderVisible(
+	settings: NewTabWidgetSettings,
+	providerId: string,
+	visible: boolean,
+	configuredProviderIds: readonly string[],
+): NewTabWidgetSettings {
+	const next = normalizedWidgetSettings(settings);
+	const configured = configuredProviderIds.filter(Boolean);
+	const currentVisible = visibleRouteUsageProviderIds(next, configured);
+	const nextVisible = visible
+		? [...new Set([...currentVisible, providerId])]
+		: currentVisible.filter((id) => id !== providerId);
+	// Persist an explicit allowlist only when it differs from "show all".
+	const showAll =
+		configured.length > 0 &&
+		configured.every((id) => nextVisible.includes(id)) &&
+		nextVisible.length === configured.length;
+	return {
+		...next,
+		routeUsageVisible: showAll ? [] : nextVisible,
+	};
 }
 
 export function saveLayout(
@@ -353,7 +415,7 @@ export function addWidget(
 		}),
 	) as NewTabWidgetSettings["layouts"];
 	return {
-		version: 1,
+		...next,
 		enabled,
 		layouts: {
 			...layouts,
@@ -390,7 +452,7 @@ export function removeWidget(
 			];
 		}),
 	) as NewTabWidgetSettings["layouts"];
-	return { version: 1, enabled, layouts };
+	return { ...next, enabled, layouts };
 }
 
 export function resizeWidget(

@@ -6,6 +6,7 @@ import type {
 	NewTabWidgetSize,
 	MemoryRecord,
 	MemoryRecallStatus,
+	ProviderUsageSnapshot,
 	RuntimeSession,
 	UserBrowserBookmark,
 	UserBrowserDownload,
@@ -49,6 +50,8 @@ import {
 	resizeWidget,
 	rowSpanForSize,
 	saveLayout,
+	setRouteUsageProviderVisible,
+	visibleRouteUsageProviderIds,
 	WIDGET_SIZE_DESCRIPTIONS,
 	WIDGET_SIZE_LABELS,
 	type NewTabWidgetDefinition,
@@ -84,7 +87,11 @@ type WidgetContext = {
 	onOpenBookmarks(): void;
 };
 
-type WidgetRenderContext = WidgetContext & { size: NewTabWidgetSize };
+type WidgetRenderContext = WidgetContext & {
+	size: NewTabWidgetSize;
+	widgetSettings: NewTabWidgetSettings;
+	onWidgetSettingsChange(next: NewTabWidgetSettings): void;
+};
 
 type NewTabWidgetsProps = WidgetContext & {
 	customizeRequestId?: number;
@@ -593,6 +600,214 @@ function RecentPagesWidget({
 	);
 }
 
+function statusChipLabel(status: ProviderUsageSnapshot["status"]): string {
+	switch (status) {
+		case "ready":
+			return "Ready";
+		case "rate_limited":
+			return "Rate limited";
+		case "unhealthy":
+			return "Unhealthy";
+		case "not_signed_in":
+			return "Not signed in";
+		case "unknown":
+			return "Unknown";
+	}
+}
+
+function formatResetAt(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	const parsed = Date.parse(value);
+	if (!Number.isFinite(parsed)) return undefined;
+	return new Date(parsed).toLocaleString(undefined, {
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+	});
+}
+
+function RouteUsageWidget({
+	size,
+	widgetSettings,
+	onWidgetSettingsChange,
+}: WidgetRenderContext) {
+	const [rows, setRows] = useState<ProviderUsageSnapshot[]>([]);
+	const [error, setError] = useState<string | undefined>();
+	const [loading, setLoading] = useState(true);
+	const visible = useRef(true);
+
+	useEffect(() => {
+		visible.current = true;
+		let cancelled = false;
+		const load = async () => {
+			try {
+				const response = await window.kestrel.request({
+					type: "runtime-provider-usage",
+				});
+				if (cancelled || !visible.current) return;
+				if (!response.ok) {
+					setError("Could not load route usage.");
+					setRows([]);
+					return;
+				}
+				setRows(response.providerUsage ?? []);
+				setError(undefined);
+			} catch {
+				if (cancelled || !visible.current) return;
+				setError("Could not load route usage.");
+			} finally {
+				if (!cancelled && visible.current) setLoading(false);
+			}
+		};
+		void load();
+		const timer = window.setInterval(() => {
+			if (document.visibilityState === "hidden") return;
+			void load();
+		}, 60_000);
+		const onVisibility = () => {
+			if (document.visibilityState === "visible") void load();
+		};
+		document.addEventListener("visibilitychange", onVisibility);
+		return () => {
+			cancelled = true;
+			visible.current = false;
+			window.clearInterval(timer);
+			document.removeEventListener("visibilitychange", onVisibility);
+		};
+	}, []);
+
+	const configuredIds = rows.map((row) => row.providerId);
+	const shownIds = new Set(
+		visibleRouteUsageProviderIds(widgetSettings, configuredIds),
+	);
+	const limit = visibleItemCount(size);
+	const visibleRows = rows
+		.filter((row) => shownIds.has(row.providerId))
+		.slice(0, limit);
+	const hiddenConfigured = rows.filter((row) => !shownIds.has(row.providerId));
+
+	return (
+		<div className="kestrel-widget-route-usage">
+			{loading && rows.length === 0 ? (
+				<p className="kestrel-widget-empty">Checking configured routes…</p>
+			) : error && rows.length === 0 ? (
+				<p className="kestrel-widget-empty">{error}</p>
+			) : visibleRows.length === 0 ? (
+				<p className="kestrel-widget-empty">
+					{rows.length === 0
+						? "No model routes are configured yet."
+						: "All routes are hidden. Show one below."}
+				</p>
+			) : (
+				<ul className="kestrel-widget-route-usage-list">
+					{visibleRows.map((row) => (
+						<li key={row.providerId} className="kestrel-widget-route-usage-row">
+							<div className="kestrel-widget-route-usage-heading">
+								<div>
+									<strong>{row.label}</strong>
+									{(row.email || row.plan) && (
+										<small>
+											{[row.email, row.plan].filter(Boolean).join(" · ")}
+										</small>
+									)}
+								</div>
+								<span
+									className={`kestrel-widget-route-usage-chip is-${row.status}`}
+								>
+									{statusChipLabel(row.status)}
+								</span>
+								<button
+									type="button"
+									className="kestrel-widget-route-usage-hide"
+									aria-label={`Hide ${row.label}`}
+									title={`Hide ${row.label}`}
+									onClick={() =>
+										onWidgetSettingsChange(
+											setRouteUsageProviderVisible(
+												widgetSettings,
+												row.providerId,
+												false,
+												configuredIds,
+											),
+										)
+									}
+								>
+									Hide
+								</button>
+							</div>
+							{row.windows && row.windows.length > 0 ? (
+								<div className="kestrel-widget-route-usage-meters">
+									{row.windows.map((windowRow) => (
+										<div
+											key={`${row.providerId}-${windowRow.label}`}
+											className="kestrel-widget-route-usage-meter"
+										>
+											<div className="kestrel-widget-route-usage-meter-label">
+												<span>{windowRow.label}</span>
+												<span>{Math.round(windowRow.usedPercent)}%</span>
+											</div>
+											<div
+												className="kestrel-widget-route-usage-meter-track"
+												role="meter"
+												aria-label={`${windowRow.label} usage`}
+												aria-valuemin={0}
+												aria-valuemax={100}
+												aria-valuenow={Math.round(windowRow.usedPercent)}
+											>
+												<span
+													style={{
+														width: `${Math.max(0, Math.min(100, windowRow.usedPercent))}%`,
+													}}
+												/>
+											</div>
+											{windowRow.resetsAt && (
+												<small>
+													Resets {formatResetAt(windowRow.resetsAt)}
+												</small>
+											)}
+										</div>
+									))}
+								</div>
+							) : (
+								<p className="kestrel-widget-route-usage-detail">
+									{row.statusDetail ??
+										(row.status === "ready"
+											? "Status only — this route does not publish usage windows."
+											: statusChipLabel(row.status))}
+								</p>
+							)}
+						</li>
+					))}
+				</ul>
+			)}
+			{hiddenConfigured.length > 0 && (
+				<div className="kestrel-widget-route-usage-hidden">
+					<small>Hidden routes</small>
+					{hiddenConfigured.map((row) => (
+						<button
+							key={row.providerId}
+							type="button"
+							onClick={() =>
+								onWidgetSettingsChange(
+									setRouteUsageProviderVisible(
+										widgetSettings,
+										row.providerId,
+										true,
+										configuredIds,
+									),
+								)
+							}
+						>
+							Show {row.label}
+						</button>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
 function WidgetBody({
 	definition,
 	context,
@@ -619,6 +834,8 @@ function WidgetBody({
 			return <OpenTabsWidget {...context} pinnedOnly />;
 		case "recent-pages":
 			return <RecentPagesWidget {...context} />;
+		case "route-usage":
+			return <RouteUsageWidget {...context} />;
 	}
 }
 
@@ -805,7 +1022,10 @@ function WidgetCard({
 	editing: boolean;
 	dragging: boolean;
 	dragDelta: { x: number; y: number };
-	context: WidgetContext;
+	context: WidgetContext & {
+		widgetSettings: NewTabWidgetSettings;
+		onWidgetSettingsChange(next: NewTabWidgetSettings): void;
+	};
 	onMove(id: NewTabWidgetId, direction: "up" | "down"): void;
 	onResize(id: NewTabWidgetId, size: NewTabWidgetSize): void;
 	onRemove(id: NewTabWidgetId): void;
@@ -1216,7 +1436,12 @@ export function NewTabWidgets({
 								editing={editing}
 								dragging={draggingId === item.id}
 								dragDelta={dragDelta}
-								context={context}
+								context={{
+									...context,
+									widgetSettings: workingSettings,
+									onWidgetSettingsChange: (next) =>
+										updateWorkingSettings(next, true),
+								}}
 								onMove={handleMove}
 								onResize={handleResize}
 								onRemove={handleRemove}

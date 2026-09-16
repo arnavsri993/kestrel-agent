@@ -45,6 +45,19 @@ input.on("line", line => {
   if (message.method === "initialize") return send({ id: message.id, result: { userAgent: "fake", codexHome: "/fake", platformFamily: "unix", platformOs: "macos" } });
   if (message.method === "initialized") return;
   if (message.method === "account/read") return send({ id: message.id, result: { account: { type: "chatgpt" }, requiresOpenaiAuth: true } });
+  if (message.method === "account/rateLimits/read") {
+    return send({
+      id: message.id,
+      result: {
+        ordinaryUsageAllowed: true,
+        rateLimits: {
+          primary: { usedPercent: 55, windowDurationMins: 300, resetsAt: 1900000000 },
+          secondary: { usedPercent: 12, windowDurationMins: 10080, resetsAt: 1900500000 },
+          planType: "plus",
+        },
+      },
+    });
+  }
   if (message.method === "model/list") {
     if (message.params && message.params.cursor === "page-2") {
       return send({ id: message.id, result: { data: [{ id: "gpt-hidden", model: "gpt-hidden", displayName: "Hidden model", supportedReasoningEfforts: [{ reasoningEffort: "minimal" }], hidden: true }], nextCursor: null } });
@@ -500,6 +513,40 @@ describe("persistent Codex app-server provider", () => {
 					record.value.result &&
 					record.value.result.action === "decline" &&
 					record.value.result.content === null,
+			),
+		).toBe(true);
+		await provider.close();
+	});
+
+	it("reads Codex rate-limit windows without inventing meters", async () => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({
+			executable: fake.executable,
+		});
+		const snapshot = await provider.readRateLimits();
+		expect(snapshot).toMatchObject({
+			ordinaryUsageAllowed: true,
+			plan: "plus",
+			rateLimitReached: false,
+			primary: {
+				usedPercent: 55,
+				windowDurationMins: 300,
+			},
+			secondary: {
+				usedPercent: 12,
+				windowDurationMins: 10_080,
+			},
+		});
+		expect(snapshot.primary?.resetsAt).toMatch(/^\d{4}-/);
+		const records = (await readFile(fake.capture, "utf8"))
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { value: { method?: string; params?: Record<string, unknown> } });
+		expect(
+			records.some(
+				(record) =>
+					record.value.method === "account/rateLimits/read" &&
+					record.value.params?.excludeResetCreditDetails === true,
 			),
 		).toBe(true);
 		await provider.close();
