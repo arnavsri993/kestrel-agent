@@ -253,10 +253,10 @@ function passwordOverlaySize(prompt: PasswordPrompt): {
 	return prompt.mode === "profile"
 		? { width: 382, height: 352 }
 		: prompt.mode === "save"
-		? { width: 356, height: 276 }
+		? { width: 382, height: 320 }
 		: prompt.mode === "field"
-			? { width: 356, height: Math.min(388, 214 + Math.max(0, prompt.entries.length - 1) * 50) }
-			: { width: 356, height: 214 };
+			? { width: 382, height: Math.min(420, 236 + Math.max(0, prompt.entries.length - 1) * 56) }
+			: { width: 382, height: prompt.mode === "generate" ? 280 : 236 };
 }
 
 function passwordOverlayBounds(
@@ -324,6 +324,10 @@ function updatePasswordOverlay(
 			show: false,
 			frame: false,
 			transparent: true,
+			...(process.platform === "darwin" ? {
+				vibrancy: "popover" as const,
+				visualEffectState: "active" as const,
+			} : {}),
 			resizable: false,
 			skipTaskbar: true,
 			hasShadow: true,
@@ -405,7 +409,7 @@ function paymentOverlaySize(prompt: PaymentPrompt): {
 	height: number;
 } {
 	return prompt.mode === "save"
-		? { width: 398, height: 270 }
+		? { width: 398, height: 340 }
 		: { width: 410, height: 304 };
 }
 
@@ -471,6 +475,10 @@ function updatePaymentOverlay(
 			show: false,
 			frame: false,
 			transparent: true,
+			...(process.platform === "darwin" ? {
+				vibrancy: "popover" as const,
+				visualEffectState: "active" as const,
+			} : {}),
 			resizable: false,
 			skipTaskbar: true,
 			hasShadow: true,

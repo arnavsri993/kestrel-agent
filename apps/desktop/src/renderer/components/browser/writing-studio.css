@@ -312,7 +312,7 @@
 	height: 25px;
 	flex: 0 0 auto;
 	border-radius: 50%;
-	background: radial-gradient(circle at 35% 30%, var(--solid), color-mix(in srgb, var(--solid) 35%, transparent) 64%, transparent 66%);
+	background: var(--solid);
 	box-shadow: 0 0 0 5px color-mix(in srgb, var(--solid) 8%, transparent);
 }
 
