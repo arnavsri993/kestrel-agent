@@ -21,6 +21,10 @@ The suite covers:
 - Stable field identity when the page inserts other fields; refused values do not count as successful fills.
 - Main-frame and active-tab restrictions, stale navigation rejection, personal-info settings, and native popup-to-form filling in the full desktop app.
 
+- A temporary unavailable Keychain no longer poisons subsequent password/profile operations; the next operation retries protected storage without falling back to plaintext.
+- Learning split address lines supersedes an older combined street address, and vice versa. Partial line edits preserve other address lines; reopening the vault verifies persistence.
+- The native personal-info popup previews saved values with category icons before filling. Preview data is requested only by the trusted popup, stays out of prompt broadcasts, and is rejected if its active page or prompt changes during the protected read.
+
 The tests use synthetic fixture values and isolated profiles. They do not submit real credentials to providers.
 
 ## Remaining differences from Edge

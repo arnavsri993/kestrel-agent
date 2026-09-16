@@ -127,7 +127,12 @@ export class MacOSKeychainCredentialStore implements CredentialStore {
 	}
 
 	private storage(): Promise<SafeStorageLike> {
-		this.storagePromise ??= this.loadStorage();
+		this.storagePromise ??= this.loadStorage().catch((error: unknown) => {
+			// A temporary Keychain outage must not poison every later save/read
+			// for the lifetime of the app. Retry on the next explicit operation.
+			this.storagePromise = undefined;
+			throw error;
+		});
 		return this.storagePromise;
 	}
 

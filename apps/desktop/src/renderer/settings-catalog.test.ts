@@ -3,6 +3,7 @@ import {
 	LEGACY_SETTINGS_SECTION_ALIASES,
 	SETTINGS_CATALOG,
 	SETTINGS_SECTIONS,
+	SETTINGS_NAVIGATION_GROUPS,
 	normalizeSettingsSection,
 	sectionDefinition,
 	settingsScopeForSection,
@@ -10,6 +11,15 @@ import {
 } from "./settings-catalog";
 
 describe("organized settings catalog", () => {
+	it("places every visible category in exactly one same-scope navigation group", () => {
+		const ids = SETTINGS_NAVIGATION_GROUPS.flatMap((group) => [...group.sections]);
+		expect(new Set(ids).size).toBe(ids.length);
+		expect([...ids].sort()).toEqual(SETTINGS_SECTIONS.filter((section) => section.id !== "browser").map((section) => section.id).sort());
+		for (const group of SETTINGS_NAVIGATION_GROUPS) {
+			expect(group.sections.length).toBeGreaterThan(0);
+			for (const id of group.sections) expect(sectionDefinition(id).scope).toBe(group.scope);
+		}
+	});
 	it("keeps every section and searchable setting uniquely addressable", () => {
 		expect(new Set(SETTINGS_SECTIONS.map((section) => section.id)).size).toBe(
 			SETTINGS_SECTIONS.length,

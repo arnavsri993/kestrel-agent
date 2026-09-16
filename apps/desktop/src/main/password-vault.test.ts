@@ -290,6 +290,18 @@ describe("password vault", () => {
 });
 
 describe("protected form profile", () => {
+ it("replaces stale alternate address representations when learning a new address", async () => {
+  const {vault,root} = createVault();
+  await vault.saveProfile({'street-address':'Old street\nOld apartment',email:'fixture@example.test'});
+  await vault.saveProfile({'address-line1':'New street','address-line2':'New apartment'},true);
+  expect(await vault.getProfile()).toEqual({'address-line1':'New street','address-line2':'New apartment',email:'fixture@example.test'});
+  await vault.saveProfile({'street-address':'Newest street'},true);
+  expect(await vault.getProfile()).toEqual({'street-address':'Newest street',email:'fixture@example.test'});
+  await vault.saveProfile({'address-line2':'Apartment 4'},true);
+  const reopened = new PasswordVault(testProtectedStore(root));
+  expect(await reopened.getProfile()).toEqual({'address-line1':'Newest street','address-line2':'Apartment 4',email:'fixture@example.test'});
+ });
+
  it("persists encrypted profile info, merges serially, and clears without deleting passwords", async () => {
   const {vault,root} = createVault();
   await vault.save({origin:"https://example.test",username:"fixture",password:"fixture-secret"});

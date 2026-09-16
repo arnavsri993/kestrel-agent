@@ -249,7 +249,9 @@ function passwordOverlaySize(prompt: PasswordPrompt): {
 	width: number;
 	height: number;
 } {
-	return prompt.mode === "save"
+	return prompt.mode === "profile"
+		? { width: 382, height: 352 }
+		: prompt.mode === "save"
 		? { width: 382, height: 320 }
 		: prompt.mode === "field"
 			? { width: 382, height: Math.min(420, 236 + Math.max(0, prompt.entries.length - 1) * 56) }
@@ -2724,6 +2726,7 @@ function registerIpc(): void {
     if (
       isPasswordOverlayWindow &&
       ![
+        "autofill-profile-preview",
         "autofill-profile-fill",
         "password-save-suggestion",
         "password-fill-page",
@@ -2777,6 +2780,8 @@ function registerIpc(): void {
       return { ok: true };
     }
     if (isPasswordOverlayWindow && passwordService) {
+      if (request.type === "autofill-profile-preview")
+        return { ok: true, autofillProfile: await passwordService.previewAutofillProfile() };
       if (request.type === "autofill-profile-fill")
         await passwordService.fillAutofillProfile(request.fieldId);
       else if (request.type === "password-save-suggestion")

@@ -7,6 +7,26 @@ Keep dense graphite surfaces, system type, 4px spacing, existing focus rings and
 menu motion. No new fonts, colors, or motion. Verify search, account isolation,
 unsupported effort fallback, keyboard reopening, and narrow/short viewport scrolling.
 
+# Settings organization — September 2026
+
+Thesis: make Kestrel preferences easy to scan through small, named groups that
+match everyday browser and agent tasks. Keep the existing compact Mac controls,
+system typography, graphite surfaces, semantic colors, and 4px spacing rhythm.
+This is an existing React settings-page refinement with low visual intensity.
+
+- Browser: Everyday browsing; Privacy & personal data; Manage browser.
+- Agent: Setup & intelligence; Work & tools; Safety & maintenance.
+- One catalog owns grouping for desktop navigation and the narrow native picker.
+- Preserve search across both scopes, focused category panels, legacy links,
+  saved settings, and all permission/destructive-action safeguards.
+- Use readable group headings and restrained separators, with a clear selected
+  row. Avoid extra cards, descriptions, decorative icons, and new animations.
+- Fix the observed flat category list, scattered related categories, and the
+  ungrouped narrow picker. Verify navigation, search focus, persistence, keyboard
+  access, and overflow at desktop, intermediate, and narrow widths.
+- Why this is not generic: the groups reflect Kestrel's actual separation of
+  browsing, agent intelligence, tools, and local permission/data controls.
+
 # New Tab glass refinement — September 2026
 
 This section supersedes the older Home shelf and square-control guidance below.

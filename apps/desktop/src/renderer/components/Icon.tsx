@@ -1,6 +1,10 @@
 import type { SVGProps } from "react";
 
 const paths: Record<string, string[]> = {
+	person: ["M16 7a4 4 0 11-8 0 4 4 0 018 0", "M4 21v-2a8 8 0 0116 0v2"],
+	mail: ["M3 5h18v14H3z", "M3 5l9 7 9-7"],
+	phone: ["M5 3h4l2 5-3 2a14 14 0 006 6l2-3 5 2v4a2 2 0 01-2 2C9 21 3 15 3 5a2 2 0 012-2"],
+	address: ["M3 11l9-8 9 8", "M5 10v11h14V10", "M9 21v-7h6v7"],
 	plus: ["M12 5v14M5 12h14"],
 	close: ["M6 6l12 12M18 6L6 18"],
 	back: ["M15 5l-7 7 7 7"],
