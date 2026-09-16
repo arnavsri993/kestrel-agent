@@ -6,9 +6,8 @@ import { KESTREL_MENU_TRANSITION } from "../../motion-contract";
 import { Icon } from "../Icon";
 import {
 	accountForChoice,
-	matchesCatalogSearch,
+	searchProviderGroups,
 	modelAvailabilityLabel,
-	modelForChoice,
 	providerGroups,
 	selectableModel,
 	selectAuto,
@@ -61,8 +60,8 @@ export function ModelSelector({
 	});
 	const groups = useMemo(() => providerGroups(accounts), [accounts]);
 	const visibleGroups = useMemo(
-		() => groups.filter((group) => matchesCatalogSearch(group, query)),
-		[groups, query],
+		() => searchProviderGroups(accounts, query),
+		[accounts, query],
 	);
 	const selectedAccount = accountForChoice(accounts, choice);
 	const [activeProviderId, setActiveProviderId] = useState(
@@ -76,32 +75,24 @@ export function ModelSelector({
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
 	const menuRef = useRef<HTMLDivElement | null>(null);
 	const didFocusMenuRef = useRef(false);
+	const initializedMenuRef = useRef(false);
 	const activeGroup =
 		visibleGroups.find((group) => group.id === activeProviderId) ??
 		visibleGroups[0];
 	const activeAccount =
 		activeGroup?.accounts.find((account) => account.id === activeAccountId) ??
 		activeGroup?.accounts[0];
-	const visibleModels = useMemo(() => {
-		if (!activeAccount) return [];
-		const normalized = query.trim().toLocaleLowerCase();
-		return activeAccount.models.filter(
-			(model) =>
-				!normalized ||
-				model.id.toLocaleLowerCase().includes(normalized) ||
-				model.displayName.toLocaleLowerCase().includes(normalized),
-		);
-	}, [activeAccount, query]);
-	const activeModel =
-		visibleModels.find((model) => model.id === activeModelId) ??
-		modelForChoice(accounts, choice) ??
-		visibleModels[0];
+	const visibleModels = activeAccount?.models ?? [];
+	const activeModel = visibleModels.find((model) => model.id === activeModelId);
 	const showThinking =
-		activeModel?.capabilities.capabilityProvenance === "confirmed" &&
+		activeModel && selectableModel(activeModel) &&
+		activeModel.capabilities.capabilityProvenance === "confirmed" &&
 		activeModel.capabilities.reasoningEfforts.length > 1;
 
 	useEffect(() => {
-		if (!open) return;
+		if (!open) { initializedMenuRef.current = false; return; }
+		if (initializedMenuRef.current) return;
+		initializedMenuRef.current = true;
 		const account = accountForChoice(accounts, choice) ?? groups[0]?.accounts[0];
 		setActiveProviderId(account?.providerId ?? "");
 		setActiveAccountId(account?.id ?? "");
@@ -206,6 +197,7 @@ export function ModelSelector({
 				title={`Model: ${selectorTriggerLabel(choice, accounts)}`}
 				onClick={() =>
 					setOpen((current) => {
+						didFocusMenuRef.current = false;
 						if (current)
 							window.requestAnimationFrame(() => triggerRef.current?.focus());
 						return !current;
@@ -266,7 +258,7 @@ export function ModelSelector({
 									<div className="model-selector-list">
 										{visibleGroups.length === 0 ? (
 											<p className="model-selector-empty">
-												Connect an account in Settings first.
+												{query.trim() ? "No accounts or models match your search." : "Connect an account in Settings first."}
 											</p>
 										) : (
 											visibleGroups.map((group) => (
@@ -276,11 +268,6 @@ export function ModelSelector({
 													className={`model-selector-item${
 														activeGroup?.id === group.id ? " is-active" : ""
 													}`}
-													onMouseEnter={() => {
-														setActiveProviderId(group.id);
-														setActiveAccountId(group.accounts[0]?.id ?? "");
-														setActiveModelId("");
-													}}
 													onClick={() => {
 														setActiveProviderId(group.id);
 														setActiveAccountId(group.accounts[0]?.id ?? "");
@@ -335,10 +322,6 @@ export function ModelSelector({
 															? " is-selected"
 															: ""
 													}`}
-													onMouseEnter={() => {
-														setActiveAccountId(account.id);
-														setActiveModelId("");
-													}}
 													onClick={() => {
 														setActiveAccountId(account.id);
 														setActiveModelId("");
@@ -377,11 +360,11 @@ export function ModelSelector({
 													<button
 														type="button"
 														key={model.id}
+														aria-pressed={selected}
 														disabled={!selectable}
 														className={`model-selector-item${
 															selected ? " is-selected" : ""
 														}${activeModel?.id === model.id ? " is-active" : ""}`}
-														onMouseEnter={() => setActiveModelId(model.id)}
 														onClick={() => {
 															setActiveModelId(model.id);
 															const next = selectModel(activeAccount, model, choice);
@@ -420,7 +403,8 @@ export function ModelSelector({
 								</div>
 								{showThinking && activeAccount && activeModel ? (
 									<div className="model-selector-column" aria-label="Thinking level">
-										<div className="model-selector-column-header">Thinking</div>
+										<div className="model-selector-column-header">Reasoning level</div>
+										<p className="model-selector-context">{activeModel.displayName}</p>
 										<div className="model-selector-list">
 											{THINKING_LEVELS.filter((level) =>
 												activeModel.capabilities.reasoningEfforts.includes(level.id),
@@ -428,6 +412,7 @@ export function ModelSelector({
 												<button
 													type="button"
 													key={level.id}
+													aria-pressed={choice.executionMode === "manual" && choice.accountId === activeAccount.id && choice.model === activeModel.id && choice.reasoningEffort === level.id}
 													className={`model-selector-item${
 														choice.executionMode === "manual" &&
 														choice.accountId === activeAccount.id &&
@@ -445,7 +430,7 @@ export function ModelSelector({
 														)
 													}
 												>
-													<span className="model-selector-copy"><strong>{level.label}</strong></span>
+													<span className="model-selector-copy"><strong>{level.label}</strong><small>{level.description}</small></span>
 												</button>
 											))}
 										</div>

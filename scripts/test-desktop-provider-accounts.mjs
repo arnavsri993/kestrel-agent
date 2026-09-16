@@ -143,9 +143,26 @@ try {
 	await selector.getByRole("button", { name: /Model:/ }).click();
 	const menu = page.locator(".model-selector-menu");
 	await menu.waitFor();
+	const search = menu.getByRole("textbox", { name: "Search provider accounts and models" });
+	await search.fill("Work local");
+	assert.equal(await menu.getByRole("button", { name: /Personal local/ }).count(), 0);
+	await menu.getByRole("button", { name: /Local simulation/ }).waitFor();
+	await search.fill("does-not-exist");
+	await menu.getByText("No accounts or models match your search.").waitFor();
+	await search.fill("");
 	await menu.getByRole("button", { name: /Lab.*2 accounts/ }).click();
 	await menu.getByRole("button", { name: /Personal local/ }).click();
+	if (screenshotPath) {
+		mkdirSync(dirname(resolve(screenshotPath)), { recursive: true });
+		await page.screenshot({ path: resolve(screenshotPath).replace(/\.png$/, "-picker.png") });
+	}
+	await page.setViewportSize({ width: 600, height: 450 });
+	await menu.getByRole("button", { name: /Local simulation/ }).scrollIntoViewIfNeeded();
+	const bounds = await menu.boundingBox();
+	assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 600 && bounds.y + bounds.height <= 450);
+	if (screenshotPath) await page.screenshot({ path: resolve(screenshotPath).replace(/\.png$/, "-narrow.png") });
 	await menu.getByRole("button", { name: /Local simulation/ }).click();
+	await page.setViewportSize({ width: 1320, height: 860 });
 	await selector.getByRole("button", { name: /Model: Local simulation/ }).waitFor();
 	if (screenshotPath) {
 		mkdirSync(dirname(resolve(screenshotPath)), { recursive: true });
@@ -157,8 +174,8 @@ try {
 	page = await launch();
 	await openProviderAccounts(page);
 	assert.equal(await page.locator(".provider-account-card").count(), 2);
-	assert.equal(await page.getByText("Personal local", { exact: true }).count(), 1);
-	assert.equal(await page.getByText("Work local", { exact: true }).count(), 1);
+	assert.equal(await page.locator(".provider-account-card").getByText("Personal local", { exact: true }).count(), 1);
+	assert.equal(await page.locator(".provider-account-card").getByText("Work local", { exact: true }).count(), 1);
 	process.stdout.write(
 		`Provider account desktop flow passed against ${packagedExecutable ? "the packaged app" : "the built desktop app"}.\n`,
 	);

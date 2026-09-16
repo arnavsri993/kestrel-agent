@@ -5,6 +5,7 @@ import type {
 } from "@kestrel/shared-types";
 import {
 	accountForChoice,
+	searchProviderGroups,
 	matchesCatalogSearch,
 	modelAvailabilityLabel,
 	modelForChoice,
@@ -154,7 +155,7 @@ describe("account-aware model selector", () => {
 
 	it("uses discovered reasoning capabilities rather than a vendor model name", () => {
 		expect(modelSupportsThinking(accounts, choice)).toBe(true);
-		expect(selectorTriggerLabel(choice, accounts)).toBe("Work GPT · Med");
+		expect(selectorTriggerLabel(choice, accounts)).toBe("Work GPT · Medium");
 		expect(
 		modelSupportsThinking(accounts, {
 			...choice,
@@ -216,3 +217,26 @@ describe("account-aware model selector", () => {
 		});
 	});
 });
+
+ describe("reasoning and search consistency", () => {
+	it("replaces an unsupported prior effort with an advertised effort", () => {
+		expect(selectModel(accounts[0]!, accounts[0]!.models[0]!, { ...choice, reasoningEffort: "max" }).reasoningEffort).toBe("medium");
+		const limited = model("limited", { capabilities: { ...modelCapabilities, reasoningEfforts: ["low", "high"] } });
+		expect(selectModel(accounts[0]!, limited, choice).reasoningEffort).toBe("low");
+		const fixed = model("fixed", { capabilities: { ...modelCapabilities, reasoningEfforts: ["high"] } });
+		expect(selectModel(accounts[0]!, fixed, choice).reasoningEffort).toBe("high");
+	});
+	it("retains a supported effort including the provider default", () => {
+		const flexible = model("flexible", { capabilities: { ...modelCapabilities, reasoningEfforts: ["none", "high"] } });
+		expect(selectModel(accounts[0]!, flexible, { ...choice, reasoningEffort: "none" }).reasoningEffort).toBe("none");
+		expect(selectModel(accounts[0]!, flexible, { ...choice, reasoningEffort: "high" }).reasoningEffort).toBe("high");
+	});
+	it("searches the matching account instead of displaying its first sibling", () => {
+		const result = searchProviderGroups(accounts, "gpt-work");
+		expect(result[0]!.accounts.map(item => item.id)).toEqual(["openai-work"]);
+		expect(result[0]!.accounts[0]!.models.map(item => item.id)).toEqual(["gpt-work"]);
+		expect(searchProviderGroups(accounts, "personal")[0]!.accounts[0]!.models).toHaveLength(1);
+		expect(searchProviderGroups(accounts, "OPENAI")[0]!.accounts).toHaveLength(2);
+		expect(searchProviderGroups(accounts, "no match")).toEqual([]);
+	});
+ });
