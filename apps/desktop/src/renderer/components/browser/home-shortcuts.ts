@@ -8,10 +8,10 @@ export function normalizeShortcutUrl(value: string): string | null {
  } catch { return null; }
 }
 
-export function homeShortcuts(pinned: NonNullable<UserBrowserSettings["newTabShortcuts"]>, frequent: FrequentBrowserSite[]) {
+export function homeShortcuts(pinned: NonNullable<UserBrowserSettings["newTabShortcuts"]>, frequent: FrequentBrowserSite[], showFrequent = true) {
  const origins = new Set(pinned.map((item) => new URL(item.url).origin));
  return [
   ...pinned.map((item) => ({ ...item, pinned: true, faviconDataUrl: frequent.find((site) => site.origin === new URL(item.url).origin)?.faviconDataUrl })),
-  ...frequent.filter((item) => !origins.has(item.origin)).map((item) => ({ ...item, title: item.hostname.replace(/^www\./, ""), pinned: false })),
+  ...(showFrequent ? frequent : []).filter((item) => !origins.has(item.origin)).map((item) => ({ ...item, title: item.hostname.replace(/^www\./, ""), pinned: false })),
  ].slice(0, Math.max(8, pinned.length));
 }

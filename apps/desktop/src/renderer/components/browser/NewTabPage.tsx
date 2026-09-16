@@ -27,6 +27,7 @@ import {
 	originFaviconMap,
 	suggestedAgentActions,
 } from "./new-tab";
+import { normalizedWidgetSettings } from "./new-tab-widgets";
 import { NewTabPersonalization } from "./NewTabPersonalization";
 import { NewTabWidgets } from "./NewTabWidgets";
 import "./new-tab.css";
@@ -192,7 +193,7 @@ export function NewTabPage({
           <NewTabComposer agentName={agentName} projects={projects} onProjectsChange={onProjectsChange} onNavigate={onNavigate} onSubmitDraft={onSubmitDraft} />
         </header>
 
-        <NewTabPersonalization frequent={frequent} shortcuts={shortcutSettings ?? []}
+        <NewTabPersonalization frequent={frequent} showFrequent={!normalizedWidgetSettings(widgetSettings).enabled.includes("frequent-tabs")} shortcuts={shortcutSettings ?? []}
           background={background} onUpdate={onUpdateHomeSettings} onNavigate={onNavigate}
           onEditWidgets={() => setCustomizeRequestId((value) => value + 1)} />
 		<NewTabWidgets

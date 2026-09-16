@@ -1,7 +1,6 @@
 /* Clear refractive material. Distort only the backdrop; text and icons are
    painted afterward and remain sharp. The static map costs no animation loop. */
 .kestrel-home .kestrel-home-composer,
-.kestrel-widget-shelves .kestrel-widget-card,
 .home-site-glyph,
 .home-personalize > summary {
  background: linear-gradient(135deg, rgb(255 255 255 / 12%), rgb(255 255 255 / 2%) 45%, rgb(255 255 255 / 7%)), rgb(17 22 29 / 28%);
@@ -10,21 +9,13 @@
  border: 1px solid rgb(255 255 255 / 32%);
  box-shadow: inset 0 1px 0 rgb(255 255 255 / 40%), inset 0 -1px 0 rgb(255 255 255 / 13%), 0 8px 26px rgb(0 0 0 / 15%);
 }
-.kestrel-widget-shelves .kestrel-widget-card:hover { background-color: rgb(17 22 29 / 34%); }
 .kestrel-home .kestrel-home-composer textarea::placeholder { color: rgb(255 255 255 / 78%); }
 .kestrel-home .kestrel-home-composer.is-expanded { background-color: rgb(17 22 29 / 38%); }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
  .kestrel-home .kestrel-home-composer,
- .kestrel-widget-shelves .kestrel-widget-card,
- .home-site-glyph,
+  .home-site-glyph,
  .home-personalize > summary {
   background: var(--panel); backdrop-filter: none; -webkit-backdrop-filter: none;
   border-color: var(--ink-secondary); box-shadow: none;
  }
-}
-/* Reading cards keep a little more tint than short controls, without hiding
-   the refracted wallpaper texture. */
-.kestrel-widget-shelves .kestrel-widget-card { background-color: rgb(17 22 29 / 44%); }
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
- .kestrel-widget-shelves .kestrel-widget-card { background: var(--panel); }
 }

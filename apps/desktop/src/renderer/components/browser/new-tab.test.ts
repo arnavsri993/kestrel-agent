@@ -64,6 +64,19 @@ describe("new tab shortcuts", () => {
     });
   });
 
+  it("excludes authentication handoffs without losing useful pages from the same site", () => {
+    const urls = [
+      "https://example.com/docs", "https://example.com/login", "https://example.com/codex/open-app?source=login", "https://example.com/oauth/callback",
+      "https://auth.example.com/", "https://accounts.example.com/consent",
+      "https://example.com/sign-in", "https://example.com/%6cogin", "https://example.com/logout",
+      "https://example.com/private?token=secret", "https://example.com/cb?code=secret",
+      "https://user:password@example.com/project", "https://example.com/%invalid",
+    ];
+    const history = urls.map((url, index) => ({ id: `visit-${index}`, tabId, url, title: "Example", visitedAt: `2026-09-15T12:00:${String(index).padStart(2, "0")}.000Z` }));
+    expect(frequentBrowserSites(history)).toEqual([expect.objectContaining({ url: urls[0], visits: 1 })]);
+    expect(suggestedAgentActions(history).filter(action => action.personalized)).toHaveLength(1);
+  });
+
   it("attaches local tab favicons to frequent sites and prefers live tabs", () => {
     const history = [
       {
@@ -162,6 +175,8 @@ describe("new tab shortcuts", () => {
 
     expect(actions).toHaveLength(5);
     expect(actions[0]?.title).toBe("Check on Review deployment plan");
+    expect(actions[0]?.sessionId).toBe("session-waiting");
+    expect(actions[1]?.sessionId).toBe("session-active");
     expect(actions[1]?.title).toBe("Continue Fix flaky desktop test");
     expect(actions.filter((action) => action.personalized)).toHaveLength(2);
     expect(actions.filter((action) => !action.personalized)).toHaveLength(3);
@@ -172,14 +187,14 @@ describe("new tab shortcuts", () => {
       {
         id: "visit-00000000-0000-4000-8000-000000000011",
         tabId,
-        url: "https://user:password@example.com/project?token=private#draft",
+        url: "https://example.com/project?view=private#draft",
         title: "Project notes",
         visitedAt: "2026-08-18T12:00:00.000Z",
       },
       {
         id: "visit-00000000-0000-4000-8000-000000000012",
         tabId,
-        url: "https://docs.example.org/guide?session=private",
+        url: "https://docs.example.org/guide?view=private",
         title: "Implementation guide",
         visitedAt: "2026-08-18T13:00:00.000Z",
       },

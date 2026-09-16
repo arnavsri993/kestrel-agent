@@ -6,6 +6,7 @@ import { homeShortcuts, normalizeShortcutUrl } from "./home-shortcuts";
 
 type Props = {
  frequent: FrequentBrowserSite[];
+ showFrequent?: boolean;
  shortcuts: NonNullable<UserBrowserSettings["newTabShortcuts"]>;
  background: UserBrowserSettings["newTabBackground"];
  onUpdate(next: Partial<UserBrowserSettings>): Promise<unknown>;
@@ -13,14 +14,14 @@ type Props = {
  onEditWidgets(): void;
 };
 
-export function NewTabPersonalization({ frequent, shortcuts, background, onUpdate, onNavigate, onEditWidgets }: Props) {
+export function NewTabPersonalization({ frequent, showFrequent = true, shortcuts, background, onUpdate, onNavigate, onEditWidgets }: Props) {
  const panel = useRef<HTMLDetailsElement>(null);
  const [adding, setAdding] = useState(false);
  const [title, setTitle] = useState("");
  const [url, setUrl] = useState("");
  const [error, setError] = useState("");
  const [saving, setSaving] = useState(false);
- const links = homeShortcuts(shortcuts, frequent);
+ const links = homeShortcuts(shortcuts, frequent, showFrequent);
  async function save(next: Partial<UserBrowserSettings>) {
   setSaving(true); setError("");
   try { await onUpdate(next); return true; }
@@ -49,7 +50,7 @@ export function NewTabPersonalization({ frequent, shortcuts, background, onUpdat
     <button type="button" onClick={() => { setAdding(true); panel.current!.open = false; }}>Add a shortcut<Icon name="plus" /></button>
    </div>
   </details>
-  <nav className="home-site-shortcuts" aria-label="Site shortcuts">
+  <nav className={`home-site-shortcuts${links.length === 0 ? " is-empty" : ""}`} aria-label="Site shortcuts">
    {links.map((link) => <div className="home-site-shortcut" key={link.url}>
     <button type="button" title={link.title + " · " + link.url} onClick={() => onNavigate(link.url)}>
      <span className="home-site-glyph">{link.faviconDataUrl ? <img src={link.faviconDataUrl} alt="" /> : link.title.slice(0, 1).toUpperCase()}</span>

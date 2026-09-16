@@ -787,3 +787,20 @@ Download centering is verified from both button and glyph bounding boxes.
 ## Persistent operations simplification
 
 Preserve the established native graphite material, type scale, compact sidebar widths and universe scene. Organize recurring work under Agent, account/resource access under Connections, and retained knowledge/people/time under Memory. Keep projects and chats in place. Use existing controls and contextual disclosure; avoid another dashboard, decorative cards, new fonts or motion libraries. State and feedback transitions reuse the existing reduced-motion-aware system. Primary pages lead with their task and show advanced details on demand. Verify routing, focus, scope isolation and visible canonical app behavior separately.
+
+## New Tab detail pass — September 2026
+
+- Thesis: one clear task entry, one representation of each destination, and readable local work lists over the person's chosen wallpaper. Retain platform typography, compact spacing, existing composer material, and user-owned widget layouts.
+- Evidence: installed New Tab repeated frequent sites in two places, clipped domain labels in an icon grid, and rendered text-heavy widgets over a busy image. Continue suggestions also created fresh tasks instead of restoring their source session.
+- Scope: exclude authentication handoffs from automatic recommendations; reopen the exact session; show automatic sites in the frequent widget when enabled and in shortcuts otherwise; retain pinned shortcuts.
+- Material and density: 16px widget corners and gaps, stable nearly opaque reading surfaces, 12px primary/11px metadata text, full-width site rows. No new motion or dependencies. Existing feedback and reduced-motion behavior remain authoritative.
+- Verification: focused routing/history/shortcut tests, desktop typecheck/build, fresh-profile New Tab smoke, and canonical installed UI review including keyboard focus and compact layout.
+- Why this is not generic: the hierarchy follows Kestrel's actual browser history, saved shortcuts, sessions, and customizable widgets; no decorative feature is added.
+
+### Verified delivery
+
+- 22 focused New Tab, shortcut, and widget tests passed; desktop TypeScript checks passed.
+- The development package was built and installed through `corepack pnpm install:mac:dev`; installed and packaged `app.asar` SHA-256 values matched.
+- Installed-executable smoke passed composer expansion, pasted attachments, persisted shortcuts, wallpaper selection, widget arrangement, reduced-motion compact overflow, and exact-session continuation without creating another task.
+- Two installed screenshot reviews exposed and corrected the conflicting glass material and CSS/layout column mismatch. Final canonical-window review confirmed readable surfaces, full-width site rows, wrapped task titles, and no duplicate automatic shortcuts.
+- Full repository verification and unrelated app flows were not run. Jules was unavailable because its API key was not configured.

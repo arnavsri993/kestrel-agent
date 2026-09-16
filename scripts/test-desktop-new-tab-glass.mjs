@@ -76,6 +76,21 @@ try {
  await page.emulateMedia({ reducedMotion: "reduce" });
  await page.screenshot({ animations: "disabled", path: join(evidence, "narrow.png") });
  assert.equal(await page.locator(".new-tab-page").evaluate((node) => node.scrollWidth > node.clientWidth + 1), false, "Home must not overflow horizontally");
+ await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows().find((win) => !win.webContents.getURL().includes("petOverlay")); win.setSize(1440, 1000); });
+ // Continuing a suggestion must reopen its source, never create a second task.
+ const title = "New Tab continuation verification";
+ await page.evaluate(async (title) => {
+  const response = await window.kestrel.request({ type: "runtime-create-session", title, kind: "conversation" });
+  if (!response.ok || !response.session) throw new Error("Could not create continuation fixture");
+ }, title);
+ await page.reload();
+ const continuation = page.locator(".kestrel-widget-action-list button").filter({ hasText: `Continue ${title}` });
+ await continuation.waitFor();
+ const before = await page.evaluate(async () => (await window.kestrel.request({ type: "runtime-list-sessions" })).sessions.map(item => item.id));
+ await continuation.click();
+ await page.locator(".kestrel-sidebar-list-item[aria-current='page']").filter({ hasText: title }).waitFor();
+ const after = await page.evaluate(async () => (await window.kestrel.request({ type: "runtime-list-sessions" })).sessions.map(item => item.id));
+ assert.deepEqual(after.sort(), before.sort(), "Continue must preserve session identity without creating a new task");
  assert.deepEqual(errors, []);
- console.log("New Tab glass smoke passed: expansion, paste, shortcuts, wallpaper, widgets, narrow layout.");
+ console.log("New Tab glass smoke passed: expansion, paste, shortcuts, wallpaper, widgets, narrow layout, exact-session continuation.");
 } catch (error) { const page = application ? await application.firstWindow() : null; await page?.screenshot({ animations: "disabled", path: join(evidence, "failure.png") }).catch(() => {}); throw error; } finally { await application?.close(); rmSync(root, { recursive: true, force: true }); }
