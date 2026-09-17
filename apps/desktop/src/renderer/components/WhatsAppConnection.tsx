@@ -27,12 +27,12 @@ export function WhatsAppConnection({ session }: { session?: RuntimeSession | und
  }
  return <section className="agent-resource-access" aria-label="WhatsApp connection">
   <h2>WhatsApp</h2><p>Browser connection · user-triggered reads only</p>
-  <button disabled={busy} onClick={() => void perform(async () => { const result = await window.kestrel.request({ type: "whatsapp-open" }); if (!result.ok) throw new Error(result.error); if ("whatsapp" in result) setInspection(result.whatsapp); })}>Open WhatsApp connection</button>
+  <button className="button secondary" disabled={busy} onClick={() => void perform(async () => { const result = await window.kestrel.request({ type: "whatsapp-open" }); if (!result.ok) throw new Error(result.error); if ("whatsapp" in result) setInspection(result.whatsapp); })}>Open WhatsApp connection</button>
   <details><summary>{sources.length ? `${sources.length} assigned conversation${sources.length === 1 ? "" : "s"}` : "Select a team conversation"}</summary>
    <p>Link your account in the dedicated window. Open the team group and Group info. Opening messages may mark them read. Kestrel checks the group and privacy settings before capturing up to 200 visible text messages.</p>
    <p>Capture currently supports recognized English controls. Protected, disappearing, or unrecognized content is not imported.</p>
    {!session || session.kind !== "agent" ? <p>Choose a parent agent in “Access for” to assign a conversation.</p> : <>
-    <button disabled={busy} onClick={() => void perform(async () => { const result = await window.kestrel.request({ type: "whatsapp-inspect" }); if (!result.ok) throw new Error(result.error); if ("whatsapp" in result) { setInspection(result.whatsapp); setConsent(false); } })}>Check selected group</button>
+    <button className="button secondary" disabled={busy} onClick={() => void perform(async () => { const result = await window.kestrel.request({ type: "whatsapp-inspect" }); if (!result.ok) throw new Error(result.error); if ("whatsapp" in result) { setInspection(result.whatsapp); setConsent(false); } })}>Check selected group</button>
     {inspection && <p role="status">{inspection.name ? `${inspection.name} · ` : ""}{inspection.state.replaceAll("_", " ")}{inspection.reason ? ` — ${inspection.reason}` : ""}</p>}
     {inspection?.state === "ready" && inspection.resourceId && <form onSubmit={event => { event.preventDefault(); void perform(async () => {
      const result = await window.kestrel.request({ type: "whatsapp-select", sessionId: session.id, resourceId: inspection.resourceId!, processingConsent: true, modelProcessingConsent: modelConsent, dateOrder, timezone });
@@ -47,13 +47,13 @@ export function WhatsAppConnection({ session }: { session?: RuntimeSession | und
     {sources.map(source => <article key={source.resourceId}>
      <h3>{source.label}</h3><p>{source.status.replaceAll("_", " ")} · {source.coverage} history{source.lastSyncedAt ? ` · last read ${new Date(source.lastSyncedAt).toLocaleString()}` : " · not yet read"}</p>
      {source.oldestObservedAt && <p>Observed range: {new Date(source.oldestObservedAt).toLocaleString()} – {source.newestObservedAt ? new Date(source.newestObservedAt).toLocaleString() : "unknown"}. This is not a full-history sync.</p>}
-     <button disabled={busy || source.status !== "ready"} onClick={() => void perform(async () => {
+     <button className="button secondary" disabled={busy || source.status !== "ready"} onClick={() => void perform(async () => {
       try { const result = await window.kestrel.request({ type: "whatsapp-sync", sessionId: session.id, resourceId: source.resourceId }) as CoreResponse; if (!result.ok) throw new Error(result.error); setNotice(`${result.sourceIngestion?.inserted ?? 0} new observations; ${result.sourceIngestion?.repeated ?? 0} already stored. Coverage is partial.`); }
       finally { await refresh(); }
      })}>Sync now</button>
-     <button disabled={busy} onClick={() => void perform(async () => { const result = await window.kestrel.request({ type: "source-select", selection: { ...source, status: source.status === "paused" ? "ready" : "paused", updatedAt: new Date().toISOString() } }); if (!result.ok) throw new Error(result.error); await refresh(); })}>{source.status === "paused" ? "Resume" : "Pause"}</button>
+     <button className="button secondary" disabled={busy} onClick={() => void perform(async () => { const result = await window.kestrel.request({ type: "source-select", selection: { ...source, status: source.status === "paused" ? "ready" : "paused", updatedAt: new Date().toISOString() } }); if (!result.ok) throw new Error(result.error); await refresh(); })}>{source.status === "paused" ? "Resume" : "Pause"}</button>
      <details><summary>Disconnect this source</summary><p>Stops synchronization and model retrieval. Imported observations remain available for you to inspect in Memory. The linked browser session stays on this computer.</p>
-      <button disabled={busy} onClick={() => void perform(async () => { const result = await window.kestrel.request({ type: "source-select", selection: { ...source, status: "disconnected", updatedAt: new Date().toISOString() } }); if (!result.ok) throw new Error(result.error); await refresh(); })}>Disconnect source</button>
+      <button className="button secondary" disabled={busy} onClick={() => void perform(async () => { const result = await window.kestrel.request({ type: "source-select", selection: { ...source, status: "disconnected", updatedAt: new Date().toISOString() } }); if (!result.ok) throw new Error(result.error); await refresh(); })}>Disconnect source</button>
      </details>
     </article>)}
    </>}

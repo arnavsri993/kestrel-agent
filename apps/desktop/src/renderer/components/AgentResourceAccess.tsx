@@ -42,12 +42,12 @@ export function AgentResourceAccess({ session, googleEmail }: { session: Runtime
   {loaded && <>
    <ul>{grants.map((grant, index) => <li key={`${grant.connectionId}:${grant.resourceId}:${grant.capability}`}>
     <span>{grant.resourceId} · {grant.capability}<small>{grant.connectionId}</small></span>
-    <button disabled={busy} onClick={() => void save(grants.filter((_, position) => position !== index))}>Revoke</button>
+    <button className="button secondary" disabled={busy} onClick={() => void save(grants.filter((_, position) => position !== index))}>Revoke</button>
    </li>)}</ul>
    {!grants.length && <p>No connected resources assigned.</p>}
    {session.parentSessionId ? <details><summary>Assign from parent</summary>
     {parentGrants.filter(item => !grants.some(grant => same(grant, item))).map(item => <p key={`${item.connectionId}:${item.resourceId}:${item.capability}`}>
-     {item.resourceId} · {item.capability} <button disabled={busy} onClick={() => void save([...grants, item])}>Assign</button>
+     {item.resourceId} · {item.capability} <button className="button secondary" disabled={busy} onClick={() => void save([...grants, item])}>Assign</button>
     </p>)}
     {!parentGrants.length && <p>Assign a resource to the parent agent first.</p>}
    </details> : googleEmail ? <details><summary>Assign a Google resource</summary>
@@ -61,7 +61,7 @@ export function AgentResourceAccess({ session, googleEmail }: { session: Runtime
      </select></label>
      {kind !== "calendar" && <label>{kind === "thread" ? "Gmail thread ID" : "Recipient email"}<input required type={kind === "recipient" ? "email" : "text"} pattern={kind === "thread" ? "[a-zA-Z0-9_-]{1,200}" : undefined} maxLength={kind === "thread" ? 200 : 300} value={value} onChange={event => setValue(event.target.value)} /></label>}
      <p>{kind === "thread" ? "Use an explicit thread ID. This does not grant mailbox search or attachment access." : kind === "calendar" ? "Allows reading events on your primary calendar. It does not publish events." : "Allows creating drafts to this recipient after the normal approval check. It does not grant mailbox reads or sending."}</p>
-     <button disabled={busy} type="submit">Assign resource</button>
+     <button className="button secondary" disabled={busy} type="submit">Assign resource</button>
     </form>
    </details> : <p>Connect Google Workspace below to assign a supported resource.</p>}
   </>}

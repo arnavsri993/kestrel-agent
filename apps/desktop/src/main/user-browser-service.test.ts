@@ -3676,8 +3676,20 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     service.findInPage(first.id, "kestrel");
     expect(contents.findInPage).toHaveBeenCalledWith("kestrel", {
       forward: true,
+      findNext: true,
+    });
+    service.findInPage(first.id, "kestrel", { findNext: true });
+    expect(contents.findInPage).toHaveBeenLastCalledWith("kestrel", {
+      forward: true,
       findNext: false,
     });
+    service.findInPage(first.id, "kestrel", { findNext: true, forward: false });
+    expect(contents.findInPage).toHaveBeenLastCalledWith("kestrel", {
+      forward: false,
+      findNext: false,
+    });
+    service.findInPage(first.id, "");
+    expect(contents.stopFindInPage).toHaveBeenCalledWith("clearSelection");
     service.openDevTools(first.id);
     expect(contents.openDevTools).toHaveBeenCalled();
     service.printTab(first.id);

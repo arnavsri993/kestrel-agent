@@ -3005,7 +3005,8 @@ export class UserBrowserService {
 		}
 		liveWebContents(record?.view?.webContents)?.findInPage(text, {
 			forward: options.forward ?? true,
-			findNext: Boolean(options.findNext),
+			// Electron uses true to start a search and false to advance it.
+			findNext: !options.findNext,
 		});
 		return this.getState();
 	}

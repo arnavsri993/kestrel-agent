@@ -7,7 +7,7 @@
  -webkit-backdrop-filter: blur(2px) saturate(125%);
  backdrop-filter: url("#kestrel-glass-refraction") saturate(125%);
  border: 1px solid rgb(255 255 255 / 32%);
- box-shadow: inset 0 1px 0 rgb(255 255 255 / 40%), inset 0 -1px 0 rgb(255 255 255 / 13%), 0 8px 26px rgb(0 0 0 / 15%);
+ box-shadow: 0 8px 26px rgb(0 0 0 / 15%);
 }
 .kestrel-home .kestrel-home-composer textarea::placeholder { color: rgb(255 255 255 / 78%); }
 .kestrel-home .kestrel-home-composer.is-expanded { background-color: rgb(17 22 29 / 38%); }

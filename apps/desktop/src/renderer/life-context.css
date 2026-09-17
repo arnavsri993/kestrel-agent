@@ -493,12 +493,15 @@
 
 .life-switcher {
 	display: flex;
+	overflow-x: auto;
 	min-width: 0;
 	border-bottom: 1px solid var(--line);
 }
 
 .life-switcher button {
 	display: flex;
+	flex-shrink: 0;
+	white-space: nowrap;
 	align-items: center;
 	gap: 8px;
 	min-height: 40px;
@@ -1762,3 +1765,45 @@
 .agent-resource-access small { display: block; opacity: .7; }
 .agent-resource-access form { display: grid; gap: 12px; margin-top: 12px; }
 .agent-resource-access label { display: grid; gap: 6px; }
+
+/* Scope and source forms share a real block flow, including their empty state. */
+.source-memory-view, .scoped-life-view { display: grid; gap: 16px; min-width: 0; }
+.source-memory-field { display: grid; gap: 8px; max-width: 600px; min-width: 0; color: var(--ink-secondary); font-size: 13px; }
+.source-memory-field select,
+.memory-scope-selector select,
+.scoped-memory-search input { width: 100%; min-width: 0; }
+.scoped-agent-memory .page-header h1 { overflow-wrap: anywhere; }
+.scoped-agent-memory p { margin: 0; overflow-wrap: anywhere; }
+
+.agent-resource-access {
+ display: grid;
+ gap: 12px;
+ min-width: 0;
+ padding-block: 20px;
+ border-bottom: 1px solid var(--line);
+}
+.agent-resource-access > :is(h2, p, ul) { margin: 0; }
+.agent-resource-access h2 { font: 620 16px/22px var(--sans); overflow-wrap: anywhere; }
+.agent-resource-access p { color: var(--ink-secondary); line-height: 1.5; overflow-wrap: anywhere; }
+.agent-resource-access details > :not(summary) { margin-top: 12px; }
+.agent-resource-access summary, .scoped-agent-memory summary { cursor: pointer; line-height: 1.5; }
+.agent-resource-access summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.agent-resource-access .button, .scoped-agent-memory .button { justify-self: start; }
+.agent-resource-access label:has(> input[type="checkbox"]),
+.scoped-agent-memory form label:has(> input[type="checkbox"]) {
+ display: flex;
+ align-items: flex-start;
+ gap: 8px;
+ line-height: 1.5;
+}
+.agent-resource-access input[type="checkbox"], .scoped-agent-memory input[type="checkbox"] { flex: 0 0 auto; margin: 3px 0 0; }
+:is(.agent-resource-access, .scoped-agent-memory, .memory-scope-selector) :is(input:not([type="checkbox"]), select, textarea) {
+ min-width: 0;
+ max-width: 100%;
+ border: 1px solid var(--line-strong);
+ padding: 8px 10px;
+}
+
+.scoped-life-view > label { display: grid; gap: 8px; max-width: 320px; }
+
+:is(.agent-resource-access, .scoped-agent-memory, .memory-scope-selector) select { padding-right: 32px; }

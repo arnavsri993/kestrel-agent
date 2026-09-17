@@ -41,7 +41,7 @@ export function ScopedAgentMemory({ sessionId }: { sessionId: string }) {
 		<nav className="life-switcher" aria-label="Agent memory views">
 			{(["knowledge", "work", "sources", "people", "calendar"] as const).map(id => <button type="button" key={id} className={view === id ? "active" : ""} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{id === "knowledge" ? "Knowledge" : id === "sources" ? "Sources" : id === "people" ? "People" : id === "calendar" ? "Calendar" : "Work history"}</button>)}
 		</nav>
-		{error && <p role="alert">{error} <button onClick={() => setRevision(value => value + 1)}>Retry</button></p>}
+		{error && <p role="alert">{error} <button className="button secondary" onClick={() => setRevision(value => value + 1)}>Retry</button></p>}
 		{!data && !error && <p role="status">Loading this agent’s memory…</p>}
 		{(view === "people" || view === "calendar") && <ScopedLifeView key={`${sessionId}:${view}`} sessionId={sessionId} view={view} />}
 		{view === "sources" && <SourceMemoryView key={sessionId} sessionId={sessionId} onQueued={() => setRevision(value => value + 1)} />}
@@ -54,11 +54,11 @@ export function ScopedAgentMemory({ sessionId }: { sessionId: string }) {
 				<details><summary>Source references</summary><ul>{item.sourceIds.map(id => <li key={id}>{id}</li>)}</ul></details>
 				<form onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); void correct(item.id, String(form.get("content") ?? "")); }}>
 					<label>Correct this memory<textarea name="content" defaultValue={item.content} required maxLength={100000} /></label>
-					<button type="submit">Save correction</button>
+					<button className="button secondary" type="submit">Save correction</button>
 				</form>
 			</details>)}
 			{!data.memories.some(item => matches(item.content)) && <p>No matching memories on this page.</p>}
-			<div><button disabled={memoryOffset === 0} onClick={() => setMemoryOffset(Math.max(0, memoryOffset - 200))}>Previous memories</button><span> Page {Math.floor(memoryOffset / 200) + 1} </span><button disabled={data.memoryNextOffset === undefined} onClick={() => setMemoryOffset(data.memoryNextOffset!)}>Next memories</button></div>
+			<div><button className="button secondary" disabled={memoryOffset === 0} onClick={() => setMemoryOffset(Math.max(0, memoryOffset - 200))}>Previous memories</button><span> Page {Math.floor(memoryOffset / 200) + 1} </span><button className="button secondary" disabled={data.memoryNextOffset === undefined} onClick={() => setMemoryOffset(data.memoryNextOffset!)}>Next memories</button></div>
 		</>}
 		{data && view === "work" && <>
 			<label><input type="checkbox" checked={includeSpecialists} onChange={event => { setIncludeSpecialists(event.target.checked); setTaskOffset(0); }} />Include specialist work</label>
@@ -71,7 +71,7 @@ export function ScopedAgentMemory({ sessionId }: { sessionId: string }) {
 				<ul>{item.evidence.map((evidence, index) => <li key={index}>{evidence.label ?? evidence.type}: {evidence.id}</li>)}</ul>
 			</details>)}
 			{!data.tasks.some(item => matches(item.goal)) && <p>No matching work on this page.</p>}
-			<div><button disabled={taskOffset === 0} onClick={() => setTaskOffset(Math.max(0, taskOffset - 100))}>Previous work</button><span> Page {Math.floor(taskOffset / 100) + 1} </span><button disabled={data.taskNextOffset === undefined} onClick={() => setTaskOffset(data.taskNextOffset!)}>Next work</button></div>
+			<div><button className="button secondary" disabled={taskOffset === 0} onClick={() => setTaskOffset(Math.max(0, taskOffset - 100))}>Previous work</button><span> Page {Math.floor(taskOffset / 100) + 1} </span><button className="button secondary" disabled={data.taskNextOffset === undefined} onClick={() => setTaskOffset(data.taskNextOffset!)}>Next work</button></div>
 		</>}
 	</section>;
 }

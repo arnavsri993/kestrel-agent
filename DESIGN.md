@@ -1,3 +1,24 @@
+# System UI consistency audit — September 16, 2026
+
+Existing React/Electron product audit, across browser chrome, New Tab, sidebar,
+Memory, Connections, Agent, settings, libraries, work and utility destinations.
+Thesis: one compact graphite work environment with predictable control geometry,
+readable content, even surface boundaries and no collisions between controls.
+Keep system typography, the 4px spacing rhythm, existing colors and restrained
+state/feedback motion. No new dependencies, decorative animation or marketing UI.
+
+- Find belongs below the toolbar, aligned to the content plane, with space
+  reserved in the native page bounds. Test horizontal and vertical tabs.
+- Center the compact composer line box vertically; retain expandable editing.
+- Sidebar titles fade at the trailing edge without ellipses; retain full labels.
+- Widgets have a single even border, without an extra top highlight.
+- Field labels, inputs and navigation occupy separate layout rows; empty source
+  selectors explain their state. Long titles and narrow pages must reflow.
+- Audit with synthetic fixtures at 1440 and 760 pixels, plus 200% zoom and reduced
+  motion. Log observed defects, corrections, tested surfaces and remaining limits.
+- Why this is not generic: corrections preserve Kestrel's browser/content split,
+  native page layering and real scoped work, rather than replacing its interface.
+
 ## Model and reasoning picker — September 15, 2026
 
 Component refinement: explicit clicks choose the provider, account, and model.

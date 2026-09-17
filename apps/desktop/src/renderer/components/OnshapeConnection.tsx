@@ -18,7 +18,7 @@ export function OnshapeConnection({ session }: { session?: RuntimeSession | unde
    }); }}>
     <label>Access key<input name="access" type="password" required minLength={8} autoComplete="off" /></label>
     <label>Secret key<input name="secret" type="password" required minLength={8} autoComplete="off" /></label>
-    <button disabled={busy}>Save protected keys</button>
+    <button className="button secondary" disabled={busy}>Save protected keys</button>
    </form>
   </details>
   {configured && session?.kind === "agent" && <form onSubmit={event => { event.preventDefault(); void action(async () => {
@@ -31,7 +31,7 @@ export function OnshapeConnection({ session }: { session?: RuntimeSession | unde
   }); }}>
    <label>Document URL<input type="url" required value={documentUrl} onChange={event => { setDocumentUrl(event.target.value); setResult(""); }} /></label>
    <p>Assigns read access to this document workspace or version for {session.title}. Revoke it under agent access. An element URL grants the containing document context.</p>
-   <button disabled={busy}>Assign and inspect document</button>
+   <button className="button secondary" disabled={busy}>Assign and inspect document</button>
   </form>}
   {!session && <p>Select an agent to assign a document.</p>}
   {result && <p role="status">{result}</p>}

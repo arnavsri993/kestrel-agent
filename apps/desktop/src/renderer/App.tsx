@@ -11332,7 +11332,7 @@ export function App() {
 						if (tabId) void browser.navigate(tabId, kestrelAppPageUrl("memory", event.target.value || undefined));
 					}}>
 						<option value="">Personal</option>
-						{runtimeSessions.filter(session => session.kind === "agent" || session.specialistDefinition).map(session =>
+						{runtimeSessions.filter(session => session.kind === "agent" || session.specialistDefinition || session.id === currentAppPage?.scopeSessionId).map(session =>
 							<option key={session.id} value={session.id}>{session.parentSessionId ? "↳ " : ""}{session.title}</option>)}
 					</select>
 				</label>
