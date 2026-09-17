@@ -11293,6 +11293,8 @@ export function App() {
 			)}
 			{appPageId === "projects" && (
 				<ProjectsWorkspace
+					onOpenProject={openProject}
+					onShowAllProjects={() => selectProject(null)}
 					projects={projects}
 					projectAppearances={projectAppearances}
 					sessions={runtimeSessions}
@@ -11408,6 +11410,7 @@ export function App() {
 			onNewTask={() => startNewAgent()}
 			onOpenBrowser={openBrowser}
 			onOpenAgent={openAgent}
+			onOpenProjects={() => { selectProject(null); navigate("projects"); }}
 			onOpenConnections={() => navigate("connections")}
 			onOpenMemory={() => {
 				const session = runtimeSessions.find(item => item.id === activeRuntimeSessionId);
