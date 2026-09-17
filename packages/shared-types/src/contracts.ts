@@ -4755,6 +4755,11 @@ export const RendererRequestSchema = z.union([
 		transferToken: z.string().uuid().optional(),
 	}),
 	z.object({
+		type: z.literal("browser-open-find"),
+		bounds: z.object({ x: z.number().int().min(0).max(20_000), y: z.number().int().min(0).max(20_000), width: z.number().int().min(0).max(20_000), height: z.number().int().min(0).max(20_000) }),
+	}),
+	z.object({ type: z.literal("browser-close-find") }),
+	z.object({
 		type: z.literal("browser-find-in-page"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 		query: z.string().max(2_000),

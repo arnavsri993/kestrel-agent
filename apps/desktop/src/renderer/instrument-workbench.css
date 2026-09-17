@@ -1684,14 +1684,3 @@
  .unified-ui .browser-library .library-search { width: min(360px, 100%); }
  .unified-ui .browser-library .ui-page-frame-actions > button { white-space: nowrap; }
 }
-
-/* The compact Find row is shorter than ordinary settings fields. */
-.unified-ui #browser-find-input {
- min-height: 28px;
- height: 28px;
-}
-.unified-ui #browser-find-input:focus {
- outline: 2px solid var(--focus);
- outline-offset: 1px;
- box-shadow: none;
-}

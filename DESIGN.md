@@ -7,8 +7,10 @@ readable content, even surface boundaries and no collisions between controls.
 Keep system typography, the 4px spacing rhythm, existing colors and restrained
 state/feedback motion. No new dependencies, decorative animation or marketing UI.
 
-- Find belongs below the toolbar, aligned to the content plane, with space
-  reserved in the native page bounds. Test horizontal and vertical tabs.
+- Find is a compact upper-right popover (maximum 360 by 48px), not a row.
+  Use a real native child overlay so the live page never moves, resizes or
+  becomes a screenshot. Keep one input, count, previous/next and close.
+  Test horizontal/vertical tabs, keyboard control and narrow windows.
 - Center the compact composer line box vertically; retain expandable editing.
 - Sidebar titles fade at the trailing edge without ellipses; retain full labels.
 - Widgets have a single even border, without an extra top highlight.

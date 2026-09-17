@@ -321,13 +321,7 @@
 	);
 }
 
-.browser-workspace .browser-find-bar {
-	position: absolute;
-	top: var(--browser-chrome-height);
-	left: var(--kestrel-sidebar-space);
-	right: var(--agent-panel-width);
-	z-index: 9;
-}
+
 
 .kestrel-sidebar-header {
 	display: flex;
@@ -1367,16 +1361,4 @@
   display: flex; flex-direction: column; gap: 4px; width: 32px;
  }
  .kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-icon-button { border-radius: 50%; }
-}
-
-/* Find reserves content space: native WebContentsViews cannot be covered by
-   renderer z-index. The measured viewport must begin below the find controls. */
-.browser-workspace-find-open:not(.browser-workspace-vertical) .browser-viewport {
- margin-top: 40px;
-}
-.browser-workspace-vertical .browser-find-bar {
- left: calc(var(--kestrel-sidebar-space) + var(--browser-tab-rail-width));
-}
-.browser-workspace-vertical.browser-workspace-find-open .browser-viewport {
- top: calc(var(--browser-chrome-height) + 40px);
 }

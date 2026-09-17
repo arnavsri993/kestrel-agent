@@ -75,3 +75,32 @@ not published because automatic greetings may contain local identity. Screenshot
 cover representative empty/default states, not every provider, dataset or error.
 The audit does not certify all possible product states or live external accounts.
 Jules was checked and is unavailable because its API key is not configured.
+
+
+## Find design correction — compact popover
+
+The first fix incorrectly used a full-width row and reserved 40px above the
+page. That solved the overlap but was the wrong interaction design. It is
+superseded by a 360×48px maximum upper-right floating control, with an integrated
+input, match count, up/down arrows and close. No extra page-wide surface or
+page reflow. A native child window keeps the real web page visible and interactive;
+renderer z-index or a frozen preview is insufficient for this task.
+
+Comparison: [Chrome documents a dedicated search window](https://support.google.com/chrome/answer/95440?co=GENIE.Platform%3DDesktop&hl=en),
+[VS Code uses a Find widget](https://code.visualstudio.com/docs/editing/codebasics#_find-and-replace),
+and [Firefox uses a bottom Find bar](https://support.mozilla.org/en-US/kb/search-contents-current-page-text-or-links).
+There is no universal layout, but the user's supplied compact floating reference
+is the target here. The previous Kestrel row unnecessarily consumed the page width.
+
+Source checks verify unchanged renderer and native bounds, a visible native page,
+initial/next/previous matches, no-results feedback, Escape/close, tab-switch cleanup,
+compact placement and denial of unrelated IPC from the Find renderer. The overlay
+is bound to its owner's active tab; navigation and tab changes close it.
+
+Final popover verification: desktop typecheck, 118 browser-service tests, source
+and installed focused UI checks, and packaged desktop smoke passed. Repeated
+Cmd+F selects the current query; unrelated and cross-tab IPC requests are rejected.
+The canonical app was checked with its existing profile: Cmd+F opened the child
+popover over a live web page, the count advanced from 1/2 to 2/2, and Escape
+returned to that page. Installed and packaged app.asar SHA-256 matched:
+`d5dca8bec7cadbaac14a989fe8804cd1ce2612ecbc5668e8c3ed278f3391e6bc`.

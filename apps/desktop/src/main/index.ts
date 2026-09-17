@@ -1,3 +1,9 @@
+import {
+  findPopoverForSender,
+  openFindPopover,
+  forwardFindPopoverEvent,
+  updateFindPopoverAnchor,
+} from "./find-popover";
 import { normalizeWhatsAppTimestamp } from "./whatsapp-source";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -1895,6 +1901,7 @@ function createMainWindow(): BrowserWindow {
           onEvent: (event) => {
             if (!window.isDestroyed())
               window.webContents.send("kestrel:browser-event", event);
+            forwardFindPopoverEvent(window, event);
           },
           onPasswordPrompt: (prompt) => updatePasswordOverlay(window, prompt),
           onPaymentPrompt: (prompt) => updatePaymentOverlay(window, prompt),
@@ -2073,6 +2080,7 @@ function createDetachedBrowserWindow(
     onEvent: (event) => {
       if (!window.isDestroyed())
         window.webContents.send("kestrel:browser-event", event);
+      forwardFindPopoverEvent(window, event);
     },
     onPasswordPrompt: (prompt) => updatePasswordOverlay(window, prompt),
     onPaymentPrompt: (prompt) => updatePaymentOverlay(window, prompt),
@@ -2692,6 +2700,7 @@ function registerIpc(): void {
 
 	ipcMain.handle("kestrel:request", async (event, raw) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    const findPopover = senderWindow ? findPopoverForSender(senderWindow) : undefined;
     const isCalculatorOverlayWindow = Boolean(
       senderWindow && calculatorOverlayWindows.has(senderWindow),
     );
@@ -2707,6 +2716,7 @@ function registerIpc(): void {
       !senderWindow ||
       (!browserWindowServices.has(senderWindow) &&
         !isCalculatorOverlayWindow &&
+        !findPopover &&
         !isPasswordOverlayWindow &&
         !isPaymentOverlayWindow &&
         senderWindow !== petOverlayWindow) ||
@@ -2718,6 +2728,14 @@ function registerIpc(): void {
     )
       throw new Error("Kestrel rejected a request from an untrusted renderer.");
     const request = RendererRequestSchema.parse(raw);
+    if (findPopover) {
+      if (request.type === "browser-close-find") { senderWindow.close(); return { ok: true }; }
+      if (request.type !== "browser-find-in-page" || request.tabId !== findPopover.tabId || findPopover.service.getState().activeTabId !== findPopover.tabId)
+        throw new Error("Find popovers can only search their bound active tab or close themselves.");
+      findPopover.service.findInPage(findPopover.tabId, request.query, { findNext: request.findNext ?? false, forward: request.forward ?? true });
+      return { ok: true };
+    }
+
     if (
       isCalculatorOverlayWindow &&
       request.type !== "browser-close-calculator"
@@ -3171,6 +3189,7 @@ function registerIpc(): void {
       );
       if (request.bounds.width > 0 && request.bounds.height > 0)
         updateCalculatorOverlayAnchor(senderWindow, request.bounds);
+      updateFindPopoverAnchor(senderWindow, request.bounds);
       return {
         ok: true,
         ...(browserPagePreview ? { browserPagePreview } : {}),
@@ -3547,6 +3566,14 @@ function registerIpc(): void {
             : sourceService.getState(),
         browserWindowRole: senderWindow === mainWindow ? "main" : "detached",
       };
+    }
+    if (request.type === "browser-open-find") {
+      if (!requestBrowserService) throw new Error("The visible user browser is unavailable.");
+      openFindPopover({ owner: senderWindow, service: requestBrowserService, anchor: request.bounds,
+        preload: join(__dirname, "../preload/index.cjs"), renderer: RENDERER_ENTRY_PATH,
+        ...(DEVELOPMENT_RENDERER_URL ? { developmentUrl: DEVELOPMENT_RENDERER_URL } : {}),
+        protect: contents => protectRendererNavigation(contents, trustedRendererUrl) });
+      return { ok: true };
     }
     if (request.type === "browser-find-in-page") {
       if (!requestBrowserService)

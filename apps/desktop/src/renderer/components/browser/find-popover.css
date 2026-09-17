@@ -1,0 +1,76 @@
+.find-popover {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	height: 48px;
+	margin: 0;
+	padding: 6px 8px 6px 14px;
+	box-sizing: border-box;
+	background: #252628;
+	border: 1px solid #45464a;
+	border-radius: 12px;
+	color: #ececee;
+	font: 13px/20px var(--sans);
+}
+.find-popover input {
+	flex: 1;
+	min-width: 0;
+	width: 100%;
+	height: 32px;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+}
+.find-popover input:focus,
+.find-popover input:focus-visible {
+	outline: none;
+	box-shadow: none;
+}
+.find-popover:focus-within {
+	border-color: #777980;
+}
+.find-popover output {
+	flex: 0 0 auto;
+	color: #a6a7ae;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+.find-popover output.is-empty {
+	color: #f0a6a6;
+}
+.find-popover-actions {
+	display: flex;
+	flex: 0 0 auto;
+	gap: 2px;
+	padding-left: 6px;
+	border-left: 1px solid #45464a;
+}
+.find-popover button {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+}
+.find-popover button:hover:not(:disabled) {
+	background: #3b3c40;
+}
+.find-popover button:disabled {
+	opacity: 0.35;
+}
+.find-popover button:focus-visible {
+	outline: 2px solid #c9cad0;
+	outline-offset: -2px;
+}
+.find-popover button svg {
+	width: 15px;
+	height: 15px;
+}

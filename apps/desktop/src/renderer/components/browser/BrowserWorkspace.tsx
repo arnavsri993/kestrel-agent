@@ -112,10 +112,6 @@ export function BrowserWorkspace({
   const reducedMotion = useReducedMotion() ?? false;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
-  const findRef = useRef<HTMLInputElement | null>(null);
-  const findTabIdRef = useRef<string | null>(null);
-  const [findOpen, setFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState("");
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [openChromeMenus, setOpenChromeMenus] = useState({
     tab: false,
@@ -174,8 +170,6 @@ export function BrowserWorkspace({
     muteTab,
     duplicateTab,
     closeOtherTabs,
-    findInPage,
-    stopFindInPage,
     printTab,
     openDevTools,
     saveScreenshot,
@@ -407,33 +401,13 @@ export function BrowserWorkspace({
   );
 
   const openFind = useCallback(() => {
-    findTabIdRef.current = activeTab?.id ?? null;
-    setFindOpen(true);
-    window.requestAnimationFrame(() => {
-      findRef.current?.focus();
-      findRef.current?.select();
-    });
-  }, [activeTab?.id]);
-
-  const closeFind = useCallback(() => {
-    setFindOpen(false);
-    setFindQuery("");
-    const searchedTabId = findTabIdRef.current ?? activeTab?.id;
-    findTabIdRef.current = null;
-    if (searchedTabId) void stopFindInPage(searchedTabId);
-    // The native page cannot reliably receive renderer focus, so return to the
-    // nearest stable browser control instead of leaving focus in an exiting row.
-    window.requestAnimationFrame(() => addressRef.current?.focus());
-  }, [activeTab, stopFindInPage]);
-
-  useEffect(() => {
-    const searchedTabId = findTabIdRef.current;
-    if (!findOpen || !searchedTabId || searchedTabId === activeTab?.id) return;
-    setFindOpen(false);
-    setFindQuery("");
-    findTabIdRef.current = null;
-    void stopFindInPage(searchedTabId);
-  }, [activeTab?.id, findOpen, stopFindInPage]);
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    void window.kestrel.request({ type: "browser-open-find", bounds: {
+      x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)),
+      width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)),
+    }});
+  }, []);
 
   const handleTabMenuOpenChange = useCallback((open: boolean) => {
     setOpenChromeMenus((current) =>
@@ -610,11 +584,6 @@ export function BrowserWorkspace({
 			'[aria-modal="true"], .model-selector-menu, [role="menu"], .browser-address-suggestions',
 		);
 		if (foregroundOverlay) return;
-        if (findOpen) {
-          event.preventDefault();
-          closeFind();
-          return;
-        }
         if (activeTab?.loading) {
           event.preventDefault();
           void stop(activeTab.id);
@@ -793,7 +762,6 @@ export function BrowserWorkspace({
     back,
     browser,
     closeTab,
-    closeFind,
     createTab,
     forward,
     onNewAgent,
@@ -812,8 +780,6 @@ export function BrowserWorkspace({
     selectTab,
     state,
     stop,
-    stopFindInPage,
-    findOpen,
     bookmarkDialogPresent,
     toggleBookmarkFromChrome,
     zoomIn,
@@ -858,7 +824,7 @@ export function BrowserWorkspace({
     <main
       className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
         showBookmarksBar ? " browser-workspace-bookmarks" : ""
-      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}${findOpen ? " browser-workspace-find-open" : ""}`}
+      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}`}
       aria-label="Browser"
     >
       {navigationSidebar}
@@ -1021,74 +987,7 @@ export function BrowserWorkspace({
 			}
         />
       )}
-      <AnimatePresence initial={false}>
-      {findOpen && (
-        <motion.form
-          key="browser-find-bar"
-          className="browser-find-bar"
-          initial={
-            reducedMotion
-              ? false
-              : { height: 0, opacity: 0, y: -4, pointerEvents: "none" }
-          }
-          animate={{ height: 40, opacity: 1, y: 0, pointerEvents: "auto" }}
-          exit={
-            reducedMotion
-              ? { height: 0, opacity: 1, y: 0, pointerEvents: "none" }
-              : { height: 0, opacity: 0, y: -4, pointerEvents: "none" }
-          }
-          transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (activeTab?.url)
-              void findInPage(activeTab.id, findQuery, { findNext: true });
-          }}
-        >
-          <label className="sr-only" htmlFor="browser-find-input">
-            Find in page
-          </label>
-          <input
-            id="browser-find-input"
-            ref={findRef}
-            value={findQuery}
-            placeholder="Find in page"
-            onChange={(event) => {
-              const value = event.target.value;
-              setFindQuery(value);
-              if (activeTab?.url) void findInPage(activeTab.id, value);
-            }}
-          />
-          <span>
-            {browser.findMatch && findQuery
-              ? `${browser.findMatch.activeMatchOrdinal} of ${browser.findMatch.matches}`
-              : "Find"}
-          </span>
-          <button
-            type="button"
-            aria-label="Previous match"
-            onClick={() =>
-              activeTab?.url &&
-              void findInPage(activeTab.id, findQuery, {
-                findNext: true,
-                forward: false,
-              })
-            }
-          >
-            <Icon name="back" />
-          </button>
-          <button type="submit" aria-label="Next match">
-            <Icon name="forward" />
-          </button>
-          <button
-            type="button"
-            aria-label="Close find"
-            onClick={closeFind}
-          >
-            <Icon name="close" />
-          </button>
-        </motion.form>
-      )}
-      </AnimatePresence>
+
 			<AnimatePresence initial={false}>
 				{browser.error && (
           <motion.p

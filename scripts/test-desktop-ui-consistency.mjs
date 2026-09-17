@@ -62,7 +62,7 @@ try {
 		await app.evaluate(
 			({ BrowserWindow }, { width, height }) => {
 				const w = BrowserWindow.getAllWindows().find(
-					(w) => !w.webContents.getURL().includes("petOverlay"),
+					(w) => !/[?&](petOverlay|findPopover)=/.test(w.webContents.getURL()),
 				);
 				w.setMinimumSize(400, 400);
 				w.setSize(width, height);
@@ -244,66 +244,56 @@ try {
 		),
 		"Widgets need a single even rim",
 	);
+	async function openPopover() {
+		const popupPromise = app.waitForEvent("window");
+		await app.evaluate(({ BrowserWindow }) =>
+			BrowserWindow.getAllWindows()
+				.find(
+					(w) => !/[?&](petOverlay|findPopover)=/.test(w.webContents.getURL()),
+				)
+				.webContents.send("kestrel:browser-command", "find-in-page"),
+		);
+		const popup = await popupPromise;
+		await popup
+			.getByRole("textbox", { name: "Find in page", exact: true })
+			.waitFor();
+		return popup;
+	}
 	for (const tabLayout of ["horizontal", "vertical"]) {
 		await page.evaluate(async (tabLayout) => {
 			const s = await window.kestrel.request({ type: "browser-get-state" });
-			const r = await window.kestrel.request({
+			await window.kestrel.request({
 				type: "browser-update-settings",
 				settings: { ...s.browserState.settings, tabLayout },
 			});
-			if (!r.ok) throw new Error(r.error);
 		}, tabLayout);
-		await page.locator("#new-tab-title").click();
-		await page.keyboard.press("Meta+f");
-		await page.locator("#browser-find-input").waitFor();
-		await page.waitForTimeout(100);
-		const fieldStyle = await page
-			.locator("#browser-find-input")
-			.evaluate((n) => {
-				const s = getComputedStyle(n);
-				return {
-					height: s.height,
-					minHeight: s.minHeight,
-					shadow: s.boxShadow,
-				};
-			});
-		assert.equal(fieldStyle.height, "28px");
-		assert.equal(fieldStyle.minHeight, "28px");
-		assert.equal(
-			fieldStyle.shadow,
-			"none",
-			"Find uses a single outline, not stacked focus rings",
+		await page.waitForTimeout(350);
+		const before = await page.locator(".browser-viewport").boundingBox();
+		const popup = await openPopover();
+		assert.deepEqual(
+			await page.locator(".browser-viewport").boundingBox(),
+			before,
+			"Find must not move or resize page content",
 		);
-		const geometry = await page.evaluate(() => {
-			const f = document
-					.querySelector(".browser-find-bar")
-					.getBoundingClientRect(),
-				v = document.querySelector(".browser-viewport").getBoundingClientRect(),
-				t = document.querySelector(".browser-toolbar").getBoundingClientRect();
+		const bounds = await app.evaluate(({ BrowserWindow }) => {
+			const w = BrowserWindow.getAllWindows().find((w) =>
+				w.webContents.getURL().includes("findPopover=1"),
+			);
 			return {
-				find: { x: f.x, y: f.y, right: f.right, bottom: f.bottom },
-				viewport: { x: v.x, y: v.y, right: v.right },
-				toolbarBottom: t.bottom,
+				bounds: w.getBounds(),
+				parent: w.getParentWindow()?.getContentBounds(),
 			};
 		});
-		assert(
-			geometry.find.y >= geometry.toolbarBottom,
-			`${tabLayout}: Find must be below toolbar`,
-		);
-		assert(
-			geometry.viewport.y >= geometry.find.bottom - 1,
-			`${tabLayout}: native viewport must clear Find`,
-		);
-		assert(
-			Math.abs(geometry.find.x - geometry.viewport.x) < 1,
-			`${tabLayout}: Find must align with content`,
-		);
-		await page.getByLabel("Find in page", { exact: true }).fill("fixture");
-		await capture(`find-${tabLayout}`);
-		await page.keyboard.press("Escape");
-		await page.locator(".browser-find-bar").waitFor({ state: "detached" });
-		await page.keyboard.press("Escape");
-		report.checks.push({ tabLayout, geometry });
+		assert(bounds.bounds.width <= 360 && bounds.bounds.height === 48);
+		assert(bounds.bounds.y >= bounds.parent.y + before.y);
+		assert.equal(await page.locator(".browser-find-bar").count(), 0);
+		await popup.screenshot({ path: join(output, `find-${tabLayout}.png`) });
+		const closed = popup.waitForEvent("close");
+		await popup.keyboard.press("Escape").catch((error) => {
+			if (!popup.isClosed()) throw error;
+		});
+		await closed;
+		report.checks.push({ tabLayout, bounds, viewportUnchanged: true });
 	}
 	await page.evaluate(async () => {
 		const s = await window.kestrel.request({ type: "browser-get-state" });
@@ -332,62 +322,115 @@ try {
 		);
 		return t?.title === "Find fixture" && !t.loading;
 	});
-	await app.evaluate(({ BrowserWindow }) =>
-		BrowserWindow.getAllWindows()
-			.find((w) => !w.webContents.getURL().includes("petOverlay"))
-			.webContents.send("kestrel:browser-command", "find-in-page"),
+	const nativeBounds = () =>
+		app.evaluate(({ BrowserWindow }, url) => {
+			const w = BrowserWindow.getAllWindows().find(
+				(w) => !/[?&](petOverlay|findPopover)=/.test(w.webContents.getURL()),
+			);
+			return w.contentView.children
+				.filter((v) => v.webContents?.getURL().startsWith(url))
+				.map((v) => ({ bounds: v.getBounds(), visible: v.getVisible() }));
+		}, fixtureUrl);
+	const beforeNative = await nativeBounds();
+	const popup = await openPopover();
+	const input = popup.getByRole("textbox", {
+		name: "Find in page",
+		exact: true,
+	});
+	await input.fill("needle");
+	await popup.locator("output").filter({ hasText: "1/3" }).waitFor();
+	assert.deepEqual(
+		await nativeBounds(),
+		beforeNative,
+		"Native page must remain visible at unchanged bounds",
 	);
-	await page.getByLabel("Find in page", { exact: true }).fill("needle");
-	await page
-		.locator(".browser-find-bar > span")
-		.filter({ hasText: /of 3$/ })
-		.waitFor();
-	const native = await app.evaluate(({ BrowserWindow }, url) => {
-		const w = BrowserWindow.getAllWindows().find(
-			(w) => !w.webContents.getURL().includes("petOverlay"),
+	assert(beforeNative.length && beforeNative.every((v) => v.visible));
+	await popup.getByRole("button", { name: "Next match", exact: true }).click();
+	await popup.locator("output").filter({ hasText: "2/3" }).waitFor();
+	await input.press("Shift+Enter");
+	await popup.locator("output").filter({ hasText: "1/3" }).waitFor();
+	await popup.screenshot({ path: join(output, "native-find.png") });
+	await size(760, 760);
+	await page.waitForTimeout(400);
+	const compact = await app.evaluate(({ BrowserWindow }) => {
+		const w = BrowserWindow.getAllWindows().find((w) =>
+			w.webContents.getURL().includes("findPopover=1"),
 		);
-		return w.contentView.children
-			.filter((v) => v.webContents?.getURL().startsWith(url))
-			.map((v) => v.getBounds());
-	}, fixtureUrl);
-	const findBottom = await page
-		.locator(".browser-find-bar")
-		.evaluate((n) => n.getBoundingClientRect().bottom);
+		return {
+			bounds: w.getBounds(),
+			parent: w.getParentWindow().getContentBounds(),
+		};
+	});
 	assert(
-		native.length && native.every((r) => r.y >= findBottom - 1),
-		"Native page must start below Find controls",
+		compact.bounds.x >= compact.parent.x &&
+			compact.bounds.x + compact.bounds.width <=
+				compact.parent.x + compact.parent.width,
 	);
-	await capture("native-find");
-	await page
-		.locator(".browser-find-bar > span")
-		.filter({ hasText: "1 of 3" })
-		.waitFor();
-	await page.getByRole("button", { name: "Next match", exact: true }).click();
-	await page
-		.locator(".browser-find-bar > span")
-		.filter({ hasText: "2 of 3" })
-		.waitFor();
-	await page
-		.getByRole("button", { name: "Previous match", exact: true })
-		.click();
-	await page
-		.locator(".browser-find-bar > span")
-		.filter({ hasText: "1 of 3" })
-		.waitFor();
-	await page.getByRole("button", { name: "Close find", exact: true }).click();
-	await page.locator(".browser-find-bar").waitFor({ state: "detached" });
+	await popup.screenshot({ path: join(output, "native-find-compact.png") });
+	const restricted = await popup.evaluate(async () => {
+		try {
+			await window.kestrel.request({ type: "browser-get-state" });
+			return false;
+		} catch {
+			return true;
+		}
+	});
+	assert(restricted, "Popover must not access general browser IPC");
+	await input.press("Meta+f");
+	assert.equal(
+		await input.evaluate((n) => n.selectionEnd - n.selectionStart),
+		"needle".length,
+		"Cmd+F reselects the current query",
+	);
+	const otherTabRejected = await popup.evaluate(async () => {
+		try {
+			await window.kestrel.request({
+				type: "browser-find-in-page",
+				tabId: "tab-00000000-0000-0000-0000-000000000000",
+				query: "test",
+			});
+			return false;
+		} catch {
+			return true;
+		}
+	});
+	assert(otherTabRejected, "Popover cannot search a different tab");
+	await input.fill("no-match-fixture");
+	await popup.locator("output").filter({ hasText: "0/0" }).waitFor();
+	assert(
+		await popup
+			.getByRole("button", { name: "Next match", exact: true })
+			.isDisabled(),
+	);
+	const closed = popup.waitForEvent("close");
+	await popup
+		.getByRole("button", { name: "Close find", exact: true })
+		.click()
+		.catch((error) => {
+			if (!popup.isClosed()) throw error;
+		});
+	await closed;
+	const second = await openPopover();
+	const switched = second.waitForEvent("close");
+	await route("");
+	await switched;
 	report.checks.push({
-		nativeBounds: native,
-		findBottom,
+		nativeBounds: beforeNative,
 		matches: 3,
 		nextPrevious: true,
+		noPageReflow: true,
+		ipcRestricted: true,
+		closeOnTabSwitch: true,
 	});
+	await size(1440, 1000);
 	await route("");
 	await page.locator("#new-tab-chat-input").focus();
 	await capture("composer-expanded");
 	await app.evaluate(({ BrowserWindow }) =>
 		BrowserWindow.getAllWindows()
-			.find((w) => !w.webContents.getURL().includes("petOverlay"))
+			.find(
+				(w) => !/[?&](petOverlay|findPopover)=/.test(w.webContents.getURL()),
+			)
 			.webContents.setZoomFactor(2),
 	);
 	await route(`memory?scope=${session}`);

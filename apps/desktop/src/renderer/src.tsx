@@ -1,3 +1,5 @@
+import { FindPopover } from "./components/browser/FindPopover";
+import "./components/browser/find-popover.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
@@ -25,6 +27,7 @@ import { PasswordOverlay } from "./components/browser/PasswordOverlay";
 import { PaymentOverlay } from "./components/browser/PaymentOverlay";
 import { WindowControls } from "./components/WindowControls";
 
+const isFindPopover = new URLSearchParams(location.search).get("findPopover") === "1";
 const isPetOverlay =
 	new URLSearchParams(location.search).get("petOverlay") === "1";
 const isCalculatorOverlay =
@@ -44,7 +47,7 @@ function desktopPlatform(): "macos" | "windows" | "other" {
 
 document.documentElement.dataset.platform = desktopPlatform();
 
-if (isPetOverlay || isCalculatorOverlay || isPasswordOverlay || isPaymentOverlay) {
+if (isFindPopover || isPetOverlay || isCalculatorOverlay || isPasswordOverlay || isPaymentOverlay) {
 	document.documentElement.style.background = "transparent";
 	document.body.style.background = "transparent";
 	root.style.background = "transparent";
@@ -52,7 +55,7 @@ if (isPetOverlay || isCalculatorOverlay || isPasswordOverlay || isPaymentOverlay
 
 ReactDOM.createRoot(root).render(
 	<React.StrictMode>
-		{isPetOverlay ? null : isCalculatorOverlay ? (
+		{isFindPopover ? <FindPopover /> : isPetOverlay ? null : isCalculatorOverlay ? (
 			<CalculatorOverlay />
 		) : isPasswordOverlay ? (
 			<PasswordOverlay />
