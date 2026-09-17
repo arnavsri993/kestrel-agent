@@ -543,6 +543,7 @@ export class TaskOrchestrator {
 		private readonly memorySubstrate?: MemorySubstrate,
 		private readonly prepareAutomaticRoute?: () => void,
 		private readonly routingOutcomes?: RoutingOutcomeStore,
+		private readonly retrieveMemoryContext?: (sessionId: string, query: string) => string,
 	) {
 		this.reconcileInterruptedJobs();
 	}
@@ -730,6 +731,7 @@ export class TaskOrchestrator {
 	}
 
 	private privateAgentContext(sessionId: string, query: string): string {
+		if (this.retrieveMemoryContext) return this.retrieveMemoryContext(sessionId, query);
 		if (!this.memorySubstrate) return "";
 		try {
 			return this.memorySubstrate.getRelevantContext({
