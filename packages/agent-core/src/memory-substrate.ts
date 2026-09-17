@@ -1097,6 +1097,8 @@ export class MemorySubstrate {
 		agentId?: string;
 		sessionId?: string;
 		includeSharedMemory?: boolean;
+		/** Workspace documents supersede the legacy/entity prompt projection. */
+		includeDocumentMemory?: boolean;
 		includeSensitive?: boolean;
 		includeRestricted?: boolean;
 		maximumCharacters?: number;
@@ -1121,8 +1123,9 @@ export class MemorySubstrate {
 			...(input.includeRestricted !== undefined ? { includeRestricted: input.includeRestricted } : {}),
 			...(input.agentId ? { agentId: input.agentId } : {}),
 			...(input.sessionId ? { sourceSessionId: input.sessionId } : {}),
-			includeMemories: allowSharedMemory,
-			includeEntities: allowSharedMemory,
+			includeMemories: allowSharedMemory && input.includeDocumentMemory !== false,
+			includeEntities: allowSharedMemory && input.includeDocumentMemory !== false,
+			includeAgents: input.includeDocumentMemory !== false,
 			limit: 80,
 		}));
 		const all = timeline.results;
@@ -1324,6 +1327,7 @@ export class MemorySubstrate {
 
 	forget(id: string): ReturnType<MemoryManager["forget"]> {
 		const deleted = this.legacyMemory.forget(id);
+		this.database.forgetMemoryWorkspaceDocument(`workspace:legacy-memory:${id}`);
 		for (const agentMemory of this.database.listAllAgentMemories())
 			if (
 				agentMemory.sourceIds.includes(id) ||
@@ -1340,6 +1344,12 @@ export class MemorySubstrate {
 	}
 
 	forgetSource(sourceId: string): MemoryDeleteResult {
+		const events = this.database.listTimelineEvents({ limit: 2_000, includeSensitive: true, includeRestricted: true });
+		const evidenceIds = new Set([sourceId, ...events.filter(event => event.sourceId === sourceId || event.sourceSessionId === sourceId || event.sessionId === sourceId).map(event => event.id)]);
+		for (const document of this.database.listMemoryWorkspaceDocuments()) {
+			if (document.sourceIds.some(id => evidenceIds.has(id)) || document.passages.some(passage => passage.sourceIds.some(id => evidenceIds.has(id))))
+				this.database.forgetMemoryWorkspaceDocument(document.id);
+		}
 		return this.database.deleteMemoryArtifactsForSource(sourceId);
 	}
 

@@ -1,3 +1,4 @@
+import { MemoryWorkspaceQuerySchema, MemoryWorkspaceSchema, MemoryDocumentSchema, MemoryDocumentSaveSchema } from "./memory-workspace";
 import { SourceSelectionSchema, SourceObservationSchema } from "./source-observations";
 import { MemoryRecoveryPreviewSchema } from "./memory-recovery";
 import { ResourceScopeSchema } from "./resource-access";
@@ -2889,6 +2890,10 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		id: z.string().min(1),
 		decision: z.enum(["confirm", "reject"]),
 	}),
+	z.object({ type: z.literal("memory-workspace-read"), query: MemoryWorkspaceQuerySchema }),
+	z.object({ type: z.literal("memory-workspace-consolidate"), query: MemoryWorkspaceQuerySchema }),
+	z.object({ type: z.literal("memory-document-save"), document: MemoryDocumentSaveSchema }),
+	z.object({ type: z.literal("memory-document-forget"), id: z.string().min(1).max(200) }),
 	MemoryQuerySchema.extend({
 		type: z.literal("memory-timeline-query"),
 	}),
@@ -3472,6 +3477,8 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		routingTraces: z.array(RoutingTraceSchema).optional(),
 		providerVerifications: z.array(ProviderVerificationSchema).optional(),
 		memories: z.array(MemoryRecordSchema).optional(),
+		memoryWorkspace: MemoryWorkspaceSchema.optional(),
+		memoryDocument: MemoryDocumentSchema.optional(),
 		memoryTimeline: MemoryTimelineQueryResultSchema.optional(),
 		memoryCaptureStatus: CaptureStatusSchema.optional(),
 		memoryDiagnostics: MemoryDiagnosticsSchema.optional(),

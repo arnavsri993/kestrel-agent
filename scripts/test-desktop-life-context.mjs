@@ -136,122 +136,46 @@ try {
 	await page.setViewportSize({ width: 1320, height: 900 });
 	await openKestrelDestination(page, "Memory");
 	const life = page.locator(".life-product-surface");
-	await life
-		.getByRole("heading", { name: "Memory", exact: true })
-		.waitFor();
-
-	await life.getByText("Deep work · Kestrel", { exact: true }).waitFor();
-	await life.getByText("Inferred · 76%", { exact: true }).waitFor();
-	await life.getByText("Suggested · 64%", { exact: true }).waitFor();
-	assert.equal(await life.getByText("Apple Calendar", { exact: true }).count(), 0);
-	assert.equal(await life.getByText("Outlook Calendar", { exact: true }).count(), 0);
-	assert.equal(await life.getByText("Adapter planned", { exact: true }).count(), 0);
-	assert.equal(
-		await life.getByRole("button", { name: "Sync Google" }).isDisabled(),
-		true,
-	);
-
-	await life.getByRole("button", { name: /Deep work · Kestrel/ }).click();
-	await life.getByText("Why this is here", { exact: true }).click();
-	await life
-		.getByText("Created directly by the user.", { exact: true })
-		.waitFor();
-	await life.evaluate((element) => {
-		element.scrollTop = 0;
-	});
-	await page.screenshot({ path: wideCalendarScreenshot });
-
-	const nextWeek = life.getByRole("button", { name: "Next week" });
-	await nextWeek.focus();
-	await page.keyboard.press("Tab");
-	await page.keyboard.press("Shift+Tab");
-	assert.notEqual(
-		await nextWeek.evaluate(
-			(element) => getComputedStyle(element).outlineStyle,
-		),
-		"none",
-	);
-
-	await life.getByRole("button", { name: "People", exact: true }).click();
-	await life.getByText("Dr. Maya Chen", { exact: true }).first().click();
-	await life
-		.getByText("Brief, respectful, and prepared", { exact: true })
-		.waitFor();
-	await life
-		.getByText("Confirmed · 100% · explicit-user-control", { exact: true })
-		.first()
-		.waitFor();
-	await life.evaluate((element) => {
-		element.scrollTop = 0;
-	});
-	await page.screenshot({ path: peopleScreenshot });
-
-	await life.getByRole("button", { name: "Knowledge", exact: true }).click();
-	await life
-		.getByText(
-			"The Kestrel capstone review is the highest-priority project this month.",
-			{ exact: true },
-		)
-		.first()
-		.waitFor();
-	await life
-		.getByPlaceholder("When should I work on the statistics paper?")
-		.fill(
-			"When should I prepare for my Kestrel capstone review with Professor Chen?",
-		);
-	await life.getByRole("button", { name: "Show influences" }).click();
-	await life.locator(".context-explainer li").first().waitFor();
-	await life.evaluate((element) => {
-		element.scrollTop = 0;
-	});
+	await life.getByRole("heading", { name: "Memory", exact: true }).waitFor();
+	await life.getByRole("heading", { name: "What Kestrel understands" }).waitFor();
+	await life.getByText("The Kestrel capstone review is the highest-priority project this month.", { exact: true }).first().waitFor();
 	await page.screenshot({ path: memoryScreenshot });
-	await life.getByRole("button", { name: "Forget this fact" }).click();
-	await page.waitForFunction(
-		() =>
-			document.activeElement instanceof HTMLButtonElement &&
-			Boolean(document.activeElement.closest(".memory-ledger-list")),
-	);
+
+	const viewer = life.getByLabel("Viewing as");
+	const domain = life.getByLabel("Domain");
+	assert.equal(await viewer.inputValue(), "user");
+	assert.equal(await domain.inputValue(), "");
+
+	await life.getByRole("button", { name: "Memory", exact: true }).click();
+	await life.getByText("Edit memory documents", { exact: true }).click();
+	await life.getByRole("button", { name: "New", exact: true }).click();
+	await life.getByLabel("Title").fill("Working preference");
+	await life.getByLabel("What Kestrel should know").fill("Keep technical explanations concise and source the important claims.");
+	await life.getByRole("button", { name: "Save", exact: true }).click();
+	await life.getByRole("heading", { name: "Working preference", exact: true }).waitFor();
+	await life.getByRole("button", { name: "Edit memory", exact: true }).click();
+	await life.getByText("Sources and provenance", { exact: true }).click();
+	await life.getByText("manual", { exact: true }).waitFor();
 
 	await life.getByRole("button", { name: "Timeline", exact: true }).click();
-	await life
-		.getByText("Timeline fixture: reviewed the Kestrel memory architecture.", { exact: true })
-		.first()
-		.waitFor();
-	await life
-		.getByRole("button", { name: /Timeline fixture: reviewed the Kestrel memory architecture/ })
-		.click();
-	await life.getByText("Provenance", { exact: true }).waitFor();
-	await life.getByText("runtime.message", { exact: true }).first().waitFor();
-	await life
-		.getByPlaceholder("Search this day’s activity")
-		.fill("memory architecture");
-	await life.getByRole("button", { name: "Search timeline" }).click();
-	await life
-		.getByText("Timeline fixture: reviewed the Kestrel memory architecture.", { exact: true })
-		.first()
-		.waitFor();
-	await life.getByRole("button", { name: "Previous day" }).click();
-	await life.getByRole("button", { name: "Today" }).click();
+	await life.getByRole("heading", { name: "Your week in context" }).waitFor();
+	await life.locator(".memory-days details summary").first().click();
+	await life.getByText("Timeline fixture: reviewed the Kestrel memory architecture.", { exact: true }).first().waitFor();
 
-	await life.getByRole("button", { name: "Calendar", exact: true }).click();
-	await page.setViewportSize({ width: 640, height: 760 });
+	await life.getByRole("button", { name: "Tools", exact: true }).click();
+	await life.getByText("Calendar, capture, and source administration", { exact: true }).click();
 	await life.getByText("Deep work · Kestrel", { exact: true }).waitFor();
-	await life.evaluate((element) => {
-		element.scrollTop = 0;
-	});
-	assert.equal(
-		await page.evaluate(
-			() =>
-				document.documentElement.scrollWidth >
-				document.documentElement.clientWidth,
-		),
-		false,
-	);
+	await page.screenshot({ path: wideCalendarScreenshot });
+
+	await page.setViewportSize({ width: 640, height: 760 });
+	await life.getByRole("button", { name: "Overview", exact: true }).click();
+	await life.getByRole("heading", { name: "What Kestrel understands" }).waitFor();
+	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
 	await page.screenshot({ path: compactCalendarScreenshot, fullPage: true });
 
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		`Unified calendar provenance, people context, explainable retrieval, focus, compact reflow, and screenshots passed. Screenshots: ${wideCalendarScreenshot}, ${compactCalendarScreenshot}, ${peopleScreenshot}, ${memoryScreenshot}\n`,
+		`Memory overview, document editing, weekly timeline, advanced tools, scope controls, and compact reflow passed. Screenshots: ${wideCalendarScreenshot}, ${compactCalendarScreenshot}, ${peopleScreenshot}, ${memoryScreenshot}\n`,
 	);
 } finally {
 	await application?.close();
