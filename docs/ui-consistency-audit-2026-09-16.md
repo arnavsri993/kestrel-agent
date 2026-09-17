@@ -60,12 +60,14 @@ and ad-hoc signing subsequently passed; the cleanup stage needed
 `KESTREL_MACOS_KEEP_APP` set to this worktree's release bundle to preserve it for
 installation. `/Applications/Kestrel.app` was replaced using the normal installer;
 its `app.asar` SHA-256 matches the packaged artifact:
-`ca5c8d97148735876e90def17dae3ca1a9efc8d0a03be8a4eecbb162de1fecdd`.
+`56522145bff4ec904d553fcfa96f4b4ece47f2a29f5e5a36ce0847ca09303361`.
 Deep strict signature verification passed. Final installed focused checks and
 packaged desktop smoke passed, including native Sharp, isolated browser tools
 and action receipts. The canonical app was reopened with the existing profile;
 New Tab, sidebar fading, Find placement/sizing and the reported Robotics Memory
-Sources page were visually verified. No profile reset or migration was performed.
+Sources page were visually verified. No profile reset or migration was performed. Another local build replaced the
+canonical app during the task; this branch was rebuilt and restored through
+the same installer, retaining the displaced bundle in Trash.
 
 Local
 screenshots remain under `.tmp/ui-baseline` and `.tmp/ui-consistency`; they are
