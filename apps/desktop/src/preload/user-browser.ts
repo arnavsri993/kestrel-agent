@@ -1,4 +1,10 @@
-import { ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
+import {
+	installUserBrowserActivityInstrumentation,
+	USER_BROWSER_ACTIVITY_CHANNEL,
+	USER_BROWSER_ACTIVITY_EVENT,
+	type UserBrowserActivity,
+} from "./user-browser-activity";
 
 // This preload runs in Electron's isolated world. It intentionally exposes no
 // API to the page: password values arrive from the main process, are applied to
@@ -11,6 +17,61 @@ const MAX_PASSWORD_LENGTH = 4_096;
 const HEIC_UPLOAD_CHANNEL = "kestrel:user-browser-heic-upload";
 const HEIC_UPLOAD_FAILED_CHANNEL = "kestrel:user-browser-heic-upload-failed";
 const HEIC_UPLOAD_INPUT_ID_ATTRIBUTE = "data-kestrel-heic-upload-id";
+
+function activitySnapshot(value: unknown): UserBrowserActivity | undefined {
+	if (!value || typeof value !== "object") return;
+	const candidate = value as Partial<UserBrowserActivity>;
+	const keys: Array<keyof UserBrowserActivity> = [
+		"playing",
+		"microphone",
+		"camera",
+		"screen",
+		"location",
+		"busy",
+		"dirty",
+	];
+	if (!keys.every((key) => typeof candidate[key] === "boolean")) return;
+	return {
+		playing: candidate.playing!,
+		microphone: candidate.microphone!,
+		camera: candidate.camera!,
+		screen: candidate.screen!,
+		location: candidate.location!,
+		busy: candidate.busy!,
+		dirty: candidate.dirty!,
+	};
+}
+
+function installActivityBridge(): void {
+	if (!process.isMainFrame) return;
+	// Install this listener before entering the main world. The page only has a
+	// DOM event name; it never receives an Electron bridge or any Kestrel API.
+	window.addEventListener(USER_BROWSER_ACTIVITY_EVENT, (event) => {
+		const snapshot = activitySnapshot((event as CustomEvent<unknown>).detail);
+		if (snapshot) ipcRenderer.send(USER_BROWSER_ACTIVITY_CHANNEL, snapshot);
+	});
+	try {
+		contextBridge.executeInMainWorld({
+			func: installUserBrowserActivityInstrumentation,
+			args: [USER_BROWSER_ACTIVITY_EVENT],
+		});
+	} catch {
+		// Activity reports are advisory-only, but failing open here would sleep a
+		// tab whose page observer could not be installed. This never grants access;
+		// it only asks the lifecycle policy to preserve the tab.
+		ipcRenderer.send(USER_BROWSER_ACTIVITY_CHANNEL, {
+			playing: false,
+			microphone: false,
+			camera: false,
+			screen: false,
+			location: false,
+			busy: true,
+			dirty: false,
+		} satisfies UserBrowserActivity);
+	}
+}
+
+installActivityBridge();
 
 interface PendingHeicUpload {
 	pathSignature: string;

@@ -84,6 +84,7 @@ import {
   UserBrowserService,
   isUserBrowserBackendWireRequest,
 } from "./user-browser-service";
+import { updateTabPreview } from "./tab-preview-window";
 import {
   defaultBrowserDownloadDirectory,
   legacyBrowserDownloadDirectory,
@@ -255,7 +256,7 @@ function passwordOverlaySize(prompt: PasswordPrompt): {
 		? { width: 382, height: 320 }
 		: prompt.mode === "field"
 			? { width: 382, height: Math.min(420, 236 + Math.max(0, prompt.entries.length - 1) * 56) }
-			: { width: 382, height: 236 };
+			: { width: 382, height: prompt.mode === "generate" ? 280 : 236 };
 }
 
 function passwordOverlayBounds(
@@ -264,22 +265,25 @@ function passwordOverlayBounds(
 ): Electron.Rectangle {
 	const content = owner.getContentBounds();
 	const size = passwordOverlaySize(prompt);
+	// The trusted shell reports the Tools control's bounds to the browser
+	// service. Keep the native password surface attached to that control rather
+	// than the page-owned field that prompted it; password values remain in the
+	// main process throughout.
 	const anchor = prompt.anchor;
-	const screenX = content.x + anchor.x;
+	const screenX = content.x + anchor.x + anchor.width - size.width;
 	const screenY = content.y + anchor.y;
 	const display = screen.getDisplayNearestPoint({ x: screenX, y: screenY });
 	const workArea = display.workArea;
-	const preferredX = screenX;
-	const preferredY = screenY + anchor.height + 8;
+	const preferredY = screenY + anchor.height + 6;
 	const y =
 		preferredY + size.height <= workArea.y + workArea.height - 12
 			? preferredY
-			: screenY - size.height - 8;
+			: screenY - size.height - 6;
 	return {
 		x: Math.round(
 			Math.max(
 				workArea.x + 12,
-				Math.min(preferredX, workArea.x + workArea.width - size.width - 12),
+				Math.min(screenX, workArea.x + workArea.width - size.width - 12),
 			),
 		),
 		y: Math.round(
@@ -320,6 +324,10 @@ function updatePasswordOverlay(
 			show: false,
 			frame: false,
 			transparent: true,
+			...(process.platform === "darwin" ? {
+				vibrancy: "popover" as const,
+				visualEffectState: "active" as const,
+			} : {}),
 			resizable: false,
 			skipTaskbar: true,
 			hasShadow: true,
@@ -401,7 +409,7 @@ function paymentOverlaySize(prompt: PaymentPrompt): {
 	height: number;
 } {
 	return prompt.mode === "save"
-		? { width: 398, height: 270 }
+		? { width: 398, height: 340 }
 		: { width: 410, height: 304 };
 }
 
@@ -467,6 +475,10 @@ function updatePaymentOverlay(
 			show: false,
 			frame: false,
 			transparent: true,
+			...(process.platform === "darwin" ? {
+				vibrancy: "popover" as const,
+				visualEffectState: "active" as const,
+			} : {}),
 			resizable: false,
 			skipTaskbar: true,
 			hasShadow: true,
@@ -3175,6 +3187,21 @@ function registerIpc(): void {
         ok: true,
         ...(browserPagePreview ? { browserPagePreview } : {}),
       };
+    }
+    if (request.type === "browser-show-tab-preview") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const tab = request.tabId
+        ? requestBrowserService.getState().tabs.find((candidate) => candidate.id === request.tabId)
+        : undefined;
+      updateTabPreview(senderWindow, tab, request.anchor);
+      return { ok: true };
+    }
+    if (request.type === "browser-set-password-overlay-anchor") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      requestBrowserService.setPasswordOverlayAnchor(request.anchor);
+      return { ok: true };
     }
 		if (request.type === "browser-update-settings") {
 			if (!requestBrowserService)

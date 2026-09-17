@@ -1363,7 +1363,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const verifiedModelReady =
 		Boolean(localRuntime?.verifiedModel) ||
 		providerChecks.some((check) => check.ok);
-	const recommendedModel = recommendedLocalModel(systemProfile);
+	const localRuntimeUnavailableReason = localRuntime?.unavailableReason ?? "";
+	const recommendedModel = localRuntimeUnavailableReason
+		? null
+		: recommendedLocalModel(systemProfile);
 	const recommendedModelInstalled = Boolean(
 		recommendedModel &&
 		localModels.some(
@@ -1373,9 +1376,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 		),
 	);
 	const localSetupAvailable =
-		ollamaAvailable || localRuntime?.automaticSupported === true;
-	const recommendedTiers = recommendedLocalModelTiers(systemProfile);
-	const compatibleLocalModels = supportedLocalModels(systemProfile);
+		!localRuntimeUnavailableReason &&
+		(ollamaAvailable || localRuntime?.automaticSupported === true);
+	const recommendedTiers = localRuntimeUnavailableReason
+		? []
+		: recommendedLocalModelTiers(systemProfile);
+	const compatibleLocalModels = localRuntimeUnavailableReason
+		? []
+		: supportedLocalModels(systemProfile);
 	const matchingPaidProviders = paidProviderCatalog.filter((provider) => {
 		const query = providerQuery.trim().toLocaleLowerCase();
 		return (
@@ -1598,9 +1606,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											{modelView === "accounts"
 												? "Sign in with a provider or add a protected API key."
 												: modelView === "local"
-													? recommendedModel
-														? `Kestrel recommends ${recommendedModel.title} for this Mac.`
-														: "Checking this Mac's hardware…"
+													? localRuntimeUnavailableReason
+														? localRuntimeUnavailableReason
+														: recommendedModel
+															? `Kestrel recommends ${recommendedModel.title} for this Mac.`
+															: "Checking this Mac's hardware…"
 													: "Free plans and terms vary by provider."}
 										</p>
 									)}
@@ -1952,6 +1962,12 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												</span>
 											</div>
 										</div>
+										{localRuntimeUnavailableReason ? (
+											<p className="setup-error" role="status">
+												{localRuntimeUnavailableReason}
+											</p>
+										) : (
+											<>
 										{recommendedModel && (
 											<section
 												className="local-auto-setup"
@@ -2242,6 +2258,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												</div>
 											)}
 										</section>
+											</>
+										)}
 									</div>
 								)}
 

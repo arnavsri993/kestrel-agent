@@ -18,6 +18,7 @@ import "./surface-responsive.css";
 import "./materials.css";
 import "./instrument-workbench.css";
 import "./action-motion.css";
+import "./glass-menus.css";
 import { ActionMotion } from "./components/ActionMotion";
 import { App } from "./App";
 import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";
@@ -43,6 +44,10 @@ function desktopPlatform(): "macos" | "windows" | "other" {
 }
 
 document.documentElement.dataset.platform = desktopPlatform();
+
+if (isPasswordOverlay || isPaymentOverlay) {
+	document.documentElement.dataset.autofillOverlay = "true";
+}
 
 if (isPetOverlay || isCalculatorOverlay || isPasswordOverlay || isPaymentOverlay) {
 	document.documentElement.style.background = "transparent";

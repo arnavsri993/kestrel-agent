@@ -28,6 +28,36 @@ identity for memory.
 - Verification: real IPC CRUD, viewer/domain separation, raced scope loads,
   empty/error states, keyboard focus, narrow reflow and long document text.
 
+# Glass menus and autofill — September 2026
+
+Thesis: small, legible graphite-glass menus keep the website and the user's next
+action in view, with one quiet rim and clear typography instead of decorative gradients.
+Existing React/Electron redesign; dense-app profile, frequent keyboard and pointer use.
+The classifier's marketing-page inference does not apply to these native app menus.
+
+- SF Pro Display headings / SF Pro Text controls (system fallback): 14 / 13 / 12 / 11px.
+  Native system typography is intentional for a macOS utility, not a marketing identity.
+- 4px spacing rhythm, 16px panel inset, 8px row gaps, 32px minimum action heights.
+- Graphite surface, white primary text, readable gray secondary text, monochrome actions;
+  semantic red only for errors. Existing app light/dark tokens govern in-page menus.
+- Material: one translucent plane, hairline rim, soft shadow; grouped content uses
+  separators rather than nested glass cards. Opaque fallback for increased contrast
+  and reduced transparency. Native password/payment windows need OS vibrancy:
+  CSS backdrop blur cannot sample a separate browser WebContentsView.
+- Composition: compact icon/title/site header, scannable saved data or choices,
+  one primary fill/save action, quiet secondary actions. No hero or promotional copy.
+- Motion roles: state (180ms anchored arrival), feedback (120ms hover/press).
+  No stagger, looping shine, decorative parallax, or delayed actions. Reduced motion
+  removes transforms/animations, independently of transparency preferences.
+- Remove decorative gradients throughout desktop renderer styles, including Home,
+  payment preview, and glass highlights; preserve actual wallpaper images.
+- Preserve protected IPC, exact-origin validation, masked card/password summaries,
+  existing save/update semantics and typed-field preservation.
+- Verify all password modes, personal-info scroll/actions, payment save/fill,
+  keyboard focus/Escape, long data, narrow/short windows, contrast and reduced motion.
+- Why this is not generic: the menu hierarchy is built around Kestrel's real saved
+  identities, site context, and explicit field-versus-form actions.
+
 ## Model and reasoning picker — September 15, 2026
 
 Component refinement: explicit clicks choose the provider, account, and model.
@@ -56,6 +86,19 @@ This is an existing React settings-page refinement with low visual intensity.
   access, and overflow at desktop, intermediate, and narrow widths.
 - Why this is not generic: the groups reflect Kestrel's actual separation of
   browsing, agent intelligence, tools, and local permission/data controls.
+
+## Tab previews and password tools — September 13, 2026
+
+Preserve the existing compact macOS system type and neutral glass. An inactive
+ tab opens a small native preview under its tab, with the last local snapshot,
+ title, and host. Only active resources appear as icons with hover descriptions;
+ measured memory estimates appear only while sleeping. No invented savings or
+ permission-granted-as-current-use indicators. Native overlays preserve the
+ running page beneath them. Password suggestions attach to toolbar Tools, retain
+ protected main-process comparisons, and use short save/update actions.
+Snapshots stay in a bounded in-memory cache and are invalidated on navigation.
+Verify playing muted video, ongoing transfers/work, capture, edits, idle sleep,
+ navigation freshness, hover dismissal, icon tooltips, and unchanged passwords.
 
 # New Tab glass refinement — September 2026
 
@@ -834,3 +877,15 @@ Preserve the established native graphite material, type scale, compact sidebar w
 - Installed-executable smoke passed composer expansion, pasted attachments, persisted shortcuts, wallpaper selection, widget arrangement, reduced-motion compact overflow, and exact-session continuation without creating another task.
 - Two installed screenshot reviews exposed and corrected the conflicting glass material and CSS/layout column mismatch. Final canonical-window review confirmed readable surfaces, full-width site rows, wrapped task titles, and no duplicate automatic shortcuts.
 - Full repository verification and unrelated app flows were not run. Jules was unavailable because its API key was not configured.
+
+### Menu verification notes
+
+Visual refinement corrected three observed issues: short profiles unnecessarily
+scrolled, three password-save actions wrapped unevenly, and the tint obscured the
+native material. A subsequent 280px screenshot caught the shell's inherited 320px
+body minimum; only autofill windows now override it. The test checks document-level
+horizontal overflow as well as the card, and long profiles keep actions outside
+the scrolling data region. Native OS menus retain their platform rendering.
+
+The source implementation uses existing CSS/React only. Catalog candidates were
+considered but no external code, assets, or new motion dependency was incorporated.

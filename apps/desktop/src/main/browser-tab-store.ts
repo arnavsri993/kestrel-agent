@@ -407,7 +407,7 @@ export class BrowserTabStore {
 							/^https?:\/\//.test(tab.url) ||
 							isKestrelAppPageUrl(tab.url),
 					)
-					.map(({ blockedNavigation, ...tab }) => {
+					.map(({ blockedNavigation, preview: _preview, activity: _activity, estimatedSavedMemoryBytes: _memory, ...tab }) => {
 						const blockedUrl = blockedNavigation
 							? sanitizeBrowserUrl(blockedNavigation.url)
 							: "";
@@ -515,6 +515,9 @@ export class BrowserTabStore {
 			tabs: state.tabs.map(
 				({
 					faviconDataUrl: _faviconDataUrl,
+					preview: _preview,
+					activity: _activity,
+					estimatedSavedMemoryBytes: _memory,
 					blockedNavigation,
 					...tab
 				}) => {

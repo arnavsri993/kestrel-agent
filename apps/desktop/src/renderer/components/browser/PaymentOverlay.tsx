@@ -1,3 +1,4 @@
+import { Icon } from "../Icon";
 import { useEffect, useMemo, useState } from "react";
 import type { PaymentPrompt } from "@kestrel/shared-types";
 
@@ -115,7 +116,7 @@ export function PaymentOverlay() {
 				<header className="payment-overlay-header">
 					<div className="payment-overlay-heading">
 						<span className="payment-overlay-mark" aria-hidden="true">
-							▰
+							<Icon name="card" width={16} height={16} />
 						</span>
 						<span>
 							<strong>
@@ -137,7 +138,7 @@ export function PaymentOverlay() {
 				{prompt.mode === "save" && prompt.candidate ? (
 					<>
 						<p className="payment-overlay-copy">
-							Save your card details securely on this device to use them faster next time.
+							Save this card on this device for next time.
 						</p>
 						<div className="payment-card-preview" aria-label={`${prompt.candidate.brand} ending in ${prompt.candidate.last4}`}>
 							<div className="payment-card-preview-top">
@@ -178,9 +179,9 @@ export function PaymentOverlay() {
 				) : (
 					<>
 						<p className="payment-overlay-copy">
-							Fill payment details with a card saved in Kestrel. Your security code stays manual.
+							Choose a card. You’ll enter the security code yourself.
 						</p>
-						<div className="payment-overlay-entries" role="list" aria-label="Saved payment cards">
+						<div className="payment-overlay-entries" role="group" aria-label="Saved payment cards">
 							{prompt.entries.map((entry) => (
 								<button
 									key={entry.id}
@@ -198,7 +199,7 @@ export function PaymentOverlay() {
 							))}
 						</div>
 						{chooseFields && (
-							<div className="payment-overlay-fields" role="list" aria-label="Payment fields">
+							<div className="payment-overlay-fields" role="group" aria-label="Payment fields">
 								{fillableFields.map((field) => {
 									const actionKey = `${selectedEntryId}:${field.id}`;
 									return (
