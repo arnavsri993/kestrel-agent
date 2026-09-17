@@ -1,3 +1,28 @@
+# Navigation clarity — September 2026
+
+Thesis: a familiar browser with obvious places to browse, ask for help, and find
+work, plus a stable, separate home for configuration and personal context.
+Existing React/Electron app redesign, frequent use, compact density, low visual
+and motion intensity. The classifier marketing-page inference does not apply.
+Keep system typography (13px controls, 11px section labels), existing graphite
+and light-theme tokens, 4px spacing rhythm, quiet separators, and current focus
+and reduced-motion behavior. No new materials, fonts, gradients, or animation.
+
+Observed weaknesses: no labeled Browser destination, icon-only search/settings,
+and duplicated toolbar entry points competing with the address field.
+Primary navigation: Browser, Agent, Projects, Search Kestrel. User projects and
+recent chats occupy the scrollable middle. Memory, Connections, Settings remain
+anchored below it. Preserve project/session identity and all existing actions.
+The toolbar keeps protected Tools, History, Downloads, and the browser menu;
+Extensions, Bookmarks, and Page options remain explicitly labeled in that menu.
+Pinned extensions remain directly available. New chat and New Tab stay distinct.
+Keep navigation labels at laptop widths; use the compact rail only below 800px or by explicit collapse.
+Projects opens a searchable overview; individual projects offer All projects to return.
+Verify routes, keyboard focus, menu dismissal, project/chat continuity, compact
+height, collapsed sidebar, desktop build, and the canonical running app.
+Why this is not generic: the hierarchy separates browsing, agent work, and
+Kestrel's real context/settings without introducing another mode or dashboard.
+
 # Glass menus and autofill — September 2026
 
 Thesis: small, legible graphite-glass menus keep the website and the user's next
