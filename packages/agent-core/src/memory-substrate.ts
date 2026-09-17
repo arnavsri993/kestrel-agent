@@ -1344,10 +1344,13 @@ export class MemorySubstrate {
 	}
 
 	forgetSource(sourceId: string): MemoryDeleteResult {
-		const events = this.database.listTimelineEvents({ limit: 2_000, includeSensitive: true, includeRestricted: true });
-		const evidenceIds = new Set([sourceId, ...events.filter(event => event.sourceId === sourceId || event.sourceSessionId === sourceId || event.sessionId === sourceId).map(event => event.id)]);
+		const isSourceEvidence = (id: string) => {
+			if (id === sourceId) return true;
+			const event = this.database.getTimelineEvent(id);
+			return event?.sourceId === sourceId || event?.sourceSessionId === sourceId || event?.sessionId === sourceId;
+		};
 		for (const document of this.database.listMemoryWorkspaceDocuments()) {
-			if (document.sourceIds.some(id => evidenceIds.has(id)) || document.passages.some(passage => passage.sourceIds.some(id => evidenceIds.has(id))))
+			if (document.sourceIds.some(isSourceEvidence) || document.passages.some(passage => passage.sourceIds.some(isSourceEvidence)))
 				this.database.forgetMemoryWorkspaceDocument(document.id);
 		}
 		return this.database.deleteMemoryArtifactsForSource(sourceId);

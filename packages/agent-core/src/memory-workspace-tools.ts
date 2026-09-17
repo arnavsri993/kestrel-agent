@@ -24,6 +24,18 @@ export function installMemoryWorkspaceTools(runtime: AgentRuntime, workspace: Me
 		const viewerId = session.kind === "agent" || session.parentSessionId ? identity.id : "user";
 		return { memories: workspace.read({ viewerId }).documents.filter(document => document.kind !== "knowledge").slice(0, 100) };
 	});
+	register("memory.forget", "Forget an owned memory document", false, {
+		type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false,
+	}, async ({ session }, input) => {
+		const { id } = z.object({ id: z.string().min(1) }).parse(input);
+		substrate.assertMemorySession(session.id);
+		if (!id.startsWith("workspace:") && !id.startsWith("workspace-memory-")) return { memory: substrate.forgetForSession(session.id, id) };
+		const identity = substrate.ensureAgentIdentity(session);
+		const viewerId = session.kind === "agent" || session.parentSessionId ? identity.id : "user";
+		const document = workspace.read({ viewerId }).documents.find(item => item.id === id);
+		if (!document) throw new Error("Memory document is not visible to this agent.");
+		return { memory: workspace.forget(id, viewerId, document.version) };
+	});
 	register("memory.document.update", "Consolidate an owned memory document using its existing evidence", false, {
 		type: "object", properties: { id: { type: "string" }, text: { type: "string", minLength: 1, maxLength: 20_000 }, expectedVersion: { type: "integer", minimum: 1 } }, required: ["id", "text", "expectedVersion"], additionalProperties: false,
 	}, async ({ session }, input) => {

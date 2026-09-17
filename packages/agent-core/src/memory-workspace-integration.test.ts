@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { CoreRequestSchema } from "@kestrel/shared-types";
@@ -6,7 +7,7 @@ import { AgentCore, type ModelProvider } from "./index";
 
 function setup(provider?: ModelProvider) {
 	const database = new KestrelDatabase(":memory:", createEncryptionKey());
-	const core = new AgentCore({ database, ...(provider ? { modelProviders: [provider] } : {}), now: () => "2026-09-16T15:00:00.000Z" });
+	const core = new AgentCore({ database, workspaceRoots: [tmpdir()], projects: [{ id: "robotics", name: "Robotics", path: tmpdir(), order: 0, createdAt: "2026-09-16T15:00:00.000Z", updatedAt: "2026-09-16T15:00:00.000Z" }], ...(provider ? { modelProviders: [provider] } : {}), now: () => "2026-09-16T15:00:00.000Z" });
 	return { core, database, send: (input: unknown) => core.handle(CoreRequestSchema.parse(input)) };
 }
 
@@ -29,6 +30,20 @@ describe("memory workspace integration", () => {
 		} finally { await core.close(); database.close(); }
 	});
 
+	it("forgets the same canonical document returned by the agent list tool", async () => {
+		const { core, database, send } = setup();
+		try {
+			const saved = await send({ type: "memory-document-save", document: { kind: "memory", title: "Temporary context", text: "Review the chassis constraints." } });
+			if (!saved.ok || !saved.memoryDocument) throw new Error("Document missing");
+			const session = core.runtime.ensureMainSession();
+			const listed = await core.runtime.callTool(session.id, "memory.list", {}, { approvalStatus: "approved" });
+			expect(JSON.stringify(listed.output)).toContain(saved.memoryDocument.id);
+			const forgotten = await core.runtime.callTool(session.id, "memory.forget", { id: saved.memoryDocument.id }, { approvalStatus: "approved", idempotencyKey: "forget-document" });
+			expect(forgotten.status).toBe("verified");
+			expect(core.memoryWorkspace.read().documents.some(document => document.id === saved.memoryDocument!.id)).toBe(false);
+		} finally { await core.close(); database.close(); }
+	});
+
 	it("injects relevant person text in a real agent request without unrelated life memory", async () => {
 		let received = "";
 		const provider: ModelProvider = { id: "memory-proof", defaultModel: "memory-proof", capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: true },
@@ -44,6 +59,13 @@ describe("memory workspace integration", () => {
 			const result = await send({ type: "runtime-run-agent", sessionId: session.id, model: "memory-proof", providerIds: ["memory-proof"], message: "Draft a message to Avery about robotics changes." });
 			expect(result.ok).toBe(true);
 			expect(received).toContain("casual and direct");
+			expect(received).not.toContain("blue gate");
+			await send({ type: "memory-document-save", document: { kind: "person", title: "Morgan", text: "Morgan reviews robotics assemblies with concise technical feedback.", domainIds: ["robotics"], sharing: "domain_shared" } });
+			const parent = core.runtime.createSession({ title: "Robotics", kind: "agent", projectId: "robotics" });
+			core.memorySubstrate.ensureAgentIdentity(parent);
+			const delegated = await core.orchestrator.delegate({ parentSessionId: parent.id, title: "CAD", prompt: "Draft an update to Morgan about robotics assemblies.", model: "memory-proof", providerIds: ["memory-proof"], allowedTools: [] });
+			expect(delegated.result.run.status).toBe("completed");
+			expect(received).toContain("concise technical feedback");
 			expect(received).not.toContain("blue gate");
 		} finally { await core.close(); database.close(); }
 	});

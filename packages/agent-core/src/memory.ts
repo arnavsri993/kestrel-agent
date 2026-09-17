@@ -410,7 +410,7 @@ export function installMemoryTools(
 		inputSchema: Record<string, unknown>,
 		execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"],
 	) => {
-		if (options.workspaceReads && (name === "memory.list" || name === "memory.search")) return;
+		if (options.workspaceReads && (name === "memory.list" || name === "memory.search" || name === "memory.forget")) return;
 		runtime.registerExternalTool({
 			descriptor: {
 				name,

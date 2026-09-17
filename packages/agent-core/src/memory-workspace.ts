@@ -1,3 +1,4 @@
+import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
 import { dayFingerprint } from "./memory-consolidation";
 import { randomUUID } from "node:crypto";
 import type { KestrelDatabase } from "@kestrel/database";
@@ -211,10 +212,18 @@ export class MemoryWorkspaceService {
 		if (!input.agentId && session && session.kind !== "agent" && !session.parentSessionId) viewerId = "user";
 		const queryTerms = terms(input.query).filter(term => !["the", "and", "about", "with", "this", "that", "for", "to", "of", "is", "are", "message", "draft"].includes(term));
 		if (!queryTerms.length) return [];
+		const queryVector = localSemanticEmbedding(queryTerms.join(" "));
 		const matches = this.read({ viewerId }).documents.filter(document => document.kind !== "knowledge").map(document => {
 			const haystack = terms(`${document.title} ${document.text}`);
 			const matches = queryTerms.filter(term => haystack.some(candidate => candidate === term || candidate.startsWith(term) || term.startsWith(candidate))).length;
-			return { document, score: matches / queryTerms.length };
+			const semantic = semanticSimilarity(queryVector, localSemanticEmbedding(`${document.title} ${document.text}`));
+			const relevance = matches / queryTerms.length;
+			const ageDays = Math.max(0, (this.now().getTime() - Date.parse(document.updatedAt)) / 86_400_000);
+			const recency = 1 / (1 + ageDays / 30);
+			const domainMatch = session?.projectId && document.domainIds.includes(session.projectId) ? 1 : 0;
+			const durability = document.tier === "long_term" ? 1 : document.tier === "mid_term" ? 0.6 : 0.2;
+			return { document, score: relevance > 0 || semantic >= 0.45
+				? relevance * 0.55 + semantic * 0.25 + domainMatch * 0.08 + document.confidence * 0.05 + recency * 0.04 + durability * 0.03 : 0 };
 		}).filter(item => item.score > 0)
 			.sort((left, right) => right.score - left.score || right.document.confidence - left.document.confidence || right.document.updatedAt.localeCompare(left.document.updatedAt))
 			.slice(0, 12).map(item => item.document);

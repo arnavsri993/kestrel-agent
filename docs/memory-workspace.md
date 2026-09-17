@@ -28,11 +28,14 @@ selection narrows the user view independently of agent ownership. An agent
 cannot overwrite an inherited document. Mixed-scope documents cannot be flattened
 by an agent rewrite. Edits require the observed version.
 
-Agent run/retry and `memory.list`/`memory.search` use these canonical documents.
+Agent run/retry, delegated workers, and `memory.list`/`memory.search` use these canonical documents.
 Legacy Life Context paragraphs are no longer separately injected. Timeline and
 working-task context remain bounded substrate context. Reviewed user preferences
 and explicitly enabled remote memory retain their existing configuration gates.
-Knowledge is excluded from personal-memory document search.
+Knowledge is excluded from personal-memory document search. Ranking combines lexical
+relevance, the existing local feature embedding similarity, active project,
+confidence, recency, and tier. The local embedding is not a hosted language-model
+embedding; semantic paraphrase recall remains limited.
 
 ## Consolidation
 

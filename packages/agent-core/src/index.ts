@@ -693,6 +693,7 @@ export class AgentCore {
 				this.synchronizeAccountAvailability();
 			},
 			this.routingOutcomes,
+			(sessionId, query) => this.substrateContextForSession(sessionId, query, this.memoryEnabledForSession(this.runtime.getSession(sessionId)))?.prompt ?? "",
 		);
 		installOrchestrationTools(this.runtime, this.orchestrator, mainSession.id);
 		for (const session of this.runtime.listSessions()) {

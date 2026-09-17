@@ -66,4 +66,15 @@ describe("canonical memory workspace", () => {
    expect(f.core.memoryWorkspace.read().days[0]?.summaryMethod).toBe("deterministic");
   } finally { await f.close(); }
  });
+ it("forgets consolidated documents and scoped passages with their source", async () => {
+  const f = fixture(); try {
+   const event = f.core.memorySubstrate.captureActivity({ source: "test", sourceId: "source-to-forget", eventType: "project_activity", textSummary: "Reviewed the chassis constraints.", importance: 0.8 })!;
+   const document = f.save({ title: "Chassis decision", sourceIds: [event.id] });
+   const retained = f.save({ title: "Unrelated decision", sourceIds: ["different-source"] });
+   f.core.memorySubstrate.forgetSource("source-to-forget");
+   const ids = f.core.memoryWorkspace.read().documents.map(item => item.id);
+   expect(ids).not.toContain(document.id); expect(ids).toContain(retained.id);
+  } finally { await f.close(); }
+ });
+
 });
