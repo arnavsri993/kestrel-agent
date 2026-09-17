@@ -883,6 +883,7 @@ export class AgentCore {
 		providerIds: string[] = ["auto"],
 		attachments: SelectedAttachment[] = [],
 		role: "worker" | "writer" | "reviewer" = "worker",
+		requireTools = false,
 	): {
 		route: ModelRoutingDecision;
 		execution: ReturnType<AdaptiveModelRouter["executionPlan"]>;
@@ -912,6 +913,7 @@ export class AgentCore {
 			attachments,
 		);
 		const requirements = this.requirementAnalyzer.analyze(taskId, message, {
+			requiresTools: requireTools,
 			requiresVision: attachments.some((attachment) =>
 				attachment.mediaType.startsWith("image/"),
 			),
@@ -2465,6 +2467,15 @@ export class AgentCore {
 									`retry-${request.sessionId}`,
 									priorMessage,
 									request.providerIds,
+									[],
+									"worker",
+									this.runtime.requiresToolProvider(
+										request.sessionId,
+										this.configuration.filterToolNames(
+											this.runtime.discoverTools(request.sessionId).map(tool => tool.name),
+											this.personalities.get(this.selectedPersonalityId).toolNames,
+										),
+									),
 								)
 							: undefined;
 					const controller = new AbortController();
@@ -3928,6 +3939,14 @@ export class AgentCore {
 										request.message,
 										selectedProviderIds,
 										request.attachments,
+										"worker",
+										this.runtime.requiresToolProvider(
+											request.sessionId,
+											this.configuration.filterToolNames(
+												this.runtime.discoverTools(request.sessionId).map(tool => tool.name),
+												personality.toolNames,
+											),
+										),
 									)
 								: undefined;
 						const runtimeSession = this.runtime.getSession(request.sessionId);
