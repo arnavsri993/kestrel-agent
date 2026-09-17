@@ -37,10 +37,10 @@ function Overview({ documents, workspace, full = false }: { documents: MemoryDoc
 	return (
 		<div className="memory-overview">
 			<header>
-				
+
 				{!full && <><h2>Today</h2><p>{workspace.days.find(day => day.day === todayKey)?.summary ?? "No significant activity remembered today."}</p></>}
 				<h2>What Kestrel understands</h2>
-				
+
 			</header>
 			{(["short_term", "mid_term", "long_term"] as const).map((tier) => {
 				const entries = memory.filter((item) => item.tier === tier);

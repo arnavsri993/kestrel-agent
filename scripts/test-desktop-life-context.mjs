@@ -152,7 +152,7 @@ try {
 	await life.getByLabel("Title").fill("Working preference");
 	await life.getByLabel("What Kestrel should know").fill("Keep technical explanations concise and source the important claims.");
 	await life.getByRole("button", { name: "Save", exact: true }).click();
-	await life.getByRole("heading", { name: "Working preference", exact: true }).waitFor();
+	await life.getByRole("heading", { name: "Working preference", exact: true, level: 2 }).waitFor();
 	await life.getByRole("button", { name: "Edit memory", exact: true }).click();
 	await life.getByText("Sources and provenance", { exact: true }).click();
 	await life.getByText("manual", { exact: true }).waitFor();
