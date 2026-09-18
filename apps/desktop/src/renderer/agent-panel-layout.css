@@ -2,11 +2,12 @@
  * controls remain full-width above it, while the actual page viewport reserves
  * the rail width so native browser content never sits underneath the panel. */
 .ai-browser-app {
-	--agent-panel-default-width: 336px;
+	/* Chat needs real width; a ~320px rail leaves most of the window empty. */
+	--agent-panel-default-width: 560px;
 	--agent-panel-open-width: clamp(
-		288px,
+		480px,
 		var(--agent-panel-user-width, var(--agent-panel-default-width)),
-		min(520px, 44vw)
+		min(820px, 60vw)
 	);
 	--agent-panel-width: var(
 		--agent-panel-presented-width,
@@ -408,8 +409,9 @@
 	width: 100%;
 	max-width: none;
 	margin: 0;
-	overflow-x: hidden;
+	overflow-x: clip;
 	overflow-y: auto;
+	scrollbar-gutter: stable;
 }
 
 .agent-conversation-host .assistant-message,
@@ -418,6 +420,7 @@
 .agent-conversation-host .assistant-message > div {
 	min-width: 0;
 	max-width: 100%;
+	overflow-x: clip;
 }
 
 .agent-conversation-host .work-summary {
@@ -427,9 +430,11 @@
 
 .agent-conversation-host .work-summary span,
 .agent-conversation-host .assistant-message p,
-.agent-conversation-host .user-message p {
+.agent-conversation-host .user-message p,
+.agent-conversation-host .message-list :is(pre, code) {
 	min-width: 0;
 	max-width: 100%;
+	overflow-x: clip;
 	overflow-wrap: anywhere;
 	word-break: break-word;
 }
@@ -463,7 +468,8 @@
 	right: auto;
 	bottom: auto;
 	display: grid;
-	grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+	/* Keep workspace compact so the conversation owns the window. */
+	grid-template-columns: minmax(200px, 240px) minmax(0, 1fr);
 	grid-template-rows: auto minmax(0, 1fr);
 	width: 100%;
 	height: 100vh;
@@ -553,17 +559,21 @@
 	width: 100%;
 	max-width: none;
 	margin: 0;
-	overflow-x: hidden;
+	overflow-x: clip;
 	overflow-y: auto;
-	padding: 24px 32px 12px;
+	padding: 20px 28px 28px;
 }
 
 .ai-browser-app.agent-full-page .agent-conversation-host .runtime-new-composer,
 .ai-browser-app.agent-full-page .agent-conversation-host .thread-composer {
+	position: relative;
+	left: auto;
+	bottom: auto;
+	transform: none;
 	width: 100%;
 	max-width: none;
 	margin-inline: 0;
-	padding: 12px 32px 28px;
+	padding: 12px 28px 24px;
 	background: transparent;
 }
 
@@ -655,13 +665,13 @@
 
 @media (max-width: 1120px) {
 	.ai-browser-app {
-		--agent-panel-default-width: 312px;
+		--agent-panel-default-width: 520px;
 	}
 }
 
 @media (max-width: 980px) {
 	.ai-browser-app {
-		--agent-panel-default-width: 288px;
+		--agent-panel-default-width: 480px;
 	}
 }
 
