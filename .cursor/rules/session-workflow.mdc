@@ -1,5 +1,5 @@
 ---
-description: Mandatory Kestrel workflow — commit, PR, GitHub sync, restart local app after every change
+description: Mandatory Kestrel workflow — commit, PR, rebuild dock app, verify on screen
 alwaysApply: true
 ---
 
@@ -19,18 +19,24 @@ When you finish a coding task — or even a small fix — complete **all** of th
 1. **Commit** scoped changes with a clear message. Do not include unrelated local files, screenshots, or artifacts.
 2. **Push** to GitHub (`git push -u origin HEAD` when the branch is new).
 3. **Open or update a PR** with `gh pr create` or `gh pr edit`. Return the PR URL in your reply.
-4. **Sync local Kestrel** with GitHub:
+4. **Rebuild and install the dock-pinned app** (not only `dev:desktop`):
    - `git pull --ff-only` on the branch you pushed
-   - Stop any existing `corepack pnpm dev:desktop` watcher (`pkill -f "electron-vite dev"` if needed)
-   - Start one fresh `corepack pnpm dev:desktop` watcher
-5. **Verify** the running app matches the branch you pushed. Renderer HMR alone is not enough after main-process, preload, credential, or Electron startup changes.
+   - Quit every running Kestrel / `electron-vite` process
+   - Run `corepack pnpm install:mac:dev` so `/Applications/Kestrel.app` is replaced in place
+   - Run cleanup so Finder shows **only one** Kestrel (`corepack pnpm package:mac:dev` already invokes cleanup; also run `node scripts/cleanup-kestrel-macos-apps.mjs` if duplicates remain)
+   - Open the canonical app: `open -a /Applications/Kestrel.app` (the Dock pin must launch this path)
+5. **Personally verify on screen** before calling the task done:
+   - Confirm the running process is `/Applications/Kestrel.app/...` (not a `release/**` or temp runtime copy left as the user-facing app)
+   - Confirm Finder `/Applications` lists a single `Kestrel.app` (no `Kestrel-*.app`, Desktop copies, or extra install roots)
+   - Capture or inspect the live UI and confirm the change is actually visible
+   - Process/CI evidence alone is not enough
 
-If any step fails, say so and fix it — do not mark the task complete.
+`corepack pnpm dev:desktop` is fine for mid-task iteration. The finish handoff for Sai is always the rebuilt dock-pinned `/Applications/Kestrel.app`.
 
 ## Do not
 
-- Edit files and stop without commit → push → PR → restart dev.
-- Skip the GitHub update because a previous session already pulled.
-- Leave local Kestrel running stale code after pushing a change.
-- Assume Vite HMR is enough after main-process, preload, credential, or Electron startup changes.
+- Edit files and stop without commit → push → PR → rebuild dock app → on-screen verify.
+- Leave Sai on a stale Dock pin while only a source watcher was restarted.
+- Leave duplicate Kestrel.app bundles in Applications, Desktop, Downloads, or Documents.
+- Claim the running app is current from a build timestamp or HMR alone.
 - Mix unrelated dirty-tree files into the PR.
