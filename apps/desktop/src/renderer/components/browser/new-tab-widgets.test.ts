@@ -13,12 +13,14 @@ import {
 	NEW_TAB_WIDGET_DEFINITIONS,
 	normalizedWidgetSettings,
 	prioritizeCodexUsageRows,
+	remainingUsagePercent,
 	removeWidget,
 	reorderWidget,
 	resizeWidget,
 	rowSpanForSize,
 	saveLayout,
 	setRouteUsageProviderVisible,
+	usageBatteryLevel,
 	visibleRouteUsageProviderIds,
 } from "./new-tab-widgets";
 
@@ -217,5 +219,16 @@ describe("New Tab widget layout model", () => {
 			"account-a",
 			"account-b",
 		]);
+	});
+
+	it("maps used percent to remaining Batteries-style levels", () => {
+		expect(remainingUsagePercent(0)).toBe(100);
+		expect(remainingUsagePercent(54)).toBe(46);
+		expect(remainingUsagePercent(100)).toBe(0);
+		expect(usageBatteryLevel(100)).toBe("ok");
+		expect(usageBatteryLevel(20)).toBe("low");
+		expect(usageBatteryLevel(8)).toBe("critical");
+		expect(usageBatteryLevel(0)).toBe("empty");
+		expect(usageBatteryLevel(undefined)).toBe("unknown");
 	});
 });

@@ -51,7 +51,9 @@ import {
 	rowSpanForSize,
 	saveLayout,
 	prioritizeCodexUsageRows,
+	remainingUsagePercent,
 	setRouteUsageProviderVisible,
+	usageBatteryLevel,
 	visibleRouteUsageProviderIds,
 	WIDGET_SIZE_DESCRIPTIONS,
 	WIDGET_SIZE_LABELS,
@@ -623,16 +625,81 @@ function statusChipLabel(status: ProviderUsageSnapshot["status"]): string {
 	}
 }
 
-function formatResetAt(value: string | undefined): string | undefined {
-	if (!value) return undefined;
-	const parsed = Date.parse(value);
-	if (!Number.isFinite(parsed)) return undefined;
-	return new Date(parsed).toLocaleString(undefined, {
-		month: "short",
-		day: "numeric",
-		hour: "numeric",
-		minute: "2-digit",
-	});
+function accountDisplayName(row: ProviderUsageSnapshot): string {
+	const label = row.label.replace(/\s*·\s*(codex|chatgpt).*$/i, "").trim();
+	if (label && !/^codex(-subscription)?$/i.test(label)) return label;
+	if (row.email) {
+		const local = row.email.split("@")[0]?.trim();
+		if (local) return local;
+	}
+	return row.label;
+}
+
+function ProviderUsageGlyph({ providerId }: { providerId: string }) {
+	const id = providerId.toLowerCase();
+	if (id.includes("codex") || id.includes("chatgpt") || id.includes("openai")) {
+		return (
+			<span className="kestrel-usage-glyph is-codex" aria-hidden="true">
+				<svg viewBox="0 0 24 24" width="16" height="16" focusable="false">
+					<path
+						fill="currentColor"
+						d="M12 2.2c.6 0 1.2.16 1.7.45l5.1 2.95c1.1.63 1.7 1.78 1.7 3.05v5.9c0 1.27-.6 2.42-1.7 3.05l-5.1 2.95a3.4 3.4 0 01-3.4 0l-5.1-2.95A3.4 3.4 0 013.5 14.55v-5.9c0-1.27.6-2.42 1.7-3.05l5.1-2.95c.5-.29 1.1-.45 1.7-.45zm0 3.1L7.4 8.1v4.9L12 15.7l4.6-2.7V8.1L12 5.3z"
+					/>
+				</svg>
+			</span>
+		);
+	}
+	if (id.includes("cursor")) {
+		return (
+			<span className="kestrel-usage-glyph is-cursor" aria-hidden="true">
+				<svg viewBox="0 0 24 24" width="15" height="15" focusable="false">
+					<path
+						fill="currentColor"
+						d="M5 3.5l14 7.2-6.1 1.7L11 20.5 5 3.5z"
+					/>
+				</svg>
+			</span>
+		);
+	}
+	return (
+		<span className="kestrel-usage-glyph" aria-hidden="true">
+			{(providerId[0] ?? "?").toUpperCase()}
+		</span>
+	);
+}
+
+function UsageBattery({
+	remainingPercent,
+	label,
+}: {
+	remainingPercent: number | undefined;
+	label: string;
+}) {
+	const level = usageBatteryLevel(remainingPercent);
+	const fill =
+		remainingPercent === undefined
+			? 0
+			: Math.max(0, Math.min(100, remainingPercent));
+	return (
+		<span
+			className={`kestrel-usage-battery is-${level}`}
+			title={
+				remainingPercent === undefined
+					? `${label}: unavailable`
+					: `${label}: ${fill}% left`
+			}
+			role="meter"
+			aria-label={`${label} remaining`}
+			aria-valuemin={0}
+			aria-valuemax={100}
+			aria-valuenow={remainingPercent === undefined ? undefined : fill}
+		>
+			<span className="kestrel-usage-battery-body">
+				<span style={{ width: `${fill}%` }} />
+			</span>
+			<span className="kestrel-usage-battery-nub" aria-hidden="true" />
+		</span>
+	);
 }
 
 function RouteUsageWidget({
@@ -701,38 +768,79 @@ function RouteUsageWidget({
 	return (
 		<div className="kestrel-widget-route-usage">
 			{loading && rows.length === 0 ? (
-				<p className="kestrel-widget-empty">Checking configured routes…</p>
+				<p className="kestrel-widget-empty">Checking Codex accounts…</p>
 			) : error && rows.length === 0 ? (
 				<p className="kestrel-widget-empty">{error}</p>
 			) : visibleRows.length === 0 ? (
 				<p className="kestrel-widget-empty">
 					{rows.length === 0
-						? "No model routes are configured yet."
-						: "All routes are hidden. Show one below."}
+						? "No Codex accounts are configured yet."
+						: "All accounts are hidden. Show one below."}
 				</p>
 			) : (
 				<ul className="kestrel-widget-route-usage-list">
-					{visibleRows.map((row) => (
-						<li key={row.providerId} className="kestrel-widget-route-usage-row">
-							<div className="kestrel-widget-route-usage-heading">
-								<div>
-									<strong>{row.label}</strong>
-									{(row.email || row.plan) && (
-										<small>
-											{[row.email, row.plan].filter(Boolean).join(" · ")}
-										</small>
+					{visibleRows.map((row) => {
+						const name = accountDisplayName(row);
+						const windows = row.windows ?? [];
+						const primary = windows[0];
+						const secondary = windows[1];
+						const primaryLeft = primary
+							? remainingUsagePercent(primary.usedPercent)
+							: undefined;
+						const secondaryLeft = secondary
+							? remainingUsagePercent(secondary.usedPercent)
+							: undefined;
+						const headlineLeft = primaryLeft ?? secondaryLeft;
+						const detail =
+							row.status !== "ready"
+								? statusChipLabel(row.status)
+								: row.email
+									? row.email
+									: undefined;
+						return (
+							<li
+								key={row.providerId}
+								className="kestrel-widget-route-usage-row"
+							>
+								<ProviderUsageGlyph providerId={row.providerId} />
+								<div className="kestrel-widget-route-usage-copy">
+									<strong title={row.email ?? row.label}>
+										{widgetText(name, 28)}
+									</strong>
+									{detail && (
+										<small title={detail}>{widgetText(detail, 34)}</small>
 									)}
 								</div>
 								<span
-									className={`kestrel-widget-route-usage-chip is-${row.status}`}
+									className={`kestrel-widget-route-usage-percent${
+										headlineLeft === undefined ? " is-muted" : ""
+									}`}
 								>
-									{statusChipLabel(row.status)}
+									{headlineLeft === undefined ? "—" : `${headlineLeft}%`}
 								</span>
+								<div className="kestrel-widget-route-usage-batteries">
+									{windows.length > 0 ? (
+										windows.map((windowRow) => (
+											<UsageBattery
+												key={`${row.providerId}-${windowRow.label}`}
+												remainingPercent={remainingUsagePercent(
+													windowRow.usedPercent,
+												)}
+												label={windowRow.label}
+											/>
+										))
+									) : (
+										<UsageBattery
+											remainingPercent={undefined}
+											label={statusChipLabel(row.status)}
+										/>
+									)}
+								</div>
 								<button
 									type="button"
 									className="kestrel-widget-route-usage-hide"
-									aria-label={`Hide ${row.label}`}
-									title={`Hide ${row.label}`}
+									aria-label={`Hide ${name}`}
+									title={`Hide ${name}`}
 									onClick={() =>
 										onWidgetSettingsChange(
 											setRouteUsageProviderVisible(
@@ -744,57 +852,16 @@ function RouteUsageWidget({
 										)
 									}
 								>
-									Hide
+									<span aria-hidden="true">×</span>
 								</button>
-							</div>
-							{row.windows && row.windows.length > 0 ? (
-								<div className="kestrel-widget-route-usage-meters">
-									{row.windows.map((windowRow) => (
-										<div
-											key={`${row.providerId}-${windowRow.label}`}
-											className="kestrel-widget-route-usage-meter"
-										>
-											<div className="kestrel-widget-route-usage-meter-label">
-												<span>{windowRow.label}</span>
-												<span>{Math.round(windowRow.usedPercent)}%</span>
-											</div>
-											<div
-												className="kestrel-widget-route-usage-meter-track"
-												role="meter"
-												aria-label={`${windowRow.label} usage`}
-												aria-valuemin={0}
-												aria-valuemax={100}
-												aria-valuenow={Math.round(windowRow.usedPercent)}
-											>
-												<span
-													style={{
-														width: `${Math.max(0, Math.min(100, windowRow.usedPercent))}%`,
-													}}
-												/>
-											</div>
-											{windowRow.resetsAt && (
-												<small>
-													Resets {formatResetAt(windowRow.resetsAt)}
-												</small>
-											)}
-										</div>
-									))}
-								</div>
-							) : (
-								<p className="kestrel-widget-route-usage-detail">
-									{row.statusDetail ??
-										(row.status === "ready"
-											? "Status only — this route does not publish usage windows."
-											: statusChipLabel(row.status))}
-								</p>
-							)}
-						</li>
-					))}
+							</li>
+						);
+					})}
 				</ul>
 			)}
 			{hiddenConfigured.length > 0 && (
 				<div className="kestrel-widget-route-usage-hidden">
-					<small>Hidden routes</small>
+					<small>Hidden</small>
 					{hiddenConfigured.map((row) => (
 						<button
 							key={row.providerId}
@@ -810,7 +877,7 @@ function RouteUsageWidget({
 								)
 							}
 						>
-							Show {row.label}
+							Show {accountDisplayName(row)}
 						</button>
 					))}
 				</div>

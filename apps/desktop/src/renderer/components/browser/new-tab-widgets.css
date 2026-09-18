@@ -748,80 +748,183 @@
 
 .kestrel-widget-route-usage {
 	display: grid;
-	gap: 10px;
-	padding: 0 6px 4px;
+	gap: 8px;
+	padding: 2px 4px 4px;
 }
 
 .kestrel-widget-route-usage-list {
 	list-style: none;
 	margin: 0;
 	padding: 0;
-	display: grid;
-	gap: 10px;
 }
 
 .kestrel-widget-route-usage-row {
 	display: grid;
-	gap: 8px;
-	padding: 8px 10px;
-	border: 1px solid var(--line);
-	border-radius: 12px;
-	background: color-mix(in srgb, var(--panel) 88%, transparent);
-}
-
-.kestrel-widget-route-usage-heading {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto auto;
-	gap: 8px;
-	align-items: start;
-}
-
-.kestrel-widget-route-usage-heading strong {
-	display: block;
-	font-size: 12px;
-	line-height: 1.35;
-}
-
-.kestrel-widget-route-usage-heading small,
-.kestrel-widget-route-usage-detail,
-.kestrel-widget-route-usage-meter small,
-.kestrel-widget-route-usage-hidden small {
-	display: block;
-	color: var(--ink-secondary);
-	font-size: 11px;
-	line-height: 1.35;
-}
-
-.kestrel-widget-route-usage-chip {
-	display: inline-flex;
+	grid-template-columns: 28px minmax(0, 1fr) auto auto 18px;
 	align-items: center;
-	min-height: 22px;
-	padding: 0 8px;
-	border-radius: 999px;
-	border: 1px solid var(--line);
-	font-size: 10px;
-	font-weight: 650;
-	color: var(--ink-secondary);
+	gap: 8px;
+	min-height: 44px;
+	padding: 7px 4px;
+	border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.kestrel-widget-route-usage-row:last-child {
+	border-bottom: 0;
+}
+
+.kestrel-usage-glyph {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--ink) 10%, transparent);
+	color: var(--ink);
+	font: 700 11px / 1 var(--mono);
+}
+
+.kestrel-usage-glyph.is-codex {
+	background: #101010;
+	color: #f5f5f5;
+}
+
+.kestrel-usage-glyph.is-cursor {
+	background: #1a1a1a;
+	color: #f4f4f5;
+}
+
+.kestrel-widget-route-usage-copy {
+	min-width: 0;
+	display: grid;
+	gap: 1px;
+}
+
+.kestrel-widget-route-usage-copy strong,
+.kestrel-widget-route-usage-copy small {
+	overflow: hidden;
+	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-.kestrel-widget-route-usage-chip.is-ready {
+.kestrel-widget-route-usage-copy strong {
+	font-size: 12.5px;
+	font-weight: 560;
+	letter-spacing: -0.01em;
 	color: var(--ink);
-	border-color: color-mix(in srgb, var(--line-strong) 70%, transparent);
 }
 
-.kestrel-widget-route-usage-chip.is-rate_limited,
-.kestrel-widget-route-usage-chip.is-unhealthy {
-	color: var(--ink);
-	border-color: color-mix(in srgb, #a9433c 45%, var(--line));
+.kestrel-widget-route-usage-copy small {
+	font-size: 10.5px;
+	color: var(--ink-secondary);
 }
 
-.kestrel-widget-route-usage-chip.is-not_signed_in,
-.kestrel-widget-route-usage-chip.is-unknown {
+.kestrel-widget-route-usage-percent {
+	font-variant-numeric: tabular-nums;
+	font-size: 12.5px;
+	font-weight: 560;
+	color: var(--ink);
+	min-width: 2.6em;
+	text-align: right;
+}
+
+.kestrel-widget-route-usage-percent.is-muted {
+	color: var(--ink-secondary);
+}
+
+.kestrel-widget-route-usage-batteries {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.kestrel-usage-battery {
+	display: inline-flex;
+	align-items: center;
+	gap: 1px;
+}
+
+.kestrel-usage-battery-body {
+	position: relative;
+	width: 22px;
+	height: 11px;
+	border: 1.5px solid color-mix(in srgb, var(--ink) 72%, transparent);
+	border-radius: 3px;
+	overflow: hidden;
+	background: transparent;
+}
+
+.kestrel-usage-battery-body > span {
+	position: absolute;
+	inset: 1.5px auto 1.5px 1.5px;
+	border-radius: 1.5px;
+	background: #34c759;
+	transition: width 180ms var(--ease-kestrel, ease);
+}
+
+.kestrel-usage-battery-nub {
+	width: 2px;
+	height: 5px;
+	border-radius: 0 1px 1px 0;
+	background: color-mix(in srgb, var(--ink) 72%, transparent);
+}
+
+.kestrel-usage-battery.is-low .kestrel-usage-battery-body > span {
+	background: #ffd60a;
+}
+
+.kestrel-usage-battery.is-critical .kestrel-usage-battery-body > span,
+.kestrel-usage-battery.is-empty .kestrel-usage-battery-body > span {
+	background: #ff453a;
+}
+
+.kestrel-usage-battery.is-unknown .kestrel-usage-battery-body {
+	opacity: 0.45;
+}
+
+.kestrel-usage-battery.is-unknown .kestrel-usage-battery-body > span {
+	width: 0 !important;
+}
+
+.kestrel-widget-route-usage-hide {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	color: var(--ink-secondary);
+	font: inherit;
+	font-size: 16px;
+	line-height: 1;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	cursor: pointer;
+	opacity: 0;
+	border-radius: 6px;
+}
+
+.kestrel-widget-route-usage-row:hover .kestrel-widget-route-usage-hide,
+.kestrel-widget-route-usage-row:focus-within .kestrel-widget-route-usage-hide {
 	opacity: 0.85;
 }
 
-.kestrel-widget-route-usage-hide,
+.kestrel-widget-route-usage-hide:hover,
+.kestrel-widget-route-usage-hidden button:hover {
+	color: var(--ink);
+	opacity: 1;
+}
+
+.kestrel-widget-route-usage-hidden {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 12px;
+	align-items: center;
+	padding: 2px 4px 0;
+}
+
+.kestrel-widget-route-usage-hidden small {
+	color: var(--ink-secondary);
+	font-size: 11px;
+}
+
 .kestrel-widget-route-usage-hidden button {
 	appearance: none;
 	border: 0;
@@ -832,51 +935,6 @@
 	font-weight: 600;
 	cursor: pointer;
 	padding: 0;
-}
-
-.kestrel-widget-route-usage-hide:hover,
-.kestrel-widget-route-usage-hidden button:hover {
-	color: var(--ink);
-}
-
-.kestrel-widget-route-usage-meters {
-	display: grid;
-	gap: 8px;
-}
-
-.kestrel-widget-route-usage-meter {
-	display: grid;
-	gap: 4px;
-}
-
-.kestrel-widget-route-usage-meter-label {
-	display: flex;
-	justify-content: space-between;
-	gap: 8px;
-	font-size: 11px;
-	color: var(--ink-secondary);
-}
-
-.kestrel-widget-route-usage-meter-track {
-	height: 6px;
-	border-radius: 999px;
-	background: color-mix(in srgb, var(--line) 80%, transparent);
-	overflow: hidden;
-}
-
-.kestrel-widget-route-usage-meter-track > span {
-	display: block;
-	height: 100%;
-	border-radius: inherit;
-	background: color-mix(in srgb, var(--ink) 55%, transparent);
-}
-
-.kestrel-widget-route-usage-hidden {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 8px 12px;
-	align-items: center;
-	padding: 0 4px;
 }
 
 .kestrel-widget-list strong {

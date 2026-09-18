@@ -139,7 +139,7 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	"route-usage": {
 		id: "route-usage",
 		title: "Codex usage",
-		description: "Per-account 5h and weekly Codex meters",
+		description: "Batteries-style 5h and weekly remaining per Codex account",
 		icon: "activity",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "large",
@@ -368,6 +368,24 @@ function isLegacyCodexRow(row: RouteUsageRowLike): boolean {
 		row.providerId === "codex-subscription" ||
 		(row.label.trim().toLowerCase() === "codex" && !row.providerId.startsWith("account-"))
 	);
+}
+
+/** Remaining capacity from a used-percent window (Apple Batteries style). */
+export function remainingUsagePercent(usedPercent: number): number {
+	if (!Number.isFinite(usedPercent)) return 0;
+	return Math.max(0, Math.min(100, Math.round(100 - usedPercent)));
+}
+
+export type UsageBatteryLevel = "ok" | "low" | "critical" | "empty" | "unknown";
+
+export function usageBatteryLevel(
+	remainingPercent: number | undefined,
+): UsageBatteryLevel {
+	if (remainingPercent === undefined) return "unknown";
+	if (remainingPercent <= 0) return "empty";
+	if (remainingPercent <= 10) return "critical";
+	if (remainingPercent <= 25) return "low";
+	return "ok";
 }
 
 /**
