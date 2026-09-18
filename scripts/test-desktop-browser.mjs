@@ -2168,9 +2168,9 @@ try {
 		"The main system should expose the primary conversation composer.",
 	);
 	assert.equal(
-		await page.getByText("Kestrel model system", { exact: true }).count(),
+		await page.locator(".agent-universe-context-composer .model-selector-trigger").count(),
 		1,
-		"The Agent Universe composer should use Kestrel's model system label.",
+		"The Agent Universe composer should expose the shared model picker.",
 	);
 	assert.equal(
 		await page.getByRole("button", { name: "Review approvals", exact: true }).count(),

@@ -1058,6 +1058,7 @@ export class AgentLoop {
 								? {}
 								: { providerIds: run.providerIds }),
 							automaticRouting: run.providerIds.includes("auto"),
+							requireTools: this.runtime.requiresToolProvider(session.id, tools.map(tool => tool.name)),
 							...(run.providerModels
 								? { providerModels: run.providerModels }
 								: {}),

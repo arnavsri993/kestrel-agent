@@ -11,7 +11,7 @@ import { textContent } from "./types";
 const roots: string[] = [];
 const executeFile = promisify(execFileCallback);
 
-async function fakeAppServer(): Promise<{
+async function fakeAppServer(replies: string[] = []): Promise<{
 	executable: string;
 	capture: string;
 }> {
@@ -26,6 +26,7 @@ const fs = require("node:fs");
 const readline = require("node:readline");
 const capture = process.argv[1] + ".capture.jsonl";
 let turn = 0;
+const replies = ${JSON.stringify(replies)};
 function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
 function record(value) {
   const row = { pid: process.pid, value };
@@ -52,6 +53,7 @@ input.on("line", line => {
     return send({ id: message.id, result: { data: [{ id: "gpt-catalog", model: "gpt-catalog", displayName: "Catalog model", inputModalities: ["text", "image"], supportedReasoningEfforts: [{ reasoningEffort: "minimal" }, { reasoningEffort: "low" }, { reasoningEffort: "high" }] }], nextCursor: "page-2" } });
   }
   if (message.method === "thread/start") return send({ id: message.id, result: { thread: { id: "thread-1" }, model: message.params.model } });
+  if (message.method === "thread/archive") return send({ id: message.id, result: {} });
   if (message.method === "thread/resume") return send({ id: message.id, result: { thread: { id: message.params.threadId } } });
   if (message.method === "turn/start") {
     turn += 1;
@@ -65,7 +67,7 @@ input.on("line", line => {
   if (typeof message.id === "number" && message.id >= 901) {
     const current = message.id - 900;
     const turnId = "turn-" + current;
-    send({ method: "item/agentMessage/delta", params: { threadId: "thread-1", turnId, itemId: "answer-" + current, delta: "Persistent answer " + current } });
+    send({ method: "item/agentMessage/delta", params: { threadId: "thread-1", turnId, itemId: "answer-" + current, delta: replies[current - 1] ?? "Persistent answer " + current } });
     send({ method: "thread/tokenUsage/updated", params: { threadId: "thread-1", turnId, tokenUsage: { last: { inputTokens: 12, outputTokens: 3, cachedInputTokens: current > 1 ? 5 : 0, reasoningOutputTokens: 1 } } } });
     send({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: turnId, status: "completed", error: null } } });
   }
@@ -145,6 +147,36 @@ async function readCapture(path: string): Promise<CaptureRecord[]> {
 }
 
 describe("persistent Codex app-server provider", () => {
+ it("bridges structured tool requests with fresh authorized context and no raw JSON streaming", async () => {
+  const fake = await fakeAppServer([
+   JSON.stringify({ text: "Checking available tools.", toolCalls: [{ name: "tools.search", argumentsJson: '{"query":"robotics"}' }] }),
+   JSON.stringify({ text: "Found robotics tools.", toolCalls: [] }),
+  ]);
+  const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 10_000 });
+  const tools = [{ name: "tools.search", description: "Discover tools", inputSchema: { type: "object" } }];
+  const deltas: string[] = [];
+  try {
+   const first = await provider.complete({ model: "gpt-test", tools, metadata: { session_id: "agent-1" }, messages: [{ role: "user", content: textContent("Get started") }] }, { onEvent: event => { if (event.type === "text_delta") deltas.push(event.delta); } });
+   expect(first.toolCalls).toEqual([{ id: expect.any(String), name: "tools.search", arguments: { query: "robotics" } }]);
+   expect(first.finishReason).toBe("tool_calls");
+   expect(deltas.join("")).toBe("Checking available tools.");
+   await provider.complete({ model: "gpt-test", tools, metadata: { session_id: "agent-1" }, messages: [
+    { role: "user", content: textContent("Get started") },
+    { role: "assistant", content: textContent(first.text), toolCalls: first.toolCalls },
+    { role: "tool", content: textContent("Verified tool result"), toolCallId: first.toolCalls[0]!.id },
+   ] });
+   const records = await readCapture(fake.capture);
+   const starts = records.filter(row => row.value.method === "thread/start");
+   expect(starts).toHaveLength(2);
+   expect(starts.every(row => row.value.params?.ephemeral === true)).toBe(true);
+   const turns = records.filter(row => row.value.method === "turn/start");
+   expect(turns[0]!.value.params?.outputSchema).toMatchObject({ type: "object", additionalProperties: false });
+   expect(turns[0]!.value.params?.sandboxPolicy).toEqual({ type: "readOnly", networkAccess: false });
+   expect(JSON.stringify(turns[1]!.value.params?.input)).toContain("Verified tool result");
+   expect(JSON.stringify(turns[1]!.value.params?.input)).toContain(first.toolCalls[0]!.id);
+  } finally { await provider.close(); }
+ });
+
 	it("discovers the signed-in account's stable app-server model catalog", async () => {
 		const fake = await fakeAppServer();
 		const provider = new CodexAppServerProvider({
@@ -161,7 +193,7 @@ describe("persistent Codex app-server provider", () => {
 				capabilities: {
 					capabilityProvenance: "confirmed",
 					streaming: true,
-					tools: false,
+					tools: true,
 					images: true,
 					audio: false,
 					documents: false,
