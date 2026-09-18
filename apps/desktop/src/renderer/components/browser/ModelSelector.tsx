@@ -186,7 +186,13 @@ export function ModelSelector({
 	}
 
 	return (
-		<div className="model-selector" data-open={open ? "true" : "false"}>
+		<div className="model-selector" data-open={open ? "true" : "false"}
+   onKeyDown={(event) => {
+    if (!open || event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenu({ restoreFocus: true });
+   }}>
 			<button
 				ref={triggerRef}
 				type="button"

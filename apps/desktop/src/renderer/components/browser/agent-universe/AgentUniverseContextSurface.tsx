@@ -1,5 +1,6 @@
 import type {
 	AgentRun,
+	ProviderAccountSummary,
 	AgentGroupMemoryStatus,
 	AgentIdentity,
 	AgentMemoryRecord,
@@ -21,6 +22,9 @@ import {
 	agentSessionRecency,
 	agentSessionStatusLabel,
 } from "../../../agent-workspace";
+import { ModelSelector } from "../ModelSelector";
+import { accountForChoice, type ModelSelectorChoice } from "../model-selector";
+import "../new-tab-composer.css";
 import { Icon } from "../../Icon";
 import { Status, type StatusTone } from "../../ui";
 import {
@@ -250,6 +254,16 @@ export function AgentUniverseContextSurface({
 	onRefreshAgentMemory(sessionId: string): void;
 }) {
 	const [input, setInput] = useState("");
+ const [expanded, setExpanded] = useState(false);
+ const [accounts, setAccounts] = useState<ProviderAccountSummary[]>([]);
+ const [choice, setChoice] = useState<ModelSelectorChoice>({ executionMode: "automatic", providerId: "", model: "", reasoningEffort: "none" });
+ useEffect(() => {
+  let active = true;
+  void window.kestrel.request({ type: "runtime-list-providers" }).then(response => {
+   if (active && response.ok && "providerAccounts" in response) setAccounts(response.providerAccounts ?? []);
+  }).catch(() => undefined);
+  return () => { active = false; };
+ }, []);
 	const [messageState, setMessageState] = useState<
 		"idle" | "sending" | "complete" | "error"
 	>("idle");
@@ -537,6 +551,8 @@ export function AgentUniverseContextSurface({
 
 	useEffect(() => {
 		resetAgentUniverseMessage(messageLifecycleRef.current);
+  setExpanded(false);
+  setChoice({ executionMode: "automatic", providerId: "", model: "", reasoningEffort: "none" });
 		setInput("");
 		setMessageState("idle");
 		setMessageError("");
@@ -562,10 +578,10 @@ export function AgentUniverseContextSurface({
 		const textarea = inputRef.current;
 		if (!textarea) return;
 		textarea.style.height = "auto";
-		const maxHeight = 132;
-		textarea.style.height = `${Math.min(maxHeight, Math.max(42, textarea.scrollHeight))}px`;
+		const maxHeight = 180;
+		textarea.style.height = `${Math.min(maxHeight, Math.max(expanded ? 55 : 38, textarea.scrollHeight))}px`;
 		textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
-	}, [input]);
+	}, [input, expanded]);
 
 	useLayoutEffect(() => {
 		const log = messageLogRef.current;
@@ -597,6 +613,10 @@ export function AgentUniverseContextSurface({
 	const sendMessage = useCallback(async () => {
 		const message = input.trim();
 		if (!message || messageState === "sending") return;
+  if (choice.executionMode === "manual" && (!choice.model.trim() || !accountForChoice(accounts, choice))) {
+   setMessageError("Select an available model or use automatic routing.");
+   return;
+  }
 		const streamId = crypto.randomUUID();
 		const attempt = beginAgentUniverseMessage(
 			messageLifecycleRef.current,
@@ -616,8 +636,9 @@ export function AgentUniverseContextSurface({
 				type: "runtime-run-agent",
 				sessionId: openSessionId,
 				message,
-				model: "auto",
-				providerIds: ["auto"],
+				model: choice.executionMode === "automatic" ? "auto" : choice.model,
+    providerIds: [choice.executionMode === "automatic" ? "auto" : choice.providerId],
+    ...(choice.reasoningEffort !== "none" ? { reasoningEffort: choice.reasoningEffort } : {}),
 				streamId,
 			});
 			const response = raw as CoreResponse;
@@ -638,7 +659,7 @@ export function AgentUniverseContextSurface({
 		} finally {
 			finishAgentUniverseMessage(messageLifecycleRef.current, attempt);
 		}
-	}, [input, loadHistory, messageState, openSessionId]);
+	}, [input, loadHistory, messageState, openSessionId, choice, accounts]);
 
 	const renderedHistory = conversationMessages(history);
 	const hasOptimisticMessage = Boolean(
@@ -1099,7 +1120,8 @@ export function AgentUniverseContextSurface({
 					</p>
 				) : null}
 				<form
-					className="agent-universe-context-composer"
+					className={`agent-universe-context-composer kestrel-task-composer${expanded || input || messageState === "sending" ? " is-expanded" : ""}`}
+     onFocus={() => setExpanded(true)}
 					onSubmit={(event) => {
 						event.preventDefault();
 						void sendMessage();
@@ -1118,22 +1140,15 @@ export function AgentUniverseContextSurface({
 						value={input}
 						onChange={(event) => setInput(event.target.value)}
 						onKeyDown={(event) => {
-							if (event.key !== "Enter" || event.shiftKey) return;
+							if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
 							event.preventDefault();
 							void sendMessage();
 						}}
 						placeholder={`Message ${title}…`}
 						disabled={messageState === "sending"}
 					/>
-					<div className="agent-universe-context-composer-footer">
-						<span
-							className="agent-universe-context-model-system"
-							aria-label="Kestrel model system, automatic routing"
-						>
-							<Icon name="models" />
-							<span>Kestrel model system</span>
-							<small>Automatic routing</small>
-						</span>
+     <div className="new-tab-composer-footer" inert={expanded || input || messageState === "sending" ? undefined : true} aria-hidden={!(expanded || input || messageState === "sending")}>
+      <div className="new-tab-composer-send-actions"><ModelSelector accounts={accounts} choice={choice} onChange={setChoice} /></div>
 						<button
 							type="submit"
 							className="agent-universe-context-send"
