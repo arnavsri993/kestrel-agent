@@ -485,9 +485,13 @@ body:has(.ai-browser-app),
 }
 
 .agent-conversation-host .message-list {
+	width: 100%;
+	max-width: none;
 	min-height: 0;
+	margin: 0;
 	padding: 18px 14px 24px;
-	overflow: auto;
+	overflow-x: hidden;
+	overflow-y: auto;
 	overscroll-behavior: contain;
 	scrollbar-width: thin;
 }
@@ -523,7 +527,23 @@ body:has(.ai-browser-app),
 .agent-conversation-host .assistant-message p,
 .agent-conversation-host .user-message p {
 	margin: 0;
+	max-width: 100%;
 	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+
+.agent-conversation-host .work-summary {
+	display: flex;
+	align-items: flex-start;
+	max-width: 100%;
+	min-width: 0;
+}
+
+.agent-conversation-host .work-summary span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .agent-conversation-host .memory-capture-confirmation {
@@ -4025,9 +4045,13 @@ body:has(.ai-browser-app),
 .agent-conversation-host .runtime-suggestions svg { width: 15px; height: 15px; }
 
 .agent-conversation-host .message-list {
+  width: 100%;
+  max-width: none;
   min-height: 0;
+  margin: 0;
   padding: 18px 14px 24px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
@@ -4081,8 +4105,27 @@ body:has(.ai-browser-app),
 }
 
 .agent-conversation-host .assistant-message p,
-.agent-conversation-host .user-message p { margin: 0; white-space: pre-wrap; }
-.agent-conversation-host .work-summary { margin: 11px 0; padding: 11px 11px; font-size: 11px; }
+.agent-conversation-host .user-message p {
+  margin: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.agent-conversation-host .work-summary {
+  display: flex;
+  align-items: flex-start;
+  max-width: 100%;
+  min-width: 0;
+  margin: 11px 0;
+  padding: 11px 11px;
+  font-size: 11px;
+}
+.agent-conversation-host .work-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .agent-conversation-host .approval-message > div { min-width: 0; }
 .agent-conversation-host .approval-message .button-row { display: grid; grid-template-columns: 1fr 1fr; }
 .agent-conversation-host .approval-message .button { min-width: 0; padding-inline: 11px; font-size: 11px; }

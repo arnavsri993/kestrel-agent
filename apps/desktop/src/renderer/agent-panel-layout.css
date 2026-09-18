@@ -405,7 +405,33 @@
 }
 
 .agent-conversation-host .message-list {
-	overflow: auto;
+	width: 100%;
+	max-width: none;
+	margin: 0;
+	overflow-x: hidden;
+	overflow-y: auto;
+}
+
+.agent-conversation-host .assistant-message,
+.agent-conversation-host .user-message,
+.agent-conversation-host .work-summary,
+.agent-conversation-host .assistant-message > div {
+	min-width: 0;
+	max-width: 100%;
+}
+
+.agent-conversation-host .work-summary {
+	display: flex;
+	align-items: flex-start;
+}
+
+.agent-conversation-host .work-summary span,
+.agent-conversation-host .assistant-message p,
+.agent-conversation-host .user-message p {
+	min-width: 0;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .agent-conversation-host .runtime-new-composer,
@@ -524,16 +550,25 @@
 }
 
 .ai-browser-app.agent-full-page .agent-conversation-host .message-list {
-	overflow: auto;
-	padding: 24px 28px 12px;
+	width: 100%;
+	max-width: none;
+	margin: 0;
+	overflow-x: hidden;
+	overflow-y: auto;
+	padding: 24px 32px 12px;
 }
 
 .ai-browser-app.agent-full-page .agent-conversation-host .runtime-new-composer,
 .ai-browser-app.agent-full-page .agent-conversation-host .thread-composer {
-	width: min(760px, 100%);
-	margin-inline: auto;
-	padding: 12px 24px 28px;
+	width: 100%;
+	max-width: none;
+	margin-inline: 0;
+	padding: 12px 32px 28px;
 	background: transparent;
+}
+
+.ai-browser-app.agent-full-page .agent-conversation-host .assistant-message p {
+	max-width: none;
 }
 
 .ai-browser-app.agent-full-page .agent-workspace {
