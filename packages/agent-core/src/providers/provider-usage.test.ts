@@ -89,6 +89,42 @@ describe("Codex usage snapshot parsing", () => {
 			},
 		]);
 	});
+
+	it("reads OpenClaw-style rateLimitsByLimitId.codex buckets", () => {
+		const snapshot = parseCodexAccountUsageSnapshot({
+			ordinaryUsageAllowed: true,
+			rateLimitsByLimitId: {
+				codex: {
+					primary: {
+						usedPercent: 42,
+						windowDurationMins: 300,
+						resetsAt: 2_000_000_000,
+					},
+					secondary: {
+						usedPercent: 17,
+						windowDurationMins: 10_080,
+						resetsAt: 2_000_100_000,
+					},
+					planType: "plus",
+				},
+			},
+		});
+		expect(usageWindowsFromCodex(snapshot)).toEqual([
+			{
+				label: "5-hour",
+				usedPercent: 42,
+				windowDurationMins: 300,
+				resetsAt: new Date(2_000_000_000 * 1_000).toISOString(),
+			},
+			{
+				label: "Weekly",
+				usedPercent: 17,
+				windowDurationMins: 10_080,
+				resetsAt: new Date(2_000_100_000 * 1_000).toISOString(),
+			},
+		]);
+		expect(snapshot.plan).toBe("plus");
+	});
 });
 
 describe("Account-backed Codex usage identity", () => {

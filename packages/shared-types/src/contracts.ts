@@ -4118,8 +4118,8 @@ export const NEW_TAB_WIDGET_IDS = [
 export const DEFAULT_NEW_TAB_WIDGET_IDS = [
 	"frequent-tabs",
 	"recent-work",
+	"route-usage",
 	"recent-memories",
-	"quick-actions",
 ] as const;
 
 export const NewTabWidgetIdSchema = z.enum(NEW_TAB_WIDGET_IDS);

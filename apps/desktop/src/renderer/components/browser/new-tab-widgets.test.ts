@@ -47,8 +47,8 @@ describe("New Tab widget layout model", () => {
 		expect(DEFAULT_NEW_TAB_WIDGET_IDS).toEqual([
 			"frequent-tabs",
 			"recent-work",
+			"route-usage",
 			"recent-memories",
-			"quick-actions",
 		]);
 		expect(NEW_TAB_WIDGET_DEFINITIONS["recent-memories"]?.icon).toBe("memory");
 		expect(NEW_TAB_WIDGET_DEFINITIONS["open-tabs"]?.defaultSize).toBe("medium");
@@ -56,6 +56,7 @@ describe("New Tab widget layout model", () => {
 		expect(NEW_TAB_WIDGET_DEFINITIONS["recent-pages"]?.description).toContain(
 			"Visited pages",
 		);
+		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"]?.title).toBe("Codex usage");
 	});
 
 	it("derives a new class from a saved semantic order and preserves enabled widgets", () => {
@@ -149,7 +150,7 @@ describe("New Tab widget layout model", () => {
 		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].id).toBe("route-usage");
 		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].title).toBe("Codex usage");
 		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].defaultSize).toBe("large");
-		expect(DEFAULT_NEW_TAB_WIDGET_IDS).not.toContain("route-usage");
+		expect(DEFAULT_NEW_TAB_WIDGET_IDS).toContain("route-usage");
 		expect(rowSpanForSize("large", "route-usage")).toBe(4);
 		expect(rowSpanForSize("medium", "route-usage")).toBe(3);
 		expect(rowSpanForSize("large")).toBe(2);
@@ -182,6 +183,23 @@ describe("New Tab widget layout model", () => {
 				"cursor-subscription",
 			]),
 		).toEqual(["codex-subscription", "cursor-subscription"]);
+	});
+
+	it("upgrades the previous home default to include Codex usage", () => {
+		const previous: NewTabWidgetSettings = {
+			version: 1,
+			enabled: [
+				"frequent-tabs",
+				"recent-work",
+				"recent-memories",
+				"quick-actions",
+			],
+			layouts: {},
+			routeUsageVisible: [],
+		};
+		expect(normalizedWidgetSettings(previous).enabled).toEqual([
+			...DEFAULT_NEW_TAB_WIDGET_IDS,
+		]);
 	});
 
 	it("dedupes legacy Codex mirrors and keeps metered accounts first", () => {

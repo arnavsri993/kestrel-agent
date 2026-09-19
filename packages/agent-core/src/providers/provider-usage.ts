@@ -17,20 +17,24 @@ const FIVE_HOUR_MINS = 300;
 const WEEKLY_MINS = 10_080;
 
 export function providerUsageLabel(provider: ModelProvider): string {
+	const named = provider.account?.displayName?.trim();
+	if (named) return named;
 	const id = provider.poolId ?? provider.id;
 	switch (id) {
+		case "codex":
 		case "codex-subscription":
 			return "Codex";
 		case "claude-subscription":
 			return "Claude Code";
 		case "opencode-subscription":
 			return "OpenCode";
+		case "cursor":
 		case "cursor-subscription":
 			return "Cursor";
 		case "ollama":
 			return "Ollama";
 		default:
-			return provider.account?.displayName?.trim() || id;
+			return id;
 	}
 }
 

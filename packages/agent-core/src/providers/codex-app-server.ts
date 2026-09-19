@@ -192,14 +192,41 @@ function accountEmailAndPlan(account: JsonObject | undefined): {
  * Normalize the non-secret fields from `account/rateLimits/read` (and sparse
  * `account/rateLimits/updated` notifications) for routing and the New Tab widget.
  */
+/**
+ * Resolve the Codex-metered snapshot the same way OpenClaw does: prefer the
+ * `codex` bucket from rateLimitsByLimitId, then the backward-compatible
+ * single-bucket `rateLimits` payload.
+ */
+function resolveCodexRateLimitBucket(root: JsonObject): JsonObject {
+	const byLimitId =
+		object(root.rateLimitsByLimitId) ?? object(root.rate_limits_by_limit_id);
+	const preferred =
+		(byLimitId ? object(byLimitId.codex) : undefined) ??
+		(byLimitId
+			? Object.values(byLimitId)
+					.map((value) => object(value))
+					.find(
+						(entry) =>
+							entry &&
+							(parseRateLimitWindow(entry.primary) ||
+								parseRateLimitWindow(entry.secondary)),
+					)
+			: undefined);
+	const legacy =
+		object(root.rateLimits) ?? object(root.rate_limits) ?? undefined;
+	if (preferred) return preferred;
+	if (legacy && (legacy.primary !== undefined || legacy.secondary !== undefined))
+		return legacy;
+	return legacy ?? root;
+}
+
 export function parseCodexAccountUsageSnapshot(
 	rateLimitsResult: unknown,
 	accountResult?: unknown,
 	previous?: CodexAccountUsageSnapshot,
 ): CodexAccountUsageSnapshot {
 	const root = object(rateLimitsResult) ?? {};
-	const rateLimits =
-		object(root.rateLimits) ?? object(root.rate_limits) ?? root;
+	const rateLimits = resolveCodexRateLimitBucket(root);
 	const ordinaryRaw = root.ordinaryUsageAllowed ?? root.ordinary_usage_allowed;
 	const ordinaryUsageAllowed =
 		typeof ordinaryRaw === "boolean"

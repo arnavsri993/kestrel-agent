@@ -37,6 +37,14 @@ const LEGACY_DEFAULT_NEW_TAB_WIDGET_IDS: readonly NewTabWidgetId[] = [
 	"quick-actions",
 ];
 
+/** Pre–Codex-usage home layout; untouched profiles upgrade to include route-usage. */
+const PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS: readonly NewTabWidgetId[] = [
+	"frequent-tabs",
+	"recent-work",
+	"recent-memories",
+	"quick-actions",
+];
+
 export interface NewTabWidgetDefinition {
 	id: NewTabWidgetId;
 	title: string;
@@ -259,6 +267,29 @@ function isLegacyDefaultSettings(settings: NewTabWidgetSettings): boolean {
 	);
 }
 
+function isPreviousDefaultSettings(settings: NewTabWidgetSettings): boolean {
+	const savedLayouts = Object.values(settings.layouts).filter(
+		(layout): layout is NewTabWidgetLayout => Boolean(layout),
+	);
+	const untouchedLayouts = savedLayouts.every(
+		(layout) =>
+			!layout.customized &&
+			layout.items.length === PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS.length &&
+			new Set(layout.items.map((item) => item.id)).size ===
+				PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS.length &&
+			layout.items.every((item) =>
+				PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS.includes(item.id),
+			),
+	);
+	return (
+		settings.enabled.length === PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS.length &&
+		PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS.every((id) =>
+			settings.enabled.includes(id),
+		) &&
+		untouchedLayouts
+	);
+}
+
 function sourceLayoutFor(
 	settings: NewTabWidgetSettings,
 	excluded: NewTabWidgetLayoutClass,
@@ -305,7 +336,9 @@ export function normalizedWidgetSettings(
 	settings: NewTabWidgetSettings,
 ): NewTabWidgetSettings {
 	const enabled = normalizeEnabled(
-		isLegacyDefaultSettings(settings) ? DEFAULT_NEW_TAB_WIDGET_IDS : settings.enabled,
+		isLegacyDefaultSettings(settings) || isPreviousDefaultSettings(settings)
+			? DEFAULT_NEW_TAB_WIDGET_IDS
+			: settings.enabled,
 	);
 	const layouts = Object.fromEntries(
 		NEW_TAB_WIDGET_LAYOUT_CLASSES.flatMap((layoutClass) => {
