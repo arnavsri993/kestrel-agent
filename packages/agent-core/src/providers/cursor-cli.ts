@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
 	contentText,
 	type DiscoveredModel,
@@ -82,6 +82,19 @@ function cancellationError(signal: AbortSignal | undefined): Error {
 	return signal?.reason instanceof Error
 		? signal.reason
 		: new Error("Cursor request was cancelled.");
+}
+
+/**
+ * Standalone `agent` / `cursor-agent` binaries already speak the agent CLI
+ * surface. The `cursor` app binary needs the `agent` subcommand prefix.
+ */
+export function cursorAgentArgs(
+	executable: string,
+	args: string[],
+): string[] {
+	const name = basename(executable).toLowerCase();
+	if (name === "agent" || name === "cursor-agent") return args;
+	return ["agent", ...args];
 }
 
 function runCursorCli(
@@ -317,7 +330,11 @@ export class CursorCliManager {
 		try {
 			const result = await runCursorCli(
 				this.options.executable,
-				["agent", "status", "--format", "json"],
+				cursorAgentArgs(this.options.executable, [
+					"status",
+					"--format",
+					"json",
+				]),
 				{
 					cwd: root,
 					environment: this.environment,
@@ -336,15 +353,19 @@ export class CursorCliManager {
 			throw new Error("Cursor sign-in is already in progress.");
 		const root = await mkdtemp(join(tmpdir(), "kestrel-cursor-login-"));
 		try {
-			await runCursorCli(this.options.executable, ["agent", "login"], {
-				cwd: root,
-				environment: this.environment,
-				...(signal ? { signal } : {}),
-				timeoutMs: this.loginTimeoutMs,
-				onChild: (child) => {
-					this.activeLogin = child;
+			await runCursorCli(
+				this.options.executable,
+				cursorAgentArgs(this.options.executable, ["login"]),
+				{
+					cwd: root,
+					environment: this.environment,
+					...(signal ? { signal } : {}),
+					timeoutMs: this.loginTimeoutMs,
+					onChild: (child) => {
+						this.activeLogin = child;
+					},
 				},
-			});
+			);
 		} finally {
 			this.activeLogin = undefined;
 			await rm(root, { recursive: true, force: true });
@@ -430,7 +451,11 @@ export class CursorSubscriptionProvider implements ModelProvider {
 		try {
 			const result = await runCursorCli(
 				this.executable,
-				["agent", "--list-models", "--output-format", "json"],
+				cursorAgentArgs(this.executable, [
+					"--list-models",
+					"--output-format",
+					"json",
+				]),
 				{
 					cwd: root,
 					environment: this.environment,
@@ -463,8 +488,7 @@ export class CursorSubscriptionProvider implements ModelProvider {
 		let finalText = "";
 		let responseId: string | undefined;
 		try {
-			const args = [
-				"agent",
+			const args = cursorAgentArgs(this.executable, [
 				"--print",
 				"--output-format",
 				"stream-json",
@@ -473,7 +497,7 @@ export class CursorSubscriptionProvider implements ModelProvider {
 				"ask",
 				"--sandbox",
 				"enabled",
-			];
+			]);
 			if (
 				request.model &&
 				request.model !== "cursor-auto" &&

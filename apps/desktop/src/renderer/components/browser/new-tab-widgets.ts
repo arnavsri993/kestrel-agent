@@ -37,6 +37,14 @@ const LEGACY_DEFAULT_NEW_TAB_WIDGET_IDS: readonly NewTabWidgetId[] = [
 	"quick-actions",
 ];
 
+/** Pre–Codex-usage home layout; untouched profiles upgrade to include route-usage. */
+const PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS: readonly NewTabWidgetId[] = [
+	"frequent-tabs",
+	"recent-work",
+	"recent-memories",
+	"quick-actions",
+];
+
 export interface NewTabWidgetDefinition {
 	id: NewTabWidgetId;
 	title: string;
@@ -136,6 +144,15 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 		defaultSize: "medium",
 		priority: 80,
 	},
+	"route-usage": {
+		id: "route-usage",
+		title: "Codex usage",
+		description: "Batteries-style 5h and weekly remaining per Codex account",
+		icon: "activity",
+		supportedSizes: ["small", "medium", "large"],
+		defaultSize: "large",
+		priority: 40,
+	},
 };
 
 export function layoutClassForWidth(width: number): NewTabWidgetLayoutClass {
@@ -169,7 +186,17 @@ export function columnSpanForSize(
 	return Math.min(2, columnsForLayoutClass(layoutClass));
 }
 
-export function rowSpanForSize(size: NewTabWidgetSize): number {
+export function rowSpanForSize(
+	size: NewTabWidgetSize,
+	widgetId?: NewTabWidgetId,
+): number {
+	// Codex usage needs room for several isolated account meters; a normal
+	// large card (~2 rows) clips after the first account with overflow:hidden.
+	if (widgetId === "route-usage") {
+		if (size === "large") return 4;
+		if (size === "medium") return 3;
+		return 2;
+	}
 	return size === "large" ? 2 : 1;
 }
 
@@ -240,6 +267,29 @@ function isLegacyDefaultSettings(settings: NewTabWidgetSettings): boolean {
 	);
 }
 
+function isPreviousDefaultSettings(settings: NewTabWidgetSettings): boolean {
+	const savedLayouts = Object.values(settings.layouts).filter(
+		(layout): layout is NewTabWidgetLayout => Boolean(layout),
+	);
+	const untouchedLayouts = savedLayouts.every(
+		(layout) =>
+			!layout.customized &&
+			layout.items.length === PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS.length &&
+			new Set(layout.items.map((item) => item.id)).size ===
+				PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS.length &&
+			layout.items.every((item) =>
+				PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS.includes(item.id),
+			),
+	);
+	return (
+		settings.enabled.length === PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS.length &&
+		PREVIOUS_DEFAULT_NEW_TAB_WIDGET_IDS.every((id) =>
+			settings.enabled.includes(id),
+		) &&
+		untouchedLayouts
+	);
+}
+
 function sourceLayoutFor(
 	settings: NewTabWidgetSettings,
 	excluded: NewTabWidgetLayoutClass,
@@ -286,7 +336,9 @@ export function normalizedWidgetSettings(
 	settings: NewTabWidgetSettings,
 ): NewTabWidgetSettings {
 	const enabled = normalizeEnabled(
-		isLegacyDefaultSettings(settings) ? DEFAULT_NEW_TAB_WIDGET_IDS : settings.enabled,
+		isLegacyDefaultSettings(settings) || isPreviousDefaultSettings(settings)
+			? DEFAULT_NEW_TAB_WIDGET_IDS
+			: settings.enabled,
 	);
 	const layouts = Object.fromEntries(
 		NEW_TAB_WIDGET_LAYOUT_CLASSES.flatMap((layoutClass) => {
@@ -303,7 +355,140 @@ export function normalizedWidgetSettings(
 			];
 		}),
 	) as NewTabWidgetSettings["layouts"];
-	return { version: 1, enabled, layouts };
+	const routeUsageVisible = normalizeRouteUsageVisible(settings.routeUsageVisible);
+	return { version: 1, enabled, layouts, routeUsageVisible };
+}
+
+function normalizeRouteUsageVisible(
+	ids: readonly string[] | undefined,
+): string[] {
+	const seen = new Set<string>();
+	const normalized: string[] = [];
+	for (const id of ids ?? []) {
+		const trimmed = id.trim();
+		if (!trimmed || trimmed.length > 100 || seen.has(trimmed)) continue;
+		seen.add(trimmed);
+		normalized.push(trimmed);
+		if (normalized.length >= 64) break;
+	}
+	return normalized;
+}
+
+/**
+ * Empty / missing means show every configured route. A non-empty allowlist is
+ * an explicit show/hide preference for the route-usage widget.
+ */
+export function visibleRouteUsageProviderIds(
+	settings: NewTabWidgetSettings,
+	providerIds: readonly string[],
+): string[] {
+	const allowlist = normalizeRouteUsageVisible(settings.routeUsageVisible);
+	if (allowlist.length === 0) return [...providerIds];
+	const allowed = new Set(allowlist);
+	return providerIds.filter((id) => allowed.has(id));
+}
+
+type RouteUsageRowLike = {
+	providerId: string;
+	label: string;
+	email?: string;
+	windows?: readonly unknown[];
+};
+
+function isLegacyCodexRow(row: RouteUsageRowLike): boolean {
+	return (
+		row.providerId === "legacy-codex" ||
+		row.providerId === "codex-subscription" ||
+		(row.label.trim().toLowerCase() === "codex" && !row.providerId.startsWith("account-"))
+	);
+}
+
+/** Remaining capacity from a used-percent window (Apple Batteries style). */
+export function remainingUsagePercent(usedPercent: number): number {
+	if (!Number.isFinite(usedPercent)) return 0;
+	return Math.max(0, Math.min(100, Math.round(100 - usedPercent)));
+}
+
+export type UsageBatteryLevel = "ok" | "low" | "critical" | "empty" | "unknown";
+
+export function usageBatteryLevel(
+	remainingPercent: number | undefined,
+): UsageBatteryLevel {
+	if (remainingPercent === undefined) return "unknown";
+	if (remainingPercent <= 0) return "empty";
+	if (remainingPercent <= 10) return "critical";
+	if (remainingPercent <= 25) return "low";
+	return "ok";
+}
+
+/**
+ * Prefer real per-account Codex meters. Drop the legacy ~/.codex mirror when a
+ * profile-backed account already publishes the same email, and keep status-only
+ * non-Codex routes after the metered accounts.
+ */
+export function prioritizeCodexUsageRows<T extends RouteUsageRowLike>(
+	rows: readonly T[],
+): T[] {
+	const metered = rows.filter((row) => (row.windows?.length ?? 0) > 0);
+	const profileEmails = new Set(
+		metered
+			.filter((row) => !isLegacyCodexRow(row) && row.email)
+			.map((row) => row.email!.trim().toLowerCase()),
+	);
+	const droppedIds = new Set<string>();
+	const dedupedMetered = metered.filter((row) => {
+		if (!isLegacyCodexRow(row)) return true;
+		const email = row.email?.trim().toLowerCase();
+		if (email && profileEmails.has(email)) {
+			droppedIds.add(row.providerId);
+			return false;
+		}
+		return true;
+	});
+	const meteredIds = new Set(dedupedMetered.map((row) => row.providerId));
+	const remainder = rows.filter(
+		(row) => !meteredIds.has(row.providerId) && !droppedIds.has(row.providerId),
+	);
+	const codexRemainder = remainder.filter((row) => {
+		const id = row.providerId.toLowerCase();
+		const label = row.label.toLowerCase();
+		return (
+			id.includes("codex") ||
+			label.includes("codex") ||
+			label.includes("@") ||
+			Boolean(row.email)
+		);
+	});
+	const otherRemainder = remainder.filter((row) => !codexRemainder.includes(row));
+	// The New Tab card is titled Codex usage: once real meters exist, keep the
+	// focus on Codex accounts instead of padding with unrelated status-only routes.
+	if (dedupedMetered.length > 0) {
+		return [...dedupedMetered, ...codexRemainder];
+	}
+	return [...dedupedMetered, ...codexRemainder, ...otherRemainder];
+}
+
+export function setRouteUsageProviderVisible(
+	settings: NewTabWidgetSettings,
+	providerId: string,
+	visible: boolean,
+	configuredProviderIds: readonly string[],
+): NewTabWidgetSettings {
+	const next = normalizedWidgetSettings(settings);
+	const configured = configuredProviderIds.filter(Boolean);
+	const currentVisible = visibleRouteUsageProviderIds(next, configured);
+	const nextVisible = visible
+		? [...new Set([...currentVisible, providerId])]
+		: currentVisible.filter((id) => id !== providerId);
+	// Persist an explicit allowlist only when it differs from "show all".
+	const showAll =
+		configured.length > 0 &&
+		configured.every((id) => nextVisible.includes(id)) &&
+		nextVisible.length === configured.length;
+	return {
+		...next,
+		routeUsageVisible: showAll ? [] : nextVisible,
+	};
 }
 
 export function saveLayout(
@@ -353,7 +538,7 @@ export function addWidget(
 		}),
 	) as NewTabWidgetSettings["layouts"];
 	return {
-		version: 1,
+		...next,
 		enabled,
 		layouts: {
 			...layouts,
@@ -390,7 +575,7 @@ export function removeWidget(
 			];
 		}),
 	) as NewTabWidgetSettings["layouts"];
-	return { version: 1, enabled, layouts };
+	return { ...next, enabled, layouts };
 }
 
 export function resizeWidget(
