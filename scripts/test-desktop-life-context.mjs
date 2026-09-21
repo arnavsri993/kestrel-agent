@@ -138,6 +138,7 @@ try {
 	const life = page.locator(".life-product-surface");
 	await life.getByRole("heading", { name: "Memory", exact: true }).waitFor();
 	await life.getByRole("heading", { name: "Notes", exact: true }).waitFor();
+	await life.locator("aside > button").filter({ hasText: "The Kestrel capstone review" }).click();
 	await life.getByText("The Kestrel capstone review is the highest-priority project this month.", { exact: true }).first().waitFor();
 	await page.screenshot({ path: memoryScreenshot });
 
@@ -149,7 +150,12 @@ try {
 
 	await life.getByRole("button", { name: "Notes", exact: true }).click();
 	await life.getByRole("button", { name: "Add note", exact: true }).click();
-	await life.getByLabel("Title").fill("Working preference");
+	assert.equal(await life.getByLabel("What Kestrel should know").evaluate(element => element === document.activeElement), true);
+    await life.getByLabel("What Kestrel should know").fill("Prefer short meeting summaries.");
+    await life.getByRole("button", { name: "Save", exact: true }).click();
+    await life.getByRole("heading", { name: "Prefer short meeting summaries.", exact: true }).waitFor();
+    await life.getByRole("button", { name: "Add note", exact: true }).click();
+    await life.getByLabel("Title").fill("Working preference");
 	await life.getByLabel("What Kestrel should know").fill("Keep technical explanations concise and source the important claims.");
 	await life.getByRole("button", { name: "Save", exact: true }).click();
 	await life.getByRole("heading", { name: "Working preference", exact: true, level: 2 }).waitFor();
@@ -162,6 +168,12 @@ try {
 	await life.getByRole("button", { name: "Edit note", exact: true }).click();
 	await life.getByLabel("Title").fill("Unsaved title");
     page.once("dialog", dialog => dialog.dismiss());
+    await life.getByRole("button", { name: "Recent activity", exact: true }).click();
+    assert.equal(await life.getByLabel("Title").inputValue(), "Unsaved title");
+    page.once("dialog", dialog => dialog.dismiss());
+    await life.getByLabel("More memory views").selectOption("knowledge");
+    assert.equal(await life.getByLabel("Title").inputValue(), "Unsaved title");
+    page.once("dialog", dialog => dialog.dismiss());
     await life.getByRole("button", { name: "Cancel", exact: true }).click();
     assert.equal(await life.getByLabel("Title").inputValue(), "Unsaved title");
     page.once("dialog", dialog => dialog.accept());
@@ -171,6 +183,8 @@ try {
     await life.getByText("Sources and provenance", { exact: true }).click();
 	await life.getByText("manual", { exact: true }).waitFor();
 
+	await life.getByLabel("Title").fill("Discard on navigation");
+    page.once("dialog", dialog => dialog.accept());
 	await life.getByRole("button", { name: "Recent activity", exact: true }).click();
 	await life.getByRole("heading", { name: "Your week in context" }).waitFor();
 	await life.locator(".memory-days details summary").first().click();
@@ -197,12 +211,13 @@ try {
 	await page.screenshot({ path: join(screenshotRoot, "connections-compact.png") });
 	await connections.locator(".connection-app > summary").filter({ hasText: "Google" }).click();
 	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
-	const googleButton = await connections.getByRole("button", { name: "Connect with Google", exact: true }).boundingBox();
+	const googleButton = await connections.getByRole("button", { name: "Set up Google", exact: true }).boundingBox();
 	assert.ok(googleButton && googleButton.width > 100 && googleButton.height < 90, "Google action must remain readable at compact width");
 	await page.screenshot({ path: join(screenshotRoot, "connections-setup-compact.png") });
 	await page.setViewportSize({ width: 1320, height: 900 });
 	await page.screenshot({ path: join(screenshotRoot, "connections-wide.png") });
-	await connections.getByText("Set up Google connection", { exact: true }).click();
+	await connections.getByRole("button", { name: "Set up Google", exact: true }).click();
+    assert.equal(await connections.getByLabel("Desktop OAuth client ID").evaluate(element => element === document.activeElement), true);
 	await connections.getByLabel("Desktop OAuth client ID").waitFor();
 	await connections.getByLabel("More connection settings").selectOption("local");
 	await connections.getByText("Messages on this Mac", { exact: true }).waitFor();

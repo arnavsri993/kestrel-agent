@@ -948,3 +948,14 @@ Why this is not generic: the starting screens directly serve remembering a usefu
 fact and choosing a real connected app, without exposing Kestrel's storage taxonomy.
 Verify new-note save/edit/cancel, search, secondary navigation, setup disclosure,
 independent scopes, keyboard access, compact reflow, and the canonical installed app.
+
+### Follow-up: faster capture and safer navigation
+
+Use a note's first line as its title when the user leaves Title empty; put the
+writing field first and focus it on Add note. Show recently updated notes first,
+limit long list titles to two lines, and avoid repeating generated excerpts.
+Confirm before leaving an unsaved note for another view or scope; block navigation
+while its save is pending. Turn missing Google configuration into a working setup
+action that expands instructions and focuses the required field. No new access or
+storage behavior. Validate untitled save, rejected/accepted navigation, and setup
+keyboard focus in the installed app.
