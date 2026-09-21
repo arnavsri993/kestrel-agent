@@ -222,9 +222,19 @@ const AUTHENTICATION_HOSTS = new Set([
 ]);
 const AUTHENTICATION_PATH_PATTERN =
 	/(?:^|\/)(?:auth|authenticate|authentication|authorize|authorization|challenge|consent|log[-_]?in|oauth\d*|sign[-_]?in|sign[-_]?up|signin|signup|sso|verify|verification)(?:\/|$)/i;
-const APP_STORE_PROTOCOLS = new Set(["itms-apps:", "macappstore:"]);
-const APP_STORE_HOSTS = new Set(["apps.apple.com", "itunes.apple.com"]);
-const ZOOM_JOIN_PROTOCOL = "zoommtg:";
+// apps.apple.com CSP launches `itms-appss:` (HTTPS App Store) and `macappstore:`.
+const APP_STORE_PROTOCOLS = new Set([
+	"itms-apps:",
+	"itms-appss:",
+	"macappstore:",
+]);
+const APP_STORE_HOSTS = new Set([
+	"apps.apple.com",
+	"itunes.apple.com",
+	"geo.itunes.apple.com",
+]);
+// Zoom web launchers use both desktop (`zoommtg:`) and mobile (`zoomus:`) schemes.
+const ZOOM_JOIN_PROTOCOLS = new Set(["zoommtg:", "zoomus:"]);
 const ZOOM_JOIN_HOST = "zoom.us";
 const ZOOM_JOIN_PATH = "/join";
 const ZOOM_MEETING_NUMBER = /^\d{9,11}$/;
@@ -596,7 +606,7 @@ export function safeAppStoreUrl(value: string): string | undefined {
 	}
 }
 
-/** Allow only a standard Zoom desktop meeting-join link to leave the browser. */
+/** Allow only a standard Zoom meeting-join link to leave the browser. */
 export function safeZoomJoinUrl(value: string): string | undefined {
 	if (!value || value.length > 8_192) return undefined;
 	try {
@@ -605,7 +615,7 @@ export function safeZoomJoinUrl(value: string): string | undefined {
 		const actions = url.searchParams.getAll("action");
 		const passwords = url.searchParams.getAll("pwd");
 		if (
-			url.protocol !== ZOOM_JOIN_PROTOCOL ||
+			!ZOOM_JOIN_PROTOCOLS.has(url.protocol) ||
 			url.hostname.toLowerCase() !== ZOOM_JOIN_HOST ||
 			url.pathname !== ZOOM_JOIN_PATH ||
 			url.port ||
