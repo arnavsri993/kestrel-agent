@@ -6709,6 +6709,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 		bundledClientAvailable: false,
 	});
 	const [googleClientId, setGoogleClientId] = useState("");
+	const googleSetupRef = useRef<HTMLDetailsElement>(null);
+	const googleClientInputRef = useRef<HTMLInputElement>(null);
 	const [googleBusy, setGoogleBusy] = useState(false);
 	const [googleError, setGoogleError] = useState("");
 	const [subscriptionClis, setSubscriptionClis] = useState<
@@ -6990,10 +6992,11 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 									: "Google setup is needed on this build. Open the setup instructions below to get started."}
 						</p>
 						{!googleStatus.connected && !googleStatus.bundledClientAvailable && (
-							<details className="connection-advanced"><summary>Set up Google connection</summary><p>Allows sending Gmail, reading recent email and login codes, and reading or updating Calendar events and availability.</p>
+							<details ref={googleSetupRef} className="connection-advanced"><summary>Set up Google connection</summary><p>Allows sending Gmail, reading recent email and login codes, and reading or updating Calendar events and availability.</p>
 								<label>
 									Desktop OAuth client ID
 									<input
+                                        ref={googleClientInputRef}
 										value={googleClientId}
 										autoComplete="off"
 										spellCheck={false}
@@ -7075,13 +7078,14 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						) : (
 							<button
 								className="button secondary"
-								disabled={
-									!googleStatus.bundledClientAvailable &&
-									!googleClientId.trim()
-								}
-								onClick={() => void connectGoogle()}
+								onClick={() => {
+                                    if (!googleStatus.bundledClientAvailable && !googleClientId.trim()) {
+                                        if (googleSetupRef.current) googleSetupRef.current.open = true;
+                                        googleClientInputRef.current?.focus();
+                                    } else void connectGoogle();
+                                }}
 							>
-								Connect with Google
+								{!googleStatus.bundledClientAvailable && !googleClientId.trim() ? "Set up Google" : "Connect with Google"}
 							</button>
 						)}
 					</div>
