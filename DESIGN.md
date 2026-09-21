@@ -908,3 +908,19 @@ Preserve protected fields, IPC, scope filtering, provenance and deletion prompts
 Verify navigation, search/empty recovery, long notes, narrow layout, keyboard focus,
 build and canonical installed app. This is specific to Kestrel's actual resource
 grants and scoped natural-language memory, with no invented integration status.
+
+## Connections and Memory: everyday use first — September 21
+
+Existing React desktop redesign. The classifier incorrectly inferred an expressive
+personal website; the actual product is a frequent-use browser utility with private
+data. Keep system typography, graphite tokens, 4px spacing, no new motion or fonts.
+Memory starts with readable saved notes, three everyday destinations, and a separate
+More picker for overview, reference knowledge, and administration. Scope filters and
+note organization are disclosed on demand, with the active viewer always named.
+Connections starts with three expandable service rows; setup forms stay mounted and
+retain input. Local access, AI accounts, and agent permissions remain reachable in
+More settings. Preserve actual permission consent, provenance, and persistence.
+Why this is not generic: the starting screens directly serve remembering a useful
+fact and choosing a real connected app, without exposing Kestrel's storage taxonomy.
+Verify new-note save/edit/cancel, search, secondary navigation, setup disclosure,
+independent scopes, keyboard access, compact reflow, and the canonical installed app.

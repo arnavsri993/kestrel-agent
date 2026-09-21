@@ -27,6 +27,15 @@ function humanDate(value: string) {
 	return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
+function documentTitle(document: MemoryDocument) {
+    // Older memories used their storage category as the title.
+    if (["semantic", "episodic", "procedural", "project", "relationship"].includes(document.title.toLowerCase())) {
+        const line = document.text.trim().split("\n")[0] || document.title;
+        return line.length > 72 ? `${line.slice(0, 69)}…` : line;
+    }
+    return document.title;
+}
+
 function documentSubtitle(document: MemoryDocument) {
 	return `${tierLabels[document.tier]} · ${document.confirmation === "confirmed" ? "Confirmed" : `${Math.round(document.confidence * 100)}% inferred`}`;
 }
@@ -137,7 +146,7 @@ function DocumentWorkspace({
 	}, [documents, selectedId, dirty, kind]);
 
 	function select(document?: MemoryDocument) {
-		if (dirty && !window.confirm("Discard unsaved memory changes?")) return;
+		if (dirty && !window.confirm("Discard unsaved memory changes?")) return false;
 		setCreating(!document);
 		setEditing(!document);
 		setDomainsText(document?.domainIds.join(", ") ?? "");
@@ -148,6 +157,7 @@ function DocumentWorkspace({
 		setTier(document?.tier ?? (kind === "memory_and_knowledge" ? "mid_term" : "long_term"));
 		setDirty(false);
 		setError("");
+        return true;
 	}
 
 	async function save(event: FormEvent) {
@@ -192,27 +202,27 @@ function DocumentWorkspace({
 	return (
 		<div className="memory-library">
 			<aside aria-label={`${noun} documents`}>
-				<header><h2>{kind === "person" ? "People" : kind === "tool" ? "Tools" : kind === "knowledge" ? "Knowledge" : "Notes"}</h2><button onClick={() => select(undefined)}>New</button></header>
+				<header><h2>{kind === "person" ? "People" : kind === "tool" ? "Tools" : kind === "knowledge" ? "Knowledge" : "Notes"}</h2><button onClick={() => select(undefined)}>Add {noun === "memory" ? "note" : noun}</button></header>
 				<label className="memory-search">Search {noun}<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={`Search ${noun}…`} /></label>
 				<p className="memory-result-count" aria-live="polite">{matches.length} of {visible.length} documents</p>
-				{matches.map((document) => <button className={document.id === selectedId ? "active" : ""} aria-pressed={document.id === selectedId} key={document.id} onClick={() => select(document)}><strong>{document.title}</strong><small>{documentSubtitle(document)}</small></button>)}
-				{!visible.length && <p>No {noun} documents yet. Add one with New.</p>}
+				{matches.map((document) => <button className={document.id === selectedId ? "active" : ""} aria-pressed={document.id === selectedId} key={document.id} onClick={() => select(document)}><strong>{documentTitle(document)}</strong><small>{document.text.slice(0, 100)}</small></button>)}
+				{!visible.length && <p>No {noun === "memory" ? "notes" : noun} yet. Add something you want Kestrel to remember.</p>}
                 {!!visible.length && !matches.length && <p>No matching documents. <button onClick={() => setSearch("")}>Clear search</button></p>}
 			</aside>
-			{selected && !editing ? <article className="memory-reader"><h2>{selected.title}</h2><p>{selected.text}</p><button onClick={() => setEditing(true)}>Edit memory</button><details><summary>Evidence and visibility</summary><p>{documentSubtitle(selected)} · {selected.domainIds.join(", ") || "No domain assigned"}</p><p>{selected.sourceIds.join(" · ")}</p></details></article> : <form className="memory-editor" onSubmit={save}>
+			{selected && !editing ? <article className="memory-reader"><h2>{documentTitle(selected)}</h2><p>{selected.text}</p><button onClick={() => setEditing(true)}>Edit {noun === "memory" ? "note" : noun}</button><details><summary>Evidence and visibility</summary><p>{documentSubtitle(selected)} · {selected.domainIds.join(", ") || "No domain assigned"}</p><p>{selected.sourceIds.join(" · ")}</p></details></article> : <form className="memory-editor" onSubmit={save}>
 				<label>Title<input value={title} maxLength={500} onChange={(event) => { setTitle(event.target.value); setDirty(true); }} placeholder={`Name this ${noun}`} /></label>
 				<label>What Kestrel should know<textarea value={text} maxLength={100000} onChange={(event) => { setText(event.target.value); setDirty(true); }} placeholder={`Write the useful context about this ${noun}…`} /></label>
-				<details><summary>Domain and sharing</summary><label>Domains<input value={domainsText} onChange={event => { setDomainsText(event.target.value); setDirty(true); }} placeholder="Separate domains with commas" /></label><label>Visibility<select value={sharing} onChange={event => { setSharing(event.target.value as typeof sharing); setDirty(true); }}><option value="owner_only">Only this viewer</option><option value="domain_shared">Relevant agents in these domains</option></select></label></details><label className="memory-tier-select">Memory horizon<select value={tier} onChange={(event) => { setTier(event.target.value as MemoryDocument["tier"]); setDirty(true); }}>{Object.entries(tierLabels).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label>
+				<details><summary>Organization and sharing</summary><label>Domains<input value={domainsText} onChange={event => { setDomainsText(event.target.value); setDirty(true); }} placeholder="Separate domains with commas" /></label><label>Visibility<select value={sharing} onChange={event => { setSharing(event.target.value as typeof sharing); setDirty(true); }}><option value="owner_only">Only this viewer</option><option value="domain_shared">Relevant agents in these domains</option></select></label><label className="memory-tier-select">Remember for<select value={tier} onChange={(event) => { setTier(event.target.value as MemoryDocument["tier"]); setDirty(true); }}>{Object.entries(tierLabels).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label></details>
 				{selected && <details className="memory-provenance"><summary>Sources and provenance</summary><dl><dt>Origin</dt><dd>{selected.origin}</dd><dt>Status</dt><dd>{selected.confirmation}, {Math.round(selected.confidence * 100)}% confidence</dd><dt>Sharing</dt><dd>{selected.sharing.replace("_", " ")}</dd><dt>Updated</dt><dd>{humanDate(selected.updatedAt)}</dd><dt>Source IDs</dt><dd>{selected.sourceIds.length ? selected.sourceIds.join(", ") : "No source IDs"}</dd></dl></details>}
 				{error && <p className="memory-error" role="alert">{error}</p>}
-				<footer><button className="primary" disabled={busy || !dirty || !title.trim() || !text.trim()} type="submit">{busy ? "Saving…" : "Save"}</button>{selected && <button className="danger" disabled={busy} type="button" onClick={() => void forget()}>Forget</button>}<span aria-live="polite">{dirty ? "Unsaved changes" : selected ? "Saved" : ""}</span></footer>
+				<footer><button type="button" disabled={busy} onClick={() => { if (select(selected ?? visible[0])) setEditing(false); }}>Cancel</button><button className="primary" disabled={busy || !dirty || !title.trim() || !text.trim()} type="submit">{busy ? "Saving…" : "Save"}</button>{selected && <button className="danger" disabled={busy} type="button" onClick={() => void forget()}>Forget</button>}<span aria-live="polite">{dirty ? "Unsaved changes" : selected ? "Saved" : ""}</span></footer>
 			</form>}
 		</div>
 	);
 }
 
 export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSessionId?: string; legacyTools?: ReactNode }) {
-	const [view, setView] = useState<WorkspaceView>("overview");
+	const [view, setView] = useState<WorkspaceView>("memory");
 	const [viewerId, setViewerId] = useState(initialSessionId ?? "user");
 	const [domainId, setDomainId] = useState("");
 	const [weekOffset, setWeekOffset] = useState(0);
@@ -253,15 +263,20 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 	return (
 		<main className="memory-workspace">
 			<header className="memory-workspace-header">
-				<div><h1>Memory</h1><p className="memory-intro">Browse what Kestrel remembers, where it came from, and who can use it.</p></div>
-				<div className="memory-scope-controls">
+				<div><h1>Memory</h1><p className="memory-intro">Things you want Kestrel to remember. Read, edit, or add a note.</p></div>
+				<details className="memory-filters-disclosure"><summary>{workspace?.viewers.find(viewer => viewer.id === viewerId)?.label ?? (viewerId === "user" ? "Your memory" : "Agent memory")}{domainId ? ` · ${workspace?.domains.find(domain => domain.id === domainId)?.label ?? domainId}` : ""} · Filters</summary><div className="memory-scope-controls">
 					<label>Viewing as<select value={viewerId} onChange={(event) => { setWorkspace(null); setDomainId(""); setViewerId(event.target.value); }}><option value="user">You</option>{workspace?.viewers.filter((viewer) => viewer.id !== "user").map((viewer) => <option key={viewer.id} value={viewer.id}>{viewer.parentId ? "↳ " : ""}{viewer.label}</option>)}</select></label>
 					<label>Domain<select value={domainId} onChange={(event) => setDomainId(event.target.value)}><option value="">All</option>{workspace?.domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.label}</option>)}</select></label>
-				</div>
+				</div></details>
 			</header>
-			<nav className="memory-workspace-tabs" aria-label="Memory views">{([ ["overview", "Overview"], ["timeline", "Timeline"], ["memory", "Notes"], ["people", "People"], ["knowledge", "Knowledge"], ["tools", "Tools"] ] as const).map(([id, label]) => <button key={id} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{label}</button>)}</nav>
+			<nav className="memory-workspace-tabs" aria-label="Memory views">
+                {([["memory", "Notes"], ["timeline", "Recent activity"], ["people", "People"]] as const).map(([id, label]) => <button key={id} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{label}</button>)}
+                <select aria-label="More memory views" value={["overview", "knowledge", "tools"].includes(view) ? view : ""} onChange={event => { if (event.target.value) setView(event.target.value as WorkspaceView); }}>
+                    <option value="" disabled>More</option><option value="overview">Summary</option><option value="knowledge">Reference knowledge</option><option value="tools">Tools & settings</option>
+                </select>
+            </nav>
 			{error && <div className="memory-state" role="alert"><h2>Memory is unavailable</h2><p>{error}</p><button onClick={() => void load()}>Try again</button></div>}
-			{busy && !workspace && <div className="memory-state" aria-live="polite"><h2>Reading memory…</h2><p>Gathering the notes visible to this viewer.</p></div>}
+			{busy && !workspace && <div className="memory-state" aria-live="polite"><h2>Reading memory…</h2><p>Loading your saved notes.</p></div>}
 			{workspace && !error && <div className="memory-workspace-content">
 				{view === "overview" && <><Overview documents={workspace.documents} workspace={workspace} /><section className="memory-recent"><button onClick={() => setView("memory")}>Browse all notes →</button><h3>People</h3>{!workspace.documents.some(item => item.kind === "person") && <p className="memory-empty-copy">No people remembered in this scope.</p>}{workspace.documents.filter(item => item.kind === "person").slice(0, 5).map(item => <button key={item.id} onClick={() => setView("people")}>{item.title}</button>)}<h3>Tools</h3>{!workspace.documents.some(item => item.kind === "tool") && <p className="memory-empty-copy">No tool experience recorded in this scope.</p>}{workspace.documents.filter(item => item.kind === "tool").slice(0, 5).map(item => <button key={item.id} onClick={() => setView("tools")}>{item.title}</button>)}</section></>}
 				{view === "timeline" && <><div className="memory-week-controls"><button onClick={() => setWeekOffset(value => value - 1)}>Previous week</button><button onClick={() => setWeekOffset(0)}>This week</button><button disabled={weekOffset >= 0} onClick={() => setWeekOffset(value => value + 1)}>Next week</button><button disabled={consolidating} onClick={async () => { const generation = requestId.current; setConsolidating(true); try { const result = await request({ type: "memory-workspace-consolidate", query: workspace.query }); if (generation === requestId.current && "memoryWorkspace" in result && result.memoryWorkspace) setWorkspace(result.memoryWorkspace); } catch (cause) { if (generation === requestId.current) setError(cause instanceof Error ? cause.message : "Could not consolidate memory."); } finally { setConsolidating(false); } }}>{consolidating ? "Summarizing…" : "Summarize with model"}</button></div><Timeline workspace={workspace} /></>}
