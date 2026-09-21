@@ -80,3 +80,18 @@
 .memory-tier-heading { margin-bottom: 10px; }
 .memory-tier article + article { margin-top: 16px; }
 .memory-recent button { border: 0; background: transparent; color: var(--ink); padding: 6px 14px 6px 0; }
+
+/* Keep the library readable in narrow browser panes and with long imported notes. */
+.memory-intro { color: var(--text-secondary, #aaa); font-size: 13px; line-height: 1.5; margin: 8px 0 0; }
+.memory-preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.memory-library { grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); max-width: 1100px; }
+.memory-library > *, .memory-editor label { min-width: 0; }
+.memory-search { display: grid; gap: 6px; font-size: 12px; color: var(--text-secondary, #aaa); }
+.memory-search input { width: 100%; min-width: 0; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); font: inherit; }
+.memory-result-count { font-size: 11px; color: var(--text-secondary, #aaa); margin: 10px 0; }
+.memory-library > aside > button strong { overflow-wrap: anywhere; }
+.memory-reader h2 { margin-top: 0; }
+.memory-workspace input:focus-visible, .memory-workspace select:focus-visible, .memory-workspace textarea:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+@media (max-width: 720px) { .memory-library { grid-template-columns: minmax(0, 1fr); } }
+
+.memory-tier article .memory-preview { white-space: normal; }

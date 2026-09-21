@@ -1,0 +1,30 @@
+/* Shared by Settings and the standalone Connections workspace. */
+#setting-agent-connections .connection-sections { display: flex; gap: 22px; overflow-x: auto; border-bottom: 1px solid var(--line); margin: 12px 0 24px; }
+#setting-agent-connections .connection-sections button { flex-shrink: 0; padding: 12px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+#setting-agent-connections .connection-sections button[aria-current="page"] { color: var(--ink); border-bottom-color: currentColor; }
+#setting-agent-connections [hidden] { display: none !important; }
+#setting-agent-connections .connection-section > h2 { font-size: 18px; margin: 0 0 8px; }
+#setting-agent-connections .connection-section-description { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0 0 20px; }
+#setting-agent-connections .agent-resource-access { padding: 20px 0; border-top: 1px solid var(--line); }
+#setting-agent-connections .agent-resource-access h2 { font-size: 15px; margin: 0 0 8px; }
+#setting-agent-connections .agent-resource-access p { color: var(--muted); font-size: 13px; line-height: 1.6; }
+#setting-agent-connections .agent-resource-access button { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-control, 7px); padding: 7px 11px; font: inherit; cursor: pointer; }
+#setting-agent-connections .agent-resource-access summary { padding: 10px 0; cursor: pointer; font-size: 13px; }
+#setting-agent-connections .agent-resource-access form { display: grid; gap: 12px; max-width: 580px; }
+#setting-agent-connections .agent-resource-access label { display: grid; gap: 6px; font-size: 12px; }
+#setting-agent-connections .agent-resource-access input { min-width: 0; width: 100%; box-sizing: border-box; }
+#setting-agent-connections button:focus-visible, #setting-agent-connections summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+#setting-agent-connections .connection-section { min-width: 0; overflow-wrap: anywhere; }
+#setting-agent-connections .connection-section + .connection-section:not([hidden]) { margin-top: 16px; }
+
+#setting-agent-connections .connection-section { border-top: 0; }
+#setting-agent-connections .connection-advanced > summary { cursor: pointer; padding: 8px 0; font-size: 12px; }
+@media (max-width: 900px) {
+  #setting-agent-connections .connection-list article { grid-template-columns: 40px minmax(0, 1fr); align-items: start; gap: 12px; }
+  #setting-agent-connections .connection-list article > .connection-status,
+  #setting-agent-connections .connection-list article > .connection-actions,
+  #setting-agent-connections .connection-list article > .honest-status,
+  #setting-agent-connections .connection-list article > .button { grid-column: 2; justify-self: start; }
+  #setting-agent-connections .connection-actions { width: 100%; min-width: 0; }
+  #setting-agent-connections .connection-actions .button { grid-column: auto; width: auto; max-width: 100%; white-space: normal; overflow-wrap: normal; }
+}

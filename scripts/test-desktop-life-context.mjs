@@ -146,13 +146,18 @@ try {
 	assert.equal(await viewer.inputValue(), "user");
 	assert.equal(await domain.inputValue(), "");
 
-	await life.getByRole("button", { name: "Memory", exact: true }).click();
-	await life.getByText("Edit memory documents", { exact: true }).click();
+	await life.getByRole("button", { name: "Notes", exact: true }).click();
 	await life.getByRole("button", { name: "New", exact: true }).click();
 	await life.getByLabel("Title").fill("Working preference");
 	await life.getByLabel("What Kestrel should know").fill("Keep technical explanations concise and source the important claims.");
 	await life.getByRole("button", { name: "Save", exact: true }).click();
 	await life.getByRole("heading", { name: "Working preference", exact: true, level: 2 }).waitFor();
+	await page.screenshot({ path: join(screenshotRoot, "notes-reader-wide.png") });
+	await life.getByLabel("Search memory").fill("important claims");
+	assert.equal(await life.locator("aside > button").count(), 1);
+	await life.getByLabel("Search memory").fill("no-such-memory-fixture");
+	await life.getByText("No matching documents.", { exact: false }).waitFor();
+	await life.getByRole("button", { name: "Clear search", exact: true }).click();
 	await life.getByRole("button", { name: "Edit memory", exact: true }).click();
 	await life.getByText("Sources and provenance", { exact: true }).click();
 	await life.getByText("manual", { exact: true }).waitFor();
@@ -162,6 +167,8 @@ try {
 	await life.locator(".memory-days details summary").first().click();
 	await life.getByText("Timeline fixture: reviewed the Kestrel memory architecture.", { exact: true }).first().waitFor();
 
+	await life.getByRole("button", { name: "Knowledge", exact: true }).click();
+	await life.getByRole("heading", { name: "Knowledge", exact: true }).waitFor();
 	await life.getByRole("button", { name: "Tools", exact: true }).click();
 	await life.getByText("Calendar, capture, and source administration", { exact: true }).click();
 	await life.getByText("Deep work · Kestrel", { exact: true }).waitFor();
@@ -173,6 +180,26 @@ try {
 	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
 	await page.screenshot({ path: compactCalendarScreenshot, fullPage: true });
 
+	await openKestrelDestination(page, "Connections");
+	const connections = page.locator("#setting-agent-connections");
+	await connections.getByRole("heading", { name: "Apps & accounts", exact: true }).waitFor();
+	assert.equal(await connections.getByRole("heading", { name: "Onshape", exact: true }).count(), 1);
+	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
+	const googleButton = await connections.getByRole("button", { name: "Connect with Google", exact: true }).boundingBox();
+	assert.ok(googleButton && googleButton.width > 100 && googleButton.height < 90, "Google action must remain readable at compact width");
+	await page.screenshot({ path: join(screenshotRoot, "connections-compact.png") });
+	await page.setViewportSize({ width: 1320, height: 900 });
+	await page.screenshot({ path: join(screenshotRoot, "connections-wide.png") });
+	await connections.getByText("Set up Google connection", { exact: true }).click();
+	await connections.getByLabel("Desktop OAuth client ID").waitFor();
+	await connections.getByRole("button", { name: "On this Mac", exact: true }).click();
+	await connections.getByText("Messages on this Mac", { exact: true }).waitFor();
+	assert.equal(await connections.getByRole("heading", { name: "Onshape", exact: true }).isVisible(), false);
+	await connections.getByRole("button", { name: "Model provider", exact: true }).click();
+	await connections.getByText("ChatGPT", { exact: true }).waitFor();
+	await connections.getByRole("button", { name: "Agent access", exact: true }).click();
+	await connections.getByText("Select an agent in", { exact: false }).waitFor();
+	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
 		`Memory overview, document editing, weekly timeline, advanced tools, scope controls, and compact reflow passed. Screenshots: ${wideCalendarScreenshot}, ${compactCalendarScreenshot}, ${peopleScreenshot}, ${memoryScreenshot}\n`,

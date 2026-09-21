@@ -889,3 +889,22 @@ the scrolling data region. Native OS menus retain their platform rendering.
 
 The source implementation uses existing CSS/React only. Catalog candidates were
 considered but no external code, assets, or new motion dependency was incorporated.
+
+## Connections and Memory organization — September 21, 2026
+
+Existing desktop redesign, medium density, low visual intensity. Make accounts,
+local access, model sign-in, and agent permissions separately discoverable; make
+Memory a readable, searchable library with explicit viewer and domain scope.
+Keep system typography, existing neutral panel/ink/line tokens, 4px spacing rhythm,
+compact section navigation and solid surfaces. No imagery or new animation.
+The classifier's marketing inference does not match this verified desktop app.
+
+Observed weaknesses: the installed Connections repeats Onshape and mixes setup
+with permissions; Memory repeats entire notes before its collapsed editor; domain
+knowledge is hidden under Tools and documents have no search. Use the current
+main branch's single Onshape instance, group connections without changing grants,
+show searchable document readers directly, and give Knowledge its own view.
+Preserve protected fields, IPC, scope filtering, provenance and deletion prompts.
+Verify navigation, search/empty recovery, long notes, narrow layout, keyboard focus,
+build and canonical installed app. This is specific to Kestrel's actual resource
+grants and scoped natural-language memory, with no invented integration status.
