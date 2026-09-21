@@ -1097,6 +1097,8 @@ export class MemorySubstrate {
 		agentId?: string;
 		sessionId?: string;
 		includeSharedMemory?: boolean;
+		/** Workspace documents supersede the legacy/entity prompt projection. */
+		includeDocumentMemory?: boolean;
 		includeSensitive?: boolean;
 		includeRestricted?: boolean;
 		maximumCharacters?: number;
@@ -1121,8 +1123,9 @@ export class MemorySubstrate {
 			...(input.includeRestricted !== undefined ? { includeRestricted: input.includeRestricted } : {}),
 			...(input.agentId ? { agentId: input.agentId } : {}),
 			...(input.sessionId ? { sourceSessionId: input.sessionId } : {}),
-			includeMemories: allowSharedMemory,
-			includeEntities: allowSharedMemory,
+			includeMemories: allowSharedMemory && input.includeDocumentMemory !== false,
+			includeEntities: allowSharedMemory && input.includeDocumentMemory !== false,
+			includeAgents: input.includeDocumentMemory !== false,
 			limit: 80,
 		}));
 		const all = timeline.results;
@@ -1324,6 +1327,7 @@ export class MemorySubstrate {
 
 	forget(id: string): ReturnType<MemoryManager["forget"]> {
 		const deleted = this.legacyMemory.forget(id);
+		this.database.forgetMemoryWorkspaceDocument(`workspace:legacy-memory:${id}`);
 		for (const agentMemory of this.database.listAllAgentMemories())
 			if (
 				agentMemory.sourceIds.includes(id) ||
@@ -1340,6 +1344,15 @@ export class MemorySubstrate {
 	}
 
 	forgetSource(sourceId: string): MemoryDeleteResult {
+		const isSourceEvidence = (id: string) => {
+			if (id === sourceId) return true;
+			const event = this.database.getTimelineEvent(id);
+			return event?.sourceId === sourceId || event?.sourceSessionId === sourceId || event?.sessionId === sourceId;
+		};
+		for (const document of this.database.listMemoryWorkspaceDocuments()) {
+			if (document.sourceIds.some(isSourceEvidence) || document.passages.some(passage => passage.sourceIds.some(isSourceEvidence)))
+				this.database.forgetMemoryWorkspaceDocument(document.id);
+		}
 		return this.database.deleteMemoryArtifactsForSource(sourceId);
 	}
 
