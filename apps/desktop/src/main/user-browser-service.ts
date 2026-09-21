@@ -625,23 +625,55 @@ export function safeZoomJoinUrl(value: string): string | undefined {
 	}
 }
 
-/** Microsoft Teams navigation/join links; never arbitrary application commands. */
+/** Teams launchers also use hostless msteams:/l/... links. */
 export function safeTeamsUrl(value: string): string | undefined {
-	if (!value || value.length > 8_192) return undefined;
+	if (!value || value.length > 8_192 || /[\\\u0000-\u0020\u007f]/.test(value)) return undefined;
 	try {
 		const url = new URL(value);
 		if (url.protocol !== "msteams:" ||
-			!["teams.microsoft.com", "teams.live.com"].includes(url.hostname.toLowerCase()) ||
+			!["", "teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"].includes(url.hostname.toLowerCase()) ||
 			url.username || url.password || url.port || url.hash ||
-			!/^\/l\/(?:meetup-join|team|channel)\/[^/]+/.test(url.pathname)) return undefined;
+			!/^\/l\/(?:meetup-join|team|channel|chat|message)\/[^/]+(?:\/[^/]+)*\/?$/.test(url.pathname)) return undefined;
 		return url.toString();
 	} catch { return undefined; }
 }
 
-function openSystemAppUrl(value: string): boolean {
-	const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value);
+/** Only Cursor authentication callbacks, never file, command, or install links. */
+export function safeCursorAuthUrl(value: string): string | undefined {
+	if (!value || value.length > 8_192 || /[\\\u0000-\u0020\u007f]/.test(value)) return undefined;
+	try {
+		const url = new URL(value);
+		if (url.protocol !== "cursor:" || url.username || url.password || url.port || url.hash) return undefined;
+		const host = url.hostname.toLowerCase();
+		const login = host === "cursorauth" && (url.pathname === "" || url.pathname === "/");
+		const oauth = host === "anysphere.cursor-mcp" && ["/oauth/callback", "/oauth/return"].includes(url.pathname);
+		return login || oauth ? url.toString() : undefined;
+	} catch { return undefined; }
+}
+
+const appLaunchErrorWindows = new WeakSet<BrowserWindow>();
+
+function openSystemAppUrl(value: string, owner: BrowserWindow): boolean {
+	const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value) ?? safeCursorAuthUrl(value);
 	if (!url) return false;
-	void Promise.resolve(shell.openExternal(url)).catch(() => undefined);
+	const appName = safeTeamsUrl(url) ? "Microsoft Teams" : safeCursorAuthUrl(url) ? "Cursor" : safeZoomJoinUrl(url) ? "Zoom" : "App Store";
+	void (async () => {
+		try {
+			await shell.openExternal(url);
+		} catch {
+			if (owner.isDestroyed() || appLaunchErrorWindows.has(owner)) return;
+			appLaunchErrorWindows.add(owner);
+			try {
+				await dialog.showMessageBox(owner, {
+					type: "info",
+					title: `Couldn’t open ${appName}`,
+					message: `Couldn’t open ${appName}`,
+					detail: `Make sure ${appName} is installed, then try the link again. You can continue on this page.`,
+					buttons: ["OK"],
+				});
+			} finally { appLaunchErrorWindows.delete(owner); }
+		}
+	})().catch(() => undefined);
 	return true;
 }
 
@@ -5741,7 +5773,7 @@ export class UserBrowserService {
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents) return;
 		webContents.setWindowOpenHandler(({ url, disposition }) => {
-			if (openSystemAppUrl(url)) return { action: "deny" };
+			if (openSystemAppUrl(url, this.window)) return { action: "deny" };
 			if (url !== "about:blank" && !safePageUrl(url)) return { action: "deny" };
 			return {
 				action: "allow",
@@ -5826,14 +5858,14 @@ export class UserBrowserService {
 		webContents.on("will-frame-navigate", (event) => {
 			// Meeting launchers may navigate a hidden iframe to their app scheme.
 			// Main-frame handoffs are handled below so each link opens only once.
-			if (!event.isMainFrame && openSystemAppUrl(event.url)) event.preventDefault();
+			if (!event.isMainFrame && openSystemAppUrl(event.url, this.window)) event.preventDefault();
 		});
 		webContents.on("will-navigate", (event, url) => {
 			if (this.passwordSaveCommitTabId === tab.id) {
 				event.preventDefault();
 				return;
 			}
-			if (openSystemAppUrl(url)) {
+			if (openSystemAppUrl(url, this.window)) {
 				event.preventDefault();
 				return;
 			}
@@ -5853,7 +5885,7 @@ export class UserBrowserService {
 				event.preventDefault();
 				return;
 			}
-			if (openSystemAppUrl(url)) {
+			if (openSystemAppUrl(url, this.window)) {
 				event.preventDefault();
 				return;
 			}

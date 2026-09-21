@@ -213,14 +213,14 @@ vi.mock("electron", () => ({
 }));
 
 import { nativeImage } from "electron";
-import { dialog } from "electron";
-import { shell } from "electron";
+import { dialog, shell } from "electron";
 import { BrowserTabStore } from "./browser-tab-store";
 import {
   isAuthenticationFlowUrl,
   safeAppStoreUrl,
   safeZoomJoinUrl,
   safeTeamsUrl,
+  safeCursorAuthUrl,
   UserBrowserService,
 } from "./user-browser-service";
 import type { BrowserThreatProvider } from "./browser-threat-provider";
@@ -2415,6 +2415,8 @@ describe("UserBrowserService", () => {
       "msteams://teams.microsoft.com/l/meetup-join/19%3afixture/0?context=example",
       "msteams://teams.microsoft.com/l/team/19%3afixture/conversations?groupId=example",
       "msteams://teams.live.com/l/channel/fixture/general",
+      "msteams:/l/meetup-join/19%3afixture/0?context=example",
+      "msteams://teams.cloud.microsoft/l/chat/fixture/conversations",
     ]) {
       expect(safeTeamsUrl(url)).toBe(url);
       const event = {preventDefault: vi.fn()};
@@ -2425,8 +2427,54 @@ describe("UserBrowserService", () => {
     for (const url of [
       "msteams://evil.example/l/team/fixture", "msteams://teams.microsoft.com.evil.example/l/team/fixture",
       "msteams://user@teams.microsoft.com/l/team/fixture", "msteams://teams.microsoft.com:8000/l/team/fixture",
-      "msteams://teams.microsoft.com/l/call/fixture", "file:///tmp/test", "msteams://teams.microsoft.com/l/team/",
+      "msteams://teams.microsoft.com/l/call/fixture", "msteams:/l/team/fixture#fragment",
+      "msteams:https://teams.microsoft.com/l/team/fixture", "msteams:/l/team/fixture\\command", "file:///tmp/test", "msteams://teams.microsoft.com/l/team/",
     ]) expect(safeTeamsUrl(url)).toBeUndefined();
+  });
+
+  it("allows only Cursor authentication routes and preserves callback parameters", async () => {
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://cursor.com");
+    const source = electron.state.views[0]!.webContents;
+    for (const url of [
+      "cursor://cursorAuth?code=synthetic%2Bvalue&state=fixture",
+      "cursor://anysphere.cursor-mcp/oauth/callback?code=fixture&state=fixture",
+      "cursor://anysphere.cursor-mcp/oauth/return?state=fixture",
+    ]) {
+      expect(safeCursorAuthUrl(url)).toBe(url);
+      for (const name of ["will-navigate", "will-redirect"]) {
+        const event = { preventDefault: vi.fn() };
+        source.emit(name, event, url);
+        expect(event.preventDefault).toHaveBeenCalledOnce();
+      }
+      const frame = { isMainFrame: false, url, preventDefault: vi.fn() };
+      source.emit("will-frame-navigate", frame);
+      expect(frame.preventDefault).toHaveBeenCalledOnce();
+      expect(source.windowOpenHandler?.({ url, disposition: "new-window" }).action).toBe("deny");
+      expect(shell.openExternal).toHaveBeenLastCalledWith(url);
+    }
+    expect(service.getState().tabs).toHaveLength(1);
+    for (const url of [
+      "cursor://file/tmp/example", "cursor://anysphere.cursor-deeplink/mcp/install?config=fixture",
+      "cursor://cursorAuth.evil.example?code=fixture", "cursor://user@cursorAuth?code=fixture",
+      "cursor://cursorAuth:123?code=fixture", "cursor://cursorAuth/command?code=fixture",
+      "cursor://cursorAuth?code=fixture#fragment", "cursor://cursorAuth?code=bad\nvalue",
+      "cursor://anysphere.cursor-mcp/oauth/callback/extra", "file:///tmp/test",
+    ]) expect(safeCursorAuthUrl(url)).toBeUndefined();
+  });
+
+  it("reports app launch failures without exposing callback secrets or losing the page", async () => {
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://cursor.com");
+    const source = electron.state.views[0]!.webContents;
+    vi.mocked(shell.openExternal).mockRejectedValueOnce(new Error("secret-fixture"));
+    source.emit("will-redirect", { preventDefault: vi.fn() }, "cursor://cursorAuth?token=secret-fixture");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(dialog.showMessageBox).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      message: "Couldn’t open Cursor", buttons: ["OK"],
+    }));
+    expect(JSON.stringify(vi.mocked(dialog.showMessageBox).mock.calls)).not.toContain("secret-fixture");
+    expect(source.getURL()).toBe("https://cursor.com/");
   });
 
   it("allows native navigation and redirects without replaying requests", async () => {
