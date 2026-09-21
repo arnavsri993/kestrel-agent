@@ -1,3 +1,4 @@
+import "./Connections.css";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
@@ -6700,6 +6701,7 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 		CommunicationSourceStatus[]
 	>([]);
 	const [busy, setBusy] = useState(false);
+	const [section, setSection] = useState("apps");
 	const [grantError, setGrantError] = useState("");
 	const [googleStatus, setGoogleStatus] = useState<GoogleWorkspaceOAuthStatus>({
 		connected: false,
@@ -6912,11 +6914,17 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 					access remain explicit and revocable.
 				</p>
 			</header>}
-			<WhatsAppConnection session={scopeSession} />
-			<OnshapeConnection key={scopeSession?.id ?? "global"} session={scopeSession} />
-			{scopeSession && <AgentResourceAccess key={scopeSession.id} session={scopeSession} {...(googleStatus.connected && googleStatus.email ? { googleEmail: googleStatus.email } : {})} />}
-			<div className="connection-list">
-				<details className="connection-advanced"><summary>Model provider · ChatGPT</summary>
+			<nav className="connection-sections" aria-label="Connection sections">
+                {([["apps", "Apps & accounts"], ["local", "On this Mac"], ["models", "Model provider"], ["access", "Agent access"]] as const).map(([id, label]) => <button key={id} aria-current={section === id ? "page" : undefined} onClick={() => setSection(id)}>{label}</button>)}
+            </nav>
+            <div hidden={section !== "access"} className="connection-section">
+                <h2>Agent access</h2>
+                <p className="connection-section-description">Choose which connected resources the selected agent can use.</p>
+                {scopeSession ? <AgentResourceAccess key={scopeSession.id} session={scopeSession} {...(googleStatus.connected && googleStatus.email ? { googleEmail: googleStatus.email } : {})} /> : <p>{standalone ? "Select an agent in “Access for” above to review its resources." : "Open Connections from the sidebar and select an agent to review its resources."} Connecting an account and assigning agent access are separate steps.</p>}
+            </div>
+            <div hidden={section !== "models"} className="connection-list connection-section">
+                <h2>Model provider</h2>
+                <p className="connection-section-description">Manage the ChatGPT sign-in used by the Codex model route.</p>
 				<article className="oauth-connection">
 					<div className="connection-monogram">CG</div>
 					<div>
@@ -6964,7 +6972,10 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						)}
 					</div>
 				</article>
-				</details>
+            </div>
+            <div hidden={section !== "apps"} className="connection-list connection-section">
+                <h2>Apps & accounts</h2>
+                <p className="connection-section-description">Connect a service, then assign its resources under Agent access.</p>
 				<article className="oauth-connection">
 					<div className="connection-monogram">GW</div>
 					<div>
@@ -6977,7 +6988,7 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 									: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar event and availability access."}
 						</p>
 						{!googleStatus.connected && !googleStatus.bundledClientAvailable && (
-							<>
+							<details className="connection-advanced"><summary>Set up Google connection</summary>
 								<label>
 									Desktop OAuth client ID
 									<input
@@ -7000,7 +7011,7 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 									, enable Gmail and Calendar APIs, then sign in in Google's
 									browser.
 								</small>
-							</>
+							</details>
 						)}
 						{!googleStatus.connected && googleStatus.bundledClientAvailable && (
 							<small>
@@ -7073,6 +7084,12 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						)}
 					</div>
 				</article>
+                <WhatsAppConnection session={scopeSession} />
+                <OnshapeConnection key={scopeSession?.id ?? "global"} session={scopeSession} />
+            </div>
+            <div hidden={section !== "local"} className="connection-list connection-section">
+                <h2>On this Mac</h2>
+                <p className="connection-section-description">Review local permissions and the folders you have selected.</p>
 				<article className="oauth-connection communication-source-connection">
 					<div className="connection-monogram">MS</div>
 					<div>
@@ -7119,6 +7136,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						)}
 					</div>
 				</article>
+			</div>
+            <div hidden={section !== "apps" || !channels.length} className="connection-list connection-section"><h2>Messaging channels</h2>
 				{channels.map((channel) => (
 					<article key={`channel-${channel.id}`}>
 						<div className="connection-monogram">
@@ -7138,6 +7157,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						<span className="honest-status">Owner-configured</span>
 					</article>
 				))}
+			</div>
+            <div hidden={section !== "local"} className="connection-list connection-section">
 				{snapshot.connections
 					.filter(
 						(connection) =>
