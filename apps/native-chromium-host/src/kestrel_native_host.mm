@@ -40,6 +40,7 @@
 #include "include/wrapper/cef_message_router.h"
 #include "include/wrapper/cef_stream_resource_handler.h"
 #include "kestrel_chromium_app.h"
+#include "kestrel_extension_workbench.h"
 
 @interface KestrelNativeCoreRelay : NSObject
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
@@ -2149,6 +2150,10 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 }
 
 - (void)terminate:(id)sender {
+  if (extension_workbench_client) {
+    extension_workbench_client->CloseAll();
+    return;
+  }
   if (client_instance && !client_instance->IsClosing()) {
     client_instance->CloseBrowser();
   }
@@ -2160,6 +2165,10 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 
 @implementation KestrelAppDelegate
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
+  if (extension_workbench_client) {
+    extension_workbench_client->CloseAll();
+    return NSTerminateCancel;
+  }
   if (client_instance && !client_instance->IsClosing()) {
     client_instance->CloseBrowser();
     return NSTerminateCancel;
@@ -2194,6 +2203,14 @@ int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);
   @autoreleasepool {
     [KestrelApplication sharedApplication];
+    const bool extension_workbench =
+        has_argument(argc, argv, "--kestrel-extension-workbench");
+    if (extension_workbench &&
+        (has_argument(argc, argv, "--kestrel-renderer") ||
+         has_argument(argc, argv, "--kestrel-ephemeral-core"))) {
+      std::cerr << "Extension workbench cannot run the privileged shell or Core." << std::endl;
+      return 1;
+    }
     full_renderer_enabled =
         has_argument(argc, argv, "--kestrel-renderer");
     shell_url = bundled_shell_url();
@@ -2291,7 +2308,11 @@ int main(int argc, char* argv[]) {
     ephemeral_core_enabled =
         has_argument(argc, argv, "--kestrel-ephemeral-core");
 
-    CefRefPtr<KestrelChromiumApp> app(new KestrelChromiumApp([] {
+    CefRefPtr<KestrelChromiumApp> app(new KestrelChromiumApp([extension_workbench] {
+      if (extension_workbench) {
+        StartExtensionWorkbench();
+        return;
+      }
       if (!register_renderer_scheme()) {
         std::cerr << "Kestrel could not register its bundled renderer scheme."
                   << std::endl;
@@ -2312,7 +2333,7 @@ int main(int argc, char* argv[]) {
               new KestrelAlloyBrowserViewDelegate());
       CefWindow::CreateTopLevelWindow(
           new KestrelWindowDelegate(browser_view));
-    }));
+    }, extension_workbench));
     if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
       std::cerr << "Kestrel could not initialize Chromium." << std::endl;
       return CefGetExitCode();
@@ -2320,6 +2341,19 @@ int main(int argc, char* argv[]) {
 
     KestrelAppDelegate* delegate = [[KestrelAppDelegate alloc] init];
     NSApp.delegate = delegate;
+    if (extension_workbench) {
+      // CEF supplies the browser toolbar, but the embedding app owns its
+      // application menu and Cmd-Q. Route Quit through our tracked browsers.
+      NSMenu* menu = [[NSMenu alloc] init];
+      NSMenuItem* application_item = [[NSMenuItem alloc] init];
+      NSMenu* application_menu = [[NSMenu alloc] initWithTitle:@"Kestrel"];
+      [application_menu addItemWithTitle:@"Quit Kestrel Extension Workbench"
+                                 action:@selector(terminate:)
+                          keyEquivalent:@"q"];
+      application_item.submenu = application_menu;
+      [menu addItem:application_item];
+      NSApp.mainMenu = menu;
+    }
     CefRunMessageLoop();
     if (main_client_owner) {
       main_client_owner->FinalizeUserBrowserShutdown();
@@ -2330,6 +2364,7 @@ int main(int argc, char* argv[]) {
     // has started, which is easy to trigger when deferred router callbacks are
     // still owned by the client.
     main_client_owner = nullptr;
+    extension_workbench_client = nullptr;
     if (full_renderer_enabled) {
       CefClearSchemeHandlerFactories();
       renderer_scheme_factory = nullptr;
@@ -2338,5 +2373,5 @@ int main(int argc, char* argv[]) {
     CefShutdown();
     delegate = nil;
   }
-  return 0;
+  return extension_workbench_exit_code;
 }

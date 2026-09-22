@@ -234,6 +234,26 @@ describe("desktop credential broker", () => {
 		expect(migrated.toString("utf8")).toContain(key.toString("base64"));
 	});
 
+	it("does not probe Electron safeStorage during plaintext prepare", async () => {
+		let probed = false;
+		const protection = new PlaintextSecretProtection({
+			isEncryptionAvailable() {
+				probed = true;
+				return true;
+			},
+			encryptString(value: string) {
+				return Buffer.from(value);
+			},
+			decryptString(value: Buffer) {
+				return value.toString("utf8");
+			},
+		});
+		await protection.prepare();
+		expect(probed).toBe(false);
+		const sealed = await protection.encryptString("local-only");
+		expect(sealed.toString("utf8")).toContain("kestrel-plaintext-v1");
+	});
+
 	it("seals the database key with safeStorage when explicitly opted in", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-safestorage-opt-in-"));
 		roots.push(root);

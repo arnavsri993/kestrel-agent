@@ -269,6 +269,22 @@ function processIsAlive(pid: number): boolean {
 const CORE_RESTART_INTERRUPTION_REASON =
 	"Kestrel restarted while this run was active. No model or tool call was resumed automatically. Review any action that may have started, then retry the last turn when ready.";
 
+const STALE_OWNER_INTERRUPTION_REASON =
+	"Kestrel could not confirm this run still had a live owner (missing heartbeat while the session claim looked occupied). No model or tool call was resumed automatically. Review any action that may have started, then retry the last turn when ready.";
+
+/** Runs without a fresh heartbeat are treated as stranded even if kill(pid,0) succeeds. */
+const RUN_HEARTBEAT_STALE_MS = 3 * 60_000;
+
+function runHeartbeatKey(runId: string): string {
+	return `agent-run-heartbeat.${runId}`;
+}
+
+interface StoredRunHeartbeat {
+	updatedAt: string;
+	ownerToken: string;
+	ownerPid: number;
+}
+
 const SUPERSEDED_BY_NEW_MESSAGE_REASON =
 	"Superseded by a new message. The pending approval is no longer available.";
 
@@ -300,20 +316,46 @@ export class AgentLoop {
 	}
 
 	private reconcileInterruptedRuns(): void {
+		const nowMs = this.now().getTime();
 		for (const run of this.database.listRunningAgentRuns()) {
 			const claim = this.database.getIdempotentClaim(
 				`agent-session-run:${run.sessionId}`,
 			);
-			if (claim && processIsAlive(claim.ownerPid)) continue;
+			const heartbeat = this.database.getPrivateState<StoredRunHeartbeat>(
+				runHeartbeatKey(run.id),
+			);
+			const heartbeatAgeMs = heartbeat
+				? nowMs - Date.parse(heartbeat.updatedAt)
+				: Number.POSITIVE_INFINITY;
+			const claimLooksAlive = Boolean(claim && processIsAlive(claim.ownerPid));
+			const heartbeatFresh =
+				Number.isFinite(heartbeatAgeMs) &&
+				heartbeatAgeMs >= 0 &&
+				heartbeatAgeMs <= RUN_HEARTBEAT_STALE_MS &&
+				heartbeat?.ownerToken === claim?.ownerToken;
+			if (claimLooksAlive && heartbeatFresh) continue;
+			const staleWhileClaimed = claimLooksAlive && !heartbeatFresh;
 			this.database.interruptAgentRunAfterRestart({
 				runId: run.id,
 				interruptedAt: this.now().toISOString(),
-				reason: CORE_RESTART_INTERRUPTION_REASON,
+				reason: staleWhileClaimed
+					? STALE_OWNER_INTERRUPTION_REASON
+					: CORE_RESTART_INTERRUPTION_REASON,
+				recoveryReason: staleWhileClaimed ? "stale_owner" : "core_restarted",
 				...(claim
 					? { expectedSessionClaimOwnerToken: claim.ownerToken }
 					: {}),
 			});
+			this.database.deletePrivateState(runHeartbeatKey(run.id));
 		}
+	}
+
+	private touchRunHeartbeat(runId: string): void {
+		this.database.setPrivateState(runHeartbeatKey(runId), {
+			updatedAt: this.now().toISOString(),
+			ownerToken: this.sessionRunOwnerToken,
+			ownerPid: process.pid,
+		} satisfies StoredRunHeartbeat);
 	}
 
 	private recordAdaptiveFailure(
@@ -1026,6 +1068,7 @@ export class AgentLoop {
 		try {
 			for (let turn = run.turn + 1; turn <= options.maximumTurns; turn += 1) {
 				if (options.signal?.aborted) throw options.signal.reason;
+				this.touchRunHeartbeat(run.id);
 				run = { ...run, turn, updatedAt: this.now().toISOString() };
 				this.saveActiveRun(run);
 				const workspaceRoot = this.runtime.activeWorkspaceRoot(session.id);
@@ -1058,6 +1101,7 @@ export class AgentLoop {
 								? {}
 								: { providerIds: run.providerIds }),
 							automaticRouting: run.providerIds.includes("auto"),
+							requireTools: this.runtime.requiresToolProvider(session.id, tools.map(tool => tool.name)),
 							...(run.providerModels
 								? { providerModels: run.providerModels }
 								: {}),
