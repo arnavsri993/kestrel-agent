@@ -1,3 +1,26 @@
+# App organization — September 21, 2026
+
+Existing React/Electron redesign; compact daily-use desktop application. Keep
+system type, current light/dark tokens, 4px spacing, restrained separators and
+existing focus rings. No new imagery, gradients, animation or dependencies.
+The classifier's marketing assumptions do not apply to this browser workspace.
+
+Thesis: each place has one clear purpose, everyday actions appear first, and
+advanced work stays reachable without filling the first screen with forms.
+
+- Build on the existing navigation/Projects and Connections/Memory changes.
+- App directory: Browse, Work, Library, Settings & help; searchable destinations
+  with plain descriptions, optional category filters, no repeated pinned links.
+- Work: Goals, Schedules, Delegation and Teams. Show one section at a time,
+  keep drafts mounted, and expose the shared parent task and routing context.
+- Preserve every destination, route ID, backend action, permission and user data.
+- Use semantic buttons with selected state for filters and native disclosure
+  for creation forms. Keep compact layouts wrapping without horizontal overflow.
+- Verify search across categories, clearing and empty results, section switching,
+  retained drafts, goal creation focus, and wide/compact installed-app views.
+- Why this is not generic: the structure follows Kestrel's actual browsing,
+  agent work, saved context, approvals and local setup responsibilities.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

@@ -239,13 +239,13 @@ function rectCenterY(rect) {
 
 function expectedAgentPanelWidth(viewportWidth) {
 	if (viewportWidth <= 760) return 0;
-	if (viewportWidth <= 980) return 288;
-	if (viewportWidth <= 1_120) return 312;
-	return 336;
+	if (viewportWidth <= 980) return 480;
+	if (viewportWidth <= 1_120) return 520;
+	return 560;
 }
 
 function expectedNavigationWidth(viewportWidth) {
-	return viewportWidth <= 1_120 ? 56 : 216;
+	return viewportWidth <= 800 ? 56 : 216;
 }
 
 async function readLayout(page) {
@@ -950,8 +950,8 @@ function assertOpenLayout(layout) {
 function agentPanelWidthBounds(viewportWidth) {
 	if (viewportWidth <= 760) return { min: 0, max: 0 };
 	return {
-		min: 288,
-		max: Math.max(288, Math.min(520, viewportWidth * 0.44)),
+		min: 480,
+		max: Math.max(480, Math.min(820, viewportWidth * 0.6)),
 	};
 }
 

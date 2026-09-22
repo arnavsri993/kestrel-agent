@@ -118,9 +118,10 @@ try {
 	);
 
 	await openKestrelDestination(page, "Work");
+	await page.getByRole("group", { name: "Work sections" }).getByRole("button", { name: "Delegation", exact: true }).click();
 	await page.getByText("Override automatic routing", { exact: true }).waitFor();
 	assert.match(
-		await page.locator(".work-card-note").first().innerText(),
+		await page.locator("#work-delegation .work-card-note").first().innerText(),
 		/capability, cost, privacy, and your preferences?/,
 	);
 	assert.equal(runtimeErrors.length, 0, runtimeErrors.join("\n"));
