@@ -889,3 +889,17 @@ the scrolling data region. Native OS menus retain their platform rendering.
 
 The source implementation uses existing CSS/React only. Catalog candidates were
 considered but no external code, assets, or new motion dependency was incorporated.
+
+## Persistent agent composer — September 17, 2026
+
+Reuse the New Tab task-composer language inside the agent conversation: 14px
+system text, a 48px resting capsule expanding to a 28px rounded writing surface,
+neutral tonal material, 4px spacing, circular send control, and controls revealed
+on focus. No gradients or agent-colored border competing with the draft. Keep
+Enter to send, Shift+Enter for lines, IME composition, visible focus, draft
+recovery after errors, and a bounded growing input. Show actual model choices
+through the existing account-aware picker.
+Preserve the existing session identity and tool authorization. Verify narrow
+conversation panels and 200% zoom; no ornamental motion beyond focus expansion.
+This is specific to Kestrel: the New Tab and persistent-agent entry points share
+the same writing surface and model-picker behavior.
