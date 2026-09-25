@@ -551,7 +551,9 @@ export function ProviderAccountsSettings() {
 														<span>{model.displayName}</span>
 														<small>
 															{model.availability.replaceAll("_", " ")} · {model.discoverySource.replaceAll("_", " ")}
-															{model.capabilities.capabilityProvenance !== "confirmed"
+															{!["confirmed", "metadata"].includes(
+																model.capabilities.capabilityProvenance,
+															)
 																? " · capabilities need verification"
 																: ""}
 														</small>

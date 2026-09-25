@@ -60,11 +60,21 @@ export function selectableModel(model: ProviderAccountModel): boolean {
 	return ["available", "unknown", "stale"].includes(model.availability);
 }
 
+export function hasVerifiedModelCapabilities(
+	model: Pick<ProviderAccountModel, "capabilities">,
+): boolean {
+	return ["confirmed", "metadata"].includes(
+		model.capabilities.capabilityProvenance,
+	);
+}
+
 export function modelAvailabilityLabel(model: ProviderAccountModel): string {
 	const capabilitiesUnverified =
-		model.capabilities.capabilityProvenance !== "confirmed";
+		!hasVerifiedModelCapabilities(model);
 	switch (model.availability) {
 		case "available":
+			if (model.capabilities.capabilityProvenance === "metadata")
+				return "Available · documented compatibility";
 			return capabilitiesUnverified
 				? "Available · capabilities unverified"
 				: "Available";
@@ -122,7 +132,8 @@ export function modelSupportsThinking(
 ): boolean {
 	const model = modelForChoice(accounts, choice);
 	return (
-		model?.capabilities.capabilityProvenance === "confirmed" &&
+		model !== undefined &&
+		hasVerifiedModelCapabilities(model) &&
 		(model.capabilities.reasoningEfforts.length ?? 0) > 1
 	);
 }
@@ -153,7 +164,7 @@ export function selectModel(
 	model: ProviderAccountModel,
 	current: ModelSelectorChoice,
 ): ModelSelectorChoice {
-	const efforts = model.capabilities.capabilityProvenance === "confirmed"
+	const efforts = hasVerifiedModelCapabilities(model)
 		? model.capabilities.reasoningEfforts
 		: [];
 	const reasoningEffort = efforts.includes(current.reasoningEffort)

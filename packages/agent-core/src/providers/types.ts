@@ -136,7 +136,7 @@ export type ProviderModelAvailability =
 
 export interface DiscoveredModelCapabilities {
 	/** How confidently this adapter knows the per-model feature flags below. */
-	capabilityProvenance?: "confirmed" | "transport" | "unknown";
+	capabilityProvenance?: "confirmed" | "metadata" | "transport" | "unknown";
 	streaming?: boolean;
 	tools?: boolean;
 	images?: boolean;

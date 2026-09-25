@@ -654,9 +654,11 @@ export const ModelProfileSchema = z.object({
 	/**
 	 * Kept separate from availability: an account can advertise a model while
 	 * omitting the model-specific capability metadata needed for auto-routing.
+	 * `metadata` means Kestrel attached documented, version-specific provider
+	 * compatibility after the account itself advertised the model.
 	 */
 	capabilityProvenance: z
-		.enum(["confirmed", "transport", "unknown"])
+		.enum(["confirmed", "metadata", "transport", "unknown"])
 		.optional(),
 });
 export type ModelProfile = z.infer<typeof ModelProfileSchema>;
@@ -1602,12 +1604,18 @@ export type ProviderModelDiscoverySource = z.infer<
 
 export const ProviderAccountModelCapabilitiesSchema = z.object({
 	/**
-	 * Whether the individual model advertised these capabilities, the adapter
+	 * Whether the individual model advertised these capabilities, Kestrel
+	 * attached documented version-specific compatibility metadata, the adapter
 	 * supplied transport-level defaults, or the listing did not say. A model
 	 * list alone is not evidence that every listed model can call tools or
 	 * accept every attachment type.
 	 */
-	capabilityProvenance: z.enum(["confirmed", "transport", "unknown"]),
+	capabilityProvenance: z.enum([
+		"confirmed",
+		"metadata",
+		"transport",
+		"unknown",
+	]),
 	streaming: z.boolean(),
 	tools: z.boolean(),
 	vision: z.boolean(),
