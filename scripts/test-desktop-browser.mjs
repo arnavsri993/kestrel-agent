@@ -934,6 +934,11 @@ try {
 	await page.locator("#new-tab-title").waitFor();
 	await page.locator("#runtime-prompt").waitFor();
 	await page.locator("#new-tab-chat-input").waitFor();
+	// Keep the physical divider check isolated on the first New Tab, before the
+	// broader browser journey changes the active view and window state.
+	await assertKestrelSidebarResize();
+	await page.locator("#runtime-prompt").waitFor();
+	await page.locator("#new-tab-chat-input").waitFor();
 	await page.locator("#new-tab-chat-input").focus();
 	assert.equal(await page.getByRole("button", { name: "Add files", exact: true }).count(), 1);
 	assert.equal(await page.locator(".new-tab-access-trigger").count(), 1);
@@ -977,7 +982,6 @@ try {
 			value.tabs.length === browserBeforeHeicUpload.tabs.length,
 		"The HEIC upload fixture tab did not close cleanly",
 	);
-	await assertKestrelSidebarResize();
 	await page.locator("#new-tab-chat-input").focus();
 	const homeSend = page.getByRole("button", {
 		name: "Send message to Pragmatic",
@@ -1917,8 +1921,54 @@ try {
 	assert.equal(await folderMenu.getByRole("menuitem", { name: "Open Page one" }).count(), 1);
 	assert.equal(await folderMenu.locator("img").count(), 1);
 	await page.keyboard.press("Escape");
+	const bookmarksWindowSize = await application.evaluate(({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows().find(
+			(candidate) =>
+				!candidate.isDestroyed() &&
+				!candidate.webContents.getURL().includes("petOverlay=1"),
+		);
+		if (!window) throw new Error("The Kestrel window is unavailable.");
+		return window.getSize();
+	});
+	const narrowBookmarksWindowWidth = 1200;
+	if (bookmarksWindowSize[0] !== narrowBookmarksWindowWidth) {
+		await application.evaluate(
+			({ BrowserWindow }, [width, height]) => {
+				const window = BrowserWindow.getAllWindows().find(
+					(candidate) =>
+						!candidate.isDestroyed() &&
+						!candidate.webContents.getURL().includes("petOverlay=1"),
+				);
+				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setSize(width, height);
+			},
+			[narrowBookmarksWindowWidth, bookmarksWindowSize[1]],
+		);
+		await page.waitForFunction(
+			(width) => innerWidth === width,
+			narrowBookmarksWindowWidth,
+		);
+	}
 	await page.getByRole("button", { name: "Manage bookmarks", exact: true }).click();
 	await page.getByRole("heading", { name: "Saved pages", exact: true }).waitFor();
+	const bookmarkHeaderLayout = await page.evaluate(() => {
+		const viewport = document.querySelector(".browser-viewport");
+		const header = document.querySelector(".browser-library .ui-page-frame-header");
+		const heading = document.querySelector("#bookmarks-title");
+		return {
+			viewportWidth: viewport?.getBoundingClientRect().width ?? 0,
+			headerDisplay: header ? getComputedStyle(header).display : "",
+			headingWidth: heading?.getBoundingClientRect().width ?? 0,
+			overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+		};
+	});
+	assert(bookmarkHeaderLayout.viewportWidth <= 760);
+	assert.equal(bookmarkHeaderLayout.headerDisplay, "grid");
+	assert(
+		bookmarkHeaderLayout.headingWidth > 100,
+		`The Saved pages heading was squeezed by its actions: ${JSON.stringify(bookmarkHeaderLayout)}`,
+	);
+	assert(bookmarkHeaderLayout.overflow <= 1);
 	const savedBookmarkRow = page.locator(`.bookmark-library-list > li`).first();
 	await savedBookmarkRow.getByRole("button", { name: "Edit", exact: true }).click();
 	await savedBookmarkRow.locator(".bookmark-library-edit").waitFor();
@@ -1948,6 +1998,24 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Browser did not return to Page one after bookmark management",
 	);
+	if (bookmarksWindowSize[0] !== narrowBookmarksWindowWidth) {
+		await application.evaluate(
+			({ BrowserWindow }, [width, height]) => {
+				const window = BrowserWindow.getAllWindows().find(
+					(candidate) =>
+						!candidate.isDestroyed() &&
+						!candidate.webContents.getURL().includes("petOverlay=1"),
+				);
+				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setSize(width, height);
+			},
+			bookmarksWindowSize,
+		);
+		await page.waitForFunction(
+			(width) => innerWidth === width,
+			bookmarksWindowSize[0],
+		);
+	}
 
 	state = await browserState();
 	const tabId = state.activeTabId;
