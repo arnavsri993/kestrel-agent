@@ -1193,13 +1193,14 @@ export const RuntimeToolExecutionSchema = z.object({
 export type RuntimeToolExecution = z.infer<typeof RuntimeToolExecutionSchema>;
 
 /**
- * Whole-desktop computer use is a separate, opt-in capability. Keeping the
+ * Mac computer use is a separate, opt-in capability. Keeping the
  * preference and the native permission probe in a shared contract lets the
  * renderer show the exact state enforced by the main process.
  */
 export const ComputerUseSettingsSchema = z.strictObject({
 	version: z.literal(1).default(1),
 	enabled: z.boolean().default(false),
+	foregroundEnabled: z.boolean().default(false),
 });
 export type ComputerUseSettings = z.infer<typeof ComputerUseSettingsSchema>;
 
@@ -1218,14 +1219,513 @@ export type ComputerUsePermissionState = z.infer<
 
 export const ComputerUseStatusSchema = z.strictObject({
 	enabled: z.boolean(),
+	foregroundEnabled: z.boolean(),
+	foregroundReady: z.boolean(),
+	postEventAccess: z.boolean(),
+	foregroundInputBackend: z.enum(["healthy", "unavailable", "unsupported"]),
 	platform: z.string().min(1).max(100),
 	screenRecording: ComputerUsePermissionStateSchema,
 	accessibility: ComputerUsePermissionStateSchema,
 	captureReady: z.boolean(),
 	controlReady: z.boolean(),
 	checkedAt: z.string().datetime(),
+	/** The native bridge is deliberately separate from the permission probes. */
+	nativeBackend: z.enum(["healthy", "degraded", "unavailable", "unsupported"]),
+	architecture: z.string().min(1).max(32),
+	osVersion: z.string().min(1).max(64).optional(),
+	backgroundSafeOnly: z.boolean(),
+	activeOperations: z.number().int().min(0).max(32),
+	latestFailure: z
+		.object({
+			code: z.string().min(1).max(100),
+			message: z.string().min(1).max(500),
+			at: z.string().datetime(),
+		})
+		.strict()
+		.optional(),
 });
 export type ComputerUseStatus = z.infer<typeof ComputerUseStatusSchema>;
+
+/**
+ * Versioned, bounded contract shared by the Electron main process, the Agent
+ * Core utility process, and the in-process macOS bridge. The contract is
+ * semantic actions and explicit foreground input have separate operations.
+ * Both reject arbitrary native calls, clipboard access, and shell commands.
+ */
+export const ComputerUseProtocolVersionSchema = z.literal(1);
+export type ComputerUseProtocolVersion = z.infer<
+	typeof ComputerUseProtocolVersionSchema
+>;
+
+export const ComputerUseCapabilityStateSchema = z.enum([
+	"semanticSafe",
+	"targetedEventSafe",
+	"observationOnly",
+	"unavailable",
+	"unverified",
+	"unsafeForSession",
+]);
+export type ComputerUseCapabilityState = z.infer<
+	typeof ComputerUseCapabilityStateSchema
+>;
+
+export const ComputerUseBackendSchema = z.enum([
+	"macos-accessibility",
+	"macos-foreground-input",
+	"screencapturekit",
+	"none",
+]);
+export type ComputerUseBackend = z.infer<typeof ComputerUseBackendSchema>;
+
+export const ComputerUseErrorCodeSchema = z.enum([
+	"permissionDenied",
+	"appTerminated",
+	"windowDisappeared",
+	"staleElement",
+	"unsupportedAction",
+	"unsupportedAttribute",
+	"timeout",
+	"ambiguousSelector",
+	"backgroundUnsafe",
+	"invariantViolation",
+	"captureUnavailable",
+	"protectedContent",
+	"nativeBridgeUnavailable",
+	"disabled",
+	"unsupportedPlatform",
+	"cancelled",
+	"invalidRequest",
+	"targetNotFound",
+	"foregroundChanged",
+	"foregroundWindowChanged",
+	"staleTarget",
+	"targetChanged",
+	"targetUnavailable",
+	"eventCreationFailed",
+	"unsupportedKey",
+	"operationConflict",
+]);
+export type ComputerUseErrorCode = z.infer<typeof ComputerUseErrorCodeSchema>;
+
+export const ComputerUseInvariantSampleSchema = z
+	.object({
+		cursorX: z.number().finite(),
+		cursorY: z.number().finite(),
+		frontmostPid: z.number().int().min(0),
+		frontmostBundleId: z.string().max(300).optional(),
+		targetPid: z.number().int().min(0),
+		kestrelPid: z.number().int().min(0),
+		userActivity: z.enum(["active", "idle", "unknown"]),
+		sampledAt: z.string().datetime(),
+		backend: ComputerUseBackendSchema,
+		activationAttempted: z.literal(false),
+	})
+	.strict();
+export type ComputerUseInvariantSample = z.infer<
+	typeof ComputerUseInvariantSampleSchema
+>;
+
+export const ComputerUseInvariantResultSchema = z.enum([
+	"held",
+	"user_moved",
+	"not_applicable",
+	"unknown",
+	"violated",
+]);
+export type ComputerUseInvariantResult = z.infer<
+	typeof ComputerUseInvariantResultSchema
+>;
+
+export const ComputerUseEvidenceSchema = z
+	.object({
+		operation: z.string().min(1).max(80),
+		durationMs: z.number().int().min(0).max(120_000),
+		backend: ComputerUseBackendSchema,
+		cursorInvariant: ComputerUseInvariantResultSchema,
+		foregroundInvariant: ComputerUseInvariantResultSchema,
+		postcondition: z.enum(["verified", "not_checked", "failed"]),
+		activationAttempted: z.boolean(),
+		invariantReceipt: z
+			.object({
+				before: ComputerUseInvariantSampleSchema,
+				after: ComputerUseInvariantSampleSchema,
+			})
+			.strict()
+			.optional(),
+	})
+	.strict();
+export type ComputerUseEvidence = z.infer<typeof ComputerUseEvidenceSchema>;
+
+export const ComputerUseErrorSchema = z
+	.object({
+		code: ComputerUseErrorCodeSchema,
+		message: z.string().min(1).max(2_000),
+		retryable: z.boolean(),
+	})
+	.strict();
+export type ComputerUseError = z.infer<typeof ComputerUseErrorSchema>;
+
+export const ComputerUseCapabilitiesSchema = z
+	.object({
+		protocolVersion: ComputerUseProtocolVersionSchema,
+		platform: z.string().min(1).max(100),
+		architecture: z.string().min(1).max(32),
+		bridge: z.enum(["in-process-node-api", "unavailable"]),
+		accessibility: z.boolean(),
+		screenCaptureKit: z.boolean(),
+		/** Permission state is reported without prompting; availability is separate. */
+		screenRecordingPermission: z.boolean().optional(),
+		targetedEvents: z.literal(false),
+		backgroundSafeOnly: z.literal(true),
+		maxTreeNodes: z.number().int().positive().max(800),
+		maxCaptureWidth: z.number().int().positive().max(3_840),
+		maxCaptureHeight: z.number().int().positive().max(2_160),
+	})
+	.strict();
+export type ComputerUseCapabilities = z.infer<
+	typeof ComputerUseCapabilitiesSchema
+>;
+
+export const ComputerUseBoundsSchema = z
+	.object({
+		x: z.number().finite(),
+		y: z.number().finite(),
+		width: z.number().finite().gte(0).lte(20_000),
+		height: z.number().finite().gte(0).lte(20_000),
+	})
+	.strict();
+export type ComputerUseBounds = z.infer<typeof ComputerUseBoundsSchema>;
+
+export const ComputerUseApplicationSchema = z
+	.object({
+		pid: z.number().int().positive(),
+		bundleId: z.string().min(1).max(300),
+		name: z.string().min(1).max(500),
+		isFrontmost: z.boolean(),
+		accessibilityAvailable: z.boolean(),
+		capability: ComputerUseCapabilityStateSchema,
+		supportedBackends: z.array(ComputerUseBackendSchema).max(4),
+	})
+	.strict();
+export type ComputerUseApplication = z.infer<
+	typeof ComputerUseApplicationSchema
+>;
+
+export const ComputerUseWindowSchema = z
+	.object({
+		pid: z.number().int().positive(),
+		bundleId: z.string().min(1).max(300),
+		applicationName: z.string().min(1).max(500),
+		windowId: z.number().int().positive(),
+		title: z.string().max(1_000).optional(),
+		bounds: ComputerUseBoundsSchema,
+		layer: z.number().int().min(-10_000).max(10_000),
+		visible: z.boolean(),
+		captureState: z.enum([
+			"available",
+			"unavailable",
+			"protected",
+			"stale",
+			"unknown",
+		]),
+		accessibilityAvailable: z.boolean(),
+		isFrontmostApplication: z.boolean(),
+		capability: ComputerUseCapabilityStateSchema,
+		supportedBackends: z.array(ComputerUseBackendSchema).max(4),
+	})
+	.strict();
+export type ComputerUseWindow = z.infer<typeof ComputerUseWindowSchema>;
+
+export const ComputerUseAXValueSchema = z.union([
+	z.string().max(20_000),
+	z.number().finite(),
+	z.boolean(),
+	z.null(),
+	z.object({ redacted: z.literal(true), reason: z.string().max(100) }).strict(),
+]);
+export type ComputerUseAXValue = z.infer<typeof ComputerUseAXValueSchema>;
+
+export const ComputerUseAXNodeSchema = z
+	.object({
+		elementId: z.string().min(1).max(200),
+		fingerprint: z.string().min(1).max(200),
+		role: z.string().max(200).optional(),
+		subrole: z.string().max(200).optional(),
+		title: z.string().max(1_000).optional(),
+		description: z.string().max(1_000).optional(),
+		help: z.string().max(1_000).optional(),
+		identifier: z.string().max(500).optional(),
+		value: ComputerUseAXValueSchema.optional(),
+		valueRedacted: z.boolean(),
+		enabled: z.boolean().optional(),
+		selected: z.boolean().optional(),
+		focused: z.boolean().optional(),
+		frame: ComputerUseBoundsSchema.optional(),
+		supportedActions: z.array(z.string().max(200)).max(32),
+		settableAttributes: z.array(z.string().max(200)).max(32),
+		children: z.array(z.string().max(200)).max(64),
+		ancestry: z.array(z.string().max(200)).max(16),
+	})
+	.strict();
+export type ComputerUseAXNode = z.infer<typeof ComputerUseAXNodeSchema>;
+
+export const ComputerUseAXTreeSchema = z
+	.object({
+		protocolVersion: ComputerUseProtocolVersionSchema,
+		generation: z.string().min(1).max(200),
+		pid: z.number().int().positive(),
+		windowId: z.number().int().positive().optional(),
+		nodes: z.array(ComputerUseAXNodeSchema).max(800),
+		truncated: z.boolean(),
+	})
+	.strict();
+export type ComputerUseAXTree = z.infer<typeof ComputerUseAXTreeSchema>;
+
+export const ComputerUseElementSelectorSchema = z
+	.object({
+		elementId: z.string().min(1).max(200).optional(),
+		fingerprint: z.string().min(1).max(200).optional(),
+		role: z.string().max(200).optional(),
+		subrole: z.string().max(200).optional(),
+		identifier: z.string().max(500).optional(),
+		title: z.string().max(1_000).optional(),
+		description: z.string().max(1_000).optional(),
+		/** Optional geometry is only a bounded disambiguation hint, never an input coordinate. */
+		frame: ComputerUseBoundsSchema.optional(),
+		ancestry: z.array(z.string().max(200)).max(16).optional(),
+	})
+	.strict()
+	.refine(
+		(value) =>
+			Object.entries(value).some(
+				([key, entry]) =>
+					entry !== undefined &&
+					!(key === "ancestry" && Array.isArray(entry) && entry.length === 0),
+			),
+		"An accessibility selector must contain at least one criterion.",
+	);
+export type ComputerUseElementSelector = z.infer<
+	typeof ComputerUseElementSelectorSchema
+>;
+
+export const ComputerUsePostconditionSchema = z
+	.object({
+		selector: ComputerUseElementSelectorSchema,
+		expectedValue: ComputerUseAXValueSchema,
+	})
+	.strict();
+export type ComputerUsePostcondition = z.infer<
+	typeof ComputerUsePostconditionSchema
+>;
+
+export const ComputerUseActionSchema = z.discriminatedUnion("type", [
+	z.object({ type: z.literal("press") }).strict(),
+	z.object({ type: z.literal("confirm") }).strict(),
+	z.object({ type: z.literal("cancel") }).strict(),
+	z.object({ type: z.literal("showMenu") }).strict(),
+	z.object({ type: z.literal("pick") }).strict(),
+	z.object({ type: z.literal("select") }).strict(),
+	z.object({ type: z.literal("increment") }).strict(),
+	z.object({ type: z.literal("decrement") }).strict(),
+	z.object({ type: z.literal("expand") }).strict(),
+	z.object({ type: z.literal("collapse") }).strict(),
+	z
+		.object({
+			type: z.literal("scroll"),
+			direction: z.enum(["up", "down", "left", "right"]),
+			amount: z.number().int().gte(1).lte(10),
+		})
+		.strict(),
+	]);
+export type ComputerUseAction = z.infer<typeof ComputerUseActionSchema>;
+
+const ComputerUseRequestBase = {
+	protocolVersion: ComputerUseProtocolVersionSchema,
+	requestId: z.string().min(1).max(200),
+	deadlineMs: z.number().int().gte(1).lte(120_000),
+};
+const ComputerUseTarget = {
+	pid: z.number().int().positive().max(10_000_000),
+	windowId: z.number().int().positive().max(0x7fffffff).optional(),
+};
+
+const ForegroundPointSchema = z.strictObject({
+	x: z.number().finite().gte(-100_000).lte(100_000),
+	y: z.number().finite().gte(-100_000).lte(100_000),
+});
+export const ComputerForegroundActionSchema = z.discriminatedUnion("type", [
+	z.strictObject({ type: z.literal("activate") }),
+	z.strictObject({ type: z.literal("click"), point: ForegroundPointSchema, button: z.enum(["left", "right", "middle"]).default("left"), clickCount: z.number().int().min(1).max(3).default(1) }),
+	z.strictObject({ type: z.literal("drag"), from: ForegroundPointSchema, to: ForegroundPointSchema, button: z.enum(["left", "right", "middle"]).default("left"), durationMs: z.number().int().min(0).max(10_000).default(350) }),
+	z.strictObject({ type: z.literal("scroll"), deltaX: z.number().int().min(-10_000).max(10_000), deltaY: z.number().int().min(-10_000).max(10_000), point: ForegroundPointSchema.optional() }).refine((value) => value.deltaX !== 0 || value.deltaY !== 0),
+	z.strictObject({ type: z.literal("type"), text: z.string().min(1).max(4_096) }),
+	z.strictObject({ type: z.literal("key"), key: z.string().regex(/^[A-Za-z0-9]{1,20}$/), modifiers: z.array(z.enum(["command", "control", "option", "shift", "function"])).max(5).default([]) }),
+]);
+export type ComputerForegroundAction = z.infer<typeof ComputerForegroundActionSchema>;
+
+export const ComputerForegroundTargetSchema = z.strictObject({
+	pid: z.number().int().positive().max(10_000_000),
+	windowId: z.number().int().positive().max(0x7fffffff),
+	bundleId: z.string().min(1).max(255),
+	bounds: ComputerUseBoundsSchema.extend({ width: z.number().finite().gt(0).lte(20_000), height: z.number().finite().gt(0).lte(20_000) }),
+});
+export type ComputerForegroundTarget = z.infer<typeof ComputerForegroundTargetSchema>;
+
+export const ComputerUseRequestSchema = z.discriminatedUnion("operation", [
+	z.strictObject({ ...ComputerUseRequestBase, operation: z.literal("performForegroundInput"), target: ComputerForegroundTargetSchema, action: ComputerForegroundActionSchema }),
+	z.strictObject({ ...ComputerUseRequestBase, operation: z.literal("status") }),
+	z.object({ ...ComputerUseRequestBase, operation: z.literal("health") }).strict(),
+	z.object({ ...ComputerUseRequestBase, operation: z.literal("capabilities") }).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		operation: z.literal("listApplications"),
+	}).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		operation: z.literal("listWindows"),
+	}).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		operation: z.literal("describeWindow"),
+		windowId: z.number().int().positive().max(0x7fffffff),
+	}).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		operation: z.literal("captureWindow"),
+		windowId: z.number().int().positive().max(0x7fffffff),
+		maxWidth: z.number().int().gte(1).lte(3_840).default(1_920),
+		maxHeight: z.number().int().gte(1).lte(2_160).default(1_080),
+	}).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		...ComputerUseTarget,
+		operation: z.literal("inspectAccessibilityTree"),
+		maxNodes: z.number().int().gte(1).lte(800).default(400),
+		maxDepth: z.number().int().gte(1).lte(24).default(16),
+	}).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		...ComputerUseTarget,
+		operation: z.literal("resolveElement"),
+		selector: ComputerUseElementSelectorSchema,
+	}).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		...ComputerUseTarget,
+		operation: z.literal("performAccessibilityAction"),
+		selector: ComputerUseElementSelectorSchema,
+		action: ComputerUseActionSchema,
+		expectedValue: ComputerUseAXValueSchema.optional(),
+		postcondition: ComputerUsePostconditionSchema.optional(),
+	}).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		...ComputerUseTarget,
+		operation: z.literal("setAccessibilityValue"),
+		selector: ComputerUseElementSelectorSchema,
+		value: z.string().max(20_000),
+		secret: z.boolean().default(false),
+		expectedValue: ComputerUseAXValueSchema.optional(),
+	}).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		...ComputerUseTarget,
+		operation: z.literal("readAccessibilityValue"),
+		selector: ComputerUseElementSelectorSchema,
+	}).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		operation: z.literal("cancel"),
+		cancelRequestId: z.string().min(1).max(200),
+	}).strict(),
+	z.object({ ...ComputerUseRequestBase, operation: z.literal("shutdown") }).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		operation: z.literal("getInvariantState"),
+		targetPid: z.number().int().min(0).max(10_000_000).optional(),
+	}).strict(),
+	z.object({
+		...ComputerUseRequestBase,
+		operation: z.literal("probeTargetedEventSupport"),
+		...ComputerUseTarget,
+		eventClass: z.enum(["mouse", "keyboard", "scroll"]),
+		bundleId: z.string().max(300).optional(),
+	}).strict(),
+]);
+export type ComputerUseRequest = z.infer<typeof ComputerUseRequestSchema>;
+
+/**
+ * Results cross an Electron utility-process boundary. Keep the envelope
+ * bounded even though individual operation payloads are intentionally typed
+ * by the operation-specific schemas above and validated again by the manager.
+ */
+export const ComputerUseResultSchema = z
+	.record(z.string().min(1).max(100), z.unknown())
+	.superRefine((value, context) => {
+		if (Object.keys(value).length > 32) {
+			context.addIssue({
+				code: "custom",
+				message: "Computer-use results may contain at most 32 top-level fields.",
+			});
+			return;
+		}
+		try {
+			const bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength;
+			if (bytes > 32_000_000)
+				context.addIssue({
+					code: "custom",
+					message: "Computer-use result exceeds the bounded message size.",
+				});
+		} catch {
+			context.addIssue({
+				code: "custom",
+				message: "Computer-use result is not JSON serializable.",
+			});
+		}
+	});
+export type ComputerUseResult = z.infer<typeof ComputerUseResultSchema>;
+
+export const ComputerUseResponseSchema = z.discriminatedUnion("ok", [
+	z.object({
+		protocolVersion: ComputerUseProtocolVersionSchema,
+		requestId: z.string().min(1).max(200),
+		ok: z.literal(true),
+		result: ComputerUseResultSchema,
+		evidence: ComputerUseEvidenceSchema,
+	}).strict(),
+	z.object({
+		protocolVersion: ComputerUseProtocolVersionSchema,
+		requestId: z.string().min(1).max(200),
+		ok: z.literal(false),
+		error: ComputerUseErrorSchema,
+		evidence: ComputerUseEvidenceSchema,
+	}).strict(),
+]);
+export type ComputerUseResponse = z.infer<typeof ComputerUseResponseSchema>;
+
+export const ComputerUseActionReceiptSchema = z
+	.object({
+		actionId: z.string().min(1).max(200),
+		requestId: z.string().min(1).max(200),
+		targetBundleId: z.string().max(300).optional(),
+		targetPid: z.number().int().min(0),
+		targetWindowId: z.number().int().min(0).optional(),
+		elementFingerprint: z.string().max(200).optional(),
+		requestedAction: z.string().min(1).max(80),
+		backend: ComputerUseBackendSchema,
+		policyDecision: z.enum(["allowed", "denied", "approval_required"]),
+		approvalReference: z.string().max(200).optional(),
+		startedAt: z.string().datetime(),
+		completedAt: z.string().datetime().optional(),
+		postcondition: z.string().max(500),
+		cursorInvariant: ComputerUseInvariantResultSchema,
+		foregroundInvariant: ComputerUseInvariantResultSchema,
+		outcome: z.enum(["verified", "dispatched", "failed", "cancelled", "unsafe"]),
+	})
+	.strict();
+export type ComputerUseActionReceipt = z.infer<
+	typeof ComputerUseActionReceiptSchema
+>;
 
 const PresentationTextSchema = z
 	.string()
@@ -4838,6 +5338,7 @@ export const RendererRequestSchema = z.union([
 	z.object({
 		type: z.literal("computer-use-update"),
 		enabled: z.boolean(),
+		foregroundEnabled: z.boolean().optional(),
 	}),
 	z.object({
 		type: z.literal("computer-use-open-settings"),

@@ -3,6 +3,7 @@ node_modules/
 .tmp/
 dist/
 out/
+apps/desktop/native/*.node
 .next/
 coverage/
 test-results/

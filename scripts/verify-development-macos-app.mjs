@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { auditPackagedMacApp } from "./macos-architecture-audit.cjs";
+import { auditPackagedBackgroundComputerUse, auditPackagedForegroundComputerInput } from "./macos-background-computer-use-audit.mjs";
 
 const require = createRequire(import.meta.url);
 const { verifyAgentCoreSidecar } = require("../apps/desktop/build/agent-core-sidecar.cjs");
@@ -113,6 +114,8 @@ runCodesign(["--verify", "--deep", "--strict", "--verbose=2", appPath], {
 	stdio: "inherit",
 });
 verifyAgentCoreSidecar(appPath, { verifySignature: true });
+auditPackagedBackgroundComputerUse(appPath, { expectedBundleId: "com.kestrel.desktop.dev" });
+auditPackagedForegroundComputerInput(appPath);
 
 const evidence = runCodesign(["-dv", "--verbose=4", appPath]);
 const signature = `${evidence.stdout}${evidence.stderr}`;
