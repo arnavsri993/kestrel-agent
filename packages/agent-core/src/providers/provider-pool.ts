@@ -8,6 +8,10 @@ import {
 	type ProviderQuotaSnapshot,
 	normalizeProviderQuotaSnapshot,
 } from "./types";
+import {
+	contractFromProviderCapabilities,
+	evaluateCapabilityRequirements,
+} from "./transport-capability";
 
 const DEFAULT_HEALTH_BACKOFF_MS = 30_000;
 const MAX_HEALTH_BACKOFF_MS = 24 * 60 * 60_000;
@@ -373,7 +377,22 @@ export class ProviderPool {
 		else if (clearWhenUnavailable) this.quotaByProvider.delete(providerId);
 	}
 
-	private supports(provider: ModelProvider, request: ModelRequest): boolean {
+	private supports(provider: ModelProvider, request: ModelRequest, requireTools = false): boolean {
+		if (requireTools) {
+			const contract = contractFromProviderCapabilities({
+				streaming: provider.capabilities.streaming,
+				tools: provider.capabilities.tools,
+				images: provider.capabilities.images,
+				audio: provider.capabilities.audio,
+				documents: provider.capabilities.documents,
+				...(provider.capabilities.video !== undefined
+					? { video: provider.capabilities.video }
+					: {}),
+				local: provider.capabilities.local,
+			});
+			if (evaluateCapabilityRequirements(contract, { requireTools: true }))
+				return false;
+		}
 		const parts = request.messages.flatMap((message) => message.content);
 		return (
 			!parts.some(
@@ -398,6 +417,8 @@ export class ProviderPool {
 			providerModels?: Record<string, string>;
 			healthBackoffMs?: number;
 			automaticRouting?: boolean;
+			/** Fail closed for executable agent work; never strip its tools. */
+			requireTools?: boolean;
 			costScore?: (providerId: string, model: string) => number;
 			canAttempt?: (
 				providerId: string,
@@ -444,11 +465,11 @@ export class ProviderPool {
 		);
 		const candidates = selected.filter(
 			(provider) =>
-				this.supports(provider, request) &&
+				this.supports(provider, request, options.requireTools) &&
 				(options.providerAllowed?.(provider.id, provider.poolId) ?? true),
 		);
 		for (const provider of selected.filter(
-			(candidate) => !this.supports(candidate, request),
+			(candidate) => !this.supports(candidate, request, options.requireTools),
 		)) {
 			const timestamp = this.now().toISOString();
 			attempts.push({
@@ -456,12 +477,14 @@ export class ProviderPool {
 				startedAt: timestamp,
 				completedAt: timestamp,
 				status: "failed",
-				error: "Provider capabilities do not support this request.",
+				error: options.requireTools && !provider.capabilities.tools
+					? "This agent needs a provider with Kestrel tool support. Select a tool-capable provider in Settings; this provider is text-only."
+					: "Provider capabilities do not support this request.",
 			});
 		}
 		for (const provider of selected.filter(
 			(candidate) =>
-				this.supports(candidate, request) &&
+				this.supports(candidate, request, options.requireTools) &&
 				!(options.providerAllowed?.(candidate.id, candidate.poolId) ?? true),
 		)) {
 			const timestamp = this.now().toISOString();

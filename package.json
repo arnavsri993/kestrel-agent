@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Kestrel \u2014 a local-first work agent with visible approvals and verified delivery",
+  "description": "Kestrel — a local-first work agent with visible approvals and verified delivery",
   "packageManager": "pnpm@11.15.1",
   "engines": {
     "node": ">=22.12.0"
@@ -84,7 +84,11 @@
     "verify:meetup": "node scripts/verify-meetup-preflight.mjs && pnpm verify && pnpm assets:verify && pnpm test:local-ai:real && pnpm package:mac:dev && pnpm test:packaged-desktop:arm64 && pnpm benchmark:browser-agent:packaged:arm64",
     "check:presentation-warmup": "node scripts/presentation-warmup-check.mjs",
     "cleanup:mac:apps": "node scripts/cleanup-kestrel-macos-apps.mjs",
-    "test:desktop-new-tab": "node scripts/test-desktop-new-tab-glass.mjs"
+    "test:desktop-new-tab": "node scripts/test-desktop-new-tab-glass.mjs",
+    "dev:native-extensions": "node scripts/dev-native-chromium-host.mjs --extensions",
+    "test:native-extensions": "node scripts/smoke-native-extensions.mjs",
+    "benchmark:memory-retrieval": "node benchmarks/memory-retrieval/run-lexical-baseline.mjs",
+    "benchmark:model-agent:fixture": "node benchmarks/model-agent/run-fixture.mjs"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.3.0",

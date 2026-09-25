@@ -121,6 +121,57 @@ design, production signing/notarization, and proof of the remaining desktop
 capabilities. Keep the Electron adapter in place until those replacement
 boundaries have been exercised.
 
+## Native extension workbench
+
+Run `corepack pnpm dev:native-extensions` on Apple Silicon macOS to build and
+open the same native CEF executable in an opt-in Chrome-style mode, starting at
+`chrome://extensions/`. Chromium supplies its toolbar, extension manager,
+permission dialogs, and popup windows. Enable Developer mode and use **Load
+unpacked** to test a local extension, or follow the manager's Chrome Web Store
+link. No Electron process is involved.
+
+This is a compatibility workbench, not a replacement for the installed Kestrel
+app. The launcher creates a disposable profile and removes it after exit,
+including installed extensions, their settings, and browser sessions. It has no
+Kestrel shell, Core relay, custom `kestrel:` scheme, or native message-router
+bridge, including in renderer helpers. Combining the workbench flag with the
+privileged renderer or ephemeral Core flags is rejected. Mock Keychain and the
+existing background-networking restrictions remain enabled. Those flags are
+not a network firewall: visiting the store and running extensions can make
+network requests. Use test data here, not personal accounts.
+
+`corepack pnpm test:native-extensions` builds the native artifact and checks:
+
+- Chromium's real extension manager displays a locally loaded MV3 fixture.
+- A content script sends a message to its service worker and receives a reply.
+- `chrome.storage.local` retains an incremented value across page reloads.
+- Extension pages render, ordinary popups survive closing their opener, and
+  closing the browser exits cleanly.
+- Remote pages, extension pages, and even the bundled shell file have no native
+  bridge in this mode; renderer/GPU/utility processes remain sandboxed.
+
+Screenshots are written to `.tmp/native-extension-evidence`. A just-built
+artifact can be tested without rebuilding by setting `KESTREL_NATIVE_TEST_APP`
+to its absolute `.app` path. The test always creates its own temporary profile
+and uses a local HTTP server; it does not install a third-party extension or
+require the Web Store to be online.
+
+A manual check on 2026-09-21 opened the real Chrome Web Store and reached the
+native permission dialog for uBlock Origin Lite. The dialog was canceled.
+End-to-end store installation, update delivery, persisted extensions across
+app restarts, toolbar action popups, and broad extension API compatibility are
+**not yet verified**. Store pages also displayed a “Switch to Chrome” banner;
+reaching a permission dialog alone is not evidence of complete store support.
+CEF's upstream [extension management issue](https://github.com/chromiumembedded/cef/issues/3450)
+documents Chrome-style management and the remaining programmatic API boundary.
+
+The next integration step is to connect extension-capable Chrome-style user
+browsing to Kestrel's shell while keeping the privileged renderer in a separate
+extension-free security boundary. Then add explicit durable native-profile
+ownership, install/update/removal and permission tests, and the remaining
+browser/agent parity gates before any canonical-app cutover. Do not enable
+extensions globally in the current Alloy shell to shortcut this separation.
+
 ## Next boundaries
 
 The next native-host slices are durable profile ownership without Keychain

@@ -10,4 +10,5 @@ export * from "./openai-chat-completions";
 export * from "./openai-responses";
 export * from "./provider-pool";
 export * from "./subscription-cli";
+export * from "./transport-capability";
 export * from "./types";
