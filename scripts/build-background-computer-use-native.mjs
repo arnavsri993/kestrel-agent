@@ -43,8 +43,10 @@ if (process.platform !== "darwin") {
 	process.exit(0);
 }
 
-if (process.arch !== "arm64" && process.env.npm_config_arch !== "arm64")
-	throw new Error("The macOS computer-use bridges must be built for arm64.");
+if (process.arch !== "arm64" && process.env.npm_config_arch !== "arm64") {
+	console.log("Skipping the arm64 macOS computer-use bridges on this architecture.");
+	process.exit(0);
+}
 verifyBackgroundComputerUseSafety(root);
 
 const desktopPackage = JSON.parse(
@@ -53,10 +55,17 @@ const desktopPackage = JSON.parse(
 const electronVersion = desktopPackage.devDependencies?.electron;
 if (typeof electronVersion !== "string" || electronVersion.length === 0)
 	throw new Error("The desktop Electron version is missing from apps/desktop/package.json.");
+const electronInclude = join(homedir(), ".electron-gyp", electronVersion, "include", "node");
+// These addons use only Node-API v8, whose ABI is stable across Node and
+// Electron. The first desktop build in a clean CI checkout may run before
+// electron-rebuild has downloaded Electron's headers.
+const hostNodeInclude = join(dirname(dirname(process.execPath)), "include", "node");
 const nodeInclude = process.env.ELECTRON_GYP_INCLUDE ??
-	join(homedir(), ".electron-gyp", electronVersion, "include", "node");
+	(existsSync(join(electronInclude, "node_api.h")) ? electronInclude : hostNodeInclude);
 if (!existsSync(join(nodeInclude, "node_api.h")))
-	throw new Error(`Electron Node-API headers are missing: ${nodeInclude}`);
+	throw new Error(`Node-API headers are missing: ${nodeInclude}`);
+if (nodeInclude === hostNodeInclude)
+	console.log(`Using host Node-API headers for the native bridges: ${nodeInclude}`);
 const sdk = execFileSync("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"], {
 	encoding: "utf8",
 }).trim();
