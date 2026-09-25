@@ -1,3 +1,4 @@
+import "./Connections.css";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
@@ -6700,6 +6701,7 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 		CommunicationSourceStatus[]
 	>([]);
 	const [busy, setBusy] = useState(false);
+	const [section, setSection] = useState("apps");
 	const [grantError, setGrantError] = useState("");
 	const [googleStatus, setGoogleStatus] = useState<GoogleWorkspaceOAuthStatus>({
 		connected: false,
@@ -6707,6 +6709,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 		bundledClientAvailable: false,
 	});
 	const [googleClientId, setGoogleClientId] = useState("");
+	const googleSetupRef = useRef<HTMLDetailsElement>(null);
+	const googleClientInputRef = useRef<HTMLInputElement>(null);
 	const [googleBusy, setGoogleBusy] = useState(false);
 	const [googleError, setGoogleError] = useState("");
 	const [subscriptionClis, setSubscriptionClis] = useState<
@@ -6912,11 +6916,20 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 					access remain explicit and revocable.
 				</p>
 			</header>}
-			<WhatsAppConnection session={scopeSession} />
-			<OnshapeConnection key={scopeSession?.id ?? "global"} session={scopeSession} />
-			{scopeSession && <AgentResourceAccess key={scopeSession.id} session={scopeSession} {...(googleStatus.connected && googleStatus.email ? { googleEmail: googleStatus.email } : {})} />}
-			<div className="connection-list">
-				<details className="connection-advanced"><summary>Model provider · ChatGPT</summary>
+			<nav className="connection-sections" aria-label="Connection sections">
+                <button aria-current={section === "apps" ? "page" : undefined} onClick={() => setSection("apps")}>Apps & accounts</button>
+                <select aria-label="More connection settings" value={section === "apps" ? "" : section} onChange={event => { if (event.target.value) setSection(event.target.value as typeof section); }}>
+                    <option value="" disabled>More settings</option><option value="local">Files & this Mac</option><option value="models">AI account</option><option value="access">Agent permissions</option>
+                </select>
+            </nav>
+            <div hidden={section !== "access"} className="connection-section">
+                <h2>Agent access</h2>
+                <p className="connection-section-description">Choose which connected resources the selected agent can use.</p>
+                {scopeSession ? <AgentResourceAccess key={scopeSession.id} session={scopeSession} {...(googleStatus.connected && googleStatus.email ? { googleEmail: googleStatus.email } : {})} /> : <p>{standalone ? "Select an agent in “Access for” above to review its resources." : "Open Connections from the sidebar and select an agent to review its resources."} Connecting an account and assigning agent access are separate steps.</p>}
+            </div>
+            <div hidden={section !== "models"} className="connection-list connection-section">
+                <h2>Model provider</h2>
+                <p className="connection-section-description">Manage the ChatGPT sign-in used by the Codex model route.</p>
 				<article className="oauth-connection">
 					<div className="connection-monogram">CG</div>
 					<div>
@@ -6964,8 +6977,10 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						)}
 					</div>
 				</article>
-				</details>
-				<article className="oauth-connection">
+            </div>
+            <div hidden={section !== "apps"} className="connection-list connection-section">
+                <p className="connection-section-description">Choose an app to connect or manage. You control what Kestrel can access.</p>
+				<details className="connection-app"><summary><strong>Google</strong><span>Gmail and Calendar</span><small>{googleStatus.connected ? googleStatus.email || "Connected" : "Not connected"}</small></summary><article className="oauth-connection">
 					<div className="connection-monogram">GW</div>
 					<div>
 						<strong>Google Workspace</strong>
@@ -6974,13 +6989,14 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 								? `${googleStatus.email} · Gmail, Calendar events and availability, and login-code lookup`
 								: googleStatus.bundledClientAvailable
 									? "Connect Gmail and Calendar with Kestrel's verified Google sign-in."
-									: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar event and availability access."}
+									: "Google setup is needed on this build. Open the setup instructions below to get started."}
 						</p>
 						{!googleStatus.connected && !googleStatus.bundledClientAvailable && (
-							<>
+							<details ref={googleSetupRef} className="connection-advanced"><summary>Set up Google connection</summary><p>Allows sending Gmail, reading recent email and login codes, and reading or updating Calendar events and availability.</p>
 								<label>
 									Desktop OAuth client ID
 									<input
+                                        ref={googleClientInputRef}
 										value={googleClientId}
 										autoComplete="off"
 										spellCheck={false}
@@ -7000,7 +7016,7 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 									, enable Gmail and Calendar APIs, then sign in in Google's
 									browser.
 								</small>
-							</>
+							</details>
 						)}
 						{!googleStatus.connected && googleStatus.bundledClientAvailable && (
 							<small>
@@ -7062,17 +7078,24 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						) : (
 							<button
 								className="button secondary"
-								disabled={
-									!googleStatus.bundledClientAvailable &&
-									!googleClientId.trim()
-								}
-								onClick={() => void connectGoogle()}
+								onClick={() => {
+                                    if (!googleStatus.bundledClientAvailable && !googleClientId.trim()) {
+                                        if (googleSetupRef.current) googleSetupRef.current.open = true;
+                                        googleClientInputRef.current?.focus();
+                                    } else void connectGoogle();
+                                }}
 							>
-								Connect with Google
+								{!googleStatus.bundledClientAvailable && !googleClientId.trim() ? "Set up Google" : "Connect with Google"}
 							</button>
 						)}
 					</div>
-				</article>
+				</article></details>
+                <details className="connection-app"><summary><strong>WhatsApp</strong><span>Choose conversations to remember</span><small>Browser connection</small></summary><WhatsAppConnection session={scopeSession} /></details>
+                <details className="connection-app"><summary><strong>Onshape</strong><span>Read your CAD documents</span><small>Manage access</small></summary><OnshapeConnection key={scopeSession?.id ?? "global"} session={scopeSession} /></details>
+            </div>
+            <div hidden={section !== "local"} className="connection-list connection-section">
+                <h2>On this Mac</h2>
+                <p className="connection-section-description">Review local permissions and the folders you have selected.</p>
 				<article className="oauth-connection communication-source-connection">
 					<div className="connection-monogram">MS</div>
 					<div>
@@ -7119,6 +7142,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						)}
 					</div>
 				</article>
+			</div>
+            <div hidden={section !== "apps" || !channels.length} className="connection-list connection-section"><h2>Messaging channels</h2>
 				{channels.map((channel) => (
 					<article key={`channel-${channel.id}`}>
 						<div className="connection-monogram">
@@ -7138,6 +7163,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						<span className="honest-status">Owner-configured</span>
 					</article>
 				))}
+			</div>
+            <div hidden={section !== "local"} className="connection-list connection-section">
 				{snapshot.connections
 					.filter(
 						(connection) =>
@@ -11304,16 +11331,16 @@ export function App() {
 				/>
 			)}
 			{appPageId === "connections" && (
-				<PageFrame title="Connections" text="Manage connected accounts and access.">
-					<label className="memory-scope-selector">Access for
+				<PageFrame title="Connections" text="Connect the apps you use.">
+					<details className="connection-scope-disclosure"><summary>{currentAppPage?.scopeSessionId ? `For ${runtimeSessions.find(session => session.id === currentAppPage.scopeSessionId)?.title ?? "this agent"}` : "For you"} · Change</summary><label className="memory-scope-selector">Access for
       <select aria-label="Connection scope" value={currentAppPage?.scopeSessionId ?? ""} onChange={event => {
        const tabId = browser.state?.activeTabId;
        if (tabId) void browser.navigate(tabId, kestrelAppPageUrl("connections", event.target.value || undefined));
       }}>
-       <option value="">Personal / global accounts</option>
+       <option value="">Your accounts</option>
        {runtimeSessions.filter(session => session.kind === "agent" || session.specialistDefinition).map(session => <option key={session.id} value={session.id}>{session.parentSessionId ? "↳ " : ""}{session.title}</option>)}
       </select>
-     </label>
+     </label></details>
      <Connections snapshot={snapshot} standalone scopeSession={runtimeSessions.find(session => session.id === currentAppPage?.scopeSessionId)} />
 				</PageFrame>
 			)}
