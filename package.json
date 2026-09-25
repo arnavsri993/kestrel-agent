@@ -12,6 +12,8 @@
     "dev": "pnpm --filter @kestrel/desktop dev",
     "dev:chromium": "pnpm build:core && pnpm --filter @kestrel/chromium-host dev",
     "test:chromium-host": "tsx scripts/smoke-chromium-host.ts",
+    "dev:native-extensions": "node scripts/dev-native-chromium-host.mjs --extensions",
+    "test:native-extensions": "node scripts/smoke-native-extensions.mjs",
     "dev:native-chromium-host": "node scripts/dev-native-chromium-host.mjs",
     "dev:desktop": "pnpm --filter @kestrel/desktop dev",
     "dev:website": "pnpm --filter @kestrel/website dev",
