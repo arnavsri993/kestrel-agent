@@ -24,10 +24,25 @@ const server = createServer(async (req, res) => {
   }
   res.end(`<title>Auth fixture</title><h1>Auth fixture</h1>
     <form method="post" action="/callback"><input name="fixture" value="synthetic"><button>Continue</button></form>
-    <script>window.addEventListener('message', e => { if (e.origin === location.origin) window.fixtureResult = e.data; });</script>`);
+    <script>window.addEventListener('message', e => { if (e.origin === location.origin || e.origin === '${iframeOrigin}') window.fixtureResult = e.data; });</script>`);
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
+let iframeOrigin;
+const iframeServer = createServer((req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  if (req.url === '/callback') {
+    res.end(`<script>window.opener.postMessage('iframe-popup-complete', location.origin); window.close();</script>`);
+    return;
+  }
+  res.end(`<button id="google-like-popup">Continue with provider</button>
+    <script>
+      document.querySelector('button').addEventListener('click', () => window.open('/callback', 'fixture-iframe-auth'));
+      window.addEventListener('message', e => { if (e.origin === location.origin) parent.postMessage(e.data, ${JSON.stringify(origin)}); });
+    </script>`);
+});
+await new Promise(r => iframeServer.listen(0, '127.0.0.1', r));
+iframeOrigin = `http://127.0.0.1:${iframeServer.address().port}`;
 const root = mkdtempSync(join(tmpdir(), 'kestrel-auth-links-'));
 const requireDesktop = createRequire(resolve('apps/desktop/package.json'));
 const packaged = process.env.KESTREL_DESKTOP_EXECUTABLE;
@@ -47,6 +62,8 @@ try {
       KESTREL_REAL_USER_PROFILE: '1', KESTREL_DISABLE_UPDATES: '1', KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: '1',
       KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: '1'},
   });
+  assert((await app.evaluate(({app}) => app.commandLine.getSwitchValue('disable-features'))).split(',').includes('FedCm'),
+    'Google button fallback must be configured before Chromium starts');
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   await page.evaluate(() => { localStorage.setItem('kestrel:onboarded', 'yes'); localStorage.setItem('kestrel:default-browser-prompted', 'yes'); });
@@ -78,7 +95,25 @@ try {
   await until(() => run(`window.fixtureResult === 'fixture-complete'`), 'Popup lost window.opener/postMessage');
   await until(async () => (await state()).tabs.length === before, 'Popup did not close its managed tab');
   assert.equal(await run('window.fixturePopup.closed'), true);
-  assert.equal((await state()).activeTabId, tabId, 'Closing sign-in must restore its opener');
+  await until(async () => (await state()).activeTabId === tabId, 'Closing sign-in must restore its opener');
+  await navigate();
+  await run(`(() => { const frame = document.createElement('iframe'); frame.src = ${JSON.stringify(`${iframeOrigin}/button`)}; frame.width = 300; frame.height = 80; document.body.append(frame); })()`);
+  await until(() => app.evaluate(({webContents}, url) => {
+    const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
+    return wc?.mainFrame.frames.some(f => f.url.endsWith('/button'));
+  }, `${origin}/one`), 'Provider iframe did not load');
+  const point = await run(`(() => { const rect = document.querySelector('iframe').getBoundingClientRect(); return {x:Math.round(rect.x+55), y:Math.round(rect.y+20)}; })()`);
+  await app.evaluate(async ({webContents}, {url,point}) => {
+    const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
+    wc.debugger.attach('1.3');
+    try {
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', {type:'mouseMoved', ...point});
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', {type:'mousePressed', ...point, button:'left', clickCount:1});
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', {type:'mouseReleased', ...point, button:'left', clickCount:1});
+    } finally { wc.debugger.detach(); }
+  }, {url:`${origin}/one`,point});
+  await until(() => run(`window.fixtureResult === 'iframe-popup-complete'`), 'Provider iframe popup lost callback');
+  await until(async () => (await state()).activeTabId === tabId, 'Provider iframe popup did not restore its opener');
   for (const target of ['_blank','fixture-post']) {
     await navigate(); requests.length = 0;
     await run(`document.querySelector('form').target = ${JSON.stringify(target)}; document.querySelector('form').requestSubmit()`);
@@ -104,8 +139,8 @@ try {
     await until(() => app.evaluate(() => globalThis.authFixtureExternalLinks.length > 0), 'Iframe app handoff failed');
     assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [url]);
   }
-  console.log('Auth links passed: same-tab POST, 307/308 POST redirects, blank popup navigation, opener callback, popup close, target/named popup POST, and Zoom/Teams/App Store popup and iframe handoffs.');
+  console.log('Auth links passed: same-tab POST, 307/308 POST redirects, blank and provider-iframe popup navigation, opener callbacks, popup close, target/named popup POST, and Zoom/Teams/App Store handoffs.');
 } finally {
-  await app?.close(); server.closeAllConnections(); await new Promise(r => server.close(r));
+  await app?.close(); server.closeAllConnections(); iframeServer.closeAllConnections(); await new Promise(r => server.close(r)); await new Promise(r => iframeServer.close(r));
   rmSync(root, {recursive:true,force:true});
 }
