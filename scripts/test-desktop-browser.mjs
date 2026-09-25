@@ -3079,6 +3079,82 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after applying tab organization",
 	);
+	const folderMembers = state.tabs.filter(
+		(tab) => tab.tabFolderId === reviewedFolder.id,
+	);
+	assert(
+		folderMembers.length >= 2,
+		"The organized folder needs two tabs to check collapsed selection",
+	);
+	const activeTabBeforeFolderCheck = state.activeTabId;
+	const folderToggle = page.locator(".browser-tab-folder").filter({
+		has: page.getByText(reviewedFolder.name, { exact: true }),
+	});
+	const assertCollapsedFolderSelection = async (tabId, orientation) => {
+		const response = await page.evaluate(
+			async (selectedId) =>
+				window.kestrel.request({ type: "browser-select-tab", tabId: selectedId }),
+			tabId,
+		);
+		assert(response.ok, `Could not select a tab in the ${orientation} folder`);
+		await waitForBrowserState(
+			(value) => value.activeTabId === tabId,
+			`Selecting a tab in the ${orientation} folder`,
+		);
+		const selectedTab = page.locator(`.browser-tab[data-tab-id="${tabId}"]`);
+		await selectedTab.waitFor({ state: "visible" });
+		assert.equal(
+			await selectedTab.getByRole("tab").getAttribute("aria-selected"),
+			"true",
+		);
+		assert.equal(await folderToggle.getAttribute("aria-expanded"), "false");
+		assert.equal(
+			await page.getByRole("tablist", { name: "Browser tabs" }).getAttribute("aria-orientation"),
+			orientation,
+		);
+		for (const member of folderMembers) {
+			if (member.id === tabId) continue;
+			assert.equal(
+				await page.locator(`.browser-tab[data-tab-id="${member.id}"]`).count(),
+				0,
+				"Inactive tabs in a collapsed folder should stay hidden",
+			);
+		}
+	};
+	await page.evaluate(
+		async (tabId) => window.kestrel.request({ type: "browser-select-tab", tabId }),
+		folderMembers[0].id,
+	);
+	await waitForBrowserState(
+		(value) => value.activeTabId === folderMembers[0].id,
+		"First organized folder tab",
+	);
+	await folderToggle.click();
+	await assertCollapsedFolderSelection(folderMembers[0].id, "vertical");
+	await assertCollapsedFolderSelection(folderMembers[1].id, "vertical");
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Turn Off Vertical Tabs" }).click();
+	await waitForBrowserState(
+		(value) => value.settings.tabLayout === "horizontal",
+		"Horizontal tabs with a collapsed folder",
+	);
+	await assertCollapsedFolderSelection(folderMembers[1].id, "horizontal");
+	await assertCollapsedFolderSelection(folderMembers[0].id, "horizontal");
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Turn On Vertical Tabs" }).click();
+	await waitForBrowserState(
+		(value) => value.settings.tabLayout === "vertical",
+		"Restored vertical tabs",
+	);
+	await folderToggle.click();
+	await page.evaluate(
+		async (tabId) => window.kestrel.request({ type: "browser-select-tab", tabId }),
+		activeTabBeforeFolderCheck,
+	);
+	await waitForBrowserState(
+		(value) => value.activeTabId === activeTabBeforeFolderCheck,
+		"Restored the active browser tab after folder checks",
+	);
 	await page.evaluate(async (tabIds) => {
 		for (const tabId of tabIds) {
 			const response = await window.kestrel.request({
