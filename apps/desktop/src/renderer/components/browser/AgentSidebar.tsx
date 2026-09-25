@@ -20,9 +20,9 @@ import { Icon } from "../Icon";
 const AGENT_PANEL_WIDTH_KEY = "kestrel:agent-panel-width";
 
 function defaultAgentPanelWidth(viewportWidth: number): number {
-	if (viewportWidth <= 980) return 288;
-	if (viewportWidth <= 1_120) return 312;
-	return 336;
+	if (viewportWidth <= 980) return 480;
+	if (viewportWidth <= 1_120) return 520;
+	return 560;
 }
 
 export function AgentSidebar({
@@ -209,7 +209,7 @@ export function AgentSidebar({
 		const maximum = clampAgentPanelWidth(Number.POSITIVE_INFINITY, window.innerWidth);
 		const next = clampAgentPanelWidth(
 			event.key === "Home"
-				? 288
+				? 480
 				: event.key === "End"
 					? maximum
 					: current + (event.key === "ArrowLeft" ? 16 : -16),
@@ -322,7 +322,7 @@ export function AgentSidebar({
 					role="separator"
 					aria-label="Resize Agent panel"
 					aria-orientation="vertical"
-					aria-valuemin={288}
+					aria-valuemin={480}
 					aria-valuemax={Math.round(clampAgentPanelWidth(Number.POSITIVE_INFINITY, window.innerWidth))}
 					aria-valuenow={Math.round(panelWidth)}
 					tabIndex={0}

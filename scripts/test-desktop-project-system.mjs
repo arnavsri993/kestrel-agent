@@ -149,6 +149,35 @@ try {
 	await waitForProject("Beta");
 	await waitForProject("Gamma");
 
+	// Everyday destinations must be discoverable and return to the existing browser.
+	await sidebar.getByRole("button", { name: "Projects", exact: true }).click();
+	await page.locator(".projects-workspace").waitFor();
+	await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
+	await page.getByRole("searchbox", { name: "Search projects", exact: true }).fill("Beta");
+	assert.equal(await page.locator(".projects-workspace-chat-list button").count(), 1);
+	await page.locator(".projects-workspace-chat-list button").click();
+	await page.getByRole("heading", { name: "Beta", exact: true }).waitFor();
+	await page.getByRole("button", { name: "All projects", exact: true }).click();
+	await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
+	assert.equal(await sidebar.getByRole("button", { name: "Projects", exact: true }).getAttribute("aria-current"), "page");
+	await sidebar.getByRole("button", { name: "Browser", exact: true }).click();
+	await page.waitForFunction(() => document.querySelector('.kestrel-sidebar[data-active-destination="browser"]'));
+	await sidebar.getByRole("button", { name: "Open search", exact: true }).waitFor();
+	assert.deepEqual(await sidebar.locator('.kestrel-sidebar-utilities button').allTextContents(), ["Memory", "Connections", "Settings"]);
+	const initialViewport = page.viewportSize();
+	await page.setViewportSize({ width: 1000, height: 600 });
+	assert.equal(await sidebar.locator('[data-destination="browser"] span').isVisible(), true, "Laptop widths must retain navigation labels.");
+	const settingsBounds = await sidebar.locator('[data-destination="settings"]').boundingBox();
+	assert(settingsBounds && settingsBounds.y >= 0 && settingsBounds.y + settingsBounds.height <= 600, "Settings must remain reachable in short windows.");
+	if (initialViewport) await page.setViewportSize(initialViewport);
+	// Less frequent actions remain available through the labeled browser menu.
+	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Bookmarks" }).waitFor();
+	await page.getByRole("menuitem", { name: "Extensions", exact: true }).click();
+	await page.getByRole("menu", { name: "Extensions", exact: true }).waitFor();
+	await page.keyboard.press("Escape");
+	await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Browser menu");
+
 	const sidebarText = await sidebar.textContent();
 	assert.doesNotMatch(sidebarText ?? "", /workspace/i);
 	assert.equal(await sidebar.locator(".kestrel-sidebar-chats h2 svg").count(), 0);
@@ -179,7 +208,7 @@ try {
 	await page.locator(".projects-workspace").waitFor();
 	await page.getByRole("heading", { name: "Alpha", exact: true }).waitFor();
 	const alphaChildChats = page.locator(".kestrel-sidebar-project-chat");
-	await alphaChildChats.first().waitFor();
+	await page.locator(".kestrel-sidebar-project-chat").filter({ hasText: "Alpha chat" }).first().waitFor();
 	assert.equal(await alphaChildChats.count(), 5, "Project previews should be bounded.");
 	assert.equal(await page.getByRole("button", { name: "Show more", exact: true }).count(), 1);
 	const alphaChild = alphaChildChats.first();

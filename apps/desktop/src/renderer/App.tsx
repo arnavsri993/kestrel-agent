@@ -1,3 +1,5 @@
+import { commandDestinations } from "./app-directory";
+import "./Connections.css";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
@@ -137,7 +139,6 @@ import { WritingStudio } from "./components/browser/WritingStudio";
 import { KeyboardShortcutsModal } from "./components/browser/KeyboardShortcutsModal";
 import {
 	CommandCenter,
-	type CommandDestination,
 } from "./components/browser/CommandCenter";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
 import { ComputerUseSettings } from "./components/ComputerUseSettings";
@@ -294,148 +295,6 @@ type SkillReviewRequest = {
 	proposalId: string;
 	requestId: number;
 };
-const commandDestinations: CommandDestination[] = [
-	{
-		id: "browser",
-		label: "Browser",
-		detail: "Browse the web",
-		icon: "browser",
-		group: "Browse",
-	},
-	{
-		id: "organize-tabs",
-		label: "Organize tabs",
-		detail: "Group related tabs",
-		icon: "folder",
-		group: "Browse",
-	},
-	{
-		id: "agent",
-		label: "Agent",
-		detail: "Start or resume work",
-		icon: "agent",
-		group: "Agent",
-	},
-	{
-		id: "projects",
-		label: "Projects",
-		detail: "Keep related work together",
-		icon: "folder",
-		group: "Agent",
-	},
-	{
-		id: "writing",
-		label: "Writing Studio",
-		detail: "Draft with your context",
-		icon: "writing",
-		group: "Agent",
-	},
-	{
-		id: "history",
-		label: "History",
-		detail: "Pages you visited",
-		icon: "history",
-		group: "Browse",
-	},
-	{
-		id: "bookmarks",
-		label: "Bookmarks",
-		detail: "Pages you saved",
-		icon: "star",
-		group: "Browse",
-	},
-	{
-		id: "downloads",
-		label: "Downloads",
-		detail: "Downloaded files",
-		icon: "downloads",
-		group: "Browse",
-	},
-	{
-		id: "approvals",
-		label: "Approvals",
-		detail: "Review agent actions",
-		icon: "approvals",
-		group: "Agent",
-	},
-	{
-		id: "work",
-		label: "Work",
-		detail: "Goals, delegates, and schedules",
-		icon: "work",
-		group: "Agent",
-	},
-	{
-		id: "events",
-		label: "Opportunities",
-		detail: "Event applications",
-		icon: "events",
-		group: "Agent",
-	},
-	{
-		id: "connections",
-		label: "Connections",
-		detail: "Manage connected accounts and access",
-		icon: "connections",
-		group: "Context",
-	},
-	{
-		id: "memory",
-		label: "Memory",
-		detail: "Calendar, people, and memory",
-		icon: "memory",
-		group: "Context",
-	},
-	{
-		id: "research",
-		label: "Research",
-		detail: "Sources and findings",
-		icon: "research",
-		group: "Context",
-	},
-	{
-		id: "artifacts",
-		label: "Artifacts",
-		detail: "Files and results",
-		icon: "artifacts",
-		group: "Context",
-	},
-	{
-		id: "activity",
-		label: "Activity",
-		detail: "Runs and evidence",
-		icon: "activity",
-		group: "Context",
-	},
-	{
-		id: "extensions",
-		label: "Extensions",
-		detail: "Plugins and tools",
-		icon: "extensions",
-		group: "Build",
-	},
-	{
-		id: "readiness",
-		label: "Readiness",
-		detail: "Check what is ready",
-		icon: "readiness",
-		group: "System",
-	},
-	{
-		id: "settings",
-		label: "Settings",
-		detail: "Browser, agent, and privacy",
-		icon: "settings",
-		group: "System",
-	},
-	{
-		id: "shortcuts",
-		label: "Keyboard Shortcuts",
-		detail: "Keyboard shortcuts",
-		icon: "command",
-		group: "System",
-	},
-];
 type ExecutionMode = "automatic" | "manual";
 const SETUP_ASSISTANT_PROMPT =
 	"Help me finish setting up Kestrel. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings, or to provider-owned sign-in. Verify one working route before adding more.";
@@ -5959,6 +5818,7 @@ function Work({
 	sessions: RuntimeSession[];
 	onSessions(sessions: RuntimeSession[]): void;
 }) {
+	const [section, setSection] = useState<"Goals" | "Schedules" | "Delegation" | "Teams">("Goals");
 	const [goals, setGoals] = useState<GoalRecordContract[]>([]);
 	const [teams, setTeams] = useState<TeamRecordContract[]>([]);
 	const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
@@ -6009,6 +5869,7 @@ function Work({
 	const [handoffSummary, setHandoffSummary] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const createGoalDetailsRef = useRef<HTMLDetailsElement>(null);
 	const createGoalFormRef = useRef<HTMLFormElement>(null);
 	const children = sessions.filter(
 		(session) => session.parentSessionId === parentSessionId,
@@ -6189,65 +6050,48 @@ function Work({
 				: 100;
 
 	return (
-		<PageFrame
-			title="Work"
-			measure="wide"
-		>
-			{routedTask && (
-				<section
-					className={`orchestration-status status-${routedTask.status}`}
-					aria-label="Current routed task"
-				>
-					<div>
-						<small>Current task</small>
-						<strong>{routedTask.summary}</strong>
-						<span>
-							{routedTask.decisions
-								.map((decision) => decision.role)
-								.join(" · ")}{" "}
-							· {routedTask.status.replaceAll("_", " ")}
-						</span>
-					</div>
-					<progress
-						value={routedProgress}
-						max="100"
-						aria-label={`Approximate progress: ${routedProgress}%`}
-					/>
-					{(routedTask.escalationCount > 0 ||
-						routedTask.status === "failed" ||
-						routedTask.status === "cancelled") && (
-						<p role={routedTask.status === "failed" ? "alert" : "status"}>
-							{routedTask.status === "failed"
-								? "The routed task failed. Open details to inspect the route."
-								: routedTask.status === "cancelled"
-									? "The routed task was cancelled."
-									: `Kestrel escalated ${routedTask.escalationCount} time${routedTask.escalationCount === 1 ? "" : "s"} to protect result quality.`}
+		<PageFrame title="Work" text="Keep goals, scheduled work, and delegated tasks in order." measure="wide" className="work-workspace">
+			<div className="workspace-sections" role="group" aria-label="Work sections">
+				{(["Goals", "Schedules", "Delegation", "Teams"] as const).map(item => (
+					<button type="button" key={item} aria-pressed={section === item} aria-controls={`work-${item.toLowerCase()}`} onClick={() => setSection(item)}>{item}</button>
+				))}
+			</div>
+			<div className="work-context">
+
+				<label>
+					Parent task
+						<select
+							value={parentSessionId}
+							onChange={(event) => {
+								setParentSessionId(event.target.value);
+								setTeamMembers([]);
+							}}
+						>
+							{sessions.map((session) => (
+								<option key={session.id} value={session.id}>
+									{sessionTitleForDisplay(session.title)}
+								</option>
+							))}
+						</select>
+					</label>
+					<details className="work-routing-override" hidden={section === "Goals" || section === "Teams"}>
+						<summary>Override automatic routing</summary>
+						<p className="work-card-note">
+							Choose one connected account only when this work must bypass
+							Kestrel's automatic router.
 						</p>
-					)}
-					<details>
-						<summary>Model and cost details</summary>
-						{routedTask.decisions.map((decision) => (
-							<div key={decision.id} className="orchestration-route-detail">
-								<strong>{decision.role}</strong>
-								<span>
-									{decision.model} via {decision.providerId} ·{" "}
-									{decision.reasoningLevel} reasoning · Fast{" "}
-									{decision.fastMode ? "on" : "off"}
-								</span>
-								<small>
-									{Math.round(decision.confidence * 100)}% routing confidence
-									{decision.estimatedCost === undefined
-										? ""
-										: ` · about $${decision.estimatedCost.toFixed(3)}`}
-								</small>
-							</div>
-						))}
+						<ModelSelector
+							accounts={providerAccounts}
+							choice={workModelChoice}
+							onChange={setWorkModelChoice}
+						/>
 					</details>
-				</section>
-			)}
+			</div>
+			<section id="work-goals" aria-label="Goals" hidden={section !== "Goals"}>
+
 			<header className="kanban-header work-board-tools">
 				<div>
-					<small>From the active session</small>
+					<small>From the selected task</small>
 				</div>
 				<button
 					className="button secondary"
@@ -6267,8 +6111,9 @@ function Work({
 				sessions={sessions}
 				busy={busy}
 				onCreateGoal={() => {
+					if (createGoalDetailsRef.current) createGoalDetailsRef.current.open = true;
 					createGoalFormRef.current?.scrollIntoView({
-						behavior: "smooth",
+						behavior: "auto",
 						block: "nearest",
 					});
 					createGoalFormRef.current
@@ -6292,103 +6137,9 @@ function Work({
 					})
 				}
 			/>
-			<section className="work-grid">
-				<form
-					className="work-card"
-					onSubmit={(event) => {
-						event.preventDefault();
-						if (!parentSessionId || !workRoutingReady) return;
-						void mutate(
-							{
-								type: "orchestration-delegate",
-								parentSessionId,
-								title: delegateTitle,
-								prompt: delegatePrompt,
-								...workRouting,
-								...(workModelChoice.executionMode === "manual" &&
-								workModelChoice.reasoningEffort !== "none"
-									? { reasoningEffort: workModelChoice.reasoningEffort }
-									: {}),
-								isolateWorktree,
-							},
-							() => {
-								setDelegateTitle("");
-								setDelegatePrompt("");
-							},
-						);
-					}}
-				>
-				<h2>Delegate a task</h2>
-				<p className="work-card-note">
-					Kestrel selects a verified worker based on capability, cost, privacy,
-					and your preferences.
-				</p>
-				<label>
-					Parent task
-						<select
-							value={parentSessionId}
-							onChange={(event) => {
-								setParentSessionId(event.target.value);
-								setTeamMembers([]);
-							}}
-						>
-							{sessions.map((session) => (
-								<option key={session.id} value={session.id}>
-									{sessionTitleForDisplay(session.title)}
-								</option>
-							))}
-						</select>
-					</label>
-					<label>
-						Title
-						<input
-							value={delegateTitle}
-							onChange={(event) => setDelegateTitle(event.target.value)}
-						/>
-					</label>
-					<label>
-						Prompt
-						<textarea
-							rows={3}
-							value={delegatePrompt}
-							onChange={(event) => setDelegatePrompt(event.target.value)}
-						/>
-					</label>
-					<details className="work-routing-override">
-						<summary>Override automatic routing</summary>
-						<p className="work-card-note">
-							Choose one connected account only when this work must bypass
-							Kestrel's automatic router.
-						</p>
-						<ModelSelector
-							accounts={providerAccounts}
-							choice={workModelChoice}
-							onChange={setWorkModelChoice}
-						/>
-					</details>
-					{delegationEvidence && (
-						<small role="status">{delegationEvidence}</small>
-					)}
-					<label className="work-check">
-						<input
-							type="checkbox"
-							checked={isolateWorktree}
-							onChange={(event) => setIsolateWorktree(event.target.checked)}
-						/>
-						Create an isolated Git worktree
-					</label>
-					<button
-						className="button primary"
-						disabled={
-							busy ||
-							!delegateTitle.trim() ||
-							!delegatePrompt.trim() ||
-							!workRoutingReady
-						}
-					>
-						Run delegate
-					</button>
-				</form>
+			<details className="work-create-goal" ref={createGoalDetailsRef}>
+				<summary>Create a goal</summary>
+
 				<form
 					ref={createGoalFormRef}
 					className="work-card"
@@ -6410,7 +6161,7 @@ function Work({
 						);
 					}}
 				>
-					<h2>Create a goal</h2>
+					<p className="work-card-note">Name the goal, then describe the outcome and its tasks.</p>
 					<label>
 						Title
 						<input
@@ -6428,11 +6179,64 @@ function Work({
 					</label>
 					<button
 						className="button primary"
-						disabled={busy || !goalTitle.trim() || !goalObjective.trim()}
+						disabled={busy || !parentSessionId || !goalTitle.trim() || !goalObjective.trim()}
 					>
 						Create goal
 					</button>
 				</form>
+			</details>
+			</section>
+			<section id="work-schedules" aria-label="Schedules" hidden={section !== "Schedules"}>
+			<p className="work-section-description">Review scheduled runs or set up background work.</p>
+
+			<section className="work-section">
+				<h2>Scheduled work</h2>
+				{jobs.length === 0 ? (
+					<p>No scheduled jobs yet.</p>
+				) : (
+					jobs.map((job) => (
+						<article className="work-row" key={job.id}>
+							<div>
+								<strong>{job.title}</strong>
+								<p>
+									{job.status} · next{" "}
+									{new Date(job.schedule.nextRunAt).toLocaleString()}
+								</p>
+								{job.error && <small>{job.error}</small>}
+							</div>
+							<div className="button-row">
+								{job.status === "waiting_approval" && (
+									<button
+										className="button primary"
+										disabled={busy}
+										onClick={() =>
+											void mutate({
+												type: "orchestration-job-resume",
+												jobId: job.id,
+											})
+										}
+									>
+										Approve & resume
+									</button>
+								)}
+								{job.status === "pending" && (
+									<button
+										className="button secondary"
+										disabled={busy}
+										onClick={() =>
+											void mutate({
+												type: "orchestration-job-cancel",
+												jobId: job.id,
+											})
+										}
+									>
+										Cancel
+									</button>
+								)}
+							</div>
+						</article>
+					))
+				)}
 			</section>
 			<section className="work-grid">
 				<form
@@ -6488,6 +6292,7 @@ function Work({
 					className="button primary"
 					disabled={
 						busy ||
+						!parentSessionId ||
 						!scheduleTitle.trim() ||
 						!schedulePrompt.trim() ||
 						!scheduleExpression.trim() ||
@@ -6497,13 +6302,161 @@ function Work({
 					Schedule
 				</button>
 				</form>
-				<article className="work-card">
-					<h2>Automation boundary</h2>
+				<details className="work-card work-schedule-help">
+					<summary>How scheduled work runs</summary>
 					<p>
 						Runs stay local and encrypted. Sensitive actions wait for approval;
 						recurring work continues only after a run completes.
 					</p>
-				</article>
+				</details>
+			</section>
+			</section>
+			<section id="work-delegation" aria-label="Delegation" hidden={section !== "Delegation"}>
+			<p className="work-section-description">Give a child agent a focused task and track its latest route.</p>
+
+			{routedTask && (
+				<section
+					className={`orchestration-status status-${routedTask.status}`}
+					aria-label="Current routed task"
+				>
+					<div>
+						<small>Current task</small>
+						<strong>{routedTask.summary}</strong>
+						<span>
+							{routedTask.decisions
+								.map((decision) => decision.role)
+								.join(" · ")}{" "}
+							· {routedTask.status.replaceAll("_", " ")}
+						</span>
+					</div>
+					<progress
+						value={routedProgress}
+						max="100"
+						aria-label={`Approximate progress: ${routedProgress}%`}
+					/>
+					{(routedTask.escalationCount > 0 ||
+						routedTask.status === "failed" ||
+						routedTask.status === "cancelled") && (
+						<p role={routedTask.status === "failed" ? "alert" : "status"}>
+							{routedTask.status === "failed"
+								? "The routed task failed. Open details to inspect the route."
+								: routedTask.status === "cancelled"
+									? "The routed task was cancelled."
+									: `Kestrel escalated ${routedTask.escalationCount} time${routedTask.escalationCount === 1 ? "" : "s"} to protect result quality.`}
+						</p>
+					)}
+					<details>
+						<summary>Model and cost details</summary>
+						{routedTask.decisions.map((decision) => (
+							<div key={decision.id} className="orchestration-route-detail">
+								<strong>{decision.role}</strong>
+								<span>
+									{decision.model} via {decision.providerId} ·{" "}
+									{decision.reasoningLevel} reasoning · Fast{" "}
+									{decision.fastMode ? "on" : "off"}
+								</span>
+								<small>
+									{Math.round(decision.confidence * 100)}% routing confidence
+									{decision.estimatedCost === undefined
+										? ""
+										: ` · about $${decision.estimatedCost.toFixed(3)}`}
+								</small>
+							</div>
+						))}
+					</details>
+				</section>
+			)}
+				<form
+					className="work-card"
+					onSubmit={(event) => {
+						event.preventDefault();
+						if (!parentSessionId || !workRoutingReady) return;
+						void mutate(
+							{
+								type: "orchestration-delegate",
+								parentSessionId,
+								title: delegateTitle,
+								prompt: delegatePrompt,
+								...workRouting,
+								...(workModelChoice.executionMode === "manual" &&
+								workModelChoice.reasoningEffort !== "none"
+									? { reasoningEffort: workModelChoice.reasoningEffort }
+									: {}),
+								isolateWorktree,
+							},
+							() => {
+								setDelegateTitle("");
+								setDelegatePrompt("");
+							},
+						);
+					}}
+				>
+				<h2>Delegate a task</h2>
+				<p className="work-card-note">
+					Kestrel selects a verified worker based on capability, cost, privacy,
+					and your preferences.
+				</p>
+					<label>
+						Title
+						<input
+							value={delegateTitle}
+							onChange={(event) => setDelegateTitle(event.target.value)}
+						/>
+					</label>
+					<label>
+						Prompt
+						<textarea
+							rows={3}
+							value={delegatePrompt}
+							onChange={(event) => setDelegatePrompt(event.target.value)}
+						/>
+					</label>
+					{delegationEvidence && (
+						<small role="status">{delegationEvidence}</small>
+					)}
+					<label className="work-check">
+						<input
+							type="checkbox"
+							checked={isolateWorktree}
+							onChange={(event) => setIsolateWorktree(event.target.checked)}
+						/>
+						Create an isolated Git worktree
+					</label>
+					<button
+						className="button primary"
+						disabled={
+							busy ||
+							!parentSessionId ||
+							!delegateTitle.trim() ||
+							!delegatePrompt.trim() ||
+							!workRoutingReady
+						}
+					>
+						Run delegate
+					</button>
+				</form>
+			</section>
+			<section id="work-teams" aria-label="Teams" hidden={section !== "Teams"}>
+			<p className="work-section-description">Coordinate child agents and review their handoffs.</p>
+
+			<section className="work-section">
+				<h2>Teams</h2>
+				{teams.length === 0 ? <p>No teams yet. Delegate a task first, then group its child agents here.</p> : null}
+				{teams.map((team) => (
+					<article className="work-row" key={team.id}>
+						<div>
+							<strong>{team.title}</strong>
+							<p>{team.sharedPlan.join(" → ") || "No shared plan"}</p>
+							<small>
+								{team.memberSessionIds.length} members · {team.messages.length}{" "}
+								peer messages · {team.usage?.runs ?? 0} runs ·{" "}
+								{team.usage?.inputTokens ?? 0} in /{" "}
+								{team.usage?.outputTokens ?? 0} out
+							</small>
+						</div>
+						<span className="status">Active</span>
+					</article>
+				))}
 			</section>
 			<section className="work-grid">
 				<form
@@ -6617,73 +6570,8 @@ function Work({
 					</button>
 				</form>
 			</section>
-			<section className="work-section">
-				<h2>Teams</h2>
-				{teams.map((team) => (
-					<article className="work-row" key={team.id}>
-						<div>
-							<strong>{team.title}</strong>
-							<p>{team.sharedPlan.join(" → ") || "No shared plan"}</p>
-							<small>
-								{team.memberSessionIds.length} members · {team.messages.length}{" "}
-								peer messages · {team.usage?.runs ?? 0} runs ·{" "}
-								{team.usage?.inputTokens ?? 0} in /{" "}
-								{team.usage?.outputTokens ?? 0} out
-							</small>
-						</div>
-						<span className="status">Active</span>
-					</article>
-				))}
 			</section>
-			<section className="work-section">
-				<h2>Background review queue</h2>
-				{jobs.length === 0 ? (
-					<p>No scheduled jobs yet.</p>
-				) : (
-					jobs.map((job) => (
-						<article className="work-row" key={job.id}>
-							<div>
-								<strong>{job.title}</strong>
-								<p>
-									{job.status} · next{" "}
-									{new Date(job.schedule.nextRunAt).toLocaleString()}
-								</p>
-								{job.error && <small>{job.error}</small>}
-							</div>
-							<div className="button-row">
-								{job.status === "waiting_approval" && (
-									<button
-										className="button primary"
-										disabled={busy}
-										onClick={() =>
-											void mutate({
-												type: "orchestration-job-resume",
-												jobId: job.id,
-											})
-										}
-									>
-										Approve & resume
-									</button>
-								)}
-								{job.status === "pending" && (
-									<button
-										className="button secondary"
-										disabled={busy}
-										onClick={() =>
-											void mutate({
-												type: "orchestration-job-cancel",
-												jobId: job.id,
-											})
-										}
-									>
-										Cancel
-									</button>
-								)}
-							</div>
-						</article>
-					))
-				)}
-			</section>
+
 			{error && (
 				<p className="connection-error" role="alert">
 					{error}
@@ -6700,6 +6588,7 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 		CommunicationSourceStatus[]
 	>([]);
 	const [busy, setBusy] = useState(false);
+	const [section, setSection] = useState("apps");
 	const [grantError, setGrantError] = useState("");
 	const [googleStatus, setGoogleStatus] = useState<GoogleWorkspaceOAuthStatus>({
 		connected: false,
@@ -6707,6 +6596,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 		bundledClientAvailable: false,
 	});
 	const [googleClientId, setGoogleClientId] = useState("");
+	const googleSetupRef = useRef<HTMLDetailsElement>(null);
+	const googleClientInputRef = useRef<HTMLInputElement>(null);
 	const [googleBusy, setGoogleBusy] = useState(false);
 	const [googleError, setGoogleError] = useState("");
 	const [subscriptionClis, setSubscriptionClis] = useState<
@@ -6912,11 +6803,20 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 					access remain explicit and revocable.
 				</p>
 			</header>}
-			<WhatsAppConnection session={scopeSession} />
-			<OnshapeConnection key={scopeSession?.id ?? "global"} session={scopeSession} />
-			{scopeSession && <AgentResourceAccess key={scopeSession.id} session={scopeSession} {...(googleStatus.connected && googleStatus.email ? { googleEmail: googleStatus.email } : {})} />}
-			<div className="connection-list">
-				<details className="connection-advanced"><summary>Model provider · ChatGPT</summary>
+			<nav className="connection-sections" aria-label="Connection sections">
+                <button aria-current={section === "apps" ? "page" : undefined} onClick={() => setSection("apps")}>Apps & accounts</button>
+                <select aria-label="More connection settings" value={section === "apps" ? "" : section} onChange={event => { if (event.target.value) setSection(event.target.value as typeof section); }}>
+                    <option value="" disabled>More settings</option><option value="local">Files & this Mac</option><option value="models">AI account</option><option value="access">Agent permissions</option>
+                </select>
+            </nav>
+            <div hidden={section !== "access"} className="connection-section">
+                <h2>Agent access</h2>
+                <p className="connection-section-description">Choose which connected resources the selected agent can use.</p>
+                {scopeSession ? <AgentResourceAccess key={scopeSession.id} session={scopeSession} {...(googleStatus.connected && googleStatus.email ? { googleEmail: googleStatus.email } : {})} /> : <p>{standalone ? "Select an agent in “Access for” above to review its resources." : "Open Connections from the sidebar and select an agent to review its resources."} Connecting an account and assigning agent access are separate steps.</p>}
+            </div>
+            <div hidden={section !== "models"} className="connection-list connection-section">
+                <h2>Model provider</h2>
+                <p className="connection-section-description">Manage the ChatGPT sign-in used by the Codex model route.</p>
 				<article className="oauth-connection">
 					<div className="connection-monogram">CG</div>
 					<div>
@@ -6964,8 +6864,10 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						)}
 					</div>
 				</article>
-				</details>
-				<article className="oauth-connection">
+            </div>
+            <div hidden={section !== "apps"} className="connection-list connection-section">
+                <p className="connection-section-description">Choose an app to connect or manage. You control what Kestrel can access.</p>
+				<details className="connection-app"><summary><strong>Google</strong><span>Gmail and Calendar</span><small>{googleStatus.connected ? googleStatus.email || "Connected" : "Not connected"}</small></summary><article className="oauth-connection">
 					<div className="connection-monogram">GW</div>
 					<div>
 						<strong>Google Workspace</strong>
@@ -6974,13 +6876,14 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 								? `${googleStatus.email} · Gmail, Calendar events and availability, and login-code lookup`
 								: googleStatus.bundledClientAvailable
 									? "Connect Gmail and Calendar with Kestrel's verified Google sign-in."
-									: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar event and availability access."}
+									: "Google setup is needed on this build. Open the setup instructions below to get started."}
 						</p>
 						{!googleStatus.connected && !googleStatus.bundledClientAvailable && (
-							<>
+							<details ref={googleSetupRef} className="connection-advanced"><summary>Set up Google connection</summary><p>Allows sending Gmail, reading recent email and login codes, and reading or updating Calendar events and availability.</p>
 								<label>
 									Desktop OAuth client ID
 									<input
+                                        ref={googleClientInputRef}
 										value={googleClientId}
 										autoComplete="off"
 										spellCheck={false}
@@ -7000,7 +6903,7 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 									, enable Gmail and Calendar APIs, then sign in in Google's
 									browser.
 								</small>
-							</>
+							</details>
 						)}
 						{!googleStatus.connected && googleStatus.bundledClientAvailable && (
 							<small>
@@ -7062,17 +6965,24 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						) : (
 							<button
 								className="button secondary"
-								disabled={
-									!googleStatus.bundledClientAvailable &&
-									!googleClientId.trim()
-								}
-								onClick={() => void connectGoogle()}
+								onClick={() => {
+                                    if (!googleStatus.bundledClientAvailable && !googleClientId.trim()) {
+                                        if (googleSetupRef.current) googleSetupRef.current.open = true;
+                                        googleClientInputRef.current?.focus();
+                                    } else void connectGoogle();
+                                }}
 							>
-								Connect with Google
+								{!googleStatus.bundledClientAvailable && !googleClientId.trim() ? "Set up Google" : "Connect with Google"}
 							</button>
 						)}
 					</div>
-				</article>
+				</article></details>
+                <details className="connection-app"><summary><strong>WhatsApp</strong><span>Choose conversations to remember</span><small>Browser connection</small></summary><WhatsAppConnection session={scopeSession} /></details>
+                <details className="connection-app"><summary><strong>Onshape</strong><span>Read your CAD documents</span><small>Manage access</small></summary><OnshapeConnection key={scopeSession?.id ?? "global"} session={scopeSession} /></details>
+            </div>
+            <div hidden={section !== "local"} className="connection-list connection-section">
+                <h2>On this Mac</h2>
+                <p className="connection-section-description">Review local permissions and the folders you have selected.</p>
 				<article className="oauth-connection communication-source-connection">
 					<div className="connection-monogram">MS</div>
 					<div>
@@ -7119,6 +7029,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						)}
 					</div>
 				</article>
+			</div>
+            <div hidden={section !== "apps" || !channels.length} className="connection-list connection-section"><h2>Messaging channels</h2>
 				{channels.map((channel) => (
 					<article key={`channel-${channel.id}`}>
 						<div className="connection-monogram">
@@ -7138,6 +7050,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						<span className="honest-status">Owner-configured</span>
 					</article>
 				))}
+			</div>
+            <div hidden={section !== "local"} className="connection-list connection-section">
 				{snapshot.connections
 					.filter(
 						(connection) =>
@@ -11292,6 +11206,8 @@ export function App() {
 			)}
 			{appPageId === "projects" && (
 				<ProjectsWorkspace
+					onOpenProject={openProject}
+					onShowAllProjects={() => selectProject(null)}
 					projects={projects}
 					projectAppearances={projectAppearances}
 					sessions={runtimeSessions}
@@ -11304,16 +11220,16 @@ export function App() {
 				/>
 			)}
 			{appPageId === "connections" && (
-				<PageFrame title="Connections" text="Manage connected accounts and access.">
-					<label className="memory-scope-selector">Access for
+				<PageFrame title="Connections" text="Connect the apps you use.">
+					<details className="connection-scope-disclosure"><summary>{currentAppPage?.scopeSessionId ? `For ${runtimeSessions.find(session => session.id === currentAppPage.scopeSessionId)?.title ?? "this agent"}` : "For you"} · Change</summary><label className="memory-scope-selector">Access for
       <select aria-label="Connection scope" value={currentAppPage?.scopeSessionId ?? ""} onChange={event => {
        const tabId = browser.state?.activeTabId;
        if (tabId) void browser.navigate(tabId, kestrelAppPageUrl("connections", event.target.value || undefined));
       }}>
-       <option value="">Personal / global accounts</option>
+       <option value="">Your accounts</option>
        {runtimeSessions.filter(session => session.kind === "agent" || session.specialistDefinition).map(session => <option key={session.id} value={session.id}>{session.parentSessionId ? "↳ " : ""}{session.title}</option>)}
       </select>
-     </label>
+     </label></details>
      <Connections snapshot={snapshot} standalone scopeSession={runtimeSessions.find(session => session.id === currentAppPage?.scopeSessionId)} />
 				</PageFrame>
 			)}
@@ -11397,6 +11313,7 @@ export function App() {
 			onNewTask={() => startNewAgent()}
 			onOpenBrowser={openBrowser}
 			onOpenAgent={openAgent}
+			onOpenProjects={() => { selectProject(null); navigate("projects"); }}
 			onOpenConnections={() => navigate("connections")}
 			onOpenMemory={() => {
 				const session = runtimeSessions.find(item => item.id === activeRuntimeSessionId);

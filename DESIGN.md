@@ -1,3 +1,26 @@
+# App organization — September 21, 2026
+
+Existing React/Electron redesign; compact daily-use desktop application. Keep
+system type, current light/dark tokens, 4px spacing, restrained separators and
+existing focus rings. No new imagery, gradients, animation or dependencies.
+The classifier's marketing assumptions do not apply to this browser workspace.
+
+Thesis: each place has one clear purpose, everyday actions appear first, and
+advanced work stays reachable without filling the first screen with forms.
+
+- Build on the existing navigation/Projects and Connections/Memory changes.
+- App directory: Browse, Work, Library, Settings & help; searchable destinations
+  with plain descriptions, optional category filters, no repeated pinned links.
+- Work: Goals, Schedules, Delegation and Teams. Show one section at a time,
+  keep drafts mounted, and expose the shared parent task and routing context.
+- Preserve every destination, route ID, backend action, permission and user data.
+- Use semantic buttons with selected state for filters and native disclosure
+  for creation forms. Keep compact layouts wrapping without horizontal overflow.
+- Verify search across categories, clearing and empty results, section switching,
+  retained drafts, goal creation focus, and wide/compact installed-app views.
+- Why this is not generic: the structure follows Kestrel's actual browsing,
+  agent work, saved context, approvals and local setup responsibilities.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the
@@ -27,6 +50,30 @@ identity for memory.
   user/agent ownership, memory tiers, relationships, tool knowledge, and evidence.
 - Verification: real IPC CRUD, viewer/domain separation, raced scope loads,
   empty/error states, keyboard focus, narrow reflow and long document text.
+# Navigation clarity — September 2026
+
+Thesis: a familiar browser with obvious places to browse, ask for help, and find
+work, plus a stable, separate home for configuration and personal context.
+Existing React/Electron app redesign, frequent use, compact density, low visual
+and motion intensity. The classifier marketing-page inference does not apply.
+Keep system typography (13px controls, 11px section labels), existing graphite
+and light-theme tokens, 4px spacing rhythm, quiet separators, and current focus
+and reduced-motion behavior. No new materials, fonts, gradients, or animation.
+
+Observed weaknesses: no labeled Browser destination, icon-only search/settings,
+and duplicated toolbar entry points competing with the address field.
+Primary navigation: Browser, Agent, Projects, Search Kestrel. User projects and
+recent chats occupy the scrollable middle. Memory, Connections, Settings remain
+anchored below it. Preserve project/session identity and all existing actions.
+The toolbar keeps protected Tools, History, Downloads, and the browser menu;
+Extensions, Bookmarks, and Page options remain explicitly labeled in that menu.
+Pinned extensions remain directly available. New chat and New Tab stay distinct.
+Keep navigation labels at laptop widths; use the compact rail only below 800px or by explicit collapse.
+Projects opens a searchable overview; individual projects offer All projects to return.
+Verify routes, keyboard focus, menu dismissal, project/chat continuity, compact
+height, collapsed sidebar, desktop build, and the canonical running app.
+Why this is not generic: the hierarchy separates browsing, agent work, and
+Kestrel's real context/settings without introducing another mode or dashboard.
 
 # Glass menus and autofill — September 2026
 
@@ -889,3 +936,49 @@ the scrolling data region. Native OS menus retain their platform rendering.
 
 The source implementation uses existing CSS/React only. Catalog candidates were
 considered but no external code, assets, or new motion dependency was incorporated.
+
+## Connections and Memory organization — September 21, 2026
+
+Existing desktop redesign, medium density, low visual intensity. Make accounts,
+local access, model sign-in, and agent permissions separately discoverable; make
+Memory a readable, searchable library with explicit viewer and domain scope.
+Keep system typography, existing neutral panel/ink/line tokens, 4px spacing rhythm,
+compact section navigation and solid surfaces. No imagery or new animation.
+The classifier's marketing inference does not match this verified desktop app.
+
+Observed weaknesses: the installed Connections repeats Onshape and mixes setup
+with permissions; Memory repeats entire notes before its collapsed editor; domain
+knowledge is hidden under Tools and documents have no search. Use the current
+main branch's single Onshape instance, group connections without changing grants,
+show searchable document readers directly, and give Knowledge its own view.
+Preserve protected fields, IPC, scope filtering, provenance and deletion prompts.
+Verify navigation, search/empty recovery, long notes, narrow layout, keyboard focus,
+build and canonical installed app. This is specific to Kestrel's actual resource
+grants and scoped natural-language memory, with no invented integration status.
+
+## Connections and Memory: everyday use first — September 21
+
+Existing React desktop redesign. The classifier incorrectly inferred an expressive
+personal website; the actual product is a frequent-use browser utility with private
+data. Keep system typography, graphite tokens, 4px spacing, no new motion or fonts.
+Memory starts with readable saved notes, three everyday destinations, and a separate
+More picker for overview, reference knowledge, and administration. Scope filters and
+note organization are disclosed on demand, with the active viewer always named.
+Connections starts with three expandable service rows; setup forms stay mounted and
+retain input. Local access, AI accounts, and agent permissions remain reachable in
+More settings. Preserve actual permission consent, provenance, and persistence.
+Why this is not generic: the starting screens directly serve remembering a useful
+fact and choosing a real connected app, without exposing Kestrel's storage taxonomy.
+Verify new-note save/edit/cancel, search, secondary navigation, setup disclosure,
+independent scopes, keyboard access, compact reflow, and the canonical installed app.
+
+### Follow-up: faster capture and safer navigation
+
+Use a note's first line as its title when the user leaves Title empty; put the
+writing field first and focus it on Add note. Show recently updated notes first,
+limit long list titles to two lines, and avoid repeating generated excerpts.
+Confirm before leaving an unsaved note for another view or scope; block navigation
+while its save is pending. Turn missing Google configuration into a working setup
+action that expands instructions and focuses the required field. No new access or
+storage behavior. Validate untitled save, rejected/accepted navigation, and setup
+keyboard focus in the installed app.

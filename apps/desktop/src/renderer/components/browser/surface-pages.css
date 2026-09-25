@@ -137,3 +137,77 @@
     border-left: 0;
   }
 }
+
+/* Shared section navigation keeps ordinary work distinct from setup. */
+.workspace-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-sections > button {
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.workspace-sections > button:hover,
+.workspace-sections > button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--ink);
+}
+.workspace-sections > button[aria-pressed="true"] { border-color: var(--line); }
+.workspace-sections > button:focus-visible,
+.directory-clear:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.directory-controls { max-width: 760px; margin: 18px auto 0; }
+.directory-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.directory-result-count { color: var(--muted); font-size: 13px; }
+.command-search .directory-clear {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 8px;
+  cursor: pointer;
+}
+.command-center .command-groups { gap: 24px; margin-top: 24px; }
+.command-center .command-groups button { min-width: 0; }
+.command-center .command-groups button span { min-width: 0; }
+.command-center .command-groups button small { overflow-wrap: anywhere; }
+.work-workspace [hidden] { display: none !important; }
+.work-context {
+  display: flex;
+  align-items: start;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 20px;
+}
+.work-context > label { display: grid; gap: 6px; flex: 1 1 240px; min-width: 0; max-width: 440px; color: var(--muted); font-size: 12px; }
+.work-context select { width: 100%; min-width: 0; }
+.work-context .work-routing-override { flex: 1 1 240px; min-width: 0; }
+.work-create-goal { margin: 20px 0; border-block: 1px solid var(--line); padding: 14px 0; }
+.work-create-goal > summary { cursor: pointer; font-weight: 600; }
+.work-workspace .work-section-description { color: var(--muted); margin: 16px 0; font-size: 13px; }
+.command-center { container-type: inline-size; }
+.command-center .command-groups h2 {
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+@container (min-width: 680px) {
+  .command-center .command-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+}
+.work-schedule-help { align-self: start; }
+.work-schedule-help > summary { cursor: pointer; color: var(--muted); }
