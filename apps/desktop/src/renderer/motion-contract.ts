@@ -93,8 +93,8 @@ export function springDampingRatio({
 }
 
 export function clampAgentPanelWidth(width: number, viewportWidth: number): number {
-	const maximum = Math.max(288, Math.min(520, viewportWidth * 0.44));
-	return Math.min(maximum, Math.max(288, width));
+	const maximum = Math.max(480, Math.min(820, viewportWidth * 0.6));
+	return Math.min(maximum, Math.max(480, width));
 }
 
 export function projectedPanelWidth(
