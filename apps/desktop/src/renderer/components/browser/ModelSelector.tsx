@@ -6,6 +6,7 @@ import { KESTREL_MENU_TRANSITION } from "../../motion-contract";
 import { Icon } from "../Icon";
 import {
 	accountForChoice,
+	hasVerifiedModelCapabilities,
 	searchProviderGroups,
 	modelAvailabilityLabel,
 	providerGroups,
@@ -86,7 +87,7 @@ export function ModelSelector({
 	const activeModel = visibleModels.find((model) => model.id === activeModelId);
 	const showThinking =
 		activeModel && selectableModel(activeModel) &&
-		activeModel.capabilities.capabilityProvenance === "confirmed" &&
+		hasVerifiedModelCapabilities(activeModel) &&
 		activeModel.capabilities.reasoningEfforts.length > 1;
 
 	useEffect(() => {
@@ -354,7 +355,7 @@ export function ModelSelector({
 													choice.model === model.id;
 												const selectable = selectableModel(model);
 												const supportsThinking =
-													model.capabilities.capabilityProvenance === "confirmed" &&
+													hasVerifiedModelCapabilities(model) &&
 													model.capabilities.reasoningEfforts.length > 1;
 												return (
 													<button

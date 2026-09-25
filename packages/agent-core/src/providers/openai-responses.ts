@@ -17,6 +17,7 @@ import {
 	type ModelToolCall,
 	safeJsonObject,
 } from "./types";
+import { openAIModelMetadata } from "./openai-model-metadata";
 
 export interface OpenAIResponsesProviderOptions {
 	apiKey: string;
@@ -176,6 +177,19 @@ export class OpenAIResponsesProvider implements ModelProvider {
 			if (!item || typeof item !== "object") return [];
 			const record = item as Record<string, unknown>;
 			if (typeof record.id !== "string" || !record.id.trim()) return [];
+			const reportedContextWindow =
+				typeof record.context_window === "number" &&
+				Number.isFinite(record.context_window) &&
+				record.context_window > 0
+					? Math.floor(record.context_window)
+					: undefined;
+			// The authenticated API catalog remains the entitlement source. Only
+			// enrich canonical GPT-6 records returned by api.openai.com; a custom
+			// OpenAI-compatible endpoint may reuse an ID without matching features.
+			const documented =
+				this.baseUrl === "https://api.openai.com/v1"
+					? openAIModelMetadata(record.id)
+					: undefined;
 			return [
 				{
 					id: record.id,
@@ -185,17 +199,23 @@ export class OpenAIResponsesProvider implements ModelProvider {
 							: record.id,
 					availability: "available" as const,
 					source: "provider_api" as const,
-					capabilities: {
-						// This endpoint confirms that an account can see the model,
-						// but does not advertise its feature matrix.
-						capabilityProvenance: "unknown" as const,
-						...(typeof record.context_window === "number" &&
-						Number.isFinite(record.context_window) &&
-						record.context_window > 0
-							? { contextWindow: Math.floor(record.context_window) }
-							: {}),
+					capabilities: documented
+						? {
+							...documented.discoveryCapabilities,
+							capabilityProvenance: "metadata" as const,
+							...(reportedContextWindow
+								? { contextWindow: reportedContextWindow }
+								: {}),
+						}
+						: {
+							// This endpoint confirms that an account can see the model,
+							// but does not advertise its feature matrix.
+							capabilityProvenance: "unknown" as const,
+							...(reportedContextWindow
+								? { contextWindow: reportedContextWindow }
+								: {}),
+						},
 					},
-				},
 			];
 		});
 	}
