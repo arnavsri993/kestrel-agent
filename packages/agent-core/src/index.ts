@@ -2692,7 +2692,7 @@ export class AgentCore {
 								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
 							...(finalizedResult.pendingExecution
-								? { execution: finalizedResult.pendingExecution }
+								? { execution: this.runtime.approvalReview(finalizedResult.pendingExecution) }
 								: {}),
 						};
 					} catch (error) {
@@ -4173,7 +4173,7 @@ export class AgentCore {
 								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
 							...(finalizedResult.pendingExecution
-								? { execution: finalizedResult.pendingExecution }
+								? { execution: this.runtime.approvalReview(finalizedResult.pendingExecution) }
 								: {}),
 						};
 					} catch (error) {
@@ -4287,7 +4287,7 @@ export class AgentCore {
 								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
 							...(finalizedResult.pendingExecution
-								? { execution: finalizedResult.pendingExecution }
+								? { execution: this.runtime.approvalReview(finalizedResult.pendingExecution) }
 								: {}),
 						};
 					} finally {
