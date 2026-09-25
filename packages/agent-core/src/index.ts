@@ -4766,6 +4766,7 @@ export {
 	type WorkflowStep,
 } from "./orchestration";
 export { type AgentPersonality, PersonalityRegistry } from "./personality";
+export { installComputerUseTools, type ComputerUseBackend } from "./computer-use";
 export {
 	type PetHatchCapability,
 	type PetHatchDraft,

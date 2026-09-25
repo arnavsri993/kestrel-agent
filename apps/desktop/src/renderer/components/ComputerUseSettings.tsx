@@ -102,6 +102,23 @@ export function ComputerUseSettings() {
 		}
 	}
 
+	async function toggleForeground() {
+		if (!status || !status.enabled) return;
+		setBusy("foreground");
+		setError("");
+		try {
+			setStatus(parseStatus(await window.kestrel.request({
+				type: "computer-use-update",
+				enabled: true,
+				foregroundEnabled: !status.foregroundEnabled,
+			})));
+		} catch (cause) {
+			setError(errorMessage(cause, "Foreground control preference could not be saved."));
+		} finally {
+			setBusy("");
+		}
+	}
+
 	async function openPrivacySettings(
 		surface: "screen-recording" | "accessibility",
 	) {
@@ -164,10 +181,28 @@ export function ComputerUseSettings() {
 					</p>
 				)}
 				<p className="computer-use-boundary">
-					This check never requests permission. Even when enabled, approvals still
-					pause consequential actions; Kestrel cannot purchase, create accounts, or
-					bypass a CAPTCHA.
+					This check never requests permission. Foreground input uses the pointer and keyboard
+					only for the app and window named in each approved action. Kestrel cannot purchase,
+					create accounts, or bypass a CAPTCHA.
 				</p>
+				<div className="computer-use-foreground-row">
+					<span>
+						<strong>Foreground pointer and keyboard</strong>
+						<small>{status?.foregroundInputBackend === "unavailable"
+							? "Native input is unavailable in this build"
+							: status?.foregroundReady
+								? "Ready for individually approved actions"
+								: "Needs whole-desktop use, Accessibility, and this separate switch"}</small>
+					</span>
+					<button
+						className={`switch ${status?.foregroundEnabled ? "on" : ""}`}
+						type="button" role="switch"
+						aria-label="Enable foreground pointer and keyboard"
+						aria-checked={status?.foregroundEnabled ?? false}
+						disabled={!status?.enabled || status.platform !== "darwin" || Boolean(busy)}
+						onClick={() => void toggleForeground()}
+					><span /></button>
+				</div>
 				{error && <small className="computer-use-error" role="alert">{error}</small>}
 			</div>
 			<div className="computer-use-actions">
