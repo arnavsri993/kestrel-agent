@@ -1507,6 +1507,11 @@ try {
 	await page.getByText("0 of 0", { exact: true }).waitFor();
 	await page.keyboard.press("Escape");
 	await findInput.waitFor({ state: "detached" });
+	await page.locator(".browser-address-suggestions").waitFor({ state: "detached" });
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing Find in page",
+	);
 	const formSourceTabId = (await browserState()).activeTabId;
 	assert(formSourceTabId);
 	const tabsBeforeFormLaunch = (await browserState()).tabs.length;
@@ -3139,8 +3144,15 @@ try {
 		);
 		for (const member of folderMembers) {
 			if (member.id === tabId) continue;
+			const inactiveTab = page.locator(
+				`.browser-tab[data-tab-id="${member.id}"]`,
+			);
+			// Motion retains an exiting tab briefly so its departure is not abrupt.
+			// Verify the settled, user-visible collapsed state instead of sampling
+			// between the service state update and that short exit completion.
+			await inactiveTab.waitFor({ state: "detached" });
 			assert.equal(
-				await page.locator(`.browser-tab[data-tab-id="${member.id}"]`).count(),
+				await inactiveTab.count(),
 				0,
 				"Inactive tabs in a collapsed folder should stay hidden",
 			);

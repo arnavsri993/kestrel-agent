@@ -420,10 +420,12 @@ export function BrowserWorkspace({
     setFindQuery("");
     const searchedTabId = findTabIdRef.current ?? activeTab?.id;
     findTabIdRef.current = null;
-    if (searchedTabId) void stopFindInPage(searchedTabId);
-    // The native page cannot reliably receive renderer focus, so return to the
-    // nearest stable browser control instead of leaving focus in an exiting row.
-    window.requestAnimationFrame(() => addressRef.current?.focus());
+    if (searchedTabId) {
+      void stopFindInPage(searchedTabId);
+    }
+    // Closing the Find row changes the viewport bounds, whose sync restores
+    // the attached native page. Do not focus the omnibox here:
+    // doing so opens suggestions and hides the page a person just returned to.
   }, [activeTab, stopFindInPage]);
 
   useEffect(() => {
