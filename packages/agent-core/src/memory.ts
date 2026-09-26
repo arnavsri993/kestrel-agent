@@ -401,6 +401,7 @@ export function installMemoryTools(
 	runtime: AgentRuntime,
 	manager: MemoryToolManager,
 	sessionId: string,
+	options: { workspaceReads?: boolean } = {},
 ): void {
 	const register = (
 		name: string,
@@ -409,6 +410,7 @@ export function installMemoryTools(
 		inputSchema: Record<string, unknown>,
 		execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"],
 	) => {
+		if (options.workspaceReads && (name === "memory.list" || name === "memory.search" || name === "memory.forget")) return;
 		runtime.registerExternalTool({
 			descriptor: {
 				name,

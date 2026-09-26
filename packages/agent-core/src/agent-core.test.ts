@@ -1084,7 +1084,7 @@ describe("core agent request path", () => {
 			model: "memory-model",
 			providerIds: ["memory-provider"],
 		});
-		expect(receivedSystem).toContain("Selected local life context");
+		expect(receivedSystem).toContain("Selected memory documents");
 		expect(receivedSystem).toContain("launch brief is due Friday");
 		expect(receivedSystem).toContain("User-confirmed context");
 		expect(receivedSystem).toContain("Keep updates concise");
