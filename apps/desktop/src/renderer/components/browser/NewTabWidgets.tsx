@@ -721,7 +721,7 @@ function RouteUsageWidget({
 					type: "runtime-provider-usage",
 				});
 				if (cancelled || !visible.current) return;
-				if (!response.ok) {
+				if (!response.ok || !("providerUsage" in response)) {
 					setError("Could not load route usage.");
 					setRows([]);
 					return;

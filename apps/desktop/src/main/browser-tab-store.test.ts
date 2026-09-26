@@ -661,6 +661,7 @@ describe("browser tab persistence", () => {
 					],
 				},
 			},
+			routeUsageVisible: [],
 		};
 		store.save(state);
 		expect(store.load().settings.newTabWidgets).toEqual(
@@ -676,8 +677,9 @@ describe("browser tab persistence", () => {
 		writeFileSync(path, `${JSON.stringify(malformed, null, 2)}\n`, "utf8");
 		expect(store.load().settings.newTabWidgets).toMatchObject({
 			version: 1,
-			enabled: ["frequent-tabs", "recent-work", "recent-memories", "quick-actions"],
+			enabled: ["frequent-tabs", "recent-work", "route-usage", "recent-memories"],
 			layouts: {},
+			routeUsageVisible: [],
 		});
 	});
 

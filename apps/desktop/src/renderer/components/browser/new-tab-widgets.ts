@@ -391,8 +391,8 @@ export function visibleRouteUsageProviderIds(
 type RouteUsageRowLike = {
 	providerId: string;
 	label: string;
-	email?: string;
-	windows?: readonly unknown[];
+	email?: string | undefined;
+	windows?: readonly unknown[] | undefined;
 };
 
 function isLegacyCodexRow(row: RouteUsageRowLike): boolean {

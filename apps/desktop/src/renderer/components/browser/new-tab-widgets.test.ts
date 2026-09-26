@@ -94,6 +94,7 @@ describe("New Tab widget layout model", () => {
 				"quick-actions",
 			],
 			layouts: {},
+			routeUsageVisible: [],
 		};
 
 		expect(normalizedWidgetSettings(legacySettings).enabled).toEqual(
