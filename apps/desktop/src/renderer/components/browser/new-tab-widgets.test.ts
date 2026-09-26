@@ -12,16 +12,23 @@ import {
 	moveWidget,
 	NEW_TAB_WIDGET_DEFINITIONS,
 	normalizedWidgetSettings,
+	prioritizeCodexUsageRows,
+	remainingUsagePercent,
 	removeWidget,
 	reorderWidget,
 	resizeWidget,
+	rowSpanForSize,
 	saveLayout,
+	setRouteUsageProviderVisible,
+	usageBatteryLevel,
+	visibleRouteUsageProviderIds,
 } from "./new-tab-widgets";
 
 const baseSettings: NewTabWidgetSettings = {
 	version: 1,
-	enabled: [...NEW_TAB_WIDGET_IDS],
+	enabled: NEW_TAB_WIDGET_IDS.filter((id) => id !== "route-usage"),
 	layouts: {},
+	routeUsageVisible: [],
 };
 
 describe("New Tab widget layout model", () => {
@@ -40,8 +47,8 @@ describe("New Tab widget layout model", () => {
 		expect(DEFAULT_NEW_TAB_WIDGET_IDS).toEqual([
 			"frequent-tabs",
 			"recent-work",
+			"route-usage",
 			"recent-memories",
-			"quick-actions",
 		]);
 		expect(NEW_TAB_WIDGET_DEFINITIONS["recent-memories"]?.icon).toBe("memory");
 		expect(NEW_TAB_WIDGET_DEFINITIONS["open-tabs"]?.defaultSize).toBe("medium");
@@ -49,6 +56,7 @@ describe("New Tab widget layout model", () => {
 		expect(NEW_TAB_WIDGET_DEFINITIONS["recent-pages"]?.description).toContain(
 			"Visited pages",
 		);
+		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"]?.title).toBe("Codex usage");
 	});
 
 	it("derives a new class from a saved semantic order and preserves enabled widgets", () => {
@@ -86,6 +94,7 @@ describe("New Tab widget layout model", () => {
 				"quick-actions",
 			],
 			layouts: {},
+			routeUsageVisible: [],
 		};
 
 		expect(normalizedWidgetSettings(legacySettings).enabled).toEqual(
@@ -136,5 +145,109 @@ describe("New Tab widget layout model", () => {
 			id: "quick-actions",
 			size: "medium",
 		});
+	});
+
+	it("keeps route-usage optional and normalizes show/hide prefs", () => {
+		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].id).toBe("route-usage");
+		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].title).toBe("Codex usage");
+		expect(NEW_TAB_WIDGET_DEFINITIONS["route-usage"].defaultSize).toBe("large");
+		expect(DEFAULT_NEW_TAB_WIDGET_IDS).toContain("route-usage");
+		expect(rowSpanForSize("large", "route-usage")).toBe(4);
+		expect(rowSpanForSize("medium", "route-usage")).toBe(3);
+		expect(rowSpanForSize("large")).toBe(2);
+
+		const withRoute = addWidget(baseSettings, "standard", "route-usage");
+		expect(withRoute.enabled).toContain("route-usage");
+		expect(withRoute.routeUsageVisible).toEqual([]);
+
+		const hidden = setRouteUsageProviderVisible(
+			withRoute,
+			"codex-subscription",
+			false,
+			["codex-subscription", "cursor-subscription"],
+		);
+		expect(visibleRouteUsageProviderIds(hidden, [
+			"codex-subscription",
+			"cursor-subscription",
+		])).toEqual(["cursor-subscription"]);
+
+		const restored = setRouteUsageProviderVisible(
+			hidden,
+			"codex-subscription",
+			true,
+			["codex-subscription", "cursor-subscription"],
+		);
+		expect(restored.routeUsageVisible).toEqual([]);
+		expect(
+			visibleRouteUsageProviderIds(restored, [
+				"codex-subscription",
+				"cursor-subscription",
+			]),
+		).toEqual(["codex-subscription", "cursor-subscription"]);
+	});
+
+	it("upgrades the previous home default to include Codex usage", () => {
+		const previous: NewTabWidgetSettings = {
+			version: 1,
+			enabled: [
+				"frequent-tabs",
+				"recent-work",
+				"recent-memories",
+				"quick-actions",
+			],
+			layouts: {},
+			routeUsageVisible: [],
+		};
+		expect(normalizedWidgetSettings(previous).enabled).toEqual([
+			...DEFAULT_NEW_TAB_WIDGET_IDS,
+		]);
+	});
+
+	it("dedupes legacy Codex mirrors and keeps metered accounts first", () => {
+		const ranked = prioritizeCodexUsageRows([
+			{
+				providerId: "legacy-openrouter",
+				label: "OpenRouter",
+				status: "ready",
+			},
+			{
+				providerId: "legacy-codex",
+				label: "Codex",
+				email: "arnavsri992@gmail.com",
+				windows: [{ label: "5-hour", usedPercent: 100 }],
+			},
+			{
+				providerId: "account-a",
+				label: "arnavsri993@gmail.com — Main",
+				email: "arnavsri993@gmail.com",
+				windows: [{ label: "5-hour", usedPercent: 40 }],
+			},
+			{
+				providerId: "account-b",
+				label: "arnavsri992@gmail.com — Main",
+				email: "arnavsri992@gmail.com",
+				windows: [{ label: "5-hour", usedPercent: 80 }],
+			},
+			{
+				providerId: "legacy-cursor",
+				label: "Cursor",
+				status: "ready",
+			},
+		]);
+		expect(ranked.map((row) => row.providerId)).toEqual([
+			"account-a",
+			"account-b",
+		]);
+	});
+
+	it("maps used percent to remaining Batteries-style levels", () => {
+		expect(remainingUsagePercent(0)).toBe(100);
+		expect(remainingUsagePercent(54)).toBe(46);
+		expect(remainingUsagePercent(100)).toBe(0);
+		expect(usageBatteryLevel(100)).toBe("ok");
+		expect(usageBatteryLevel(20)).toBe("low");
+		expect(usageBatteryLevel(8)).toBe("critical");
+		expect(usageBatteryLevel(0)).toBe("empty");
+		expect(usageBatteryLevel(undefined)).toBe("unknown");
 	});
 });

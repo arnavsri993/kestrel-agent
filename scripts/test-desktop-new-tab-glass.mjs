@@ -60,6 +60,8 @@ try {
  await page.getByRole("button", { name: "Arrange widgets" }).click();
  await page.locator(".kestrel-widget-canvas.is-editing").waitFor({ state: "visible" });
  await page.getByRole("button", { name: "Done", exact: true }).click();
+ await page.locator('[data-kestrel-widget-id="route-usage"]').getByRole("heading", { name: "Codex usage", exact: true }).waitFor();
+ await page.locator('[data-kestrel-widget-id="route-usage"]').getByText("No Codex accounts are configured yet.", { exact: true }).waitFor();
  const gap = await page.locator(".kestrel-widget-shelves").evaluate((node) => parseFloat(getComputedStyle(node).gap));
  assert(gap >= 16, "Widgets must be separated");
  const download = await page.locator(".browser-download-trigger").evaluate((button) => {
@@ -84,7 +86,7 @@ try {
   if (!response.ok || !response.session) throw new Error("Could not create continuation fixture");
  }, title);
  await page.reload();
- const continuation = page.locator(".kestrel-widget-action-list button").filter({ hasText: `Continue ${title}` });
+ const continuation = page.locator('[data-kestrel-widget-id="recent-work"] button').filter({ hasText: title });
  await continuation.waitFor();
  const before = await page.evaluate(async () => (await window.kestrel.request({ type: "runtime-list-sessions" })).sessions.map(item => item.id));
  await continuation.click();

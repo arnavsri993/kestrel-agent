@@ -34,6 +34,7 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 		version: 1,
 		enabled: [...DEFAULT_NEW_TAB_WIDGET_IDS],
 		layouts: {},
+		routeUsageVisible: [],
 	},
 	restoreSession: true,
 	historyRetentionDays: 90,

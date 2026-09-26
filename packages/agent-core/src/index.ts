@@ -143,6 +143,7 @@ import {
 	ModelProviderError,
 	ProviderPool,
 	ProviderPoolError,
+	ProviderUsageCollector,
 	type ModelResult,
 	type ProviderAttempt,
 	textContent,
@@ -260,6 +261,7 @@ export class AgentCore {
 	readonly modelRouter: AdaptiveModelRouter;
 	readonly runtime: AgentRuntime;
 	readonly providerPool: ProviderPool;
+	readonly providerUsage: ProviderUsageCollector;
 	readonly modelCatalog: ModelCatalog;
 	readonly accountAvailability: AccountAvailabilityMonitor;
 	readonly routingOutcomes: RoutingOutcomeStore;
@@ -548,6 +550,10 @@ export class AgentCore {
 		}
 		this.providerPool = new ProviderPool(
 			this.deps.modelProviders ?? createEnvironmentModelProviders(),
+			() => new Date(this.now()),
+		);
+		this.providerUsage = new ProviderUsageCollector(
+			this.providerPool,
 			() => new Date(this.now()),
 		);
 		this.modelCatalog = new ModelCatalog(
@@ -3921,6 +3927,13 @@ export class AgentCore {
 						providerAccounts: this.modelCatalog.list(),
 					};
 				}
+				case "runtime-provider-usage":
+					return {
+						ok: true,
+						providerUsage: await this.providerUsage.collect(
+							AbortSignal.timeout(45_000),
+						),
+					};
 				case "runtime-refresh-provider-models": {
 					const providerAccounts = await this.refreshProviderModels(
 						request.providerId,

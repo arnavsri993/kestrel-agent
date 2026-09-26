@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { app, utilityProcess } from "electron";
 import type { CoreProcess } from "./core-process";
 import { coreEnvironment } from "./core-process-environment";
+import { isPackagedKestrelRuntime } from "./default-browser";
 import { nodeCoreProcess } from "./node-core-process";
 
 export interface PackagedAgentCoreSidecar {
@@ -33,7 +34,10 @@ export function packagedAgentCoreSidecar(
 // The desktop owns process selection; the supervisor itself remains host-independent.
 export function desktopCoreProcess(): CoreProcess {
 	const env = coreEnvironment();
-	if (app.isPackaged) {
+	// The macOS branded Electron wrapper reports app.isPackaged=true even for
+	// electron-vite development. Only the real production package uses the
+	// Agent Core sidecar under Resources/.
+	if (isPackagedKestrelRuntime(app.isPackaged)) {
 		const sidecar = packagedAgentCoreSidecar();
 		return nodeCoreProcess({
 			executable: sidecar.executable,
