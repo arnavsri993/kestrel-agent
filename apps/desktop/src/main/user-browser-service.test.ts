@@ -216,6 +216,7 @@ import { nativeImage } from "electron";
 import { dialog } from "electron";
 import { shell } from "electron";
 import { BrowserTabStore } from "./browser-tab-store";
+import { FIND_IN_PAGE_WORLD_ID } from "./find-in-page-scripts";
 import {
   isAuthenticationFlowUrl,
   safeAppStoreUrl,
@@ -3771,7 +3772,7 @@ it("serializes closeTab behind an in-flight agent act", async () => {
   });
 
 	it("bookmarks, pins, and finds in the active page", async () => {
-    const { service } = createService();
+    const { service, events } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://docs.example/path");
     const bookmarked = service.toggleBookmark();
@@ -3783,15 +3784,77 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     expect(pinned.tabs[0]?.pinned).toBe(true);
 
     const contents = electron.state.views[0]!.webContents;
-    service.findInPage(first.id, "kestrel");
-    expect(contents.findInPage).toHaveBeenCalledWith("kestrel", {
-      forward: true,
-      findNext: false,
+    contents.executeJavaScriptInIsolatedWorld.mockResolvedValue({
+      found: true,
+      matches: 3,
     });
+    service.findInPage(first.id, "kestrel");
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "find-in-page",
+        match: {
+          tabId: first.id,
+          activeMatchOrdinal: 1,
+          matches: 3,
+          finalUpdate: true,
+        },
+      }),
+    );
+    expect(contents.findInPage).not.toHaveBeenCalled();
+    expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledWith(
+      FIND_IN_PAGE_WORLD_ID,
+      [
+        expect.objectContaining({
+          code: expect.stringContaining('"query":"kestrel"'),
+        }),
+      ],
+    );
     service.openDevTools(first.id);
     expect(contents.openDevTools).toHaveBeenCalled();
     service.printTab(first.id);
 		expect(contents.print).toHaveBeenCalled();
+	});
+
+	it("does not publish a stale isolated find result after the query changes", async () => {
+		const { service, events } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://docs.example/path");
+		const contents = electron.state.views[0]!.webContents;
+		let resolveFirst: ((value: unknown) => void) | undefined;
+		contents.executeJavaScriptInIsolatedWorld
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveFirst = resolve;
+					}),
+			)
+			.mockResolvedValueOnce({ found: true, matches: 2 });
+
+		service.findInPage(tab.id, "first query");
+		service.findInPage(tab.id, "second query");
+		await vi.waitFor(() =>
+			expect(events).toContainEqual({
+				type: "find-in-page",
+				match: {
+					tabId: tab.id,
+					activeMatchOrdinal: 1,
+					matches: 2,
+					finalUpdate: true,
+				},
+			}),
+		);
+		expect(resolveFirst).toBeDefined();
+		resolveFirst?.({ found: true, matches: 1 });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(
+			events.filter(
+				(event) =>
+					typeof event === "object" &&
+					event !== null &&
+					"type" in event &&
+					event.type === "find-in-page",
+			),
+		).toHaveLength(1);
 	});
 
 	it("saves bookmark presentation choices and keeps folder operations reversible", async () => {

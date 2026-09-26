@@ -231,6 +231,22 @@
 	margin-left: 0;
 }
 
+/* Find is browser chrome, not an implicit grid item. Give it a real row over
+ * the page and move the native WebContentsView below it so the renderer owns
+ * every input target. */
+.browser-workspace:not(.browser-workspace-vertical) .browser-find-bar {
+	position: absolute;
+	top: var(--browser-chrome-height);
+	left: var(--kestrel-sidebar-space);
+	right: var(--agent-panel-width);
+	z-index: 9;
+}
+
+.browser-workspace.browser-workspace-find-open:not(.browser-workspace-vertical)
+	.browser-viewport {
+	margin-top: 40px;
+}
+
 /* Keep vertical tabs in the lower workspace as well. The toolbar and optional
  * bookmarks remain full-width chrome, while Kestrel and the vertical tab rail
  * sit beside the page content below them. */
@@ -306,6 +322,10 @@
 	);
 	height: auto;
 	margin: 0;
+}
+
+.browser-workspace-vertical.browser-workspace-find-open .browser-viewport {
+	top: calc(var(--browser-chrome-height) + 40px);
 }
 
 .browser-workspace-vertical .browser-loading-line {

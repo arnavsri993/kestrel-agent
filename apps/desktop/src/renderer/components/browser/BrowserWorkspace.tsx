@@ -560,7 +560,7 @@ export function BrowserWorkspace({
 
   useLayoutEffect(() => {
     syncBounds();
-  }, [openChromeMenus, organizeTabsPreview, syncBounds]);
+  }, [findOpen, openChromeMenus, organizeTabsPreview, syncBounds]);
 
   useEffect(
     () =>
@@ -858,7 +858,9 @@ export function BrowserWorkspace({
     <main
       className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
         showBookmarksBar ? " browser-workspace-bookmarks" : ""
-      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}`}
+      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}${
+        findOpen ? " browser-workspace-find-open" : ""
+      }`}
       aria-label="Browser"
     >
       {navigationSidebar}
