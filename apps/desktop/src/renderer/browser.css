@@ -4122,6 +4122,21 @@ body:has(.ai-browser-app),
 }
 
 .agent-conversation-host .composer-footer > span { display: none; }
+.agent-conversation-host .composer-footer > .composer-status.is-model-readiness {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-conversation-host .composer-connect-model {
+  min-height: 28px;
+  padding-inline: 8px;
+  font-size: 11px;
+}
 .agent-conversation-host .composer-project-button span { font-size: 11px; }
 .agent-conversation-host .task-settings-panel {
   left: 0;

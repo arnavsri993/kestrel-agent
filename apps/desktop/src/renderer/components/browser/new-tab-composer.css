@@ -93,6 +93,10 @@
 .new-tab-composer-status, .new-tab-composer-error { display: block; margin: 4px 8px 0; font-size: 12px; text-align: left; }
 .new-tab-composer-status { color: var(--ink-secondary); }
 .new-tab-composer-error { color: var(--error, #df8a87); }
+.new-tab-composer-route-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 8px 0; color: var(--ink-secondary); font-size: 12px; text-align: left; }
+.new-tab-composer-route-status button { flex: 0 0 auto; border: 0; border-radius: 999px; background: var(--surface-strong); color: var(--ink); cursor: pointer; font: inherit; font-weight: 600; padding: 5px 9px; }
+.new-tab-composer-route-status button:hover { background: var(--line-strong); }
+.new-tab-composer-route-status button:focus-visible { outline: 2px solid var(--solid); outline-offset: 2px; }
 .new-tab-composer-icon.is-recording { color: var(--error, #df8a87); }
 .kestrel-home .kestrel-home-composer .kestrel-home-send { width: 32px; height: 32px; min-width: 32px; min-height: 32px; border-radius: 50%; }
 .kestrel-home-composer :is(button, textarea):focus-visible { outline: 2px solid var(--solid); outline-offset: 2px; }
@@ -118,7 +122,8 @@
 .new-tab-composer-send-actions .model-selector-trigger { border-radius: 999px; background: transparent; }
 .new-tab-composer-send-actions { flex-shrink: 0; }
 @media (max-width: 480px) {
- .new-tab-composer-footer { flex-wrap: wrap; gap: 8px; }
- .kestrel-home-composer.is-expanded .new-tab-composer-footer { max-height: 90px; }
- .new-tab-composer-send-actions { margin-left: auto; }
+	.new-tab-composer-footer { flex-wrap: wrap; gap: 8px; }
+	.kestrel-home-composer.is-expanded .new-tab-composer-footer { max-height: 90px; }
+	.new-tab-composer-send-actions { margin-left: auto; }
+	.new-tab-composer-route-status { align-items: flex-start; }
 }

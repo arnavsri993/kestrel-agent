@@ -264,21 +264,26 @@ async function waitForPostLaunchRequest(label) {
 
 async function nativeViewState() {
 	return application.evaluate(({ BrowserWindow }) => {
-		const window = BrowserWindow.getAllWindows().find(
-			(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
-		);
-		if (!window) throw new Error("Kestrel main window is unavailable.");
-		const views = window.contentView.children
-			.filter((child) => "webContents" in child)
-			.map((child) => ({
-				url: child.webContents.getURL(),
-				title: child.webContents.getTitle(),
-				bounds: child.getBounds(),
-				destroyed: child.webContents.isDestroyed(),
+		const candidates = BrowserWindow.getAllWindows()
+			.filter(
+				(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+			)
+			.map((candidate) => ({
+				views: candidate.contentView.children
+					.filter((child) => "webContents" in child)
+					.map((child) => ({
+						url: child.webContents.getURL(),
+						title: child.webContents.getTitle(),
+						bounds: child.getBounds(),
+						destroyed: child.webContents.isDestroyed(),
+					})),
 			}));
+		const activeCandidate = candidates.find(
+			(candidate) => candidate.views.length > 0,
+		);
 		return {
 			browserWindowCount: BrowserWindow.getAllWindows().length,
-			views,
+			views: activeCandidate?.views ?? candidates[0]?.views ?? [],
 		};
 	});
 }
@@ -882,24 +887,6 @@ async function createRuntimeSessionWithVisibleBrowser(kind = "agent") {
 	}, kind);
 }
 
-async function waitForRuntimeRunsToSettle(sessionId) {
-	const settled = await page.waitForFunction(async (id) => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-runs",
-			sessionId: id,
-		});
-		if (!response.ok || !("runs" in response)) return false;
-		const runs = response.runs ?? [];
-		return (
-			runs.length > 0 &&
-			runs.every((run) =>
-				["completed", "failed", "cancelled"].includes(run.status),
-			)
-		);
-	}, sessionId);
-	await settled.dispose();
-}
-
 async function callTool(sessionId, toolName, input, options = {}) {
 	let timeout;
 	try {
@@ -984,56 +971,46 @@ try {
 		"The HEIC upload fixture tab did not close cleanly",
 	);
 	await page.locator("#new-tab-chat-input").focus();
-	const homeSend = page.getByRole("button", {
-		name: "Send message to Pragmatic",
-	});
+	const homeSend = page.locator(".kestrel-home-composer .kestrel-home-send");
 	assert.equal(await homeSend.isDisabled(), true);
 	const homePrompt = "Start with the smallest useful fix.";
-	const homeSessionIdsBefore = await page.evaluate(async () => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return response.ok && "sessions" in response
-			? (response.sessions ?? []).map((session) => session.id)
-			: [];
-	});
 	await page.locator("#new-tab-chat-input").fill(homePrompt);
-	await homeSend.click();
-	await page.waitForFunction(async (expected) => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return (
-			response.ok &&
-			"sessions" in response &&
-			(response.sessions ?? []).length === expected.length + 1
-		);
-	}, homeSessionIdsBefore);
-	assert.equal(await page.locator("#runtime-prompt").inputValue(), "");
-	const homeSessionId = await page.evaluate(async (existingIds) => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		if (!response.ok || !("sessions" in response)) return null;
-		return (
-			response.sessions ?? []
-		).find((session) => !existingIds.includes(session.id))?.id ?? null;
-	}, homeSessionIdsBefore);
-	assert(homeSessionId, "The home task did not expose its new runtime session.");
-	await waitForRuntimeRunsToSettle(homeSessionId);
-	const homeSessionsAfter = await page.evaluate(async () => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return response.ok && "sessions" in response
-			? (response.sessions ?? []).length
-			: -1;
-	});
-	assert.equal(homeSessionsAfter, homeSessionIdsBefore.length + 1);
 	await page
-		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New chat" })
-		.click();
+		.locator(".kestrel-home-composer")
+		.getByText("Connect a model to send tasks.", { exact: true })
+		.waitFor();
+	assert.equal(
+		await homeSend.isDisabled(),
+		true,
+		"A task must not be submitted until a model route is available.",
+	);
+	await page.locator("#new-tab-chat-input").fill(origin);
+	assert.equal(
+		await homeSend.isEnabled(),
+		true,
+		"Browsing a URL must remain available without a model route.",
+	);
+	await homeSend.click();
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/`,
+		"The home URL did not remain usable without a model route",
+	);
+	const homeNavigationTabId = (await browserState()).activeTabId;
+	assert(homeNavigationTabId);
+	await page.evaluate(async (tabId) => {
+		const created = await window.kestrel.request({
+			type: "browser-create-tab",
+			input: "",
+			active: true,
+		});
+		if (!created.ok) throw new Error("Could not restore a New Tab after navigation.");
+		const closed = await window.kestrel.request({
+			type: "browser-close-tab",
+			tabId,
+		});
+		if (!closed.ok) throw new Error("Could not close the temporary home navigation tab.");
+	}, homeNavigationTabId);
+	await page.locator("#new-tab-title").waitFor();
 
 	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
 	await openKestrelDestination(page, "Settings");
@@ -3201,6 +3178,13 @@ try {
 		);
 		const selectedTab = page.locator(`.browser-tab[data-tab-id="${tabId}"]`);
 		await selectedTab.waitFor({ state: "visible" });
+		await page.waitForFunction(
+			(expectedOrientation) =>
+				document
+					.querySelector('[role="tablist"][aria-label="Browser tabs"]')
+					?.getAttribute("aria-orientation") === expectedOrientation,
+			orientation,
+		);
 		assert.equal(
 			await selectedTab.getByRole("tab").getAttribute("aria-selected"),
 			"true",

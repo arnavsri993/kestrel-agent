@@ -59,9 +59,10 @@ export function BrowserWorkspace({
   navigationSidebar,
   agentOpen,
   onToggleAgent,
-  onNewAgent,
+	onNewAgent,
 	onOpenTaskSettings,
   onOpenSettings,
+	onOpenModelSettings,
   onOpenWorkspaces,
   onOpenHistory,
   onOpenDownloads,
@@ -90,6 +91,7 @@ export function BrowserWorkspace({
   onNewAgent(prompt?: string): void;
 	onOpenTaskSettings(): void;
   onOpenSettings(): void;
+	onOpenModelSettings(): void;
   onOpenWorkspaces?(): void;
   onOpenHistory(): void;
   onOpenDownloads(): void;
@@ -1214,8 +1216,9 @@ export function BrowserWorkspace({
 			}
             onNavigate={(input) => void navigate(activeTab.id, input)}
 			onOpenTab={(tabId) => void selectTab(tabId)}
-            onNewAgent={onNewAgent}
+			onNewAgent={onNewAgent}
 			onOpenTaskSettings={onOpenTaskSettings}
+			onOpenModelSettings={onOpenModelSettings}
 			projects={projects}
 			onProjectsChange={onProjectsChange}
 			onSubmitDraft={onSubmitNewTabDraft}

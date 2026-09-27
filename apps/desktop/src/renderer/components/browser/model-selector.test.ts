@@ -5,6 +5,7 @@ import type {
 } from "@kestrel/shared-types";
 import {
 	accountForChoice,
+	automaticRouteAvailable,
 	searchProviderGroups,
 	matchesCatalogSearch,
 	modelAvailabilityLabel,
@@ -139,6 +140,18 @@ describe("account-aware model selector", () => {
 				}),
 			),
 		).toBe("Fallback · capabilities unverified");
+	});
+
+	it("does not present automatic routing when no enabled account has a usable model", () => {
+		expect(automaticRouteAvailable(accounts)).toBe(true);
+		expect(
+			automaticRouteAvailable([
+				account("empty", "Empty account", []),
+				account("blocked", "Blocked account", [
+					model("blocked", { availability: "permission_denied" }),
+				]),
+			]),
+		).toBe(false);
 	});
 
 	it("never substitutes a removed account with another endpoint", () => {

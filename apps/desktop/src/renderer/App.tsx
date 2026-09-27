@@ -102,6 +102,7 @@ import { ProjectSettingsDialog } from "./components/browser/ProjectSettingsDialo
 import { ModelSelector } from "./components/browser/ModelSelector";
 import {
 	accountForChoice,
+	automaticRouteAvailable,
 	type ModelSelectorChoice,
 } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
@@ -3087,6 +3088,7 @@ function RuntimeConversation({
 	onTranscriptTargetHandled,
 	onOpenActivity,
 	onReviewLearnedSkill,
+	onOpenModelSettings,
 }: {
 	visible: boolean;
 	activeSessionId: string | null;
@@ -3115,6 +3117,7 @@ function RuntimeConversation({
 	onTranscriptTargetHandled?(): void;
 	onOpenActivity?(executionId: string): void;
 	onReviewLearnedSkill(proposalId: string): void;
+	onOpenModelSettings(): void;
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
@@ -3122,6 +3125,7 @@ function RuntimeConversation({
 	const [providerAccounts, setProviderAccounts] = useState<
 		ProviderAccountSummary[]
 	>([]);
+	const [providerAccountsLoaded, setProviderAccountsLoaded] = useState(false);
 	const [providerId, setProviderId] = useState(
 		() => localStorage.getItem("kestrel:provider-id") ?? "",
 	);
@@ -3154,6 +3158,10 @@ function RuntimeConversation({
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [mentionFiles, setMentionFiles] = useState<SelectedAttachment[]>([]);
 	const shouldAutoSubmitFirstTaskRef = useRef(false);
+	const pendingNewAgentAutoSubmitRef = useRef<{
+		prompt: string;
+		draft?: NewTabComposerDraft;
+	} | null>(null);
 	const [guidedFirstTaskActive, setGuidedFirstTaskActive] = useState(false);
 	const [input, setInput] = useState(() => {
 		if (localStorage.getItem("kestrel:first-task") === "yes") {
@@ -3253,8 +3261,18 @@ function RuntimeConversation({
 		reasoningEffort,
 	};
 	const selectedManualAccount = accountForChoice(providerAccounts, modelChoice);
-	const manualRoutingReady = Boolean(selectedManualAccount && model.trim());
-	const executionReady = executionMode === "automatic" || manualRoutingReady;
+	const automaticRoutingReady =
+		providerAccountsLoaded && automaticRouteAvailable(providerAccounts);
+	const manualRoutingReady = Boolean(
+		providerAccountsLoaded && selectedManualAccount && model.trim(),
+	);
+	const executionReady =
+		executionMode === "automatic" ? automaticRoutingReady : manualRoutingReady;
+	const modelReadinessMessage = !providerAccountsLoaded
+		? "Checking model access…"
+		: executionMode === "automatic"
+			? "Connect a model to send tasks."
+			: "Choose an available model to send tasks.";
 	activeSessionIdRef.current = activeSessionId;
 
 	function applyModelChoice(next: ModelSelectorChoice) {
@@ -3286,6 +3304,7 @@ function RuntimeConversation({
 	useEffect(() => {
 		if (previousNewAgentRequestIdRef.current === newAgentRequestId) return;
 		previousNewAgentRequestIdRef.current = newAgentRequestId;
+		pendingNewAgentAutoSubmitRef.current = null;
 		if (busy) {
 			setError("Finish or cancel the active task before starting a new one.");
 			window.setTimeout(() => promptRef.current?.focus(), 0);
@@ -3310,7 +3329,17 @@ function RuntimeConversation({
 			}
 			promptRef.current?.focus();
 		}, 0);
-		if (newAgentPrompt.trim()) void submit(newAgentPrompt, newAgentDraft ?? undefined);
+		if (newAgentPrompt.trim()) {
+			const pendingSubmission = {
+				prompt: newAgentPrompt,
+				...(newAgentDraft ? { draft: newAgentDraft } : {}),
+			};
+			if (!providerAccountsLoaded) {
+				pendingNewAgentAutoSubmitRef.current = pendingSubmission;
+				return;
+			}
+			void submit(pendingSubmission.prompt, pendingSubmission.draft);
+		}
 	}, [
 		busy,
 		newAgentFocusTarget,
@@ -3320,7 +3349,15 @@ function RuntimeConversation({
 		newAgentWorkspace,
 		newAgentDraft,
 		onActiveSession,
+		providerAccountsLoaded,
 	]);
+
+	useEffect(() => {
+		const pendingSubmission = pendingNewAgentAutoSubmitRef.current;
+		if (!pendingSubmission || !providerAccountsLoaded) return;
+		pendingNewAgentAutoSubmitRef.current = null;
+		void submit(pendingSubmission.prompt, pendingSubmission.draft);
+	}, [providerAccountsLoaded]);
 
 	useEffect(() => {
 		if (
@@ -3481,8 +3518,21 @@ function RuntimeConversation({
 	useEffect(() => {
 		if (!visible) return;
 		let cancelled = false;
+		const providerRequest = window.kestrel.request({
+			type: "runtime-list-providers",
+		});
+		void providerRequest
+			.then((providerResponse) => {
+				if (cancelled) return;
+				if (providerResponse.ok && "providerAccounts" in providerResponse)
+					setProviderAccounts(providerResponse.providerAccounts ?? []);
+				setProviderAccountsLoaded(true);
+			})
+			.catch(() => {
+				if (!cancelled) setProviderAccountsLoaded(true);
+			});
 		void Promise.all([
-			window.kestrel.request({ type: "runtime-list-providers" }),
+			providerRequest,
 			window.kestrel.request({ type: "runtime-list-sessions" }),
 		])
 			.then(
@@ -3495,9 +3545,6 @@ function RuntimeConversation({
 						providerResponse.ok && "providerAccounts" in providerResponse
 							? (providerResponse.providerAccounts ?? [])
 							: [];
-					if (providerResponse.ok && "providerAccounts" in providerResponse) {
-						setProviderAccounts(available);
-					}
 					const availableGrants = availableWorkspaceGrants(projects);
 					setWorkspace(
 						(current) =>
@@ -3519,12 +3566,14 @@ function RuntimeConversation({
 				},
 			)
 			.catch((cause) => {
-				if (!cancelled)
+				if (!cancelled) {
+					setProviderAccountsLoaded(true);
 					setError(
 						cause instanceof Error
 							? cause.message
 							: "Could not load task options.",
 					);
+				}
 			});
 		return () => {
 			cancelled = true;
@@ -3966,6 +4015,17 @@ function RuntimeConversation({
 			);
 			return;
 		}
+		if (runChoice.executionMode === "automatic" && !providerAccountsLoaded) {
+			setError("Checking model access. Try again in a moment.");
+			return;
+		}
+		if (
+			runChoice.executionMode === "automatic" &&
+			!automaticRouteAvailable(providerAccounts)
+		) {
+			setError("Connect a model in Settings before starting a task.");
+			return;
+		}
 		if (runChoice.executionMode === "manual" && !runChoice.model.trim()) {
 			setError("Enter a model ID or switch execution back to Automatic.");
 			return;
@@ -4063,11 +4123,27 @@ function RuntimeConversation({
 	}
 
 	useEffect(() => {
-		if (!shouldAutoSubmitFirstTaskRef.current) return;
+		if (!shouldAutoSubmitFirstTaskRef.current || !providerAccountsLoaded) return;
 		shouldAutoSubmitFirstTaskRef.current = false;
+		const firstTaskReady =
+			executionMode === "automatic"
+				? automaticRouteAvailable(providerAccounts)
+				: Boolean(selectedManualAccount && model.trim());
+		if (!firstTaskReady) {
+			setGuidedFirstTaskActive(false);
+			setError(modelReadinessMessage);
+			return;
+		}
 		setGuidedFirstTaskActive(true);
 		void submit(FIRST_TASK_PROMPT);
-	}, []);
+	}, [
+		providerAccountsLoaded,
+		providerAccounts,
+		executionMode,
+		model,
+		selectedManualAccount,
+		modelReadinessMessage,
+	]);
 
 	useEffect(() => {
 		if (!guidedFirstTaskActive || busy || pending) return;
@@ -5068,13 +5144,18 @@ function RuntimeConversation({
 								</div>
 							</details>
 						</div>
-						<span className="composer-status">
+						<span
+							className={`composer-status${!executionReady ? " is-model-readiness" : ""}`}
+							role="status"
+						>
 							{voiceState === "recording"
 								? "Microphone live · tap Stop to transcribe"
 								: activeSessionBusy
 									? "Send an update at the next safe turn boundary"
 									: backgroundSessionBusy
 										? "Another chat is running · return there to update or cancel"
+										: !executionReady
+											? modelReadinessMessage
 										: selectedGrant?.available === false
 											? `${selectedGrant.name} · unavailable; reconnect or remove it in Settings`
 											: taskWorkspace
@@ -5107,9 +5188,21 @@ function RuntimeConversation({
 						) : (
 							<div className="button-row composer-send-actions">
 								{voiceButton}
+								{!executionReady && providerAccountsLoaded ? (
+									<button
+										type="button"
+										className="button secondary composer-connect-model"
+										onClick={onOpenModelSettings}
+										aria-label="Connect a model"
+										title="Connect a model"
+									>
+										Connect
+									</button>
+								) : null}
 								<button
 									className="send-button"
 									aria-label="Send message"
+									title={!executionReady ? modelReadinessMessage : "Send message"}
 									disabled={
 										backgroundSessionBusy ||
 										!input.trim() ||
@@ -11456,6 +11549,7 @@ export function App() {
 						onNewAgent={startNewAgent}
 						onOpenTaskSettings={openTaskSettings}
 						onOpenSettings={() => openSettings("browser")}
+						onOpenModelSettings={() => openSettings("agent-connections")}
 						onOpenWorkspaces={() => openSettings("connections")}
 						onOpenHistory={openBrowserHistory}
 						onOpenDownloads={openBrowserDownloads}
@@ -11537,6 +11631,7 @@ export function App() {
 							navigate("activity");
 						}}
 						onReviewLearnedSkill={reviewLearnedSkill}
+						onOpenModelSettings={() => openSettings("agent-connections")}
 					/>
 				</AgentSidebar>
 				<DefaultBrowserPrompt
