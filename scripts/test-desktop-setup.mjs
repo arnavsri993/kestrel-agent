@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
@@ -15,14 +16,23 @@ const testEnvironment = Object.fromEntries(
 		process.env[key] === undefined ? [] : [[key, process.env[key]]],
 	),
 );
+const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
+const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
+const executablePath = packagedExecutable
+	? resolve(packagedExecutable)
+	: requireFromDesktop("electron");
+const launchArgs = packagedExecutable
+	? ["--use-mock-keychain"]
+	: [
+			resolve("apps/desktop/out/main/index.js"),
+			...(process.platform === "darwin" ? ["--use-mock-keychain"] : []),
+		];
 let application;
 
 try {
 	application = await electron.launch({
-		args: [
-			resolve("apps/desktop/out/main/index.js"),
-			...(process.platform === "darwin" ? ["--use-mock-keychain"] : []),
-		],
+		executablePath,
+		args: launchArgs,
 		env: {
 			...testEnvironment,
 			HOME: testHome,
@@ -32,6 +42,7 @@ try {
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 			KESTREL_TEST_USER_DATA: join(root, "user-data"),
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
 		},
 	});
 	const page = await application.firstWindow();
