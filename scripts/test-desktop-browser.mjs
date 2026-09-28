@@ -134,6 +134,7 @@ const server = createServer((request, response) => {
         <main>
           <h1>${pageName}</h1>
           <p id="copy">A robotics reference visible in the current viewport.</p>
+          <p id="find-fixture">Kestrel find verification token. Kestrel find verification token. Kestrel find verification token.</p>
           <label>Name <input id="name" name="name" autocomplete="off"></label>
           <button id="submit" type="button">Submit</button>
           <output id="result">Waiting</output>
@@ -1482,6 +1483,35 @@ try {
 	assert.equal(loaded.browserWindowCount, 1);
 	assert.equal(loaded.views[0].title, "Page one");
 	assert.equal(loaded.views[0].destroyed, false);
+	await page.evaluate(() => {
+		const active = document.activeElement;
+		if (active instanceof HTMLElement) active.blur();
+	});
+	await page.keyboard.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
+	const findInput = page.locator("#browser-find-input");
+	await findInput.waitFor();
+	await findInput.fill("Kestrel find verification token");
+	await page.getByText("1 of 3", { exact: true }).waitFor();
+	assert.equal(
+		await readActiveViewScript(
+			"String(window.getSelection())",
+			"Find in page did not select the first visible match",
+		),
+		"Kestrel find verification token",
+	);
+	await page.getByRole("button", { name: "Next match", exact: true }).click();
+	await page.getByText("2 of 3", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Previous match", exact: true }).click();
+	await page.getByText("1 of 3", { exact: true }).waitFor();
+	await findInput.fill("Kestrel absent verification token");
+	await page.getByText("0 of 0", { exact: true }).waitFor();
+	await page.keyboard.press("Escape");
+	await findInput.waitFor({ state: "detached" });
+	await page.locator(".browser-address-suggestions").waitFor({ state: "detached" });
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing Find in page",
+	);
 	const formSourceTabId = (await browserState()).activeTabId;
 	assert(formSourceTabId);
 	const tabsBeforeFormLaunch = (await browserState()).tabs.length;
@@ -3114,8 +3144,15 @@ try {
 		);
 		for (const member of folderMembers) {
 			if (member.id === tabId) continue;
+			const inactiveTab = page.locator(
+				`.browser-tab[data-tab-id="${member.id}"]`,
+			);
+			// Motion retains an exiting tab briefly so its departure is not abrupt.
+			// Verify the settled, user-visible collapsed state instead of sampling
+			// between the service state update and that short exit completion.
+			await inactiveTab.waitFor({ state: "detached" });
 			assert.equal(
-				await page.locator(`.browser-tab[data-tab-id="${member.id}"]`).count(),
+				await inactiveTab.count(),
 				0,
 				"Inactive tabs in a collapsed folder should stay hidden",
 			);
@@ -3137,6 +3174,12 @@ try {
 	await waitForBrowserState(
 		(value) => value.settings.tabLayout === "horizontal",
 		"Horizontal tabs with a collapsed folder",
+	);
+	await page.waitForFunction(
+		() =>
+			document
+				.querySelector('[role="tablist"][aria-label="Browser tabs"]')
+				?.getAttribute("aria-orientation") === "horizontal",
 	);
 	await assertCollapsedFolderSelection(folderMembers[1].id, "horizontal");
 	await assertCollapsedFolderSelection(folderMembers[0].id, "horizontal");
