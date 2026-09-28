@@ -60,7 +60,12 @@ try {
 	const taskSettings = page.locator(".task-settings[open]");
 	await taskSettings.locator(".runtime-project-picker select").waitFor();
 	await taskSettings.getByText(/Auto routes model, thinking level/).waitFor();
-	await page.getByRole("button", { name: /^Model:/ }).click();
+	// The explanatory settings panel must leave the adjacent agent model picker
+	// directly usable; the home-page picker is a separate control.
+	await page
+		.locator(".agent-conversation-host")
+		.getByRole("button", { name: /^Model:/ })
+		.click();
 	const modelMenu = page.getByRole("dialog", {
 		name: "Choose a provider, account, model, and thinking level",
 	});
