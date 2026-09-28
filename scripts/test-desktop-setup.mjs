@@ -30,6 +30,7 @@ try {
 			LOGNAME: "kestrel-test",
 			CODEX_HOME: testCodexHome,
 			KESTREL_DISABLE_UPDATES: "1",
+			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 			KESTREL_TEST_USER_DATA: join(root, "user-data"),
 		},
 	});
@@ -749,28 +750,124 @@ try {
 		await page.evaluate(() => localStorage.getItem("kestrel:onboarded")),
 		null,
 	);
+	const existingProviderAccounts = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "provider-account-list",
+		});
+		if (!response.ok || !("providerAccounts" in response))
+			throw new Error("Could not list the disposable profile's provider accounts.");
+		return response.providerAccounts.map((account) => account.id);
+	});
+	for (const accountId of existingProviderAccounts) {
+		const removed = await page.evaluate(
+			async (id) =>
+				window.kestrel.request({
+					type: "provider-account-remove",
+					accountId: id,
+				}),
+			accountId,
+		);
+		assert.equal(removed.ok, true);
+	}
+	const sessionsBeforeGuidedFirstTask = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-sessions",
+		});
+		if (!response.ok || !("sessions" in response))
+			throw new Error("Could not read sessions before the guided first task.");
+		return response.sessions.map((session) => session.id);
+	});
 	await page.evaluate(() => {
 		localStorage.setItem("kestrel:onboarded", "yes");
 		localStorage.setItem("kestrel:first-task", "yes");
 	});
 	await page.reload();
-	await page.locator("#runtime-prompt").waitFor();
-	await page
-		.getByText(/just finished Kestrel setup/i)
-		.first()
-		.waitFor({ timeout: 10_000 });
+	const guidedConversation = page.locator(".agent-conversation-host");
+	await guidedConversation.locator("#runtime-prompt").waitFor();
+	try {
+		await page.waitForFunction(
+			() => {
+				const prompt = document.querySelector("#runtime-prompt");
+				return (
+					prompt instanceof HTMLTextAreaElement &&
+					prompt.value.startsWith("I just finished Kestrel setup.")
+				);
+			},
+			undefined,
+			{ timeout: 10_000 },
+		);
+	} catch (cause) {
+		const state = await page.evaluate(async () => {
+			const [providers, sessions] = await Promise.all([
+				window.kestrel.request({ type: "runtime-list-providers" }),
+				window.kestrel.request({ type: "runtime-list-sessions" }),
+			]);
+			return {
+				onboarded: localStorage.getItem("kestrel:onboarded"),
+				firstTask: localStorage.getItem("kestrel:first-task"),
+				promptPresent: Boolean(document.querySelector("#runtime-prompt")?.value),
+				providerAccountCount:
+					providers.ok && "providerAccounts" in providers
+						? providers.providerAccounts.length
+						: null,
+				sessionCount:
+					sessions.ok && "sessions" in sessions ? sessions.sessions.length : null,
+			};
+		});
+		throw new Error(
+			`Guided first-task recovery did not load its draft: ${JSON.stringify(state)}`,
+			{ cause },
+		);
+	}
+	try {
+		await guidedConversation
+			.locator(".chat-error")
+			.filter({ hasText: "Connect a model to send tasks." })
+			.waitFor({ timeout: 10_000 });
+	} catch (cause) {
+		const input = await guidedConversation.getByLabel("Message Kestrel").inputValue();
+		const errors = await guidedConversation.locator(".chat-error").allTextContents();
+		throw new Error(
+			`Guided first-task recovery did not reach the no-provider state: ${JSON.stringify({ input, errors })}`,
+			{ cause },
+		);
+	}
+	assert.match(
+		await guidedConversation.getByLabel("Message Kestrel").inputValue(),
+		/^I just finished Kestrel setup\./,
+		"First-task onboarding should preserve the guided prompt until a model is connected.",
+	);
 	assert.equal(
-		await page.getByLabel("Message Kestrel").inputValue(),
-		"",
-		"First-task onboarding should auto-send and clear the composer.",
+		await guidedConversation
+			.getByRole("button", { name: "Connect a model" })
+			.isEnabled(),
+		true,
+	);
+	assert.equal(
+		await guidedConversation
+			.getByRole("button", { name: "Send message" })
+			.isDisabled(),
+		true,
 	);
 	assert.equal(
 		await page.evaluate(() => localStorage.getItem("kestrel:first-task")),
 		null,
 	);
+	assert.deepEqual(
+		await page.evaluate(async () => {
+			const response = await window.kestrel.request({
+				type: "runtime-list-sessions",
+			});
+			if (!response.ok || !("sessions" in response))
+				throw new Error("Could not read sessions after the guided first task.");
+			return response.sessions.map((session) => session.id);
+		}),
+		sessionsBeforeGuidedFirstTask,
+		"First-task onboarding must not create a run without a configured model.",
+	);
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Five-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, guided first-task auto-send, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n",
+		"Five-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, safe no-provider guided first-task recovery, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n",
 	);
 } finally {
 	await application?.close();
