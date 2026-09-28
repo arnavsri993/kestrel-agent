@@ -308,6 +308,9 @@ async function readTaskSettingsLayout(page) {
 		const voiceButton = document.querySelector(
 			".agent-conversation-host .composer-send-actions .voice-button",
 		);
+		const unavailableAddFiles = document.querySelector(
+			".agent-conversation-host .composer-footer.is-model-unavailable .composer-add-files",
+		);
 		const host = document.querySelector(".agent-conversation-host");
 		const footer = document.querySelector(
 			".agent-conversation-host .composer-footer",
@@ -357,6 +360,7 @@ async function readTaskSettingsLayout(page) {
 			sendActions: rect(sendActions),
 			connectButton: connectButton ? rect(connectButton) : null,
 			voiceButtonPresent: Boolean(voiceButton),
+			unavailableAddFilesPresent: Boolean(unavailableAddFiles),
 			sendButton: rect(sendButton),
 			contextActions: rect(contextActions),
 			footer: rect(footer),
@@ -420,6 +424,11 @@ function assertTaskSettingsLayout(layout) {
 		layout.voiceButtonPresent,
 		false,
 		"No-provider composer must not show a voice action that cannot send work.",
+	);
+	assert.equal(
+		layout.unavailableAddFilesPresent,
+		false,
+		"No-provider composer must not show a file action that cannot submit work.",
 	);
 	for (const [label, control] of [
 		["model selector", layout.modelTrigger],

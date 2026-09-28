@@ -5015,18 +5015,20 @@ function RuntimeConversation({
 						className={`composer-footer${!executionReady ? " is-model-unavailable" : ""}`}
 					>
 						<div className="button-row composer-context-actions">
-							<button
-								type="button"
-								className="composer-icon composer-add-files"
-								aria-label={composerFilesLabel}
-								title={composerFilesTitle}
-								disabled={
-									busy || voiceState !== "idle" || needsNewTaskForFiles
-								}
-								onClick={addComposerContext}
-							>
-								<Icon name="plus" />
-							</button>
+							{executionReady ? (
+								<button
+									type="button"
+									className="composer-icon composer-add-files"
+									aria-label={composerFilesLabel}
+									title={composerFilesTitle}
+									disabled={
+										busy || voiceState !== "idle" || needsNewTaskForFiles
+									}
+									onClick={addComposerContext}
+								>
+									<Icon name="plus" />
+								</button>
+							) : null}
 							<ModelSelector
 								accounts={providerAccounts}
 								choice={modelChoice}
