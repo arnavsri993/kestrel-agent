@@ -31,6 +31,7 @@ export const THINKING_LEVELS: readonly {
 	{ id: "high", label: "High", description: "More thorough reasoning" },
 	{ id: "xhigh", label: "Extra high", description: "Extended reasoning" },
 	{ id: "max", label: "Max", description: "Largest reasoning budget" },
+	{ id: "ultra", label: "Ultra", description: "Maximum available reasoning" },
 ];
 
 export function providerGroups(

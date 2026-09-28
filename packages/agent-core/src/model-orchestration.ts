@@ -1906,7 +1906,10 @@ export class AdaptiveModelRouter {
 				medium: "high",
 				high: "xhigh",
 				xhigh: "max",
+				// Per-model level availability is preserved for manual selection. Keep
+				// automatic escalation at max until the router carries that detail.
 				max: "max",
+				ultra: "ultra",
 			};
 			level = escalationLadder[level];
 		}

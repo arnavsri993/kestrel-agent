@@ -19,7 +19,16 @@ function savedModelChoice(): ModelSelectorChoice {
 		providerId: localStorage.getItem("kestrel:provider-id") ?? "",
 		...(accountId ? { accountId } : {}),
 		model: localStorage.getItem("kestrel:model") ?? "",
-		reasoningEffort: effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh" || effort === "max" || effort === "none" ? effort : "none",
+		reasoningEffort:
+			effort === "low" ||
+			effort === "medium" ||
+			effort === "high" ||
+			effort === "xhigh" ||
+			effort === "max" ||
+			effort === "ultra" ||
+			effort === "none"
+				? effort
+				: "none",
 	};
 }
 

@@ -3143,6 +3143,7 @@ function RuntimeConversation({
 				stored === "high" ||
 				stored === "xhigh" ||
 				stored === "max" ||
+				stored === "ultra" ||
 				stored === "none"
 				? stored
 				: "none";
@@ -6081,6 +6082,7 @@ function Work({
 					storedReasoningEffort === "high" ||
 					storedReasoningEffort === "xhigh" ||
 					storedReasoningEffort === "max" ||
+					storedReasoningEffort === "ultra" ||
 					storedReasoningEffort === "none"
 						? storedReasoningEffort
 						: "none",
