@@ -2581,11 +2581,19 @@ try {
 		},
 		`${origin}/two`,
 	);
+	// The detached window samples the native pointer at creation. This probe runs
+	// after the renderer is ready and reads that pointer again, which can differ
+	// by a few device-independent pixels after a Playwright drag on macOS.
+	// Keep the assertion tight enough to catch a wrong display or placement rule
+	// without turning harmless post-drop cursor jitter into a smoke failure.
+	const detachedPlacementTolerance = 4;
 	assert(
 		detachedPlacement.bounds &&
 			detachedPlacement.expectedBounds &&
-			Math.abs(detachedPlacement.bounds.x - detachedPlacement.expectedBounds.x) <= 1 &&
-			Math.abs(detachedPlacement.bounds.y - detachedPlacement.expectedBounds.y) <= 1,
+			Math.abs(detachedPlacement.bounds.x - detachedPlacement.expectedBounds.x) <=
+				detachedPlacementTolerance &&
+			Math.abs(detachedPlacement.bounds.y - detachedPlacement.expectedBounds.y) <=
+				detachedPlacementTolerance,
 		`Detached window did not open at the pointer-relative, work-area-clamped position: ${JSON.stringify(detachedPlacement)}`,
 	);
 	const rejectedForgedTransfer = await page.evaluate(async (tabId) => {
