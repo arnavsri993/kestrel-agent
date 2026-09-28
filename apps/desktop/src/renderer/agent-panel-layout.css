@@ -367,6 +367,31 @@
 	min-width: 0;
 }
 
+/* Keep the compact recovery controls in one predictable row. The explanatory
+ * readiness status renders directly beneath it instead of competing for the
+ * same narrow rail width. */
+.unified-ui .agent-conversation-host .composer-footer.is-model-unavailable {
+	gap: 4px;
+}
+
+.unified-ui .agent-conversation-host .composer-footer.is-model-unavailable
+	.composer-context-actions,
+.unified-ui .agent-conversation-host .composer-footer.is-model-unavailable
+	.composer-send-actions {
+	flex: 0 0 auto;
+	flex-wrap: nowrap;
+}
+
+.unified-ui
+	.agent-conversation-host
+	.composer-status.is-model-readiness {
+	display: block;
+	margin: 0 8px 8px;
+	color: var(--ink-secondary);
+	font-size: 11px;
+	line-height: 1.35;
+}
+
 .agent-sidebar-identity {
 	grid-template-columns: minmax(0, 1fr) auto auto auto;
 }

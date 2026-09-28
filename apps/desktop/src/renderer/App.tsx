@@ -4513,6 +4513,22 @@ function RuntimeConversation({
 						: humanInputRequests.some((request) => request.status === "waiting")
 							? "Kestrel is waiting for your answer."
 							: "";
+	const composerStatus =
+		voiceState === "recording"
+			? "Microphone live · tap Stop to transcribe"
+			: activeSessionBusy
+				? "Send an update at the next safe turn boundary"
+				: backgroundSessionBusy
+					? "Another chat is running · return there to update or cancel"
+					: !executionReady
+						? modelReadinessMessage
+						: selectedGrant?.available === false
+							? `${selectedGrant.name} · unavailable; reconnect or remove it in Settings`
+							: taskWorkspace
+								? `${selectedGrant?.name ?? "Project"} · files and tools stay scoped`
+								: activeSessionId
+									? "Conversation only · start a new chat to add a project"
+									: "Conversation only";
 	const hasQuestionSurface = humanInputRequests.length > 0;
 	return (
 		<section
@@ -4995,7 +5011,9 @@ function RuntimeConversation({
 							}}
 							onDismiss={() => setInput((current) => `${current} `)}
 						/>
-					<div className="composer-footer">
+					<div
+						className={`composer-footer${!executionReady ? " is-model-unavailable" : ""}`}
+					>
 						<div className="button-row composer-context-actions">
 							<button
 								type="button"
@@ -5145,26 +5163,11 @@ function RuntimeConversation({
 								</div>
 							</details>
 						</div>
-						<span
-							className={`composer-status${!executionReady ? " is-model-readiness" : ""}`}
-							role="status"
-						>
-							{voiceState === "recording"
-								? "Microphone live · tap Stop to transcribe"
-								: activeSessionBusy
-									? "Send an update at the next safe turn boundary"
-									: backgroundSessionBusy
-										? "Another chat is running · return there to update or cancel"
-										: !executionReady
-											? modelReadinessMessage
-										: selectedGrant?.available === false
-											? `${selectedGrant.name} · unavailable; reconnect or remove it in Settings`
-											: taskWorkspace
-												? `${selectedGrant?.name ?? "Project"} · files and tools stay scoped`
-												: activeSessionId
-													? "Conversation only · start a new chat to add a project"
-													: "Conversation only"}
-						</span>
+						{executionReady ? (
+							<span className="composer-status" role="status">
+								{composerStatus}
+							</span>
+						) : null}
 						{activeSessionBusy || backgroundSessionBusy ? (
 							<div className="button-row composer-send-actions">
 								{voiceButton}
@@ -5188,7 +5191,7 @@ function RuntimeConversation({
 							</div>
 						) : (
 							<div className="button-row composer-send-actions">
-								{voiceButton}
+								{executionReady ? voiceButton : null}
 								{!executionReady && providerAccountsLoaded ? (
 									<button
 										type="button"
@@ -5216,6 +5219,11 @@ function RuntimeConversation({
 							</div>
 						)}
 					</div>
+					{!executionReady ? (
+						<span className="composer-status is-model-readiness" role="status">
+							{composerStatus}
+						</span>
+					) : null}
 				</form>
 				{error && !latestOutcome && (
 					<p className="chat-error" role="alert">
