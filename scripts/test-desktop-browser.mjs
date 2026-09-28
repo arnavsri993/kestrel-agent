@@ -680,12 +680,22 @@ async function assertKestrelSidebarResize() {
 	const targetWidth = Math.min(initial.max, initial.width + 72);
 	await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 120);
 	await page.mouse.down();
+	await page.waitForFunction(() =>
+		document
+			.querySelector(".ai-browser-app")
+			?.classList.contains("kestrel-sidebar-resizing"),
+	);
 	await page.mouse.move(
 		handleBox.x + handleBox.width / 2 + (targetWidth - initial.width),
 		handleBox.y + 120,
 		{ steps: 3 },
 	);
 	await page.mouse.up();
+	await page.waitForFunction(() =>
+		!document
+			.querySelector(".ai-browser-app")
+			?.classList.contains("kestrel-sidebar-resizing"),
+	);
 	await page.waitForFunction(
 		({ expected, key }) => {
 			const sidebar = document.querySelector(".kestrel-sidebar");
@@ -1475,13 +1485,22 @@ try {
 	assert.equal(loaded.browserWindowCount, 1);
 	assert.equal(loaded.views[0].title, "Page one");
 	assert.equal(loaded.views[0].destroyed, false);
-	await page.evaluate(() => {
-		const active = document.activeElement;
-		if (active instanceof HTMLElement) active.blur();
-	});
-	await page.keyboard.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
+	const findShortcutModifier = process.platform === "darwin" ? "meta" : "control";
+	await sendInputToActiveView(
+		{ type: "keyDown", keyCode: "F", modifiers: [findShortcutModifier] },
+		"The browser find shortcut could not reach the active page",
+	);
+	await sendInputToActiveView(
+		{ type: "keyUp", keyCode: "F", modifiers: [findShortcutModifier] },
+		"The browser find shortcut could not finish on the active page",
+	);
 	const findInput = page.locator("#browser-find-input");
 	await findInput.waitFor();
+	await page.waitForFunction(
+		() => document.activeElement?.id === "browser-find-input",
+		undefined,
+		{ timeout: 5_000 },
+	);
 	await findInput.fill("Kestrel find verification token");
 	await page.getByText("1 of 3", { exact: true }).waitFor();
 	assert.equal(

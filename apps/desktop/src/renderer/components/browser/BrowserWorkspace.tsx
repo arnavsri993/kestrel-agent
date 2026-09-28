@@ -411,10 +411,6 @@ export function BrowserWorkspace({
   const openFind = useCallback(() => {
     findTabIdRef.current = activeTab?.id ?? null;
     setFindOpen(true);
-    window.requestAnimationFrame(() => {
-      findRef.current?.focus();
-      findRef.current?.select();
-    });
   }, [activeTab?.id]);
 
   const closeFind = useCallback(() => {
@@ -565,6 +561,18 @@ export function BrowserWorkspace({
   useLayoutEffect(() => {
     syncBounds();
   }, [findOpen, openChromeMenus, organizeTabsPreview, syncBounds]);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    // The native page is hidden as Find mounts. Focus only after the input
+    // exists, otherwise a native Cmd/Ctrl+F can race React's render and leave
+    // the visible Find field unreachable from the keyboard.
+    const frame = window.requestAnimationFrame(() => {
+      findRef.current?.focus({ preventScroll: true });
+      findRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [findOpen]);
 
   useEffect(
     () =>

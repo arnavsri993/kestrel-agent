@@ -40,6 +40,7 @@ async function launch() {
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
 		},
 	});
 	return application.firstWindow();
