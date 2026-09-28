@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -33,6 +39,10 @@ function readMacQuarantine(path) {
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
 const userData = join(root, "user-data");
+const detachedPlacementCapturePath = join(
+	userData,
+	"detached-window-placement.json",
+);
 const heicUploadFixture = join(root, "kestrel-upload.HEIC");
 const heicSourcePng = join(root, "kestrel-upload-source.png");
 writeFileSync(
@@ -201,6 +211,7 @@ async function launch() {
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 		KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 		KESTREL_TEST_USER_DATA: userData,
+		KESTREL_TEST_DETACHED_WINDOW_PLACEMENT_PATH: detachedPlacementCapturePath,
 		KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
 		KESTREL_REAL_USER_PROFILE: "1",
 		},
@@ -2476,6 +2487,11 @@ try {
 		(value) => value.tabs.some((tab) => tab.id === detachableTabId && tab.url === `${origin}/two`),
 		"Detachable tab did not load",
 	);
+	assert.equal(
+		existsSync(detachedPlacementCapturePath),
+		false,
+		"Detached-window placement was captured before a tab was detached.",
+	);
 	const detachableTab = page.locator(
 		`.browser-tab[data-tab-id="${detachableTabId}"]`,
 	);
@@ -2546,55 +2562,50 @@ try {
 		["application/x-kestrel-tab"],
 		"Detached tab drag did not advertise a Kestrel tab transfer",
 	);
-	const detachedPlacement = await application.evaluate(
-		({ BrowserWindow, screen }, expectedUrl) => {
-			const cursor = screen.getCursorScreenPoint();
-			const workArea = screen.getDisplayNearestPoint(cursor).workArea;
+	const detachedBounds = await application.evaluate(
+		({ BrowserWindow }, expectedUrl) => {
 			const detached = BrowserWindow.getAllWindows().find((candidate) =>
 				candidate.contentView.children.some(
 					(child) =>
 						"webContents" in child && child.webContents.getURL() === expectedUrl,
 				),
 			);
-			const bounds = detached?.getBounds() ?? null;
-			const clamp = (value, minimum, maximum) =>
-				Math.round(Math.max(minimum, Math.min(value, maximum)));
-			return {
-				cursor,
-				bounds,
-				workArea,
-				expectedBounds: bounds
-					? {
-						x: clamp(
-							cursor.x - 180,
-							workArea.x,
-							workArea.x + workArea.width - bounds.width,
-						),
-						y: clamp(
-							cursor.y - 20,
-							workArea.y,
-							workArea.y + workArea.height - bounds.height,
-						),
-					}
-					: null,
-			};
+			return detached?.getBounds() ?? null;
 		},
 		`${origin}/two`,
 	);
-	// The detached window samples the native pointer at creation. This probe runs
-	// after the renderer is ready and reads that pointer again, which can differ
-	// by a few device-independent pixels after a Playwright drag on macOS.
-	// Keep the assertion tight enough to catch a wrong display or placement rule
-	// without turning harmless post-drop cursor jitter into a smoke failure.
-	const detachedPlacementTolerance = 4;
-	assert(
-		detachedPlacement.bounds &&
-			detachedPlacement.expectedBounds &&
-			Math.abs(detachedPlacement.bounds.x - detachedPlacement.expectedBounds.x) <=
-				detachedPlacementTolerance &&
-			Math.abs(detachedPlacement.bounds.y - detachedPlacement.expectedBounds.y) <=
-				detachedPlacementTolerance,
-		`Detached window did not open at the pointer-relative, work-area-clamped position: ${JSON.stringify(detachedPlacement)}`,
+	assert.ok(
+		existsSync(detachedPlacementCapturePath),
+		"Detached-window placement was not captured during the tear-off gesture.",
+	);
+	const detachedPlacement = JSON.parse(
+		readFileSync(detachedPlacementCapturePath, "utf8"),
+	);
+	const clamp = (value, minimum, maximum) =>
+		Math.round(Math.max(minimum, Math.min(value, maximum)));
+	const expectedDetachedBounds = {
+		x: clamp(
+			detachedPlacement.cursor.x - 180,
+			detachedPlacement.workArea.x,
+			detachedPlacement.workArea.x + detachedPlacement.workArea.width - 1320,
+		),
+		y: clamp(
+			detachedPlacement.cursor.y - 20,
+			detachedPlacement.workArea.y,
+			detachedPlacement.workArea.y + detachedPlacement.workArea.height - 860,
+		),
+		width: 1320,
+		height: 860,
+	};
+	assert.deepEqual(
+		detachedPlacement.bounds,
+		expectedDetachedBounds,
+		`Detached window did not calculate pointer-relative, work-area-clamped bounds: ${JSON.stringify(detachedPlacement)}`,
+	);
+	assert.deepEqual(
+		detachedBounds,
+		detachedPlacement.bounds,
+		`Detached window did not open at its calculated pointer-relative bounds: ${JSON.stringify({ detachedBounds, detachedPlacement })}`,
 	);
 	const rejectedForgedTransfer = await page.evaluate(async (tabId) => {
 		try {

@@ -3,7 +3,14 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  constants,
+  existsSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import {
   copyFile,
   lstat,
@@ -2006,26 +2013,57 @@ function detachedBrowserState(
   return state;
 }
 
-function detachedBrowserWindowBounds(): {
+type DetachedBrowserWindowBounds = {
 	x: number;
 	y: number;
 	width: number;
 	height: number;
-} {
+};
+
+type DetachedBrowserWindowPlacement = {
+	cursor: { x: number; y: number };
+	workArea: { x: number; y: number; width: number; height: number };
+	bounds: DetachedBrowserWindowBounds;
+};
+
+function writeDetachedBrowserWindowPlacementForTest(
+	placement: DetachedBrowserWindowPlacement,
+): void {
+	const testUserData = process.env.KESTREL_TEST_USER_DATA;
+	const capturePath = process.env.KESTREL_TEST_DETACHED_WINDOW_PLACEMENT_PATH;
+	if (!testUserData || !capturePath) return;
+	const captureRelativePath = relative(testUserData, capturePath);
+	if (
+		captureRelativePath === "" ||
+		captureRelativePath === ".." ||
+		captureRelativePath.startsWith(`..${sep}`) ||
+		captureRelativePath.startsWith(sep)
+	)
+		return;
+	writeFileSync(capturePath, `${JSON.stringify(placement)}\n`, { mode: 0o600 });
+}
+
+function detachedBrowserWindowPlacement(): DetachedBrowserWindowPlacement {
 	const width = 1320;
 	const height = 860;
 	const cursor = screen.getCursorScreenPoint();
 	const workArea = screen.getDisplayNearestPoint(cursor).workArea;
 	const clamp = (value: number, minimum: number, maximum: number) =>
 		Math.round(Math.max(minimum, Math.min(value, maximum)));
-	return {
-		// Put the new tab strip under the pointer instead of letting the OS pick
-		// an unrelated default window location.
-		x: clamp(cursor.x - 180, workArea.x, workArea.x + workArea.width - width),
-		y: clamp(cursor.y - 20, workArea.y, workArea.y + workArea.height - height),
-		width,
-		height,
+	const placement = {
+		cursor,
+		workArea,
+		bounds: {
+			// Put the new tab strip under the pointer instead of letting the OS pick
+			// an unrelated default window location.
+			x: clamp(cursor.x - 180, workArea.x, workArea.x + workArea.width - width),
+			y: clamp(cursor.y - 20, workArea.y, workArea.y + workArea.height - height),
+			width,
+			height,
+		},
 	};
+	writeDetachedBrowserWindowPlacementForTest(placement);
+	return placement;
 }
 
 function createDetachedBrowserWindow(
@@ -2035,8 +2073,9 @@ function createDetachedBrowserWindow(
   restoredStatePath?: string,
 ): BrowserWindow {
   const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
+  const placement = detachedBrowserWindowPlacement();
   const window = new BrowserWindow({
-    ...detachedBrowserWindowBounds(),
+    ...placement.bounds,
     minWidth: 920,
     minHeight: 680,
     show: false,
