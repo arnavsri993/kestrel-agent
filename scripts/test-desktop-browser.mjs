@@ -1582,6 +1582,22 @@ try {
 	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
 	const initialTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
 	await initialTabToolsMenu.waitFor();
+	assert.equal(
+		await initialTabToolsMenu.getByRole("menuitem", { name: "Open Tabs", exact: true }).getAttribute("aria-expanded"),
+		"true",
+		"Tab tools should show open tabs first",
+	);
+	assert.equal(
+		await initialTabToolsMenu.getByRole("menuitem", { name: "Recently Closed", exact: true }).getAttribute("aria-expanded"),
+		"false",
+		"Tab tools should keep closed history behind its disclosure",
+	);
+	await initialTabToolsMenu.getByRole("searchbox", { name: "Search Tabs" }).fill("one");
+	assert.equal(
+		await initialTabToolsMenu.getByRole("menuitem", { name: "Recently Closed", exact: true }).getAttribute("aria-expanded"),
+		"true",
+		"Searching should include recently closed tabs",
+	);
 	await assertNativePagePreviewVisible();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
