@@ -1095,6 +1095,8 @@ export class TaskRequirementAnalyzer {
 			/\b(repository|repo|git|deploy|publish|shell command|run the command|browser automation)\b/.test(
 				normalized,
 			) ||
+			(/\b(review|inspect|check|analy[sz]e)\b/.test(normalized) &&
+				/\b(github|gitlab|pull request|pr\s*#\d+)\b/.test(normalized)) ||
 			/\b(edit|open|read|write)\b.{0,24}\bfiles?\b/.test(normalized)
 		)
 			mark("tool_use", 0.88);

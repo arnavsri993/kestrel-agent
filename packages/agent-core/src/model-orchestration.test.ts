@@ -250,7 +250,7 @@ describe("adaptive model orchestration", () => {
 			defaultModel: "gpt-catalog",
 			capabilities: {
 				streaming: true,
-				tools: false,
+				tools: true,
 				images: false,
 				audio: false,
 				documents: false,
@@ -267,7 +267,7 @@ describe("adaptive model orchestration", () => {
 					capabilities: {
 						capabilityProvenance: "confirmed",
 						streaming: true,
-						tools: false,
+						tools: true,
 						images: false,
 						audio: false,
 						documents: false,
@@ -305,6 +305,15 @@ describe("adaptive model orchestration", () => {
 			"codex-account-d",
 			"codex-account-a",
 		]);
+		const review = new TaskRequirementAnalyzer().analyze(
+			"review-pr-802",
+			"Review GitHub PR #802. Inspect the diff before giving findings.",
+		);
+		expect(review.requiresTools).toBe(true);
+		expect(router.route(review, { role: "worker" })).toMatchObject({
+			providerId: "codex",
+			endpointId: "codex-account-b",
+		});
 		database.close();
 	});
 
