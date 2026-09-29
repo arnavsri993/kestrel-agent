@@ -112,6 +112,17 @@ export function BrowserWorkspace({
   const reducedMotion = useReducedMotion() ?? false;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
+  const focusAddress = useCallback(() => {
+    const input = addressRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+    const valueAtFocus = input.value;
+    window.requestAnimationFrame(() => {
+      if (document.activeElement === input && input.value === valueAtFocus)
+        input.select();
+    });
+  }, []);
   const findRef = useRef<HTMLInputElement | null>(null);
   const findTabIdRef = useRef<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -567,7 +578,7 @@ export function BrowserWorkspace({
   useEffect(
     () =>
       window.kestrel.onBrowserCommand((command) => {
-        if (command === "focus-address") addressRef.current?.focus();
+        if (command === "focus-address") focusAddress();
         else if (command === "new-agent") onNewAgent();
         else if (command === "open-commands") onOpenMenu();
         else if (command === "open-history") openHistoryPopover();
@@ -586,6 +597,7 @@ export function BrowserWorkspace({
       }),
     [
       activeTab,
+      focusAddress,
       onNewAgent,
       onOpenMenu,
       openHistoryPopover,
@@ -651,7 +663,7 @@ export function BrowserWorkspace({
         }
         if (event.key.toLowerCase() === "d") {
           event.preventDefault();
-          addressRef.current?.focus();
+          focusAddress();
           return;
         }
       }
@@ -724,7 +736,7 @@ export function BrowserWorkspace({
 
       if (key === "l" || (event.ctrlKey && key === "e")) {
         event.preventDefault();
-        addressRef.current?.focus();
+        focusAddress();
       } else if (key === "t") {
         event.preventDefault();
         if (event.shiftKey) {
@@ -816,6 +828,7 @@ export function BrowserWorkspace({
     stop,
     stopFindInPage,
     findOpen,
+    focusAddress,
     bookmarkDialogPresent,
     toggleBookmarkFromChrome,
     zoomIn,

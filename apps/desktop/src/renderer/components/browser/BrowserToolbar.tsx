@@ -391,6 +391,7 @@ export function BrowserToolbar({
   const overlayOpenRef = useRef(false);
   const suggestionsCloseTimerRef = useRef<number | null>(null);
   const selectAddressAfterPointerRef = useRef(false);
+  const replacingAddressRef = useRef(false);
   const inlineCompletionRef = useRef<{ typed: string; completed: string } | null>(
     null,
   );
@@ -485,6 +486,7 @@ export function BrowserToolbar({
 
   useEffect(() => {
     setAddress(tab.url);
+    replacingAddressRef.current = false;
     setSuggestionQuery("");
     setSuggestionsOpen(false);
     setSuggestionFilter("all");
@@ -722,6 +724,10 @@ export function BrowserToolbar({
     // same suffix back after Backspace/Delete, which is one of the most
     // frustrating omnibox behaviours in otherwise good browser UIs.
     if (inputType?.startsWith("delete")) return;
+    // A full-URL replacement must remain exactly what the person types. An
+    // inline match for the old URL can otherwise expand the first character
+    // and swallow the following keystrokes.
+    if (replacingAddressRef.current) return;
     if (!addressBarSuggestionsEnabled) return;
     const nextSuggestions = getAddressBarSuggestions({
       ...suggestionSource,
@@ -744,6 +750,11 @@ export function BrowserToolbar({
   function handleAddressKeyDown(
     event: ReactKeyboardEvent<HTMLInputElement>,
   ): void {
+    const input = event.currentTarget;
+    if (event.key.length === 1 && !event.metaKey && !event.ctrlKey &&
+        !event.altKey && input.value && input.selectionStart === 0 &&
+        input.selectionEnd === input.value.length)
+      replacingAddressRef.current = true;
     if (event.key === "Escape" && (showSuggestions || inlineCompletionRef.current)) {
       event.preventDefault();
       const inline = inlineCompletionRef.current;
@@ -954,14 +965,25 @@ export function BrowserToolbar({
             autoCorrect="off"
             spellCheck={false}
             onPointerDown={(event) => {
-              // The browser's default click placement runs after onFocus and
-              // collapses the selection that onFocus creates. Remember a
-              // first pointer focus so the click handler can restore the
-              // full-URL selection after that default placement.
-              selectAddressAfterPointerRef.current =
-                document.activeElement !== event.currentTarget;
+              // A click should select the whole address even when this input
+              // kept focus across a tab change. Native click placement runs
+              // after onFocus, so restore the selection in onClick.
+              selectAddressAfterPointerRef.current = event.button === 0;
+            }}
+            onBeforeInput={(event) => {
+              const input = event.currentTarget;
+              if (input.value && input.selectionStart === 0 &&
+                  input.selectionEnd === input.value.length)
+                replacingAddressRef.current = true;
+            }}
+            onPaste={(event) => {
+              const input = event.currentTarget;
+              if (input.value && input.selectionStart === 0 &&
+                  input.selectionEnd === input.value.length)
+                replacingAddressRef.current = true;
             }}
             onFocus={(event) => {
+              replacingAddressRef.current = false;
               clearSuggestionsCloseTimer();
               const input = event.currentTarget;
               const needsUrlReset = Boolean(tab.url && address !== tab.url);
@@ -972,7 +994,8 @@ export function BrowserToolbar({
               setSuggestionsOpen(addressBarSuggestionsEnabled);
               inlineCompletionRef.current = null;
               const selectAll = () => {
-                if (document.activeElement === input) {
+                if (document.activeElement === input &&
+                    (!needsUrlReset || input.value === tab.url)) {
                   input.setSelectionRange(0, input.value.length);
                 }
               };
@@ -982,16 +1005,22 @@ export function BrowserToolbar({
             onClick={(event) => {
               if (!selectAddressAfterPointerRef.current) return;
               selectAddressAfterPointerRef.current = false;
+              replacingAddressRef.current = true;
               const input = event.currentTarget;
+              const valueAtClick = input.value;
               const selectAll = () => {
-                if (document.activeElement === input) input.select();
+                if (document.activeElement === input && input.value === valueAtClick)
+                  input.select();
               };
               // Select synchronously so an immediate ⌘C copies the URL, then
-              // repeat after React's controlled-value update settles.
+              // repeat only if the user has not started typing meanwhile.
               selectAll();
               window.requestAnimationFrame(selectAll);
             }}
-            onBlur={scheduleCloseSuggestions}
+            onBlur={() => {
+              replacingAddressRef.current = false;
+              scheduleCloseSuggestions();
+            }}
             onKeyDown={handleAddressKeyDown}
             onChange={handleAddressChange}
           />

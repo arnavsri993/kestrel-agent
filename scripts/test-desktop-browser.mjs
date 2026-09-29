@@ -1856,6 +1856,29 @@ try {
 		end: selection.length,
 		length: selection.length,
 	});
+	// The address can remain focused after a tab switch. A second click must
+	// still select the entire URL so typing replaces it immediately.
+	await addressInput.evaluate((node) =>
+		node.setSelectionRange(node.value.length, node.value.length),
+	);
+	await addressInput.click();
+	await page.waitForFunction(() => {
+		const input = document.querySelector("#browser-address-input");
+		return input instanceof HTMLInputElement &&
+			input.selectionStart === 0 && input.selectionEnd === input.value.length;
+	});
+	await addressInput.press("x");
+	assert.equal(await addressInput.inputValue(), "x");
+	await addressInput.fill(currentAddress);
+	await addressInput.evaluate((node) =>
+		node.setSelectionRange(node.value.length, node.value.length),
+	);
+	await page.keyboard.press(process.platform === "darwin" ? "Meta+L" : "Control+L");
+	await page.waitForFunction(() => {
+		const input = document.querySelector("#browser-address-input");
+		return input instanceof HTMLInputElement &&
+			input.selectionStart === 0 && input.selectionEnd === input.value.length;
+	});
 	await addressInput.press("Meta+C");
 	assert.equal(
 		await application.evaluate(({ clipboard }) => clipboard.readText()),
@@ -2503,6 +2526,20 @@ try {
 		`.browser-tab[data-tab-id="${detachableTabId}"]`,
 	);
 	await detachableTab.waitFor();
+	await detachableTab.hover();
+	// Real gestures often start after the hover preview opens. That native
+	// popup must not intercept the pointer on its way out of the tab rail.
+	const previewDeadline = Date.now() + 5_000;
+	let previewVisible = false;
+	while (Date.now() < previewDeadline && !previewVisible) {
+		previewVisible = await application.evaluate(({ BrowserWindow }) =>
+			BrowserWindow.getAllWindows().some((candidate) =>
+				candidate.webContents.getURL().startsWith("data:text/html"),
+			),
+		);
+		if (!previewVisible) await page.waitForTimeout(75);
+	}
+	assert(previewVisible, "Inactive tab hover preview did not open");
 	const detachableBounds = await detachableTab.boundingBox();
 	assert(detachableBounds);
 	const detachX = detachableBounds.x + detachableBounds.width / 2;
