@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	rmSync,
@@ -39,6 +40,17 @@ function readMacQuarantine(path) {
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
 const userData = join(root, "user-data");
+const testHome = join(root, "home");
+const testCodexHome = join(root, "codex-home");
+const testTempDirectory = join(root, "tmp");
+mkdirSync(testHome, { recursive: true });
+mkdirSync(testCodexHome, { recursive: true });
+mkdirSync(testTempDirectory, { recursive: true });
+const testEnvironment = Object.fromEntries(
+	["PATH", "SHELL", "LANG", "LC_ALL", "TERM", "CI"].flatMap((key) =>
+		process.env[key] === undefined ? [] : [[key, process.env[key]]],
+	),
+);
 const detachedPlacementCapturePath = join(
 	userData,
 	"detached-window-placement.json",
@@ -206,14 +218,19 @@ async function launch() {
 		executablePath,
 		args: launchArgs,
 		env: {
-			...process.env,
+			...testEnvironment,
+			HOME: testHome,
+			USER: "kestrel-browser-test",
+			LOGNAME: "kestrel-browser-test",
+			CODEX_HOME: testCodexHome,
+			TMPDIR: testTempDirectory,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
-		KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-		KESTREL_TEST_USER_DATA: userData,
-		KESTREL_TEST_DETACHED_WINDOW_PLACEMENT_PATH: detachedPlacementCapturePath,
-		KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
-		KESTREL_REAL_USER_PROFILE: "1",
+			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+			KESTREL_TEST_USER_DATA: userData,
+			KESTREL_TEST_DETACHED_WINDOW_PLACEMENT_PATH: detachedPlacementCapturePath,
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
+			KESTREL_REAL_USER_PROFILE: "1",
 		},
 	});
 	page = await application.firstWindow();
@@ -688,8 +705,35 @@ async function assertKestrelSidebarResize() {
 	await page.mouse.move(
 		handleBox.x + handleBox.width / 2 + (targetWidth - initial.width),
 		handleBox.y + 120,
-		{ steps: 3 },
+		{ steps: 10 },
 	);
+	// Confirm the final physical move changed the live layout before pointerup
+	// persists it. This keeps the real pointer path under test without assuming
+	// a particular native input-dispatch cadence.
+	try {
+		await page.waitForFunction((expected) => {
+			const sidebar = document.querySelector(".kestrel-sidebar");
+			return sidebar && Math.abs(sidebar.getBoundingClientRect().width - expected) <= 1;
+		}, targetWidth);
+	} catch (error) {
+		const actual = await page.evaluate(() => {
+			const sidebar = document.querySelector(".kestrel-sidebar");
+			const shell = document.querySelector(".ai-browser-app");
+			return {
+				width: sidebar?.getBoundingClientRect().width ?? null,
+				storedWidth: localStorage.getItem("kestrel:navigation-sidebar-width"),
+				presentedWidth: shell?.style.getPropertyValue("--kestrel-sidebar-user-width") ?? null,
+				ariaValueNow: sidebar
+					?.querySelector(".kestrel-sidebar-resize-handle")
+					?.getAttribute("aria-valuenow") ?? null,
+				resizing: shell?.classList.contains("kestrel-sidebar-resizing") ?? false,
+			};
+		});
+		throw new Error(
+			`Sidebar pointer resize did not reach ${targetWidth}px: ${JSON.stringify(actual)}`,
+			{ cause: error },
+		);
+	}
 	await page.mouse.up();
 	await page.waitForFunction(() =>
 		!document
@@ -2602,19 +2646,21 @@ try {
 	);
 	const clamp = (value, minimum, maximum) =>
 		Math.round(Math.max(minimum, Math.min(value, maximum)));
+	const detachedWidth = Math.min(1320, detachedPlacement.workArea.width);
+	const detachedHeight = Math.min(860, detachedPlacement.workArea.height);
 	const expectedDetachedBounds = {
 		x: clamp(
 			detachedPlacement.cursor.x - 180,
 			detachedPlacement.workArea.x,
-			detachedPlacement.workArea.x + detachedPlacement.workArea.width - 1320,
+			detachedPlacement.workArea.x + detachedPlacement.workArea.width - detachedWidth,
 		),
 		y: clamp(
 			detachedPlacement.cursor.y - 20,
 			detachedPlacement.workArea.y,
-			detachedPlacement.workArea.y + detachedPlacement.workArea.height - 860,
+			detachedPlacement.workArea.y + detachedPlacement.workArea.height - detachedHeight,
 		),
-		width: 1320,
-		height: 860,
+		width: detachedWidth,
+		height: detachedHeight,
 	};
 	assert.deepEqual(
 		detachedPlacement.bounds,

@@ -125,6 +125,8 @@ export function BrowserWorkspace({
   });
   const [tabDragActive, setTabDragActive] = useState(false);
   const tabDragActiveRef = useRef(false);
+  const [sidebarResizeActive, setSidebarResizeActive] = useState(false);
+  const sidebarResizeActiveRef = useRef(false);
   const [organizeTabsPreview, setOrganizeTabsPreview] =
     useState<UserBrowserTabOrganizationPreview | null>(null);
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
@@ -328,7 +330,7 @@ export function BrowserWorkspace({
       !activeAppPage &&
       !activeFilePage,
   );
-  const nativePageVisible =
+  const nativePageCanBeVisible =
     nativePageEligible &&
     // Keep the renderer in the input path while a tab is being dragged;
     // native WebContentsView siblings sit above the renderer surface.
@@ -340,6 +342,7 @@ export function BrowserWorkspace({
     !organizeTabsPresent &&
     !bookmarkDialogPresent &&
     !extensionCompatibilityDialogPresent;
+  const nativePageVisible = nativePageCanBeVisible && !sidebarResizeActive;
   const showChromeWebStoreInstall = Boolean(
     nativePageEligible &&
       activeTab?.url &&
@@ -458,7 +461,10 @@ export function BrowserWorkspace({
     };
     const targetTabId = activeTab?.id ?? null;
     const targetVisible =
-      visibleOverride ?? (!tabDragActiveRef.current && nativePageVisible);
+      visibleOverride ??
+      (!tabDragActiveRef.current &&
+        !sidebarResizeActiveRef.current &&
+        nativePageCanBeVisible);
     const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${targetVisible}:${targetTabId ?? ""}`;
     if (lastBoundsRef.current === key) return;
     lastBoundsRef.current = key;
@@ -478,7 +484,7 @@ export function BrowserWorkspace({
         }
       })
       .catch(() => undefined);
-  }, [activeTab?.id, nativePageVisible, setContentBounds]);
+  }, [activeTab?.id, nativePageCanBeVisible, setContentBounds]);
 
   const handleTabDragStateChange = useCallback((dragging: boolean) => {
     tabDragActiveRef.current = dragging;
@@ -510,7 +516,23 @@ export function BrowserWorkspace({
     const mutationObserver = new MutationObserver(syncFromRef);
     if (root) mutationObserver.observe(root, { childList: true });
     const appShell = node.closest(".ai-browser-app");
-    const shellObserver = new MutationObserver(scheduleFromRef);
+    const syncSidebarResizeState = () => {
+      const resizing = appShell?.classList.contains("kestrel-sidebar-resizing") ?? false;
+      if (sidebarResizeActiveRef.current !== resizing) {
+        sidebarResizeActiveRef.current = resizing;
+        setSidebarResizeActive(resizing);
+      }
+      if (resizing) {
+        // The embedded page is a native sibling above the renderer. Remove it
+        // before the pointer crosses the sidebar edge so DOM pointer capture
+        // continues to receive the full resize drag. The existing preview path
+        // keeps the page visually continuous while it is temporarily hidden.
+        syncBoundsRef.current(false);
+        return;
+      }
+      scheduleFromRef();
+    };
+    const shellObserver = new MutationObserver(syncSidebarResizeState);
     if (appShell) {
       shellObserver.observe(appShell, {
         attributes: true,
@@ -531,6 +553,7 @@ export function BrowserWorkspace({
     window.addEventListener("resize", syncFromRef);
     const frame = window.requestAnimationFrame(syncFromRef);
     const settleTimer = window.setTimeout(syncFromRef, 320);
+    syncSidebarResizeState();
     syncFromRef();
     return () => {
       observer.disconnect();

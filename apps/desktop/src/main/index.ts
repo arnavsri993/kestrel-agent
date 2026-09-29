@@ -2044,10 +2044,12 @@ function writeDetachedBrowserWindowPlacementForTest(
 }
 
 function detachedBrowserWindowPlacement(): DetachedBrowserWindowPlacement {
-	const width = 1320;
-	const height = 860;
 	const cursor = screen.getCursorScreenPoint();
 	const workArea = screen.getDisplayNearestPoint(cursor).workArea;
+	// A tear-off must stay usable on a smaller external display instead of
+	// relying on macOS to silently resize an oversized BrowserWindow request.
+	const width = Math.min(1320, workArea.width);
+	const height = Math.min(860, workArea.height);
 	const clamp = (value: number, minimum: number, maximum: number) =>
 		Math.round(Math.max(minimum, Math.min(value, maximum)));
 	const placement = {
@@ -2076,8 +2078,11 @@ function createDetachedBrowserWindow(
   const placement = detachedBrowserWindowPlacement();
   const window = new BrowserWindow({
     ...placement.bounds,
-    minWidth: 920,
-    minHeight: 680,
+    // Do not let a minimum larger than the active display undo the fitted
+    // placement above. The renderer remains responsive below the preferred
+    // desktop size.
+    minWidth: Math.min(920, placement.bounds.width),
+    minHeight: Math.min(680, placement.bounds.height),
     show: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     // Keep the detached browser window on the same native-material footing as
