@@ -40,6 +40,10 @@ try {
 			LOGNAME: "kestrel-test",
 			CODEX_HOME: testCodexHome,
 			KESTREL_DISABLE_UPDATES: "1",
+		// This onboarding test covers an intentionally unconfigured profile. Do
+		// not let an Ollama instance running on the developer or CI host turn it
+		// into a different, ready-to-send experience.
+		KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 			KESTREL_TEST_USER_DATA: join(root, "user-data"),
 			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
@@ -481,9 +485,16 @@ try {
 	await page
 		.getByRole("heading", { name: /You're set\.|Ready for a first task/ })
 		.waitFor();
-	await page
-		.getByRole("button", { name: "Finish with setup help" })
-		.click({ timeout: 120_000 });
+	const finishWithSetupHelp = page.getByRole("button", {
+		name: "Finish with setup help",
+	});
+	await finishWithSetupHelp.waitFor();
+	assert.equal(
+		await finishWithSetupHelp.isEnabled(),
+		true,
+		"An unconfigured profile must be able to leave setup and explore Kestrel.",
+	);
+	await finishWithSetupHelp.click();
 	await page
 		.getByRole("button", { name: "New chat", exact: true })
 		.first()
@@ -597,11 +608,16 @@ try {
 		await newAgentButton.getAttribute("aria-keyshortcuts"),
 		"Meta+N",
 	);
-	await page
-		.getByRole("button", {
-			name: /Add (?:context files|files or choose folder)/,
-		})
-		.waitFor();
+	await page.getByRole("button", { name: "Connect a model" }).waitFor();
+	assert.equal(
+		await page
+			.getByRole("button", {
+				name: /Add (?:context files|files or choose folder)/,
+			})
+			.count(),
+		0,
+		"A first-run composer must make its unavailable model route explicit instead of offering task context it cannot send.",
+	);
 	await page.locator("#runtime-prompt").waitFor();
 	assert.equal(await page.getByRole("button", { name: /Review a project/ }).count(), 0);
 	assert.equal(await page.getByRole("button", { name: /Plan a task/ }).count(), 0);

@@ -944,6 +944,10 @@ function localRuntimeManager(): LocalRuntimeManager {
     (progress) => {
       mainWindow?.webContents.send("kestrel:local-runtime-progress", progress);
     },
+    {
+      modelDiscoveryDisabled:
+        process.env.KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY === "1",
+    },
   );
   return managedLocalRuntime;
 }
@@ -2611,6 +2615,10 @@ async function initializeCore(
       throw new Error("Agent Core returned no workspace state during startup.");
     setAgentState(response.snapshot.agentState);
     publishMacWidgetSnapshot(response.snapshot);
+    // Core restarts can change the available model routes while the renderer's
+    // task composer remains mounted. Send the same authoritative snapshot used
+    // for other runtime changes so it can refresh that catalog immediately.
+    mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
   } catch (error) {
     // A bootstrap can fail after the utility process has been created. Tear it
     // down before the recovery dialog retries, or the next attempt sees a
@@ -2666,12 +2674,6 @@ async function selectPluginDirectory(
 async function restartCoreAfterGrantChange(): Promise<Project[]> {
   await supervisor.stop();
   await initializeCore();
-  const response = await supervisor.request({ type: "snapshot" });
-  if (response.ok && response.snapshot) {
-    setAgentState(response.snapshot.agentState);
-    publishMacWidgetSnapshot(response.snapshot);
-    mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
-  }
   return new WorkspaceGrantStore(
     join(app.getPath("userData"), "workspace-grants.json"),
   ).statusList();

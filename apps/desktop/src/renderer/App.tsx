@@ -3671,6 +3671,38 @@ function RuntimeConversation({
 		if (previousRefreshRevisionRef.current === refreshRevision) return;
 		previousRefreshRevisionRef.current = refreshRevision;
 		if (!visible) return;
+		let cancelled = false;
+		// Settings updates arrive as snapshots while this conversation remains
+		// mounted. Re-read the account catalog here so a newly enabled route is
+		// usable from the composer immediately, without asking someone to reload
+		// Kestrel or reopen their task.
+		void (async () => {
+			try {
+				const providerResponse = await window.kestrel.request({
+					type: "runtime-list-providers",
+				});
+				if (cancelled) return;
+				if (!providerResponse.ok || !("providerAccounts" in providerResponse)) {
+					setProviderAccountsLoaded(true);
+					return;
+				}
+				const accounts = providerResponse.providerAccounts ?? [];
+				setProviderAccounts(accounts);
+				setProviderAccountsLoaded(true);
+				if (!catalogNeedsBackgroundRefresh(accounts)) return;
+				const refreshed = await window.kestrel.request({
+					type: "runtime-refresh-provider-models",
+				});
+				if (
+					!cancelled &&
+					refreshed.ok &&
+					"providerAccounts" in refreshed
+				)
+					setProviderAccounts(refreshed.providerAccounts ?? []);
+			} catch {
+				if (!cancelled) setProviderAccountsLoaded(true);
+			}
+		})();
 		const sessionId = activeSessionIdRef.current;
 		void Promise.all([
 			refreshSessions(),
@@ -3685,8 +3717,11 @@ function RuntimeConversation({
 						cause instanceof Error
 							? cause.message
 							: "Could not refresh the recovered task.",
-					);
-			});
+						);
+				});
+		return () => {
+			cancelled = true;
+		};
 	}, [refreshRevision, visible]);
 
 	useEffect(() => {

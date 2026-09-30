@@ -68,6 +68,11 @@ interface ManagerDependencies {
 	manifest?: LocalRuntimeManifest;
 	now?: () => Date;
 	origin?: string;
+	/**
+	 * Keeps disposable test profiles from probing a developer's loopback
+	 * service. Production construction leaves discovery enabled.
+	 */
+	modelDiscoveryDisabled?: boolean;
 }
 
 function loopbackOllamaOrigin(value: string): URL {
@@ -178,6 +183,7 @@ export class LocalRuntimeManager {
 	private readonly now: () => Date;
 	private readonly ollamaOrigin: string;
 	private readonly ollamaHost: string;
+	private readonly modelDiscoveryDisabled: boolean;
 	private child: ChildProcess | null = null;
 	private operation: AbortController | null = null;
 
@@ -206,6 +212,7 @@ export class LocalRuntimeManager {
 		);
 		this.ollamaOrigin = origin.origin;
 		this.ollamaHost = origin.host;
+		this.modelDiscoveryDisabled = dependencies.modelDiscoveryDisabled ?? false;
 	}
 
 	private installRoot(): string {
@@ -244,6 +251,7 @@ export class LocalRuntimeManager {
 		timeoutMs = 1_500,
 		signal?: AbortSignal,
 	): Promise<LocalModelSummary[]> {
+		if (this.modelDiscoveryDisabled) return [];
 		const response = await this.fetcher(`${this.ollamaOrigin}/api/tags`, {
 			signal: signal
 				? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
@@ -284,6 +292,16 @@ export class LocalRuntimeManager {
 	async status(): Promise<LocalRuntimeStatus> {
 		const automaticSupported = this.automaticSupported();
 		const managedRuntime = await this.hasManagedInstall();
+		if (this.modelDiscoveryDisabled)
+			return {
+				automaticSupported,
+				managedRuntime,
+				ollamaAvailable: false,
+				source: managedRuntime ? "managed" : "none",
+				runtimeVersion: this.manifest.version,
+				runtimeDownloadBytes: this.manifest.bytes,
+				localModels: [],
+			};
 		try {
 			const localModels = await this.listModels();
 			const verification = await this.readVerification(localModels);
@@ -745,6 +763,7 @@ export class LocalRuntimeManager {
 	}
 
 	async startManagedIfInstalled(): Promise<void> {
+		if (this.modelDiscoveryDisabled) return;
 		if (!(await this.hasManagedInstall())) return;
 		try {
 			await this.listModels(700);
