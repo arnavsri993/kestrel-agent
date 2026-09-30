@@ -62,6 +62,28 @@ function discovered(id: string): DiscoveredModel {
 }
 
 describe("account-aware model catalog", () => {
+	it("waits for every discovery worker to settle after cancellation", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const controller = new AbortController();
+		let release!: () => void;
+		let abortFast!: (error: Error) => void;
+		const fast = provider({ id: "fast", providerId: "fixture", accountId: "fast", displayName: "Fast", discovery: () => new Promise((_resolve, reject) => { abortFast = reject; }) });
+		const slow = provider({ id: "slow", providerId: "fixture", accountId: "slow", displayName: "Slow", discovery: async () => { await new Promise<void>(resolve => { release = resolve; }); return []; } });
+		const catalog = new ModelCatalog(database, [fast, slow]);
+		let settled = false;
+		const refresh = catalog.refresh([fast, slow], undefined, controller.signal);
+		void refresh.then(() => { settled = true; }, () => { settled = true; });
+		try {
+			controller.abort(new Error("Cancelled"));
+			abortFast(new Error("Cancelled"));
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(settled).toBe(false);
+			release();
+			await expect(refresh).rejects.toThrow("Cancelled");
+		} finally { release(); database.close(); }
+	});
+
 	it("keeps matching provider model IDs isolated by account", async () => {
 		let first: DiscoveryState = { models: [discovered("shared"), discovered("a-only")] };
 		let second: DiscoveryState = { models: [discovered("shared"), discovered("b-only")] };

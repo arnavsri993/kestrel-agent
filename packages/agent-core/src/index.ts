@@ -257,6 +257,7 @@ export class AgentCore {
 	readonly runtime: AgentRuntime;
 	readonly providerPool: ProviderPool;
 	readonly modelCatalog: ModelCatalog;
+	private automaticCatalogRefresh: Promise<void> | undefined;
 	readonly accountAvailability: AccountAvailabilityMonitor;
 	readonly routingOutcomes: RoutingOutcomeStore;
 	readonly usageGovernor: UsageGovernor;
@@ -597,8 +598,10 @@ export class AgentCore {
 			lifeContext: this.lifeContext,
 			userModel: this.userModel,
 			writingProfile: this.writingProfile,
-			resolveRoute: (taskId, prompt, providerIds, role) =>
-				this.automaticRoute(taskId, prompt, providerIds, [], role),
+			resolveRoute: async (taskId, prompt, providerIds, role) => {
+				await this.refreshAutomaticModelCatalog();
+				return this.automaticRoute(taskId, prompt, providerIds, [], role);
+			},
 			providerAllowed: (providerId, poolId) =>
 				this.providerAllowed(providerId, poolId),
 			now: () => this.now(),
@@ -669,7 +672,8 @@ export class AgentCore {
 			() => this.configuration.current().workflows.maximumTurns,
 			this.groupMemory,
 			this.memorySubstrate,
-			() => {
+			async () => {
+				await this.refreshAutomaticModelCatalog();
 				this.modelRegistry.syncProviderCatalog(
 					this.providerPool.list(),
 					this.modelCatalog,
@@ -974,6 +978,34 @@ export class AgentCore {
 		};
 	}
 
+	/** Resolve expired account entitlements before an Auto task selects a model. */
+	private async refreshAutomaticModelCatalog(): Promise<void> {
+		if (this.automaticCatalogRefresh) return this.automaticCatalogRefresh;
+		const controller = new AbortController();
+		let timer: ReturnType<typeof setTimeout>;
+		const deadline = new Promise<void>((resolve) => {
+			timer = setTimeout(() => {
+				controller.abort(new Error("Automatic model catalog refresh timed out."));
+				resolve();
+			}, 10_000);
+			timer.unref?.();
+		});
+		const work = this.refreshStaleProviderModels(controller.signal)
+			.then(() => undefined)
+			.catch(() => {
+				// An incomplete refresh leaves stale models ineligible for Auto.
+			});
+		const refresh = Promise.race([work, deadline]);
+		this.automaticCatalogRefresh = refresh;
+		void work.finally(() => {
+			clearTimeout(timer);
+			// Keep one discovery in flight even if a provider ignores cancellation.
+			if (this.automaticCatalogRefresh === refresh)
+				this.automaticCatalogRefresh = undefined;
+		});
+		await refresh;
+	}
+
 	private modelRoutingDecision(
 		taskId: string,
 		decision: ReturnType<AdaptiveModelRouter["route"]>,
@@ -1023,6 +1055,7 @@ export class AgentCore {
 				category !== "verification"
 			)
 				return undefined;
+			await this.refreshAutomaticModelCatalog();
 			this.modelRegistry.syncProviderCatalog(
 				this.providerPool.list(),
 				this.modelCatalog,
@@ -1151,7 +1184,7 @@ export class AgentCore {
 		return providerAccounts;
 	}
 
-	/** Refresh only missing or expired dynamic catalogs at process startup. */
+	/** Refresh only missing or expired dynamic catalogs before routing. */
 	async refreshStaleProviderModels(signal?: AbortSignal) {
 		const providerAccounts = await this.modelCatalog.refreshStale(
 			this.providerPool.list(),
@@ -1238,6 +1271,7 @@ export class AgentCore {
 			...(request.firstName ? { firstName: request.firstName } : {}),
 		};
 		const prompt = newTabGreetingUserPrompt(context);
+		await this.refreshAutomaticModelCatalog();
 		const automatic = this.automaticRoute(
 			"new-tab-greeting",
 			prompt,
@@ -1332,6 +1366,7 @@ export class AgentCore {
 		const prompt = browserTabFolderNamingPrompt(groups);
 		let automatic: ReturnType<AgentCore["automaticRoute"]>;
 		try {
+			await this.refreshAutomaticModelCatalog();
 			automatic = this.automaticRoute(
 				"browser-tab-folder-names",
 				"Generate concise, topic-specific labels for related browser-tab clusters.",
@@ -2357,6 +2392,7 @@ export class AgentCore {
      const task = { ...prepared.task, status: "running" as const, updatedAt: this.now() };
      this.deps.database.upsertWorkingTask(task);
      try {
+      if (request.model === "auto") await this.refreshAutomaticModelCatalog();
       const route = request.model === "auto" ? this.automaticRoute(task.id, prepared.prompt, request.providerIds) : undefined;
       if (route?.route.reviewRequired) throw new Error("This route requires independent verification. Source review cannot bypass that requirement.");
       const result = await this.agentLoop.run({ sessionId: request.sessionId, workingTaskId: task.id,
@@ -2461,6 +2497,7 @@ export class AgentCore {
 					const priorMessage = this.runtime.retryLastTurnMessage(
 						request.sessionId,
 					);
+					if (request.model === "auto") await this.refreshAutomaticModelCatalog();
 					const route =
 						request.model === "auto"
 							? this.automaticRoute(
@@ -3932,6 +3969,7 @@ export class AgentCore {
 						const selectedProviderIds = personality.providerIds?.length
 							? personality.providerIds
 							: request.providerIds;
+						if (selectedModel === "auto") await this.refreshAutomaticModelCatalog();
 						route =
 							selectedModel === "auto"
 								? this.automaticRoute(

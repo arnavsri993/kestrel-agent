@@ -561,7 +561,8 @@ export class CodexAppServerProvider {
 		try {
 			await this.ensureStarted();
 			const bridged = Boolean(request.tools?.length);
-			const sessionKey = bridged ? `tool-step-${randomUUID()}` : request.metadata?.session_id ?? `call-${randomUUID()}`;
+			const isolated = bridged || request.metadata?.kestrel_final_turn === "1";
+			const sessionKey = isolated ? `tool-step-${randomUUID()}` : request.metadata?.session_id ?? `call-${randomUUID()}`;
 			const workspaceRoot = request.metadata?.workspace_root;
 			const binding = await this.ensureThread(
 				sessionKey,
@@ -582,7 +583,7 @@ export class CodexAppServerProvider {
 					finishReason: output.toolCalls.length ? "tool_calls" : "stop",
 				};
 			} finally {
-				if (bridged) {
+				if (isolated) {
 					this.threads.delete(sessionKey);
 					// Each tool step receives only the current authorized Kestrel transcript.
 					// Never retain a provider conversation after source revocation or rollback.
@@ -936,8 +937,8 @@ export class CodexAppServerProvider {
 					approvalPolicy: "never",
 					sandbox: "read-only",
 					cwd: workspaceRoot ?? this.scratchRoot!,
-					ephemeral: Boolean(request.tools?.length),
-					baseInstructions: request.tools?.length ? CODEX_TOOL_BRIDGE_INSTRUCTIONS : this.browserMcp
+					ephemeral: Boolean(request.tools?.length) || request.metadata?.kestrel_final_turn === "1",
+					baseInstructions: request.metadata?.kestrel_final_turn === "1" ? READ_ONLY_INSTRUCTIONS : request.tools?.length ? CODEX_TOOL_BRIDGE_INSTRUCTIONS : this.browserMcp
 						? BROWSER_MCP_INSTRUCTIONS
 						: READ_ONLY_INSTRUCTIONS,
 				},

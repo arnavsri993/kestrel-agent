@@ -449,12 +449,16 @@ export class ModelCatalog {
 			}
 		};
 		try {
-			await Promise.all(
+			const settled = await Promise.allSettled(
 				Array.from(
 					{ length: Math.min(MAX_CONCURRENT_DISCOVERIES, targets.length) },
 					() => worker(),
 				),
 			);
+			// Cancellation must not release the shared refresh while a sibling
+			// provider is still unwinding its discovery request.
+			const failed = settled.find(result => result.status === "rejected");
+			if (failed?.status === "rejected") throw failed.reason;
 		} finally {
 			// Persist every completed endpoint even if a startup deadline aborts one
 			// slower discovery request. The next bounded refresh can resume safely.

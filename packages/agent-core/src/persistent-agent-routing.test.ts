@@ -97,3 +97,76 @@ it("does not let model catalog capabilities grant tools to a text-only transport
   expect(profile?.capabilities.tool_use).toBe(0);
  } finally { database.close(); }
 });
+
+it("refreshes expired account catalogs before Auto launches concurrent tool tasks", async () => {
+ const database = new KestrelDatabase(":memory:", createEncryptionKey());
+ let now = new Date("2026-09-30T12:00:00Z");
+ const worker = provider("catalog-worker", true);
+ const discovered = [{ id: worker.defaultModel!, availability: "available" as const, source: "protocol" as const, capabilities: { capabilityProvenance: "confirmed" as const, tools: true } }];
+ let release!: () => void;
+ const pending = new Promise<void>(resolve => { release = resolve; });
+ worker.discoverModels = vi.fn(async () => {
+  if (now.getMinutes() === 16) await pending;
+  return discovered;
+ });
+ const core = new AgentCore({ database, seedDevelopmentFixtures: false, modelProviders: [worker], now: () => now.toISOString() });
+ try {
+  await core.refreshProviderModels();
+  now = new Date("2026-09-30T12:16:00Z");
+  const sessions = [1, 2].map(index => core.runtime.createSession({ title: `Review ${index}`, kind: "agent", allowedTools: ["tools.search"] }));
+  const running = sessions.map(session => core.handle({ type: "runtime-run-agent", sessionId: session.id, message: "Inspect the available tools", model: "auto", providerIds: ["auto"] }));
+  await vi.waitFor(() => expect(worker.discoverModels).toHaveBeenCalledTimes(2));
+  release();
+  const results = await Promise.all(running);
+  expect(results.every(result => result.ok), JSON.stringify(results)).toBe(true);
+  expect(worker.discoverModels).toHaveBeenCalledTimes(2);
+  expect(worker.complete).toHaveBeenCalledTimes(2);
+  expect(core.modelCatalog.list()[0]?.discovery.state).toBe("fresh");
+ } finally { release(); await core.close(); }
+});
+
+it("keeps an expired model ineligible when its catalog refresh fails", async () => {
+ const database = new KestrelDatabase(":memory:", createEncryptionKey());
+ let now = new Date("2026-09-30T12:00:00Z");
+ const worker = provider("catalog-worker", true);
+ worker.discoverModels = vi.fn(async () => {
+  if (now.getMinutes() === 16) throw new Error("Catalog unavailable");
+  return [{ id: worker.defaultModel!, availability: "available" as const, source: "protocol" as const, capabilities: { capabilityProvenance: "confirmed" as const, tools: true } }];
+ });
+ const core = new AgentCore({ database, seedDevelopmentFixtures: false, modelProviders: [worker], now: () => now.toISOString() });
+ try {
+  await core.refreshProviderModels();
+  now = new Date("2026-09-30T12:16:00Z");
+  const session = core.runtime.createSession({ title: "Review", kind: "agent", allowedTools: ["tools.search"] });
+  const result = await core.handle({ type: "runtime-run-agent", sessionId: session.id, message: "Inspect the available tools", model: "auto", providerIds: ["auto"] });
+  expect(result).toMatchObject({ ok: false, error: expect.stringContaining("Kestrel tool support") });
+  expect(worker.discoverModels).toHaveBeenCalledTimes(2);
+  expect(worker.complete).not.toHaveBeenCalled();
+ } finally { await core.close(); }
+});
+
+it("bounds Auto routing while keeping an unresponsive discovery coalesced", async () => {
+ const database = new KestrelDatabase(":memory:", createEncryptionKey());
+ const worker = provider("slow-catalog", true);
+ let release!: () => void;
+ let started!: () => void;
+ const began = new Promise<void>(resolve => { started = resolve; });
+ const pending = new Promise<void>(resolve => { release = resolve; });
+ worker.discoverModels = vi.fn(async () => { started(); await pending; return []; });
+ const core = new AgentCore({ database, seedDevelopmentFixtures: false, modelProviders: [worker] });
+ vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+ try {
+  const run = () => core.handle({ type: "runtime-run-agent", sessionId: core.runtime.createSession({ title: "Review", kind: "agent", allowedTools: ["tools.search"] }).id, message: "Inspect tools", model: "auto", providerIds: ["auto"] });
+  const first = run();
+  await began;
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(await first).toMatchObject({ ok: false, error: expect.stringContaining("Kestrel tool support") });
+  expect(await run()).toMatchObject({ ok: false });
+  expect(worker.discoverModels).toHaveBeenCalledTimes(1);
+  expect(worker.complete).not.toHaveBeenCalled();
+ } finally {
+  release();
+  vi.useRealTimers();
+  await core.close();
+ }
+});

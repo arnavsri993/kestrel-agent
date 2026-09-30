@@ -147,6 +147,31 @@ async function readCapture(path: string): Promise<CaptureRecord[]> {
 }
 
 describe("persistent Codex app-server provider", () => {
+ it("uses fresh complete transcripts for consecutive final answers in the same session", async () => {
+  const fake = await fakeAppServer(["First verified answer", "Second verified answer"]);
+  const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 10_000 });
+  provider.attachBrowserMcp({ url: "http://127.0.0.1:4567/mcp", token: "fixture-token" });
+  try {
+   for (const evidence of ["First evidence", "Second evidence"]) {
+    await provider.complete({ model: "gpt-test", tools: [], metadata: { session_id: "same-session", kestrel_final_turn: "1" }, messages: [
+     { role: "user", content: textContent("Review this task") },
+     { role: "tool", content: textContent(evidence) },
+     { role: "system", content: textContent("Final turn: answer from verified evidence only") },
+    ] });
+   }
+   const records = await readCapture(fake.capture);
+   const starts = records.filter(row => row.value.method === "thread/start");
+   expect(starts).toHaveLength(2);
+   expect(starts.every(row => row.value.params?.ephemeral === true)).toBe(true);
+   expect(starts.every(row => String(row.value.params?.baseInstructions).includes("Do not execute commands, edit files, browse, invoke MCP"))).toBe(true);
+   const turns = records.filter(row => row.value.method === "turn/start");
+   expect(JSON.stringify(turns[0]!.value.params?.input)).toContain("First evidence");
+   expect(JSON.stringify(turns[1]!.value.params?.input)).toContain("Second evidence");
+   expect(JSON.stringify(turns[1]!.value.params?.input)).toContain("Final turn: answer from verified evidence only");
+   expect(turns.every(row => row.value.params?.outputSchema === undefined)).toBe(true);
+  } finally { await provider.close(); }
+ });
+
  it("bridges structured tool requests with fresh authorized context and no raw JSON streaming", async () => {
   const fake = await fakeAppServer([
    JSON.stringify({ text: "Checking available tools.", toolCalls: [{ name: "tools.search", argumentsJson: '{"query":"robotics"}' }] }),

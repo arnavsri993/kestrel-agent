@@ -541,7 +541,7 @@ export class TaskOrchestrator {
 		private readonly configuredMaximumTurns: () => number = () => 12,
 		private readonly groupMemory?: AgentGroupMemoryManager,
 		private readonly memorySubstrate?: MemorySubstrate,
-		private readonly prepareAutomaticRoute?: () => void,
+		private readonly prepareAutomaticRoute?: () => void | Promise<void>,
 		private readonly routingOutcomes?: RoutingOutcomeStore,
 	) {
 		this.reconcileInterruptedJobs();
@@ -1098,7 +1098,7 @@ export class TaskOrchestrator {
 			throw new Error(
 				`Delegation depth exceeds the configured maximum of ${policy.maximumDelegationDepth}.`,
 			);
-		this.prepareAutomaticRoute?.();
+		await this.prepareAutomaticRoute?.();
 		this.modelRegistry.applyProviderHealth(this.providers.health());
 		const requirements = this.requirementAnalyzer.analyze(
 			taskId,
@@ -1242,7 +1242,7 @@ export class TaskOrchestrator {
 				this.modelRouter.policy(),
 			);
 			if (!policy.allowAutomaticEscalation) return undefined;
-			this.prepareAutomaticRoute?.();
+			await this.prepareAutomaticRoute?.();
 			this.modelRegistry.applyProviderHealth(this.providers.health());
 			const previous = selected.decision;
 			let decision: ReturnType<AdaptiveModelRouter["route"]>;
