@@ -1713,6 +1713,16 @@ export class AgentCore {
 				automatic.decision.traceId,
 				"ROUTE_VERIFIED",
 			);
+		if (result.run.turn >= Math.min(result.run.maximumTurns ?? 12, this.configuration.current().workflows.maximumTurns)) {
+			const error = "Independent review found incomplete or unsupported work, and the configured turn budget has been used.";
+			const run = { ...result.run, status: "failed" as const, error, updatedAt: this.now() };
+			this.deps.database.saveAgentRun(run);
+			const assistantMessage = this.runtime.appendMessage({
+				sessionId, role: "assistant",
+				content: `${error}\n\n${reviewerFeedback?.slice(0, 4_000) ?? "The result could not be verified."}`,
+			});
+			return { result: { ...result, run, assistantMessage }, verifierStatus: "failed" };
+		}
 		const corrected = await this.agentLoop.reworkAfterVerification({
 			runId: result.run.id,
 			maximumTurns: this.configuration.current().workflows.maximumTurns,
