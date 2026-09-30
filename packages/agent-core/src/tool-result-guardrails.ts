@@ -152,6 +152,38 @@ function axLabel(value: unknown): string {
 	return "";
 }
 
+const SOURCE_FILE_EXTENSIONS = [
+	".tsx", ".ts", ".jsx", ".js", ".mts", ".cts", ".mjs", ".cjs",
+	".py", ".rs", ".go", ".swift", ".md", ".json", ".yaml", ".yml",
+] as const;
+
+/** Scan a bounded label for a source path without regex backtracking on page text. */
+function sourcePathInLabel(label: string): string | undefined {
+	let token = "";
+	const finish = () => {
+		const lower = token.toLowerCase();
+		return SOURCE_FILE_EXTENSIONS.some((extension) => lower.endsWith(extension))
+			? token
+			: undefined;
+	};
+	for (let index = 0; index < Math.min(label.length, 600); index += 1) {
+		const character = label[index]!;
+		const code = character.charCodeAt(0);
+		const pathCharacter =
+			(code >= 48 && code <= 57) ||
+			(code >= 65 && code <= 90) ||
+			(code >= 97 && code <= 122) ||
+			character === "_" || character === "." || character === "/" || character === "-";
+		if (pathCharacter) token += character;
+		else {
+			const file = finish();
+			if (file) return file;
+			token = "";
+		}
+	}
+	return finish();
+}
+
 /** Keep the full encrypted receipt, but send a small page outline to the model. */
 function compactBrowserSnapshotForModel(output: unknown): unknown {
 	if (!output || typeof output !== "object" || Array.isArray(output)) return output;
@@ -179,7 +211,7 @@ function compactBrowserSnapshotForModel(output: unknown): unknown {
 	const diffRows: Array<{ file: string; text: string }> = [];
 	for (const item of named) {
 		if (item.role.toLowerCase() === "heading" || item.role.toLowerCase() === "link") {
-			const file = item.name.match(/[\w./-]+\.(?:[cm]?[jt]sx?|py|rs|go|swift|md|json|ya?ml)\b/i)?.[0];
+			const file = sourcePathInLabel(item.name);
 			if (file) currentFile = file;
 		}
 		if (item.role.toLowerCase() !== "row") continue;
@@ -188,8 +220,9 @@ function compactBrowserSnapshotForModel(output: unknown): unknown {
 	}
 	const priority = named.filter(({ name, role }) =>
 		role.toLowerCase() === "heading" ||
-		/\b(?:files changed|commits|pull request)\b/i.test(name) ||
-		/[\w./-]+\.(?:[cm]?[jt]sx?|py|rs|go|swift|md|json|ya?ml)\b/i.test(name),
+		["files changed", "commits", "pull request"].some((phrase) =>
+			name.toLowerCase().includes(phrase)) ||
+		sourcePathInLabel(name) !== undefined,
 	);
 	const selected = new Map<number, { index: number; role: string; name: string; ref?: string }>();
 	let nodeCharacters = 0;

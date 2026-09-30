@@ -107,6 +107,10 @@ describe("model-facing tool result guardrails", () => {
 			name: { value: "scripts/test-desktop-browser.mjs" },
 		});
 		nodes.push({
+			role: { value: "heading" },
+			name: { value: `${"-".repeat(20_000)}.not-source` },
+		});
+		nodes.push({
 			role: { value: "row" },
 			name: { value: "1585 + assert.equal(openTabsExpanded, true)" },
 		});
@@ -140,6 +144,6 @@ describe("model-facing tool result guardrails", () => {
 			},
 		]);
 		expect(output.accessibilityTree.nodes.length).toBeLessThan(nodes.length);
-		expect((original.output?.accessibilityTree as { nodes: unknown[] }).nodes).toHaveLength(1_004);
+		expect((original.output?.accessibilityTree as { nodes: unknown[] }).nodes).toHaveLength(1_005);
 	});
 });
