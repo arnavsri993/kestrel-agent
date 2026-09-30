@@ -592,6 +592,8 @@ export const ModelProfileSchema = z.object({
 	accountAlias: RoutingSafeLabelSchema.optional(),
 	model: RoutingModelIdentifierSchema,
 	displayName: RoutingDisplayNameSchema,
+	/** Provider catalog ordering; lower values are preferred when policy scores tie. */
+	catalogPriority: z.number().int().nonnegative().optional(),
 	enabled: z.boolean(),
 	local: z.boolean(),
 	tier: ModelTierSchema.optional(),
@@ -1625,6 +1627,9 @@ export type ProviderAccountModelCapabilities = z.infer<
 export const ProviderAccountModelSchema = z.object({
 	id: z.string().min(1).max(200),
 	displayName: z.string().min(1).max(300),
+	description: z.string().max(500).optional(),
+	/** Provider catalog ordering; lower values are preferred when policy scores tie. */
+	catalogPriority: z.number().int().nonnegative().optional(),
 	availability: ProviderModelAvailabilitySchema,
 	discoverySource: ProviderModelDiscoverySourceSchema,
 	discoveredAt: z.string().datetime().optional(),

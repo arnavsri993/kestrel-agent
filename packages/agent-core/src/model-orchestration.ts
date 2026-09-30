@@ -392,6 +392,46 @@ function applyModelNamePriors(
 	}
 }
 
+/** Use the provider's own capability description when a live catalog supplies one. */
+function catalogDescriptionTier(description?: string): ModelTier | undefined {
+	if (!description) return undefined;
+	const normalized = description.toLowerCase();
+	if (/frontier intelligence|most demanding work/.test(normalized))
+		return "frontier";
+	if (/workhorse model/.test(normalized)) return "advanced";
+	if (/fast and affordable|easier tasks|legacy coding model/.test(normalized))
+		return "standard";
+	return undefined;
+}
+
+function applyCatalogDescriptionPriors(
+	description: string,
+	scores: Record<ModelCapability, number>,
+): void {
+	const tier = catalogDescriptionTier(description);
+	if (tier === "frontier") {
+		scores.complex_reasoning = Math.max(scores.complex_reasoning, 0.96);
+		scores.coding = Math.max(scores.coding, 0.94);
+		scores.planning = Math.max(scores.planning, 0.93);
+		scores.code_review = Math.max(scores.code_review, 0.92);
+		scores.instruction_following = Math.max(scores.instruction_following, 0.93);
+		scores.reliability = Math.max(scores.reliability, 0.9);
+	} else if (tier === "advanced") {
+		scores.complex_reasoning = Math.max(scores.complex_reasoning, 0.88);
+		scores.coding = Math.max(scores.coding, 0.88);
+		scores.planning = Math.max(scores.planning, 0.84);
+		scores.code_review = Math.max(scores.code_review, 0.84);
+		scores.instruction_following = Math.max(scores.instruction_following, 0.86);
+		scores.reliability = Math.max(scores.reliability, 0.84);
+	} else if (/fast and affordable|easier tasks/i.test(description)) {
+		scores.speed = Math.max(scores.speed, 0.92);
+		scores.cost_efficiency = Math.max(scores.cost_efficiency, 0.93);
+	} else if (/legacy coding model/i.test(description)) {
+		scores.coding = Math.max(scores.coding, 0.72);
+		scores.code_review = Math.max(scores.code_review, 0.68);
+	}
+}
+
 export function inferModelTier(
 	model: string,
 	providerId: string,
@@ -511,10 +551,10 @@ function baselineCapabilities(
 		model?.capabilities.contextWindow ??
 		provider.profileHints?.limits?.contextWindow;
 	scores.long_context = contextWindow ? bounded(contextWindow / 200_000) : 0.55;
-	// Name priors were the old compatibility fallback. Keep them only for a
-	// clearly-labelled fallback record; dynamic records rely on advertised
-	// capability/limit data and measured outcomes instead.
-	if (model?.isFallback && provider.defaultModel)
+	// Dynamic records use the provider's advertised description. Name priors
+	// remain only for a clearly labelled fallback with no live catalog record.
+	if (model?.description) applyCatalogDescriptionPriors(model.description, scores);
+	else if (model?.isFallback && provider.defaultModel)
 		applyModelNamePriors(provider.defaultModel, scores);
 	for (const [capability, score] of Object.entries(
 		provider.profileHints?.capabilities ?? {},
@@ -550,7 +590,7 @@ function profileFromProvider(
 	const useCatalogMetadata = Boolean(
 		model && (provider.account || !model.isFallback),
 	);
-	const tier = inferModelTier(
+	const tier = catalogDescriptionTier(model?.description) ?? inferModelTier(
 		modelId.data,
 		endpoint.data,
 		provider.capabilities.local,
@@ -582,6 +622,9 @@ function profileFromProvider(
 			: {}),
 		model: modelId.data,
 		displayName: displayName?.success ? displayName.data : modelId.data,
+		...(model?.catalogPriority !== undefined
+			? { catalogPriority: model.catalogPriority }
+			: {}),
 		enabled:
 			model?.availability !== "authentication_required" &&
 			model?.availability !== "permission_denied" &&
@@ -1449,6 +1492,10 @@ export class AdaptiveModelRouter {
 			(left, right) =>
 				right.score - left.score ||
 				left.estimatedCost - right.estimatedCost ||
+				(left.profile.provider === right.profile.provider
+					? (left.profile.catalogPriority ?? Number.MAX_SAFE_INTEGER) -
+						(right.profile.catalogPriority ?? Number.MAX_SAFE_INTEGER)
+					: 0) ||
 				left.profile.id.localeCompare(right.profile.id),
 		);
 		const selected = this.selectBalancedAccountCandidate(scored, policy);
@@ -1483,7 +1530,13 @@ export class AdaptiveModelRouter {
 		const candidateSummaries: RoutingCandidate[] = [...scoredCandidates]
 			.sort(
 				(left, right) =>
-					right.score - left.score || left.profile.id.localeCompare(right.profile.id),
+					right.score - left.score ||
+					left.estimatedCost - right.estimatedCost ||
+					(left.profile.provider === right.profile.provider
+						? (left.profile.catalogPriority ?? Number.MAX_SAFE_INTEGER) -
+							(right.profile.catalogPriority ?? Number.MAX_SAFE_INTEGER)
+						: 0) ||
+					left.profile.id.localeCompare(right.profile.id),
 			)
 			.slice(0, 32)
 			.map((candidate) => ({

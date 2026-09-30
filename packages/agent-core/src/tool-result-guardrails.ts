@@ -143,6 +143,85 @@ function redactValue(
 	return value;
 }
 
+const MAX_MODEL_BROWSER_SNAPSHOT_CHARACTERS = 32_000;
+
+function axLabel(value: unknown): string {
+	if (typeof value === "string") return value;
+	if (value && typeof value === "object" && "value" in value &&
+		typeof value.value === "string") return value.value;
+	return "";
+}
+
+/** Keep the full encrypted receipt, but send a small page outline to the model. */
+function compactBrowserSnapshotForModel(output: unknown): unknown {
+	if (!output || typeof output !== "object" || Array.isArray(output)) return output;
+	const snapshot = output as Record<string, unknown>;
+	const tree = snapshot.accessibilityTree;
+	if (!tree || typeof tree !== "object" || !Array.isArray((tree as { nodes?: unknown }).nodes))
+		return output;
+	if (JSON.stringify(output).length <= MAX_MODEL_BROWSER_SNAPSHOT_CHARACTERS)
+		return output;
+	const nodes = (tree as { nodes: unknown[] }).nodes;
+	const named = nodes.flatMap((value, index) => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+		const node = value as Record<string, unknown>;
+		if (node.ignored === true) return [];
+		const name = axLabel(node.name).trim();
+		const role = axLabel(node.role).trim();
+		const ref = typeof node.ref === "string" ? node.ref : undefined;
+		if (!name && !ref) return [];
+		return [{ index, name, role, ...(ref ? { ref } : {}) }];
+	});
+	// A code review needs the changed lines, not just the page headings. GitHub's
+	// accessibility tree exposes each diff line as a named row; retain those
+	// short rows across all files while dropping the redundant grid cells.
+	let currentFile = "";
+	const diffRows: Array<{ file: string; text: string }> = [];
+	for (const item of named) {
+		if (item.role.toLowerCase() === "heading" || item.role.toLowerCase() === "link") {
+			const file = item.name.match(/[\w./-]+\.(?:[cm]?[jt]sx?|py|rs|go|swift|md|json|ya?ml)\b/i)?.[0];
+			if (file) currentFile = file;
+		}
+		if (item.role.toLowerCase() !== "row") continue;
+		if (!/^(?:@@|\d+(?:\s+\d+)?\s+[+-]\s?)/.test(item.name)) continue;
+		diffRows.push({ file: currentFile, text: item.name.slice(0, 240) });
+	}
+	const priority = named.filter(({ name, role }) =>
+		role.toLowerCase() === "heading" ||
+		/\b(?:files changed|commits|pull request)\b/i.test(name) ||
+		/[\w./-]+\.(?:[cm]?[jt]sx?|py|rs|go|swift|md|json|ya?ml)\b/i.test(name),
+	);
+	const selected = new Map<number, { index: number; role: string; name: string; ref?: string }>();
+	let nodeCharacters = 0;
+	for (const item of [...priority, ...named.slice(0, 90), ...named.slice(-30)]) {
+		if (selected.has(item.index)) continue;
+		const compact = { ...item, name: item.name.slice(0, 180) };
+		const size = JSON.stringify(compact).length;
+		if (nodeCharacters + size > 18_000 || selected.size >= 180) continue;
+		selected.set(item.index, compact);
+		nodeCharacters += size;
+	}
+	const compactNodes = [...selected.values()].sort((a, b) => a.index - b.index);
+	const interactive = Array.isArray(snapshot.interactive)
+		? snapshot.interactive.slice(0, 70)
+		: undefined;
+	const compacted = {
+		...snapshot,
+		accessibilityTree: { nodes: compactNodes },
+		...(interactive ? { interactive } : {}),
+		...(diffRows.length > 0 ? { modelDiffRows: diffRows } : {}),
+		truncated: true,
+		modelSummary: `Compact page outline: ${compactNodes.length} of ${nodes.length} captured accessibility nodes${diffRows.length ? ` and ${diffRows.length} changed diff rows` : ""}. Use browser.current-context or a smaller page for full text.`,
+	};
+	while (JSON.stringify(compacted).length > MAX_MODEL_BROWSER_SNAPSHOT_CHARACTERS &&
+		compactNodes.length > 0) compactNodes.pop();
+	while (JSON.stringify(compacted).length > MAX_MODEL_BROWSER_SNAPSHOT_CHARACTERS &&
+		interactive && interactive.length > 0) interactive.pop();
+	while (JSON.stringify(compacted).length > MAX_MODEL_BROWSER_SNAPSHOT_CHARACTERS &&
+		diffRows.length > 0) diffRows.pop();
+	return compacted;
+}
+
 /**
  * Format a tool result for conversation history and model context.
  *
@@ -152,10 +231,15 @@ function redactValue(
  */
 export function modelVisibleToolResult(execution: RuntimeToolExecution): string {
 	const state = createRedactionState();
-	const output =
+	const redactedOutput =
 		execution.output === undefined
 			? undefined
 			: redactValue(execution.output, state);
+	const output =
+		execution.toolName === "browser.visible-snapshot" ||
+		execution.toolName === "browser.snapshot"
+			? compactBrowserSnapshotForModel(redactedOutput)
+			: redactedOutput;
 	const error = execution.error
 		? redactText(execution.error, state)
 		: undefined;

@@ -149,6 +149,12 @@ function recordFromDiscovery(
 		id,
 		displayName:
 			model.displayName?.trim().slice(0, 300) || id,
+		...(model.description?.trim()
+			? { description: model.description.trim().slice(0, 500) }
+			: {}),
+		...(catalogPriority(model.catalogPriority) !== undefined
+			? { catalogPriority: catalogPriority(model.catalogPriority)! }
+			: {}),
 		availability: model.availability ?? "unknown",
 		discoverySource: model.source,
 		discoveredAt: now,
@@ -185,6 +191,14 @@ function recordFromDiscovery(
 		},
 		isFallback: false,
 	};
+}
+
+function catalogPriority(value: unknown): number | undefined {
+	return typeof value === "number" &&
+		Number.isInteger(value) &&
+		value >= 0
+		? value
+		: undefined;
 }
 
 function sanitizeStoredEndpoint(

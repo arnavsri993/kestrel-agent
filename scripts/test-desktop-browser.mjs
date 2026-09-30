@@ -2125,10 +2125,19 @@ try {
 	await page
 		.getByRole("heading", { name: "Visible browser worker", exact: true })
 		.waitFor();
+	const workerComposer = page.locator(
+		".agent-universe-context-surface .agent-universe-context-composer textarea",
+	);
+	assert.equal(
+		await workerComposer.count(),
+		1,
+		"A delegated moon should expose its own conversation composer.",
+	);
+	await workerComposer.focus();
 	assert.equal(
 		await page.getByRole("button", { name: "Send message to Visible browser worker", exact: true }).count(),
 		1,
-		"A delegated moon should expose its own conversation composer.",
+		"The delegated moon composer should expose its send control when focused.",
 	);
 	await page
 		.getByRole("button", { name: "Back to the map from Visible browser worker" })

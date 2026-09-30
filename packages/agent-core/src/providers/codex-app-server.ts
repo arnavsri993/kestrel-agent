@@ -121,17 +121,22 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	const record = object(value);
 	if (record?.hidden === true) return undefined;
 	const model =
-		typeof record?.model === "string" && record.model.trim()
+		typeof record?.slug === "string" && record.slug.trim()
+			? record.slug.trim()
+			: typeof record?.model === "string" && record.model.trim()
 			? record.model.trim()
 			: typeof record?.id === "string" && record.id.trim()
 				? record.id.trim()
 				: undefined;
 	if (!model) return undefined;
-	const reasoningEfforts: SupportedReasoningEffort[] = (Array.isArray(record?.supportedReasoningEfforts)
-		? record.supportedReasoningEfforts
+	const reasoningEfforts: SupportedReasoningEffort[] = (Array.isArray(record?.supported_reasoning_levels)
+		? record.supported_reasoning_levels
+		: Array.isArray(record?.supportedReasoningEfforts)
+			? record.supportedReasoningEfforts
 		: []
 	).flatMap((value) => {
-		const effort = object(value)?.reasoningEffort;
+		const effortRecord = object(value);
+		const effort = effortRecord?.effort ?? effortRecord?.reasoningEffort;
 		return typeof effort === "string" && REASONING_EFFORTS.has(effort as SupportedReasoningEffort)
 			? [effort as SupportedReasoningEffort]
 			: [];
@@ -140,7 +145,9 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	// image. Preserve that documented default for older Codex installations, but
 	// never infer audio, documents, video, or tool execution from a catalog row.
 	const inputModalities = new Set(
-		(Array.isArray(record?.inputModalities)
+		(Array.isArray(record?.input_modalities)
+			? record.input_modalities
+			: Array.isArray(record?.inputModalities)
 			? record.inputModalities
 			: ["text", "image"]
 		)
@@ -150,9 +157,21 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	return {
 		id: model,
 		displayName:
-			typeof record?.displayName === "string" && record.displayName.trim()
+			typeof record?.display_name === "string" && record.display_name.trim()
+				? record.display_name.trim()
+				: typeof record?.displayName === "string" && record.displayName.trim()
 				? record.displayName.trim()
 				: model,
+		...(typeof record?.description === "string" && record.description.trim()
+			? { description: record.description.trim().slice(0, 500) }
+			: {}),
+		...(typeof record?.priority === "number" &&
+			Number.isInteger(record.priority) &&
+			record.priority >= 0
+			? { catalogPriority: record.priority }
+			: record?.isDefault === true
+				? { catalogPriority: 0 }
+			: {}),
 		availability: "available",
 		source: "protocol",
 		capabilities: {

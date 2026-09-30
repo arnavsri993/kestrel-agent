@@ -215,7 +215,7 @@ vi.mock("electron", () => ({
 import { nativeImage } from "electron";
 import { dialog } from "electron";
 import { shell } from "electron";
-import { BrowserTabStore } from "./browser-tab-store";
+import { BrowserTabStore, MAX_AX_SNAPSHOT_BYTES } from "./browser-tab-store";
 import {
   isAuthenticationFlowUrl,
   safeAppStoreUrl,
@@ -3489,7 +3489,7 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 
     const snapshot = await service.snapshot(tab.id);
     expect(snapshot.truncated).toBe(true);
-    expect(Buffer.byteLength(JSON.stringify(snapshot.accessibilityTree))).toBeLessThanOrEqual(1_500_000);
+    expect(Buffer.byteLength(JSON.stringify(snapshot.accessibilityTree))).toBeLessThanOrEqual(MAX_AX_SNAPSHOT_BYTES);
     expect(snapshot.interactive?.map((item) => item.name)).toEqual(["Keep"]);
   });
 

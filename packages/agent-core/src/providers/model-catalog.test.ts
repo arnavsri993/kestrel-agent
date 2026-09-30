@@ -107,6 +107,30 @@ describe("account-aware model catalog", () => {
 		database.close();
 	});
 
+	it("retains a discovered catalog priority", async () => {
+		const endpoint = provider({
+			id: "codex-account",
+			providerId: "codex",
+			accountId: "account-a",
+			displayName: "Codex",
+			discovery: async () => [
+				{
+					...discovered("gpt-6-astra"),
+					catalogPriority: 2,
+				},
+			],
+		});
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const catalog = new ModelCatalog(database, [endpoint]);
+
+		await catalog.refresh([endpoint]);
+
+		expect(catalog.modelsForEndpoint(endpoint.id)).toMatchObject([
+			{ id: "gpt-6-astra", catalogPriority: 2 },
+		]);
+		database.close();
+	});
+
 	it("replaces models removed upstream instead of restoring a fallback default", async () => {
 		let state: DiscoveryState = { models: [discovered("old-model")] };
 		const endpoint = provider({

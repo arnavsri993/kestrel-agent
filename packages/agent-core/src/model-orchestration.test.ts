@@ -334,6 +334,95 @@ describe("adaptive model orchestration", () => {
 		item.database.close();
 	});
 
+	it("uses catalog order to break equal Codex model scores for a PR review", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint: ModelProvider = {
+			...provider({ id: "codex-account", model: "gpt-5.5" }),
+			poolId: "codex",
+			account: {
+				id: "codex-account",
+				providerId: "codex",
+				displayName: "Codex",
+				authTransport: "oauth",
+				enabled: true,
+			},
+			discoverModels: async () =>
+				([
+					["gpt-5.5", 13],
+					["gpt-6-astra", 2],
+				] as const).map(([id, catalogPriority]) => ({
+					id,
+					catalogPriority,
+					availability: "available" as const,
+					source: "protocol" as const,
+					capabilities: {
+						capabilityProvenance: "confirmed" as const,
+						streaming: true,
+						tools: true,
+						images: true,
+						reasoningEfforts: ["low", "medium", "high"] as Array<"low" | "medium" | "high">,
+					},
+				})),
+		};
+		const catalog = new ModelCatalog(database, [endpoint]);
+		await catalog.refresh([endpoint]);
+		const registry = new ModelRegistry(database, [endpoint], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+		const requirements = new TaskRequirementAnalyzer().analyze(
+			"review-pr-catalog",
+			"Review the open GitHub PR #802. Inspect all four changed files and relevant surrounding behavior with browser tools.",
+		);
+		const decision = router.route(requirements, { role: "worker" });
+		expect(decision.model).toBe("gpt-6-astra");
+		expect(decision.reasoningLevel).toBe("high");
+		database.close();
+	});
+
+	it("uses live catalog descriptions to prefer Astra over a legacy model", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint: ModelProvider = {
+			...provider({ id: "codex-described", model: "gpt-5.5" }),
+			poolId: "codex",
+			account: {
+				id: "codex-described",
+				providerId: "codex",
+				displayName: "Codex",
+				authTransport: "oauth",
+				enabled: true,
+			},
+			discoverModels: async () =>
+				([
+				["gpt-5.5", "Legacy coding model."],
+				["gpt-6-astra", "Frontier intelligence for the most demanding work."],
+			] as const).map(([id, description]) => ({
+				id,
+				description,
+				availability: "available" as const,
+				source: "protocol" as const,
+				capabilities: {
+					capabilityProvenance: "confirmed" as const,
+					streaming: true,
+					tools: true,
+					reasoningEfforts: ["low", "medium", "high"] as Array<"low" | "medium" | "high">,
+				},
+			})),
+		};
+		const catalog = new ModelCatalog(database, [endpoint]);
+		await catalog.refresh([endpoint]);
+		const registry = new ModelRegistry(database, [endpoint], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+		const requirements = new TaskRequirementAnalyzer().analyze(
+			"review-pr-described",
+			"Review GitHub PR #802. Inspect all four changed files and surrounding behavior using browser tools.",
+		);
+		const decision = router.route(requirements, { role: "worker" });
+		expect(registry.get("codex-described:gpt-5.5").tier).toBe("standard");
+		expect(registry.get("codex-described:gpt-6-astra").tier).toBe("frontier");
+		expect(decision.model).toBe("gpt-6-astra");
+		expect(decision.reasoningLevel).toBe("high");
+		database.close();
+	});
+
 	it("does not automatically route through an unverified fallback model", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const endpoint: ModelProvider = {

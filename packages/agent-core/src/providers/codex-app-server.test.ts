@@ -50,7 +50,7 @@ input.on("line", line => {
     if (message.params && message.params.cursor === "page-2") {
       return send({ id: message.id, result: { data: [{ id: "gpt-hidden", model: "gpt-hidden", displayName: "Hidden model", supportedReasoningEfforts: [{ reasoningEffort: "minimal" }], hidden: true }], nextCursor: null } });
     }
-    return send({ id: message.id, result: { data: [{ id: "gpt-catalog", model: "gpt-catalog", displayName: "Catalog model", inputModalities: ["text", "image"], supportedReasoningEfforts: [{ reasoningEffort: "minimal" }, { reasoningEffort: "low" }, { reasoningEffort: "high" }] }], nextCursor: "page-2" } });
+    return send({ id: message.id, result: { data: [{ id: "gpt-catalog", model: "gpt-catalog", displayName: "Catalog model", priority: 9, inputModalities: ["text", "image"], supportedReasoningEfforts: [{ reasoningEffort: "minimal" }, { reasoningEffort: "low" }, { reasoningEffort: "high" }] }, { slug: "gpt-6-astra", display_name: "GPT-6-Astra", description: "Frontier intelligence for the most demanding work.", isDefault: true, input_modalities: ["text", "image"], supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }] }], nextCursor: "page-2" } });
   }
   if (message.method === "thread/start") return send({ id: message.id, result: { thread: { id: "thread-1" }, model: message.params.model } });
   if (message.method === "thread/archive") return send({ id: message.id, result: {} });
@@ -188,6 +188,26 @@ describe("persistent Codex app-server provider", () => {
 			{
 				id: "gpt-catalog",
 				displayName: "Catalog model",
+				catalogPriority: 9,
+				availability: "available",
+				source: "protocol",
+				capabilities: {
+					capabilityProvenance: "confirmed",
+					streaming: true,
+					tools: true,
+					images: true,
+					audio: false,
+					documents: false,
+					video: false,
+					structuredOutput: false,
+					reasoningEfforts: ["low", "high"],
+				},
+			},
+			{
+				id: "gpt-6-astra",
+				displayName: "GPT-6-Astra",
+				description: "Frontier intelligence for the most demanding work.",
+				catalogPriority: 0,
 				availability: "available",
 				source: "protocol",
 				capabilities: {
