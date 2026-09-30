@@ -197,6 +197,98 @@ describe("provider-neutral agent loop", () => {
 		database.close();
 	});
 
+	it("keeps an agent run alive when a browser tool returns more than one megabyte", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Large browser tool result" });
+		const oversizedSnapshot = "x".repeat(1_000_001);
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.visible-snapshot",
+				title: "Visible browser snapshot",
+				description: "Return a read-only browser observation.",
+				category: "browser",
+				riskLevel: "read_only",
+				readOnly: true,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["browser", "test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({ accessibilityTree: oversizedSnapshot }),
+		});
+		runtime.allowTool(session.id, "browser.visible-snapshot");
+		let calls = 0;
+		let modelToolContent = "";
+		const provider: ModelProvider = {
+			id: "large-browser-tool-result",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				if (calls === 2)
+					modelToolContent = request.messages
+						.filter((message) => message.role === "tool")
+						.map((message) => contentText(message.content))
+						.join("\n");
+				return calls === 1
+					? {
+							providerId: "large-browser-tool-result",
+							model: request.model,
+							text: "",
+							toolCalls: [
+								{
+									id: "call-large-browser-snapshot",
+									name: "browser.visible-snapshot",
+									arguments: {},
+								},
+							],
+							usage: { inputTokens: 2, outputTokens: 1 },
+							finishReason: "tool_calls",
+						}
+					: {
+							providerId: "large-browser-tool-result",
+							model: request.model,
+							text: "The browser result was too large, so I need a narrower observation.",
+							toolCalls: [],
+							usage: { inputTokens: 3, outputTokens: 5 },
+							finishReason: "stop",
+						};
+			},
+		};
+
+		const result = await new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		).run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Inspect the visible page."),
+		});
+
+		expect(result.run).toMatchObject({ status: "completed", turn: 2 });
+		expect(modelToolContent).toContain('"truncated":true');
+		expect(modelToolContent).toContain("Do not assume omitted details");
+		expect(modelToolContent).not.toContain("x".repeat(1_000));
+		const storedToolMessage = runtime
+			.listMessages(session.id)
+			.find((message) => message.role === "tool");
+		expect(storedToolMessage?.content).toBe(modelToolContent);
+		expect(storedToolMessage?.content.length).toBeLessThan(1_000_000);
+		expect(
+			database.listToolExecutions(session.id)[0]?.output,
+		).toEqual({ accessibilityTree: oversizedSnapshot });
+		database.close();
+	});
+
 	it("normalizes a non-finite maximum turn setting", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);
