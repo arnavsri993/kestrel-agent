@@ -93,6 +93,7 @@ import {
 	selectBrowserOption,
 	targetPointFromBackendNode,
 } from "./browser-backend-node-target";
+import { limitBrowserAccessibilityTree } from "./browser-accessibility-limit";
 import { BrowserExtensionManager } from "./browser-extension-manager";
 import {
 	createDefaultBrowserThreatProvider,
@@ -4772,18 +4773,14 @@ export class UserBrowserService {
 		const annotated = annotateAccessibilityTree({
 			nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES),
 		});
-		const interactive = annotated.interactive.slice(0, MAX_INTERACTIVE_REFS);
-		const accessibilityTree = sanitizeUntrustedBrowserValue(
+		const sanitizedTree = sanitizeUntrustedBrowserValue(
 			annotated.accessibilityTree,
-		);
-		if (
-			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
-			MAX_AX_SNAPSHOT_BYTES
-		) {
-			this.elementRefs.set(tab.id, new Map());
-			this.sensitiveElementRefs.delete(tab.id);
-			throw new Error("Visible browser accessibility snapshot exceeds 1.5 MB.");
-		}
+		) as { nodes: unknown[] };
+		const bounded = limitBrowserAccessibilityTree(sanitizedTree, MAX_AX_SNAPSHOT_BYTES);
+		const interactive = annotated.interactive
+			.slice(0, MAX_INTERACTIVE_REFS)
+			.filter((item) => bounded.retainedRefs.has(item.ref));
+		const accessibilityTree = bounded.accessibilityTree;
 		this.elementRefs.set(tab.id, rememberElementRefs(interactive));
 		this.sensitiveElementRefs.set(
 			tab.id,
@@ -4805,6 +4802,7 @@ export class UserBrowserService {
 					: {}),
 			})),
 			truncated:
+				bounded.truncated ||
 				nodes.length > MAX_AX_SNAPSHOT_NODES ||
 				annotated.interactive.length > MAX_INTERACTIVE_REFS,
 		};

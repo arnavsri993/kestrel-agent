@@ -305,8 +305,10 @@ function normalizedModelId(model: string): string {
 	return model.toLowerCase();
 }
 
+// These family labels affect quality ranking only. Tool, context, modality,
+// availability, and reasoning support still come from the live model catalog.
 function isCompactModelName(model: string): boolean {
-	return /\b(haiku|mini|nano|lite|tiny|small|flash-lite|gpt-oss|8b|7b|3b|1b)\b/.test(
+	return /\b(haiku|mini|nano|lite|tiny|small|flash-lite|gpt-oss|gpt-6-luna|8b|7b|3b|1b)\b/.test(
 		model,
 	);
 }
@@ -325,6 +327,7 @@ function isPermissiveModelName(model: string, providerId: string): boolean {
 function isFrontierModelName(model: string): boolean {
 	if (isCompactModelName(model)) return false;
 	return (
+		model.includes("gpt-6-astra") ||
 		/\bgpt-5(?:\.\d+)?(?:-|$)/.test(model) ||
 		/\b(?:o1|o3|o4)(?:-|$)/.test(model) ||
 		model.includes("gpt-4.5") ||
@@ -343,6 +346,7 @@ function isFrontierModelName(model: string): boolean {
 function isAdvancedModelName(model: string): boolean {
 	if (isCompactModelName(model) || isFrontierModelName(model)) return false;
 	return (
+		model.includes("gpt-6-sol") ||
 		model.includes("claude-sonnet") ||
 		model.includes("claude-3-5-sonnet") ||
 		model.includes("gpt-4o") ||
@@ -1026,6 +1030,12 @@ export class TaskRequirementAnalyzer {
 			/\b(kernel|driver|firmware|assembly|embedded|cuda|matrix|tensor|quantum|cryptograph|algebra|calculus|differential)\b/.test(
 				normalized,
 			);
+		const pullRequestReview =
+			/\b(review|verify|inspect|audit)\b/.test(normalized) &&
+			/\b(pull request|pr\s*#\d+|diff)\b/.test(normalized);
+		const broadPullRequestReview = pullRequestReview &&
+			(/\b(all|multiple|several|four|five|six|\d+)\b.{0,24}\bfiles?\b/.test(normalized) ||
+				/\bsurrounding (?:code|behavior)\b/.test(normalized));
 
 		if (
 			/\b(code|coding|software|typescript|javascript|python|rust|golang|refactor|bug|fix|implement(?:ation)?|function|handler)\b/.test(
@@ -1138,8 +1148,11 @@ export class TaskRequirementAnalyzer {
 				(/```/.test(prompt) ? 0.08 : 0) +
 				(/\n\s*\d+[.)]\s+\S/.test(prompt) ? 0.08 : 0),
 		);
+		if (pullRequestReview)
+			complexity = Math.max(complexity, broadPullRequestReview ? 0.72 : 0.6);
 		const shortQuestion =
 			words < 28 &&
+			!pullRequestReview &&
 			/^(?:what|why|who|when|where|how|is|are|can|does|should)\b/i.test(
 				prompt.trim(),
 			) &&
@@ -1403,7 +1416,20 @@ export class AdaptiveModelRouter {
 		);
 		if (withinLatency.length === 0)
 			throw new Error("No configured model fits the task latency limits.");
-		const scoredCandidates = withinLatency;
+		// Prefer review-capable routes for broad repository reviews while keeping
+		// cheaper routes in the fallback ladder and honoring explicit speed/cost modes.
+		const prioritizeReview =
+			(requirements.capabilities.code_review ?? 0) >= 0.8 &&
+			requirements.complexity >= 0.7 &&
+			requirements.requiresTools &&
+			policy.mode !== "cheapest" && policy.mode !== "fastest";
+		const scoredCandidates = withinLatency.map((candidate) => ({
+			...candidate,
+			score: candidate.score + (prioritizeReview &&
+				((candidate.profile.capabilities.code_review ?? 0) >= 0.8 ||
+					candidate.profile.tier === "frontier" ||
+					candidate.profile.tier === "advanced") ? 0.2 : 0),
+		}));
 		const minimumQuality = bounded(
 			0.45 +
 				requirements.complexity * 0.3 +

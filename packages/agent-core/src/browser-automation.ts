@@ -710,6 +710,8 @@ export class BrowserController {
 		if (tabId !== undefined && !/^tab-[a-f0-9-]{36}$/.test(tabId))
 			throw new Error("Visible browser tab ID is invalid.");
 		const snapshot = await this.visibleSnapshot(tabId, signal);
+		if (snapshot.truncated)
+			throw new Error("Kestrel cannot share a screenshot when the page inspection is incomplete.");
 		if (snapshot.interactive?.some(isSensitiveBrowserInteractiveRef))
 			throw new Error(
 				"Kestrel does not share browser screenshots from pages with sensitive input fields.",

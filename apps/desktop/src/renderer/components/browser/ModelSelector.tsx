@@ -215,7 +215,7 @@ export function ModelSelector({
 				</span>
 				<Icon name="chevron" />
 			</button>
-			{createPortal(
+			{typeof document !== "undefined" ? createPortal(
 				<AnimatePresence initial={false}>
 					{open ? (
 						<motion.div
@@ -447,7 +447,7 @@ export function ModelSelector({
 					) : null}
 				</AnimatePresence>,
 				document.body,
-			)}
+			) : null}
 		</div>
 	);
 }

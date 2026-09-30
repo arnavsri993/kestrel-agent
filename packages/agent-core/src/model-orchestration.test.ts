@@ -317,6 +317,23 @@ describe("adaptive model orchestration", () => {
 		database.close();
 	});
 
+	it("uses a review-capable model with high reasoning for a multi-file PR review", () => {
+		const item = fixture([
+			provider({ id: "fast", model: "gpt-6-luna", reasoningLevels: true }),
+			provider({ id: "strong", model: "gpt-6-astra", reasoningLevels: true }),
+		]);
+		const requirements = item.analyzer.analyze(
+			"review-pr-files",
+			"Review GitHub PR #802 in the browser. Inspect all four changed files and surrounding code before reporting correctness findings.",
+		);
+		expect(requirements.requiresTools).toBe(true);
+		expect(requirements.complexity).toBeGreaterThanOrEqual(0.7);
+		const decision = item.router.route(requirements, { role: "worker" });
+		expect(decision.selectedModelId).toBe("strong:gpt-6-astra");
+		expect(decision.reasoningLevel).toBe("high");
+		item.database.close();
+	});
+
 	it("does not automatically route through an unverified fallback model", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const endpoint: ModelProvider = {
