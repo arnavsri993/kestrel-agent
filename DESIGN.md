@@ -1,3 +1,33 @@
+# Memory workspace — September 16, 2026
+
+Thesis: a calm, editable account of what Kestrel knows, organized around the
+person viewing it, with time and evidence available when needed.
+Existing React desktop redesign; moderate information density, low visual
+intensity and high privacy consequence. The first viewport is a reading surface:
+Memory title, separate Viewing as and Domain selectors, five simple text tabs,
+then the current overview. Overview is the default; an empty calendar is not an
+identity for memory.
+
+- System typography only: 26px title, 18px section headings, 14px reading text
+  at 1.65 line height, 12px metadata. Limit paragraphs to 76 characters per line.
+- Graphite existing surfaces, neutral hairline separators, muted secondary text,
+  existing accent for selection/focus and existing danger color for forgetting.
+- 4px rhythm; 24px main gaps, 16px reading gaps. One document reader/editor next
+  to a compact index, collapsing vertically at narrow widths. No card forest.
+- Overview uses short, mid, and long term paragraphs. People and Tools each
+  expose one editable document per selection. Timeline starts with a readable
+  weekly summary and day summaries, then discloses source events.
+- Viewing as and Domain have independent meaning. Scope changes immediately
+  clear old data; background refresh never overwrites an unsaved document.
+- Evidence, confidence, origin, capture controls and legacy administration stay
+  inside explicit details. Never claim inferred text is confirmed or live data.
+- Motion roles: existing control feedback only. No entry animation, decorative
+  motion, imagery, new fonts, or libraries. Native controls retain keyboard use.
+- Why this is not generic: its reading-first layout follows Kestrel's actual
+  user/agent ownership, memory tiers, relationships, tool knowledge, and evidence.
+- Verification: real IPC CRUD, viewer/domain separation, raced scope loads,
+  empty/error states, keyboard focus, narrow reflow and long document text.
+
 # Glass menus and autofill — September 2026
 
 Thesis: small, legible graphite-glass menus keep the website and the user's next

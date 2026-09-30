@@ -216,6 +216,7 @@ import { nativeImage } from "electron";
 import { dialog } from "electron";
 import { shell } from "electron";
 import { BrowserTabStore, MAX_AX_SNAPSHOT_BYTES } from "./browser-tab-store";
+import { FIND_IN_PAGE_WORLD_ID } from "./find-in-page-scripts";
 import {
   isAuthenticationFlowUrl,
   safeAppStoreUrl,
@@ -2336,22 +2337,53 @@ describe("UserBrowserService", () => {
     expect(service.getState().tabs).toHaveLength(1);
   });
 
-  it("accepts both Apple App Store URL forms and rejects other custom schemes", () => {
+  it("accepts Apple App Store URL forms including itms-appss and rejects other schemes", () => {
     expect(
       safeAppStoreUrl("macappstore://itunes.apple.com/app/id113517709?mt=12"),
     ).toBe("macappstore://itunes.apple.com/app/id113517709?mt=12");
     expect(
       safeAppStoreUrl("itms-apps://apps.apple.com/app/id113517709?mt=12"),
     ).toBe("itms-apps://apps.apple.com/app/id113517709?mt=12");
+    expect(
+      safeAppStoreUrl("itms-appss://apps.apple.com/app/id113517709?mt=12"),
+    ).toBe("itms-appss://apps.apple.com/app/id113517709?mt=12");
+    expect(
+      safeAppStoreUrl(
+        "itms-appss://geo.itunes.apple.com/us/app/id113517709?mt=12",
+      ),
+    ).toBe("itms-appss://geo.itunes.apple.com/us/app/id113517709?mt=12");
     for (const url of [
       "javascript:alert(1)",
       "my-app://itunes.apple.com/app/id113517709",
       "macappstore://evil.example/app/id113517709",
+      "itms-appss://evil.example/app/id113517709",
       "macappstore://itunes.apple.com:8080/app/id113517709",
       "macappstore://user:secret@itunes.apple.com/app/id113517709",
     ]) {
       expect(safeAppStoreUrl(url)).toBeUndefined();
     }
+  });
+
+  it("hands off HTTPS App Store launchers that use itms-appss", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://apps.apple.com/");
+    const source = electron.state.views[0]!.webContents;
+    const appStoreUrl = "itms-appss://apps.apple.com/app/id113517709?mt=12";
+    const preventDefault = vi.fn();
+
+    source.emit("will-navigate", { preventDefault }, appStoreUrl);
+    expect(
+      source.windowOpenHandler?.({
+        url: appStoreUrl,
+        disposition: "foreground-tab",
+      }),
+    ).toEqual({ action: "deny" });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl);
+    expect(shell.openExternal).toHaveBeenCalledTimes(2);
+    expect(service.getState().tabs).toHaveLength(1);
   });
 
   it("hands off a validated Zoom join link from navigation, redirects, and popups", async () => {
@@ -2382,7 +2414,7 @@ describe("UserBrowserService", () => {
     expect(service.getState().tabs).toHaveLength(1);
   });
 
-  it("accepts validated Zoom meeting join URLs", () => {
+  it("accepts validated Zoom meeting join URLs for zoommtg and zoomus", () => {
     const zoomJoinUrl =
       "zoommtg://zoom.us/join?confno=1234567890&action=join";
     expect(safeZoomJoinUrl(zoomJoinUrl)).toBe(zoomJoinUrl);
@@ -2391,9 +2423,16 @@ describe("UserBrowserService", () => {
         "zoommtg://zoom.us/join?confno=1234567890&pwd=example",
       ),
     ).toBe("zoommtg://zoom.us/join?confno=1234567890&pwd=example");
+    expect(
+      safeZoomJoinUrl("zoomus://zoom.us/join?confno=1234567890&action=join"),
+    ).toBe("zoomus://zoom.us/join?confno=1234567890&action=join");
+    expect(
+      safeZoomJoinUrl("zoomus://zoom.us/join?confno=1234567890"),
+    ).toBe("zoomus://zoom.us/join?confno=1234567890");
     for (const url of [
-      "zoomus://zoom.us/join?confno=1234567890",
+      "zoomus://evil.example/join?confno=1234567890",
       "zoommtg://evil.example/join?confno=1234567890",
+      "zoommtg://us02web.zoom.us/join?confno=1234567890",
       "zoommtg://zoom.us:8080/join?confno=1234567890",
       "zoommtg://user:secret@zoom.us/join?confno=1234567890",
       "zoommtg://zoom.us/start?confno=1234567890",
@@ -3737,7 +3776,7 @@ it("serializes closeTab behind an in-flight agent act", async () => {
   });
 
 	it("bookmarks, pins, and finds in the active page", async () => {
-    const { service } = createService();
+    const { service, events } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://docs.example/path");
     const bookmarked = service.toggleBookmark();
@@ -3749,15 +3788,77 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     expect(pinned.tabs[0]?.pinned).toBe(true);
 
     const contents = electron.state.views[0]!.webContents;
-    service.findInPage(first.id, "kestrel");
-    expect(contents.findInPage).toHaveBeenCalledWith("kestrel", {
-      forward: true,
-      findNext: false,
+    contents.executeJavaScriptInIsolatedWorld.mockResolvedValue({
+      found: true,
+      matches: 3,
     });
+    service.findInPage(first.id, "kestrel");
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "find-in-page",
+        match: {
+          tabId: first.id,
+          activeMatchOrdinal: 1,
+          matches: 3,
+          finalUpdate: true,
+        },
+      }),
+    );
+    expect(contents.findInPage).not.toHaveBeenCalled();
+    expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledWith(
+      FIND_IN_PAGE_WORLD_ID,
+      [
+        expect.objectContaining({
+          code: expect.stringContaining('"query":"kestrel"'),
+        }),
+      ],
+    );
     service.openDevTools(first.id);
     expect(contents.openDevTools).toHaveBeenCalled();
     service.printTab(first.id);
 		expect(contents.print).toHaveBeenCalled();
+	});
+
+	it("does not publish a stale isolated find result after the query changes", async () => {
+		const { service, events } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://docs.example/path");
+		const contents = electron.state.views[0]!.webContents;
+		let resolveFirst: ((value: unknown) => void) | undefined;
+		contents.executeJavaScriptInIsolatedWorld
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveFirst = resolve;
+					}),
+			)
+			.mockResolvedValueOnce({ found: true, matches: 2 });
+
+		service.findInPage(tab.id, "first query");
+		service.findInPage(tab.id, "second query");
+		await vi.waitFor(() =>
+			expect(events).toContainEqual({
+				type: "find-in-page",
+				match: {
+					tabId: tab.id,
+					activeMatchOrdinal: 1,
+					matches: 2,
+					finalUpdate: true,
+				},
+			}),
+		);
+		expect(resolveFirst).toBeDefined();
+		resolveFirst?.({ found: true, matches: 1 });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(
+			events.filter(
+				(event) =>
+					typeof event === "object" &&
+					event !== null &&
+					"type" in event &&
+					event.type === "find-in-page",
+			),
+		).toHaveLength(1);
 	});
 
 	it("saves bookmark presentation choices and keeps folder operations reversible", async () => {

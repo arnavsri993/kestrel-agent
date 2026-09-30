@@ -420,10 +420,12 @@ export function BrowserWorkspace({
     setFindQuery("");
     const searchedTabId = findTabIdRef.current ?? activeTab?.id;
     findTabIdRef.current = null;
-    if (searchedTabId) void stopFindInPage(searchedTabId);
-    // The native page cannot reliably receive renderer focus, so return to the
-    // nearest stable browser control instead of leaving focus in an exiting row.
-    window.requestAnimationFrame(() => addressRef.current?.focus());
+    if (searchedTabId) {
+      void stopFindInPage(searchedTabId);
+    }
+    // Closing the Find row changes the viewport bounds, whose sync restores
+    // the attached native page. Do not focus the omnibox here:
+    // doing so opens suggestions and hides the page a person just returned to.
   }, [activeTab, stopFindInPage]);
 
   useEffect(() => {
@@ -560,7 +562,7 @@ export function BrowserWorkspace({
 
   useLayoutEffect(() => {
     syncBounds();
-  }, [openChromeMenus, organizeTabsPreview, syncBounds]);
+  }, [findOpen, openChromeMenus, organizeTabsPreview, syncBounds]);
 
   useEffect(
     () =>
@@ -858,7 +860,9 @@ export function BrowserWorkspace({
     <main
       className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
         showBookmarksBar ? " browser-workspace-bookmarks" : ""
-      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}`}
+      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}${
+        findOpen ? " browser-workspace-find-open" : ""
+      }`}
       aria-label="Browser"
     >
       {navigationSidebar}

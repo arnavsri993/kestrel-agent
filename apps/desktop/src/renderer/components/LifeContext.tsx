@@ -4,7 +4,6 @@ import type {
 	CoreResponse,
 	MemoryRecord,
 	MemoryTimelineQueryResult,
-	PersonRecord,
 	ProvenanceRecord,
 	RendererRequest,
 	TimelineEvent,
@@ -17,8 +16,9 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { DreamingPanel } from "./DreamingPanel";
 import { Icon } from "./Icon";
 import { MemoryRecallStatus } from "./MemoryRecallStatus";
+import { MemoryWorkspace } from "./MemoryWorkspace";
 
-type LifeView = "calendar" | "timeline" | "people" | "memory";
+type LegacyLifeView = "calendar" | "timeline" | "people" | "memory";
 
 const dayFormatter = new Intl.DateTimeFormat(undefined, {
 	weekday: "short",
@@ -1018,309 +1018,6 @@ const detailRelatedIds = useMemo(
 	);
 }
 
-function PeopleView() {
-	const [people, setPeople] = useState<PersonRecord[]>([]);
-	const [selectedId, setSelectedId] = useState<string | null>(null);
-	const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-	const [name, setName] = useState("");
-	const [relationship, setRelationship] = useState("");
-	const [organization, setOrganization] = useState("");
-	const [email, setEmail] = useState("");
-	const [tone, setTone] = useState("");
-	const [formality, setFormality] = useState<
-		"casual" | "neutral" | "professional" | "formal"
-	>("professional");
-	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState("");
-	const selected = people.find((person) => person.id === selectedId);
-
-	async function load() {
-		setBusy(true);
-		setError("");
-		try {
-			const response = await request({ type: "people-list" });
-			setPeople(response.people ?? []);
-		} catch (cause) {
-			setError(
-				cause instanceof Error ? cause.message : "Could not load people.",
-			);
-		} finally {
-			setBusy(false);
-		}
-	}
-
-	useEffect(() => {
-		void load();
-	}, []);
-
-	async function save(event: FormEvent) {
-		event.preventDefault();
-		if (!name.trim()) return;
-		setBusy(true);
-		setError("");
-		try {
-			const response = await request({
-				type: "people-upsert",
-				displayName: name.trim(),
-				nicknames: [],
-				...(relationship.trim() ? { relationship: relationship.trim() } : {}),
-				...(organization.trim() ? { organization: organization.trim() } : {}),
-				...(email.trim() ? { email: email.trim() } : {}),
-				...(tone.trim() ? { tone: tone.trim() } : {}),
-				formality,
-				sourceId: "desktop-user",
-				sensitivity: "personal",
-			});
-			setName("");
-			setRelationship("");
-			setOrganization("");
-			setEmail("");
-			setTone("");
-			setSelectedId(response.people?.[0]?.id ?? null);
-			await load();
-		} catch (cause) {
-			setError(
-				cause instanceof Error ? cause.message : "Could not save person.",
-			);
-			setBusy(false);
-		}
-	}
-
-	async function removePerson(id: string) {
-		setBusy(true);
-		setError("");
-		try {
-			await request({ type: "people-delete", id });
-			setSelectedId(null);
-			setDeleteConfirmId(null);
-			await load();
-		} catch (cause) {
-			setError(
-				cause instanceof Error
-					? cause.message
-					: "Could not delete this person.",
-			);
-			setBusy(false);
-		}
-	}
-
-	return (
-		<div className="people-layout">
-			<section className="people-directory" aria-busy={busy}>
-				<header>
-					<div>
-						<h2>People</h2>
-					</div>
-					<strong>{people.length}</strong>
-				</header>
-				{people.map((person) => (
-					<button
-						key={person.id}
-						className={selectedId === person.id ? "active" : ""}
-						aria-pressed={selectedId === person.id}
-						onClick={() => {
-							setSelectedId(person.id);
-							setDeleteConfirmId(null);
-						}}
-					>
-						<span aria-hidden="true">
-							{person.displayName
-								.split(/\s+/)
-								.slice(0, 2)
-								.map((part) => part[0])
-								.join("")
-								.toUpperCase()}
-						</span>
-						<div>
-							<strong>{person.displayName}</strong>
-							<small>
-								{person.relationship ??
-									person.organization ??
-									"Relationship not set"}
-							</small>
-						</div>
-					</button>
-				))}
-				{people.length === 0 && !busy && (
-					<div className="people-empty">
-						<p>No people are stored yet.</p>
-						<small>Add someone to keep relationship context on this Mac.</small>
-					</div>
-				)}
-			</section>
-
-			<section className="person-detail">
-				{selected ? (
-					<>
-						<header>
-							<span>
-								{selected.displayName
-									.split(/\s+/)
-									.slice(0, 2)
-									.map((part) => part[0])
-									.join("")
-									.toUpperCase()}
-							</span>
-							<div>
-								<h2>{selected.displayName}</h2>
-								<p>
-									{selected.relationship ??
-										selected.organization ??
-										"Relationship not set"}
-								</p>
-							</div>
-						</header>
-						<dl>
-							{selected.organization && (
-								<>
-									<dt>Organization</dt>
-									<dd>{selected.organization}</dd>
-								</>
-							)}
-							{selected.role && (
-								<>
-									<dt>Role</dt>
-									<dd>{selected.role}</dd>
-								</>
-							)}
-							{selected.communicationStyle.formality && (
-								<>
-									<dt>Formality</dt>
-									<dd>{selected.communicationStyle.formality}</dd>
-								</>
-							)}
-							{selected.communicationStyle.tone && (
-								<>
-									<dt>Your usual tone</dt>
-									<dd>{selected.communicationStyle.tone}</dd>
-								</>
-							)}
-						</dl>
-						<section className="person-facts">
-							<h3>Facts</h3>
-							{selected.facts
-								.filter((fact) => fact.status === "active")
-								.map((fact) => (
-									<article key={fact.id}>
-										<div>
-											<strong>{fact.key}</strong>
-											<p>{fact.value}</p>
-										</div>
-										<small>
-											{fact.userConfirmed ? "Confirmed" : "Inferred"} ·{" "}
-											{Math.round(fact.confidence * 100)}% · {fact.sourceType}
-										</small>
-									</article>
-								))}
-						</section>
-						{deleteConfirmId === selected.id ? (
-							<div className="destructive-confirmation" role="alert">
-								<p>
-									Delete this person and every memory directly attached to them?
-									Unrelated memories remain.
-								</p>
-								<div>
-									<button
-										className="button danger"
-										disabled={busy}
-										onClick={() => void removePerson(selected.id)}
-									>
-										Delete person and related facts
-									</button>
-									<button
-										className="button secondary"
-										onClick={() => setDeleteConfirmId(null)}
-									>
-										Cancel
-									</button>
-								</div>
-							</div>
-						) : (
-							<button
-								className="quiet-link danger-link"
-								onClick={() => setDeleteConfirmId(selected.id)}
-							>
-								Delete everything about this person
-							</button>
-						)}
-					</>
-				) : (
-					<div className="person-detail-empty">
-						<h2>Select a person</h2>
-						<p>Use confirmed relationship and tone context when drafting.</p>
-					</div>
-				)}
-			</section>
-
-			<details className="life-create person-create" open={people.length === 0}>
-				<summary>Add a person</summary>
-				<form onSubmit={(event) => void save(event)}>
-					<label>
-						Name
-						<input
-							value={name}
-							onChange={(event) => setName(event.target.value)}
-						/>
-					</label>
-					<label>
-						Relationship
-						<input
-							value={relationship}
-							onChange={(event) => setRelationship(event.target.value)}
-							placeholder="Professor, friend, sponsor…"
-						/>
-					</label>
-					<label>
-						Organization
-						<input
-							value={organization}
-							onChange={(event) => setOrganization(event.target.value)}
-						/>
-					</label>
-					<label>
-						Email
-						<input
-							type="email"
-							value={email}
-							onChange={(event) => setEmail(event.target.value)}
-						/>
-					</label>
-					<label>
-						Formality
-						<select
-							value={formality}
-							onChange={(event) =>
-								setFormality(event.target.value as typeof formality)
-							}
-						>
-							<option value="casual">Casual</option>
-							<option value="neutral">Neutral</option>
-							<option value="professional">Professional</option>
-							<option value="formal">Formal</option>
-						</select>
-					</label>
-					<label className="wide">
-						Your usual tone
-						<input
-							value={tone}
-							onChange={(event) => setTone(event.target.value)}
-							placeholder="Brief, respectful, and prepared"
-						/>
-					</label>
-					<button className="button primary" disabled={busy || !name.trim()}>
-						Save person
-					</button>
-				</form>
-			</details>
-			{error && (
-				<p className="connection-error" role="alert">
-					{error}
-				</p>
-			)}
-		</div>
-	);
-}
-
 function MemoryView({
 	snapshot,
 	update,
@@ -1863,49 +1560,32 @@ export function LifeContext({
 	snapshot,
 	update,
 	onOpenTranscriptResult,
+	initialSessionId,
 }: {
 	snapshot: WorkspaceSnapshot;
 	update(next: WorkspaceSnapshot): void;
 	onOpenTranscriptResult?(result: TranscriptSearchResult): void;
+	initialSessionId?: string;
 }) {
-	const [view, setView] = useState<LifeView>("calendar");
+	const [view, setView] = useState<LegacyLifeView>("calendar");
 	return (
-		<div className="life-page">
-			<header className="page-header life-header">
-				<h1>Memory</h1>
-			</header>
-			<nav className="life-switcher" aria-label="Memory views">
-				{(
-					[
-						["calendar", "Calendar", "today"],
-						["timeline", "Timeline", "activity"],
-						["people", "People", "chat"],
-						["memory", "Knowledge", "memory"],
-					] as const
-				).map(([id, label, icon]) => (
-					<button
-						key={id}
-						aria-current={view === id ? "page" : undefined}
-						className={view === id ? "active" : ""}
-						onClick={() => setView(id)}
-					>
-						<Icon name={icon} />
-						<span>{label}</span>
-					</button>
-				))}
-			</nav>
-			{view === "calendar" && <CalendarView />}
-			{view === "timeline" && <TimelineView />}
-			{view === "people" && <PeopleView />}
-			{view === "memory" && (
-				<MemoryView
-					snapshot={snapshot}
-					update={update}
-					{...(onOpenTranscriptResult
-						? { onOpenTranscriptResult }
-						: {})}
-				/>
-			)}
-		</div>
+		<MemoryWorkspace
+			{...(initialSessionId ? { initialSessionId } : {})}
+			legacyTools={
+				<details className="memory-legacy-tools">
+					<summary>Calendar, capture, and source administration</summary>
+					<div>
+						<nav className="life-switcher" aria-label="Advanced memory tools">
+							{([ ["calendar", "Calendar", "today"], ["timeline", "Raw activity", "activity"], ["memory", "Capture & knowledge", "memory"] ] as const).map(([id, label, icon]) => (
+								<button key={id} aria-current={view === id ? "page" : undefined} className={view === id ? "active" : ""} onClick={() => setView(id)}><Icon name={icon} /><span>{label}</span></button>
+							))}
+						</nav>
+						{view === "calendar" && <CalendarView />}
+						{view === "timeline" && <TimelineView />}
+						{view === "memory" && <MemoryView snapshot={snapshot} update={update} {...(onOpenTranscriptResult ? { onOpenTranscriptResult } : {})} />}
+					</div>
+				</details>
+			}
+		/>
 	);
 }

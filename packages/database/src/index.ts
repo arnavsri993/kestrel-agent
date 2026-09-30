@@ -60,6 +60,10 @@ import {
 	WorkingTaskSchema,
 	type MemoryRecord,
 	MemoryRecordSchema,
+	type MemoryDocument,
+	MemoryDocumentSchema,
+	type MemoryWorkspaceDaySummary,
+	MemoryWorkspaceDaySummarySchema,
 	type MemoryVersion,
 	MemoryVersionSchema,
 	type ModelCallAudit,
@@ -300,6 +304,12 @@ interface EncryptedPayloadRow {
 	payload_ciphertext: string;
 	payload_iv: string;
 	payload_auth_tag: string;
+}
+
+interface MemoryWorkspaceDocumentRow extends EncryptedPayloadRow {
+	id: string;
+	version: number;
+	status: "active" | "deleted";
 }
 
 interface BrowserActivityRow extends EncryptedPayloadRow {
@@ -4127,6 +4137,98 @@ export class KestrelDatabase {
 					right.relevanceScore - left.relevanceScore ||
 					right.updatedAt.localeCompare(left.updatedAt),
 			);
+	}
+
+	getMemoryWorkspaceDocument(id: string): MemoryDocument | undefined {
+		const row = this.db.prepare(
+			"SELECT * FROM memory_workspace_documents WHERE id = ? AND status = 'active'",
+		).get(id) as MemoryWorkspaceDocumentRow | undefined;
+		return row ? MemoryDocumentSchema.parse(this.decryptPayload(row)) : undefined;
+	}
+
+	listMemoryWorkspaceDocuments(): MemoryDocument[] {
+		return (this.db.prepare(
+			"SELECT * FROM memory_workspace_documents WHERE status = 'active' ORDER BY updated_at DESC, id ASC",
+		).all() as MemoryWorkspaceDocumentRow[])
+			.map(row => MemoryDocumentSchema.parse(this.decryptPayload(row)));
+	}
+
+	/** Includes tombstones so projections of forgotten legacy rows stay hidden. */
+	hasMemoryWorkspaceDocumentRecord(id: string): boolean {
+		return Boolean(this.db.prepare(
+			"SELECT 1 FROM memory_workspace_documents WHERE id = ?",
+		).get(id));
+	}
+
+	upsertMemoryWorkspaceDocument(document: MemoryDocument, expectedVersion?: number): MemoryDocument {
+		const parsed = MemoryDocumentSchema.parse(document);
+		const existing = this.db.prepare(
+			"SELECT version, status FROM memory_workspace_documents WHERE id = ?",
+		).get(parsed.id) as Pick<MemoryWorkspaceDocumentRow, "version" | "status"> | undefined;
+		if (expectedVersion !== undefined && (existing?.version ?? 0) !== expectedVersion)
+			throw new Error("Memory document changed before it could be saved.");
+		if (existing && parsed.version !== existing.version + 1)
+			throw new Error("Memory document version must advance by one.");
+		if (!existing && parsed.version !== 1)
+			throw new Error("A new memory document must start at version 1.");
+		const encrypted = encryptText(JSON.stringify(parsed), this.encryptionKey);
+		this.db.prepare(`INSERT INTO memory_workspace_documents
+			(id, version, status, created_at, updated_at, payload_ciphertext, payload_iv, payload_auth_tag)
+			VALUES (?, ?, 'active', ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET version=excluded.version, status='active',
+			updated_at=excluded.updated_at, payload_ciphertext=excluded.payload_ciphertext,
+			payload_iv=excluded.payload_iv, payload_auth_tag=excluded.payload_auth_tag`)
+			.run(parsed.id, parsed.version, parsed.createdAt, parsed.updatedAt,
+				encrypted.ciphertext, encrypted.iv, encrypted.authTag);
+		return parsed;
+	}
+
+	forgetMemoryWorkspaceDocument(id: string, expectedVersion?: number): boolean {
+		const existing = this.db.prepare(
+			"SELECT version FROM memory_workspace_documents WHERE id = ?",
+		).get(id) as Pick<MemoryWorkspaceDocumentRow, "version"> | undefined;
+		if (expectedVersion !== undefined && (existing?.version ?? 0) !== expectedVersion)
+			throw new Error("Memory document changed before it could be forgotten.");
+		if (existing) return this.db.prepare(
+			"UPDATE memory_workspace_documents SET status='deleted', version=version+1, updated_at=? WHERE id=?",
+		).run(new Date().toISOString(), id).changes === 1;
+		return this.db.prepare(`INSERT INTO memory_workspace_documents
+			(id, version, status, created_at, updated_at) VALUES (?, 1, 'deleted', ?, ?)`)
+			.run(id, new Date().toISOString(), new Date().toISOString()).changes === 1;
+	}
+
+	getMemoryWorkspaceDaySummary(viewerId: string, domainId: string | undefined, day: string): MemoryWorkspaceDaySummary | undefined {
+		const row = this.db.prepare(`SELECT payload_ciphertext, payload_iv, payload_auth_tag
+			FROM memory_workspace_day_summaries WHERE viewer_id=? AND domain_id IS ? AND day=?`)
+			.get(viewerId, domainId ?? null, day) as EncryptedPayloadRow | undefined;
+		return row ? MemoryWorkspaceDaySummarySchema.parse(this.decryptPayload(row)) : undefined;
+	}
+
+	listMemoryWorkspaceDaySummaries(viewerId: string, domainId?: string): MemoryWorkspaceDaySummary[] {
+		const rows = (domainId === undefined
+			? this.db.prepare(`SELECT payload_ciphertext, payload_iv, payload_auth_tag FROM memory_workspace_day_summaries
+				WHERE viewer_id=? ORDER BY day DESC`).all(viewerId)
+			: this.db.prepare(`SELECT payload_ciphertext, payload_iv, payload_auth_tag FROM memory_workspace_day_summaries
+				WHERE viewer_id=? AND domain_id=? ORDER BY day DESC`).all(viewerId, domainId)) as EncryptedPayloadRow[];
+		return rows.map(row => MemoryWorkspaceDaySummarySchema.parse(this.decryptPayload(row)));
+	}
+
+	upsertMemoryWorkspaceDaySummary(summary: MemoryWorkspaceDaySummary, expectedVersion?: number): MemoryWorkspaceDaySummary {
+		const parsed = MemoryWorkspaceDaySummarySchema.parse(summary);
+		const existing = this.getMemoryWorkspaceDaySummary(parsed.viewerId, parsed.domainId, parsed.day);
+		if (expectedVersion !== undefined && (existing?.version ?? 0) !== expectedVersion)
+			throw new Error("Memory day summary changed before it could be saved.");
+		if (parsed.version !== (existing?.version ?? 0) + 1)
+			throw new Error("Memory day summary version must advance by one.");
+		const encrypted = encryptText(JSON.stringify(parsed), this.encryptionKey);
+		this.db.prepare(`INSERT INTO memory_workspace_day_summaries
+			(id,viewer_id,domain_id,day,version,created_at,updated_at,payload_ciphertext,payload_iv,payload_auth_tag)
+			VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+			version=excluded.version,updated_at=excluded.updated_at,
+			payload_ciphertext=excluded.payload_ciphertext,payload_iv=excluded.payload_iv,payload_auth_tag=excluded.payload_auth_tag`)
+			.run(parsed.id, parsed.viewerId, parsed.domainId ?? null, parsed.day, parsed.version,
+				parsed.createdAt, parsed.updatedAt, encrypted.ciphertext, encrypted.iv, encrypted.authTag);
+		return parsed;
 	}
 
 	upsertCalendarEvent(event: UnifiedCalendarEvent): void {

@@ -93,7 +93,9 @@ try {
   });
   for (const url of [
     'zoommtg://zoom.us/join?confno=1234567890&action=join',
+    'zoomus://zoom.us/join?confno=1234567890&action=join',
     'msteams://teams.microsoft.com/l/meetup-join/19%3afixture/0',
+    'itms-appss://apps.apple.com/app/id113517709?mt=12',
   ]) {
     await run(`window.open(${JSON.stringify(url)}, '_blank')`);
     await until(() => app.evaluate(() => globalThis.authFixtureExternalLinks.length > 0), 'App popup handoff failed');
@@ -102,7 +104,7 @@ try {
     await until(() => app.evaluate(() => globalThis.authFixtureExternalLinks.length > 0), 'Iframe app handoff failed');
     assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [url]);
   }
-  console.log('Auth links passed: same-tab POST, 307/308 POST redirects, blank popup navigation, opener callback, popup close, target/named popup POST, and Zoom/Teams popup and iframe handoffs.');
+  console.log('Auth links passed: same-tab POST, 307/308 POST redirects, blank popup navigation, opener callback, popup close, target/named popup POST, and Zoom/Teams/App Store popup and iframe handoffs.');
 } finally {
   await app?.close(); server.closeAllConnections(); await new Promise(r => server.close(r));
   rmSync(root, {recursive:true,force:true});

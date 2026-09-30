@@ -1,5 +1,11 @@
 import { whatsappDomSnapshot } from "./whatsapp-source";
 import { PAYMENT_AUTOFILL_WORLD_ID, PAYMENT_FORM_SCAN_SCRIPT, PAYMENT_FORM_VALUES_SCRIPT, paymentFillScript } from "./payment-form-scripts";
+import {
+	CLEAR_FIND_IN_PAGE_SELECTION_SCRIPT,
+	FIND_IN_PAGE_WORLD_ID,
+	findInPageFallbackScript,
+	type FallbackFindInPageResult,
+} from "./find-in-page-scripts";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
@@ -177,6 +183,44 @@ const MAX_HEIC_UPLOAD_PIXELS = 75_000_000;
 const HEIC_UPLOAD_CONVERSION_TIMEOUT_MS = 30_000;
 const HEIC_UPLOAD_TEMPORARY_FILE_TTL_MS = 60 * 60 * 1_000;
 const executeFile = promisify(execFileCallback);
+
+type ActiveFindRequest = {
+	generation: number;
+	query: string;
+	url: string;
+	matches: number;
+	activeMatchOrdinal: number;
+};
+
+function parseFallbackFindInPageResult(
+	value: unknown,
+): FallbackFindInPageResult | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const candidate = value as Partial<FallbackFindInPageResult>;
+	if (
+		typeof candidate.found !== "boolean" ||
+		typeof candidate.matches !== "number" ||
+		!Number.isSafeInteger(candidate.matches) ||
+		candidate.matches < 0
+	)
+		return undefined;
+	return { found: candidate.found, matches: candidate.matches };
+}
+
+function nextFindMatchOrdinal(
+	activeMatchOrdinal: number,
+	matches: number,
+	forward: boolean,
+): number {
+	if (matches === 0) return 0;
+	if (forward)
+		return activeMatchOrdinal <= 0 || activeMatchOrdinal >= matches
+			? 1
+			: activeMatchOrdinal + 1;
+	return activeMatchOrdinal <= 1 || activeMatchOrdinal > matches
+		? matches
+		: activeMatchOrdinal - 1;
+}
 const PasswordSubmissionMessageSchema = z.object({
 	username: z.string().max(500),
 	password: z.string().min(1).max(4_096),
@@ -223,9 +267,19 @@ const AUTHENTICATION_HOSTS = new Set([
 ]);
 const AUTHENTICATION_PATH_PATTERN =
 	/(?:^|\/)(?:auth|authenticate|authentication|authorize|authorization|challenge|consent|log[-_]?in|oauth\d*|sign[-_]?in|sign[-_]?up|signin|signup|sso|verify|verification)(?:\/|$)/i;
-const APP_STORE_PROTOCOLS = new Set(["itms-apps:", "macappstore:"]);
-const APP_STORE_HOSTS = new Set(["apps.apple.com", "itunes.apple.com"]);
-const ZOOM_JOIN_PROTOCOL = "zoommtg:";
+// apps.apple.com CSP launches `itms-appss:` (HTTPS App Store) and `macappstore:`.
+const APP_STORE_PROTOCOLS = new Set([
+	"itms-apps:",
+	"itms-appss:",
+	"macappstore:",
+]);
+const APP_STORE_HOSTS = new Set([
+	"apps.apple.com",
+	"itunes.apple.com",
+	"geo.itunes.apple.com",
+]);
+// Zoom web launchers use both desktop (`zoommtg:`) and mobile (`zoomus:`) schemes.
+const ZOOM_JOIN_PROTOCOLS = new Set(["zoommtg:", "zoomus:"]);
 const ZOOM_JOIN_HOST = "zoom.us";
 const ZOOM_JOIN_PATH = "/join";
 const ZOOM_MEETING_NUMBER = /^\d{9,11}$/;
@@ -597,7 +651,7 @@ export function safeAppStoreUrl(value: string): string | undefined {
 	}
 }
 
-/** Allow only a standard Zoom desktop meeting-join link to leave the browser. */
+/** Allow only a standard Zoom meeting-join link to leave the browser. */
 export function safeZoomJoinUrl(value: string): string | undefined {
 	if (!value || value.length > 8_192) return undefined;
 	try {
@@ -606,7 +660,7 @@ export function safeZoomJoinUrl(value: string): string | undefined {
 		const actions = url.searchParams.getAll("action");
 		const passwords = url.searchParams.getAll("pwd");
 		if (
-			url.protocol !== ZOOM_JOIN_PROTOCOL ||
+			!ZOOM_JOIN_PROTOCOLS.has(url.protocol) ||
 			url.hostname.toLowerCase() !== ZOOM_JOIN_HOST ||
 			url.pathname !== ZOOM_JOIN_PATH ||
 			url.port ||
@@ -1107,6 +1161,8 @@ export class UserBrowserService {
 	private readonly extensionRuntime: ElectronExtensionRuntime;
 	private readonly extensionStartup: Promise<void> = Promise.resolve();
 	private readonly views = new Map<string, ViewRecord>();
+	private readonly findRequests = new Map<string, ActiveFindRequest>();
+	private findRequestGeneration = 0;
 	private readonly elementRefs = new Map<string, Map<string, number>>();
 	private readonly sensitiveElementRefs = new Map<string, Set<string>>();
 	private readonly downloadPaths = new Map<string, string>();
@@ -3085,18 +3141,99 @@ export class UserBrowserService {
 			this.stopFindInPage(tabId);
 			return this.getState();
 		}
-		liveWebContents(record?.view?.webContents)?.findInPage(text, {
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents) return this.getState();
+		const previous = this.findRequests.get(tabId);
+		const findNext = Boolean(options.findNext) && previous?.query === text;
+		const request: ActiveFindRequest = {
+			generation: ++this.findRequestGeneration,
+			query: text,
+			url: webContents.getURL(),
+			matches: findNext ? (previous?.matches ?? 0) : 0,
+			activeMatchOrdinal: findNext
+				? (previous?.activeMatchOrdinal ?? 0)
+				: 0,
+		};
+		this.findRequests.set(tabId, request);
+		void this.runFallbackFindInPage(tabId, webContents, request, {
+			findNext,
 			forward: options.forward ?? true,
-			findNext: Boolean(options.findNext),
 		});
 		return this.getState();
 	}
 
 	stopFindInPage(tabId: string): UserBrowserState {
+		this.findRequests.delete(tabId);
 		const record = this.views.get(tabId);
 		const webContents = liveWebContents(record?.view?.webContents);
-		if (webContents) webContents.stopFindInPage("clearSelection");
+		if (webContents) {
+			webContents.stopFindInPage("clearSelection");
+			void Promise.resolve(
+				webContents.executeJavaScriptInIsolatedWorld(FIND_IN_PAGE_WORLD_ID, [
+					{ code: CLEAR_FIND_IN_PAGE_SELECTION_SCRIPT },
+				]),
+			).catch(() => undefined);
+		}
 		return this.getState();
+	}
+
+	private async runFallbackFindInPage(
+		tabId: string,
+		webContents: WebContents,
+		request: ActiveFindRequest,
+		options: { findNext: boolean; forward: boolean },
+	): Promise<void> {
+		let result: FallbackFindInPageResult | undefined;
+		try {
+			result = parseFallbackFindInPageResult(
+				await webContents.executeJavaScriptInIsolatedWorld(
+					FIND_IN_PAGE_WORLD_ID,
+					[
+						{
+							code: findInPageFallbackScript({
+								query: request.query,
+								findNext: options.findNext,
+								forward: options.forward,
+							}),
+						},
+					],
+				),
+			);
+		} catch {
+			// A page can be replaced while its isolated search is in flight.
+		}
+		const current = this.findRequests.get(tabId);
+		if (
+			this.disposed ||
+			!current ||
+			current.generation !== request.generation ||
+			!liveWebContents(webContents) ||
+			webContents.getURL() !== request.url
+		)
+			return;
+		const matches = result?.found ? result.matches : 0;
+		const activeMatchOrdinal = matches
+			? options.findNext
+				? nextFindMatchOrdinal(
+						current.activeMatchOrdinal,
+						matches,
+						options.forward,
+					)
+				: options.forward
+					? 1
+					: matches
+			: 0;
+		current.matches = matches;
+		current.activeMatchOrdinal = activeMatchOrdinal;
+		this.onEvent({
+			type: "find-in-page",
+			match: {
+				tabId,
+				activeMatchOrdinal,
+				matches,
+				finalUpdate: true,
+			},
+		});
 	}
 
 	printTab(tabId: string): UserBrowserState {
@@ -6498,6 +6635,7 @@ export class UserBrowserService {
 
 	private closeView(tabId: string, closeWebContents = true): void {
 		if (tabId === this.state.activeTabId) this.clearPasswordPrompt();
+		this.findRequests.delete(tabId);
 		this.submittedUsernames.delete(tabId);
 		this.loginFlows.clearTab(tabId);
 		const record = this.views.get(tabId);
