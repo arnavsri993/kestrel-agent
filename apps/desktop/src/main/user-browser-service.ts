@@ -1,3 +1,4 @@
+import { embeddedBrowserUserAgent } from "./browser-user-agent";
 import { whatsappDomSnapshot } from "./whatsapp-source";
 import { PAYMENT_AUTOFILL_WORLD_ID, PAYMENT_FORM_SCAN_SCRIPT, PAYMENT_FORM_VALUES_SCRIPT, paymentFillScript } from "./payment-form-scripts";
 import {
@@ -439,6 +440,8 @@ type TabActivity = Partial<Record<"playing" | "microphone" | "camera" | "screen"
 
 interface ViewRecord {
 	activity?: TabActivity;
+	externalGesture?: { url: string; at: number };
+	externalPromptPending?: boolean;
 	mediaPlaying?: boolean;
 	view: WebContentsView;
 	navigatingTo?: string;
@@ -633,7 +636,7 @@ function safePageUrl(value: string): URL | undefined {
 
 /** Allow only Apple App Store deep links to cross from a page into macOS. */
 export function safeAppStoreUrl(value: string): string | undefined {
-	if (!value || value.length > 8_192) return undefined;
+	if (!value || value.length > 8_192 || /[\\\u0000-\u0020\u007f]/.test(value)) return undefined;
 	try {
 		const url = new URL(value);
 		if (
@@ -652,7 +655,7 @@ export function safeAppStoreUrl(value: string): string | undefined {
 
 /** Allow only a standard Zoom meeting-join link to leave the browser. */
 export function safeZoomJoinUrl(value: string): string | undefined {
-	if (!value || value.length > 8_192) return undefined;
+	if (!value || value.length > 8_192 || /[\\\u0000-\u0020\u007f]/.test(value)) return undefined;
 	try {
 		const url = new URL(value);
 		const meetingNumbers = url.searchParams.getAll("confno");
@@ -679,24 +682,30 @@ export function safeZoomJoinUrl(value: string): string | undefined {
 	}
 }
 
-/** Microsoft Teams navigation/join links; never arbitrary application commands. */
+/** Teams launchers also use hostless msteams:/l/... links. */
 export function safeTeamsUrl(value: string): string | undefined {
-	if (!value || value.length > 8_192) return undefined;
+	if (!value || value.length > 8_192 || /[\\\u0000-\u0020\u007f]/.test(value)) return undefined;
 	try {
 		const url = new URL(value);
 		if (url.protocol !== "msteams:" ||
-			!["teams.microsoft.com", "teams.live.com"].includes(url.hostname.toLowerCase()) ||
+			!["", "teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"].includes(url.hostname.toLowerCase()) ||
 			url.username || url.password || url.port || url.hash ||
-			!/^\/l\/(?:meetup-join|team|channel)\/[^/]+/.test(url.pathname)) return undefined;
+			!/^\/l\/(?:meetup-join|team|channel|chat|message)\/[^/]+(?:\/[^/]+)*\/?$/.test(url.pathname)) return undefined;
 		return url.toString();
 	} catch { return undefined; }
 }
 
-function openSystemAppUrl(value: string): boolean {
-	const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value);
-	if (!url) return false;
-	void Promise.resolve(shell.openExternal(url)).catch(() => undefined);
-	return true;
+/** Only Cursor authentication callbacks, never file, command, or install links. */
+export function safeCursorAuthUrl(value: string): string | undefined {
+	if (!value || value.length > 8_192 || /[\\\u0000-\u0020\u007f]/.test(value)) return undefined;
+	try {
+		const url = new URL(value);
+		if (url.protocol !== "cursor:" || url.username || url.password || url.port || url.hash) return undefined;
+		const host = url.hostname.toLowerCase();
+		const login = host === "cursorauth" && (url.pathname === "" || url.pathname === "/");
+		const oauth = host === "anysphere.cursor-mcp" && ["/oauth/callback", "/oauth/return"].includes(url.pathname);
+		return login || oauth ? url.toString() : undefined;
+	} catch { return undefined; }
 }
 
 function discardPasswordEntry(entry: { password: string }): void {
@@ -1156,6 +1165,8 @@ export class UserBrowserService {
 	private readonly window: BrowserWindow;
 	private readonly store: BrowserTabStore;
 	private readonly partition: Session;
+	private readonly browserUserAgent: string;
+	private externalGrantGeneration = 0;
 	private readonly extensionManager: BrowserExtensionManager;
 	private readonly extensionRuntime: ElectronExtensionRuntime;
 	private readonly extensionStartup: Promise<void> = Promise.resolve();
@@ -1339,6 +1350,12 @@ export class UserBrowserService {
 		this.partition = electronSession.fromPartition(this.partitionName, {
 			cache: true,
 		});
+		// Configure the session before any extension, popup, or page can navigate.
+		// Keep Chromium's own platform/version and native Client Hints behavior.
+		this.browserUserAgent = embeddedBrowserUserAgent(
+			this.partition.getUserAgent(), process.versions.chrome, app.getName(),
+		);
+		this.partition.setUserAgent(this.browserUserAgent);
 		this.extensionRuntime = new ElectronExtensionRuntime(this.partition);
 		this.applySessionBrowserPreferences();
 		if (!this.connectionMode) this.extensionStartup = this.extensionManager
@@ -2504,6 +2521,7 @@ export class UserBrowserService {
 			typeof this.partition.clearStorageData === "function"
 		) {
 			await this.partition.clearStorageData();
+			this.externalGrantGeneration++;
 			this.state.sitePermissions = [];
 		}
 		this.commit();
@@ -3256,7 +3274,17 @@ export class UserBrowserService {
 		const normalizedOrigin = this.permissionOrigin(origin);
 		if (!normalizedOrigin)
 			throw new Error("Site permissions require an HTTP(S) origin.");
+		if (permission.startsWith("open-external:")) this.externalGrantGeneration++;
 		this.rememberSitePermission(normalizedOrigin, permission, decision);
+		this.commit();
+		return this.getState();
+	}
+
+	clearExternalAppPermissions(): UserBrowserState {
+		this.externalGrantGeneration++;
+		this.state.sitePermissions = this.state.sitePermissions.filter(
+			(item) => !item.permission.startsWith("open-external:"),
+		);
 		this.commit();
 		return this.getState();
 	}
@@ -3265,6 +3293,7 @@ export class UserBrowserService {
 		const normalizedOrigin = this.permissionOrigin(origin);
 		if (!normalizedOrigin)
 			throw new Error("Site permissions require an HTTP(S) origin.");
+		if (permission.startsWith("open-external:")) this.externalGrantGeneration++;
 		this.state.sitePermissions = this.state.sitePermissions.filter(
 			(item) =>
 				!(item.origin === normalizedOrigin && item.permission === permission),
@@ -5847,6 +5876,7 @@ export class UserBrowserService {
 		const webContents = liveWebContents(view?.webContents);
 		if (!webContents)
 			throw new Error("Kestrel could not create a browser page. Try again.");
+		webContents.setUserAgent(this.browserUserAgent);
 		view.setBackgroundColor("#ffffff");
 		this.applyViewBrowserPreferences(webContents);
 		const record: ViewRecord = { view, navigationGeneration: 0 };
@@ -5874,11 +5904,77 @@ export class UserBrowserService {
 		return record;
 	}
 
+	private recordExternalGesture(tab: UserBrowserTab, record: ViewRecord): void {
+		const contents = liveWebContents(record.view.webContents);
+		const url = contents && safePageUrl(contents.getURL());
+		if (this.state.activeTabId === tab.id && url?.protocol === "https:")
+			record.externalGesture = { url: url.toString(), at: this.now().getTime() };
+	}
+
+	/** Return true only for recognized app URLs; never navigate the page to them. */
+	private requestExternalApp(
+		tab: UserBrowserTab, record: ViewRecord, value: string, initiatingUrl?: string,
+	): boolean {
+		const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value) ?? safeCursorAuthUrl(value);
+		if (!url) return false;
+		const contents = liveWebContents(record.view.webContents);
+		const source = contents && safePageUrl(contents.getURL());
+		const gesture = record.externalGesture;
+		delete record.externalGesture;
+		const now = this.now().getTime();
+		// Never infer a gesture from a page URL, referrer, redirect or DOM message.
+		if (!contents || !source || source.protocol !== "https:" ||
+			this.state.activeTabId !== tab.id || this.views.get(tab.id) !== record ||
+			!gesture || gesture.url !== source.toString() || now < gesture.at || now - gesture.at > 5_000 ||
+			(initiatingUrl !== undefined && safePageUrl(initiatingUrl)?.origin !== source.origin)) return true;
+		if (record.externalPromptPending) return true;
+		const scheme = new URL(url).protocol.slice(0, -1);
+		const permission = `open-external:${scheme}`;
+		const existing = this.state.sitePermissions.find((item) => item.origin === source.origin && item.permission === permission);
+		if (existing?.decision === "deny") return true;
+		const appName = safeTeamsUrl(url) ? "Microsoft Teams" : safeCursorAuthUrl(url) ? "Cursor" : safeZoomJoinUrl(url) ? "Zoom" : "App Store";
+		const generation = record.navigationGeneration;
+		const grantGeneration = this.externalGrantGeneration;
+		const stillCurrent = () => !this.disposed && !this.window.isDestroyed() &&
+			liveWebContents(record.view.webContents) === contents && this.views.get(tab.id) === record &&
+			this.state.activeTabId === tab.id && contents.getURL() === source.toString() &&
+			record.navigationGeneration === generation && this.externalGrantGeneration === grantGeneration;
+		record.externalPromptPending = true;
+		void (async () => {
+			try {
+				if (existing?.decision !== "allow") {
+					const decision = await dialog.showMessageBox(this.window, {
+						type: "question", title: `Open ${appName}?`,
+						message: `${source.origin} wants to open ${appName}.`,
+						detail: "Continue only if you requested this. You can keep using the current page.",
+						buttons: ["Open app", "Stay here"], defaultId: 1, cancelId: 1,
+						checkboxLabel: `Remember for this site and ${appName}`, checkboxChecked: false,
+					});
+					if (!stillCurrent() || decision.response !== 0) return;
+					if (decision.checkboxChecked) {
+						this.rememberSitePermission(source.origin, permission, "allow");
+						this.commit();
+					}
+				}
+				if (!stillCurrent()) return;
+				await shell.openExternal(url);
+			} catch {
+				if (!stillCurrent()) return;
+				await dialog.showMessageBox(this.window, {
+					type: "info", title: `Couldn’t open ${appName}`, message: `Couldn’t open ${appName}`,
+					detail: `Make sure ${appName} is installed, then try the link again. You can continue on this page.`,
+					buttons: ["OK"],
+				});
+			} finally { record.externalPromptPending = false; }
+		})().catch(() => undefined);
+		return true;
+	}
+
 	private configureView(tab: UserBrowserTab, record: ViewRecord): void {
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents) return;
-		webContents.setWindowOpenHandler(({ url, disposition }) => {
-			if (openSystemAppUrl(url)) return { action: "deny" };
+		webContents.setWindowOpenHandler(({ url, disposition, referrer }) => {
+			if (this.requestExternalApp(tab, record, url, referrer?.url || undefined)) return { action: "deny" };
 			if (url !== "about:blank" && !safePageUrl(url)) return { action: "deny" };
 			return {
 				action: "allow",
@@ -5911,6 +6007,10 @@ export class UserBrowserService {
 					return child.view.webContents;
 				},
 			};
+		});
+		webContents.on("before-mouse-event", (_event, input) => {
+			if (input.type === "mouseDown" && input.button === "left")
+				this.recordExternalGesture(tab, record);
 		});
 		webContents.on("media-started-playing", () => { record.mediaPlaying = true; this.emit(); });
 		webContents.on("media-paused", () => { record.mediaPlaying = false; this.emit(); });
@@ -5961,16 +6061,21 @@ export class UserBrowserService {
 				);
 		});
 		webContents.on("will-frame-navigate", (event) => {
-			// Meeting launchers may navigate a hidden iframe to their app scheme.
-			// Main-frame handoffs are handled below so each link opens only once.
-			if (!event.isMainFrame && openSystemAppUrl(event.url)) event.preventDefault();
+			// Validate the actual initiating frame before the main-frame event.
+			// Preventing here ensures a supported app link is handled only once.
+			if (this.requestExternalApp(
+				tab, record, event.url,
+				event.initiator?.url ?? (event.isMainFrame ? undefined : event.frame?.url ?? ""),
+			)) event.preventDefault();
+			else if (!event.isMainFrame && event.url !== "about:blank" && !safePageUrl(event.url))
+				event.preventDefault();
 		});
 		webContents.on("will-navigate", (event, url) => {
 			if (this.passwordSaveCommitTabId === tab.id) {
 				event.preventDefault();
 				return;
 			}
-			if (openSystemAppUrl(url)) {
+			if (this.requestExternalApp(tab, record, url)) {
 				event.preventDefault();
 				return;
 			}
@@ -5990,7 +6095,7 @@ export class UserBrowserService {
 				event.preventDefault();
 				return;
 			}
-			if (openSystemAppUrl(url)) {
+			if (this.requestExternalApp(tab, record, url)) {
 				event.preventDefault();
 				return;
 			}
@@ -6318,6 +6423,8 @@ export class UserBrowserService {
 		});
 		webContents.on("before-input-event", (event, input) => {
 			if (input.type !== "keyDown") return;
+			if (["Enter", " "].includes(input.key) && !input.meta && !input.control && !input.alt)
+				this.recordExternalGesture(tab, record);
 
 			// Escape: Stop loading if currently loading
 			if (input.key === "Escape") {

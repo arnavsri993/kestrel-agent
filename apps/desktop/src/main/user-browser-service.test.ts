@@ -97,6 +97,7 @@ const electron = vi.hoisted(() => {
     copyImageAt = vi.fn();
     copyVideoFrameAt = vi.fn();
     downloadURL = vi.fn();
+    setUserAgent = vi.fn();
     setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = (details) => {
       const result = handler(details);
       if (result.action === "allow") result.createWindow?.({ webPreferences: {} });
@@ -150,6 +151,8 @@ const electron = vi.hoisted(() => {
     permissionRequestHandler: unknown;
     setPermissionCheckHandler = vi.fn((handler) => { this.permissionCheckHandler = handler; });
     setPermissionRequestHandler = vi.fn((handler) => { this.permissionRequestHandler = handler; });
+    getUserAgent = vi.fn(() => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Kestrel/0.1.0 Chrome/150.0.7339.0 Electron/43.4.0 Safari/537.36");
+    setUserAgent = vi.fn();
     setSpellCheckerEnabled = vi.fn();
     setSpellCheckerLanguages = vi.fn();
     clearCache = vi.fn(async () => undefined);
@@ -184,7 +187,7 @@ const electron = vi.hoisted(() => {
 });
 
 vi.mock("electron", () => ({
-  app: { getAppMetrics: () => [] },
+  app: { getAppMetrics: () => [], getName: () => "Kestrel" },
   webContents: { getAllWebContents: () => [] },
   BrowserWindow: class {},
   WebContentsView: electron.MockView,
@@ -222,6 +225,7 @@ import {
   safeAppStoreUrl,
   safeZoomJoinUrl,
   safeTeamsUrl,
+  safeCursorAuthUrl,
   UserBrowserService,
 } from "./user-browser-service";
 import type { BrowserThreatProvider } from "./browser-threat-provider";
@@ -2302,6 +2306,7 @@ describe("UserBrowserService", () => {
   });
 
   it("hands off allowlisted App Store links to macOS", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(
@@ -2313,27 +2318,30 @@ describe("UserBrowserService", () => {
       "macappstore://itunes.apple.com/us/app/speedtest-by-ookla/id113517709?mt=12";
     const preventDefault = vi.fn();
 
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
     source.emit("will-navigate", { preventDefault }, appStoreUrl);
 
     expect(preventDefault).toHaveBeenCalledOnce();
-    expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl);
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl));
     expect(service.getState().tabs).toHaveLength(1);
   });
 
   it("hands off App Store popup links without creating a browser tab", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://apps.apple.com/");
     const source = electron.state.views[0]!.webContents;
     const appStoreUrl = "itms-apps://apps.apple.com/app/id113517709?mt=12";
 
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
     expect(
       source.windowOpenHandler?.({
         url: appStoreUrl,
         disposition: "foreground-tab",
       }),
     ).toEqual({ action: "deny" });
-    expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl);
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl));
     expect(service.getState().tabs).toHaveLength(1);
   });
 
@@ -2365,6 +2373,7 @@ describe("UserBrowserService", () => {
   });
 
   it("hands off HTTPS App Store launchers that use itms-appss", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://apps.apple.com/");
@@ -2372,7 +2381,10 @@ describe("UserBrowserService", () => {
     const appStoreUrl = "itms-appss://apps.apple.com/app/id113517709?mt=12";
     const preventDefault = vi.fn();
 
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
     source.emit("will-navigate", { preventDefault }, appStoreUrl);
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(1));
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
     expect(
       source.windowOpenHandler?.({
         url: appStoreUrl,
@@ -2381,12 +2393,13 @@ describe("UserBrowserService", () => {
     ).toEqual({ action: "deny" });
 
     expect(preventDefault).toHaveBeenCalledOnce();
-    expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl);
-    expect(shell.openExternal).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl));
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(2));
     expect(service.getState().tabs).toHaveLength(1);
   });
 
   it("hands off a validated Zoom join link from navigation, redirects, and popups", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://zoom.us/join");
@@ -2396,18 +2409,23 @@ describe("UserBrowserService", () => {
     const navigationPreventDefault = vi.fn();
     const redirectPreventDefault = vi.fn();
 
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
     expect(
       source.windowOpenHandler?.({
         url: zoomJoinUrl,
         disposition: "foreground-tab",
       }),
     ).toEqual({ action: "deny" });
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(1));
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
     source.emit("will-navigate", { preventDefault: navigationPreventDefault }, zoomJoinUrl);
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(2));
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
     source.emit("will-redirect", { preventDefault: redirectPreventDefault }, zoomJoinUrl);
 
     expect(navigationPreventDefault).toHaveBeenCalledOnce();
     expect(redirectPreventDefault).toHaveBeenCalledOnce();
-    expect(shell.openExternal).toHaveBeenCalledTimes(3);
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(3));
     expect(shell.openExternal).toHaveBeenNthCalledWith(1, zoomJoinUrl);
     expect(shell.openExternal).toHaveBeenNthCalledWith(2, zoomJoinUrl);
     expect(shell.openExternal).toHaveBeenNthCalledWith(3, zoomJoinUrl);
@@ -2447,6 +2465,7 @@ describe("UserBrowserService", () => {
   });
 
   it("hands off Teams meeting and team invitations and rejects unrelated schemes", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
     const { service } = createService();
     await service.navigate(service.getState().tabs[0]!.id, "https://teams.microsoft.com");
     const source = electron.state.views[0]!.webContents;
@@ -2457,15 +2476,185 @@ describe("UserBrowserService", () => {
     ]) {
       expect(safeTeamsUrl(url)).toBe(url);
       const event = {preventDefault: vi.fn()};
-      source.emit("will-navigate", event, url);
+      source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    source.emit("will-navigate", event, url);
       expect(event.preventDefault).toHaveBeenCalledOnce();
-      expect(shell.openExternal).toHaveBeenCalledWith(url);
+      await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledWith(url));
     }
     for (const url of [
       "msteams://evil.example/l/team/fixture", "msteams://teams.microsoft.com.evil.example/l/team/fixture",
       "msteams://user@teams.microsoft.com/l/team/fixture", "msteams://teams.microsoft.com:8000/l/team/fixture",
       "msteams://teams.microsoft.com/l/call/fixture", "file:///tmp/test", "msteams://teams.microsoft.com/l/team/",
     ]) expect(safeTeamsUrl(url)).toBeUndefined();
+  });
+
+  it("sets the embedded Chromium identity on the persistent session and each page before navigation", async () => {
+    for (const connectionMode of [undefined, "whatsapp"] as const) {
+      const { service } = createService(connectionMode ? { connectionMode, partitionName: "persist:whatsapp-fixture" } : {});
+      const tab = service.getState().tabs[0]!;
+      await service.navigate(tab.id, "https://web.whatsapp.com/");
+      const contents = electron.state.views.at(-1)!.webContents;
+      const partition = electron.state.partitions.at(-1)!.instance;
+      const agent = partition.setUserAgent.mock.calls[0]![0];
+      expect(agent).toContain("Chrome/150.0.7339.0");
+      expect(agent).toContain("Macintosh; Intel Mac OS X 10_15_7");
+      expect(agent).not.toMatch(/Electron|Kestrel/);
+      expect(contents.setUserAgent).toHaveBeenCalledWith(agent);
+      expect(partition.setUserAgent.mock.invocationCallOrder[0]).toBeLessThan(contents.setUserAgent.mock.invocationCallOrder[0]!);
+      expect(contents.setUserAgent.mock.invocationCallOrder[0]).toBeLessThan(contents.loadURL.mock.invocationCallOrder[0]!);
+      expect(partition.clearStorageData).not.toHaveBeenCalled();
+      expect(partition.clearCache).not.toHaveBeenCalled();
+      expect(electron.state.views.at(-1)!.options).toMatchObject({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true } });
+      service.dispose();
+    }
+  });
+
+  it("applies the browser identity to restored pages and native OAuth popups", async () => {
+    const { service, window, statePath } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://web.whatsapp.com/");
+    service.dispose();
+    const restored = new UserBrowserService({ window: window as never, statePath, downloadDirectory: join(statePath, "../downloads"), onEvent: () => undefined });
+    await restored.setContentBounds({ x: 0, y: 0, width: 300, height: 200 }, true);
+    await vi.waitFor(() => expect(electron.state.views.at(-1)!.webContents.loadURL).toHaveBeenCalledWith("https://web.whatsapp.com/"));
+    const contents = electron.state.views.at(-1)!.webContents;
+    const identity = electron.state.partitions.at(-1)!.instance.setUserAgent.mock.calls[0]![0];
+    expect(contents.setUserAgent).toHaveBeenCalledWith(identity);
+    contents.windowOpenHandler?.({ url: "https://accounts.google.com/o/oauth2/auth", disposition: "foreground-tab" });
+    const popup = electron.state.views.at(-1)!;
+    expect(popup.webContents.setUserAgent).toHaveBeenCalledWith(identity);
+    expect(popup.options).toMatchObject({ webPreferences: { contextIsolation: true, sandbox: true, webSecurity: true } });
+    restored.dispose();
+  });
+
+  it("recovers Teams hostless routes and only Cursor auth callback routes", () => {
+    for (const value of [
+      "msteams:/l/meetup-join/19%3afixture/0?context=example",
+      "msteams:/l/chat/0/0?users=person%40example.test",
+      "msteams://teams.cloud.microsoft/l/message/fixture/message-id",
+    ]) expect(safeTeamsUrl(value)).toBe(value);
+    for (const value of ["cursor://cursorAuth?code=fixture&state=nonce", "cursor://anysphere.cursor-mcp/oauth/callback?code=fixture", "cursor://anysphere.cursor-mcp/oauth/return?code=fixture"])
+      expect(safeCursorAuthUrl(value)).toBe(value);
+    for (const value of ["cursor://file/tmp/private", "cursor://command/workbench.action.terminal.new", "cursor://anysphere.cursor-mcp/install", "cursor://cursorAuth/extra?code=fixture", "cursor://user:password@cursorAuth?code=fixture", "cursor://cursorAuth:123?code=fixture", "cursor://cursorAuth?code=fixture#secret", "cursor://cursorAuth\\evil", "cursor://cursorAuth?code=bad\n", "cursor://cursorAuth?code=" + "x".repeat(8192)])
+      expect(safeCursorAuthUrl(value)).toBeUndefined();
+  });
+
+  it("requires active HTTPS page input before any app request and consumes that input", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
+    let now = new Date("2026-09-30T00:00:00.000Z");
+    const { service } = createService({ now: () => now });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://cursor.com/auth");
+    const source = electron.state.views[0]!.webContents;
+    const value = "cursor://cursorAuth?code=secret-fixture&state=nonce";
+    source.windowOpenHandler?.({ url: value, disposition: "foreground-tab" });
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    now = new Date(now.getTime() + 5_001);
+    source.emit("will-redirect", { preventDefault: vi.fn() }, value);
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
+    source.emit("before-input-event", {}, { type: "keyDown", key: "Enter" });
+    source.windowOpenHandler?.({ url: value, disposition: "foreground-tab" });
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledWith(value));
+    source.windowOpenHandler?.({ url: value, disposition: "foreground-tab" });
+    expect(shell.openExternal).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(vi.mocked(dialog.showMessageBox).mock.calls)).not.toContain("secret-fixture");
+    await service.navigate(tab.id, "http://cursor.com/auth");
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    source.emit("will-navigate", { preventDefault: vi.fn() }, value);
+    expect(shell.openExternal).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports same-origin meeting iframe launchers and blocks cross-origin frame/popup sources", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://teams.microsoft.com/join");
+    const source = electron.state.views[0]!.webContents;
+    const value = "msteams:/l/meetup-join/fixture/0?context=example";
+    const event = { preventDefault: vi.fn(), isMainFrame: false, url: value, initiator: { url: "https://malicious.example/iframe" } };
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    source.emit("will-frame-navigate", event);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
+    source.windowOpenHandler?.({ url: value, disposition: "foreground-tab", referrer: { url: "https://malicious.example/frame", policy: "default" } });
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    source.emit("will-frame-navigate", { ...event, initiator: source.mainFrame });
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledWith(value));
+  });
+
+  it("remembers app grants per exact origin and scheme and revokes them", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: true });
+    const { service, statePath } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://cursor.com/auth");
+    const source = electron.state.views[0]!.webContents;
+    const launch = (value = "cursor://cursorAuth?code=fixture") => {
+      source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+      source.emit("will-navigate", { preventDefault: vi.fn() }, value);
+    };
+    launch();
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(1));
+    expect(new BrowserTabStore(statePath).load().sitePermissions).toEqual([expect.objectContaining({ origin: "https://cursor.com", permission: "open-external:cursor", decision: "allow" })]);
+    launch();
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(2));
+    expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    launch("msteams:/l/team/fixture");
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(3));
+    expect(dialog.showMessageBox).toHaveBeenCalledTimes(2);
+    await service.navigate(tab.id, "https://www.cursor.com/auth");
+    launch();
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(4));
+    expect(dialog.showMessageBox).toHaveBeenCalledTimes(3);
+    service.clearExternalAppPermissions();
+    expect(service.getState().sitePermissions).toHaveLength(0);
+    launch();
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(5));
+    expect(dialog.showMessageBox).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(["navigation", "tab", "close", "revoke"])("rejects app consent when its source changes through %s", async (change) => {
+    let approve!: (result: { response: number; checkboxChecked: boolean }) => void;
+    vi.mocked(dialog.showMessageBox).mockImplementationOnce(() => new Promise((resolve) => { approve = resolve; }));
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://cursor.com/auth");
+    const source = electron.state.views[0]!.webContents;
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    source.emit("will-navigate", { preventDefault: vi.fn() }, "cursor://cursorAuth?code=fixture");
+    if (change === "navigation") await service.navigate(tab.id, "https://cursor.com/different");
+    if (change === "tab") await service.createTab("https://other.example", true);
+    if (change === "close") await service.closeTab(tab.id);
+    if (change === "revoke") service.clearSitePermission("https://cursor.com", "open-external:cursor");
+    approve({ response: 0, checkboxChecked: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(shell.openExternal).not.toHaveBeenCalled();
+    expect(service.getState().sitePermissions).toHaveLength(0);
+  });
+
+  it("keeps the page available after cancellation or an unavailable native app", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://cursor.com/auth");
+    const source = electron.state.views[0]!.webContents;
+    const value = "cursor://cursorAuth?code=secret-fixture";
+    const launch = () => {
+      source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+      const event = { preventDefault: vi.fn() };
+      source.emit("will-navigate", event, value);
+      expect(event.preventDefault).toHaveBeenCalledOnce();
+    };
+    vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 1, checkboxChecked: false });
+    launch();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(shell.openExternal).not.toHaveBeenCalled();
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
+    vi.mocked(shell.openExternal).mockRejectedValueOnce(new Error("missing app, secret-fixture"));
+    launch();
+    await vi.waitFor(() => expect(dialog.showMessageBox).toHaveBeenCalledTimes(3));
+    expect(service.getState().tabs).toHaveLength(1);
+    expect(source.getURL()).toBe("https://cursor.com/auth");
+    expect(JSON.stringify(vi.mocked(dialog.showMessageBox).mock.calls)).not.toContain("secret-fixture");
   });
 
   it("allows native navigation and redirects without replaying requests", async () => {
