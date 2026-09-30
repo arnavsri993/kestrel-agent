@@ -1,3 +1,4 @@
+import { PAGE_CONTEXT_VISIBLE_TEXT_SCRIPT } from "./page-context-visible-text";
 import { whatsappDomSnapshot } from "./whatsapp-source";
 import { PAYMENT_AUTOFILL_WORLD_ID, PAYMENT_FORM_SCAN_SCRIPT, PAYMENT_FORM_VALUES_SCRIPT, paymentFillScript } from "./payment-form-scripts";
 import {
@@ -3322,8 +3323,7 @@ export class UserBrowserService {
 					/(?:current|new)[-_ ]password|one[-_ ]time[-_ ]code|\\botp\\b|recovery[-_ ]code|verification[-_ ]code|security[-_ ]code|\\b(?:cvv|cvc)\\b|api[-_ ]key|access[-_ ]token|private[-_ ]key/.test(hint)
 				);
 			};
-      const nodes = Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table,article,main")).filter(visible);
-      const visibleText = nodes.map((node) => limit(node.innerText || node.textContent, 4000)).filter(Boolean).join("\\n").slice(0, 40000);
+      const visibleText = ${PAGE_CONTEXT_VISIBLE_TEXT_SCRIPT};
       const links = Array.from(document.querySelectorAll("a[href]")).filter(visible).slice(0, 100).map((node) => ({ text: limit(node.innerText || node.textContent, 500), url: node.href }));
 			const forms = Array.from(document.querySelectorAll("input,textarea,select,button")).filter(visible).slice(0, 60).map((node) => sensitiveField(node)
 				? { label: "Sensitive field", type: "sensitive", name: "" }
@@ -3332,7 +3332,7 @@ export class UserBrowserService {
       return {
         description: limit(document.querySelector('meta[name="description"]')?.content, 2000),
 				selectedText: active instanceof Element && sensitiveField(active) ? "" : limit(getSelection()?.toString(), 20000),
-        visibleText: visibleText || limit(document.body?.innerText, 40000),
+        visibleText,
         headings: Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6")).filter(visible).slice(0, 60).map((node) => limit(node.innerText || node.textContent, 500)).filter(Boolean),
         links,
         forms,
