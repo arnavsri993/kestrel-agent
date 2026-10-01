@@ -6,11 +6,18 @@ import { resolve } from "node:path";
 export function sourceProvenance(root = resolve(import.meta.dirname, "..")) {
   const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
   const sourceCommit = git("rev-parse", "HEAD");
-  const dirty = Boolean(git("status", "--porcelain", "--untracked-files=normal"));
+  // electron-vite writes this exact transient module beside its config while
+  // importing it, then unlinks it. It is generated code, not a source input.
+  // Exclude only untracked instances; a tracked file still remains an input.
+  const transientConfig = path => /^apps\/desktop\/electron\.vite\.config\.\d+\.mjs$/.test(path);
+  const dirty = git("status", "--porcelain", "-z", "--untracked-files=all").split("\0")
+    .some(record => record && !(record.startsWith("?? ") && transientConfig(record.slice(3))));
   // Only source inputs are hashed. Ignored build products and private traces
   // are never read or embedded in an app. Include new untracked source files.
-  const files = [...new Set(git("ls-files", "-z", "--cached", "--others", "--exclude-standard")
-    .split("\0").filter(path => /^(apps|packages|scripts)\//.test(path) || /^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/.test(path)))].sort();
+  const tracked = git("ls-files", "-z", "--cached").split("\0");
+  const untracked = git("ls-files", "-z", "--others", "--exclude-standard").split("\0").filter(path => !transientConfig(path));
+  const files = [...new Set([...tracked, ...untracked]
+    .filter(path => /^(apps|packages|scripts)\//.test(path) || /^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/.test(path)))].sort();
   const digest = createHash("sha256");
   for (const file of files) {
     digest.update(`${Buffer.byteLength(file)}:${file}\0`);

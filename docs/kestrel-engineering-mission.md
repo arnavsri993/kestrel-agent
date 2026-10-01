@@ -123,3 +123,36 @@ and merge gate before canonical installation and real-service journeys.
   archive; unknown startup or failed interruption closes the transport before
   reuse. Both numeric and string server RPC IDs preserve exact response IDs.
   Six fault regressions and 105 focused tests pass before combined verification.
+
+## Integrated candidate validation and checkpoint
+
+The mission branch selectively reconciles the reviewed maintenance slices of
+#805 (patched runtime dependencies), #806 (truthful oversized-result receipt)
+and #808 (dedicated full 50,000-record benchmark). Their original PRs remain
+unmerged and open under the protected review gate. These source integrations
+are commits `a32f7e13`, `55429bae`, and `2ed962e6`. Broad unreviewed UI, native
+computer-use and static model priors were not imported. #782 remains rejected
+as written; #795 remains held for authentication regression evidence.
+
+- The combined candidate passed 230 files / 1,629 tests and the full
+  50,000-record encrypted-storage benchmark; website E2E passed 50 tests.
+  Dependency audit reports no known vulnerabilities.
+- Layout, settings, new tab, browser navigation/auth popup fixtures, restart
+  restoration and protected autofill coverage passed. The aggregate run was
+  interrupted during autofill; its isolated rerun passed. Remaining aggregate
+  checks and the final exact candidate rerun are required before a full pass.
+- Package provenance rejected a desktop/core mismatch. Investigation confirmed
+  electron-vite's temporary generated config entered only the desktop source
+  digest. Only untracked exact generated-config modules are excluded; tracked
+  and other new source still affect the identity. A regression verifies this.
+- Exact-head merge-tree checks cover all 22 snapshot heads with no head drift.
+  Conflicts against initial main: #793 package.json; #789 auth-link smoke;
+  #785 DESIGN.md; #783 DESIGN, browser service/tests, App, BrowserWorkspace,
+  renderer entry and package.json. Clean merge trees do not establish approval.
+
+The candidate remains uninstalled. Only a normally reviewed, passing merge to
+current main permits canonical deployment. The previous app and all user data
+remain available. The existing source/profile are unchanged outside the
+mission's isolated worktrees. No persistent supervisor or durable wake-up is
+active. Final exact-head evidence is recorded in the mission pull request;
+private raw canaries, screenshots and logs stay outside Git.
