@@ -441,7 +441,9 @@ type TabActivity = Partial<Record<"playing" | "microphone" | "camera" | "screen"
 interface ViewRecord {
 	activity?: TabActivity;
 	externalGesture?: { url: string; at: number };
+	externalRedirectGesture?: { url: string; at: number; generation: number };
 	externalPromptPending?: boolean;
+	externalDocumentGeneration?: number;
 	mediaPlaying?: boolean;
 	view: WebContentsView;
 	navigatingTo?: string;
@@ -5905,6 +5907,7 @@ export class UserBrowserService {
 	}
 
 	private recordExternalGesture(tab: UserBrowserTab, record: ViewRecord): void {
+		delete record.externalRedirectGesture;
 		const contents = liveWebContents(record.view.webContents);
 		const url = contents && safePageUrl(contents.getURL());
 		if (this.state.activeTabId === tab.id && url?.protocol === "https:")
@@ -5913,20 +5916,22 @@ export class UserBrowserService {
 
 	/** Return true only for recognized app URLs; never navigate the page to them. */
 	private requestExternalApp(
-		tab: UserBrowserTab, record: ViewRecord, value: string, initiatingUrl?: string,
+		tab: UserBrowserTab, record: ViewRecord, value: string, initiatingUrl: string, mainFrameRedirect = false,
 	): boolean {
 		const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value) ?? safeCursorAuthUrl(value);
 		if (!url) return false;
 		const contents = liveWebContents(record.view.webContents);
 		const source = contents && safePageUrl(contents.getURL());
-		const gesture = record.externalGesture;
+		const redirected = mainFrameRedirect ? record.externalRedirectGesture : undefined;
+		const gesture = record.externalGesture ?? (redirected?.generation === (record.externalDocumentGeneration ?? 0) ? redirected : undefined);
 		delete record.externalGesture;
+		delete record.externalRedirectGesture;
 		const now = this.now().getTime();
 		// Never infer a gesture from a page URL, referrer, redirect or DOM message.
 		if (!contents || !source || source.protocol !== "https:" ||
 			this.state.activeTabId !== tab.id || this.views.get(tab.id) !== record ||
 			!gesture || gesture.url !== source.toString() || now < gesture.at || now - gesture.at > 5_000 ||
-			(initiatingUrl !== undefined && safePageUrl(initiatingUrl)?.origin !== source.origin)) return true;
+			safePageUrl(initiatingUrl)?.origin !== source.origin) return true;
 		if (record.externalPromptPending) return true;
 		const scheme = new URL(url).protocol.slice(0, -1);
 		const permission = `open-external:${scheme}`;
@@ -5935,10 +5940,12 @@ export class UserBrowserService {
 		const appName = safeTeamsUrl(url) ? "Microsoft Teams" : safeCursorAuthUrl(url) ? "Cursor" : safeZoomJoinUrl(url) ? "Zoom" : "App Store";
 		const generation = record.navigationGeneration;
 		const grantGeneration = this.externalGrantGeneration;
+		const documentGeneration = record.externalDocumentGeneration ?? 0;
 		const stillCurrent = () => !this.disposed && !this.window.isDestroyed() &&
 			liveWebContents(record.view.webContents) === contents && this.views.get(tab.id) === record &&
 			this.state.activeTabId === tab.id && contents.getURL() === source.toString() &&
-			record.navigationGeneration === generation && this.externalGrantGeneration === grantGeneration;
+			record.navigationGeneration === generation && this.externalGrantGeneration === grantGeneration &&
+			(record.externalDocumentGeneration ?? 0) === documentGeneration;
 		record.externalPromptPending = true;
 		void (async () => {
 			try {
@@ -5974,7 +5981,9 @@ export class UserBrowserService {
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents) return;
 		webContents.setWindowOpenHandler(({ url, disposition, referrer }) => {
-			if (this.requestExternalApp(tab, record, url, referrer?.url || undefined)) return { action: "deny" };
+			// Missing referrers cannot establish the initiating origin. Fail closed
+			// instead of lending a top-level remembered grant to an unknown frame.
+			if (this.requestExternalApp(tab, record, url, referrer?.url ?? "")) return { action: "deny" };
 			if (url !== "about:blank" && !safePageUrl(url)) return { action: "deny" };
 			return {
 				action: "allow",
@@ -6012,6 +6021,25 @@ export class UserBrowserService {
 			if (input.type === "mouseDown" && input.button === "left")
 				this.recordExternalGesture(tab, record);
 		});
+		webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
+			const target = safePageUrl(url);
+			if (isMainFrame && !isInPlace && target) {
+				// Native reloads and document navigations must invalidate consent,
+				// even when their final URL is identical to the previous document.
+				record.externalDocumentGeneration = (record.externalDocumentGeneration ?? 0) + 1;
+				const gesture = record.externalGesture;
+				const source = safePageUrl(webContents.getURL());
+				// A clicked same-origin HTTPS launcher may redirect before commit.
+				// Carry its intent only to the real main-frame redirect event; a
+				// reload or a committed document cannot borrow the previous input.
+				record.externalRedirectGesture = gesture && source?.protocol === "https:" &&
+					target.protocol === "https:" && target.origin === source.origin &&
+					target.toString() !== source.toString() && gesture.url === source.toString()
+					? { ...gesture, generation: record.externalDocumentGeneration } : undefined;
+				delete record.externalGesture;
+			}
+		});
+		webContents.on("did-navigate", () => { delete record.externalRedirectGesture; });
 		webContents.on("media-started-playing", () => { record.mediaPlaying = true; this.emit(); });
 		webContents.on("media-paused", () => { record.mediaPlaying = false; this.emit(); });
 		webContents.on("ipc-message", (event, channel, ...args) => {
@@ -6065,7 +6093,7 @@ export class UserBrowserService {
 			// Preventing here ensures a supported app link is handled only once.
 			if (this.requestExternalApp(
 				tab, record, event.url,
-				event.initiator?.url ?? (event.isMainFrame ? undefined : event.frame?.url ?? ""),
+				event.initiator?.url ?? event.frame?.url ?? "",
 			)) event.preventDefault();
 			else if (!event.isMainFrame && event.url !== "about:blank" && !safePageUrl(event.url))
 				event.preventDefault();
@@ -6075,7 +6103,7 @@ export class UserBrowserService {
 				event.preventDefault();
 				return;
 			}
-			if (this.requestExternalApp(tab, record, url)) {
+			if (this.requestExternalApp(tab, record, url, event.initiator?.url ?? event.frame?.url ?? "")) {
 				event.preventDefault();
 				return;
 			}
@@ -6095,7 +6123,8 @@ export class UserBrowserService {
 				event.preventDefault();
 				return;
 			}
-			if (this.requestExternalApp(tab, record, url)) {
+			if (this.requestExternalApp(tab, record, url, event.initiator?.url ?? event.frame?.url ?? "",
+				event.isMainFrame && event.frame === webContents.mainFrame)) {
 				event.preventDefault();
 				return;
 			}

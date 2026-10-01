@@ -9865,3 +9865,9 @@ select {
 		flex-direction: column;
 	}
 }
+/* Local diagnostic identifiers must wrap at narrow widths and enlarged text. */
+.build-provenance { margin-block: 0.75rem; }
+.build-provenance summary { cursor: pointer; }
+.build-provenance summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.build-provenance dl { display: grid; gap: 0.25rem; }
+.build-provenance dd { margin-inline-start: 0; overflow-wrap: anywhere; font-family: monospace; }

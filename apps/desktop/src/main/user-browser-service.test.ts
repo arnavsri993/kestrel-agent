@@ -40,6 +40,14 @@ const electron = vi.hoisted(() => {
     destroyed = false;
     url = "";
     mainFrame = { url: "" };
+    emit(name: string, ...args: unknown[]) {
+      // Current Electron navigation events include frame context. Populate
+      // native defaults for legacy fixtures; explicit null/foreign contexts
+      // remain intact for fail-closed regression coverage.
+      if (["will-navigate", "will-redirect", "will-frame-navigate"].includes(name))
+        args[0] = { isMainFrame: true, frame: this.mainFrame, ...(args[0] as object) };
+      super.emit(name, ...args);
+    }
     passwordSnapshot: unknown = { fields: [] };
     title = "";
     loadURL = vi.fn(async (url: string) => {
@@ -99,7 +107,7 @@ const electron = vi.hoisted(() => {
     downloadURL = vi.fn();
     setUserAgent = vi.fn();
     setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = (details) => {
-      const result = handler(details);
+      const result = handler({ referrer: { url: this.url, policy: "default" }, ...details });
       if (result.action === "allow") result.createWindow?.({ webPreferences: {} });
       return result;
     }; });
@@ -2611,6 +2619,62 @@ describe("UserBrowserService", () => {
     launch();
     await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(5));
     expect(dialog.showMessageBox).toHaveBeenCalledTimes(4);
+  });
+  it("does not lend a remembered grant to unknown popup sources or cross-origin redirects", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: true });
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://teams.microsoft.com/join");
+    const source = electron.state.views[0]!.webContents;
+    const value = "msteams:/l/meetup-join/fixture/0";
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    source.emit("will-navigate", { preventDefault: vi.fn() }, value);
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(1));
+    for (const url of ["", "https://malicious.example/frame"]) {
+      source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+      source.windowOpenHandler?.({ url: value, disposition: "foreground-tab", referrer: { url, policy: "no-referrer" } });
+    }
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    const foreign = { url: "https://malicious.example/frame" };
+    const event = { preventDefault: vi.fn(), isMainFrame: false, frame: foreign, initiator: foreign };
+    source.emit("will-redirect", event, value);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(shell.openExternal).toHaveBeenCalledTimes(1);
+    expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+  });
+  it("invalidates pending consent across a native same-URL document reload", async () => {
+    let approve!: (result: { response: number; checkboxChecked: boolean }) => void;
+    vi.mocked(dialog.showMessageBox).mockImplementationOnce(() => new Promise(resolve => { approve = resolve; }));
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://cursor.com/auth");
+    const source = electron.state.views[0]!.webContents;
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    source.emit("will-navigate", { preventDefault: vi.fn() }, "cursor://cursorAuth?code=fixture");
+    source.emit("did-start-navigation", {}, source.getURL(), false, true);
+    approve({ response: 0, checkboxChecked: true });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(shell.openExternal).not.toHaveBeenCalled();
+    expect(service.getState().sitePermissions).toHaveLength(0);
+  });
+  it("does not lend a click to a reloaded document and carries only pre-commit same-origin launcher redirects", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: true });
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://teams.microsoft.com/join");
+    const source = electron.state.views[0]!.webContents;
+    const value = "msteams:/l/meetup-join/fixture/0";
+    const click = () => source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    click(); source.emit("will-navigate", { preventDefault: vi.fn() }, value);
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(1));
+    click(); source.emit("did-start-navigation", {}, source.getURL(), false, true);
+    source.emit("will-navigate", { preventDefault: vi.fn() }, value);
+    expect(shell.openExternal).toHaveBeenCalledTimes(1);
+    click(); source.emit("did-start-navigation", {}, "https://teams.microsoft.com/launcher", false, true);
+    source.emit("will-redirect", { preventDefault: vi.fn() }, value);
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(2));
+    click(); source.emit("did-start-navigation", {}, "https://teams.microsoft.com/launcher", false, true);
+    source.emit("did-navigate", {}, "https://teams.microsoft.com/launcher");
+    source.emit("will-redirect", { preventDefault: vi.fn() }, value);
+    expect(shell.openExternal).toHaveBeenCalledTimes(2);
   });
 
   it.each(["navigation", "tab", "close", "revoke"])("rejects app consent when its source changes through %s", async (change) => {

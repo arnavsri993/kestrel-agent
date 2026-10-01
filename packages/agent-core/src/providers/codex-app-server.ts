@@ -98,7 +98,9 @@ interface ThreadBinding {
 
 interface TurnCollector {
 	threadId: string;
+	generation: number;
 	turnId?: string;
+	interrupt?: Promise<unknown>;
 	text: string;
 	finalText?: string;
 	tools: ModelTool[];
@@ -481,6 +483,7 @@ export class CodexAppServerProvider {
 	private browserMcp: CodexBrowserMcpAttachment | undefined;
 	private closing = false;
 	private discoveredModels: DiscoveredModel[] | undefined;
+	private transportStopPromise: Promise<void> | undefined;
 
 	constructor(options: CodexAppServerOptions = {}) {
 		this.id = options.id ?? "codex-subscription";
@@ -660,6 +663,7 @@ export class CodexAppServerProvider {
 	}
 
 	private async ensureStarted(): Promise<void> {
+		if (this.transportStopPromise) await this.transportStopPromise;
 		if (this.startPromise) return this.startPromise;
 		if (this.child?.exitCode === null) return;
 		this.startPromise = this.start().finally(() => {
@@ -782,7 +786,7 @@ export class CodexAppServerProvider {
 			else pending.resolve(message.result);
 			return;
 		}
-		if (typeof message.id === "number" && typeof message.method === "string") {
+		if ((typeof message.id === "number" || typeof message.id === "string") && typeof message.method === "string") {
 			if (message.method === "item/tool/call")
 				this.handleDynamicToolCall(message.id, message.params);
 			else this.write(this.serverRequestReply(message.id, message.method));
@@ -843,7 +847,7 @@ export class CodexAppServerProvider {
 		}
 	}
 
-	private handleDynamicToolCall(id: number, value: unknown): void {
+	private handleDynamicToolCall(id: number | string, value: unknown): void {
 		const params = object(value);
 		const collector = typeof params?.threadId === "string"
 			? this.collectors.get(params.threadId) : undefined;
@@ -871,22 +875,22 @@ export class CodexAppServerProvider {
 			const call = parseCodexDynamicToolCall(value, collector.tools, collector.threadId, collector.turnId);
 			collector.toolCalls.push(call);
 			collector.handedOff = true;
-			void this.request("turn/interrupt", {
+			collector.interrupt = this.request("turn/interrupt", {
 				threadId: collector.threadId,
 				turnId: collector.turnId,
-			}).then(
+			});
+			void collector.interrupt.then(
 				() => collector.resolve(),
 				() => collector.reject(new Error(
 					"Codex could not end the reasoning step safely. No tool requests were accepted.",
 				)),
 			);
 		} catch {
-			void this.request("turn/interrupt", { threadId: collector.threadId, turnId: collector.turnId }).catch(() => undefined);
 			collector.reject(new Error("Codex returned an invalid or out-of-scope dynamic tool request. No tool requests were accepted."));
 		}
 	}
 
-	private serverRequestReply(id: number, method: string): JsonObject {
+	private serverRequestReply(id: number | string, method: string): JsonObject {
 		if (
 			method === "item/commandExecution/requestApproval" ||
 			method === "item/fileChange/requestApproval"
@@ -1078,8 +1082,10 @@ export class CodexAppServerProvider {
 		});
 		// A turn/start transport failure can precede our await of this promise.
 		void completed.catch(() => undefined);
+		let turnFailed = false;
 		const collector: TurnCollector = {
 			threadId,
+			generation: this.generation,
 			text: "",
 			tools: request.tools ?? [],
 			toolCalls: [],
@@ -1087,7 +1093,7 @@ export class CodexAppServerProvider {
 			pendingMessages: [],
 			usage: { inputTokens: 0, outputTokens: 0 },
 			resolve: settle,
-			reject: fail,
+			reject: (error) => { turnFailed = true; fail(error); },
 		};
 		this.collectors.set(threadId, collector);
 		let streamed = 0;
@@ -1101,12 +1107,6 @@ export class CodexAppServerProvider {
 			}
 		}, 16);
 		const abort = () => {
-			if (collector.turnId) {
-				void this.request("turn/interrupt", {
-					threadId,
-					turnId: collector.turnId,
-				}).catch(() => undefined);
-			}
 			collector.reject(
 				options.signal?.reason instanceof Error
 					? options.signal.reason
@@ -1118,13 +1118,18 @@ export class CodexAppServerProvider {
 			() => collector.reject(new Error("Codex app-server turn timed out.")),
 			this.turnTimeoutMs,
 		);
+		let startRequested = false;
 		try {
+			const input = await turnInput(request.messages, binding.turns === 0);
+			options.signal?.throwIfAborted();
+			if (turnFailed) await completed;
+			startRequested = true;
 			const result = object(
-				await this.request(
+				await Promise.race([this.request(
 					"turn/start",
 					{
 						threadId,
-						input: await turnInput(request.messages, binding.turns === 0),
+						input,
 						model: request.model,
 						approvalPolicy: "never",
 						sandboxPolicy: { type: "readOnly", networkAccess: false },
@@ -1135,7 +1140,9 @@ export class CodexAppServerProvider {
 							: {}),
 					},
 					options.signal,
-				),
+				), completed.then(() => {
+					throw new Error("Codex turn ended before startup was confirmed.");
+				})]),
 			);
 			const turn = object(result?.turn);
 			if (typeof turn?.id !== "string")
@@ -1151,11 +1158,35 @@ export class CodexAppServerProvider {
 				});
 			}
 			return collector;
+		} catch (error) {
+			// A rejected local promise does not stop vendor reasoning. Keep the
+			// collector registered until interruption is acknowledged, or reset
+			// the transport when turn/start left the active turn unidentified.
+			collector.handedOff = true;
+			clearInterval(progress);
+			if (startRequested) await this.stopFailedTurn(collector);
+			throw error;
 		} finally {
 			clearTimeout(timer);
 			clearInterval(progress);
 			options.signal?.removeEventListener("abort", abort);
 			this.collectors.delete(threadId);
 		}
+	}
+
+	private async stopFailedTurn(collector: TurnCollector): Promise<void> {
+		if (collector.generation !== this.generation || !this.child) return;
+		if (collector.turnId) {
+			try {
+				await (collector.interrupt ??= this.request("turn/interrupt", {
+					threadId: collector.threadId, turnId: collector.turnId,
+				}));
+				return;
+			} catch { /* An unconfirmed interrupt requires transport shutdown. */ }
+		}
+		this.transportStopPromise ??= this.close().finally(() => {
+			this.transportStopPromise = undefined;
+		});
+		await this.transportStopPromise;
 	}
 }

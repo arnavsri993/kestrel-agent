@@ -55,13 +55,16 @@ input.on("line", line => {
     return send({ id: message.id, result: { data: [{ id: "gpt-catalog", model: "gpt-catalog", displayName: "Catalog model", inputModalities: ["text", "image"], supportedReasoningEfforts: [{ reasoningEffort: "minimal" }, { reasoningEffort: "low" }, { reasoningEffort: "high" }, { reasoningEffort: "ultra" }] }], nextCursor: "page-2" } });
   }
   if (message.method === "thread/start") { tools = message.params.dynamicTools ?? []; return send({ id: message.id, result: { thread: { id: "thread-1" }, model: toolScenario.effectiveModel ?? message.params.model } }); }
+  if (message.method === "turn/interrupt" && toolScenario.rejectInterrupt) return send({ id: message.id, error: { code: -32000, message: "interrupt failed" } });
   if (message.method === "turn/interrupt" || message.method === "thread/archive") return send({ id: message.id, result: {} });
   if (message.method === "thread/resume") return send({ id: message.id, result: { thread: { id: message.params.threadId } } });
   if (message.method === "turn/start") {
     turn += 1;
     const turnId = "turn-" + turn;
+    if (toolScenario.deferStart) return;
     if (toolScenario.earlyToolCall) send({ id: 1000 + turn, method: "item/tool/call", params: { threadId: "thread-1", turnId: toolScenario.turnId ?? turnId, callId: "early-call", tool: "kestrel_0", arguments: {} } });
     send({ id: message.id, result: { turn: { id: turnId, status: "inProgress" } } });
+    if (toolScenario.hangTurn) return;
     send({ id: 800 + turn, method: "item/permissions/requestApproval", params: { threadId: "thread-1", turnId, itemId: "perm-" + turn, permissions: { network: { enabled: true } } } });
     send({ id: 700 + turn, method: "mcpServer/elicitation/request", params: { threadId: "thread-1", turnId, serverName: "kestrel_browser", mode: "form", message: "confirm" } });
     send({ id: 900 + turn, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", turnId, itemId: "cmd-" + turn, command: "touch forbidden" } });
@@ -71,7 +74,7 @@ input.on("line", line => {
     const current = message.id - 900;
     const turnId = "turn-" + current;
     if (tools.length) {
-      send({ id: 1000 + current, method: "item/tool/call", params: { threadId: "thread-1", turnId, callId: "call-" + current, tool: "kestrel_0", arguments: { path: "src/index.ts" }, ...toolScenario } });
+      send({ id: toolScenario.stringToolRequest ? "tool-request-" + current : 1000 + current, method: "item/tool/call", params: { threadId: "thread-1", turnId, callId: "call-" + current, tool: "kestrel_0", arguments: { path: "src/index.ts" }, ...toolScenario } });
       return;
     }
     send({ method: "item/agentMessage/delta", params: { threadId: "thread-1", turnId, itemId: "answer-" + current, delta: "Persistent answer " + current } });
@@ -240,6 +243,69 @@ describe("persistent Codex app-server provider", () => {
 		const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 10_000, turnTimeoutMs: 2_000 });
 		try {
 			await expect(provider.complete({ model: "gpt-catalog", messages: [{ role: "user", content: textContent("Inspect") }], tools: [{ name: "filesystem.read", description: "Read", inputSchema: { type: "object" } }] })).rejects.toThrow("invalid or out-of-scope dynamic tool request");
+		} finally { await provider.close(); }
+	});
+
+	it("preserves string server RPC IDs when yielding a dynamic tool request", async () => {
+		const fake = await fakeAppServer({ stringToolRequest: true });
+		const provider = new CodexAppServerProvider({ executable: fake.executable, turnTimeoutMs: 2_000 });
+		try {
+			const result = await provider.complete({ model: "gpt-catalog", messages: [{ role: "user", content: textContent("Read") }], tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }] });
+			expect(result.toolCalls).toHaveLength(1);
+			expect((await readCapture(fake.capture)).find(row => row.value.id === "tool-request-1")?.value.result).toMatchObject({ success: false });
+		} finally { await provider.close(); }
+	});
+
+	it("interrupts a timed-out vendor turn before archiving the tool step", async () => {
+		const fake = await fakeAppServer({ hangTurn: true });
+		const provider = new CodexAppServerProvider({ executable: fake.executable, turnTimeoutMs: 100 });
+		try {
+			await expect(provider.complete({ model: "gpt-catalog", messages: [{ role: "user", content: textContent("Read") }], tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }] })).rejects.toThrow("turn timed out");
+			await expect.poll(async () => (await readCapture(fake.capture)).some(row => row.value.method === "thread/archive")).toBe(true);
+			const methods = (await readCapture(fake.capture)).map(row => row.value.method);
+			expect(methods.indexOf("turn/interrupt")).toBeGreaterThan(methods.indexOf("turn/start"));
+			expect(methods.indexOf("thread/archive")).toBeGreaterThan(methods.indexOf("turn/interrupt"));
+		} finally { await provider.close(); }
+	});
+
+	it.each(["cancel", "timeout"])("resets an unidentified vendor turn after %s before accepting another request", async (failure) => {
+		const fake = await fakeAppServer({ deferStart: true });
+		const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 10_000, turnTimeoutMs: failure === "timeout" ? 100 : 2_000 });
+		const controller = new AbortController();
+		try {
+			const completion = provider.complete({ model: "gpt-catalog", messages: [{ role: "user", content: textContent("Read") }], tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }] }, { signal: controller.signal });
+			const rejection = expect(completion).rejects.toThrow(failure === "timeout" ? "turn timed out" : "cancelled");
+			await expect.poll(async () => (await readCapture(fake.capture)).some(row => row.value.method === "turn/start")).toBe(true);
+			if (failure === "cancel") controller.abort(new Error("cancelled"));
+			await rejection;
+			const originalPid = (await readCapture(fake.capture))[0]!.pid;
+			expect(() => process.kill(originalPid, 0)).toThrow();
+			await provider.probe();
+			const initializations = (await readCapture(fake.capture)).filter(row => row.value.method === "initialize");
+			expect(initializations).toHaveLength(2);
+			expect(initializations[1]!.pid).not.toBe(originalPid);
+		} finally { await provider.close(); }
+	});
+
+	it("closes the transport when a timed-out turn cannot acknowledge interruption", async () => {
+		const fake = await fakeAppServer({ hangTurn: true, rejectInterrupt: true });
+		const provider = new CodexAppServerProvider({ executable: fake.executable, turnTimeoutMs: 100 });
+		try {
+			await expect(provider.complete({ model: "gpt-catalog", messages: [{ role: "user", content: textContent("Read") }], tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }] })).rejects.toThrow("turn timed out");
+			const records = await readCapture(fake.capture);
+			expect(records.some(row => row.value.method === "turn/interrupt")).toBe(true);
+			expect(() => process.kill(records[0]!.pid, 0)).toThrow();
+		} finally { await provider.close(); }
+	});
+
+	it("returns no tool requests and closes the transport when handoff interruption fails", async () => {
+		const fake = await fakeAppServer({ rejectInterrupt: true });
+		const provider = new CodexAppServerProvider({ executable: fake.executable, turnTimeoutMs: 2_000 });
+		try {
+			await expect(provider.complete({ model: "gpt-catalog", messages: [{ role: "user", content: textContent("Read") }], tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }] })).rejects.toThrow("No tool requests were accepted");
+			const records = await readCapture(fake.capture);
+			expect(records.filter(row => row.value.method === "turn/interrupt")).toHaveLength(1);
+			expect(() => process.kill(records[0]!.pid, 0)).toThrow();
 		} finally { await provider.close(); }
 	});
 

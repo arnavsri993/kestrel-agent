@@ -1,4 +1,5 @@
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
+import { BuildProvenance } from "./components/BuildProvenance";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
 import type { AgentTemplate } from "@kestrel/shared-types";
@@ -5983,6 +5984,8 @@ function Work({
 				...(accountId ? { accountId } : {}),
 				model: localStorage.getItem("kestrel:model") ?? "auto",
 				reasoningEffort:
+					storedReasoningEffort === "minimal" ||
+					storedReasoningEffort === "ultra" ||
 					storedReasoningEffort === "low" ||
 					storedReasoningEffort === "medium" ||
 					storedReasoningEffort === "high" ||
@@ -9324,6 +9327,7 @@ function AgentDiagnosticsSettings() {
 		<article className="setting-row" id="setting-agent-diagnostics">
 			<div>
 				<strong>Health and diagnostic reports</strong>
+				<BuildProvenance />
 				<p>
 					Run a content-free readiness check or export a local report. Reports omit
 					prompts, credentials, and page content.

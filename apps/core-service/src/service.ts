@@ -36,7 +36,7 @@ import {
 	KestrelDatabase,
 	PROTECTED_DATABASE_ERROR_CODE,
 } from "@kestrel/database";
-import { CoreRequestSchema } from "@kestrel/shared-types";
+import { CoreRequestSchema, embeddedBuildIdentity } from "@kestrel/shared-types";
 import type { CoreParentPort } from "./transport";
 
 export function startCoreService(port: CoreParentPort): void {
@@ -460,7 +460,7 @@ export function startCoreService(port: CoreParentPort): void {
 					void task;
 				}, 30_000);
 				automationTimer.unref();
-				port.postMessage({ type: "ready" });
+				port.postMessage({ type: "ready", buildIdentity: embeddedBuildIdentity() });
 			} catch (error) {
 				await browserMcp?.stop();
 				browserMcp = undefined;

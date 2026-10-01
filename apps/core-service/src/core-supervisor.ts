@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
 import {
 	AgentStreamEventSchema,
+	BuildIdentitySchema,
+	type BuildIdentity,
 	BackgroundJobsEventSchema,
 	type CoreRequest,
 	type CoreResponse,
@@ -86,6 +88,8 @@ function cloneBootstrapConfig(
 }
 
 export class CoreSupervisor extends EventEmitter {
+	private buildIdentity: BuildIdentity | null = null;
+	getBuildIdentity(): BuildIdentity | null { return this.ready ? this.buildIdentity : null; }
 	private child: CoreProcess | undefined;
 	private readonly pending = new Map<
 		string,
@@ -328,6 +332,8 @@ export class CoreSupervisor extends EventEmitter {
 		}
 		const wire = message as Record<string, unknown>;
 		if (wire.type === "ready") {
+			const identity = BuildIdentitySchema.safeParse(wire.buildIdentity);
+			this.buildIdentity = identity.success ? identity.data : null;
 			if (this.stopping || this.startup?.child !== child) return;
 			this.lastSuccessfulConfig = cloneBootstrapConfig(this.startup.config);
 			this.ready = true;
