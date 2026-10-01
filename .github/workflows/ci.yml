@@ -31,6 +31,15 @@ jobs:
       - run: corepack pnpm exec playwright install chromium
       - run: corepack pnpm typecheck
       - run: corepack pnpm test
+      - run: KESTREL_SOURCE_BENCHMARK_REPORT=.tmp/source-ingestion-benchmark/ci.json corepack pnpm benchmark:source-ingestion
+      - name: Upload source-ingestion benchmark report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: source-ingestion-benchmark-${{ github.run_attempt }}
+          path: .tmp/source-ingestion-benchmark/*.json
+          if-no-files-found: warn
+          retention-days: 14
       - run: corepack pnpm audit
       - run: corepack pnpm assets:verify
       - run: corepack pnpm audit:references
