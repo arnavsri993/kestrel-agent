@@ -65,28 +65,21 @@ function accountIdentity(
 }
 
 /**
- * Preserve adapter behavior while giving it the stable account endpoint and
- * logical provider identity used by routing. The wrapped provider still owns
- * its HTTP/CLI process and receives no renderer-facing account metadata.
+ * Attach stable account identity without wrapping the adapter. Class-backed
+ * routes keep their protocol-specific methods while every endpoint retains its
+ * own profile environment and account identity.
  */
 function attachAccount(
 	provider: ModelProvider,
 	account: ProviderAccountRuntimeConfig,
 ): ModelProvider {
-	return {
-		id: provider.id,
-		poolId: account.providerId,
-		account: accountIdentity(account),
-		...(provider.defaultModel ? { defaultModel: provider.defaultModel } : {}),
-		capabilities: provider.capabilities,
-		...(provider.profileHints ? { profileHints: provider.profileHints } : {}),
-		...(provider.probe ? { probe: provider.probe.bind(provider) } : {}),
-		...(provider.discoverModels
-			? { discoverModels: provider.discoverModels.bind(provider) }
-			: {}),
-		complete: provider.complete.bind(provider),
-		...(provider.close ? { close: provider.close.bind(provider) } : {}),
+	const target = provider as ModelProvider & {
+		poolId?: string;
+		account?: ProviderAccountIdentity;
 	};
+	target.poolId = account.providerId;
+	target.account = accountIdentity(account);
+	return target;
 }
 
 function requireApiKey(account: ProviderAccountRuntimeConfig): string {

@@ -28,11 +28,19 @@ import {
 	type ModelRequest,
 	type ModelResult,
 	type ModelUsage,
+	type ModelTool,
+	type ModelToolCall,
 } from "./types";
 import {
 	type BrowserMcpCallSession,
 	resolveUniqueMappedSession,
 } from "../browser-mcp-session";
+import {
+	CODEX_TOOL_BRIDGE_INSTRUCTIONS,
+	CODEX_TOOL_BRIDGE_CONFIG,
+	codexDynamicTools,
+	parseCodexDynamicToolCall,
+} from "./codex-tool-bridge";
 
 const MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -52,18 +60,22 @@ const HEIF_MEDIA_TYPES = new Set(["image/heic", "image/heif"]);
 const executeFile = promisify(execFileCallback);
 type SupportedReasoningEffort =
 	| "none"
+	| "minimal"
 	| "low"
 	| "medium"
 	| "high"
 	| "xhigh"
-	| "max";
+	| "max"
+	| "ultra";
 const REASONING_EFFORTS = new Set<SupportedReasoningEffort>([
 	"none",
+	"minimal",
 	"low",
 	"medium",
 	"high",
 	"xhigh",
 	"max",
+	"ultra",
 ] as const);
 const READ_ONLY_INSTRUCTIONS =
 	"You are operating as a read-only model runtime inside Kestrel. Answer the user in plain text. Do not execute commands, edit files, browse, invoke MCP, or request approvals; Kestrel owns tools and approvals.";
@@ -88,6 +100,11 @@ interface TurnCollector {
 	threadId: string;
 	turnId?: string;
 	text: string;
+	finalText?: string;
+	tools: ModelTool[];
+	toolCalls: ModelToolCall[];
+	handedOff: boolean;
+	pendingMessages: Array<() => void>;
 	usage: ModelUsage;
 	resolve(): void;
 	reject(error: Error): void;
@@ -118,17 +135,22 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	const record = object(value);
 	if (record?.hidden === true) return undefined;
 	const model =
-		typeof record?.model === "string" && record.model.trim()
+		typeof record?.slug === "string" && record.slug.trim()
+			? record.slug.trim()
+			: typeof record?.model === "string" && record.model.trim()
 			? record.model.trim()
 			: typeof record?.id === "string" && record.id.trim()
 				? record.id.trim()
 				: undefined;
 	if (!model) return undefined;
-	const reasoningEfforts: SupportedReasoningEffort[] = (Array.isArray(record?.supportedReasoningEfforts)
-		? record.supportedReasoningEfforts
-		: []
+	const reasoningEfforts: SupportedReasoningEffort[] = (Array.isArray(record?.supported_reasoning_levels)
+		? record.supported_reasoning_levels
+		: Array.isArray(record?.supportedReasoningEfforts)
+			? record.supportedReasoningEfforts
+			: []
 	).flatMap((value) => {
-		const effort = object(value)?.reasoningEffort;
+		const effortRecord = object(value);
+		const effort = typeof value === "string" ? value : effortRecord?.effort ?? effortRecord?.reasoningEffort;
 		return typeof effort === "string" && REASONING_EFFORTS.has(effort as SupportedReasoningEffort)
 			? [effort as SupportedReasoningEffort]
 			: [];
@@ -137,9 +159,11 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	// image. Preserve that documented default for older Codex installations, but
 	// never infer audio, documents, video, or tool execution from a catalog row.
 	const inputModalities = new Set(
-		(Array.isArray(record?.inputModalities)
-			? record.inputModalities
-			: ["text", "image"]
+		(Array.isArray(record?.input_modalities)
+			? record.input_modalities
+			: Array.isArray(record?.inputModalities)
+				? record.inputModalities
+				: ["text", "image"]
 		)
 			.filter((value): value is string => typeof value === "string")
 			.map((value) => value.trim().toLowerCase()),
@@ -147,24 +171,28 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	return {
 		id: model,
 		displayName:
-			typeof record?.displayName === "string" && record.displayName.trim()
+			typeof record?.display_name === "string" && record.display_name.trim()
+				? record.display_name.trim()
+				: typeof record?.displayName === "string" && record.displayName.trim()
 				? record.displayName.trim()
 				: model,
-		availability: "available",
+		availability: record?.supported_in_api === false ? "unsupported" : "available",
 		source: "protocol",
 		capabilities: {
 			// `model/list` confirms account entitlement, input modality, and each
-			// advertised reasoning level. This remains a read-only Kestrel route;
-			// image input does not grant shell, file-editing, or tool capability.
+			// advertised reasoning level. Requests use dynamicTools; execution
+			// and authorization stay in Kestrel, never Codex.
 			capabilityProvenance: "confirmed",
 			streaming: true,
-			tools: false,
+			tools: record?.tool_mode !== "none" && record?.tool_mode !== "disabled",
 			images: inputModalities.has("image"),
 			audio: false,
 			documents: false,
 			video: false,
 			structuredOutput: false,
 			reasoningEfforts,
+			...(typeof record?.context_window === "number" && record.context_window > 0
+				? { contextWindow: record.context_window } : {}),
 		},
 	};
 }
@@ -194,7 +222,16 @@ function textPrompt(messages: ModelMessage[]): string {
 				message.role === "tool"
 					? `Tool result${message.toolName ? ` (${message.toolName})` : ""}`
 					: message.role[0]!.toUpperCase() + message.role.slice(1);
-			const text = contentText(message.content);
+			const text = [
+				contentText(message.content),
+				...(message.toolCalls?.map(
+					(call) =>
+						`Kestrel tool request ${call.id}: ${call.name} ${JSON.stringify(call.arguments)}`,
+				) ?? []),
+				...(message.toolCallId ? [`Tool call ID: ${message.toolCallId}`] : []),
+			]
+				.filter(Boolean)
+				.join("\n");
 			const omitted = message.content
 				.filter((part) => part.type !== "text" && part.type !== "image")
 				.map((part) => `[${part.type} content unavailable to this route]`)
@@ -416,7 +453,7 @@ export class CodexAppServerProvider {
 	readonly defaultModel: string;
 	readonly capabilities = {
 		streaming: true,
-		tools: false,
+		tools: true,
 		images: true,
 		audio: false,
 		documents: false,
@@ -443,6 +480,7 @@ export class CodexAppServerProvider {
 	private scratchRoot: string | undefined;
 	private browserMcp: CodexBrowserMcpAttachment | undefined;
 	private closing = false;
+	private discoveredModels: DiscoveredModel[] | undefined;
 
 	constructor(options: CodexAppServerOptions = {}) {
 		this.id = options.id ?? "codex-subscription";
@@ -521,7 +559,8 @@ export class CodexAppServerProvider {
 				seenCursors.add(nextCursor);
 				cursor = nextCursor;
 			}
-			return [...models.values()];
+			this.discoveredModels = [...models.values()];
+			return this.discoveredModels;
 		} catch (error) {
 			if (signal?.aborted) throw error;
 			throw new ModelProviderError(
@@ -538,7 +577,18 @@ export class CodexAppServerProvider {
 	): Promise<ModelResult> {
 		try {
 			await this.ensureStarted();
-			const sessionKey = request.metadata?.session_id ?? `call-${randomUUID()}`;
+			const bridged = Boolean(request.tools?.length);
+			if (bridged) {
+				const models = this.discoveredModels ?? await this.discoverModels(options.signal);
+				const model = models.find((model) => model.id === request.model && model.availability === "available");
+				if (!model?.capabilities?.tools)
+					throw new Error("The selected Codex account has not advertised a tool-capable version of this model. Refresh models or select another account model.");
+				if (request.reasoningEffort && !model.capabilities.reasoningEfforts?.includes(request.reasoningEffort))
+					throw new Error("The selected Codex account model does not advertise this thinking level. Select an advertised level; no substitute was used.");
+			}
+			const sessionKey = bridged
+				? `tool-step-${randomUUID()}`
+				: (request.metadata?.session_id ?? `call-${randomUUID()}`);
 			const workspaceRoot = request.metadata?.workspace_root;
 			const binding = await this.ensureThread(
 				sessionKey,
@@ -546,21 +596,33 @@ export class CodexAppServerProvider {
 				workspaceRoot,
 				options.signal,
 			);
-			const collector = await this.startTurn(
-				binding,
-				request,
-				workspaceRoot,
-				options,
-			);
-			return {
-				providerId: this.id,
-				model: request.model,
-				responseId: collector.turnId ?? binding.threadId,
-				text: collector.text,
-				toolCalls: [],
-				usage: collector.usage,
-				finishReason: "stop",
-			};
+			try {
+				const collector = await this.startTurn(
+					binding,
+					request,
+					workspaceRoot,
+					options,
+				);
+				const output = {
+					text: collector.finalText ?? collector.text,
+					toolCalls: collector.toolCalls,
+				};
+				return {
+					providerId: this.id,
+					model: request.model,
+					responseId: collector.turnId ?? binding.threadId,
+					...output,
+					usage: collector.usage,
+					finishReason: output.toolCalls.length ? "tool_calls" : "stop",
+				};
+			} finally {
+				if (bridged) {
+					this.threads.delete(sessionKey);
+					void this.request("thread/archive", {
+						threadId: binding.threadId,
+					}).catch(() => undefined);
+				}
+			}
 		} catch (error) {
 			if (options.signal?.aborted) throw error;
 			throw new ModelProviderError(
@@ -652,7 +714,7 @@ export class CodexAppServerProvider {
 					title: "Kestrel Desktop",
 					version: "0.1.0",
 				},
-				capabilities: null,
+				capabilities: { experimentalApi: true },
 			});
 			this.notify("initialized", {});
 		} catch (error) {
@@ -721,7 +783,9 @@ export class CodexAppServerProvider {
 			return;
 		}
 		if (typeof message.id === "number" && typeof message.method === "string") {
-			this.write(this.serverRequestReply(message.id, message.method));
+			if (message.method === "item/tool/call")
+				this.handleDynamicToolCall(message.id, message.params);
+			else this.write(this.serverRequestReply(message.id, message.method));
 			return;
 		}
 		if (typeof message.method === "string") {
@@ -734,8 +798,14 @@ export class CodexAppServerProvider {
 			typeof params.threadId === "string" ? params.threadId : undefined;
 		if (!threadId) return;
 		const collector = this.collectors.get(threadId);
-		if (!collector) return;
-		if (typeof params.turnId === "string") collector.turnId ??= params.turnId;
+		if (!collector || collector.handedOff) return;
+		// Notifications can arrive in the same stdout chunk as turn/start's
+		// response. Only that response establishes the authoritative turn ID.
+		if (!collector.turnId) {
+			this.deferUntilTurnStarts(collector, () => this.handleNotification(method, params));
+			return;
+		}
+		if (typeof params.turnId === "string" && params.turnId !== collector.turnId) return;
 		if (
 			method === "item/agentMessage/delta" &&
 			typeof params.delta === "string"
@@ -743,12 +813,22 @@ export class CodexAppServerProvider {
 			collector.text += params.delta;
 			return;
 		}
+		if (method === "item/completed") {
+			const item = object(params.item);
+			if (
+				item?.type === "agentMessage" &&
+				typeof item.text === "string" &&
+				item.phase !== "commentary"
+			)
+				collector.finalText = item.text;
+		}
 		if (method === "thread/tokenUsage/updated") {
 			collector.usage = usageFrom(params.tokenUsage);
 			return;
 		}
 		if (method === "turn/completed") {
 			const turn = object(params.turn);
+			if (turn?.id !== collector.turnId) return;
 			if (turn?.status === "failed") {
 				collector.reject(
 					new Error(
@@ -760,6 +840,49 @@ export class CodexAppServerProvider {
 			} else {
 				collector.resolve();
 			}
+		}
+	}
+
+	private handleDynamicToolCall(id: number, value: unknown): void {
+		const params = object(value);
+		const collector = typeof params?.threadId === "string"
+			? this.collectors.get(params.threadId) : undefined;
+		// Always close the vendor RPC without asserting the action happened.
+		this.write({ id, result: { success: false, contentItems: [{ type: "inputText", text: "Execution is deferred to Kestrel's authorization and receipt path. This Codex step is ending; no action was executed here." }] } });
+		if (!collector || collector.handedOff || !collector.tools.length) return;
+		this.acceptDynamicToolCall(collector, value);
+	}
+
+	private deferUntilTurnStarts(collector: TurnCollector, message: () => void): void {
+		if (collector.pendingMessages.length >= 128) {
+			collector.reject(new Error("Codex emitted too many messages before the turn started."));
+			return;
+		}
+		collector.pendingMessages.push(message);
+	}
+
+	private acceptDynamicToolCall(collector: TurnCollector, value: unknown): void {
+		if (collector.handedOff) return;
+		if (!collector.turnId) {
+			this.deferUntilTurnStarts(collector, () => this.acceptDynamicToolCall(collector, value));
+			return;
+		}
+		try {
+			const call = parseCodexDynamicToolCall(value, collector.tools, collector.threadId, collector.turnId);
+			collector.toolCalls.push(call);
+			collector.handedOff = true;
+			void this.request("turn/interrupt", {
+				threadId: collector.threadId,
+				turnId: collector.turnId,
+			}).then(
+				() => collector.resolve(),
+				() => collector.reject(new Error(
+					"Codex could not end the reasoning step safely. No tool requests were accepted.",
+				)),
+			);
+		} catch {
+			void this.request("turn/interrupt", { threadId: collector.threadId, turnId: collector.turnId }).catch(() => undefined);
+			collector.reject(new Error("Codex returned an invalid or out-of-scope dynamic tool request. No tool requests were accepted."));
 		}
 	}
 
@@ -902,15 +1025,30 @@ export class CodexAppServerProvider {
 					model: request.model,
 					approvalPolicy: "never",
 					sandbox: "read-only",
-					cwd: workspaceRoot ?? this.scratchRoot!,
-					ephemeral: false,
-					baseInstructions: this.browserMcp
-						? BROWSER_MCP_INSTRUCTIONS
+					cwd: request.tools?.length
+						? this.scratchRoot!
+						: workspaceRoot ?? this.scratchRoot!,
+					allowProviderModelFallback: false,
+					...(request.tools?.length
+						? {
+								dynamicTools: codexDynamicTools(request.tools),
+								config: CODEX_TOOL_BRIDGE_CONFIG,
+								runtimeWorkspaceRoots: [],
+								environments: [],
+							}
+						: {}),
+					ephemeral: Boolean(request.tools?.length),
+					baseInstructions: request.tools?.length
+						? CODEX_TOOL_BRIDGE_INSTRUCTIONS
+						: this.browserMcp
+							? BROWSER_MCP_INSTRUCTIONS
 						: READ_ONLY_INSTRUCTIONS,
 				},
 				signal,
 			),
 		);
+		if (typeof result?.model === "string" && result.model !== request.model)
+			throw new Error("Codex substituted a different model. The requested model was not executed.");
 		const thread = object(result?.thread);
 		if (typeof thread?.id !== "string")
 			throw new Error("Codex app-server returned no thread id.");
@@ -938,9 +1076,15 @@ export class CodexAppServerProvider {
 			settle = resolve;
 			fail = reject;
 		});
+		// A turn/start transport failure can precede our await of this promise.
+		void completed.catch(() => undefined);
 		const collector: TurnCollector = {
 			threadId,
 			text: "",
+			tools: request.tools ?? [],
+			toolCalls: [],
+			handedOff: false,
+			pendingMessages: [],
 			usage: { inputTokens: 0, outputTokens: 0 },
 			resolve: settle,
 			reject: fail,
@@ -984,7 +1128,8 @@ export class CodexAppServerProvider {
 						model: request.model,
 						approvalPolicy: "never",
 						sandboxPolicy: { type: "readOnly", networkAccess: false },
-						...(workspaceRoot ? { cwd: workspaceRoot } : {}),
+						...(request.tools?.length ? { cwd: this.scratchRoot! } : workspaceRoot ? { cwd: workspaceRoot } : {}),
+						...(request.serviceTier ? { serviceTier: request.serviceTier } : {}),
 						...(request.reasoningEffort
 							? { effort: request.reasoningEffort }
 							: {}),
@@ -996,6 +1141,7 @@ export class CodexAppServerProvider {
 			if (typeof turn?.id !== "string")
 				throw new Error("Codex app-server returned no turn id.");
 			collector.turnId = turn.id;
+			for (const message of collector.pendingMessages.splice(0)) message();
 			await completed;
 			binding.turns += 1;
 			if (collector.text.length > streamed) {

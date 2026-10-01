@@ -5,13 +5,14 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
+import { createAccountModelProviders } from "./account-providers";
 import { CodexAppServerProvider } from "./codex-app-server";
 import { textContent } from "./types";
 
 const roots: string[] = [];
 const executeFile = promisify(execFileCallback);
 
-async function fakeAppServer(): Promise<{
+async function fakeAppServer(toolScenario: Record<string, unknown> = {}): Promise<{
 	executable: string;
 	capture: string;
 }> {
@@ -26,6 +27,8 @@ const fs = require("node:fs");
 const readline = require("node:readline");
 const capture = process.argv[1] + ".capture.jsonl";
 let turn = 0;
+let tools = [];
+const toolScenario = ${JSON.stringify(toolScenario)};
 function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
 function record(value) {
   const row = { pid: process.pid, value };
@@ -49,22 +52,28 @@ input.on("line", line => {
     if (message.params && message.params.cursor === "page-2") {
       return send({ id: message.id, result: { data: [{ id: "gpt-hidden", model: "gpt-hidden", displayName: "Hidden model", supportedReasoningEfforts: [{ reasoningEffort: "minimal" }], hidden: true }], nextCursor: null } });
     }
-    return send({ id: message.id, result: { data: [{ id: "gpt-catalog", model: "gpt-catalog", displayName: "Catalog model", inputModalities: ["text", "image"], supportedReasoningEfforts: [{ reasoningEffort: "minimal" }, { reasoningEffort: "low" }, { reasoningEffort: "high" }] }], nextCursor: "page-2" } });
+    return send({ id: message.id, result: { data: [{ id: "gpt-catalog", model: "gpt-catalog", displayName: "Catalog model", inputModalities: ["text", "image"], supportedReasoningEfforts: [{ reasoningEffort: "minimal" }, { reasoningEffort: "low" }, { reasoningEffort: "high" }, { reasoningEffort: "ultra" }] }], nextCursor: "page-2" } });
   }
-  if (message.method === "thread/start") return send({ id: message.id, result: { thread: { id: "thread-1" }, model: message.params.model } });
+  if (message.method === "thread/start") { tools = message.params.dynamicTools ?? []; return send({ id: message.id, result: { thread: { id: "thread-1" }, model: toolScenario.effectiveModel ?? message.params.model } }); }
+  if (message.method === "turn/interrupt" || message.method === "thread/archive") return send({ id: message.id, result: {} });
   if (message.method === "thread/resume") return send({ id: message.id, result: { thread: { id: message.params.threadId } } });
   if (message.method === "turn/start") {
     turn += 1;
     const turnId = "turn-" + turn;
+    if (toolScenario.earlyToolCall) send({ id: 1000 + turn, method: "item/tool/call", params: { threadId: "thread-1", turnId: toolScenario.turnId ?? turnId, callId: "early-call", tool: "kestrel_0", arguments: {} } });
     send({ id: message.id, result: { turn: { id: turnId, status: "inProgress" } } });
     send({ id: 800 + turn, method: "item/permissions/requestApproval", params: { threadId: "thread-1", turnId, itemId: "perm-" + turn, permissions: { network: { enabled: true } } } });
     send({ id: 700 + turn, method: "mcpServer/elicitation/request", params: { threadId: "thread-1", turnId, serverName: "kestrel_browser", mode: "form", message: "confirm" } });
     send({ id: 900 + turn, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", turnId, itemId: "cmd-" + turn, command: "touch forbidden" } });
     return;
   }
-  if (typeof message.id === "number" && message.id >= 901) {
+  if (typeof message.id === "number" && message.id >= 901 && message.id < 1000) {
     const current = message.id - 900;
     const turnId = "turn-" + current;
+    if (tools.length) {
+      send({ id: 1000 + current, method: "item/tool/call", params: { threadId: "thread-1", turnId, callId: "call-" + current, tool: "kestrel_0", arguments: { path: "src/index.ts" }, ...toolScenario } });
+      return;
+    }
     send({ method: "item/agentMessage/delta", params: { threadId: "thread-1", turnId, itemId: "answer-" + current, delta: "Persistent answer " + current } });
     send({ method: "thread/tokenUsage/updated", params: { threadId: "thread-1", turnId, tokenUsage: { last: { inputTokens: 12, outputTokens: 3, cachedInputTokens: current > 1 ? 5 : 0, reasoningOutputTokens: 1 } } } });
     send({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: turnId, status: "completed", error: null } } });
@@ -161,13 +170,13 @@ describe("persistent Codex app-server provider", () => {
 				capabilities: {
 					capabilityProvenance: "confirmed",
 					streaming: true,
-					tools: false,
+					tools: true,
 					images: true,
 					audio: false,
 					documents: false,
 					video: false,
 					structuredOutput: false,
-					reasoningEfforts: ["low", "high"],
+					reasoningEfforts: ["minimal", "low", "high", "ultra"],
 				},
 			},
 		]);
@@ -185,6 +194,81 @@ describe("persistent Codex app-server provider", () => {
 		expect(modelListRequests[1]?.value.params).toMatchObject({
 			cursor: "page-2",
 		});
+	});
+
+	it("retains protocol methods and distinct profile environments on account adapters", async () => {
+		const fake = await fakeAppServer();
+		const accounts = ["a", "b"].map(suffix => ({ id: `account-${suffix}`, providerId: "codex", adapter: "codex-app-server" as const, displayName: `Profile ${suffix}`, authTransport: "cli_profile" as const, enabled: true, executable: fake.executable, profilePath: `/fake/profile-${suffix}` }));
+		const providers = createAccountModelProviders(accounts);
+		try {
+			for (const endpoint of providers) {
+				expect(endpoint).toBeInstanceOf(CodexAppServerProvider);
+				expect(endpoint.account?.id).toBe(endpoint.id);
+				expect(endpoint.poolId).toBe("codex");
+				await endpoint.probe!();
+			}
+			const starts = (await readCapture(fake.capture)).filter(row => row.value.method === "initialize");
+			expect(starts.map(row => row.env?.CODEX_HOME)).toEqual(["/fake/profile-a", "/fake/profile-b"]);
+			expect(new Set(starts.map(row => row.pid)).size).toBe(2);
+		} finally { await Promise.all(providers.map(provider => provider.close!())); }
+	});
+
+	it("uses dynamicTools and yields execution to Kestrel with exact model and thinking", async () => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 10_000, turnTimeoutMs: 2_000 });
+		try {
+			const result = await provider.complete({
+				model: "gpt-catalog", reasoningEffort: "high",
+				metadata: { session_id: "persistent-agent", workspace_root: "/authorized/project" },
+				messages: [{ role: "user", content: textContent("Inspect the scoped source.") }],
+				tools: [{ name: "filesystem.read", description: "Read scoped source", inputSchema: { type: "object", required: ["path"], properties: { path: { type: "string" } } } }],
+			});
+			expect(result).toMatchObject({ model: "gpt-catalog", text: "", finishReason: "tool_calls", toolCalls: [{ name: "filesystem.read", arguments: { path: "src/index.ts" } }] });
+			const records = await readCapture(fake.capture);
+			const thread = records.find(row => row.value.method === "thread/start")!.value.params!;
+			expect(thread).toMatchObject({ model: "gpt-catalog", ephemeral: true, allowProviderModelFallback: false, sandbox: "read-only", approvalPolicy: "never", runtimeWorkspaceRoots: [], environments: [], dynamicTools: [{ type: "function", name: "kestrel_0", inputSchema: { required: ["path"] } }], config: { "features.shell_tool": false, "features.apps": false, web_search: "disabled", mcp_servers: {} } });
+			expect(thread.cwd).not.toBe("/authorized/project");
+			expect(records.find(row => row.value.method === "initialize")!.value.params).toMatchObject({ capabilities: { experimentalApi: true } });
+			expect(records.find(row => row.value.method === "turn/start")!.value.params).toMatchObject({ model: "gpt-catalog", effort: "high", sandboxPolicy: { type: "readOnly", networkAccess: false } });
+			expect(records.some(row => row.value.method === "turn/interrupt")).toBe(true);
+			expect(records.find(row => row.value.id === 1001)!.value.result).toMatchObject({ success: false, contentItems: [{ type: "inputText", text: expect.stringContaining("no action was executed") }] });
+		} finally { await provider.close(); }
+	});
+
+	it.each([{ tool: "shell" }, { tool: "kestrel_9" }, { turnId: "other-turn" }, { namespace: "other" }, { arguments: [] }])("rejects out-of-scope dynamic requests: %j", async (scenario) => {
+		const fake = await fakeAppServer(scenario);
+		const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 10_000, turnTimeoutMs: 2_000 });
+		try {
+			await expect(provider.complete({ model: "gpt-catalog", messages: [{ role: "user", content: textContent("Inspect") }], tools: [{ name: "filesystem.read", description: "Read", inputSchema: { type: "object" } }] })).rejects.toThrow("invalid or out-of-scope dynamic tool request");
+		} finally { await provider.close(); }
+	});
+
+	it.each([false, true])("validates early dynamic requests against turn/start before handoff (stale: %s)", async (stale) => {
+		const fake = await fakeAppServer({ earlyToolCall: true, ...(stale ? { turnId: "stale-turn" } : {}) });
+		const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 10_000, turnTimeoutMs: 2_000 });
+		try {
+			const result = provider.complete({ model: "gpt-catalog", messages: [{ role: "user", content: textContent("Read") }], tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }] });
+			if (stale) await expect(result).rejects.toThrow("out-of-scope");
+			else expect((await result).toolCalls).toHaveLength(1);
+		} finally { await provider.close(); }
+	});
+
+	it("rejects a provider-substituted model before starting a turn", async () => {
+		const fake = await fakeAppServer({ effectiveModel: "substitute" });
+		const provider = new CodexAppServerProvider({ executable: fake.executable });
+		try {
+			await expect(provider.complete({ model: "gpt-catalog", messages: [{ role: "user", content: textContent("Read") }], tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }] })).rejects.toThrow("substituted a different model");
+			expect((await readCapture(fake.capture)).some(row => row.value.method === "turn/start")).toBe(false);
+		} finally { await provider.close(); }
+	});
+
+	it.each([{ model: "not-entitled", reasoningEffort: "high" as const }, { model: "gpt-catalog", reasoningEffort: "max" as const }])("never substitutes an unadvertised account model or effort: %j", async (selection) => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 10_000 });
+		try {
+			await expect(provider.complete({ ...selection, messages: [{ role: "user", content: textContent("Inspect") }], tools: [{ name: "filesystem.read", description: "Read", inputSchema: { type: "object" } }] })).rejects.toThrow(/selected Codex account/);
+			expect((await readCapture(fake.capture)).some(row => row.value.method === "thread/start")).toBe(false);
+		} finally { await provider.close(); }
 	});
 
 	it("restarts after initialization failure instead of reusing an uninitialized process", async () => {

@@ -81,6 +81,24 @@ describe("provider-neutral agent loop", () => {
 		database.close();
 	});
 
+	it("rejects a text-only endpoint for persistent tool execution", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Persistent tool requirement", kind: "agent" });
+		runtime.registerExternalTool({ descriptor: { name: "test.read", title: "Read fixture", description: "Read a harmless fixture", category: "web", riskLevel: "read_only", readOnly: true, requiresWorkspace: false, source: "mcp", tags: [] }, inputSchema: { type: "object" }, execute: async () => ({ value: "ok" }) });
+		runtime.allowTool(session.id, "test.read");
+		let called = false;
+		const provider: ModelProvider = {
+			id: "text-only", capabilities: { streaming: false, tools: false, images: false, audio: false, documents: false, local: true },
+			complete: async request => { called = true; return { providerId: "text-only", model: request.model, text: "claimed result", toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, finishReason: "stop" }; },
+		};
+		try {
+			await expect(new AgentLoop(database, runtime, new ProviderPool([provider])).run({ sessionId: session.id, model: "fixture", providerIds: [provider.id], allowedTools: ["test.read"], userContent: textContent("Inspect the fixture") })).rejects.toThrow();
+			expect(called).toBe(false);
+			expect(database.listToolExecutions(session.id)).toEqual([]);
+		} finally { database.close(); }
+	});
+
 	it("redacts sensitive tool output before it enters model context or history", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);
