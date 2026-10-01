@@ -215,7 +215,7 @@ vi.mock("electron", () => ({
 import { nativeImage } from "electron";
 import { dialog } from "electron";
 import { shell } from "electron";
-import { BrowserTabStore } from "./browser-tab-store";
+import { BrowserTabStore, MAX_AX_SNAPSHOT_BYTES } from "./browser-tab-store";
 import { FIND_IN_PAGE_WORLD_ID } from "./find-in-page-scripts";
 import {
   isAuthenticationFlowUrl,
@@ -3515,17 +3515,21 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 		expect(contents.capturePage).not.toHaveBeenCalled();
 	});
 
-  it("rejects oversized accessibility snapshots before returning them", async () => {
+  it("returns a bounded partial snapshot without refs to omitted nodes", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
     await service.navigate(tab.id, "https://example.com");
     const contents = electron.state.views[0]!.webContents;
     contents.url = "https://example.com/";
-    contents.debugger.sendCommand.mockResolvedValue({
-      nodes: [{ name: { value: "x".repeat(1_500_000) } }],
-    });
+    contents.debugger.sendCommand.mockResolvedValue({ nodes: [
+      { role: { value: "button" }, name: { value: "Keep" }, backendDOMNodeId: 1 },
+      { role: { value: "button" }, name: { value: "x".repeat(1_500_000) }, backendDOMNodeId: 2 },
+    ] });
 
-    await expect(service.snapshot(tab.id)).rejects.toThrow("exceeds 1.5 MB");
+    const snapshot = await service.snapshot(tab.id);
+    expect(snapshot.truncated).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(snapshot.accessibilityTree))).toBeLessThanOrEqual(MAX_AX_SNAPSHOT_BYTES);
+    expect(snapshot.interactive?.map((item) => item.name)).toEqual(["Keep"]);
   });
 
   it("bounds a stalled Electron capture and retries after requesting a repaint", async () => {

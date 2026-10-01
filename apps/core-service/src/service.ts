@@ -356,14 +356,6 @@ export function startCoreService(port: CoreParentPort): void {
 					delete account.apiKey;
 					delete account.headers;
 				}
-				// A new or expired dynamic catalog is resolved before Auto is offered.
-				// ModelCatalog limits discovery concurrency and this short deadline keeps
-				// startup responsive if an account endpoint is unreachable.
-				try {
-					await agentCore.refreshStaleProviderModels(AbortSignal.timeout(4_000));
-				} catch {
-					console.warn("Kestrel provider model catalog startup refresh did not complete.");
-				}
 				const mainSession = agentCore.runtime.ensureMainSession();
 				if (googleWorkspace)
 					installGoogleWorkspaceTools(
@@ -400,6 +392,16 @@ export function startCoreService(port: CoreParentPort): void {
 					url: browserMcpEndpoint.url,
 					token: browserMcpEndpoint.token,
 				});
+				// Discovery can start the Codex app-server. Attach the browser MCP
+				// before its first process launch because that config is not hot-reloaded.
+				// A new or expired dynamic catalog is resolved before Auto is offered.
+				// ModelCatalog limits discovery concurrency and this short deadline keeps
+				// startup responsive if an account endpoint is unreachable.
+				try {
+					await agentCore.refreshStaleProviderModels(AbortSignal.timeout(4_000));
+				} catch {
+					console.warn("Kestrel provider model catalog startup refresh did not complete.");
+				}
 				const configuredLanguageServer = await environmentLanguageServerClient();
 				if (configuredLanguageServer) {
 					languageServer = configuredLanguageServer.client;

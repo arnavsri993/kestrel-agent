@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,12 @@ import {
 	ProtectedDatabaseError,
 } from "@kestrel/database";
 import { createEncryptionKey, encryptText } from "@kestrel/encryption";
-import type { RuntimeToolExecution } from "@kestrel/shared-types";
+import {
+	AgentConfigurationAuditEventSchema,
+	AgentConfigurationDocumentSchema,
+	AgentConfigurationVersionSchema,
+	type RuntimeToolExecution,
+} from "@kestrel/shared-types";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	AgentConfigurationManager,
@@ -32,6 +38,88 @@ afterEach(() => {
 });
 
 describe("chat configuration manager", () => {
+	it("migrates only the untouched legacy turn limit and preserves custom configurations", () => {
+		const seedLegacyDefault = (
+			database: KestrelDatabase,
+			responseStyle: "balanced" | "concise",
+			maximumTurns = 12,
+		) => {
+			const document = AgentConfigurationDocumentSchema.parse({
+				...DEFAULT_AGENT_CONFIGURATION,
+				behavior: {
+					...DEFAULT_AGENT_CONFIGURATION.behavior,
+					responseStyle,
+				},
+				workflows: {
+					...DEFAULT_AGENT_CONFIGURATION.workflows,
+					maximumTurns,
+				},
+			});
+			const version = AgentConfigurationVersionSchema.parse({
+				id: `config-version-${randomUUID()}`,
+				sequence: 1,
+				document,
+				sha256: createHash("sha256").update(JSON.stringify(document)).digest("hex"),
+				knownGood: true,
+				createdBy: "system",
+				createdAt: "2026-07-29T12:00:00.000Z",
+			});
+			database.commitAgentConfigurationVersion({
+				version,
+				auditEvent: AgentConfigurationAuditEventSchema.parse({
+					id: `config-audit-${randomUUID()}`,
+					action: "initialized",
+					actor: "system",
+					versionId: version.id,
+					detail: "Initialized the protected configuration.",
+					evidence: ["default schema valid"],
+					createdAt: version.createdAt,
+				}),
+			});
+			return version;
+		};
+
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const oldDefault = seedLegacyDefault(database, "balanced");
+		const manager = new AgentConfigurationManager(database);
+		const migrated = manager.currentVersion();
+		expect(migrated).toMatchObject({
+			sequence: 2,
+			parentVersionId: oldDefault.id,
+			knownGood: true,
+			createdBy: "system",
+			document: { workflows: { maximumTurns: 24 } },
+		});
+		expect(database.getAgentConfigurationVersion(oldDefault.id)).toEqual(oldDefault);
+		expect(manager.audit().map((event) => event.action)).toEqual([
+			"initialized",
+			"default_migrated",
+		]);
+		expect(new AgentConfigurationManager(database).currentVersion().id).toBe(
+			migrated.id,
+		);
+		expect(manager.history()).toHaveLength(2);
+		database.close();
+
+		const customDatabase = new KestrelDatabase(":memory:", createEncryptionKey());
+		const custom = seedLegacyDefault(customDatabase, "concise");
+		const customManager = new AgentConfigurationManager(customDatabase);
+		expect(customManager.currentVersion()).toEqual(custom);
+		expect(customManager.history()).toHaveLength(1);
+		expect(customManager.audit().map((event) => event.action)).toEqual([
+			"initialized",
+		]);
+		customDatabase.close();
+
+		const limitedDatabase = new KestrelDatabase(":memory:", createEncryptionKey());
+		const limited = seedLegacyDefault(limitedDatabase, "balanced", 8);
+		const limitedManager = new AgentConfigurationManager(limitedDatabase);
+		expect(limitedManager.currentVersion()).toEqual(limited);
+		expect(limitedManager.current().workflows.maximumTurns).toBe(8);
+		expect(limitedManager.history()).toHaveLength(1);
+		limitedDatabase.close();
+	});
+
 	it("stages without touching live state, persists an applied version, and restores known-good history", () => {
 		const { path, key } = persistentDatabase();
 		const firstDatabase = new KestrelDatabase(path, key);

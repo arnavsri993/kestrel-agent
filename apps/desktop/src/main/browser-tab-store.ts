@@ -95,7 +95,9 @@ export interface NormalizedBrowserAddress {
 	url: string;
 }
 
-export const MAX_AX_SNAPSHOT_BYTES = 1_500_000;
+// Leave room for tool-result metadata and string escaping under the 1 MB
+// message limit used by the Codex app-server bridge.
+export const MAX_AX_SNAPSHOT_BYTES = 700_000;
 export const MAX_AX_SNAPSHOT_NODES = 5_000;
 export const MAX_INTERACTIVE_REFS = 200;
 export const MAX_ORIGIN_FAVICONS = 200;

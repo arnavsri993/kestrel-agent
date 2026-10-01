@@ -33,6 +33,7 @@ import {
 	sanitizeBrowserUrl,
 	sanitizeUntrustedBrowserValue,
 } from "./browser-tab-store";
+import { limitBrowserAccessibilityTree } from "./browser-accessibility-limit";
 import {
 	dispatchBrowserKey,
 	dispatchBrowserMouseClick,
@@ -574,17 +575,14 @@ export class ElectronBrowserService {
 		const annotated = annotateAccessibilityTree({
 			nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES),
 		});
-		const interactive = annotated.interactive.slice(0, MAX_INTERACTIVE_REFS);
-		const accessibilityTree = sanitizeUntrustedBrowserValue(
+		const sanitizedTree = sanitizeUntrustedBrowserValue(
 			annotated.accessibilityTree,
-		);
-		if (
-			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
-			MAX_AX_SNAPSHOT_BYTES
-		) {
-			this.elementRefs.set(id, new Map());
-			throw new Error("Isolated browser accessibility snapshot exceeds 1.5 MB.");
-		}
+		) as { nodes: unknown[] };
+		const bounded = limitBrowserAccessibilityTree(sanitizedTree, MAX_AX_SNAPSHOT_BYTES);
+		const interactive = annotated.interactive
+			.slice(0, MAX_INTERACTIVE_REFS)
+			.filter((item) => bounded.retainedRefs.has(item.ref));
+		const accessibilityTree = bounded.accessibilityTree;
 		this.elementRefs.set(id, rememberElementRefs(interactive));
 		return {
 			url:
@@ -594,6 +592,7 @@ export class ElectronBrowserService {
 			accessibilityTree,
 			interactive: publicInteractiveRefs(interactive),
 			truncated:
+				bounded.truncated ||
 				nodes.length > MAX_AX_SNAPSHOT_NODES ||
 				annotated.interactive.length > MAX_INTERACTIVE_REFS,
 		};
@@ -606,6 +605,8 @@ export class ElectronBrowserService {
 		const { window } = this.require(id);
 		if (signal.aborted) throw signal.reason;
 		const snapshot = await this.snapshot(id, signal);
+		if (snapshot.truncated)
+			throw new Error("Kestrel cannot share a screenshot when the page inspection is incomplete.");
 		if (
 			snapshot.interactive?.some(
 				(item) =>
