@@ -414,13 +414,14 @@ export function startCoreService(port: CoreParentPort): void {
 					port.postMessage({ type: "runtime-event", event }),
 				);
 				automationTimer = setInterval(() => {
-					if (!core || automationRunning) return;
+					if (!core || automationRunning || core.isPaused) return;
 					automationRunning = true;
 					const controller = new AbortController();
 					automationController = controller;
 					const checkedAt = new Date();
 					const task = Promise.resolve()
 						.then(async () => {
+							if (!core || core.isPaused || controller.signal.aborted) return [];
 							await core!.runAmbientMaintenance(checkedAt);
 							return core!.orchestrator.runDue(checkedAt, controller.signal);
 						})

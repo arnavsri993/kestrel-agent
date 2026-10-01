@@ -36,16 +36,16 @@ must be updated only after the corresponding operation is verified.
 
 | Requirement | Reproduced symptom / hypothesis | Owner | Dependency | Implementation | Evidence | Integrated commit | Deployment |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1. WhatsApp compatibility | Live unsupported-browser screen; Electron/app tokens exposed in UA | Browser specialist | Reviewed canonical deployment; real service | Embedded Chromium identity applied to persistent session and every view before navigation | UA/restore/session fixtures pass; real QR login across reload/restart in disposable candidate; pairing/canonical pending | Local `8e649457` plus broker hardening | Existing app preserved |
+| 1. WhatsApp compatibility | Live unsupported-browser screen; Electron/app tokens exposed in UA | Browser specialist | Reviewed canonical deployment; real service | Embedded Chromium identity applied to persistent session and every view before navigation | UA/restore/session fixtures pass; real QR login across new tab/reload/restart in disposable candidate; authenticated pairing/read/connection and canonical delivery pending | Local `8e649457` plus broker hardening | Existing app preserved |
 | 2. Teams native handoff | PR #789 route/error slice useful but origin/intent needed hardening | Browser specialist | Validated main broker; reviewed canonical deployment | Bounded Teams/Cursor routes, exact-origin app grants, active-tab input and consent revalidation | Positive/hostile frame, popup, reload, revocation and failure fixtures pass; live OS handoff pending | Local `8e649457` plus broker hardening | Not deployed |
-| 3. Complex task completion | Text-only Codex route could not execute Kestrel tools | Runtime specialist | Official dynamic-tool bridge; route readiness | Codex dynamic calls return to existing AgentLoop approvals/scopes/receipts | Four real account tool reads and one full three-turn, two-file derived-answer completion | Local `2f51c29b`; final transport review in progress | Not deployed |
-| 4. Sustained progress / fewer interruptions | Tool transport and oversized results can abort useful work | Runtime specialist | Verified cancellation, bounded task budgets, durable execution | Tool-capable fallback enforced; existing durable runtime retained | Small full completion and cancellation/RPC cleanup regressions verified; broader long-running recovery target unmeasured | Local `2f51c29b` + `55429bae`; transport cleanup hardened | Not deployed |
+| 3. Complex task completion | Text-only Codex route could not execute Kestrel tools | Integration owner / runtime specialist | Official dynamic-tool bridge; route readiness | Structured calls execute through existing approvals, scopes and receipts | Four live profile reads, two-file derived answer and bounded PR #809 review completed; broader multi-app reliability pending | Candidate `1a331645` plus current controls | Not deployed |
+| 4. Sustained progress / fewer interruptions | Routing/worktree cancellation gaps and ineffective background pause | Integration owner | Durable execution and safe shutdown | Persistent pause, atomic job claims, active/delegated cancellation and stale-owner lease implemented | 46 focused fault tests including two actual scheduler processes with a fixture provider; full current unit suite 1,659 passes | Current control patch; exact-head full verification pending | Not deployed |
 | 5. Model / effort selection | Picker lacked minimal/ultra; model listing could overstate transport support | Runtime specialist | Account-specific discovery and wire validation | Exact advertised efforts, model/transport intersection, tools required through fallback | Four accounts sent exact `gpt-6-astra` / `high`; registrations and reads observed; other efforts/modalities not live-verified | Local `2f51c29b` plus shared/picker changes | Not deployed |
-| 6. Persistent engineering agent / four accounts | Existing agent and account systems must be extended, not duplicated | Integration owner / runtime specialist | Verified provider isolation, tools, cancellation, deployment | Safety/readiness audit | Agent not enabled; four live account tool reads verified, scheduler not verified | Pending | Pending |
-| 7. PR integration | Initial 18 became 22, then 23 with #809; all main-target heads require approval | PR reviewer / integration owner | Complete exact-head source review, passing CI and compatibility | Every refreshed PR has explicit disposition; no eligible protected merge | 7 green, 14 failed, 1 missing checks; see dated PR record and review-coverage limits | No GitHub merge | No unreviewed deployment |
-| 8. Changes appearing in actual app | No cross-worktree lock/provenance gate; prior overwrite documented | Integration/deployment owner | Clean current integrated main; recorded owner; signed matching artifact | Kernel lock, fresh-main/owner/downgrade/hash gates, recoverable previous app and component diagnostic implemented | Competing-process, stale/revoked-owner, stale-source and tampered/mixed fixtures; visible development diagnostic matches all components; package/canonical pending | Mission branch; unmerged | Existing app preserved |
-| 9. Competitor overlap / switching reasons | Overlap requires journey evidence, not feature-count marketing | Integration owner | Measured user journeys | Seven current primary-source products compared with bounded switching hypotheses | See competitor benchmark; zero competitor trials; no market-leader claim | Mission documentation | Not applicable |
-| 10. Measurable reliability | Fixture counts alone do not measure live usefulness | Integration owner / specialists | Repeatable production-path evaluations | Baseline and thresholds established | See thresholds below | Pending | Pending |
+| 6. Persistent engineering agent / four accounts | Existing core must supply safe persistent work without a parallel engine | Integration owner | Canonical reviewed build; scoped provider/tool/stop/restart acceptance | Existing scheduler control hardening; production agent ID none, enabled false | Four profiles execute real tools; independent quota pools unverified; scheduler fault fixtures pass | Current mission branch | Production agent not enabled |
+| 7. PR integration | 23 other PRs plus mission #810; required independent latest-push approval absent | Integration owner | Exact-head review, passing CI, compatibility and protection | Every snapshot PR has a disposition; maintenance slices #805/#806/#808 reconciled; broader held reviews bounded | #810 prior head `1a331645` has passing CI/CodeQL; current patch requires new checks | Source integrated; no GitHub merge | Not deployed |
+| 8. Changes appearing in actual app | Concurrent external overwrite confirmed; installed source commit unknown | Integration/deployment owner | Fresh integrated main and owner; signed matching artifact | Kernel installation lock, ownership/main/hash/downgrade gates and visible component diagnostic | Clean `1a331645` package and packaged smokes pass; visible candidate component IDs match; installed identity unverified | Source candidate `1a331645` | Canonical app preserved; updated install pending |
+| 9. Competitor overlap / switching reasons | Dots and Grok Bot share the persistent teammate promise | Integration owner | Matched journey evidence | Compare delegated responsibility, follow-through and verifiable outcomes | Current primary sources refreshed; zero standalone competitor trials or leadership claim | Mission benchmark documentation | Not applicable |
+| 10. Measurable reliability | Test counts do not establish live usefulness | Integration owner | Repeated real user journeys | Explicit evidence classes and 9/10 live journey target retained | Prior complete candidate verify/package; current control unit/fault tests; simple live tasks only | Full current candidate rerun pending | Canonical visible journeys pending |
 
 ## Acceptance thresholds fixed before tuning
 
@@ -81,9 +81,8 @@ control and bounded first task pass. Local work cannot continue while the
 machine is asleep or powered off. App-quit/window-close behavior must be
 measured before claiming background continuity.
 
-Next executable steps: finish installation lock/provenance tests, reconcile
-browser/runtime specialist commits, record all PR dispositions, validate the
-combined exact commit, publish its PR, then deploy only after review/merge.
+Current executable steps are in the latest checkpoint below. The branch must
+pass its review gate before any protected-main merge or canonical deployment.
 
 ## October 1 verified milestones
 
@@ -108,10 +107,9 @@ combined exact commit, publish its PR, then deploy only after review/merge.
   final combined verification; later transport hardening requires rerun.
 
 See [PR dispositions](kestrel-pr-dispositions-20261001.md) and
-[competitor journeys](kestrel-competitor-benchmark.md). The next executable
-steps are final transport cleanup, security/receipt/benchmark reconciliation,
-combined verification and signed package inspection, then the normal review
-and merge gate before canonical installation and real-service journeys.
+[competitor journeys](kestrel-competitor-benchmark.md). At this checkpoint,
+transport cleanup, combined verification and signed package inspection were
+still outstanding; later checkpoints supersede that task list.
 
 - October 1 canonical recheck: PID 6000, launched September 30 at 19:38:35
   America/Chicago; installed app.asar SHA-256
@@ -168,3 +166,53 @@ A final-root live account-3 canary completed two scoped file reads and verified 
 New #809 has an explicit hold; #786 now has complete changed-diff coverage and two confirmed findings. Review coverage for other large held PRs remains bounded as recorded. No protected merge, deployment-owner claim, canonical install or production Engineering agent occurred.
 
 The popup bridge keeps the native missing-referrer handler closed and uses isolated trusted main-frame input, matched native intent, exact sender/document/URL, a private nonce and acknowledged generation. It preserves the same main-process validators, consent, revocation and one-use limit. Foreign frames cannot borrow it. BFCache restoration rotates registration and requires new input/ack. Independent source review found no confirmed authority bypass; 160 focused tests and desktop typecheck passed. Built/packaged default-policy popup verification is still required. The existing experimental Electron `executeInMainWorld` API is used with a fail-closed fallback; same-document URL changes also fail closed until a new document loads.
+
+
+## Authoritative October 1 control checkpoint
+
+The clean candidate `1a331645d8cd9035cef742a43d2a8fa0aaebb02d` completed
+the full `corepack pnpm verify`: 232 unit-test files / 1,645 tests, the dedicated
+50,000-record encrypted-source benchmark (9 tests), audits, typechecking,
+builds, 50 website E2E tests, browser benchmark and all aggregate desktop,
+packaged CLI and security checks. The clean ad-hoc signed development package
+passed separate packaged smoke, auth-link, model-routing, account and restart
+checks. Its visible diagnostic matched main/preload/renderer/core identities,
+and honestly marked installation identity unverified. This evidence belongs
+to that prior commit, not the current control patch.
+
+Current controls fix persisted background pause, route/worktree/model/child
+cancellation, approval retirement, atomic cross-process claims and immediate
+terminal run authority. Job ownership has a 30-second lease renewed every
+5 seconds. Shutdown releases owned jobs as failed with uncertain outcome;
+late results cannot revive them. Interrupted work is never silently replayed.
+An independent source review found a shutdown drain gap when pause arrived
+during routing; completion now occurs on every finally path and the regression
+awaits drain. The current patch passed 46 focused tests, 233 unit-test files /
+1,659 tests and repository typechecking. Final exact-head aggregate, package
+and remote CI verification remain required before treating this patch as ready.
+
+A real bounded PR #809 review through the candidate used six Astra High turns
+and five verified tool reads/writes, completed in 77.635 seconds and persisted
+completed. This is a bounded repository canary, not a sustained production
+Engineering agent or a complex multi-app completion rate. Four authenticated
+profiles executed real dynamic tools, but profile comparison found only three
+distinct emails, including one email with separate Team/Plus profiles. The
+provider does not expose a billing/quotapool identity, so four independent
+capacity pools are unverified. No account preference or credential changed.
+
+PR #810 is open; its prior exact head passed CI and CodeQL, but protection
+requires one eligible independent approval after the latest push. Source
+integration, packaged inspection and an unmerged PR do not satisfy that gate.
+The canonical app remains the separately observed PID 6000 / installed asar
+`573dc322d10e50a719614a25612499b2e13e52c9419f8ad3eba8e0197210e304`,
+with source commit unverified. No canonical replacement, production profile
+reset, protected merge, deployment-owner claim or persistent supervisor was
+performed. Production Engineering agent ID: **none**; enabled: **false**.
+
+The real WhatsApp QR page and restart restoration were observed in a
+disposable candidate profile. Canonical connection setup, pairing and
+authenticated read remain pending; real Teams OS handoff also remains pending.
+Dots and Grok Bot are compared as the same persistent teammate promise.
+Private raw traces, provider/account evidence and screenshots remain outside
+Git. The mission is unfinished until the review, canonical delivery and
+production-agent acceptance boundaries are satisfied.

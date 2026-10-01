@@ -535,6 +535,9 @@ export class ProviderPool {
 				const result = await this.withActiveRequest(providerId, () =>
 					provider.complete(providerRequest, options),
 				);
+				// An adapter may settle after cancellation despite receiving the signal.
+				// Do not publish that result, mark success, or attempt another account.
+				options.signal?.throwIfAborted();
 				this.recordQuota(providerId, result.quota, true);
 				attempts.push({
 					providerId,

@@ -118,6 +118,7 @@ export interface ScheduledAgentJob {
 		| "failed"
 		| "cancelled";
 	lastRunId?: string;
+	owner?: { instanceId: string; pid: number; heartbeatAt?: number };
 	error?: string | undefined;
 	createdAt: string;
 	updatedAt: string;
@@ -125,6 +126,8 @@ export interface ScheduledAgentJob {
 
 const MIN_SCHEDULE_INTERVAL_MS = 60_000;
 const MAX_SCHEDULE_INTERVAL_MS = 31_536_000_000;
+const SCHEDULE_OWNER_LEASE_MS = 30_000;
+const SCHEDULE_OWNER_HEARTBEAT_MS = 5_000;
 
 function routingCostScarcity(
 	penalty: number | undefined,
@@ -416,6 +419,10 @@ function isScheduledAgentJob(value: unknown): value is ScheduledAgentJob {
 		typeof value.instructions !== "string"
 	)
 		return false;
+	if (value.owner !== undefined &&
+		(!isRecord(value.owner) || typeof value.owner.instanceId !== "string" ||
+			!Number.isSafeInteger(value.owner.pid) || Number(value.owner.pid) <= 0 ||
+			(value.owner.heartbeatAt !== undefined && !Number.isFinite(value.owner.heartbeatAt)))) return false;
 	if (
 		value.providerModels !== undefined &&
 		(!isRecord(value.providerModels) ||
@@ -523,6 +530,12 @@ export class TaskOrchestrator {
 	private readonly goalsKey = "orchestrator.goals";
 	private readonly teamsKey = "orchestrator.teams";
 	private readonly maximumStoredGoals = 200;
+	private readonly activeScheduledJobs = new Map<string, AbortController>();
+	private readonly scheduledObservers = new Map<string, () => void>();
+	private readonly scheduledCompletions = new Map<string, Promise<void>>();
+	private readonly scheduledResolvers = new Map<string, () => void>();
+	private shuttingDown = false;
+	private readonly instanceId = randomUUID();
 	private readonly activeDelegations = new Map<
 		string,
 		{ controller: AbortController; parentSessionId: string; sessionId?: string }
@@ -750,6 +763,7 @@ export class TaskOrchestrator {
 	}
 
 	async delegate(input: DelegatedTaskInput): Promise<DelegatedTaskResult> {
+		input.signal?.throwIfAborted();
 		const parent = this.runtime.getSession(input.parentSessionId);
 		const specialist = input.specialistSessionId ? this.runtime.getSession(input.specialistSessionId) : undefined;
 		if (specialist && (specialist.parentSessionId !== parent.id || !specialist.specialistDefinition?.enabled || specialist.forgottenAt))
@@ -772,6 +786,13 @@ export class TaskOrchestrator {
 			input.dependencyTaskIds ?? [],
 		);
 		const taskController = new AbortController();
+		const executionSignal = AbortSignal.any([
+			taskController.signal,
+			...(input.signal ? [input.signal] : []),
+			AbortSignal.timeout(
+				this.modelRouter?.policy().maximumTaskDurationMs ?? 600_000,
+			),
+		]);
 		this.activeDelegations.set(taskId, {
 			controller: taskController,
 			parentSessionId: parent.id,
@@ -783,6 +804,7 @@ export class TaskOrchestrator {
 			| Awaited<ReturnType<TaskOrchestrator["selectWorker"]>>
 			| undefined;
 		try {
+			executionSignal.throwIfAborted();
 			if (input.isolateWorktree) {
 				if (!parent.workspaceRoot)
 					throw new Error(
@@ -796,9 +818,10 @@ export class TaskOrchestrator {
 					{
 						approvalStatus: "approved",
 						idempotencyKey: `delegate:${taskId}:worktree`,
-						signal: taskController.signal,
+						signal: executionSignal,
 					},
 				);
+				executionSignal.throwIfAborted();
 				if (
 					worktree.status !== "verified" ||
 					typeof worktree.output?.path !== "string"
@@ -862,13 +885,6 @@ export class TaskOrchestrator {
 				startedAt: this.now().toISOString(),
 			});
 			this.attachSubtask(parentTask, workingTask.id);
-			const executionSignal = AbortSignal.any([
-				taskController.signal,
-				...(input.signal ? [input.signal] : []),
-				AbortSignal.timeout(
-					this.modelRouter?.policy().maximumTaskDurationMs ?? 600_000,
-				),
-			]);
 			await this.waitForTaskDependencies(workingTask, executionSignal);
 			workingTask = this.saveDurableTask({
 				...workingTask,
@@ -877,7 +893,7 @@ export class TaskOrchestrator {
 			});
 			selected =
 				input.model === "auto" || input.providerIds.includes("auto")
-					? await this.selectWorker(input, taskId, session.allowedTools)
+					? await this.selectWorker({ ...input, signal: executionSignal }, taskId, session.allowedTools)
 					: undefined;
 			const privateMemoryContext = this.privateAgentContext(
 				session.id,
@@ -1041,6 +1057,10 @@ export class TaskOrchestrator {
 		reason = "Cancelled because the owning agent session was cancelled.",
 	): WorkingTask[] {
 		const ids = new Set(sessionIds);
+		for (const job of this.listJobs()) {
+			if (ids.has(job.sessionId) && ["pending", "running", "waiting_approval"].includes(job.status))
+				this.cancelJob(job.id);
+		}
 		for (const active of this.activeDelegations.values()) {
 			if (
 				ids.has(active.parentSessionId) ||
@@ -1145,6 +1165,7 @@ export class TaskOrchestrator {
 						trace.taskId === `retry-${input.parentSessionId}`),
 			);
 		for (let attempt = 0; attempt <= policy.maximumRetries; attempt += 1) {
+			input.signal?.throwIfAborted();
 			const decision = this.modelRouter.route(requirements, {
 				role: attempt === 0 ? (input.role ?? "worker") : "fallback",
 				allowedProviderIds: input.providerIds,
@@ -1152,7 +1173,8 @@ export class TaskOrchestrator {
 				...(parentTrace ? { parentTraceId: parentTrace.id } : {}),
 				policy,
 			});
-			const verification = await this.providers.verify(decision.endpointId);
+			const verification = await this.providers.verify(decision.endpointId, input.signal);
+			input.signal?.throwIfAborted();
 			const checked = verification.find(
 				(item) => item.providerId === decision.endpointId,
 			);
@@ -1867,7 +1889,7 @@ export class TaskOrchestrator {
 			createdAt: timestamp,
 			updatedAt: timestamp,
 		};
-		this.saveJobs([...this.listJobs(), job]);
+		this.updateJobs(jobs => [...jobs, job]);
 		return job;
 	}
 
@@ -1879,25 +1901,65 @@ export class TaskOrchestrator {
 	}
 
 	cancelJob(id: string): ScheduledAgentJob {
-		const jobs = this.listJobs();
-		const index = jobs.findIndex((job) => job.id === id);
-		const job = jobs[index];
-		if (!job) throw new Error("Scheduled job not found.");
-		const updated = {
-			...job,
-			status: "cancelled" as const,
-			updatedAt: this.now().toISOString(),
-		};
-		jobs[index] = updated;
-		this.saveJobs(jobs);
+		let job!: ScheduledAgentJob;
+		let updated!: ScheduledAgentJob;
+		this.updateJobs(jobs => {
+			const index = jobs.findIndex(candidate => candidate.id === id);
+			job = jobs[index]!;
+			if (!job) throw new Error("Scheduled job not found.");
+			updated = { ...job, status: "cancelled", updatedAt: this.now().toISOString() };
+			this.retireScheduledRun(job, "cancelled", "Scheduled job cancelled by the user.");
+			jobs[index] = updated;
+			return jobs;
+		});
+		const controller = this.activeScheduledJobs.get(id);
+		if (controller) {
+			controller.abort(new Error("Scheduled job cancelled by the user."));
+			// Delegation and tool/process execution inherit this run's signal.
+			// Preserve independent work and the reusable owning agent session.
+		}
 		return updated;
 	}
 
+	private retireScheduledRun(job: ScheduledAgentJob, status: "cancelled" | "failed", reason: string): void {
+		if (!job.lastRunId || (job.status !== "running" && job.status !== "waiting_approval")) return;
+		const run = this.database.getAgentRun(job.lastRunId);
+		if (run?.sessionId !== job.sessionId || !["running", "waiting_approval", "waiting_input"].includes(run.status)) return;
+		if (run.pendingToolExecutionId) this.runtime.cancelPendingApproval(run.pendingToolExecutionId, reason);
+		this.database.saveAgentRunIfActive({ ...run, status, error: reason, updatedAt: this.now().toISOString() });
+	}
+
+	shutdown(): void {
+		this.shuttingDown = true;
+		const reason = "Kestrel stopped before this scheduled run finished. Its outcome is uncertain, so it will not be retried automatically.";
+		this.updateJobs(jobs => jobs.map(job => {
+			if (job.status !== "running" || job.owner?.instanceId !== this.instanceId) return job;
+			this.retireScheduledRun(job, "failed", reason);
+			return { ...job, status: "failed", error: reason, updatedAt: this.now().toISOString() };
+		}));
+		for (const stop of this.scheduledObservers.values()) stop();
+		for (const controller of this.activeScheduledJobs.values()) controller.abort(new Error(reason));
+	}
+
+	async drain(): Promise<void> {
+		await Promise.all(this.scheduledCompletions.values());
+	}
+
 	async resumeJob(id: string): Promise<ScheduledAgentJob> {
-		const job = this.listJobs().find((candidate) => candidate.id === id);
-		if (!job) throw new Error("Scheduled job not found.");
-		if (job.status !== "waiting_approval" || !job.lastRunId)
+		if (this.shuttingDown) throw new Error("Kestrel is shutting down.");
+		if (this.isPaused())
+			throw new Error("Kestrel is paused. Resume before continuing a scheduled job.");
+		const candidate = this.listJobs().find((job) => job.id === id);
+		if (!candidate) throw new Error("Scheduled job not found.");
+		if (candidate.status !== "waiting_approval" || !candidate.lastRunId)
 			throw new Error("Scheduled job is not waiting for approval.");
+		if (this.activeScheduledJobs.has(id))
+			throw new Error("Scheduled job is already running.");
+		const job = this.claimJob(id, "waiting_approval");
+		if (!job?.lastRunId) throw new Error("Scheduled job is no longer eligible to resume.");
+		const controller = new AbortController();
+		this.activeScheduledJobs.set(id, controller);
+		const stopObserving = this.observeJobCancellation(id, controller);
 		let updated: ScheduledAgentJob = {
 			...job,
 			status: "running",
@@ -1909,6 +1971,7 @@ export class TaskOrchestrator {
 				runId: job.lastRunId,
 				approvalDecision: "approved",
 				maximumTurns: this.maximumTurnsForRun(),
+				signal: controller.signal,
 			});
 			updated = this.finishJob(updated, result, this.now());
 		} catch (error) {
@@ -1926,15 +1989,20 @@ export class TaskOrchestrator {
 							error: "Scheduled agent resume failed.",
 							updatedAt: this.now().toISOString(),
 						};
+		} finally {
+			stopObserving();
+			this.activeScheduledJobs.delete(id);
+			this.completeScheduledJob(id);
 		}
-		this.replaceJob(updated);
-		return updated;
+		return this.replaceJob(updated);
 	}
 
 	async runDue(
 		at = this.now(),
 		signal?: AbortSignal,
 	): Promise<ScheduledAgentJob[]> {
+		if (this.shuttingDown || this.isPaused()) return [];
+		this.reconcileInterruptedJobs();
 		const jobs = this.listJobs();
 		const due = jobs.filter(
 			(job) =>
@@ -1942,8 +2010,20 @@ export class TaskOrchestrator {
 				new Date(job.schedule.nextRunAt).getTime() <= at.getTime(),
 		);
 		const output: ScheduledAgentJob[] = [];
-		for (const job of due) {
-			if (signal?.aborted) break;
+		for (const candidate of due) {
+			if (signal?.aborted || this.isPaused()) break;
+			// A preceding await may allow another dispatcher or cancellation to
+			// change an entry from this snapshot before we reach it.
+			if (this.activeScheduledJobs.has(candidate.id)) continue;
+			const job = this.claimJob(candidate.id, "pending", at);
+			if (!job) continue;
+			const controller = new AbortController();
+			const executionSignal = AbortSignal.any([
+				controller.signal,
+				...(signal ? [signal] : []),
+			]);
+			this.activeScheduledJobs.set(job.id, controller);
+			const stopObserving = this.observeJobCancellation(job.id, controller);
 			let current: ScheduledAgentJob = {
 				...job,
 				status: "running",
@@ -1968,14 +2048,27 @@ export class TaskOrchestrator {
 										? { instructions: job.instructions }
 										: {}),
 									role: "worker",
-									...(signal ? { signal } : {}),
+									signal: executionSignal,
 								},
 								`scheduled-${job.id}`,
 								session.allowedTools,
 							)
 						: undefined;
+				if (this.isPaused()) {
+					this.replaceJob({ ...job, status: "pending" });
+					continue;
+				}
+				executionSignal.throwIfAborted();
 				const result = await this.loop.run({
 					sessionId: job.sessionId,
+					onRunStarted: runId => {
+						current = { ...current, lastRunId: runId };
+						current = this.replaceJob(current);
+						if (current.status !== "running" || current.owner?.instanceId !== this.instanceId) {
+							controller.abort(new Error("Scheduled job cancelled or ownership changed before startup."));
+							executionSignal.throwIfAborted();
+						}
+					},
 					model: selected?.execution.model ?? job.model,
 					providerIds: selected?.execution.providerIds ?? job.providerIds,
 					...(job.providerModels || selected
@@ -2004,12 +2097,12 @@ export class TaskOrchestrator {
 							}
 						: {}),
 					maximumTurns: this.maximumTurnsForRun(),
-					...(signal ? { signal } : {}),
+					signal: executionSignal,
 				});
 				this.recordSelectedOutcome(selected, result);
 				current = this.finishJob(current, result, at);
 			} catch (error) {
-				current = signal?.aborted
+				current = executionSignal.aborted
 					? {
 							...current,
 							status: "failed",
@@ -2030,11 +2123,21 @@ export class TaskOrchestrator {
 								error: "Scheduled agent run failed.",
 								updatedAt: this.now().toISOString(),
 							};
+			} finally {
+				stopObserving();
+				this.activeScheduledJobs.delete(job.id);
+				this.completeScheduledJob(job.id);
 			}
-			this.replaceJob(current);
-			output.push(current);
+			output.push(this.replaceJob(current));
 		}
 		return output;
+	}
+
+	private isPaused(): boolean {
+		const requested = this.database.getState<unknown>("agent.pauseRequested");
+		return typeof requested === "boolean"
+			? requested
+			: this.database.getState<unknown>("agentState") === "paused";
 	}
 
 	startWorkflow(
@@ -2188,8 +2291,55 @@ export class TaskOrchestrator {
 		return workflow;
 	}
 
-	private saveJobs(jobs: ScheduledAgentJob[]): void {
-		this.database.setPrivateState(this.jobsKey, jobs);
+	private updateJobs(update: (jobs: ScheduledAgentJob[]) => ScheduledAgentJob[]): ScheduledAgentJob[] {
+		return this.database.updatePrivateState<unknown>(this.jobsKey, stored =>
+			update(Array.isArray(stored) ? stored.filter(isScheduledAgentJob) : []),
+		) as ScheduledAgentJob[];
+	}
+
+	private claimJob(id: string, expected: "pending" | "waiting_approval", at?: Date): ScheduledAgentJob | undefined {
+		let claimed: ScheduledAgentJob | undefined;
+		this.updateJobs(jobs => {
+			if (this.shuttingDown || this.isPaused()) return jobs;
+			const index = jobs.findIndex(job => job.id === id);
+			const job = jobs[index];
+			if (!job || job.status !== expected || (at && Date.parse(job.schedule.nextRunAt) > at.getTime())) return jobs;
+			claimed = { ...job, status: "running", owner: { instanceId: this.instanceId, pid: process.pid, heartbeatAt: Date.now() }, updatedAt: this.now().toISOString() };
+			jobs[index] = claimed;
+			return jobs;
+		});
+		return claimed;
+	}
+
+	private observeJobCancellation(id: string, controller: AbortController): () => void {
+		this.scheduledCompletions.set(id, new Promise(resolve => this.scheduledResolvers.set(id, resolve)));
+		let heartbeatAt = Date.now();
+		const timer = setInterval(() => {
+			try {
+				const job = this.listJobs().find(candidate => candidate.id === id);
+				if (!job || job.status !== "running" || job.owner?.instanceId !== this.instanceId || Date.now() - (job.owner.heartbeatAt ?? 0) >= SCHEDULE_OWNER_LEASE_MS) {
+					controller.abort(new Error("Scheduled job cancelled or ownership changed."));
+					return;
+				}
+				if (Date.now() - heartbeatAt >= SCHEDULE_OWNER_HEARTBEAT_MS) {
+					heartbeatAt = Date.now();
+					this.updateJobs(jobs => jobs.map(current => current.id === id && current.status === "running" && current.owner?.instanceId === this.instanceId
+						? { ...current, owner: { ...current.owner, heartbeatAt } } : current));
+				}
+			} catch {
+				controller.abort(new Error("Scheduled job ownership could not be verified."));
+			}
+		}, 250);
+		timer.unref();
+		const stop = () => { clearInterval(timer); this.scheduledObservers.delete(id); };
+		this.scheduledObservers.set(id, stop);
+		return stop;
+	}
+
+	private completeScheduledJob(id: string): void {
+		this.scheduledResolvers.get(id)?.();
+		this.scheduledResolvers.delete(id);
+		this.scheduledCompletions.delete(id);
 	}
 
 	private saveGoals(goals: GoalRecord[]): void {
@@ -2208,12 +2358,28 @@ export class TaskOrchestrator {
 		this.database.setPrivateState(this.goalsKey, value);
 	}
 
-	private replaceJob(job: ScheduledAgentJob): void {
-		const jobs = this.listJobs();
-		const index = jobs.findIndex((candidate) => candidate.id === job.id);
-		if (index < 0) jobs.push(job);
-		else jobs[index] = job;
-		this.saveJobs(jobs);
+	private replaceJob(job: ScheduledAgentJob): ScheduledAgentJob {
+		let updated = job;
+		this.updateJobs(jobs => {
+			const index = jobs.findIndex(candidate => candidate.id === job.id);
+			const current = jobs[index];
+			// Cancellation wins; only its owning run may attach final audit metadata.
+			if (current?.status === "cancelled" || current?.status === "failed") {
+				updated = job.lastRunId && current.owner?.instanceId === job.owner?.instanceId
+					? { ...current, lastRunId: job.lastRunId } : current;
+			} else if (current?.status === "running" && current.owner?.instanceId !== job.owner?.instanceId) {
+				updated = current;
+			} else if (job.status !== "running") {
+				const { owner: _owner, ...withoutOwner } = job;
+				updated = withoutOwner;
+			} else if (current?.owner) {
+				updated = { ...job, owner: current.owner };
+			}
+			if (index < 0) jobs.push(updated);
+			else jobs[index] = updated;
+			return jobs;
+		});
+		return updated;
 	}
 
 	private finishJob(
@@ -2221,6 +2387,9 @@ export class TaskOrchestrator {
 		result: AgentLoopResult,
 		at: Date,
 	): ScheduledAgentJob {
+		const current = this.listJobs().find(candidate => candidate.id === job.id);
+		if (current?.status === "cancelled" || current?.status === "failed")
+			return { ...current, lastRunId: result.run.id };
 		if (result.run.status === "waiting_approval") {
 			return {
 				...job,
@@ -2283,11 +2452,13 @@ export class TaskOrchestrator {
 	}
 
 	private reconcileInterruptedJobs(): void {
-		const jobs = this.listJobs();
-		let changed = false;
-		const recovered = jobs.map((job) => {
+		this.updateJobs(jobs => jobs.map((job) => {
 			if (job.status !== "running") return job;
-			changed = true;
+			if (job.owner && Date.now() - (job.owner.heartbeatAt ?? 0) < SCHEDULE_OWNER_LEASE_MS) {
+				try { process.kill(job.owner.pid, 0); return job; }
+				catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") return job; }
+			}
+			this.retireScheduledRun(job, "failed", "Scheduled run ownership expired; its outcome is uncertain and it will not be retried automatically.");
 			return {
 				...job,
 				status: "failed" as const,
@@ -2295,8 +2466,7 @@ export class TaskOrchestrator {
 					"Kestrel stopped before this scheduled run finished. Its outcome is uncertain, so it will not be retried automatically.",
 				updatedAt: this.now().toISOString(),
 			};
-		});
-		if (changed) this.saveJobs(recovered);
+		}));
 	}
 }
 
