@@ -23,6 +23,30 @@ the comparison finding separately.
 The review's **FAIL** verdict concerns the reviewed PR's code. The review task
 itself completed successfully.
 
+The original prompt containing `manifest.json` was repeated after the routing
+fix at `681299db`. Auto again selected `gpt-6-astra` with `high` reasoning and
+completed in four turns without escalation, independently identifying the same
+P2. The first successful run took about 71 seconds and the repeat about 55
+seconds; these are observations from two runs of one task, not a latency benchmark.
+
+## Installed desktop result
+
+The canonical `/Applications/Kestrel.app` at `681299db` was restarted and given
+the same exact-source task in a project granting only the bounded source-copy
+directory. The first Auto attempt executed workspace reads and searches, then
+reported that all eligible providers failed. An existing Codex account's
+credential probe succeeded. A single alternate route, explicitly selecting the
+existing official Codex profile and `gpt-6.1-sol` with `high` reasoning, completed
+the review in the real profile.
+
+The desktop result independently identified the same P2 at
+`TabStrip.tsx:997–1000`, proposed routing trigger closure through the reset
+helper, assessed tests, and stated that tests and UI behavior had not been run.
+Its final verdict and “Task complete” outcome were visibly verified in Kestrel.
+This establishes that the installed Codex agent completed useful review work;
+it does not establish first-attempt reliability of the Auto account pool. The
+provider failure's cause was not established by the available diagnostics.
+
 ## Confirmed finding
 
 The Tab tools trigger at `TabStrip.tsx:995–1000` toggles the menu and clears the
@@ -49,7 +73,9 @@ output, so the task was rejected before execution.
 The analyzer now distinguishes input formats from explicit output-format
 requests. Regression coverage checks source filenames, JSON/CSV inputs, schema
 inspection, explicit structured-output requirements, and actual route selection
-for a tool-capable endpoint without structured output.
+for a tool-capable endpoint without structured output. Common requests such as
+“respond with JSON” and “return findings in a JSON object” remain recognized.
+All 52 routing tests and agent-core typechecking passed.
 
 ## Browser-review limit
 

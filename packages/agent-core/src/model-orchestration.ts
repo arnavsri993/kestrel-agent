@@ -1164,7 +1164,7 @@ export class TaskRequirementAnalyzer {
 			/\b(?:return|output|emit|produce)\s+(?:(?:only|valid|strict|raw)\s+){0,3}(?:json|csv)\b(?![\w-]|\.[\w-])/.test(
 				normalized,
 			) ||
-			/\b(?:return|respond|reply|answer|output|emit|format|produce)\b[^.!?\n]{0,80}\b(?:as|in)\s+(?:(?:valid|strict|raw|only)\s+){0,3}(?:json|csv)\b(?![\w-]|\.[\w-])/.test(
+			/\b(?:return|respond|reply|answer|output|emit|format|produce)\b[^.!?\n]{0,80}\b(?:as|in|with)\s+(?:an?\s+)?(?:(?:valid|strict|raw|only)\s+){0,3}(?:json|csv)\b(?![\w-]|\.[\w-])/.test(
 				normalized,
 			)
 		)
