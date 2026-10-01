@@ -2642,6 +2642,52 @@ describe("UserBrowserService", () => {
     expect(shell.openExternal).toHaveBeenCalledTimes(1);
     expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
   });
+  it("routes a default-referrer main-frame popup only after isolated capture of native input", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://teams.microsoft.com/join");
+    const source = electron.state.views[0]!.webContents;
+    const documentId = "12345678-1234-1234-1234-123456789abc";
+    const base = { documentId, documentUrl: source.getURL() };
+    const ipc = (value: object, frame = source.mainFrame) => source.emit("ipc-message", { senderFrame: frame }, "kestrel:user-browser-external-app", { ...base, ...value });
+    ipc({ type: "ready" });
+    const ack = source.send.mock.calls.find(call => call[0] === "kestrel:user-browser-external-app-ready")![1] as { generation: number };
+    const request = { type: "request", generation: ack.generation, url: "msteams:/l/meetup-join/fixture/0" };
+    const capture = { type: "capture", generation: ack.generation, kind: "mouse" };
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    ipc(request); // Native input alone does not establish a top-frame source.
+    ipc(capture, { url: source.getURL() }); ipc(request);
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
+    ipc(capture); ipc(request); ipc(request);
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith(request.url));
+    expect(dialog.showMessageBox).toHaveBeenCalledOnce();
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    source.windowOpenHandler?.({ url: request.url, disposition: "foreground-tab", referrer: { url: "", policy: "strict-origin-when-cross-origin" } });
+    expect(shell.openExternal).toHaveBeenCalledOnce();
+  });
+
+  it.each(["reload", "new-input", "bad-generation", "foreign-frame", "wrong-document", "expiry"])("rejects a popup bridge capture after %s", async (change) => {
+    let now = new Date("2026-10-01T12:00:00Z");
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: true });
+    const { service } = createService({ now: () => now });
+    await service.navigate(service.getState().tabs[0]!.id, "https://teams.microsoft.com/join");
+    const source = electron.state.views[0]!.webContents;
+    const base = { documentId: "12345678-1234-1234-1234-123456789abc", documentUrl: source.getURL() };
+    const ipc = (value: object, frame = source.mainFrame) => source.emit("ipc-message", { senderFrame: frame }, "kestrel:user-browser-external-app", { ...base, ...value });
+    ipc({ type: "ready" });
+    const ack = source.send.mock.calls.find(call => call[0] === "kestrel:user-browser-external-app-ready")![1] as { generation: number };
+    source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+    ipc({ type: "capture", generation: ack.generation, kind: "mouse" });
+    if (change === "reload") source.emit("did-start-navigation", {}, source.getURL(), false, true);
+    if (change === "new-input") source.emit("before-input-event", { preventDefault: vi.fn() }, { type: "keyDown", key: "a" });
+    if (change === "expiry") now = new Date(now.getTime() + 5_001);
+    ipc({ type: "request", generation: change === "bad-generation" ? ack.generation + 1 : ack.generation,
+      ...(change === "wrong-document" ? { documentId: "87654321-1234-1234-1234-123456789abc" } : {}),
+      url: "msteams:/l/meetup-join/fixture/0" }, change === "foreign-frame" ? { url: source.getURL() } : source.mainFrame);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(dialog.showMessageBox).not.toHaveBeenCalled(); expect(shell.openExternal).not.toHaveBeenCalled();
+  });
+
   it("invalidates pending consent across a native same-URL document reload", async () => {
     let approve!: (result: { response: number; checkboxChecked: boolean }) => void;
     vi.mocked(dialog.showMessageBox).mockImplementationOnce(() => new Promise(resolve => { approve = resolve; }));

@@ -440,7 +440,9 @@ type TabActivity = Partial<Record<"playing" | "microphone" | "camera" | "screen"
 
 interface ViewRecord {
 	activity?: TabActivity;
-	externalGesture?: { url: string; at: number };
+	externalGesture?: { url: string; at: number; kind?: string; generation?: number };
+	externalBridgeDocument?: { id: string; url: string; generation: number };
+	externalMainFrameCapture?: { gesture: NonNullable<ViewRecord["externalGesture"]>; documentId: string };
 	externalRedirectGesture?: { url: string; at: number; generation: number };
 	externalPromptPending?: boolean;
 	externalDocumentGeneration?: number;
@@ -5906,12 +5908,52 @@ export class UserBrowserService {
 		return record;
 	}
 
-	private recordExternalGesture(tab: UserBrowserTab, record: ViewRecord): void {
+	private recordExternalGesture(tab: UserBrowserTab, record: ViewRecord, kind: string): void {
 		delete record.externalRedirectGesture;
+		delete record.externalMainFrameCapture;
+		delete record.externalGesture;
 		const contents = liveWebContents(record.view.webContents);
 		const url = contents && safePageUrl(contents.getURL());
 		if (this.state.activeTabId === tab.id && url?.protocol === "https:")
-			record.externalGesture = { url: url.toString(), at: this.now().getTime() };
+			record.externalGesture = { url: url.toString(), at: this.now().getTime(), kind, generation: record.externalDocumentGeneration ?? 0 };
+	}
+
+	private handleExternalAppBridge(tab: UserBrowserTab, record: ViewRecord, event: Electron.IpcMainEvent, raw: unknown): void {
+		const contents = liveWebContents(record.view.webContents);
+		if (!contents || event.senderFrame !== contents.mainFrame || !raw || typeof raw !== "object" ||
+			this.views.get(tab.id) !== record) return;
+		const value = raw as Record<string, unknown>;
+		const source = safePageUrl(contents.getURL());
+		if (!source || source.protocol !== "https:" || event.senderFrame.url !== source.toString() ||
+			value.documentUrl !== source.toString() || typeof value.documentId !== "string" ||
+			!/^[a-f0-9-]{36}$/.test(value.documentId)) return;
+		const generation = record.externalDocumentGeneration ?? 0;
+		if (value.type === "ready") {
+			record.externalBridgeDocument = { id: value.documentId, url: source.toString(), generation };
+			delete record.externalMainFrameCapture;
+			contents.send("kestrel:user-browser-external-app-ready", { documentId: value.documentId, generation });
+			return;
+		}
+		if (this.state.activeTabId !== tab.id) return;
+		const bridge = record.externalBridgeDocument;
+		if (!bridge || bridge.id !== value.documentId || bridge.url !== source.toString() ||
+			bridge.generation !== generation || value.generation !== generation) return;
+		const gesture = record.externalGesture;
+		const now = this.now().getTime();
+		if (value.type === "capture") {
+			if (!gesture || gesture.generation !== generation || gesture.url !== source.toString() ||
+				gesture.kind !== value.kind || now < gesture.at || now - gesture.at > 1_000) return;
+			record.externalMainFrameCapture = { gesture, documentId: bridge.id };
+			return;
+		}
+		if (value.type !== "request" || typeof value.url !== "string" || value.url.length > 16_384) return;
+		const captured = record.externalMainFrameCapture;
+		delete record.externalMainFrameCapture;
+		if (!captured || captured.gesture !== gesture || captured.documentId !== bridge.id ||
+			!gesture || gesture.generation !== generation) return;
+		// This source is established by current main-frame IPC AND isolated-world
+		// trusted DOM input tied to native input, never by the popup's referrer.
+		this.requestExternalApp(tab, record, value.url, source.toString());
 	}
 
 	/** Return true only for recognized app URLs; never navigate the page to them. */
@@ -5926,6 +5968,7 @@ export class UserBrowserService {
 		const gesture = record.externalGesture ?? (redirected?.generation === (record.externalDocumentGeneration ?? 0) ? redirected : undefined);
 		delete record.externalGesture;
 		delete record.externalRedirectGesture;
+		delete record.externalMainFrameCapture;
 		const now = this.now().getTime();
 		// Never infer a gesture from a page URL, referrer, redirect or DOM message.
 		if (!contents || !source || source.protocol !== "https:" ||
@@ -6018,12 +6061,15 @@ export class UserBrowserService {
 			};
 		});
 		webContents.on("before-mouse-event", (_event, input) => {
+			if (input.type === "mouseDown") delete record.externalMainFrameCapture;
 			if (input.type === "mouseDown" && input.button === "left")
-				this.recordExternalGesture(tab, record);
+				this.recordExternalGesture(tab, record, "mouse");
 		});
 		webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
 			const target = safePageUrl(url);
 			if (isMainFrame && !isInPlace && target) {
+				delete record.externalBridgeDocument;
+				delete record.externalMainFrameCapture;
 				// Native reloads and document navigations must invalidate consent,
 				// even when their final URL is identical to the previous document.
 				record.externalDocumentGeneration = (record.externalDocumentGeneration ?? 0) + 1;
@@ -6044,6 +6090,10 @@ export class UserBrowserService {
 		webContents.on("media-started-playing", () => { record.mediaPlaying = true; this.emit(); });
 		webContents.on("media-paused", () => { record.mediaPlaying = false; this.emit(); });
 		webContents.on("ipc-message", (event, channel, ...args) => {
+			if (channel === "kestrel:user-browser-external-app") {
+				this.handleExternalAppBridge(tab, record, event, args[0]);
+				return;
+			}
 			if (channel === "kestrel:user-browser-activity") {
 				if (event.senderFrame !== webContents.mainFrame || !args[0] || typeof args[0] !== "object") return;
 				const data = args[0] as Record<string, unknown>;
@@ -6453,8 +6503,9 @@ export class UserBrowserService {
 		});
 		webContents.on("before-input-event", (event, input) => {
 			if (input.type !== "keyDown") return;
+			delete record.externalMainFrameCapture;
 			if (["Enter", " "].includes(input.key) && !input.meta && !input.control && !input.alt)
-				this.recordExternalGesture(tab, record);
+				this.recordExternalGesture(tab, record, input.key);
 
 			// Escape: Stop loading if currently loading
 			if (input.key === "Escape") {
