@@ -1603,11 +1603,39 @@ try {
 		(value) => value.views.length === 0,
 		"Native page remained above the tab tools menu",
 	);
-	await page.keyboard.press("Escape");
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
 	await assertNativeViewHiddenThroughOverlayExit(initialTabToolsMenu, "Tab tools menu");
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing tab tools",
+	);
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	const reopenedTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await reopenedTabToolsMenu.waitFor();
+	assert.equal(
+		await reopenedTabToolsMenu
+			.getByRole("menuitem", { name: "Open Tabs", exact: true })
+			.getAttribute("aria-expanded"),
+		"true",
+		"Closing Tab tools through its trigger should restore the open-tabs default",
+	);
+	assert.equal(
+		await reopenedTabToolsMenu
+			.getByRole("menuitem", { name: "Recently Closed", exact: true })
+			.getAttribute("aria-expanded"),
+		"false",
+		"Closing Tab tools through its trigger should restore the closed-history default",
+	);
+	assert.equal(
+		await reopenedTabToolsMenu.getByRole("searchbox", { name: "Search Tabs" }).inputValue(),
+		"",
+		"Closing Tab tools through its trigger should clear its search",
+	);
+	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(reopenedTabToolsMenu, "Reopened tab tools menu");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing reopened tab tools",
 	);
 	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
 	const browserMenu = page.getByRole("menu", { name: "Browser menu" });
