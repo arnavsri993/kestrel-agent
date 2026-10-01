@@ -6032,10 +6032,11 @@ export class UserBrowserService {
 				// A clicked same-origin HTTPS launcher may redirect before commit.
 				// Carry its intent only to the real main-frame redirect event; a
 				// reload or a committed document cannot borrow the previous input.
-				record.externalRedirectGesture = gesture && source?.protocol === "https:" &&
+				if (gesture && source?.protocol === "https:" &&
 					target.protocol === "https:" && target.origin === source.origin &&
-					target.toString() !== source.toString() && gesture.url === source.toString()
-					? { ...gesture, generation: record.externalDocumentGeneration } : undefined;
+					target.toString() !== source.toString() && gesture.url === source.toString())
+					record.externalRedirectGesture = { ...gesture, generation: record.externalDocumentGeneration };
+				else delete record.externalRedirectGesture;
 				delete record.externalGesture;
 			}
 		});
