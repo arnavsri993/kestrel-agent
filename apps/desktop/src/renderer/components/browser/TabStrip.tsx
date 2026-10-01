@@ -994,10 +994,8 @@ export function TabStrip({
 					title="Tab tools"
 					onClick={(event) => {
 						tabToolsTriggerRef.current = event.currentTarget;
-						setTabToolsOpen((value) => {
-							if (value) setTabSearch("");
-							return !value;
-						});
+						if (tabToolsOpen) dismissTabTools();
+						else setTabToolsOpen(true);
 					}}
 				>
 					<Icon name="tabActions" />
