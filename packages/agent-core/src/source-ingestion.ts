@@ -112,12 +112,19 @@ export class SourceIngestion {
    });
    if (personId && observation.state !== "deleted" && observation.state !== "expired") {
     const person = this.database.getPerson(personId);
-    this.database.upsertPerson({ id: personId, agentId: identity.id, identityStatus: person?.identityStatus ?? "observed",
+    // Keep explicit confirmation provenance, with only the first and latest
+    // connected-source references so repeated syncs do not grow the record.
+    const confirmedEvidence = person?.identityStatus === "confirmed" ? person.sourceIds.map(sourceId => ({ sourceId, source: this.database.getTimelineEvent(sourceId)?.source })) : undefined;
+    const firstObservationId = confirmedEvidence?.find(item => item.source === "connected-source")?.sourceId;
+    const sourceIds = confirmedEvidence
+     ? [...new Set([...confirmedEvidence.filter(item => item.source !== "connected-source").map(item => item.sourceId), ...(firstObservationId ? [firstObservationId] : []), id])]
+     : [...new Set([person?.sourceIds[0] ?? id, id])];
+    this.database.upsertPerson({ ...person, id: personId, agentId: identity.id, identityStatus: person?.identityStatus ?? "observed",
      displayName: person?.identityStatus === "confirmed" ? person.displayName : observation.senderName ?? "Unlabelled source sender",
      nicknames: person?.nicknames ?? [], ...(person?.role ? { role: person.role } : {}),
      communicationStyle: person?.communicationStyle ?? { boundaries: [] }, facts: person?.facts ?? [],
-     sourceIds: [...new Set([person?.sourceIds[0] ?? id, id])], confidence: person?.confidence ?? 0,
-     sensitivity: "sensitive", status: "active", relevanceScore: 0,
+     sourceIds, confidence: person?.confidence ?? 0,
+     sensitivity: person?.sensitivity === "restricted" ? "restricted" : "sensitive", status: person?.status ?? "active", relevanceScore: person?.relevanceScore ?? 0,
      lastInteractionAt: person?.lastInteractionAt && person.lastInteractionAt > observation.occurredAt ? person.lastInteractionAt : observation.occurredAt,
      createdAt: person?.createdAt ?? now, updatedAt: now });
    }

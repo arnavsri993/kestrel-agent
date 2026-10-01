@@ -3715,7 +3715,12 @@ export class KestrelDatabase {
 				if (!person || person.agentId !== event.agentId) continue;
 				const retainedEvidence = this.listTimelineEvents({ ...(event.agentId ? { agentId: event.agentId } : {}), personIds: [person.id], includeSensitive: true, limit: 3 })
 					.filter(candidate => candidate.id !== id && candidate.source === "connected-source");
-				const sourceIds = [...new Set([...person.sourceIds.filter(sourceId => sourceId !== id && Boolean(this.getTimelineEvent(sourceId))), ...retainedEvidence.map(candidate => candidate.id)])].slice(-3);
+				// Explicit user confirmation is independent of the source being
+				// removed. Bound observation references without dropping that evidence.
+				const remainingReferences = person.sourceIds.filter(sourceId => sourceId !== id).map(sourceId => ({ sourceId, event: this.getTimelineEvent(sourceId) }));
+				const confirmationIds = person.identityStatus === "confirmed" ? remainingReferences.filter(item => item.event?.source !== "connected-source").map(item => item.sourceId) : [];
+				const observationIds = [...new Set([...remainingReferences.filter(item => item.event).map(item => item.sourceId), ...retainedEvidence.map(candidate => candidate.id)])].slice(-3);
+				const sourceIds = [...new Set([...confirmationIds, ...observationIds])];
 				if (!sourceIds.length && person.identityStatus === "observed") {
 					this.db.prepare("DELETE FROM people WHERE id = ?").run(person.id);
 				} else {
