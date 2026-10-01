@@ -1160,8 +1160,13 @@ export class TaskRequirementAnalyzer {
 			mark("image_understanding", 0.86);
 		if (
 			input.requiresStructuredOutput ||
-			/\b(json|structured output|csv)\b/.test(normalized) ||
-			(/\bschema\b/.test(normalized) && softwareContext)
+			/\bstructured output\b/.test(normalized) ||
+			/\b(?:return|output|emit|produce)\s+(?:(?:only|valid|strict|raw)\s+){0,3}(?:json|csv)\b(?![\w-]|\.[\w-])/.test(
+				normalized,
+			) ||
+			/\b(?:return|respond|reply|answer|output|emit|format|produce)\b[^.!?\n]{0,80}\b(?:as|in)\s+(?:(?:valid|strict|raw|only)\s+){0,3}(?:json|csv)\b(?![\w-]|\.[\w-])/.test(
+				normalized,
+			)
 		)
 			mark("structured_output", 0.86);
 		if (input.requiresWriting) {

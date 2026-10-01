@@ -97,6 +97,66 @@ function fixture(providers: ModelProvider[]) {
 }
 
 describe("adaptive model orchestration", () => {
+	it.each([
+		"Inspect manifest.json and package.json before reviewing the diff.",
+		"Review the JSON input and explain the findings in prose.",
+		"Read data.csv and summarize the CSV input.",
+		"Review the database schema implementation.",
+		"Return findings after inspecting the JSON schema.",
+	])("does not require structured output for source formats: %s", (prompt) => {
+		expect(
+			new TaskRequirementAnalyzer().analyze("input-format", prompt)
+				.requiresStructuredOutput,
+		).toBe(false);
+	});
+
+	it.each([
+		"Return JSON with the findings.",
+		"Output valid CSV.",
+		"Respond in JSON.",
+		"Return the review findings as JSON.",
+		"Format the answer as CSV.",
+		"Use structured output for the response.",
+	])("requires structured output when requested: %s", (prompt) => {
+		expect(
+			new TaskRequirementAnalyzer().analyze("output-format", prompt)
+				.requiresStructuredOutput,
+		).toBe(true);
+	});
+
+	it("keeps an explicit structured-output requirement authoritative", () => {
+		expect(
+			new TaskRequirementAnalyzer().analyze("explicit-output", "Review this note.", {
+				requiresStructuredOutput: true,
+			}).requiresStructuredOutput,
+		).toBe(true);
+	});
+
+	it("routes JSON source inspection to a tool-capable endpoint without structured output", () => {
+		const base = provider({ id: "source-review", model: "reviewer", tools: true });
+		const endpoint: ModelProvider = {
+			...base,
+			profileHints: {
+				...base.profileHints,
+				features: { structuredOutput: false, reasoningLevels: false, fastMode: false },
+			},
+		};
+		const item = fixture([endpoint]);
+		expect(
+			item.router.route(
+				item.analyzer.analyze("manifest-review",
+					"Review the repository diff using manifest.json and the source files."),
+				{ role: "worker" },
+			).endpointId,
+		).toBe(endpoint.id);
+		expect(() => item.router.route(
+			item.analyzer.analyze("json-response",
+				"Review the repository diff and return findings as JSON."),
+			{ role: "worker" },
+		)).toThrow("No configured model satisfies");
+		item.database.close();
+	});
+
 	it("does not automatically route to an unavailable account model", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const unavailable: ModelProvider = {
