@@ -233,6 +233,7 @@
 		.browser-library .library-search,
 		.command-search,
 		.agent-task-search,
+		.agent-universe-search,
 		.browser-history-popover-search,
 		.projects-workspace-search
 	) {
@@ -249,6 +250,7 @@
 		.browser-library .library-search input,
 		.command-search input,
 		.agent-task-search input,
+		.agent-universe-search input,
 		.browser-history-popover-search input,
 		.projects-workspace-search input,
 		.kestrel-home-composer > input
@@ -268,12 +270,28 @@
 		.browser-library .library-search input,
 		.command-search input,
 		.agent-task-search input,
+		.agent-universe-search input,
 		.browser-history-popover-search input,
 		.projects-workspace-search input,
 		.kestrel-home-composer > input
 	):focus {
 	border-color: transparent;
 	box-shadow: none;
+}
+
+.unified-ui .agent-conversation-host .composer textarea {
+	border: 0;
+	background: transparent;
+}
+
+.unified-ui .agent-conversation-host .composer textarea:focus {
+	outline: none;
+	box-shadow: none;
+}
+
+.unified-ui .agent-conversation-host .composer:has(textarea:focus-visible) {
+	outline: 2px solid var(--ink);
+	outline-offset: 2px;
 }
 /* Settings ---------------------------------------------------------------- */
 .settings-section-picker {

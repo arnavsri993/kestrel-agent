@@ -11573,7 +11573,7 @@ export function App() {
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}
 						onOpenTaskSettings={openTaskSettings}
-						onOpenSettings={() => openSettings("browser")}
+						onOpenSettings={(section) => openSettings(section ?? "browser")}
 						onOpenModelSettings={() => openSettings("agent-connections")}
 						onOpenWorkspaces={() => openSettings("connections")}
 						onOpenHistory={openBrowserHistory}

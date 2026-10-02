@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { _electron as electron } from "@playwright/test";
+import { _electron as electron, expect } from "@playwright/test";
 import { KESTREL_APP_PAGES } from "../apps/desktop/src/utility/browser-app-pages";
 import { SETTINGS_SECTIONS } from "../apps/desktop/src/renderer/settings-catalog";
 import { revealNewTabControl, selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
@@ -75,8 +75,8 @@ async function audit(id: string, viewport: string, action: () => Promise<void>) 
     await action();
 		const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 		assert(overflow <= 1, `${id} causes ${overflow}px of document overflow`);
-		if (id.startsWith("page-") || id.startsWith("settings-")) await assertReadableSurface(id);
-    if (id.startsWith("menu-") && await page.locator(".browser-toolbar-popover").count()) {
+		if (id.startsWith("page-") || id.startsWith("settings-") || id.startsWith("menu-destination-")) await assertReadableSurface(id);
+    if (id.startsWith("menu-") && !id.startsWith("menu-destination-") && await page.locator(".browser-toolbar-popover").count()) {
       await page.waitForFunction(() => {
         const menu = document.querySelector(".browser-toolbar-popover");
         return menu && getComputedStyle(menu).opacity === "1";
@@ -120,6 +120,20 @@ async function navigate(id: string) {
   // Wait for the previous page's exit transition to finish, so controls belong
   // to the destination being audited rather than an outgoing page.
 		await page.waitForFunction(() => document.querySelectorAll(".browser-app-page").length === 1);
+}
+
+async function openToolbarMenu(label: string) {
+	const toolbar = page.locator(".browser-toolbar");
+	// Tab tools belongs to the tab strip; the other menus belong to the toolbar.
+	const trigger = (label === "Tab tools" ? page : toolbar).getByRole("button", { name: label, exact: true });
+	if (await trigger.isVisible()) {
+		await trigger.click();
+		await expect(trigger).toHaveAttribute("aria-expanded", "true");
+	} else {
+		await toolbar.getByRole("button", { name: "Browser menu", exact: true }).click();
+		await page.getByRole("menuitem", { name: label, exact: true }).click();
+		await page.getByRole("menu", { name: label, exact: true }).waitFor();
+	}
 }
 
 try {
@@ -221,16 +235,18 @@ try {
 		});
 		await page.getByRole("group", { name: "Agent workspace view" }).getByRole("button", { name: "List", exact: true }).click();
 		if (size.name === "compact") {
+			const toggle = page.locator("#browser-agent-toggle");
+			const chat = page.locator(".agent-sidebar");
 			await audit("compact-chat-overlay", size.name, async () => {
-				const toggle = page.locator("#browser-agent-toggle");
 				await toggle.click();
-				const chat = page.locator(".agent-sidebar");
+				assert.equal(await chat.getAttribute("aria-modal"), "true");
+				assert.equal(await chat.getAttribute("aria-hidden"), "false");
+				assert.equal(await page.locator(".browser-main-plane").evaluate(element => getComputedStyle(element).visibility), "hidden");
+				assert.equal(await page.locator(".agent-compact-dock").evaluate(element => getComputedStyle(element).display), "none");
+				assert.equal(await chat.evaluate(element => element.contains(document.activeElement)), true, "Opening compact chat moves focus inside its modal");
+			});
+			await audit("compact-chat-escape", size.name, async () => {
 				try {
-					assert.equal(await chat.getAttribute("aria-modal"), "true");
-					assert.equal(await chat.getAttribute("aria-hidden"), "false");
-					assert.equal(await page.locator(".browser-main-plane").evaluate(element => getComputedStyle(element).visibility), "hidden");
-					assert.equal(await page.locator(".agent-compact-dock").evaluate(element => getComputedStyle(element).display), "none");
-					assert.equal(await chat.evaluate(element => element.contains(document.activeElement)), true, "Opening compact chat moves focus inside its modal");
 					await page.keyboard.press("Escape");
 					assert.equal(await toggle.getAttribute("aria-expanded"), "false", "Escape closes compact chat overlay");
 					assert.equal(await toggle.evaluate(element => element === document.activeElement), true, "Focus returns to compact chat trigger");
@@ -287,7 +303,6 @@ try {
 			await page.getByRole("button", { name: /Release audit fixture note/ }).click();
 			await page.getByRole("heading", { name: "Release audit fixture note", exact: true }).waitFor();
 			await page.getByText("Evidence and visibility", { exact: true }).click();
-			await page.getByRole("button", { name: "Edit note", exact: true }).click();
 		});
 		await audit("memory-note-editor", size.name, async () => {
 			await navigate("memory");
@@ -333,18 +348,30 @@ try {
     await page.locator("#new-tab-title").waitFor();
     for (const label of ["Tab tools", "Tools", "History", "Downloads", "Browser menu", "Extensions", "Page options"]) {
       await audit(`menu-${label.toLowerCase().replace(/ /g, "-")}`, size.name, async () => {
-        const trigger = page.getByRole("button", { name: label, exact: true });
-        if (await trigger.isVisible()) {
-          await trigger.click();
-          assert.equal(await trigger.getAttribute("aria-expanded"), "true", `${label} did not open`);
-        } else {
-          await page.getByRole("button", { name: "Browser menu", exact: true }).click();
-          await page.getByRole("menuitem", { name: label, exact: true }).click();
-          await page.getByRole("menu", { name: label, exact: true }).waitFor();
-        }
+        await openToolbarMenu(label);
       });
       await page.keyboard.press("Escape");
     }
+		for (const [menu, command, section, sectionLabel] of [
+			["Browser menu", "Clear browsing data…", "browser-reset", "Data & reset"],
+			["Extensions", "Manage extensions", "browser-extensions", "Extensions"],
+			["Browser menu", "Passwords", "browser-autofill", "Autofill"],
+		] as const) {
+			await audit(`menu-destination-${section}`, size.name, async () => {
+				await openToolbarMenu(menu);
+				await page.getByRole("menuitem", { name: command, exact: true }).click();
+				await expect(page.locator(".browser-toolbar-popover")).toHaveCount(0);
+				const destination = page.locator('.browser-app-page[data-app-page="settings"]');
+				await destination.waitFor();
+				await expect(destination).toHaveCount(1);
+				// The picker remains mounted at both sizes. Assert its state without
+				// selecting another section, which would mask a broken menu destination.
+				const picker = destination.locator(".settings-section-picker select");
+				await expect(picker).toHaveValue(section, { timeout: 12_000 });
+				if (await picker.isVisible()) assert.equal(await picker.inputValue(), section);
+				else assert.equal((await destination.locator(".settings-nav [aria-current='page']").innerText()).trim(), sectionLabel);
+			});
+		}
   }
 } finally {
   writeFileSync(join(evidence, "manifest.json"), JSON.stringify({ mode: packaged ? "packaged" : "source", fixture, results, lifecycle, pageErrors }, null, 2) + "\n");

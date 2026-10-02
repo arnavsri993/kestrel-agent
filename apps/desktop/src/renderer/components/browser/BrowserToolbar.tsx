@@ -23,6 +23,7 @@ import type {
   UserBrowserTab,
 } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
+import type { BrowserSettingsSection } from "../../settings-catalog";
 import {
   getAddressBarSuggestions,
   getInlineAddressCompletion,
@@ -360,7 +361,7 @@ export function BrowserToolbar({
   onOpenDevTools(): void;
   onSaveScreenshot(): Promise<string | undefined>;
   onToggleBookmark(): void;
-  onOpenSettings(section?: "browser-autofill"): void;
+  onOpenSettings(section?: BrowserSettingsSection): void;
   onOpenExtensionStore(): void;
   onToggleCalculator(): void;
   onOpenMenu(): void;
@@ -1451,7 +1452,7 @@ export function BrowserToolbar({
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={() => runAndClose(onOpenSettings)}
+                    onClick={() => runAndClose(() => onOpenSettings("browser-reset"))}
                   >
                     <Icon name="trash" />
                     <span>Clear browsing data…</span>
@@ -1596,7 +1597,7 @@ export function BrowserToolbar({
                   type="button"
                   role="menuitem"
                   className="browser-toolbar-menu-link"
-                  onClick={() => runAndClose(onOpenSettings)}
+                  onClick={() => runAndClose(() => onOpenSettings("browser-extensions"))}
                 >
                   <Icon name="settings" />
                   <span>Manage extensions</span>

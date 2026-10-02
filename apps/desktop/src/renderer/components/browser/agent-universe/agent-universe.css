@@ -806,8 +806,7 @@
 .agent-universe-rail-toggle:focus-visible,
 .agent-universe-new-task:focus-visible,
 .agent-universe-camera-controls button:focus-visible,
-.agent-universe-minimap button:focus-visible,
-.agent-universe-search input:focus-visible {
+.agent-universe-minimap button:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }

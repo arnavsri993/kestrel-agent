@@ -21,6 +21,7 @@ import {
 	type UserBrowserTabOrganizationPreview,
 } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
+import type { BrowserSettingsSection } from "../../settings-catalog";
 import {
   parseKestrelAppPage,
   parseKestrelFilePage,
@@ -90,7 +91,7 @@ export function BrowserWorkspace({
   onToggleAgent(): void;
   onNewAgent(prompt?: string): void;
 	onOpenTaskSettings(): void;
-  onOpenSettings(): void;
+  onOpenSettings(section?: BrowserSettingsSection): void;
 	onOpenModelSettings(): void;
   onOpenWorkspaces?(): void;
   onOpenHistory(): void;

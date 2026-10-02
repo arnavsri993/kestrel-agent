@@ -1586,6 +1586,7 @@ try {
 	});
 	await page.reload();
 	await page.locator(".new-tab-page").waitFor();
+	await page.locator("#new-tab-chat-input").waitFor();
 	await clickAfterHitTest(
 		page,
 		page.locator("#browser-agent-toggle"),
@@ -1595,7 +1596,6 @@ try {
 		page,
 		expectedAgentPanelWidth(await page.evaluate(() => innerWidth)),
 	);
-	await page.locator("#new-tab-chat-input").waitFor();
 	await assertTaskSettingsAtCurrentWidth(page);
 	await clickAfterHitTest(
 		page,
