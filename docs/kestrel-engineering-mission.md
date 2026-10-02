@@ -39,13 +39,13 @@ must be updated only after the corresponding operation is verified.
 | 1. WhatsApp compatibility | Live unsupported-browser screen; Electron/app tokens exposed in UA | Browser specialist | Reviewed canonical deployment; real service | Embedded Chromium identity applied to persistent session and every view before navigation | UA/restore/session fixtures pass; real QR login across new tab/reload/restart in disposable candidate; authenticated pairing/read/connection and canonical delivery pending | Local `8e649457` plus broker hardening | Existing app preserved |
 | 2. Teams native handoff | PR #789 route/error slice useful but origin/intent needed hardening | Browser specialist | Validated main broker; reviewed canonical deployment | Bounded Teams/Cursor routes, exact-origin app grants, active-tab input and consent revalidation | Positive/hostile frame, popup, reload, revocation and failure fixtures pass; live OS handoff pending | Local `8e649457` plus broker hardening | Not deployed |
 | 3. Complex task completion | Text-only Codex route could not execute Kestrel tools | Integration owner / runtime specialist | Official dynamic-tool bridge; route readiness | Structured calls execute through existing approvals, scopes and receipts | Four live profile reads, two-file derived answer and bounded PR #809 review completed; broader multi-app reliability pending | Candidate `1a331645` plus current controls | Not deployed |
-| 4. Sustained progress / fewer interruptions | Routing/worktree cancellation gaps and ineffective background pause | Integration owner | Durable execution and safe shutdown | Persistent pause, atomic job claims, active/delegated cancellation and stale-owner lease implemented | 46 focused fault tests including two actual scheduler processes with a fixture provider; full current unit suite 1,659 passes | Control commit `660d0429`; full exact verify passed | Not deployed |
+| 4. Sustained progress / fewer interruptions | Routing/worktree cancellation gaps, ineffective background pause and stranded failed approval | Integration owner | Durable execution and safe shutdown | Pause/claims/cancellation/lease implemented; approval failure retirement under correction | Prior 46 focused fault tests and full 1,659-test verification; new approval regression needs current checks | Prior control `660d0429` and picker `0dfb9710`; new correction pending | Not deployed |
 | 5. Model / effort selection | Picker lacked minimal/ultra; model listing could overstate transport support | Runtime specialist | Account-specific discovery and wire validation | Exact advertised efforts, model/transport intersection, tools required through fallback | Four accounts sent exact `gpt-6-astra` / `high`; registrations and reads observed; other efforts/modalities not live-verified | Local `2f51c29b` plus shared/picker changes | Not deployed |
 | 6. Persistent engineering agent / four accounts | Existing core must supply safe persistent work without a parallel engine | Integration owner | Canonical reviewed build; scoped provider/tool/stop/restart acceptance | Existing scheduler control hardening; production agent ID none, enabled false | Four profiles execute real tools; independent quota pools unverified; scheduler fault fixtures pass | Current mission branch | Production agent not enabled |
-| 7. PR integration | 23 other PRs plus mission #810; required independent latest-push approval absent | Integration owner | Exact-head review, passing CI, compatibility and protection | Every snapshot PR has a disposition; maintenance slices #805/#806/#808 reconciled; broader held reviews bounded | #810 prior head `1a331645` has passing CI/CodeQL; current patch requires new checks | Source integrated; no GitHub merge | Not deployed |
-| 8. Changes appearing in actual app | Concurrent external overwrite confirmed; installed source commit unknown | Integration/deployment owner | Fresh integrated main and owner; signed matching artifact | Kernel installation lock, ownership/main/hash/downgrade gates and visible component diagnostic | Clean `1a331645` package and packaged smokes pass; visible candidate component IDs match; installed identity unverified | Source candidate `1a331645` | Canonical app preserved; updated install pending |
+| 7. PR integration | 24 other PRs plus mission #810; required independent latest-push approval absent | Integration owner | Exact-head review, passing CI, compatibility and protection | Every snapshot PR has a disposition; maintenance slices #805/#806/#808 reconciled; #811 reviewed and held for reproduced failures and CI | #810 prior head `0dfb9710` has passing CI/CodeQL; new approval correction needs fresh checks | Source integrated; no GitHub merge | Not deployed |
+| 8. Changes appearing in actual app | Concurrent legacy installation confirmed; existing running process predates replacement | Integration/deployment owner | Fresh integrated main, owner and competing installer coordination | Kernel installation lock, ownership/main/hash/downgrade gates and visible component diagnostic | Clean `0dfb9710` package and packaged smokes pass; candidate component IDs match; canonical identity unverified | Prior source candidate `0dfb9710`; new correction pending | Canonical app preserved; updated install pending |
 | 9. Competitor overlap / switching reasons | Dots and Grok Bot share the persistent teammate promise | Integration owner | Matched journey evidence | Compare delegated responsibility, follow-through and verifiable outcomes | Current primary sources refreshed; zero standalone competitor trials or leadership claim | Mission benchmark documentation | Not applicable |
-| 10. Measurable reliability | Test counts do not establish live usefulness | Integration owner | Repeated real user journeys | Explicit evidence classes and 9/10 live journey target retained | Prior complete candidate verify/package; current control unit/fault tests; simple live tasks only | Control candidate `660d0429` passed full verify; picker correction pending | Canonical visible journeys pending |
+| 10. Measurable reliability | Test counts do not establish live usefulness | Integration owner | Repeated real user journeys | Explicit evidence classes and 9/10 live journey target retained | Complete prior `0dfb9710` verify/package; bounded provider and scheduler tasks; new failure regression needs checks | Prior candidate `0dfb9710` passed full verify | Canonical visible journeys pending |
 
 ## Acceptance thresholds fixed before tuning
 
@@ -255,3 +255,53 @@ The other eligible maintainer, `saiaathish`, was requested to review PR #810.
 GitHub still requires the independent latest-push approval. The mission owns
 that coordination; no protection was bypassed, app replaced, profile reset or
 production persistent agent enabled.
+
+## October 1 approval recovery correction
+
+The previous exact candidate `0dfb971023ef3593d471e504d0bfdc7850511cdf`
+passed the complete verify gate (1,659 unit tests), remote CI/CodeQL, clean
+ad-hoc development packaging, packaged smoke and visible pause/restart/resume/
+cancel and four-component provenance checks. It remains unmerged because the
+independent latest-push approval is pending. Those results belong to that head.
+
+Review of new #811 reproduced an existing failure in the generic approval
+resume path: a failed approved tool or expired private input throws before the
+run leaves `waiting_approval`, leaving a stale grant visible and encouraging
+repeated attempts. The correction terminalizes only the owning run, clears
+its pending identifiers, retires the grant, records the actual terminal tool
+result and prevents automatic replay. The owning session remains reusable;
+unrelated approvals and absorbing cancellation states are preserved. Pending
+grants must also match the run's provider-call idempotency key; a same-session,
+same-tool foreign grant fails closed. Consumed one-time grants no longer
+advertise approval as pending and retain their approved-once receipt.
+
+The existing desktop panel reloads authoritative run state after failed
+approval before showing recovery, and its outcome text has a polite status
+semantic. The existing interface and styling are preserved. A new production-
+path desktop test uses a missing configuration proposal, local HTTP provider
+and disposable profile. Keyboard approval produces visible failure, removes
+the stale approval, rejects another approval and completes a fresh task in the
+same session. The old built candidate failed the stale-button assertion; the
+rebuilt correction passes. It is included in aggregate verification and CI
+for source and packaged desktop. No real configuration or provider changes.
+
+The new state regressions failed before correction. Afterward 141 focused
+AgentLoop/runtime/orchestration/control tests and source desktop recovery pass.
+Independent focused source review found a grant ownership gap, which was
+corrected and re-reviewed. Final exact-head aggregate verification, clean
+package, packaged recovery and remote CI are required for this new correction.
+
+#811 remains held: two reproduced lifecycle defects, canceled desktop CI,
+failed CodeQL gate, absent approval and content conflicts with this mission.
+Its credential implementation was not ported; details are in the PR
+disposition record. The full refreshed set contains 24 other PRs plus #810.
+
+The canonical app changed outside this mission again. At the October 1
+20:55 America/Chicago check, its disk `app.asar` SHA was
+`be73cb1aeb4c84ec6c49a7d8ace4ba247f1b739b24ba0e21b13f5fb29d30f99a`,
+no provenance manifest was present, and PID 97770 was launched at 19:35:01.
+The previous PID 6000 had exited. This mission did not install or restart it,
+and source/component identity remains unverified. Competing installation
+ownership must still be resolved before canonical replacement; permission
+to message the other chat remains pending. Production Engineering agent ID
+is none, enabled false, with no current scope or task.

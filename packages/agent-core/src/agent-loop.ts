@@ -33,6 +33,7 @@ import {
 	type BrowserRecoveryBudgetState,
 } from "./browser-recovery";
 import { prematureBrowserCompletionErrorForRun } from "./agent-run-completion";
+import { buildActionReceipt } from "./action-receipts";
 import type { AgentRuntime } from "./runtime";
 import { modelVisibleToolResult } from "./tool-result-guardrails";
 import { UsageGovernor } from "./usage-governor";
@@ -585,6 +586,10 @@ export class AgentLoop {
 	private async resumeClaimed(
 		input: AgentLoopResumeInput,
 	): Promise<AgentLoopResult> {
+		let resolvingApproval:
+			| { executionId: string; providerToolCallId: string; toolName: string }
+			| undefined;
+		let approvedExecution: RuntimeToolExecution | undefined;
 		try {
 			let run = this.database.getAgentRun(input.runId);
 			if (!run) throw new Error("Agent run not found.");
@@ -600,6 +605,14 @@ export class AgentLoop {
 				run.pendingToolExecutionId,
 			);
 			if (!blocked) throw new Error("Pending tool execution was not found.");
+			if (
+				blocked.sessionId !== run.sessionId ||
+				blocked.toolName !== run.pendingToolName ||
+				blocked.idempotencyKey !== `${run.id}:${run.pendingProviderToolCallId}` ||
+				blocked.status !== "blocked" ||
+				blocked.output?.approvalRequired !== true
+			)
+				throw new Error("Pending tool approval is no longer valid.");
 			let execution: RuntimeToolExecution;
 			if (input.approvalDecision === "rejected") {
 				this.runtime.discardApprovalInput(blocked.id);
@@ -611,7 +624,12 @@ export class AgentLoop {
 				};
 				this.database.saveToolExecution(execution);
 			} else if (input.approvalDecision === "approved") {
-				execution = await this.runtime.callTool(
+				resolvingApproval = {
+					executionId: blocked.id,
+					providerToolCallId: run.pendingProviderToolCallId,
+					toolName: run.pendingToolName,
+				};
+				execution = approvedExecution = await this.runtime.callTool(
 					run.sessionId,
 					run.pendingToolName,
 					this.runtime.approvalInput(blocked),
@@ -748,8 +766,8 @@ export class AgentLoop {
 				},
 			);
 		} catch (error) {
+			const current = this.database.getAgentRun(input.runId);
 			if (input.signal?.aborted) {
-				const current = this.database.getAgentRun(input.runId);
 				if (current) {
 					const {
 						pendingToolExecutionId: _execution,
@@ -764,8 +782,74 @@ export class AgentLoop {
 						updatedAt: this.now().toISOString(),
 					});
 				}
+			} else if (
+				resolvingApproval &&
+				current?.status === "waiting_approval" &&
+				current.pendingToolExecutionId === resolvingApproval.executionId
+			) {
+				this.failResolvedApproval(current, resolvingApproval, approvedExecution, error);
 			}
 			throw error;
+		}
+	}
+
+	private failResolvedApproval(
+		run: AgentRun,
+		approval: { executionId: string; providerToolCallId: string; toolName: string },
+		approvedExecution: RuntimeToolExecution | undefined,
+		error: unknown,
+	): void {
+		const failure = agentRunErrorMessage(error, false);
+		this.runtime.discardApprovalInput(approval.executionId);
+		const wasPending = this.database.getToolExecution(approval.executionId)?.status === "blocked";
+		this.runtime.cancelPendingApproval(approval.executionId, failure);
+		if (wasPending) {
+			const retired = this.database.getToolExecution(approval.executionId);
+			if (retired) {
+				const receipt = buildActionReceipt({
+					execution: retired,
+					approval: { required: true, result: "approved_once" },
+				});
+				if (receipt) this.database.saveActionReceipt(receipt);
+			}
+		}
+		if (approvedExecution?.status === "blocked")
+			this.runtime.cancelPendingApproval(approvedExecution.id, failure);
+		const recordedApproved = approvedExecution
+			? this.database.getToolExecution(approvedExecution.id) ?? approvedExecution
+			: undefined;
+		const terminalExecution = (recordedApproved?.status !== "blocked" ? recordedApproved : undefined) ?? this.database
+			.listToolExecutions(run.sessionId)
+			.find((candidate) =>
+				candidate.idempotencyKey === `${run.id}:${approval.providerToolCallId}` &&
+				candidate.toolName === approval.toolName &&
+				candidate.status === "failed",
+			) ?? this.database.getToolExecution(approval.executionId);
+		const {
+			pendingToolExecutionId: _execution,
+			pendingProviderToolCallId: _call,
+			pendingToolName: _tool,
+			...base
+		} = run;
+		if (!this.database.saveAgentRunIfActive({
+			...base,
+			status: "failed",
+			error: failure,
+			updatedAt: this.now().toISOString(),
+		})) return;
+		if (terminalExecution && !this.runtime.listMessages(run.sessionId).some((message) =>
+			message.role === "tool" &&
+			message.providerToolCallId === approval.providerToolCallId &&
+			message.toolExecutionId === terminalExecution.id)) {
+			this.runtime.appendMessage({
+				sessionId: run.sessionId,
+				role: "tool",
+				content: modelVisibleToolResult(terminalExecution),
+				toolExecutionId: terminalExecution.id,
+				providerToolCallId: approval.providerToolCallId,
+				toolName: approval.toolName,
+			});
+			this.appendDeferredToolCancellations(run.sessionId, approval.providerToolCallId);
 		}
 	}
 

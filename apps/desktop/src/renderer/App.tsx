@@ -4116,12 +4116,20 @@ function RuntimeConversation({
 			)
 				onSnapshot(snapshotResponse.snapshot);
 		} catch (cause) {
-			if (activeSessionIdRef.current === sessionId)
-				setError(
-					cause instanceof Error
-						? cause.message
-						: "Could not resolve the approval.",
-				);
+			if (activeSessionIdRef.current === sessionId) {
+				const failure = cause instanceof Error
+					? cause.message
+					: "Could not resolve the approval.";
+				// A failed approved tool may have retired the durable run and grant.
+				// Reload that state before presenting recovery instead of retaining
+				// an approval button that can no longer execute this action.
+				try {
+					await loadSession(sessionId);
+				} catch {
+					// Preserve the action's failure when the state refresh also fails.
+				}
+				if (activeSessionIdRef.current === sessionId) setError(failure);
+			}
 		} finally {
 			if (!streamId || streamIdRef.current === streamId) {
 				streamIdRef.current = null;
@@ -4748,7 +4756,7 @@ function RuntimeConversation({
 										}
 								/>
 							</div>
-							<div className="runtime-outcome-copy">
+							<div className="runtime-outcome-copy" role="status">
 								<strong>{outcomeCopy?.title}</strong>
 								<p>{outcomeCopy?.detail}</p>
 							</div>

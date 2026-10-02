@@ -2216,6 +2216,7 @@ export class AgentRuntime extends EventEmitter {
 				RuntimeToolExecutionSchema.parse({
 					...oneTimeApprovalGrant,
 					status: "cancelled",
+					output: { ...oneTimeApprovalGrant.output, approvalRequired: false, persistentApprovalAllowed: false },
 					error: "The approved one-time grant was consumed.",
 					completedAt: startedAt,
 				}),

@@ -97,3 +97,43 @@ The complete 23-file diff at `63abc221557e916b1de5d2306658adf6f2f398e8` was insp
 - **#809**, newly opened after the frozen 22-PR snapshot, at `9d2d42a9aa1d7bdcf4a325fd2627893062183518`: all three changed files and relevant person schema/ingestion/removal paths inspected. No blocking source defect found. Confirmed person metadata/status/restriction/confirmation survives source sync/removal, with added regressions. Hold under `REVIEW_REQUIRED` (no reviews) and failed dependency audit (24 advisories); remote typecheck/tests, desktop/package and CodeQL pass, but subsequent Core steps were skipped. Exact merge-tree against `f9f7e45f` is clean. Added blank EOF at source-ingestion-people.test.ts:44 fails diff-check and should be cleaned. No local tests or installed proof were performed for this head. Private exact metadata/diff: `/private/tmp/kestrel-pr-809-current-*`.
 
 The refreshed set contains 23 other open PRs. None has an eligible approving review. This mission does not close or merge any of them based on local source reconciliation alone.
+
+## Follow-up source review — #811
+
+The refreshed set now contains 24 other open PRs plus mission #810. New
+[#811](https://github.com/arnavsri993/kestrel-agent/pull/811), “Protect temporary
+task credentials and verify cleanup,” was reviewed at
+`0199c48f935692c28c5a525b4c58ec66b4cb68a4`. The 31 changed-file diff sections were
+inspected across security, desktop/dependencies and independent loop/lifecycle
+test review. **Hold** for two reproduced control failures, exact CI, review and
+semantic reconciliation:
+
+- The new cleanup receipt observer runs before releasing the session claim
+  (`agent-loop.ts:995-999`). A throwing observer leaves the live-PID claim held;
+  the next task reports a busy session despite a persisted failed run. Release
+  the claim even if cleanup, receipt persistence or observation fails.
+- A pending credential approval can expire after ten minutes. Approving it
+  fails, but the run remains `waiting_approval` with the same pending execution
+  (`agent-loop.ts:628-630,987-998`). Two synthetic approval attempts reproduced
+  the same expiry error and no cleanup receipt, while the one-time grant was
+  already consumed. The underlying failed-approved-tool state bug also affects
+  the mission branch and is being corrected separately; the credential feature
+  adds a routine human-delay trigger.
+
+Exact diff-check passed. Pure exact-source vault checks passed repeated-value
+masking, scope isolation, environment restrictions, expiry refusal and cleanup
+readback. These used synthetic values and disposable local state; they are
+not live account/provider or installed acceptance. No #811 code was ported.
+
+Current #811 Core CI passed, desktop CI was canceled during restart recovery
+with later source/package checks skipped, and CodeQL failed with twelve high
+severity annotations. The annotations include regex performance and hash
+dataflow into unchanged downstream source. They are not twelve independently
+confirmed vulnerabilities; every alert still needs resolution or justified
+review without disabling checks. Main approval remains absent.
+
+Merge-tree against mission head `0dfb9710` reports content conflicts in
+`App.tsx`, `agent-loop.ts` and `tool-result-guardrails.ts`. Preserve the scoped
+dynamic Codex bridge, cancellation gates and bounded model-facing results
+during any future reconciliation. The source review and reproductions do not
+establish combined-tree compatibility or authorize canonical installation.
