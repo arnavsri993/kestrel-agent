@@ -10,6 +10,8 @@ export interface SandboxedCommandInput {
 	mode: "read_only" | "workspace_write" | "network_workspace_write";
 	timeoutMs: number;
 	environment?: Record<string, string>;
+	/** Credential-bearing operations expose no process output and cannot fork. */
+	protectSecrets?: boolean;
 }
 
 export interface SandboxedCommandResult {
@@ -172,7 +174,7 @@ export class SandboxedCommandRunner {
 		const timeoutMs = validateTimeout(input.timeoutMs);
 		const executable = resolveExecutable(input.command);
 		const startedAt = Date.now();
-		const profile = sandboxProfile(input.workspaceRoot, input.mode);
+		const profile = sandboxProfile(input.workspaceRoot, input.mode) + (input.protectSecrets ? " (deny process-fork)" : "");
 		const launch = options.interactive
 			? [
 					resolveExecutable("python3"),
@@ -204,13 +206,16 @@ export class SandboxedCommandRunner {
 		let overflowed = false;
 		const maximumOutputBytes = 1_000_000;
 		const capture = (stream: "stdout" | "stderr", chunk: Buffer) => {
-			const text = chunk.toString("utf8");
 			outputBytes += chunk.byteLength;
 			if (outputBytes > maximumOutputBytes) {
 				overflowed = true;
 				killChildProcess(child);
 				return;
 			}
+			// Discard the bytes before conversion, aggregation, snapshots or events.
+			// Withholding all output also prevents encoded/fragmented secret leaks.
+			if (input.protectSecrets) return;
+			const text = chunk.toString("utf8");
 			if (stream === "stdout") stdout += text;
 			else stderr += text;
 			options.onProgress({ stream, chunk: text });

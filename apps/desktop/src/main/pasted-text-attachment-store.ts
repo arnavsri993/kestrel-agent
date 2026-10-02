@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import type { SelectedAttachment } from "@kestrel/shared-types";
+import { maskSensitiveText } from "@kestrel/shared-types";
 
 const MAX_PASTED_TEXT_BYTES = 1_000_000;
 
@@ -24,6 +25,8 @@ export class PastedTextAttachmentStore {
 	}
 
 	async create(text: string): Promise<SelectedAttachment> {
+		if (maskSensitiveText(text) !== text)
+			throw new Error("Sensitive pasted text stays in the composer and cannot be saved as an attachment. Use a protected credential field for keys.");
 		const size = Buffer.byteLength(text, "utf8");
 		if (!text || size > MAX_PASTED_TEXT_BYTES)
 			throw new Error("Pasted text attachments must contain 1 byte to 1 MB.");

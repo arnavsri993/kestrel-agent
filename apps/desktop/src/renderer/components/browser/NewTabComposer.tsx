@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ClipboardEvent, type FormEvent } from
 import { Icon } from "../Icon";
 import { ModelSelector } from "./ModelSelector";
 import { createPastedTextAttachment, LARGE_PASTE_MIN_LENGTH, removePastedTextAttachment } from "./composer-paste";
+import { maskSensitiveText } from "@kestrel/shared-types";
 import { accountForChoice, type ModelSelectorChoice } from "./model-selector";
 import type { NewTabComposerDraft } from "./new-tab-composer";
 import "./new-tab-composer.css";
@@ -125,11 +126,12 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	}
 
 	async function addFiles() {
-		const selectedRoot = workspaceRoot || await chooseProject();
-		if (!selectedRoot) return;
+		if (busy) return;
 		setBusy(true);
 		setError("");
 		try {
+			const selectedRoot = workspaceRoot || await chooseProject();
+			if (!selectedRoot) return;
 			const response = await window.kestrel.request({ type: "select-context-files", workspaceRoot: selectedRoot });
 			if (!response.ok) throw new Error(response.error);
 			if ("selectedAttachments" in response) setAttachments((current) => {
@@ -143,7 +145,7 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 
 	async function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
 		const text = event.clipboardData.getData("text/plain");
-		if (text.length < LARGE_PASTE_MIN_LENGTH) return;
+		if (text.length < LARGE_PASTE_MIN_LENGTH || maskSensitiveText(text) !== text) return;
 		event.preventDefault();
 		if (attachments.length >= 8) { setError("Remove an attachment before pasting more text."); return; }
 		setBusy(true);

@@ -1,6 +1,6 @@
 import type { RuntimeCheckpoint, RuntimeMessage } from "@kestrel/shared-types";
 import { contentText, type ModelMessage, textContent } from "./providers";
-import { redactSensitiveContent } from "./tool-result-guardrails";
+import { redactSensitiveContent, redactSensitiveValue } from "./tool-result-guardrails";
 
 export interface CompactedContext {
 	messages: ModelMessage[];
@@ -20,12 +20,8 @@ interface MessageGroup {
 function toModelMessage(message: RuntimeMessage): ModelMessage {
 	return {
 		role: message.role,
-		content: textContent(
-			message.role === "tool"
-				? redactSensitiveContent(message.content)
-				: message.content,
-		),
-		...(message.modelToolCalls ? { toolCalls: message.modelToolCalls } : {}),
+		content: textContent(redactSensitiveContent(message.content)),
+		...(message.modelToolCalls ? { toolCalls: redactSensitiveValue(message.modelToolCalls) as NonNullable<ModelMessage["toolCalls"]> } : {}),
 		...(message.providerToolCallId
 			? { toolCallId: message.providerToolCallId }
 			: {}),
@@ -154,7 +150,7 @@ function digestText(removedGroups: MessageGroup[]): string {
 function checkpointMessage(
 	checkpoint: string | undefined,
 ): ModelMessage | undefined {
-	const summary = checkpoint?.replace(/\s+/g, " ").trim();
+	const summary = checkpoint ? redactSensitiveContent(checkpoint).replace(/\s+/g, " ").trim() : undefined;
 	if (!summary) return undefined;
 	return {
 		role: "user",

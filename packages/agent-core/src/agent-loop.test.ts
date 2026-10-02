@@ -172,10 +172,10 @@ describe("provider-neutral agent loop", () => {
 			.find((message) => message.role === "tool");
 		expect(storedToolMessage?.content).not.toContain(openAiKey);
 		expect(storedToolMessage?.content).not.toContain(bearerToken);
-		expect(database.listToolExecutions(session.id)[0]?.output).toEqual({
-			apiKey: openAiKey,
-			pageText: `Bearer ${bearerToken}`,
-		});
+		const storedExecution = JSON.stringify(database.listToolExecutions(session.id)[0]);
+		expect(storedExecution).not.toContain(openAiKey);
+		expect(storedExecution).not.toContain(bearerToken);
+		expect(storedExecution).toContain("[API_KEY_1]");
 		database.close();
 	});
 
