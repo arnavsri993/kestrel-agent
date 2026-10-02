@@ -175,6 +175,51 @@ export class ProviderPool {
 		);
 	}
 
+	/**
+	 * Mark a provider temporarily unavailable to routing. Explicit selections
+	 * receive a failed attempt explaining the cooldown without calling it.
+	 */
+	markUnavailable(
+		providerId: string,
+		reason: ProviderAvailabilityReason,
+		until?: Date | number,
+	): void {
+		if (!this.providers.has(providerId)) return;
+		const untilMs =
+			until === undefined
+				? this.now().getTime() + DEFAULT_HEALTH_BACKOFF_MS
+				: typeof until === "number"
+					? until
+					: until.getTime();
+		if (!Number.isFinite(untilMs) || untilMs <= this.now().getTime()) {
+			this.unhealthyUntil.set(
+				providerId,
+				this.now().getTime() + DEFAULT_HEALTH_BACKOFF_MS,
+			);
+		} else {
+			this.unhealthyUntil.set(
+				providerId,
+				Math.min(untilMs, this.now().getTime() + MAX_HEALTH_BACKOFF_MS),
+			);
+		}
+		this.unhealthyReason.set(providerId, reason);
+	}
+
+	/**
+	 * Clear a prior `markUnavailable` when a usage poll shows the route is open
+	 * again. Does not wipe failure measurements.
+	 */
+	clearUnavailable(providerId: string, reason?: ProviderAvailabilityReason): void {
+		if (!this.providers.has(providerId)) return;
+		if (
+			reason !== undefined &&
+			this.unhealthyReason.get(providerId) !== reason
+		)
+			return;
+		this.unhealthyUntil.delete(providerId);
+		this.unhealthyReason.delete(providerId);
+	}
+
 	health(): ProviderHealth[] {
 		return [...this.providers.values()].map((provider) => {
 			const measurement = this.measurements.get(provider.id) ?? {
@@ -488,8 +533,21 @@ export class ProviderPool {
 			if (options.signal?.aborted) throw options.signal.reason;
 			const provider = candidates[index]!;
 			const providerId = provider.id;
-			if ((this.unhealthyUntil.get(providerId) ?? 0) > this.now().getTime())
+			const unavailableUntil = this.unhealthyUntil.get(providerId);
+			if (unavailableUntil !== undefined && unavailableUntil > this.now().getTime()) {
+				if (!automatic && options.providerIds !== undefined) {
+					const timestamp = this.now().toISOString();
+					const reason = this.unhealthyReason.get(providerId) ?? "unknown";
+					attempts.push({
+						providerId,
+						startedAt: timestamp,
+						completedAt: timestamp,
+						status: "failed",
+						error: `Provider temporarily unavailable (${reason}) until ${new Date(unavailableUntil).toISOString()}.`,
+					});
+				}
 				continue;
+			}
 			const model =
 				options.providerModels?.[providerId] ??
 				(provider.poolId

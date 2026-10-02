@@ -1,7 +1,7 @@
 # Kestrel engineering mission
 
 Started 2026-09-30. Integration and canonical deployment owner: the mission
-branch in `/private/tmp/kestrel-reliability-mission`. Specialists use isolated
+branch in `/Users/arnavsrivastava/.codex/worktrees/kestrel-reliability-mission/Agent`. Specialists use isolated
 worktrees and never install an app or change the production profile.
 
 ## Baseline and evidence rules
@@ -42,7 +42,7 @@ must be updated only after the corresponding operation is verified.
 | 4. Sustained progress / fewer interruptions | Routing/worktree cancellation gaps, ineffective background pause and stranded failed approval | Integration owner | Durable execution and safe shutdown | Pause/claims/cancellation/lease implemented; approval failure retirement under correction | Prior 46 focused fault tests and full 1,659-test verification; new approval regression needs current checks | Prior control `660d0429` and picker `0dfb9710`; new correction pending | Not deployed |
 | 5. Model / effort selection | Picker lacked minimal/ultra; model listing could overstate transport support | Runtime specialist | Account-specific discovery and wire validation | Exact advertised efforts, model/transport intersection, tools required through fallback | Four accounts sent exact `gpt-6-astra` / `high`; registrations and reads observed; other efforts/modalities not live-verified | Local `2f51c29b` plus shared/picker changes | Not deployed |
 | 6. Persistent engineering agent / four accounts | Existing core must supply safe persistent work without a parallel engine | Integration owner | Canonical reviewed build; scoped provider/tool/stop/restart acceptance | Existing scheduler control hardening; production agent ID none, enabled false | Four profiles execute real tools; independent quota pools unverified; scheduler fault fixtures pass | Current mission branch | Production agent not enabled |
-| 7. PR integration | 24 other PRs plus mission #810; required independent latest-push approval absent | Integration owner | Exact-head review, passing CI, compatibility and protection | Every snapshot PR has a disposition; maintenance slices #805/#806/#808 reconciled; #811 reviewed and held for reproduced failures and CI | #810 prior head `0dfb9710` has passing CI/CodeQL; new approval correction needs fresh checks | Source integrated; no GitHub merge | Not deployed |
+| 7. PR integration | 21 other PRs plus mission #810; required independent latest-push approval absent | Integration owner | Exact-head review, passing CI, compatibility and protection | Every snapshot PR has a disposition; maintenance slices #805/#806/#808 reconciled; #811 reviewed and held for reproduced failures and CI | #810 prior head `0dfb9710` has passing CI/CodeQL; new approval correction needs fresh checks | Source integrated; no GitHub merge | Not deployed |
 | 8. Changes appearing in actual app | Concurrent legacy installation confirmed; existing running process predates replacement | Integration/deployment owner | Fresh integrated main, owner and competing installer coordination | Kernel installation lock, ownership/main/hash/downgrade gates and visible component diagnostic | Clean `0dfb9710` package and packaged smokes pass; candidate component IDs match; canonical identity unverified | Prior source candidate `0dfb9710`; new correction pending | Canonical app preserved; updated install pending |
 | 9. Competitor overlap / switching reasons | Dots and Grok Bot share the persistent teammate promise | Integration owner | Matched journey evidence | Compare delegated responsibility, follow-through and verifiable outcomes | Current primary sources refreshed; zero standalone competitor trials or leadership claim | Mission benchmark documentation | Not applicable |
 | 10. Measurable reliability | Test counts do not establish live usefulness | Integration owner | Repeated real user journeys | Explicit evidence classes and 9/10 live journey target retained | Complete prior `0dfb9710` verify/package; bounded provider and scheduler tasks; new failure regression needs checks | Prior candidate `0dfb9710` passed full verify | Canonical visible journeys pending |
@@ -305,3 +305,41 @@ and source/component identity remains unverified. Competing installation
 ownership must still be resolved before canonical replacement; permission
 to message the other chat remains pending. Production Engineering agent ID
 is none, enabled false, with no current scope or task.
+
+
+## October 2 durable worktree recovery and fresh-main reconciliation
+
+Approval recovery was committed and pushed as `0cc9e2c3`. Its 1,665 unit tests,
+audits, typechecks, builds and early desktop checks passed, but aggregate verify
+stopped at blank New Tab tear-off. The failure did not recur after reconciling
+fresh main; causality is unconfirmed. Full browser smoke and the focused tab
+interaction smoke passed on combined source before the temporary files were
+lost. The loopback download quarantine assertion was skipped because macOS did
+not assign that metadata. Those private logs are no longer available.
+
+Main advanced outside this mission to `39c68f6f` through #805, #781 and #803.
+The reconciliation preserves scoped dynamic tools, manual effort, account
+identity and transport shutdown alongside provider usage snapshots and tab
+interactions. Independent provider review found wrong quota-window selection,
+legacy meter priority, reset hints on unrelated errors and silent manual
+cooldown failures. Corrections need fresh combined verification and packaging.
+
+Remote CodeQL passed for `0cc9e2c3`. No pull-request CI run was created while it
+conflicted with advanced main; GitHub does not run pull-request workflows with
+[merge conflicts](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows).
+The separate GitHub AI review failed because its monthly quota was exhausted.
+It did not produce a source verdict, and no paid service or retry was enabled.
+
+The temporary worktree, package and private evidence under `/private/tmp`
+disappeared outside this mission before the reconciliation was committed. The
+published source and surviving Git merge index were preserved. The same branch
+and staged merge were recovered into the durable worktree above without pruning
+other worktrees or changing the primary checkout. Lost unstaged corrections
+are being reconstructed from recorded diffs and will be verified again. New
+private evidence lives under `Documents/Codex/2026-10-02/kestrel-mission/evidence`.
+Historical validation does not prove the recovered candidate.
+
+There are 22 open PRs, including this mission. Required independent approval,
+canonical deployment ownership and all remaining live journey gates still apply.
+The mission has not merged or installed anything. Production Engineering agent
+ID remains none, enabled false, without a task or scope.

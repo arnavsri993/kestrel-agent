@@ -137,3 +137,14 @@ Merge-tree against mission head `0dfb9710` reports content conflicts in
 dynamic Codex bridge, cancellation gates and bounded model-facing results
 during any future reconciliation. The source review and reproductions do not
 establish combined-tree compatibility or authorize canonical installation.
+
+
+## Subsequent main advance
+
+Main advanced outside this mission to `39c68f6f` through #805, #781 and #803;
+these PRs are now merged. The remaining live open set is 22 PRs, including #810.
+The mission is reconciling this main tip, preserving its scoped tool bridge and
+approval controls alongside usage polling and tab interactions. Quota-handling
+integration defects identified during independent review require corrections
+and fresh checks. #811 remains open and held at its recorded exact head. No
+protected merge, PR closure or canonical installation was performed here.

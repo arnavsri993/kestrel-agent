@@ -7,7 +7,7 @@ import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAccountModelProviders } from "./account-providers";
 import { CodexAppServerProvider } from "./codex-app-server";
-import { textContent } from "./types";
+import { ModelProviderError, textContent } from "./types";
 
 const roots: string[] = [];
 const executeFile = promisify(execFileCallback);
@@ -48,6 +48,19 @@ input.on("line", line => {
   if (message.method === "initialize") return send({ id: message.id, result: { userAgent: "fake", codexHome: "/fake", platformFamily: "unix", platformOs: "macos" } });
   if (message.method === "initialized") return;
   if (message.method === "account/read") return send({ id: message.id, result: { account: { type: "chatgpt" }, requiresOpenaiAuth: true } });
+  if (message.method === "account/rateLimits/read") {
+    return send({
+      id: message.id,
+      result: {
+        ordinaryUsageAllowed: true,
+        rateLimits: {
+          primary: { usedPercent: 55, windowDurationMins: 300, resetsAt: 1900000000 },
+          secondary: { usedPercent: 12, windowDurationMins: 10080, resetsAt: 1900500000 },
+          planType: "plus",
+        },
+      },
+    });
+  }
   if (message.method === "model/list") {
     if (message.params && message.params.cursor === "page-2") {
       return send({ id: message.id, result: { data: [{ id: "gpt-hidden", model: "gpt-hidden", displayName: "Hidden model", supportedReasoningEfforts: [{ reasoningEffort: "minimal" }], hidden: true }], nextCursor: null } });
@@ -653,6 +666,64 @@ describe("persistent Codex app-server provider", () => {
 			),
 		).toBe(true);
 		await provider.close();
+	});
+
+	it("reads Codex rate-limit windows without inventing meters", async () => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({
+			executable: fake.executable,
+		});
+		const snapshot = await provider.readRateLimits();
+		expect(snapshot).toMatchObject({
+			ordinaryUsageAllowed: true,
+			plan: "plus",
+			rateLimitReached: false,
+			primary: {
+				usedPercent: 55,
+				windowDurationMins: 300,
+			},
+			secondary: {
+				usedPercent: 12,
+				windowDurationMins: 10_080,
+			},
+		});
+		expect(snapshot.primary?.resetsAt).toMatch(/^\d{4}-/);
+		const records = (await readFile(fake.capture, "utf8"))
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { value: { method?: string; params?: Record<string, unknown> } });
+		expect(
+			records.some(
+				(record) =>
+					record.value.method === "account/rateLimits/read" &&
+					record.value.params?.excludeResetCreditDetails === true,
+			),
+		).toBe(true);
+		await provider.close();
+	});
+
+	it("does not attach a cached quota reset to an unrelated model error", async () => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({ executable: fake.executable });
+		try {
+			await provider.readRateLimits();
+			await provider.discoverModels();
+			let failure: unknown;
+			try {
+				await provider.complete({
+					model: "gpt-catalog",
+					reasoningEffort: "xhigh",
+					messages: [{ role: "user", content: textContent("hi") }],
+					tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }],
+				});
+			} catch (error) {
+				failure = error;
+			}
+			expect(failure).toBeInstanceOf(ModelProviderError);
+			expect(failure).toMatchObject({ status: undefined, retryAfterMs: undefined });
+		} finally {
+			await provider.close();
+		}
 	});
 
 	it.each([Number.NaN, Number.POSITIVE_INFINITY])(

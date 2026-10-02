@@ -133,6 +133,180 @@ function object(value: unknown): JsonObject | undefined {
 		: undefined;
 }
 
+export interface CodexRateLimitWindow {
+	usedPercent: number;
+	windowDurationMins?: number;
+	resetsAt?: string;
+}
+
+export interface CodexAccountUsageSnapshot {
+	email?: string;
+	plan?: string;
+	ordinaryUsageAllowed?: boolean;
+	rateLimitReached?: boolean;
+	primary?: CodexRateLimitWindow;
+	secondary?: CodexRateLimitWindow;
+	updatedAt: string;
+}
+
+const RATE_LIMIT_ERROR_PATTERN =
+	/\b(rate[- ]?limit|quota|usage limit|limit reached|too many requests|429)\b/i;
+
+function unixSecondsToIso(value: unknown): string | undefined {
+	if (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
+		return undefined;
+	// Codex reports reset boundaries as unix seconds; tolerate accidental ms.
+	const millis = value > 1_000_000_000_000 ? value : value * 1_000;
+	const date = new Date(millis);
+	return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function parseRateLimitWindow(value: unknown): CodexRateLimitWindow | undefined {
+	const record = object(value);
+	if (!record) return undefined;
+	const usedPercent = Number(record.usedPercent ?? record.used_percent);
+	if (!Number.isFinite(usedPercent)) return undefined;
+	const duration = Number(
+		record.windowDurationMins ??
+			record.window_duration_mins ??
+			record.windowMinutes ??
+			record.window_minutes,
+	);
+	const resetsAt = unixSecondsToIso(record.resetsAt ?? record.resets_at);
+	return {
+		usedPercent: Math.max(0, Math.min(100, Math.round(usedPercent))),
+		...(Number.isFinite(duration) && duration > 0
+			? { windowDurationMins: Math.trunc(duration) }
+			: {}),
+		...(resetsAt ? { resetsAt } : {}),
+	};
+}
+
+function accountEmailAndPlan(account: JsonObject | undefined): {
+	email?: string;
+	plan?: string;
+} {
+	if (!account) return {};
+	const nested = object(account.account) ?? account;
+	const email =
+		typeof nested.email === "string" && nested.email.trim()
+			? nested.email.trim()
+			: undefined;
+	const planRaw = nested.planType ?? nested.plan_type ?? nested.plan;
+	const plan =
+		typeof planRaw === "string" && planRaw.trim()
+			? planRaw.trim()
+			: planRaw !== null &&
+					typeof planRaw === "object" &&
+					typeof (planRaw as { type?: unknown }).type === "string"
+				? String((planRaw as { type: string }).type).trim()
+				: undefined;
+	return {
+		...(email ? { email } : {}),
+		...(plan ? { plan } : {}),
+	};
+}
+
+/**
+ * Prefer the Codex bucket, then the legacy single-bucket response. Other
+ * named buckets are only a fallback when neither Codex source is present.
+ */
+function resolveCodexRateLimitBucket(root: JsonObject): JsonObject {
+	const byLimitId =
+		object(root.rateLimitsByLimitId) ?? object(root.rate_limits_by_limit_id);
+	const legacy =
+		object(root.rateLimits) ?? object(root.rate_limits) ?? undefined;
+	const codex = byLimitId ? object(byLimitId.codex) : undefined;
+	if (codex) return codex;
+	if (legacy && (legacy.primary !== undefined || legacy.secondary !== undefined))
+		return legacy;
+	const other = byLimitId
+		? Object.values(byLimitId)
+				.map((value) => object(value))
+				.find(
+					(entry) =>
+						entry &&
+						(parseRateLimitWindow(entry.primary) ||
+							parseRateLimitWindow(entry.secondary)),
+				)
+		: undefined;
+	if (other) return other;
+	return legacy ?? root;
+}
+
+/** Normalize complete reads and sparse notifications into non-secret usage. */
+export function parseCodexAccountUsageSnapshot(
+	rateLimitsResult: unknown,
+	accountResult?: unknown,
+	previous?: CodexAccountUsageSnapshot,
+	authoritative = false,
+): CodexAccountUsageSnapshot {
+	const root = object(rateLimitsResult) ?? {};
+	const rateLimits = resolveCodexRateLimitBucket(root);
+	const ordinaryRaw = root.ordinaryUsageAllowed ?? root.ordinary_usage_allowed;
+	const ordinaryUsageAllowed =
+		typeof ordinaryRaw === "boolean"
+			? ordinaryRaw
+			: authoritative
+				? undefined
+				: previous?.ordinaryUsageAllowed;
+	const reachedType =
+		rateLimits.rateLimitReachedType ?? rateLimits.rate_limit_reached_type;
+	const reachedFromType =
+		typeof reachedType === "string" &&
+		reachedType.length > 0 &&
+		reachedType.toLowerCase() !== "none";
+	const primary =
+		parseRateLimitWindow(rateLimits.primary) ??
+		(authoritative ? undefined : previous?.primary);
+	const secondary =
+		parseRateLimitWindow(rateLimits.secondary) ??
+		(authoritative ? undefined : previous?.secondary);
+	const atLimit =
+		ordinaryUsageAllowed === false ||
+		reachedFromType ||
+		(primary?.usedPercent ?? 0) >= 100 ||
+		(secondary?.usedPercent ?? 0) >= 100;
+	const accountRoot = object(accountResult);
+	const accountInfo = accountEmailAndPlan(
+		object(accountRoot?.account) ?? accountRoot,
+	);
+	const planFromLimits =
+		typeof rateLimits.planType === "string" && rateLimits.planType.trim()
+			? rateLimits.planType.trim()
+			: typeof rateLimits.plan_type === "string" && rateLimits.plan_type.trim()
+				? rateLimits.plan_type.trim()
+				: undefined;
+	const email = accountInfo.email ?? previous?.email;
+	const plan = accountInfo.plan ?? planFromLimits ?? previous?.plan;
+	return {
+		...(email ? { email } : {}),
+		...(plan ? { plan } : {}),
+		...(ordinaryUsageAllowed !== undefined ? { ordinaryUsageAllowed } : {}),
+		rateLimitReached: atLimit,
+		...(primary ? { primary } : {}),
+		...(secondary ? { secondary } : {}),
+		updatedAt: new Date().toISOString(),
+	};
+}
+
+export function codexAvailabilityResetAt(
+	snapshot: CodexAccountUsageSnapshot | undefined,
+): string | undefined {
+	if (!snapshot?.rateLimitReached) return undefined;
+	const exhausted = [snapshot.primary, snapshot.secondary].filter(
+		(window): window is CodexRateLimitWindow =>
+			window !== undefined && window.usedPercent >= 100,
+	);
+	if (exhausted.length === 0) return undefined;
+	const resets = exhausted.map((window) =>
+		window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN,
+	);
+	if (resets.some((reset) => !Number.isFinite(reset) || reset <= Date.now()))
+		return undefined;
+	return new Date(Math.max(...resets)).toISOString();
+}
+
 function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	const record = object(value);
 	if (record?.hidden === true) return undefined;
@@ -484,6 +658,7 @@ export class CodexAppServerProvider {
 	private closing = false;
 	private discoveredModels: DiscoveredModel[] | undefined;
 	private transportStopPromise: Promise<void> | undefined;
+	private lastUsageSnapshot: CodexAccountUsageSnapshot | undefined;
 
 	constructor(options: CodexAppServerOptions = {}) {
 		this.id = options.id ?? "codex-subscription";
@@ -525,6 +700,36 @@ export class CodexAppServerProvider {
 				"Codex is not signed in. Complete authentication in the official Codex or ChatGPT surface.",
 			);
 		}
+	}
+
+	/**
+	 * Read ChatGPT plan rate-limit windows through the stable app-server API.
+	 * Background polls pass `excludeResetCreditDetails` so we do not hammer the
+	 * separate reset-credit detail lookup on every New Tab refresh.
+	 */
+	async readRateLimits(
+		signal?: AbortSignal,
+	): Promise<CodexAccountUsageSnapshot> {
+		await this.ensureStarted();
+		const account = object(
+			await this.request("account/read", { refreshToken: false }, signal),
+		);
+		const rateLimits = await this.request(
+			"account/rateLimits/read",
+			{ excludeResetCreditDetails: true },
+			signal,
+		);
+		this.lastUsageSnapshot = parseCodexAccountUsageSnapshot(
+			rateLimits,
+			account,
+			this.lastUsageSnapshot,
+			true,
+		);
+		return this.lastUsageSnapshot;
+	}
+
+	lastRateLimits(): CodexAccountUsageSnapshot | undefined {
+		return this.lastUsageSnapshot;
 	}
 
 	async discoverModels(signal?: AbortSignal): Promise<DiscoveredModel[]> {
@@ -628,12 +833,34 @@ export class CodexAppServerProvider {
 			}
 		} catch (error) {
 			if (options.signal?.aborted) throw error;
-			throw new ModelProviderError(
+			const message =
 				error instanceof Error
 					? error.message
-					: "Codex app-server request failed.",
+					: "Codex app-server request failed.";
+			const rateLimited = RATE_LIMIT_ERROR_PATTERN.test(message);
+			if (rateLimited) {
+				this.lastUsageSnapshot = {
+					...(this.lastUsageSnapshot ?? {
+						updatedAt: new Date().toISOString(),
+					}),
+					rateLimitReached: true,
+					ordinaryUsageAllowed: false,
+					updatedAt: new Date().toISOString(),
+				};
+			}
+			const resetAt = rateLimited
+				? codexAvailabilityResetAt(this.lastUsageSnapshot)
+				: undefined;
+			const retryAfterMs = resetAt
+				? Math.max(0, Date.parse(resetAt) - Date.now())
+				: undefined;
+			throw new ModelProviderError(
+				message,
 				this.id,
 				true,
+				rateLimited ? 429 : undefined,
+				false,
+				retryAfterMs,
 			);
 		}
 	}
@@ -798,6 +1025,14 @@ export class CodexAppServerProvider {
 	}
 
 	private handleNotification(method: string, params: JsonObject): void {
+		if (method === "account/rateLimits/updated") {
+			this.lastUsageSnapshot = parseCodexAccountUsageSnapshot(
+				{ rateLimits: params.rateLimits ?? params.rate_limits ?? params },
+				undefined,
+				this.lastUsageSnapshot,
+			);
+			return;
+		}
 		const threadId =
 			typeof params.threadId === "string" ? params.threadId : undefined;
 		if (!threadId) return;
