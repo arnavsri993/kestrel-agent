@@ -271,7 +271,7 @@ describe("persistent Codex app-server provider", () => {
 				capabilities: {
 					capabilityProvenance: "confirmed",
 					streaming: true,
-					tools: false,
+					tools: true,
 					images: true,
 					audio: false,
 					documents: false,
@@ -288,7 +288,7 @@ describe("persistent Codex app-server provider", () => {
 				capabilities: {
 					capabilityProvenance: "confirmed",
 					streaming: true,
-					tools: false,
+					tools: true,
 					images: true,
 					audio: false,
 					documents: false,

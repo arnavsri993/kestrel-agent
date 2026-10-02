@@ -223,6 +223,30 @@ describe("managed local runtime", () => {
 		).toThrow("explicit loopback HTTP port");
 	});
 
+	it("does not probe a loopback service when model discovery is disabled", async () => {
+		const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+		roots.push(root);
+		let fetches = 0;
+		const manager = new LocalRuntimeManager(root, () => undefined, {
+			fetch: (async () => {
+				fetches += 1;
+				throw new Error("The isolated profile must not contact Ollama.");
+			}) as typeof fetch,
+			platform: "darwin",
+			architecture: "arm64",
+			modelDiscoveryDisabled: true,
+		});
+
+		await expect(manager.listModels()).resolves.toEqual([]);
+		await expect(manager.status()).resolves.toMatchObject({
+			ollamaAvailable: false,
+			source: "none",
+			localModels: [],
+		});
+		await manager.startManagedIfInstalled();
+		expect(fetches).toBe(0);
+	});
+
 	it("prefers the recorded verified model over the first listed tag", async () => {
 		const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
 		roots.push(root);
