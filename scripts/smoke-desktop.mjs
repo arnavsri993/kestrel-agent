@@ -55,6 +55,8 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
+	const chatToggle = page.locator("#browser-agent-toggle");
+	if (await chatToggle.getAttribute("aria-expanded") !== "true") await chatToggle.click();
 	await page.locator("#runtime-prompt").waitFor();
 	await page.locator('summary[aria-label="Task settings"]').click();
 	const taskSettings = page.locator(".task-settings[open]");

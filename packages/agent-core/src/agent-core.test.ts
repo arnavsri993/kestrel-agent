@@ -1676,6 +1676,9 @@ describe("core agent request path", () => {
 			ok: false,
 			error: "Voice recording contains invalid base64 data.",
 		});
+		expect(
+			await core.handle({ type: "media-transcribe", dataBase64: `YWJj${"=".repeat(100_000)}x`, mediaType: "audio/webm" }),
+		).toMatchObject({ ok: false, error: "Voice recording contains invalid base64 data." });
 		await core.close();
 	});
 

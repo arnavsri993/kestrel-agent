@@ -4,6 +4,9 @@ import {
 } from "./types";
 
 export const PROVIDER_CONNECT_TIMEOUT_MS = 20_000;
+export const PROVIDER_RESPONSE_TIMEOUT_MS = 120_000;
+export const LOCAL_GENERATION_CONNECT_TIMEOUT_MS = 120_000;
+export const LOCAL_GENERATION_RESPONSE_TIMEOUT_MS = 180_000;
 
 const NETWORK_UNAVAILABLE_CODES = new Set(["ENOTFOUND", "ECONNREFUSED"]);
 const MAX_QUOTA_RESET_MS = 7 * 24 * 60 * 60_000;
@@ -33,15 +36,25 @@ const QUOTA_RESET_HEADERS = [
 	"anthropic-ratelimit-tokens-reset",
 ] as const;
 
-function providerConnectSignal(callerSignal?: AbortSignal | null): {
+function providerConnectSignal(callerSignal: AbortSignal | null | undefined, localGeneration: boolean): {
 	signal: AbortSignal;
 	connectTimeoutSignal: AbortSignal;
+	connectTimeoutMs: number;
+	connected: () => void;
 } {
-	const connectTimeoutSignal = AbortSignal.timeout(PROVIDER_CONNECT_TIMEOUT_MS);
-	if (!callerSignal) return { signal: connectTimeoutSignal, connectTimeoutSignal };
+	const connectTimeoutMs = localGeneration ? LOCAL_GENERATION_CONNECT_TIMEOUT_MS : PROVIDER_CONNECT_TIMEOUT_MS;
+	const responseTimeoutMs = localGeneration ? LOCAL_GENERATION_RESPONSE_TIMEOUT_MS : PROVIDER_RESPONSE_TIMEOUT_MS;
+	const connectController = new AbortController();
+	const timer = setTimeout(() => connectController.abort(new DOMException("Timed out", "TimeoutError")), connectTimeoutMs);
+	timer.unref?.();
+	const connectTimeoutSignal = connectController.signal;
+	const signals = [connectTimeoutSignal, AbortSignal.timeout(responseTimeoutMs)];
+	if (callerSignal) signals.push(callerSignal);
 	return {
-		signal: AbortSignal.any([callerSignal, connectTimeoutSignal]),
+		signal: AbortSignal.any(signals),
 		connectTimeoutSignal,
+		connectTimeoutMs,
+		connected: () => clearTimeout(timer),
 	};
 }
 
@@ -63,11 +76,12 @@ function providerFetchError(
 	providerId: string,
 	callerSignal: AbortSignal | undefined,
 	connectTimeoutSignal: AbortSignal,
+	connectTimeoutMs: number,
 ): never {
 	if (callerSignal?.aborted) throw error;
 	if (connectTimeoutSignal.aborted && !callerSignal?.aborted) {
 		throw new ModelProviderError(
-			`Provider connect timed out after ${PROVIDER_CONNECT_TIMEOUT_MS / 1_000}s.`,
+			`Provider connect timed out after ${connectTimeoutMs / 1_000}s.`,
 			providerId,
 			true,
 		);
@@ -261,8 +275,9 @@ export async function providerFetch(
 	providerId: string,
 	url: string,
 	init: RequestInit,
+	deadline: "standard" | "local_generation" = "standard",
 ): Promise<Response> {
-	const { signal, connectTimeoutSignal } = providerConnectSignal(init.signal);
+	const { signal, connectTimeoutSignal, connectTimeoutMs, connected } = providerConnectSignal(init.signal, deadline === "local_generation");
 	let response: Response;
 	try {
 		// Provider requests carry protected credentials. A redirect could move
@@ -276,7 +291,13 @@ export async function providerFetch(
 			providerId,
 			init.signal ?? undefined,
 			connectTimeoutSignal,
+			connectTimeoutMs,
 		);
+	} finally {
+		// Fetch resolves when headers arrive. Keeping the connect timer alive
+		// afterward used to abort healthy generation streams at twenty seconds.
+		// The caller and bounded response deadline continue to cover the body.
+		connected();
 	}
 	if (!response.ok) {
 		// Upstream responses frequently echo authorization, custom request headers,

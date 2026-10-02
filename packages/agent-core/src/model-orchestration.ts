@@ -1044,7 +1044,7 @@ export class TaskRequirementAnalyzer {
 	routingPolicy(prompt: string, base: RoutingPolicySeed): RoutingPolicy {
 		const normalized = prompt.toLowerCase();
 		const amount = normalized.match(
-			/\b(?:under|below|no more than|budget(?: of)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\b/,
+			/\b(?:under|below|no more than|budget(?: of)?)\s*(?:\$\s*)?(\d+(?:\.\d{1,2})?)\b/,
 		);
 		let mode = base.mode;
 		let allowExternal = base.allowExternal;
@@ -1255,7 +1255,7 @@ export class TaskRequirementAnalyzer {
 				(isLowLevelOrMath ? 0.2 : 0) +
 				(Object.keys(capabilities).length >= 6 ? 0.18 : 0) +
 				(/```/.test(prompt) ? 0.08 : 0) +
-				(/\n\s*\d+[.)]\s+\S/.test(prompt) ? 0.08 : 0),
+				(/\n[^\S\r\n]*\d+[.)][^\S\r\n]+\S/.test(prompt) ? 0.08 : 0),
 		);
 		if (pullRequestReview)
 			complexity = Math.max(complexity, broadPullRequestReview ? 0.72 : 0.6);

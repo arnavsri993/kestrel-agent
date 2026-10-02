@@ -1,4 +1,5 @@
 import { SourceIngestion } from "./source-ingestion";
+import { stripTrailingCharacters } from "./text-boundaries";
 import { OnshapeClient, installOnshapeTools, parseOnshapeDocument } from "./onshape";
 export { OnshapeClient } from "./onshape";
 import { AgentMemoryRecovery } from "./memory-recovery";
@@ -3842,8 +3843,8 @@ export class AgentCore {
 					const data = Buffer.from(request.dataBase64, "base64");
 					if (
 						data.byteLength === 0 ||
-						data.toString("base64").replace(/=+$/, "") !==
-							request.dataBase64.replace(/=+$/, "")
+						stripTrailingCharacters(data.toString("base64"), "=") !==
+							stripTrailingCharacters(request.dataBase64, "=")
 					)
 						throw new Error("Voice recording contains invalid base64 data.");
 					const result = await this.deps.transcriptionProvider.transcribe({

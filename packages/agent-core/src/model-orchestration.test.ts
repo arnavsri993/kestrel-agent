@@ -98,6 +98,26 @@ function fixture(providers: ModelProvider[]) {
 }
 
 describe("adaptive model orchestration", () => {
+	it("parses budget spacing without overlapping whitespace scans", () => {
+		const analyzer = new TaskRequirementAnalyzer();
+		const item = fixture([]);
+		const base = item.router.policy();
+		for (const prompt of ["under 2.50", "under $2.50", "budget of \t$ \t2.50"]) {
+			expect(analyzer.routingPolicy(prompt, base).maximumTaskCostUsd).toBe(2.5);
+		}
+		expect(analyzer.routingPolicy(`under${" ".repeat(100_000)}unlimited`, base)).toEqual(base);
+		item.database.close();
+	});
+
+	it("recognizes indented list items without rescanning blank lines", () => {
+		const analyzer = new TaskRequirementAnalyzer();
+		const plain = analyzer.analyze("plain", "Outline the steps.");
+		const blanks = analyzer.analyze("blanks", `Outline the steps.${"\n".repeat(100_000)}end`);
+		const numbered = analyzer.analyze("numbered", "Outline the steps.\n \t1. end");
+		expect(blanks.complexity).toBeLessThan(plain.complexity + 0.01);
+		expect(numbered.complexity).toBeGreaterThan(blanks.complexity + 0.07);
+	});
+
 	it.each([
 		"Inspect manifest.json and package.json before reviewing the diff.",
 		"Review the JSON input and explain the findings in prose.",

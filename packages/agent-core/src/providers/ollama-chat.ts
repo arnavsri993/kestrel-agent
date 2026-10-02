@@ -161,7 +161,7 @@ export class OllamaChatProvider implements ModelProvider {
 					: { options: { num_ctx: this.contextWindow } }),
 			}),
 			...(options.signal ? { signal: options.signal } : {}),
-		});
+		}, "local_generation");
 		let text = "";
 		let inputTokens = 0;
 		let outputTokens = 0;

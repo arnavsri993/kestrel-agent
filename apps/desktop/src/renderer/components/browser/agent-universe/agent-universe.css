@@ -6,6 +6,7 @@
  * this file only supplies material, hierarchy, and motion.
  */
 .agent-universe-workspace {
+  container: agent-workspace / inline-size;
   --agent-universe-canvas: #040507;
   --agent-universe-plane: #040507;
   position: relative;
@@ -2543,7 +2544,7 @@
   opacity: 0.58;
 }
 
-@media (max-width: 920px) {
+@container agent-workspace (max-width: 920px) {
   .agent-universe-mapbar {
     gap: 10px;
     padding: 14px;
@@ -2588,7 +2589,7 @@
   }
 }
 
-@media (max-width: 640px) {
+@container agent-workspace (max-width: 640px) {
   .agent-universe-mapbar {
     display: grid;
     gap: 8px;
@@ -2690,7 +2691,7 @@
 
 }
 
-@media (max-width: 460px) {
+@container agent-workspace (max-width: 460px) {
   .agent-universe-map-identity {
     max-width: calc(100vw - 28px);
   }
@@ -2795,3 +2796,44 @@
 .persistent-agent-settings .persistent-agent-enabled input { width: 16px; height: 16px; margin: 0; flex: 0 0 auto; }
 .persistent-agent-settings textarea { min-height: 80px; resize: vertical; }
 .persistent-agent-settings details { padding-block: 10px; border-top: 1px solid var(--border, #555); }
+
+/* The list header and content share normal grid rows. Their height depends on
+ * the space left by navigation and Chat, rather than the window's width. */
+.is-list-view .agent-universe-stage {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.is-list-view .agent-universe-mapbar {
+  position: relative;
+  grid-row: 1;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-height: none;
+  overflow: visible;
+  gap: 12px;
+}
+.is-list-view .agent-universe-map-identity-stack { flex: 0 1 160px; min-width: 0; }
+.is-list-view .agent-universe-map-actions {
+  flex: 1 1 420px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  gap: 4px;
+}
+.is-list-view .agent-universe-visual-plane {
+  position: relative;
+  grid-row: 2;
+}
+.is-list-view .agent-workspace-list,
+.is-list-view .agent-workspace-list-state {
+  padding-top: 28px;
+  padding-bottom: 28px;
+}
+.is-list-view .agent-universe-map-footer {
+  position: relative;
+  grid-row: 3;
+  inset: auto;
+  padding: 10px 16px;
+}

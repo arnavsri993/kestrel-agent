@@ -159,6 +159,34 @@ try {
 	});
 	if (!memorySeed.ok || !memorySeed.memoryDocument?.id) throw new Error("Could not seed the isolated Memory fixture.");
 
+	await page.setViewportSize({ width: 1320, height: 860 });
+	await audit("agent-header-with-navigation-and-chat", "desktop-split", async () => {
+		await navigate("agent");
+		const expandNavigation = page.getByRole("button", { name: "Expand sidebar", exact: true });
+		if (await expandNavigation.isVisible()) await expandNavigation.click();
+		const toggle = page.locator("#browser-agent-toggle");
+		await toggle.click();
+		await page.waitForFunction(() => {
+			const workspace = document.querySelector(".agent-universe-workspace");
+			return workspace && workspace.getBoundingClientRect().width < 700;
+		});
+			const bounds = await page.locator(".agent-universe-mapbar").evaluate(header => {
+				const root = header.closest(".agent-universe-workspace")!.getBoundingClientRect();
+				const controls = [...header.querySelectorAll<HTMLElement>("button, input")].filter(element => element.getClientRects().length).map(element => ({ label: element.getAttribute("aria-label") ?? element.textContent, rect: element.getBoundingClientRect().toJSON() }));
+				return { root: root.toJSON(), controls, header: header.getBoundingClientRect().toJSON(), list: header.parentElement!.querySelector(".agent-workspace-list")!.getBoundingClientRect().toJSON() };
+			});
+			for (const { label, rect } of bounds.controls) {
+				assert(rect.x >= bounds.root.x - 1 && rect.right <= bounds.root.right + 1, `${label} escapes the Agent workspace`);
+			}
+			for (let i = 0; i < bounds.controls.length; i++) for (let j = i + 1; j < bounds.controls.length; j++) {
+				const a = bounds.controls[i]!, b = bounds.controls[j]!;
+				assert(!(a.rect.x < b.rect.right - 1 && b.rect.x < a.rect.right - 1 && a.rect.y < b.rect.bottom - 1 && b.rect.y < a.rect.bottom - 1), `${a.label} overlaps ${b.label}`);
+			}
+			assert(bounds.list.y >= bounds.header.bottom - 1, "Agent list is covered by its header");
+			writeFileSync(join(evidence, "desktop-split-agent-header-geometry.json"), JSON.stringify(bounds, null, 2));
+	});
+	if (await page.locator("#browser-agent-toggle").getAttribute("aria-expanded") === "true") await page.locator("#browser-agent-toggle").click();
+
   for (const size of [{ name: "desktop", width: 1440, height: 900 }, { name: "compact", width: 800, height: 660 }]) {
     await page.setViewportSize({ width: size.width, height: size.height });
     for (const id of Object.keys(KESTREL_APP_PAGES)) {
