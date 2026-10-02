@@ -42,7 +42,7 @@ must be updated only after the corresponding operation is verified.
 | 4. Sustained progress / fewer interruptions | Routing/worktree cancellation gaps, ineffective background pause and stranded failed approval | Integration owner | Durable execution and safe shutdown | Pause/claims/cancellation/lease implemented; approval failure retirement under correction | Prior 46 focused fault tests and full 1,659-test verification; new approval regression needs current checks | Prior control `660d0429` and picker `0dfb9710`; new correction pending | Not deployed |
 | 5. Model / effort selection | Picker lacked minimal/ultra; model listing could overstate transport support | Runtime specialist | Account-specific discovery and wire validation | Exact advertised efforts, model/transport intersection, tools required through fallback | Four accounts sent exact `gpt-6-astra` / `high`; registrations and reads observed; other efforts/modalities not live-verified | Local `2f51c29b` plus shared/picker changes | Not deployed |
 | 6. Persistent engineering agent / four accounts | Existing core must supply safe persistent work without a parallel engine | Integration owner | Canonical reviewed build; scoped provider/tool/stop/restart acceptance | Existing scheduler control hardening; production agent ID none, enabled false | Four profiles execute real tools; independent quota pools unverified; scheduler fault fixtures pass | Current mission branch | Production agent not enabled |
-| 7. PR integration | 21 other PRs plus mission #810; required independent latest-push approval absent | Integration owner | Exact-head review, passing CI, compatibility and protection | Every snapshot PR has a disposition; maintenance slices #805/#806/#808 reconciled; #811 reviewed and held for reproduced failures and CI | #810 prior head `0dfb9710` has passing CI/CodeQL; new approval correction needs fresh checks | Source integrated; no GitHub merge | Not deployed |
+| 7. PR integration | 17 other PRs plus mission #810; required independent latest-push approval absent | Integration owner | Exact-head review, passing CI, compatibility and protection | Every snapshot PR has a disposition; maintenance slices #805/#806/#808 reconciled; #811 reviewed and held for reproduced failures and CI | #810 prior head `0dfb9710` has passing CI/CodeQL; new approval correction needs fresh checks | Source integrated; no GitHub merge | Not deployed |
 | 8. Changes appearing in actual app | Concurrent legacy installation confirmed; existing running process predates replacement | Integration/deployment owner | Fresh integrated main, owner and competing installer coordination | Kernel installation lock, ownership/main/hash/downgrade gates and visible component diagnostic | Clean `0dfb9710` package and packaged smokes pass; candidate component IDs match; canonical identity unverified | Prior source candidate `0dfb9710`; new correction pending | Canonical app preserved; updated install pending |
 | 9. Competitor overlap / switching reasons | Dots and Grok Bot share the persistent teammate promise | Integration owner | Matched journey evidence | Compare delegated responsibility, follow-through and verifiable outcomes | Current primary sources refreshed; zero standalone competitor trials or leadership claim | Mission benchmark documentation | Not applicable |
 | 10. Measurable reliability | Test counts do not establish live usefulness | Integration owner | Repeated real user journeys | Explicit evidence classes and 9/10 live journey target retained | Complete prior `0dfb9710` verify/package; bounded provider and scheduler tasks; new failure regression needs checks | Prior candidate `0dfb9710` passed full verify | Canonical visible journeys pending |
@@ -343,3 +343,22 @@ There are 22 open PRs, including this mission. Required independent approval,
 canonical deployment ownership and all remaining live journey gates still apply.
 The mission has not merged or installed anything. Production Engineering agent
 ID remains none, enabled false, without a task or scope.
+
+
+## Later October 2 main advance and shortcut verification
+
+Main advanced again outside this mission to `3e932358` through #791, #806,
+#809 and #808. The source reconciliation retains all mission gates plus the
+new native-extension smoke. Confirmed people/provenance survive source sync;
+the already reconciled oversized tool-result guard remains equivalent to main.
+There are 18 open PRs including this mission; #811 remains open and held.
+
+All remote CI/CodeQL gates passed for `e552b939`, but local aggregate verification
+failed when the browser test sent keyUp to a native view already detached by
+Cmd+L. A bounded actual Electron test proved the intended transition: native
+page attached, address field focused with page detached after keyDown, then
+page restored after renderer keyUp and Escape. The smoke now asserts that
+transition and releases the key in the focused renderer. Product source did
+not require changing. A separate browser rerun stopped before that scenario
+at the existing sidebar-resize assertion, whose failure is recorded separately.
+Fresh exact combined verification remains required; no full local pass is claimed.

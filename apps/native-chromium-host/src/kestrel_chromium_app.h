@@ -23,7 +23,8 @@ class KestrelChromiumApp final : public CefApp,
   using BrowserContextInitialized = std::function<void()>;
 
   explicit KestrelChromiumApp(
-      BrowserContextInitialized on_context_initialized = {});
+      BrowserContextInitialized on_context_initialized = {},
+      bool extension_workbench = false);
 
   void OnBeforeCommandLineProcessing(
       const CefString& process_type,
@@ -35,6 +36,7 @@ class KestrelChromiumApp final : public CefApp,
   CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override;
 
   void OnContextInitialized() override;
+  void OnBeforeChildProcessLaunch(CefRefPtr<CefCommandLine> command_line) override;
 
   void OnWebKitInitialized() override;
   void OnContextCreated(CefRefPtr<CefBrowser> browser,
@@ -50,6 +52,7 @@ class KestrelChromiumApp final : public CefApp,
 
  private:
   BrowserContextInitialized on_context_initialized_;
+  bool extension_workbench_;
   CefRefPtr<CefMessageRouterRendererSide> renderer_router_;
 
   IMPLEMENT_REFCOUNTING(KestrelChromiumApp);

@@ -148,3 +148,9 @@ approval controls alongside usage polling and tab interactions. Quota-handling
 integration defects identified during independent review require corrections
 and fresh checks. #811 remains open and held at its recorded exact head. No
 protected merge, PR closure or canonical installation was performed here.
+
+
+Later main `3e932358` also includes #791, #806, #809 and #808 merged outside
+this mission. The live open set is 18 PRs including #810. Fresh-main source
+compatibility and validation are being rechecked; prior exact-head results
+remain separate. #811 is still held at its recorded head.
