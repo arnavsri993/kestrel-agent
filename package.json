@@ -28,6 +28,7 @@
     "test:native-chromium-core-relay": "node scripts/smoke-native-chromium-core-relay.mjs",
     "benchmark:browser-agent": "node scripts/run-browser-agent-benchmark.mjs",
     "benchmark:browser-agent:packaged:arm64": "KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel node scripts/run-browser-agent-benchmark.mjs",
+    "benchmark:source-ingestion": "KESTREL_SOURCE_INGESTION_BENCHMARK=1 vitest run packages/agent-core/src/source-ingestion.test.ts",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
