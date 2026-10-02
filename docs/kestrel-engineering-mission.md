@@ -39,13 +39,13 @@ must be updated only after the corresponding operation is verified.
 | 1. WhatsApp compatibility | Live unsupported-browser screen; Electron/app tokens exposed in UA | Browser specialist | Reviewed canonical deployment; real service | Embedded Chromium identity applied to persistent session and every view before navigation | UA/restore/session fixtures pass; real QR login across new tab/reload/restart in disposable candidate; authenticated pairing/read/connection and canonical delivery pending | Local `8e649457` plus broker hardening | Existing app preserved |
 | 2. Teams native handoff | PR #789 route/error slice useful but origin/intent needed hardening | Browser specialist | Validated main broker; reviewed canonical deployment | Bounded Teams/Cursor routes, exact-origin app grants, active-tab input and consent revalidation | Positive/hostile frame, popup, reload, revocation and failure fixtures pass; live OS handoff pending | Local `8e649457` plus broker hardening | Not deployed |
 | 3. Complex task completion | Text-only Codex route could not execute Kestrel tools | Integration owner / runtime specialist | Official dynamic-tool bridge; route readiness | Structured calls execute through existing approvals, scopes and receipts | Four live profile reads, two-file derived answer and bounded PR #809 review completed; broader multi-app reliability pending | Candidate `1a331645` plus current controls | Not deployed |
-| 4. Sustained progress / fewer interruptions | Routing/worktree cancellation gaps and ineffective background pause | Integration owner | Durable execution and safe shutdown | Persistent pause, atomic job claims, active/delegated cancellation and stale-owner lease implemented | 46 focused fault tests including two actual scheduler processes with a fixture provider; full current unit suite 1,659 passes | Current control patch; exact-head full verification pending | Not deployed |
+| 4. Sustained progress / fewer interruptions | Routing/worktree cancellation gaps and ineffective background pause | Integration owner | Durable execution and safe shutdown | Persistent pause, atomic job claims, active/delegated cancellation and stale-owner lease implemented | 46 focused fault tests including two actual scheduler processes with a fixture provider; full current unit suite 1,659 passes | Control commit `660d0429`; full exact verify passed | Not deployed |
 | 5. Model / effort selection | Picker lacked minimal/ultra; model listing could overstate transport support | Runtime specialist | Account-specific discovery and wire validation | Exact advertised efforts, model/transport intersection, tools required through fallback | Four accounts sent exact `gpt-6-astra` / `high`; registrations and reads observed; other efforts/modalities not live-verified | Local `2f51c29b` plus shared/picker changes | Not deployed |
 | 6. Persistent engineering agent / four accounts | Existing core must supply safe persistent work without a parallel engine | Integration owner | Canonical reviewed build; scoped provider/tool/stop/restart acceptance | Existing scheduler control hardening; production agent ID none, enabled false | Four profiles execute real tools; independent quota pools unverified; scheduler fault fixtures pass | Current mission branch | Production agent not enabled |
 | 7. PR integration | 23 other PRs plus mission #810; required independent latest-push approval absent | Integration owner | Exact-head review, passing CI, compatibility and protection | Every snapshot PR has a disposition; maintenance slices #805/#806/#808 reconciled; broader held reviews bounded | #810 prior head `1a331645` has passing CI/CodeQL; current patch requires new checks | Source integrated; no GitHub merge | Not deployed |
 | 8. Changes appearing in actual app | Concurrent external overwrite confirmed; installed source commit unknown | Integration/deployment owner | Fresh integrated main and owner; signed matching artifact | Kernel installation lock, ownership/main/hash/downgrade gates and visible component diagnostic | Clean `1a331645` package and packaged smokes pass; visible candidate component IDs match; installed identity unverified | Source candidate `1a331645` | Canonical app preserved; updated install pending |
 | 9. Competitor overlap / switching reasons | Dots and Grok Bot share the persistent teammate promise | Integration owner | Matched journey evidence | Compare delegated responsibility, follow-through and verifiable outcomes | Current primary sources refreshed; zero standalone competitor trials or leadership claim | Mission benchmark documentation | Not applicable |
-| 10. Measurable reliability | Test counts do not establish live usefulness | Integration owner | Repeated real user journeys | Explicit evidence classes and 9/10 live journey target retained | Prior complete candidate verify/package; current control unit/fault tests; simple live tasks only | Full current candidate rerun pending | Canonical visible journeys pending |
+| 10. Measurable reliability | Test counts do not establish live usefulness | Integration owner | Repeated real user journeys | Explicit evidence classes and 9/10 live journey target retained | Prior complete candidate verify/package; current control unit/fault tests; simple live tasks only | Control candidate `660d0429` passed full verify; picker correction pending | Canonical visible journeys pending |
 
 ## Acceptance thresholds fixed before tuning
 
@@ -216,3 +216,42 @@ Dots and Grok Bot are compared as the same persistent teammate promise.
 Private raw traces, provider/account evidence and screenshots remain outside
 Git. The mission is unfinished until the review, canonical delivery and
 production-agent acceptance boundaries are satisfied.
+
+
+## Exact control validation and remaining delivery gate
+
+Control commit `660d04295cb2e9a91af179e56b8d0644c67e99a6` completed
+the entire `corepack pnpm verify` with exit 0, including all 1,659 unit tests,
+full 50,000-record benchmark, website/browser and aggregate desktop/core/security
+checks. Generated fixture screenshots were preserved privately and restored
+before packaging. The clean package passed strict ad-hoc signing and packaged
+smoke. A separate packaged production-path check exercised the visible
+Background work control: pause survived application restart and a 30-second
+desktop scheduler cycle, resume completed the same job exactly once, and active
+cancellation closed the local fixture provider's HTTP request and terminalized
+the run while retaining the reusable agent. This is fixture-provider evidence.
+
+Three bounded real-provider scheduler trials have differing outcomes. Profile
+2 failed before any read; its contemporaneous quota probe reported the five-hour
+window 100% used. Profile 4's first trial verified both reads but failed before
+completion; its failure cause was not captured and is unresolved. A diagnostic
+trial on profile 4 completed and persisted the expected derived answer after
+restoring the paused job, with no dispatch while paused and no second dispatch.
+It used six actual Astra turns at provider-default effort, five verified reads
+(including repeated reads of alpha.txt), and 80.001 seconds. This is one
+successful simple scheduled task, not 9/10 reliability, automatic account
+failover, explicit High effort, production Engineering-agent activation or a
+complex multi-app result. User profiles and account preferences were unchanged.
+
+Remote Core/security and CodeQL passed at `660d0429`; desktop CI failed the
+model-picker 600-by-450 bounds assertion after native resize. Source inspection
+found positioning measured the opening animation's transformed dimensions and
+did not fully clamp the vertical position. The focused correction uses layout
+dimensions and viewport clamping; the check retains its exact bounds requirement
+and waits for resize/React/animation frames to settle. New exact-head validation
+and CI are required for that correction.
+
+The other eligible maintainer, `saiaathish`, was requested to review PR #810.
+GitHub still requires the independent latest-push approval. The mission owns
+that coordination; no protection was bypassed, app replaced, profile reset or
+production persistent agent enabled.

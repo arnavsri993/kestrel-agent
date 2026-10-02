@@ -4,7 +4,7 @@ Checked against primary documentation on **October 1, 2026**. This is a journey 
 
 ## What Kestrel actually demonstrated
 
-On four connected Codex accounts, one bounded live `gpt-6-astra` / `high` turn per account requested `workspace.read`; Kestrel's existing AgentLoop/runtime executed each scoped fixture read and recorded a **verified RuntimeToolExecution** containing the expected fixture marker. All four registrations reported effective Astra, read-only sandbox, and no sandbox network access; each outgoing turn retained the requested model and effort. These four runs intentionally stopped at a one-turn bound, before a final completion answer.
+On four connected Codex profiles, one bounded live `gpt-6-astra` / `high` turn per account requested `workspace.read`; Kestrel's existing AgentLoop/runtime executed each scoped fixture read and recorded a **verified RuntimeToolExecution** containing the expected fixture marker. All four registrations reported effective Astra, read-only sandbox, and no sandbox network access; each outgoing turn retained the requested model and effort. These four runs intentionally stopped at a one-turn bound, before a final completion answer.
 
 One additional isolated task on account 3 read `alpha.txt` (`ALPHA=12`) and `beta.txt` (`BETA=30`) through Kestrel, then returned exactly `TOTAL=42; inputs=alpha.txt,beta.txt`. Both reads were verified; the run and its persisted database state were `completed`. It used three Astra High turns within a four-turn cap. No paid fallback or production agent was created. Read-only tools deliberately do not generate mutation ActionReceipts; the verified records here are RuntimeToolExecutions.
 
@@ -32,4 +32,21 @@ These are proposed acceptance thresholds, not results or authorization to execut
 2. **Inspectable continuity makes recurring work worth trusting.** On 10 existing task restart/resume journeys and 10 scoped-memory checks, require at least 9 correct recoveries/recalls in each set, every returned fact traceable to its current source, and no cross-agent/private-profile disclosure. In 10 denied-scope or withdrawn-permission probes require 10 correct blocks and zero claimed actions without evidence. Compare with an available Hermes/OpenClaw persistent-work journey and an available Dots/Grok/Cowork journey before claiming an advantage. Current proof covers one persisted completed run, not restarts, recall, scheduling, or adversarial boundaries.
 3. **Existing subscriptions remain usable without changing the user's deal.** Across 10 bounded quota/timeout/account-availability scenarios, require model, effort, tool catalog, and Kestrel authority preserved in every attempted route; complete at least 8 scenarios that have an eligible account. Require zero paid fallback and an explicit blocker for every scenario with no eligible account. Test route selection and failover separately from simple account access. Then compare setup and recovery friction against standalone Codex and the user's present workflow. Current proof is four successful account reads plus one full completion; automatic failover was tested synthetically, not observed live.
 
-The supported claim today is narrow: **Kestrel can use four existing Codex accounts for actual Astra High tool requests, and can complete one simple scoped two-file task while keeping execution in Kestrel.** A leader, parity, production-readiness, or reason-to-switch claim needs the matched user journeys above.
+The supported claim today is narrow: **Kestrel can use four existing Codex profiles for actual Astra High tool requests, and can complete one simple scoped two-file task while keeping execution in Kestrel.** A leader, parity, production-readiness, or reason-to-switch claim needs the matched user journeys above.
+
+
+## Subsequent Kestrel evidence and limits
+
+The later candidate completed a bounded real PR #809 source-review artifact
+(six explicit Astra High turns, five verified read/write tools, 77.635 seconds),
+and a real scheduled two-file task after paused-state restart restoration
+(six Astra turns at provider-default effort, five verified reads, 80.001 seconds).
+Two earlier live scheduled trials failed; one profile's quota probe was fully
+used, and the other trial's completion failure remains unclassified. A separate
+packaged fixture verified the visible pause/resume control, no timer dispatch
+while paused, one dispatch after resume and active request cancellation. These
+are separate bounded results, not a broad reliability rate or a continuously
+working production teammate. Four authenticated profiles expose three distinct
+emails; independent quota pools are unverified. Standalone competitor trials
+remain zero. See the authoritative mission register for exact commits and
+canonical delivery boundaries.
