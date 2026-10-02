@@ -807,6 +807,32 @@
 	font-size: 11px;
 }
 
+.unified-ui .computer-use-foreground-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 18px;
+	max-width: 600px;
+	margin-top: 15px;
+	padding: 11px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-control);
+}
+
+.unified-ui .computer-use-foreground-row > span {
+	display: grid;
+	gap: 3px;
+}
+
+.unified-ui .computer-use-foreground-row strong {
+	font-size: 11px;
+}
+
+.unified-ui .computer-use-foreground-row small {
+	color: var(--faint);
+	font-size: 10px;
+}
+
 .unified-ui .computer-use-loading,
 .unified-ui .computer-use-error {
 	margin-top: 12px;

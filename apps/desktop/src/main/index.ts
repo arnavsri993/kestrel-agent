@@ -561,6 +561,8 @@ function updatePaymentOverlay(
 
 const supervisor = new CoreSupervisor(
   (request, signal) => {
+    if (request.operation === "computer-use")
+      return computerUseManager().handle(request.request, signal);
     if (isUserBrowserBackendWireRequest(request)) {
       if (request.operation === "visible-tabs") {
         return Promise.resolve(
@@ -3781,7 +3783,10 @@ function registerIpc(): void {
       return { ok: true, computerUseStatus };
     }
     if (request.type === "computer-use-update") {
-      const settings = await computerUseManager().setEnabled(request.enabled);
+      const settings = await computerUseManager().setEnabled(
+        request.enabled,
+        request.foregroundEnabled,
+      );
       browserService.setComputerUseEnabled(settings.enabled);
       const computerUseStatus = await computerUseManager().status();
       return { ok: true, computerUseStatus };
