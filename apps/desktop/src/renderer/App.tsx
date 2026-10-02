@@ -145,6 +145,7 @@ import {
 	CommandCenter,
 } from "./components/browser/CommandCenter";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
+import { RuntimeToolMessage } from "./components/RuntimeToolMessage";
 import { ComputerUseSettings } from "./components/ComputerUseSettings";
 import {
 	parseUIPresentationMessage,
@@ -3055,6 +3056,9 @@ function RuntimeConversation({
 	const [actionReceipts, setActionReceipts] = useState<ActionReceipt[]>([]);
 	const [humanInputRequests, setHumanInputRequests] = useState<HumanInputRequest[]>([]);
 	const [executions, setExecutions] = useState<RuntimeToolExecution[]>([]);
+	const messageListRef = useRef<HTMLDivElement | null>(null);
+	const followMessagesRef = useRef(true);
+	const previousMessageScrollTopRef = useRef(0);
 	const [skillBusy, setSkillBusy] = useState(false);
 	const [skillNotice, setSkillNotice] =
 		useState<SkillLearningProposal | null>(null);
@@ -3064,6 +3068,18 @@ function RuntimeConversation({
 		execution: RuntimeToolExecution;
 	} | null>(null);
 	const [error, setError] = useState("");
+	useEffect(() => {
+		followMessagesRef.current = true;
+		previousMessageScrollTopRef.current = 0;
+	}, [activeSessionId]);
+	useLayoutEffect(() => {
+		if (!visible || !followMessagesRef.current || transcriptTarget || loadingEarlierMessages) return;
+		const list = messageListRef.current;
+		if (list) {
+			list.scrollTop = list.scrollHeight;
+			previousMessageScrollTopRef.current = list.scrollTop;
+		}
+	}, [visible, messages, streamText, optimisticUser, optimisticSteering, busy, pending, latestRun, transcriptTarget, loadingEarlierMessages]);
 	const streamIdRef = useRef<string | null>(null);
 	const streamSessionIdRef = useRef<string | null>(null);
 	const activeSessionIdRef = useRef(activeSessionId);
@@ -3528,6 +3544,7 @@ function RuntimeConversation({
 				`[data-runtime-message-id="${CSS.escape(transcriptTarget.messageId)}"]`,
 			);
 			if (!target) return;
+			followMessagesRef.current = false;
 			target.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
 			target.focus({ preventScroll: true });
 			onTranscriptTargetHandled?.();
@@ -3647,6 +3664,8 @@ function RuntimeConversation({
 		() =>
 			window.kestrel.onRuntimeEvent((event) => {
 				if (event.sessionId !== activeSessionIdRef.current) return;
+				if (event.type === "message.appended" && streamSessionIdRef.current !== event.sessionId)
+					void loadSession(event.sessionId).catch(() => undefined);
 				if (event.type.startsWith("tool."))
 					setToolActivity((current) => [...current, event].slice(-12));
 				if (event.type === "question.created" || event.type === "question.updated")
@@ -4480,7 +4499,18 @@ function RuntimeConversation({
 					</p>
 				</div>
 			) : (
-				<div className="message-list">
+				<div className="message-list" ref={messageListRef} onScroll={(event) => {
+					const list = event.currentTarget;
+					if (list.scrollHeight - list.scrollTop - list.clientHeight <= 80)
+						followMessagesRef.current = true;
+					else if (list.scrollTop < previousMessageScrollTopRef.current)
+						followMessagesRef.current = false;
+					previousMessageScrollTopRef.current = list.scrollTop;
+				}} onWheel={(event) => {
+					if (event.deltaY < 0) followMessagesRef.current = false;
+				}} onKeyDown={(event) => {
+					if (["ArrowUp", "PageUp", "Home"].includes(event.key)) followMessagesRef.current = false;
+				}}>
 					{hasEarlierMessages && (
 						<button
 							type="button"
@@ -4555,17 +4585,7 @@ function RuntimeConversation({
 								<PresentationCard presentation={presentation} />
 							</div>
 						) : (
-							<div
-								className="work-summary"
-								key={message.id}
-								data-runtime-message-id={message.id}
-								tabIndex={-1}
-							>
-								<Icon name="check" />
-								<span>
-									{message.toolName ?? "Tool result"}: {message.content}
-								</span>
-							</div>
+							<RuntimeToolMessage key={message.id} message={message} />
 						);
 					})}
 					{humanInputRequests.map((request) => (
