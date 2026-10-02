@@ -50,17 +50,17 @@ export function AgentSettingsDialog({ session, sessions, onClose, onSaved }: {
 		finally { setBusy(false); }
 	}
 	const editor = (target: RuntimeSession) => <form onSubmit={event => { event.preventDefault(); void save(target, event.currentTarget); }}>
-		<label>Name<input name="name" defaultValue={target.title} required maxLength={200} /></label>
+		<label>Name<input aria-label="Name" name="name" defaultValue={target.title} required maxLength={200} /></label>
 		{target.specialistDefinition && <>
-			<label>Purpose<textarea name="purpose" required maxLength={2000} defaultValue={target.specialistDefinition.purpose} /></label>
-			<label><input type="checkbox" name="enabled" defaultChecked={target.specialistDefinition.enabled} />Available for delegation</label>
+			<label>Purpose<textarea aria-label="Purpose" name="purpose" required maxLength={2000} defaultValue={target.specialistDefinition.purpose} /></label>
+			<label className="persistent-agent-enabled"><input type="checkbox" name="enabled" defaultChecked={target.specialistDefinition.enabled} />Available for delegation</label>
 		</>}
-		<label>Instructions<textarea name="instructions" maxLength={20000} defaultValue={target.specialistDefinition?.instructions ?? target.agentInstructions ?? ""} /></label>
+		<label>Instructions<textarea aria-label="Instructions" name="instructions" maxLength={20000} defaultValue={target.specialistDefinition?.instructions ?? target.agentInstructions ?? ""} /></label>
 		<button type="submit" className="button secondary" disabled={busy}>Save</button>
 		{target.specialistDefinition && <button type="button" className="button secondary" disabled={busy} onClick={() => void archive(target, true)}>Archive specialist</button>}
 	</form>;
 	return <dialog ref={ref} className="persistent-agent-settings" aria-labelledby="persistent-agent-settings-title" onCancel={onClose}>
-		<header><h2 id="persistent-agent-settings-title">{session.title} settings</h2><button type="button" onClick={onClose}>Close</button></header>
+		<header><h2 id="persistent-agent-settings-title">{session.title} settings</h2><button type="button" className="button secondary" onClick={onClose}>Close</button></header>
 		{error && <p role="alert">{error}</p>}
 		{editor(session)}
 		{session.kind === "agent" && <>

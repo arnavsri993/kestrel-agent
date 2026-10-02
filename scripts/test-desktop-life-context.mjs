@@ -198,6 +198,9 @@ try {
 	await page.screenshot({ path: wideCalendarScreenshot });
 
 	await page.setViewportSize({ width: 640, height: 760 });
+	await page.waitForFunction(() => document.querySelector(".ai-browser-app")?.classList.contains("agent-sidebar-compact"));
+	const closeChat = page.getByRole("button", { name: "Close chat", exact: true });
+	if (await closeChat.isVisible()) await closeChat.click();
 	await life.getByLabel("More memory views").selectOption("overview");
 	await life.getByRole("heading", { name: "What Kestrel understands" }).waitFor();
 	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);

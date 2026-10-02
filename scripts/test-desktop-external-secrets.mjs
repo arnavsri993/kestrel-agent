@@ -94,6 +94,9 @@ try {
 	await page.screenshot({ path: screenshotPath, fullPage: true });
 
 	await page.setViewportSize({ width: 640, height: 760 });
+	const closeChat = page.getByRole("button", { name: "Close chat", exact: true });
+	await closeChat.waitFor();
+	await closeChat.click();
 	const overflow = await page.evaluate(
 		() =>
 			document.documentElement.scrollWidth >

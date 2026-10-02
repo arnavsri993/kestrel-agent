@@ -2791,5 +2791,7 @@
 .persistent-agent-settings header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .persistent-agent-settings form { display: grid; gap: 12px; padding-block: 12px; }
 .persistent-agent-settings label { display: grid; gap: 6px; }
+.persistent-agent-settings .persistent-agent-enabled { display: flex; align-items: center; gap: 9px; }
+.persistent-agent-settings .persistent-agent-enabled input { width: 16px; height: 16px; margin: 0; flex: 0 0 auto; }
 .persistent-agent-settings textarea { min-height: 80px; resize: vertical; }
 .persistent-agent-settings details { padding-block: 10px; border-top: 1px solid var(--border, #555); }
