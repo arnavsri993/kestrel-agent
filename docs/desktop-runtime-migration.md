@@ -150,6 +150,10 @@ network requests. Use test data here, not personal accounts.
 - Remote pages, extension pages, and even the bundled shell file have no native
   bridge in this mode; renderer/GPU/utility processes remain sandboxed.
 
+This smoke is part of `corepack pnpm verify` and the macOS core CI job so the
+extension workbench's defining security and compatibility boundary is checked
+by broad local and pull-request validation.
+
 Screenshots are written to `.tmp/native-extension-evidence`. A just-built
 artifact can be tested without rebuilding by setting `KESTREL_NATIVE_TEST_APP`
 to its absolute `.app` path. The test always creates its own temporary profile
