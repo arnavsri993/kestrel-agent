@@ -31,8 +31,10 @@ mkdirSync(resolve("artifacts/screenshots/desktop/setup-revised"), {
 let application;
 
 try {
+	const packaged = process.env.KESTREL_DESKTOP_EXECUTABLE;
 	application = await electron.launch({
-		args: [resolve("apps/desktop/out/main/index.js")],
+		...(packaged ? { executablePath: resolve(packaged) } : {}),
+		args: [...(packaged ? [] : [resolve("apps/desktop/out/main/index.js")]), "--use-mock-keychain"],
 		env: { ...process.env, KESTREL_TEST_USER_DATA: join(root, "user-data") },
 	});
 	const page = await application.firstWindow();
@@ -94,6 +96,9 @@ try {
 	await page.screenshot({ path: screenshotPath, fullPage: true });
 
 	await page.setViewportSize({ width: 640, height: 760 });
+	const chatToggle = page.locator("#browser-agent-toggle");
+	if (await chatToggle.getAttribute("aria-expanded") !== "true")
+		await chatToggle.click();
 	const closeChat = page.getByRole("button", { name: "Close chat", exact: true });
 	await closeChat.waitFor();
 	await closeChat.click();

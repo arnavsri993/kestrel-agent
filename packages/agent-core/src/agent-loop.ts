@@ -40,6 +40,7 @@ import { maskSensitiveText } from "@kestrel/shared-types";
 import { UsageGovernor } from "./usage-governor";
 import { isTransientComputerScreenshot, prepareComputerScreenshot } from "./computer-observation-model";
 import { localToolCatalog, LOCAL_TOOL_DISCOVERY_INSTRUCTIONS } from "./local-tool-catalog";
+import { localBrowserContext } from "./local-browser-context";
 import {
 	decideAdaptiveExecution,
 	emptyAdaptiveExecutionBudget,
@@ -1224,7 +1225,7 @@ export class AgentLoop {
 							] : localTools ? [
 								...modelMessages,
 								{ role: "system" as const, content: textContent(LOCAL_TOOL_DISCOVERY_INSTRUCTIONS) },
-							] : modelMessages).map(message => ({
+							] : modelMessages).map(message => explicitLocalRoute ? localBrowserContext(message) : message).map(message => ({
 								...message,
 								content: message.content.map(part => part.type === "text"
 									? { ...part, text: this.runtime.taskSecrets.redact(session.id, part.text) } : part),

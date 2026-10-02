@@ -11,6 +11,34 @@ const tools: ModelTool[] = ["tools.search", "browser.open-tab", ...Array.from({ 
 const discovery = (status: string, active: unknown[]): ModelMessage => ({ role: "tool", toolName: "tools.search", content: textContent(JSON.stringify({ status, output: { active } })) });
 
 describe("local progressive tool catalog", () => {
+	it.each([true, false])("projects browser context only for an explicit local route: local=%s", async local => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		try {
+			const runtime = new AgentRuntime(database);
+			const session = runtime.createSession({ title: "Browser evidence projection" });
+			const name = "Observed exact-text-0aA-9zZ";
+			runtime.registerExternalTool({ descriptor: { name: "browser.visible-snapshot", title: "Read", description: "Read fixture", category: "web", riskLevel: "read_only", readOnly: true, requiresWorkspace: false, source: "mcp", tags: [] }, inputSchema: { type: "object" }, execute: async () => ({ url: "https://example.com/fixture", trust: "untrusted_browser", accessibilityTree: { nodes: [{ role: { value: "StaticText" }, name: { value: name, sources: [{ value: { value: name }, type: "contents" }] }, chromeRole: { value: 158 } }] } }) });
+			runtime.allowTool(session.id, "browser.visible-snapshot");
+			let calls = 0;
+			const provider: ModelProvider = { id: "projection-fixture", capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local }, complete: async request => {
+				calls++;
+				if (calls === 2) {
+					const tool = request.messages.find(message => message.role === "tool" && message.toolName === "browser.visible-snapshot");
+					const content = tool?.content.find(part => part.type === "text");
+					if (!content || content.type !== "text") throw new Error("Missing observation");
+					const output = JSON.parse(content.text).output;
+					expect(output.trust).toBe("untrusted_browser");
+					if (local) expect(output.pageText).toEqual([name]);
+					else expect(output.accessibilityTree.nodes[0].name.sources).toBeDefined();
+				}
+				return { providerId: "projection-fixture", model: request.model, text: calls === 2 ? name : "", toolCalls: calls === 1 ? [{ id: "read", name: "browser.visible-snapshot", arguments: {} }] : [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: calls === 1 ? "tool_calls" : "stop" };
+			} };
+			const result = await new AgentLoop(database, runtime, new ProviderPool([provider])).run({ sessionId: session.id, model: "fixture", providerIds: [provider.id], allowedTools: ["browser.visible-snapshot"], maximumTurns: 3, userContent: textContent("Read the fixture.") });
+			expect(result.run.status).toBe("completed");
+			const stored = runtime.listMessages(session.id).find(message => message.role === "tool" && message.toolName === "browser.visible-snapshot");
+			expect(JSON.parse(stored!.content).output.accessibilityTree.nodes[0].name.sources).toBeDefined();
+		} finally { database.close(); }
+	});
 	it.each(["continue", "plan-only", "repeated-plan", "final-turn", "nonlocal"])("bounds an unfinished local execution plan: %s", async mode => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		try {
