@@ -690,12 +690,18 @@ describe("model provider adapters", () => {
 		expect(requestBody.think).toBe(false);
 	});
 
-	it("executes a corrected Ollama read instead of replaying an earlier turn's failure", async () => {
+	it.each(["Ollama", "OpenAI-compatible"])("executes a corrected %s read instead of replaying an earlier turn's failure", async (adapter) => {
 		let generation = 0;
 		const baseUrl = await serve((_request, response) => {
 			generation += 1;
-			response.writeHead(200, { "content-type": "application/x-ndjson" });
-			response.end(`${JSON.stringify({ message: { role: "assistant", content: "", tool_calls: [{ function: { name: "test.observe", arguments: { target: generation === 1 ? "missing" : "corrected" } } }] }, done: true })}\n`);
+			const args = { target: generation === 1 ? "missing" : "corrected" };
+			if (adapter === "Ollama") {
+				response.writeHead(200, { "content-type": "application/x-ndjson" });
+				response.end(`${JSON.stringify({ message: { role: "assistant", content: "", tool_calls: [{ function: { name: "test.observe", arguments: args } }] }, done: true })}\n`);
+			} else {
+				response.writeHead(200, { "content-type": "text/event-stream" });
+				response.end(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "test.observe", arguments: JSON.stringify(args) } }] }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`);
+			}
 		});
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);
@@ -712,7 +718,9 @@ describe("model provider adapters", () => {
 		});
 		runtime.allowTool(session.id, "test.observe");
 		try {
-			const provider = new OllamaChatProvider({ baseUrl });
+			const provider = adapter === "Ollama"
+				? new OllamaChatProvider({ baseUrl })
+				: new OpenAIChatCompletionsProvider({ baseUrl, id: "local-compatible", defaultModel: "local-test", local: true });
 			const request = { model: "local-test", messages: [{ role: "user" as const, content: textContent("Read the fixture") }] };
 			const first = (await provider.complete(request)).toolCalls[0]!;
 			const failed = await runtime.callTool(session.id, first.name, first.arguments, { idempotencyKey: `fixture-run:${first.id}` });

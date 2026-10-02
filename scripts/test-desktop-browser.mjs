@@ -444,6 +444,7 @@ async function assertBrowserChromeLayout({
 	sidebarVisible = true,
 } = {}) {
 	const layout = await page.evaluate(() => {
+		const agent = document.querySelector(".agent-sidebar");
 		const bounds = (selector) => {
 			const node = document.querySelector(selector);
 			if (!node) return null;
@@ -471,6 +472,9 @@ async function assertBrowserChromeLayout({
 			recommendations: bounds(".kestrel-widget-canvas"),
 			viewport: bounds("#browser-viewport"),
 			agent: bounds(".agent-sidebar"),
+			agentHidden: agent?.getAttribute("aria-hidden") === "true",
+			agentInert: agent?.inert === true,
+			agentOverlay: agent?.classList.contains("agent-sidebar-overlay") === true,
 			toolbarDragFill: bounds(".browser-toolbar-drag-fill"),
 			toolbarAppRegion: getComputedStyle(document.querySelector(".browser-toolbar")).getPropertyValue(
 				"-webkit-app-region",
@@ -618,7 +622,15 @@ async function assertBrowserChromeLayout({
 		layout.viewport.bottom <= layout.app.bottom,
 		"Browser content must stay inside the window",
 	);
-	if (layout.agent && layout.agent.width > 0) {
+	if (layout.agentHidden) {
+		assert(layout.agentInert, "Closed Chat must not expose interactive controls");
+		assert.equal(
+			layout.viewport.right,
+			layout.app.right,
+			"Closed Chat must leave the full browser width available",
+		);
+	} else if (layout.agent && layout.agent.width > 0) {
+		assert(!layout.agentOverlay, "Browser chrome checks require compact Chat to be closed");
 		assert(
 			layout.viewport.right <= layout.agent.x,
 			"Browser content must stay before the lower Agent rail",
@@ -1100,8 +1112,12 @@ try {
 	await page.locator("#new-tab-title").waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 
-	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().click();
 	const agentSidebar = page.locator(".agent-sidebar");
+	const agentToggle = page.locator("#browser-agent-toggle");
+	if ((await agentToggle.getAttribute("aria-expanded")) !== "true") {
+		await agentToggle.click();
+	}
+	await agentSidebar.locator(".agent-sidebar-collapse").click();
 	assert.equal(await agentSidebar.getAttribute("aria-hidden"), "true");
 	assert.equal(
 		await agentSidebar.evaluate((sidebar) => sidebar.inert),
@@ -1117,13 +1133,28 @@ try {
 			}),
 		false,
 	);
-	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).waitFor();
+	await agentToggle.waitFor();
+	assert.equal(await agentToggle.getAttribute("aria-expanded"), "false");
 	await page.reload();
 	await page.locator("#new-tab-title").waitFor();
-	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
-	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().waitFor();
+	assert.equal(await agentToggle.getAttribute("aria-expanded"), "false");
+	await agentToggle.click();
+	await agentSidebar.locator(".agent-sidebar-collapse").waitFor();
 	assert.equal(await agentSidebar.evaluate((sidebar) => sidebar.inert), false);
 	await page.locator("#runtime-prompt").waitFor();
+	if (await agentSidebar.evaluate((sidebar) => sidebar.classList.contains("agent-sidebar-overlay"))) {
+		await agentSidebar.locator(".agent-sidebar-collapse").click();
+		// The remaining journey exercises tabs and Chat together. Compact Chat
+		// deliberately owns the workspace, so use the docked desktop layout.
+		await application.evaluate(({ BrowserWindow }) => {
+			const window = BrowserWindow.getAllWindows().find(
+				(candidate) => !candidate.isDestroyed() && !candidate.webContents.getURL().includes("petOverlay=1"),
+			);
+			if (!window) throw new Error("The Kestrel window is unavailable.");
+			window.setSize(1440, 900);
+		});
+		await page.waitForFunction(() => !document.querySelector(".agent-sidebar")?.classList.contains("agent-sidebar-overlay"));
+	}
 
 	assert.equal(await page.locator(".runtime-suggestions").count(), 0);
 	await page
