@@ -247,6 +247,21 @@ describe("account-aware model catalog", () => {
 		database.close();
 	});
 
+ it("rediscovers a fresh catalog when the adapter gains tool support", async () => {
+  const database = new KestrelDatabase(":memory:", createEncryptionKey());
+  const first = provider({ id: "bridge-account", providerId: "codex", accountId: "bridge-account", displayName: "Codex", discovery: async () => [discovered("model")] });
+  const old = { ...first, capabilities: { ...first.capabilities, tools: false } };
+  const catalog = new ModelCatalog(database, [old]);
+  await catalog.refresh([old]);
+  const changed = { ...first, capabilities: { ...first.capabilities, tools: true } };
+  const reloaded = new ModelCatalog(database, [changed]);
+  expect(reloaded.list()[0]!.discovery.state).toBe("idle");
+  expect(reloaded.modelsForEndpoint(changed.id)).toEqual([]);
+  await reloaded.refreshStale([changed]);
+  expect(reloaded.list()[0]!.discovery.state).toBe("fresh");
+  database.close();
+ });
+
 	it("invalidates a stored account catalog when its connection revision changes", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const first = provider({

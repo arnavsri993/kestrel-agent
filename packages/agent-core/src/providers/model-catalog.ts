@@ -348,8 +348,11 @@ export class ModelCatalog {
 			// An endpoint can keep its stable account ID while its base URL, headers,
 			// credential, or enablement changes. Reusing that account's old catalog
 			// would turn a previous endpoint's entitlement into a false fresh result.
+   // Adapter capability changes also require rediscovery (for example a newly
+   // supported tool bridge must not retain a fresh text-only model catalog).
 			const reusableEndpoint =
-				storedEndpoint?.configurationVersion === identity.configurationVersion
+				storedEndpoint?.configurationVersion === identity.configurationVersion &&
+    JSON.stringify(storedEndpoint?.capabilities) === JSON.stringify(identity.capabilities)
 					? storedEndpoint
 					: undefined;
 			// A fallback is only authoritative when the adapter has no supported

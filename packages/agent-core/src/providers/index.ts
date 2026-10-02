@@ -11,4 +11,5 @@ export * from "./openai-responses";
 export * from "./provider-pool";
 export * from "./provider-usage";
 export * from "./subscription-cli";
+export * from "./transport-capability";
 export * from "./types";

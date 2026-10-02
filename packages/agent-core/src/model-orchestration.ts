@@ -494,7 +494,7 @@ function baselineCapabilities(
 			? 0.68
 			: 0.48;
 	scores.tool_use =
-		(useModelCapabilities ? model?.capabilities.tools : provider.capabilities.tools)
+		(provider.capabilities.tools && (!useModelCapabilities || model?.capabilities.tools))
 			? 0.75
 			: 0;
 	scores.image_understanding =
@@ -598,9 +598,8 @@ function profileFromProvider(
 				: {}),
 		},
 		features: {
-			tools: useModelCapabilities
-				? (model?.capabilities.tools ?? false)
-				: provider.capabilities.tools,
+			tools: provider.capabilities.tools &&
+				(!useModelCapabilities || (model?.capabilities.tools ?? false)),
 			vision: useModelCapabilities
 				? (model?.capabilities.vision ?? false)
 				: provider.capabilities.images,
@@ -1359,7 +1358,8 @@ export class AdaptiveModelRouter {
 		}
 		if (candidates.length === 0)
 			throw new Error(
-				"No configured model satisfies the task features, context, provider policy, and privacy constraints.",
+				"No configured model satisfies the task features, context, provider policy, and privacy constraints." +
+					(requirements.requiresTools ? " This task needs Kestrel tool support. Select an available tool-capable provider in Settings; text-only routes cannot execute agent work." : ""),
 			);
 		const availableScored = candidates
 			.map((profile) => this.score(profile, requirements, policy, options))

@@ -1537,7 +1537,7 @@ export const AgentRunSchema = z.object({
 	pendingToolName: z.string().min(1).optional(),
 	recovery: z
 		.object({
-			reason: z.literal("core_restarted"),
+			reason: z.enum(["core_restarted", "stale_owner"]),
 			action: z.literal("retry_last_turn"),
 		})
 		.optional(),

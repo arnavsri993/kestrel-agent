@@ -1390,6 +1390,7 @@ export class KestrelDatabase {
 		interruptedAt: string;
 		reason: string;
 		expectedSessionClaimOwnerToken?: string;
+		recoveryReason?: "core_restarted" | "stale_owner";
 	}): RetiredAgentHistory {
 		if (!input.runId) throw new Error("Interrupted agent run ID is required.");
 		if (!Number.isFinite(Date.parse(input.interruptedAt)))
@@ -1462,7 +1463,7 @@ export class KestrelDatabase {
 				...base,
 				status: "failed",
 				recovery: {
-					reason: "core_restarted",
+					reason: input.recoveryReason ?? "core_restarted",
 					action: "retry_last_turn",
 				},
 				error: input.reason,

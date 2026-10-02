@@ -1868,6 +1868,14 @@ export class AgentRuntime extends EventEmitter {
 			.sort((a, b) => a.name.localeCompare(b.name));
 	}
 
+	/** Persistent execution must retain its authorized tools through routing and fallback. */
+	requiresToolProvider(sessionId: string, allowedTools?: string[]): boolean {
+		const session = this.getSession(sessionId);
+		if (session.kind !== "agent" && !session.specialistDefinition) return false;
+		return this.discoverTools(sessionId).some((tool) =>
+			allowedTools === undefined || allowedTools.includes(tool.name));
+	}
+
 	modelTools(sessionId: string): RuntimeModelTool[] {
 		const available = new Set(
 			this.discoverTools(sessionId).map((tool) => tool.name),
