@@ -107,6 +107,7 @@ export function WritingStudio() {
         storedReasoningEffort === "high" ||
         storedReasoningEffort === "xhigh" ||
         storedReasoningEffort === "max" ||
+        storedReasoningEffort === "ultra" ||
         storedReasoningEffort === "none"
           ? storedReasoningEffort
           : "none",

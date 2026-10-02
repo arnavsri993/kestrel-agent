@@ -90,7 +90,7 @@ export interface AgentLoopInput {
 	providerIds: string[];
 	providerModels?: Record<string, string>;
 	fallbackModelIds?: string[];
-	reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+	reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 	serviceTier?: "standard" | "priority";
 	allowedTools?: string[];
 	userContent: ModelContentPart[];
@@ -135,7 +135,7 @@ export interface AgentAdaptiveEscalationUpdate {
 	providerIds: string[];
 	providerModels?: Record<string, string>;
 	fallbackModelIds?: string[];
-	reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+	reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 	serviceTier?: "standard" | "priority";
 	maximumContextCharacters?: number;
 	maximumOutputTokens?: number;

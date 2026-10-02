@@ -63,7 +63,10 @@ input.on("line", line => {
     if (message.params && message.params.cursor === "page-2") {
       return send({ id: message.id, result: { data: [{ id: "gpt-hidden", model: "gpt-hidden", displayName: "Hidden model", supportedReasoningEfforts: [{ reasoningEffort: "minimal" }], hidden: true }], nextCursor: null } });
     }
-    return send({ id: message.id, result: { data: [{ id: "gpt-catalog", model: "gpt-catalog", displayName: "Catalog model", priority: 9, inputModalities: ["text", "image"], supportedReasoningEfforts: [{ reasoningEffort: "minimal" }, { reasoningEffort: "low" }, { reasoningEffort: "high" }] }, { slug: "gpt-6-astra", display_name: "GPT-6-Astra", description: "Frontier intelligence for the most demanding work.", isDefault: true, input_modalities: ["text", "image"], supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }] }], nextCursor: "page-2" } });
+    return send({ id: message.id, result: { data: [{ id: "gpt-catalog", model: "gpt-catalog", displayName: "Catalog model", priority: 9, inputModalities: ["text", "image"], supportedReasoningEfforts: [{ reasoningEffort: "minimal" }, { reasoningEffort: "low" }, { reasoningEffort: "high" }] }, { slug: "gpt-6-astra", display_name: "GPT-6-Astra", description: "Frontier intelligence for the most demanding work.", isDefault: true, input_modalities: ["text", "image"], supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }] },
+      { id: "gpt-6-sol", model: "gpt-6-sol", displayName: "GPT-6 Sol", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "medium" }, { reasoningEffort: "high" }, { reasoningEffort: "xhigh" }, { reasoningEffort: "max" }, { reasoningEffort: "ultra" }] },
+      { id: "gpt-6-luna", model: "gpt-6-luna", displayName: "GPT-6 Luna", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "medium" }, { reasoningEffort: "high" }, { reasoningEffort: "xhigh" }, { reasoningEffort: "max" }] },
+    ], nextCursor: "page-2" } });
   }
   if (message.method === "thread/start") return send({ id: message.id, result: { thread: { id: "thread-1" }, model: message.params.model } });
   if (message.method === "thread/archive") return send({ id: message.id, result: {} });
@@ -260,6 +263,40 @@ describe("persistent Codex app-server provider", () => {
 					reasoningEfforts: ["low", "high"],
 				},
 			},
+			{
+				id: "gpt-6-sol",
+				displayName: "GPT-6 Sol",
+				availability: "available",
+				source: "protocol",
+				capabilities: {
+					capabilityProvenance: "confirmed",
+					streaming: true,
+					tools: false,
+					images: true,
+					audio: false,
+					documents: false,
+					video: false,
+					structuredOutput: false,
+					reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+				},
+			},
+			{
+				id: "gpt-6-luna",
+				displayName: "GPT-6 Luna",
+				availability: "available",
+				source: "protocol",
+				capabilities: {
+					capabilityProvenance: "confirmed",
+					streaming: true,
+					tools: false,
+					images: true,
+					audio: false,
+					documents: false,
+					video: false,
+					structuredOutput: false,
+					reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+				},
+			},
 		]);
 		await provider.close();
 
@@ -320,7 +357,8 @@ describe("persistent Codex app-server provider", () => {
 		const deltas: string[] = [];
 		const first = await provider.complete(
 			{
-				model: "gpt-test",
+				model: "gpt-6-sol",
+				reasoningEffort: "ultra",
 				metadata: { session_id: "session-1", workspace_root: process.cwd() },
 				messages: [
 					{ role: "system", content: textContent("Private system context") },
@@ -345,7 +383,8 @@ describe("persistent Codex app-server provider", () => {
 			},
 		);
 		const second = await provider.complete({
-			model: "gpt-test",
+			model: "gpt-6-luna",
+			reasoningEffort: "max",
 			metadata: { session_id: "session-1", workspace_root: process.cwd() },
 			messages: [
 				{ role: "system", content: textContent("Private system context") },
@@ -393,6 +432,12 @@ describe("persistent Codex app-server provider", () => {
 			(record) => record.value.method === "turn/start",
 		);
 		expect(turns).toHaveLength(2);
+		expect(turns.map((turn) => turn.value.params)).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({ model: "gpt-6-sol", effort: "ultra" }),
+			expect.objectContaining({ model: "gpt-6-luna", effort: "max" }),
+		]),
+	);
 		expect(
 			(turns[0]!.value.params!.input as Array<{ text: string }>)[0]!.text,
 		).toContain("Private system context");

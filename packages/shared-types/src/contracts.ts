@@ -456,6 +456,7 @@ export const ReasoningEffortSchema = z.enum([
 	"high",
 	"xhigh",
 	"max",
+	"ultra",
 ]);
 export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
 
@@ -2125,7 +2126,7 @@ export const ProviderAccountModelCapabilitiesSchema = z.object({
 	documents: z.boolean(),
 	video: z.boolean(),
 	structuredOutput: z.boolean(),
-	reasoningEfforts: z.array(ReasoningEffortSchema).max(6),
+	reasoningEfforts: z.array(ReasoningEffortSchema).max(7),
 	contextWindow: z.number().int().positive().optional(),
 	maxOutputTokens: z.number().int().positive().optional(),
 });

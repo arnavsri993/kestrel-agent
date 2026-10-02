@@ -6,6 +6,7 @@ import type {
 import {
 	accountForChoice,
 	hasVerifiedModelCapabilities,
+	automaticRouteAvailable,
 	searchProviderGroups,
 	matchesCatalogSearch,
 	modelAvailabilityLabel,
@@ -85,6 +86,20 @@ const accounts: ProviderAccountSummary[] = [
 				reasoningEfforts: ["low", "medium", "high"],
 			},
 		}),
+		model("gpt-6-sol", {
+			displayName: "GPT-6 Sol",
+			capabilities: {
+				...modelCapabilities,
+				reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+			},
+		}),
+		model("gpt-6-luna", {
+			displayName: "GPT-6 Luna",
+			capabilities: {
+				...modelCapabilities,
+				reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+			},
+		}),
 	]),
 	account("openai-personal", "Personal OpenAI", [
 		model("gpt-personal", {
@@ -140,6 +155,18 @@ describe("account-aware model selector", () => {
 				}),
 			),
 		).toBe("Fallback · capabilities unverified");
+	});
+
+	it("does not present automatic routing when no enabled account has a usable model", () => {
+		expect(automaticRouteAvailable(accounts)).toBe(true);
+		expect(
+			automaticRouteAvailable([
+				account("empty", "Empty account", []),
+				account("blocked", "Blocked account", [
+					model("blocked", { availability: "permission_denied" }),
+				]),
+			]),
+		).toBe(false);
 	});
 
 	it("never substitutes a removed account with another endpoint", () => {
@@ -206,6 +233,33 @@ describe("account-aware model selector", () => {
 			true,
 		);
 		expect(documentedChoice.reasoningEffort).toBe("medium");
+	});
+
+	it("keeps GPT-6 Sol and Luna discovered levels distinct", () => {
+		const catalog = providerGroups(accounts)[0]!.accounts[1]!.models;
+		const sol = catalog.find((model) => model.id === "gpt-6-sol")!;
+		const luna = catalog.find((model) => model.id === "gpt-6-luna")!;
+		expect(sol.capabilities.reasoningEfforts).toEqual([
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+			"ultra",
+		]);
+		expect(luna.capabilities.reasoningEfforts).toEqual([
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+		]);
+		expect(
+			selectModel(accounts[0]!, sol, { ...choice, reasoningEffort: "ultra" }),
+		).toMatchObject({ model: "gpt-6-sol", reasoningEffort: "ultra" });
+		expect(
+			selectModel(accounts[0]!, luna, { ...choice, reasoningEffort: "max" }),
+		).toMatchObject({ model: "gpt-6-luna", reasoningEffort: "max" });
 	});
 
 	it("searches provider, account, and discovered model fields", () => {

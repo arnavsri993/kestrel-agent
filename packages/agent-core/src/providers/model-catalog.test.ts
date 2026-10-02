@@ -247,6 +247,54 @@ describe("account-aware model catalog", () => {
 		database.close();
 	});
 
+	it("persists all advertised reasoning levels for a discovered GPT-6 Sol model", async () => {
+		const endpoint = provider({
+			id: "codex-account",
+			providerId: "codex",
+			accountId: "codex-account",
+			displayName: "Codex profile",
+			discovery: async () => [
+				{
+					...discovered("gpt-6-sol"),
+					displayName: "GPT-6 Sol",
+					capabilities: {
+						capabilityProvenance: "confirmed",
+						reasoningEfforts: [
+							"none",
+							"low",
+							"medium",
+							"high",
+							"xhigh",
+							"max",
+							"ultra",
+						],
+					},
+				},
+			],
+		});
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const catalog = new ModelCatalog(database, [endpoint]);
+
+		await catalog.refresh([endpoint]);
+
+		expect(catalog.modelsForEndpoint(endpoint.id)[0]).toMatchObject({
+			id: "gpt-6-sol",
+			capabilities: {
+				capabilityProvenance: "confirmed",
+				reasoningEfforts: [
+					"none",
+					"low",
+					"medium",
+					"high",
+					"xhigh",
+					"max",
+					"ultra",
+				],
+			},
+		});
+		database.close();
+	});
+
 	it("marks discovered models stale after the cache interval in a running core", async () => {
 		let now = new Date("2026-09-06T12:00:00.000Z");
 		const endpoint = provider({

@@ -59,6 +59,7 @@ export function NewTabPage({
 	onOpenHistory,
 	onOpenDownloads,
 	onOpenBookmarks,
+	onOpenModelSettings,
 	onOpenSession,
 	projects = [],
 	onProjectsChange,
@@ -96,6 +97,7 @@ export function NewTabPage({
 	onOpenHistory(): void;
 	onOpenDownloads(): void;
 	onOpenBookmarks(): void;
+	onOpenModelSettings(): void;
 	onOpenSession?: ((sessionId: string) => void) | undefined;
 	projects?: Project[];
 	onProjectsChange(projects: Project[]): void;
@@ -190,7 +192,7 @@ export function NewTabPage({
         <header className="kestrel-home-hero">
           <h1 id="new-tab-title">{greeting}</h1>
 
-          <NewTabComposer agentName={agentName} projects={projects} onProjectsChange={onProjectsChange} onNavigate={onNavigate} onSubmitDraft={onSubmitDraft} />
+          <NewTabComposer agentName={agentName} projects={projects} onProjectsChange={onProjectsChange} onNavigate={onNavigate} onSubmitDraft={onSubmitDraft} onOpenModelSettings={onOpenModelSettings} />
         </header>
 
         <NewTabPersonalization frequent={frequent} showFrequent={!normalizedWidgetSettings(widgetSettings).enabled.includes("frequent-tabs")} shortcuts={shortcutSettings ?? []}
