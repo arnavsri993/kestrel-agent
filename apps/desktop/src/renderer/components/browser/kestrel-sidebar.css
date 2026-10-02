@@ -302,9 +302,13 @@
 
 .browser-workspace-vertical .browser-tab-tools-menu {
 	width: min(318px, calc(100vw - var(--kestrel-sidebar-space) - 12px));
+	/* The trigger sits 46px below the lower workspace's chrome: 8px rail
+	 * padding, a 30px control, and the menu's 8px gap. Reserve that anchor
+	 * offset plus an 8px bottom gutter so a scrollable menu cannot escape a
+	 * short window. */
 	max-height: min(
 		640px,
-		calc(100vh - var(--browser-chrome-height) - 16px)
+		calc(100vh - var(--browser-chrome-height) - 54px)
 	);
 }
 
