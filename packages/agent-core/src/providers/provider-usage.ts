@@ -108,8 +108,13 @@ function statusFromHealth(
 async function probeStatus(
 	provider: ModelProvider,
 	signal?: AbortSignal,
-): Promise<{ status: ProviderUsageStatus; statusDetail?: string } | undefined> {
-	if (!provider.probe) return undefined;
+): Promise<{ status: ProviderUsageStatus; statusDetail?: string }> {
+	if (!provider.probe) {
+		return {
+			status: "unknown",
+			statusDetail: "Availability has not been verified",
+		};
+	}
 	try {
 		await provider.probe(signal);
 		return { status: "ready" };
@@ -170,6 +175,7 @@ export class ProviderUsageCollector {
 	): Promise<ProviderUsageSnapshot> {
 		const updatedAt = this.now().toISOString();
 		const label = providerUsageLabel(provider);
+		const providerPoolId = provider.poolId ?? provider.id;
 
 		if (provider instanceof CodexAppServerProvider) {
 			const codex = await this.readCodex(provider, signal);
@@ -183,6 +189,7 @@ export class ProviderUsageCollector {
 			) {
 				return {
 					providerId: provider.id,
+					providerPoolId,
 					label,
 					status: "not_signed_in",
 					statusDetail: "Not signed in",
@@ -197,6 +204,7 @@ export class ProviderUsageCollector {
 			const windows = usageWindowsFromCodex(codex);
 			return {
 				providerId: provider.id,
+				providerPoolId,
 				label,
 				...(codex.email ? { email: codex.email } : {}),
 				...(codex.plan ? { plan: codex.plan } : {}),
@@ -214,6 +222,7 @@ export class ProviderUsageCollector {
 		if (healthStatus.status !== "ready") {
 			return {
 				providerId: provider.id,
+				providerPoolId,
 				label,
 				status: healthStatus.status,
 				...(healthStatus.statusDetail
@@ -223,10 +232,10 @@ export class ProviderUsageCollector {
 			};
 		}
 
-		const probed = await probeStatus(provider, signal);
-		const status = probed ?? { status: "ready" as const };
+		const status = await probeStatus(provider, signal);
 		return {
 			providerId: provider.id,
+			providerPoolId,
 			label,
 			status: status.status,
 			...(status.statusDetail ? { statusDetail: status.statusDetail } : {}),

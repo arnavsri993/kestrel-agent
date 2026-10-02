@@ -145,6 +145,36 @@ describe("Account-backed Codex usage identity", () => {
 		expect(providerUsageLabel(provider!)).toBe("user@example.test — Main");
 	});
 
+	it("keeps an unprobed provider unverified instead of reporting it ready", async () => {
+		const provider: ModelProvider = {
+			id: "account-unprobed",
+			poolId: "openai",
+			defaultModel: "default",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				video: false,
+				local: false,
+			},
+			async complete() {
+				throw new Error("not used");
+			},
+		};
+		const collector = new ProviderUsageCollector(new ProviderPool([provider]));
+
+		await expect(collector.collect()).resolves.toMatchObject([
+			{
+				providerId: "account-unprobed",
+				providerPoolId: "openai",
+				status: "unknown",
+				statusDetail: "Availability has not been verified",
+			},
+		]);
+	});
+
 	it("polls each Codex account home independently", async () => {
 		const snapshots = new Map<string, ReturnType<typeof parseCodexAccountUsageSnapshot>>([
 			[
@@ -177,6 +207,12 @@ describe("Account-backed Codex usage identity", () => {
 		const collector = new ProviderUsageCollector(new ProviderPool(providers));
 		const rows = await collector.collect();
 		expect(rows).toHaveLength(2);
+		expect(rows).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ providerId: "account-a", providerPoolId: "codex" }),
+				expect.objectContaining({ providerId: "account-b", providerPoolId: "codex" }),
+			]),
+		);
 		expect(rows.find((row) => row.providerId === "account-a")?.windows).toEqual([
 			{ label: "5-hour", usedPercent: 11, windowDurationMins: 300 },
 			{ label: "Weekly", usedPercent: 21, windowDurationMins: 10_080 },

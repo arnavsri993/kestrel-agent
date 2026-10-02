@@ -668,7 +668,7 @@ function ProviderUsageGlyph({ providerId }: { providerId: string }) {
 	);
 }
 
-function UsageBattery({
+export function UsageBattery({
 	remainingPercent,
 	label,
 }: {
@@ -680,19 +680,30 @@ function UsageBattery({
 		remainingPercent === undefined
 			? 0
 			: Math.max(0, Math.min(100, remainingPercent));
+	if (remainingPercent === undefined) {
+		return (
+			<span
+				className={`kestrel-usage-battery is-${level}`}
+				title={`${label}: unavailable`}
+				role="status"
+				aria-label={`${label}: unavailable`}
+			>
+				<span className="kestrel-usage-battery-body" aria-hidden="true">
+					<span style={{ width: "0%" }} />
+				</span>
+				<span className="kestrel-usage-battery-nub" aria-hidden="true" />
+			</span>
+		);
+	}
 	return (
 		<span
 			className={`kestrel-usage-battery is-${level}`}
-			title={
-				remainingPercent === undefined
-					? `${label}: unavailable`
-					: `${label}: ${fill}% left`
-			}
+			title={`${label}: ${fill}% left`}
 			role="meter"
 			aria-label={`${label} remaining`}
 			aria-valuemin={0}
 			aria-valuemax={100}
-			aria-valuenow={remainingPercent === undefined ? undefined : fill}
+			aria-valuenow={fill}
 		>
 			<span className="kestrel-usage-battery-body">
 				<span style={{ width: `${fill}%` }} />
@@ -773,7 +784,7 @@ function RouteUsageWidget({
 				<p className="kestrel-widget-empty">{error}</p>
 			) : visibleRows.length === 0 ? (
 				<p className="kestrel-widget-empty">
-					{rows.length === 0
+					{rankedRows.length === 0
 						? "No Codex accounts are configured yet."
 						: "All accounts are hidden. Show one below."}
 				</p>

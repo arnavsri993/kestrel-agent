@@ -207,6 +207,7 @@ describe("New Tab widget layout model", () => {
 		const ranked = prioritizeCodexUsageRows([
 			{
 				providerId: "legacy-openrouter",
+				providerPoolId: "openrouter",
 				label: "OpenRouter",
 				status: "ready",
 			},
@@ -218,18 +219,21 @@ describe("New Tab widget layout model", () => {
 			},
 			{
 				providerId: "account-a",
+				providerPoolId: "codex",
 				label: "arnavsri993@gmail.com — Main",
 				email: "arnavsri993@gmail.com",
 				windows: [{ label: "5-hour", usedPercent: 40 }],
 			},
 			{
 				providerId: "account-b",
+				providerPoolId: "codex",
 				label: "arnavsri992@gmail.com — Main",
 				email: "arnavsri992@gmail.com",
 				windows: [{ label: "5-hour", usedPercent: 80 }],
 			},
 			{
 				providerId: "legacy-cursor",
+				providerPoolId: "cursor",
 				label: "Cursor",
 				status: "ready",
 			},
@@ -238,6 +242,31 @@ describe("New Tab widget layout model", () => {
 			"account-a",
 			"account-b",
 		]);
+	});
+
+	it("keeps non-Codex status routes out of the Codex usage card", () => {
+		const ranked = prioritizeCodexUsageRows([
+			{
+				providerId: "account-openai",
+				providerPoolId: "openai",
+				label: "user@example.test",
+				status: "unknown",
+			},
+			{
+				providerId: "account-codex",
+				providerPoolId: "codex",
+				label: "user@example.test — Codex",
+				status: "not_signed_in",
+			},
+			{
+				providerId: "cursor-subscription",
+				providerPoolId: "cursor",
+				label: "Cursor",
+				status: "ready",
+			},
+		]);
+
+		expect(ranked.map((row) => row.providerId)).toEqual(["account-codex"]);
 	});
 
 	it("maps used percent to remaining Batteries-style levels", () => {

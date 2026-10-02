@@ -390,6 +390,7 @@ export function visibleRouteUsageProviderIds(
 
 type RouteUsageRowLike = {
 	providerId: string;
+	providerPoolId?: string | undefined;
 	label: string;
 	email?: string | undefined;
 	windows?: readonly unknown[] | undefined;
@@ -400,6 +401,17 @@ function isLegacyCodexRow(row: RouteUsageRowLike): boolean {
 		row.providerId === "legacy-codex" ||
 		row.providerId === "codex-subscription" ||
 		(row.label.trim().toLowerCase() === "codex" && !row.providerId.startsWith("account-"))
+	);
+}
+
+function isCodexUsageRow(row: RouteUsageRowLike): boolean {
+	const providerPoolId = (row.providerPoolId ?? row.providerId)
+		.trim()
+		.toLowerCase();
+	return (
+		providerPoolId === "codex" ||
+		providerPoolId === "codex-subscription" ||
+		isLegacyCodexRow(row)
 	);
 }
 
@@ -429,7 +441,8 @@ export function usageBatteryLevel(
 export function prioritizeCodexUsageRows<T extends RouteUsageRowLike>(
 	rows: readonly T[],
 ): T[] {
-	const metered = rows.filter((row) => (row.windows?.length ?? 0) > 0);
+	const codexRows = rows.filter(isCodexUsageRow);
+	const metered = codexRows.filter((row) => (row.windows?.length ?? 0) > 0);
 	const profileEmails = new Set(
 		metered
 			.filter((row) => !isLegacyCodexRow(row) && row.email)
@@ -446,26 +459,12 @@ export function prioritizeCodexUsageRows<T extends RouteUsageRowLike>(
 		return true;
 	});
 	const meteredIds = new Set(dedupedMetered.map((row) => row.providerId));
-	const remainder = rows.filter(
+	const remainder = codexRows.filter(
 		(row) => !meteredIds.has(row.providerId) && !droppedIds.has(row.providerId),
 	);
-	const codexRemainder = remainder.filter((row) => {
-		const id = row.providerId.toLowerCase();
-		const label = row.label.toLowerCase();
-		return (
-			id.includes("codex") ||
-			label.includes("codex") ||
-			label.includes("@") ||
-			Boolean(row.email)
-		);
-	});
-	const otherRemainder = remainder.filter((row) => !codexRemainder.includes(row));
-	// The New Tab card is titled Codex usage: once real meters exist, keep the
-	// focus on Codex accounts instead of padding with unrelated status-only routes.
-	if (dedupedMetered.length > 0) {
-		return [...dedupedMetered, ...codexRemainder];
-	}
-	return [...dedupedMetered, ...codexRemainder, ...otherRemainder];
+	// This card is explicitly titled Codex usage. Keep other providers out even
+	// when no Codex meter is available, rather than attributing their status to Codex.
+	return [...dedupedMetered, ...remainder];
 }
 
 export function setRouteUsageProviderVisible(

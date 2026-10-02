@@ -2037,6 +2037,8 @@ export type ProviderUsageWindow = z.infer<typeof ProviderUsageWindowSchema>;
 
 export const ProviderUsageSnapshotSchema = z.object({
 	providerId: z.string().min(1).max(100),
+	/** Logical provider family for account-scoped endpoint IDs. */
+	providerPoolId: z.string().min(1).max(100).optional(),
 	label: z.string().min(1).max(120),
 	email: z.string().max(320).optional(),
 	plan: z.string().max(80).optional(),
