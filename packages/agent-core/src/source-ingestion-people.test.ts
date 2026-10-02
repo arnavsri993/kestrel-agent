@@ -41,4 +41,3 @@ it.each(["active", "archived"] as const)("preserves confirmed person details and
   expect(JSON.stringify(f.core.sourceIngestion.page(f.base))).not.toContain(message.text);
  } finally { await f.core.close(); }
 });
-
