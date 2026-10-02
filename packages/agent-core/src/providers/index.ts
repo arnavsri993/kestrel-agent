@@ -9,5 +9,6 @@ export * from "./ollama-chat";
 export * from "./openai-chat-completions";
 export * from "./openai-responses";
 export * from "./provider-pool";
+export * from "./provider-usage";
 export * from "./subscription-cli";
 export * from "./types";
