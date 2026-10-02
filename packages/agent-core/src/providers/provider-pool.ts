@@ -8,6 +8,10 @@ import {
 	type ProviderQuotaSnapshot,
 	normalizeProviderQuotaSnapshot,
 } from "./types";
+import {
+	contractFromProviderCapabilities,
+	evaluateCapabilityRequirements,
+} from "./transport-capability";
 
 const DEFAULT_HEALTH_BACKOFF_MS = 30_000;
 const MAX_HEALTH_BACKOFF_MS = 24 * 60 * 60_000;
@@ -419,7 +423,21 @@ export class ProviderPool {
 	}
 
 	private supports(provider: ModelProvider, request: ModelRequest, requireTools = false): boolean {
-		if (requireTools && !provider.capabilities.tools) return false;
+		if (requireTools) {
+			const contract = contractFromProviderCapabilities({
+				streaming: provider.capabilities.streaming,
+				tools: provider.capabilities.tools,
+				images: provider.capabilities.images,
+				audio: provider.capabilities.audio,
+				documents: provider.capabilities.documents,
+				...(provider.capabilities.video !== undefined
+					? { video: provider.capabilities.video }
+					: {}),
+				local: provider.capabilities.local,
+			});
+			if (evaluateCapabilityRequirements(contract, { requireTools: true }))
+				return false;
+		}
 		const parts = request.messages.flatMap((message) => message.content);
 		return (
 			!parts.some(

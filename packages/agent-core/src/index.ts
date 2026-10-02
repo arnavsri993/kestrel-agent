@@ -2594,8 +2594,11 @@ export class AgentCore {
 									this.runtime.requiresToolProvider(
 										request.sessionId,
 										this.configuration.filterToolNames(
-											this.runtime.discoverTools(request.sessionId).map(tool => tool.name),
-											this.personalities.get(this.selectedPersonalityId).toolNames,
+											this.runtime
+												.discoverTools(request.sessionId)
+												.map((tool) => tool.name),
+											this.personalities.get(this.selectedPersonalityId)
+												.toolNames,
 										),
 									),
 								)
@@ -4078,7 +4081,9 @@ export class AgentCore {
 										this.runtime.requiresToolProvider(
 											request.sessionId,
 											this.configuration.filterToolNames(
-												this.runtime.discoverTools(request.sessionId).map(tool => tool.name),
+												this.runtime
+													.discoverTools(request.sessionId)
+													.map((tool) => tool.name),
 												personality.toolNames,
 											),
 										),

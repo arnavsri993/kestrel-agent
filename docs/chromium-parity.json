@@ -1,0 +1,122 @@
+[
+  {
+    "id": "windows",
+    "surface": "Application windows / multi-window shell",
+    "electronStatus": "complete",
+    "nativeStatus": "partial",
+    "gate": "G-PARITY",
+    "notes": "Electron owns product chrome and multi-window behavior. Native CEF host has a shell but is not feature-complete vs desktop UI."
+  },
+  {
+    "id": "tabs",
+    "surface": "Tab create / switch / close / restore",
+    "electronStatus": "complete",
+    "nativeStatus": "partial",
+    "gate": "G-SMOKE-NATIVE",
+    "notes": "Native smoke covers bridge-created and repeated tabs; full session restore and product tab strip parity unfinished."
+  },
+  {
+    "id": "navigation",
+    "surface": "URL load, redirects, back/forward, error pages",
+    "electronStatus": "complete",
+    "nativeStatus": "partial",
+    "gate": "G-PARITY",
+    "notes": "Core navigation exists on native. Auth callbacks and some external handoffs remain Electron-validated (#789 open/conflicting for Teams/Cursor)."
+  },
+  {
+    "id": "profiles",
+    "surface": "User profile directories, partition identity, migration",
+    "electronStatus": "complete",
+    "nativeStatus": "missing",
+    "gate": "G-MIGRATE",
+    "notes": "Native uses isolated/disposable profiles for evidence. No production Electron→native profile migration. Do not raw-copy Application Support."
+  },
+  {
+    "id": "sessions",
+    "surface": "Session persistence across restart",
+    "electronStatus": "complete",
+    "nativeStatus": "partial",
+    "gate": "G-PARITY",
+    "notes": "Native status reports in-memory / isolated tab behavior; durable session product remains Electron."
+  },
+  {
+    "id": "downloads",
+    "surface": "App-contained downloads, size limits, hashes, cancel",
+    "electronStatus": "complete",
+    "nativeStatus": "missing",
+    "gate": "G-DL",
+    "notes": "Downloads unmigrated on native host. Cutover blocked until policy parity tests exist."
+  },
+  {
+    "id": "permissions",
+    "surface": "Site permissions (camera/mic/generic); USB/HID/serial policy",
+    "electronStatus": "partial",
+    "nativeStatus": "missing",
+    "gate": "G-PERM",
+    "notes": "Electron persists camera/mic + generic grants; USB/HID/serial denied by policy. Native permissions unmigrated. Depth/management UX incomplete on both for diligence."
+  },
+  {
+    "id": "popups",
+    "surface": "Popup windows, opener, postMessage, close",
+    "electronStatus": "complete",
+    "nativeStatus": "partial",
+    "gate": "G-PARITY",
+    "notes": "Electron auth-link suite covers popup opener behavior. Native must not silently fall back to unmanaged CEF popups that lose intended ownership."
+  },
+  {
+    "id": "history",
+    "surface": "History write, retention, clear",
+    "electronStatus": "complete",
+    "nativeStatus": "missing",
+    "gate": "G-PARITY",
+    "notes": "Electron browser service owns history retention tests. Native product history not claimed."
+  },
+  {
+    "id": "bookmarks",
+    "surface": "Bookmarks storage and browser menu access",
+    "electronStatus": "complete",
+    "nativeStatus": "missing",
+    "gate": "G-PARITY",
+    "notes": "Bookmarks remain Electron shell features."
+  },
+  {
+    "id": "find",
+    "surface": "Find-in-page (Cmd+F)",
+    "electronStatus": "partial",
+    "nativeStatus": "missing",
+    "gate": "G-PARITY",
+    "notes": "Electron Find UX improved on open PR #783 (native popover in Electron shell — naming means OS-native UI, not CEF host). CEF-host find not claimed."
+  },
+  {
+    "id": "storage",
+    "surface": "HTTP cache, cookies, local storage, credential vault binding",
+    "electronStatus": "complete",
+    "nativeStatus": "partial",
+    "gate": "G-CRED",
+    "notes": "Native reports credentialStorage disabled / isolated. Stable Electron uses Keychain/safeStorage policy; plaintext-default (#782) rejected for production."
+  },
+  {
+    "id": "external-protocol",
+    "surface": "External URL scheme handoff (Zoom, App Store, Teams, etc.)",
+    "electronStatus": "partial",
+    "nativeStatus": "missing",
+    "gate": "G-PARITY",
+    "notes": "#788 on main improves App Store/Zoom. #789 Teams/Cursor still open/conflicting. Native host not the authority."
+  },
+  {
+    "id": "extensions",
+    "surface": "MV3 extensions in product shell",
+    "electronStatus": "partial",
+    "nativeStatus": "missing",
+    "gate": "G-EXT",
+    "notes": "Electron: BrowserExtensionManager + ElectronExtensionRuntime. Native product shell disables extensions. #791 opt-in workbench is evidence only — do not raise nativeStatus above missing for product shell."
+  },
+  {
+    "id": "automation",
+    "surface": "Agent browser tools / accessibility snapshots / deterministic benchmark path",
+    "electronStatus": "complete",
+    "nativeStatus": "missing",
+    "gate": "G-AGENT",
+    "notes": "50-workflow deterministic benchmark targets ElectronBrowserService. Native automation backend not cutover-complete. Model-driven eval track separate and missing."
+  }
+]

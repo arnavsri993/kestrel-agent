@@ -97,7 +97,6 @@ it("does not let model catalog capabilities grant tools to a text-only transport
   expect(profile?.capabilities.tool_use).toBe(0);
  } finally { database.close(); }
 });
-
 it("refreshes expired account catalogs before Auto launches concurrent tool tasks", async () => {
  const database = new KestrelDatabase(":memory:", createEncryptionKey());
  let now = new Date("2026-09-30T12:00:00Z");
