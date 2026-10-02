@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -33,6 +40,21 @@ function readMacQuarantine(path) {
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
 const userData = join(root, "user-data");
+const testHome = join(root, "home");
+const testCodexHome = join(root, "codex-home");
+const testTempDirectory = join(root, "tmp");
+mkdirSync(testHome, { recursive: true });
+mkdirSync(testCodexHome, { recursive: true });
+mkdirSync(testTempDirectory, { recursive: true });
+const testEnvironment = Object.fromEntries(
+	["PATH", "SHELL", "LANG", "LC_ALL", "TERM", "CI"].flatMap((key) =>
+		process.env[key] === undefined ? [] : [[key, process.env[key]]],
+	),
+);
+const detachedPlacementCapturePath = join(
+	userData,
+	"detached-window-placement.json",
+);
 const heicUploadFixture = join(root, "kestrel-upload.HEIC");
 const heicSourcePng = join(root, "kestrel-upload-source.png");
 writeFileSync(
@@ -196,13 +218,19 @@ async function launch() {
 		executablePath,
 		args: launchArgs,
 		env: {
-			...process.env,
+			...testEnvironment,
+			HOME: testHome,
+			USER: "kestrel-browser-test",
+			LOGNAME: "kestrel-browser-test",
+			CODEX_HOME: testCodexHome,
+			TMPDIR: testTempDirectory,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
-		KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-		KESTREL_TEST_USER_DATA: userData,
-		KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
-		KESTREL_REAL_USER_PROFILE: "1",
+			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+			KESTREL_TEST_USER_DATA: userData,
+			KESTREL_TEST_DETACHED_WINDOW_PLACEMENT_PATH: detachedPlacementCapturePath,
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
+			KESTREL_REAL_USER_PROFILE: "1",
 		},
 	});
 	page = await application.firstWindow();
@@ -264,21 +292,26 @@ async function waitForPostLaunchRequest(label) {
 
 async function nativeViewState() {
 	return application.evaluate(({ BrowserWindow }) => {
-		const window = BrowserWindow.getAllWindows().find(
-			(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
-		);
-		if (!window) throw new Error("Kestrel main window is unavailable.");
-		const views = window.contentView.children
-			.filter((child) => "webContents" in child)
-			.map((child) => ({
-				url: child.webContents.getURL(),
-				title: child.webContents.getTitle(),
-				bounds: child.getBounds(),
-				destroyed: child.webContents.isDestroyed(),
+		const candidates = BrowserWindow.getAllWindows()
+			.filter(
+				(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+			)
+			.map((candidate) => ({
+				views: candidate.contentView.children
+					.filter((child) => "webContents" in child)
+					.map((child) => ({
+						url: child.webContents.getURL(),
+						title: child.webContents.getTitle(),
+						bounds: child.getBounds(),
+						destroyed: child.webContents.isDestroyed(),
+					})),
 			}));
+		const activeCandidate = candidates.find(
+			(candidate) => candidate.views.length > 0,
+		);
 		return {
 			browserWindowCount: BrowserWindow.getAllWindows().length,
-			views,
+			views: activeCandidate?.views ?? candidates[0]?.views ?? [],
 		};
 	});
 }
@@ -664,12 +697,49 @@ async function assertKestrelSidebarResize() {
 	const targetWidth = Math.min(initial.max, initial.width + 72);
 	await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 120);
 	await page.mouse.down();
+	await page.waitForFunction(() =>
+		document
+			.querySelector(".ai-browser-app")
+			?.classList.contains("kestrel-sidebar-resizing"),
+	);
 	await page.mouse.move(
 		handleBox.x + handleBox.width / 2 + (targetWidth - initial.width),
 		handleBox.y + 120,
-		{ steps: 3 },
+		{ steps: 10 },
 	);
+	// Confirm the final physical move changed the live layout before pointerup
+	// persists it. This keeps the real pointer path under test without assuming
+	// a particular native input-dispatch cadence.
+	try {
+		await page.waitForFunction((expected) => {
+			const sidebar = document.querySelector(".kestrel-sidebar");
+			return sidebar && Math.abs(sidebar.getBoundingClientRect().width - expected) <= 1;
+		}, targetWidth);
+	} catch (error) {
+		const actual = await page.evaluate(() => {
+			const sidebar = document.querySelector(".kestrel-sidebar");
+			const shell = document.querySelector(".ai-browser-app");
+			return {
+				width: sidebar?.getBoundingClientRect().width ?? null,
+				storedWidth: localStorage.getItem("kestrel:navigation-sidebar-width"),
+				presentedWidth: shell?.style.getPropertyValue("--kestrel-sidebar-user-width") ?? null,
+				ariaValueNow: sidebar
+					?.querySelector(".kestrel-sidebar-resize-handle")
+					?.getAttribute("aria-valuenow") ?? null,
+				resizing: shell?.classList.contains("kestrel-sidebar-resizing") ?? false,
+			};
+		});
+		throw new Error(
+			`Sidebar pointer resize did not reach ${targetWidth}px: ${JSON.stringify(actual)}`,
+			{ cause: error },
+		);
+	}
 	await page.mouse.up();
+	await page.waitForFunction(() =>
+		!document
+			.querySelector(".ai-browser-app")
+			?.classList.contains("kestrel-sidebar-resizing"),
+	);
 	await page.waitForFunction(
 		({ expected, key }) => {
 			const sidebar = document.querySelector(".kestrel-sidebar");
@@ -882,24 +952,6 @@ async function createRuntimeSessionWithVisibleBrowser(kind = "agent") {
 	}, kind);
 }
 
-async function waitForRuntimeRunsToSettle(sessionId) {
-	const settled = await page.waitForFunction(async (id) => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-runs",
-			sessionId: id,
-		});
-		if (!response.ok || !("runs" in response)) return false;
-		const runs = response.runs ?? [];
-		return (
-			runs.length > 0 &&
-			runs.every((run) =>
-				["completed", "failed", "cancelled"].includes(run.status),
-			)
-		);
-	}, sessionId);
-	await settled.dispose();
-}
-
 async function callTool(sessionId, toolName, input, options = {}) {
 	let timeout;
 	try {
@@ -984,56 +1036,46 @@ try {
 		"The HEIC upload fixture tab did not close cleanly",
 	);
 	await page.locator("#new-tab-chat-input").focus();
-	const homeSend = page.getByRole("button", {
-		name: "Send message to Pragmatic",
-	});
+	const homeSend = page.locator(".kestrel-home-composer .kestrel-home-send");
 	assert.equal(await homeSend.isDisabled(), true);
 	const homePrompt = "Start with the smallest useful fix.";
-	const homeSessionIdsBefore = await page.evaluate(async () => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return response.ok && "sessions" in response
-			? (response.sessions ?? []).map((session) => session.id)
-			: [];
-	});
 	await page.locator("#new-tab-chat-input").fill(homePrompt);
-	await homeSend.click();
-	await page.waitForFunction(async (expected) => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return (
-			response.ok &&
-			"sessions" in response &&
-			(response.sessions ?? []).length === expected.length + 1
-		);
-	}, homeSessionIdsBefore);
-	assert.equal(await page.locator("#runtime-prompt").inputValue(), "");
-	const homeSessionId = await page.evaluate(async (existingIds) => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		if (!response.ok || !("sessions" in response)) return null;
-		return (
-			response.sessions ?? []
-		).find((session) => !existingIds.includes(session.id))?.id ?? null;
-	}, homeSessionIdsBefore);
-	assert(homeSessionId, "The home task did not expose its new runtime session.");
-	await waitForRuntimeRunsToSettle(homeSessionId);
-	const homeSessionsAfter = await page.evaluate(async () => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return response.ok && "sessions" in response
-			? (response.sessions ?? []).length
-			: -1;
-	});
-	assert.equal(homeSessionsAfter, homeSessionIdsBefore.length + 1);
 	await page
-		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New chat" })
-		.click();
+		.locator(".kestrel-home-composer")
+		.getByText("Connect a model to send tasks.", { exact: true })
+		.waitFor();
+	assert.equal(
+		await homeSend.isDisabled(),
+		true,
+		"A task must not be submitted until a model route is available.",
+	);
+	await page.locator("#new-tab-chat-input").fill(origin);
+	assert.equal(
+		await homeSend.isEnabled(),
+		true,
+		"Browsing a URL must remain available without a model route.",
+	);
+	await homeSend.click();
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/`,
+		"The home URL did not remain usable without a model route",
+	);
+	const homeNavigationTabId = (await browserState()).activeTabId;
+	assert(homeNavigationTabId);
+	await page.evaluate(async (tabId) => {
+		const created = await window.kestrel.request({
+			type: "browser-create-tab",
+			input: "",
+			active: true,
+		});
+		if (!created.ok) throw new Error("Could not restore a New Tab after navigation.");
+		const closed = await window.kestrel.request({
+			type: "browser-close-tab",
+			tabId,
+		});
+		if (!closed.ok) throw new Error("Could not close the temporary home navigation tab.");
+	}, homeNavigationTabId);
+	await page.locator("#new-tab-title").waitFor();
 
 	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
 	await openKestrelDestination(page, "Settings");
@@ -1487,13 +1529,22 @@ try {
 	assert.equal(loaded.browserWindowCount, 1);
 	assert.equal(loaded.views[0].title, "Page one");
 	assert.equal(loaded.views[0].destroyed, false);
-	await page.evaluate(() => {
-		const active = document.activeElement;
-		if (active instanceof HTMLElement) active.blur();
-	});
-	await page.keyboard.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
+	const findShortcutModifier = process.platform === "darwin" ? "meta" : "control";
+	await sendInputToActiveView(
+		{ type: "keyDown", keyCode: "F", modifiers: [findShortcutModifier] },
+		"The browser find shortcut could not reach the active page",
+	);
+	await sendInputToActiveView(
+		{ type: "keyUp", keyCode: "F", modifiers: [findShortcutModifier] },
+		"The browser find shortcut could not finish on the active page",
+	);
 	const findInput = page.locator("#browser-find-input");
 	await findInput.waitFor();
+	await page.waitForFunction(
+		() => document.activeElement?.id === "browser-find-input",
+		undefined,
+		{ timeout: 5_000 },
+	);
 	await findInput.fill("Kestrel find verification token");
 	await page.getByText("1 of 3", { exact: true }).waitFor();
 	assert.equal(
@@ -2522,6 +2573,11 @@ try {
 		(value) => value.tabs.some((tab) => tab.id === detachableTabId && tab.url === `${origin}/two`),
 		"Detachable tab did not load",
 	);
+	assert.equal(
+		existsSync(detachedPlacementCapturePath),
+		false,
+		"Detached-window placement was captured before a tab was detached.",
+	);
 	const detachableTab = page.locator(
 		`.browser-tab[data-tab-id="${detachableTabId}"]`,
 	);
@@ -2606,47 +2662,52 @@ try {
 		["application/x-kestrel-tab"],
 		"Detached tab drag did not advertise a Kestrel tab transfer",
 	);
-	const detachedPlacement = await application.evaluate(
-		({ BrowserWindow, screen }, expectedUrl) => {
-			const cursor = screen.getCursorScreenPoint();
-			const workArea = screen.getDisplayNearestPoint(cursor).workArea;
+	const detachedBounds = await application.evaluate(
+		({ BrowserWindow }, expectedUrl) => {
 			const detached = BrowserWindow.getAllWindows().find((candidate) =>
 				candidate.contentView.children.some(
 					(child) =>
 						"webContents" in child && child.webContents.getURL() === expectedUrl,
 				),
 			);
-			const bounds = detached?.getBounds() ?? null;
-			const clamp = (value, minimum, maximum) =>
-				Math.round(Math.max(minimum, Math.min(value, maximum)));
-			return {
-				cursor,
-				bounds,
-				workArea,
-				expectedBounds: bounds
-					? {
-						x: clamp(
-							cursor.x - 180,
-							workArea.x,
-							workArea.x + workArea.width - bounds.width,
-						),
-						y: clamp(
-							cursor.y - 20,
-							workArea.y,
-							workArea.y + workArea.height - bounds.height,
-						),
-					}
-					: null,
-			};
+			return detached?.getBounds() ?? null;
 		},
 		`${origin}/two`,
 	);
-	assert(
-		detachedPlacement.bounds &&
-			detachedPlacement.expectedBounds &&
-			Math.abs(detachedPlacement.bounds.x - detachedPlacement.expectedBounds.x) <= 1 &&
-			Math.abs(detachedPlacement.bounds.y - detachedPlacement.expectedBounds.y) <= 1,
-		`Detached window did not open at the pointer-relative, work-area-clamped position: ${JSON.stringify(detachedPlacement)}`,
+	assert.ok(
+		existsSync(detachedPlacementCapturePath),
+		"Detached-window placement was not captured during the tear-off gesture.",
+	);
+	const detachedPlacement = JSON.parse(
+		readFileSync(detachedPlacementCapturePath, "utf8"),
+	);
+	const clamp = (value, minimum, maximum) =>
+		Math.round(Math.max(minimum, Math.min(value, maximum)));
+	const detachedWidth = Math.min(1320, detachedPlacement.workArea.width);
+	const detachedHeight = Math.min(860, detachedPlacement.workArea.height);
+	const expectedDetachedBounds = {
+		x: clamp(
+			detachedPlacement.cursor.x - 180,
+			detachedPlacement.workArea.x,
+			detachedPlacement.workArea.x + detachedPlacement.workArea.width - detachedWidth,
+		),
+		y: clamp(
+			detachedPlacement.cursor.y - 20,
+			detachedPlacement.workArea.y,
+			detachedPlacement.workArea.y + detachedPlacement.workArea.height - detachedHeight,
+		),
+		width: detachedWidth,
+		height: detachedHeight,
+	};
+	assert.deepEqual(
+		detachedPlacement.bounds,
+		expectedDetachedBounds,
+		`Detached window did not calculate pointer-relative, work-area-clamped bounds: ${JSON.stringify(detachedPlacement)}`,
+	);
+	assert.deepEqual(
+		detachedBounds,
+		detachedPlacement.bounds,
+		`Detached window did not open at its calculated pointer-relative bounds: ${JSON.stringify({ detachedBounds, detachedPlacement })}`,
 	);
 	const rejectedForgedTransfer = await page.evaluate(async (tabId) => {
 		try {
@@ -3238,6 +3299,13 @@ try {
 		);
 		const selectedTab = page.locator(`.browser-tab[data-tab-id="${tabId}"]`);
 		await selectedTab.waitFor({ state: "visible" });
+		await page.waitForFunction(
+			(expectedOrientation) =>
+				document
+					.querySelector('[role="tablist"][aria-label="Browser tabs"]')
+					?.getAttribute("aria-orientation") === expectedOrientation,
+			orientation,
+		);
 		assert.equal(
 			await selectedTab.getByRole("tab").getAttribute("aria-selected"),
 			"true",

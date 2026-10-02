@@ -2184,7 +2184,7 @@ body { font-family: var(--sans); }
 .agent-conversation-host .task-settings .task-settings-panel {
 	left: auto;
 	right: 0;
-	bottom: 40px;
+	bottom: calc(100% + 8px);
 	width: min(340px, calc(100vw - 48px));
 	/* Keep the popover readable over the sidebar and composer. */
 	background: var(--panel);

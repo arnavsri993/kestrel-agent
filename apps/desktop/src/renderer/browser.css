@@ -4122,6 +4122,21 @@ body:has(.ai-browser-app),
 }
 
 .agent-conversation-host .composer-footer > span { display: none; }
+.agent-conversation-host .composer-footer > .composer-status.is-model-readiness {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-conversation-host .composer-connect-model {
+  min-height: 28px;
+  padding-inline: 8px;
+  font-size: 11px;
+}
 .agent-conversation-host .composer-project-button span { font-size: 11px; }
 .agent-conversation-host .task-settings-panel {
   left: 0;
@@ -6793,10 +6808,14 @@ body:has(.calculator-overlay),
 	position: static;
 }
 
+.agent-conversation-host .composer-footer {
+	position: relative;
+}
+
 .agent-conversation-host .task-settings-panel {
 	left: auto;
 	right: 0;
-	bottom: 42px;
+	bottom: calc(100% + 8px);
 	width: min(340px, 100%);
 }
 

@@ -44,7 +44,14 @@ export interface DelegatedWorkerRoute {
 	selectedModelId?: string;
 	tier?: ModelTier;
 	role?: "orchestrator" | "worker" | "reviewer" | "fallback";
-	reasoningEffort: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+	reasoningEffort:
+		| "none"
+		| "low"
+		| "medium"
+		| "high"
+		| "xhigh"
+		| "max"
+		| "ultra";
 	fastMode?: boolean;
 	local: boolean;
 	confidence?: number;

@@ -59,9 +59,10 @@ export function BrowserWorkspace({
   navigationSidebar,
   agentOpen,
   onToggleAgent,
-  onNewAgent,
+	onNewAgent,
 	onOpenTaskSettings,
   onOpenSettings,
+	onOpenModelSettings,
   onOpenWorkspaces,
   onOpenHistory,
   onOpenDownloads,
@@ -90,6 +91,7 @@ export function BrowserWorkspace({
   onNewAgent(prompt?: string): void;
 	onOpenTaskSettings(): void;
   onOpenSettings(): void;
+	onOpenModelSettings(): void;
   onOpenWorkspaces?(): void;
   onOpenHistory(): void;
   onOpenDownloads(): void;
@@ -134,6 +136,8 @@ export function BrowserWorkspace({
   });
   const [tabDragActive, setTabDragActive] = useState(false);
   const tabDragActiveRef = useRef(false);
+  const [sidebarResizeActive, setSidebarResizeActive] = useState(false);
+  const sidebarResizeActiveRef = useRef(false);
   const [organizeTabsPreview, setOrganizeTabsPreview] =
     useState<UserBrowserTabOrganizationPreview | null>(null);
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
@@ -337,7 +341,7 @@ export function BrowserWorkspace({
       !activeAppPage &&
       !activeFilePage,
   );
-  const nativePageVisible =
+  const nativePageCanBeVisible =
     nativePageEligible &&
     // Keep the renderer in the input path while a tab is being dragged;
     // native WebContentsView siblings sit above the renderer surface.
@@ -349,6 +353,7 @@ export function BrowserWorkspace({
     !organizeTabsPresent &&
     !bookmarkDialogPresent &&
     !extensionCompatibilityDialogPresent;
+  const nativePageVisible = nativePageCanBeVisible && !sidebarResizeActive;
   const showChromeWebStoreInstall = Boolean(
     nativePageEligible &&
       activeTab?.url &&
@@ -420,10 +425,6 @@ export function BrowserWorkspace({
   const openFind = useCallback(() => {
     findTabIdRef.current = activeTab?.id ?? null;
     setFindOpen(true);
-    window.requestAnimationFrame(() => {
-      findRef.current?.focus();
-      findRef.current?.select();
-    });
   }, [activeTab?.id]);
 
   const closeFind = useCallback(() => {
@@ -471,7 +472,10 @@ export function BrowserWorkspace({
     };
     const targetTabId = activeTab?.id ?? null;
     const targetVisible =
-      visibleOverride ?? (!tabDragActiveRef.current && nativePageVisible);
+      visibleOverride ??
+      (!tabDragActiveRef.current &&
+        !sidebarResizeActiveRef.current &&
+        nativePageCanBeVisible);
     const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${targetVisible}:${targetTabId ?? ""}`;
     if (lastBoundsRef.current === key) return;
     lastBoundsRef.current = key;
@@ -491,7 +495,7 @@ export function BrowserWorkspace({
         }
       })
       .catch(() => undefined);
-  }, [activeTab?.id, nativePageVisible, setContentBounds]);
+  }, [activeTab?.id, nativePageCanBeVisible, setContentBounds]);
 
   const handleTabDragStateChange = useCallback((dragging: boolean) => {
     tabDragActiveRef.current = dragging;
@@ -523,7 +527,23 @@ export function BrowserWorkspace({
     const mutationObserver = new MutationObserver(syncFromRef);
     if (root) mutationObserver.observe(root, { childList: true });
     const appShell = node.closest(".ai-browser-app");
-    const shellObserver = new MutationObserver(scheduleFromRef);
+    const syncSidebarResizeState = () => {
+      const resizing = appShell?.classList.contains("kestrel-sidebar-resizing") ?? false;
+      if (sidebarResizeActiveRef.current !== resizing) {
+        sidebarResizeActiveRef.current = resizing;
+        setSidebarResizeActive(resizing);
+      }
+      if (resizing) {
+        // The embedded page is a native sibling above the renderer. Remove it
+        // before the pointer crosses the sidebar edge so DOM pointer capture
+        // continues to receive the full resize drag. The existing preview path
+        // keeps the page visually continuous while it is temporarily hidden.
+        syncBoundsRef.current(false);
+        return;
+      }
+      scheduleFromRef();
+    };
+    const shellObserver = new MutationObserver(syncSidebarResizeState);
     if (appShell) {
       shellObserver.observe(appShell, {
         attributes: true,
@@ -544,6 +564,7 @@ export function BrowserWorkspace({
     window.addEventListener("resize", syncFromRef);
     const frame = window.requestAnimationFrame(syncFromRef);
     const settleTimer = window.setTimeout(syncFromRef, 320);
+    syncSidebarResizeState();
     syncFromRef();
     return () => {
       observer.disconnect();
@@ -574,6 +595,18 @@ export function BrowserWorkspace({
   useLayoutEffect(() => {
     syncBounds();
   }, [findOpen, openChromeMenus, organizeTabsPreview, syncBounds]);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    // The native page is hidden as Find mounts. Focus only after the input
+    // exists, otherwise a native Cmd/Ctrl+F can race React's render and leave
+    // the visible Find field unreachable from the keyboard.
+    const frame = window.requestAnimationFrame(() => {
+      findRef.current?.focus({ preventScroll: true });
+      findRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [findOpen]);
 
   useEffect(
     () =>
@@ -1227,8 +1260,9 @@ export function BrowserWorkspace({
 			}
             onNavigate={(input) => void navigate(activeTab.id, input)}
 			onOpenTab={(tabId) => void selectTab(tabId)}
-            onNewAgent={onNewAgent}
+			onNewAgent={onNewAgent}
 			onOpenTaskSettings={onOpenTaskSettings}
+			onOpenModelSettings={onOpenModelSettings}
 			projects={projects}
 			onProjectsChange={onProjectsChange}
 			onSubmitDraft={onSubmitNewTabDraft}

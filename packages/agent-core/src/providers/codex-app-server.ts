@@ -56,7 +56,8 @@ type SupportedReasoningEffort =
 	| "medium"
 	| "high"
 	| "xhigh"
-	| "max";
+	| "max"
+	| "ultra";
 const REASONING_EFFORTS = new Set<SupportedReasoningEffort>([
 	"none",
 	"low",
@@ -64,6 +65,7 @@ const REASONING_EFFORTS = new Set<SupportedReasoningEffort>([
 	"high",
 	"xhigh",
 	"max",
+	"ultra",
 ] as const);
 const READ_ONLY_INSTRUCTIONS =
 	"You are operating as a read-only model runtime inside Kestrel. Answer the user in plain text. Do not execute commands, edit files, browse, invoke MCP, or request approvals; Kestrel owns tools and approvals.";

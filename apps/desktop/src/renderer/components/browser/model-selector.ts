@@ -31,6 +31,7 @@ export const THINKING_LEVELS: readonly {
 	{ id: "high", label: "High", description: "More thorough reasoning" },
 	{ id: "xhigh", label: "Extra high", description: "Extended reasoning" },
 	{ id: "max", label: "Max", description: "Largest reasoning budget" },
+	{ id: "ultra", label: "Ultra", description: "Maximum available reasoning" },
 ];
 
 export function providerGroups(
@@ -58,6 +59,19 @@ export function providerGroups(
 
 export function selectableModel(model: ProviderAccountModel): boolean {
 	return ["available", "unknown", "stale"].includes(model.availability);
+}
+
+/**
+ * Auto routing may only start when an enabled account exposes a model that the
+ * current catalog says can still be attempted. This keeps an empty profile
+ * from looking ready and sending a task that the runtime cannot route.
+ */
+export function automaticRouteAvailable(
+	accounts: readonly ProviderAccountSummary[],
+): boolean {
+	return accounts.some(
+		(account) => account.enabled && account.models.some(selectableModel),
+	);
 }
 
 export function modelAvailabilityLabel(model: ProviderAccountModel): string {

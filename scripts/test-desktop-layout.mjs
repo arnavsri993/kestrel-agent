@@ -302,6 +302,15 @@ async function readTaskSettingsLayout(page) {
 		const sendActions = document.querySelector(
 			".agent-conversation-host .composer-send-actions",
 		);
+		const connectButton = document.querySelector(
+			".agent-conversation-host .composer-connect-model",
+		);
+		const voiceButton = document.querySelector(
+			".agent-conversation-host .composer-send-actions .voice-button",
+		);
+		const unavailableAddFiles = document.querySelector(
+			".agent-conversation-host .composer-footer.is-model-unavailable .composer-add-files",
+		);
 		const host = document.querySelector(".agent-conversation-host");
 		const footer = document.querySelector(
 			".agent-conversation-host .composer-footer",
@@ -349,6 +358,9 @@ async function readTaskSettingsLayout(page) {
 				ariaLabel: taskTrigger.getAttribute("aria-label"),
 			},
 			sendActions: rect(sendActions),
+			connectButton: connectButton ? rect(connectButton) : null,
+			voiceButtonPresent: Boolean(voiceButton),
+			unavailableAddFilesPresent: Boolean(unavailableAddFiles),
 			sendButton: rect(sendButton),
 			contextActions: rect(contextActions),
 			footer: rect(footer),
@@ -404,6 +416,32 @@ function assertTaskSettingsLayout(layout) {
 		layout.taskTrigger.right <= layout.sendActions.left + 1,
 		`Task settings must precede send actions: ${JSON.stringify({ task: layout.taskTrigger, send: layout.sendActions })}.`,
 	);
+	assert.ok(
+		layout.connectButton,
+		"No-provider composer must expose a visible Connect action.",
+	);
+	assert.equal(
+		layout.voiceButtonPresent,
+		false,
+		"No-provider composer must not show a voice action that cannot send work.",
+	);
+	assert.equal(
+		layout.unavailableAddFilesPresent,
+		false,
+		"No-provider composer must not show a file action that cannot submit work.",
+	);
+	for (const [label, control] of [
+		["model selector", layout.modelTrigger],
+		["task settings", layout.taskTrigger],
+		["Connect action", layout.connectButton],
+		["send actions", layout.sendActions],
+	]) {
+		assert.ok(
+			control.left >= layout.footer.left - 1 &&
+				control.right <= layout.footer.right + 1,
+			`${label} escaped the composer footer: ${JSON.stringify({ control, footer: layout.footer })}.`,
+		);
+	}
 	for (const [label, first, second] of [
 		["model and task-settings", layout.modelTrigger, layout.taskTrigger],
 		["task-settings and send", layout.taskTrigger, layout.sendActions],
@@ -1074,6 +1112,7 @@ async function assertTaskSettingsAtCurrentWidth(page) {
 	noteOperation("measure Task settings", runtimeDiagnostics.lastBreakpoint);
 	await waitForOpenAgentLayout(page);
 	assertResponsiveAgentPanelWidth(await readLayout(page));
+	await page.locator(".agent-conversation-host .composer-connect-model").waitFor();
 	const details = page.locator(".agent-conversation-host .task-settings");
 	await details.waitFor();
 	await details.evaluate((element) => element.removeAttribute("open"));
