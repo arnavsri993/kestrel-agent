@@ -169,6 +169,20 @@ import {
 // use an isolated mock because ad-hoc signatures cannot retain durable access.
 if (!shouldUseRealKeychain(process.env, PRODUCT_IDENTITY.updateChannel))
 	app.commandLine.appendSwitch("use-mock-keychain");
+// Chromium advertises FedCM to Google Identity Services inside Electron, but
+// Electron's native browser view cannot complete the button token request. GIS
+// then leaves the button inert instead of opening its supported popup flow.
+// Preserve any existing Chromium feature switches while using that popup flow.
+const disabledChromiumFeatures = app.commandLine
+	.getSwitchValue("disable-features")
+	.split(",")
+	.map((feature) => feature.trim())
+	.filter(Boolean);
+if (!disabledChromiumFeatures.includes("FedCm"))
+	app.commandLine.appendSwitch(
+		"disable-features",
+		[...disabledChromiumFeatures, "FedCm"].join(","),
+	);
 installDiagnosticFailureHooks();
 installMacFileIconCrashGuard(app);
 
