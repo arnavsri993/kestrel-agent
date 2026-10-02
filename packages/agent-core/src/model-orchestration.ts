@@ -36,6 +36,7 @@ import {
 	type ModelCatalog,
 	type CatalogModelRecord,
 } from "./providers";
+import { openAIModelMetadata } from "./providers/openai-model-metadata";
 import type { AccountAvailabilityMonitor } from "./routing/account-availability";
 
 const CAPABILITIES: ModelCapability[] = [
@@ -311,6 +312,12 @@ function isCompactModelName(model: string): boolean {
 	);
 }
 
+function hasVerifiedModelCapabilities(
+	provenance: CatalogModelRecord["capabilities"]["capabilityProvenance"] | undefined,
+): boolean {
+	return provenance === "confirmed" || provenance === "metadata";
+}
+
 function isPermissiveModelName(model: string, providerId: string): boolean {
 	return (
 		providerId.includes("nous") ||
@@ -324,6 +331,7 @@ function isPermissiveModelName(model: string, providerId: string): boolean {
 
 function isFrontierModelName(model: string): boolean {
 	if (isCompactModelName(model)) return false;
+	if (openAIModelMetadata(model)?.tier === "frontier") return true;
 	return (
 		/\bgpt-5(?:\.\d+)?(?:-|$)/.test(model) ||
 		/\b(?:o1|o3|o4)(?:-|$)/.test(model) ||
@@ -479,9 +487,9 @@ function baselineCapabilities(
 	provider: ModelProvider,
 	model?: CatalogModelRecord,
 ): Record<ModelCapability, number> {
-	const modelCapabilitiesAreConfirmed =
-		model?.capabilities.capabilityProvenance === "confirmed";
-	const useModelCapabilities = Boolean(model?.isFallback) || modelCapabilitiesAreConfirmed;
+	const modelCapabilitiesAreVerified =
+		hasVerifiedModelCapabilities(model?.capabilities.capabilityProvenance);
+	const useModelCapabilities = Boolean(model?.isFallback) || modelCapabilitiesAreVerified;
 	const scores = emptyScores(0.5);
 	scores.speed = provider.capabilities.local ? 0.82 : 0.58;
 	scores.cost_efficiency = provider.capabilities.local ? 0.95 : 0.5;
@@ -507,6 +515,16 @@ function baselineCapabilities(
 		model?.capabilities.contextWindow ??
 		provider.profileHints?.limits?.contextWindow;
 	scores.long_context = contextWindow ? bounded(contextWindow / 200_000) : 0.55;
+	const documented = openAIModelMetadata(model?.id ?? provider.defaultModel ?? "");
+	if (documented && (model?.isFallback || modelCapabilitiesAreVerified)) {
+		for (const [capability, score] of Object.entries(documented.capabilities)) {
+			if (CAPABILITIES.includes(capability as ModelCapability))
+				scores[capability as ModelCapability] = Math.max(
+					scores[capability as ModelCapability],
+					bounded(score),
+				);
+		}
+	}
 	// Name priors were the old compatibility fallback. Keep them only for a
 	// clearly-labelled fallback record; dynamic records rely on advertised
 	// capability/limit data and measured outcomes instead.
@@ -537,15 +555,19 @@ function profileFromProvider(
 	const profileId = `${endpoint.data}:${modelId.data}`;
 	if (!RoutingProfileIdentifierSchema.safeParse(profileId).success) return undefined;
 	const capabilities = baselineCapabilities(provider, model);
-	const modelCapabilitiesAreConfirmed =
-		model?.capabilities.capabilityProvenance === "confirmed";
-	const useModelCapabilities = Boolean(model?.isFallback) || modelCapabilitiesAreConfirmed;
+	const modelCapabilitiesAreVerified =
+		hasVerifiedModelCapabilities(model?.capabilities.capabilityProvenance);
+	const useModelCapabilities = Boolean(model?.isFallback) || modelCapabilitiesAreVerified;
 	// Older providers have no account identity. Their fallback stays a legacy
 	// static profile instead of being mistaken for an unverified account catalog
 	// record. Dynamic discovery is still authoritative whenever it exists.
 	const useCatalogMetadata = Boolean(
 		model && (provider.account || !model.isFallback),
 	);
+	const documentedCost =
+		model?.capabilities.capabilityProvenance === "metadata"
+			? openAIModelMetadata(modelId.data)?.cost
+			: undefined;
 	const tier = inferModelTier(
 		modelId.data,
 		endpoint.data,
@@ -586,7 +608,10 @@ function profileFromProvider(
 		local: provider.capabilities.local,
 		tier,
 		capabilities,
-		cost: provider.profileHints?.cost ?? {},
+		cost: {
+			...(documentedCost ?? {}),
+			...(provider.profileHints?.cost ?? {}),
+		},
 		latency: provider.profileHints?.latency ?? {},
 		limits: {
 			...(provider.profileHints?.limits ?? {}),
@@ -933,6 +958,38 @@ function routingSummary(profile: RoutingTaskProfile): string {
 		.slice(0, 240);
 }
 
+/**
+ * A safety boundary such as "do not edit files" is not an instruction to use
+ * file tools. Keep that distinction at routing time: otherwise a person can
+ * make a plain-text request unroutable simply by spelling out the actions the
+ * agent must not take.
+ */
+function isExplicitlyProhibitedFileAction(
+	normalizedPrompt: string,
+	actionIndex: number,
+): boolean {
+	const sentenceStart = Math.max(
+		normalizedPrompt.lastIndexOf(".", actionIndex),
+		normalizedPrompt.lastIndexOf("!", actionIndex),
+		normalizedPrompt.lastIndexOf("?", actionIndex),
+		normalizedPrompt.lastIndexOf("\n", actionIndex),
+	) + 1;
+	const leadingDirective = normalizedPrompt
+		.slice(sentenceStart, actionIndex)
+		.trim();
+	return /\b(?:do not|don't|never|without)\b/.test(leadingDirective);
+}
+
+function requestsFileToolUse(normalizedPrompt: string): boolean {
+	const pattern = /\b(?:edit|open|read|write)\b.{0,24}\bfiles?\b/g;
+	for (const match of normalizedPrompt.matchAll(pattern)) {
+		const index = match.index ?? 0;
+		if (!isExplicitlyProhibitedFileAction(normalizedPrompt, index))
+			return true;
+	}
+	return false;
+}
+
 export class TaskRequirementAnalyzer {
 	routingPolicy(prompt: string, base: RoutingPolicySeed): RoutingPolicy {
 		const normalized = prompt.toLowerCase();
@@ -1096,7 +1153,7 @@ export class TaskRequirementAnalyzer {
 			/\b(repository|repo|git|deploy|publish|shell command|run the command|browser automation)\b/.test(
 				normalized,
 			) ||
-			/\b(edit|open|read|write)\b.{0,24}\bfiles?\b/.test(normalized)
+			requestsFileToolUse(normalized)
 		)
 			mark("tool_use", 0.88);
 		if (
@@ -1307,7 +1364,7 @@ export class AdaptiveModelRouter {
 		const policy = RoutingPolicySchema.parse(options.policy ?? this.policy());
 		const allowed = new Set(options.allowedProviderIds ?? []);
 		const excluded = new Set(options.excludeModelIds ?? []);
-		const needsConfirmedModelCapabilities =
+		const needsVerifiedModelCapabilities =
 			requirements.requiresTools ||
 			requirements.requiresVision ||
 			requirements.requiresStructuredOutput;
@@ -1325,10 +1382,11 @@ export class AdaptiveModelRouter {
 						profile.availability === "available") &&
 					// A listing proves that a model is available for plain-text work,
 					// but not its feature matrix. A capability-demanding task needs a
-					// model-level confirmation, never a transport-wide inference.
-					(!needsConfirmedModelCapabilities ||
+					// model-level verification, never a transport-wide inference.
+					(!needsVerifiedModelCapabilities ||
 						profile.availability === undefined ||
-						profile.capabilityProvenance === "confirmed") &&
+						profile.capabilityProvenance === "confirmed" ||
+						profile.capabilityProvenance === "metadata") &&
 					!excluded.has(profile.id) &&
 					this.providerAllowed(profile.provider, profile.endpointId) &&
 					!policy.avoidedProviderIds.includes(profile.provider) &&
