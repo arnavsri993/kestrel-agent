@@ -154,7 +154,7 @@ export async function buildNativeChromiumWrapper({ runtime } = {}) {
 			stdio: "inherit",
 		});
 		execFileSync("/usr/bin/ranlib", [archive], { cwd: root, stdio: "inherit" });
-		execFileSync("/usr/bin/lipo", ["-verify_arch", "arm64", archive], {
+		execFileSync("/usr/bin/lipo", [archive, "-verify_arch", "arm64"], {
 			cwd: root,
 			stdio: "inherit",
 		});

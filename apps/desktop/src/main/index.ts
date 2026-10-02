@@ -1048,6 +1048,12 @@ function detectedSubscriptionCli(id: SubscriptionCliId): string | undefined {
             ]
           : [
               configured,
+              join(home, ".local", "bin", "agent"),
+              join(home, ".local", "bin", "cursor-agent"),
+              "/opt/homebrew/bin/agent",
+              "/usr/local/bin/agent",
+              "/opt/homebrew/bin/cursor-agent",
+              "/usr/local/bin/cursor-agent",
               "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
               "/opt/homebrew/bin/cursor",
               "/usr/local/bin/cursor",
