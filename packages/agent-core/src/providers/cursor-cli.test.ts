@@ -7,10 +7,26 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	CursorCliManager,
 	CursorSubscriptionProvider,
+	cursorAgentArgs,
 } from "./cursor-cli";
 import { ModelProviderError, textContent } from "./types";
 
 const roots: string[] = [];
+
+describe("cursorAgentArgs", () => {
+	it("prefixes the agent subcommand for the Cursor app binary only", () => {
+		expect(cursorAgentArgs("/usr/bin/cursor", ["status"])).toEqual([
+			"agent",
+			"status",
+		]);
+		expect(cursorAgentArgs("/home/user/.local/bin/agent", ["status"])).toEqual([
+			"status",
+		]);
+		expect(
+			cursorAgentArgs("/home/user/.local/bin/cursor-agent", ["--mode", "ask"]),
+		).toEqual(["--mode", "ask"]);
+	});
+});
 
 async function fakeCursorCli(options: { authenticated?: boolean } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "kestrel-cursor-fake-"));
