@@ -8,6 +8,7 @@ import type {
 	RuntimeMessage,
 	WorkingTask,
 } from "@kestrel/shared-types";
+import { maskSensitiveText } from "@kestrel/shared-types";
 import {
 	useCallback,
 	useEffect,
@@ -606,7 +607,7 @@ export function AgentUniverseContextSurface({
 		if (!attempt) return;
 		setInput("");
 		stickToBottomRef.current = true;
-		setLastMessage(message);
+		setLastMessage(maskSensitiveText(message));
 		setLastResponse("");
 		setStreamText("");
 		setMessageError("");

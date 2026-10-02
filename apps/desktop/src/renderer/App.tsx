@@ -1,4 +1,5 @@
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
+import { maskSensitiveText } from "@kestrel/shared-types";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
 import type { AgentTemplate } from "@kestrel/shared-types";
@@ -3075,6 +3076,8 @@ function RuntimeConversation({
 	mentionTabs = [],
 	mentionBookmarks = [],
 	newAgentRequestId,
+	newAgentHandledRequest,
+	onNewAgentRequestHandled,
 	newAgentPrompt,
 	newAgentWorkspace,
 	newAgentProjectId,
@@ -3103,6 +3106,8 @@ function RuntimeConversation({
 	mentionTabs?: UserBrowserTab[];
 	mentionBookmarks?: UserBrowserBookmark[];
 	newAgentRequestId: number;
+	newAgentHandledRequest: { current: number };
+	onNewAgentRequestHandled(): void;
 	newAgentPrompt: string;
 	newAgentWorkspace: string | null;
 	newAgentProjectId: string | null;
@@ -3122,6 +3127,7 @@ function RuntimeConversation({
 	const [providerAccounts, setProviderAccounts] = useState<
 		ProviderAccountSummary[]
 	>([]);
+	const [providerAccountsLoaded, setProviderAccountsLoaded] = useState(false);
 	const [providerId, setProviderId] = useState(
 		() => localStorage.getItem("kestrel:provider-id") ?? "",
 	);
@@ -3192,7 +3198,6 @@ function RuntimeConversation({
 	const streamIdRef = useRef<string | null>(null);
 	const streamSessionIdRef = useRef<string | null>(null);
 	const activeSessionIdRef = useRef(activeSessionId);
-	const previousNewAgentRequestIdRef = useRef(newAgentRequestId);
 	const taskSettingsRef = useRef<HTMLDetailsElement>(null);
 	const externalIntakeRequestIdRef = useRef(0);
 	const sessionLoadSequenceRef = useRef(0);
@@ -3284,8 +3289,16 @@ function RuntimeConversation({
 	}, [input]);
 
 	useEffect(() => {
-		if (previousNewAgentRequestIdRef.current === newAgentRequestId) return;
-		previousNewAgentRequestIdRef.current = newAgentRequestId;
+		if (newAgentHandledRequest.current === newAgentRequestId) return;
+		if (newAgentDraft?.modelChoice.executionMode === "manual") {
+			if (!providerAccountsLoaded) return;
+			if (!accountForChoice(providerAccounts, newAgentDraft.modelChoice)) {
+				setError("The selected provider account is unavailable. Choose an available account before sending this task.");
+				return;
+			}
+		}
+		newAgentHandledRequest.current = newAgentRequestId;
+		onNewAgentRequestHandled();
 		if (busy) {
 			setError("Finish or cancel the active task before starting a new one.");
 			window.setTimeout(() => promptRef.current?.focus(), 0);
@@ -3317,6 +3330,10 @@ function RuntimeConversation({
 		newAgentPrompt,
 		newAgentProjectId,
 		newAgentRequestId,
+		newAgentHandledRequest,
+		onNewAgentRequestHandled,
+		providerAccountsLoaded,
+		providerAccounts,
 		newAgentWorkspace,
 		newAgentDraft,
 		onActiveSession,
@@ -3498,6 +3515,7 @@ function RuntimeConversation({
 					if (providerResponse.ok && "providerAccounts" in providerResponse) {
 						setProviderAccounts(available);
 					}
+					setProviderAccountsLoaded(true);
 					const availableGrants = availableWorkspaceGrants(projects);
 					setWorkspace(
 						(current) =>
@@ -3519,6 +3537,7 @@ function RuntimeConversation({
 				},
 			)
 			.catch((cause) => {
+				if (!cancelled) setProviderAccountsLoaded(true);
 				if (!cancelled)
 					setError(
 						cause instanceof Error
@@ -3818,7 +3837,7 @@ function RuntimeConversation({
 
 	async function attachLargePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
 		const text = event.clipboardData.getData("text/plain");
-		if (busy || text.length < LARGE_PASTE_MIN_LENGTH) return;
+		if (busy || text.length < LARGE_PASTE_MIN_LENGTH || maskSensitiveText(text) !== text) return;
 		event.preventDefault();
 		if (attachments.length >= 8) {
 			setError("Remove an attachment before pasting more text.");
@@ -3957,7 +3976,7 @@ function RuntimeConversation({
 				setError(response.error);
 				return;
 			}
-			setOptimisticSteering((current) => [...current, prompt]);
+			setOptimisticSteering((current) => [...current, maskSensitiveText(prompt)]);
 			return;
 		}
 		if (runChoice.executionMode === "manual" && !accountForChoice(providerAccounts, runChoice)) {
@@ -3976,7 +3995,7 @@ function RuntimeConversation({
 		setStreamText("");
 		setToolActivity([]);
 		setPending(null);
-		setOptimisticUser(prompt);
+		setOptimisticUser(maskSensitiveText(prompt));
 		setInput("");
 		let sessionId = activeSessionIdRef.current;
 		let streamId: string | null = null;
@@ -10290,8 +10309,14 @@ export function App() {
 		() => localStorage.getItem("kestrel:active-project-id"),
 	);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
+	// Ownership survives the conversation panel's first mount and later remounts.
+	const newAgentHandledRequest = useRef(0);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
 	const [newAgentDraft, setNewAgentDraft] = useState<NewTabComposerDraft | null>(null);
+	const clearNewAgentRequest = useCallback(() => {
+		setNewAgentPrompt("");
+		setNewAgentDraft(null);
+	}, []);
 	const [newAgentFocusTarget, setNewAgentFocusTarget] = useState<
 		"prompt" | "task-settings"
 	>("prompt");
@@ -11517,6 +11542,8 @@ export function App() {
 						externalIntake={externalIntake}
 						externalIntakeRequestId={externalIntakeRequestId}
 						newAgentRequestId={newAgentRequestId}
+						newAgentHandledRequest={newAgentHandledRequest}
+						onNewAgentRequestHandled={clearNewAgentRequest}
 						newAgentPrompt={newAgentPrompt}
 						newAgentWorkspace={newAgentWorkspace}
 						newAgentProjectId={newAgentProjectId}

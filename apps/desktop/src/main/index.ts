@@ -59,6 +59,7 @@ import {
 import { CoreSupervisor } from "./core-supervisor";
 import { desktopCoreProcess } from "./electron-core-process";
 import { CredentialBroker } from "./credential-broker";
+import { maskSensitiveText } from "@kestrel/shared-types";
 import {
   BrokerCredentialStore,
   MacOSKeychainCredentialStore,
@@ -4853,7 +4854,7 @@ function registerIpc(): void {
 		if (trackedStreamId) {
 			activeAgentStreams.add(trackedStreamId);
 			if (request.type === "runtime-run-agent")
-				activeAgentTaskLabel = request.message.split(/\r?\n/, 1)[0]!.slice(0, 120);
+				activeAgentTaskLabel = maskSensitiveText(request.message).split(/\r?\n/, 1)[0]!.slice(0, 120);
 			setAgentState("working");
 		}
 		if (

@@ -1,25 +1,13 @@
 import { createHash } from "node:crypto";
 import type { RuntimeToolExecution } from "@kestrel/shared-types";
+import { replaceSensitiveText } from "@kestrel/shared-types";
+export { replaceSensitiveText } from "@kestrel/shared-types";
 
 interface RedactionState {
 	redactions: number;
 	tokens: Map<string, string>;
 	nextTokenByKind: Map<string, number>;
 }
-
-const PRIVATE_KEY_PATTERN =
-	/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
-const SENSITIVE_ASSIGNMENT_PATTERN =
-	/\b(api[_ -]?key|access[_ -]?token|auth(?:orization)?|client[_ -]?secret|password|secret|private[_ -]?key|session[_ -]?cookie|credential)\b(\s*[:=]\s*)(["'`]?)([^\s"'`,;&}]{8,})(\3)/gi;
-const ANTHROPIC_KEY_PATTERN = /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g;
-const OPENAI_KEY_PATTERN = /\bsk-(?:proj-[A-Za-z0-9_-]{16,}|[A-Za-z0-9_-]{24,})\b/g;
-const GITHUB_TOKEN_PATTERN =
-	/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_\-]{16,}\b/g;
-const GOOGLE_API_KEY_PATTERN = /\bAIza[0-9A-Za-z_-]{20,}\b/g;
-const AWS_ACCESS_KEY_PATTERN = /\bAKIA[0-9A-Z]{16}\b/g;
-const SLACK_TOKEN_PATTERN = /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/g;
-const BEARER_TOKEN_PATTERN =
-	/(\bBearer\s+)([A-Za-z0-9._~+\/-]{20,})/gi;
 
 function createRedactionState(): RedactionState {
 	return {
@@ -67,50 +55,14 @@ function assignmentKind(key: string): string {
 
 function isSensitiveKey(key: string): boolean {
 	const normalized = normalizedKey(key);
+	if (/(?:^|_)(?:available|enabled|disabled|required|configured|present|count|length|status|name|label|hint)$/.test(normalized)) return false;
 	return /(?:^|_)(?:api_key|access_token|auth|authorization|client_secret|password|secret|private_key|session_cookie|credential)(?:$|_)/.test(
 		normalized,
 	);
 }
 
 function redactText(value: string, state: RedactionState): string {
-	let redacted = value.replace(
-		PRIVATE_KEY_PATTERN,
-		(match) => tokenFor("PRIVATE_KEY", match, state),
-	);
-	redacted = redacted.replace(
-		SENSITIVE_ASSIGNMENT_PATTERN,
-		(_match, key: string, separator: string, quote: string, secret: string) =>
-			`${key}${separator}${quote}${tokenFor(assignmentKind(key), secret, state)}${quote}`,
-	);
-	redacted = redacted.replace(
-		ANTHROPIC_KEY_PATTERN,
-		(match) => tokenFor("ANTHROPIC_API_KEY", match, state),
-	);
-	redacted = redacted.replace(
-		OPENAI_KEY_PATTERN,
-		(match) => tokenFor("OPENAI_API_KEY", match, state),
-	);
-	redacted = redacted.replace(
-		GITHUB_TOKEN_PATTERN,
-		(match) => tokenFor("GITHUB_TOKEN", match, state),
-	);
-	redacted = redacted.replace(
-		GOOGLE_API_KEY_PATTERN,
-		(match) => tokenFor("GOOGLE_API_KEY", match, state),
-	);
-	redacted = redacted.replace(
-		AWS_ACCESS_KEY_PATTERN,
-		(match) => tokenFor("AWS_ACCESS_KEY", match, state),
-	);
-	redacted = redacted.replace(
-		SLACK_TOKEN_PATTERN,
-		(match) => tokenFor("SLACK_TOKEN", match, state),
-	);
-	return redacted.replace(
-		BEARER_TOKEN_PATTERN,
-		(_match, prefix: string, token: string) =>
-			`${prefix}${tokenFor("BEARER_TOKEN", token, state)}`,
-	);
+	return replaceSensitiveText(value, (kind, secret) => tokenFor(kind, secret, state));
 }
 
 /** Redact a previously persisted tool-message payload before replaying it. */
@@ -122,33 +74,39 @@ function redactValue(
 	value: unknown,
 	state: RedactionState,
 	key?: string,
+	redactKnownText: (text: string) => string = text => text,
 ): unknown {
 	if (typeof value === "string")
-		return key && isSensitiveKey(key)
+		return key && isSensitiveKey(key) && !/^(?:\[(?:[A-Z][A-Z0-9_]*_\d+|REDACTED|TASK_SECRET:[^\]]+)\]|task-secret-[a-f0-9-]{36})$/.test(value)
 			? tokenFor(assignmentKind(key), value, state)
-			: redactText(value, state);
-	if (typeof value === "number" || typeof value === "boolean")
+			: redactKnownText(redactText(value, state));
+	if (typeof value === "boolean") return value;
+	if (typeof value === "number")
 		return key && isSensitiveKey(key)
 			? tokenFor(assignmentKind(key), String(value), state)
 			: value;
-	if (Array.isArray(value)) return value.map((item) => redactValue(item, state));
+	if (Array.isArray(value)) return value.map((item) => redactValue(item, state, undefined, redactKnownText));
 	if (value && typeof value === "object") {
 		return Object.fromEntries(
 			Object.entries(value).map(([childKey, childValue]) => [
 				childKey,
-				redactValue(childValue, state, childKey),
+				redactValue(childValue, state, childKey, redactKnownText),
 			]),
 		);
 	}
 	return value;
 }
 
+/** Durable records use the same protections as model-facing results. */
+export function redactSensitiveValue(value: unknown, redactKnownText?: (text: string) => string): unknown {
+	return redactValue(value, createRedactionState(), undefined, redactKnownText);
+}
+
 /**
  * Format a tool result for conversation history and model context.
  *
- * The encrypted execution record remains unchanged; only the model-facing
- * copy is redacted so a local read of a secret-bearing file or external page
- * cannot replay that secret into a hosted model on a later turn.
+ * This is independent defense at the provider boundary. Runtime journals use
+ * redactSensitiveValue too; encryption alone is not permission to retain keys.
  */
 export function modelVisibleToolResult(execution: RuntimeToolExecution): string {
 	const state = createRedactionState();
