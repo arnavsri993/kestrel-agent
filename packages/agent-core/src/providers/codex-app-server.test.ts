@@ -174,6 +174,27 @@ async function readCapture(path: string): Promise<CaptureRecord[]> {
 }
 
 describe("persistent Codex app-server provider", () => {
+ it("delivers transient observations preceding the final user message to a fresh tool turn", async () => {
+  const fake = await fakeAppServer();
+  const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 10_000 });
+  const png = (await sharp({ create: { width: 2, height: 2, channels: 3, background: "#123456" } }).png().toBuffer()).toString("base64");
+  try {
+   await provider.discoverModels();
+   expect(provider.supportsModelImages("gpt-catalog")).toBe(true);
+   expect(provider.supportsModelImages("not-advertised")).toBe(false);
+   await provider.complete({ model: "gpt-catalog", tools: [{ name: "workspace.read", description: "Read scoped evidence", inputSchema: { type: "object" } }], messages: [
+    { role: "user", toolName: "computer_observe_window", toolCallId: "capture-1", content: [
+     ...textContent("Untrusted observation of exact window 7"),
+     { type: "image", source: "base64", mediaType: "image/png", data: png },
+    ] },
+    { role: "tool", toolCallId: "capture-1", content: textContent("Image attached transiently") },
+    { role: "user", content: textContent("Describe the verified evidence") },
+   ] });
+   const turn = (await readCapture(fake.capture)).find(row => row.value.method === "turn/start")!;
+   expect(turn.value.params?.input).toEqual(expect.arrayContaining([{ type: "image", url: `data:image/png;base64,${png}` }]));
+   expect(JSON.stringify(turn.value.params?.input)).toContain("exact window 7");
+  } finally { await provider.close(); }
+ });
  it("uses fresh complete transcripts for consecutive final answers in the same session", async () => {
   const fake = await fakeAppServer(["First verified answer", "Second verified answer"]);
   const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 10_000 });

@@ -440,6 +440,8 @@ try {
 	);
 
 	await page.setViewportSize({ width: 640, height: 760 });
+	const compactChatClose = page.getByRole("button", { name: "Close chat", exact: true });
+	if (await compactChatClose.isVisible()) await compactChatClose.click();
 	const overflow = await page.evaluate(
 		() =>
 			document.documentElement.scrollWidth >
@@ -632,7 +634,7 @@ try {
 		.filter({ has: page.getByText("Settings", { exact: true }) })
 		.first()
 		.click();
-	await page.getByRole("heading", { name: "Settings" }).waitFor();
+	await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
 	assert.equal(
 		await page.getByLabel("Message Kestrel").inputValue(),
 		preservedDraft,
@@ -701,11 +703,12 @@ try {
 	await page.locator(".command-center").waitFor({ state: "detached" });
 	assert.equal(await page.locator(".command-center").count(), 0);
 	await page.setViewportSize({ width: 1320, height: 860 });
-	await page.getByRole("heading", { name: "Settings" }).waitFor();
+	await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
 	assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
 	assert.equal(await page.locator(".page-header > p").count(), 0);
 	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
-	await page.locator("summary").filter({ hasText: "Model provider · ChatGPT" }).click();
+	await page.getByLabel("More connection settings").selectOption("models");
+	await page.getByRole("heading", { name: "Model provider", exact: true }).waitFor();
 	const chatGptConnection = page
 		.locator(".oauth-connection")
 		.filter({ hasText: "ChatGPT" });
@@ -718,13 +721,15 @@ try {
 			.count(),
 		1,
 	);
+	await page.getByRole("button", { name: "Apps & accounts", exact: true }).click();
+	await page.locator("summary").filter({ hasText: "Gmail and Calendar" }).click();
+	await page.getByRole("button", { name: "Set up Google", exact: true }).click();
 	await page.getByLabel("Desktop OAuth client ID").waitFor();
 	assert.equal(
-		await page
-			.getByRole("button", { name: "Connect with Google" })
-			.isDisabled(),
+		await page.getByLabel("Desktop OAuth client ID").evaluate(input => input === document.activeElement),
 		true,
 	);
+	assert.equal(await page.getByRole("button", { name: "Connect with Google", exact: true }).count(), 0);
 	await page
 		.getByLabel("Desktop OAuth client ID")
 		.fill(

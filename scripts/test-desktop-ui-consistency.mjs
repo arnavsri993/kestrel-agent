@@ -54,7 +54,11 @@ try {
 			kind: "conversation",
 		});
 		if (!r.ok || !r.session) throw new Error("Fixture creation failed");
-		return r.session.id;
+		const agent = await window.kestrel.request({
+			type: "runtime-create-session", title: "Scoped memory fixture", kind: "agent",
+		});
+		if (!agent.ok || !agent.session) throw new Error("Scoped agent fixture creation failed");
+		return agent.session.id;
 	});
 	await page.reload();
 	await page.locator("#new-tab-title").waitFor();
@@ -123,19 +127,22 @@ try {
 		]) {
 			await route(id);
 			const name = id.includes("scope=") ? "scoped-memory" : id || "home";
-			if (name === "scoped-memory")
-				await page
-					.getByRole("button", { name: "Sources", exact: true })
-					.click();
+			if (name === "scoped-memory") {
+				await page.locator(".memory-workspace-content").waitFor();
+				await page.locator(".memory-filters-disclosure > summary").click();
+			}
 			await capture(`${width}-${name}`);
 			if (name === "scoped-memory") {
-				assert.equal(
-					await page.getByLabel("Memory scope", { exact: true }).inputValue(),
-					session,
-				);
-				assert(
-					await page.getByLabel("Memory source", { exact: true }).isDisabled(),
-				);
+				await page.waitForFunction(() => {
+					const select = document.querySelector('.memory-scope-controls select');
+					return select?.selectedOptions?.[0]?.textContent === "Scoped memory fixture";
+				});
+				const viewers = await page.getByLabel("Viewing as", { exact: true }).locator("option").evaluateAll(nodes =>
+					nodes.filter(node => node.selected).map(node => ({ value: node.value, label: node.textContent })));
+				assert.equal(viewers.length, 1, "Scoped memory must have one selected viewer");
+				assert.equal(viewers[0].label, "Scoped memory fixture");
+				assert.notEqual(viewers[0].value, "user", "Agent memory must not fall back to personal memory");
+				assert.equal(await page.getByLabel("Domain", { exact: true }).inputValue(), "", "Viewer and domain remain separate filters");
 			}
 
 			const metrics = await page.evaluate(() => ({
@@ -434,11 +441,13 @@ try {
 			.webContents.setZoomFactor(2),
 	);
 	await route(`memory?scope=${session}`);
-	await page.getByRole("button", { name: "Sources", exact: true }).click();
+	await page.locator(".memory-workspace-content").waitFor();
+	await page.locator(".memory-filters-disclosure > summary").click();
+	assert.equal(await page.getByLabel("Viewing as", { exact: true }).locator("option:checked").innerText(), "Scoped memory fixture");
 	await capture("memory-200-percent");
 	assert.equal(
 		await page
-			.locator(".source-memory-view")
+			.locator(".memory-workspace-content")
 			.evaluate((n) => n.scrollWidth > n.clientWidth + 1),
 		false,
 	);

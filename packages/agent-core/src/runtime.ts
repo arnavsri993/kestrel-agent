@@ -66,7 +66,7 @@ import {
 } from "./human-input";
 import type { HumanInputRequest } from "@kestrel/shared-types";
 import { maskSensitiveText } from "@kestrel/shared-types";
-import { redactSensitiveValue } from "./tool-result-guardrails";
+import { modelVisibleToolResult, redactSensitiveValue } from "./tool-result-guardrails";
 import { TaskSecretVault, type PreparedTaskSecrets } from "./task-secrets";
 
 export type RuntimeHookEvent = "pre_tool" | "post_tool" | "tool_error";
@@ -1171,7 +1171,7 @@ export class AgentRuntime extends EventEmitter {
 			throw new Error("A specialist's stable key cannot change.");
 		if (this.database.listAgentRuns(sessionId).some(run => ["running", "waiting_approval", "waiting_input"].includes(run.status)))
 			throw new Error("Stop the current run before changing this agent's definition.");
-		const updated = RuntimeSessionSchema.parse({ ...current, title: input.title,
+		const updated = RuntimeSessionSchema.parse({ ...current, title: maskSensitiveText(input.title),
 			agentInstructions: input.specialistDefinition ? `${input.specialistDefinition.purpose}\n${input.instructions}` : input.instructions,
 			...(input.specialistDefinition ? { specialistDefinition: input.specialistDefinition } : {}), updatedAt: this.now() });
 		this.database.saveRuntimeSession(updated);
@@ -1468,6 +1468,13 @@ export class AgentRuntime extends EventEmitter {
 		input: Omit<RuntimeMessage, "id" | "createdAt">,
 	): RuntimeMessage {
 		this.requireSession(input.sessionId);
+		// Computer observations may be used in the current model step, but
+		// durable transcripts must use the same projection as tool journals.
+		const storedExecution = input.role === "tool" && input.toolExecutionId
+			? this.database.getToolExecution(input.toolExecutionId) : undefined;
+		const content = storedExecution && storedExecution.sessionId === input.sessionId &&
+			(this.tools.get(storedExecution.toolName)?.redactOutput || storedExecution.toolName === "computer.screenshot")
+			? modelVisibleToolResult(this.executionForStorage(storedExecution)) : input.content;
         const sourceToolExecutionIds = input.role === "assistant"
             ? [...new Set([...(input.sourceToolExecutionIds ?? []), ...this.listMessages(input.sessionId).flatMap(message => [
                 ...(message.sourceToolExecutionIds ?? []),
@@ -1475,7 +1482,7 @@ export class AgentRuntime extends EventEmitter {
             ])])] : input.sourceToolExecutionIds;
 		const message = RuntimeMessageSchema.parse({
 			...input,
-			content: this.taskSecrets.redact(input.sessionId, input.content),
+			content: this.taskSecrets.redact(input.sessionId, content),
 			...(input.modelToolCalls ? { modelToolCalls: redactSensitiveValue(input.modelToolCalls, text => this.taskSecrets.redact(input.sessionId, text)) } : {}),
             ...(sourceToolExecutionIds?.length ? { sourceToolExecutionIds } : {}),
 			id: `message-${randomUUID()}`,
@@ -2212,7 +2219,9 @@ export class AgentRuntime extends EventEmitter {
    if (definition.redactInput && canonicalJson(completed.input) !== canonicalJson(rawInput))
     throw new Error("This idempotency key was already used with different input; use a new key for a new mutation.");
    this.assertResourceAccess(sessionId, definition, completed.input, options);
-   return completed;
+   // Concurrent callers replay the durable projection. Only the caller that
+   // executes the observation receives its transient original output.
+   return definition.redactOutput ? this.executionForStorage(completed) : completed;
   }
 
 		const pendingExecution = this.executeToolCall(
@@ -2792,6 +2801,11 @@ export class AgentRuntime extends EventEmitter {
 		);
 		const result = RuntimeToolExecutionSchema.parse(completion.result);
 		this.journalToolExecution(result, approval, descriptor);
+		// Preserve the first authorized observation for this executing caller;
+		// ownership conflicts and every replay retain the durable projection.
+		if (completion.completed && result.id === execution.id && execution.status === "verified" &&
+			descriptor?.readOnly && this.tools.get(execution.toolName)?.redactOutput && execution.output !== undefined)
+			return { ...result, output: this.protectedTaskOutput(execution.sessionId, execution.output) };
 		return result;
 	}
 

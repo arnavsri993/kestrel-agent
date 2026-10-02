@@ -278,8 +278,8 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 			<header className="memory-workspace-header">
 				<div><h1>Memory</h1><p className="memory-intro">Things you want Kestrel to remember. Read, edit, or add a note.</p></div>
 				<details className="memory-filters-disclosure"><summary>{workspace?.viewers.find(viewer => viewer.id === viewerId)?.label ?? (viewerId === "user" ? "Your memory" : "Agent memory")}{domainId ? ` · ${workspace?.domains.find(domain => domain.id === domainId)?.label ?? domainId}` : ""} · Filters</summary><div className="memory-scope-controls">
-					<label>Viewing as<select value={viewerId} onChange={(event) => { if (canNavigate()) { setWorkspace(null); setDomainId(""); setViewerId(event.target.value); } }}><option value="user">You</option>{workspace?.viewers.filter((viewer) => viewer.id !== "user").map((viewer) => <option key={viewer.id} value={viewer.id}>{viewer.parentId ? "↳ " : ""}{viewer.label}</option>)}</select></label>
-					<label>Domain<select value={domainId} onChange={(event) => { if (canNavigate()) setDomainId(event.target.value); }}><option value="">All</option>{workspace?.domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.label}</option>)}</select></label>
+					<label>Viewing as<select aria-label="Viewing as" value={viewerId} onChange={(event) => { if (canNavigate()) { setWorkspace(null); setDomainId(""); setViewerId(event.target.value); } }}><option value="user">You</option>{workspace?.viewers.filter((viewer) => viewer.id !== "user").map((viewer) => <option key={viewer.id} value={viewer.id}>{viewer.parentId ? "↳ " : ""}{viewer.label}</option>)}</select></label>
+					<label>Domain<select aria-label="Domain" value={domainId} onChange={(event) => { if (canNavigate()) setDomainId(event.target.value); }}><option value="">All</option>{workspace?.domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.label}</option>)}</select></label>
 				</div></details>
 			</header>
 			<nav className="memory-workspace-tabs" aria-label="Memory views">

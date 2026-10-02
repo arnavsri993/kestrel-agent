@@ -1,4 +1,5 @@
 import { commandDestinations } from "./app-directory";
+import { dismissCompactChatForDestination } from "./agent-panel-navigation";
 import "./Connections.css";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { BuildProvenance } from "./components/BuildProvenance";
@@ -10321,6 +10322,16 @@ export function App() {
 	const [agentUniverseRailOpen, setAgentUniverseRailOpen] = useState(
 		() => localStorage.getItem("kestrel:agent-universe-rail") === "open",
 	);
+	const dismissChatForDestination = useCallback((destination?: string) => {
+		if (!dismissCompactChatForDestination(window.innerWidth, destination)) return;
+		setAgentSidebarOpen(false);
+		setAgentUniverseRailOpen(false);
+		localStorage.setItem("kestrel:agent-sidebar", "collapsed");
+		localStorage.setItem("kestrel:agent-universe-rail", "collapsed");
+	}, []);
+	const activeRouteTab = browser.state?.tabs.find(tab => tab.id === browser.state?.activeTabId);
+	const activeRouteKey = activeRouteTab ? `${activeRouteTab.id}:${activeRouteTab.url}` : "";
+	const activeRoutePageId = parseKestrelAppPage(activeRouteTab?.url ?? "")?.id;
 	const [settingsSectionRequest, setSettingsSectionRequest] = useState<{
 		section: SettingsSection | null;
 		requestId: number;
@@ -10335,6 +10346,47 @@ export function App() {
 	);
 	const pendingToolRouteFocusRef = useRef<KestrelAppPageId | null>(null);
 	const routeFocusFrameRef = useRef<number | null>(null);
+	const focusToolRoute = useCallback((node: HTMLDivElement | null) => {
+		const expected = pendingToolRouteFocusRef.current;
+		if (!node || !expected) return;
+		if (routeFocusFrameRef.current !== null)
+			window.cancelAnimationFrame(routeFocusFrameRef.current);
+		routeFocusFrameRef.current = window.requestAnimationFrame(() => {
+			routeFocusFrameRef.current = null;
+			if (pendingToolRouteFocusRef.current !== expected || !node.isConnected)
+				return;
+			const target =
+				expected === "commands"
+					? node.querySelector<HTMLElement>(".command-search input")
+					: expected === "agent"
+						? document.getElementById("agent-workspace-title")
+						: node.querySelector<HTMLElement>("h1, h2");
+			if (!target || target.closest("[inert]")) return;
+			pendingToolRouteFocusRef.current = null;
+			if (target.matches("input, button, select, textarea, [tabindex]")) {
+				target.focus();
+				return;
+			}
+			const previousTabIndex = target.getAttribute("tabindex");
+			target.tabIndex = -1;
+			target.focus();
+			target.addEventListener(
+				"blur",
+				() => {
+					if (previousTabIndex === null) target.removeAttribute("tabindex");
+					else target.setAttribute("tabindex", previousTabIndex);
+				},
+				{ once: true },
+			);
+		});
+	}, []);
+	// Address-bar, tab selection and host IPC can navigate without openAppPage.
+	// Depend only on the route so starting a task on the same page keeps its chat.
+	useLayoutEffect(() => {
+		if (!activeRouteKey) return;
+		dismissChatForDestination(activeRoutePageId);
+	}, [activeRouteKey, activeRoutePageId, dismissChatForDestination]);
+
 	const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
 	const [runtimeSessionsLoadState, setRuntimeSessionsLoadState] = useState<
 		"loading" | "ready" | "error"
@@ -10702,6 +10754,8 @@ export function App() {
 	const runtimeWaiting = runtimeAgentState === "waiting_approval";
 	const openAppPage = useCallback(
 		async (id: KestrelAppPageId, section?: SettingsSection, scopeSessionId?: string) => {
+			pendingToolRouteFocusRef.current = id;
+			dismissChatForDestination(id);
 			if (id === "projects")
 				await refreshProjects().catch((cause) => {
 					setDeepLinkNotice(
@@ -10715,7 +10769,6 @@ export function App() {
 					section: section ?? null,
 					requestId: current.requestId + 1,
 				}));
-			pendingToolRouteFocusRef.current = id;
 			const tabs = browser.state?.tabs ?? [];
 			const existing = tabs.find(
 				(tab) => parseKestrelAppPage(tab.url)?.url === kestrelAppPageUrl(id, scopeSessionId),
@@ -10723,11 +10776,14 @@ export function App() {
 			if (existing) {
 				if (existing.id !== browser.state?.activeTabId)
 					await browser.selectTab(existing.id);
+				focusToolRoute(document.querySelector<HTMLDivElement>(
+					`.browser-app-page[data-app-page="${id}"]`,
+				));
 				return;
 			}
 			await browser.createTab(kestrelAppPageUrl(id, scopeSessionId));
 		},
-		[browser, refreshProjects],
+		[browser, refreshProjects, dismissChatForDestination, focusToolRoute],
 	);
 	const openTranscriptResult = useCallback(
 		(result: TranscriptSearchResult) => {
@@ -10880,6 +10936,7 @@ export function App() {
 		[refreshRuntimeSessions, selectProject],
 	);
 	const openBrowserWorkspace = useCallback(async () => {
+		dismissChatForDestination();
 		const tabs = browser.state?.tabs ?? [];
 		const webTab = tabs.find((tab) => !parseKestrelAppPage(tab.url));
 		if (webTab) {
@@ -10888,7 +10945,7 @@ export function App() {
 			return;
 		}
 		await browser.createTab();
-	}, [browser]);
+	}, [browser, dismissChatForDestination]);
 	const reviewApprovals = useCallback(() => {
 		if (
 			sidebarReviewTarget({
@@ -11126,40 +11183,12 @@ export function App() {
 		const timer = window.setInterval(beacon, 45_000);
 		return () => window.clearInterval(timer);
 	}, []);
-	const focusToolRoute = useCallback((node: HTMLDivElement | null) => {
-		const expected = pendingToolRouteFocusRef.current;
-		if (!node || !expected) return;
-		if (routeFocusFrameRef.current !== null)
-			window.cancelAnimationFrame(routeFocusFrameRef.current);
-		routeFocusFrameRef.current = window.requestAnimationFrame(() => {
-			routeFocusFrameRef.current = null;
-			if (pendingToolRouteFocusRef.current !== expected || !node.isConnected)
-				return;
-			const target =
-				expected === "commands"
-					? node.querySelector<HTMLElement>(".command-search input")
-					: expected === "agent"
-						? document.getElementById("agent-workspace-title")
-						: node.querySelector<HTMLElement>("h1, h2");
-			if (!target) return;
-			pendingToolRouteFocusRef.current = null;
-			if (target.matches("input, button, select, textarea, [tabindex]")) {
-				target.focus();
-				return;
-			}
-			const previousTabIndex = target.getAttribute("tabindex");
-			target.tabIndex = -1;
-			target.focus();
-			target.addEventListener(
-				"blur",
-				() => {
-					if (previousTabIndex === null) target.removeAttribute("tabindex");
-					else target.setAttribute("tabindex", previousTabIndex);
-				},
-				{ once: true },
-			);
-		});
-	}, []);
+	useLayoutEffect(() => {
+		if (pendingToolRouteFocusRef.current && activeRoutePageId === pendingToolRouteFocusRef.current)
+			focusToolRoute(document.querySelector<HTMLDivElement>(
+				`.browser-app-page[data-app-page="${activeRoutePageId}"]`,
+			));
+	}, [activeRouteKey, activeRoutePageId, agentSidebarOpen, agentUniverseRailOpen, focusToolRoute]);
 	useEffect(
 		() => () => {
 			if (routeFocusFrameRef.current !== null)

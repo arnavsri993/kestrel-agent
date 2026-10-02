@@ -216,6 +216,8 @@ export interface ModelProvider {
   probe?(signal?: AbortSignal): Promise<void>;
 	/** Enumerates models through the adapter's supported provider or CLI surface. */
 	discoverModels?(signal?: AbortSignal): Promise<DiscoveredModel[]>;
+	/** A cached, model-specific image capability when the transport advertises a catalog. */
+	supportsModelImages?(model: string): boolean;
   complete(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResult>;
   close?(): Promise<void>;
 }

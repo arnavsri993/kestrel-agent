@@ -45,7 +45,9 @@ export async function openCommandCenter(page) {
 			await commandCenterButton.click();
 		},
 		async () => {
-			await page.locator("#new-tab-title").click({ force: true });
+			// Destination pages do not contain the New Tab heading. Foreground
+			// the fixture window before using its supported global shortcut.
+			await page.bringToFront();
 			await page.keyboard.press("Meta+K");
 		},
 		async () => {

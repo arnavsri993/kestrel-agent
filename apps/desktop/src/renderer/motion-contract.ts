@@ -92,9 +92,18 @@ export function springDampingRatio({
 	return damping / (2 * Math.sqrt(stiffness * mass));
 }
 
+export const AGENT_PANEL_MIN_WIDTH = 480;
+export const AGENT_PANEL_COMPACT_BREAKPOINT = 1120;
+
+export function agentPanelUsesOverlay(viewportWidth: number): boolean {
+	return viewportWidth <= AGENT_PANEL_COMPACT_BREAKPOINT;
+}
+
 export function clampAgentPanelWidth(width: number, viewportWidth: number): number {
-	const maximum = Math.max(480, Math.min(820, viewportWidth * 0.6));
-	return Math.min(maximum, Math.max(480, width));
+	// Leave a useful workspace beside the dock. Compact windows use an overlay.
+	const maximum = Math.max(AGENT_PANEL_MIN_WIDTH, Math.min(820, viewportWidth - 640));
+	return Math.min(maximum, Math.max(AGENT_PANEL_MIN_WIDTH,
+		Number.isNaN(width) ? AGENT_PANEL_MIN_WIDTH : width));
 }
 
 export function projectedPanelWidth(

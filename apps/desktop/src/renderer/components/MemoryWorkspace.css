@@ -106,3 +106,15 @@
 /* Keep imported titles readable without letting one note dominate the list. */
 .memory-library > aside > button strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .memory-library > aside > button:disabled { cursor: wait; }
+
+/* Use available workspace width: the chat dock can narrow a large window. */
+@container kestrel-browser-viewport (max-width: 700px) {
+	.memory-workspace-header { align-items: stretch; flex-direction: column; gap: 16px; padding: 22px 20px 16px; }
+	.memory-workspace-content { padding: 24px 20px 40px; }
+	.memory-library { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+	.memory-library > aside { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 18px; }
+	.memory-workspace-tabs { gap: 16px; padding: 0 20px; flex-wrap: wrap; }
+	.memory-workspace-tabs > select { margin-left: 0; }
+	.memory-editor footer { flex-wrap: wrap; }
+	.memory-scope-controls select { min-width: 0; width: 100%; }
+}

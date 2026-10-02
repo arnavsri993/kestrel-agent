@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import {
 	mkdtempSync,
 	mkdirSync,
@@ -238,9 +239,7 @@ function rectCenterY(rect) {
 }
 
 function expectedAgentPanelWidth(viewportWidth) {
-	if (viewportWidth <= 760) return 0;
-	if (viewportWidth <= 980) return 480;
-	if (viewportWidth <= 1_120) return 520;
+	if (viewportWidth <= 1120) return viewportWidth;
 	return 560;
 }
 
@@ -986,10 +985,10 @@ function assertOpenLayout(layout) {
 }
 
 function agentPanelWidthBounds(viewportWidth) {
-	if (viewportWidth <= 760) return { min: 0, max: 0 };
+	if (viewportWidth <= 1120) return { min: viewportWidth, max: viewportWidth };
 	return {
 		min: 480,
-		max: Math.max(480, Math.min(820, viewportWidth * 0.6)),
+		max: Math.max(480, Math.min(820, viewportWidth - 640)),
 	};
 }
 
@@ -1101,11 +1100,95 @@ async function waitForOpenAgentLayout(page, expectedWidth = null) {
 				!shell.classList.contains("agent-sidebar-collapsed") &&
 				!shell.classList.contains("agent-sidebar-settling") &&
 				width > 0 &&
+				(innerWidth > 1120 || (shell.classList.contains("agent-sidebar-overlay-open") && Math.abs(width - innerWidth) <= 1)) &&
 				(target === null || Math.abs(width - target) <= 1)
 			);
 		},
 		expectedWidth,
 	);
+}
+
+async function assertCompactChatInteraction(application, page) {
+	const originalMinimum = await application.evaluate(({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows().find(window => !/[?&]petOverlay=/.test(window.webContents.getURL()));
+		const minimum = window.getMinimumSize();
+		// Synthetic reflow coverage may narrow this disposable test window only.
+		window.setMinimumSize(640, minimum[1]);
+		return minimum;
+	});
+	const server = createServer((_request, response) => {
+		response.writeHead(200, { "Content-Type": "text/html" });
+		response.end("<!doctype html><title>Compact chat native fixture</title><h1>Native browser content</h1>");
+	});
+	await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+	const url = `http://127.0.0.1:${server.address().port}/`;
+	const nativeViews = () => application.evaluate(({ BrowserWindow }, url) =>
+		BrowserWindow.getAllWindows().flatMap(window => window.contentView.children
+			.filter(view => view.webContents?.getURL().startsWith(url))
+			.map(view => ({ visible: view.getVisible(), title: view.webContents.getTitle() }))), url);
+	const waitForNative = async visible => {
+		const deadline = Date.now() + 10000;
+		do {
+			const views = await nativeViews();
+			if (visible ? views.some(view => view.visible) : views.every(view => !view.visible)) return;
+			await page.waitForTimeout(50);
+		} while (Date.now() < deadline);
+		throw new Error(`Native browser visibility did not become ${visible}`);
+	};
+	try {
+		await setDesktopWindowWidth(application, page, 800);
+		await page.evaluate(async url => {
+			const result = await window.kestrel.request({ type: "browser-create-tab", input: url, active: true });
+			if (!result.ok) throw new Error(result.error);
+		}, url);
+		await waitForCollapsedLayout(page);
+		await waitForNative(true);
+		await page.locator("#browser-agent-toggle").click();
+		await waitForOpenAgentLayout(page, 800);
+		await page.getByRole("dialog", { name: /chat/ }).waitFor();
+		await waitForNative(false);
+		assert.equal(await page.locator(".browser-main-plane").evaluate(node => node.inert), true);
+		const focusBounds = await page.locator(".agent-sidebar").evaluate(node => {
+			const controls = [...node.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]')]
+				.filter(control => control.getClientRects().length && !control.closest("[inert]"));
+			controls.at(-1).focus();
+			return { first: controls[0].outerHTML, last: controls.at(-1).outerHTML };
+		});
+		await page.keyboard.press("Tab");
+		assert.equal(await page.evaluate(() => document.activeElement.outerHTML), focusBounds.first);
+		await page.keyboard.press("Shift+Tab");
+		assert.equal(await page.evaluate(() => document.activeElement.outerHTML), focusBounds.last);
+		await page.screenshot({ path: join(evidenceDirectory, `${evidenceStamp}-compact-chat-native.png`) });
+		await page.keyboard.press("Escape");
+		await waitForCollapsedLayout(page);
+		await waitForNative(true);
+		await page.waitForFunction(() => document.activeElement?.id === "browser-agent-toggle");
+		assert.equal(await page.locator(".browser-main-plane").evaluate(node => node.inert), false);
+		await page.locator("#browser-agent-toggle").click();
+		await waitForOpenAgentLayout(page, 800);
+		await page.locator(".agent-conversation-host .composer-connect-model").click();
+		await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+		await waitForCollapsedLayout(page);
+		assert.equal(await page.locator(".browser-main-plane").evaluate(node => node.inert), false);
+		await page.locator("#browser-agent-toggle").click();
+		await waitForOpenAgentLayout(page, 800);
+		await page.keyboard.press("Meta+K");
+		await page.getByLabel("Search Kestrel").waitFor();
+		await waitForCollapsedLayout(page);
+		await page.waitForFunction(() => document.activeElement?.id === "kestrel-directory-search");
+		await page.screenshot({ path: join(evidenceDirectory, `${evidenceStamp}-compact-chat-command-navigation.png`) });
+		await page.locator("#browser-agent-toggle").click();
+		await waitForOpenAgentLayout(page, 800);
+		await page.getByRole("button", { name: "Close chat", exact: true }).click();
+		await waitForCollapsedLayout(page);
+		await setDesktopWindowWidth(application, page, 1440);
+	} finally {
+		await new Promise(resolve => server.close(resolve));
+		await application.evaluate(({ BrowserWindow }, minimum) => {
+			const window = BrowserWindow.getAllWindows().find(window => !/[?&]petOverlay=/.test(window.webContents.getURL()));
+			window.setMinimumSize(...minimum);
+		}, originalMinimum);
+	}
 }
 
 async function assertTaskSettingsAtCurrentWidth(page) {
@@ -1585,6 +1668,8 @@ try {
 	);
 	await waitForCollapsedLayout(page);
 
+	await assertCompactChatInteraction(application, page);
+
 	await openKestrelDestination(page, "Agent");
 	await page.waitForFunction(() => {
 		const shell = document.querySelector(".ai-browser-app");
@@ -1625,7 +1710,7 @@ try {
 	assert.deepEqual(pageErrors, []);
 	assert.deepEqual(await readUnhandledRejections(page), []);
 	process.stdout.write(
-		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, in-tab Agent route, and minimum-width 200% zoom reflow.\n",
+		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, in-tab Agent route, compact chat native isolation, focus loop, Escape, destination navigation, and minimum-width 200% zoom reflow.\n",
 	);
 } catch (error) {
 	const evidence = await captureFailureEvidence(error);

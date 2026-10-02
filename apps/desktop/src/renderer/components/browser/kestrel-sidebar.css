@@ -718,8 +718,12 @@
 	display: block;
 	min-width: 0;
 	overflow: hidden;
-	text-overflow: ellipsis;
+	text-overflow: clip;
 	white-space: nowrap;
+	mask-image: linear-gradient(to right, #000 0, #000 calc(100% - var(--kestrel-sidebar-title-fade-width)), transparent 100%);
+}
+@media (forced-colors: active) {
+	.kestrel-sidebar-title { mask-image: none; text-overflow: ellipsis; }
 }
 
 .kestrel-sidebar-project-open > svg:last-child {

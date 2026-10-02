@@ -38,6 +38,7 @@ import type { AgentRuntime } from "./runtime";
 import { modelVisibleToolResult, redactSensitiveValue } from "./tool-result-guardrails";
 import { maskSensitiveText } from "@kestrel/shared-types";
 import { UsageGovernor } from "./usage-governor";
+import { isTransientComputerScreenshot, prepareComputerScreenshot } from "./computer-observation-model";
 import {
 	decideAdaptiveExecution,
 	emptyAdaptiveExecutionBudget,
@@ -1196,6 +1197,8 @@ export class AgentLoop {
 		try {
 			for (let turn = run.turn + 1; turn <= options.maximumTurns; turn += 1) {
 				if (options.signal?.aborted) throw options.signal.reason;
+				if (this.runtime.taskSecrets.hasSession(session.id))
+					modelMessages = modelMessages.filter(message => !isTransientComputerScreenshot(message));
 				this.touchRunHeartbeat(run.id);
 				const finalTurn = turn === options.maximumTurns;
 				const availableTools = finalTurn ? [] : tools;
@@ -1576,7 +1579,14 @@ export class AgentLoop {
 							}
 						}
 					}
-					const content = modelVisibleToolResult(modelExecution);
+					const executingProvider = this.providers.list().find(provider => provider.id === result.providerId);
+					const screenshot = await prepareComputerScreenshot(modelExecution, {
+						toolCallId: call.id, messages: modelMessages,
+						credentialTask: this.runtime.taskSecrets.hasSession(session.id),
+						providerSupportsImages: executingProvider?.capabilities.images === true &&
+							(executingProvider.supportsModelImages?.(result.model) ?? true),
+					});
+					const content = modelVisibleToolResult(screenshot.execution);
 					if (execution.status === "blocked") {
 						if (execution.output?.approvalRequired === true) {
 							run = {
@@ -1616,7 +1626,7 @@ export class AgentLoop {
 						execution.status === "verified" &&
 						(descriptor.category === "web" ||
 							descriptor.source === "mcp" ||
-							outputCarriesUntrustedContent(execution.output))
+						outputCarriesUntrustedContent(screenshot.execution.output))
 					) {
 						untrustedExternalContent =
 								`${untrustedExternalContent}\n${content}`.slice(
@@ -1637,6 +1647,10 @@ export class AgentLoop {
 						toolCallId: call.id,
 						toolName: call.name,
 					});
+					if (screenshot.message) {
+						// This image message is intentionally never appended to runtime history.
+						modelMessages.push(screenshot.message);
+					}
 				}
 				consumeSteering();
 			}

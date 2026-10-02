@@ -2260,7 +2260,9 @@ export class AgentCore {
 					);
 				parts.push({
 					type: "text",
-					text: `[Attachment: ${name}]\n${bytes.toString("utf8")}`,
+					// Attached reference data never authorizes credential use. Redact
+					// its values without allocating resolvable task-secret references.
+					text: this.runtime.taskSecrets.redact(sessionId, `[Attachment: ${name}]\n${bytes.toString("utf8")}`),
 				});
 			} else if (attachment.mediaType.startsWith("image/"))
 				parts.push({

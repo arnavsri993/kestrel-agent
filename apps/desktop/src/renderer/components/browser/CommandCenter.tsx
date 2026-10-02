@@ -23,7 +23,8 @@ export function CommandCenter({ destinations, onSelect, onClose, onBack, onNewTa
 
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.defaultPrevented ||
+          !(event.target instanceof Element) || !event.target.closest(".command-center")) return;
       event.preventDefault();
       onClose();
     };

@@ -9,6 +9,9 @@ import {
 	redactComputerUseOutput,
 } from "./computer-use";
 import { AgentRuntime } from "./runtime";
+import { AgentLoop } from "./agent-loop";
+import { ProviderPool, textContent, type ModelProvider } from "./providers";
+import sharp from "sharp";
 
 function responseFor(request: {
 	requestId: string;
@@ -231,8 +234,10 @@ describe("background computer-use Agent Core tools", () => {
 		}
 		try {
 			for (const name of names) {
-				const execution = await runtime.callTool(session.id, name, {});
-				expect(execution.output).toBeDefined();
+				const execution = await runtime.callTool(session.id, name, {}, { idempotencyKey: name });
+				expect(execution.output).toEqual(outputs[name]);
+				const replay = await runtime.callTool(session.id, name, {}, { idempotencyKey: name });
+				expect(replay.output).toMatchObject({ redacted: true });
 				const persisted = database.getToolExecution(execution.id);
 				expect(persisted).toBeDefined();
 				expect(JSON.stringify(persisted)).not.toContain(secretPixels);
@@ -243,6 +248,113 @@ describe("background computer-use Agent Core tools", () => {
 		} finally {
 			database.close();
 		}
+	});
+
+	it.each([false, true])("supplies live keyed observations while keeping history private (credential task: %s)", async credentialTask => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Ephemeral computer observations" });
+		const secret = "fixture-loop-key-123456789";
+		const privateText = "private AX fixture text";
+		const pixels = (await sharp({ create: { width: 1, height: 1, channels: 3, background: "#124578" } }).png().toBuffer()).toString("base64");
+		const outputs: Record<string, Record<string, unknown>> = {
+			computer_inspect_window: { tree: { pid: 42, windowId: 7,
+				nodes: [{ value: credentialTask ? `${privateText} ${secret}` : privateText }], truncated: false } },
+			computer_observe_window: { windowId: 7, width: 1, height: 1, pngBase64: pixels },
+		};
+		let observations = 0;
+		const register = () => {
+			for (const name of Object.keys(outputs)) {
+				runtime.registerExternalTool({
+					descriptor: { name, title: name, description: "Ephemeral observation fixture.",
+						category: "ui", riskLevel: "read_only", readOnly: true, requiresWorkspace: false,
+						source: "builtin", tags: ["computer-use"] },
+					inputSchema: { type: "object", properties: {}, additionalProperties: false },
+					redactInput: input => redactComputerUseInput(name, input),
+					redactOutput: output => redactComputerUseOutput(name, output),
+					execute: async () => { observations++; return outputs[name]!; },
+				});
+				runtime.allowTool(session.id, name);
+			}
+		};
+		register();
+		const requests: string[] = [];
+		const model: ModelProvider = {
+			id: "fixture-computer-loop",
+			capabilities: { streaming: false, tools: true, images: true, audio: false, documents: false, local: true },
+			complete: async request => {
+				requests.push(JSON.stringify(request));
+				if (requests.length === 2) expect(request.tools).toEqual([]);
+				return { providerId: "fixture-computer-loop", model: "fixture", text: requests.length === 1 ? "" : "Observation completed.",
+					toolCalls: requests.length === 1 ? Object.keys(outputs).map(name => ({ id: name, name, arguments: name === "computer_observe_window" ? { windowId: 7 } : {} })) : [],
+					usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" as const };
+			},
+		};
+		try {
+			const loop = new AgentLoop(database, runtime, new ProviderPool([model]));
+			const result = await loop.run({ sessionId: session.id, model: "fixture", providerIds: [model.id],
+				maximumTurns: 2, userContent: textContent(credentialTask ? `Inspect the fixture. API_KEY=${secret}` : "Inspect the fixture.") });
+			expect(result.run.status).toBe("completed");
+			expect(requests).toHaveLength(2);
+			expect(requests[1]).toContain(privateText);
+			const nextRequest = JSON.parse(requests[1]!);
+			const imageParts = nextRequest.messages.flatMap((message: { content: Array<{ type: string; data?: string }> }) => message.content).filter((part: { type: string }) => part.type === "image");
+			expect(imageParts).toHaveLength(credentialTask ? 0 : 1);
+			if (!credentialTask) expect(imageParts[0]).toMatchObject({ source: "base64", mediaType: "image/png", data: pixels });
+			const toolText = JSON.stringify(nextRequest.messages.filter((message: { role: string }) => message.role === "tool"));
+			expect(toolText).not.toContain(pixels);
+			expect(toolText).toContain(credentialTask ? "withheld" : "attached");
+			expect(requests.join("\n")).not.toContain(secret);
+			const history = JSON.stringify(runtime.listMessages(session.id));
+			expect(history).not.toContain(privateText);
+			expect(history).not.toContain(pixels);
+			expect(history).not.toContain(secret);
+			for (const name of Object.keys(outputs)) {
+				const stored = database.getIdempotentResult(`runtime-tool:${session.id}:${name}:${result.run.id}:${name}`);
+				expect(JSON.stringify(stored)).not.toContain(privateText);
+				expect(JSON.stringify(stored)).not.toContain(pixels);
+				expect(JSON.stringify(stored)).not.toContain(secret);
+			}
+			runtime.close();
+			runtime = new AgentRuntime(database);
+			register();
+			for (const name of Object.keys(outputs)) {
+				const replay = await runtime.callTool(session.id, name, name === "computer_observe_window" ? { windowId: 7 } : {}, { idempotencyKey: `${result.run.id}:${name}` });
+				expect(replay.output).toMatchObject({ redacted: true });
+			}
+			expect(observations).toBe(2);
+		} finally { runtime.close(); database.close(); }
+	});
+
+	it("returns a private observation only to its executor and redacts concurrent replay", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Concurrent observation" });
+		let release!: () => void;
+		let started!: () => void;
+		const active = new Promise<void>(resolve => { started = resolve; });
+		const barrier = new Promise<void>(resolve => { release = resolve; });
+		let calls = 0;
+		runtime.registerExternalTool({
+			descriptor: { name: "computer_read_element", title: "Read element", description: "Private observation fixture.",
+				category: "ui", riskLevel: "read_only", readOnly: true, requiresWorkspace: false, source: "builtin", tags: [] },
+			inputSchema: { type: "object", properties: {}, additionalProperties: false },
+			redactInput: input => input,
+			redactOutput: output => redactComputerUseOutput("computer_read_element", output),
+			execute: async () => { calls++; started(); await barrier; return { value: "private concurrent value" }; },
+		});
+		runtime.allowTool(session.id, "computer_read_element");
+		try {
+			const first = runtime.callTool(session.id, "computer_read_element", {}, { idempotencyKey: "shared" });
+			await active;
+			const concurrent = runtime.callTool(session.id, "computer_read_element", {}, { idempotencyKey: "shared" });
+			release();
+			const [executed, replayed] = await Promise.all([first, concurrent]);
+			expect(executed.output).toEqual({ value: "private concurrent value" });
+			expect(replayed.output).toMatchObject({ redacted: true });
+			expect(JSON.stringify(replayed)).not.toContain("private concurrent value");
+			expect(calls).toBe(1);
+		} finally { release(); runtime.close(); database.close(); }
 	});
 
 	it("requires approval, executes with the raw value, and compares redacted idempotent input", async () => {

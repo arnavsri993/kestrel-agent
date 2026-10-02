@@ -139,6 +139,8 @@ export function BrowserWorkspace({
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
   const [organizeTabsPresent, setOrganizeTabsPresent] = useState(false);
   const [historyPopoverRequestId, setHistoryPopoverRequestId] = useState(0);
+  const [agentOverlayOpen, setAgentOverlayOpen] = useState(false);
+  const agentOverlayOpenRef = useRef(false);
   const [nativePagePreview, setNativePagePreview] = useState<{
     tabId: string;
     dataUrl: string;
@@ -337,6 +339,7 @@ export function BrowserWorkspace({
   );
   const nativePageCanBeVisible =
     nativePageEligible &&
+    !agentOverlayOpen &&
     // Keep the renderer in the input path while a tab is being dragged;
     // native WebContentsView siblings sit above the renderer surface.
     !tabDragActive &&
@@ -449,7 +452,8 @@ export function BrowserWorkspace({
     const targetTabId = activeTab?.id ?? null;
     const targetVisible =
       visibleOverride ??
-      (!tabDragActiveRef.current &&
+      (!agentOverlayOpenRef.current &&
+        !tabDragActiveRef.current &&
         !sidebarResizeActiveRef.current &&
         nativePageCanBeVisible);
     const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${targetVisible}:${targetTabId ?? ""}`;
@@ -504,6 +508,13 @@ export function BrowserWorkspace({
     if (root) mutationObserver.observe(root, { childList: true });
     const appShell = node.closest(".ai-browser-app");
     const syncSidebarResizeState = () => {
+      const overlayOpen = appShell?.classList.contains("agent-sidebar-overlay-open") ?? false;
+      agentOverlayOpenRef.current = overlayOpen;
+      setAgentOverlayOpen(overlayOpen);
+      if (overlayOpen) {
+        syncBoundsRef.current(false);
+        return;
+      }
       const resizing = appShell?.classList.contains("kestrel-sidebar-resizing") ?? false;
       if (sidebarResizeActiveRef.current !== resizing) {
         sidebarResizeActiveRef.current = resizing;

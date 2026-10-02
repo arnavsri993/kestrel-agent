@@ -797,7 +797,9 @@ export function BrowserToolbar({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const input = inlineCompletionRef.current?.completed ?? address;
+    // Submit the text the person can see. A delayed suggestion or state update
+    // must never replace a newly typed address with an older completion.
+    const input = addressRef.current?.value ?? address;
     closeSuggestions();
     inlineCompletionRef.current = null;
     if (input.trim()) onNavigate(input);
@@ -986,21 +988,19 @@ export function BrowserToolbar({
               replacingAddressRef.current = false;
               clearSuggestionsCloseTimer();
               const input = event.currentTarget;
-              const needsUrlReset = Boolean(tab.url && address !== tab.url);
-              if (tab.url) setAddress(tab.url);
+              // Refocusing an unfinished edit must preserve its visible text.
+              // The tab URL effect already refreshes the field on navigation.
               setSuggestionQuery("");
               setSuggestionFilter("all");
               setActiveSuggestionIndex(-1);
               setSuggestionsOpen(addressBarSuggestionsEnabled);
               inlineCompletionRef.current = null;
               const selectAll = () => {
-                if (document.activeElement === input &&
-                    (!needsUrlReset || input.value === tab.url)) {
+                if (document.activeElement === input) {
                   input.setSelectionRange(0, input.value.length);
                 }
               };
-              if (needsUrlReset) window.requestAnimationFrame(selectAll);
-              else selectAll();
+              selectAll();
             }}
             onClick={(event) => {
               if (!selectAddressAfterPointerRef.current) return;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	clampAgentPanelWidth,
+	agentPanelUsesOverlay,
 	KESTREL_CONTROL_TRANSITION,
 	KESTREL_CRITICAL_SPRING,
 	KESTREL_MENU_TRANSITION,
@@ -40,8 +41,17 @@ describe("renderer motion contract", () => {
 
 	it("clamps the agent rail to useful content and viewport bounds", () => {
 		expect(clampAgentPanelWidth(120, 1440)).toBe(480);
-		expect(clampAgentPanelWidth(900, 1440)).toBe(820);
+		expect(clampAgentPanelWidth(900, 1440)).toBe(800);
 		expect(clampAgentPanelWidth(500, 800)).toBe(480);
+	});
+
+	it("uses one full workspace for chat before adjacent columns become unreadable", () => {
+		expect(agentPanelUsesOverlay(800)).toBe(true);
+		expect(agentPanelUsesOverlay(1120)).toBe(true);
+		expect(agentPanelUsesOverlay(1200)).toBe(false);
+		expect(clampAgentPanelWidth(180, 1440)).toBe(480);
+		expect(clampAgentPanelWidth(820, 1200)).toBe(560);
+		expect(clampAgentPanelWidth(Number.NaN, 1440)).toBe(480);
 	});
 
 	it("projects release velocity without leaving the allowed range", () => {

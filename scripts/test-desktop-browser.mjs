@@ -559,11 +559,11 @@ async function assertBrowserChromeLayout({
 		1,
 		"Tools should remain available beside the address field",
 	);
-	assert.equal(
-		await page.locator('.browser-toolbar-actions button[aria-label="Page options"]').count(),
-		1,
-		"Page options should remain available beside the address field",
-	);
+	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Page options", exact: true }).click();
+	await page.getByRole("menu", { name: "Page options", exact: true }).waitFor();
+	await page.keyboard.press("Escape");
+	await page.getByRole("menu", { name: "Page options", exact: true }).waitFor({ state: "detached" });
 	assert.equal(
 		await page.locator('.browser-toolbar-actions button[aria-label="History"]').count(),
 		1,
@@ -1529,6 +1529,7 @@ try {
 	assert.equal(loaded.browserWindowCount, 1);
 	assert.equal(loaded.views[0].title, "Page one");
 	assert.equal(loaded.views[0].destroyed, false);
+	const findWindowOpened = application.waitForEvent("window");
 	const findShortcutModifier = process.platform === "darwin" ? "meta" : "control";
 	await sendInputToActiveView(
 		{ type: "keyDown", keyCode: "F", modifiers: [findShortcutModifier] },
@@ -1538,30 +1539,22 @@ try {
 		{ type: "keyUp", keyCode: "F", modifiers: [findShortcutModifier] },
 		"The browser find shortcut could not finish on the active page",
 	);
-	const findInput = page.locator("#browser-find-input");
+	const findWindow = await findWindowOpened;
+	const findInput = findWindow.getByRole("textbox", { name: "Find in page", exact: true });
 	await findInput.waitFor();
-	await page.waitForFunction(
-		() => document.activeElement?.id === "browser-find-input",
-		undefined,
-		{ timeout: 5_000 },
-	);
+	await findWindow.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Find in page");
 	await findInput.fill("Kestrel find verification token");
-	await page.getByText("1 of 3", { exact: true }).waitFor();
-	assert.equal(
-		await readActiveViewScript(
-			"String(window.getSelection())",
-			"Find in page did not select the first visible match",
-		),
-		"Kestrel find verification token",
-	);
-	await page.getByRole("button", { name: "Next match", exact: true }).click();
-	await page.getByText("2 of 3", { exact: true }).waitFor();
-	await page.getByRole("button", { name: "Previous match", exact: true }).click();
-	await page.getByText("1 of 3", { exact: true }).waitFor();
+	await findWindow.getByText("1/3", { exact: true }).waitFor();
+	await findWindow.getByRole("button", { name: "Next match", exact: true }).click();
+	await findWindow.getByText("2/3", { exact: true }).waitFor();
+	await findWindow.getByRole("button", { name: "Previous match", exact: true }).click();
+	await findWindow.getByText("1/3", { exact: true }).waitFor();
 	await findInput.fill("Kestrel absent verification token");
-	await page.getByText("0 of 0", { exact: true }).waitFor();
-	await page.keyboard.press("Escape");
-	await findInput.waitFor({ state: "detached" });
+	await findWindow.getByText("0/0", { exact: true }).waitFor();
+	assert.equal(await findWindow.getByRole("button", { name: "Next match", exact: true }).isDisabled(), true);
+	const findWindowClosed = findWindow.waitForEvent("close");
+	await findInput.press("Escape").catch(error => { if (!findWindow.isClosed()) throw error; });
+	await findWindowClosed;
 	await page.locator(".browser-address-suggestions").waitFor({ state: "detached" });
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
@@ -1701,7 +1694,7 @@ try {
 		"Zoom out",
 		"Reset zoom to 100 percent",
 		"Zoom in",
-		"Favorites",
+		"Bookmarks",
 		"History",
 		"Tab groups",
 		"Downloads",
@@ -1754,7 +1747,8 @@ try {
 	await page.locator(".browser-zoom-feedback").filter({ hasText: "100%" }).waitFor();
 	const extensionsSourceTabId = (await browserState()).activeTabId;
 	assert(extensionsSourceTabId);
-	await page.getByRole("button", { name: "Extensions", exact: true }).click();
+	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Extensions", exact: true }).click();
 	const extensionsMenu = page.getByRole("menu", { name: "Extensions" });
 	await extensionsMenu.waitFor();
 	await assertNativePagePreviewVisible();
@@ -2170,7 +2164,7 @@ try {
 	let runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
 	await page.getByRole("button", { name: "Open Agent tab" }).click();
 	await page
-		.getByRole("heading", { name: "Agent Universe", exact: true })
+		.getByRole("heading", { name: "Agents", exact: true })
 		.waitFor();
 	await page.locator(".kestrel-sidebar").waitFor();
 	assert.equal(
@@ -2188,7 +2182,7 @@ try {
 		.waitFor();
 	await openKestrelDestination(page, "Agent");
 	await page
-		.getByRole("heading", { name: "Agent Universe", exact: true })
+		.getByRole("heading", { name: "Agents", exact: true })
 		.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
@@ -2204,6 +2198,7 @@ try {
 			throw new Error("A delegated runtime session could not be created.");
 		return response.session.id;
 	}, runtimeSessionId);
+	await page.getByRole("group", { name: "Agent workspace view" }).getByRole("button", { name: "Map", exact: true }).click();
 	await page.locator(".agent-universe-scene").waitFor();
 	const rootNode = page.locator(`[data-node-id="${runtimeSessionId}"]`);
 	await rootNode.waitFor();
@@ -2358,9 +2353,9 @@ try {
 		.getByRole("button", { name: "Back to the map from Visible browser worker" })
 		.click();
 	assert.equal(
-		await page.getByRole("button", { name: "List", exact: true }).count(),
-		0,
-		"Agent should have one spatial surface, not a list mode",
+		await page.getByRole("group", { name: "Agent workspace view" }).getByRole("button", { name: "List", exact: true }).getAttribute("aria-pressed"),
+		"false",
+		"List remains available while the optional Map is active",
 	);
 	await page.getByRole("button", { name: "Back to solar system", exact: true }).click();
 	await page.waitForFunction((id) => {

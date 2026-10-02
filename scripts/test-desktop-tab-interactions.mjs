@@ -117,6 +117,13 @@ try {
   assert.equal(await input.inputValue(), `${origin}/other-replacement`);
 
   await request({ type: "browser-select-tab", tabId: firstId });
+  await application.evaluate(({ BrowserWindow }) => {
+    const owner = BrowserWindow.getAllWindows().find(window =>
+      !window.isDestroyed() && !window.webContents.getURL().startsWith("data:") &&
+      !/[?&](petOverlay|findPopover)=/.test(window.webContents.getURL()));
+    owner.show();
+    owner.focus();
+  });
   const tab = page.locator(`.browser-tab[data-tab-id="${secondId}"]`);
   await tab.scrollIntoViewIfNeeded();
   await tab.hover();

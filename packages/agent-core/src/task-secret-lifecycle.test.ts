@@ -37,6 +37,30 @@ function result(text: string, toolCalls: Array<{ id: string; name: string; argum
 }
 
 describe("task credential lifecycle", () => {
+	it("redacts credential-like attachment data without allocating task credentials", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-attachment-secrets-"));
+		roots.push(root);
+		const path = join(root, "configuration.txt");
+		const values = Array.from({ length: 17 }, (_, index) => `fixture-reference-${index}-Alpha123456789`);
+		writeFileSync(path, values.map((value, index) => `SERVICE_${index}_API_KEY=${value}`).join("\n"));
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let modelRequest = "";
+		const model = provider(async request => { modelRequest = JSON.stringify(request); return result("Reviewed the redacted configuration."); });
+		const core = new AgentCore({ database, workspaceRoots: [root], modelProviders: [model] });
+		try {
+			const session = core.runtime.createSession({ title: "Review configuration", workspaceRoot: root });
+			const response = await core.handle({ type: "runtime-run-agent", sessionId: session.id,
+				message: "Review the attached configuration.", model: "fixture", providerIds: [model.id],
+				attachments: [{ path, name: "configuration.txt", mediaType: "text/plain", size: Buffer.byteLength(readFileSync(path)), source: "workspace" }] });
+			expect(response.ok).toBe(true);
+			expect(modelRequest).toContain("SERVICE_16_API_KEY=[REDACTED]");
+			const history = JSON.stringify(core.runtime.listMessages(session.id));
+			for (const value of values) { expect(modelRequest).not.toContain(value); expect(history).not.toContain(value); }
+			expect(core.runtime.taskSecrets.hasSession(session.id)).toBe(false);
+			expect(history).not.toContain("Temporary credential cleanup");
+			expect(readFileSync(path, "utf8")).toContain(values[16]);
+		} finally { await core.close(); }
+	});
 	it("retains exact private approvals transiently and refuses a masked request after retirement", async () => {
 		const { database, runtime, root } = fixture();
 		const session = runtime.createSession({ title: "Private approval", workspaceRoot: root, approvalPolicy: "ask" });

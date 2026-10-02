@@ -536,7 +536,7 @@ async function turnInput(
 	includeTranscript: boolean,
 ): Promise<AppServerTurnInput[]> {
 	const userContent = latestUserContent(messages);
-	const imageParts = userContent.filter(
+	const imageParts = (includeTranscript ? messages.flatMap(message => message.content) : userContent).filter(
 		(part): part is Extract<ModelContentPart, { type: "image" }> =>
 			part.type === "image",
 	);
@@ -741,6 +741,11 @@ export class CodexAppServerProvider {
 
 	lastRateLimits(): CodexAccountUsageSnapshot | undefined {
 		return this.lastUsageSnapshot;
+	}
+
+	supportsModelImages(model: string): boolean {
+		return this.discoveredModels?.some(entry => entry.id === model && entry.availability === "available" &&
+			entry.capabilities?.images === true) ?? false;
 	}
 
 	async discoverModels(signal?: AbortSignal): Promise<DiscoveredModel[]> {

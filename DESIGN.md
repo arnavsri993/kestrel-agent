@@ -1045,3 +1045,12 @@ Preserve the existing session identity and tool authorization. Verify narrow
 conversation panels and 200% zoom; no ornamental motion beyond focus expansion.
 This is specific to Kestrel: the New Tab and persistent-agent entry points share
 the same writing surface and model-picker behavior.
+
+
+## Release usability audit (2026-10-02)
+
+Agents opens as a readable work list. Names, status, workspace, and delegated tasks come from the existing scoped runtime projection. List and Map share one selection, search, and settings flow; Map remains optional. Creation uses one labeled action, reversible drafts, visible errors, and restored keyboard focus.
+
+Protect the content plane when Chat opens: compact windows present Chat as a dismissible workspace drawer; wide windows keep a readable resizable dock. Memory adapts to its actual container width, so opening Chat does not turn a note into a column of isolated letters. Keep existing graphite surfaces, system type, reduced motion, and focus treatment.
+
+Verification combines all registered destinations and settings sections with real menu/dialog interactions at desktop and compact sizes. Screenshots are private disposable-profile evidence and remain outside Git. Real installed-app checks are recorded separately from fixture tests.

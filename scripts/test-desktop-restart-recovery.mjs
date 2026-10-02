@@ -227,7 +227,15 @@ try {
 		.locator(".agent-conversation-host")
 		.getByRole("button", { name: "Send message", exact: true })
 		.click();
-	await taskStarted;
+	await Promise.race([
+		taskStarted,
+		new Promise((_, reject) => {
+			const timeout = setTimeout(async () => reject(new Error(
+				`The selected fixture provider did not receive the submitted task. Visible state: ${await page.locator(".agent-conversation-host").innerText()}`,
+			)), 30_000);
+			taskStarted.then(() => clearTimeout(timeout));
+		}),
+	]);
 
 	process.kill(corePid(application.process().pid), "SIGKILL");
 

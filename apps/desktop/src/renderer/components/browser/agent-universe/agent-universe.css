@@ -16,6 +16,11 @@
   background: var(--agent-universe-canvas);
 }
 
+.agent-universe-workspace.is-list-view {
+  --agent-universe-canvas: var(--canvas);
+  --agent-universe-plane: var(--canvas);
+}
+
 .agent-universe-stage {
   position: absolute;
   inset: 0;
@@ -473,7 +478,8 @@
   font-weight: 560;
 }
 
-.agent-universe-create-agent-form input {
+.agent-universe-create-agent-form input,
+.agent-universe-create-agent-form select {
   width: 100%;
   min-height: 34px;
   padding: 0 10px;
@@ -486,7 +492,8 @@
   font-size: 12px;
 }
 
-.agent-universe-create-agent-form input:focus-visible {
+.agent-universe-create-agent-form input:focus-visible,
+.agent-universe-create-agent-form select:focus-visible {
   border-color: var(--line-strong);
   box-shadow: var(--focus-ring);
 }
@@ -814,9 +821,16 @@
 }
 
 .agent-universe-new-task {
-  border-color: rgb(255 255 255 / 10%);
-  background: rgb(255 255 255 / 6%);
-  color: var(--ink-secondary);
+  display: inline-flex;
+  width: auto;
+  min-width: max-content;
+  gap: 6px;
+  padding-inline: 11px;
+}
+
+.agent-universe-new-task svg {
+  width: 14px;
+  height: 14px;
 }
 
 .agent-universe-create-agent-menu {
@@ -2032,6 +2046,400 @@
   transform: rotate(-45deg);
 }
 
+/* List is the everyday agent workspace. It keeps the spatial system available
+ * without asking the user to navigate a canvas just to resume work. */
+.is-list-view .agent-universe-mapbar {
+  align-items: center;
+  padding: 16px clamp(16px, 2.5vw, 28px);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--canvas) 94%, transparent);
+  backdrop-filter: blur(18px) saturate(1.04);
+}
+
+.is-list-view .agent-universe-map-identity,
+.is-list-view .agent-universe-map-actions {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.is-list-view .agent-universe-map-identity {
+  padding: 0;
+}
+
+.is-list-view .agent-universe-map-actions {
+  padding: 0;
+}
+
+.agent-workspace-view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.agent-workspace-view-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 27px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: 600 10px / 1 var(--sans);
+  cursor: pointer;
+}
+
+.agent-workspace-view-switch button:hover {
+  color: var(--ink);
+}
+
+.agent-workspace-view-switch button[aria-pressed="true"] {
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.agent-workspace-view-switch button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.agent-workspace-view-switch svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-workspace-list,
+.agent-workspace-list-state {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: auto;
+  padding: 104px clamp(16px, 3vw, 36px) 76px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.agent-workspace-list {
+  color: var(--ink);
+}
+
+.agent-workspace-list-state {
+  display: grid;
+  place-items: center;
+}
+
+.is-list-view .agent-universe-empty-state,
+.is-list-view .agent-universe-state-message {
+  position: static;
+  transform: none;
+}
+
+.is-list-view .agent-universe-empty-state {
+  width: min(520px, 100%);
+  padding: 34px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 72%, var(--canvas));
+  box-shadow: none;
+}
+
+.agent-workspace-list-heading,
+.agent-workspace-list-groups {
+  width: min(940px, 100%);
+  margin-inline: auto;
+}
+
+.agent-workspace-list-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.agent-workspace-list-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font: 650 clamp(20px, 2.2vw, 26px) / 1.16 var(--display);
+  letter-spacing: -0.025em;
+}
+
+.agent-workspace-list-heading p,
+.agent-workspace-list-heading > span {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.agent-workspace-list-heading > span {
+  flex: 0 0 auto;
+  margin: 0 0 2px;
+}
+
+.agent-workspace-list-groups {
+  border-block: 1px solid var(--line);
+}
+
+.agent-workspace-list-group + .agent-workspace-list-group {
+  border-top: 1px solid var(--line);
+}
+
+.agent-workspace-list-agent {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.agent-workspace-list-agent-open {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  min-width: 0;
+  min-height: 76px;
+  padding: 13px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.agent-workspace-list-agent-open:hover,
+.agent-workspace-list-task button:hover {
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+}
+
+.agent-workspace-list-agent-open:focus-visible,
+.agent-workspace-list-task button:focus-visible,
+.agent-workspace-list-settings:focus-visible,
+.agent-workspace-search-empty button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.agent-workspace-list-agent-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--ink-secondary);
+}
+
+.agent-workspace-list-agent-mark > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.agent-workspace-list-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border: 2px solid var(--canvas);
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.agent-workspace-list-agent-mark .agent-workspace-list-status-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+}
+
+.agent-workspace-list-status-dot.is-active,
+.agent-workspace-list-status-dot.is-running {
+  background: var(--success);
+}
+
+.agent-workspace-list-status-dot.is-waiting,
+.agent-workspace-list-status-dot.is-waiting_input,
+.agent-workspace-list-status-dot.is-waiting_approval {
+  background: var(--warning);
+}
+
+.agent-workspace-list-status-dot.is-failed,
+.agent-workspace-list-status-dot.is-cancelled {
+  background: var(--danger);
+}
+
+.agent-workspace-list-agent-copy,
+.agent-workspace-list-task-copy {
+  min-width: 0;
+}
+
+.agent-workspace-list-agent-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-workspace-list-agent-title strong,
+.agent-workspace-list-task-copy strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-workspace-list-agent-title > span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.agent-workspace-list-agent-copy > small,
+.agent-workspace-list-task-copy small {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-workspace-list-open-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.agent-workspace-list-open-label svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-workspace-list-settings {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-height: 44px;
+  align-self: center;
+  flex: 0 0 auto;
+  margin: 0 8px 0 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.agent-workspace-list-settings:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.agent-workspace-list-settings svg {
+  width: 15px;
+  height: 15px;
+}
+
+.agent-workspace-list-tasks {
+  margin: 0 0 10px 53px;
+  padding: 0 0 0 18px;
+  border-left: 1px solid var(--line);
+  list-style: none;
+}
+
+.agent-workspace-list-task button {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px 12px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-workspace-list-task:first-child button {
+  border-top: 0;
+}
+
+.agent-workspace-list-task button > svg {
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+}
+
+.agent-workspace-search-empty {
+  width: min(440px, 100%);
+  color: var(--muted);
+  text-align: center;
+}
+
+.agent-workspace-search-empty > svg {
+  width: 22px;
+  height: 22px;
+}
+
+.agent-workspace-search-empty h2 {
+  margin: 12px 0 0;
+  color: var(--ink);
+  font: 650 18px / 1.25 var(--display);
+}
+
+.agent-workspace-search-empty p {
+  margin: 7px 0 16px;
+  font-size: 11px;
+}
+
+.agent-workspace-search-empty button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: 600 11px / 1 var(--sans);
+  cursor: pointer;
+}
+
+.is-list-view .agent-universe-map-footer {
+  justify-content: flex-start;
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--canvas) 94%, transparent);
+  box-shadow: none;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .agent-universe-loading-mark {
     animation: agent-universe-loading-spin 1.8s linear infinite;
@@ -2164,6 +2572,20 @@
     bottom: 14px;
     left: 14px;
   }
+
+  .is-list-view .agent-universe-mapbar {
+    align-items: flex-start;
+  }
+
+  .is-list-view .agent-universe-map-actions {
+    flex-wrap: wrap;
+    max-width: min(620px, 72%);
+  }
+
+  .agent-workspace-list,
+  .agent-workspace-list-state {
+    padding-top: 132px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -2214,6 +2636,58 @@
     display: none;
   }
 
+  .is-list-view .agent-universe-mapbar {
+    display: flex;
+    position: absolute;
+    max-height: 150px;
+    overflow-y: auto;
+    padding: 12px 14px;
+  }
+
+  .is-list-view .agent-universe-map-identity-stack {
+    flex: 0 0 auto;
+  }
+
+  .is-list-view .agent-universe-map-actions {
+    width: auto;
+    max-width: none;
+  }
+
+  .is-list-view .agent-universe-search {
+    order: 5;
+    flex-basis: 100%;
+  }
+
+  .agent-workspace-list,
+  .agent-workspace-list-state {
+    padding: 168px 14px 76px;
+  }
+
+  .agent-workspace-list-heading {
+    align-items: flex-start;
+  }
+
+  .agent-workspace-list-heading > span,
+  .agent-workspace-list-open-label {
+    display: none;
+  }
+
+  .agent-workspace-list-agent-open {
+    grid-template-columns: 36px minmax(0, 1fr);
+    min-height: 72px;
+    padding-inline: 8px;
+  }
+
+  .agent-workspace-list-agent-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .agent-workspace-list-tasks {
+    margin-left: 43px;
+    padding-left: 10px;
+  }
+
 }
 
 @media (max-width: 460px) {
@@ -2246,6 +2720,59 @@
 
   .agent-universe-context-model-system small {
     display: none;
+  }
+
+  .is-list-view .agent-universe-mapbar {
+    display: grid;
+    max-height: 194px;
+  }
+
+  .is-list-view .agent-universe-map-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    width: 100%;
+  }
+
+  .is-list-view .agent-universe-search {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .is-list-view .agent-universe-map-actions > .ui-button-quiet,
+  .is-list-view .agent-universe-settings {
+    display: none;
+  }
+
+  .is-list-view .agent-universe-create-agent-menu {
+    justify-self: stretch;
+  }
+
+  .is-list-view .agent-universe-create-agent-trigger {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .is-list-view .agent-universe-new-task {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
+  .agent-workspace-list,
+  .agent-workspace-list-state {
+    padding-top: 208px;
+  }
+
+  .agent-workspace-list-heading {
+    display: block;
+  }
+
+  .agent-workspace-list-agent-title {
+    display: grid;
+    gap: 2px;
+  }
+
+  .agent-workspace-list-agent-title > span {
+    font-size: 9px;
   }
 }
 

@@ -39,7 +39,7 @@ function createBundle(
   return bundle;
 }
 
-function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath) {
+function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath, options = []) {
   const environment = {
     ...process.env,
     KESTREL_MACOS_INSTALL_ROOT: installRoot,
@@ -52,15 +52,44 @@ function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath) {
   if (mdfindPath) environment.KESTREL_MDFIND_PATH = mdfindPath;
   else environment.KESTREL_SKIP_SPOTLIGHT = "1";
 
-  return execFileSync(process.execPath, [script, source], {
+  return execFileSync(process.execPath, [script, source, ...options], {
     encoding: "utf8",
     env: environment,
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }
 
 const testSuite = process.platform === "darwin" ? describe : describe.skip;
 
 testSuite("development macOS app installer", () => {
+  it("rejects malformed, missing and repeated candidate flags before touching the installed app", () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-installer-candidate-args-"));
+    const installRoot = join(root, "Applications");
+    mkdirSync(installRoot);
+    const source = createBundle(root, "candidate.app");
+    const previous = createBundle(installRoot, "Kestrel.app");
+    writeFileSync(join(previous, "Contents/payload.txt"), "previous");
+    for (const [options, message] of [
+      [["--candidate-commit", "HEAD"], /exact full/],
+      [["--candidate-commit", "abcdef0"], /exact full/],
+      [["--candidate-commit"], /Missing value/],
+      [["--candidate-commit", "a".repeat(40), "--candidate-commit", "a".repeat(40)], /repeated installer option/],
+    ]) {
+      expect(() => runInstaller(source, installRoot, [installRoot], join(root, "Trash"), undefined, options)).toThrow(message);
+      expect(readPayload(previous)).toBe("previous");
+    }
+  });
+  it("never treats explicit candidates as unsigned installer fixtures", () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-installer-candidate-signature-"));
+    const installRoot = join(root, "Applications");
+    mkdirSync(installRoot);
+    const source = createBundle(root, "candidate.app");
+    const previous = createBundle(installRoot, "Kestrel.app");
+    writeFileSync(join(previous, "Contents/payload.txt"), "previous");
+    expect(() => runInstaller(source, installRoot, [installRoot], join(root, "Trash"), undefined,
+      ["--candidate-commit", "a".repeat(40)])).toThrow(/codesign/);
+    expect(readPayload(previous)).toBe("previous");
+  });
   it("cannot use a fixture-root symlink to bypass production candidate validation", () => {
     const fixture = mkdtempSync(join(tmpdir(), "kestrel-installer-link-"));
     const outside = mkdtempSync(join(tmpdir(), "kestrel-production-policy-"));
