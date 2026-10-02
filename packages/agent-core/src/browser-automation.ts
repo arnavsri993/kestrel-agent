@@ -1790,63 +1790,6 @@ export function installBrowserTools(
 			};
 		},
 	);
-	add(
-		"computer.act",
-		"Control whole desktop",
-		false,
-		{
-			type: "object",
-			properties: {
-				action: {
-					oneOf: [
-						{
-							type: "object",
-							properties: {
-								type: { const: "click" },
-								x: { type: "integer", minimum: 0, maximum: 20_000 },
-								y: { type: "integer", minimum: 0, maximum: 20_000 },
-							},
-							required: ["type", "x", "y"],
-							additionalProperties: false,
-						},
-						{
-							type: "object",
-							properties: {
-								type: { const: "type" },
-								text: { type: "string", minLength: 1, maxLength: 20_000 },
-							},
-							required: ["type", "text"],
-							additionalProperties: false,
-						},
-						{
-							type: "object",
-							properties: {
-								type: { const: "key" },
-								key: {
-									enum: [
-										"Enter",
-										"Escape",
-										"Tab",
-										"Backspace",
-										"ArrowUp",
-										"ArrowDown",
-										"ArrowLeft",
-										"ArrowRight",
-									],
-								},
-							},
-							required: ["type", "key"],
-							additionalProperties: false,
-						},
-					],
-				},
-			},
-			required: ["action"],
-			additionalProperties: false,
-		},
-		({ signal }, input) =>
-			controller.desktopAct(input.action as DesktopAction, signal),
-	);
 	if (visualValidator)
 		add(
 			"visual.validate-matrix",

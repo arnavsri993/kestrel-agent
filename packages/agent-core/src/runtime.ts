@@ -119,6 +119,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function canonicalJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+	if (isRecord(value))
+		return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+	return JSON.stringify(value) ?? String(value);
+}
+
 const REDACTED_BROWSER_TYPING_TEXT = "[redacted browser input]";
 
 /**
@@ -199,6 +206,8 @@ interface RuntimeToolDefinition {
 	descriptor: RuntimeToolDescriptor;
 	inputSchema: z.ZodType<Record<string, unknown>>;
 	jsonSchema?: Record<string, unknown>;
+	redactInput?(input: Record<string, unknown>): Record<string, unknown>;
+	redactOutput?(output: Record<string, unknown>): Record<string, unknown>;
 	outputSchema: z.ZodType<Record<string, unknown>>;
 	execute(
 		context: RuntimeToolContext,
@@ -236,9 +245,14 @@ export interface ExternalRuntimeTool {
  resourceAccess?: (input: Record<string, unknown>, session: RuntimeSession) => ResourceAccess[];
 	descriptor: RuntimeToolDescriptor;
 	inputSchema: Record<string, unknown>;
+	/** The durable journal receives this bounded projection; execution uses the original input. */
+	redactInput?(input: Record<string, unknown>): Record<string, unknown>;
+	/** The model receives the result, while durable journals receive this projection. */
+	redactOutput?(output: Record<string, unknown>): Record<string, unknown>;
 	execute(
 		context: {
 			session: RuntimeSession;
+			executionId: string;
 			signal: AbortSignal;
 			workspaceRoot?: string;
 			progress(payload: Record<string, unknown>): void;
@@ -248,6 +262,7 @@ export interface ExternalRuntimeTool {
 	verify?(
 		context: {
 			session: RuntimeSession;
+			executionId: string;
 			signal: AbortSignal;
 			workspaceRoot?: string;
 			progress(payload: Record<string, unknown>): void;
@@ -514,31 +529,73 @@ function parsePersistedCheckpointState(
 }
 
 export class AgentRuntime extends EventEmitter {
-	// Typing text must not enter journals, but approval must execute the exact
-	// original input. Keep a bounded, expiring in-process copy only.
-	private readonly pendingBrowserInputs = new Map<string, { input: Record<string, unknown>; expiresAt: number }>();
+	// Private tool input is available for one approval resume in this process only.
+	private readonly pendingPrivateInputs = new Map<string, { input: Record<string, unknown>; expiresAt: number }>();
+
+	private redactedExecutionForStorage(execution: RuntimeToolExecution): RuntimeToolExecution {
+		const browserSafe = redactBrowserTypingForStorage(execution);
+		if (browserSafe.toolName === "computer.screenshot" && browserSafe.output) {
+			const { width, height } = browserSafe.output;
+			return RuntimeToolExecutionSchema.parse({
+				...browserSafe,
+				output: {
+					redacted: true,
+					reason: "computer-use-screenshot",
+					...(typeof width === "number" ? { width } : {}),
+					...(typeof height === "number" ? { height } : {}),
+				},
+			});
+		}
+		const definition = this.tools.get(execution.toolName);
+		if (!definition?.redactInput && !definition?.redactOutput) return browserSafe;
+		const input = definition.redactInput?.(browserSafe.input) ?? browserSafe.input;
+		let output = browserSafe.output && definition.redactOutput
+			? definition.redactOutput(browserSafe.output)
+			: browserSafe.output;
+		if (browserSafe.status === "blocked" && browserSafe.output && output) {
+			output = {
+				...output,
+				...(typeof browserSafe.output.approvalRequired === "boolean"
+					? { approvalRequired: browserSafe.output.approvalRequired } : {}),
+				...(typeof browserSafe.output.persistentApprovalAllowed === "boolean"
+					? { persistentApprovalAllowed: browserSafe.output.persistentApprovalAllowed } : {}),
+				preview: JSON.stringify(input, null, 2),
+			};
+		}
+		return RuntimeToolExecutionSchema.parse({ ...browserSafe, input, ...(output ? { output } : {}) });
+	}
+
+	private inputContainsRedaction(value: unknown): boolean {
+		if (value === REDACTED_BROWSER_TYPING_TEXT) return true;
+		if (Array.isArray(value)) return value.some((item) => this.inputContainsRedaction(item));
+		if (!isRecord(value)) return false;
+		if (value.redacted === true) return true;
+		return Object.values(value).some((item) => this.inputContainsRedaction(item));
+	}
 
 	approvalInput(execution: RuntimeToolExecution): Record<string, unknown> {
-		if (redactBrowserTypingForStorage(execution) === execution) return execution.input;
-		const pending = this.pendingBrowserInputs.get(execution.id);
-		if (pending && pending.expiresAt <= Date.now()) this.pendingBrowserInputs.delete(execution.id);
-		if (!pending || pending.expiresAt <= Date.now()) throw new Error("The private browser typing request expired or the core restarted. Request a fresh approval; redacted text will not be executed.");
+		const pending = this.pendingPrivateInputs.get(execution.id);
+		if (pending && pending.expiresAt <= Date.now()) this.pendingPrivateInputs.delete(execution.id);
+		if (!pending || pending.expiresAt <= Date.now()) {
+			if (!this.inputContainsRedaction(execution.input)) return execution.input;
+			throw new Error("The private tool request expired or the core restarted. Request a fresh approval; redacted input will not be executed.");
+		}
 		return structuredClone(pending.input);
 	}
 
 	/** Transient trusted-host review projection; never written back to storage. */
 	approvalReview(execution: RuntimeToolExecution): RuntimeToolExecution {
-		if (execution.status !== "blocked" || redactBrowserTypingForStorage(execution) === execution) return execution;
+		if (execution.status !== "blocked" || !this.inputContainsRedaction(execution.input)) return execution;
 		try {
 			const input = this.approvalInput(execution);
 			return { ...execution, input, output: { ...execution.output, preview: JSON.stringify(input, null, 2) } };
 		} catch {
-			return { ...execution, output: { ...execution.output, preview: "Typing request expired. Request a fresh approval." } };
+			return { ...execution, output: { ...execution.output, preview: "Private request expired. Request a fresh approval." } };
 		}
 	}
 
 	discardApprovalInput(executionId: string): void {
-		this.pendingBrowserInputs.delete(executionId);
+		this.pendingPrivateInputs.delete(executionId);
 	}
 
 	private readonly tools = new Map<string, RuntimeToolDefinition>();
@@ -1697,13 +1754,16 @@ export class AgentRuntime extends EventEmitter {
 		this.registerTool({
 			descriptor: tool.descriptor,
  ...(tool.resourceAccess ? { resourceAccess: tool.resourceAccess } : {}),
+			...(tool.redactInput ? { redactInput: tool.redactInput } : {}),
+			...(tool.redactOutput ? { redactOutput: tool.redactOutput } : {}),
 			inputSchema: z.record(z.string(), z.unknown()),
 			jsonSchema: tool.inputSchema,
 			outputSchema: z.record(z.string(), z.unknown()),
-			execute: ({ session, signal, workspaceRoot, progress }, input) =>
+			execute: ({ session, executionId, signal, workspaceRoot, progress }, input) =>
 				tool.execute(
 					{
 						session,
+						executionId,
 						signal,
 						...(workspaceRoot ? { workspaceRoot } : {}),
 						progress,
@@ -1713,13 +1773,14 @@ export class AgentRuntime extends EventEmitter {
 			...(tool.verify
 				? {
 						verify: (
-							{ session, signal, workspaceRoot, progress },
+						{ session, executionId, signal, workspaceRoot, progress },
 							input,
 							output,
 						) =>
 							tool.verify!(
 								{
 									session,
+									executionId,
 									signal,
 									...(workspaceRoot ? { workspaceRoot } : {}),
 									progress,
@@ -2040,6 +2101,12 @@ export class AgentRuntime extends EventEmitter {
 			: undefined;
 		if (repeated) {
 			const execution = RuntimeToolExecutionSchema.parse(repeated);
+			if (definition.redactInput) {
+				if (canonicalJson(execution.input) !== canonicalJson(definition.redactInput(rawInput)))
+					throw new Error("This idempotency key was already used with different input; use a new key for a new mutation.");
+				if (this.inputContainsRedaction(execution.input))
+					throw new Error("A private action already used this idempotency key. Its original input cannot be compared after storage; use a new key for a new mutation.");
+			}
  this.assertResourceAccess(sessionId, definition, execution.input, options);
 			this.ensureActionReceipt(execution, definition.descriptor);
 			return execution;
@@ -2050,6 +2117,8 @@ export class AgentRuntime extends EventEmitter {
 			: undefined;
 		if (activeExecution) {
    const completed = await this.waitForPromise(activeExecution, options.signal);
+   if (definition.redactInput && canonicalJson(completed.input) !== canonicalJson(rawInput))
+    throw new Error("This idempotency key was already used with different input; use a new key for a new mutation.");
    this.assertResourceAccess(sessionId, definition, completed.input, options);
    return completed;
   }
@@ -2244,7 +2313,7 @@ export class AgentRuntime extends EventEmitter {
 				{ toolName, status: execution.status, error: execution.error },
 				{ executionId: execution.id },
 			);
-			return execution;
+			return this.redactedExecutionForStorage(execution);
 		}
 
 		const preHook = await this.runHooks(
@@ -2277,7 +2346,7 @@ export class AgentRuntime extends EventEmitter {
 				{ toolName, status: execution.status, error: execution.error },
 				{ executionId: execution.id },
 			);
-			return execution;
+			return this.redactedExecutionForStorage(execution);
 		}
 
 		if (options.signal?.aborted) {
@@ -2541,14 +2610,14 @@ export class AgentRuntime extends EventEmitter {
 		approval?: ActionReceiptApprovalContext,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
-		const persistedExecution = redactBrowserTypingForStorage(execution);
-		if (persistedExecution !== execution && execution.status === "blocked" && execution.output?.approvalRequired === true) {
-			if (this.pendingBrowserInputs.size >= 64) this.pendingBrowserInputs.delete(this.pendingBrowserInputs.keys().next().value!);
+		const persistedExecution = this.redactedExecutionForStorage(execution);
+		if (JSON.stringify(persistedExecution.input) !== JSON.stringify(execution.input) && execution.status === "blocked" && execution.output?.approvalRequired === true) {
+			if (this.pendingPrivateInputs.size >= 64) this.pendingPrivateInputs.delete(this.pendingPrivateInputs.keys().next().value!);
 			const pending = { input: structuredClone(execution.input), expiresAt: Date.now() + 10 * 60_000 };
-			this.pendingBrowserInputs.set(execution.id, pending);
+			this.pendingPrivateInputs.set(execution.id, pending);
 			const executionId = execution.id;
 			// Timer captures the ID only, not the private input or execution.
-			setTimeout(() => this.pendingBrowserInputs.delete(executionId), 10 * 60_000).unref();
+			setTimeout(() => this.pendingPrivateInputs.delete(executionId), 10 * 60_000).unref();
 		} else if (execution.status !== "blocked") this.discardApprovalInput(execution.id);
 		this.database.saveToolExecution(persistedExecution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
@@ -2600,7 +2669,7 @@ export class AgentRuntime extends EventEmitter {
 		execution: RuntimeToolExecution,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
-		const persistedExecution = redactBrowserTypingForStorage(execution);
+		const persistedExecution = this.redactedExecutionForStorage(execution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
 			persistedExecution.id,
 		);
@@ -2621,7 +2690,7 @@ export class AgentRuntime extends EventEmitter {
 		const completion = this.database.completeIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
-			redactBrowserTypingForStorage(execution),
+			this.redactedExecutionForStorage(execution),
 		);
 		const result = RuntimeToolExecutionSchema.parse(completion.result);
 		this.journalToolExecution(result, approval, descriptor);
@@ -2634,7 +2703,7 @@ export class AgentRuntime extends EventEmitter {
 		signal?: AbortSignal,
 	): Promise<RuntimeToolExecution | undefined> {
 		const waitStartedAt = Date.now();
-		const persistedPendingExecution = redactBrowserTypingForStorage(
+		const persistedPendingExecution = this.redactedExecutionForStorage(
 			pendingExecution,
 		);
 		const initial = this.database.claimIdempotentResult(

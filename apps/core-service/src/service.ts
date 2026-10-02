@@ -7,6 +7,7 @@ import {
 	type BrowserAction,
 	type BrowserAutomationBackend,
 	BrowserController,
+	type ComputerUseBackend,
 	type BrowserDiagnostic,
 	type BrowserDownload,
 	type BrowserSnapshot,
@@ -21,6 +22,7 @@ import {
 	environmentRemoteExecutionConfiguration,
 	environmentWebAccessOptions,
 	installBrowserTools,
+	installComputerUseTools,
 	installCodeIntelligenceTools,
 	installGoogleWorkspaceTools,
 	installUIPresentationTools,
@@ -36,7 +38,7 @@ import {
 	KestrelDatabase,
 	PROTECTED_DATABASE_ERROR_CODE,
 } from "@kestrel/database";
-import { CoreRequestSchema } from "@kestrel/shared-types";
+import { CoreRequestSchema, type ComputerUseRequest, type ComputerUseResponse } from "@kestrel/shared-types";
 import type { CoreParentPort } from "./transport";
 
 export function startCoreService(port: CoreParentPort): void {
@@ -98,6 +100,11 @@ export function startCoreService(port: CoreParentPort): void {
 			port.postMessage({ type: "browser-backend-request", requestId, request });
 		});
 	}
+
+	const computerUseBackend: ComputerUseBackend = {
+		request: (request: ComputerUseRequest, signal: AbortSignal) =>
+			browserRequest<ComputerUseResponse>({ operation: "computer-use", request }, signal),
+	};
 
 	const browserBackend: BrowserAutomationBackend = {
 		createSession: async ({ allowedOrigins }) =>
@@ -371,17 +378,22 @@ export function startCoreService(port: CoreParentPort): void {
 						googleWorkspace,
 						mainSession.id,
 					);
-				const browserToolNames = installBrowserTools(
+			const browserToolNames = installBrowserTools(
 					agentCore.runtime,
 					new BrowserController(browserBackend),
 					mainSession.id,
 					new VisualValidator(database, artifactRoot),
-				);
+			);
+			const computerUseToolNames = installComputerUseTools(
+				agentCore.runtime,
+				computerUseBackend,
+				mainSession.id,
+			);
 				const uiToolNames = installUIPresentationTools(
 					agentCore.runtime,
 					mainSession.id,
 				);
-				const installedToolNames = [...browserToolNames, ...uiToolNames];
+			const installedToolNames = [...browserToolNames, ...computerUseToolNames, ...uiToolNames];
 				// Sessions created after registration inherit these tools automatically.
 				// Preserve conversation timestamps while making the new browser layer
 				// available to conversations that already existed before this release.

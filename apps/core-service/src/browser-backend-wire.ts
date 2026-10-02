@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ComputerUseRequestSchema } from "@kestrel/shared-types";
 
 const SESSION_ID = z.string().min(1).max(200);
 const TAB_ID = z.string().regex(/^tab-[a-f0-9-]{36}$/);
@@ -153,6 +154,10 @@ export const BrowserBackendWireRequestSchema = z.discriminatedUnion(
 			})
 			.strict(),
 		z.object({ operation: z.literal("desktop-screenshot") }).strict(),
+		z.object({
+			operation: z.literal("computer-use"),
+			request: ComputerUseRequestSchema,
+		}).strict(),
 		z
 			.object({
 				operation: z.literal("desktop-act"),
@@ -257,7 +262,7 @@ export type UserBrowserBackendWireRequest = Extract<
 >;
 export type AutomationBrowserBackendWireRequest = Exclude<
 	BrowserBackendWireRequest,
-	UserBrowserBackendWireRequest
+	UserBrowserBackendWireRequest | { operation: "computer-use" }
 >;
 
 export function isUserBrowserBackendWireRequest(

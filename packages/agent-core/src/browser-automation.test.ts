@@ -351,17 +351,12 @@ describe("isolated browser automation and visual validation", () => {
 				trust: "untrusted_browser",
 			},
 		});
-		expect(
-			(
-				await runtime.callTool(
-					session.id,
-					"computer.act",
-					{ action: { type: "click", x: 10, y: 20 } },
-					{ approvalStatus: "approved", idempotencyKey: "desktop-click" },
-				)
-			).status,
-		).toBe("verified");
-		expect(backend.desktopActions).toEqual([{ type: "click", x: 10, y: 20 }]);
+		expect(runtime.discoverTools(session.id).map((tool) => tool.name)).not.toContain("computer.act");
+		const desktopFrame = await runtime.callTool(session.id, "computer.screenshot", {});
+		expect(desktopFrame.output?.pngBase64).toBeDefined();
+		expect(database.getToolExecution(desktopFrame.id)?.output).toMatchObject({
+			redacted: true, reason: "computer-use-screenshot", width: 1, height: 1,
+		});
 		database.close();
 	});
 
