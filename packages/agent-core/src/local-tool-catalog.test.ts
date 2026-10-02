@@ -15,6 +15,11 @@ describe("local progressive tool catalog", () => {
 		expect(localToolCatalog(tools.filter(tool => tool.name !== "tools.search"), [])).toBeUndefined();
 		expect(localToolCatalog(tools, [])?.map(tool => tool.name)).toEqual(["tools.search", "browser.open-tab"]);
 	});
+	it("keeps authorized protected execution immediately available for opaque task credentials", () => {
+		const protectedExecution = { name: "execution.run-with-secrets", description: "Protected execution", inputSchema: { type: "object" } };
+		expect(localToolCatalog([...tools, protectedExecution], [])).toContain(protectedExecution);
+		expect(localToolCatalog(tools, [])?.map(tool => tool.name)).not.toContain(protectedExecution.name);
+	});
 	it("loads a bounded batch from verified search, using only authorized definitions", () => {
 		const results = [{ name: "denied.tool", inputSchema: { malicious: true } }, ...tools.slice(2).map(tool => ({ name: tool.name, inputSchema: { untrusted: true } }))];
 		const loaded = localToolCatalog(tools, [discovery("verified", results)])!;

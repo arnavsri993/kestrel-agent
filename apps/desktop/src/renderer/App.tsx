@@ -146,6 +146,7 @@ import {
 } from "./components/browser/CommandCenter";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
 import { RuntimeToolMessage } from "./components/RuntimeToolMessage";
+import { AssistantMessageContent } from "./components/AssistantMessageContent";
 import { ComputerUseSettings } from "./components/ComputerUseSettings";
 import {
 	parseUIPresentationMessage,
@@ -3058,7 +3059,6 @@ function RuntimeConversation({
 	const [executions, setExecutions] = useState<RuntimeToolExecution[]>([]);
 	const messageListRef = useRef<HTMLDivElement | null>(null);
 	const followMessagesRef = useRef(true);
-	const previousMessageScrollTopRef = useRef(0);
 	const [skillBusy, setSkillBusy] = useState(false);
 	const [skillNotice, setSkillNotice] =
 		useState<SkillLearningProposal | null>(null);
@@ -3070,14 +3070,12 @@ function RuntimeConversation({
 	const [error, setError] = useState("");
 	useEffect(() => {
 		followMessagesRef.current = true;
-		previousMessageScrollTopRef.current = 0;
 	}, [activeSessionId]);
 	useLayoutEffect(() => {
 		if (!visible || !followMessagesRef.current || transcriptTarget || loadingEarlierMessages) return;
 		const list = messageListRef.current;
 		if (list) {
 			list.scrollTop = list.scrollHeight;
-			previousMessageScrollTopRef.current = list.scrollTop;
 		}
 	}, [visible, messages, streamText, optimisticUser, optimisticSteering, busy, pending, latestRun, transcriptTarget, loadingEarlierMessages]);
 	const streamIdRef = useRef<string | null>(null);
@@ -4503,11 +4501,10 @@ function RuntimeConversation({
 					const list = event.currentTarget;
 					if (list.scrollHeight - list.scrollTop - list.clientHeight <= 80)
 						followMessagesRef.current = true;
-					else if (list.scrollTop < previousMessageScrollTopRef.current)
-						followMessagesRef.current = false;
-					previousMessageScrollTopRef.current = list.scrollTop;
 				}} onWheel={(event) => {
 					if (event.deltaY < 0) followMessagesRef.current = false;
+				}} onPointerDown={() => {
+					followMessagesRef.current = false;
 				}} onKeyDown={(event) => {
 					if (["ArrowUp", "PageUp", "Home"].includes(event.key)) followMessagesRef.current = false;
 				}}>
@@ -4552,7 +4549,7 @@ function RuntimeConversation({
 							>
 								<span className="assistant-avatar">K</span>
 								<div>
-									<p>{message.content}</p>
+									<AssistantMessageContent content={message.content} />
 									{message.memoryRecallReceipt && (
 										<MemoryRecallReceiptLine
 											receipt={message.memoryRecallReceipt}

@@ -76,8 +76,9 @@ try {
 		await expect(rows.first().locator("pre")).toBeHidden();
 	}
 	// A fresh appended answer follows the bottom; reviewing old text stays put.
-	await append("assistant", "Scrollable fixture text.\n".repeat(60));
+	await append("assistant", "Scrollable fixture text.\n\n".repeat(60));
 	await expect(chat.locator(".assistant-message").last()).toContainText("Scrollable fixture text.");
+	assert(await list.evaluate(node => node.scrollHeight > node.clientHeight + 500), "Review scrolling must exercise an overflowing transcript.");
 	await expect.poll(() => list.evaluate(node => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThan(2);
 	await list.hover();
 	await page.mouse.wheel(0, -5_000);
@@ -92,8 +93,25 @@ try {
 	await expect(chat.locator(".assistant-message").last()).toContainText("Another answer at the bottom.");
 	await expect.poll(() => list.evaluate(node => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThan(2);
 	assert.equal(await page.evaluate(() => document.activeElement?.id), "runtime-prompt", "Following new results must not steal keyboard focus.");
+	await app.evaluate(async ({ session }) => {
+		await session.fromPartition("persist:kestrel-user-browser-v1").protocol.handle("https", () => new Response("<!doctype html><title>Answer reference fixture</title><h1>Reference opened</h1>", { headers: { "content-type": "text/html" } }));
+	});
+	await append("assistant", "## Readable answer\n\n- **Heading:** `Kestrel local verification`\n- [Read the reference](https://markdown.example.test/context)\n\n```js\nconst observed = 'fixture';\n```\n\n| Step | Result |\n| --- | --- |\n| Page read | Verified |\n\n![No remote image](https://markdown.example.test/beacon)\n\n[Unsafe link](javascript:alert%281%29)");
+	const answer = chat.locator(".assistant-message").last();
+	await expect(answer.getByRole("heading", { name: "Readable answer" })).toBeVisible();
+	await expect(answer.locator("strong")).toHaveText("Heading:");
+	await expect(answer.locator("pre code")).toContainText("const observed");
+	await expect(answer.getByRole("table")).toContainText("Verified");
+	await expect(answer.locator("img")).toHaveCount(0);
+	await expect(answer.getByRole("link", { name: "Unsafe link" })).toHaveCount(0);
+	assert.equal(await list.evaluate(node => node.scrollWidth > node.clientWidth), false);
+	if (evidence) await page.screenshot({ path: join(evidence, "formatted-answer.png") });
+	await answer.getByRole("link", { name: "Read the reference" }).focus();
+	await page.keyboard.press("Enter");
+	await expect.poll(async () => (await request({ type: "browser-get-state" })).browserState?.tabs.filter(tab => tab.url === "https://markdown.example.test/context").length).toBe(1);
+	assert.equal(await app.context().pages().filter(candidate => candidate.url().includes("/beacon")).length, 0);
 	assert.deepEqual(errors, []);
-	console.log("Tool results: compact and desktop details, visible errors, bounded expansion, answer follow, review scroll and focus passed.");
+	console.log("Tool results: compact/desktop details, visible errors, bounded expansion, answer follow, review scroll, focus, formatted answer and safe keyboard browser link passed.");
 } finally {
 	await app?.close();
 	rmSync(root, { recursive: true, force: true });

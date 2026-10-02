@@ -4,6 +4,7 @@ const INITIAL_LOCAL_TOOLS = new Set([
 	"tools.search", "tools.activate", "browser.open-tab", "browser.tabs",
 	"browser.visible-snapshot", "browser.current-context", "workspace.list",
 	"workspace.read", "workspace.search", "agent.config.inspect",
+	"execution.run-with-secrets",
 ]);
 const SEARCH_TOOL_BATCH = 8;
 

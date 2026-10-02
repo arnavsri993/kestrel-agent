@@ -1,0 +1,20 @@
+.assistant-content { min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
+.agent-conversation-host .assistant-content p { margin: 0 0 12px; white-space: normal; }
+.assistant-content > :last-child { margin-bottom: 0; }
+.assistant-content :is(h1, h2, h3, h4, h5, h6) { margin: 18px 0 8px; color: var(--ink); font-size: 15px; font-weight: 650; line-height: 1.4; }
+.assistant-content > :first-child { margin-top: 0; }
+.assistant-content :is(ul, ol) { margin: 8px 0 14px; padding-left: 22px; }
+.assistant-content li { margin: 5px 0; }
+.assistant-content li > p { margin-bottom: 6px; }
+.assistant-content a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.assistant-content :is(a, pre, .assistant-table-scroll):focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.assistant-content code { padding: 1px 4px; border-radius: 4px; background: var(--surface); font: 0.9em/1.5 ui-monospace, monospace; }
+.assistant-content pre { max-width: 100%; max-height: 320px; margin: 12px 0; padding: 12px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); white-space: pre; }
+.assistant-content pre code { padding: 0; background: transparent; }
+.assistant-content blockquote { margin: 12px 0; padding-left: 12px; border-left: 2px solid var(--line); color: var(--muted); }
+.assistant-content hr { margin: 18px 0; border: 0; border-top: 1px solid var(--line); }
+.assistant-table-scroll { max-width: 100%; margin: 12px 0; overflow-x: auto; }
+.assistant-content table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.assistant-content :is(th, td) { padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.assistant-content th { font-weight: 600; color: var(--ink); }
+.assistant-image-reference { color: var(--muted); font-size: 12px; }

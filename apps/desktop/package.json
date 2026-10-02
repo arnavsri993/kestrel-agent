@@ -16,8 +16,8 @@
     "package:mac:mdm": "node ../../scripts/prepare-agent-core-sidecar.mjs && pnpm build && MACOSX_DEPLOYMENT_TARGET=13.0 npm_config_arch=arm64 npm_config_target_arch=arm64 electron-builder --mac pkg --arm64 --config electron-builder.yml"
   },
   "dependencies": {
-    "@kestrel/core-service": "workspace:*",
     "@kestrel/agent-core": "workspace:*",
+    "@kestrel/core-service": "workspace:*",
     "@kestrel/database": "workspace:*",
     "@kestrel/encryption": "workspace:*",
     "@kestrel/shared-types": "workspace:*",
@@ -27,6 +27,8 @@
     "motion": "12.42.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "sharp": "0.35.4",
     "zod": "4.4.3"
   },
