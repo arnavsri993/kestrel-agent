@@ -3038,7 +3038,7 @@ try {
 	);
 
 	process.stdout.write("Browser smoke: history overlay\n");
-	await page.keyboard.press("Meta+H");
+	await page.keyboard.press("Meta+Y");
 	await page.getByPlaceholder("Search history").waitFor();
 	await page.getByPlaceholder("Search history").fill("Page one");
 	await page
