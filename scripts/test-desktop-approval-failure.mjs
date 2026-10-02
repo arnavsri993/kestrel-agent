@@ -85,6 +85,10 @@ try {
 		localStorage.setItem("kestrel:reasoning-effort", "none");
 	});
 	await page.reload();
+	const chatToggle = page.locator("#browser-agent-toggle");
+	await chatToggle.waitFor();
+	if (await chatToggle.getAttribute("aria-expanded") !== "true")
+		await chatToggle.click();
 	const input = page.locator("#runtime-prompt");
 	await input.waitFor();
 	const send = page.locator(".agent-conversation-host").getByRole("button", { name: "Send message", exact: true });
