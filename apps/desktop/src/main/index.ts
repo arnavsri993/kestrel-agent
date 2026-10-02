@@ -165,8 +165,8 @@ import {
 	ComputerUseManager,
 } from "./computer-use";
 
-// Stable releases use the real Keychain. Development and automated profiles
-// use an isolated mock because ad-hoc signatures cannot retain durable access.
+// Real Keychain/safeStorage prompts are unreliable across machines and
+// rebuilds. Mock Keychain is the default; opt in with KESTREL_USE_REAL_KEYCHAIN=1.
 if (!shouldUseRealKeychain(process.env, PRODUCT_IDENTITY.updateChannel))
 	app.commandLine.appendSwitch("use-mock-keychain");
 installDiagnosticFailureHooks();

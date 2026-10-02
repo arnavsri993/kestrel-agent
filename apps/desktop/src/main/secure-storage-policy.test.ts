@@ -5,14 +5,14 @@ import {
 } from "./secure-storage-policy";
 
 describe("desktop secure-storage policy", () => {
-	it("protects stable builds with Keychain and safeStorage by default", () => {
-		expect(shouldUseRealKeychain({}, "stable")).toBe(true);
-		expect(shouldUseSafeStorage({}, "stable")).toBe(true);
-	});
-
-	it("isolates development and automated profiles from repeated Keychain prompts", () => {
+	it("keeps Keychain and safeStorage off by default on every channel", () => {
+		expect(shouldUseRealKeychain({}, "stable")).toBe(false);
+		expect(shouldUseSafeStorage({}, "stable")).toBe(false);
 		expect(shouldUseRealKeychain({}, "development")).toBe(false);
 		expect(shouldUseSafeStorage({}, "development")).toBe(false);
+	});
+
+	it("isolates automated profiles from Keychain prompts", () => {
 		expect(
 			shouldUseRealKeychain({ KESTREL_TEST_USER_DATA: "/tmp/profile" }, "stable"),
 		).toBe(false);
@@ -40,6 +40,15 @@ describe("desktop secure-storage policy", () => {
 		expect(
 			shouldUseSafeStorage(
 				{ KESTREL_ALLOW_PLAINTEXT_SECRET_STORAGE: "1" },
+				"stable",
+			),
+		).toBe(false);
+		expect(
+			shouldUseSafeStorage(
+				{
+					KESTREL_USE_SAFESTORAGE: "1",
+					KESTREL_ALLOW_PLAINTEXT_SECRET_STORAGE: "1",
+				},
 				"stable",
 			),
 		).toBe(false);

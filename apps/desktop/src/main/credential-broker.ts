@@ -227,9 +227,16 @@ export class PlaintextSecretProtection implements SecretProtection {
 	}
 
 	async prepare(): Promise<void> {
+		if (this.migrationStorage) this.safeStorage = this.migrationStorage;
+		// Do not touch Electron safeStorage here. isEncryptionAvailable() can
+		// trigger macOS Keychain prompts even when plaintext storage is default.
+	}
+
+	private async resolveMigrationStorage(): Promise<SafeStorageLike | undefined> {
+		if (this.safeStorage) return this.safeStorage;
 		if (this.migrationStorage) {
 			this.safeStorage = this.migrationStorage;
-			return;
+			return this.safeStorage;
 		}
 		try {
 			const { safeStorage } = await import("electron");
@@ -238,6 +245,7 @@ export class PlaintextSecretProtection implements SecretProtection {
 		} catch {
 			// Electron is unavailable in isolated unit tests.
 		}
+		return this.safeStorage;
 	}
 
 	async encryptString(value: string): Promise<Buffer> {
@@ -260,7 +268,7 @@ export class PlaintextSecretProtection implements SecretProtection {
 		}
 		const legacyPayload = this.extractSafeStoragePayload(value);
 		if (legacyPayload !== undefined) {
-			const storage = this.safeStorage;
+			const storage = await this.resolveMigrationStorage();
 			if (!storage?.isEncryptionAvailable())
 				throw new SecureStorageError(
 					"Kestrel found a Keychain-protected database key from a previous build, but Keychain is unavailable on this machine. Restore the key from backup or set KESTREL_USE_SAFESTORAGE=1 on a machine that can unlock Keychain, then restart.",

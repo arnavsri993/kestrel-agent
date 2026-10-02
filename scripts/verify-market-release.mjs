@@ -292,23 +292,26 @@ if (
 	!desktopMain.includes("shouldUseRealKeychain")
 )
 	fail(
-		"desktop startup must apply the stable/development Keychain policy.",
+		"desktop startup must apply the mock-Keychain-by-default policy.",
 	);
 for (const marker of [
-	"channel === \"stable\"",
 	"KESTREL_USE_MOCK_KEYCHAIN",
 	"KESTREL_USE_REAL_KEYCHAIN",
 	"KESTREL_ALLOW_PLAINTEXT_SECRET_STORAGE",
 	"KESTREL_USE_SAFESTORAGE",
+	"return false",
 ]) {
 	if (!secureStoragePolicy.includes(marker))
 		fail(`desktop secure-storage policy is missing ${marker}.`);
 }
 if (
 	!credentialBroker.includes("shouldUseSafeStorage") ||
+	!credentialBroker.includes("PlaintextSecretProtection") ||
 	!credentialBroker.includes("SafeStorageSecretProtection")
 )
-	fail("stable database keys must use Electron safeStorage without silent fallback.");
+	fail(
+		"database keys must default to plaintext envelopes with optional safeStorage opt-in.",
+	);
 for (const marker of [
 	"kestrel-database-migrations",
 	"packages/database/migrations",
