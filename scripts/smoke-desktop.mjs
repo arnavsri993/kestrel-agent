@@ -5,10 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import {
-	openKestrelDestination,
-	selectSettingsSection,
-} from "./desktop-browser-test-helpers.mjs";
+import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-smoke-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -55,6 +52,23 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
+	await page.locator("#browser-agent-toggle").waitFor();
+	const tabsBeforeMenu = await page.evaluate(async () => (await window.kestrel.request({ type: "browser-get-state" })).browserState?.tabs.length);
+	assert.equal(typeof tabsBeforeMenu, "number");
+	const menuEvidence = await application.evaluate(({ Menu, BrowserWindow, app }) => {
+		const menu = Menu.getApplicationMenu();
+		const newTab = menu?.getMenuItemById("kestrel-new-tab");
+		if (!newTab?.click) throw new Error("The native New Tab command is missing.");
+		const roles = (items) => items.flatMap(item => [item.role, ...(item.submenu ? roles(item.submenu.items) : [])]);
+		const window = BrowserWindow.getAllWindows().find(item => !item.isDestroyed());
+		window?.focus();
+		newTab.click(newTab, window);
+		return { packaged: app.isPackaged, hasDeveloperTools: roles(menu.items).includes("toggledevtools"), hasSettings: Boolean(menu.getMenuItemById("kestrel-settings")) };
+	});
+	assert.equal(menuEvidence.hasSettings, true, "Native Settings must be available.");
+	if (menuEvidence.packaged) assert.equal(menuEvidence.hasDeveloperTools, false, "Packaged menus must not offer developer tools.");
+	await page.waitForFunction(async before => (await window.kestrel.request({ type: "browser-get-state" })).browserState?.tabs.length === before + 1, tabsBeforeMenu);
+	await page.waitForFunction(() => document.activeElement?.id === "browser-address-input");
 	const chatToggle = page.locator("#browser-agent-toggle");
 	if (await chatToggle.getAttribute("aria-expanded") !== "true") await chatToggle.click();
 	await page.locator("#runtime-prompt").waitFor();
@@ -89,7 +103,11 @@ try {
 			.isDisabled(),
 		true,
 	);
-	await openKestrelDestination(page, "Settings");
+	await application.evaluate(({ Menu, BrowserWindow }) => {
+		const settings = Menu.getApplicationMenu()?.getMenuItemById("kestrel-settings");
+		if (!settings?.click) throw new Error("The native Settings command is missing.");
+		settings.click(settings, BrowserWindow.getFocusedWindow());
+	});
 	await selectSettingsSection(page, "general", "General");
 	await page.getByText("Communication style", { exact: true }).waitFor();
 	await page.getByText("Run at login", { exact: true }).waitFor();

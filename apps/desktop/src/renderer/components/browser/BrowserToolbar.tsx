@@ -1239,7 +1239,7 @@ export function BrowserToolbar({
           aria-haspopup="menu"
           aria-expanded={openMenu === "history"}
           aria-keyshortcuts="Meta+H"
-          title="History (⌘H)"
+          title="History (⌘Y)"
           onClick={(event) => toggleMenu("history", event)}
         >
           <Icon name="history" />

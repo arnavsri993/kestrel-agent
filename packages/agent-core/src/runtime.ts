@@ -210,6 +210,7 @@ interface RuntimeToolDefinition {
 	descriptor: RuntimeToolDescriptor;
 	inputSchema: z.ZodType<Record<string, unknown>>;
 	jsonSchema?: Record<string, unknown>;
+	validateInput?(input: Record<string, unknown>): string | undefined;
 	redactInput?(input: Record<string, unknown>): Record<string, unknown>;
 	redactOutput?(output: Record<string, unknown>): Record<string, unknown>;
 	outputSchema: z.ZodType<Record<string, unknown>>;
@@ -249,6 +250,8 @@ export interface ExternalRuntimeTool {
  resourceAccess?: (input: Record<string, unknown>, session: RuntimeSession) => ResourceAccess[];
 	descriptor: RuntimeToolDescriptor;
 	inputSchema: Record<string, unknown>;
+	/** Trusted adapter validation runs before policy or approval; errors contain no input values. */
+	validateInput?(input: Record<string, unknown>): string | undefined;
 	/** The durable journal receives this bounded projection; execution uses the original input. */
 	redactInput?(input: Record<string, unknown>): Record<string, unknown>;
 	/** The model receives the result, while durable journals receive this projection. */
@@ -1847,6 +1850,7 @@ export class AgentRuntime extends EventEmitter {
 			...(tool.redactOutput ? { redactOutput: tool.redactOutput } : {}),
 			inputSchema: z.record(z.string(), z.unknown()),
 			jsonSchema: tool.inputSchema,
+			...(tool.validateInput ? { validateInput: tool.validateInput } : {}),
 			outputSchema: z.record(z.string(), z.unknown()),
 			execute: ({ session, executionId, signal, workspaceRoot, progress }, input) =>
 				tool.execute(
@@ -2258,10 +2262,11 @@ export class AgentRuntime extends EventEmitter {
 		idempotencyKey: string | undefined,
 	): Promise<RuntimeToolExecution> {
 		const input = definition.inputSchema.parse(rawInput);
+		const inputValidationError = definition.validateInput?.(input);
 		const assessment = options.externalContent
 			? assessExternalContent(options.externalContent)
 			: undefined;
-		const configuredPolicy = options.executionBlock
+		const configuredPolicy = options.executionBlock || inputValidationError
 			? {}
 			: (this.toolPolicyResolver?.({
 					session,
@@ -2285,7 +2290,7 @@ export class AgentRuntime extends EventEmitter {
 			alwaysRequireApproval ||
 			(sessionApprovalPolicy === "ask" && !definition.descriptor.readOnly);
 		const oneTimeApprovalGrant =
-			options.approvalStatus === "approved" && requiresExplicitApproval
+			!inputValidationError && options.approvalStatus === "approved" && requiresExplicitApproval
 				? this.validOneTimeApprovalGrant(
 						session.id,
 						toolName,
@@ -2308,6 +2313,8 @@ export class AgentRuntime extends EventEmitter {
 					approvalRequired: false,
 					reason: options.executionBlock.reason,
 				}
+			: inputValidationError
+			? { allowed: false, approvalRequired: false, reason: inputValidationError }
 			: configuredPolicy.denied
 			? {
 					allowed: false,
@@ -2342,10 +2349,10 @@ export class AgentRuntime extends EventEmitter {
 		if (!policy.allowed && policy.approvalRequired && configuredPolicy.reason)
 			policy.reason = configuredPolicy.reason;
 		const receiptApprovalRequired =
-			requiresExplicitApproval ||
+			!inputValidationError && (requiresExplicitApproval ||
 			effectiveRisk === "external" ||
 			effectiveRisk === "sensitive" ||
-			effectiveRisk === "high_consequence";
+			effectiveRisk === "high_consequence");
 		const receiptApproval: ActionReceiptApprovalContext = !policy.allowed
 			? {
 					required: receiptApprovalRequired,
@@ -2388,7 +2395,7 @@ export class AgentRuntime extends EventEmitter {
 							preview: this.approvalPreview(session, toolName, input),
 							approvalRequired: policy.approvalRequired,
 							persistentApprovalAllowed:
-								!options.executionBlock && !requiresExplicitApproval,
+								!inputValidationError && !options.executionBlock && !requiresExplicitApproval,
 						},
 					}
 				: {}),

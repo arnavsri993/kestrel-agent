@@ -66,10 +66,12 @@ import {
 	type Project,
 	type UserBrowserState,
   type UserBrowserTab,
+  type UserBrowserCommand,
   type WorkspaceGrant,
   type WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
+import { applicationMenuTemplate } from "./application-menu";
 import { desktopBuildProvenance } from "./build-provenance";
 import { desktopCoreProcess } from "./electron-core-process";
 import { CredentialBroker } from "./credential-broker";
@@ -725,6 +727,45 @@ function browserServiceForWindow(
   window: BrowserWindow | null,
 ): UserBrowserService | null {
   return window ? browserWindowServices.get(window) ?? null : null;
+}
+
+function installApplicationMenu(): void {
+  const targetWindow = () => {
+    const focused = BrowserWindow.getFocusedWindow();
+    const service = browserServiceForWindow(focused);
+    if (focused && !focused.isDestroyed() && service && !service.connectionMode) return focused;
+    showMainWindow();
+    return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  };
+  const command = (value: UserBrowserCommand) => {
+    const window = targetWindow();
+    if (!window) return;
+    window.webContents.focus();
+    window.webContents.send("kestrel:browser-command", value);
+  };
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate({
+    command,
+    newTab: () => {
+      const window = targetWindow();
+      const service = browserServiceForWindow(window);
+      if (!window || !service) return;
+      void service.createTab(undefined, true).then(() => {
+        if (window.isDestroyed()) return;
+        window.webContents.focus();
+        window.webContents.send("kestrel:browser-command", "focus-address");
+      }).catch(recordDiagnosticFailure);
+    },
+    closeTab: () => {
+      const service = browserServiceForWindow(targetWindow());
+      const tabId = service?.getState().activeTabId;
+      if (service && tabId) void service.closeTab(tabId).catch(recordDiagnosticFailure);
+    },
+    reload: () => {
+      const service = browserServiceForWindow(targetWindow());
+      const tabId = service?.getState().activeTabId;
+      if (service && tabId) service.reload(tabId);
+    },
+  }, { platform: process.platform, productName: PRODUCT_IDENTITY.productName, packaged: isPackagedKestrelApp })));
 }
 
 function sendWindowFocusState(window: BrowserWindow, focused: boolean): void {
@@ -5214,6 +5255,7 @@ void app
 		initializeDock();
 		const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
 		if (!mainWindow) mainWindow = createMainWindow();
+		installApplicationMenu();
 		await restoreDetachedBrowserWindows();
 		for (const deepLink of initialExternalIntakeLinks)
 			handleIncomingUrl(deepLink);

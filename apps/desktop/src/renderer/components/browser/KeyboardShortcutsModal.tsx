@@ -71,7 +71,7 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
 		shortcuts: [
 			{ keys: ["@"], description: "Mention a tab, bookmark, or file" },
 			{ keys: [cmd, "K"], description: "Open the Command Center" },
-			{ keys: [cmd, "H"], description: "Open browsing history" },
+			{ keys: [cmd, isMac ? "Y" : "H"], description: "Open browsing history" },
 			{ keys: [cmd, shift, "D"], description: "Open bookmarks" },
 			{ keys: [cmd, "J"], description: "Open downloads" },
 			{ keys: [cmd, ","], description: "Open settings" },

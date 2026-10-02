@@ -11,6 +11,7 @@ import {
 import { resolve, sep } from "node:path";
 import { deflateSync } from "node:zlib";
 import type { KestrelDatabase } from "@kestrel/database";
+import { z } from "zod";
 import type {
 	UserBrowserDownload,
 	UserBrowserHistoryEntry,
@@ -1197,6 +1198,18 @@ export function installBrowserTools(
 	visualValidator?: VisualValidator,
 ): string[] {
 	const installed: string[] = [];
+	const validateBrowserInput = (schema: Record<string, unknown>) => {
+		// These schemas are trusted built-in definitions, never remote MCP input.
+		const validator = z.fromJSONSchema(schema);
+		return (input: Record<string, unknown>) => validator.safeParse(input).success
+			? undefined
+			: "Invalid browser tool arguments. Follow the tool's input schema: browserSessionId comes from browser.create; tabId comes from browser.open-tab or browser.tabs; action must be a structured object. Read a visible tab with browser.visible-snapshot, not browser.snapshot. No browser action ran and no approval is needed for this invalid call.";
+	};
+	const browserSessionProperty = {
+		type: "string",
+		pattern: "^browser-[a-f0-9-]{36}$",
+		description: "Isolated session ID returned by browser.create. A visible tab ID is not a browserSessionId.",
+	};
 	const add = (
 		name: string,
 		title: string,
@@ -1218,6 +1231,7 @@ export function installBrowserTools(
 				tags: ["browser", "computer-use", "isolated", "untrusted"],
 			},
 			inputSchema,
+			validateInput: validateBrowserInput(inputSchema),
 			execute,
 		});
 		runtime.allowTool(sessionId, name);
@@ -1244,6 +1258,7 @@ export function installBrowserTools(
 				tags: ["browser", "visible-tabs", "computer-use", "untrusted"],
 			},
 			inputSchema,
+			validateInput: validateBrowserInput(inputSchema),
 			execute,
 		});
 		runtime.allowTool(sessionId, name);
@@ -1283,6 +1298,7 @@ export function installBrowserTools(
 					? input.allowedOrigins.map(String)
 					: [],
 			),
+		"Returns browserSessionId for browser.navigate and browser.snapshot. This isolated session has no user cookies or visible tabs. To read a tab returned by browser.open-tab, use browser.visible-snapshot with tabId instead; no browser.create is required.",
 	);
 	add(
 		"browser.navigate",
@@ -1291,7 +1307,7 @@ export function installBrowserTools(
 		{
 			type: "object",
 			properties: {
-				browserSessionId: { type: "string" },
+				browserSessionId: browserSessionProperty,
 				url: { type: "string" },
 			},
 			required: ["browserSessionId", "url"],
@@ -1313,7 +1329,7 @@ export function installBrowserTools(
 		{
 			type: "object",
 			properties: {
-				browserSessionId: { type: "string" },
+				browserSessionId: browserSessionProperty,
 				action: {
 					oneOf: [
 						{
@@ -1385,7 +1401,7 @@ export function installBrowserTools(
 		true,
 		{
 			type: "object",
-			properties: { browserSessionId: { type: "string" } },
+			properties: { browserSessionId: browserSessionProperty },
 			required: ["browserSessionId"],
 			additionalProperties: false,
 		},
@@ -1396,6 +1412,7 @@ export function installBrowserTools(
 				signal,
 			)),
 		}),
+		"Requires browserSessionId returned by browser.create. It cannot read a tabId from browser.open-tab; use browser.visible-snapshot for that tab.",
 	);
 	add(
 		"browser.screenshot",
@@ -1403,7 +1420,7 @@ export function installBrowserTools(
 		true,
 		{
 			type: "object",
-			properties: { browserSessionId: { type: "string" } },
+			properties: { browserSessionId: browserSessionProperty },
 			required: ["browserSessionId"],
 			additionalProperties: false,
 		},
@@ -1428,7 +1445,7 @@ export function installBrowserTools(
 		{
 			type: "object",
 			properties: {
-				browserSessionId: { type: "string" },
+				browserSessionId: browserSessionProperty,
 				viewport: {
 					type: "object",
 					properties: {
@@ -1461,7 +1478,7 @@ export function installBrowserTools(
 		true,
 		{
 			type: "object",
-			properties: { browserSessionId: { type: "string" } },
+			properties: { browserSessionId: browserSessionProperty },
 			required: ["browserSessionId"],
 			additionalProperties: false,
 		},
@@ -1479,7 +1496,7 @@ export function installBrowserTools(
 		{
 			type: "object",
 			properties: {
-				browserSessionId: { type: "string" },
+				browserSessionId: browserSessionProperty,
 				visible: { type: "boolean" },
 			},
 			required: ["browserSessionId", "visible"],
@@ -1493,23 +1510,10 @@ export function installBrowserTools(
 				signal,
 			),
 	);
-	runtime.registerExternalTool({
-		descriptor: {
-			name: "browser.upload",
-			title: "Upload workspace files",
-		description:
-			`Set a browser file input to bounded files contained by the current granted workspace. ${recoveryContractDescription}`,
-			category: "browser",
-			riskLevel: "sensitive",
-			readOnly: false,
-			requiresWorkspace: true,
-			source: "builtin",
-			tags: ["browser", "upload", "files", "workspace"],
-		},
-		inputSchema: {
+	const uploadInputSchema = {
 			type: "object",
 			properties: {
-				browserSessionId: { type: "string" },
+				browserSessionId: browserSessionProperty,
 				selector: { type: "string", minLength: 1, maxLength: 2_000 },
 				paths: {
 					type: "array",
@@ -1520,7 +1524,22 @@ export function installBrowserTools(
 			},
 			required: ["browserSessionId", "selector", "paths"],
 			additionalProperties: false,
+	};
+	runtime.registerExternalTool({
+		descriptor: {
+			name: "browser.upload",
+			title: "Upload workspace files",
+			description:
+				`Set a browser file input to bounded files contained by the current granted workspace. ${recoveryContractDescription}`,
+			category: "browser",
+			riskLevel: "sensitive",
+			readOnly: false,
+			requiresWorkspace: true,
+			source: "builtin",
+			tags: ["browser", "upload", "files", "workspace"],
 		},
+		inputSchema: uploadInputSchema,
+		validateInput: validateBrowserInput(uploadInputSchema),
 		execute: ({ session, signal, workspaceRoot }, input) =>
 			controller.upload(
 				session.id,
@@ -1539,14 +1558,14 @@ export function installBrowserTools(
 		true,
 		{
 			type: "object",
-			properties: { browserSessionId: { type: "string" } },
+			properties: { browserSessionId: browserSessionProperty },
 			required: ["browserSessionId"],
 			additionalProperties: false,
 		},
 		({ session, signal }, input) =>
 			controller.downloads(session.id, String(input.browserSessionId), signal),
 	);
-	const visibleTabProperty = { type: "string", pattern: "^tab-[a-f0-9-]{36}$" };
+	const visibleTabProperty = { type: "string", pattern: "^tab-[a-f0-9-]{36}$", description: "Visible tab ID returned by browser.open-tab or browser.tabs; never pass it as browserSessionId." };
 	const optionalVisibleTabSchema = {
 		type: "object",
 		properties: { tabId: visibleTabProperty },
@@ -1581,6 +1600,7 @@ export function installBrowserTools(
 				signal,
 			)),
 		}),
+		"Read a specific visible tab using its tabId from browser.open-tab or browser.tabs. Omit tabId only when the user asked to read the currently selected tab. No isolated browser session is required.",
 	);
 	addVisible(
 		"browser.visible-screenshot",
@@ -1751,6 +1771,7 @@ export function installBrowserTools(
 				typeof input.input === "string" ? input.input : undefined,
 				signal,
 			),
+		"Returns tabId. Read this exact tab with browser.visible-snapshot or browser.current-context using that tabId. browser.snapshot uses a separate isolated browserSessionId and cannot read this tab.",
 	);
 	addVisible(
 		"browser.close-tab",
@@ -1800,7 +1821,7 @@ export function installBrowserTools(
 			{
 				type: "object",
 				properties: {
-					browserSessionId: { type: "string" },
+					browserSessionId: browserSessionProperty,
 					suite: {
 						type: "string",
 						pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
@@ -1896,7 +1917,7 @@ export function installBrowserTools(
 		false,
 		{
 			type: "object",
-			properties: { browserSessionId: { type: "string" } },
+			properties: { browserSessionId: browserSessionProperty },
 			required: ["browserSessionId"],
 			additionalProperties: false,
 		},

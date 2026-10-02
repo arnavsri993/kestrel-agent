@@ -6655,7 +6655,7 @@ export class UserBrowserService {
 			} else if (key === "i" && input.shift && this.allowDevTools) {
 				event.preventDefault();
 				this.openDevTools(tab.id);
-			} else if (key === "h" || key === "y") {
+			} else if ((key === "h" && !input.meta) || key === "y") {
 				event.preventDefault();
 				this.onCommand?.("open-history");
 			} else if (key === "j") {

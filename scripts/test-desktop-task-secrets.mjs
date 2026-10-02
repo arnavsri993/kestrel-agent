@@ -142,6 +142,10 @@ try {
 		env: { ...launchEnvironment, KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1", KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_TEST_USER_DATA: join(root, "user-data"), KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_REAL_USER_PROFILE: "1", KESTREL_SMOKE_UNSELECTED_API_KEY: "synthetic-ambient-must-not-reach-child" },
 	});
 	page = await application.firstWindow();
+	// CI's smaller macOS display can start below the New Tab control breakpoint.
+	// This security flow uses the complete composer; compact Chat has a separate
+	// layout audit. Keep the native sandbox and all retention assertions intact.
+	await page.setViewportSize({ width: 1440, height: 900 });
 	page.setDefaultTimeout(30_000);
 	await page.waitForLoadState("domcontentloaded");
 	await page.evaluate(() => {

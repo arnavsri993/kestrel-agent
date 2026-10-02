@@ -1,5 +1,8 @@
 import { createServer, type RequestListener, type Server } from "node:http";
+import { KestrelDatabase } from "@kestrel/database";
+import { createEncryptionKey } from "@kestrel/encryption";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AgentRuntime } from "../runtime";
 import { AnthropicMessagesProvider } from "./anthropic-messages";
 import { createEnvironmentModelProviders } from "./environment";
 import { GeminiGenerateContentProvider } from "./gemini-generate-content";
@@ -685,6 +688,43 @@ describe("model provider adapters", () => {
 		});
 		expect(requestBody.options).toMatchObject({ num_ctx: 32_768 });
 		expect(requestBody.think).toBe(false);
+	});
+
+	it("executes a corrected Ollama read instead of replaying an earlier turn's failure", async () => {
+		let generation = 0;
+		const baseUrl = await serve((_request, response) => {
+			generation += 1;
+			response.writeHead(200, { "content-type": "application/x-ndjson" });
+			response.end(`${JSON.stringify({ message: { role: "assistant", content: "", tool_calls: [{ function: { name: "test.observe", arguments: { target: generation === 1 ? "missing" : "corrected" } } }] }, done: true })}\n`);
+		});
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Local corrected observation" });
+		const observed: unknown[] = [];
+		runtime.registerExternalTool({
+			descriptor: { name: "test.observe", title: "Read fixture", description: "Read one synthetic target", category: "browser", riskLevel: "read_only", readOnly: true, requiresWorkspace: false, source: "builtin", tags: [] },
+			inputSchema: { type: "object", properties: { target: { type: "string" } }, required: ["target"], additionalProperties: false },
+			execute: (_context, input) => {
+				observed.push(input.target);
+				if (input.target === "missing") throw new Error("Target is unavailable.");
+				return { observed: input.target };
+			},
+		});
+		runtime.allowTool(session.id, "test.observe");
+		try {
+			const provider = new OllamaChatProvider({ baseUrl });
+			const request = { model: "local-test", messages: [{ role: "user" as const, content: textContent("Read the fixture") }] };
+			const first = (await provider.complete(request)).toolCalls[0]!;
+			const failed = await runtime.callTool(session.id, first.name, first.arguments, { idempotencyKey: `fixture-run:${first.id}` });
+			expect(failed.status).toBe("failed");
+			const second = (await provider.complete(request)).toolCalls[0]!;
+			const corrected = await runtime.callTool(session.id, second.name, second.arguments, { idempotencyKey: `fixture-run:${second.id}` });
+			expect(corrected).toMatchObject({ status: "verified", output: { observed: "corrected" } });
+			expect(second.id).not.toBe(first.id);
+			expect(observed).toEqual(["missing", "corrected"]);
+		} finally {
+			database.close();
+		}
 	});
 
 	it("normalizes malformed Ollama usage metadata", async () => {

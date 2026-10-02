@@ -753,7 +753,7 @@ export function BrowserWorkspace({
       } else if (key === "r" && activeTab) {
         event.preventDefault();
         void reload(activeTab.id, event.shiftKey);
-      } else if (key === "h" || key === "y") {
+      } else if ((key === "h" && !event.metaKey) || key === "y") {
         event.preventDefault();
         openHistoryPopover();
       } else if (key === "j") {

@@ -3928,7 +3928,7 @@ it("serializes closeTab behind an in-flight agent act", async () => {
       control: false,
       shift: false,
       type: "keyDown",
-      key: "h",
+      key: "y",
     });
     firstContents.emit("before-input-event", inputEvent, {
       meta: true,
@@ -3984,6 +3984,10 @@ it("serializes closeTab behind an in-flight agent act", async () => {
       "show-shortcuts",
     ]);
     expect(inputEvent.preventDefault).toHaveBeenCalledTimes(10);
+    const hideEvent = { preventDefault: vi.fn() };
+    firstContents.emit("before-input-event", hideEvent, { meta: true, control: false, shift: false, type: "keyDown", key: "h" });
+    expect(hideEvent.preventDefault).not.toHaveBeenCalled();
+    expect(commands).toHaveLength(7);
   });
 
   it("supports reopening closed tabs and direct tab index switching", async () => {

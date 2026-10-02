@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { providerFetch, readNdjson } from "./http";
 import {
 	contentText,
@@ -167,6 +168,9 @@ export class OllamaChatProvider implements ModelProvider {
 		let outputTokens = 0;
 		let doneReason = "";
 		const toolCalls: ModelToolCall[] = [];
+		// Ollama omits call IDs. A generation needs its own namespace so a later
+		// correction cannot replay an earlier turn's idempotent tool result.
+		const toolCallPrefix = `ollama-call-${randomUUID()}`;
 		await readNdjson(response, this.id, (raw) => {
 			const chunk = raw as Record<string, unknown>;
 			const message =
@@ -176,13 +180,13 @@ export class OllamaChatProvider implements ModelProvider {
 				options.onEvent?.({ type: "text_delta", delta: message.content });
 			}
 			const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-			for (const [index, rawCall] of calls.entries()) {
+			for (const rawCall of calls) {
 				const fn =
 					((rawCall as Record<string, unknown>).function as
 						| Record<string, unknown>
 						| undefined) ?? {};
 				const call: ModelToolCall = {
-					id: `ollama-call-${toolCalls.length + index + 1}`,
+					id: `${toolCallPrefix}-${toolCalls.length + 1}`,
 					name: String(fn.name ?? "unknown_tool"),
 					arguments:
 						fn.arguments !== null && typeof fn.arguments === "object"

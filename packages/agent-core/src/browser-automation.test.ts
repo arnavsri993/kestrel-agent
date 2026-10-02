@@ -361,6 +361,33 @@ describe("isolated browser automation and visual validation", () => {
 		database.close();
 	});
 
+	it("rejects malformed browser arguments before approval without changing session boundaries", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const backend = new FakeBrowser();
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Argument correction", approvalPolicy: "ask" });
+		installBrowserTools(runtime, new BrowserController(backend), session.id);
+		try {
+			const created = await runtime.callTool(session.id, "browser.create", { allowedOrigins: ["https://example.test"] }, { approvalStatus: "approved", idempotencyKey: "argument-browser" });
+			// An ask-policy session still needs a genuine one-time approval grant.
+			expect(created).toMatchObject({ status: "blocked", output: { approvalRequired: true } });
+			const malformed = await runtime.callTool(session.id, "browser.act", { browserSessionId: "browser-00000000-0000-4000-8000-000000000000", action: '{"selector":"h1"}' }, { idempotencyKey: "malformed-action" });
+			expect(malformed).toMatchObject({ status: "blocked", output: { approvalRequired: false, persistentApprovalAllowed: false }, error: expect.stringContaining("structured object") });
+			const missing = await runtime.callTool(session.id, "browser.snapshot", {});
+			expect(missing).toMatchObject({ status: "blocked", output: { approvalRequired: false } });
+			const wrongSurface = await runtime.callTool(session.id, "browser.snapshot", { browserSessionId: backend.visibleTabId });
+			expect(wrongSurface).toMatchObject({ status: "blocked", error: expect.stringContaining("browser.visible-snapshot") });
+			expect(backend.actions).toEqual([]);
+			expect(backend.snapshotCalls).toBe(0);
+			const visible = await runtime.callTool(session.id, "browser.visible-snapshot", { tabId: backend.visibleTabId });
+			expect(visible).toMatchObject({ status: "verified", output: { title: "Visible" } });
+			const extra = await runtime.callTool(session.id, "browser.visible-snapshot", { tabId: backend.visibleTabId, browserSessionId: "ignored" });
+			expect(extra).toMatchObject({ status: "blocked", output: { approvalRequired: false } });
+		} finally {
+			database.close();
+		}
+	});
+
 	it("persists typed recovery guidance and never replays a failed browser action", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const backend = new FakeBrowser();
