@@ -3,6 +3,7 @@ import { OnshapeClient, installOnshapeTools, parseOnshapeDocument } from "./onsh
 export { OnshapeClient } from "./onshape";
 import { AgentMemoryRecovery } from "./memory-recovery";
 import { randomUUID } from "node:crypto";
+import { redactSensitiveContent } from "./tool-result-guardrails";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
@@ -2295,8 +2296,12 @@ export class AgentCore {
 		return parts;
 	}
 
-	async handle(request: CoreRequest): Promise<CoreResponse> {
+	async handle(rawRequest: CoreRequest): Promise<CoreResponse> {
+		let taskSecretScopeId: string | undefined;
 		try {
+			const prepared = rawRequest.type === "runtime-run-agent" ? this.runtime.prepareTaskSecrets(rawRequest.sessionId, rawRequest.message) : undefined;
+			taskSecretScopeId = prepared?.scopeId;
+			const request = rawRequest.type === "runtime-run-agent" && prepared ? { ...rawRequest, message: prepared.text } : rawRequest;
 			switch (request.type) {
 				case "snapshot":
 					return { ok: true, snapshot: this.snapshot() };
@@ -4138,6 +4143,7 @@ export class AgentCore {
 							honchoContext,
 						});
 						const result = await this.agentLoop.run({
+							...(taskSecretScopeId ? { taskSecretScopeId } : {}),
 							...(workingTask ? { workingTaskId: workingTask.id } : {}),
 							sessionId: request.sessionId,
 							model: route?.execution.model ?? selectedModel,
@@ -4406,7 +4412,16 @@ export class AgentCore {
 						throw new Error("Agent stream is not active for this session.");
 					if (active.steering.length >= 20)
 						throw new Error("Agent steering queue is full.");
-					active.steering.push(request.message);
+					const prepared = this.runtime.prepareTaskSecrets(request.sessionId, request.message);
+					if (prepared.scopeId) {
+						const run = this.deps.database.listAgentRuns(request.sessionId).find(candidate => candidate.status === "running");
+						if (!run) {
+							this.runtime.taskSecrets.clearScope(prepared.scopeId);
+							throw new Error("The task is still preparing. Wait for it to start before adding a temporary credential.");
+						}
+						this.runtime.taskSecrets.bind(prepared.scopeId, request.sessionId, run.id);
+					}
+					active.steering.push(prepared.text);
 					return { ok: true, answer: "Steering message queued." };
 				}
 				case "runtime-discover-tools":
@@ -4467,8 +4482,10 @@ export class AgentCore {
 			return {
 				ok: false,
 				error:
-					error instanceof Error ? error.message : "Agent Core request failed",
+					"sessionId" in rawRequest && typeof rawRequest.sessionId === "string" ? this.runtime.taskSecrets.redact(rawRequest.sessionId, error instanceof Error ? error.message : "Agent Core request failed") : redactSensitiveContent(error instanceof Error ? error.message : "Agent Core request failed"),
 			};
+		} finally {
+			if (taskSecretScopeId) this.runtime.taskSecrets.clearUnboundScope(taskSecretScopeId);
 		}
 	}
 

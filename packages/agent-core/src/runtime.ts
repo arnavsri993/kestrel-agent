@@ -65,6 +65,9 @@ import {
 	type HumanInputCreateInput,
 } from "./human-input";
 import type { HumanInputRequest } from "@kestrel/shared-types";
+import { maskSensitiveText } from "@kestrel/shared-types";
+import { redactSensitiveValue } from "./tool-result-guardrails";
+import { TaskSecretVault, type PreparedTaskSecrets } from "./task-secrets";
 
 export type RuntimeHookEvent = "pre_tool" | "post_tool" | "tool_error";
 
@@ -195,6 +198,7 @@ function hookField(
 
 interface RuntimeToolContext {
 	session: RuntimeSession;
+	runId?: string;
 	executionId: string;
 	signal: AbortSignal;
 	workspaceRoot?: string;
@@ -566,11 +570,69 @@ export class AgentRuntime extends EventEmitter {
 	}
 
 	private inputContainsRedaction(value: unknown): boolean {
-		if (value === REDACTED_BROWSER_TYPING_TEXT) return true;
+		if (value === REDACTED_BROWSER_TYPING_TEXT || (typeof value === "string" &&
+			/\[(?:[A-Z][A-Z0-9_]*_\d+|REDACTED)\]/.test(value))) return true;
 		if (Array.isArray(value)) return value.some((item) => this.inputContainsRedaction(item));
 		if (!isRecord(value)) return false;
 		if (value.redacted === true) return true;
 		return Object.values(value).some((item) => this.inputContainsRedaction(item));
+	}
+	readonly taskSecrets = new TaskSecretVault();
+
+	prepareTaskSecrets(sessionId: string, text: string): PreparedTaskSecrets {
+		this.requireSession(sessionId);
+		return this.taskSecrets.prepare(sessionId, text);
+	}
+
+	finishTaskSecrets(runId: string): RuntimeMessage | undefined {
+		const run = this.database.getAgentRun(runId);
+		if (!run || !["completed", "failed", "cancelled"].includes(run.status))
+			return;
+		if ([...this.activeExecutions.values()].some(execution => execution.sessionId === run.sessionId))
+			return;
+		const cleanup = this.taskSecrets.clearRun(runId);
+		if (!cleanup) return;
+		this.database.setPrivateState(`task-secret-cleanup.${runId}`, cleanup);
+		return this.appendMessage({
+			sessionId: run.sessionId,
+			role: "assistant",
+			content: `Temporary credential cleanup ${cleanup.verified ? "verified" : "incomplete"}: ${cleanup.removed} credential(s) removed from Kestrel's temporary store; ${cleanup.remaining} remain. ${cleanup.limits}`,
+		});
+	}
+
+	private executionForStorage(execution: RuntimeToolExecution): RuntimeToolExecution {
+		const browserSafe = this.redactedExecutionForStorage(execution);
+		return redactSensitiveValue(browserSafe, text =>
+			this.taskSecrets.redact(execution.sessionId, text),
+		) as RuntimeToolExecution;
+	}
+
+	private assertSafeMutationContent(sessionId: string, ...contents: (string | undefined)[]): void {
+		if (contents.some(content => content !== undefined &&
+			this.taskSecrets.redact(sessionId, content) !== content))
+			throw new Error(
+				"Credential-bearing files cannot enter undo history. Use the approved protected command for credential setup or removal.",
+			);
+	}
+
+	private protectedTaskOutput(sessionId: string, output: Record<string, unknown>): Record<string, unknown> {
+		const protectedTask = this.taskSecrets.hasSession(sessionId);
+		let withheld = false;
+		const visit = (value: unknown): unknown => {
+			if (Array.isArray(value)) return value.map(visit);
+			if (!value || typeof value !== "object") return value;
+			return Object.fromEntries(Object.entries(value).map(([key, child]) => {
+				if (protectedTask && ["stdout", "stderr", "dataBase64"].includes(key) && typeof child === "string") {
+					withheld = true;
+					return [key, ""];
+				}
+				return [key, visit(child)];
+			}));
+		};
+		const safe = redactSensitiveValue(visit(output),
+			text => this.taskSecrets.redact(sessionId, text),
+		) as Record<string, unknown>;
+		return withheld ? { ...safe, outputWithheld: true } : safe;
 	}
 
 	approvalInput(execution: RuntimeToolExecution): Record<string, unknown> {
@@ -792,7 +854,7 @@ export class AgentRuntime extends EventEmitter {
 			id: `session-${randomUUID()}`,
 			agentInstructions: input.agentInstructions,
 			specialistDefinition: input.specialistDefinition,
-			title: input.title,
+			title: maskSensitiveText(input.title),
 			kind: input.kind ?? "conversation",
 			...(input.parentSessionId
 				? { parentSessionId: input.parentSessionId }
@@ -1055,6 +1117,7 @@ export class AgentRuntime extends EventEmitter {
 			runId: request.runId,
 			status: request.status,
 		});
+		this.finishTaskSecrets(request.runId);
 		return request;
 	}
 
@@ -1073,6 +1136,7 @@ export class AgentRuntime extends EventEmitter {
 			runId: request.runId,
 			status: request.status,
 		});
+		this.finishTaskSecrets(request.runId);
 		return request;
 	}
 
@@ -1095,6 +1159,7 @@ export class AgentRuntime extends EventEmitter {
 				error: "Human input timed out.",
 				updatedAt: this.now(),
 			});
+			this.finishTaskSecrets(run.id);
 		}
 	}
 
@@ -1389,6 +1454,7 @@ export class AgentRuntime extends EventEmitter {
 				updatedAt: cancelledAt,
 			});
 			if (id === sessionId) updated = next;
+			this.retireActiveAgentHistory(id, cancelledAt, "Cancelled because the owning agent session was cancelled.");
 			this.emitRuntimeEvent(id === sessionId ? "session.updated" : "session.updated", id, {
 				action: "cancel",
 				...(id === sessionId ? {} : { ancestorSessionId: sessionId }),
@@ -1409,6 +1475,8 @@ export class AgentRuntime extends EventEmitter {
             ])])] : input.sourceToolExecutionIds;
 		const message = RuntimeMessageSchema.parse({
 			...input,
+			content: this.taskSecrets.redact(input.sessionId, input.content),
+			...(input.modelToolCalls ? { modelToolCalls: redactSensitiveValue(input.modelToolCalls, text => this.taskSecrets.redact(input.sessionId, text)) } : {}),
             ...(sourceToolExecutionIds?.length ? { sourceToolExecutionIds } : {}),
 			id: `message-${randomUUID()}`,
 			createdAt: this.now(),
@@ -1696,6 +1764,7 @@ export class AgentRuntime extends EventEmitter {
 	}
 
 	close(): void {
+		for (const session of this.database.listRuntimeSessions()) this.taskSecrets.clearSession(session.id);
 		for (const process of this.backgroundProcesses.values())
 			process.handle.stop();
 		this.backgroundProcesses.clear();
@@ -2337,7 +2406,7 @@ export class AgentRuntime extends EventEmitter {
 				{ toolName, status: execution.status, error: execution.error },
 				{ executionId: execution.id },
 			);
-			return this.redactedExecutionForStorage(execution);
+			return this.executionForStorage(execution);
 		}
 
 		const preHook = await this.runHooks(
@@ -2370,7 +2439,7 @@ export class AgentRuntime extends EventEmitter {
 				{ toolName, status: execution.status, error: execution.error },
 				{ executionId: execution.id },
 			);
-			return this.redactedExecutionForStorage(execution);
+			return this.executionForStorage(execution);
 		}
 
 		if (options.signal?.aborted) {
@@ -2455,6 +2524,7 @@ export class AgentRuntime extends EventEmitter {
 			});
 			const context: RuntimeToolContext = {
 				session,
+				...(options.runId ? { runId: options.runId } : {}),
 				executionId: activeExecutionId,
 				signal: controller.signal,
 				progress: (payload) =>
@@ -2474,9 +2544,9 @@ export class AgentRuntime extends EventEmitter {
     for (const key of resources) { this.mutationResourceOwners.set(key, activeExecutionId); heldResources.push(key); }
    }
 			effectStarted = true;
-			const output = definition.outputSchema.parse(
+			const output = this.protectedTaskOutput(session.id, definition.outputSchema.parse(
 				await definition.execute(context, input),
-			);
+			));
 			if (definition.descriptor.readOnly) this.assertResourceAccess(session.id, definition, input, options);
 			const verificationResult = definition.descriptor.readOnly
 				? undefined
@@ -2551,7 +2621,7 @@ export class AgentRuntime extends EventEmitter {
 				error: uncertainMutation
 					? "Cancellation arrived after this mutation started, so Kestrel could not confirm whether it completed. The action will not be retried automatically."
 					: error instanceof Error
-						? error.message
+						? this.taskSecrets.redact(session.id, error.message)
 						: "Tool execution failed.",
 				...(uncertainMutation ? { outcomeUncertain: true } : {}),
 				...(recoveryOutput ? { output: recoveryOutput } : {}),
@@ -2626,6 +2696,7 @@ export class AgentRuntime extends EventEmitter {
 					);
 				}
 			}
+			for (const run of this.database.listAgentRuns(session.id)) this.finishTaskSecrets(run.id);
 		}
 	}
 
@@ -2634,7 +2705,7 @@ export class AgentRuntime extends EventEmitter {
 		approval?: ActionReceiptApprovalContext,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
-		const persistedExecution = this.redactedExecutionForStorage(execution);
+		const persistedExecution = this.executionForStorage(execution);
 		if (JSON.stringify(persistedExecution.input) !== JSON.stringify(execution.input) && execution.status === "blocked" && execution.output?.approvalRequired === true) {
 			if (this.pendingPrivateInputs.size >= 64) this.pendingPrivateInputs.delete(this.pendingPrivateInputs.keys().next().value!);
 			const pending = { input: structuredClone(execution.input), expiresAt: Date.now() + 10 * 60_000 };
@@ -2687,13 +2758,16 @@ export class AgentRuntime extends EventEmitter {
 		);
 		for (const execution of retired.toolExecutions)
 			this.journalToolExecution(execution);
+		if (![...this.activeExecutions.values()].some(execution => execution.sessionId === sessionId)) {
+			for (const run of this.database.listAgentRuns(sessionId)) this.finishTaskSecrets(run.id);
+		}
 	}
 
 	private ensureActionReceipt(
 		execution: RuntimeToolExecution,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
-		const persistedExecution = this.redactedExecutionForStorage(execution);
+		const persistedExecution = this.executionForStorage(execution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
 			persistedExecution.id,
 		);
@@ -2714,7 +2788,7 @@ export class AgentRuntime extends EventEmitter {
 		const completion = this.database.completeIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
-			this.redactedExecutionForStorage(execution),
+			this.executionForStorage(execution),
 		);
 		const result = RuntimeToolExecutionSchema.parse(completion.result);
 		this.journalToolExecution(result, approval, descriptor);
@@ -2727,9 +2801,7 @@ export class AgentRuntime extends EventEmitter {
 		signal?: AbortSignal,
 	): Promise<RuntimeToolExecution | undefined> {
 		const waitStartedAt = Date.now();
-		const persistedPendingExecution = this.redactedExecutionForStorage(
-			pendingExecution,
-		);
+		const persistedPendingExecution = this.executionForStorage(pendingExecution);
 		const initial = this.database.claimIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
@@ -3015,9 +3087,11 @@ export class AgentRuntime extends EventEmitter {
 				chunkSha256: z.string(),
 				truncated: z.boolean(),
 			}),
-			execute: ({ workspaceRoot }, input) => {
+			execute: ({ session, workspaceRoot }, input) => {
 				if (!workspaceRoot) throw new Error("Workspace root is unavailable.");
 				const parsed = binaryReadInputSchema.parse(input);
+				if (this.taskSecrets.hasSession(session.id))
+					throw new Error("Binary reads are withheld while temporary credentials are active. Verify credential files through a non-secret status check.");
 				const path = resolveExistingPath(workspaceRoot, parsed.path);
 				const metadata = statSync(path);
 				if (!metadata.isFile())
@@ -3124,6 +3198,7 @@ export class AgentRuntime extends EventEmitter {
 					);
 				const operation =
 					before === undefined ? ("create" as const) : ("update" as const);
+				this.assertSafeMutationContent(session.id, before, parsed.content);
 				this.writeTextAtomically(path, parsed.content);
 				const mutation = WorkspaceMutationSchema.parse({
 					id: `mutation-${randomUUID()}`,
@@ -3178,6 +3253,7 @@ export class AgentRuntime extends EventEmitter {
 					throw new Error(
 						"Workspace file changed since it was read; refusing to delete it.",
 					);
+				this.assertSafeMutationContent(session.id, before);
 				unlinkSync(path);
 				const mutation = WorkspaceMutationSchema.parse({
 					id: `mutation-${randomUUID()}`,
@@ -3343,6 +3419,7 @@ export class AgentRuntime extends EventEmitter {
 						replacements += 1;
 					}
 				}
+				this.assertSafeMutationContent(session.id, before, after);
 				this.writeTextAtomically(path, after);
 				const mutation = WorkspaceMutationSchema.parse({
 					id: `mutation-${randomUUID()}`,
@@ -3459,6 +3536,46 @@ export class AgentRuntime extends EventEmitter {
 
 		this.registerTool({
 			descriptor: {
+				name: "execution.run-with-secrets",
+				title: "Run command with temporary credentials",
+				description: "Use task-local credential references as environment variables in one approved allowlisted command. Output is withheld; network, subprocesses, and writes outside the workspace are denied. A CLI may retain credentials in workspace files: disclose the exact destination and verify it separately. Never put secrets in arguments or claim this command erased files or provider copies.",
+				category: "execution",
+				riskLevel: "sensitive",
+				readOnly: false,
+				requiresWorkspace: true,
+				source: "builtin",
+				approvalMode: "always",
+				tags: ["credentials", "setup", "terminal", "sandbox"],
+			},
+			inputSchema: commandInputSchema.extend({
+				secretEnvironment: z.record(
+					z.string().min(1).max(100),
+					z.string().regex(/^task-secret-[a-f0-9-]{36}$/),
+				).refine(value => Object.keys(value).length > 0 && Object.keys(value).length <= 16),
+			}),
+			outputSchema: commandOutputSchema.extend({ outputWithheld: z.literal(true) }),
+			execute: async ({ session, runId, workspaceRoot, signal, progress }, input) => {
+				if (!workspaceRoot || !runId)
+					throw new Error("Temporary credential commands require an active owning task and a granted workspace.");
+				const parsed = commandInputSchema.parse(input);
+				const cwd = resolveExistingPath(workspaceRoot, parsed.cwd);
+				if (!statSync(cwd).isDirectory())
+					throw new Error("Command cwd must be a directory.");
+				const environment = this.taskSecrets.resolve(session.id, runId, input.secretEnvironment as Record<string, string>);
+				try {
+					const result = await this.commandRunner.run({
+						...parsed, cwd, workspaceRoot,
+						mode: "workspace_write", environment, protectSecrets: true,
+					}, { signal, onProgress: progress });
+					return { ...result, stdout: "", stderr: "", outputWithheld: true as const };
+				} finally {
+					for (const key of Object.keys(environment)) delete environment[key];
+				}
+			},
+		});
+
+		this.registerTool({
+			descriptor: {
 				name: "execution.run-readonly",
 				title: "Run read-only command",
 				description:
@@ -3533,6 +3650,8 @@ export class AgentRuntime extends EventEmitter {
 			}),
 			execute: ({ session, workspaceRoot, progress }, input) => {
 				if (!workspaceRoot) throw new Error("Workspace root is unavailable.");
+				if (this.taskSecrets.hasSession(session.id))
+					throw new Error("Temporary credential tasks use bounded foreground commands; background processes are unavailable until cleanup completes.");
 				const parsed = backgroundCommandInputSchema.parse(input);
 				const cwd = resolveExistingPath(workspaceRoot, parsed.cwd);
 				if (!statSync(cwd).isDirectory())
@@ -4531,7 +4650,7 @@ export class AgentRuntime extends EventEmitter {
 				},
 			};
 		}
-		if (tool === "execution.run")
+		if (tool === "execution.run" || tool === "execution.run-with-secrets")
 			return {
 				method: "sandbox-process-exit",
 				evidence: {
@@ -4849,6 +4968,10 @@ export class AgentRuntime extends EventEmitter {
 	}
 
 	private saveProcessJournal(record: Record<string, unknown>): void {
+		const sessionId = String(record.sessionId ?? "");
+		record = redactSensitiveValue(this.protectedTaskOutput(sessionId, record),
+			text => this.taskSecrets.redact(sessionId, text),
+		) as Record<string, unknown>;
 		const records = this.processJournalRecords();
 		this.database.setPrivateState(
 			this.processJournalKey,
@@ -4882,6 +5005,9 @@ export class AgentRuntime extends EventEmitter {
 		payload: Record<string, unknown>,
 		references: { executionId?: string; messageId?: string } = {},
 	): void {
+		// Fragments cannot be reliably redacted in isolation. Protected tasks
+		// retain status events but never forward potentially encoded output chunks.
+		if (type === "tool.progress" && this.taskSecrets.hasSession(sessionId)) return;
 		const event = RuntimeEventSchema.parse({
 			id: `event-${randomUUID()}`,
 			type,
@@ -4890,7 +5016,7 @@ export class AgentRuntime extends EventEmitter {
 				? { executionId: references.executionId }
 				: {}),
 			...(references.messageId ? { messageId: references.messageId } : {}),
-			payload,
+			payload: redactSensitiveValue(payload, text => this.taskSecrets.redact(sessionId, text)),
 			createdAt: this.now(),
 		});
 		this.emit("event", event);

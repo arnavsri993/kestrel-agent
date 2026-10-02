@@ -1,3 +1,5 @@
+import { maskSensitiveText } from "@kestrel/shared-types";
+
 const MAX_CHAT_TITLE_LENGTH = 60;
 
 const REQUEST_PREFIXES = [
@@ -32,7 +34,7 @@ function truncateAtWord(value: string, limit: number): string {
 
 export function chatTitleFromPrompt(prompt: string): string {
 	const firstMeaningfulLine =
-		prompt
+		maskSensitiveText(prompt)
 			.replace(/```[\s\S]*?```/g, " ")
 			.split(/\r?\n/)
 			.map((line) =>

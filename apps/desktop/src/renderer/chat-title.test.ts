@@ -2,6 +2,18 @@ import { describe, expect, it } from "vitest";
 import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 
 describe("chatTitleFromPrompt", () => {
+	it("masks an unlabelled repeated key even when it precedes its assignment", () => {
+		const key = "fixture-arbitrary-title-sensitive-1234";
+		expect(chatTitleFromPrompt(`${key} use this.\nAPI_KEY=${key}`)).toContain("REDACTED");
+		expect(chatTitleFromPrompt(`${key} use this.\nAPI_KEY=${key}`)).not.toContain(key);
+	});
+	it("masks a credential before title truncation can retain its prefix", () => {
+		const key = `sk-proj-${"z".repeat(40)}`;
+		const title = chatTitleFromPrompt(`Set up API_KEY=${key}`);
+		expect(title).not.toContain(key);
+		expect(title).not.toContain("sk-proj");
+		expect(title).toContain("REDACTED");
+	});
 	it("turns a conversational request into a concise title", () => {
 		expect(
 			chatTitleFromPrompt("Please make it so chat titles are named properly."),

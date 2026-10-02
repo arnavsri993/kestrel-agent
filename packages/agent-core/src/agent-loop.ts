@@ -35,7 +35,8 @@ import {
 import { prematureBrowserCompletionErrorForRun } from "./agent-run-completion";
 import { buildActionReceipt } from "./action-receipts";
 import type { AgentRuntime } from "./runtime";
-import { modelVisibleToolResult } from "./tool-result-guardrails";
+import { modelVisibleToolResult, redactSensitiveValue } from "./tool-result-guardrails";
+import { maskSensitiveText } from "@kestrel/shared-types";
 import { UsageGovernor } from "./usage-governor";
 import {
 	decideAdaptiveExecution,
@@ -45,7 +46,7 @@ import {
 } from "./routing/adaptive-execution";
 
 const CREDENTIAL_BOUNDARY_INSTRUCTIONS =
-	"Never ask the user to paste API keys, OAuth tokens, passwords, session cookies, private keys, or other secrets into chat. Direct credential entry to the product's protected native credential field or the provider's own OAuth or device-login surface. You may explain what a credential enables and verify only non-secret connection status.";
+	"Never ask the user to paste API keys, OAuth tokens, passwords, session cookies, private keys, or other secrets into chat. Direct credential entry to the product's protected native credential field or the provider's own OAuth or device-login surface. If a message contains a TASK_SECRET reference, Kestrel has already isolated recognized values locally. Continue the authorized task using execution.run-with-secrets with the reference ID in secretEnvironment; never reconstruct the value or refuse solely because a protected reference exists. That command always requires fresh approval and denies network, subprocesses and writes outside the workspace. Disclose any intended credential file and retention before configuring it. Do not claim deletion, revocation, CLI authentication or global erasure from a successful command. Kestrel supplies its own checked temporary-store cleanup receipt after the task ends; report only the scope it verifies.";
 
 function isUntrustedTrustLabel(value: unknown): boolean {
 	return typeof value === "string" && value.startsWith("untrusted_");
@@ -84,6 +85,8 @@ export const CHAT_CONFIGURATION_INSTRUCTIONS =
 	"Treat conversational self-configuration as a reviewable transaction. For behavior, personality, prompt, tool, permission, workflow, UI, memory, integration, or setting changes, inspect the agent.config catalog first, stage an exact patch with agent.config.plan, explain the proposed live effect, risk, diff, isolated checks, and protected boundaries, then use agent.config.apply only after the staged result is available so the user receives a fresh one-time approval. Never claim a staged plan changed the live agent. Never place secrets in configuration. Never weaken or reinterpret protected safety, authentication, approval enforcement, isolation, verification, history, or recovery controls. A self-improvement suggestion is evidence, not authorization, and follows the same plan, diff, test, approval, verification, and rollback path. If the request requires source code rather than registered data configuration, use the isolated worktree, test, diff, and unmerged pull-request workflow; do not patch the running protected core in place. If a request is unsafe or unsupported, explain the exact boundary and offer the closest safe editable alternative.";
 
 export interface AgentLoopInput {
+	/** Trusted ingress metadata; never supplied by the model or persisted. */
+	taskSecretScopeId?: string;
 	workingTaskId?: string;
  resourceScope?: ResourceAccess[];
 	sessionId: string;
@@ -237,7 +240,7 @@ function boundedMaximumTurns(value: number | undefined, fallback = 12): number {
 function agentRunErrorMessage(error: unknown, cancelled: boolean): string {
 	if (cancelled) return "Cancelled by the user.";
 	if (error instanceof Error) {
-		const message = error.message.trim();
+		const message = maskSensitiveText(error.message.trim());
 		if (message) return message;
 	}
 	return "Model or agent execution failed.";
@@ -432,13 +435,19 @@ export class AgentLoop {
 	}
 
 	async run(input: AgentLoopInput): Promise<AgentLoopResult> {
-		return this.withSessionRunClaim(input.sessionId, () => {
-			const session = this.requireRunnableSession(
-				input.sessionId,
-				input.providerIds,
-			);
-			return this.startRun(input, session);
-		});
+		try {
+			return await this.withSessionRunClaim(input.sessionId, () => {
+				const session = this.requireRunnableSession(
+					input.sessionId,
+					input.providerIds,
+				);
+				return this.startRun(input, session);
+			});
+		} finally {
+			// Release pre-routing input if the run claim or initial validation failed.
+			if (input.taskSecretScopeId)
+				this.runtime.taskSecrets.clearUnboundScope(input.taskSecretScopeId);
+		}
 	}
 
 	async retry(input: AgentLoopRetryInput): Promise<AgentLoopResult> {
@@ -513,6 +522,13 @@ export class AgentLoop {
 			updatedAt: createdAt,
 		};
 		this.database.saveAgentRun(run);
+		if (input.taskSecretScopeId) this.runtime.taskSecrets.bind(input.taskSecretScopeId, session.id, run.id);
+		const userContent = input.userContent.map(part => {
+			if (part.type !== "text") return part;
+			const prepared = this.runtime.prepareTaskSecrets(session.id, part.text);
+			if (prepared.scopeId) this.runtime.taskSecrets.bind(prepared.scopeId, session.id, run.id);
+			return { ...part, text: prepared.text };
+		});
 		try {
 			input.onRunStarted?.(run.id);
 			input.signal?.throwIfAborted();
@@ -521,7 +537,7 @@ export class AgentLoop {
 			this.database.saveAgentRunIfActive({
 				...run,
 				status: cancelled ? "cancelled" : "failed",
-				error: agentRunErrorMessage(error, cancelled),
+				error: this.runtime.taskSecrets.redact(session.id, agentRunErrorMessage(error, cancelled)),
 				updatedAt: this.now().toISOString(),
 			});
 			throw error;
@@ -543,14 +559,14 @@ export class AgentLoop {
 			TOOL_RESULT_SAFETY_INSTRUCTIONS,
 			CHAT_CONFIGURATION_INSTRUCTIONS,
 		].filter((value): value is string => Boolean(value));
-		const instructionText = instructions.join("\n\n");
+		const instructionText = this.runtime.taskSecrets.redact(session.id, instructions.join("\n\n"));
 		this.database.setPrivateState(`agent-run-instructions.${run.id}`, {
 			instructions: instructionText,
 		});
 		const userMessage = this.runtime.appendMessage({
 			sessionId: session.id,
 			role: "user",
-			content: transcriptContent(input.userContent),
+			content: transcriptContent(userContent),
 		});
 		this.database.setPrivateState(`agent-run-baseline.${run.id}`, {
 			sessionId: session.id,
@@ -585,7 +601,7 @@ export class AgentLoop {
 		if (lastUser >= 0)
 			modelMessages[lastUser] = {
 				role: "user",
-				content: [...input.userContent, ...(input.ephemeralContext ?? [])],
+				content: [...userContent, ...(input.ephemeralContext ?? []).map(part => part.type === "text" ? { ...part, text: this.runtime.taskSecrets.redact(session.id, part.text) } : part)],
 			};
 		return this.continueRun(run, modelMessages, compacted.removedMessages, {
 			maximumTurns,
@@ -843,7 +859,7 @@ export class AgentLoop {
 		approvedExecution: RuntimeToolExecution | undefined,
 		error: unknown,
 	): void {
-		const failure = agentRunErrorMessage(error, false);
+		const failure = this.runtime.taskSecrets.redact(run.sessionId, agentRunErrorMessage(error, false));
 		this.runtime.discardApprovalInput(approval.executionId);
 		const wasPending = this.database.getToolExecution(approval.executionId)?.status === "blocked";
 		this.runtime.cancelPendingApproval(approval.executionId, failure);
@@ -1068,7 +1084,7 @@ export class AgentLoop {
 				this.database.saveAgentRunIfActive({
 					...current,
 					status: input.signal?.aborted ? "cancelled" : "failed",
-					error: agentRunErrorMessage(error, input.signal?.aborted === true),
+					error: this.runtime.taskSecrets.redact(current.sessionId, agentRunErrorMessage(error, input.signal?.aborted === true)),
 					updatedAt: this.now().toISOString(),
 				});
 			}
@@ -1111,7 +1127,18 @@ export class AgentLoop {
 		}
 		try {
 			return await operation();
+		} catch (error) {
+			const safeError = this.runtime.taskSecrets.redact(sessionId, agentRunErrorMessage(error, false));
+			for (const run of this.database.listAgentRuns(sessionId)) {
+				if (run.status === "running") this.database.saveAgentRunIfActive({ ...run,
+					status: "failed", error: safeError, updatedAt: this.now().toISOString() });
+			}
+			throw error instanceof Error && error.message === safeError ? error : new Error(safeError);
 		} finally {
+			for (const run of this.database.listAgentRuns(sessionId)) {
+				const receipt = this.runtime.finishTaskSecrets(run.id);
+				if (receipt) this.onMessage?.(receipt);
+			}
 			this.database.releaseIdempotentClaim(key, this.sessionRunOwnerToken);
 		}
 	}
@@ -1182,12 +1209,16 @@ export class AgentLoop {
 					poolResult = await this.providers.complete(
 						{
 							model: run.model,
-							messages: finalTurn
-							? [
-									...modelMessages,
-									{ role: "system", content: textContent(FINAL_TURN_INSTRUCTIONS) },
-								]
-							: modelMessages,
+							messages: (finalTurn ? [
+								...modelMessages,
+								{ role: "system" as const, content: textContent(FINAL_TURN_INSTRUCTIONS) },
+							] : modelMessages).map(message => ({
+								...message,
+								content: message.content.map(part => part.type === "text"
+									? { ...part, text: this.runtime.taskSecrets.redact(session.id, part.text) } : part),
+								...(message.toolCalls ? { toolCalls: redactSensitiveValue(message.toolCalls,
+									text => this.runtime.taskSecrets.redact(session.id, text)) as NonNullable<ModelMessage["toolCalls"]> } : {}),
+							})),
 							tools: availableTools,
 							metadata: {
 								session_id: session.id,
@@ -1226,7 +1257,7 @@ export class AgentLoop {
 								: {}),
 							...(options.signal ? { signal: options.signal } : {}),
 							onEvent: (event) => {
-								if (event.type === "text_delta")
+								if (event.type === "text_delta" && !this.runtime.taskSecrets.hasRun(run.id))
 									options.onTextDelta?.(event.delta);
 							},
 						},
@@ -1397,7 +1428,7 @@ export class AgentLoop {
 							content: message,
 						});
 						this.onMessage?.(appended);
-						modelMessages.push({ role: "user", content: textContent(message) });
+						modelMessages.push({ role: "user", content: textContent(appended.content) });
 					}
 					return steering.length;
 				};
@@ -1617,7 +1648,7 @@ export class AgentLoop {
 			run = {
 				...run,
 				status: cancelled ? "cancelled" : "failed",
-				error: agentRunErrorMessage(error, cancelled),
+				error: this.runtime.taskSecrets.redact(session.id, agentRunErrorMessage(error, cancelled)),
 				updatedAt: this.now().toISOString(),
 			};
 			this.database.saveAgentRunIfActive(run);

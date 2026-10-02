@@ -18,4 +18,6 @@ export * from "./agent-templates";
 
 export * from "./resource-access";
 
+export * from "./sensitive-text";
+
 export * from "./source-observations";
