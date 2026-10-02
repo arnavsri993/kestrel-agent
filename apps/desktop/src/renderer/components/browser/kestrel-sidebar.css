@@ -341,13 +341,7 @@
 	);
 }
 
-.browser-workspace-vertical .browser-find-bar {
-	position: absolute;
-	top: var(--browser-chrome-height);
-	left: calc(var(--kestrel-sidebar-space) + var(--browser-tab-rail-width));
-	right: var(--agent-panel-width);
-	z-index: 9;
-}
+
 
 .kestrel-sidebar-header {
 	display: flex;

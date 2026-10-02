@@ -21,11 +21,11 @@ export function MemoryRecovery({ sessionId, onRestored }: { sessionId: string; o
 	return <details><summary>Knowledge backup and recovery</summary>
 		<p>Encrypted recovery for this scope in the same Kestrel profile, using its existing protected key. Keep that profile and key; this file cannot move knowledge to another profile.</p>
 		<p>Supports up to 1,000 active public or personal standalone knowledge records. Sensitive, restricted, expired and task- or source-linked knowledge is excluded. Chats, source history, tasks, credentials and browser sessions are not included.</p>
-		<button disabled={busy} onClick={() => void perform("export")}>Save encrypted backup</button>
-		<button disabled={busy} onClick={() => void perform("preview")}>Preview recovery</button>
+		<button className="button secondary" disabled={busy} onClick={() => void perform("export")}>Save encrypted backup</button>
+		<button className="button secondary" disabled={busy} onClick={() => void perform("preview")}>Preview recovery</button>
 		{preview && <section aria-label="Recovery preview"><p>{preview.scopeName}: {preview.newRecords} missing records to restore; {preview.existingRecords} existing records will be skipped. Nothing has been restored yet.</p>
 			<p>Preview expires {new Date(preview.expiresAt).toLocaleTimeString()}. Source references may point to material no longer available.</p>
-			<button disabled={busy || preview.newRecords === 0} onClick={() => void perform("apply")}>Restore missing records</button><button disabled={busy} onClick={() => setPreview(undefined)}>Cancel preview</button>
+			<button className="button secondary" disabled={busy || preview.newRecords === 0} onClick={() => void perform("apply")}>Restore missing records</button><button className="button secondary" disabled={busy} onClick={() => setPreview(undefined)}>Cancel preview</button>
 		</section>}
 		{notice && <p role="status">{notice}</p>}{error && <p role="alert">{error}</p>}
 	</details>;
