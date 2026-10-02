@@ -4,6 +4,7 @@ import { emptyBrowserRecoveryBudgetState } from "./browser-recovery";
 import {
 	OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR,
 	PREMATURE_BROWSER_COMPLETION_ERROR,
+	UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR,
 	prematureBrowserCompletionError,
 } from "./agent-run-completion";
 
@@ -23,6 +24,44 @@ function execution(
 }
 
 describe("prematureBrowserCompletionError", () => {
+	it.each([
+		"The verification button click was executed.",
+		"I clicked the Show verification button.",
+		"We have successfully clicked the button.",
+	])("rejects an unsupported completed click claim: %s", modelText => {
+		expect(prematureBrowserCompletionError({
+			runId: "run-1", sessionId: "session-1", modelText,
+			browserRecoveryState: emptyBrowserRecoveryBudgetState(),
+			listExecutions: () => [
+				execution({ id: "read", idempotencyKey: "run-1:read", toolName: "browser.visible-snapshot" }),
+				execution({ id: "denied", idempotencyKey: "run-1:denied", toolName: "browser.visible-act", status: "blocked", input: { action: { type: "click" } } }),
+				execution({ id: "old-click", idempotencyKey: "run-0:click", toolName: "browser.visible-act", input: { action: { type: "click" } } }),
+			],
+		})).toBe(UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR);
+	});
+	it("accepts a completed click claim only with a verified click in this run", () => {
+		for (const type of ["click", "type"]) {
+			expect(prematureBrowserCompletionError({
+				runId: "run-1", sessionId: "session-1", modelText: "I clicked the button.",
+				browserRecoveryState: emptyBrowserRecoveryBudgetState(),
+				listExecutions: () => [execution({ id: "action", idempotencyKey: "run-1:action", toolName: "browser.visible-act", input: { action: { type } } })],
+			})).toBe(type === "click" ? undefined : UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR);
+		}
+	});
+	it.each([
+		"I could not click the button. No action was taken.",
+		"I will click the button after approval.",
+		"Click the button to continue.",
+		"The click was not executed.",
+		"> I clicked the button.\nThe quoted claim is unverified.",
+		"```text\nI clicked the button.\n```\nThis is example text.",
+	])("preserves limitations, instructions and quoted examples: %s", modelText => {
+		expect(prematureBrowserCompletionError({
+			runId: "run-1", sessionId: "session-1", modelText,
+			browserRecoveryState: emptyBrowserRecoveryBudgetState(),
+			listExecutions: () => [execution({ id: "read", idempotencyKey: "run-1:read", toolName: "browser.visible-snapshot" })],
+		})).toBeUndefined();
+	});
 	it("allows normal Q&A completion with assistant text", () => {
 		expect(
 			prematureBrowserCompletionError({

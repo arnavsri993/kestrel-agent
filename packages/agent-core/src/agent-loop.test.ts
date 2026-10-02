@@ -9,7 +9,7 @@ import {
 	LOCAL_FIRST_TOOL_INSTRUCTIONS,
 	SessionRunBusyError,
 } from "./agent-loop";
-import { PREMATURE_BROWSER_COMPLETION_ERROR } from "./agent-run-completion";
+import { PREMATURE_BROWSER_COMPLETION_ERROR, UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR } from "./agent-run-completion";
 import {
 	toBrowserRecoveryError,
 	type BrowserRecoveryBudgetState,
@@ -3514,6 +3514,29 @@ describe("provider-neutral agent loop", () => {
 			maximumTurns: 2,
 		});
 		database.close();
+	});
+
+	it("fails and replaces a completed click claim when only a browser read ran", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		try {
+			const runtime = new AgentRuntime(database);
+			const session = runtime.createSession({ title: "Unverified click" });
+			runtime.registerExternalTool({
+				descriptor: { name: "browser.test-read", title: "Read", description: "Read a fixture page", category: "browser", riskLevel: "read_only", readOnly: true, requiresWorkspace: false, source: "builtin", tags: [] },
+				inputSchema: { type: "object", additionalProperties: false },
+				execute: async () => ({ heading: "Fixture", button: "Show verification" }),
+			});
+			runtime.allowTool(session.id, "browser.test-read");
+			let calls = 0;
+			const provider: ModelProvider = {
+				id: "false-click", capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: true },
+				complete: async request => ({ providerId: "false-click", model: request.model, text: ++calls === 1 ? "" : "The verification button click was executed.", toolCalls: calls === 1 ? [{ id: "read", name: "browser.test-read", arguments: {} }] : [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: calls === 1 ? "tool_calls" : "stop" }),
+			};
+			const result = await new AgentLoop(database, runtime, new ProviderPool([provider])).run({ sessionId: session.id, model: "fixture", providerIds: [provider.id], userContent: textContent("Click the fixture button.") });
+			expect(result.run).toMatchObject({ status: "failed", error: UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR });
+			expect(result.assistantMessage?.content).toBe(UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR);
+			expect(runtime.listMessages(session.id).map(message => message.content).join("\n")).not.toContain("button click was executed");
+		} finally { database.close(); }
 	});
 
 	it("marks a run failed when the model stops silently after browser work", async () => {

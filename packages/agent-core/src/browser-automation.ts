@@ -1331,6 +1331,7 @@ export function installBrowserTools(
 			properties: {
 				browserSessionId: browserSessionProperty,
 				action: {
+					type: "object",
 					oneOf: [
 						{
 							type: "object",
@@ -1673,6 +1674,7 @@ export function installBrowserTools(
 			properties: {
 				tabId: visibleTabProperty,
 				action: {
+					type: "object",
 					oneOf: [
 						{
 							type: "object",

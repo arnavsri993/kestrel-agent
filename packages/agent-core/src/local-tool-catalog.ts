@@ -2,14 +2,14 @@ import { contentText, type ModelMessage, type ModelTool } from "./providers/type
 
 const INITIAL_LOCAL_TOOLS = new Set([
 	"tools.search", "tools.activate", "browser.open-tab", "browser.tabs",
-	"browser.visible-snapshot", "browser.current-context", "workspace.list",
+	"browser.visible-snapshot", "browser.visible-act", "browser.current-context", "workspace.list",
 	"workspace.read", "workspace.search", "agent.config.inspect",
 	"execution.run-with-secrets",
 ]);
 const SEARCH_TOOL_BATCH = 8;
 
 export const LOCAL_TOOL_DISCOVERY_INSTRUCTIONS =
-	"Kestrel keeps the local model's initial tool catalog small. For an absent capability, call tools.search with a focused query or exact tool name. Up to eight matching authorized tool definitions become available on the next turn. Discovery does not grant access or approve actions. For a requested fresh URL, open it with browser.open-tab and read the returned tabId with browser.visible-snapshot. Use browser.tabs only when the task requires existing tabs; internal Kestrel pages are not web-page observations. Use the returned definitions and Kestrel's normal approval controls; never invent a tool result.";
+	'Kestrel keeps the local model\'s initial tool catalog small. For an absent capability, call tools.search with a focused query or exact tool name. Up to eight matching authorized tool definitions become available on the next turn. Discovery does not grant access or approve actions. For a requested fresh URL, open it with browser.open-tab and read the returned tabId with browser.visible-snapshot. To click an observed button, call browser.visible-act with arguments {"tabId":"the returned tabId","action":{"type":"click","target":"the observed snapshot ref"}}. The action field is a nested JSON object, never a quoted string. Wait for the actual action result, then take a fresh snapshot. Describing or planning a click does not execute it. Use browser.tabs only when the task requires existing tabs; internal Kestrel pages are not web-page observations. Use the returned definitions and Kestrel\'s normal approval controls; never invent a tool result.';
 
 /** Presentation only: every returned definition must already be inside the run's ceiling. */
 export function localToolCatalog(tools: ModelTool[], messages: ModelMessage[]): ModelTool[] | undefined {

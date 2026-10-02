@@ -32,7 +32,7 @@ import {
 	recordBrowserRecoveryToolSuccess,
 	type BrowserRecoveryBudgetState,
 } from "./browser-recovery";
-import { prematureBrowserCompletionErrorForRun } from "./agent-run-completion";
+import { prematureBrowserCompletionErrorForRun, UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR } from "./agent-run-completion";
 import { buildActionReceipt } from "./action-receipts";
 import type { AgentRuntime } from "./runtime";
 import { modelVisibleToolResult, redactSensitiveValue } from "./tool-result-guardrails";
@@ -1403,8 +1403,12 @@ export class AgentLoop {
 					}
 				}
 
+				const completionError = result.toolCalls.length === 0
+					? prematureBrowserCompletionErrorForRun(this.database, {
+						runId: run.id, sessionId: session.id, modelText: result.text, browserRecoveryState,
+					}) : undefined;
 				const assistantContent =
-					result.text.trim() ||
+					(completionError === UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR ? completionError : result.text.trim()) ||
 					`Requested tools: ${result.toolCalls.map((call) => call.name).join(", ")}`;
 				const assistantMessage = this.runtime.appendMessage({
 					sessionId: session.id,
@@ -1447,13 +1451,7 @@ export class AgentLoop {
 
 				if (result.toolCalls.length === 0) {
 					if (consumeSteering() > 0) continue;
-					const prematureCompletion =
-						prematureBrowserCompletionErrorForRun(this.database, {
-							runId: run.id,
-							sessionId: session.id,
-							modelText: result.text,
-							browserRecoveryState,
-						});
+					const prematureCompletion = completionError;
 					run = {
 						...run,
 						status: prematureCompletion ? "failed" : "completed",

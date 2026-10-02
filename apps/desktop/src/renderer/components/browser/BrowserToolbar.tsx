@@ -1408,7 +1408,7 @@ export function BrowserToolbar({
                   >
                     <Icon name="history" />
                     <span>History</span>
-                    <kbd>⌘H</kbd>
+                    <kbd>⌘Y</kbd>
                   </button>
                   <button
                     type="button"

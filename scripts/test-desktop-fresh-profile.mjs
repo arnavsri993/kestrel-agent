@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { dismissDefaultBrowserPrompt } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-fresh-profile-"));
 const testHome = join(root, "home");
@@ -43,11 +44,14 @@ async function launch() {
 			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
 		},
 	});
+	await application.evaluate(({ BrowserWindow }) =>
+		BrowserWindow.getAllWindows().find(window => !window.webContents.getURL().includes("petOverlay=1"))?.setSize(1000, 900),
+	);
 	return application.firstWindow();
 }
 
 async function assertFresh(page) {
-	await page.locator("#runtime-prompt").waitFor();
+	await page.locator("#runtime-prompt").waitFor({ state: "attached" });
 	const response = await page.evaluate(() =>
 		window.kestrel.request({ type: "snapshot" }),
 	);
@@ -70,7 +74,16 @@ async function assertFresh(page) {
 	assert.equal(await page.getByRole("button", { name: "Plan a task" }).count(), 0);
 }
 
+async function openChat(page) {
+	await dismissDefaultBrowserPrompt(page);
+	const chatToggle = page.locator("#browser-agent-toggle");
+	await chatToggle.waitFor();
+	if (await chatToggle.getAttribute("aria-expanded") !== "true")
+		await chatToggle.click();
+}
+
 async function assertNoProviderComposerState(page) {
+	await openChat(page);
 	const taskInput = page.getByRole("textbox", { name: "Message Kestrel" });
 	await taskInput.fill("Plan a safe task.");
 	await page
@@ -84,6 +97,9 @@ async function assertNoProviderComposerState(page) {
 			.isDisabled(),
 		true,
 	);
+	// The compact Chat workspace protects the browser behind it. Close Chat
+	// before exercising the separate New Tab composer.
+	await page.locator(".agent-sidebar-collapse").click();
 
 	const newTabInput = page.locator("#new-tab-chat-input");
 	await newTabInput.fill("Plan a safe task.");
@@ -114,6 +130,7 @@ async function assertNoProviderComposerState(page) {
 	});
 	await page.evaluate(() => localStorage.setItem("kestrel:first-task", "yes"));
 	await page.reload();
+	await openChat(page);
 	await page
 		.locator(".agent-conversation-host .composer-status")
 		.filter({ hasText: "Connect a model to send tasks." })

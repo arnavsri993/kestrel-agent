@@ -20,6 +20,11 @@ describe("local progressive tool catalog", () => {
 		expect(localToolCatalog([...tools, protectedExecution], [])).toContain(protectedExecution);
 		expect(localToolCatalog(tools, [])?.map(tool => tool.name)).not.toContain(protectedExecution.name);
 	});
+	it("includes an authorized visible browser action without granting an absent action", () => {
+		const action = { name: "browser.visible-act", description: "Visible browser action", inputSchema: { type: "object" } };
+		expect(localToolCatalog([...tools, action], [])).toContain(action);
+		expect(localToolCatalog(tools, [])?.map(tool => tool.name)).not.toContain(action.name);
+	});
 	it("loads a bounded batch from verified search, using only authorized definitions", () => {
 		const results = [{ name: "denied.tool", inputSchema: { malicious: true } }, ...tools.slice(2).map(tool => ({ name: tool.name, inputSchema: { untrusted: true } }))];
 		const loaded = localToolCatalog(tools, [discovery("verified", results)])!;

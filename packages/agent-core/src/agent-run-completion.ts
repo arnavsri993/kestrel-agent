@@ -8,6 +8,22 @@ export const PREMATURE_BROWSER_COMPLETION_ERROR =
 export const OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR =
 	"Kestrel stopped before taking the required fresh browser observation. Retry the last turn or ask for a follow-up.";
 
+export const UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR =
+	"Kestrel could not verify the claimed browser click. No successful click was recorded in this run. Review the browser steps, then retry or send a follow-up.";
+
+function claimsExecutedClick(text: string): boolean {
+	let fenced = false;
+	const prose = text.split("\n").filter(line => {
+		const trimmed = line.trimStart();
+		if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+			fenced = !fenced;
+			return false;
+		}
+		return !fenced && !trimmed.startsWith(">");
+	}).join("\n");
+	return /\b(?:I|we) (?:have )?(?:just )?(?:successfully )?clicked\b|\bclick (?:was|has been) (?:successfully )?(?:executed|performed|completed)\b/i.test(prose);
+}
+
 export function prematureBrowserCompletionError(input: {
 	runId: string;
 	sessionId: string;
@@ -16,7 +32,6 @@ export function prematureBrowserCompletionError(input: {
 	listExecutions: (sessionId: string) => RuntimeToolExecution[];
 }): string | undefined {
 	const modelText = input.modelText.trim();
-	if (modelText) return undefined;
 
 	const runPrefix = `${input.runId}:`;
 	const browserExecutions = input.listExecutions(input.sessionId).filter(
@@ -25,6 +40,15 @@ export function prematureBrowserCompletionError(input: {
 			execution.toolName.startsWith("browser."),
 	);
 	if (browserExecutions.length === 0) return undefined;
+	if (modelText) {
+		if (claimsExecutedClick(modelText) && !browserExecutions.some(execution => {
+			const action = execution.input.action;
+			return execution.status === "verified" &&
+				["browser.act", "browser.visible-act"].includes(execution.toolName) &&
+				typeof action === "object" && action !== null && "type" in action && action.type === "click";
+		})) return UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR;
+		return undefined;
+	}
 
 	if (
 		input.browserRecoveryState.entries.some(
