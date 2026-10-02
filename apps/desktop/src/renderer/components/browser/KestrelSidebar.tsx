@@ -250,6 +250,7 @@ export function KestrelSidebar({
 	onNewTask,
 	onOpenBrowser,
 	onOpenAgent,
+	onOpenProjects,
 	onOpenConnections,
 	onOpenMemory,
 	onOpenCapabilities,
@@ -271,6 +272,7 @@ export function KestrelSidebar({
 	onNewTask(): void;
 	onOpenBrowser(): void;
 	onOpenAgent(): void;
+	onOpenProjects(): void;
 	onOpenConnections(): void;
 	onOpenMemory(): void;
 	onOpenCapabilities(): void;
@@ -620,24 +622,6 @@ export function KestrelSidebar({
 				<div className="kestrel-sidebar-header-actions">
 					<button
 						type="button"
-						className="kestrel-sidebar-icon-button"
-						aria-label="Open command center"
-						title="Open command center (⌘K)"
-						onClick={onOpenCapabilities}
-					>
-						<Icon name="search" />
-					</button>
-					<button
-						type="button"
-						className="kestrel-sidebar-icon-button"
-						aria-label="Open settings"
-						title="Settings"
-						onClick={onOpenSettings}
-					>
-						<Icon name="settings" />
-					</button>
-					<button
-						type="button"
 						className="kestrel-sidebar-icon-button kestrel-sidebar-collapse"
 						aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
 						aria-expanded={!collapsed}
@@ -662,23 +646,22 @@ export function KestrelSidebar({
 				<kbd>⌘N</kbd>
 			</button>
 			<nav className="kestrel-sidebar-primary" aria-label="Primary">
-				<SidebarNavItem
-					icon="agent"
-					label="Agent"
-					destination="agent"
-					active={activeDestination === "agent"}
-					onClick={onOpenAgent}
-				/>
-				<SidebarNavItem icon="connections" label="Connections" destination="connections"
-					active={activeDestination === "connections"} onClick={onOpenConnections} />
-				<SidebarNavItem icon="memory" label="Memory" destination="memory"
-					active={activeDestination === "memory"} onClick={onOpenMemory} />
+				<SidebarNavItem icon="browser" label="Browser" destination="browser"
+					active={activeDestination === "browser"} onClick={onOpenBrowser} />
+				<SidebarNavItem icon="agent" label="Agent" destination="agent"
+					active={activeDestination === "agent"} onClick={onOpenAgent} />
+				<SidebarNavItem icon="folder" label="Projects" destination="projects"
+					active={activeDestination === "projects"} onClick={onOpenProjects} />
+				<button type="button" className="kestrel-sidebar-row kestrel-sidebar-nav-item"
+					aria-label="Open search" title="Search Kestrel (⌘K)" onClick={onOpenCapabilities}>
+					<Icon name="search" /><span>Search Kestrel</span>
+				</button>
 			</nav>
 
 			<div className="kestrel-sidebar-scroll">
 				<section className="kestrel-sidebar-section" aria-labelledby="kestrel-sidebar-projects">
 					<div className="kestrel-sidebar-section-heading">
-						<h2 id="kestrel-sidebar-projects">Projects</h2>
+						<h2 id="kestrel-sidebar-projects">Your projects</h2>
 						<button
 							type="button"
 							className="kestrel-sidebar-section-action"
@@ -786,7 +769,7 @@ export function KestrelSidebar({
 
 				<section className="kestrel-sidebar-section kestrel-sidebar-chats" aria-labelledby="kestrel-sidebar-chats">
 					<div className="kestrel-sidebar-section-heading">
-						<h2 id="kestrel-sidebar-chats">Chats</h2>
+						<h2 id="kestrel-sidebar-chats">Recent chats</h2>
 					</div>
 					{chats.length > 0 ? (
 						<ul>
@@ -816,6 +799,15 @@ export function KestrelSidebar({
 					) : null}
 				</section>
 			</div>
+
+			<nav className="kestrel-sidebar-utilities" aria-label="Manage Kestrel">
+				<SidebarNavItem icon="memory" label="Memory" destination="memory"
+					active={activeDestination === "memory"} onClick={onOpenMemory} />
+				<SidebarNavItem icon="connections" label="Connections" destination="connections"
+					active={activeDestination === "connections"} onClick={onOpenConnections} />
+				<SidebarNavItem icon="settings" label="Settings" destination="settings"
+					active={activeDestination === "settings"} onClick={onOpenSettings} />
+			</nav>
 
 			<AnimatePresence initial={false}>
 				{contextMenu && (contextProject || contextChat) ? (

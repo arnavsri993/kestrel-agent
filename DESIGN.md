@@ -1,3 +1,28 @@
+# Navigation clarity — September 2026
+
+Thesis: a familiar browser with obvious places to browse, ask for help, and find
+work, plus a stable, separate home for configuration and personal context.
+Existing React/Electron app redesign, frequent use, compact density, low visual
+and motion intensity. The classifier marketing-page inference does not apply.
+Keep system typography (13px controls, 11px section labels), existing graphite
+and light-theme tokens, 4px spacing rhythm, quiet separators, and current focus
+and reduced-motion behavior. No new materials, fonts, gradients, or animation.
+
+Observed weaknesses: no labeled Browser destination, icon-only search/settings,
+and duplicated toolbar entry points competing with the address field.
+Primary navigation: Browser, Agent, Projects, Search Kestrel. User projects and
+recent chats occupy the scrollable middle. Memory, Connections, Settings remain
+anchored below it. Preserve project/session identity and all existing actions.
+The toolbar keeps protected Tools, History, Downloads, and the browser menu;
+Extensions, Bookmarks, and Page options remain explicitly labeled in that menu.
+Pinned extensions remain directly available. New chat and New Tab stay distinct.
+Keep navigation labels at laptop widths; use the compact rail only below 800px or by explicit collapse.
+Projects opens a searchable overview; individual projects offer All projects to return.
+Verify routes, keyboard focus, menu dismissal, project/chat continuity, compact
+height, collapsed sidebar, desktop build, and the canonical running app.
+Why this is not generic: the hierarchy separates browsing, agent work, and
+Kestrel's real context/settings without introducing another mode or dashboard.
+
 # System UI consistency audit — September 16, 2026
 
 Existing React/Electron product audit, across browser chrome, New Tab, sidebar,
@@ -21,3 +46,894 @@ state/feedback motion. No new dependencies, decorative animation or marketing UI
 - Why this is not generic: corrections preserve Kestrel's browser/content split,
   native page layering and real scoped work, rather than replacing its interface.
 
+# Memory workspace — September 16, 2026
+
+Thesis: a calm, editable account of what Kestrel knows, organized around the
+person viewing it, with time and evidence available when needed.
+Existing React desktop redesign; moderate information density, low visual
+intensity and high privacy consequence. The first viewport is a reading surface:
+Memory title, separate Viewing as and Domain selectors, five simple text tabs,
+then the current overview. Overview is the default; an empty calendar is not an
+identity for memory.
+
+- System typography only: 26px title, 18px section headings, 14px reading text
+  at 1.65 line height, 12px metadata. Limit paragraphs to 76 characters per line.
+- Graphite existing surfaces, neutral hairline separators, muted secondary text,
+  existing accent for selection/focus and existing danger color for forgetting.
+- 4px rhythm; 24px main gaps, 16px reading gaps. One document reader/editor next
+  to a compact index, collapsing vertically at narrow widths. No card forest.
+- Overview uses short, mid, and long term paragraphs. People and Tools each
+  expose one editable document per selection. Timeline starts with a readable
+  weekly summary and day summaries, then discloses source events.
+- Viewing as and Domain have independent meaning. Scope changes immediately
+  clear old data; background refresh never overwrites an unsaved document.
+- Evidence, confidence, origin, capture controls and legacy administration stay
+  inside explicit details. Never claim inferred text is confirmed or live data.
+- Motion roles: existing control feedback only. No entry animation, decorative
+  motion, imagery, new fonts, or libraries. Native controls retain keyboard use.
+- Why this is not generic: its reading-first layout follows Kestrel's actual
+  user/agent ownership, memory tiers, relationships, tool knowledge, and evidence.
+- Verification: real IPC CRUD, viewer/domain separation, raced scope loads,
+  empty/error states, keyboard focus, narrow reflow and long document text.
+
+# Glass menus and autofill — September 2026
+
+Thesis: small, legible graphite-glass menus keep the website and the user's next
+action in view, with one quiet rim and clear typography instead of decorative gradients.
+Existing React/Electron redesign; dense-app profile, frequent keyboard and pointer use.
+The classifier's marketing-page inference does not apply to these native app menus.
+
+- SF Pro Display headings / SF Pro Text controls (system fallback): 14 / 13 / 12 / 11px.
+  Native system typography is intentional for a macOS utility, not a marketing identity.
+- 4px spacing rhythm, 16px panel inset, 8px row gaps, 32px minimum action heights.
+- Graphite surface, white primary text, readable gray secondary text, monochrome actions;
+  semantic red only for errors. Existing app light/dark tokens govern in-page menus.
+- Material: one translucent plane, hairline rim, soft shadow; grouped content uses
+  separators rather than nested glass cards. Opaque fallback for increased contrast
+  and reduced transparency. Native password/payment windows need OS vibrancy:
+  CSS backdrop blur cannot sample a separate browser WebContentsView.
+- Composition: compact icon/title/site header, scannable saved data or choices,
+  one primary fill/save action, quiet secondary actions. No hero or promotional copy.
+- Motion roles: state (180ms anchored arrival), feedback (120ms hover/press).
+  No stagger, looping shine, decorative parallax, or delayed actions. Reduced motion
+  removes transforms/animations, independently of transparency preferences.
+- Remove decorative gradients throughout desktop renderer styles, including Home,
+  payment preview, and glass highlights; preserve actual wallpaper images.
+- Preserve protected IPC, exact-origin validation, masked card/password summaries,
+  existing save/update semantics and typed-field preservation.
+- Verify all password modes, personal-info scroll/actions, payment save/fill,
+  keyboard focus/Escape, long data, narrow/short windows, contrast and reduced motion.
+- Why this is not generic: the menu hierarchy is built around Kestrel's real saved
+  identities, site context, and explicit field-versus-form actions.
+
+## Model and reasoning picker — September 15, 2026
+
+Component refinement: explicit clicks choose the provider, account, and model.
+Pointer movement never retargets reasoning. Search resolves matching accounts and
+models together. Reasoning uses confirmed model capabilities and labels its target.
+Keep dense graphite surfaces, system type, 4px spacing, existing focus rings and
+menu motion. No new fonts, colors, or motion. Verify search, account isolation,
+unsupported effort fallback, keyboard reopening, and narrow/short viewport scrolling.
+
+# Settings organization — September 2026
+
+Thesis: make Kestrel preferences easy to scan through small, named groups that
+match everyday browser and agent tasks. Keep the existing compact Mac controls,
+system typography, graphite surfaces, semantic colors, and 4px spacing rhythm.
+This is an existing React settings-page refinement with low visual intensity.
+
+- Browser: Everyday browsing; Privacy & personal data; Manage browser.
+- Agent: Setup & intelligence; Work & tools; Safety & maintenance.
+- One catalog owns grouping for desktop navigation and the narrow native picker.
+- Preserve search across both scopes, focused category panels, legacy links,
+  saved settings, and all permission/destructive-action safeguards.
+- Use readable group headings and restrained separators, with a clear selected
+  row. Avoid extra cards, descriptions, decorative icons, and new animations.
+- Fix the observed flat category list, scattered related categories, and the
+  ungrouped narrow picker. Verify navigation, search focus, persistence, keyboard
+  access, and overflow at desktop, intermediate, and narrow widths.
+- Why this is not generic: the groups reflect Kestrel's actual separation of
+  browsing, agent intelligence, tools, and local permission/data controls.
+
+## Tab previews and password tools — September 13, 2026
+
+Preserve the existing compact macOS system type and neutral glass. An inactive
+ tab opens a small native preview under its tab, with the last local snapshot,
+ title, and host. Only active resources appear as icons with hover descriptions;
+ measured memory estimates appear only while sleeping. No invented savings or
+ permission-granted-as-current-use indicators. Native overlays preserve the
+ running page beneath them. Password suggestions attach to toolbar Tools, retain
+ protected main-process comparisons, and use short save/update actions.
+Snapshots stay in a bounded in-memory cache and are invalidated on navigation.
+Verify playing muted video, ongoing transfers/work, capture, edits, idle sleep,
+ navigation freshness, hover dismissal, icon tooltips, and unchanged passwords.
+
+# New Tab glass refinement — September 2026
+
+This section supersedes the older Home shelf and square-control guidance below.
+Thesis: a wallpaper-led browser home with one compact, expandable task composer,
+recognizable local site shortcuts, and independently movable glass widgets.
+
+- Existing React/Motion desktop app; dense chrome, calm Home, SF system typography.
+- 4px spacing rhythm; 20px widget gaps, 28px surfaces, capsule short controls,
+  circular icon buttons. Keep 12–14px readable control text and explicit focus.
+- Neutral translucent material samples the wallpaper using bounded backdrop blur,
+  a thin light rim, and a quiet shadow. Reading and approval details stay legible.
+  User-requested glass/pills are intentional exceptions to the old matte system.
+- First viewport: top-right customization, greeting, focus-expanding composer,
+  automatic/pinned icon shortcuts, independent widgets. No fabricated activity.
+- Motion roles: focus expansion, existing widget rearrangement, button feedback.
+  State owns animations; reversal and reduced motion preserve all controls.
+- Preserve profile data, approval authority, actual model capabilities and local
+  history privacy. Shortcuts use stored origin favicons, never third-party fetches.
+- Inspiration only: supplied screenshots and Apple Materials guidance
+  (https://developer.apple.com/design/human-interface-guidelines/materials).
+  No external source code, dependencies, or branded assets copied.
+- Verify narrow/short layouts, large paste removal and handoff, keyboard controls,
+  wallpaper persistence, shortcut add/remove and deduplication, contrast fallbacks,
+  installed runtime, and the combined authorized PR stack.
+- Why this is not generic: the composition follows Kestrel's real local browsing,
+  task configuration, and resumable work, shaped around the supplied references.
+
+# Kestrel design system
+
+## Passwords and autofill — September 12, 2026
+
+The login page stays primary; a compact anchored suggestion offers the matching
+account, and a stable save/update prompt lets the person correct its username.
+Password settings use the existing dense graphite Mac controls and system type,
+with searchable site/account rows, explicit save and fill controls, and protected
+add/edit/reveal/copy actions. Keep website origins visible when approving a save.
+Reuse the 4px rhythm, opaque surfaces, focus rings and existing feedback motion.
+No marketing cards, decorative animation, new fonts, or new motion dependencies.
+Verify first save, return visit, username-first sign-in, changed password, failed
+login, SSO return, manual edits, and section-scoped whole-form fill with fixtures.
+
+## macOS coherence — September 2026
+
+Kestrel is a browser with adjacent local agent work: browse, ask, inspect,
+approve, and resume. This refinement keeps that working structure and gives
+navigation, forms, and local context a consistent Mac rhythm.
+
+- Dense application chrome, SF system text, 13px controls, 12px support text,
+  4px spacing rhythm, 9px fields, and 14px independent surfaces.
+- Quiet semantic graphite surfaces; opaque reading areas remain legible over
+  user-selected wallpaper. No new accent palette or wallpaper changes.
+- Selection uses a filled rounded row; keyboard focus remains an explicit ring.
+- Home has one elevated composer and a continuous, readable context shelf.
+- Existing feedback and direct manipulation remain; no new motion or libraries.
+- Avoid capsule-shaped forms, tracked uppercase navigation, decorative rules,
+  card hover effects that suggest whole cards are clickable, and nested glass.
+- Why this is not generic: the hierarchy follows real browser tabs, folder-backed
+  chats, local context, and agent controls rather than a dashboard template.
+
+Observed baseline: Home shelves compete with wallpaper, field shapes vary from
+buttons, and sidebar section labels are tiny and widely tracked. These are the
+three primary refinement targets. Installed review also identified URL entry
+actions wrapping too early; flexible fields now keep the action adjacent when
+space permits and wrap at narrow widths. The automated classifier suggested marketing
+structure; live desktop evidence establishes an existing product redesign.
+
+
+## Instrument Workbench — August 2026
+
+This is the authoritative desktop system for the product-wide redesign based
+on `main` at `524acf82`. It refines Kimi's selected Instrument Console after
+direct inspection of the renderer, 94 supplied captures, a fresh exact-base
+capture, and the original Apple Design, Sonner, Vaul, and Frontend Taste
+Engineer repositories. The full evidence and decision record is in
+`artifacts/ui-redesign/DESIGN_SYNTHESIS.md`.
+
+- **Thesis:** two quiet structural rails frame one unmistakably active graphite
+  work plane; the browser or task stays primary while the persistent agent,
+  approvals, and provenance remain continuously available.
+- **Density:** `dense-app`, with sparse composition reserved for setup, Browser
+  Home, a new task, and true empty states.
+- **Type:** platform-native variable system typography is an intentional
+  desktop-instrument choice: SF Pro/SF Mono on macOS and Segoe UI
+  Variable/Consolas on Windows. Page title is `26/32 680`, section `16/21 630`,
+  body `14/21 450`, control `13/18 560`, support `12.5/18 450`, metadata
+  `11.5/15 580`, and evidence `11/16 500`. Nothing is below 11px.
+- **Spacing and shape:** 4px base with `4/8/12/16/20/24/32/40/56/72`. Controls
+  use 8–10px radii; meaningful independent surfaces use 12–14px; ordinary page
+  grouping has no container radius. Targets are 32px compact, 40px normal, and
+  44px for primary or consequential decisions.
+- **Color/material:** a semantic monochrome ramp from canvas through chrome,
+  rail, workbench, surface, raised, and overlay. Content is opaque. macOS may
+  progressively enhance under-scroll structural chrome with blur; Windows and
+  reduced-transparency modes are opaque.
+- **Page architecture:** every `kestrel://` destination uses one PageFrame with
+  an optional real-state eyebrow, one title, one useful description, optional
+  actions/local navigation, and a declared reading/standard/wide/full measure.
+  Pages are never giant rounded cards inside the browser.
+- **Controls:** one Button vocabulary (`solid`, `bordered`, `quiet`,
+  `destructive`), one input treatment, one continuous Row, cause-specific
+  EmptyState, shape-plus-label Status, and Card only for independent objects or
+  layers. The legacy `.button` system is retired rather than restyled in
+  parallel.
+- **Motion roles:** feedback (70–90ms), state/orientation (120–180ms), and
+  direct manipulation only where a person drags. Popovers originate at the
+  trigger, reversible transitions use the same path, and gesture motion starts
+  from the rendered value. Reduced motion retains feedback with opacity or an
+  immediate state swap.
+- **Motion quality gate:** buttons, tab lifecycle/reorder, rail resize,
+  overlays, command center, dialogs, approvals, routes, disclosures, Settings,
+  selectors, New Tab, direct manipulation, async state changes, and compact
+  recomposition must be manually exercised in Electron. Feedback begins on
+  pointer-down; input never waits for motion; reversal starts from the rendered
+  value; enter/exit paths agree; trigger geometry anchors overlays; physical
+  travel uses near-critical springs without ornamental bounce; tracked gestures
+  preserve grab offset and relevant release velocity; transform/opacity motion
+  causes no layout shift; reduced motion remains explicit. Screenshots and the
+  mere presence of transitions do not satisfy this release-blocking gate.
+- **Responsive:** shell and component breakpoints occur where content stops
+  working. The navigation rail becomes a 56px accessible icon rail at compact
+  width; the agent remains available through a persistent bottom agent dock.
+  Settings moves from local side navigation to a labelled compact section
+  control before content becomes narrow. No page-level horizontal scrolling.
+- **State/access:** native semantics and visible focus are mandatory. Overlays
+  define focus entry, traversal, Escape, and restoration. Every supported
+  surface represents loading, empty, populated, error/retry, disconnected,
+  disabled, running, approval, verified, and recovery honestly.
+- **Avoid:** generic dashboard composition, card walls, glass stacks, glow,
+  gradients, pill forests, duplicated headings, hover-only meaning, ambient
+  motion, macOS Settings cosplay, mobile-sheet navigation, hue-only state, and
+  fake metrics.
+- **Why this is not generic:** Kestrel's visual identity is the real
+  browser-and-agent workbench, angular brand/control language, and visible
+  approval/provenance loop—not a theme, accent color, or component catalog.
+
+## ChatGPT-inspired navigation rail — August 31, 2026
+
+- **Thesis:** make the left rail immediately legible like a familiar chat
+  workspace without flattening Kestrel's browser, agent, approval, and local
+  project semantics.
+- **Order:** `New chat`, `Scheduled`, and `Agent` are the primary destinations;
+  folder-backed `Projects` comes next, followed by standalone `Chats`.
+  Writing Studio, Approvals, and Capabilities remain reachable in a quieter
+  Workspace group, with Settings anchored at the bottom.
+- **Customization:** each project can opt into a curated icon and named color.
+  These are local presentation preferences keyed by the granted folder path;
+  they do not alter workspace permissions, project identity, or encrypted
+  runtime data. The palette is decorative and never encodes task state.
+- **Interaction:** project rows keep New chat, expand/collapse, and appearance
+  customization as separate, labelled controls. The appearance chooser is
+  keyboard reachable, closes on Escape or outside press, and persists only
+  validated options. Compact mode retains the primary icon rail and hides the
+  scrollable project/chat groups to protect the narrow browser viewport.
+- **Why this is not generic:** the familiar ordering is adapted around
+  Kestrel's actual scheduled work, agent sessions, and folder-backed projects,
+  while the graphite ramp and approval boundary remain intact.
+
+## Agent Universe spatial surface — September 2026
+
+- **Thesis:** `kestrel://agent` is a field of real runtime systems first, with
+  the browser shell and navigation acting as a quiet frame rather than a page
+  scaffold. A person should be able to understand the topology at a glance,
+  then move closer to a system or delegated session without losing spatial
+  continuity.
+- **Composition:** the default Universe is an edge-to-edge map plane below the
+  browser chrome. Title, search, map controls, and task creation are compact
+  floating instrument controls. The persistent conversation rail stays
+  mounted and can be revealed without reclaiming the map's identity; opening a
+  task still returns to the established transcript surface rather than adding
+  a second history view.
+- **Camera:** pointer drag pans the field, wheel/pinch-style input zooms around
+  the pointer, and focused systems/nodes move to a stable inspection anchor.
+  Zoom in/out and fit/reset controls plus arrow-key and `+`/`-`/`0` equivalents
+  make the direct-manipulation surface keyboard reachable. Camera state is
+  ephemeral; runtime identity and hierarchy remain in the deterministic
+  renderer projection.
+- **Depth and restraint:** a sparse static field, proximity, scale, and
+  progressive labels establish depth. The overview reserves eight planet slots
+  for top-level systems; an explicit overflow list keeps additional real
+  systems reachable without making the field unreadable. Each system uses a
+  deliberately limited red/yellow/green palette inspired by the window's
+  traffic lights; each system receives a stable identity color until the user
+  chooses another, while status is communicated separately through size,
+  opacity, and rim treatment. Only an explicitly created persistent agent owns
+  a planet; an ordinary conversation such as the default Main session never
+  becomes a planet by inference. Persistent agents choose from bundled,
+  attributed NASA/JPL planet imagery in Agent settings, while direct delegated
+  sessions are smaller moon-like bodies on compact root-centered guides and
+  deeper descendants stay close to their owning moon. No trusted agent photo
+  metadata exists in the runtime contract, so the body treatment uses real
+  celestial imagery rather than a fake profile image. Thin straight ownership
+  links remain the persistent cue that every relationship is real delegated
+  work. Selecting any planet or moon opens its runtime-backed conversation; the
+  focused view exposes an explicit Back to solar system control. Selection and
+  focus add emphasis; they do not mutate or invent runtime state.
+- **Starfield:** the ambient field uses several deterministic depth layers with
+  dense pinprick stars, small warm/cool color-temperature variation, rare bright
+  cores and soft halos, and barely visible blue/amber dust. Camera parallax and
+  slow drift preserve the depth cue without turning the map into a screensaver;
+  reduced motion freezes the field.
+- **Motion roles:** spatial continuity for focus and camera changes, direct
+  manipulation for pan/zoom, and calm state feedback for real active work or
+  recent runtime events. The map is still at rest: moons do not orbit, idle-bob,
+  or randomly drift. Dragging activates only the selected local system's damped
+  parent-relative physics, vacancy redistribution, and a restrained return.
+  Active state adds a slow dashed ring; a real runtime event adds one outward
+  pulse and briefly animates the affected ownership link. Waiting, failed,
+  completed, or cancelled sessions are still, darker, and smaller. Reduced
+  motion freezes the ring and link animations while keeping the hierarchy and
+  drag relationship legible.
+- **Why this is not generic:** the scene is derived from Kestrel's actual
+  `RuntimeSession` ownership and status model, while exact task history,
+  inspector routing details, approvals, and persistent agent conversation all
+  remain reachable through the same product shell.
+
+### Magical starfield refinement — September 7, 2026
+
+- **Thesis:** keep the Universe usable as a daily work surface while giving its
+  depth plane the photographic magic of a long-exposure night sky: countless
+  fine stars, a very small crisp bright tail, cold-white light with sparse warm
+  and violet temperatures, faint blue dust, and occasional broad star-cloud
+  regions rather than uniform wallpaper.
+- **Motion roles:** slow depth drift is the single focal ambient beat; existing
+  camera parallax remains the spatial state transition. The field never uses
+  warp speed, shooting stars, randomized flashes, or movement that implies an
+  agent is working. Reduced Motion freezes time while retaining the same rich
+  spatial composition.
+- **Performance:** star geometry, haze, and cluster texture are rendered into
+  cached tiles. Animation only recomposites those tiles at a capped cadence,
+  pauses when the document is hidden, and does not regenerate points per frame.
+- **Avoid:** broad milky overlays, bloom on every point, high-frequency flicker,
+  obvious tile repetition, ornamental constellations, moving planets, or a
+  bright cluster that competes with task labels and controls.
+- **Why this is not generic:** the reference-like star clouds live inside the
+  same camera-attached depth model as Kestrel's real agent topology, so the
+  atmosphere strengthens the spatial product rather than acting as a generic
+  particle backdrop.
+
+## New Tab widget shelf — August 2026
+
+- Thesis: New Tab should offer a calm starting surface, not a dashboard. The
+  composer stays dominant; a small curated set of local widgets gives the
+  person useful context without making every available source visible at once.
+- Default density: Frequent tabs, Recent work, and Quick actions are the
+  recommended first view. Bookmarks, Downloads, Open tabs, Pinned tabs, and
+  Recent pages remain available through Customize and are all backed by local
+  browser or Kestrel data—no fabricated calendar, weather, or task metrics.
+- Layout: measured content width uses one, two, three, or four columns. Small
+  and medium widgets occupy one column; large widgets span two where space
+  allows. Cards are matte and borderless at rest, with descriptions and
+  reorder/resize controls disclosed only in Customize mode.
+- Interaction: every widget is a real destination or local empty state. Open
+  and pinned tabs select an existing tab, history-based widgets navigate the
+  current tab, and the catalog is scroll-bounded so adding choices does not
+  create page-level horizontal overflow.
+- Avoid list: no default widget wall, decorative metrics, remote integrations
+  without a source contract, or extra card chrome competing with the composer.
+- Why this is not generic: the catalog follows Kestrel's actual browser and
+  agent surfaces, while the first view intentionally shows only the three
+  things that help a person start or resume work.
+
+## Desktop stability and interaction refinement — August 2026
+
+This pass is a `motion-refinement` and product-wide quality audit, not a new
+theme or information architecture. It preserves the current renderer palette,
+type, density, routes, and native-feeling shell while tightening behavior that
+has drifted after many small changes.
+
+### Visual and motion lock
+
+- Thesis: Kestrel should feel like a quiet Mac instrument whose controls react
+  continuously and predictably to the person, never like a sequence of canned
+  hover frames.
+- Material and color: retain the shipped role-based surfaces and native traffic
+  colors. The triangular window controls may darken their inner fill and glyph
+  with proximity, but they do not glow, bloom, or introduce a new accent system.
+- Geometry and density: preserve existing shell, route, and control dimensions;
+  this pass fixes alignment and interaction defects rather than reflowing the
+  product.
+- Intentional minimalism and spatial intent: the wide center plane belongs to the active browser or
+  route-level task, while the narrow persistent agent pane remains a secondary
+  action boundary. Empty states use that space to isolate one status and one
+  recovery/next action instead of filling it with fake cards; setup screens use
+  the same restraint to stage one consequential choice at a time. Compact mode
+  recomposes navigation and content rather than shrinking the wide layout.
+- Motion role 1 — focal feedback: the triangular window controls track pointer
+  position with a small, interruptible tilt and offset while the fill deepens.
+- Motion role 2 — state continuity: existing route, tab, menu, disclosure, and
+  panel transitions remain restrained and explain state changes.
+- Motion role 3 — direct feedback: hover, press, focus, success, and error
+  changes stay short and local. No ambient or scroll-reveal animation is added.
+- Performance budget and evidence: high-frequency pointer input is coalesced to
+  at most one style-update batch per animation frame; geometry is measured
+  outside the hot path and invalidated only on real layout changes. Animations
+  use transform, opacity, and color only. `test-desktop-layout.mjs` exercises
+  the pointer path and 200% zoom overflow budget; a dedicated FPS number is not
+  claimed because headless Electron has no stable display clock.
+- Accessibility: keyboard focus remains explicit, window controls keep native
+  accessible names and hit targets, and reduced motion removes travel/tilt
+  while retaining an immediate darker fill and visible glyph.
+- Avoid list: no demo-reel motion, spring overshoot, blur trails, perpetual
+  loops, layout-shifting hover, hover-only meaning, or ornamental animation on
+  dense operational screens.
+- Why this is not generic: the signature triangular traffic controls respond as
+  one continuous physical cluster while Kestrel's approval, provenance, and
+  recovery surfaces remain calm enough for daily work.
+
+### Interaction continuation — September 6, 2026
+
+- Audit finding: tab pickup was pointer-responsive but updated React state for
+  every pointer movement; sidebar project disclosures animated while their
+  context menus appeared and disappeared abruptly; browser-settings loading
+  had semantic status text but no visual loading surface; project settings
+  trapped focus without returning it to its opener.
+- Motion grammar: direct controls use the shortest feedback timing, menus use
+  a quick anchored transition, selection/reorder uses a firm overdamped spring,
+  and sheets use a slightly slower panel timing. Under reduced motion all of
+  these preserve state and focus feedback while removing travel and scale.
+- Surface ownership: the shared renderer contract owns timing and physical
+  families; TabStrip owns pointer-direct drag presentation; KestrelSidebar
+  owns anchored project/menu continuity; each dialog owns its focus lifecycle.
+  No new animation dependency, ambient loop, or Agent Universe rewrite is
+  required for this pass.
+- Verification intent: exercise rapid tab reorder/reversal, menu open/close
+  and Escape restoration, project dialog Tab/Escape paths, settings loading and
+  retry, reduced motion, and narrow browser chrome after each packaged refresh.
+
+## Monochrome — August 2026
+
+This is the authoritative desktop visual system. It supersedes every older
+palette, ambient-field, navigation, skin, backdrop, pet, and motion direction
+below where they conflict. Kestrel is a black-and-white Mac instrument: simple,
+modern, fast, and honest about approval and data boundaries.
+
+### Tokens and type
+
+- Elevation is value-only: canvas `#0a0a0a`, sidebar `#101011`, panel
+  `#151517`, surface `#1d1d20`, raised surface `#27272b`, and overlay
+  `#303036`.
+- Ink is `#f5f5f7`, readable secondary ink is `#cfcfd6`, metadata is
+  `#9a9aa2`, and disabled or hint text is `#6a6a72`. White `#f5f5f7` is the
+  sole accent and `#0a0a0a` is the ink on solid actions.
+- Lines are `rgba(255,255,255,0.06)` and
+  `rgba(255,255,255,0.14)`. Selected fill is
+  `rgba(255,255,255,0.08)`. Status fill is the raised surface and status ink
+  is primary ink.
+- Display is `40/46 700`; title is `24/30 700`; section is `16/21 650`; body
+  is `14/21 450`; control is `13.5/18 550`; support is `12.5/17 450`; metadata
+  is `11.5/15 500` uppercase when it is an eyebrow or status label; evidence
+  is `11/15` SF Mono. No interface copy is below 11px.
+- Spacing uses the 4px base. Radii are `6/10/12/14/16/24px` plus a true pill.
+  Controls are 40px, compact controls and icon buttons never fall below 32px,
+  and setup or approval decisions are 44px.
+
+### Surface, status, and component rules
+
+- Five matte planes and real shadows create depth. Content never uses a
+  gradient, glow, ambient field, texture, glass effect, or blur. Borders are
+  quiet and are not a substitute for elevation.
+- White is reserved for the primary action, focus ring, active navigation, and
+  the strongest verified state. Every status pairs a filled shape with a plain
+  label: check for verified, triangle for approval, loader for running,
+  octagon or x for error, and circle or info for neutral state. Hue never
+  communicates state because the renderer contains no hue.
+- Buttons, cards, rows, inputs, status badges, and empty states share one
+  grammar. Static cards have no visible border; interactive cards lift by 1px.
+  Rows are at least 52px with inset separators. Inputs focus with a white
+  border. Empty states use one 56px monochrome mark, one section line, one
+  support line, and at most one action.
+- Direct feedback is 90ms and state or route feedback is 140ms. Route entry is
+  a 6px rise plus fade. No ambient animation is allowed. A running indicator
+  may pulse opacity only, and reduced motion removes travel, scale, spin, and
+  pulse while keeping a short opacity or state change.
+
+### Shell and setup rules
+
+- The persistent agent rail is 360px. Its top bar is expand-to-full-chat, New
+  chat, centered title with the project name under it, and collapse. Empty
+  chats show a centered welcome above the pinned composer. The composer keeps
+  the model selector on the left and send plus microphone on the right. Four
+  destinations remain: Browser, Agent, Approvals, and Settings. Pending
+  approval appears as Review in the rail and as a white dot on Approvals.
+  History, Downloads, Settings, and specialist tools open as browser tabs
+  rather than covering the workspace. They remain reachable from the Command
+  Center, the browser menu, and keyboard commands.
+- Browser Home is flat canvas. Its focal point is the 56px composer below a
+  40px greeting. Frequent tabs appear only when local history exists.
+  Suggestions are exactly three text rows; there are no thumbnails, duplicate
+  Home identity, personalization gear, or Frequent-tabs add control.
+- Setup keeps the five product stages and the complete safety acknowledgment.
+  Progress is five centered 32x4 segments with a metadata label. Welcome and
+  Ready are centered, model choice uses three continuous rows, and verification
+  remains explicit and live. Flat canvas, concise copy, and one solid primary
+  action replace decorative fields and card nesting.
+
+### Compatibility and safety
+
+- The renderer exposes no skin picker, new-tab backdrop picker, accent choice,
+  desktop-pet settings, pet overlay, or gradient thumbnail. Legacy IPC,
+  persistence fields, and schema values remain dormant for compatibility; they
+  do not affect the monochrome renderer and are not presented as choices.
+- Approval gates, boundary acknowledgment, consequential-action explanations,
+  focus visibility, semantic labels, and recovery paths are never deleted for
+  visual simplicity. The renderer must not claim a provider, model route,
+  migration, or packaged build is verified without the corresponding live
+  evidence.
+
+## Unified life context — July 2026
+
+### Product and architecture
+
+- Operating mode: `design-system` and `component-build` inside the existing
+  Electron product. The current encrypted database, agent runtime, provider
+  permissions, Google Workspace OAuth, Native Graphite shell, and Memory route
+  remain compatible.
+- Thesis: time, people, and remembered context form one inspectable life model;
+  the calendar is the temporal projection of that model, while every block and
+  fact keeps its authority, source, confidence, sensitivity, and correction
+  path visible.
+- Increment: add backward-compatible structured memory metadata, encrypted
+  people and unified-calendar records, deterministic context selection,
+  contradiction/lifecycle maintenance, Google Calendar import, and one combined
+  Life surface. Apple Calendar, Outlook, richer inference, and destructive
+  external edits remain explicit adapter boundaries for later increments.
+- Trust: high. Direct user statements outrank agent inference; provider events,
+  explicit blocks, inferred routines, and unapproved suggestions never collapse
+  into one visual state. Sensitive and restricted records require explicit
+  retrieval permission and remain encrypted at rest.
+
+### Visual system lock
+
+- Density: `dense-app`. The week is a ruled time plane, not a set of event
+  cards. People and memory use continuous rows with separators.
+- Type: preserve SF Pro Display, SF Pro Text, and SF Mono roles from Native
+  Graphite. Calendar time, confidence, provenance IDs, and recency use SF Mono.
+- Scale: page title `32/38`; week day `13/18`; event title `12/16`; time and
+  provenance `10/14`; body and editable values `13/19`.
+- Spacing: preserve the 4px base and `8/12/16/20/24/32` operational rhythm.
+- Color roles: confirmed provider events use aluminum plus a solid source edge;
+  explicit Kestrel events use sage; inferred blocks use a dashed amber edge and
+  confidence text; suggestions use a dotted tertiary edge and an approval
+  label. Color is never the only distinction.
+- Material: matte graphite planes, thin rules, and one selected-detail surface.
+  No glow, glass event cards, rainbow provider palette, pill forest, or bento
+  dashboard.
+- Composition: a compact Life header, one three-way view switch, then one
+  dominant work plane. Calendar is the default temporal view; People and Memory
+  expose the same underlying records rather than separate mini-products.
+- Motion: existing route/state fade and direct control feedback only. Calendar
+  data never animates while the user is reading it. Reduced motion removes all
+  travel without changing state.
+- Compact behavior: below the wide calendar threshold, recompose the week into
+  a chronological agenda; do not shrink seven columns or introduce page-level
+  horizontal scrolling.
+- Accessibility: semantic buttons/forms/lists first, visible focus, text labels
+  for source and confidence, logical chronological reading order, destructive
+  confirmation, and focus restoration after removal.
+- Why this is not generic: the provenance hierarchy is the visual hierarchy—the
+  same fact can be inspected as time, person context, or memory without losing
+  where it came from or being promoted from inference to truth.
+
+### State and verification contract
+
+- Calendar: loading, first-use, disconnected provider, connected/stale, syncing,
+  sync error/retry, empty range, provider-confirmed, explicit, inferred,
+  suggested, recurring, conflict, selected detail, compact agenda, and local
+  creation.
+- People: empty, resolved aliases, relationship/tone facts, sensitive fields,
+  conflicting facts, correction, delete-person warning, and deleted.
+- Memory: short/mid/long/archive, active/superseded/contradicted/expired,
+  confirmed/inferred/suggested, search/no results, correction, provenance,
+  related entities/events, usage explanation, and deletion.
+- Engineering checks: schema migration and encryption, retrieval minimization,
+  sensitivity filtering, contradiction precedence, relationship tone,
+  recurring schedule correction, Google normalization/idempotent sync,
+  person-scoped deletion, lifecycle archival, renderer typecheck/build,
+  keyboard/focus, compact reflow, packaged macOS capture, and no console errors.
+
+## Final Native Graphite system — July 2026 (historical)
+
+This section preserves the design history and feature-specific safety
+boundaries. The Monochrome — August 2026 section above is authoritative wherever
+palette, navigation, material, motion, or visible customization conflicts.
+
+### Product position
+
+- Operating mode: `existing-redesign` of the packaged React/Electron desktop
+  product. Renderer behavior, IPC, persistence, provider setup, approvals,
+  extension contracts, and user-authored skins remain intact.
+- Thesis: Kestrel is a quiet Mac instrument that turns an outcome into
+  inspectable work. One current task is visually primary; permissions,
+  execution state, evidence, and recovery remain nearby without becoming a
+  dashboard.
+- Product loop: `ask → scope → act → approve when consequential → verify`.
+  Setup introduces that same loop and structurally becomes the workspace.
+- Density: sparse and welcoming for setup and a new task; comfortable dense-app
+  rhythm for conversations, ledgers, settings, and specialist tools.
+- Identity: dark Native Graphite, aluminum ink, and a restrained sage signal.
+  The angular Kestrel mark and a persistent local-status anchor are the repeated
+  motifs. The product must not resemble a generic AI dashboard, developer
+  console, Apple clone, or card catalog.
+
+### Tokens and geometry
+
+- Type: SF Pro Display for setup headlines, page titles, and the Kestrel name;
+  SF Pro Text for controls and reading; SF Mono only for paths, hashes, model
+  IDs, routing, usage, and evidence.
+- Scale: setup display `48/50`; workspace greeting `40/44`; page title `32/38`;
+  section title `19/24`; body and conversation `14/22`; control `13/18`;
+  support `12/18`; evidence `11/16`. Critical explanatory text never uses the
+  evidence size.
+- Spacing: 4px base with `8/12/16/20/24/32/40/56/72`. Main reading measure is
+  760px; setup task measure is 880px; dense ledgers may expand to 1040px.
+- Radius ladder: 8px compact controls, 12px grouped rows and buttons, 16px
+  elevated composer and transient disclosures, 22px major setup surfaces.
+  Circular geometry is reserved for icon actions, status dots, and the mark.
+- Controls: 36px minimum compact controls, 40px normal controls, and 44px
+  primary/setup actions. One primary action per decision region. Hover,
+  pressed, selected, disabled, busy, success, warning, and error states must
+  remain distinct without relying on color alone.
+- Color roles: canvas `#1c1c1e`; deep rail `#141416`; panel `#242426`; raised
+  surface `#2c2c2e`; strong surface `#3a3a3c`; aluminum ink `#f5f5f7`;
+  secondary ink `#b8b8bd`; tertiary ink `#8e8e93`; line `#38383b`; sage signal
+  `#78b986`; amber only for warning/approval; red only for error/destructive.
+
+### Material and surface grammar
+
+- Content planes are matte and mostly opaque. List-like information lives in
+  one continuous surface with subtle separators rather than separate bordered
+  cards.
+- The composer is the primary elevated work surface. Approval drafts, artifact
+  previews, and isolated interactive results may be self-contained surfaces
+  because their boundaries carry meaning.
+- Transparency and blur are limited to persistent navigation over scrolled
+  content, the top drag bar, and transient floating disclosures. They must
+  respond to reduced transparency and increased contrast. No content panel gets
+  `backdrop-filter` merely for decoration.
+- Selected controls use a quiet sage-tinted surface and exact ring, never a
+  glowing border or left-edge selection bar. Sage marks focus, verification, or
+  the current anchor; it does not color whole screens.
+- Shadows are short and low elevation. Gradients, decorative glass, glow,
+  floating bento layouts, ornamental badges, pill forests, provider-logo walls,
+  fake terminal chrome, and ambient AI visuals are out of scope.
+
+### Information architecture and copy
+
+- Primary navigation is Browser, Agent, Writing Studio, Approvals, and Settings;
+  the agent conversation is a stable adjacent surface with New task and Task
+  history. Urgent approval status remains visible. Browser utilities live in
+  the browser menu, while specialist routes remain available through the
+  searchable Command Center.
+- The browser menu groups familiar tab, history, page-tool, and settings
+  actions. It closes after navigation and on Escape. Compact windows keep the
+  browser return path and place overflow navigation in a bounded scroll region.
+- Page headers name the surface directly. Eyebrows are reserved for real state
+  or trust boundaries, not decoration. Support copy appears only when it
+  explains consequence, provenance, privacy, recovery, or an empty state.
+- Settings uses one section navigator and continuous setting rows. Technical
+  detail stays in native disclosures; primary choices and current state remain
+  visible.
+
+### Browser Home and persistent rail
+
+The current Home is a flat browser canvas rather than a dashboard. Browser
+chrome remains primary, the greeting and hero composer form one focal region,
+local Frequent tabs disappear when empty, and exactly three monochrome text
+rows open real agent prompts. The persistent 360px rail merges browser context
+and current task, caps Recent at three rows, pins the composer, and exposes four
+primary destinations. Personalization choices, decorative thumbnails, duplicate
+identity, empty-history cards, and redundant approval state are not part of the
+renderer.
+
+### Setup and workspace continuity
+
+- The five stable stages remain Welcome, Before you begin, Choose a model,
+  Model setup, and Ready. The progress rail is one row at every supported
+  width and should feel like a short path, not five separate forms.
+- A shared Kestrel anchor combines the mark, local/private status, and current
+  setup state. It remains in a stable composition through setup, then moves into
+  the workspace status location when setup completes.
+- Each stage makes one decision dominant. Welcome states the promise; Before
+  you begin exposes four non-negotiable boundaries with concise summaries and
+  optional detail; Choose a model presents three clear routes; Model setup
+  progressively discloses provider or model detail; Ready reports verified,
+  configured-but-unverified, or preview truthfully.
+- Completion is state-driven. The final anchor and primary surface use shared
+  layout continuity into the first workspace; no prerecorded transition,
+  timeout-gated interaction, or fixed copy is required. If the workspace is
+  still loading, the same anchor remains visible rather than flashing an
+  unrelated loading screen.
+
+### Motion and accessibility
+
+- Motion role 1 — focal continuity: the shared Kestrel anchor and setup surface
+  reposition across setup and completion.
+- Motion role 2 — state continuity: brief opacity/position changes for setup
+  stages, route changes, and transient disclosures.
+- Motion role 3 — direct feedback: hover, press, focus, recording, progress, and
+  verified/error state changes.
+- Motion is interruptible, usually 120–220ms, and never delays interaction.
+  Reduced motion removes travel, scale, blur, and pulse, retaining short fades,
+  text, icons, and color/state changes. Reduced transparency replaces blurred
+  chrome with an opaque surface. Keyboard focus remains a visible 2px sage ring.
+
+### Functional state contract
+
+- Setup: first and returning visit; all five stages; warning unchecked/checked;
+  account, local, and free-account routes; credential loading/saving/configured
+  and failure; provider search/selection/planned adapters; automatic local setup
+  unsupported/detecting/downloading/verifying/installing/starting/cancelled/
+  failed/ready; manual setup collapsed/expanded; live provider verification;
+  verified/configured/preview completion; setup-help handoff.
+- Workspace: startup/error/retry; new and persisted chat; project absent/granted;
+  automatic/manual routing; attachments; recording/transcribing; empty,
+  streaming, steering, tool progress, failure/retry, checkpoint, usage, skill
+  review, approval pending/approved/rejected/edited, and local agent status.
+- Specialist surfaces: loading, empty, selected, busy, disabled, success,
+  warning, error, provenance, verification, recovery, compact reflow, keyboard
+  focus, reduced motion, and reduced transparency remain representable.
+
+### Implementation plan and expected files
+
+- Consolidate renderer tokens and final component overrides in
+  `apps/desktop/src/renderer/styles.css`.
+- Introduce the shared setup/workspace anchor, shorten high-volume copy, and
+  improve the browser-first navigation and command-center behavior in
+  `apps/desktop/src/renderer/App.tsx`.
+- Reuse and normalize the existing approval, artifact, dashboard, memory,
+  opportunity, work, settings, skin, presence, observability, and secret-source
+  components rather than adding a second component system.
+- Expand `scripts/capture-desktop.ts` and setup/desktop assertions to capture
+  every setup stage, major workspace surfaces, compact layouts, reduced motion,
+  reduced transparency, and overflow.
+- Inspect three rendered passes, record the largest visible weaknesses, then
+  package and smoke-test the actual macOS application.
+
+### Research and source-use ledger
+
+- Apple Human Interface Guidelines, Materials, and accessibility evaluation
+  criteria, accessed 2026-07-27: navigation/control layers may use material when
+  depth is real; text-heavy content needs stable contrast; reduced motion keeps
+  meaning while removing spatial, scale, and blur effects.
+- `naplesblue/apple-design-skill` at
+  `e81692da299d64b9bf38ae26db2d709fc60c8bf3`, accessed 2026-07-27, MIT:
+  direction-only guidance for hierarchy, unified surfaces, purposeful
+  material, concise controls, and interruptible same-path motion. No tokens,
+  assets, or components copied.
+- `justinwetch/HIGAgentSkills` at
+  `701151a7b39609b71a58d54de6d86e3500c0c316`, accessed 2026-07-27, no repository
+  license detected: summary-only research for macOS density, onboarding,
+  sidebars, lists, settings, focus, and motion. Nothing copied or derived
+  verbatim.
+- Frontend classifier output was treated as non-authoritative because it routed
+  this repository-wide product redesign as a marketing/component task. The
+  actual repository, user contract, and rendered Electron states establish
+  `existing-redesign`, multi-surface product-interface mode.
+
+### Rendered refinement and delivery evidence
+
+- The final evidence set contains 34 screenshots captured from the packaged
+  Apple Silicon application in
+  `artifacts/screenshots/desktop/final-native-graphite/`: every setup stage and
+  route, warning detail, account/local/free provider variants, setup completion,
+  workspace continuity, transient Task settings and Tools, every specialist
+  surface, every Settings section, compact navigation, reduced motion, and
+  reduced transparency.
+- Pass 1 joined the setup anchor to its workspace target, removed clipped Tools
+  navigation, and replaced the Readiness card cluster with one ruled plane.
+  Pass 2 corrected the compact model chooser's squeezed text and control
+  geometry. Pass 3 re-ran the complete packaged capture with no page-level
+  horizontal overflow, one-row setup progress, bounded disclosures, visible
+  keyboard focus, console errors, or long-running reduced-motion animations.
+- Sparse space is intentional only in setup, new task, Research, Artifacts, and
+  extension empty states: it protects one decision, one composer, or one empty
+  outcome. Dense operational surfaces use continuous rows and dividers instead
+  of vacant scale or decorative cards.
+- Controls remain real application controls, not presentational imitations.
+  Setup, model routes, local installation, OAuth entries, Tools navigation,
+  task settings, Kanban movement, readiness and backup, secrets, observability,
+  memory, skins, plugins, widgets, applications, managed policy, and compact
+  reflow are exercised by the desktop suites.
+- The redesign adds no runtime dependency, generated media, or heavy UI
+  framework. The production renderer is 1,296,287 bytes of JavaScript and
+  164,446 bytes of CSS before transport compression. Motion is limited to the
+  three roles above and reduced-motion capture rejects any animation that
+  remains active beyond 50ms.
+- `release/mac-arm64/Kestrel.app` is a 460 MB development bundle. Its renderer,
+  native Sharp dependency, and isolated browser tool pass the packaged smoke
+  test. Its linker signature is ad hoc with no Team ID; this proves the private
+  Apple Silicon build only, not Developer ID signing, notarization, update-feed
+  readiness, or public distribution.
+
+Reference parity is deliberately layered, not a claim that every named vendor adapter ships in core. The 1,117-page Hermes/OpenClaw audit separates bundled capability families, signed extension contracts, and operational documentation. Native-node behavior is represented by a tested paired-device extension protocol rather than a bundled mobile app; Kestrel itself is a direct-download Apple Silicon Mac application.
+
+
+## Unified settings
+
+Existing React desktop redesign; compact utility density, low visual intensity.
+One searchable Browser/Agent toolbar and one category rail lead to focused pages.
+The browser entry opens Startup rather than duplicating every category in an overview.
+Keep existing system typography, neutral surface tokens, 13px row labels, 16px section headings,
+8/12/16/24px spacing, and visible keyboard focus. No new imagery or animation.
+Category changes are immediate so outgoing and incoming settings never overlap.
+Remove repeated marketing and implementation copy in JSX; retain decision-critical
+privacy, permission, destructive-action, validation, and live-status text.
+At narrow container widths the same catalog drives a native section picker.
+Avoid repeated titles, nested rounded cards, clipped category names, and unsupported controls.
+Why this is not generic: the navigation reflects Kestrel's actual browser preferences
+and agent models, memory, tools, workspace, permissions, and recovery boundaries.
+Reference use is inspiration-only: familiar browser categories and explicit agent
+configuration boundaries; no third-party code or visual assets copied.
+
+## Tactile action feedback — September 2026
+
+Extend the traffic lights' pointer-responsive feel to a bounded set of everyday
+icon actions. Preserve the dense desktop layout, system typography, graphite
+surfaces, spacing, focus rings, and existing Agent Universe focal motion.
+Motion roles remain continuity (existing tabs/rail), state (existing disclosures),
+and feedback (this change). No new library or visual material.
+
+Navigation, New Tab/New Chat, sidebar tools, bookmarks and send icons lean at
+most 2px and 6 degrees toward the pointer inside stationary button hit boxes.
+Press compresses the icon; release/exit returns continuously from its current
+pose. Feedback never waits before invoking an action. Keyboard presses retain
+native activation and focus; reduced motion keeps color/focus feedback without
+movement. Touch does not receive hover tracking. Only the active control is
+measured and updated at most once per frame, with no idle frame loop.
+
+Reject moving text rows, magnetic hit boxes, looping reload decoration, animated
+approval/destructive actions, and broad hover bounce. These would add task cost
+or suggest unverified work. This is specific to Kestrel's existing tactile
+chrome, not a new animation theme. Verify rapid reversal, exit/cancellation,
+disabled controls, keyboard, reduced motion, and the canonical installed app.
+
+### Expanded tactile feedback
+
+Page-action toolbar and widget customize/add/size controls share pointer lean.
+Open toolbar icons retain a small tilted pose that reflects aria-expanded.
+New Tab shortcut glyphs lift 2px and tilt 4 degrees while their destination
+arrows nudge 3px; row text and hit areas remain fixed. Keyboard focus gets lift
+without tilt. Customize's actual active state gives a single 280ms check flourish.
+These are feedback/state roles; existing menu and widget-layout animations remain
+their owners. Hover effects require a fine pointer and every addition is gated
+by reduced motion. No new continuous animation or background work.
+
+### Clear refraction follow-up
+
+The final material uses a static SVG displacement map in backdrop-filter to bend
+wallpaper detail, a 0.5px finishing blur, and clear tinted surfaces. This is a
+Chromium-rendered interpretation, not the native Apple Liquid Glass API. No
+continuous wave animation or new runtime library is required. Reading widgets
+have more tint than short controls. Reduced transparency and increased contrast
+restore opaque surfaces. MDN backdrop-filter guidance was used as documentation,
+not copied source. Runtime screenshots caught and corrected a doubled textarea
+focus border, narrow-rail clipping, and the initially over-frosted material.
+Download centering is verified from both button and glyph bounding boxes.
+
+## Persistent operations simplification
+
+Preserve the established native graphite material, type scale, compact sidebar widths and universe scene. Organize recurring work under Agent, account/resource access under Connections, and retained knowledge/people/time under Memory. Keep projects and chats in place. Use existing controls and contextual disclosure; avoid another dashboard, decorative cards, new fonts or motion libraries. State and feedback transitions reuse the existing reduced-motion-aware system. Primary pages lead with their task and show advanced details on demand. Verify routing, focus, scope isolation and visible canonical app behavior separately.
+
+## New Tab detail pass — September 2026
+
+- Thesis: one clear task entry, one representation of each destination, and readable local work lists over the person's chosen wallpaper. Retain platform typography, compact spacing, existing composer material, and user-owned widget layouts.
+- Evidence: installed New Tab repeated frequent sites in two places, clipped domain labels in an icon grid, and rendered text-heavy widgets over a busy image. Continue suggestions also created fresh tasks instead of restoring their source session.
+- Scope: exclude authentication handoffs from automatic recommendations; reopen the exact session; show automatic sites in the frequent widget when enabled and in shortcuts otherwise; retain pinned shortcuts.
+- Material and density: 16px widget corners and gaps, stable nearly opaque reading surfaces, 12px primary/11px metadata text, full-width site rows. No new motion or dependencies. Existing feedback and reduced-motion behavior remain authoritative.
+- Verification: focused routing/history/shortcut tests, desktop typecheck/build, fresh-profile New Tab smoke, and canonical installed UI review including keyboard focus and compact layout.
+- Why this is not generic: the hierarchy follows Kestrel's actual browser history, saved shortcuts, sessions, and customizable widgets; no decorative feature is added.
+
+### Verified delivery
+
+- 22 focused New Tab, shortcut, and widget tests passed; desktop TypeScript checks passed.
+- The development package was built and installed through `corepack pnpm install:mac:dev`; installed and packaged `app.asar` SHA-256 values matched.
+- Installed-executable smoke passed composer expansion, pasted attachments, persisted shortcuts, wallpaper selection, widget arrangement, reduced-motion compact overflow, and exact-session continuation without creating another task.
+- Two installed screenshot reviews exposed and corrected the conflicting glass material and CSS/layout column mismatch. Final canonical-window review confirmed readable surfaces, full-width site rows, wrapped task titles, and no duplicate automatic shortcuts.
+- Full repository verification and unrelated app flows were not run. Jules was unavailable because its API key was not configured.
+
+### Menu verification notes
+
+Visual refinement corrected three observed issues: short profiles unnecessarily
+scrolled, three password-save actions wrapped unevenly, and the tint obscured the
+native material. A subsequent 280px screenshot caught the shell's inherited 320px
+body minimum; only autofill windows now override it. The test checks document-level
+horizontal overflow as well as the card, and long profiles keep actions outside
+the scrolling data region. Native OS menus retain their platform rendering.
+
+The source implementation uses existing CSS/React only. Catalog candidates were
+considered but no external code, assets, or new motion dependency was incorporated.

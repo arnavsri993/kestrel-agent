@@ -11296,6 +11296,8 @@ export function App() {
 			)}
 			{appPageId === "projects" && (
 				<ProjectsWorkspace
+					onOpenProject={openProject}
+					onShowAllProjects={() => selectProject(null)}
 					projects={projects}
 					projectAppearances={projectAppearances}
 					sessions={runtimeSessions}
@@ -11346,3 +11348,231 @@ export function App() {
 				/>
 			)}
 			{appPageId === "memory" && (
+				<LifeContext
+					key={currentAppPage?.scopeSessionId ?? "user"}
+					snapshot={snapshot}
+					update={setSnapshot}
+					onOpenTranscriptResult={openTranscriptResult}
+					{...(currentAppPage?.scopeSessionId ? { initialSessionId: currentAppPage.scopeSessionId } : {})}
+				/>
+			)}
+			{appPageId === "research" && <Research />}
+			{appPageId === "artifacts" && <Artifacts />}
+			{appPageId === "work" && (
+				<Work sessions={runtimeSessions} onSessions={setRuntimeSessions} />
+			)}
+			{appPageId === "events" && (
+				<EventApplications onOpenSession={openRuntimeSession} />
+			)}
+			{appPageId === "activity" && (
+				<RuntimeActivityTrail
+					snapshot={snapshot}
+					highlightExecutionId={activityFocusExecutionId}
+				/>
+			)}
+			{appPageId === "extensions" && (
+				<DashboardExtensions
+					snapshot={snapshot}
+					sessions={runtimeSessions}
+					onNavigate={navigate}
+				/>
+			)}
+		</motion.div>
+	) : undefined;
+	const kestrelNavigation = showKestrelSidebar ? (
+		<KestrelSidebar
+			activeDestination={
+				activeSidebarDestination === "browser" ||
+				activeSidebarDestination === "scheduled" ||
+				activeSidebarDestination === "agent" ||
+				activeSidebarDestination === "projects" ||
+				activeSidebarDestination === "writing" ||
+				activeSidebarDestination === "approvals" ||
+				activeSidebarDestination === "connections" ||
+				activeSidebarDestination === "memory" ||
+				activeSidebarDestination === "settings"
+					? activeSidebarDestination
+					: "capabilities"
+			}
+			activeSessionId={activeRuntimeSessionId}
+			activeProjectId={activeProjectId}
+			agentName={activeAgentName}
+			sessions={runtimeSessions}
+			projects={projects}
+			projectAppearances={projectAppearances}
+			onNewTask={() => startNewAgent()}
+			onOpenBrowser={openBrowser}
+			onOpenAgent={openAgent}
+			onOpenProjects={() => { selectProject(null); navigate("projects"); }}
+			onOpenConnections={() => navigate("connections")}
+			onOpenMemory={() => {
+				const session = runtimeSessions.find(item => item.id === activeRuntimeSessionId);
+				void openAppPage("memory", undefined, session?.kind === "agent" || session?.specialistDefinition ? session.id : undefined);
+			}}
+			onOpenCapabilities={openCommandCenter}
+			onOpenSettings={() => openSettings("browser")}
+			onCreateProject={() => void createProject()}
+			onOpenProject={openProject}
+			onOpenProjectChat={startProjectChat}
+			onOpenProjectSettings={openProjectSettings}
+			onOpenSession={openSidebarSession}
+			onMoveSession={moveSessionToProject}
+		/>
+	) : undefined;
+	return (
+		<ProductShellTransition>
+			<motion.div
+				key="workspace"
+				className={`ai-browser-app ${presentedAgentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				initial={reduced ? false : { opacity: 0 }}
+				animate={{ opacity: 1 }}
+				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
+				transition={{ duration: reduced ? 0 : 0.14 }}
+			>
+					<section className="browser-main-plane">
+						<AnimatePresence initial={false}>
+							{deepLinkNotice && (
+								<motion.small
+									key="deep-link-notice"
+									className="browser-notice"
+									role="status"
+									initial={reduced ? false : { opacity: 0, x: "-50%", y: 8 }}
+									animate={{ opacity: 1, x: "-50%", y: 0 }}
+									exit={
+										reduced
+											? { opacity: 1, x: "-50%", y: 0, pointerEvents: "none" }
+											: { opacity: 0, x: "-50%", y: 8, pointerEvents: "none" }
+									}
+									transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+								>
+									{deepLinkNotice}
+								</motion.small>
+							)}
+						</AnimatePresence>
+					<BrowserWorkspace
+						browser={browser}
+						agentName={activeAgentName}
+						greetingName={greetingName}
+						navigationSidebar={kestrelNavigation}
+						agentOpen={presentedAgentSidebarOpen}
+						onToggleAgent={toggleAgentSidebar}
+						onNewAgent={startNewAgent}
+						onOpenTaskSettings={openTaskSettings}
+						onOpenSettings={() => openSettings("browser")}
+						onOpenWorkspaces={() => openSettings("connections")}
+						onOpenHistory={openBrowserHistory}
+						onOpenDownloads={openBrowserDownloads}
+						onOpenBookmarks={openBrowserBookmarks}
+						onOpenMenu={openCommandCenter}
+						onShowShortcuts={() => setShowShortcuts(true)}
+						onAskFile={askFileFromTab}
+						projects={projects}
+						onProjectsChange={setProjects}
+						onSubmitNewTabDraft={submitNewTabDraft}
+						sessions={runtimeSessions}
+						onOpenSession={openSidebarSession}
+						organizeTabsRequestId={organizeTabsRequestId}
+						memories={snapshot?.memories ?? []}
+						memoryRecall={
+							snapshot?.memoryRecall ?? {
+								chatInjection: "off",
+								activeMemories: 0,
+								confirmedPreferences: 0,
+								explicitCapture: true,
+								personalityScope: "shared",
+								personalityName: activeAgentName,
+								useSharedContext: true,
+								offReason: "Loading memory status…",
+							}
+						}
+						onOpenLifeMemory={() => void openAppPage("memory")}
+						{...(appPage ? { appPage } : {})}
+					/>
+				</section>
+				<AgentSidebar
+					communicationAssistant={
+						<CommunicationCodeAssistant
+							browser={browser}
+							enabled={!currentAppPage}
+							onOpenConnections={() => navigate("connections")}
+						/>
+					}
+					sessions={runtimeSessions}
+					activeSessionId={activeRuntimeSessionId}
+					agentName={activeAgentName}
+					collapsed={!presentedAgentSidebarOpen}
+					onNewAgent={startNewAgent}
+					onToggleAgent={toggleAgentSidebar}
+					onExpandChat={openAgent}
+				>
+					{/* Conversation state stays mounted across browser and settings routes so
+            streams, steering, cancellation, and approval boundaries remain intact. */}
+					<RuntimeConversation
+						visible
+						activeSessionId={activeRuntimeSessionId}
+						sessions={runtimeSessions}
+						onActiveSession={openRuntimeSession}
+						onSessions={setRuntimeSessions}
+						onSnapshot={setSnapshot}
+						onRuntimeAgentState={setRuntimeAgentState}
+						configurationUi={snapshot.configuration.ui}
+						{...(activeFileAttachment ? { activeFileAttachment } : {})}
+						externalIntake={externalIntake}
+						externalIntakeRequestId={externalIntakeRequestId}
+						newAgentRequestId={newAgentRequestId}
+						newAgentPrompt={newAgentPrompt}
+						newAgentWorkspace={newAgentWorkspace}
+						newAgentProjectId={newAgentProjectId}
+						newAgentFocusTarget={newAgentFocusTarget}
+						newAgentDraft={newAgentDraft}
+						projects={projects}
+						onProjectsChange={setProjects}
+						refreshRevision={runtimeRefreshRevision}
+						mentionTabs={browser.state?.tabs ?? []}
+						mentionBookmarks={browser.state?.bookmarks ?? []}
+						{...(browserContextEnabled
+							? { browserContext: () => browser.pageContext() }
+							: {})}
+						transcriptTarget={transcriptTarget}
+						onTranscriptTargetHandled={() => setTranscriptTarget(null)}
+						onOpenActivity={(executionId) => {
+							setActivityFocusExecutionId(executionId);
+							navigate("activity");
+						}}
+						onReviewLearnedSkill={reviewLearnedSkill}
+					/>
+				</AgentSidebar>
+				<DefaultBrowserPrompt
+					isOpen={showDefaultBrowserPrompt}
+					onClose={() => {
+						localStorage.setItem("kestrel:default-browser-prompted", "yes");
+						setShowDefaultBrowserPrompt(false);
+					}}
+					onSetDefault={() => {
+						localStorage.setItem("kestrel:default-browser-prompted", "yes");
+						setShowDefaultBrowserPrompt(false);
+					}}
+					/>
+					{projectSettingsProject ? (
+						<ProjectSettingsDialog
+							project={projectSettingsProject}
+							appearance={
+								projectAppearances[projectSettingsProject.path] ??
+								DEFAULT_PROJECT_APPEARANCE
+							}
+							onClose={() => setProjectSettingsProjectId(null)}
+							onSave={(input) =>
+								saveProjectSettings(projectSettingsProject.id, input)
+							}
+							onDelete={() => deleteProject(projectSettingsProject.id)}
+						/>
+					) : null}
+					<AnimatePresence initial={false}>
+				{showShortcuts && (
+					<KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />
+				)}
+				</AnimatePresence>
+			</motion.div>
+		</ProductShellTransition>
+	);
+}

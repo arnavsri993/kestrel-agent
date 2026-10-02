@@ -46,6 +46,8 @@ export function ProjectsWorkspace({
 	onOpenProjectSettings,
 	onOpenConnections,
 	onCreateProject,
+	onOpenProject,
+	onShowAllProjects,
 }: {
 	projects: Project[];
 	sessions: RuntimeSession[];
@@ -56,9 +58,11 @@ export function ProjectsWorkspace({
 	onOpenProjectSettings(project: Project): void;
 	onOpenConnections(): void;
 	onCreateProject(): void;
+	onOpenProject(project: Project): void;
+	onShowAllProjects(): void;
 }) {
 	const selectedProject =
-		projects.find((project) => project.id === activeProjectId) ?? projects[0];
+		projects.find((project) => project.id === activeProjectId);
 	const [query, setQuery] = useState("");
 
 	useEffect(() => {
@@ -86,8 +90,28 @@ export function ProjectsWorkspace({
 				as="div"
 				measure="wide"
 			>
-				{selectedProject ? (
+				{!selectedProject && projects.length > 0 ? (
+					<section className="projects-workspace-home" aria-label="All projects">
+						<header className="projects-workspace-header">
+							<div><h1 id="projects-workspace-title">Projects</h1><p>Keep related chats and files together.</p></div>
+							<button type="button" className="button primary" onClick={onCreateProject}><Icon name="plus" />Create project</button>
+						</header>
+						<label className="projects-workspace-search">
+							<Icon name="search" /><span className="sr-only">Search projects</span>
+							<input type="search" placeholder="Search projects…" value={query} onChange={event => setQuery(event.target.value)} />
+						</label>
+						<ul className="projects-workspace-chat-list">
+							{projects.filter(project => project.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map(project => (
+								<li key={project.id}><button type="button" className="projects-workspace-chat" onClick={() => onOpenProject(project)}>
+									<strong>{project.name}</strong><span>{project.available === false ? "Folder unavailable" : `${projectChats(sessions, project).length} chats`}</span><Icon name="chevron" />
+								</button></li>
+							))}
+						</ul>
+						{!projects.some(project => project.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) ? <p role="status">No matching projects. Try another name.</p> : null}
+					</section>
+				) : selectedProject ? (
 					<div className="projects-workspace-home">
+						<button type="button" className="quiet-link" onClick={onShowAllProjects}>All projects</button>
 						<header className="projects-workspace-header">
 							<div className="projects-workspace-heading">
 								<ProjectMark

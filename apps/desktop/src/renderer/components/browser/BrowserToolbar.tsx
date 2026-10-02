@@ -1206,17 +1206,6 @@ export function BrowserToolbar({
           )}
         </AnimatePresence>
         <div className="browser-extension-cluster browser-toolbar-secondary">
-          <button
-            type="button"
-            className={`browser-toolbar-menu-trigger ${openMenu === "extensions" ? "active" : ""}`}
-            aria-label="Extensions"
-            aria-haspopup="menu"
-            aria-expanded={openMenu === "extensions"}
-            title="Extensions"
-            onClick={(event) => toggleMenu("extensions", event)}
-          >
-            <Icon name="extensions" />
-          </button>
           {pinnedExtensions.map((extension) => (
             <button
               type="button"
@@ -1243,17 +1232,6 @@ export function BrowserToolbar({
           <Icon name="tools" />
         </button>
         <button
-          type="button"
-          className={`browser-toolbar-menu-trigger ${openMenu === "screen" ? "active" : ""}`}
-          aria-label="Page options"
-          aria-haspopup="menu"
-          aria-expanded={openMenu === "screen"}
-          title="Page options"
-          onClick={(event) => toggleMenu("screen", event)}
-        >
-          <Icon name="sliders" />
-        </button>
-        <button
           ref={historyTriggerRef}
           type="button"
           className={`browser-toolbar-menu-trigger browser-toolbar-secondary ${openMenu === "history" ? "active" : ""}`}
@@ -1265,16 +1243,6 @@ export function BrowserToolbar({
           onClick={(event) => toggleMenu("history", event)}
         >
           <Icon name="history" />
-        </button>
-        <button
-          type="button"
-          className="browser-toolbar-secondary"
-          aria-label="Bookmarks"
-          aria-keyshortcuts="Meta+Shift+D"
-          title="Bookmarks (⌘⇧D)"
-          onClick={onOpenBookmarks}
-        >
-          <Icon name="star" />
         </button>
         <button
           ref={downloadsTriggerRef}
@@ -1430,7 +1398,7 @@ export function BrowserToolbar({
                     onClick={() => runAndClose(onOpenBookmarks)}
                   >
                     <Icon name="star" />
-                    <span>Favorites</span>
+                    <span>Bookmarks</span>
                     <kbd>⌘⇧D</kbd>
                   </button>
                   <button

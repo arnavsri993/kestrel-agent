@@ -48,3 +48,30 @@ function desktopPlatform(): "macos" | "windows" | "other" {
 
 document.documentElement.dataset.platform = desktopPlatform();
 
+if (isPasswordOverlay || isPaymentOverlay) {
+	document.documentElement.dataset.autofillOverlay = "true";
+}
+
+if (isFindPopover || isPetOverlay || isCalculatorOverlay || isPasswordOverlay || isPaymentOverlay) {
+	document.documentElement.style.background = "transparent";
+	document.body.style.background = "transparent";
+	root.style.background = "transparent";
+}
+
+ReactDOM.createRoot(root).render(
+	<React.StrictMode>
+		{isFindPopover ? <FindPopover /> : isPetOverlay ? null : isCalculatorOverlay ? (
+			<CalculatorOverlay />
+		) : isPasswordOverlay ? (
+			<PasswordOverlay />
+		) : isPaymentOverlay ? (
+			<PaymentOverlay />
+		) : (
+			<>
+				<ActionMotion />
+				<WindowControls />
+				<App />
+			</>
+		)}
+	</React.StrictMode>,
+);
