@@ -125,8 +125,9 @@ CefMessageRouterConfig KestrelBridgeRouterConfig() {
 }
 
 KestrelChromiumApp::KestrelChromiumApp(
-    BrowserContextInitialized on_context_initialized)
-    : on_context_initialized_(std::move(on_context_initialized)) {}
+    BrowserContextInitialized on_context_initialized, bool extension_workbench)
+    : on_context_initialized_(std::move(on_context_initialized)),
+      extension_workbench_(extension_workbench) {}
 
 void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
@@ -143,10 +144,10 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     command_line->AppendSwitch("disable-background-networking");
     command_line->AppendSwitch("disable-component-update");
     command_line->AppendSwitch("disable-component-extensions-with-background-pages");
-    // Extension packages and their background pages do not have a native CEF
-    // lifecycle yet. Disabling them also keeps dormant extension messaging
-    // from enrolling background account channels at first launch.
-    command_line->AppendSwitch("disable-extensions");
+    // Keep extensions disabled in the privileged Alloy shell. Only the
+    // separate Chrome-style workbench owns an extension lifecycle; it has
+    // no Kestrel bridge, custom scheme, Core relay, or user credentials.
+    if (!extension_workbench_) command_line->AppendSwitch("disable-extensions");
     command_line->AppendSwitch("disable-default-apps");
     command_line->AppendSwitch("disable-domain-reliability");
     command_line->AppendSwitch("disable-sync");
@@ -158,6 +159,7 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
 
 void KestrelChromiumApp::OnRegisterCustomSchemes(
     CefRawPtr<CefSchemeRegistrar> registrar) {
+  if (extension_workbench_) return;
   registrar->AddCustomScheme(
       "kestrel",
       CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
@@ -181,7 +183,14 @@ void KestrelChromiumApp::OnContextInitialized() {
   }
 }
 
+void KestrelChromiumApp::OnBeforeChildProcessLaunch(
+    CefRefPtr<CefCommandLine> command_line) {
+  if (extension_workbench_)
+    command_line->AppendSwitch("kestrel-extension-workbench");
+}
+
 void KestrelChromiumApp::OnWebKitInitialized() {
+  if (extension_workbench_) return;
   renderer_router_ = CefMessageRouterRendererSide::Create(
       KestrelBridgeRouterConfig());
 }

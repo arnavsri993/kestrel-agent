@@ -39,6 +39,12 @@ int main(int argc, char* argv[]) {
   }
 
   CefMainArgs main_args(argc, argv);
-  CefRefPtr<KestrelChromiumApp> app(new KestrelChromiumApp());
+  bool extension_workbench = false;
+  for (int index = 1; index < argc; ++index) {
+    if (std::strcmp(argv[index], "--kestrel-extension-workbench") == 0)
+      extension_workbench = true;
+  }
+  CefRefPtr<KestrelChromiumApp> app(
+      new KestrelChromiumApp({}, extension_workbench));
   return CefExecuteProcess(main_args, app.get(), nullptr);
 }
