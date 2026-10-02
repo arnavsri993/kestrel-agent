@@ -39,14 +39,14 @@ describe("renderer motion contract", () => {
 	});
 
 	it("clamps the agent rail to useful content and viewport bounds", () => {
-		expect(clampAgentPanelWidth(120, 1440)).toBe(288);
-		expect(clampAgentPanelWidth(800, 1440)).toBe(520);
-		expect(clampAgentPanelWidth(500, 800)).toBe(352);
+		expect(clampAgentPanelWidth(120, 1440)).toBe(480);
+		expect(clampAgentPanelWidth(900, 1440)).toBe(820);
+		expect(clampAgentPanelWidth(500, 800)).toBe(480);
 	});
 
 	it("projects release velocity without leaving the allowed range", () => {
-		expect(projectedPanelWidth(336, 500, 1440)).toBe(376);
-		expect(projectedPanelWidth(336, -2000, 1440)).toBe(288);
+		expect(projectedPanelWidth(560, 500, 1440)).toBe(600);
+		expect(projectedPanelWidth(560, -2000, 1440)).toBe(480);
 	});
 
 	it("bounds momentum handed to an interrupted rail reversal", () => {
