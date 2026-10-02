@@ -1273,7 +1273,7 @@ export function TabStrip({
 							const shouldRenderFolder = folder
 								? !renderedFolderIds.has(folder.id)
 								: false;
-							if (folder && folderCollapsed && !shouldRenderFolder) return [];
+							if (folder && folderCollapsed && !shouldRenderFolder && !active) return [];
 							const rows: ReactNode[] = [];
 							if (folder && shouldRenderFolder) {
 								renderedFolderIds.add(folder.id);
@@ -1311,7 +1311,9 @@ export function TabStrip({
 									</motion.button>,
 								);
 							}
-							if (folder && folderCollapsed) return rows;
+							// A collapsed folder still shows its selected tab, including when
+							// keyboard navigation selects a different child in that folder.
+							if (folder && folderCollapsed && !active) return rows;
 							// Keep tab boxes on the same baseline while flexbox recalculates
 							// widths. Lifecycle feedback should not move neighbors or scale
 							// their hit targets.

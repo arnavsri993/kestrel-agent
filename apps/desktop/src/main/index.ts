@@ -1101,7 +1101,7 @@ async function subscriptionCliStatuses() {
                 .catch((): ChatGptOAuthStatus => ({ connected: false }))
             : undefined;
         const cursorStatus =
-          id === "cursor" && path
+          id === "cursor" && path && enabled
             ? await new CursorCliManager({ executable: path })
                 .status()
                 .catch(() => ({ connected: false }))
@@ -1141,9 +1141,7 @@ async function subscriptionCliStatuses() {
                 ? "CLI found. Enable it to use the vendor's existing on-device sign-in for text-only tasks."
                 : id === "opencode"
                   ? "OpenCode CLI found. Enable it to use your local OpenCode models and configuration."
-                  : cursorStatus?.connected
-                    ? "Cursor connected. Enable it to add Cursor Auto to plain-text routing."
-                    : "Cursor found. Sign in through the official Cursor browser flow."
+                  : "Cursor CLI found. Enable it to check sign-in and add Cursor Auto to plain-text routing."
             : `Install and sign in to the official ${subscriptionCliName(id)} CLI to make this route available.`;
         return {
           id,

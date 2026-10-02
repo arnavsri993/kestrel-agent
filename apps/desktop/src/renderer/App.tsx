@@ -7606,7 +7606,11 @@ function SubscriptionCliSettings({
 										? "Cancel sign-in"
 										: "Sign in with ChatGPT"}
 								</button>
-							) : item.id === "cursor" && item.detected && !item.authenticated ? (
+							) :
+								item.id === "cursor" &&
+								item.detected &&
+								item.enabled &&
+								!item.authenticated ? (
 								<button
 									className="button primary"
 									disabled={Boolean(busy) && busy !== "cursor-oauth"}

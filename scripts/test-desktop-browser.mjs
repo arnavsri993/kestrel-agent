@@ -134,6 +134,7 @@ const server = createServer((request, response) => {
         <main>
           <h1>${pageName}</h1>
           <p id="copy">A robotics reference visible in the current viewport.</p>
+          <p id="find-fixture">Kestrel find verification token. Kestrel find verification token. Kestrel find verification token.</p>
           <label>Name <input id="name" name="name" autocomplete="off"></label>
           <button id="submit" type="button">Submit</button>
           <output id="result">Waiting</output>
@@ -934,6 +935,11 @@ try {
 	await page.locator("#new-tab-title").waitFor();
 	await page.locator("#runtime-prompt").waitFor();
 	await page.locator("#new-tab-chat-input").waitFor();
+	// Keep the physical divider check isolated on the first New Tab, before the
+	// broader browser journey changes the active view and window state.
+	await assertKestrelSidebarResize();
+	await page.locator("#runtime-prompt").waitFor();
+	await page.locator("#new-tab-chat-input").waitFor();
 	await page.locator("#new-tab-chat-input").focus();
 	assert.equal(await page.getByRole("button", { name: "Add files", exact: true }).count(), 1);
 	assert.equal(await page.locator(".new-tab-access-trigger").count(), 1);
@@ -977,7 +983,6 @@ try {
 			value.tabs.length === browserBeforeHeicUpload.tabs.length,
 		"The HEIC upload fixture tab did not close cleanly",
 	);
-	await assertKestrelSidebarResize();
 	await page.locator("#new-tab-chat-input").focus();
 	const homeSend = page.getByRole("button", {
 		name: "Send message to Pragmatic",
@@ -1482,6 +1487,35 @@ try {
 	assert.equal(loaded.browserWindowCount, 1);
 	assert.equal(loaded.views[0].title, "Page one");
 	assert.equal(loaded.views[0].destroyed, false);
+	await page.evaluate(() => {
+		const active = document.activeElement;
+		if (active instanceof HTMLElement) active.blur();
+	});
+	await page.keyboard.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
+	const findInput = page.locator("#browser-find-input");
+	await findInput.waitFor();
+	await findInput.fill("Kestrel find verification token");
+	await page.getByText("1 of 3", { exact: true }).waitFor();
+	assert.equal(
+		await readActiveViewScript(
+			"String(window.getSelection())",
+			"Find in page did not select the first visible match",
+		),
+		"Kestrel find verification token",
+	);
+	await page.getByRole("button", { name: "Next match", exact: true }).click();
+	await page.getByText("2 of 3", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Previous match", exact: true }).click();
+	await page.getByText("1 of 3", { exact: true }).waitFor();
+	await findInput.fill("Kestrel absent verification token");
+	await page.getByText("0 of 0", { exact: true }).waitFor();
+	await page.keyboard.press("Escape");
+	await findInput.waitFor({ state: "detached" });
+	await page.locator(".browser-address-suggestions").waitFor({ state: "detached" });
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing Find in page",
+	);
 	const formSourceTabId = (await browserState()).activeTabId;
 	assert(formSourceTabId);
 	const tabsBeforeFormLaunch = (await browserState()).tabs.length;
@@ -1917,8 +1951,54 @@ try {
 	assert.equal(await folderMenu.getByRole("menuitem", { name: "Open Page one" }).count(), 1);
 	assert.equal(await folderMenu.locator("img").count(), 1);
 	await page.keyboard.press("Escape");
+	const bookmarksWindowSize = await application.evaluate(({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows().find(
+			(candidate) =>
+				!candidate.isDestroyed() &&
+				!candidate.webContents.getURL().includes("petOverlay=1"),
+		);
+		if (!window) throw new Error("The Kestrel window is unavailable.");
+		return window.getSize();
+	});
+	const narrowBookmarksWindowWidth = 1200;
+	if (bookmarksWindowSize[0] !== narrowBookmarksWindowWidth) {
+		await application.evaluate(
+			({ BrowserWindow }, [width, height]) => {
+				const window = BrowserWindow.getAllWindows().find(
+					(candidate) =>
+						!candidate.isDestroyed() &&
+						!candidate.webContents.getURL().includes("petOverlay=1"),
+				);
+				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setSize(width, height);
+			},
+			[narrowBookmarksWindowWidth, bookmarksWindowSize[1]],
+		);
+		await page.waitForFunction(
+			(width) => innerWidth === width,
+			narrowBookmarksWindowWidth,
+		);
+	}
 	await page.getByRole("button", { name: "Manage bookmarks", exact: true }).click();
 	await page.getByRole("heading", { name: "Saved pages", exact: true }).waitFor();
+	const bookmarkHeaderLayout = await page.evaluate(() => {
+		const viewport = document.querySelector(".browser-viewport");
+		const header = document.querySelector(".browser-library .ui-page-frame-header");
+		const heading = document.querySelector("#bookmarks-title");
+		return {
+			viewportWidth: viewport?.getBoundingClientRect().width ?? 0,
+			headerDisplay: header ? getComputedStyle(header).display : "",
+			headingWidth: heading?.getBoundingClientRect().width ?? 0,
+			overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+		};
+	});
+	assert(bookmarkHeaderLayout.viewportWidth <= 760);
+	assert.equal(bookmarkHeaderLayout.headerDisplay, "grid");
+	assert(
+		bookmarkHeaderLayout.headingWidth > 100,
+		`The Saved pages heading was squeezed by its actions: ${JSON.stringify(bookmarkHeaderLayout)}`,
+	);
+	assert(bookmarkHeaderLayout.overflow <= 1);
 	const savedBookmarkRow = page.locator(`.bookmark-library-list > li`).first();
 	await savedBookmarkRow.getByRole("button", { name: "Edit", exact: true }).click();
 	await savedBookmarkRow.locator(".bookmark-library-edit").waitFor();
@@ -1948,6 +2028,24 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Browser did not return to Page one after bookmark management",
 	);
+	if (bookmarksWindowSize[0] !== narrowBookmarksWindowWidth) {
+		await application.evaluate(
+			({ BrowserWindow }, [width, height]) => {
+				const window = BrowserWindow.getAllWindows().find(
+					(candidate) =>
+						!candidate.isDestroyed() &&
+						!candidate.webContents.getURL().includes("petOverlay=1"),
+				);
+				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setSize(width, height);
+			},
+			bookmarksWindowSize,
+		);
+		await page.waitForFunction(
+			(width) => innerWidth === width,
+			bookmarksWindowSize[0],
+		);
+	}
 
 	state = await browserState();
 	const tabId = state.activeTabId;
@@ -3078,6 +3176,95 @@ try {
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after applying tab organization",
+	);
+	const folderMembers = state.tabs.filter(
+		(tab) => tab.tabFolderId === reviewedFolder.id,
+	);
+	assert(
+		folderMembers.length >= 2,
+		"The organized folder needs two tabs to check collapsed selection",
+	);
+	const activeTabBeforeFolderCheck = state.activeTabId;
+	const folderToggle = page.locator(".browser-tab-folder").filter({
+		has: page.getByText(reviewedFolder.name, { exact: true }),
+	});
+	const assertCollapsedFolderSelection = async (tabId, orientation) => {
+		const response = await page.evaluate(
+			async (selectedId) =>
+				window.kestrel.request({ type: "browser-select-tab", tabId: selectedId }),
+			tabId,
+		);
+		assert(response.ok, `Could not select a tab in the ${orientation} folder`);
+		await waitForBrowserState(
+			(value) => value.activeTabId === tabId,
+			`Selecting a tab in the ${orientation} folder`,
+		);
+		const selectedTab = page.locator(`.browser-tab[data-tab-id="${tabId}"]`);
+		await selectedTab.waitFor({ state: "visible" });
+		assert.equal(
+			await selectedTab.getByRole("tab").getAttribute("aria-selected"),
+			"true",
+		);
+		assert.equal(await folderToggle.getAttribute("aria-expanded"), "false");
+		assert.equal(
+			await page.getByRole("tablist", { name: "Browser tabs" }).getAttribute("aria-orientation"),
+			orientation,
+		);
+		for (const member of folderMembers) {
+			if (member.id === tabId) continue;
+			const inactiveTab = page.locator(
+				`.browser-tab[data-tab-id="${member.id}"]`,
+			);
+			// Motion retains an exiting tab briefly so its departure is not abrupt.
+			// Verify the settled, user-visible collapsed state instead of sampling
+			// between the service state update and that short exit completion.
+			await inactiveTab.waitFor({ state: "detached" });
+			assert.equal(
+				await inactiveTab.count(),
+				0,
+				"Inactive tabs in a collapsed folder should stay hidden",
+			);
+		}
+	};
+	await page.evaluate(
+		async (tabId) => window.kestrel.request({ type: "browser-select-tab", tabId }),
+		folderMembers[0].id,
+	);
+	await waitForBrowserState(
+		(value) => value.activeTabId === folderMembers[0].id,
+		"First organized folder tab",
+	);
+	await folderToggle.click();
+	await assertCollapsedFolderSelection(folderMembers[0].id, "vertical");
+	await assertCollapsedFolderSelection(folderMembers[1].id, "vertical");
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Turn Off Vertical Tabs" }).click();
+	await waitForBrowserState(
+		(value) => value.settings.tabLayout === "horizontal",
+		"Horizontal tabs with a collapsed folder",
+	);
+	await page.waitForFunction(
+		() =>
+			document
+				.querySelector('[role="tablist"][aria-label="Browser tabs"]')
+				?.getAttribute("aria-orientation") === "horizontal",
+	);
+	await assertCollapsedFolderSelection(folderMembers[1].id, "horizontal");
+	await assertCollapsedFolderSelection(folderMembers[0].id, "horizontal");
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Turn On Vertical Tabs" }).click();
+	await waitForBrowserState(
+		(value) => value.settings.tabLayout === "vertical",
+		"Restored vertical tabs",
+	);
+	await folderToggle.click();
+	await page.evaluate(
+		async (tabId) => window.kestrel.request({ type: "browser-select-tab", tabId }),
+		activeTabBeforeFolderCheck,
+	);
+	await waitForBrowserState(
+		(value) => value.activeTabId === activeTabBeforeFolderCheck,
+		"Restored the active browser tab after folder checks",
 	);
 	await page.evaluate(async (tabIds) => {
 		for (const tabId of tabIds) {
