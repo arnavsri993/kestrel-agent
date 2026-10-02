@@ -103,7 +103,9 @@ export function ModelSelector({
 	const positionMenu = useCallback(() => {
 		if (!triggerRef.current || !menuRef.current) return;
 		const button = triggerRef.current.getBoundingClientRect();
-		const menu = menuRef.current.getBoundingClientRect();
+		// Motion transforms shrink the visible rect while opening. Position from
+		// layout dimensions so the final menu still fits after the animation.
+		const menu = { width: menuRef.current.offsetWidth, height: menuRef.current.offsetHeight };
 		let left = button.left;
 		let top = button.top - menu.height - 8;
 		let placement: "above" | "below" = "above";
@@ -114,6 +116,7 @@ export function ModelSelector({
 			top = Math.min(window.innerHeight - menu.height - 12, button.bottom + 8);
 			placement = "below";
 		}
+		top = Math.max(12, Math.min(top, window.innerHeight - menu.height - 12));
 		setMenuPos({ top, left, placement });
 	}, []);
 

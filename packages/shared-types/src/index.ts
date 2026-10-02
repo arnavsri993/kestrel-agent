@@ -1,4 +1,5 @@
 export * from "./configuration";
+export * from "./build-provenance";
 export * from "./communication";
 export * from "./chrome-web-store";
 export * from "./extension-compatibility";

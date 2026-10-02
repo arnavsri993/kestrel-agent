@@ -28,11 +28,19 @@ import {
 	type ModelRequest,
 	type ModelResult,
 	type ModelUsage,
+	type ModelTool,
+	type ModelToolCall,
 } from "./types";
 import {
 	type BrowserMcpCallSession,
 	resolveUniqueMappedSession,
 } from "../browser-mcp-session";
+import {
+	CODEX_TOOL_BRIDGE_INSTRUCTIONS,
+	CODEX_TOOL_BRIDGE_CONFIG,
+	codexDynamicTools,
+	parseCodexDynamicToolCall,
+} from "./codex-tool-bridge";
 
 const MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -52,18 +60,22 @@ const HEIF_MEDIA_TYPES = new Set(["image/heic", "image/heif"]);
 const executeFile = promisify(execFileCallback);
 type SupportedReasoningEffort =
 	| "none"
+	| "minimal"
 	| "low"
 	| "medium"
 	| "high"
 	| "xhigh"
-	| "max";
+	| "max"
+	| "ultra";
 const REASONING_EFFORTS = new Set<SupportedReasoningEffort>([
 	"none",
+	"minimal",
 	"low",
 	"medium",
 	"high",
 	"xhigh",
 	"max",
+	"ultra",
 ] as const);
 const READ_ONLY_INSTRUCTIONS =
 	"You are operating as a read-only model runtime inside Kestrel. Answer the user in plain text. Do not execute commands, edit files, browse, invoke MCP, or request approvals; Kestrel owns tools and approvals.";
@@ -86,8 +98,15 @@ interface ThreadBinding {
 
 interface TurnCollector {
 	threadId: string;
+	generation: number;
 	turnId?: string;
+	interrupt?: Promise<unknown>;
 	text: string;
+	finalText?: string;
+	tools: ModelTool[];
+	toolCalls: ModelToolCall[];
+	handedOff: boolean;
+	pendingMessages: Array<() => void>;
 	usage: ModelUsage;
 	resolve(): void;
 	reject(error: Error): void;
@@ -189,41 +208,38 @@ function accountEmailAndPlan(account: JsonObject | undefined): {
 }
 
 /**
- * Normalize the non-secret fields from `account/rateLimits/read` (and sparse
- * `account/rateLimits/updated` notifications) for routing and the New Tab widget.
- */
-/**
- * Resolve the Codex-metered snapshot the same way OpenClaw does: prefer the
- * `codex` bucket from rateLimitsByLimitId, then the backward-compatible
- * single-bucket `rateLimits` payload.
+ * Prefer the Codex bucket, then the legacy single-bucket response. Other
+ * named buckets are only a fallback when neither Codex source is present.
  */
 function resolveCodexRateLimitBucket(root: JsonObject): JsonObject {
 	const byLimitId =
 		object(root.rateLimitsByLimitId) ?? object(root.rate_limits_by_limit_id);
-	const preferred =
-		(byLimitId ? object(byLimitId.codex) : undefined) ??
-		(byLimitId
-			? Object.values(byLimitId)
-					.map((value) => object(value))
-					.find(
-						(entry) =>
-							entry &&
-							(parseRateLimitWindow(entry.primary) ||
-								parseRateLimitWindow(entry.secondary)),
-					)
-			: undefined);
 	const legacy =
 		object(root.rateLimits) ?? object(root.rate_limits) ?? undefined;
-	if (preferred) return preferred;
+	const codex = byLimitId ? object(byLimitId.codex) : undefined;
+	if (codex) return codex;
 	if (legacy && (legacy.primary !== undefined || legacy.secondary !== undefined))
 		return legacy;
+	const other = byLimitId
+		? Object.values(byLimitId)
+				.map((value) => object(value))
+				.find(
+					(entry) =>
+						entry &&
+						(parseRateLimitWindow(entry.primary) ||
+							parseRateLimitWindow(entry.secondary)),
+				)
+		: undefined;
+	if (other) return other;
 	return legacy ?? root;
 }
 
+/** Normalize complete reads and sparse notifications into non-secret usage. */
 export function parseCodexAccountUsageSnapshot(
 	rateLimitsResult: unknown,
 	accountResult?: unknown,
 	previous?: CodexAccountUsageSnapshot,
+	authoritative = false,
 ): CodexAccountUsageSnapshot {
 	const root = object(rateLimitsResult) ?? {};
 	const rateLimits = resolveCodexRateLimitBucket(root);
@@ -231,7 +247,9 @@ export function parseCodexAccountUsageSnapshot(
 	const ordinaryUsageAllowed =
 		typeof ordinaryRaw === "boolean"
 			? ordinaryRaw
-			: previous?.ordinaryUsageAllowed;
+			: authoritative
+				? undefined
+				: previous?.ordinaryUsageAllowed;
 	const reachedType =
 		rateLimits.rateLimitReachedType ?? rateLimits.rate_limit_reached_type;
 	const reachedFromType =
@@ -239,9 +257,11 @@ export function parseCodexAccountUsageSnapshot(
 		reachedType.length > 0 &&
 		reachedType.toLowerCase() !== "none";
 	const primary =
-		parseRateLimitWindow(rateLimits.primary) ?? previous?.primary;
+		parseRateLimitWindow(rateLimits.primary) ??
+		(authoritative ? undefined : previous?.primary);
 	const secondary =
-		parseRateLimitWindow(rateLimits.secondary) ?? previous?.secondary;
+		parseRateLimitWindow(rateLimits.secondary) ??
+		(authoritative ? undefined : previous?.secondary);
 	const atLimit =
 		ordinaryUsageAllowed === false ||
 		reachedFromType ||
@@ -270,33 +290,43 @@ export function parseCodexAccountUsageSnapshot(
 	};
 }
 
-export function earliestCodexResetAt(
+export function codexAvailabilityResetAt(
 	snapshot: CodexAccountUsageSnapshot | undefined,
 ): string | undefined {
-	if (!snapshot) return undefined;
-	const candidates = [snapshot.primary?.resetsAt, snapshot.secondary?.resetsAt]
-		.filter((value): value is string => Boolean(value))
-		.map((value) => Date.parse(value))
-		.filter((value) => Number.isFinite(value) && value > Date.now());
-	if (candidates.length === 0) return undefined;
-	return new Date(Math.min(...candidates)).toISOString();
+	if (!snapshot?.rateLimitReached) return undefined;
+	const exhausted = [snapshot.primary, snapshot.secondary].filter(
+		(window): window is CodexRateLimitWindow =>
+			window !== undefined && window.usedPercent >= 100,
+	);
+	if (exhausted.length === 0) return undefined;
+	const resets = exhausted.map((window) =>
+		window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN,
+	);
+	if (resets.some((reset) => !Number.isFinite(reset) || reset <= Date.now()))
+		return undefined;
+	return new Date(Math.max(...resets)).toISOString();
 }
 
 function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	const record = object(value);
 	if (record?.hidden === true) return undefined;
 	const model =
-		typeof record?.model === "string" && record.model.trim()
+		typeof record?.slug === "string" && record.slug.trim()
+			? record.slug.trim()
+			: typeof record?.model === "string" && record.model.trim()
 			? record.model.trim()
 			: typeof record?.id === "string" && record.id.trim()
 				? record.id.trim()
 				: undefined;
 	if (!model) return undefined;
-	const reasoningEfforts: SupportedReasoningEffort[] = (Array.isArray(record?.supportedReasoningEfforts)
-		? record.supportedReasoningEfforts
-		: []
+	const reasoningEfforts: SupportedReasoningEffort[] = (Array.isArray(record?.supported_reasoning_levels)
+		? record.supported_reasoning_levels
+		: Array.isArray(record?.supportedReasoningEfforts)
+			? record.supportedReasoningEfforts
+			: []
 	).flatMap((value) => {
-		const effort = object(value)?.reasoningEffort;
+		const effortRecord = object(value);
+		const effort = typeof value === "string" ? value : effortRecord?.effort ?? effortRecord?.reasoningEffort;
 		return typeof effort === "string" && REASONING_EFFORTS.has(effort as SupportedReasoningEffort)
 			? [effort as SupportedReasoningEffort]
 			: [];
@@ -305,9 +335,11 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	// image. Preserve that documented default for older Codex installations, but
 	// never infer audio, documents, video, or tool execution from a catalog row.
 	const inputModalities = new Set(
-		(Array.isArray(record?.inputModalities)
-			? record.inputModalities
-			: ["text", "image"]
+		(Array.isArray(record?.input_modalities)
+			? record.input_modalities
+			: Array.isArray(record?.inputModalities)
+				? record.inputModalities
+				: ["text", "image"]
 		)
 			.filter((value): value is string => typeof value === "string")
 			.map((value) => value.trim().toLowerCase()),
@@ -315,24 +347,28 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	return {
 		id: model,
 		displayName:
-			typeof record?.displayName === "string" && record.displayName.trim()
+			typeof record?.display_name === "string" && record.display_name.trim()
+				? record.display_name.trim()
+				: typeof record?.displayName === "string" && record.displayName.trim()
 				? record.displayName.trim()
 				: model,
-		availability: "available",
+		availability: record?.supported_in_api === false ? "unsupported" : "available",
 		source: "protocol",
 		capabilities: {
 			// `model/list` confirms account entitlement, input modality, and each
-			// advertised reasoning level. This remains a read-only Kestrel route;
-			// image input does not grant shell, file-editing, or tool capability.
+			// advertised reasoning level. Requests use dynamicTools; execution
+			// and authorization stay in Kestrel, never Codex.
 			capabilityProvenance: "confirmed",
 			streaming: true,
-			tools: false,
+			tools: record?.tool_mode !== "none" && record?.tool_mode !== "disabled",
 			images: inputModalities.has("image"),
 			audio: false,
 			documents: false,
 			video: false,
 			structuredOutput: false,
 			reasoningEfforts,
+			...(typeof record?.context_window === "number" && record.context_window > 0
+				? { contextWindow: record.context_window } : {}),
 		},
 	};
 }
@@ -362,7 +398,16 @@ function textPrompt(messages: ModelMessage[]): string {
 				message.role === "tool"
 					? `Tool result${message.toolName ? ` (${message.toolName})` : ""}`
 					: message.role[0]!.toUpperCase() + message.role.slice(1);
-			const text = contentText(message.content);
+			const text = [
+				contentText(message.content),
+				...(message.toolCalls?.map(
+					(call) =>
+						`Kestrel tool request ${call.id}: ${call.name} ${JSON.stringify(call.arguments)}`,
+				) ?? []),
+				...(message.toolCallId ? [`Tool call ID: ${message.toolCallId}`] : []),
+			]
+				.filter(Boolean)
+				.join("\n");
 			const omitted = message.content
 				.filter((part) => part.type !== "text" && part.type !== "image")
 				.map((part) => `[${part.type} content unavailable to this route]`)
@@ -584,7 +629,7 @@ export class CodexAppServerProvider {
 	readonly defaultModel: string;
 	readonly capabilities = {
 		streaming: true,
-		tools: false,
+		tools: true,
 		images: true,
 		audio: false,
 		documents: false,
@@ -611,6 +656,8 @@ export class CodexAppServerProvider {
 	private scratchRoot: string | undefined;
 	private browserMcp: CodexBrowserMcpAttachment | undefined;
 	private closing = false;
+	private discoveredModels: DiscoveredModel[] | undefined;
+	private transportStopPromise: Promise<void> | undefined;
 	private lastUsageSnapshot: CodexAccountUsageSnapshot | undefined;
 
 	constructor(options: CodexAppServerOptions = {}) {
@@ -676,6 +723,7 @@ export class CodexAppServerProvider {
 			rateLimits,
 			account,
 			this.lastUsageSnapshot,
+			true,
 		);
 		return this.lastUsageSnapshot;
 	}
@@ -719,7 +767,8 @@ export class CodexAppServerProvider {
 				seenCursors.add(nextCursor);
 				cursor = nextCursor;
 			}
-			return [...models.values()];
+			this.discoveredModels = [...models.values()];
+			return this.discoveredModels;
 		} catch (error) {
 			if (signal?.aborted) throw error;
 			throw new ModelProviderError(
@@ -736,7 +785,18 @@ export class CodexAppServerProvider {
 	): Promise<ModelResult> {
 		try {
 			await this.ensureStarted();
-			const sessionKey = request.metadata?.session_id ?? `call-${randomUUID()}`;
+			const bridged = Boolean(request.tools?.length);
+			if (bridged) {
+				const models = this.discoveredModels ?? await this.discoverModels(options.signal);
+				const model = models.find((model) => model.id === request.model && model.availability === "available");
+				if (!model?.capabilities?.tools)
+					throw new Error("The selected Codex account has not advertised a tool-capable version of this model. Refresh models or select another account model.");
+				if (request.reasoningEffort && !model.capabilities.reasoningEfforts?.includes(request.reasoningEffort))
+					throw new Error("The selected Codex account model does not advertise this thinking level. Select an advertised level; no substitute was used.");
+			}
+			const sessionKey = bridged
+				? `tool-step-${randomUUID()}`
+				: (request.metadata?.session_id ?? `call-${randomUUID()}`);
 			const workspaceRoot = request.metadata?.workspace_root;
 			const binding = await this.ensureThread(
 				sessionKey,
@@ -744,21 +804,33 @@ export class CodexAppServerProvider {
 				workspaceRoot,
 				options.signal,
 			);
-			const collector = await this.startTurn(
-				binding,
-				request,
-				workspaceRoot,
-				options,
-			);
-			return {
-				providerId: this.id,
-				model: request.model,
-				responseId: collector.turnId ?? binding.threadId,
-				text: collector.text,
-				toolCalls: [],
-				usage: collector.usage,
-				finishReason: "stop",
-			};
+			try {
+				const collector = await this.startTurn(
+					binding,
+					request,
+					workspaceRoot,
+					options,
+				);
+				const output = {
+					text: collector.finalText ?? collector.text,
+					toolCalls: collector.toolCalls,
+				};
+				return {
+					providerId: this.id,
+					model: request.model,
+					responseId: collector.turnId ?? binding.threadId,
+					...output,
+					usage: collector.usage,
+					finishReason: output.toolCalls.length ? "tool_calls" : "stop",
+				};
+			} finally {
+				if (bridged) {
+					this.threads.delete(sessionKey);
+					void this.request("thread/archive", {
+						threadId: binding.threadId,
+					}).catch(() => undefined);
+				}
+			}
 		} catch (error) {
 			if (options.signal?.aborted) throw error;
 			const message =
@@ -776,7 +848,9 @@ export class CodexAppServerProvider {
 					updatedAt: new Date().toISOString(),
 				};
 			}
-			const resetAt = earliestCodexResetAt(this.lastUsageSnapshot);
+			const resetAt = rateLimited
+				? codexAvailabilityResetAt(this.lastUsageSnapshot)
+				: undefined;
 			const retryAfterMs = resetAt
 				? Math.max(0, Date.parse(resetAt) - Date.now())
 				: undefined;
@@ -816,6 +890,7 @@ export class CodexAppServerProvider {
 	}
 
 	private async ensureStarted(): Promise<void> {
+		if (this.transportStopPromise) await this.transportStopPromise;
 		if (this.startPromise) return this.startPromise;
 		if (this.child?.exitCode === null) return;
 		this.startPromise = this.start().finally(() => {
@@ -870,7 +945,7 @@ export class CodexAppServerProvider {
 					title: "Kestrel Desktop",
 					version: "0.1.0",
 				},
-				capabilities: null,
+				capabilities: { experimentalApi: true },
 			});
 			this.notify("initialized", {});
 		} catch (error) {
@@ -938,8 +1013,10 @@ export class CodexAppServerProvider {
 			else pending.resolve(message.result);
 			return;
 		}
-		if (typeof message.id === "number" && typeof message.method === "string") {
-			this.write(this.serverRequestReply(message.id, message.method));
+		if ((typeof message.id === "number" || typeof message.id === "string") && typeof message.method === "string") {
+			if (message.method === "item/tool/call")
+				this.handleDynamicToolCall(message.id, message.params);
+			else this.write(this.serverRequestReply(message.id, message.method));
 			return;
 		}
 		if (typeof message.method === "string") {
@@ -960,8 +1037,14 @@ export class CodexAppServerProvider {
 			typeof params.threadId === "string" ? params.threadId : undefined;
 		if (!threadId) return;
 		const collector = this.collectors.get(threadId);
-		if (!collector) return;
-		if (typeof params.turnId === "string") collector.turnId ??= params.turnId;
+		if (!collector || collector.handedOff) return;
+		// Notifications can arrive in the same stdout chunk as turn/start's
+		// response. Only that response establishes the authoritative turn ID.
+		if (!collector.turnId) {
+			this.deferUntilTurnStarts(collector, () => this.handleNotification(method, params));
+			return;
+		}
+		if (typeof params.turnId === "string" && params.turnId !== collector.turnId) return;
 		if (
 			method === "item/agentMessage/delta" &&
 			typeof params.delta === "string"
@@ -969,12 +1052,22 @@ export class CodexAppServerProvider {
 			collector.text += params.delta;
 			return;
 		}
+		if (method === "item/completed") {
+			const item = object(params.item);
+			if (
+				item?.type === "agentMessage" &&
+				typeof item.text === "string" &&
+				item.phase !== "commentary"
+			)
+				collector.finalText = item.text;
+		}
 		if (method === "thread/tokenUsage/updated") {
 			collector.usage = usageFrom(params.tokenUsage);
 			return;
 		}
 		if (method === "turn/completed") {
 			const turn = object(params.turn);
+			if (turn?.id !== collector.turnId) return;
 			if (turn?.status === "failed") {
 				collector.reject(
 					new Error(
@@ -989,7 +1082,50 @@ export class CodexAppServerProvider {
 		}
 	}
 
-	private serverRequestReply(id: number, method: string): JsonObject {
+	private handleDynamicToolCall(id: number | string, value: unknown): void {
+		const params = object(value);
+		const collector = typeof params?.threadId === "string"
+			? this.collectors.get(params.threadId) : undefined;
+		// Always close the vendor RPC without asserting the action happened.
+		this.write({ id, result: { success: false, contentItems: [{ type: "inputText", text: "Execution is deferred to Kestrel's authorization and receipt path. This Codex step is ending; no action was executed here." }] } });
+		if (!collector || collector.handedOff || !collector.tools.length) return;
+		this.acceptDynamicToolCall(collector, value);
+	}
+
+	private deferUntilTurnStarts(collector: TurnCollector, message: () => void): void {
+		if (collector.pendingMessages.length >= 128) {
+			collector.reject(new Error("Codex emitted too many messages before the turn started."));
+			return;
+		}
+		collector.pendingMessages.push(message);
+	}
+
+	private acceptDynamicToolCall(collector: TurnCollector, value: unknown): void {
+		if (collector.handedOff) return;
+		if (!collector.turnId) {
+			this.deferUntilTurnStarts(collector, () => this.acceptDynamicToolCall(collector, value));
+			return;
+		}
+		try {
+			const call = parseCodexDynamicToolCall(value, collector.tools, collector.threadId, collector.turnId);
+			collector.toolCalls.push(call);
+			collector.handedOff = true;
+			collector.interrupt = this.request("turn/interrupt", {
+				threadId: collector.threadId,
+				turnId: collector.turnId,
+			});
+			void collector.interrupt.then(
+				() => collector.resolve(),
+				() => collector.reject(new Error(
+					"Codex could not end the reasoning step safely. No tool requests were accepted.",
+				)),
+			);
+		} catch {
+			collector.reject(new Error("Codex returned an invalid or out-of-scope dynamic tool request. No tool requests were accepted."));
+		}
+	}
+
+	private serverRequestReply(id: number | string, method: string): JsonObject {
 		if (
 			method === "item/commandExecution/requestApproval" ||
 			method === "item/fileChange/requestApproval"
@@ -1128,15 +1264,30 @@ export class CodexAppServerProvider {
 					model: request.model,
 					approvalPolicy: "never",
 					sandbox: "read-only",
-					cwd: workspaceRoot ?? this.scratchRoot!,
-					ephemeral: false,
-					baseInstructions: this.browserMcp
-						? BROWSER_MCP_INSTRUCTIONS
+					cwd: request.tools?.length
+						? this.scratchRoot!
+						: workspaceRoot ?? this.scratchRoot!,
+					allowProviderModelFallback: false,
+					...(request.tools?.length
+						? {
+								dynamicTools: codexDynamicTools(request.tools),
+								config: CODEX_TOOL_BRIDGE_CONFIG,
+								runtimeWorkspaceRoots: [],
+								environments: [],
+							}
+						: {}),
+					ephemeral: Boolean(request.tools?.length),
+					baseInstructions: request.tools?.length
+						? CODEX_TOOL_BRIDGE_INSTRUCTIONS
+						: this.browserMcp
+							? BROWSER_MCP_INSTRUCTIONS
 						: READ_ONLY_INSTRUCTIONS,
 				},
 				signal,
 			),
 		);
+		if (typeof result?.model === "string" && result.model !== request.model)
+			throw new Error("Codex substituted a different model. The requested model was not executed.");
 		const thread = object(result?.thread);
 		if (typeof thread?.id !== "string")
 			throw new Error("Codex app-server returned no thread id.");
@@ -1164,12 +1315,20 @@ export class CodexAppServerProvider {
 			settle = resolve;
 			fail = reject;
 		});
+		// A turn/start transport failure can precede our await of this promise.
+		void completed.catch(() => undefined);
+		let turnFailed = false;
 		const collector: TurnCollector = {
 			threadId,
+			generation: this.generation,
 			text: "",
+			tools: request.tools ?? [],
+			toolCalls: [],
+			handedOff: false,
+			pendingMessages: [],
 			usage: { inputTokens: 0, outputTokens: 0 },
 			resolve: settle,
-			reject: fail,
+			reject: (error) => { turnFailed = true; fail(error); },
 		};
 		this.collectors.set(threadId, collector);
 		let streamed = 0;
@@ -1183,12 +1342,6 @@ export class CodexAppServerProvider {
 			}
 		}, 16);
 		const abort = () => {
-			if (collector.turnId) {
-				void this.request("turn/interrupt", {
-					threadId,
-					turnId: collector.turnId,
-				}).catch(() => undefined);
-			}
 			collector.reject(
 				options.signal?.reason instanceof Error
 					? options.signal.reason
@@ -1200,28 +1353,37 @@ export class CodexAppServerProvider {
 			() => collector.reject(new Error("Codex app-server turn timed out.")),
 			this.turnTimeoutMs,
 		);
+		let startRequested = false;
 		try {
+			const input = await turnInput(request.messages, binding.turns === 0);
+			options.signal?.throwIfAborted();
+			if (turnFailed) await completed;
+			startRequested = true;
 			const result = object(
-				await this.request(
+				await Promise.race([this.request(
 					"turn/start",
 					{
 						threadId,
-						input: await turnInput(request.messages, binding.turns === 0),
+						input,
 						model: request.model,
 						approvalPolicy: "never",
 						sandboxPolicy: { type: "readOnly", networkAccess: false },
-						...(workspaceRoot ? { cwd: workspaceRoot } : {}),
+						...(request.tools?.length ? { cwd: this.scratchRoot! } : workspaceRoot ? { cwd: workspaceRoot } : {}),
+						...(request.serviceTier ? { serviceTier: request.serviceTier } : {}),
 						...(request.reasoningEffort
 							? { effort: request.reasoningEffort }
 							: {}),
 					},
 					options.signal,
-				),
+				), completed.then(() => {
+					throw new Error("Codex turn ended before startup was confirmed.");
+				})]),
 			);
 			const turn = object(result?.turn);
 			if (typeof turn?.id !== "string")
 				throw new Error("Codex app-server returned no turn id.");
 			collector.turnId = turn.id;
+			for (const message of collector.pendingMessages.splice(0)) message();
 			await completed;
 			binding.turns += 1;
 			if (collector.text.length > streamed) {
@@ -1231,11 +1393,35 @@ export class CodexAppServerProvider {
 				});
 			}
 			return collector;
+		} catch (error) {
+			// A rejected local promise does not stop vendor reasoning. Keep the
+			// collector registered until interruption is acknowledged, or reset
+			// the transport when turn/start left the active turn unidentified.
+			collector.handedOff = true;
+			clearInterval(progress);
+			if (startRequested) await this.stopFailedTurn(collector);
+			throw error;
 		} finally {
 			clearTimeout(timer);
 			clearInterval(progress);
 			options.signal?.removeEventListener("abort", abort);
 			this.collectors.delete(threadId);
 		}
+	}
+
+	private async stopFailedTurn(collector: TurnCollector): Promise<void> {
+		if (collector.generation !== this.generation || !this.child) return;
+		if (collector.turnId) {
+			try {
+				await (collector.interrupt ??= this.request("turn/interrupt", {
+					threadId: collector.threadId, turnId: collector.turnId,
+				}));
+				return;
+			} catch { /* An unconfirmed interrupt requires transport shutdown. */ }
+		}
+		this.transportStopPromise ??= this.close().finally(() => {
+			this.transportStopPromise = undefined;
+		});
+		await this.transportStopPromise;
 	}
 }

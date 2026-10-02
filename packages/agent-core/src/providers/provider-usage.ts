@@ -5,7 +5,7 @@ import type {
 } from "@kestrel/shared-types";
 import {
 	CodexAppServerProvider,
-	earliestCodexResetAt,
+	codexAvailabilityResetAt,
 	type CodexAccountUsageSnapshot,
 	type CodexRateLimitWindow,
 } from "./codex-app-server";
@@ -78,7 +78,7 @@ function statusFromHealth(
 	codex?: CodexAccountUsageSnapshot,
 ): { status: ProviderUsageStatus; statusDetail?: string } {
 	if (codex?.rateLimitReached) {
-		const reset = earliestCodexResetAt(codex);
+		const reset = codexAvailabilityResetAt(codex);
 		return {
 			status: "rate_limited",
 			statusDetail: reset
@@ -281,7 +281,7 @@ export class ProviderUsageCollector {
 		codex: CodexAccountUsageSnapshot,
 	): void {
 		if (codex.rateLimitReached) {
-			const reset = earliestCodexResetAt(codex);
+			const reset = codexAvailabilityResetAt(codex);
 			this.pool.markUnavailable(
 				provider.id,
 				"rate_limit",

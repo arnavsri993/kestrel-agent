@@ -3,6 +3,8 @@ import { join, resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import type { Plugin } from "vite";
+// @ts-expect-error Build-only JavaScript helper, never shipped to the renderer.
+import { sourceProvenance } from "../../scripts/build-provenance.mjs";
 import {
 	createRendererCspNonce,
 	rendererCspNoncePlugin,
@@ -55,10 +57,19 @@ const require = __cjs_mod__.createRequire(import.meta.url);
 `;
 
 const rendererCspNonce = createRendererCspNonce();
+const buildIdentity = sourceProvenance(resolve(__dirname, "../.."));
+const buildDefine = { __KESTREL_BUILD_IDENTITY__: JSON.stringify(buildIdentity) };
+function emitBuildProvenance(): Plugin {
+  return { name: "kestrel-build-provenance", generateBundle() {
+    this.emitFile({ type: "asset", fileName: "build-provenance.json", source: JSON.stringify(buildIdentity) });
+  } };
+}
 
 export default defineConfig({
 	main: {
+		define: buildDefine,
 		plugins: [
+			emitBuildProvenance(),
 			emitDatabaseMigrations(),
 			externalizeDepsPlugin({ exclude: [...workspacePackages, "zod"] }),
 		],
@@ -75,6 +86,7 @@ export default defineConfig({
 		},
 	},
 	preload: {
+		define: buildDefine,
 		plugins: [
 			externalizeDepsPlugin({ exclude: [...workspacePackages, "zod"] }),
 		],
@@ -89,6 +101,7 @@ export default defineConfig({
 		},
 	},
 	renderer: {
+		define: buildDefine,
 		root: resolve(__dirname, "src/renderer"),
 		plugins: [react(), rendererCspNoncePlugin(rendererCspNonce)],
 		html: {
