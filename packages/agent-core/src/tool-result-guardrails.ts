@@ -21,6 +21,14 @@ const SLACK_TOKEN_PATTERN = /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/g;
 const BEARER_TOKEN_PATTERN =
 	/(\bBearer\s+)([A-Za-z0-9._~+\/-]{20,})/gi;
 
+/**
+ * Keep model-facing tool receipts comfortably below RuntimeMessageSchema's
+ * 1 MB hard limit. This is deliberately smaller than the persistence limit so
+ * result metadata and future envelope fields cannot turn a safe result into a
+ * rejected runtime message.
+ */
+export const MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS = 250_000;
+
 function createRedactionState(): RedactionState {
 	return {
 		redactions: 0,
@@ -159,7 +167,7 @@ export function modelVisibleToolResult(execution: RuntimeToolExecution): string 
 	const error = execution.error
 		? redactText(execution.error, state)
 		: undefined;
-	return JSON.stringify({
+	const result = {
 		status: execution.status,
 		...(output === undefined ? {} : { output }),
 		...(error === undefined ? {} : { error }),
@@ -169,6 +177,29 @@ export function modelVisibleToolResult(execution: RuntimeToolExecution): string 
 						redactedSensitiveData: true,
 						redactionCount: state.redactions,
 						note: "Sensitive-looking values were replaced locally before this result reached the model. Never reconstruct or request a redacted value.",
+					},
+				}
+			: {}),
+	};
+	const serialized = JSON.stringify(result);
+	if (serialized.length <= MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS)
+		return serialized;
+
+	return JSON.stringify({
+		status: execution.status,
+		output: {
+			truncated: true,
+			originalCharacterCount: serialized.length,
+			limitCharacterCount: MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
+			message:
+				"The tool result was too large to add to model context. Do not assume omitted details were read; use a narrower request or a scoped tool.",
+		},
+		...(state.redactions > 0
+			? {
+					safety: {
+						redactedSensitiveData: true,
+						redactionCount: state.redactions,
+						note: "Sensitive-looking values were handled locally before this result reached the model.",
 					},
 				}
 			: {}),
