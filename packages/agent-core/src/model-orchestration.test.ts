@@ -12,6 +12,7 @@ import {
 } from "./model-orchestration";
 import type { ModelProvider } from "./providers";
 import { ModelCatalog } from "./providers/model-catalog";
+import { openAIModelMetadata } from "./providers/openai-model-metadata";
 import { AccountAvailabilityMonitor } from "./routing/account-availability";
 
 function provider(input: {
@@ -158,6 +159,122 @@ describe("adaptive model orchestration", () => {
 			{ role: "worker" },
 		)).toThrow("No configured model satisfies");
 		item.database.close();
+	});
+
+	it("routes documented GPT-6 Sol and Luna account models by task, without pricing a Codex subscription", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const sol = openAIModelMetadata("gpt-6-sol")!;
+		const luna = openAIModelMetadata("gpt-6-luna")!;
+		const api: ModelProvider = {
+			id: "openai-api-account",
+			poolId: "openai",
+			account: {
+				id: "openai-api-account",
+				providerId: "openai",
+				displayName: "OpenAI API",
+				authTransport: "api_key",
+				enabled: true,
+			},
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: true,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			discoverModels: async () =>
+				["gpt-6-sol", "gpt-6-luna"].map((id) => ({
+					id,
+					availability: "available" as const,
+					source: "provider_api" as const,
+					capabilities: {
+						...(id === "gpt-6-sol" ? sol : luna).discoveryCapabilities,
+						capabilityProvenance: "metadata" as const,
+					},
+				})),
+			complete: async (request) => ({
+				providerId: "openai-api-account",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 0, outputTokens: 0 },
+				finishReason: "stop" as const,
+			}),
+		};
+		const catalog = new ModelCatalog(database, [api]);
+		await catalog.refresh([api]);
+		const registry = new ModelRegistry(database, [api], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 1);
+
+		expect(registry.get("openai-api-account:gpt-6-sol")).toMatchObject({
+			tier: "frontier",
+			cost: { inputPerMillion: 2, outputPerMillion: 10 },
+			features: { reasoningLevels: true, tools: true },
+		});
+		expect(registry.get("openai-api-account:gpt-6-luna")).toMatchObject({
+			tier: "standard",
+			cost: { inputPerMillion: 0.1, outputPerMillion: 0.5 },
+			features: { reasoningLevels: true, tools: true },
+		});
+
+		const analyzer = new TaskRequirementAnalyzer();
+		expect(
+			router.route(
+				analyzer.analyze("gpt6-cheap", "Summarize this short note."),
+				{
+					role: "worker",
+					policy: { ...router.policy(), mode: "cheapest" },
+				},
+			).selectedModelId,
+		).toBe("openai-api-account:gpt-6-luna");
+		expect(
+			router.route(
+				analyzer.analyze(
+					"gpt6-demanding",
+					"Design and implement a secure, multi-service agent workflow with a migration, approval boundaries, and a complete validation plan.",
+					{ requiresTools: true },
+				),
+				{ role: "orchestrator", policy: { ...router.policy(), mode: "best_quality" } },
+			).selectedModelId,
+		).toBe("openai-api-account:gpt-6-sol");
+
+		const subscription: ModelProvider = {
+			...api,
+			id: "codex-subscription-account",
+			poolId: "codex",
+			account: {
+				...api.account!,
+				id: "codex-subscription-account",
+				providerId: "codex",
+				displayName: "Codex subscription",
+				authTransport: "oauth",
+			},
+			discoverModels: async () => [
+				{
+					id: "gpt-6-sol",
+					availability: "available",
+					source: "protocol",
+					capabilities: {
+						...sol.discoveryCapabilities,
+						capabilityProvenance: "confirmed",
+					},
+				},
+			],
+		};
+		const subscriptionCatalog = new ModelCatalog(database, [subscription]);
+		await subscriptionCatalog.refresh([subscription]);
+		const subscriptionRegistry = new ModelRegistry(
+			database,
+			[subscription],
+			[],
+			undefined,
+			subscriptionCatalog,
+		);
+		expect(
+			subscriptionRegistry.get("codex-subscription-account:gpt-6-sol").cost,
+		).toEqual({});
+		database.close();
 	});
 
 	it("does not automatically route to an unavailable account model", async () => {
@@ -456,6 +573,7 @@ describe("adaptive model orchestration", () => {
 			discoverModels: async () =>
 				([
 				["gpt-5.5", "Legacy coding model."],
+				["gpt-6-sol", "Previous generation workhorse model."],
 				["gpt-6-astra", "Frontier intelligence for the most demanding work."],
 			] as const).map(([id, description]) => ({
 				id,
@@ -480,6 +598,10 @@ describe("adaptive model orchestration", () => {
 		);
 		const decision = router.route(requirements, { role: "worker" });
 		expect(registry.get("codex-described:gpt-5.5").tier).toBe("standard");
+		expect(registry.get("codex-described:gpt-6-sol")).toMatchObject({
+			tier: "advanced",
+			capabilities: { complex_reasoning: 0.88, coding: 0.88 },
+		});
 		expect(registry.get("codex-described:gpt-6-astra").tier).toBe("frontier");
 		expect(decision.model).toBe("gpt-6-astra");
 		expect(decision.reasoningLevel).toBe("high");
@@ -1417,6 +1539,32 @@ describe("adaptive model orchestration", () => {
 				requireReviewAboveRisk: "sensitive",
 			}).mode,
 		).toBe("best_quality");
+	});
+
+	it("keeps an explicit no-file-tools safety boundary on a plain-text route", () => {
+		const item = fixture([
+			provider({
+				id: "codex-read-only",
+				model: "gpt-6-sol",
+				tools: false,
+				capabilities: {
+					planning: 0.93,
+					instruction_following: 0.93,
+					reliability: 0.9,
+				},
+			}),
+		]);
+		const requirements = item.analyzer.analyze(
+			"codex-read-only-plan",
+			"Create a short launch-readiness plan. Do not call tools, access credentials, browse, run commands, edit files, or make changes.",
+		);
+
+		expect(requirements.requiresTools).toBe(false);
+		expect(requirements.capabilities.tool_use).toBeUndefined();
+		expect(
+			item.router.route(requirements, { role: "worker" }).selectedModelId,
+		).toBe("codex-read-only:gpt-6-sol");
+		item.database.close();
 	});
 
 	it("keeps trivial work off frontier models when a cheaper adequate model exists", () => {

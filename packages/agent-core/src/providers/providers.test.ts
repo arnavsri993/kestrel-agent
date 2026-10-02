@@ -1,5 +1,5 @@
 import { createServer, type RequestListener, type Server } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnthropicMessagesProvider } from "./anthropic-messages";
 import { createEnvironmentModelProviders } from "./environment";
 import { GeminiGenerateContentProvider } from "./gemini-generate-content";
@@ -262,6 +262,59 @@ describe("model provider adapters", () => {
 		]);
 		expect(method).toBe("GET");
 		expect(authorization).toBe("Bearer probe-secret");
+	});
+
+	it("enriches only official OpenAI GPT-6 catalog rows with documented compatibility", async () => {
+		const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+			new Response(
+				JSON.stringify({
+					data: [
+						{ id: "gpt-6-sol", name: "GPT-6 Sol" },
+						{ id: "gpt-6-luna", context_window: 900_000 },
+						{ id: "unverified-model" },
+					],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		try {
+			const official = new OpenAIResponsesProvider({ apiKey: "not-a-real-key" });
+			expect(await official.discoverModels()).toMatchObject([
+				{
+					id: "gpt-6-sol",
+					capabilities: {
+						capabilityProvenance: "metadata",
+						tools: true,
+						structuredOutput: true,
+						reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+						contextWindow: 1_050_000,
+					},
+				},
+				{
+					id: "gpt-6-luna",
+					capabilities: {
+						capabilityProvenance: "metadata",
+						contextWindow: 900_000,
+					},
+				},
+				{
+					id: "unverified-model",
+					capabilities: { capabilityProvenance: "unknown" },
+				},
+			]);
+
+			const custom = new OpenAIResponsesProvider({
+				apiKey: "not-a-real-key",
+				baseUrl: "https://proxy.example/v1",
+			});
+			expect((await custom.discoverModels())[0]).toMatchObject({
+				id: "gpt-6-sol",
+				capabilities: { capabilityProvenance: "unknown" },
+			});
+			expect(fetch).toHaveBeenCalledTimes(2);
+		} finally {
+			fetch.mockRestore();
+		}
 	});
 
 	it("uses HTTP Retry-After to remember provider capacity availability", async () => {

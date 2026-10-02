@@ -5,6 +5,7 @@ import type {
 } from "@kestrel/shared-types";
 import {
 	accountForChoice,
+	hasVerifiedModelCapabilities,
 	searchProviderGroups,
 	matchesCatalogSearch,
 	modelAvailabilityLabel,
@@ -182,6 +183,29 @@ describe("account-aware model selector", () => {
 			false,
 		);
 		expect(unverifiedChoice.reasoningEffort).toBe("none");
+	});
+
+	it("keeps documented GPT-6 compatibility distinct from an unverified listing", () => {
+		const documented = model("gpt-6-luna", {
+			capabilities: {
+				...modelCapabilities,
+				capabilityProvenance: "metadata",
+				reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+			},
+		});
+		const documentedAccount = account("openai-documented", "OpenAI API", [
+			documented,
+		]);
+		const documentedChoice = selectModel(documentedAccount, documented, choice);
+
+		expect(hasVerifiedModelCapabilities(documented)).toBe(true);
+		expect(modelAvailabilityLabel(documented)).toBe(
+			"Available · documented compatibility",
+		);
+		expect(modelSupportsThinking([documentedAccount], documentedChoice)).toBe(
+			true,
+		);
+		expect(documentedChoice.reasoningEffort).toBe("medium");
 	});
 
 	it("searches provider, account, and discovered model fields", () => {
