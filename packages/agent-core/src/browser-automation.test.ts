@@ -8,6 +8,7 @@ import {
 	type BrowserAction,
 	type BrowserAutomationBackend,
 	BrowserController,
+	type BrowserSnapshot,
 	installBrowserTools,
 	type ScreenshotFrame,
 	VisualValidator,
@@ -135,7 +136,7 @@ class FakeBrowser implements BrowserAutomationBackend {
 			trust: "untrusted_browser" as const,
 		};
 	}
-	async visibleSnapshot() {
+	async visibleSnapshot(): Promise<BrowserSnapshot & { trust: "untrusted_browser" }> {
 		return {
 			url: "https://example.test/",
 			title: "Visible",
@@ -551,6 +552,25 @@ describe("isolated browser automation and visual validation", () => {
 			),
 		).rejects.toThrow("tab ID is invalid");
 		database.close();
+	});
+
+	it("does not capture a visible screenshot from a truncated page inspection", async () => {
+		const backend = new FakeBrowser();
+		vi.spyOn(backend, "visibleSnapshot").mockResolvedValue({
+			url: "https://example.test/",
+			title: "Visible",
+			accessibilityTree: { role: "document" },
+			truncated: true,
+			trust: "untrusted_browser",
+		});
+		const capture = vi.spyOn(backend, "visibleScreenshot");
+		await expect(
+			new BrowserController(backend).visibleScreenshot(
+				backend.visibleTabId,
+				new AbortController().signal,
+			),
+		).rejects.toThrow("page inspection is incomplete");
+		expect(capture).not.toHaveBeenCalled();
 	});
 
 	it("rejects accessibility trees that cannot be serialized", async () => {

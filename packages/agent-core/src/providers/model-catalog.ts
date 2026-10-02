@@ -149,6 +149,12 @@ function recordFromDiscovery(
 		id,
 		displayName:
 			model.displayName?.trim().slice(0, 300) || id,
+		...(model.description?.trim()
+			? { description: model.description.trim().slice(0, 500) }
+			: {}),
+		...(catalogPriority(model.catalogPriority) !== undefined
+			? { catalogPriority: catalogPriority(model.catalogPriority)! }
+			: {}),
 		availability: model.availability ?? "unknown",
 		discoverySource: model.source,
 		discoveredAt: now,
@@ -185,6 +191,14 @@ function recordFromDiscovery(
 		},
 		isFallback: false,
 	};
+}
+
+function catalogPriority(value: unknown): number | undefined {
+	return typeof value === "number" &&
+		Number.isInteger(value) &&
+		value >= 0
+		? value
+		: undefined;
 }
 
 function sanitizeStoredEndpoint(
@@ -348,8 +362,11 @@ export class ModelCatalog {
 			// An endpoint can keep its stable account ID while its base URL, headers,
 			// credential, or enablement changes. Reusing that account's old catalog
 			// would turn a previous endpoint's entitlement into a false fresh result.
+   // Adapter capability changes also require rediscovery (for example a newly
+   // supported tool bridge must not retain a fresh text-only model catalog).
 			const reusableEndpoint =
-				storedEndpoint?.configurationVersion === identity.configurationVersion
+				storedEndpoint?.configurationVersion === identity.configurationVersion &&
+    JSON.stringify(storedEndpoint?.capabilities) === JSON.stringify(identity.capabilities)
 					? storedEndpoint
 					: undefined;
 			// A fallback is only authoritative when the adapter has no supported
@@ -432,12 +449,16 @@ export class ModelCatalog {
 			}
 		};
 		try {
-			await Promise.all(
+			const settled = await Promise.allSettled(
 				Array.from(
 					{ length: Math.min(MAX_CONCURRENT_DISCOVERIES, targets.length) },
 					() => worker(),
 				),
 			);
+			// Cancellation must not release the shared refresh while a sibling
+			// provider is still unwinding its discovery request.
+			const failed = settled.find(result => result.status === "rejected");
+			if (failed?.status === "rejected") throw failed.reason;
 		} finally {
 			// Persist every completed endpoint even if a startup deadline aborts one
 			// slower discovery request. The next bounded refresh can resume safely.

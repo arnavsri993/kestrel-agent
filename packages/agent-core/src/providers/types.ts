@@ -154,6 +154,10 @@ export interface DiscoveredModelCapabilities {
 export interface DiscoveredModel {
 	id: string;
 	displayName?: string;
+	/** Non-secret capability description advertised by the provider. */
+	description?: string;
+	/** Provider catalog ordering; lower values are preferred when policy scores tie. */
+	catalogPriority?: number;
 	availability?: ProviderModelAvailability;
 	source: ProviderModelDiscoverySource;
 	capabilities?: DiscoveredModelCapabilities;

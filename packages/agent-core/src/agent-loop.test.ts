@@ -309,11 +309,12 @@ describe("provider-neutral agent loop", () => {
 		database.close();
 	});
 
-	it("persists actionable failure copy when the turn budget is exhausted", async () => {
+	it("uses the last turn to answer from completed tool evidence", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);
 		const session = runtime.createSession({ title: "Turn budget" });
 		let calls = 0;
+		let executions = 0;
 		const provider: ModelProvider = {
 			id: "turn-budget",
 			capabilities: {
@@ -326,19 +327,50 @@ describe("provider-neutral agent loop", () => {
 			},
 			complete: async (request) => {
 				calls += 1;
+				if (request.tools?.length) {
+					expect(request.tools.map((tool) => tool.name)).toContain(
+						"test.read-only",
+					);
+					return {
+						providerId: "turn-budget",
+						model: request.model,
+						text: "",
+						toolCalls: [
+							{
+								id: `call-${calls}`,
+								name: "test.read-only",
+								arguments: {},
+							},
+						],
+						usage: { inputTokens: 1, outputTokens: 1 },
+						finishReason: "tool_calls",
+					};
+				}
+				expect(calls).toBe(2);
+				expect(request.tools).toEqual([]);
+				expect(
+				request.messages.some(
+					(message) =>
+						message.role === "system" &&
+						contentText(message.content).includes(
+							"Do not invent findings, verification, or tool results.",
+						),
+				),
+			).toBe(true);
+				expect(
+				request.messages.some(
+					(message) =>
+						message.role === "tool" &&
+						contentText(message.content).includes('"status":"verified"'),
+				),
+			).toBe(true);
 				return {
 					providerId: "turn-budget",
 					model: request.model,
-					text: "",
-					toolCalls: [
-						{
-							id: `call-${calls}`,
-							name: "test.read-only",
-							arguments: {},
-						},
-					],
-					usage: { inputTokens: 1, outputTokens: 1 },
-					finishReason: "tool_calls",
+					text: "The fixture read was verified. Further checks remain unchecked.",
+					toolCalls: [],
+					usage: { inputTokens: 4, outputTokens: 9 },
+					finishReason: "stop",
 				};
 			},
 		};
@@ -355,27 +387,31 @@ describe("provider-neutral agent loop", () => {
 				tags: ["test"],
 			},
 			inputSchema: { type: "object", additionalProperties: false },
-			execute: async () => ({ ok: true }),
+			execute: async () => {
+				executions += 1;
+				return { ok: true };
+			},
 			verify: async () => ({
 				method: "fixture-readback",
 				evidence: { fixture: true },
 			}),
 		});
+		runtime.allowTool(session.id, "test.read-only");
 		const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
-		await expect(
-			loop.run({
-				sessionId: session.id,
-				model: "fixture",
-				providerIds: ["turn-budget"],
-				userContent: textContent("Keep calling tools"),
-				maximumTurns: 1,
-				approvalStatus: "approved",
-			}),
-		).rejects.toThrow("Agent loop reached its maximum of 1 model turns.");
-		expect(database.getAgentRun(database.listAgentRuns(session.id)[0]!.id)).toMatchObject({
-			status: "failed",
-			error: "Agent loop reached its maximum of 1 model turns.",
+		const outcome = await loop.run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: ["turn-budget"],
+			userContent: textContent("Read the fixture and report what is verified"),
+			maximumTurns: 2,
+			approvalStatus: "approved",
 		});
+		expect(outcome.run).toMatchObject({ status: "completed", turn: 2 });
+		expect(outcome.assistantMessage?.content).toBe(
+			"The fixture read was verified. Further checks remain unchecked.",
+		);
+		expect(calls).toBe(2);
+		expect(executions).toBe(1);
 		database.close();
 	});
 
@@ -1947,7 +1983,7 @@ describe("provider-neutral agent loop", () => {
 	});
 
 	it.each(["approved", "rejected"] as const)(
-		"allows one model follow-up after a %s decision at the configured turn ceiling",
+		"allows a final model answer after a %s approval decision",
 		async (approvalDecision) => {
 			const root = mkdtempSync(
 				join(tmpdir(), `kestrel-loop-turn-ceiling-${approvalDecision}-`),
@@ -2025,12 +2061,12 @@ describe("provider-neutral agent loop", () => {
 				model: "fake",
 				providerIds: ["fake"],
 				userContent: textContent("Delete it"),
-				maximumTurns: 1,
+				maximumTurns: 2,
 			});
 			expect(waiting.run).toMatchObject({
 				status: "waiting_approval",
 				turn: 1,
-				maximumTurns: 1,
+				maximumTurns: 2,
 			});
 
 			const resumed = await loop.resume({

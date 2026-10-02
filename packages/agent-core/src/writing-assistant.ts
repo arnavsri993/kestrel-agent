@@ -441,7 +441,7 @@ export type WritingRouteResolver = (
 	prompt: string,
 	providerIds: string[],
 	role: "writer" | "reviewer",
-) => WritingAutomaticRoute;
+) => WritingAutomaticRoute | Promise<WritingAutomaticRoute>;
 
 interface WritingAssistantDependencies {
 	providerPool: ProviderPool;
@@ -812,7 +812,7 @@ export class WritingAssistant {
 		const routePrompt = `${input.prompt}\n\nReturn the structured tool response now.`;
 		const plan = input.modelOverride
 			? undefined
-			: this.deps.resolveRoute(
+			: await this.deps.resolveRoute(
 				input.taskId,
 				routePrompt,
 				input.providerIds,

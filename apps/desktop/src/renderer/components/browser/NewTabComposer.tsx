@@ -232,11 +232,11 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	}
 
 	const isExpanded = expanded || Boolean(input) || attachments.length > 0;
-	return <div className={`kestrel-home-composer${isExpanded ? " is-expanded" : ""}`} onFocus={() => setExpanded(true)}>
+	return <div className={`kestrel-home-composer kestrel-task-composer${isExpanded ? " is-expanded" : ""}`} onFocus={() => setExpanded(true)}>
 		<form onSubmit={send}>
 			<label className="sr-only" htmlFor="new-tab-chat-input">Message {agentName} or enter a URL</label>
 			<textarea ref={inputRef} id="new-tab-chat-input" rows={1} value={input} placeholder={`Ask ${agentName} or enter a URL`} onChange={(event) => setInput(event.target.value)} onPaste={(event) => void onPaste(event)} onKeyDown={(event) => {
-				if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); }
+				if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); }
 			}} />
 			{attachments.length > 0 && <div className="new-tab-composer-attachments" aria-label="Attached files">{attachments.map((attachment) => <button type="button" key={attachment.path} aria-label={`Remove ${attachment.name}`} onClick={() => { removePastedTextAttachment(attachment); setAttachments((current) => current.filter((item) => item.path !== attachment.path)); }}><Icon name="file" /><span>{attachment.name}</span><Icon name="close" /></button>)}</div>}
 			<div className="new-tab-composer-footer" inert={isExpanded ? undefined : true} aria-hidden={!isExpanded}>

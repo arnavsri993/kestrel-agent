@@ -62,6 +62,28 @@ function discovered(id: string): DiscoveredModel {
 }
 
 describe("account-aware model catalog", () => {
+	it("waits for every discovery worker to settle after cancellation", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const controller = new AbortController();
+		let release!: () => void;
+		let abortFast!: (error: Error) => void;
+		const fast = provider({ id: "fast", providerId: "fixture", accountId: "fast", displayName: "Fast", discovery: () => new Promise((_resolve, reject) => { abortFast = reject; }) });
+		const slow = provider({ id: "slow", providerId: "fixture", accountId: "slow", displayName: "Slow", discovery: async () => { await new Promise<void>(resolve => { release = resolve; }); return []; } });
+		const catalog = new ModelCatalog(database, [fast, slow]);
+		let settled = false;
+		const refresh = catalog.refresh([fast, slow], undefined, controller.signal);
+		void refresh.then(() => { settled = true; }, () => { settled = true; });
+		try {
+			controller.abort(new Error("Cancelled"));
+			abortFast(new Error("Cancelled"));
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(settled).toBe(false);
+			release();
+			await expect(refresh).rejects.toThrow("Cancelled");
+		} finally { release(); database.close(); }
+	});
+
 	it("keeps matching provider model IDs isolated by account", async () => {
 		let first: DiscoveryState = { models: [discovered("shared"), discovered("a-only")] };
 		let second: DiscoveryState = { models: [discovered("shared"), discovered("b-only")] };
@@ -103,6 +125,30 @@ describe("account-aware model catalog", () => {
 		expect(catalog.list().map((account) => [account.id, account.models.length])).toEqual([
 			["account-a", 2],
 			["account-b", 2],
+		]);
+		database.close();
+	});
+
+	it("retains a discovered catalog priority", async () => {
+		const endpoint = provider({
+			id: "codex-account",
+			providerId: "codex",
+			accountId: "account-a",
+			displayName: "Codex",
+			discovery: async () => [
+				{
+					...discovered("gpt-6-astra"),
+					catalogPriority: 2,
+				},
+			],
+		});
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const catalog = new ModelCatalog(database, [endpoint]);
+
+		await catalog.refresh([endpoint]);
+
+		expect(catalog.modelsForEndpoint(endpoint.id)).toMatchObject([
+			{ id: "gpt-6-astra", catalogPriority: 2 },
 		]);
 		database.close();
 	});
@@ -246,6 +292,21 @@ describe("account-aware model catalog", () => {
 		expect(calls).toBe(2);
 		database.close();
 	});
+
+ it("rediscovers a fresh catalog when the adapter gains tool support", async () => {
+  const database = new KestrelDatabase(":memory:", createEncryptionKey());
+  const first = provider({ id: "bridge-account", providerId: "codex", accountId: "bridge-account", displayName: "Codex", discovery: async () => [discovered("model")] });
+  const old = { ...first, capabilities: { ...first.capabilities, tools: false } };
+  const catalog = new ModelCatalog(database, [old]);
+  await catalog.refresh([old]);
+  const changed = { ...first, capabilities: { ...first.capabilities, tools: true } };
+  const reloaded = new ModelCatalog(database, [changed]);
+  expect(reloaded.list()[0]!.discovery.state).toBe("idle");
+  expect(reloaded.modelsForEndpoint(changed.id)).toEqual([]);
+  await reloaded.refreshStale([changed]);
+  expect(reloaded.list()[0]!.discovery.state).toBe("fresh");
+  database.close();
+ });
 
 	it("invalidates a stored account catalog when its connection revision changes", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());

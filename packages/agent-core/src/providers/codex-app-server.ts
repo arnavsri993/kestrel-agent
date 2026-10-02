@@ -34,6 +34,8 @@ import {
 	resolveUniqueMappedSession,
 } from "../browser-mcp-session";
 
+import { CODEX_TOOL_BRIDGE_INSTRUCTIONS, codexToolOutputSchema, parseCodexToolResponse } from "./codex-tool-bridge";
+
 const MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -88,6 +90,7 @@ interface TurnCollector {
 	threadId: string;
 	turnId?: string;
 	text: string;
+	finalText?: string;
 	usage: ModelUsage;
 	resolve(): void;
 	reject(error: Error): void;
@@ -286,17 +289,22 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	const record = object(value);
 	if (record?.hidden === true) return undefined;
 	const model =
-		typeof record?.model === "string" && record.model.trim()
+		typeof record?.slug === "string" && record.slug.trim()
+			? record.slug.trim()
+			: typeof record?.model === "string" && record.model.trim()
 			? record.model.trim()
 			: typeof record?.id === "string" && record.id.trim()
 				? record.id.trim()
 				: undefined;
 	if (!model) return undefined;
-	const reasoningEfforts: SupportedReasoningEffort[] = (Array.isArray(record?.supportedReasoningEfforts)
-		? record.supportedReasoningEfforts
+	const reasoningEfforts: SupportedReasoningEffort[] = (Array.isArray(record?.supported_reasoning_levels)
+		? record.supported_reasoning_levels
+		: Array.isArray(record?.supportedReasoningEfforts)
+			? record.supportedReasoningEfforts
 		: []
 	).flatMap((value) => {
-		const effort = object(value)?.reasoningEffort;
+		const effortRecord = object(value);
+		const effort = effortRecord?.effort ?? effortRecord?.reasoningEffort;
 		return typeof effort === "string" && REASONING_EFFORTS.has(effort as SupportedReasoningEffort)
 			? [effort as SupportedReasoningEffort]
 			: [];
@@ -305,7 +313,9 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	// image. Preserve that documented default for older Codex installations, but
 	// never infer audio, documents, video, or tool execution from a catalog row.
 	const inputModalities = new Set(
-		(Array.isArray(record?.inputModalities)
+		(Array.isArray(record?.input_modalities)
+			? record.input_modalities
+			: Array.isArray(record?.inputModalities)
 			? record.inputModalities
 			: ["text", "image"]
 		)
@@ -315,18 +325,30 @@ function modelFromCatalog(value: unknown): DiscoveredModel | undefined {
 	return {
 		id: model,
 		displayName:
-			typeof record?.displayName === "string" && record.displayName.trim()
+			typeof record?.display_name === "string" && record.display_name.trim()
+				? record.display_name.trim()
+				: typeof record?.displayName === "string" && record.displayName.trim()
 				? record.displayName.trim()
 				: model,
+		...(typeof record?.description === "string" && record.description.trim()
+			? { description: record.description.trim().slice(0, 500) }
+			: {}),
+		...(typeof record?.priority === "number" &&
+			Number.isInteger(record.priority) &&
+			record.priority >= 0
+			? { catalogPriority: record.priority }
+			: record?.isDefault === true
+				? { catalogPriority: 0 }
+			: {}),
 		availability: "available",
 		source: "protocol",
 		capabilities: {
 			// `model/list` confirms account entitlement, input modality, and each
-			// advertised reasoning level. This remains a read-only Kestrel route;
-			// image input does not grant shell, file-editing, or tool capability.
+			// advertised reasoning level. Tool requests use the structured response
+			// bridge; execution and authorization stay in Kestrel, never Codex.
 			capabilityProvenance: "confirmed",
 			streaming: true,
-			tools: false,
+			tools: true,
 			images: inputModalities.has("image"),
 			audio: false,
 			documents: false,
@@ -362,7 +384,7 @@ function textPrompt(messages: ModelMessage[]): string {
 				message.role === "tool"
 					? `Tool result${message.toolName ? ` (${message.toolName})` : ""}`
 					: message.role[0]!.toUpperCase() + message.role.slice(1);
-			const text = contentText(message.content);
+			const text = [contentText(message.content), ...(message.toolCalls?.map(call => `Kestrel tool request ${call.id}: ${call.name} ${JSON.stringify(call.arguments)}`) ?? []), ...(message.toolCallId ? [`Tool call ID: ${message.toolCallId}`] : [])].filter(Boolean).join("\n");
 			const omitted = message.content
 				.filter((part) => part.type !== "text" && part.type !== "image")
 				.map((part) => `[${part.type} content unavailable to this route]`)
@@ -584,7 +606,7 @@ export class CodexAppServerProvider {
 	readonly defaultModel: string;
 	readonly capabilities = {
 		streaming: true,
-		tools: false,
+		tools: true,
 		images: true,
 		audio: false,
 		documents: false,
@@ -736,7 +758,9 @@ export class CodexAppServerProvider {
 	): Promise<ModelResult> {
 		try {
 			await this.ensureStarted();
-			const sessionKey = request.metadata?.session_id ?? `call-${randomUUID()}`;
+			const bridged = Boolean(request.tools?.length);
+			const isolated = bridged || request.metadata?.kestrel_final_turn === "1";
+			const sessionKey = isolated ? `tool-step-${randomUUID()}` : request.metadata?.session_id ?? `call-${randomUUID()}`;
 			const workspaceRoot = request.metadata?.workspace_root;
 			const binding = await this.ensureThread(
 				sessionKey,
@@ -744,21 +768,26 @@ export class CodexAppServerProvider {
 				workspaceRoot,
 				options.signal,
 			);
-			const collector = await this.startTurn(
-				binding,
-				request,
-				workspaceRoot,
-				options,
-			);
-			return {
-				providerId: this.id,
-				model: request.model,
-				responseId: collector.turnId ?? binding.threadId,
-				text: collector.text,
-				toolCalls: [],
-				usage: collector.usage,
-				finishReason: "stop",
-			};
+			try {
+				const collector = await this.startTurn(binding, request, workspaceRoot, options);
+				const output = bridged
+					? parseCodexToolResponse(collector.finalText ?? collector.text, request.tools!)
+					: { text: collector.text, toolCalls: [] };
+				if (bridged && output.text) options.onEvent?.({ type: "text_delta", delta: output.text });
+				return {
+					providerId: this.id, model: request.model,
+					responseId: collector.turnId ?? binding.threadId,
+					...output, usage: collector.usage,
+					finishReason: output.toolCalls.length ? "tool_calls" : "stop",
+				};
+			} finally {
+				if (isolated) {
+					this.threads.delete(sessionKey);
+					// Each tool step receives only the current authorized Kestrel transcript.
+					// Never retain a provider conversation after source revocation or rollback.
+					void this.request("thread/archive", { threadId: binding.threadId }).catch(() => undefined);
+				}
+			}
 		} catch (error) {
 			if (options.signal?.aborted) throw error;
 			const message =
@@ -969,6 +998,11 @@ export class CodexAppServerProvider {
 			collector.text += params.delta;
 			return;
 		}
+		if (method === "item/completed") {
+			const item = object(params.item);
+			if (item?.type === "agentMessage" && typeof item.text === "string" && item.phase !== "commentary")
+				collector.finalText = item.text;
+		}
 		if (method === "thread/tokenUsage/updated") {
 			collector.usage = usageFrom(params.tokenUsage);
 			return;
@@ -1129,8 +1163,8 @@ export class CodexAppServerProvider {
 					approvalPolicy: "never",
 					sandbox: "read-only",
 					cwd: workspaceRoot ?? this.scratchRoot!,
-					ephemeral: false,
-					baseInstructions: this.browserMcp
+					ephemeral: Boolean(request.tools?.length) || request.metadata?.kestrel_final_turn === "1",
+					baseInstructions: request.metadata?.kestrel_final_turn === "1" ? READ_ONLY_INSTRUCTIONS : request.tools?.length ? CODEX_TOOL_BRIDGE_INSTRUCTIONS : this.browserMcp
 						? BROWSER_MCP_INSTRUCTIONS
 						: READ_ONLY_INSTRUCTIONS,
 				},
@@ -1174,7 +1208,7 @@ export class CodexAppServerProvider {
 		this.collectors.set(threadId, collector);
 		let streamed = 0;
 		const progress = setInterval(() => {
-			if (collector.text.length > streamed) {
+			if (!request.tools?.length && collector.text.length > streamed) {
 				options.onEvent?.({
 					type: "text_delta",
 					delta: collector.text.slice(streamed),
@@ -1206,7 +1240,11 @@ export class CodexAppServerProvider {
 					"turn/start",
 					{
 						threadId,
-						input: await turnInput(request.messages, binding.turns === 0),
+						input: await turnInput(request.tools?.length ? [
+							{ role: "system", content: [{ type: "text", text: `${CODEX_TOOL_BRIDGE_INSTRUCTIONS}\nCurrent Kestrel tools:\n${JSON.stringify(request.tools)}` }] },
+							...request.messages,
+						] : request.messages, binding.turns === 0),
+						...(request.tools?.length ? { outputSchema: codexToolOutputSchema(request.tools) } : {}),
 						model: request.model,
 						approvalPolicy: "never",
 						sandboxPolicy: { type: "readOnly", networkAccess: false },
@@ -1224,7 +1262,7 @@ export class CodexAppServerProvider {
 			collector.turnId = turn.id;
 			await completed;
 			binding.turns += 1;
-			if (collector.text.length > streamed) {
+			if (!request.tools?.length && collector.text.length > streamed) {
 				options.onEvent?.({
 					type: "text_delta",
 					delta: collector.text.slice(streamed),
