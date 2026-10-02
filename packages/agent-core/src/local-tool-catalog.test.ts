@@ -3,6 +3,7 @@ import { createEncryptionKey } from "@kestrel/encryption";
 import { describe, expect, it } from "vitest";
 import { AgentLoop } from "./agent-loop";
 import { localToolCatalog } from "./local-tool-catalog";
+import { UNEXECUTED_LOCAL_PLAN_ERROR } from "./agent-run-completion";
 import { AgentRuntime } from "./runtime";
 import { ProviderPool, textContent, type ModelMessage, type ModelProvider, type ModelTool } from "./providers";
 
@@ -10,6 +11,40 @@ const tools: ModelTool[] = ["tools.search", "browser.open-tab", ...Array.from({ 
 const discovery = (status: string, active: unknown[]): ModelMessage => ({ role: "tool", toolName: "tools.search", content: textContent(JSON.stringify({ status, output: { active } })) });
 
 describe("local progressive tool catalog", () => {
+	it.each(["continue", "plan-only", "repeated-plan", "final-turn", "nonlocal"])("bounds an unfinished local execution plan: %s", async mode => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		try {
+			const runtime = new AgentRuntime(database);
+			const session = runtime.createSession({ title: "Local plan continuation" });
+			let executed = 0;
+			for (const name of tools.slice(1).map(tool => tool.name)) {
+				runtime.registerExternalTool({ descriptor: { name, title: name, description: "Read a fixture", category: "web", riskLevel: "read_only", readOnly: true, requiresWorkspace: false, source: "mcp", tags: [] }, inputSchema: { type: "object" }, execute: async () => { executed++; return { observed: "fixture-result" }; } });
+				runtime.allowTool(session.id, name);
+			}
+			let calls = 0;
+			const provider: ModelProvider = {
+				id: "plan-fixture", capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: mode !== "nonlocal" },
+				complete: async request => {
+					calls++;
+					if (calls === 2) {
+						const context = request.messages.map(message => message.content).flat().filter(part => part.type === "text").map(part => part.text).join("\n");
+						expect(context).toContain("Only call a tool if the user asked you to perform that work");
+						expect(request.tools?.map(tool => tool.name)).toEqual(["tools.search", "browser.open-tab"]);
+					}
+					return { providerId: "plan-fixture", model: request.model, text: mode === "plan-only" && calls === 2 ? "Here is the requested plan. No execution was requested." : calls === 3 ? "Fixture page read." : "Plan: read the fixture page.\nLet's execute:", toolCalls: mode === "continue" && calls === 2 ? [{ id: "read", name: "browser.open-tab", arguments: {} }] : [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: calls === 2 && mode === "continue" ? "tool_calls" : "stop" };
+				},
+			};
+			const scope = tools.map(tool => tool.name);
+			const result = await new AgentLoop(database, runtime, new ProviderPool([provider])).run({ sessionId: session.id, model: "fixture", providerIds: [provider.id], allowedTools: scope, maximumTurns: mode === "final-turn" ? 1 : 4, userContent: textContent(mode === "plan-only" ? "Give me a plan only. Do not execute it." : "Read the fixture page once.") });
+			expect(result.run.toolScope).toEqual(scope);
+			expect(calls).toBe(mode === "continue" ? 3 : ["repeated-plan", "plan-only"].includes(mode) ? 2 : 1);
+			expect(executed).toBe(mode === "continue" ? 1 : 0);
+			if (["repeated-plan", "final-turn"].includes(mode)) {
+				expect(result.run).toMatchObject({ status: "failed", error: UNEXECUTED_LOCAL_PLAN_ERROR });
+				expect(result.assistantMessage?.content).toBe(UNEXECUTED_LOCAL_PLAN_ERROR);
+			} else expect(result.run.status).toBe("completed");
+		} finally { database.close(); }
+	});
 	it("keeps scoped catalogs intact and requires authorized discovery", () => {
 		expect(localToolCatalog(tools.slice(0, 10), [])).toBeUndefined();
 		expect(localToolCatalog(tools.filter(tool => tool.name !== "tools.search"), [])).toBeUndefined();

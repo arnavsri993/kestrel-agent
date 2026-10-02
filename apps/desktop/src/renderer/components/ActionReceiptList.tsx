@@ -27,7 +27,7 @@ export function ActionReceiptList({
 			<summary>
 				<span>Action receipts</span>
 				<small>
-					{receipts.length} consequential action
+					{receipts.length} receipt
 					{receipts.length === 1 ? "" : "s"}
 				</small>
 			</summary>

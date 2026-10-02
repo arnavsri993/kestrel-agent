@@ -32,7 +32,7 @@ import {
 	recordBrowserRecoveryToolSuccess,
 	type BrowserRecoveryBudgetState,
 } from "./browser-recovery";
-import { prematureBrowserCompletionErrorForRun, UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR } from "./agent-run-completion";
+import { isUnexecutedLocalPlan, prematureBrowserCompletionErrorForRun, UNEXECUTED_LOCAL_PLAN_ERROR, UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR } from "./agent-run-completion";
 import { buildActionReceipt } from "./action-receipts";
 import type { AgentRuntime } from "./runtime";
 import { modelVisibleToolResult, redactSensitiveValue } from "./tool-result-guardrails";
@@ -1403,12 +1403,16 @@ export class AgentLoop {
 					}
 				}
 
-				const completionError = result.toolCalls.length === 0
+				const unfinishedPlan = explicitLocalRoute && tools.length > 0 &&
+					result.toolCalls.length === 0 && isUnexecutedLocalPlan(result.text);
+				const continuePlan = unfinishedPlan && turn === 1 && !finalTurn;
+				const completionError = unfinishedPlan && !continuePlan
+					? UNEXECUTED_LOCAL_PLAN_ERROR : result.toolCalls.length === 0
 					? prematureBrowserCompletionErrorForRun(this.database, {
 						runId: run.id, sessionId: session.id, modelText: result.text, browserRecoveryState,
 					}) : undefined;
 				const assistantContent =
-					(completionError === UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR ? completionError : result.text.trim()) ||
+					(completionError === UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR || completionError === UNEXECUTED_LOCAL_PLAN_ERROR ? completionError : result.text.trim()) ||
 					`Requested tools: ${result.toolCalls.map((call) => call.name).join(", ")}`;
 				const assistantMessage = this.runtime.appendMessage({
 					sessionId: session.id,
@@ -1451,6 +1455,12 @@ export class AgentLoop {
 
 				if (result.toolCalls.length === 0) {
 					if (consumeSteering() > 0) continue;
+					if (continuePlan) {
+						modelMessages.push({ role: "system", content: textContent(
+							"Your preceding answer ended with an unfinished execution plan and no tool was called. Continue the same request once, within its existing tool scope and approval policy. Only call a tool if the user asked you to perform that work. If they asked only for a plan or explanation, give that final answer without executing it. If work is blocked, explain the limitation. Do not present planned work as completed.",
+						) });
+						continue;
+					}
 					const prematureCompletion = completionError;
 					run = {
 						...run,

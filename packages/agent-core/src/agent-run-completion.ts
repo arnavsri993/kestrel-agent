@@ -11,6 +11,14 @@ export const OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR =
 export const UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR =
 	"Kestrel could not verify the claimed browser click. No successful click was recorded in this run. Review the browser steps, then retry or send a follow-up.";
 
+export const UNEXECUTED_LOCAL_PLAN_ERROR =
+	"Kestrel returned an unfinished plan instead of carrying out its next step. No completion was verified. Retry or send a follow-up.";
+
+export function isUnexecutedLocalPlan(text: string): boolean {
+	const lastLine = text.trim().split("\n").at(-1)?.trim() ?? "";
+	return /^let['’]s (?:execute|begin|proceed|do it)[.!:]?$/i.test(lastLine);
+}
+
 function claimsExecutedClick(text: string): boolean {
 	let fenced = false;
 	const prose = text.split("\n").filter(line => {

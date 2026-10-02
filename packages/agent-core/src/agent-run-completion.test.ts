@@ -5,6 +5,7 @@ import {
 	OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR,
 	PREMATURE_BROWSER_COMPLETION_ERROR,
 	UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR,
+	isUnexecutedLocalPlan,
 	prematureBrowserCompletionError,
 } from "./agent-run-completion";
 
@@ -24,6 +25,12 @@ function execution(
 }
 
 describe("prematureBrowserCompletionError", () => {
+	it.each(["Let's execute:", "Let’s execute:", "Plan:\nLet's begin."])("recognizes a terminal unfinished execution plan: %s", text => {
+		expect(isUnexecutedLocalPlan(text)).toBe(true);
+	});
+	it.each(["Here is the requested plan.", "> Let's execute:", "Let's execute the following code in your own terminal."])("does not reinterpret final explanations or quoted plans: %s", text => {
+		expect(isUnexecutedLocalPlan(text)).toBe(false);
+	});
 	it.each([
 		"The verification button click was executed.",
 		"I clicked the Show verification button.",

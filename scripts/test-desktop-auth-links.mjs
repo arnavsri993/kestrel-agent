@@ -91,6 +91,12 @@ try {
   await page.evaluate(() => { localStorage.setItem('kestrel:onboarded', 'yes'); localStorage.setItem('kestrel:default-browser-prompted', 'yes'); });
   await page.reload();
   await page.waitForFunction(() => !!window.kestrel);
+  // Native gesture assertions need the page visible, including on compact CI
+  // displays where open Chat deliberately protects and hides the browser.
+  const chatToggle = page.locator('#browser-agent-toggle');
+  await chatToggle.waitFor();
+  if (await chatToggle.getAttribute('aria-expanded') === 'true')
+    await page.locator('.agent-sidebar-collapse').click();
   const state = async () => (await page.evaluate(() => window.kestrel.request({type: 'browser-get-state'}))).browserState;
   // Trust only this ephemeral certificate at the two loopback fixture origins.
   // Do not disable certificate checks for the browser or other origins.
@@ -148,7 +154,13 @@ try {
     } finally { wc.debugger.detach(); }
   }, {url:`${origin}/one`,point});
   await until(() => run(`window.fixtureResult === 'iframe-popup-complete'`), 'Provider iframe popup lost callback');
-  await until(async () => (await state()).activeTabId === tabId, 'Provider iframe popup did not restore its opener');
+  try {
+    await until(async () => (await state()).activeTabId === tabId, 'Provider iframe popup did not restore its opener');
+  } catch (error) {
+    const current = await state();
+    console.error('Disposable iframe popup state:', JSON.stringify({expectedOpener: tabId, activeTabId: current.activeTabId, tabs: current.tabs.map(({id, url, title, loading}) => ({id, url, title, loading}))}));
+    throw error;
+  }
   for (const target of ['_blank','fixture-post']) {
     await navigate(); requests.length = 0;
     await run(`document.querySelector('form').target = ${JSON.stringify(target)}; document.querySelector('form').requestSubmit()`);
