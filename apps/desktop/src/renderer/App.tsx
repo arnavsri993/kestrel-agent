@@ -6202,12 +6202,6 @@ function Work({
 			.reverse()
 			.find((item) => item.status === "planned" || item.status === "running") ??
 		routingTraces.at(-1);
-	const routedProgress =
-		routedTask?.status === "planned"
-			? 12
-			: routedTask?.status === "running"
-				? 58
-				: 100;
 
 	return (
 		<PageFrame title="Work" text="Keep goals, scheduled work, and delegated tasks in order." measure="wide" className="work-workspace">
@@ -6489,11 +6483,6 @@ function Work({
 							· {routedTask.status.replaceAll("_", " ")}
 						</span>
 					</div>
-					<progress
-						value={routedProgress}
-						max="100"
-						aria-label={`Approximate progress: ${routedProgress}%`}
-					/>
 					{(routedTask.escalationCount > 0 ||
 						routedTask.status === "failed" ||
 						routedTask.status === "cancelled") && (

@@ -215,7 +215,7 @@ try {
     await assertDenied(() => run(`document.querySelector('#handoff').click()`), 'Default-policy popup without native input must be denied');
     const defaultBefore = await counts();
     await nativeClick(`${origin}/one`);
-    await until(async () => (await counts()).links === defaultBefore.links + 1, 'Native default-policy main-frame popup handoff failed');
+    await until(async () => (await counts()).links === defaultBefore.links + 1, `Native default-policy main-frame popup handoff failed for ${url}`);
     assert.equal(await run('window.fixtureTrustedClick'), true, 'Default-policy handoff must receive a trusted native click');
     assert.equal((await counts()).prompts, defaultBefore.prompts + 1, 'Default-policy handoff requires explicit fixture consent');
     assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [url]);

@@ -28,6 +28,7 @@ This branch combines the frozen latest open pull-request heads on main `3e932358
 ## Usability changes
 
 - Agents opens as a searchable list with names, status, settings, and delegated tasks; Map remains optional.
+- Work reports the runtime's task state without deriving percentage completion from a status label.
 - Compact Chat uses one readable workspace with Close, Escape, focus restoration, and a protected background. Navigation reveals the destination.
 - Memory follows available container width and gives viewer/domain controls stable accessible names.
 - Address-bar edits survive refocusing, and Command Center only consumes Escape inside its own surface. Action menus use an opaque material so underlying page text cannot compete with their commands.

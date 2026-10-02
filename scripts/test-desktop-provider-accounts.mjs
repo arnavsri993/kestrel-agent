@@ -135,6 +135,9 @@ try {
 	);
 
 	await openKestrelDestination(page, "Work");
+	await page.getByRole("group", { name: "Work sections" }).getByRole("button", { name: "Schedules", exact: true }).click();
+	const chatToggle = page.locator("#browser-agent-toggle");
+	if (await chatToggle.getAttribute("aria-expanded") === "true") await chatToggle.click();
 	await page.getByText("Override automatic routing", { exact: true }).waitFor();
 	const override = page.locator(".work-routing-override");
 	await override.locator("summary").click();
