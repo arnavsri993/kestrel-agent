@@ -38,7 +38,7 @@ import {
 	KestrelDatabase,
 	PROTECTED_DATABASE_ERROR_CODE,
 } from "@kestrel/database";
-import { CoreRequestSchema, type ComputerUseRequest, type ComputerUseResponse } from "@kestrel/shared-types";
+import { CoreRequestSchema, embeddedBuildIdentity, type ComputerUseRequest, type ComputerUseResponse } from "@kestrel/shared-types";
 import type { CoreParentPort } from "./transport";
 
 export function startCoreService(port: CoreParentPort): void {
@@ -428,13 +428,14 @@ export function startCoreService(port: CoreParentPort): void {
 					port.postMessage({ type: "runtime-event", event }),
 				);
 				automationTimer = setInterval(() => {
-					if (!core || automationRunning) return;
+					if (!core || automationRunning || core.isPaused) return;
 					automationRunning = true;
 					const controller = new AbortController();
 					automationController = controller;
 					const checkedAt = new Date();
 					const task = Promise.resolve()
 						.then(async () => {
+							if (!core || core.isPaused || controller.signal.aborted) return [];
 							await core!.runAmbientMaintenance(checkedAt);
 							return core!.orchestrator.runDue(checkedAt, controller.signal);
 						})
@@ -474,7 +475,7 @@ export function startCoreService(port: CoreParentPort): void {
 					void task;
 				}, 30_000);
 				automationTimer.unref();
-				port.postMessage({ type: "ready" });
+				port.postMessage({ type: "ready", buildIdentity: embeddedBuildIdentity() });
 			} catch (error) {
 				await browserMcp?.stop();
 				browserMcp = undefined;

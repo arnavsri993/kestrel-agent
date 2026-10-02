@@ -1121,6 +1121,28 @@ describe("model provider adapters", () => {
 		expect(calls).toEqual([]);
 	});
 
+	it("retains tools on account fallback and never calls text-only endpoints for an agent", async () => {
+		const calls: string[] = [];
+		const endpoint = (id: string, tools: boolean): ModelProvider => ({
+			id, poolId: "codex", defaultModel: "advertised-model",
+			capabilities: { streaming: false, tools, images: false, audio: false, documents: false, local: false },
+			complete: async (request) => {
+				calls.push(id);
+				expect(request.tools).toHaveLength(1);
+				expect(request.reasoningEffort).toBe("high");
+				if (id === "limited-account") throw new ModelProviderError("rate limit", id, true, 429);
+				return { providerId: id, model: request.model, text: "ok", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" };
+			},
+		});
+		const pool = new ProviderPool([endpoint("limited-account", true), endpoint("text-account", false), endpoint("healthy-account", true)]);
+		const request = { model: "advertised-model", reasoningEffort: "high" as const, messages: [{ role: "user" as const, content: textContent("Read scoped source") }], tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }] };
+		const result = await pool.complete(request, { providerIds: ["limited-account", "text-account", "healthy-account"], requireTools: true });
+		expect(result.result.providerId).toBe("healthy-account");
+		expect(calls).toEqual(["limited-account", "healthy-account"]);
+		expect(result.attempts.find(attempt => attempt.providerId === "text-account")?.error).toContain("text-only");
+		await expect(new ProviderPool([endpoint("text-account", false)]).complete(request, { providerIds: ["text-account"], requireTools: true })).rejects.toThrow();
+	});
+
 	it("gives an exact account endpoint precedence over a matching provider alias", async () => {
 		const calls: string[] = [];
 		const provider = (id: string, poolId?: string): ModelProvider => ({

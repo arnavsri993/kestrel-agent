@@ -332,6 +332,13 @@ export class AgentCore {
 			: seedDevelopmentFixtures
 				? "waiting_approval"
 				: "idle";
+		// Keep the user's background pause separate from transient task state.
+		// Older profiles persisted the request only as agentState.
+		if (
+			deps.database.getState<unknown>("agent.pauseRequested") === undefined &&
+			this.state === "paused"
+		)
+			deps.database.setState("agent.pauseRequested", true);
 		const storedPersonalities =
 			deps.database.getPrivateState<Array<Omit<AgentPersonality, "builtin">>>(
 				this.customPersonalitiesKey,
@@ -768,7 +775,7 @@ export class AgentCore {
 		const workspaceRoots = this.deps.workspaceRoots ?? [];
 		return WorkspaceSnapshotSchema.parse({
 			productName: PRODUCT_IDENTITY.productName,
-			agentState: this.state,
+			agentState: this.isPaused ? "paused" : this.state,
 			autonomyLevel: "assistant",
 			opportunity: this.opportunity,
 			approvals: this.deps.database.listApprovals(),
@@ -1951,7 +1958,13 @@ export class AgentCore {
 		return "I found incomplete device context. I can inspect the exact phone, OS, controller, symptoms, and prior attempts before ranking the next safe test.";
 	}
 
+	get isPaused(): boolean {
+		const requested = this.deps.database.getState<unknown>("agent.pauseRequested");
+		return typeof requested === "boolean" ? requested : this.state === "paused";
+	}
+
 	setPaused(paused: boolean): WorkspaceSnapshot {
+		this.deps.database.setState("agent.pauseRequested", paused);
 		this.state = paused
 			? "paused"
 			: this.deps.database
@@ -4544,6 +4557,7 @@ export class AgentCore {
 	}
 
 	async close(): Promise<void> {
+		this.orchestrator.shutdown();
 		if (this.memoryConsolidationTimer) clearInterval(this.memoryConsolidationTimer);
 		await this.memoryConsolidationWork;
         for (const controller of this.sourceReviews.values()) controller.abort(new Error("Agent Core is shutting down."));
@@ -4554,6 +4568,7 @@ export class AgentCore {
 		await this.honchoMemory.flush();
 		await this.observability.shutdown();
 		await this.providerPool.close();
+		await this.orchestrator.drain();
 		await this.memorySubstrate.close();
 		this.runtime.close();
 		this.deps.database.close();

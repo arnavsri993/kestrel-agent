@@ -4,6 +4,7 @@ import { MemoryRecoveryPreviewSchema } from "./memory-recovery";
 import { ResourceScopeSchema } from "./resource-access";
 import { AgentTemplateSchema, SpecialistDefinitionSchema } from "./agent-templates";
 import { z } from "zod";
+import { BuildIdentitySchema, type DesktopBuildProvenance } from "./build-provenance";
 import {
 	CommunicationCodeScanSchema,
 	CommunicationCodeMatchSchema,
@@ -451,6 +452,7 @@ export type ExecutionModel = z.infer<typeof ExecutionModelSchema>;
 
 export const ReasoningEffortSchema = z.enum([
 	"none",
+	"minimal",
 	"low",
 	"medium",
 	"high",
@@ -2126,7 +2128,7 @@ export const ProviderAccountModelCapabilitiesSchema = z.object({
 	documents: z.boolean(),
 	video: z.boolean(),
 	structuredOutput: z.boolean(),
-	reasoningEfforts: z.array(ReasoningEffortSchema).max(7),
+	reasoningEfforts: z.array(ReasoningEffortSchema).max(8),
 	contextWindow: z.number().int().positive().optional(),
 	maxOutputTokens: z.number().int().positive().optional(),
 });
@@ -5458,6 +5460,10 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({ type: z.literal("local-runtime-cancel") }),
 	z.object({ type: z.literal("system-readiness") }),
+	z.object({ type: z.literal("build-provenance"),
+    rendererBuild: BuildIdentitySchema.nullable(),
+    preloadBuild: BuildIdentitySchema.nullable().optional(),
+  }),
 	z.object({ type: z.literal("export-diagnostic-report") }),
 	z.object({ type: z.literal("create-local-backup") }),
 	z.object({ type: z.literal("reveal-local-backup"), path: z.string().min(1) }),
@@ -5760,6 +5766,7 @@ export type GoogleWorkspaceOAuthStatus = z.infer<
 >;
 
 export type RendererResponse =
+ | { ok: true; buildProvenance: DesktopBuildProvenance }
  | { ok: true; whatsapp: { state: string; reason?: string; name?: string; resourceId?: string } }
 	| CoreResponse
 	| {

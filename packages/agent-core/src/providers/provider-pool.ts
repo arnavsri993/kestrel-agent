@@ -180,8 +180,8 @@ export class ProviderPool {
 	}
 
 	/**
-	 * Mark a provider temporarily unavailable for automatic routing. Manual
-	 * selections still pass through `candidates(..., automatic=false)`.
+	 * Mark a provider temporarily unavailable to routing. Explicit selections
+	 * receive a failed attempt explaining the cooldown without calling it.
 	 */
 	markUnavailable(
 		providerId: string,
@@ -522,9 +522,10 @@ export class ProviderPool {
 				startedAt: timestamp,
 				completedAt: timestamp,
 				status: "failed",
-				error: options.requireTools && !provider.capabilities.tools
-					? "This agent needs a provider with Kestrel tool support. Select a tool-capable provider in Settings; this provider is text-only."
-					: "Provider capabilities do not support this request.",
+				error:
+					options.requireTools && !provider.capabilities.tools
+						? "This agent needs a provider with Kestrel tool support. Select a tool-capable provider in Settings; this provider is text-only."
+						: "Provider capabilities do not support this request.",
 			});
 		}
 		for (const provider of selected.filter(
@@ -546,8 +547,21 @@ export class ProviderPool {
 			if (options.signal?.aborted) throw options.signal.reason;
 			const provider = candidates[index]!;
 			const providerId = provider.id;
-			if ((this.unhealthyUntil.get(providerId) ?? 0) > this.now().getTime())
+			const unavailableUntil = this.unhealthyUntil.get(providerId);
+			if (unavailableUntil !== undefined && unavailableUntil > this.now().getTime()) {
+				if (!automatic && options.providerIds !== undefined) {
+					const timestamp = this.now().toISOString();
+					const reason = this.unhealthyReason.get(providerId) ?? "unknown";
+					attempts.push({
+						providerId,
+						startedAt: timestamp,
+						completedAt: timestamp,
+						status: "failed",
+						error: `Provider temporarily unavailable (${reason}) until ${new Date(unavailableUntil).toISOString()}.`,
+					});
+				}
 				continue;
+			}
 			const model =
 				options.providerModels?.[providerId] ??
 				(provider.poolId
@@ -593,6 +607,9 @@ export class ProviderPool {
 				const result = await this.withActiveRequest(providerId, () =>
 					provider.complete(providerRequest, options),
 				);
+				// An adapter may settle after cancellation despite receiving the signal.
+				// Do not publish that result, mark success, or attempt another account.
+				options.signal?.throwIfAborted();
 				this.recordQuota(providerId, result.quota, true);
 				attempts.push({
 					providerId,

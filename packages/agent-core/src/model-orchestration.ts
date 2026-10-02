@@ -546,7 +546,8 @@ function baselineCapabilities(
 			? 0.68
 			: 0.48;
 	scores.tool_use =
-		(provider.capabilities.tools && (!useModelCapabilities || model?.capabilities.tools))
+		(provider.capabilities.tools &&
+		(!useModelCapabilities || model?.capabilities.tools))
 			? 0.75
 			: 0;
 	scores.image_understanding =
@@ -672,7 +673,8 @@ function profileFromProvider(
 				: {}),
 		},
 		features: {
-			tools: provider.capabilities.tools &&
+			tools:
+				provider.capabilities.tools &&
 				(!useModelCapabilities || (model?.capabilities.tools ?? false)),
 			vision: useModelCapabilities
 				? (model?.capabilities.vision ?? false)
@@ -1482,7 +1484,9 @@ export class AdaptiveModelRouter {
 		if (candidates.length === 0)
 			throw new Error(
 				"No configured model satisfies the task features, context, provider policy, and privacy constraints." +
-					(requirements.requiresTools ? " This task needs Kestrel tool support. Select an available tool-capable provider in Settings; text-only routes cannot execute agent work." : ""),
+					(requirements.requiresTools
+						? " This task needs Kestrel tool support. Select an available tool-capable provider in Settings; text-only routes cannot execute agent work."
+						: ""),
 			);
 		const availableScored = candidates
 			.map((profile) => this.score(profile, requirements, policy, options))
@@ -2048,6 +2052,7 @@ export class AdaptiveModelRouter {
 		if (escalationReason) {
 			const escalationLadder: Record<ReasoningEffort, ReasoningEffort> = {
 				none: "low",
+				minimal: "low",
 				low: "medium",
 				medium: "high",
 				high: "xhigh",

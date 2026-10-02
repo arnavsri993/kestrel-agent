@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { installExternalAppBridge, EXTERNAL_APP_READY_CHANNEL } from "./user-browser-external-app";
 import {
 	installUserBrowserActivityInstrumentation,
 	USER_BROWSER_ACTIVITY_CHANNEL,
@@ -7,7 +8,7 @@ import {
 } from "./user-browser-activity";
 
 // This preload runs in Electron's isolated world. It intentionally exposes no
-// API to the page: password values arrive from the main process, are applied to
+// privileged API to the page: password values arrive from the main process, are applied to
 // DOM controls here, and only a non-secret completion result returns over IPC.
 const PASSWORD_SUBMISSION_CHANNEL = "kestrel:user-browser-password-submission";
 const PASSWORD_COMMAND_CHANNEL = "kestrel:user-browser-credential-command";
@@ -17,6 +18,13 @@ const MAX_PASSWORD_LENGTH = 4_096;
 const HEIC_UPLOAD_CHANNEL = "kestrel:user-browser-heic-upload";
 const HEIC_UPLOAD_FAILED_CHANNEL = "kestrel:user-browser-heic-upload-failed";
 const HEIC_UPLOAD_INPUT_ID_ATTRIBUTE = "data-kestrel-heic-upload-id";
+
+installExternalAppBridge({
+	isMainFrame: process.isMainFrame,
+	send: (channel, value) => ipcRenderer.send(channel, value),
+	onReady: (listener) => ipcRenderer.on(EXTERNAL_APP_READY_CHANNEL, (_event, value: unknown) => listener(value)),
+	execute: (func, args) => { contextBridge.executeInMainWorld({ func, args }); },
+});
 
 function activitySnapshot(value: unknown): UserBrowserActivity | undefined {
 	if (!value || typeof value !== "object") return;

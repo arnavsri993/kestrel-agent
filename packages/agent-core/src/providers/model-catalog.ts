@@ -366,7 +366,8 @@ export class ModelCatalog {
    // supported tool bridge must not retain a fresh text-only model catalog).
 			const reusableEndpoint =
 				storedEndpoint?.configurationVersion === identity.configurationVersion &&
-    JSON.stringify(storedEndpoint?.capabilities) === JSON.stringify(identity.capabilities)
+				JSON.stringify(storedEndpoint?.capabilities) ===
+					JSON.stringify(identity.capabilities)
 					? storedEndpoint
 					: undefined;
 			// A fallback is only authoritative when the adapter has no supported

@@ -102,6 +102,8 @@ export function WritingStudio() {
       ...(accountId ? { accountId } : {}),
       model: localStorage.getItem("kestrel:model") ?? "auto",
       reasoningEffort:
+        storedReasoningEffort === "minimal" ||
+        storedReasoningEffort === "ultra" ||
         storedReasoningEffort === "low" ||
         storedReasoningEffort === "medium" ||
         storedReasoningEffort === "high" ||

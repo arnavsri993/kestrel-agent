@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	AgentLoop,
 	LOCAL_FIRST_TOOL_INSTRUCTIONS,
@@ -79,6 +79,24 @@ describe("provider-neutral agent loop", () => {
 				.some((message) => message.content.includes("BROWSER-ONLY-CONTEXT")),
 		).toBe(false);
 		database.close();
+	});
+
+	it("rejects a text-only endpoint for persistent tool execution", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Persistent tool requirement", kind: "agent" });
+		runtime.registerExternalTool({ descriptor: { name: "test.read", title: "Read fixture", description: "Read a harmless fixture", category: "web", riskLevel: "read_only", readOnly: true, requiresWorkspace: false, source: "mcp", tags: [] }, inputSchema: { type: "object" }, execute: async () => ({ value: "ok" }) });
+		runtime.allowTool(session.id, "test.read");
+		let called = false;
+		const provider: ModelProvider = {
+			id: "text-only", capabilities: { streaming: false, tools: false, images: false, audio: false, documents: false, local: true },
+			complete: async request => { called = true; return { providerId: "text-only", model: request.model, text: "claimed result", toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, finishReason: "stop" }; },
+		};
+		try {
+			await expect(new AgentLoop(database, runtime, new ProviderPool([provider])).run({ sessionId: session.id, model: "fixture", providerIds: [provider.id], allowedTools: ["test.read"], userContent: textContent("Inspect the fixture") })).rejects.toThrow();
+			expect(called).toBe(false);
+			expect(database.listToolExecutions(session.id)).toEqual([]);
+		} finally { database.close(); }
 	});
 
 	it("redacts sensitive tool output before it enters model context or history", async () => {
@@ -1019,6 +1037,139 @@ describe("provider-neutral agent loop", () => {
 		expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
 		database.close();
 	});
+
+	it.each([
+		{ failure: "failed execution", approvalMode: "session" },
+		{ failure: "failed execution", approvalMode: "always" },
+		{ failure: "stale private input", approvalMode: "session" },
+		{ failure: "stale private input", approvalMode: "always" },
+	] as const)(
+		"retires a resolved $approvalMode approval after $failure without replaying its mutation",
+		async ({ failure, approvalMode }) => {
+			const database = new KestrelDatabase(":memory:", createEncryptionKey());
+			const runtime = new AgentRuntime(database);
+			const session = runtime.createSession({ title: "Failed approval resolution" });
+			let toolCalls = 0;
+			let modelCalls = 0;
+			runtime.registerExternalTool({
+				descriptor: {
+					name: "test.approval-fails",
+					title: "Failing approval fixture",
+					description: "A synthetic mutation whose approved execution fails.",
+					category: "connector",
+					riskLevel: "sensitive",
+					readOnly: false,
+					requiresWorkspace: false,
+					source: "plugin",
+					...(approvalMode === "always" ? { approvalMode: "always" as const } : {}),
+					tags: ["test", "approval"],
+				},
+				inputSchema: { type: "object", additionalProperties: false },
+				execute: async () => {
+					toolCalls += 1;
+					throw new Error("Synthetic approved tool failure.");
+				},
+			});
+			runtime.allowTool(session.id, "test.approval-fails");
+			const provider: ModelProvider = {
+				id: "approval-failure",
+				capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: true },
+				complete: async request => {
+					modelCalls += 1;
+					return modelCalls === 1
+						? { providerId: "approval-failure", model: request.model, text: "Approve the synthetic action.",
+							toolCalls: [{ id: "call-failure", name: "test.approval-fails", arguments: {} }],
+							usage: { inputTokens: 2, outputTokens: 2 }, finishReason: "tool_calls" }
+						: { providerId: "approval-failure", model: request.model, text: "A fresh task is usable.",
+							toolCalls: [], usage: { inputTokens: 2, outputTokens: 2 }, finishReason: "stop" };
+				},
+			};
+			const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
+			const waiting = await loop.run({ sessionId: session.id, model: "fixture", providerIds: [provider.id],
+				userContent: textContent("Request one synthetic action") });
+			expect(waiting.run.status).toBe("waiting_approval");
+			const pendingId = waiting.pendingExecution!.id;
+			const sibling = { ...waiting.run, id: "run-unrelated-sibling", status: "waiting_approval" as const,
+				pendingToolExecutionId: "tool-unrelated-sibling" };
+			database.saveAgentRun(sibling);
+			database.saveToolExecution({ ...waiting.pendingExecution!, id: "tool-unrelated-sibling" });
+			if (failure === "stale private input")
+				vi.spyOn(runtime, "approvalInput").mockImplementationOnce(() => { throw new Error("Synthetic private input expired."); });
+			await expect(loop.resume({ runId: waiting.run.id, approvalDecision: "invalid" as "approved" })).rejects.toThrow("explicit approval decision");
+			expect(database.getAgentRun(waiting.run.id)?.status).toBe("waiting_approval");
+			await expect(loop.resume({ runId: waiting.run.id, approvalDecision: "approved" })).rejects.toThrow(
+				failure === "failed execution" ? "Synthetic approved tool failure" : "Synthetic private input expired",
+			);
+			expect(database.getAgentRun(waiting.run.id)).toMatchObject({ status: "failed" });
+			expect(database.getAgentRun(waiting.run.id)).not.toHaveProperty("pendingToolExecutionId");
+			expect(database.getAgentRun(sibling.id)).toMatchObject({ status: "waiting_approval", pendingToolExecutionId: "tool-unrelated-sibling" });
+			expect(database.getToolExecution("tool-unrelated-sibling")?.status).toBe("blocked");
+			expect(database.getToolExecution(pendingId)?.output?.approvalRequired).toBe(false);
+			expect(database.listToolExecutions(session.id).filter(item => item.toolName === "test.approval-fails" && item.status === "failed")).toHaveLength(
+				failure === "failed execution" ? 1 : 0,
+			);
+			const receipts = database.listActionReceipts(session.id);
+			expect(receipts.some(receipt => receipt.outcome === (failure === "failed execution" ? "uncertain" : "cancelled"))).toBe(true);
+			expect(database.getActionReceiptForExecution(pendingId)?.approval).toMatchObject({ required: true, result: "approved_once" });
+			expect(runtime.listMessages(session.id).filter(message => message.role === "tool")).toHaveLength(1);
+			expect(modelCalls).toBe(1);
+			expect(toolCalls).toBe(failure === "failed execution" ? 1 : 0);
+			await expect(loop.resume({ runId: waiting.run.id, approvalDecision: "approved" })).rejects.toThrow("not waiting at an approval boundary");
+			expect(toolCalls).toBe(failure === "failed execution" ? 1 : 0);
+			const fresh = await loop.run({ sessionId: session.id, model: "fixture", providerIds: [provider.id],
+				userContent: textContent("Fresh task") });
+			expect(fresh.run.status).toBe("completed");
+			expect(runtime.getSession(session.id).status).toBe("active");
+			database.close();
+		},
+	);
+
+	it.each(["approved", "rejected"] as const)(
+		"rejects a %s decision against another run's same-session, same-tool grant",
+		async (approvalDecision) => {
+			const database = new KestrelDatabase(":memory:", createEncryptionKey());
+			const runtime = new AgentRuntime(database);
+			const session = runtime.createSession({ title: "Foreign approval grant" });
+			let executions = 0;
+			let modelCalls = 0;
+			runtime.registerExternalTool({
+				descriptor: { name: "test.shared-approval", title: "Shared tool", description: "One synthetic action.",
+				category: "connector", riskLevel: "sensitive", readOnly: false, requiresWorkspace: false,
+				source: "plugin", approvalMode: "always", tags: ["test"] },
+				inputSchema: { type: "object", additionalProperties: false },
+				execute: async () => { executions += 1; return { ok: true }; },
+			});
+			runtime.allowTool(session.id, "test.shared-approval");
+			const at = "2026-10-01T12:00:00.000Z";
+			const foreignGrant = {
+				id: "tool-foreign-grant", sessionId: session.id, toolName: "test.shared-approval",
+				status: "blocked" as const, riskLevel: "sensitive" as const, input: {},
+				output: { approvalRequired: true, persistentApprovalAllowed: false, preview: "One synthetic action" },
+				error: "Approval required.", idempotencyKey: "run-foreign:call-shared", startedAt: at, completedAt: at,
+			};
+			database.saveToolExecution(foreignGrant);
+			database.saveAgentRun({
+				id: "run-owner", sessionId: session.id, model: "fixture", providerIds: ["fixture"],
+				status: "waiting_approval", turn: 1, pendingToolExecutionId: foreignGrant.id,
+				pendingProviderToolCallId: "call-shared", pendingToolName: "test.shared-approval",
+				createdAt: at, updatedAt: at,
+			});
+			const provider: ModelProvider = {
+				id: "fixture", capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: true },
+				complete: async request => { modelCalls += 1; return { providerId: "fixture", model: request.model,
+					text: "Unexpected replay", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" }; },
+			};
+			const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
+			await expect(loop.resume({ runId: "run-owner", approvalDecision })).rejects.toThrow("Pending tool approval is no longer valid.");
+			expect(database.getAgentRun("run-owner")).toMatchObject({ status: "waiting_approval", pendingToolExecutionId: foreignGrant.id });
+			expect(database.getToolExecution(foreignGrant.id)).toMatchObject(foreignGrant);
+			expect(database.listToolExecutions(session.id)).toHaveLength(1);
+			expect(database.listActionReceipts(session.id)).toEqual([]);
+			expect(executions).toBe(0);
+			expect(modelCalls).toBe(0);
+			database.close();
+		},
+	);
 
 	it("supersedes waiting approval when a new message starts", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());

@@ -1901,17 +1901,16 @@ try {
 		},
 		"The browser address-bar shortcut could not reach the active page",
 	);
-	await sendInputToActiveView(
-		{
-			type: "keyUp",
-			keyCode: "L",
-			modifiers: ["meta"],
-		},
-		"The browser address-bar shortcut could not finish on the active page",
-	);
 	await page.waitForFunction(
 		() => document.activeElement?.id === "browser-address-input",
 	);
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Focusing the address bar did not hide the native page",
+	);
+	// Focus moved from the native page to the renderer on keyDown, so keyUp
+	// belongs to the renderer and the native view is intentionally detached.
+	await page.keyboard.up("L");
 	await assertNativePagePreviewVisible();
 	await page.keyboard.press("Escape");
 	await assertNativeViewHiddenThroughOverlayExit(

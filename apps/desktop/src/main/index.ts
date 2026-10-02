@@ -70,6 +70,7 @@ import {
   type WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
+import { desktopBuildProvenance } from "./build-provenance";
 import { desktopCoreProcess } from "./electron-core-process";
 import { CredentialBroker } from "./credential-broker";
 import {
@@ -2815,6 +2816,9 @@ function registerIpc(): void {
       return { ok: true };
     }
 
+    if (request.type === "build-provenance") return { ok: true,
+      buildProvenance: desktopBuildProvenance({ renderer: request.rendererBuild,
+        preload: request.preloadBuild ?? null, core: supervisor.getBuildIdentity() }) };
     if (
       isCalculatorOverlayWindow &&
       request.type !== "browser-close-calculator"

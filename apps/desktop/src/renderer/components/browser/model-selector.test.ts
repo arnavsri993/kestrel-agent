@@ -130,6 +130,13 @@ const choice = {
 };
 
 describe("account-aware model selector", () => {
+	it("preserves exact minimal and ultra efforts only when the account advertises them", () => {
+		const discovered = model("advertised-model", { capabilities: { ...modelCapabilities, reasoningEfforts: ["minimal", "ultra"] } });
+		const route = account("isolated-account", "Fixture account", [discovered]);
+		expect(selectModel(route, discovered, { ...choice, reasoningEffort: "ultra" }).reasoningEffort).toBe("ultra");
+		expect(selectModel(route, discovered, { ...choice, reasoningEffort: "minimal" }).reasoningEffort).toBe("minimal");
+		expect(selectModel(accounts[0]!, accounts[0]!.models[0]!, { ...choice, reasoningEffort: "ultra" }).reasoningEffort).toBe("medium");
+	});
 	it("groups only enabled accounts by provider and sorts their labels", () => {
 		const groups = providerGroups(accounts);
 		expect(groups).toHaveLength(1);

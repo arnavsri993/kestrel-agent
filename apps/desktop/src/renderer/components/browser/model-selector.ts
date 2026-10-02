@@ -26,12 +26,13 @@ export const THINKING_LEVELS: readonly {
 	description: string;
 }[] = [
 	{ id: "none", label: "Default", description: "Use the provider default" },
+	{ id: "minimal", label: "Minimal", description: "Minimal reasoning when advertised by this model" },
 	{ id: "low", label: "Low", description: "Less deliberation" },
 	{ id: "medium", label: "Medium", description: "Balanced deliberation" },
 	{ id: "high", label: "High", description: "More thorough reasoning" },
 	{ id: "xhigh", label: "Extra high", description: "Extended reasoning" },
 	{ id: "max", label: "Max", description: "Largest reasoning budget" },
-	{ id: "ultra", label: "Ultra", description: "Maximum available reasoning" },
+	{ id: "ultra", label: "Ultra", description: "Provider-advertised ultra effort" },
 ];
 
 export function providerGroups(

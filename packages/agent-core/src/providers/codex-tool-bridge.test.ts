@@ -1,22 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { codexToolOutputSchema, parseCodexToolResponse } from "./codex-tool-bridge";
-const tools = [{ name: "tools.search", description: "Discover tools", inputSchema: { type: "object" } }];
-const envelope = (name = "tools.search", argumentsJson = "{}") => JSON.stringify({ text: "", toolCalls: [{ name, argumentsJson }] });
-describe("Codex Kestrel tool bridge", () => {
- it("restricts the output schema to the current tool catalog", () => {
-  expect(JSON.stringify(codexToolOutputSchema(tools))).toContain('"enum":["tools.search"]');
- });
- it("accepts plain final answers and gives requests unique IDs", () => {
-  expect(parseCodexToolResponse('{"text":"Done","toolCalls":[]}', tools)).toEqual({ text: "Done", toolCalls: [] });
-  expect(parseCodexToolResponse(envelope(), tools).toolCalls[0]!.id).not.toBe(parseCodexToolResponse(envelope(), tools).toolCalls[0]!.id);
- });
- it.each(["not JSON", '```json\n{"text":"","toolCalls":[]}\n```', '{"text":"","toolCalls":[],"extra":true}', JSON.stringify({text:"",toolCalls:Array(17).fill({name:"tools.search",argumentsJson:"{}"})})])("rejects invalid envelopes without partial execution", raw => {
-  expect(() => parseCodexToolResponse(raw, tools)).toThrow("invalid Kestrel tool response");
- });
- it("rejects tools outside the current catalog", () => {
-  expect(() => parseCodexToolResponse(envelope("shell.execute"), tools)).toThrow("outside");
- });
- it.each(["[]", "null", "42", '"string"', "{"])("rejects non-object or malformed arguments", raw => {
-  expect(() => parseCodexToolResponse(envelope("tools.search", raw), tools)).toThrow();
- });
+import { codexDynamicTools, parseCodexDynamicToolCall } from "./codex-tool-bridge";
+
+const tools = [{ name: "workspace.read", description: "Read scoped files", inputSchema: { type: "object", required: ["path"], properties: { path: { type: "string" } } } }];
+const call = { threadId: "thread", turnId: "turn", callId: "call", tool: "kestrel_0", arguments: { path: "file.ts" }, namespace: null };
+
+describe("Codex dynamic tool boundary", () => {
+	it("projects only the current Kestrel tool catalog into protocol-safe aliases", () => {
+		expect(codexDynamicTools(tools)).toEqual([{ type: "function", name: "kestrel_0", description: "workspace.read: Read scoped files", inputSchema: tools[0]!.inputSchema }]);
+		expect(parseCodexDynamicToolCall(call, tools, "thread", "turn")).toMatchObject({ name: "workspace.read", arguments: { path: "file.ts" } });
+	});
+
+	it.each([
+		{ threadId: "another" }, { turnId: "stale" }, { namespace: "native" },
+		{ tool: "kestrel_1" }, { tool: "kestrel_00" }, { tool: "shell" },
+		{ arguments: [] }, { arguments: { path: "x".repeat(100_001) } },
+	])("rejects requests outside the active step: %j", (overrides) => {
+		expect(() => parseCodexDynamicToolCall({ ...call, ...overrides }, tools, "thread", "turn")).toThrow();
+	});
 });

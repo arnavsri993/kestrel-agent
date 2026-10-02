@@ -153,6 +153,20 @@ describe("account-aware model catalog", () => {
 		database.close();
 	});
 
+	it("invalidates same-revision model claims when endpoint tool transport changes", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint = provider({ id: "codex-profile", providerId: "codex", accountId: "account", displayName: "Profile", discovery: async () => [discovered("model")] });
+		const oldEndpoint = { ...endpoint, capabilities: { ...endpoint.capabilities, tools: false } };
+		const catalog = new ModelCatalog(database, [oldEndpoint]);
+		await catalog.refresh([oldEndpoint]);
+		expect(catalog.modelsForEndpoint(endpoint.id)).toHaveLength(1);
+		const refreshed = new ModelCatalog(database, [endpoint]);
+		expect(refreshed.modelsForEndpoint(endpoint.id)).toEqual([]);
+		await refreshed.refresh([endpoint]);
+		expect(refreshed.modelsForEndpoint(endpoint.id)[0]?.capabilities.tools).toBe(true);
+		database.close();
+	});
+
 	it("replaces models removed upstream instead of restoring a fallback default", async () => {
 		let state: DiscoveryState = { models: [discovered("old-model")] };
 		const endpoint = provider({
