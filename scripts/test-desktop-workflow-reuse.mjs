@@ -102,9 +102,12 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
+	const chatToggle = page.locator("#browser-agent-toggle");
+	await chatToggle.waitFor();
+	if (await chatToggle.getAttribute("aria-expanded") !== "true") await chatToggle.click();
 	await page.locator("#runtime-prompt").waitFor();
 
-	await page.getByRole("button", { name: /^Model:/ }).click();
+	await page.locator(".agent-conversation-host").getByRole("button", { name: /^Model:/ }).click();
 	const modelMenu = page.getByRole("dialog", {
 		name: "Choose a provider, account, model, and thinking level",
 	});
@@ -122,7 +125,7 @@ try {
 		.locator(".agent-conversation-host")
 		.getByRole("button", { name: "Send message", exact: true })
 		.click();
-	await page.getByText("Completed the requested review checklist", { exact: false }).waitFor();
+	await page.locator(".agent-conversation-host").getByText("Completed the requested review checklist", { exact: false }).waitFor();
 	await page.getByRole("button", { name: "Save as skill", exact: true }).click();
 
 	const notice = page.locator(".skill-notice");
