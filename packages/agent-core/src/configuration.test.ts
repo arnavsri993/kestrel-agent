@@ -1009,6 +1009,7 @@ describe("chat configuration runtime approval boundary", () => {
 	it("turns a natural-language request into an explained plan, approval, verified apply, and undo option", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		let calls = 0;
+		let discoveryCalls = 0;
 		const provider: ModelProvider = {
 			id: "configuration-fixture",
 			capabilities: {
@@ -1020,11 +1021,21 @@ describe("chat configuration runtime approval boundary", () => {
 				local: true,
 			},
 			complete: async (request) => {
-				calls += 1;
 				const toolNames = new Set(
 					(request.tools ?? []).map((tool) => tool.name),
 				);
 				expect(toolNames.has("agent.config.inspect")).toBe(true);
+				if (!toolNames.has("agent.config.plan")) {
+					expect(toolNames.has("tools.search")).toBe(true);
+					expect(++discoveryCalls).toBe(1);
+					return {
+						providerId: "configuration-fixture", model: request.model,
+						text: "I’ll load the authorized configuration tools before staging a change.",
+						toolCalls: [{ id: "config-discovery", name: "tools.search", arguments: { query: "agent.config" } }],
+						usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "tool_calls",
+					};
+				}
+				calls += 1;
 				expect(toolNames.has("agent.config.plan")).toBe(true);
 				expect(toolNames.has("agent.config.apply")).toBe(true);
 				if (calls === 1) {
@@ -1149,6 +1160,7 @@ describe("chat configuration runtime approval boundary", () => {
 		expect(core.configuration.current().behavior.responseStyle).toBe(
 			"balanced",
 		);
+		expect(discoveryCalls).toBe(1);
 		const waitingRun = waiting.ok ? waiting.run : undefined;
 		const applied = await core.handle({
 			type: "runtime-resume-agent",

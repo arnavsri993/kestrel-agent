@@ -39,6 +39,7 @@ import { modelVisibleToolResult, redactSensitiveValue } from "./tool-result-guar
 import { maskSensitiveText } from "@kestrel/shared-types";
 import { UsageGovernor } from "./usage-governor";
 import { isTransientComputerScreenshot, prepareComputerScreenshot } from "./computer-observation-model";
+import { localToolCatalog, LOCAL_TOOL_DISCOVERY_INSTRUCTIONS } from "./local-tool-catalog";
 import {
 	decideAdaptiveExecution,
 	emptyAdaptiveExecutionBudget,
@@ -1201,7 +1202,12 @@ export class AgentLoop {
 					modelMessages = modelMessages.filter(message => !isTransientComputerScreenshot(message));
 				this.touchRunHeartbeat(run.id);
 				const finalTurn = turn === options.maximumTurns;
-				const availableTools = finalTurn ? [] : tools;
+				const selectedProviders = this.providers.list().filter(provider =>
+					run.providerIds.includes(provider.id) || (provider.poolId && run.providerIds.includes(provider.poolId)));
+				const explicitLocalRoute = !run.providerIds.includes("auto") &&
+					selectedProviders.length > 0 && selectedProviders.every(provider => provider.capabilities.local && provider.capabilities.tools);
+				const localTools = !finalTurn && explicitLocalRoute ? localToolCatalog(tools, modelMessages) : undefined;
+				const availableTools = finalTurn ? [] : localTools ?? tools;
 				run = { ...run, turn, updatedAt: this.now().toISOString() };
 				this.saveActiveRun(run);
 				const workspaceRoot = this.runtime.activeWorkspaceRoot(session.id);
@@ -1215,6 +1221,9 @@ export class AgentLoop {
 							messages: (finalTurn ? [
 								...modelMessages,
 								{ role: "system" as const, content: textContent(FINAL_TURN_INSTRUCTIONS) },
+							] : localTools ? [
+								...modelMessages,
+								{ role: "system" as const, content: textContent(LOCAL_TOOL_DISCOVERY_INSTRUCTIONS) },
 							] : modelMessages).map(message => ({
 								...message,
 								content: message.content.map(part => part.type === "text"

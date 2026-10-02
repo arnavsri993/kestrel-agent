@@ -641,6 +641,9 @@ try {
 	);
 	await page.getByLabel("Message Kestrel").fill("");
 	await page.setViewportSize({ width: 640, height: 760 });
+	await page.locator(".agent-sidebar-overlay").waitFor({ state: "visible" });
+	assert.equal(await page.locator(".browser-main-plane").evaluate(node => node.inert), true);
+	await page.getByRole("button", { name: "Close chat", exact: true }).click();
 	await page.locator(".kestrel-sidebar").waitFor({ state: "visible" });
 	assert.equal(
 		await page.locator(".kestrel-sidebar-brand span").evaluate(
