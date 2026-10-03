@@ -51,6 +51,7 @@ const testEnvironment = Object.fromEntries(
 		process.env[key] === undefined ? [] : [[key, process.env[key]]],
 	),
 );
+let observedFindWindow;
 const detachedPlacementCapturePath = join(
 	userData,
 	"detached-window-placement.json",
@@ -437,6 +438,36 @@ async function waitForDetachedKestrelWindow(tabId, label) {
 		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
 	}
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
+}
+
+async function waitForFindPopoverWindow(tabId) {
+	const deadline = Date.now() + 30_000;
+	let latest = [];
+	while (Date.now() < deadline) {
+		const windows = application
+			.windows()
+			.filter((candidate) => !candidate.isClosed());
+		latest = windows.map((candidate) => candidate.url());
+		for (const candidate of windows) {
+			let url;
+			try {
+				url = new URL(candidate.url());
+			} catch {
+				continue;
+			}
+			// The window event can arrive before navigation or for another popup.
+			// Identify the actual Find renderer for this tab once its URL is committed.
+			if (
+				url.searchParams.get("findPopover") === "1" &&
+				url.searchParams.get("tabId") === tabId
+			) {
+				await candidate.waitForLoadState("domcontentloaded");
+				return candidate;
+			}
+		}
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	throw new Error(`Find in page did not open for the active tab: ${JSON.stringify(latest)}`);
 }
 
 async function assertBrowserChromeLayout({
@@ -1560,7 +1591,8 @@ try {
 	assert.equal(loaded.browserWindowCount, 1);
 	assert.equal(loaded.views[0].title, "Page one");
 	assert.equal(loaded.views[0].destroyed, false);
-	const findWindowOpened = application.waitForEvent("window");
+	const findTabId = (await browserState()).activeTabId;
+	assert(findTabId);
 	const findShortcutModifier = process.platform === "darwin" ? "meta" : "control";
 	await sendInputToActiveView(
 		{ type: "keyDown", keyCode: "F", modifiers: [findShortcutModifier] },
@@ -1570,7 +1602,8 @@ try {
 		{ type: "keyUp", keyCode: "F", modifiers: [findShortcutModifier] },
 		"The browser find shortcut could not finish on the active page",
 	);
-	const findWindow = await findWindowOpened;
+	const findWindow = await waitForFindPopoverWindow(findTabId);
+	observedFindWindow = findWindow;
 	const findInput = findWindow.getByRole("textbox", { name: "Find in page", exact: true });
 	await findInput.waitFor();
 	await findWindow.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Find in page");
@@ -2660,6 +2693,26 @@ try {
 		`.browser-tab[data-tab-id="${detachableTabId}"]`,
 	);
 	await detachableTab.waitFor();
+	// Native previews intentionally require the owner to be foregrounded.
+	// Earlier native dialogs can leave the test app visible but unfocused.
+	await application.evaluate(({ BrowserWindow }, url) => {
+		const owner = BrowserWindow.getAllWindows().find(
+			(candidate) => candidate.webContents.getURL() === url,
+		);
+		if (!owner) throw new Error("The fixture browser window is unavailable.");
+		owner.show();
+		owner.focus();
+	}, page.url());
+	const focusDeadline = Date.now() + 5_000;
+	let fixtureFocused = false;
+	while (Date.now() < focusDeadline && !fixtureFocused) {
+		fixtureFocused = await application.evaluate(({ BrowserWindow }, url) =>
+			BrowserWindow.getAllWindows().some(
+				(candidate) => candidate.webContents.getURL() === url && candidate.isFocused(),
+			), page.url());
+		if (!fixtureFocused) await page.waitForTimeout(75);
+	}
+	assert(fixtureFocused, "The fixture browser window did not receive focus before hover");
 	await detachableTab.hover();
 	// Real gestures often start after the hover preview opens. That native
 	// popup must not intercept the pointer on its way out of the tab rail.
@@ -3510,6 +3563,32 @@ try {
 	);
 } catch (error) {
 	console.error("Visible browser smoke failed:", error);
+	const directory = resolve(".tmp/desktop-browser");
+	mkdirSync(directory, { recursive: true });
+	const prefix = join(
+		directory,
+		`${new Date().toISOString().replace(/[:.]/g, "-")}-${packagedExecutable ? "packaged" : "source"}`,
+	);
+	const diagnostics = {
+		error: String(error),
+		findWindowUrl: observedFindWindow?.url(),
+	};
+	try {
+		Object.assign(diagnostics, await application.evaluate(({ BrowserWindow, screen }) => ({
+			cursor: screen.getCursorScreenPoint(),
+			windows: BrowserWindow.getAllWindows().map((window) => ({
+				id: window.id,
+				url: window.webContents.getURL(),
+				visible: window.isVisible(),
+				focused: window.isFocused(),
+				bounds: window.getBounds(),
+			})),
+		})));
+		await page.screenshot({ path: `${prefix}-failure.png` });
+	} catch (captureError) {
+		diagnostics.captureError = String(captureError);
+	}
+	writeFileSync(`${prefix}-diagnostics.json`, `${JSON.stringify(diagnostics, null, 2)}\n`);
 	throw error;
 } finally {
 	await application?.close();
