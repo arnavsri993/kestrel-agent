@@ -16,6 +16,7 @@ execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyo
   '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], {stdio: 'ignore'});
 const cert = readFileSync(certPath);
 const requests = [];
+const iframeRequests = [];
 let iframeOrigin;
 const server = createServer({key: readFileSync(keyPath), cert}, async (req, res) => {
   const chunks = [];
@@ -53,6 +54,7 @@ await new Promise(r => server.listen(0, '127.0.0.1', r));
 const origin = `https://localhost:${server.address().port}`;
 const foreignOrigin = `https://127.0.0.1:${server.address().port}`;
 const iframeServer = createServer({key: readFileSync(keyPath), cert}, (req, res) => {
+  iframeRequests.push({ path: req.url, method: req.method });
   res.setHeader('Content-Type', 'text/html');
   if (req.url === '/callback') {
     res.end(`<script>window.opener.postMessage('iframe-popup-complete', location.origin); window.close();</script>`);
@@ -60,8 +62,13 @@ const iframeServer = createServer({key: readFileSync(keyPath), cert}, (req, res)
   }
   res.end(`<button id="google-like-popup">Continue with provider</button>
     <script>
-      document.querySelector('button').addEventListener('click', () => window.open('/callback', 'fixture-iframe-auth'));
+      document.querySelector('button').addEventListener('click', event => {
+        window.fixtureTrustedClick = event.isTrusted;
+        window.fixtureClicks = (window.fixtureClicks || 0) + 1;
+        window.fixturePopup = window.open('/callback', 'fixture-iframe-auth');
+      });
       window.addEventListener('message', e => { if (e.origin === location.origin) parent.postMessage(e.data, ${JSON.stringify(origin)}); });
+      window.fixtureIframeReady = true;
     </script>`);
 });
 await new Promise(r => iframeServer.listen(0, '127.0.0.1', r));
@@ -139,10 +146,23 @@ try {
   await until(async () => (await state()).activeTabId === tabId, 'Closing sign-in must restore its opener');
   await navigate();
   await run(`(() => { const frame = document.createElement('iframe'); frame.src = ${JSON.stringify(`${iframeOrigin}/button`)}; frame.width = 300; frame.height = 80; document.body.append(frame); })()`);
-  await until(() => app.evaluate(({webContents}, url) => {
+  const providerIframeState = () => app.evaluate(async ({webContents}, {url, frameUrl}) => {
     const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
-    return wc?.mainFrame.frames.some(f => f.url.endsWith('/button'));
-  }, `${origin}/one`), 'Provider iframe did not load');
+    const frame = wc?.mainFrame.frames.find(candidate => candidate.url === frameUrl);
+    return frame && await frame.executeJavaScript(`({
+      ready: document.readyState === 'complete' && window.fixtureIframeReady === true,
+      buttonPresent: !!document.querySelector('#google-like-popup'),
+      trustedClick: window.fixtureTrustedClick === true,
+      clicks: window.fixtureClicks || 0,
+      popupOpened: !!window.fixturePopup,
+      popupClosed: window.fixturePopup?.closed
+    })`).catch(() => undefined);
+  }, {url: `${origin}/one`, frameUrl: `${iframeOrigin}/button`});
+  // A committed iframe URL does not mean its button/listeners are ready.
+  await until(async () => {
+    const frame = await providerIframeState();
+    return frame?.ready && frame.buttonPresent;
+  }, 'Provider iframe button and callback handlers did not become ready');
   const point = await run(`(() => { const rect = document.querySelector('iframe').getBoundingClientRect(); return {x:Math.round(rect.x+55), y:Math.round(rect.y+20)}; })()`);
   await app.evaluate(async ({webContents}, {url,point}) => {
     const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
@@ -153,7 +173,18 @@ try {
       await wc.debugger.sendCommand('Input.dispatchMouseEvent', {type:'mouseReleased', ...point, button:'left', clickCount:1});
     } finally { wc.debugger.detach(); }
   }, {url:`${origin}/one`,point});
-  await until(() => run(`window.fixtureResult === 'iframe-popup-complete'`), 'Provider iframe popup lost callback');
+  try {
+    const frame = await providerIframeState();
+    assert.equal(frame?.trustedClick, true, 'Provider iframe must receive a trusted native click');
+    assert.equal(frame?.clicks, 1, 'Provider iframe must receive exactly one click');
+    await until(() => run(`window.fixtureResult === 'iframe-popup-complete'`), 'Provider iframe popup lost callback');
+  } catch (error) {
+    console.error('Disposable iframe callback diagnostic:', JSON.stringify({
+      frame: await providerIframeState(), iframeRequests,
+      parentResult: await run('window.fixtureResult'), tabs: (await state()).tabs.map(({id, url, title, loading}) => ({id, url, title, loading})),
+    }));
+    throw error;
+  }
   try {
     await until(async () => (await state()).activeTabId === tabId, 'Provider iframe popup did not restore its opener');
   } catch (error) {

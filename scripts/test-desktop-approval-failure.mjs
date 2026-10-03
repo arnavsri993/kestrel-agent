@@ -189,7 +189,8 @@ try {
 	assert.equal(taskCalls, 1, "A failed approved action must not be automatically replayed.");
 	await input.fill("Continue with a fresh fixture task.");
 	await send.click();
-	await page.locator(".agent-conversation-host").getByText("Fresh fixture task completed.", { exact: true }).waitFor();
+	const assistantMessages = page.locator(".agent-conversation-host .assistant-message[data-runtime-message-id]");
+	await assistantMessages.getByText("Fresh fixture task completed.", { exact: true }).waitFor();
 	const final = await page.evaluate(() => window.kestrel.request({ type: "runtime-list-sessions" }));
 	assert(final.ok);
 	assert.equal(final.sessions.find(item => item.id === session.id).status, "active");
@@ -197,7 +198,8 @@ try {
 	await input.fill(receiptPrompt);
 	await send.click();
 	await page.getByRole("button", { name: "Allow once", exact: true }).click();
-	await page.getByText("Browser receipt fixture completed.", { exact: true }).waitFor();
+	await assistantMessages.getByText("Browser receipt fixture completed.", { exact: true }).waitFor();
+	await page.locator(".runtime-stream-preview").waitFor({ state: "detached" });
 	const browserReceipts = outcome.locator(".action-receipts");
 	await browserReceipts.locator(":scope > summary").focus();
 	await page.keyboard.press("Enter");
