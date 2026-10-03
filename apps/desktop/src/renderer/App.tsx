@@ -4818,20 +4818,20 @@ function RuntimeConversation({
 						!pending &&
 						!skillNotice &&
 						!latestRunHasConfigurationMessage && (
-							<div className="workflow-memory-action">
-								<div>
-									<strong>Keep this workflow</strong>
+							<details key={latestRun.id} className="workflow-memory-action">
+								<summary>Keep this workflow</summary>
+								<div className="workflow-memory-action-content">
 									<small>Save the approved sequence as a reusable skill.</small>
+									<button
+										type="button"
+										className="button secondary"
+										disabled={skillBusy}
+										onClick={() => void saveWorkflowAsSkill()}
+									>
+										{skillBusy ? "Saving…" : "Save as skill"}
+									</button>
 								</div>
-								<button
-									type="button"
-									className="button secondary"
-									disabled={skillBusy}
-									onClick={() => void saveWorkflowAsSkill()}
-								>
-									{skillBusy ? "Saving…" : "Save as skill"}
-								</button>
-							</div>
+							</details>
 						)}
 					{skillNotice && (
 						<div

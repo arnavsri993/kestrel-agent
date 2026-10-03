@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { _electron as electron } from "@playwright/test";
+import { _electron as electron, expect } from "@playwright/test";
 import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-workflow-reuse-"));
 const userData = join(root, "user-data");
+const evidence = process.env.KESTREL_WORKFLOW_REUSE_EVIDENCE_DIR;
+if (evidence) mkdirSync(evidence, { recursive: true });
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 const executablePath = packagedExecutable
@@ -16,7 +18,7 @@ const executablePath = packagedExecutable
 	: requireFromDesktop("electron");
 const launchArgs = packagedExecutable
 	? ["--use-mock-keychain"]
-	: [resolve("apps/desktop")];
+	: [resolve("apps/desktop"), "--use-mock-keychain"];
 
 let providerCalls = 0;
 const providerErrors = [];
@@ -85,6 +87,7 @@ try {
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 			KESTREL_TEST_USER_DATA: userData,
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
 			NOUS_API_KEY: "local-test-credential",
 			NOUS_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
 			NOUS_MODEL: "fixture-model",
@@ -126,7 +129,32 @@ try {
 		.getByRole("button", { name: "Send message", exact: true })
 		.click();
 	await page.locator(".agent-conversation-host").getByText("Completed the requested review checklist", { exact: false }).waitFor();
-	await page.getByRole("button", { name: "Save as skill", exact: true }).click();
+	const workflow = page.locator(".agent-conversation-host details.workflow-memory-action");
+	const summary = workflow.locator("summary");
+	const save = workflow.getByRole("button", { name: "Save as skill", exact: true });
+	await workflow.waitFor();
+	for (const width of [1440, 1000]) {
+		await application.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows().find(window => !window.webContents.getURL().includes("petOverlay=1"))?.setSize(width, 900), width);
+		await page.waitForFunction(expected => {
+			const shell = document.querySelector(".ai-browser-app");
+			return innerWidth === expected && shell && !shell.classList.contains("agent-sidebar-settling") && shell.classList.contains("agent-sidebar-overlay-open") === (expected <= 1120);
+		}, width);
+		await expect(save).toBeHidden();
+		assert.equal(await workflow.getAttribute("open"), null, "Workflow controls must start collapsed");
+		assert(await workflow.evaluate(node => node.getBoundingClientRect().height <= 48 && node.scrollWidth <= node.clientWidth), "Closed workflow controls must occupy one contained row");
+		if (evidence) await page.screenshot({ path: join(evidence, `workflow-closed-${width}.png`) });
+		await summary.focus();
+		await page.keyboard.press("Enter");
+		await expect(save).toBeVisible();
+		assert(await workflow.evaluate(node => node.querySelector("small").getBoundingClientRect().top - node.querySelector("summary").getBoundingClientRect().bottom >= 6), "Expanded help must clear the summary focus ring");
+		if (evidence) await page.screenshot({ path: join(evidence, `workflow-open-${width}.png`) });
+		await page.keyboard.press("Enter");
+		await expect(save).toBeHidden();
+	}
+	await summary.focus();
+	await page.keyboard.press("Space");
+	await expect(save).toBeVisible();
+	await save.click();
 
 	const notice = page.locator(".skill-notice");
 	await notice.getByRole("status").waitFor();
@@ -158,7 +186,7 @@ try {
 	assert.equal(providerErrors.length, 0, providerErrors.join("\n"));
 	assert.ok(providerCalls >= 1, "fixture provider did not complete the task");
 	assert.deepEqual(runtimeErrors, [], runtimeErrors.join("\n"));
-	process.stdout.write("Workflow reuse save, review navigation, proposal focus, and desktop error smoke passed.\n");
+	process.stdout.write("Workflow reuse progressive disclosure, desktop/compact keyboard access, save, review navigation, proposal focus, and desktop error smoke passed.\n");
 } finally {
 	await application?.close();
 	await new Promise((resolveClose) => server.close(resolveClose));

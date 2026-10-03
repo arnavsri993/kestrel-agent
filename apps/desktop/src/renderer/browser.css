@@ -597,10 +597,6 @@ body:has(.ai-browser-app),
 	max-height: 180px;
 	overflow: auto;
 }
-.agent-conversation-host .workflow-memory-action {
-	margin: 12px 0;
-	padding: 10px;
-}
 .agent-conversation-host .skill-notice {
 	margin: 8px 0 0;
 }
@@ -4130,7 +4126,6 @@ body:has(.ai-browser-app),
 .agent-conversation-host .approval-message .button-row { display: grid; grid-template-columns: 1fr 1fr; }
 .agent-conversation-host .approval-message .button { min-width: 0; padding-inline: 11px; font-size: 11px; }
 .agent-conversation-host .approval-preview { max-height: 180px; overflow: auto; }
-.agent-conversation-host .workflow-memory-action { margin: 12px 0; padding: 10px; }
 
 .agent-conversation-host .runtime-new-composer,
 .agent-conversation-host .thread-composer {
@@ -6871,9 +6866,7 @@ body:has(.calculator-overlay),
 }
 
 .agent-conversation-host .workflow-memory-action {
-	align-items: stretch;
-	flex-direction: column;
-	gap: 8px;
+	margin: 8px 0 0;
 }
 
 .agent-conversation-host .workflow-memory-action .button {

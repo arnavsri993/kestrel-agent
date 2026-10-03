@@ -1339,22 +1339,26 @@ input[type="radio"] {
 	font: 11px / 1.5 var(--mono);
 }
 .workflow-memory-action {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 16px;
-	margin: 12px 0 0 40px;
-	padding: 12px 14px;
-	border: 1px solid var(--line);
+	display: block;
+	margin: 8px 0 0 40px;
 	border-radius: 8px;
-	background: color-mix(in srgb, var(--surface) 82%, var(--canvas));
 }
-.workflow-memory-action > div {
+.workflow-memory-action > summary {
+	padding: 8px 10px;
+	border-radius: 6px;
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 18px;
+	cursor: pointer;
+}
+.workflow-memory-action > summary:hover {
+	background: var(--surface);
+}
+.workflow-memory-action-content {
 	display: grid;
-	gap: 3px;
-}
-.workflow-memory-action strong {
-	font-size: 11px;
+	gap: 8px;
+	padding: 8px 10px 10px;
 }
 .workflow-memory-action small,
 .skill-notice small {
