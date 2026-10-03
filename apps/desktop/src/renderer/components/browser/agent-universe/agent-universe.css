@@ -2400,6 +2400,44 @@
   color: var(--muted);
 }
 
+.agent-workspace-list-delegated > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  margin: 0 8px 8px 53px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.agent-workspace-list-delegated > summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-workspace-list-delegated > summary:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.agent-workspace-list-delegated > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.agent-workspace-list-delegated > summary svg {
+  width: 13px;
+  height: 13px;
+  margin-left: auto;
+}
+
+.agent-workspace-list-delegated[open] > summary svg {
+  transform: rotate(90deg);
+}
+
 .agent-workspace-search-empty {
   width: min(440px, 100%);
   color: var(--muted);
@@ -2686,6 +2724,11 @@
   .agent-workspace-list-tasks {
     margin-left: 43px;
     padding-left: 10px;
+  }
+
+  .agent-workspace-list-delegated > summary {
+    margin-left: 43px;
+    padding-inline: 10px;
   }
 
 }

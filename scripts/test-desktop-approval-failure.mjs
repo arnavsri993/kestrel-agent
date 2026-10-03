@@ -197,6 +197,27 @@ try {
 	assert.equal(taskCalls, 2);
 	await input.fill(receiptPrompt);
 	await send.click();
+	const browserPreview = card.getByRole("region", { name: "Action preview", exact: true });
+	await browserPreview.waitFor();
+	assert.match(await browserPreview.innerText(), /Create an isolated browser session/);
+	assert.match(await browserPreview.innerText(), /Allowed sites/);
+	assert.equal(await browserPreview.locator("dd").innerText(), `http://127.0.0.1:${server.address().port}`);
+	assert.equal(await card.locator("details[open]").count(), 0, "Browser approval technical and persistent choices start closed.");
+	const browserInput = card.locator("details").filter({ has: page.locator("summary", { hasText: "Raw tool input" }) });
+	await browserInput.locator("summary").focus();
+	await page.keyboard.press("Enter");
+	assert.deepEqual(JSON.parse(await browserInput.locator("pre").innerText()), { allowedOrigins: [`http://127.0.0.1:${server.address().port}`] });
+	await browserInput.locator("summary").focus();
+	await page.keyboard.press("Space");
+	for (const width of [1440, 1000]) {
+		await page.setViewportSize({ width, height: 900 });
+		await browserPreview.scrollIntoViewIfNeeded();
+		assert(await browserPreview.evaluate(node => {
+			const bounds = node.getBoundingClientRect();
+			return bounds.width > 0 && bounds.left >= 0 && bounds.right <= innerWidth && node.scrollWidth <= node.clientWidth + 1;
+		}), "The complete browser scope must fit inside desktop and compact Chat.");
+		if (evidenceDirectory) await page.screenshot({ path: join(evidenceDirectory, `browser-approval-${width}.png`) });
+	}
 	await page.getByRole("button", { name: "Allow once", exact: true }).click();
 	await assistantMessages.getByText("Browser receipt fixture completed.", { exact: true }).waitFor();
 	await page.locator(".runtime-stream-preview").waitFor({ state: "detached" });

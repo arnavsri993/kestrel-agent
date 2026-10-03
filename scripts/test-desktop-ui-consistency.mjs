@@ -58,6 +58,13 @@ try {
 			type: "runtime-create-session", title: "Scoped memory fixture", kind: "agent",
 		});
 		if (!agent.ok || !agent.session) throw new Error("Scoped agent fixture creation failed");
+		for (const [index, name] of ["Disclosure child one", "Disclosure child two"].entries()) {
+			const child = await window.kestrel.request({
+				type: "runtime-add-specialist", parentSessionId: agent.session.id,
+				definition: { key: `disclosure-child-${index}`, name, purpose: "Synthetic UI disclosure check", instructions: "", enabled: true },
+			});
+			if (!child.ok) throw new Error(child.error);
+		}
 		return agent.session.id;
 	});
 	await page.reload();
@@ -99,6 +106,41 @@ try {
 			path: join(output, `${name}.png`),
 			animations: "disabled",
 		});
+	}
+	for (const width of [1440, 760]) {
+		await size(width, 900);
+		await route("agent");
+		const group = page.locator(".agent-workspace-list-group").filter({ has: page.getByRole("button", { name: "Open settings for Scoped memory fixture", exact: true }) });
+		const disclosure = group.locator(".agent-workspace-list-delegated");
+		const summary = disclosure.locator(":scope > summary");
+		const child = group.getByRole("button", { name: /Disclosure child one/ });
+		await summary.waitFor();
+		assert.equal(await disclosure.getAttribute("open"), null, "Older delegated chats start collapsed.");
+		assert.equal(await child.isVisible(), false);
+		await summary.focus();
+		await page.keyboard.press("Enter");
+		assert.equal(await child.isVisible(), true);
+		assert.equal(await summary.evaluate(node => document.activeElement === node), true);
+		assert.equal(await summary.evaluate(node => getComputedStyle(node).outlineStyle), "solid");
+		await capture(`${width}-delegated-tasks-open`);
+		await summary.focus();
+		await page.keyboard.press("Space");
+		assert.equal(await child.isVisible(), false);
+		assert.equal(await summary.evaluate(node => document.activeElement === node), true);
+		const search = page.getByRole("searchbox", { name: "Find a system or task" });
+		await search.fill("Disclosure child one");
+		await child.waitFor();
+		assert.equal(await group.locator(".agent-workspace-list-delegated").count(), 0, "Search reveals matching delegated work directly.");
+		assert.equal(await search.evaluate(node => document.activeElement === node), true, "Searching delegated work must retain typing focus.");
+		assert.equal(await group.getByRole("button", { name: /Disclosure child two/ }).count(), 0);
+		await search.fill("");
+		await summary.waitFor();
+		assert.equal(await disclosure.getAttribute("open"), null);
+		assert(await summary.evaluate(node => {
+			const bounds = node.getBoundingClientRect();
+			return bounds.left >= 0 && bounds.right <= innerWidth && node.scrollWidth <= node.clientWidth + 1;
+		}), "Delegated-task disclosure must fit the viewport.");
+		report.checks.push({ delegatedTaskDisclosure: "passed", width });
 	}
 	for (const [width, height] of process.env.KESTREL_UI_FOCUSED
 		? []

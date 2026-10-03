@@ -94,6 +94,7 @@ import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 import { BrandMark } from "./components/BrandMark";
 import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
+import { RuntimeApprovalPreview } from "./components/RuntimeApprovalPreview";
 import { RuntimeQuestionCard } from "./components/RuntimeQuestionCard";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
 import { ActionReceiptList } from "./components/ActionReceiptList";
@@ -4685,11 +4686,7 @@ function RuntimeConversation({
 									This action is waiting for your approval.
 								</small>
 								<p className="runtime-approval-action">{runtimeToolTitle(pending.execution.toolName, pending.execution.toolName)}</p>
-								<pre className="approval-preview" aria-label="Action preview" tabIndex={0}>
-									{typeof pending.execution.output?.preview === "string"
-										? pending.execution.output.preview
-										: JSON.stringify(pending.execution.input, null, 2)}
-								</pre>
+								<RuntimeApprovalPreview execution={pending.execution} />
 								<div className="button-row runtime-approval-once">
 									<button
 										className="button primary"

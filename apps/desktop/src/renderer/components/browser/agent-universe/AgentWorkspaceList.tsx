@@ -53,7 +53,7 @@ function statusForNode(node: AgentNodeProjection): {
 	label: string;
 	tone: string;
 } {
-	if (node.latestRun && agentUniverseRunIsPending(node.latestRun.status)) {
+	if (node.latestRun && (node.kind === "subagent" || agentUniverseRunIsPending(node.latestRun.status))) {
 		return {
 			label: agentUniverseRunStatusLabel(node.latestRun.status),
 			tone: node.latestRun.status,
@@ -63,6 +63,48 @@ function statusForNode(node: AgentNodeProjection): {
 		label: agentSessionStatusLabel(node.status),
 		tone: node.status,
 	};
+}
+
+function needsAttention(node: AgentNodeProjection): boolean {
+	if (node.latestRun)
+		return agentUniverseRunIsPending(node.latestRun.status) || node.latestRun.status === "failed";
+	return node.status === "waiting" || node.status === "failed";
+}
+
+function DelegatedTasks({
+	nodes,
+	systemName,
+	searching,
+	onOpenSession,
+}: {
+	nodes: AgentNodeProjection[];
+	systemName: string;
+	searching: boolean;
+	onOpenSession(sessionId: string): void;
+}) {
+	const current = searching ? nodes : nodes.filter(needsAttention);
+	const remaining = searching ? [] : nodes.filter((node) => !needsAttention(node));
+	const list = (tasks: AgentNodeProjection[]) => (
+		<ul className="agent-workspace-list-tasks" aria-label={`Delegated tasks for ${systemName}`}>
+			{tasks.map((node) => (
+				<AgentTaskRow key={node.id} node={node} onOpenSession={onOpenSession} />
+			))}
+		</ul>
+	);
+	return (
+		<>
+			{current.length > 0 ? list(current) : null}
+			{remaining.length > 0 ? (
+				<details className="agent-workspace-list-delegated">
+					<summary>
+						<span>{remaining.length} {current.length > 0 ? "other " : ""}delegated task{remaining.length === 1 ? "" : "s"}</span>
+						<Icon name="chevron" />
+					</summary>
+					{list(remaining)}
+				</details>
+			) : null}
+		</>
+	);
 }
 
 function AgentTaskRow({
@@ -189,11 +231,12 @@ export function AgentWorkspaceList({
 								</button>
 							</div>
 							{delegated.length > 0 ? (
-								<ul className="agent-workspace-list-tasks" aria-label={`Delegated tasks for ${system.name}`}>
-									{delegated.map((node) => (
-										<AgentTaskRow key={node.id} node={node} onOpenSession={onOpenSession} />
-									))}
-								</ul>
+								<DelegatedTasks
+									nodes={delegated}
+									systemName={system.name}
+									searching={Boolean(query.trim())}
+									onOpenSession={onOpenSession}
+								/>
 							) : null}
 						</article>
 					);
