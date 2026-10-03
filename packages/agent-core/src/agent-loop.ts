@@ -1419,7 +1419,7 @@ export class AgentLoop {
 					unverifiedBrowserClickNarration({ runId: run.id, sessionId: session.id, modelText: result.text,
 						listExecutions: sessionId => this.database.listToolExecutions(sessionId) });
 				const checkedText = unsupportedClickNarration
-					? `Requested tools: ${result.toolCalls.map(call => call.name).join(", ")}. The requested action has not run yet.`
+					? "The requested action has not run yet."
 					: result.text;
 				const assistantContent =
 					(completionError === UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR || completionError === UNEXECUTED_LOCAL_PLAN_ERROR ? completionError : checkedText.trim()) ||

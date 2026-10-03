@@ -3023,13 +3023,17 @@ function RuntimeConversation({
 			: "automatic",
 	);
 	const grants = projects;
-	const [workspace, setWorkspace] = useState("");
+	const [{ workspace, projectId: draftProjectId }, setTaskScope] = useState<{
+		workspace: string;
+		projectId: string | null;
+	}>({ workspace: "", projectId: null });
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [mentionFiles, setMentionFiles] = useState<SelectedAttachment[]>([]);
 	const shouldAutoSubmitFirstTaskRef = useRef(false);
 	const pendingNewAgentAutoSubmitRef = useRef<{
 		prompt: string;
 		draft?: NewTabComposerDraft;
+		scope: { workspaceRoot: string; projectId: string | null };
 	} | null>(null);
 	const [guidedFirstTaskActive, setGuidedFirstTaskActive] = useState(false);
 	const [input, setInput] = useState(() => {
@@ -3194,7 +3198,10 @@ function RuntimeConversation({
 		activeSessionIdRef.current = null;
 		onActiveSession(null);
 		setInput(newAgentPrompt);
-		setWorkspace(newAgentWorkspace ?? "");
+		setTaskScope({
+			workspace: newAgentWorkspace ?? "",
+			projectId: newAgentProjectId,
+		});
 		setAttachments(newAgentDraft?.attachments ?? []);
 		if (newAgentDraft) applyModelChoice(newAgentDraft.modelChoice);
 		setCheckpointSummary("");
@@ -3213,13 +3220,14 @@ function RuntimeConversation({
 		if (newAgentPrompt.trim()) {
 			const pendingSubmission = {
 				prompt: newAgentPrompt,
+				scope: { workspaceRoot: newAgentWorkspace ?? "", projectId: newAgentProjectId },
 				...(newAgentDraft ? { draft: newAgentDraft } : {}),
 			};
 			if (!providerAccountsLoaded) {
 				pendingNewAgentAutoSubmitRef.current = pendingSubmission;
 				return;
 			}
-			void submit(pendingSubmission.prompt, pendingSubmission.draft);
+			void submit(pendingSubmission.prompt, pendingSubmission.draft, pendingSubmission.scope);
 		}
 	}, [
 		busy,
@@ -3240,7 +3248,7 @@ function RuntimeConversation({
 		const pendingSubmission = pendingNewAgentAutoSubmitRef.current;
 		if (!pendingSubmission || !providerAccountsLoaded) return;
 		pendingNewAgentAutoSubmitRef.current = null;
-		void submit(pendingSubmission.prompt, pendingSubmission.draft);
+		void submit(pendingSubmission.prompt, pendingSubmission.draft, pendingSubmission.scope);
 	}, [providerAccountsLoaded]);
 
 	useEffect(() => {
@@ -3429,14 +3437,6 @@ function RuntimeConversation({
 						providerResponse.ok && "providerAccounts" in providerResponse
 							? (providerResponse.providerAccounts ?? [])
 							: [];
-					const availableGrants = availableWorkspaceGrants(projects);
-					setWorkspace(
-						(current) =>
-							(current &&
-							availableGrants.some((grant) => grant.path === current)
-								? current
-								: availableGrants[0]?.path) ?? "",
-					);
 					if (sessionResponse.ok && "sessions" in sessionResponse)
 						onSessions(sessionResponse.sessions ?? []);
 					const visibleSessionId = activeSessionIdRef.current;
@@ -3463,15 +3463,6 @@ function RuntimeConversation({
 			cancelled = true;
 		};
 	}, [onSessions, projects, visible]);
-
-	useEffect(() => {
-		const availableGrants = availableWorkspaceGrants(projects);
-		setWorkspace((current) =>
-			current && availableGrants.some((grant) => grant.path === current)
-				? current
-				: availableGrants[0]?.path ?? "",
-		);
-	}, [projects]);
 
 	useEffect(() => {
 		if (!transcriptTarget || transcriptTarget.sessionId !== activeSessionId) return;
@@ -3878,15 +3869,12 @@ function RuntimeConversation({
 			const added = responseProjects.find(
 				(grant) => grant.available !== false && !previousPaths.has(grant.path),
 			);
-			setWorkspace(
-				selectedWorkspacePath ??
-					added?.path ??
-					(activeGrants.some((grant) => grant.path === workspace)
-						? workspace
-						: undefined) ??
-					availableGrants[0]?.path ??
-					"",
-			);
+			const nextWorkspace = selectedWorkspacePath ?? added?.path ?? workspace;
+			setTaskScope({
+				workspace: nextWorkspace,
+				projectId:
+					responseProjects.find((project) => project.path === nextWorkspace)?.id ?? null,
+			});
 			setAttachments([]);
 		} catch (cause) {
 			setError(
@@ -3895,13 +3883,21 @@ function RuntimeConversation({
 		}
 	}
 
-	async function submit(promptOverride?: string, draft?: NewTabComposerDraft) {
+	async function submit(
+		promptOverride?: string,
+		draft?: NewTabComposerDraft,
+		scopeOverride?: { workspaceRoot: string; projectId: string | null },
+	) {
 		const prompt = (promptOverride ?? input).trim();
 		if (!prompt) return;
 		const runChoice = draft?.modelChoice ?? modelChoice;
 		const runApprovalPolicy = draft?.approvalPolicy ?? "auto";
-		const runWorkspace = draft ? (draft.workspaceRoot ?? "") : workspace;
-		const runProjectId = draft ? (draft.projectId ?? null) : newAgentProjectId;
+		const runWorkspace = draft
+			? (draft.workspaceRoot ?? "")
+			: (scopeOverride?.workspaceRoot ?? workspace);
+		const runProjectId = draft
+			? (draft.projectId ?? null)
+			: scopeOverride ? scopeOverride.projectId : draftProjectId;
 		const runAttachments = draft?.attachments ?? promptAttachments;
 		if (busy) {
 			const streamId = streamIdRef.current;
@@ -4330,10 +4326,9 @@ function RuntimeConversation({
 			)}
 		</button>
 	);
-	const canAddContextFiles =
-		Boolean(taskWorkspace) && selectedGrant?.available !== false;
 	const projectFilesUnavailable =
-		Boolean(taskWorkspace) && selectedGrant?.available === false;
+		Boolean(taskWorkspace) && (!selectedGrant || selectedGrant.available === false);
+	const canAddContextFiles = Boolean(taskWorkspace) && !projectFilesUnavailable;
 	const needsNewTaskForFiles = !canAddContextFiles && Boolean(activeSessionId);
 	const composerFilesLabel = canAddContextFiles
 		? "Add context files"
@@ -4971,11 +4966,20 @@ function RuntimeConversation({
 												<select
 													value={workspace}
 													onChange={(event) => {
-														setWorkspace(event.target.value);
+														setTaskScope({
+															workspace: event.target.value,
+															projectId:
+																projects.find((project) => project.path === event.target.value)?.id ?? null,
+														});
 														setAttachments([]);
 													}}
 												>
 													<option value="">Conversation only</option>
+													{workspace && !activeGrants.some((grant) => grant.path === workspace) && (
+														<option value={workspace} disabled>
+															{selectedGrant?.name ?? workspace.split("/").filter(Boolean).at(-1) ?? "Project"} · unavailable
+														</option>
+													)}
 													{activeGrants.map((grant) => (
 														<option value={grant.path} key={grant.path}>
 															{grant.name}

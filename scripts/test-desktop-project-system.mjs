@@ -164,12 +164,25 @@ try {
 	await page.waitForFunction(() => document.querySelector('.kestrel-sidebar[data-active-destination="browser"]'));
 	await sidebar.getByRole("button", { name: "Open search", exact: true }).waitFor();
 	assert.deepEqual(await sidebar.locator('.kestrel-sidebar-utilities button').allTextContents(), ["Memory", "Connections", "Settings"]);
-	const initialViewport = page.viewportSize();
+	// Measure browser navigation with Chat closed; compact Chat isolates the main plane.
+	const chatToggle = page.locator("#browser-agent-toggle");
+	if (await chatToggle.getAttribute("aria-expanded") === "true") {
+		await chatToggle.click();
+		await page.waitForFunction(() => {
+			const shell = document.querySelector(".ai-browser-app");
+			const panel = document.querySelector(".agent-sidebar");
+			return shell?.classList.contains("agent-sidebar-collapsed") &&
+				!shell.classList.contains("agent-sidebar-settling") &&
+				panel && panel.getBoundingClientRect().width <= 1;
+		});
+	}
+	const initialViewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
 	await page.setViewportSize({ width: 1000, height: 600 });
+	await sidebar.locator('[data-destination="browser"] span').waitFor({ state: "visible" });
 	assert.equal(await sidebar.locator('[data-destination="browser"] span').isVisible(), true, "Laptop widths must retain navigation labels.");
 	const settingsBounds = await sidebar.locator('[data-destination="settings"]').boundingBox();
 	assert(settingsBounds && settingsBounds.y >= 0 && settingsBounds.y + settingsBounds.height <= 600, "Settings must remain reachable in short windows.");
-	if (initialViewport) await page.setViewportSize(initialViewport);
+	await page.setViewportSize(initialViewport);
 	// Less frequent actions remain available through the labeled browser menu.
 	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
 	await page.getByRole("menuitem", { name: "Bookmarks" }).waitFor();

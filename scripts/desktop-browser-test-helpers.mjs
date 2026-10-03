@@ -109,6 +109,7 @@ export async function selectSettingsSection(page, value, label) {
 		Models: "Models & routing",
 		Memory: "Memory & context",
 		Plugins: "Tools, MCP & skills",
+		Privacy: "Permissions & sandbox",
 		Advanced: "Diagnostics",
 	};
 	const sectionLabel = legacyLabels[label] ?? label;
