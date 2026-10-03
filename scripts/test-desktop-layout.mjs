@@ -167,9 +167,9 @@ async function readInteractionDiagnostics(page) {
 	});
 }
 
-async function armAgentRailClickContinuityProbe(page) {
-	await page.evaluate(() => {
-		delete window.__kestrelAgentRailClickContinuity;
+async function armAgentRailInterruptionProbe(page, expectedWidth) {
+	await page.evaluate((targetWidth) => {
+		delete window.__kestrelAgentRailInterruption;
 		const readState = () => {
 			const shell = document.querySelector(".ai-browser-app");
 			const panel = document.querySelector(".agent-sidebar");
@@ -178,6 +178,7 @@ async function armAgentRailClickContinuityProbe(page) {
 				getComputedStyle(shell).getPropertyValue("--agent-panel-presented-width"),
 			);
 			return {
+				at: performance.now(),
 				width: panel.getBoundingClientRect().width,
 				presentedWidth: Number.isFinite(presentedWidth) ? presentedWidth : null,
 				settling: shell.classList.contains("agent-sidebar-settling"),
@@ -186,36 +187,87 @@ async function armAgentRailClickContinuityProbe(page) {
 					?.getAttribute("aria-label"),
 			};
 		};
-		const captureClick = (event) => {
-			const target =
-				event.target instanceof Element
-					? event.target.closest("#browser-agent-toggle")
-					: null;
-			if (!target) return;
-			document.removeEventListener("click", captureClick, true);
+		const result = {};
+		window.__kestrelAgentRailInterruption = result;
+		let phase = "opening";
+		const deadline = performance.now() + 10_000;
+		const activate = (stage, nextPhase) => {
+			const target = document.querySelector("#browser-agent-toggle");
+			const bounds = target.getBoundingClientRect();
+			const hit = document.elementFromPoint(
+				bounds.left + bounds.width / 2, bounds.top + bounds.height / 2,
+			);
+			if (hit !== target && !target.contains(hit)) {
+				result.error = "The moving rail covered its toggle.";
+				return;
+			}
 			const before = readState();
+			phase = "committing";
 			const observer = new MutationObserver(() => {
 				if (target.getAttribute("aria-label") === before.ariaLabel) return;
 				observer.disconnect();
-				window.__kestrelAgentRailClickContinuity = {
-					before,
-					after: readState(),
-				};
+				result[stage] = { before, after: readState() };
+				phase = nextPhase;
+				if (nextPhase === "resumed") {
+					requestAnimationFrame(() => requestAnimationFrame(() => {
+						result.afterTwoFrames = readState();
+						result.complete = true;
+					}));
+				}
 			});
 			observer.observe(target, {
 				attributes: true,
 				attributeFilter: ["aria-label"],
 			});
+			// Invoke the same button handler on an in-flight renderer frame. Waiting
+			// for another Playwright/CDP click can outlast the entire spring.
+			target.click();
 		};
-		document.addEventListener("click", captureClick, true);
-	});
+		const frame = () => {
+			if (result.error || result.complete) return;
+			if (performance.now() > deadline) {
+				result.error = `Rail interruption timed out in ${phase}.`;
+				return;
+			}
+			const state = readState();
+			if (state.settling && state.width > 8 && state.width < targetWidth - 8) {
+				if (phase === "opening") activate("reversal", "closing");
+				else if (phase === "closing" && state.width < result.reversal.before.width - 4)
+					activate("reopen", "resumed");
+			}
+			requestAnimationFrame(frame);
+		};
+		requestAnimationFrame(frame);
+	}, expectedWidth);
 }
 
-async function readAgentRailClickContinuityProbe(page) {
+async function readAgentRailInterruptionProbe(page) {
 	await page.waitForFunction(
-		() => window.__kestrelAgentRailClickContinuity?.after,
+		() => window.__kestrelAgentRailInterruption?.complete ||
+			window.__kestrelAgentRailInterruption?.error,
 	);
-	return page.evaluate(() => window.__kestrelAgentRailClickContinuity);
+	return page.evaluate(() => window.__kestrelAgentRailInterruption);
+}
+
+async function deferChatOpeningFocus(page) {
+	await page.evaluate(() => {
+		const original = window.requestAnimationFrame;
+		const pending = [];
+		window.requestAnimationFrame = function (callback) {
+			const source = callback.toString();
+			if (source.includes("runtime-prompt") && source.includes("browser-agent-toggle")) {
+				pending.push(callback);
+				return original.call(window, () => {});
+			}
+			return original.call(window, callback);
+		};
+		window.__kestrelFlushChatOpeningFocus = () => {
+			window.requestAnimationFrame = original;
+			for (const callback of pending) callback(performance.now());
+			delete window.__kestrelFlushChatOpeningFocus;
+			return pending.length;
+		};
+	});
 }
 
 function assertNear(actual, expected, message) {
@@ -633,41 +685,16 @@ async function assertAgentRailInterruption(page) {
 	const expectedWidth = expectedAgentPanelWidth(
 		await page.evaluate(() => innerWidth),
 	);
-	const readWidth = () =>
-		page.locator(".agent-sidebar").evaluate((element) =>
-			element.getBoundingClientRect().width,
-		);
-	const afterTwoFrames = () =>
-		page.evaluate(
-			() =>
-				new Promise((resolve) =>
-					requestAnimationFrame(() => requestAnimationFrame(resolve)),
-				),
-		);
-
+	await armAgentRailInterruptionProbe(page, expectedWidth);
 	await clickAfterHitTest(page, toggle, "#browser-agent-toggle");
-	await page.waitForFunction(
-		(target) => {
-			const shell = document.querySelector(".ai-browser-app");
-			const agent = document.querySelector(".agent-sidebar");
-			const width = agent?.getBoundingClientRect().width ?? 0;
-			return (
-				shell?.classList.contains("agent-sidebar-settling") &&
-				width > 8 &&
-				width < target - 8
-			);
-		},
-		expectedWidth,
-	);
-	// Measure both sides of the same click. A CDP round trip can span most of
-	// the spring, so comparing an earlier frame to two frames after the click
-	// confuses elapsed animation with a discontinuity.
-	await waitForHitTestTarget(page, "#browser-agent-toggle");
-	await armAgentRailClickContinuityProbe(page);
-	await toggle.click();
+	const interruption = await readAgentRailInterruptionProbe(page);
+	runtimeDiagnostics.railInterruption = interruption;
+	assert.equal(interruption.error, undefined);
 	const { before: openingState, after: reversedStart } =
-		await readAgentRailClickContinuityProbe(page);
+		interruption.reversal;
 	const openingWidth = openingState.width;
+	assert.ok(openingState.settling && openingWidth > 8 && openingWidth < expectedWidth - 8,
+		"The reversal must interrupt an in-flight opening spring.");
 	assert.ok(reversedStart.settling, "Rail reversal did not start a settling transition.");
 	assert.ok(
 		reversedStart.width > 0 && reversedStart.width < expectedWidth,
@@ -677,26 +704,11 @@ async function assertAgentRailInterruption(page) {
 		Math.abs(reversedStart.width - openingWidth) <= Math.max(24, expectedWidth * 0.16),
 		`Rail reversal jumped from ${openingWidth}px to ${reversedStart.width}px.`,
 	);
-	await page.waitForFunction(
-		(before) =>
-			(document.querySelector(".agent-sidebar")?.getBoundingClientRect().width ?? 0) <
-			before - 4,
-		openingWidth,
-	);
-	// Re-open before the close finishes. This proves the next input is accepted
-	// during motion and that the new spring starts from the rendered width. Read
-	// the first resumed frame before sampling two more frames; displacement over
-	// two frames is expected spring motion, not evidence of an endpoint jump.
-	// The close spring keeps moving while Playwright resolves the hit target.
-	// Capture the rendered width in the click's capture phase, then capture the
-	// committed React state from the aria-label mutation microtask. Both samples
-	// therefore belong to the same input event and land before the next spring
-	// animation frame, regardless of Playwright/CDP scheduling latency.
-	await waitForHitTestTarget(page, "#browser-agent-toggle");
-	await armAgentRailClickContinuityProbe(page);
-	await toggle.click();
 	const { before: closingStateBeforeReopen, after: reopenedStart } =
-		await readAgentRailClickContinuityProbe(page);
+		interruption.reopen;
+	assert.ok(closingStateBeforeReopen.settling && closingStateBeforeReopen.width > 8 &&
+		closingStateBeforeReopen.width < openingWidth - 4,
+		"The re-open must interrupt an in-flight closing spring.");
 	const continuityTolerance = Math.max(24, expectedWidth * 0.16);
 	assert.ok(
 		reopenedStart.settling,
@@ -712,8 +724,7 @@ async function assertAgentRailInterruption(page) {
 			`Interrupted re-open presented width diverged from its rendered width (${JSON.stringify(reopenedStart)}).`,
 		);
 	}
-	await afterTwoFrames();
-	const reopenedWidth = await readWidth();
+	const reopenedWidth = interruption.afterTwoFrames.width;
 	assert.ok(
 		reopenedWidth > 0 && reopenedWidth < expectedWidth,
 		`Interrupted re-open jumped to an endpoint (${reopenedWidth}px).`,
@@ -1149,6 +1160,7 @@ async function assertCompactChatInteraction(application, page) {
 		}, url);
 		await waitForCollapsedLayout(page);
 		await waitForNative(true);
+		await deferChatOpeningFocus(page);
 		await page.locator("#browser-agent-toggle").click();
 		await waitForOpenAgentLayout(page, 800);
 		await page.getByRole("dialog", { name: /chat/ }).waitFor();
@@ -1174,6 +1186,11 @@ async function assertCompactChatInteraction(application, page) {
 		});
 		runtimeDiagnostics.compactFocus = focusBounds;
 		assert.equal(focusBounds.active, focusBounds.last, "The final compact Chat control must receive focus before checking the loop");
+		const deferredFocusCount = await page.evaluate(() => window.__kestrelFlushChatOpeningFocus());
+		runtimeDiagnostics.compactFocus.deferredOpeningCallbacks = deferredFocusCount;
+		assert.ok(deferredFocusCount > 0, "The compact Chat regression must defer its opening focus callback.");
+		assert.equal(await page.evaluate(() => document.activeElement.outerHTML), focusBounds.last,
+			"A delayed Chat opening callback must preserve the person's newer focus choice.");
 		await page.keyboard.press("Tab");
 		assert.equal(await page.evaluate(() => document.activeElement.outerHTML), focusBounds.first);
 		await page.keyboard.press("Shift+Tab");

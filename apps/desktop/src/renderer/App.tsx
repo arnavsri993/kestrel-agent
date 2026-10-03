@@ -4787,7 +4787,7 @@ function RuntimeConversation({
 									Retry last turn
 								</button>
 							)}
-							<ActionReceiptList receipts={latestReceipts} />
+							<ActionReceiptList receipts={latestReceipts} executions={executions} />
 						</section>
 					)}
 					{latestRun?.status === "completed" &&
@@ -10951,6 +10951,17 @@ export function App() {
 		void openAppPage("approvals");
 	}, [focusRuntimeApproval, openAppPage, runtimeWaiting, snapshotPendingCount]);
 	const toggleAgentSidebar = useCallback(() => {
+		const focusBeforeToggle = document.activeElement;
+		const focusAfterToggle = (open: boolean) => {
+			window.requestAnimationFrame(() => {
+				// Respect focus already moved by the compact dialog or the person.
+				if (document.activeElement !== focusBeforeToggle &&
+					document.activeElement !== document.body) return;
+				document
+					.getElementById(open ? "runtime-prompt" : "browser-agent-toggle")
+					?.focus();
+			});
+		};
 		const activeTab = browser.state?.tabs.find(
 			(tab) => tab.id === browser.state?.activeTabId,
 		);
@@ -10962,11 +10973,7 @@ export function App() {
 					"kestrel:agent-universe-rail",
 					next ? "open" : "collapsed",
 				);
-				window.requestAnimationFrame(() => {
-					document
-						.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
-						?.focus();
-				});
+				focusAfterToggle(next);
 				return next;
 			});
 			return;
@@ -10977,11 +10984,7 @@ export function App() {
 				"kestrel:agent-sidebar",
 				next ? "open" : "collapsed",
 			);
-			window.requestAnimationFrame(() => {
-				document
-					.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
-					?.focus();
-			});
+			focusAfterToggle(next);
 			return next;
 		});
 	}, [browser]);

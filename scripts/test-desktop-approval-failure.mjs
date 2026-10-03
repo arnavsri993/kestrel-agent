@@ -9,7 +9,9 @@ const root = mkdtempSync(join(tmpdir(), "kestrel-approval-failure-"));
 const evidenceDirectory = process.env.KESTREL_APPROVAL_EVIDENCE_DIR;
 if (evidenceDirectory) mkdirSync(evidenceDirectory, { recursive: true });
 const prompt = "Fail approved configuration fixture.";
+const receiptPrompt = "Create the isolated browser receipt fixture.";
 let taskCalls = 0;
+let receiptCalls = 0;
 const providerErrors = [];
 const server = createServer(async (request, response) => {
 	try {
@@ -28,8 +30,15 @@ const server = createServer(async (request, response) => {
 		const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 		const user = [...(body.messages ?? [])].reverse().find(message => message.role === "user");
 		const tool = String(user?.content ?? "") === prompt;
+		const browserReceipt = String(user?.content ?? "") === receiptPrompt;
+		const userIndex = body.messages.findLastIndex(message => message.role === "user");
+		const receiptResult = body.messages.slice(userIndex + 1).some(message =>
+			message.role === "tool" && message.tool_call_id === "fixture-receipt-call");
+		const createBrowser = browserReceipt && !receiptResult;
 		if (tool || String(user?.content ?? "") === "Continue with a fresh fixture task.") taskCalls++;
+		if (browserReceipt) receiptCalls++;
 		if (tool) assert(body.tools.some(item => item.function.name === "agent.config.apply"));
+		if (createBrowser) assert(body.tools.some(item => item.function.name === "browser.create"));
 		const event = {
 			id: "approval-failure-fixture",
 			model: "fixture-model",
@@ -39,7 +48,12 @@ const server = createServer(async (request, response) => {
 					name: "agent.config.apply",
 					arguments: JSON.stringify({ proposalId: "missing-fixture-proposal", expectedBaseVersionId: "missing-fixture-version", preview: "Synthetic missing proposal; no configuration change." }),
 				} }],
-			} : { content: "Fresh fixture task completed." }, finish_reason: tool ? "tool_calls" : "stop" }],
+			} : createBrowser ? {
+				tool_calls: [{ index: 0, id: "fixture-receipt-call", type: "function", function: {
+					name: "browser.create", arguments: JSON.stringify({ allowedOrigins: [`http://127.0.0.1:${server.address().port}`] }),
+				} }],
+			} : { content: browserReceipt ? "Browser receipt fixture completed." : "Fresh fixture task completed." },
+			finish_reason: tool || createBrowser ? "tool_calls" : "stop" }],
 			usage: { prompt_tokens: 2, completion_tokens: 2 },
 		};
 		response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" })
@@ -154,6 +168,17 @@ try {
 	assert(executions.ok);
 	assert.equal(executions.executions.filter(item => item.toolName === "agent.config.apply" && item.status === "failed").length, 1);
 	assert.equal(executions.executions.find(item => item.id === pending.pendingToolExecutionId).output.approvalRequired, false);
+	const receipts = outcome.locator(".action-receipts");
+	await receipts.locator(":scope > summary").focus();
+	await page.keyboard.press("Enter");
+	assert.match(await receipts.locator(":scope > summary").innerText(), /1 action\b/);
+	const currentReceipt = receipts.locator(":scope > .action-receipt-list > .action-receipt");
+	assert.equal(await currentReceipt.count(), 1);
+	assert.match(await currentReceipt.locator(":scope > header .action-receipt-status").innerText(), /uncertain/i);
+	assert.equal(await currentReceipt.locator(":scope > .action-receipt-history").count(), 0,
+		"The consumed one-time grant must not look like a second action.");
+	await receipts.locator(":scope > summary").focus();
+	await page.keyboard.press("Enter");
 	const executionIds = executions.executions.map(item => item.id).sort();
 	const stale = await page.evaluate(runId => window.kestrel.request({ type: "runtime-resume-agent", runId, approvalDecision: "approved" }), pending.id);
 	assert.equal(stale.ok, false);
@@ -169,9 +194,43 @@ try {
 	assert(final.ok);
 	assert.equal(final.sessions.find(item => item.id === session.id).status, "active");
 	assert.equal(taskCalls, 2);
+	await input.fill(receiptPrompt);
+	await send.click();
+	await page.getByRole("button", { name: "Allow once", exact: true }).click();
+	await page.getByText("Browser receipt fixture completed.", { exact: true }).waitFor();
+	const browserReceipts = outcome.locator(".action-receipts");
+	await browserReceipts.locator(":scope > summary").focus();
+	await page.keyboard.press("Enter");
+	assert.match(await browserReceipts.locator(":scope > summary").innerText(), /1 action\b/);
+	const browserReceipt = browserReceipts.locator(":scope > .action-receipt-list > .action-receipt");
+	assert.equal(await browserReceipt.count(), 1);
+	assert.equal(await browserReceipt.locator(":scope > header .action-receipt-status").innerText(), "Verified");
+	const history = browserReceipt.locator(":scope > .action-receipt-history");
+	assert.equal(await history.getAttribute("open"), null);
+	assert.equal(await history.locator(".action-receipt-status").isVisible(), false);
+	for (const width of [1440, 1000]) {
+		await page.setViewportSize({ width, height: 900 });
+		await history.locator(":scope > summary").focus();
+		await page.keyboard.press("Enter");
+		assert.equal(await history.locator(".action-receipt-status").innerText(), "Waiting for approval");
+		assert.match(await history.locator(":scope > summary").evaluate(element => getComputedStyle(element).boxShadow), /rgba?\(/);
+		assert(await browserReceipt.evaluate(node => {
+			const bounds = node.getBoundingClientRect();
+			return bounds.width > 0 && bounds.left >= 0 && bounds.right <= innerWidth;
+		}), "The action and history must fit inside desktop and compact Chat.");
+		if (evidenceDirectory) await page.screenshot({ path: join(evidenceDirectory, `action-receipt-history-${width}.png`) });
+		await history.locator(":scope > summary").focus();
+		await page.keyboard.press("Space");
+		assert.equal(await history.getAttribute("open"), null);
+	}
+	const recordedReceipts = await page.evaluate(sessionId => window.kestrel.request({ type: "runtime-list-action-receipts", sessionId }), session.id);
+	assert(recordedReceipts.ok);
+	assert.equal(recordedReceipts.receipts.filter(receipt => receipt.toolName === "browser.create").length, 2,
+		"Grouping the visible result must preserve both bounded core receipts.");
+	assert.equal(receiptCalls, 2);
 	assert.deepEqual(providerErrors, []);
 	assert.deepEqual(runtimeErrors, []);
-	process.stdout.write("Desktop approval failure passed: compact one-time controls at 1440/1000, keyboard disclosures with exact scope/input, protected persistent-approval exclusion, visible error, retired stale control, no replay, and reusable session. Provider: local HTTP fixture; profile: disposable.\n");
+	process.stdout.write("Desktop approval failure passed: compact one-time controls at 1440/1000, keyboard disclosures with exact scope/input, protected persistent-approval exclusion, visible error, retired stale control, no replay, reusable session, and one current browser action with preserved keyboard-accessible history. Provider: deterministic HTTP fixture; profile: disposable; no real model generation.\n");
 } catch (error) {
 	if (page && process.env.KESTREL_APPROVAL_FAILURE_SCREENSHOT) {
 		await page.screenshot({ path: process.env.KESTREL_APPROVAL_FAILURE_SCREENSHOT });

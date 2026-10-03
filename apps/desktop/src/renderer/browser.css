@@ -6847,20 +6847,23 @@ body:has(.calculator-overlay),
 	color: var(--text);
 }
 
-.agent-conversation-host .action-receipt-evidence {
+.agent-conversation-host .action-receipt-evidence,
+.agent-conversation-host .action-receipt-history {
 	margin: 1px 0 7px;
 	padding-top: 6px;
 	border-top: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
 }
 
-.agent-conversation-host .action-receipt-evidence > summary {
+.agent-conversation-host .action-receipt-evidence > summary,
+.agent-conversation-host .action-receipt-history > summary {
 	color: var(--muted);
 	cursor: pointer;
 	font-size: 10px;
 	line-height: 1.4;
 }
 
-.agent-conversation-host .action-receipt-evidence > summary:focus-visible {
+.agent-conversation-host .action-receipt-evidence > summary:focus-visible,
+.agent-conversation-host .action-receipt-history > summary:focus-visible {
 	border-radius: 4px;
 	outline: none;
 	box-shadow: var(--focus-ring);
