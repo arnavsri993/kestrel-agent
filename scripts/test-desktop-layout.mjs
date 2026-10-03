@@ -1040,7 +1040,9 @@ async function setDesktopWindowWidth(application, page, width) {
 	);
 	assertNear(appliedWidth, width, "Electron window width");
 	await page.waitForFunction(
-		(expectedWidth) => Math.abs(innerWidth - expectedWidth) <= 2,
+		// The adjacent 1119/1120/1121 checks must observe their requested
+		// viewport, rather than accepting the previous width within a tolerance.
+		(expectedWidth) => innerWidth === expectedWidth,
 		width,
 	);
 }
@@ -1094,13 +1096,17 @@ async function waitForOpenAgentLayout(page, expectedWidth = null) {
 			const shell = document.querySelector(".ai-browser-app");
 			const agent = document.querySelector(".agent-sidebar");
 			const width = agent?.getBoundingClientRect().width ?? 0;
+			const desktopWidthMax = Math.max(480, Math.min(820, innerWidth - 640));
+			const responsiveLayoutReady = innerWidth > 1120
+				? !shell?.classList.contains("agent-sidebar-overlay-open") && width >= 479 && width <= desktopWidthMax + 1
+				: shell?.classList.contains("agent-sidebar-overlay-open") && Math.abs(width - innerWidth) <= 1;
 			return (
 				shell &&
 				agent &&
 				!shell.classList.contains("agent-sidebar-collapsed") &&
 				!shell.classList.contains("agent-sidebar-settling") &&
 				width > 0 &&
-				(innerWidth > 1120 || (shell.classList.contains("agent-sidebar-overlay-open") && Math.abs(width - innerWidth) <= 1)) &&
+				responsiveLayoutReady &&
 				(target === null || Math.abs(width - target) <= 1)
 			);
 		},
@@ -1152,8 +1158,22 @@ async function assertCompactChatInteraction(application, page) {
 			const controls = [...node.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]')]
 				.filter(control => control.getClientRects().length && !control.closest("[inert]"));
 			controls.at(-1).focus();
-			return { first: controls[0].outerHTML, last: controls.at(-1).outerHTML };
+			return {
+				first: controls[0].outerHTML,
+				last: controls.at(-1).outerHTML,
+				active: document.activeElement?.outerHTML,
+				controls: controls.map(control => ({
+					name: control.getAttribute("aria-label") ?? control.textContent?.trim().slice(0, 80),
+					className: control.className,
+					tabIndex: control.tabIndex,
+					visibility: getComputedStyle(control).visibility,
+					visible: control.checkVisibility({ visibilityProperty: true }),
+					closedDetails: Boolean(control.closest("details:not([open])")),
+				})),
+			};
 		});
+		runtimeDiagnostics.compactFocus = focusBounds;
+		assert.equal(focusBounds.active, focusBounds.last, "The final compact Chat control must receive focus before checking the loop");
 		await page.keyboard.press("Tab");
 		assert.equal(await page.evaluate(() => document.activeElement.outerHTML), focusBounds.first);
 		await page.keyboard.press("Shift+Tab");
@@ -1577,6 +1597,9 @@ try {
 	page.on("pageerror", (error) => pageErrors.push(error.message));
 	await page.waitForLoadState("domcontentloaded");
 	await page.waitForFunction(() => typeof window.kestrel?.request === "function");
+	// Desktop rail/motion checks need a desktop baseline even on a small CI
+	// display. Compact modal, native isolation and every breakpoint run below.
+	await setDesktopWindowWidth(application, page, 1440);
 	await page.evaluate(() => {
 		localStorage.setItem("kestrel:onboarded", "yes");
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
