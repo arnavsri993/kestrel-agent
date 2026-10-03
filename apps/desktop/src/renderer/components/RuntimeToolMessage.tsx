@@ -33,7 +33,19 @@ const titles: Record<string, string> = {
 };
 
 export function runtimeToolTitle(toolName: string, fallback = "Tool result"): string {
-	return titles[toolName] ?? fallback;
+	return Object.hasOwn(titles, toolName) ? titles[toolName] ?? fallback : fallback;
+}
+
+export function runtimeAssistantDisplayContent(
+	message: Pick<RuntimeMessage, "role" | "content" | "modelToolCalls">,
+): string {
+	const calls = message.modelToolCalls;
+	if (
+		message.role !== "assistant" || !calls?.length ||
+		message.content !== `Requested tools: ${calls.map((call) => call.name).join(", ")}`
+	) return message.content;
+	const label = calls.length === 1 ? "Requested action" : "Requested actions";
+	return `${label}: ${calls.map((call) => runtimeToolTitle(call.name, "Run an action")).join(", ")}.`;
 }
 
 const statuses = {

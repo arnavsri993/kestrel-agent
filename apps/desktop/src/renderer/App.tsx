@@ -145,7 +145,7 @@ import {
 	CommandCenter,
 } from "./components/browser/CommandCenter";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
-import { RuntimeToolMessage, runtimeToolTitle } from "./components/RuntimeToolMessage";
+import { RuntimeToolMessage, runtimeAssistantDisplayContent, runtimeToolTitle } from "./components/RuntimeToolMessage";
 import { AssistantMessageContent } from "./components/AssistantMessageContent";
 import { ComputerUseSettings } from "./components/ComputerUseSettings";
 import {
@@ -4374,11 +4374,7 @@ function RuntimeConversation({
 		: [];
 	const latestToolEvent = toolActivity.at(-1);
 	const currentAction = latestToolEvent
-		? String(
-				latestToolEvent.payload.toolName ??
-					latestToolEvent.executionId ??
-					"Tool activity",
-		  )
+		? runtimeToolTitle(String(latestToolEvent.payload.toolName ?? ""), "Working on an action")
 		: streamText
 			? "Drafting a response"
 			: "Starting the task";
@@ -4386,8 +4382,8 @@ function RuntimeConversation({
 		? latestToolEvent.type === "tool.progress"
 			? "Progress update received"
 			: latestToolEvent.type === "tool.completed"
-				? "Tool result received"
-				: "Tool started"
+				? "Result received"
+				: "Action started"
 		: latestRun
 			? `Isolated core · ${runRouteLabel(latestRun)}`
 			: "Kestrel is working in this chat.";
@@ -4431,7 +4427,7 @@ function RuntimeConversation({
 			: backgroundSessionBusy
 				? "Kestrel is working in another chat."
 				: pending
-					? `Kestrel needs your approval for ${pending.execution.toolName}.`
+					? `Kestrel needs your approval: ${runtimeToolTitle(pending.execution.toolName, "Requested action")}.`
 					: latestRun?.status === "completed"
 						? "Kestrel finished the latest response."
 						: humanInputRequests.some((request) => request.status === "waiting")
@@ -4544,7 +4540,7 @@ function RuntimeConversation({
 							>
 								<span className="assistant-avatar">K</span>
 								<div>
-									<AssistantMessageContent content={message.content} />
+									<AssistantMessageContent content={runtimeAssistantDisplayContent(message)} />
 									{message.memoryRecallReceipt && (
 										<MemoryRecallReceiptLine
 											receipt={message.memoryRecallReceipt}
