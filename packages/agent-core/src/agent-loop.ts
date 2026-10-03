@@ -32,7 +32,7 @@ import {
 	recordBrowserRecoveryToolSuccess,
 	type BrowserRecoveryBudgetState,
 } from "./browser-recovery";
-import { isUnexecutedLocalPlan, prematureBrowserCompletionErrorForRun, UNEXECUTED_LOCAL_PLAN_ERROR, UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR } from "./agent-run-completion";
+import { isUnexecutedLocalPlan, prematureBrowserCompletionErrorForRun, unverifiedBrowserClickNarration, UNEXECUTED_LOCAL_PLAN_ERROR, UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR } from "./agent-run-completion";
 import { buildActionReceipt } from "./action-receipts";
 import type { AgentRuntime } from "./runtime";
 import { modelVisibleToolResult, redactSensitiveValue } from "./tool-result-guardrails";
@@ -1209,6 +1209,7 @@ export class AgentLoop {
 					selectedProviders.length > 0 && selectedProviders.every(provider => provider.capabilities.local && provider.capabilities.tools);
 				const localTools = !finalTurn && explicitLocalRoute ? localToolCatalog(tools, modelMessages) : undefined;
 				const availableTools = finalTurn ? [] : localTools ?? tools;
+				const checkLocalBrowserNarration = explicitLocalRoute && tools.some(tool => tool.name.startsWith("browser."));
 				run = { ...run, turn, updatedAt: this.now().toISOString() };
 				this.saveActiveRun(run);
 				const workspaceRoot = this.runtime.activeWorkspaceRoot(session.id);
@@ -1270,7 +1271,9 @@ export class AgentLoop {
 								: {}),
 							...(options.signal ? { signal: options.signal } : {}),
 							onEvent: (event) => {
-								if (event.type === "text_delta" && !this.runtime.taskSecrets.hasRun(run.id))
+								// Local tool turns can narrate an action before requesting it. Wait
+								// for the complete result so that narration can be checked first.
+								if (event.type === "text_delta" && !checkLocalBrowserNarration && !this.runtime.taskSecrets.hasRun(run.id))
 									options.onTextDelta?.(event.delta);
 							},
 						},
@@ -1412,8 +1415,14 @@ export class AgentLoop {
 					? prematureBrowserCompletionErrorForRun(this.database, {
 						runId: run.id, sessionId: session.id, modelText: result.text, browserRecoveryState,
 					}) : undefined;
+				const unsupportedClickNarration = result.toolCalls.some(call => call.name.startsWith("browser.")) &&
+					unverifiedBrowserClickNarration({ runId: run.id, sessionId: session.id, modelText: result.text,
+						listExecutions: sessionId => this.database.listToolExecutions(sessionId) });
+				const checkedText = unsupportedClickNarration
+					? `Requested tools: ${result.toolCalls.map(call => call.name).join(", ")}. The requested action has not run yet.`
+					: result.text;
 				const assistantContent =
-					(completionError === UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR || completionError === UNEXECUTED_LOCAL_PLAN_ERROR ? completionError : result.text.trim()) ||
+					(completionError === UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR || completionError === UNEXECUTED_LOCAL_PLAN_ERROR ? completionError : checkedText.trim()) ||
 					`Requested tools: ${result.toolCalls.map((call) => call.name).join(", ")}`;
 				const assistantMessage = this.runtime.appendMessage({
 					sessionId: session.id,
@@ -1431,7 +1440,7 @@ export class AgentLoop {
 					...modelMessages,
 					{
 						role: "assistant",
-						content: textContent(result.text),
+						content: textContent(checkedText),
 						...(result.toolCalls.length ? { toolCalls: result.toolCalls } : {}),
 					},
 				];

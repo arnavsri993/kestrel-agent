@@ -27,9 +27,25 @@ function claimsExecutedClick(text: string): boolean {
 			fenced = !fenced;
 			return false;
 		}
-		return !fenced && !trimmed.startsWith(">");
+		return !fenced && !trimmed.startsWith(">") &&
+			!/^(?:[-*]\s+)?(?:if|when|once|unless|until|for example|example)\b/i.test(trimmed);
 	}).join("\n");
-	return /\b(?:I|we) (?:have )?(?:just )?(?:successfully )?clicked\b|\bclick (?:was|has been) (?:successfully )?(?:executed|performed|completed)\b/i.test(prose);
+	return /\b(?:I|we) (?:have )?(?:just )?(?:successfully )?clicked\b|\bclick (?:was|has been) (?:successfully )?(?:executed|performed|completed)\b|\b(?:button|link|element) (?:was|has been) (?:successfully )?clicked\b/i.test(prose);
+}
+
+export function unverifiedBrowserClickNarration(input: {
+	runId: string;
+	sessionId: string;
+	modelText: string;
+	listExecutions: (sessionId: string) => RuntimeToolExecution[];
+}): boolean {
+	return claimsExecutedClick(input.modelText) && !input.listExecutions(input.sessionId).some(execution => {
+		const action = execution.input.action;
+		return execution.idempotencyKey?.startsWith(`${input.runId}:`) === true &&
+			execution.status === "verified" &&
+			["browser.act", "browser.visible-act"].includes(execution.toolName) &&
+			typeof action === "object" && action !== null && "type" in action && action.type === "click";
+	});
 }
 
 export function prematureBrowserCompletionError(input: {
@@ -49,12 +65,8 @@ export function prematureBrowserCompletionError(input: {
 	);
 	if (browserExecutions.length === 0) return undefined;
 	if (modelText) {
-		if (claimsExecutedClick(modelText) && !browserExecutions.some(execution => {
-			const action = execution.input.action;
-			return execution.status === "verified" &&
-				["browser.act", "browser.visible-act"].includes(execution.toolName) &&
-				typeof action === "object" && action !== null && "type" in action && action.type === "click";
-		})) return UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR;
+		if (unverifiedBrowserClickNarration({ ...input, listExecutions: () => browserExecutions }))
+			return UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR;
 		return undefined;
 	}
 

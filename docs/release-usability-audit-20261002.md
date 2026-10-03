@@ -2,6 +2,16 @@
 
 This branch combines the frozen latest open pull-request heads on main `3e93235839b44dcc64643d37f6359a825c25be6e`. It preserves user profiles and the current Keychain/encryption defaults. GitHub pull requests are left unmerged for review.
 
+## Latest checkpoint
+
+Clean `e91fed2d28ce60dc5d564aa61ca01a4cf18a6591` was installed at the canonical path, independently checked against its application/core provenance hashes, and passed deep signature verification and installed smoke. A normal relaunch showed the existing profile in the new canonical process. All seven exact-head remote checks passed; the desktop job needed one rerun after an installation socket error before package-manager output. The downloader dependency repair passed the full audit with zero known advisories and both independent cold-download checks. Required review remains outstanding.
+
+The stricter repeat of the genuine two-page task on `e91fed2d` failed its complete exact-code-line assertion. The model performed the approved click, retained the nonces and computed the correct comparison, but mislabelled the code lines. That failed evidence is preserved and the acceptance checks are unchanged. A separate real-profile task against an owned disposable page exposed premature passive narration: it said the button had been clicked while that action still awaited approval. The owned server recorded no reveal request. That task was stopped after the disposable server became unavailable; it is not a completed browser-task pass.
+
+This revision checks those passive click claims before tool-bearing assistant messages enter conversation history or the next model turn. Explicit local browser-capable turns, including the final turn, withhold text deltas until the complete response can be checked. The requested tool call and approval boundary remain intact. Regression tests verify both approval and rejection, no execution before approval, one execution after approval, preserved turn limits, corrected model history and no premature streamed text. This is a bounded click-claim check, not general verification of arbitrary model statements.
+
+The approval card keeps the protected action preview visible and presents the two one-time choices together. Native disclosures hold persistent choices and technical policy/route/input details. The persistent-choice explanation states the actual conversation and tool scope, including different inputs; protected actions still omit persistent allow. Workspace type checking, 1,934 unit tests, the refreshed 84-test focused suite, full dependency audit, production secret scan, source protected-task-credential and formatted-answer/tool-result fixtures pass. The approval fixture verifies 1440/1000px containment, Enter/Space disclosure, visible focus, exact input and scope, failed-action recovery and no stale replay. The broader layout fixture initially timed out closing Chat with zero renderer errors; an unchanged full repeat passed all original geometry, focus, Escape, native-isolation and 200% zoom assertions. Both results are preserved; that transient failure has no confirmed cause. Canonical installation and genuine-agent evidence for this revision must still be recorded separately.
+
 ## Source disposition
 
 | PR | Exact head | Local disposition |

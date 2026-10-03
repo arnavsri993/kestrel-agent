@@ -23,11 +23,18 @@ const titles: Record<string, string> = {
 	"workspace.write": "Update file",
 	"execution.run": "Run command",
 	"execution.run-with-secrets": "Run protected command",
+	"agent.config.propose": "Draft configuration change",
+	"agent.config.apply": "Apply configuration change",
+	"agent.config.rollback": "Restore configuration version",
 	"memory.search": "Search Memory",
 	"memory.remember": "Save to Memory",
 	"tools.search": "Find a tool",
 	"tools.activate": "Load a tool",
 };
+
+export function runtimeToolTitle(toolName: string, fallback = "Tool result"): string {
+	return titles[toolName] ?? fallback;
+}
 
 const statuses = {
 	verified: "Done",
@@ -63,7 +70,7 @@ export function runtimeToolMessagePresentation(message: Pick<RuntimeMessage, "to
 		? `Command exited with code ${output?.exitCode}.`
 		: typeof envelope?.error === "string" ? envelope.error.slice(0, 1_000) : "";
 	return {
-		title: titles[message.toolName ?? ""] ?? "Tool result",
+		title: runtimeToolTitle(message.toolName ?? ""),
 		status: effectiveStatus,
 		label: approvalRequired ? "Needs approval" : statuses[effectiveStatus],
 		context,

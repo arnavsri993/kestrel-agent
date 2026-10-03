@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-approval-failure-"));
+const evidenceDirectory = process.env.KESTREL_APPROVAL_EVIDENCE_DIR;
+if (evidenceDirectory) mkdirSync(evidenceDirectory, { recursive: true });
 const prompt = "Fail approved configuration fixture.";
 let taskCalls = 0;
 const providerErrors = [];
@@ -96,6 +98,38 @@ try {
 	await send.click();
 	const approve = page.getByRole("button", { name: "Apply this version", exact: true });
 	await approve.waitFor();
+	const card = page.locator(".approval-message");
+	assert.equal(await card.locator("details[open]").count(), 0);
+	assert.equal(await card.getByRole("button", { name: "Reject once", exact: true }).isVisible(), true);
+	assert.equal(await card.getByRole("button", { name: "Always allow here", exact: true }).count(), 0, "A protected configuration action must never offer persistent approval.");
+	assert.equal(await card.getByRole("button", { name: "Always deny here", exact: true }).isVisible(), false);
+	assert.match(await card.locator(".approval-preview").innerText(), /Synthetic missing proposal/);
+	for (const width of [1440, 1000]) {
+		await page.setViewportSize({ width, height: 900 });
+		await card.scrollIntoViewIfNeeded();
+		const bounds = await card.locator(".runtime-approval-once button").evaluateAll(buttons => buttons.map(button => { const { x, y, right, width } = button.getBoundingClientRect(); return { x, y, right, width }; }));
+		assert.equal(bounds.length, 2);
+		assert(Math.abs(bounds[0].y - bounds[1].y) < 2, "One-time approval choices should share a row.");
+		assert(bounds.every(bound => bound.width > 0 && bound.x >= 0 && bound.right <= width), "Approval controls must stay within the viewport.");
+		if (evidenceDirectory) await page.screenshot({ path: join(evidenceDirectory, `approval-${width}.png`) });
+	}
+	const choices = card.locator("details").filter({ has: page.locator("summary", { hasText: "Remember a choice" }) });
+	await choices.locator("summary").focus();
+	await page.keyboard.press("Space");
+	assert.equal(await choices.getAttribute("open"), "");
+	assert.match(await choices.innerText(), /all requests[\s\S]*in this conversation, including different inputs/);
+	assert.equal(await choices.getByRole("button", { name: "Always deny here", exact: true }).isVisible(), true);
+	assert.match(await choices.locator("summary").evaluate(element => getComputedStyle(element).outlineStyle), /solid/);
+	await choices.locator("summary").focus();
+	await page.keyboard.press("Space");
+	const exactInput = card.locator("details").filter({ has: page.locator("summary", { hasText: "Plan identifiers and exact input" }) });
+	await exactInput.locator("summary").focus();
+	await page.keyboard.press("Enter");
+	assert.equal(await exactInput.getAttribute("open"), "");
+	assert.match(await exactInput.innerText(), /missing-fixture-proposal/);
+	assert.match(await exactInput.innerText(), /Policy level/);
+	await exactInput.locator("summary").focus();
+	await page.keyboard.press("Enter");
 	const before = await page.evaluate(() => window.kestrel.request({ type: "runtime-list-sessions" }));
 	assert(before.ok);
 	const session = before.sessions.find(item => item.title.includes("configuration fixture"));
@@ -137,7 +171,7 @@ try {
 	assert.equal(taskCalls, 2);
 	assert.deepEqual(providerErrors, []);
 	assert.deepEqual(runtimeErrors, []);
-	process.stdout.write("Desktop approval failure passed: keyboard approval, visible error, retired stale control, no replay, and reusable session. Provider: local HTTP fixture; profile: disposable.\n");
+	process.stdout.write("Desktop approval failure passed: compact one-time controls at 1440/1000, keyboard disclosures with exact scope/input, protected persistent-approval exclusion, visible error, retired stale control, no replay, and reusable session. Provider: local HTTP fixture; profile: disposable.\n");
 } catch (error) {
 	if (page && process.env.KESTREL_APPROVAL_FAILURE_SCREENSHOT) {
 		await page.screenshot({ path: process.env.KESTREL_APPROVAL_FAILURE_SCREENSHOT });

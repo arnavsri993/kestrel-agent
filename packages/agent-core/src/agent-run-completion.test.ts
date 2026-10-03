@@ -7,6 +7,7 @@ import {
 	UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR,
 	isUnexecutedLocalPlan,
 	prematureBrowserCompletionError,
+	unverifiedBrowserClickNarration,
 } from "./agent-run-completion";
 
 function execution(
@@ -35,6 +36,8 @@ describe("prematureBrowserCompletionError", () => {
 		"The verification button click was executed.",
 		"I clicked the Show verification button.",
 		"We have successfully clicked the button.",
+		"Outcome: The Reveal verification button has been clicked on the local page, exposing a hidden verification line.",
+		"The link was successfully clicked.",
 	])("rejects an unsupported completed click claim: %s", modelText => {
 		expect(prematureBrowserCompletionError({
 			runId: "run-1", sessionId: "session-1", modelText,
@@ -60,6 +63,10 @@ describe("prematureBrowserCompletionError", () => {
 		"I will click the button after approval.",
 		"Click the button to continue.",
 		"The click was not executed.",
+		"The button has not been clicked.",
+		"If the button was clicked, read the result.",
+		"Once the element has been clicked, a result should appear.",
+		"For example: the button has been clicked.",
 		"> I clicked the button.\nThe quoted claim is unverified.",
 		"```text\nI clicked the button.\n```\nThis is example text.",
 	])("preserves limitations, instructions and quoted examples: %s", modelText => {
@@ -68,6 +75,12 @@ describe("prematureBrowserCompletionError", () => {
 			browserRecoveryState: emptyBrowserRecoveryBudgetState(),
 			listExecutions: () => [execution({ id: "read", idempotencyKey: "run-1:read", toolName: "browser.visible-snapshot" })],
 		})).toBeUndefined();
+	});
+	it("checks a first tool request even before any browser execution exists", () => {
+		expect(unverifiedBrowserClickNarration({
+			runId: "run-1", sessionId: "session-1",
+			modelText: "The button has been clicked.", listExecutions: () => [],
+		})).toBe(true);
 	});
 	it("allows normal Q&A completion with assistant text", () => {
 		expect(

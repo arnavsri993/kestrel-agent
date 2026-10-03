@@ -145,7 +145,7 @@ import {
 	CommandCenter,
 } from "./components/browser/CommandCenter";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
-import { RuntimeToolMessage } from "./components/RuntimeToolMessage";
+import { RuntimeToolMessage, runtimeToolTitle } from "./components/RuntimeToolMessage";
 import { AssistantMessageContent } from "./components/AssistantMessageContent";
 import { ComputerUseSettings } from "./components/ComputerUseSettings";
 import {
@@ -4691,35 +4691,15 @@ function RuntimeConversation({
 									· {pending.execution.riskLevel.replaceAll("_", " ")}
 								</strong>
 								<small className="runtime-approval-owner">
-									Policy level {policyGateCopy(pending.execution).level} paused
-									this run. The pause is restart-safe in encrypted local state
-									until you allow or reject it.
+									This action is waiting for your approval.
 								</small>
-								<p>{pending.execution.toolName}</p>
-								<small>
-									Route {runRouteLabel(pending.run)}
-									{pending.execution.idempotencyKey
-										? ` · ${pending.execution.idempotencyKey}`
-										: ""}
-								</small>
-								<p>{policyGateCopy(pending.execution).reason}</p>
-								{typeof pending.execution.output?.preview === "string" && (
-									<pre className="approval-preview">
-										{pending.execution.output.preview}
-									</pre>
-								)}
-								<details>
-									<summary>
-										{pending.execution.toolName.startsWith("agent.config.")
-											? "Plan identifiers and exact input"
-											: "Raw tool input"}
-									</summary>
-									<pre>{JSON.stringify(pending.execution.input, null, 2)}</pre>
-								</details>
-								<div
-									className="button-row"
-									style={{ display: "flex", flexDirection: "column" }}
-								>
+								<p className="runtime-approval-action">{runtimeToolTitle(pending.execution.toolName, pending.execution.toolName)}</p>
+								<pre className="approval-preview" aria-label="Action preview" tabIndex={0}>
+									{typeof pending.execution.output?.preview === "string"
+										? pending.execution.output.preview
+										: JSON.stringify(pending.execution.input, null, 2)}
+								</pre>
+								<div className="button-row runtime-approval-once">
 									<button
 										className="button primary"
 										onClick={() => void decide("approved")}
@@ -4728,28 +4708,30 @@ function RuntimeConversation({
 											? "Apply this version"
 											: "Allow once"}
 									</button>
-									{pending.execution.output?.persistentApprovalAllowed !==
-										false && (
-										<button
-											className="button secondary"
-											onClick={() => void decidePersistently("allow")}
-										>
-											Always allow here
-										</button>
-									)}
 									<button
 										className="button secondary"
 										onClick={() => void decide("rejected")}
 									>
 										Reject once
 									</button>
-									<button
-										className="button secondary"
-										onClick={() => void decidePersistently("deny")}
-									>
-										Always deny here
-									</button>
 								</div>
+								<details key={`choices-${pending.execution.id}`} className="runtime-approval-details">
+									<summary>Remember a choice</summary>
+									<p>Applies to all requests for <code>{pending.execution.toolName}</code> in this conversation, including different inputs.</p>
+									{pending.execution.output?.persistentApprovalAllowed === false && <p>This action requires approval each time. You can still deny future requests.</p>}
+									<div className="button-row">
+										{pending.execution.output?.persistentApprovalAllowed !== false && (
+											<button className="button secondary" onClick={() => void decidePersistently("allow")}>Always allow here</button>
+										)}
+										<button className="button secondary" onClick={() => void decidePersistently("deny")}>Always deny here</button>
+									</div>
+								</details>
+								<details key={`input-${pending.execution.id}`} className="runtime-approval-details">
+									<summary>{pending.execution.toolName.startsWith("agent.config.") ? "Plan identifiers and exact input" : "Raw tool input"}</summary>
+									<p>Policy level {policyGateCopy(pending.execution).level}: {policyGateCopy(pending.execution).reason}</p>
+									<small>Route {runRouteLabel(pending.run)}{pending.execution.idempotencyKey ? ` · ${pending.execution.idempotencyKey}` : ""}</small>
+									<pre tabIndex={0}>{JSON.stringify(pending.execution.input, null, 2)}</pre>
+								</details>
 							</div>
 						</div>
 					)}

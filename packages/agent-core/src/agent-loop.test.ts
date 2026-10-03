@@ -3516,6 +3516,59 @@ describe("provider-neutral agent loop", () => {
 		database.close();
 	});
 
+	it.each(["approved", "rejected"] as const)("withholds premature streamed click narration while preserving the %s approval decision", async approvalDecision => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		try {
+			const runtime = new AgentRuntime(database);
+			const session = runtime.createSession({ title: "Click awaiting approval" });
+			let clicks = 0;
+			runtime.registerExternalTool({
+				descriptor: { name: "browser.visible-snapshot", title: "Read", description: "Read a fixture page", category: "browser", riskLevel: "read_only", readOnly: true, requiresWorkspace: false, source: "builtin", tags: [] },
+				inputSchema: { type: "object", additionalProperties: false },
+				execute: async () => ({ heading: "Fixture", button: "Reveal verification" }),
+			});
+			runtime.registerExternalTool({
+				descriptor: { name: "browser.visible-act", title: "Use page", description: "Click the fixture button", category: "browser", riskLevel: "sensitive", readOnly: false, requiresWorkspace: false, source: "builtin", tags: [] },
+				inputSchema: { type: "object", properties: { action: { type: "object", properties: { type: { const: "click" }, target: { type: "string" } }, required: ["type", "target"], additionalProperties: false } }, required: ["action"], additionalProperties: false },
+				execute: async () => { clicks++; return { clicked: true }; },
+			});
+			for (const tool of ["browser.visible-snapshot", "browser.visible-act"]) runtime.allowTool(session.id, tool);
+			const premature = "Outcome: The Reveal verification button has been clicked on the local page, exposing a hidden verification line.";
+			const deltas: string[] = [];
+			let calls = 0;
+			const provider: ModelProvider = {
+				id: "local-click-fixture", capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: true },
+				complete: async (request, options) => {
+					calls++;
+					const text = calls === 2 ? premature : calls === 3 ? approvalDecision === "approved" ? "The button has been clicked." : "The click was rejected. No action was taken." : "";
+					if (text) options?.onEvent?.({ type: "text_delta", delta: text });
+					if (calls === 3) {
+						const history = request.messages.filter(message => message.role === "assistant").map(message => contentText(message.content)).join("\n");
+						expect(history).not.toContain(premature);
+						expect(history).toContain("The requested action has not run yet.");
+						expect(request.messages.some(message => message.role === "tool" && message.toolCallId === "click")).toBe(true);
+					}
+					return { providerId: "local-click-fixture", model: request.model, text,
+						toolCalls: calls === 1 ? [{ id: "read", name: "browser.visible-snapshot", arguments: {} }] : calls === 2 ? [{ id: "click", name: "browser.visible-act", arguments: { action: { type: "click", target: "e1" } } }] : [],
+						usage: { inputTokens: 1, outputTokens: 1 }, finishReason: calls < 3 ? "tool_calls" : "stop" };
+				},
+			};
+			const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
+			const waiting = await loop.run({ sessionId: session.id, model: "fixture", providerIds: [provider.id], maximumTurns: 3, userContent: textContent("Click the fixture button."), onTextDelta: delta => deltas.push(delta) });
+			expect(waiting.run).toMatchObject({ status: "waiting_approval", turn: 2, maximumTurns: 3 });
+			expect(waiting.pendingExecution).toMatchObject({ status: "blocked", toolName: "browser.visible-act", input: { action: { type: "click", target: "e1" } } });
+			expect(clicks).toBe(0);
+			expect(deltas).toEqual([]);
+			expect(runtime.listMessages(session.id).map(message => message.content).join("\n")).not.toContain(premature);
+			expect(waiting.assistantMessage?.content).toContain("The requested action has not run yet.");
+			const resumed = await loop.resume({ runId: waiting.run.id, approvalDecision, onTextDelta: delta => deltas.push(delta) });
+			expect(resumed.run).toMatchObject({ status: "completed", turn: 3, maximumTurns: 3 });
+			expect(clicks).toBe(approvalDecision === "approved" ? 1 : 0);
+			expect(resumed.assistantMessage?.content).toBe(approvalDecision === "approved" ? "The button has been clicked." : "The click was rejected. No action was taken.");
+			expect(deltas).toEqual([]);
+		} finally { database.close(); }
+	});
+
 	it("fails and replaces a completed click claim when only a browser read ran", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		try {
@@ -3529,13 +3582,19 @@ describe("provider-neutral agent loop", () => {
 			runtime.allowTool(session.id, "browser.test-read");
 			let calls = 0;
 			const provider: ModelProvider = {
-				id: "false-click", capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: true },
-				complete: async request => ({ providerId: "false-click", model: request.model, text: ++calls === 1 ? "" : "The verification button click was executed.", toolCalls: calls === 1 ? [{ id: "read", name: "browser.test-read", arguments: {} }] : [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: calls === 1 ? "tool_calls" : "stop" }),
+				id: "false-click", capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: true },
+				complete: async (request, options) => {
+					const text = ++calls === 1 ? "" : "The verification button click was executed.";
+					if (text) options?.onEvent?.({ type: "text_delta", delta: text });
+					return { providerId: "false-click", model: request.model, text, toolCalls: calls === 1 ? [{ id: "read", name: "browser.test-read", arguments: {} }] : [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: calls === 1 ? "tool_calls" : "stop" };
+				},
 			};
-			const result = await new AgentLoop(database, runtime, new ProviderPool([provider])).run({ sessionId: session.id, model: "fixture", providerIds: [provider.id], userContent: textContent("Click the fixture button.") });
+			const deltas: string[] = [];
+			const result = await new AgentLoop(database, runtime, new ProviderPool([provider])).run({ sessionId: session.id, model: "fixture", providerIds: [provider.id], maximumTurns: 2, userContent: textContent("Click the fixture button."), onTextDelta: delta => deltas.push(delta) });
 			expect(result.run).toMatchObject({ status: "failed", error: UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR });
 			expect(result.assistantMessage?.content).toBe(UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR);
 			expect(runtime.listMessages(session.id).map(message => message.content).join("\n")).not.toContain("button click was executed");
+			expect(deltas).toEqual([]);
 		} finally { database.close(); }
 	});
 

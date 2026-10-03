@@ -6544,6 +6544,40 @@ body:has(.calculator-overlay),
 	line-height: 1.4;
 }
 
+.agent-conversation-host .runtime-approval-action {
+	margin: 10px 0 6px;
+	font-weight: 600;
+}
+
+.agent-conversation-host .runtime-approval-once {
+	margin: 10px 0;
+}
+
+.agent-conversation-host .runtime-approval-details {
+	margin-top: 8px;
+	font-size: 11px;
+	line-height: 1.5;
+}
+
+.agent-conversation-host .runtime-approval-details summary {
+	cursor: pointer;
+	color: var(--muted);
+}
+
+.agent-conversation-host .runtime-approval-details p {
+	margin: 8px 0;
+}
+
+.agent-conversation-host .runtime-approval-details pre {
+	max-height: 180px;
+	overflow: auto;
+}
+
+.agent-conversation-host .approval-message pre:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
 .agent-conversation-host .runtime-outcome {
 	min-width: 0;
 	display: grid;
