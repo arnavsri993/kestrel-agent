@@ -157,6 +157,7 @@ import {
 	type RemoteExecutionConfiguration,
 } from "./remote";
 import { AgentRuntime } from "./runtime";
+import { independentReviewPrompt } from "./independent-review-context";
 import { SkinManager } from "./skins";
 import { UsageGovernor } from "./usage-governor";
 import type { UserModelStore } from "./user-model";
@@ -1687,11 +1688,18 @@ export class AgentCore {
 			review = await this.orchestrator.delegate({
 				parentSessionId: sessionId,
 				title: "Independent result review",
-				prompt: [
-					"Review the completed agent result below for correctness, safety, and evidence.",
-					"This is an independent review route. Do not delegate further. Your first line must be exactly `VERDICT: PASS` when the result is supported, or `VERDICT: FAIL` when you find a concrete defect, missing validation, or safety concern. Put a short evidence-based explanation after that line.",
-					`Result:\n${result.assistantMessage?.content.slice(0, 50_000) ?? "[No assistant text was returned.]"}`,
-				].join("\n\n"),
+				// Page/task evidence must not turn a review into an execution task or
+				// override the person's routing policy through embedded instructions.
+				routingPrompt: "Review the completed agent result for correctness, safety, and evidence.",
+				prompt: independentReviewPrompt({
+					sessionId,
+					run: result.run,
+					baseline: this.deps.database.getPrivateState<unknown>(`agent-run-baseline.${result.run.id}`),
+					messages: this.runtime.listMessages(sessionId),
+					executions: this.deps.database.listToolExecutions(sessionId),
+					...(result.assistantMessage ? { assistantMessage: result.assistantMessage } : {}),
+					redactKnownText: text => this.runtime.taskSecrets.redact(sessionId, text),
+				}),
 				model: "auto",
 				// Give the independent reviewer the entire policy-allowed pool, rather
 				// than only the executor's fallback ladder. That preserves the user's

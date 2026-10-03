@@ -69,6 +69,8 @@ export interface DelegatedTaskInput {
 	taskId?: string;
 	title: string;
 	prompt: string;
+	/** Trusted routing description when the prompt embeds untrusted review evidence. Not exposed by delegation tools. */
+	routingPrompt?: string;
 	model: string;
 	providerIds: string[];
 	providerModels?: Record<string, string>;
@@ -902,7 +904,7 @@ export class TaskOrchestrator {
 			const selectedPolicy =
 				selected && this.modelRouter
 					? this.requirementAnalyzer.routingPolicy(
-							input.prompt,
+							input.routingPrompt ?? input.prompt,
 							this.modelRouter.policy(),
 						)
 					: undefined;
@@ -1112,7 +1114,7 @@ export class TaskOrchestrator {
 				"Automatic delegation is unavailable because the adaptive model registry is not attached.",
 			);
 		const policy = this.requirementAnalyzer.routingPolicy(
-			input.prompt,
+			input.routingPrompt ?? input.prompt,
 			this.modelRouter.policy(),
 		);
 		const depth = this.delegationDepth(input.parentSessionId);
@@ -1124,7 +1126,7 @@ export class TaskOrchestrator {
 		this.modelRegistry.applyProviderHealth(this.providers.health());
 		const requirements = this.requirementAnalyzer.analyze(
 			taskId,
-			input.prompt,
+			input.routingPrompt ?? input.prompt,
 			{ requiresTools: Boolean(effectiveAllowedTools?.length) },
 		);
 		for (const [capability, importance] of Object.entries(
@@ -1262,7 +1264,7 @@ export class TaskOrchestrator {
 			)
 				return undefined;
 			const policy = this.requirementAnalyzer.routingPolicy(
-				input.prompt,
+				input.routingPrompt ?? input.prompt,
 				this.modelRouter.policy(),
 			);
 			if (!policy.allowAutomaticEscalation) return undefined;

@@ -62,18 +62,22 @@ try {
 	});
 	await page.reload();
 	await page.locator("#new-tab-title").waitFor();
+	const ownerWindowId = await app.evaluate(({ BrowserWindow }, rendererUrl) => {
+		const owners = BrowserWindow.getAllWindows().filter(window => window.webContents.getURL() === rendererUrl);
+		if (owners.length !== 1) throw new Error("Expected one fixture owner window");
+		return owners[0].id;
+	}, page.url());
 	async function size(width, height) {
 		await app.evaluate(
-			({ BrowserWindow }, { width, height }) => {
-				const w = BrowserWindow.getAllWindows().find(
-					(w) => !/[?&](petOverlay|findPopover)=/.test(w.webContents.getURL()),
-				);
+			({ BrowserWindow }, { width, height, ownerWindowId }) => {
+				const w = BrowserWindow.fromId(ownerWindowId);
+				if (!w || w.isDestroyed()) throw new Error("Fixture owner window closed");
 				w.setMinimumSize(400, 400);
 				w.setSize(width, height);
 				w.show();
 				w.focus();
 			},
-			{ width, height },
+			{ width, height, ownerWindowId },
 		);
 	}
 	async function route(id) {
@@ -252,19 +256,31 @@ try {
 		"Widgets need a single even rim",
 	);
 	async function openPopover() {
-		const popupPromise = app.waitForEvent("window");
-		await app.evaluate(({ BrowserWindow }) =>
-			BrowserWindow.getAllWindows()
-				.find(
-					(w) => !/[?&](petOverlay|findPopover)=/.test(w.webContents.getURL()),
-				)
-				.webContents.send("kestrel:browser-command", "find-in-page"),
-		);
-		const popup = await popupPromise;
-		await popup
-			.getByRole("textbox", { name: "Find in page", exact: true })
-			.waitFor();
-		return popup;
+		const tabId = await page.evaluate(async () => {
+			const response = await window.kestrel.request({ type: "browser-get-state" });
+			if (!response.ok || !response.browserState?.activeTabId) throw new Error("No active fixture tab");
+			return response.browserState.activeTabId;
+		});
+		await app.evaluate(({ BrowserWindow }, ownerWindowId) => {
+			const owner = BrowserWindow.fromId(ownerWindowId);
+			if (!owner || owner.isDestroyed()) throw new Error("Fixture owner window closed");
+			owner.webContents.send("kestrel:browser-command", "find-in-page");
+		}, ownerWindowId);
+		const deadline = Date.now() + 30_000;
+		let latest = [];
+		while (Date.now() < deadline) {
+			const windows = app.windows().filter(candidate => !candidate.isClosed());
+			latest = windows.map(candidate => candidate.url());
+			for (const candidate of windows) {
+				let url;
+				try { url = new URL(candidate.url()); } catch { continue; }
+				if (url.searchParams.get("findPopover") !== "1" || url.searchParams.get("tabId") !== tabId) continue;
+				await candidate.getByRole("textbox", { name: "Find in page", exact: true }).waitFor();
+				return candidate;
+			}
+			await new Promise(resolveWait => setTimeout(resolveWait, 75));
+		}
+		throw new Error(`Find did not open for the bound fixture tab: ${JSON.stringify({ tabId, windows: latest })}`);
 	}
 	for (const tabLayout of ["horizontal", "vertical"]) {
 		await page.evaluate(async (tabLayout) => {
@@ -330,14 +346,13 @@ try {
 		return t?.title === "Find fixture" && !t.loading;
 	});
 	const nativeBounds = () =>
-		app.evaluate(({ BrowserWindow }, url) => {
-			const w = BrowserWindow.getAllWindows().find(
-				(w) => !/[?&](petOverlay|findPopover)=/.test(w.webContents.getURL()),
-			);
+		app.evaluate(({ BrowserWindow }, { url, ownerWindowId }) => {
+			const w = BrowserWindow.fromId(ownerWindowId);
+			if (!w || w.isDestroyed()) throw new Error("Fixture owner window closed");
 			return w.contentView.children
 				.filter((v) => v.webContents?.getURL().startsWith(url))
 				.map((v) => ({ bounds: v.getBounds(), visible: v.getVisible() }));
-		}, fixtureUrl);
+		}, { url: fixtureUrl, ownerWindowId });
 	const beforeNative = await nativeBounds();
 	const popup = await openPopover();
 	const input = popup.getByRole("textbox", {
@@ -466,6 +481,8 @@ try {
 		"route/viewport combinations",
 	);
 } catch (error) {
+	writeFileSync(join(output, "failure-report.json"), JSON.stringify({ ...report,
+		failure: error instanceof Error ? error.message : String(error), capturedAt: new Date().toISOString() }, null, 2));
 	const page = app ? await app.firstWindow() : null;
 	console.log(
 		"FIND",
