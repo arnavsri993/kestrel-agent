@@ -10,9 +10,9 @@ import { chromium, expect } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktopRequire = createRequire(join(root, "apps/desktop/package.json"));
 const { createServer } = await import(pathToFileURL(desktopRequire.resolve("vite")).href);
-const fixture = mkdtempSync(join(root, ".tmp/writing-layout-renderer-"));
 const output = join(root, ".tmp/writing-studio-layout");
 mkdirSync(output, { recursive: true });
+const fixture = mkdtempSync(join(root, ".tmp/writing-layout-renderer-"));
 const styles = [...readFileSync(join(root, "apps/desktop/src/renderer/src.tsx"), "utf8")
   .matchAll(/import "(\.\/[^\"]+\.css)";/g)]
   .map(match => `import '/apps/desktop/src/renderer/${match[1].slice(2)}';`).join("\n");
@@ -39,10 +39,21 @@ window.kestrel={request:async input=>{
 const sidebar=innerWidth<900?56:216;
 createRoot(document.getElementById('root')).render(createElement('div',{id:'owned-stage',className:'ai-browser-app unified-ui agent-sidebar-collapsed',style:{display:'block',width:'calc(100vw - '+sidebar+'px)',marginLeft:sidebar,marginTop:80,height:'calc(100vh - 80px)',overflow:'auto'}},createElement(WritingStudio)));
 `);
+// A preceding renderer fixture can leave a different optimized React graph.
+// Keep this graph private and discover Motion before the browser loads it.
 const server = await createServer({ root, configFile: false, logLevel: "error",
-  resolve: { alias: [
+  cacheDir: join(fixture, "vite-cache"),
+  optimizeDeps: {
+    entries: [join(fixture, "index.html")],
+    include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "motion/react"],
+  },
+  resolve: { dedupe: ["react", "react-dom"], alias: [
     { find: /^react$/, replacement: desktopRequire.resolve("react") },
+    { find: /^react\/jsx-runtime$/, replacement: desktopRequire.resolve("react/jsx-runtime") },
+    { find: /^react\/jsx-dev-runtime$/, replacement: desktopRequire.resolve("react/jsx-dev-runtime") },
+    { find: /^react-dom$/, replacement: desktopRequire.resolve("react-dom") },
     { find: /^react-dom\/client$/, replacement: desktopRequire.resolve("react-dom/client") },
+    { find: /^motion\/react$/, replacement: desktopRequire.resolve("motion/react") },
   ] }, esbuild: { jsx: "automatic" }, server: { host: "127.0.0.1", port: 0 }, appType: "mpa" });
 let browser;
 let activePage;
@@ -55,7 +66,7 @@ try {
     activePage = page;
     page.setDefaultTimeout(12_000);
     const errors = [];
-    page.on("pageerror", error => errors.push(error.message));
+    page.on("pageerror", error => errors.push(error.stack ?? error.message));
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/${fixture.slice(root.length+1)}/index.html`);
     await page.getByRole("heading", {name:"What do you want to say?",exact:true}).waitFor();
     const source = page.locator(".writing-draft-disclosure").first();

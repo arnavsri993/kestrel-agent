@@ -466,3 +466,26 @@ inventory also adds all three Writing disclosures at both desktop widths,
 bringing its intended coverage from 157 to 163 states. Those local Electron
 checks, the latest package/canonical refresh and new-head CI remain pending at
 this source checkpoint because the real app is open behind locked macOS.
+
+## Isolate the Writing Studio renderer fixture — October 4
+
+At `90809426`, the complete desktop/package CI job and all four CodeQL checks
+pass. Core CI fails the new headless Writing Studio fixture's zero-error
+assertion after its functional flow completes. A fresh owned shared-cache
+reproduction runs the Memory fixture successfully, then reproduces the same
+null React dispatcher in Motion's reduced-motion hook inside ModelSelector.
+This is separate from the passing desktop Writing Studio profile/consent test.
+
+The Writing fixture now uses its own temporary Vite cache, scans only its own
+HTML entry, explicitly resolves the desktop React/Motion dependencies and
+preoptimizes them before browser loading. It still requires zero page errors
+and records error stacks. The owned cache is removed with that fixture; shared
+repository caches and the user's profile are untouched. The first isolation
+attempt exposed a missing development JSX runtime alias and was corrected.
+
+The repaired fixture passes all three viewports from a fresh cache and after
+the actual Memory command passes at both viewports, matching the CI order.
+No product routing, provider invocation, request assertions or privacy checks
+are weakened. Remote validation of this follow-up and the 163-state canonical
+run remain pending; macOS is still locked and the canonical app remains at
+previously verified `1fabf938`.
