@@ -75,7 +75,7 @@ import { applicationMenuTemplate } from "./application-menu";
 import { desktopBuildProvenance } from "./build-provenance";
 import { desktopCoreProcess } from "./electron-core-process";
 import { CredentialBroker } from "./credential-broker";
-import { maskSensitiveText } from "@kestrel/shared-types";
+import { embeddedBuildIdentity, maskSensitiveText } from "@kestrel/shared-types";
 import {
   BrokerCredentialStore,
   MacOSKeychainCredentialStore,
@@ -5236,6 +5236,13 @@ void app
   .whenReady()
   .then(async () => {
     if (!singleInstance) return;
+    const build = embeddedBuildIdentity();
+    const channel = PRODUCT_IDENTITY.updateChannel;
+    app.setAboutPanelOptions({
+      applicationName: PRODUCT_IDENTITY.productName,
+      applicationVersion: app.getVersion(),
+      version: `${channel.charAt(0).toUpperCase()}${channel.slice(1)} · ${build?.sourceCommit.slice(0, 8) ?? "unverified"}${build?.dirty ? " · local changes" : ""}`,
+    });
     startAutomaticUpdates(autoUpdater, {
       packaged: isPackagedKestrelApp,
       channel: PRODUCT_IDENTITY.updateChannel,
