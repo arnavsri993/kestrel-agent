@@ -118,6 +118,7 @@ function useContextSurfacePosition(
 	const [position, setPosition] = useState({
 		left: 18,
 		top: 88,
+		maximumHeight: undefined as number | undefined,
 		placement: "right" as "left" | "right",
 	});
 	const anchorRef = useRef(anchor);
@@ -152,19 +153,27 @@ function useContextSurfacePosition(
 			: placement === "right"
 				? target.x + gap
 				: target.x - width - gap;
-		const minimumTop = containerWidth <= 640 ? 126 : 82;
+		const header = surface.closest(".agent-universe-workspace")?.querySelector<HTMLElement>(".agent-universe-mapbar");
+		const headerBottom = header
+			? header.getBoundingClientRect().bottom - container.getBoundingClientRect().top
+			: 0;
+		const minimumTop = Math.max(containerWidth <= 640 ? 126 : 82, headerBottom + 8);
+		const bottomSpace = containerWidth <= 640 ? 68 : 84;
+		const maximumHeight = Math.max(0, containerHeight - minimumTop - bottomSpace);
 		const maximumTop = Math.max(
 			minimumTop,
-			containerHeight - height - (containerWidth <= 640 ? 68 : 84),
+			containerHeight - Math.min(height, maximumHeight) - bottomSpace,
 		);
 		const nextPosition = {
 			left: clamp(left, 16, Math.max(16, containerWidth - width - 16)),
 			top: clamp(target.y - Math.min(148, height * 0.36), minimumTop, maximumTop),
+			maximumHeight,
 			placement,
 		};
 		setPosition((current) =>
 			current.left === nextPosition.left &&
 			current.top === nextPosition.top &&
+			current.maximumHeight === nextPosition.maximumHeight &&
 			current.placement === nextPosition.placement
 				? current
 				: nextPosition,
@@ -183,6 +192,8 @@ function useContextSurfacePosition(
 		const observer = new ResizeObserver(place);
 		observer.observe(container);
 		observer.observe(surface);
+		const header = surface.closest(".agent-universe-workspace")?.querySelector(".agent-universe-mapbar");
+		if (header) observer.observe(header);
 		window.addEventListener("resize", place);
 		return () => {
 			observer.disconnect();
@@ -195,6 +206,7 @@ function useContextSurfacePosition(
 		style: {
 			"--context-surface-left": `${position.left}px`,
 			"--context-surface-top": `${position.top}px`,
+			...(position.maximumHeight === undefined ? {} : { "--context-surface-max-height": `${position.maximumHeight}px` }),
 		} as CSSProperties,
 		placement: position.placement,
 	};

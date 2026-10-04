@@ -1,17 +1,27 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron, expect } from "@playwright/test";
 import { createServer } from "node:http";
 const root = mkdtempSync(join(tmpdir(), "kestrel-operations-ui-"));
+const evidence = process.env.KESTREL_PERSISTENT_AGENTS_EVIDENCE_DIR
+	? resolve(process.env.KESTREL_PERSISTENT_AGENTS_EVIDENCE_DIR)
+	: mkdtempSync(join(tmpdir(), "kestrel-operations-evidence-"));
+mkdirSync(evidence, { recursive: true });
+const fixtureEnvironment = {
+	...process.env, KESTREL_TEST_USER_DATA: join(root, "profile"),
+	KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_REAL_USER_PROFILE: "1",
+	KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
+	KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+};
 const fixtureServer = createServer((_request, response) => response.end("<!doctype html><title>Detached restart fixture</title><p>Synthetic tab</p>"));
 await new Promise(resolve => fixtureServer.listen(0, "127.0.0.1", resolve));
 const fixtureUrl = `http://127.0.0.1:${fixtureServer.address().port}/`;
 let application;
 try {
 	application = await electron.launch({ executablePath: resolve(process.env.KESTREL_DESKTOP_EXECUTABLE ?? "release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel"),
-		args: ["--use-mock-keychain"], env: { ...process.env, KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_DISABLE_UPDATES: "1" } });
+		args: ["--use-mock-keychain"], env: fixtureEnvironment });
 	const page = await application.firstWindow();
 	await page.evaluate(() => {
 		localStorage.setItem("kestrel:onboarded", "yes");
@@ -23,7 +33,7 @@ try {
 	await sidebar.getByRole("button", { name: "Connections", exact: true }).click();
 	await page.getByRole("heading", { name: "Connections", exact: true }).waitFor();
 	assert.equal(await sidebar.getByRole("button", { name: "Connections", exact: true }).getAttribute("aria-current"), "page");
-	await page.screenshot({ path: "/tmp/kestrel-operations-connections.png" });
+	await page.screenshot({ path: join(evidence, "connections.png") });
 	await sidebar.getByRole("button", { name: "Memory", exact: true }).click();
 	await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
 	assert.equal(await sidebar.getByRole("button", { name: "Memory", exact: true }).getAttribute("aria-current"), "page");
@@ -56,6 +66,7 @@ try {
 	assert.equal(recoveryProof, 1);
 	await page.getByRole("searchbox", { name: "Find a system or task" }).fill("Robotics");
 	await page.getByRole("searchbox", { name: "Find a system or task" }).press("Enter");
+	await page.locator(".agent-workspace-options > summary").click();
 	await page.getByRole("button", { name: "Open agent settings", exact: true }).click();
 	const agentSettings = page.getByRole("dialog", { name: "Robotics settings" });
 	await agentSettings.getByText("Code & Autonomy", { exact: true }).click();
@@ -75,7 +86,7 @@ try {
 	await page.getByLabel("Memory scope", { exact: true }).selectOption(parent.id);
 	await page.getByRole("heading", { name: "Robotics memory", exact: true }).waitFor();
 	assert.equal(await page.getByRole("tablist", { name: "Browser tabs" }).getByRole("tab").count(), memoryTabCount);
-	await page.screenshot({ path: "/tmp/kestrel-operations-scoped-memory.png" });
+	await page.screenshot({ path: join(evidence, "scoped-memory.png") });
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.reload();
 	await page.getByRole("heading", { name: "Robotics memory", exact: true }).waitFor();
@@ -100,7 +111,7 @@ try {
  await page.getByRole("button", { name: "Work history", exact: true }).click();
  await page.getByText(/Review a selected source observation · planned/).waitFor();
  await page.getByRole("button", { name: "Sources", exact: true }).click();
- await page.screenshot({ path: "/tmp/kestrel-operations-source-memory.png" });
+ await page.screenshot({ path: join(evidence, "source-memory.png") });
  await page.getByRole("navigation", { name: "Agent memory views" }).getByRole("button", { name: "People", exact: true }).click();
  await page.getByText("Rishi (fixture) · observed", { exact: true }).waitFor();
  await page.getByRole("button", { name: "Calendar", exact: true }).click();
@@ -110,7 +121,7 @@ try {
  await page.getByRole("heading", { name: "Robotics access", exact: true }).waitFor();
  await page.getByRole("button", { name: "Revoke", exact: true }).click();
  await page.getByText("No connected resources assigned.", { exact: true }).waitFor();
- await page.screenshot({ path: "/tmp/kestrel-operations-source-connections.png" });
+ await page.screenshot({ path: join(evidence, "source-connections.png") });
  const nextWindow = application.waitForEvent("window");
  await page.getByRole("button", { name: "Open WhatsApp connection", exact: true }).click();
  const connectionWindow = await nextWindow;
@@ -132,7 +143,7 @@ try {
  const detachedDirectory = join(root, "profile", "browser", "detached");
  const savedWindows = readdirSync(detachedDirectory).filter(name => name.startsWith("window-"));
  assert(savedWindows.some(name => JSON.parse(readFileSync(join(detachedDirectory, name), "utf8")).tabs.some(tab => tab.url === fixtureUrl)), "Detached tab address survives quitting");
- application = await electron.launch({ executablePath: resolve(process.env.KESTREL_DESKTOP_EXECUTABLE ?? "release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel"), args: ["--use-mock-keychain"], env: { ...process.env, KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_DISABLE_UPDATES: "1" } });
+ application = await electron.launch({ executablePath: resolve(process.env.KESTREL_DESKTOP_EXECUTABLE ?? "release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel"), args: ["--use-mock-keychain"], env: fixtureEnvironment });
  await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter(window => !window.isDestroyed()).length), { timeout: 30_000 }).toBeGreaterThanOrEqual(2);
  await expect.poll(() => application.evaluate(({ webContents }, url) => webContents.getAllWebContents().some(item => item.getURL() === url), fixtureUrl), { timeout: 30_000, message: "Restored detached tab loads its saved address" }).toBe(true);
  console.log("Packaged detached browser state survives quit and restores on restart.");
@@ -141,7 +152,7 @@ try {
 } catch (error) {
 	const page = await application?.firstWindow();
 	if (page) {
-		await page.screenshot({ path: "/tmp/kestrel-operations-ui-failure.png" });
+		await page.screenshot({ path: join(evidence, "failure.png") });
 		console.log(await page.locator(".agent-universe-empty-state").innerText().catch(() => "Agent surface not present"));
 	}
 	throw error;
@@ -149,4 +160,5 @@ try {
 	await application?.close();
 	await new Promise(resolve => fixtureServer.close(resolve));
 	rmSync(root, { recursive: true, force: true });
+	console.log(`Persistent agent evidence: ${evidence}`);
 }

@@ -2236,6 +2236,7 @@ try {
 		1,
 		"Agent Universe should expose an explicit persistent-agent creation control.",
 	);
+	await page.locator(".agent-workspace-options > summary").click();
 	await page.getByRole("button", { name: "Open agent settings", exact: true }).click();
 	await page
 		.getByRole("heading", { name: "Workspace and sessions", exact: true })
@@ -2695,12 +2696,13 @@ try {
 	await detachableTab.waitFor();
 	// Native previews intentionally require the owner to be foregrounded.
 	// Earlier native dialogs can leave the test app visible but unfocused.
-	await application.evaluate(({ BrowserWindow }, url) => {
+	await application.evaluate(({ app, BrowserWindow }, url) => {
 		const owner = BrowserWindow.getAllWindows().find(
 			(candidate) => candidate.webContents.getURL() === url,
 		);
 		if (!owner) throw new Error("The fixture browser window is unavailable.");
 		owner.show();
+		app.focus({ steal: true });
 		owner.focus();
 	}, page.url());
 	const focusDeadline = Date.now() + 5_000;

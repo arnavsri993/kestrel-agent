@@ -251,6 +251,15 @@ try {
 	assert.equal(recordedReceipts.receipts.filter(receipt => receipt.toolName === "browser.create").length, 2,
 		"Grouping the visible result must preserve both bounded core receipts.");
 	assert.equal(receiptCalls, 2);
+	const handoff = page.locator(".runtime-activity-handoff");
+	assert.match(await handoff.innerText(), /^Create browser session verified\./);
+	assert.doesNotMatch(await handoff.innerText(), /browser\.create/);
+	const observed = await page.evaluate(sessionId => window.kestrel.request({ type: "runtime-list-executions", sessionId }), session.id);
+	assert(observed.ok);
+	const verifiedBrowser = observed.executions.filter(item => item.toolName === "browser.create" && item.status === "verified");
+	assert.equal(verifiedBrowser.length, 1);
+	await handoff.getByRole("button", { name: "View evidence in Activity", exact: true }).click();
+	await page.locator(`#activity-item-${verifiedBrowser[0].id}.activity-item-focused`).waitFor();
 	assert.deepEqual(providerErrors, []);
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write("Desktop approval failure passed: compact one-time controls at 1440/1000, keyboard disclosures with exact scope/input, protected persistent-approval exclusion, visible error, retired stale control, no replay, reusable session, and one current browser action with preserved keyboard-accessible history. Provider: deterministic HTTP fixture; profile: disposable; no real model generation.\n");

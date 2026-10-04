@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
-import { _electron as electron } from "@playwright/test";
+import { _electron as electron, expect } from "@playwright/test";
 const temporary = mkdtempSync(join(tmpdir(), "kestrel-consistency-"));
 const output = resolve(
 	process.env.KESTREL_UI_EVIDENCE || ".tmp/ui-consistency",
@@ -107,9 +107,101 @@ try {
 			animations: "disabled",
 		});
 	}
-	for (const width of [1440, 760]) {
+	await size(1320, 860);
+	await route("agent");
+	const expandNavigation = page.getByRole("button", { name: "Expand sidebar", exact: true });
+	if (await expandNavigation.isVisible()) await expandNavigation.click();
+	const chatToggle = page.locator("#browser-agent-toggle");
+	if (await chatToggle.getAttribute("aria-expanded") !== "true") await chatToggle.click();
+	await page.waitForFunction(() => {
+		const root = document.querySelector(".agent-universe-workspace");
+		return root && root.getBoundingClientRect().width < 700 && !document.querySelector(".agent-sidebar-settling");
+	});
+	const splitHeader = await page.locator(".agent-universe-mapbar").evaluate(header => {
+		const root = header.closest(".agent-universe-workspace").getBoundingClientRect();
+		const controls = [...header.querySelectorAll("button, input, summary")].filter(element => element.checkVisibility()).map(element => ({ label: element.getAttribute("aria-label") ?? element.textContent, rect: element.getBoundingClientRect().toJSON() }));
+		return { root: root.toJSON(), controls, header: header.getBoundingClientRect().toJSON(), list: header.parentElement.querySelector(".agent-workspace-list").getBoundingClientRect().toJSON() };
+	});
+	assert(splitHeader.root.width >= 460 && splitHeader.root.width < 700);
+	assert(splitHeader.header.height <= 116, "Navigation and Chat must leave room for a two-row Agent header.");
+	assert(splitHeader.list.y >= splitHeader.header.bottom - 1, "Agent content must remain below its header.");
+	for (const { label, rect } of splitHeader.controls) {
+		assert(rect.x >= splitHeader.root.x - 1 && rect.right <= splitHeader.root.right + 1, `${label} must fit the split Agent plane.`);
+	}
+	for (let i = 0; i < splitHeader.controls.length; i++) for (let j = i + 1; j < splitHeader.controls.length; j++) {
+		const a = splitHeader.controls[i], b = splitHeader.controls[j];
+		assert(!(a.rect.x < b.rect.right - 1 && b.rect.x < a.rect.right - 1 && a.rect.y < b.rect.bottom - 1 && b.rect.y < a.rect.bottom - 1), `${a.label} overlaps ${b.label}.`);
+	}
+	writeFileSync(join(output, "split-agent-header-geometry.json"), JSON.stringify(splitHeader, null, 2));
+	await capture("1320-split-agent-header");
+	report.checks.push({ splitAgentHeader: "passed", width: 1320, headerHeight: splitHeader.header.height, workspaceWidth: splitHeader.root.width });
+	await chatToggle.click();
+	for (const width of [1440, 760, 400]) {
 		await size(width, 900);
 		await route("agent");
+		if (width === 400) {
+			const collapseNavigation = page.getByRole("button", { name: "Collapse sidebar", exact: true });
+			if (await collapseNavigation.isVisible()) await collapseNavigation.click();
+		}
+		const options = page.locator(".agent-workspace-options");
+		const more = options.locator(":scope > summary");
+		const commands = options.getByRole("group", { name: "Agent options", exact: true });
+		assert.equal(await options.getAttribute("open"), null);
+		assert.equal(await commands.getByRole("button", { name: "All work", exact: true }).isVisible(), false);
+		await more.focus();
+		await page.keyboard.press("Enter");
+		await commands.waitFor();
+		assert.equal(await commands.getByRole("button", { name: "Open agent settings", exact: true }).isVisible(), true);
+		assert(await commands.evaluate(node => {
+			const bounds = node.getBoundingClientRect(), root = node.closest(".agent-universe-workspace").getBoundingClientRect();
+			return bounds.left >= root.left && bounds.right <= root.right && bounds.top >= root.top && bounds.bottom <= root.bottom;
+		}), "All secondary commands must fit within the Agent plane.");
+		assert(await commands.locator("button").evaluateAll(buttons => buttons.every(button => {
+			const icon = button.querySelector("svg")?.getBoundingClientRect();
+			return button.getBoundingClientRect().height <= 44 && icon && icon.width <= 20 && icon.height <= 20;
+		})), "Secondary commands need compact rows and icons at every width.");
+		assert.equal(await more.evaluate(node => getComputedStyle(node).outlineStyle), "solid");
+		await capture(`${width}-agent-options`);
+		await page.keyboard.press("Tab");
+		assert.equal(await commands.getByRole("button", { name: "All work", exact: true }).evaluate(node => node === document.activeElement), true);
+		await page.keyboard.press("Escape");
+		assert.equal(await options.getAttribute("open"), null);
+		assert.equal(await more.evaluate(node => node === document.activeElement), true);
+		await page.keyboard.press("Space");
+		await page.locator(".agent-universe-map-eyebrow").click();
+		assert.equal(await options.getAttribute("open"), null, "Clicking outside closes secondary commands.");
+		await more.click();
+		await commands.getByRole("button", { name: "All work", exact: true }).click();
+		await page.locator('.browser-app-page[data-app-page="work"]').waitFor();
+		await route("agent");
+		await more.click();
+		await commands.getByRole("button", { name: "Open agent settings", exact: true }).click();
+		await page.getByRole("heading", { name: "Workspace and sessions", exact: true }).waitFor();
+		await route("agent");
+		await page.getByRole("button", { name: "New agent", exact: true }).click();
+		const createAgent = page.getByRole("dialog", { name: "Create persistent agent", exact: true });
+		await createAgent.waitFor();
+		assert(await createAgent.evaluate(node => {
+			const bounds = node.getBoundingClientRect(), root = node.closest(".agent-universe-workspace").getBoundingClientRect();
+			return bounds.left >= root.left && bounds.right <= root.right && bounds.top >= root.top && bounds.bottom <= root.bottom;
+		}), "Agent creation must fit the workspace at each tested width.");
+		await page.keyboard.press("Escape");
+		assert.equal(await createAgent.count(), 0);
+		await expect(page.getByRole("button", { name: "New agent", exact: true })).toBeFocused();
+		await page.getByRole("button", { name: "New agent", exact: true }).click();
+		await createAgent.waitFor();
+		await more.click();
+		assert.equal(await createAgent.count(), 0, "Opening another header control must dismiss agent creation.");
+		await page.keyboard.press("Escape");
+		if (width === 1440) {
+			await more.click();
+			await commands.getByRole("button", { name: "Open Chat", exact: true }).click();
+			assert.equal(await chatToggle.getAttribute("aria-expanded"), "true");
+			await more.click();
+			await commands.getByRole("button", { name: "Close Chat", exact: true }).click();
+			assert.equal(await chatToggle.getAttribute("aria-expanded"), "false");
+		}
+		report.checks.push({ agentOptions: "passed", width });
 		const group = page.locator(".agent-workspace-list-group").filter({ has: page.getByRole("button", { name: "Open settings for Scoped memory fixture", exact: true }) });
 		const disclosure = group.locator(".agent-workspace-list-delegated");
 		const summary = disclosure.locator(":scope > summary");

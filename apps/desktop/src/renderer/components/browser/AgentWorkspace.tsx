@@ -184,13 +184,22 @@ function AgentUniverseCreateAgentMenu({
 	onCreateAgent(title: string, template?: AgentTemplate): Promise<void> | void;
 }) {
 	const [open, setOpen] = useState(false);
+	const menuRef = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const closeMenu = useCallback(() => {
 		setOpen(false);
 		window.requestAnimationFrame(() => triggerRef.current?.focus());
 	}, []);
+	useEffect(() => {
+		if (!open) return;
+		function dismissOutside(event: PointerEvent) {
+			if (event.target instanceof Node && !menuRef.current?.contains(event.target)) setOpen(false);
+		}
+		document.addEventListener("pointerdown", dismissOutside);
+		return () => document.removeEventListener("pointerdown", dismissOutside);
+	}, [open]);
 	return (
-		<div className="agent-universe-create-agent-menu">
+		<div ref={menuRef} className="agent-universe-create-agent-menu">
 			<button
 				ref={triggerRef}
 				type="button"
@@ -210,6 +219,7 @@ function AgentUniverseCreateAgentMenu({
 					onKeyDown={(event) => {
 						if (event.key !== "Escape") return;
 						event.preventDefault();
+						event.stopPropagation();
 						closeMenu();
 					}}
 				>
@@ -241,6 +251,72 @@ function AgentUniverseLoadingState() {
 			<span className="agent-universe-loading-mark" aria-hidden="true" />
 			<strong>Loading agents</strong>
 		</div>
+	);
+}
+
+function AgentWorkspaceOptions({
+	onOpenWork,
+	onOpenSettings,
+	onToggleAgentSidebar,
+	agentSidebarOpen,
+}: {
+	onOpenWork?(): void;
+	onOpenSettings(): void;
+	onToggleAgentSidebar?(): void;
+	agentSidebarOpen: boolean;
+}) {
+	const disclosureRef = useRef<HTMLDetailsElement>(null);
+	const summaryRef = useRef<HTMLElement>(null);
+	useEffect(() => {
+		function dismissOutside(event: PointerEvent) {
+			const disclosure = disclosureRef.current;
+			if (disclosure?.open && event.target instanceof Node && !disclosure.contains(event.target)) {
+				disclosure.open = false;
+			}
+		}
+		document.addEventListener("pointerdown", dismissOutside);
+		return () => document.removeEventListener("pointerdown", dismissOutside);
+	}, []);
+	function invoke(action: () => void) {
+		if (disclosureRef.current) disclosureRef.current.open = false;
+		action();
+	}
+	return (
+		<details
+			ref={disclosureRef}
+			className="agent-workspace-options"
+			onBlur={(event) => {
+				if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) {
+					event.currentTarget.open = false;
+				}
+			}}
+			onKeyDown={(event) => {
+				if (event.key !== "Escape" || !event.currentTarget.open) return;
+				event.preventDefault();
+				event.stopPropagation();
+				event.currentTarget.open = false;
+				summaryRef.current?.focus();
+			}}
+		>
+			<summary ref={summaryRef} aria-label="More agent options" title="More agent options">
+				<Icon name="more" />
+			</summary>
+			<div className="agent-workspace-options-panel" role="group" aria-label="Agent options">
+				{onOpenWork ? (
+					<Button variant="quiet" size="compact" onClick={() => invoke(onOpenWork)}>
+						<Icon name="work" />All work
+					</Button>
+				) : null}
+				<Button variant="quiet" size="compact" aria-label="Open agent settings" onClick={() => invoke(onOpenSettings)}>
+					<Icon name="settings" />Agent settings
+				</Button>
+				{onToggleAgentSidebar ? (
+					<Button variant="quiet" size="compact" onClick={() => invoke(onToggleAgentSidebar)}>
+						<Icon name="chat" />{agentSidebarOpen ? "Close Chat" : "Open Chat"}
+					</Button>
+				) : null}
+			</div>
+		</details>
 	);
 }
 
@@ -328,6 +404,7 @@ export function AgentWorkspace({
 	onOpenSettings,
 	onRetrySessions,
 	onToggleAgentSidebar,
+	agentSidebarOpen = false,
 	onBack,
 }: {
 	sessions: RuntimeSession[];
@@ -343,6 +420,7 @@ export function AgentWorkspace({
 	onOpenSettings(): void;
 	onRetrySessions?(): void;
 	onToggleAgentSidebar?(): void;
+	agentSidebarOpen?: boolean;
 	onBack?(): void;
 }) {
 	const [query, setQuery] = useState("");
@@ -841,7 +919,29 @@ export function AgentWorkspace({
 							</div>
 						) : null}
 					</div>
-					<div className="agent-universe-map-actions">
+					<div className="agent-universe-map-actions agent-universe-map-commands">
+						<AgentUniverseCreateAgentMenu onCreateAgent={onCreateAgent} />
+						<Button
+							variant="solid"
+							size="compact"
+							className="agent-universe-new-task"
+							onClick={onNewTask}
+						>
+							<Icon name="plus" />
+							Start task
+						</Button>
+						<AgentWorkspaceOptions
+							agentSidebarOpen={agentSidebarOpen}
+							{...(hasSystems ? { onOpenWork } : {})}
+							onOpenSettings={() => {
+								const id = selectedNode?.id ?? focusedGroupId;
+								if (id) setSettingsSessionId(id);
+								else onOpenSettings();
+							}}
+							{...(onToggleAgentSidebar ? { onToggleAgentSidebar } : {})}
+						/>
+					</div>
+					<div className="agent-universe-map-actions agent-universe-map-tools">
 						{view === "map" && focusedSystem ? (
 							<Button
 								variant="quiet"
@@ -857,7 +957,6 @@ export function AgentWorkspace({
 							</Button>
 						) : null}
 						{hasSystems ? (
-							<>
 								<label className="agent-universe-search">
 									<Icon name="search" />
 									<span className="sr-only">Find a system or task</span>
@@ -873,11 +972,6 @@ export function AgentWorkspace({
 										}}
 									/>
 								</label>
-								<Button variant="quiet" size="compact" onClick={onOpenWork}>
-									<Icon name="work" />
-									All work
-								</Button>
-							</>
 						) : null}
 						<div className="agent-workspace-view-switch" role="group" aria-label="Agent workspace view">
 							<button
@@ -897,36 +991,6 @@ export function AgentWorkspace({
 								Map
 							</button>
 						</div>
-						<AgentUniverseCreateAgentMenu onCreateAgent={onCreateAgent} />
-						<button
-							type="button"
-							className="agent-universe-settings"
-							aria-label="Open agent settings"
-							title="Open agent settings"
-							onClick={() => { const id = selectedNode?.id ?? focusedGroupId; if (id) setSettingsSessionId(id); else onOpenSettings(); }}
-						>
-							<Icon name="settings" />
-						</button>
-						{onToggleAgentSidebar ? (
-							<button
-								type="button"
-								className="agent-universe-rail-toggle"
-								aria-label="Open agent conversation rail"
-								title="Open agent conversation rail"
-								onClick={onToggleAgentSidebar}
-							>
-								<Icon name="chat" />
-							</button>
-						) : null}
-						<Button
-							variant="solid"
-							size="compact"
-							className="agent-universe-new-task"
-							onClick={onNewTask}
-						>
-							<Icon name="plus" />
-							Start task
-						</Button>
 					</div>
 				</header>
 

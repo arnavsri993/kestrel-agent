@@ -1310,9 +1310,9 @@
   z-index: 7;
   display: flex;
   width: min(420px, calc(100% - 32px));
-  height: min(680px, calc(100% - 132px));
-  min-height: 360px;
-  max-height: calc(100% - 132px);
+  height: min(680px, var(--context-surface-max-height, calc(100% - 132px)));
+  min-height: min(360px, var(--context-surface-max-height, 360px));
+  max-height: var(--context-surface-max-height, calc(100% - 132px));
   flex-direction: column;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--agent-system-color, #ffffff) 22%, rgb(255 255 255 / 14%));
@@ -2665,9 +2665,9 @@
 
   .agent-universe-context-surface {
     width: min(340px, calc(100% - 28px));
-    height: calc(100% - 188px);
+    height: var(--context-surface-max-height, calc(100% - 188px));
     min-height: 0;
-    max-height: calc(100% - 188px);
+    max-height: var(--context-surface-max-height, calc(100% - 188px));
   }
 
   .agent-universe-context-surface::before {
@@ -2839,8 +2839,113 @@
 .persistent-agent-settings textarea { min-height: 80px; resize: vertical; }
 .persistent-agent-settings details { padding-block: 10px; border-top: 1px solid var(--border, #555); }
 
-/* The list header and content share normal grid rows. Their height depends on
- * the space left by navigation and Chat, rather than the window's width. */
+/* Keep creation separate from search and view controls. Secondary commands
+ * stay reachable without filling the narrow plane beside navigation and Chat. */
+.agent-universe-mapbar,
+.is-list-view .agent-universe-mapbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "identity commands" "tools tools";
+  align-items: center;
+  min-width: 0;
+  max-height: none;
+  overflow: visible;
+  gap: 10px 12px;
+}
+.agent-universe-map-identity-stack { grid-area: identity; justify-self: start; max-width: 100%; }
+.agent-universe-map-identity > div { min-width: 0; }
+.agent-universe-mapbar > .agent-universe-map-commands {
+  display: flex;
+  grid-area: commands;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  width: auto;
+  max-width: 100%;
+  gap: 6px;
+}
+.agent-universe-mapbar > .agent-universe-map-tools {
+  display: flex;
+  grid-area: tools;
+  justify-self: start;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  min-width: 0;
+  width: min(100%, 520px);
+  max-width: 100%;
+  gap: 8px;
+}
+.agent-universe-map-tools .agent-universe-search {
+  order: 0;
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  flex: 1 1 120px;
+  min-width: 0;
+}
+.agent-universe-map-commands .agent-universe-create-agent-trigger { width: auto; }
+.agent-universe-mapbar .agent-universe-create-agent-menu { position: static; }
+.agent-universe-mapbar .agent-universe-create-agent-popover {
+  top: calc(100% - 2px);
+  right: 14px;
+  width: min(300px, calc(100% - 28px));
+}
+
+.agent-workspace-options { position: relative; flex: 0 0 auto; }
+.agent-workspace-options > summary {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+.agent-workspace-options > summary::-webkit-details-marker { display: none; }
+.agent-workspace-options > summary svg { width: 18px; height: 18px; }
+.agent-workspace-options[open] > summary,
+.agent-workspace-options > summary:hover {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+.agent-workspace-options > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.agent-workspace-options-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 6;
+  width: 220px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 22%);
+}
+.agent-workspace-options-panel .ui-button {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 36px;
+}
+.agent-workspace-options-panel .ui-button svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+@container agent-workspace (max-width: 460px) {
+  .agent-universe-mapbar,
+  .is-list-view .agent-universe-mapbar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "identity" "commands" "tools";
+  }
+}
+
+/* The list header and content share normal grid rows so wrapping never covers
+ * the agent list, regardless of the space left by navigation and Chat. */
 .is-list-view .agent-universe-stage {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -2848,21 +2953,6 @@
 .is-list-view .agent-universe-mapbar {
   position: relative;
   grid-row: 1;
-  flex-wrap: wrap;
-  min-width: 0;
-  max-height: none;
-  overflow: visible;
-  gap: 12px;
-}
-.is-list-view .agent-universe-map-identity-stack { flex: 0 1 160px; min-width: 0; }
-.is-list-view .agent-universe-map-actions {
-  flex: 1 1 420px;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  min-width: 0;
-  width: 100%;
-  max-width: 100%;
-  gap: 4px;
 }
 .is-list-view .agent-universe-visual-plane {
   position: relative;

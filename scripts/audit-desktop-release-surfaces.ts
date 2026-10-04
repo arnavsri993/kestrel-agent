@@ -182,11 +182,11 @@ try {
 		await toggle.click();
 		await page.waitForFunction(() => {
 			const workspace = document.querySelector(".agent-universe-workspace");
-			return workspace && workspace.getBoundingClientRect().width < 700;
+			return workspace && workspace.getBoundingClientRect().width < 700 && !document.querySelector(".agent-sidebar-settling");
 		});
 			const bounds = await page.locator(".agent-universe-mapbar").evaluate(header => {
 				const root = header.closest(".agent-universe-workspace")!.getBoundingClientRect();
-				const controls = [...header.querySelectorAll<HTMLElement>("button, input")].filter(element => element.getClientRects().length).map(element => ({ label: element.getAttribute("aria-label") ?? element.textContent, rect: element.getBoundingClientRect().toJSON() }));
+				const controls = [...header.querySelectorAll<HTMLElement>("button, input, summary")].filter(element => element.checkVisibility()).map(element => ({ label: element.getAttribute("aria-label") ?? element.textContent, rect: element.getBoundingClientRect().toJSON() }));
 				return { root: root.toJSON(), controls, header: header.getBoundingClientRect().toJSON(), list: header.parentElement!.querySelector(".agent-workspace-list")!.getBoundingClientRect().toJSON() };
 			});
 			for (const { label, rect } of bounds.controls) {
@@ -197,6 +197,7 @@ try {
 				assert(!(a.rect.x < b.rect.right - 1 && b.rect.x < a.rect.right - 1 && a.rect.y < b.rect.bottom - 1 && b.rect.y < a.rect.bottom - 1), `${a.label} overlaps ${b.label}`);
 			}
 			assert(bounds.list.y >= bounds.header.bottom - 1, "Agent list is covered by its header");
+			assert(bounds.header.height <= 116, "Agent header must stay in two rows with navigation and Chat open");
 			writeFileSync(join(evidence, "desktop-split-agent-header-geometry.json"), JSON.stringify(bounds, null, 2));
 	});
 	if (await page.locator("#browser-agent-toggle").getAttribute("aria-expanded") === "true") await page.locator("#browser-agent-toggle").click();
@@ -232,8 +233,31 @@ try {
 			const workspaceView = page.getByRole("group", { name: "Agent workspace view" });
 			await workspaceView.getByRole("button", { name: "Map", exact: true }).click();
 			assert.equal(await workspaceView.getByRole("button", { name: "Map", exact: true }).getAttribute("aria-pressed"), "true");
+			await page.locator(".agent-universe-context-surface").waitFor();
+			await page.waitForFunction(() => {
+				const header = document.querySelector(".agent-universe-mapbar")!.getBoundingClientRect();
+				const panel = document.querySelector(".agent-universe-context-surface")!.getBoundingClientRect();
+				const root = document.querySelector(".agent-universe-workspace")!.getBoundingClientRect();
+				return panel.top >= header.bottom + 4 && panel.bottom <= root.bottom - 4;
+			});
+			const panel = page.locator(".agent-universe-context-surface");
+			assert(await panel.locator(".agent-universe-context-header").evaluate(element => {
+				const bounds = element.getBoundingClientRect(), panel = element.closest(".agent-universe-context-surface")!.getBoundingClientRect();
+				return bounds.top >= panel.top && bounds.bottom <= panel.bottom;
+			}), "The selected agent title must remain visible below the Map header");
+			assert(await panel.locator(".agent-universe-context-composer").evaluate(element => {
+				const bounds = element.getBoundingClientRect(), panel = element.closest(".agent-universe-context-surface")!.getBoundingClientRect();
+				return bounds.top >= panel.top && bounds.bottom <= panel.bottom;
+			}), "The selected agent message field must remain inside its panel");
 		});
 		await page.getByRole("group", { name: "Agent workspace view" }).getByRole("button", { name: "List", exact: true }).click();
+		await audit("agent-secondary-options", size.name, async () => {
+			const more = page.locator(".agent-workspace-options > summary");
+			await more.focus();
+			await page.keyboard.press("Enter");
+			await page.getByRole("group", { name: "Agent options", exact: true }).waitFor();
+		});
+		await page.keyboard.press("Escape");
 		if (size.name === "compact") {
 			const toggle = page.locator("#browser-agent-toggle");
 			const chat = page.locator(".agent-sidebar");
@@ -312,6 +336,7 @@ try {
 			assert.equal(await page.getByLabel("Title (optional)", { exact: true }).inputValue(), "Release audit fixture note");
 		});
 		await navigate("agent");
+		await page.locator(".agent-workspace-options > summary").click();
 		await page.getByRole("button", { name: "All work", exact: true }).click();
 		await page.locator('.browser-app-page[data-app-page="work"]').waitFor();
 		for (const label of ["Goals", "Schedules", "Delegation", "Teams"] as const) {

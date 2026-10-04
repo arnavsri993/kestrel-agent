@@ -4659,7 +4659,7 @@ function RuntimeConversation({
 						<div className="runtime-activity-handoff" role="status">
 							<Icon name="check" />
 							<span>
-								{verifiedApprovalEvidence.toolName} verified.{" "}
+								{runtimeToolTitle(verifiedApprovalEvidence.toolName, "Action")} verified.{" "}
 								<button
 									type="button"
 									className="quiet-link"
@@ -11387,6 +11387,7 @@ export function App() {
 					onOpenWork={() => navigate("work")}
 					onOpenSettings={() => openSettings("agent-workspace")}
 					onToggleAgentSidebar={toggleAgentSidebar}
+					agentSidebarOpen={presentedAgentSidebarOpen}
 					onRetrySessions={() => void refreshRuntimeSessions().catch(() => undefined)}
 					onBack={() => void openBrowserWorkspace()}
 				/>
