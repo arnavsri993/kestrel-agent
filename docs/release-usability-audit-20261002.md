@@ -394,3 +394,32 @@ fixture and approval recovery pass. The shorter-window screenshot was inspected.
 This follow-up still requires its clean canonical refresh and exact-head CI;
 the preceding AI reviewer is HTTP 402 quota blocked. No real Memory content
 was edited or removed during native verification.
+
+## Draft scrolling and message bubbles — October 4
+
+Clean `1fabf938` was installed at the canonical path and independently verified
+by desktop/core identities, hashes and deep development signature. Its five
+installed tool-result, setup, Readiness, Life/Memory and smoke fixtures pass.
+Native About identifies Development · 1fabf938 and the retained owned answer is
+readable in Agent. Exact-head CI `37226247449` now passes both core/security and
+desktop/package jobs, including packaged browser-agent benchmarking. All four
+CodeQL checks pass. Required independent review remains outstanding; the separate
+AI reviewer returned HTTP 402 monthly quota exhaustion.
+
+An owned headless review using the actual renderer styles found nested user
+message bubbles and a clipped draft: eight lines required 169px inside a 160px
+CSS limit, while the old 180px threshold left scrolling disabled. User messages
+now use one right-aligned bubble, with Memory confirmation below the text.
+The composer sizes against its actual CSS maximum and enables scrolling whenever
+its content exceeds its visible height. It also observes panel width changes and
+resizes on becoming visible, preserving draft text and keyboard focus.
+
+The actual sizing helper and renderer styles pass headless checks at 1000px and
+390px with no horizontal overflow. Narrowing an owned panel grows a wrapped
+draft from 93px to the 160px cap and leaves its last line scrollable, retaining
+the exact text and focus. All 2,126 tests in 264 files, desktop type checking and
+build pass. The tool-result
+fixture now checks a capped eight-line draft and clearing back to a compact
+composer. Local Electron fixture execution and canonical delivery of this
+follow-up remain pending because macOS is locked and the canonical app is open.
+No real-profile UI or provider choices were changed during this source review.

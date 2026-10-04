@@ -48,6 +48,19 @@ try {
 	const list = chat.locator(".message-list");
 	const rows = chat.locator(".runtime-tool-message");
 	await expect(rows).toHaveCount(2);
+	const prompt = chat.locator("#runtime-prompt");
+	// A draft just above the CSS height limit must remain reachable by scrolling.
+	await prompt.fill(Array.from({ length: 8 }, (_, index) => `Owned draft line ${index + 1}`).join("\n"));
+	await expect.poll(() => prompt.evaluate(node => ({
+		clamped: node.scrollHeight > node.clientHeight,
+		scrollable: getComputedStyle(node).overflowY === "auto",
+	}))).toEqual({ clamped: true, scrollable: true });
+	assert(await prompt.evaluate(node => {
+		node.scrollTop = node.scrollHeight;
+		return node.scrollTop > 0 && node.scrollTop + node.clientHeight >= node.scrollHeight - 1;
+	}), "The last line of a capped draft must be reachable.");
+	await prompt.fill("");
+	await expect.poll(() => prompt.evaluate(node => node.clientHeight)).toBeLessThan(80);
 	const resize = async (width, height) => {
 		const actual = await app.evaluate(({ BrowserWindow }, { width, height }) => {
 			const window = BrowserWindow.getAllWindows().find(window => !window.webContents.getURL().includes("petOverlay=1"));

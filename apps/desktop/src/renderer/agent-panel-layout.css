@@ -452,6 +452,19 @@
 	grid-template-columns: minmax(0, 1fr);
 }
 
+.agent-conversation-host .user-message {
+	display: block;
+	width: fit-content;
+	max-width: calc(100% - 28px);
+	margin-left: auto;
+}
+
+.agent-conversation-host .user-message > p {
+	padding: 0;
+	border: 0;
+	background: transparent;
+}
+
 .agent-conversation-host .work-summary {
 	display: flex;
 	align-items: flex-start;

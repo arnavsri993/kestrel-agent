@@ -1,5 +1,6 @@
 import { commandDestinations } from "./app-directory";
 import { dismissCompactChatForDestination } from "./agent-panel-navigation";
+import { observeTextareaSize } from "./textarea-sizing";
 import "./Connections.css";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { BuildProvenance } from "./components/BuildProvenance";
@@ -3186,14 +3187,11 @@ function RuntimeConversation({
 		localStorage.setItem("kestrel:reasoning-effort", next.reasoningEffort);
 	}
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const prompt = promptRef.current;
-		if (!prompt) return;
-		prompt.style.height = "auto";
-		const nextHeight = Math.min(prompt.scrollHeight, 180);
-		prompt.style.height = `${nextHeight}px`;
-		prompt.style.overflowY = prompt.scrollHeight > 180 ? "auto" : "hidden";
-	}, [input]);
+		if (!visible || !prompt) return;
+		return observeTextareaSize(prompt);
+	}, [input, visible]);
 
 	useEffect(() => {
 		if (newAgentHandledRequest.current === newAgentRequestId) return;
