@@ -665,3 +665,20 @@ explains that the password was not copied and asks for device confirmation.
 All 189 affected unit tests and desktop type checking pass at this source
 checkpoint. Clean canonical installation and installed flow checks remain
 separate verification steps.
+
+
+### Consistent autofill form actions
+
+The populated saved-login screenshot review also exposed short default browser
+buttons in Add login and Saved personal info. Those three form actions now use
+the existing 40px button styles, with primary Save/Add and secondary Clear.
+Desktop type checking, desktop build and the complete owned autofill desktop
+flow pass. Actual rendered measurements confirm all three targets are 40px;
+owned screenshots were inspected. Existing submit, disabled, local device
+verification and protected storage behavior are retained. Current clean package,
+installed evidence and native reopening remain separate delivery checkpoints.
+
+The preceding clean `3801775a` passed both full CI jobs in run 37242189705,
+including complete browser/autofill and packaged browser-agent checks. Aggregate
+CodeQL and independent review remain open; local foreground verification and
+native reopening await manual Mac unlock.
