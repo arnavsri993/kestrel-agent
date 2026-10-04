@@ -34,6 +34,12 @@ const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 let application;
 let page;
 const runtimeErrors = [];
+async function openChat() {
+	const toggle = page.locator("#browser-agent-toggle");
+	await toggle.waitFor();
+	if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+	await page.locator(".agent-conversation-host").waitFor();
+}
 async function settings() {
 	const details = page.locator(".agent-conversation-host .task-settings");
 	await details.waitFor();
@@ -43,7 +49,8 @@ async function settings() {
 	return { details, select };
 }
 async function newTask() {
-	await page.getByRole("button", { name: "New task", exact: true }).click();
+	await openChat();
+	await page.locator(".agent-sidebar").getByRole("button", { name: "New task", exact: true }).click();
 	return settings();
 }
 async function submitAndCheck(title, projectId, workspaceRoot) {
@@ -79,12 +86,14 @@ try {
 		localStorage.removeItem("kestrel:active-project-id"); localStorage.setItem("kestrel:execution-mode", "manual"); localStorage.setItem("kestrel:provider-id", "nous"); localStorage.setItem("kestrel:model", "fixture-model");
 	});
 	await page.reload();
-	const toggle = page.locator("#browser-agent-toggle"); await toggle.waitFor();
-	if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+	await openChat();
 	let choice = await settings();
 	await choice.select.locator('option[value="' + projects[0].path + '"]').waitFor({ state: "attached" });
 	assert.equal(await choice.select.inputValue(), "", "Loading projects must not silently grant the first folder to a draft.");
-	await page.evaluate(() => localStorage.setItem("kestrel:active-project-id", "project-alpha"));
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:active-project-id", "project-alpha");
+		localStorage.setItem("kestrel:agent-sidebar", "collapsed");
+	});
 	await page.reload();
 	choice = await newTask();
 	assert.equal(await choice.select.inputValue(), projects[0].path);
