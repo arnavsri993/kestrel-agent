@@ -646,3 +646,22 @@ access, failed writes, local authentication, decrypted-entry disposal, unsupport
 protocols, lookalike origins and retained supported browser behavior. Clean
 packaging, installed verification and exact-head CI remain separate delivery
 evidence; this repair does not resolve the other security/review/signing gates.
+
+
+### Populated saved-login layout and error copy
+
+The installed clipboard fixture exposed a populated saved-login row whose
+metadata shrank to 1.2px with Chat docked in a 1280px window. Login details now
+keep a readable minimum width while actions wrap to the next row as needed.
+Search and the Add login form adapt to their actual column width. The owned
+CSS preview passes 1280, 800 and 390px, including Edit and removal cancellation,
+with full metadata, contained actions, no horizontal overflow and no renderer
+errors; screenshots were inspected. The supported autofill desktop test now
+checks populated saved-login metadata/actions at those three widths.
+
+Password operations reuse the existing user-facing error helper to keep raw
+Electron IPC names, paths and stack details out of the product. Cancelled copy
+explains that the password was not copied and asks for device confirmation.
+All 189 affected unit tests and desktop type checking pass at this source
+checkpoint. Clean canonical installation and installed flow checks remain
+separate verification steps.

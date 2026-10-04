@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutofillProfile, PasswordEntrySummary } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import { Icon } from "../Icon";
+import { userFacingError } from "../../error-copy";
 
 type PasswordSettingKey =
 	| "offerToSavePasswords"
@@ -57,7 +58,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 	}, [syncEntries]);
 
 	useEffect(() => {
-		void loadEntries().catch((cause) => setError(cause instanceof Error ? cause.message : "Passwords could not be loaded."));
+		void loadEntries().catch((cause) => setError(userFacingError(cause, "Passwords could not be loaded.")));
 	}, [loadEntries]);
 
 	const visibleEntries = useMemo(
@@ -78,7 +79,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			if (!response.ok) throw new Error(responseError(response));
 			setNotice(type === "password-copy" ? "Password copied. Kestrel clears it if it remains unchanged." : "Password revealed after local device verification.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Password operation failed.");
+			setError(userFacingError(cause, type === "password-copy" ? "Password was not copied. Confirm device access and try again." : "Password was not revealed. Confirm device access and try again."));
 		} finally { setBusy(""); }
 	}
 
@@ -100,7 +101,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			setEditingEntryId(null);
 			setNotice(password ? "Saved login and password updated." : "Saved login name updated.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Saved login could not be updated.");
+			setError(userFacingError(cause, "Saved login could not be updated."));
 		} finally { setBusy(""); }
 	}
 
@@ -113,7 +114,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			setAddOrigin(""); setAddUsername(""); setAddPassword("");
 			setNotice("Saved login added.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Saved login could not be added.");
+			setError(userFacingError(cause, "Saved login could not be added."));
 		} finally { setBusy(""); }
 	}
 
@@ -125,7 +126,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			if ("passwords" in response) syncEntries(response.passwords);
 			setRemovalConfirmation(null); setEditingEntryId(null); setNotice("Saved login removed.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Password could not be removed.");
+			setError(userFacingError(cause, "Password could not be removed."));
 		} finally { setBusy(""); }
 	}
 
@@ -136,7 +137,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			await browser.updateSettings({ neverSavePasswordOrigins: settings.neverSavePasswordOrigins.filter((item) => item !== origin) });
 			setNotice("Never-save exception removed.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Setting could not be updated.");
+			setError(userFacingError(cause, "Setting could not be updated."));
 		} finally { setBusy(""); }
 	}
 
@@ -148,7 +149,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			if ("autofillProfile" in response) setProfile(response.autofillProfile);
 			setNotice(clear ? "Saved form info removed." : "Form info saved securely on this Mac.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Form info could not be saved.");
+			setError(userFacingError(cause, "Form info could not be saved."));
 		} finally { setBusy(""); }
 	}
 
