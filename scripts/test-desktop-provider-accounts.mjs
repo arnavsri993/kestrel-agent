@@ -183,6 +183,11 @@ try {
 	application = undefined;
 	page = await launch();
 	await openProviderAccounts(page);
+	// The section heading renders before the asynchronous protected account
+	// read completes. Wait for both persisted identities before counting;
+	// missing or renamed accounts still fail the existing bounded UI timeout.
+	await page.locator(".provider-account-card").getByText("Personal local", { exact: true }).waitFor();
+	await page.locator(".provider-account-card").getByText("Work local", { exact: true }).waitFor();
 	assert.equal(await page.locator(".provider-account-card").count(), 2);
 	assert.equal(await page.locator(".provider-account-card").getByText("Personal local", { exact: true }).count(), 1);
 	assert.equal(await page.locator(".provider-account-card").getByText("Work local", { exact: true }).count(), 1);
