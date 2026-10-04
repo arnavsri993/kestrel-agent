@@ -701,3 +701,11 @@ with contained text/actions, no horizontal overflow and zero renderer errors.
 Screenshots were inspected. Desktop build and diff checking pass. Canonical
 refresh and checks against the compiled follow-up remain separate delivery
 steps; native verification still awaits Mac unlock.
+
+
+Packaged CI now runs the existing complete desktop surface audit after its
+layout check and retains its screenshots/manifest in the always-uploaded
+owned desktop evidence artifact. The local counterpart passed 167 states on
+canonical `416685f6`. This expands coverage beyond the separate layout test;
+it does not replace native menus, real-profile routing or genuine provider
+execution. Remote execution of this new CI step remains to be verified.
