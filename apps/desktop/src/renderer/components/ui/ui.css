@@ -2330,6 +2330,7 @@ body { font-family: var(--sans); }
 .ui-card-interactive:focus-within { border-color: var(--focus); box-shadow: var(--focus-ring); }
 .ui-status { border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: var(--radius-control); text-transform: none; letter-spacing: 0; }
 .ui-empty-state { border-top: 1px solid var(--line); }
+.ui-page-frame > .ui-empty-state { border-top: 0; }
 
 @media (max-width: 720px) {
 	.ui-page-frame-header { display: grid; gap: 14px; }

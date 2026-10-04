@@ -4,6 +4,22 @@ This branch combines the frozen latest open pull-request heads on main `3e932358
 
 ## Latest checkpoint
 
+Clean `30ec52eb464a0ff056cb1d04bcfb2ce96d675005` passes both complete CI jobs
+and all four CodeQL checks. Its packaged development artifact matches clean
+source manifests, independent hashes and deep signature verification. This
+includes the Writing Studio simplification and repaired headless fixture.
+The installed app is still the independently verified `1fabf938` candidate at
+this source checkpoint; macOS is now unlocked and its refresh can proceed.
+
+The current visual follow-up replaces developer terminology in Activity and
+Approvals with direct explanations, removes a second divider above empty route
+content, and keeps library action labels on one line with a bounded 16px icon.
+Owned checks of the actual components/styles pass 15 route/viewport states with
+zero renderer errors or document overflow. Canonical and new-head remote proof
+remain separate from those source checks and will be recorded in PR #812.
+
+## Earlier installed checkpoints
+
 Clean `3ef9b330d1cf2b8ae8e85285608559576f256dca` was installed at `/Applications/Kestrel.app` with independently verified application/core provenance, hashes and deep ad-hoc signature. All five installed persistent-agent, fresh/returning-persona, 157-state surface, approval and smoke checks passed. Native relaunch retained the real profile and the owned browser-task answer, showed the readable completion action, and verified restored scoped agent history, one source search and unchanged-viewer reselection. Model and reasoning remain Auto with zero manual choices, only Codex endpoints enabled, zero local endpoints and all seven other provider groups disabled. All four exact-head CodeQL analyses passed with zero results; CI and required review remain separate gates. The current AI security reviewer failed with its HTTP 402 monthly-quota response.
 
 Switching native Memory from an agent to You exposed a separate real-profile loading failure: a daily aggregate can contain more source references than the schema's 500-reference document limit. The service already returns at most 2,000 events, each with an event ID and optional source ID. The daily response now permits their complete bounded set of up to 4,000 references. Individual document and stored-summary limits remain unchanged, and no profile data is modified or removed. The new encrypted-database IPC regression fails on the preceding schema and passes after the fix, retaining Notes, all 2,000 returned events and their 4,000 references, the existing truncation signal, unrelated-agent isolation and rejection above the bound. Fifteen focused Memory tests, all 1,983 unit tests in 260 files, workspace type checking and the production secret scan pass. Canonical delivery and visible verification of this schema revision remain pending at this source checkpoint.
@@ -489,3 +505,28 @@ No product routing, provider invocation, request assertions or privacy checks
 are weakened. Remote validation of this follow-up and the 163-state canonical
 run remain pending; macOS is still locked and the canonical app remains at
 previously verified `1fabf938`.
+
+## Empty route and action polish — October 4
+
+The full `30ec52eb` CI run completes successfully, including the repaired Writing
+fixture, source/packaged flows, security checks and browser-agent benchmarks.
+All four diff-scoped CodeQL checks pass; independent review is still required.
+
+Owned desktop and compact captures showed empty routes with two adjacent
+dividers, developer terms such as deterministic policy and encrypted SQLite in
+their introductory text, and a wrapped New folder label beside a 31px glyph.
+Activity now explains observed, checked and prepared work; Approvals explains
+that actions stay paused until the person decides, including across app restarts.
+The underlying evidence, approval decisions and persistence are unchanged.
+Empty content directly under PageFrame uses its existing header/row divider.
+Library header buttons retain their 40px target, keep one-line labels and bound
+their glyph to 16px at wide and compact widths.
+
+Before/after owned renderer reviews cover History, Bookmarks, Downloads,
+Activity and Approvals at 1280×800, 800×660 and 390×844. All 15 corrected states
+have zero document overflow and renderer errors. The Bookmarks icon is 16×16
+at each width; screenshots were visually inspected. The initial scratch review
+omitted the synthetic snapshot's approvals array and was corrected before the
+before/after comparison; it is not a product failure. Desktop type checking
+and build pass. Latest-head CI and canonical verification remain the next gates
+at this source checkpoint. No provider or real-profile settings were changed.

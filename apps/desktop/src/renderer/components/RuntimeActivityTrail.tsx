@@ -62,7 +62,7 @@ export function RuntimeActivityTrail({
   return (
     <PageFrame
       title="What happened"
-      description="Verified tool results and the local audit trail. Hashes are evidence, not a claim that the task worked."
+      description="See what Kestrel observed, checked, and prepared."
       measure="wide"
       className="runtime-activity-trail"
     >
@@ -73,8 +73,8 @@ export function RuntimeActivityTrail({
       )}
       {items.length === 0 ? (
         <EmptyState
-          title="No verified work yet"
-          detail="After a tool runs, this trail shows the status, verification method, and evidence hash stored in encrypted SQLite."
+          title="No activity yet"
+          detail="Tool results will appear here with their status and supporting evidence."
         />
       ) : (
         <ol className="activity-list">

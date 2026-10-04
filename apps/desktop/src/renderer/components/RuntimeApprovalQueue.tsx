@@ -61,14 +61,14 @@ export function RuntimeApprovalQueue({
     return (
       <EmptyState
         title="No approvals waiting"
-        detail="When a consequential tool needs a decision, Kestrel pauses the run in encrypted local state. That pause survives restart until you allow or reject it."
+        detail="Actions stay paused until you decide, even if you close and reopen Kestrel."
       />
     );
 
   return (
     <PageFrame
       title="Review this action"
-      description="A deterministic policy layer decides whether a tool can run automatically. Consequential actions wait here, restart-safe, until you decide."
+      description="Review actions that need your permission. They stay paused until you approve or reject them."
       measure="reading"
       className="runtime-approval-queue"
     >
