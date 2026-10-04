@@ -148,6 +148,7 @@ jobs:
           path: |
             .tmp/desktop-browser/**
             .tmp/desktop-layout/**
+            .tmp/desktop-personas/**
             .tmp/browser-agent-benchmark/*.json
             .tmp/ci-diagnostics/**
             test-results/**

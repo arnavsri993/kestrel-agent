@@ -35,12 +35,11 @@ export function ScopedAgentMemory({ sessionId }: { sessionId: string }) {
 	}
 	const matches = (text: string) => text.toLocaleLowerCase().includes(query.toLocaleLowerCase());
 	return <section className="life-page scoped-agent-memory" aria-label="Scoped agent memory">
-		<header className="page-header"><h1>{data ? `${data.identity.name} memory` : "Agent memory"}</h1></header>
-		<MemoryRecovery key={sessionId} sessionId={sessionId} onRestored={() => setRevision(value => value + 1)} />
-		<label className="scoped-memory-search">Search this scope<input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
+		<h2 className="scoped-agent-memory-title">{data ? `${data.identity.name} history` : "Agent history"}</h2>
 		<nav className="life-switcher" aria-label="Agent memory views">
 			{(["knowledge", "work", "sources", "people", "calendar"] as const).map(id => <button type="button" key={id} className={view === id ? "active" : ""} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{id === "knowledge" ? "Knowledge" : id === "sources" ? "Sources" : id === "people" ? "People" : id === "calendar" ? "Calendar" : "Work history"}</button>)}
 		</nav>
+		{(view === "knowledge" || view === "work") && <label className="scoped-memory-search">{view === "knowledge" ? "Search knowledge" : "Search work"}<input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>}
 		{error && <p role="alert">{error} <button className="button secondary" onClick={() => setRevision(value => value + 1)}>Retry</button></p>}
 		{!data && !error && <p role="status">Loading this agent’s memory…</p>}
 		{(view === "people" || view === "calendar") && <ScopedLifeView key={`${sessionId}:${view}`} sessionId={sessionId} view={view} />}
@@ -59,6 +58,7 @@ export function ScopedAgentMemory({ sessionId }: { sessionId: string }) {
 			</details>)}
 			{!data.memories.some(item => matches(item.content)) && <p>No matching memories on this page.</p>}
 			<div><button className="button secondary" disabled={memoryOffset === 0} onClick={() => setMemoryOffset(Math.max(0, memoryOffset - 200))}>Previous memories</button><span> Page {Math.floor(memoryOffset / 200) + 1} </span><button className="button secondary" disabled={data.memoryNextOffset === undefined} onClick={() => setMemoryOffset(data.memoryNextOffset!)}>Next memories</button></div>
+			<MemoryRecovery key={sessionId} sessionId={sessionId} onRestored={() => setRevision(value => value + 1)} />
 		</>}
 		{data && view === "work" && <>
 			<label><input type="checkbox" checked={includeSpecialists} onChange={event => { setIncludeSpecialists(event.target.checked); setTaskOffset(0); }} />Include specialist work</label>

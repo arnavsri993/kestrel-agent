@@ -77,19 +77,38 @@ try {
 	await agentSettings.getByRole("button", { name: "Close", exact: true }).click();
 	assert.equal(await sidebar.getByRole("button", { name: "Code & Autonomy", exact: true }).count(), 0);
 	await sidebar.getByRole("button", { name: "Memory", exact: true }).click();
-	await page.getByRole("heading", { name: "Robotics memory", exact: true }).waitFor();
-	await page.getByText("No matching memories on this page.", { exact: true }).waitFor();
-	assert.equal(await page.getByLabel("Memory scope", { exact: true }).inputValue(), parent.id);
-	const memoryTabCount = await page.getByRole("tablist", { name: "Browser tabs" }).getByRole("tab").count();
-	await page.getByLabel("Memory scope", { exact: true }).selectOption("");
 	await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
-	await page.getByLabel("Memory scope", { exact: true }).selectOption(parent.id);
-	await page.getByRole("heading", { name: "Robotics memory", exact: true }).waitFor();
+	await expect(page.locator(".memory-filters-disclosure > summary")).toHaveText("Robotics · Filters");
+	await page.locator(".memory-filters-disclosure > summary").click();
+	const viewer = page.getByLabel("Viewing as", { exact: true });
+	const roboticsViewerId = await viewer.getByRole("option", { name: "Robotics", exact: true }).getAttribute("value");
+	assert(roboticsViewerId);
+	await expect(viewer).toHaveValue(roboticsViewerId);
+	await viewer.selectOption(roboticsViewerId);
+	await expect(page.locator(".memory-workspace-content")).toBeVisible();
+	await expect(page.locator(".memory-filters-disclosure > summary")).toHaveText("Robotics · Filters");
+	await page.getByLabel("More memory views", { exact: true }).selectOption("agent-history");
+	await page.getByRole("heading", { name: "Robotics history", exact: true }).waitFor();
+	await expect(page.getByLabel("Domain", { exact: true })).toBeDisabled();
+	await page.getByText("No matching memories on this page.", { exact: true }).waitFor();
+	const memoryTabCount = await page.getByRole("tablist", { name: "Browser tabs" }).getByRole("tab").count();
+	await viewer.selectOption("user");
+	await expect(page.locator(".scoped-agent-memory")).toHaveCount(0);
+	await expect(page.getByLabel("More memory views").getByRole("option", { name: "Agent history", exact: true })).toHaveCount(0);
+	await expect(page.getByLabel("Domain", { exact: true })).toBeEnabled();
+	await expect(viewer).toHaveValue("user");
+	await viewer.getByRole("option", { name: "Robotics", exact: true }).waitFor({ state: "attached" });
+	await viewer.selectOption(roboticsViewerId);
+	await expect(viewer).toHaveValue(roboticsViewerId);
+	await page.getByLabel("More memory views", { exact: true }).selectOption("agent-history");
+	await page.getByRole("heading", { name: "Robotics history", exact: true }).waitFor();
 	assert.equal(await page.getByRole("tablist", { name: "Browser tabs" }).getByRole("tab").count(), memoryTabCount);
 	await page.screenshot({ path: join(evidence, "scoped-memory.png") });
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.reload();
-	await page.getByRole("heading", { name: "Robotics memory", exact: true }).waitFor();
+	await expect(page.locator(".memory-filters-disclosure > summary")).toHaveText("Robotics · Filters");
+	await page.getByLabel("More memory views", { exact: true }).selectOption("agent-history");
+	await page.getByRole("heading", { name: "Robotics history", exact: true }).waitFor();
  const seedResult = await page.evaluate(async parentId => {
   const connectionId = "fixture"; const resourceId = "fixture-team";
   const now = new Date().toISOString();
@@ -101,6 +120,8 @@ try {
  }, parent.id);
  assert(seedResult);
  await page.getByRole("button", { name: "Sources", exact: true }).click();
+ await expect(page.locator(".scoped-agent-memory").getByRole("searchbox")).toHaveCount(1);
+ await expect(page.getByText("Knowledge backup and recovery", { exact: true })).toHaveCount(0);
  await page.getByRole("combobox", { name: "Memory source" }).selectOption({ label: "Synthetic team conversation" });
  await page.getByRole("searchbox", { name: "Search imported source history" }).fill("autonomous");
  await page.getByText(/Synthetic request: inspect the autonomous path/).first().waitFor();
@@ -108,6 +129,8 @@ try {
  await expect(page.getByRole("button", { name: "Review now", exact: true })).toBeDisabled();
  await page.getByRole("button", { name: "Queue for review", exact: true }).click();
  await page.getByRole("button", { name: "Review queued", exact: true }).waitFor();
+ await page.getByRole("button", { name: "Review queued", exact: true }).scrollIntoViewIfNeeded();
+ await page.screenshot({ path: join(evidence, "source-memory-observation.png") });
  await page.getByRole("button", { name: "Work history", exact: true }).click();
  await page.getByText(/Review a selected source observation · planned/).waitFor();
  await page.getByRole("button", { name: "Sources", exact: true }).click();
@@ -117,11 +140,15 @@ try {
  await page.getByRole("button", { name: "Calendar", exact: true }).click();
  await page.getByText("No events in this month.", { exact: true }).waitFor();
  await sidebar.getByRole("button", { name: "Connections", exact: true }).click();
+ await page.locator(".connection-scope-disclosure > summary").click();
  await page.getByLabel("Connection scope").selectOption(parent.id);
+ await page.getByLabel("More connection settings", { exact: true }).selectOption("access");
  await page.getByRole("heading", { name: "Robotics access", exact: true }).waitFor();
  await page.getByRole("button", { name: "Revoke", exact: true }).click();
  await page.getByText("No connected resources assigned.", { exact: true }).waitFor();
  await page.screenshot({ path: join(evidence, "source-connections.png") });
+ await page.getByRole("button", { name: "Apps & accounts", exact: true }).click();
+ await page.locator(".connection-app > summary").filter({ has: page.getByText("WhatsApp", { exact: true }) }).click();
  const nextWindow = application.waitForEvent("window");
  await page.getByRole("button", { name: "Open WhatsApp connection", exact: true }).click();
  const connectionWindow = await nextWindow;
@@ -153,7 +180,7 @@ try {
 	const page = await application?.firstWindow();
 	if (page) {
 		await page.screenshot({ path: join(evidence, "failure.png") });
-		console.log(await page.locator(".agent-universe-empty-state").innerText().catch(() => "Agent surface not present"));
+		console.log(JSON.stringify({ url: page.url(), headings: await page.locator("h1, h2").allTextContents() }));
 	}
 	throw error;
 } finally {

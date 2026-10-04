@@ -321,6 +321,35 @@ try {
 				assert((await page.locator(".browser-app-page").last().innerText()).trim().length > 0);
 			});
 		}
+		for (const label of ["Knowledge", "Work history", "Sources", "People", "Calendar", "Recovery"] as const) {
+			await audit(`memory-agent-history-${label.toLowerCase().replaceAll(" ", "-")}`, size.name, async () => {
+				await navigate("memory");
+				const filters = page.locator(".memory-filters-disclosure");
+				if (!(await filters.evaluate(element => (element as HTMLDetailsElement).open))) await filters.locator("summary").click();
+				await page.getByLabel("Viewing as", { exact: true }).selectOption({ label: agentName });
+				await page.getByLabel("More memory views", { exact: true }).selectOption("agent-history");
+				const history = page.getByRole("region", { name: "Scoped agent memory", exact: true });
+				await history.getByRole("heading", { name: `${agentName} history`, exact: true }).waitFor();
+				await expect(page.getByLabel("Domain", { exact: true })).toBeDisabled();
+				if (label === "Recovery") {
+					await history.getByRole("navigation", { name: "Agent memory views" }).getByRole("button", { name: "Knowledge", exact: true }).click();
+					await history.getByText("Knowledge backup and recovery", { exact: true }).click();
+					await history.getByRole("button", { name: "Preview recovery", exact: true }).waitFor();
+					await history.getByRole("button", { name: "Preview recovery", exact: true }).scrollIntoViewIfNeeded();
+				} else {
+					const tab = history.getByRole("navigation", { name: "Agent memory views" }).getByRole("button", { name: label, exact: true });
+					await tab.click();
+					await expect(tab).toHaveAttribute("aria-current", "page");
+				}
+				await assertReadableSurface(`memory-agent-history-${label}`);
+			});
+		}
+		await navigate("memory");
+		const historyFilters = page.locator(".memory-filters-disclosure");
+		if (!(await historyFilters.evaluate(element => (element as HTMLDetailsElement).open))) await historyFilters.locator("summary").click();
+		await page.getByLabel("Viewing as", { exact: true }).selectOption("user");
+		await expect(page.locator(".scoped-agent-memory")).toHaveCount(0);
+		await historyFilters.locator("summary").click();
 		await audit("memory-note-details", size.name, async () => {
 			await navigate("memory");
 			await page.getByRole("button", { name: "Notes", exact: true }).click();

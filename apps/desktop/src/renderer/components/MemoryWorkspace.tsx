@@ -6,9 +6,10 @@ import type {
 	RendererRequest,
 } from "@kestrel/shared-types";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ScopedAgentMemory } from "./ScopedAgentMemory";
 import "./MemoryWorkspace.css";
 
-type WorkspaceView = "overview" | "timeline" | "memory" | "people" | "knowledge" | "tools";
+type WorkspaceView = "overview" | "timeline" | "memory" | "people" | "knowledge" | "tools" | "agent-history";
 type DocumentKind = MemoryDocument["kind"];
 
 async function request(input: RendererRequest) {
@@ -234,7 +235,10 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
         return !draftState.busy && (!draftState.dirty || window.confirm("Discard unsaved memory changes?"));
     }
     function changeView(next: WorkspaceView) {
-        if (next !== view && canNavigate()) setView(next);
+        if (next !== view && canNavigate()) {
+            if (next === "agent-history") setDomainId("");
+            setView(next);
+        }
     }
 	const [viewerId, setViewerId] = useState(initialSessionId ?? "user");
 	const [domainId, setDomainId] = useState("");
@@ -244,6 +248,14 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 	const [busy, setBusy] = useState(true);
 	const [error, setError] = useState("");
 	const requestId = useRef(0);
+	const selectedSessionId = workspace?.viewers.find(viewer => viewer.id === viewerId)?.sessionId;
+	function changeViewer(nextViewerId: string) {
+		if (nextViewerId === viewerId || !canNavigate()) return;
+		setWorkspace(null);
+		setDomainId("");
+		if (view === "agent-history") setView("memory");
+		setViewerId(nextViewerId);
+	}
 
 	async function load(background = false) {
 		const id = ++requestId.current;
@@ -278,19 +290,21 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 			<header className="memory-workspace-header">
 				<div><h1>Memory</h1><p className="memory-intro">Things you want Kestrel to remember. Read, edit, or add a note.</p></div>
 				<details className="memory-filters-disclosure"><summary>{workspace?.viewers.find(viewer => viewer.id === viewerId)?.label ?? (viewerId === "user" ? "Your memory" : "Agent memory")}{domainId ? ` · ${workspace?.domains.find(domain => domain.id === domainId)?.label ?? domainId}` : ""} · Filters</summary><div className="memory-scope-controls">
-					<label>Viewing as<select aria-label="Viewing as" value={viewerId} onChange={(event) => { if (canNavigate()) { setWorkspace(null); setDomainId(""); setViewerId(event.target.value); } }}><option value="user">You</option>{workspace?.viewers.filter((viewer) => viewer.id !== "user").map((viewer) => <option key={viewer.id} value={viewer.id}>{viewer.parentId ? "↳ " : ""}{viewer.label}</option>)}</select></label>
-					<label>Domain<select aria-label="Domain" value={domainId} onChange={(event) => { if (canNavigate()) setDomainId(event.target.value); }}><option value="">All</option>{workspace?.domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.label}</option>)}</select></label>
+					<label>Viewing as<select aria-label="Viewing as" value={viewerId} onChange={(event) => changeViewer(event.target.value)}><option value="user">You</option>{workspace?.viewers.filter((viewer) => viewer.id !== "user").map((viewer) => <option key={viewer.id} value={viewer.id}>{viewer.parentId ? "↳ " : ""}{viewer.label}</option>)}</select></label>
+					<label>Domain<select aria-label="Domain" value={domainId} disabled={view === "agent-history"} onChange={(event) => { if (canNavigate()) setDomainId(event.target.value); }}><option value="">All</option>{workspace?.domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.label}</option>)}</select></label>
 				</div></details>
 			</header>
 			<nav className="memory-workspace-tabs" aria-label="Memory views">
                 {([["memory", "Notes"], ["timeline", "Recent activity"], ["people", "People"]] as const).map(([id, label]) => <button key={id} aria-current={view === id ? "page" : undefined} onClick={() => changeView(id)}>{label}</button>)}
-                <select aria-label="More memory views" value={["overview", "knowledge", "tools"].includes(view) ? view : ""} onChange={event => { if (event.target.value) changeView(event.target.value as WorkspaceView); }}>
+                <select aria-label="More memory views" value={["overview", "knowledge", "tools", "agent-history"].includes(view) ? view : ""} onChange={event => { if (event.target.value) changeView(event.target.value as WorkspaceView); }}>
                     <option value="" disabled>More</option><option value="overview">Summary</option><option value="knowledge">Reference knowledge</option><option value="tools">Tools & settings</option>
+                    {selectedSessionId && <option value="agent-history">Agent history</option>}
                 </select>
             </nav>
 			{error && <div className="memory-state" role="alert"><h2>Memory is unavailable</h2><p>{error}</p><button onClick={() => void load()}>Try again</button></div>}
 			{busy && !workspace && <div className="memory-state" aria-live="polite"><h2>Reading memory…</h2><p>Loading your saved notes.</p></div>}
 			{workspace && !error && <div className="memory-workspace-content">
+				{view === "agent-history" && selectedSessionId && <ScopedAgentMemory key={selectedSessionId} sessionId={selectedSessionId} />}
 				{view === "overview" && <><Overview documents={workspace.documents} workspace={workspace} /><section className="memory-recent"><button onClick={() => changeView("memory")}>Browse all notes →</button><h3>People</h3>{!workspace.documents.some(item => item.kind === "person") && <p className="memory-empty-copy">No people remembered in this scope.</p>}{workspace.documents.filter(item => item.kind === "person").slice(0, 5).map(item => <button key={item.id} onClick={() => changeView("people")}>{item.title}</button>)}<h3>Tools</h3>{!workspace.documents.some(item => item.kind === "tool") && <p className="memory-empty-copy">No tool experience recorded in this scope.</p>}{workspace.documents.filter(item => item.kind === "tool").slice(0, 5).map(item => <button key={item.id} onClick={() => changeView("tools")}>{item.title}</button>)}</section></>}
 				{view === "timeline" && <><div className="memory-week-controls"><button onClick={() => setWeekOffset(value => value - 1)}>Previous week</button><button onClick={() => setWeekOffset(0)}>This week</button><button disabled={weekOffset >= 0} onClick={() => setWeekOffset(value => value + 1)}>Next week</button><button disabled={consolidating} onClick={async () => { const generation = requestId.current; setConsolidating(true); try { const result = await request({ type: "memory-workspace-consolidate", query: workspace.query }); if (generation === requestId.current && "memoryWorkspace" in result && result.memoryWorkspace) setWorkspace(result.memoryWorkspace); } catch (cause) { if (generation === requestId.current) setError(cause instanceof Error ? cause.message : "Could not consolidate memory."); } finally { setConsolidating(false); } }}>{consolidating ? "Summarizing…" : "Summarize with model"}</button></div><Timeline workspace={workspace} /></>}
 				{view === "memory" && <DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="memory_and_knowledge" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} onDraftStateChange={setDraftState} />}

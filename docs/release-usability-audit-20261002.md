@@ -66,6 +66,21 @@ Visual review also caught compact Map search covering the selected agent title. 
 
 Clean canonical delivery, the updated persistent-agent fixture and exact-head remote checks are separate pending gates at this source checkpoint. Model and reasoning remain Auto, only Codex is enabled, and no real local model generation is requested.
 
+
+### Agent history and scope resilience — 2026-10-03
+
+Clean `3678f8d8ef015ad4ed58b64552e056c23429d992` was installed at the canonical path with independently checked application/core provenance, hashes and deep ad-hoc signature. Its installed approval, UI consistency and 145-state surface checks passed. The new persistent-agent check stopped at the old scoped-memory heading: the current Memory page had no reachable path to the existing agent source history, work history, scoped people/calendar or recovery controls. This is a product visibility regression, not a provider failure.
+
+Memory now offers Agent history under More only for a selected agent returned by the workspace's viewer catalog. Notes remains the default. Changing viewer leaves history, removes the old scoped component and restores the domain filter. History uses all domains and disables that filter rather than implying a domain restriction the scoped history APIs do not enforce. Knowledge and Work history have their own visible search; Sources retains only its source search. Knowledge backup/recovery stays collapsed below Knowledge, and the embedded heading uses compact spacing.
+
+The expanded audit reproduced a blank workspace after reselecting the same viewer: the handler cleared loaded data without changing state, so no new load ran. Ten history states failed in that original 157-state run. The handler now ignores unchanged selections, with a persistent-fixture regression that requires the same viewer's content and controls to remain available. The failure manifest and images are retained.
+
+The revised packaged candidate passes the full persistent-agent fixture: Robotics creation with eight specialists, specialist archive/restore, encrypted standalone-knowledge recovery, viewer changes without new tabs or stale history, source ingestion/search with model processing disabled, queued work, observed people, scoped calendar, access revocation, dedicated WhatsApp partition and detached-tab quit/restart. Live WhatsApp linking/capture is not claimed. The first resumed attempt stopped at a closed Connections scope disclosure; the fixture now opens that disclosure, Agent permissions and the WhatsApp app disclosure before checking the same original operations. It passes all 157 registered surface states with zero renderer errors, the full 40-route/viewport and 22-section Settings consistency audit, all 1,982 unit tests in 260 files, desktop type checking/build, production secret scanning and the repository market gate. Owned desktop/compact history and persistence screenshots were inspected. Recovery and queued-observation evidence scrolls the actual controls into view.
+
+Remote `3678f8d8` core/website/security and all four CodeQL analyses passed; its desktop job stopped at Command Center Tab focus in the returning-user persona. The unchanged fixture passes locally. The revised fixture activates its own native window, verifies native and DOM focus before the original Tab assertion, and retains bounded before/after or failure diagnostics. Source fresh/returning personas pass with that prerequisite; latest-head remote confirmation is still required. CI now uploads the fixture's fresh owned evidence directory. The preceding failure is retained, and no confirmed product cause is claimed.
+
+Clean canonical delivery, visible real-profile verification and exact-head remote checks remain separate pending gates at this source checkpoint. Model and reasoning remain Auto with only Codex enabled. A read-only local status check found no Ollama/llama process and no listener at the normal Ollama status endpoint; no local generation was requested.
+
 ## Source disposition
 
 | PR | Exact head | Local disposition |
