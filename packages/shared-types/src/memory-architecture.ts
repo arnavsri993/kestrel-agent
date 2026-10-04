@@ -294,6 +294,12 @@ export const AgentMemoryRecordSchema = z.object({
 	importance: z.number().min(0).max(1),
 	sensitivity: z.enum(["public", "personal", "sensitive", "restricted"]),
 	status: z.enum(["active", "superseded", "expired", "deleted"]),
+	/** User or system pin: durable until explicitly forgotten. */
+	pinned: z.boolean().default(false),
+	/** When set, active memories past this time are eligible to fade/delete. */
+	fadesAt: z.string().datetime().optional(),
+	/** Successful recalls; used to protect source-derived facts. */
+	accessCount: z.number().int().nonnegative().default(0),
 	validUntil: z.string().datetime().optional(),
 	lastAccessedAt: z.string().datetime().optional(),
 	createdAt: z.string().datetime(),
@@ -593,6 +599,18 @@ export const MemoryDiagnosticsSchema = z.object({
 });
 export type MemoryDiagnostics = z.infer<typeof MemoryDiagnosticsSchema>;
 
+export const MemoryFadeDryRunSchema = z.object({
+	version: z.literal(1),
+	createdAt: z.string().datetime(),
+	agentMemoryCandidates: z.number().int().nonnegative(),
+	legacyMemoryCandidates: z.number().int().nonnegative(),
+	timelineCandidates: z.number().int().nonnegative(),
+	sourceDerivedCandidates: z.number().int().nonnegative(),
+	backupKey: z.string().min(1).max(200),
+	applied: z.boolean(),
+});
+export type MemoryFadeDryRun = z.infer<typeof MemoryFadeDryRunSchema>;
+
 export const MemoryMaintenanceResultSchema = z.object({
 	jobsProcessed: z.number().int().nonnegative(),
 	jobsCompleted: z.number().int().nonnegative(),
@@ -603,6 +621,7 @@ export const MemoryMaintenanceResultSchema = z.object({
 	memoriesExtracted: z.number().int().nonnegative(),
 	memoriesChanged: z.number().int().nonnegative(),
 	deletedArtifacts: z.number().int().nonnegative(),
+	fadeDryRun: MemoryFadeDryRunSchema.optional(),
 	updatedAt: z.string().datetime(),
 });
 export type MemoryMaintenanceResult = z.infer<

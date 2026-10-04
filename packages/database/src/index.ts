@@ -580,6 +580,11 @@ export class KestrelDatabase {
 			...(parsed.confirmationStatus
 				? { confirmationStatus: parsed.confirmationStatus }
 				: {}),
+			...(parsed.pinned !== undefined ? { pinned: parsed.pinned } : {}),
+			...(parsed.fadesAt ? { fadesAt: parsed.fadesAt } : {}),
+			...(parsed.accessCount !== undefined
+				? { accessCount: parsed.accessCount }
+				: {}),
 			...(parsed.lastAccessedAt
 				? { lastAccessedAt: parsed.lastAccessedAt }
 				: {}),

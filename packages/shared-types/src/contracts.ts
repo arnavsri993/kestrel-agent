@@ -113,6 +113,11 @@ export const MemoryRecordSchema = z.object({
 	inferred: z.boolean(),
 	subject: z.string().min(1).max(500).optional(),
 	layer: z.enum(["short_term", "mid_term", "long_term", "archived"]).optional(),
+	/** User pin: durable until explicitly forgotten. */
+	pinned: z.boolean().optional(),
+	/** When set, unpinned automatic memories past this time are eligible to fade. */
+	fadesAt: z.string().datetime().optional(),
+	accessCount: z.number().int().nonnegative().optional(),
 	confirmationStatus: z
 		.enum([
 			"inferred",

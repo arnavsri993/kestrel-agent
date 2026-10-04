@@ -81,6 +81,12 @@ export class MemoryManager {
 		const timestamp = this.now().toISOString();
 		const prior = this.conflictsFor(input);
 		const obviousUpdate = prior.length > 0 && this.isAuthoritativeUpdate(input);
+		const durable =
+			input.userConfirmed ||
+			input.confirmationStatus === "explicit" ||
+			input.confirmationStatus === "user_confirmed" ||
+			Boolean(input.pinned);
+		const fadeDays = durable || !input.inferred ? undefined : 90;
 		const record: MemoryRecord = {
 			...input,
 			id: `memory-${randomUUID()}`,
@@ -91,6 +97,15 @@ export class MemoryManager {
 			lastAccessedAt: timestamp,
 			relevanceScore: input.importance,
 			layer: input.layer ?? this.defaultLayer(input),
+			pinned: durable,
+			accessCount: 0,
+			...(fadeDays
+				? {
+						fadesAt: new Date(
+							new Date(timestamp).getTime() + fadeDays * 86_400_000,
+						).toISOString(),
+					}
+				: {}),
 			confirmationStatus:
 				input.confirmationStatus ??
 				(input.userConfirmed
@@ -258,13 +273,26 @@ export class MemoryManager {
 		for (const id of new Set(ids)) {
 			const memory = this.database.getMemory(id);
 			if (!memory || memory.status !== "active") continue;
+			const durable =
+				memory.pinned ||
+				memory.userConfirmed ||
+				memory.confirmationStatus === "explicit" ||
+				memory.confirmationStatus === "user_confirmed";
 			this.database.upsertMemory({
 				...memory,
 				lastAccessedAt: timestamp,
+				accessCount: (memory.accessCount ?? 0) + 1,
 				relevanceScore: Math.min(
 					1,
 					(memory.relevanceScore ?? memory.importance) + 0.03,
 				),
+				...(!durable && memory.inferred
+					? {
+							fadesAt: new Date(
+								new Date(timestamp).getTime() + 90 * 86_400_000,
+							).toISOString(),
+						}
+					: {}),
 			});
 		}
 	}
@@ -289,23 +317,45 @@ export class MemoryManager {
 			const expired =
 				memory.validUntil !== undefined &&
 				Date.parse(memory.validUntil) < timestamp.getTime();
-			const archive =
-				!expired &&
-				memory.layer !== "short_term" &&
-				ageDays >= 180 &&
-				decayed < 0.35;
+			const durable =
+				memory.pinned ||
+				memory.userConfirmed ||
+				memory.confirmationStatus === "explicit" ||
+				memory.confirmationStatus === "user_confirmed";
+			// Automatic memories get a forward fadesAt if missing (no silent mass purge).
+			let fadesAt = memory.fadesAt;
+			if (!durable && memory.inferred && !fadesAt) {
+				fadesAt = new Date(
+					timestamp.getTime() + 90 * 86_400_000,
+				).toISOString();
+			} else if (!durable && memory.inferred && memory.lastAccessedAt) {
+				const refreshed = new Date(
+					new Date(memory.lastAccessedAt).getTime() + 90 * 86_400_000,
+				).toISOString();
+				if (Date.parse(refreshed) > Date.parse(fadesAt ?? 0)) fadesAt = refreshed;
+			}
+			const faded =
+				!durable &&
+				Boolean(fadesAt) &&
+				Date.parse(fadesAt!) < timestamp.getTime();
+			if (faded || expired) {
+				this.forget(memory.id);
+				changed.push({
+					...memory,
+					status: "deleted",
+					updatedAt: timestamp.toISOString(),
+				});
+				continue;
+			}
 			if (
-				!expired &&
-				!archive &&
-				Math.abs(decayed - (memory.relevanceScore ?? memory.importance)) < 0.01
+				Math.abs(decayed - (memory.relevanceScore ?? memory.importance)) < 0.01 &&
+				fadesAt === memory.fadesAt
 			)
 				continue;
 			const next: MemoryRecord = {
 				...memory,
 				relevanceScore: decayed,
-				status: expired ? "expired" : memory.status,
-				layer: archive ? "archived" : memory.layer,
-				...(archive ? { archivedAt: timestamp.toISOString() } : {}),
+				...(fadesAt ? { fadesAt } : {}),
 				updatedAt: timestamp.toISOString(),
 			};
 			this.database.upsertMemory(next);
