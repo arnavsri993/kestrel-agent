@@ -2500,6 +2500,15 @@ export class AgentCore {
 						ok: true,
 						selectedSessionId: this.runtime.selectSession(request.sessionId),
 					};
+				case "runtime-set-session-privacy":
+					return {
+						ok: true,
+						session: this.runtime.setSessionPrivacy(
+							request.sessionId,
+							request.privacyMode,
+						),
+						selectedSessionId: this.runtime.selectedSessionId(),
+					};
 				case "runtime-forget-session":
 					return {
 						ok: true,
@@ -3022,6 +3031,8 @@ export class AgentCore {
 						ok: true,
 						memoryDiagnostics: this.memorySubstrate.diagnostics(),
 					};
+				case "memory-fade-plan": return { ok: true, memoryFadePreview: this.memorySubstrate.planFadeCleanup() };
+				case "memory-fade-apply": return { ok: true, memoryFadeDryRun: await this.memorySubstrate.applyFadeCleanup(request.planId, request.approved) };
 				case "memory-recovery-export": return { ok: true, memoryRecoveryData: this.memoryRecovery.export(request.sessionId) };
 				case "memory-recovery-preview": return { ok: true, memoryRecoveryPreview: this.memoryRecovery.preview(request.sessionId, request.encoded) };
 				case "memory-recovery-apply": return { ok: true, memoryRecoveryRestored: this.memoryRecovery.apply(request.sessionId, request.planId) };
@@ -3069,6 +3080,14 @@ export class AgentCore {
 								request.sessionId,
 								request.id,
 							),
+						],
+					};
+				case "memory-agent-pin":
+					this.memorySubstrate.assertMemorySession(request.sessionId);
+					return {
+						ok: true,
+						memoryAgentMemories: [
+							this.memorySubstrate.pinAgentMemory(request.sessionId, request.id, request.pinned),
 						],
 					};
 				case "memory-agent-provenance-list":

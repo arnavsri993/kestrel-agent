@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
+import { openKestrelDestination, selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-setup-test-"));
 const testHome = join(root, "home");
@@ -676,7 +676,9 @@ try {
 	await page.getByRole("heading", { name: "Settings" }).waitFor();
 	assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
 	assert.equal(await page.locator(".page-header > p").count(), 0);
-	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
+	await selectSettingsSection(page, "connections", "Connections");
+	await page.getByRole("button", { name: "Open Connections", exact: true }).click();
+	await page.getByRole("heading", { name: "Connections", exact: true }).waitFor();
 	await page.locator("summary").filter({ hasText: "Model provider · ChatGPT" }).click();
 	const chatGptConnection = page
 		.locator(".oauth-connection")
@@ -707,6 +709,8 @@ try {
 		true,
 	);
 	await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
+	await openKestrelDestination(page, "Settings");
+	await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
 	await selectSettingsSection(page, "general", "General");
 	const communicationStyle = page.getByRole("group", {
 		name: "Communication style",

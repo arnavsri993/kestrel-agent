@@ -15,6 +15,9 @@
 .memory-overview h2, .memory-timeline h2 { margin: 4px 0 8px; font-size: 20px; letter-spacing: -.02em; }
 .memory-overview p, .memory-timeline p { max-width: 76ch; line-height: 1.65; }
 .memory-kicker { margin: 0; color: var(--text-secondary, #aaa); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.memory-lane-actions { display: flex; gap: 8px; margin-top: 10px; }
+.memory-lane-actions button { border: 1px solid var(--border, rgba(255,255,255,.14)); border-radius: 8px; background: transparent; color: inherit; padding: 6px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.memory-lane-actions button.danger { color: var(--danger, #df8a87); }
 .memory-tier { padding: 22px 0; border-top: 1px solid var(--border, rgba(255,255,255,.1)); }
 .memory-tier-heading { display: flex; justify-content: space-between; margin-bottom: 16px; }
 .memory-tier-heading h3 { margin: 0; font-size: 16px; }
@@ -80,3 +83,33 @@
 .memory-tier-heading { margin-bottom: 10px; }
 .memory-tier article + article { margin-top: 16px; }
 .memory-recent button { border: 0; background: transparent; color: var(--ink); padding: 6px 14px 6px 0; }
+.memory-cleanup-review {
+	max-width: 760px;
+	margin-top: 24px;
+	padding: 16px;
+	border: 1px solid var(--border, rgba(255,255,255,.14));
+	border-radius: 12px;
+}
+.memory-cleanup-review p { overflow-wrap: anywhere; }
+.memory-cleanup-review button {
+	border: 1px solid var(--border, rgba(255,255,255,.14));
+	border-radius: 8px;
+	background: transparent;
+	color: inherit;
+	padding: 7px 11px;
+	font: inherit;
+	cursor: pointer;
+}
+.memory-cleanup-review button.danger { color: var(--danger, #df8a87); }
+.memory-cleanup-review button:disabled { opacity: .45; cursor: default; }
+.memory-cleanup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.memory-cleanup-candidates {
+	max-height: 360px;
+	overflow: auto;
+	margin: 16px 0;
+}
+.memory-cleanup-candidates:focus-visible { outline: 2px solid var(--ink, #f2f2f0); outline-offset: 3px; }
+.memory-cleanup-candidates article { padding: 12px 0; border-bottom: 1px solid var(--border, rgba(255,255,255,.14)); }
+.memory-cleanup-candidates h4 { margin: 0 0 8px; }
+.memory-cleanup-candidates p { white-space: pre-wrap; }
+.memory-cleanup-confirm { display: flex; align-items: flex-start; gap: 8px; margin: 16px 0; }

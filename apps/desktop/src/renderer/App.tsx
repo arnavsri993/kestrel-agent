@@ -151,7 +151,6 @@ import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
 import { GoalKanban } from "./components/GoalKanban";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
 import { MemoryRecallReceiptLine } from "./components/MemoryRecallReceiptLine";
-import { MemoryRecallStatus } from "./components/MemoryRecallStatus";
 import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
@@ -4181,6 +4180,31 @@ function RuntimeConversation({
 		}
 	}
 
+	async function markChatPrivate() {
+		if (!activeSessionId || busy) return;
+		setError("");
+		try {
+			const privacy = (await window.kestrel.request({
+				type: "runtime-set-session-privacy",
+				sessionId: activeSessionId,
+				privacyMode: "private",
+			})) as CoreResponse;
+			if (!privacy.ok) throw new Error(privacy.error);
+			const cleared = (await window.kestrel.request({
+				type: "memory-source-delete",
+				sourceId: activeSessionId,
+			})) as CoreResponse;
+			if (!cleared.ok) throw new Error(cleared.error);
+			await refreshSessions();
+		} catch (cause) {
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "Could not stop remembering this chat.",
+			);
+		}
+	}
+
 	async function restoreCheckpoint(checkpointId: string) {
 		if (!activeSessionId || busy) return;
 		const sessionId = activeSessionId;
@@ -4503,7 +4527,7 @@ function RuntimeConversation({
 								<p>{message.content}</p>
 								{parseExplicitMemoryCapture(message.content) && (
 									<p className="memory-capture-confirmation" role="status">
-										Saved to Life → Memory. Future chats can use this when shared
+										Saved to Memory. Future chats can use this when shared
 										context is on.
 									</p>
 								)}
@@ -4515,7 +4539,6 @@ function RuntimeConversation({
 								data-runtime-message-id={message.id}
 								tabIndex={-1}
 							>
-								<span className="assistant-avatar">K</span>
 								<div>
 									<p>{message.content}</p>
 									{message.memoryRecallReceipt && (
@@ -5002,6 +5025,18 @@ function RuntimeConversation({
 										</div>
 									)}
 									{taskControls}
+									{activeSessionId ? (
+										<button
+											type="button"
+											className="button secondary"
+											disabled={busy || activeSession?.privacyMode === "private"}
+											onClick={() => void markChatPrivate()}
+										>
+											{activeSession?.privacyMode === "private"
+												? "This chat is not remembered"
+												: "Don't remember this chat"}
+										</button>
+									) : null}
 									{activeSessionId && (
 										<div
 											className="runtime-lifecycle-controls"
@@ -5068,21 +5103,20 @@ function RuntimeConversation({
 								</div>
 							</details>
 						</div>
-						<span className="composer-status">
-							{voiceState === "recording"
-								? "Microphone live · tap Stop to transcribe"
-								: activeSessionBusy
-									? "Send an update at the next safe turn boundary"
-									: backgroundSessionBusy
-										? "Another chat is running · return there to update or cancel"
-										: selectedGrant?.available === false
-											? `${selectedGrant.name} · unavailable; reconnect or remove it in Settings`
-											: taskWorkspace
-												? `${selectedGrant?.name ?? "Project"} · files and tools stay scoped`
-												: activeSessionId
-													? "Conversation only · start a new chat to add a project"
-													: "Conversation only"}
-						</span>
+						{(voiceState === "recording" ||
+							activeSessionBusy ||
+							backgroundSessionBusy ||
+							selectedGrant?.available === false) && (
+							<span className="composer-status" role="status">
+								{voiceState === "recording"
+									? "Microphone live · tap Stop to transcribe"
+									: activeSessionBusy
+										? "Send an update at the next safe turn boundary"
+										: backgroundSessionBusy
+											? "Another chat is running · return there to update or cancel"
+											: `${selectedGrant?.name} · unavailable; reconnect or remove it in Settings`}
+							</span>
+						)}
 						{activeSessionBusy || backgroundSessionBusy ? (
 							<div className="button-row composer-send-actions">
 								{voiceButton}
@@ -9375,6 +9409,8 @@ function Settings({
 	browser,
 	browserContextEnabled,
 	onToggleBrowserContext,
+	onOpenMemory,
+	onOpenConnections,
 	onBack,
 }: {
 	snapshot: WorkspaceSnapshot;
@@ -9385,6 +9421,8 @@ function Settings({
 	browser: UserBrowserController;
 	browserContextEnabled: boolean;
 	onToggleBrowserContext(): void;
+	onOpenMemory?(): void;
+	onOpenConnections?(): void;
 	onBack?(): void;
 }) {
 	const reduced = useReducedMotion();
@@ -9781,7 +9819,23 @@ function Settings({
 						)}
 					{section === "agent-connections" && (
 						<>
-							<Connections snapshot={snapshot} />
+							<section className="settings-stack" aria-label="Account connections">
+								<article className="setting-row">
+									<div>
+										<strong>Connections</strong>
+										<p>Manage provider accounts and project access in one place.</p>
+									</div>
+									{onOpenConnections ? (
+										<button
+											type="button"
+											className="button secondary"
+											onClick={onOpenConnections}
+										>
+											Open Connections
+										</button>
+									) : null}
+								</article>
+							</section>
 							<section className="settings-stack" aria-label="Subscription connections">
 								<SubscriptionCliSettings hideCodexDuplicate />
 							</section>
@@ -10086,13 +10140,21 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-intelligence-title">Memory and learning</h2>
-
+								<p>Turn shared learning on or off. Review Kept and Fading notes in Memory.</p>
 							</header>
 						<section
 							className="settings-stack"
 							aria-label="Memory and behavior settings"
 						>
-							<MemoryRecallStatus snapshot={snapshot} />
+							{onOpenMemory ? (
+								<button
+									type="button"
+									className="button secondary"
+									onClick={onOpenMemory}
+								>
+									Open Memory
+								</button>
+							) : null}
 							<HonchoMemorySettings />
 							<PresenceSettings />
 						</section>
@@ -11308,17 +11370,48 @@ export function App() {
 				/>
 			)}
 			{appPageId === "connections" && (
-				<PageFrame title="Connections" text="Manage connected accounts and access.">
-					<label className="memory-scope-selector">Access for
-      <select aria-label="Connection scope" value={currentAppPage?.scopeSessionId ?? ""} onChange={event => {
-       const tabId = browser.state?.activeTabId;
-       if (tabId) void browser.navigate(tabId, kestrelAppPageUrl("connections", event.target.value || undefined));
-      }}>
-       <option value="">Personal / global accounts</option>
-       {runtimeSessions.filter(session => session.kind === "agent" || session.specialistDefinition).map(session => <option key={session.id} value={session.id}>{session.parentSessionId ? "↳ " : ""}{session.title}</option>)}
-      </select>
-     </label>
-     <Connections snapshot={snapshot} standalone scopeSession={runtimeSessions.find(session => session.id === currentAppPage?.scopeSessionId)} />
+				<PageFrame title="Connections">
+					{runtimeSessions.some(
+						(session) => session.kind === "agent" || session.specialistDefinition,
+					) ? (
+						<label className="memory-scope-selector">
+							Access for
+							<select
+								aria-label="Connection scope"
+								value={currentAppPage?.scopeSessionId ?? ""}
+								onChange={(event) => {
+									const tabId = browser.state?.activeTabId;
+									if (tabId)
+										void browser.navigate(
+											tabId,
+											kestrelAppPageUrl(
+												"connections",
+												event.target.value || undefined,
+											),
+										);
+								}}
+							>
+								<option value="">Personal</option>
+								{runtimeSessions
+									.filter(
+										(session) =>
+											session.kind === "agent" || session.specialistDefinition,
+									)
+									.map((session) => (
+										<option key={session.id} value={session.id}>
+											{session.title}
+										</option>
+									))}
+							</select>
+						</label>
+					) : null}
+					<Connections
+						snapshot={snapshot}
+						standalone
+						scopeSession={runtimeSessions.find(
+							(session) => session.id === currentAppPage?.scopeSessionId,
+						)}
+					/>
 				</PageFrame>
 			)}
 			{appPageId === "settings" && (
@@ -11335,6 +11428,8 @@ export function App() {
 					browser={browser}
 					browserContextEnabled={browserContextEnabled}
 					onToggleBrowserContext={toggleBrowserContext}
+					onOpenMemory={() => void openAppPage("memory")}
+					onOpenConnections={() => navigate("connections")}
 				/>
 			)}
 			{appPageId === "readiness" && <Readiness />}

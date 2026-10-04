@@ -1,6 +1,7 @@
 import type {
 	MemoryDocument,
 	MemoryDocumentSave,
+	MemoryFadePreview,
 	MemoryWorkspace as MemoryWorkspaceData,
 	MemoryWorkspaceQuery,
 	RendererRequest,
@@ -8,8 +9,16 @@ import type {
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import "./MemoryWorkspace.css";
 
-type WorkspaceView = "overview" | "timeline" | "memory" | "people" | "tools";
+type WorkspaceView = "kept" | "fading" | "timeline" | "people" | "tools";
 type DocumentKind = MemoryDocument["kind"];
+
+function isKeptDocument(document: MemoryDocument): boolean {
+	return document.confirmation === "confirmed" || document.tier === "long_term";
+}
+
+function isFadingDocument(document: MemoryDocument): boolean {
+	return document.kind === "memory" && !isKeptDocument(document);
+}
 
 async function request(input: RendererRequest) {
 	const response = await window.kestrel.request(input);
@@ -31,37 +40,166 @@ function documentSubtitle(document: MemoryDocument) {
 	return `${tierLabels[document.tier]} · ${document.confirmation === "confirmed" ? "Confirmed" : `${Math.round(document.confidence * 100)}% inferred`}`;
 }
 
-function Overview({ documents, workspace, full = false }: { documents: MemoryDocument[]; workspace: MemoryWorkspaceData; full?: boolean }) {
-	const today = new Date(); const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
-	const memory = documents.filter((item) => item.kind === "memory");
+function MemoryLane({
+	documents,
+	viewerId,
+	title,
+	empty,
+	fading = false,
+	onKeep,
+	onForgotten,
+}: {
+	documents: MemoryDocument[];
+	viewerId: string;
+	title: string;
+	empty: string;
+	fading?: boolean;
+	onKeep?(document: MemoryDocument): void;
+	onForgotten(id: string): void;
+}) {
+	const [busyId, setBusyId] = useState<string | null>(null);
+	const [error, setError] = useState("");
+	async function forget(id: string) {
+		setError("");
+		setBusyId(id);
+		try {
+			await request({ type: "memory-document-forget", id });
+			onForgotten(id);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Could not forget this note.");
+		} finally {
+			setBusyId(null);
+		}
+	}
+	async function keep(document: MemoryDocument) {
+		if (!onKeep) return;
+		setError("");
+		setBusyId(document.id);
+		try {
+			const response = await request({
+				type: "memory-document-save",
+				document: {
+					id: document.id,
+					expectedVersion: document.version,
+					viewerId,
+					kind: document.kind,
+					title: document.title,
+					text: document.text,
+					tier: "long_term",
+					domainIds: document.domainIds,
+					...(document.ownerAgentId ? { ownerAgentId: document.ownerAgentId } : {}),
+					sharing: document.sharing,
+					sourceIds: document.sourceIds,
+					confidence: document.confidence,
+					confirmation: document.confirmation,
+					sensitivity: document.sensitivity,
+					passages: document.passages,
+					...(document.canonicalEntityId
+						? { canonicalEntityId: document.canonicalEntityId }
+						: {}),
+					origin: document.origin,
+				},
+			});
+			if ("memoryDocument" in response && response.memoryDocument)
+				onKeep(response.memoryDocument);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Could not keep this note.");
+		} finally {
+			setBusyId(null);
+		}
+	}
 	return (
 		<div className="memory-overview">
 			<header>
-
-				{!full && <><h2>Today</h2><p>{workspace.days.find(day => day.day === todayKey)?.summary ?? "No significant activity remembered today."}</p></>}
-				<h2>What Kestrel understands</h2>
-
+				<h2>{title}</h2>
+				<p>
+					{fading
+						? "Automatic notes stay here until you choose to forget them. Keep a note to save it."
+						: "Saved notes stay until you forget them."}
+				</p>
 			</header>
-			{(["short_term", "mid_term", "long_term"] as const).map((tier) => {
-				const entries = memory.filter((item) => item.tier === tier);
-				return (
-					<section className="memory-tier" key={tier}>
-						<div className="memory-tier-heading">
-							<h3>{tierLabels[tier]}</h3>
-							<span>{entries.length} {entries.length === 1 ? "note" : "notes"}</span>
-						</div>
-						{entries.length ? (full ? entries : entries.slice(0, 3)).map((document) => (
-							<article key={document.id}>
-								<h4>{document.title}</h4>
-								<p>{document.text}</p>
-								<small>{document.confirmation === "inferred" ? `${Math.round(document.confidence * 100)}% inferred` : "Confirmed"} · updated {humanDate(document.updatedAt)}</small>
-							</article>
-						)) : <p className="memory-empty-copy">Nothing is recorded here yet.</p>}
-					</section>
-				);
-			})}
+			{error && <p role="alert">{error}</p>}
+			{documents.length ? (
+				documents.map((document) => (
+					<article key={document.id}>
+						<h4>{document.title}</h4>
+						<p>{document.text}</p>
+						<small>
+							{fading ? "Fading" : "Kept"} · {tierLabels[document.tier]} · updated{" "}
+							{humanDate(document.updatedAt)}
+						</small>
+						<footer className="memory-lane-actions">
+							{fading ? (
+								<button
+									type="button"
+									disabled={busyId === document.id}
+									onClick={() => void keep(document)}
+								>
+									Keep
+								</button>
+							) : null}
+							<button
+								type="button"
+								className="danger"
+								disabled={busyId === document.id}
+								onClick={() => void forget(document.id)}
+							>
+								Forget
+							</button>
+						</footer>
+					</article>
+				))
+			) : (
+				<p className="memory-empty-copy">{empty}</p>
+			)}
 		</div>
 	);
+}
+
+function FadeCleanupReview({ onApplied }: { onApplied(): void }) {
+	const [preview, setPreview] = useState<MemoryFadePreview | null>(null);
+	const [confirmed, setConfirmed] = useState(false);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState("");
+	const [receipt, setReceipt] = useState("");
+	async function review() {
+		setBusy(true); setError(""); setPreview(null); setConfirmed(false); setReceipt("");
+		try {
+			const response = await request({ type: "memory-fade-plan" });
+			if (!("memoryFadePreview" in response) || !response.memoryFadePreview) throw new Error("The cleanup review was not returned.");
+			setPreview(response.memoryFadePreview);
+		} catch (cause) { setError(cause instanceof Error ? cause.message : "Could not review cleanup."); }
+		finally { setBusy(false); }
+	}
+	async function apply() {
+		if (!preview || !confirmed) return;
+		setBusy(true); setError("");
+		try {
+			const response = await request({ type: "memory-fade-apply", planId: preview.plan.id, approved: true });
+			if (!("memoryFadeDryRun" in response) || !response.memoryFadeDryRun?.applied) throw new Error("Cleanup was not confirmed.");
+			setReceipt(response.memoryFadeDryRun.backupKey ?? ""); setPreview(null); setConfirmed(false); onApplied();
+		} catch (cause) {
+			setPreview(null); setConfirmed(false);
+			setError(cause instanceof Error ? cause.message : "Could not clean up notes.");
+		} finally { setBusy(false); }
+	}
+	return <details className="memory-cleanup-review">
+		<summary>Review old automatic notes</summary>
+		<p>Review up to 200 notes across all agents and domains. Saved notes are excluded from this cleanup. Nothing is removed until you approve this list; Kestrel takes a backup first.</p>
+		<button type="button" disabled={busy} onClick={() => void review()}>{busy ? "Working…" : "Review cleanup"}</button>
+		{error && <p role="alert">{error}</p>}
+		{receipt && <p role="status">Reviewed notes removed. Backup: <code>{receipt}</code></p>}
+		{preview && <div>
+			<p>{preview.candidates.length ? `${preview.candidates.length} ${preview.candidates.length === 1 ? "note is" : "notes are"} ready for review. Some notes have separate agent copies.` : "No old automatic notes are ready to remove."}</p>
+			{preview.candidates.length > 0 && <>
+				<div className="memory-cleanup-candidates" tabIndex={0} role="region" aria-label="Notes in cleanup review">{preview.candidates.map(candidate => <article key={`${candidate.kind}:${candidate.id}`}><h4>{candidate.kind === "agent" ? "Agent note" : "Automatic note"}</h4><p>{candidate.content}</p></article>)}</div>
+				<label className="memory-cleanup-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={event => setConfirmed(event.target.checked)} />I reviewed these records and want to remove them.</label>
+				<div className="memory-cleanup-actions"><button type="button" className="danger" disabled={busy || !confirmed} onClick={() => void apply()}>Remove reviewed notes</button>
+				<button type="button" disabled={busy} onClick={() => { setPreview(null); setConfirmed(false); }}>Cancel</button>
+				</div>
+			</>}
+		</div>}
+	</details>;
 }
 
 function Timeline({ workspace }: { workspace: MemoryWorkspaceData }) {
@@ -206,7 +344,7 @@ function DocumentWorkspace({
 }
 
 export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSessionId?: string; legacyTools?: ReactNode }) {
-	const [view, setView] = useState<WorkspaceView>("overview");
+	const [view, setView] = useState<WorkspaceView>("kept");
 	const [viewerId, setViewerId] = useState(initialSessionId ?? "user");
 	const [domainId, setDomainId] = useState("");
 	const [weekOffset, setWeekOffset] = useState(0);
@@ -253,13 +391,51 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 					<label>Domain<select value={domainId} onChange={(event) => setDomainId(event.target.value)}><option value="">All</option>{workspace?.domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.label}</option>)}</select></label>
 				</div>
 			</header>
-			<nav className="memory-workspace-tabs" aria-label="Memory views">{([ ["overview", "Overview"], ["timeline", "Timeline"], ["memory", "Memory"], ["people", "People"], ["tools", "Tools"] ] as const).map(([id, label]) => <button key={id} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{label}</button>)}</nav>
+			<nav className="memory-workspace-tabs" aria-label="Memory views">{([ ["kept", "Kept"], ["fading", "Fading"], ["timeline", "Timeline"], ["people", "People"], ["tools", "Tools"] ] as const).map(([id, label]) => <button key={id} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{label}</button>)}</nav>
 			{error && <div className="memory-state" role="alert"><h2>Memory is unavailable</h2><p>{error}</p><button onClick={() => void load()}>Try again</button></div>}
 			{busy && !workspace && <div className="memory-state" aria-live="polite"><h2>Reading memory…</h2><p>Gathering the notes visible to this viewer.</p></div>}
 			{workspace && !error && <div className="memory-workspace-content">
-				{view === "overview" && <><Overview documents={workspace.documents} workspace={workspace} /><section className="memory-recent"><h3>People</h3>{workspace.documents.filter(item => item.kind === "person").slice(0, 5).map(item => <button key={item.id} onClick={() => setView("people")}>{item.title}</button>)}<h3>Tools</h3>{workspace.documents.filter(item => item.kind === "tool").slice(0, 5).map(item => <button key={item.id} onClick={() => setView("tools")}>{item.title}</button>)}</section></>}
+				{view === "kept" && (
+					<>
+						<MemoryLane
+							documents={workspace.documents.filter(
+								(item) => item.kind === "memory" && isKeptDocument(item),
+							)}
+							viewerId={viewerId}
+							title="Kept"
+							empty="Nothing is kept yet. Confirm a fading note or say “remember that…”."
+							onForgotten={removeDocument}
+						/>
+						<details>
+							<summary>Edit kept documents</summary>
+							<DocumentWorkspace
+								key={`${viewerId}:${domainId}:kept`}
+								documents={workspace.documents.filter(
+									(item) => item.kind === "memory" && isKeptDocument(item),
+								)}
+								kind="memory_and_knowledge"
+								viewerId={viewerId}
+								onSaved={updateDocument}
+								onForgotten={removeDocument}
+							/>
+						</details>
+					</>
+				)}
+				{view === "fading" && (
+					<>
+					<MemoryLane
+						documents={workspace.documents.filter(isFadingDocument)}
+						viewerId={viewerId}
+						title="Fading"
+						empty="No fading notes right now."
+						fading
+						onKeep={updateDocument}
+						onForgotten={removeDocument}
+					/>
+					{viewerId === "user" && !domainId && <FadeCleanupReview onApplied={() => void load(true)} />}
+					</>
+				)}
 				{view === "timeline" && <><div className="memory-week-controls"><button onClick={() => setWeekOffset(value => value - 1)}>Previous week</button><button onClick={() => setWeekOffset(0)}>This week</button><button disabled={weekOffset >= 0} onClick={() => setWeekOffset(value => value + 1)}>Next week</button><button disabled={consolidating} onClick={async () => { const generation = requestId.current; setConsolidating(true); try { const result = await request({ type: "memory-workspace-consolidate", query: workspace.query }); if (generation === requestId.current && "memoryWorkspace" in result && result.memoryWorkspace) setWorkspace(result.memoryWorkspace); } catch (cause) { if (generation === requestId.current) setError(cause instanceof Error ? cause.message : "Could not consolidate memory."); } finally { setConsolidating(false); } }}>{consolidating ? "Summarizing…" : "Summarize with model"}</button></div><Timeline workspace={workspace} /></>}
-				{view === "memory" && <><Overview documents={workspace.documents} workspace={workspace} full /><details><summary>Edit memory documents</summary><DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="memory_and_knowledge" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} /></details></>}
 				{view === "people" && <DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="person" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} />}
 				{view === "tools" && <><DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="tool" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} /><details><summary>Domain knowledge</summary><DocumentWorkspace key={`${viewerId}:knowledge`} documents={workspace.documents} kind="knowledge" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} /></details>{viewerId === "user" && legacyTools}</>}
 			</div>}
