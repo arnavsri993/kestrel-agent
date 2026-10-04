@@ -15,6 +15,9 @@
 .memory-overview h2, .memory-timeline h2 { margin: 4px 0 8px; font-size: 20px; letter-spacing: -.02em; }
 .memory-overview p, .memory-timeline p { max-width: 76ch; line-height: 1.65; }
 .memory-kicker { margin: 0; color: var(--text-secondary, #aaa); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.memory-lane-actions { display: flex; gap: 8px; margin-top: 10px; }
+.memory-lane-actions button { border: 1px solid var(--border, rgba(255,255,255,.14)); border-radius: 8px; background: transparent; color: inherit; padding: 6px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.memory-lane-actions button.danger { color: var(--danger, #df8a87); }
 .memory-tier { padding: 22px 0; border-top: 1px solid var(--border, rgba(255,255,255,.1)); }
 .memory-tier-heading { display: flex; justify-content: space-between; margin-bottom: 16px; }
 .memory-tier-heading h3 { margin: 0; font-size: 16px; }

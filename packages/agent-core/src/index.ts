@@ -2500,6 +2500,15 @@ export class AgentCore {
 						ok: true,
 						selectedSessionId: this.runtime.selectSession(request.sessionId),
 					};
+				case "runtime-set-session-privacy":
+					return {
+						ok: true,
+						session: this.runtime.setSessionPrivacy(
+							request.sessionId,
+							request.privacyMode,
+						),
+						selectedSessionId: this.runtime.selectedSessionId(),
+					};
 				case "runtime-forget-session":
 					return {
 						ok: true,
@@ -3069,6 +3078,14 @@ export class AgentCore {
 								request.sessionId,
 								request.id,
 							),
+						],
+					};
+				case "memory-agent-pin":
+					this.memorySubstrate.assertMemorySession(request.sessionId);
+					return {
+						ok: true,
+						memoryAgentMemories: [
+							this.memorySubstrate.pinAgentMemory(request.id, request.pinned),
 						],
 					};
 				case "memory-agent-provenance-list":

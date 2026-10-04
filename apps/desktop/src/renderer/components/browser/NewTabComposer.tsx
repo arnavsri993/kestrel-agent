@@ -242,8 +242,8 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 			<div className="new-tab-composer-footer" inert={isExpanded ? undefined : true} aria-hidden={!isExpanded}>
 				<div className="new-tab-composer-actions">
 					<button type="button" className="new-tab-composer-icon" aria-label="Add files" title={workspaceRoot ? "Add files from this project" : "Choose a project to add files"} disabled={busy} onClick={() => void addFiles()}><Icon name="plus" /></button>
-					<div className={`new-tab-access${approvalPolicy === "full_access" ? " is-full-access" : ""}`} ref={accessRef}>
-						<button type="button" className="new-tab-access-trigger" aria-haspopup="menu" aria-expanded={accessOpen} aria-label={`Approval policy: ${approvalLabel}`} onClick={() => setAccessOpen((current) => !current)}><Icon name={approvalPolicy === "full_access" ? "shield" : "lock"} /><span>{approvalLabel}</span><Icon name="chevron" /></button>
+					<div className={`new-tab-access is-compact${approvalPolicy === "full_access" ? " is-full-access" : ""}`} ref={accessRef}>
+						<button type="button" className="new-tab-access-trigger" aria-haspopup="menu" aria-expanded={accessOpen} aria-label={`Approval policy: ${approvalLabel}`} title={approvalLabel} onClick={() => setAccessOpen((current) => !current)}><Icon name={approvalPolicy === "full_access" ? "shield" : "lock"} /></button>
 						{accessOpen && <div className="new-tab-access-menu" role="menu" aria-label="Approval policy" onKeyDown={(event) => {
                             if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
                             event.preventDefault();

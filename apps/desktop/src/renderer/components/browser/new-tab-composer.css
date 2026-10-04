@@ -90,6 +90,9 @@
 .new-tab-composer-attachments button { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-strong); color: var(--ink); font-size: 12px; cursor: pointer; }
 .new-tab-composer-attachments span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .new-tab-composer-attachments svg { flex: 0 0 auto; width: 13px; height: 13px; }
+.new-tab-access.is-compact .new-tab-access-trigger { width: 32px; min-width: 32px; padding: 0; justify-content: center; }
+.new-tab-access.is-compact .new-tab-access-trigger span,
+.new-tab-access.is-compact .new-tab-access-trigger .icon-chevron { display: none; }
 .new-tab-composer-status, .new-tab-composer-error { display: block; margin: 4px 8px 0; font-size: 12px; text-align: left; }
 .new-tab-composer-status { color: var(--ink-secondary); }
 .new-tab-composer-error { color: var(--error, #df8a87); }

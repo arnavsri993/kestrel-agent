@@ -2788,6 +2788,11 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		sessionId: z.string().min(1).nullable(),
 	}),
 	z.object({
+		type: z.literal("runtime-set-session-privacy"),
+		sessionId: z.string().min(1),
+		privacyMode: z.enum(["standard", "private", "incognito"]),
+	}),
+	z.object({
 		type: z.literal("runtime-forget-session"),
 		sessionId: z.string().min(1),
 	}),
@@ -2971,6 +2976,12 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("memory-agent-forget"),
 		sessionId: z.string().min(1),
 		id: z.string().min(1).max(200),
+	}),
+	z.object({
+		type: z.literal("memory-agent-pin"),
+		sessionId: z.string().min(1),
+		id: z.string().min(1).max(200),
+		pinned: z.boolean(),
 	}),
 	z.object({
 		type: z.literal("memory-agent-provenance-list"),
