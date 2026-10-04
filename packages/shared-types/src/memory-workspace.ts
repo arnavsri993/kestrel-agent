@@ -3,7 +3,11 @@ import { TimelineEventSchema } from "./memory-architecture";
 
 const identifier = z.string().trim().min(1).max(200);
 const domains = z.array(identifier).max(100).default([]);
-const sources = z.array(z.string().min(1).max(2_000)).max(500).default([]);
+const sourceId = z.string().min(1).max(2_000);
+const sources = z.array(sourceId).max(500).default([]);
+// A workspace day can contain 2,000 events, each with an event and source ID.
+// Keep all of their provenance without widening individual document limits.
+const daySources = z.array(sourceId).max(4_000).default([]);
 export const MemoryWorkspaceQuerySchema = z.object({
 	viewerId: identifier.default("user"),
 	domainId: identifier.optional(),
@@ -90,7 +94,7 @@ export const MemoryWorkspaceSchema = z.object({
 		summaryUpdatedAt: z.string().datetime().optional(),
 		events: z.array(TimelineEventSchema).max(2_000),
 		eventCount: z.number().int().nonnegative(),
-		sourceIds: sources,
+		sourceIds: daySources,
 	})).max(2_000),
 	generatedAt: z.string().datetime(),
 	summaryMethod: z.enum(["model", "deterministic"]),
