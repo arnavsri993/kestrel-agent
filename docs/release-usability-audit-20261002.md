@@ -423,3 +423,46 @@ fixture now checks a capped eight-line draft and clearing back to a compact
 composer. Local Electron fixture execution and canonical delivery of this
 follow-up remain pending because macOS is locked and the canonical app is open.
 No real-profile UI or provider choices were changed during this source review.
+
+## Writing Studio first-draft flow — October 4
+
+Both exact-head CI jobs and all four CodeQL checks now pass at clean `60913d98`,
+including the real desktop and packaged capped-draft regression. Its packaged
+artifact matches source identities, independent hashes and deep development
+signature. Canonical delivery remains at previously verified `1fabf938` while
+macOS is locked; no latest-installed claim is made.
+
+Writing Studio previously placed starting text, tone, model selection, voice
+strength and sensitive-context controls before its primary action. Create draft
+now sits directly below the brief. Existing-text, style/model/context and learned
+voice controls use keyboard-accessible disclosures. Closing them preserves the
+person's choices. The primary action continues to display whether sensitive
+context is included and that drafts are not sent automatically; the default is
+still excluded and routing remains Auto. A completed draft scrolls into view and
+receives heading focus once; editing does not pull focus back to that heading.
+
+The component check exposed an accessibility-name problem: Body's implicit label
+included all of its textarea's initial draft text. Purpose, starting text, samples
+and Body now use explicit label references, keeping field names stable as text
+changes. The original failing field dump is retained. A subsequent pointer-target
+failure on the deliberately hidden radio was corrected to exercise native Space
+selection. A formatting reload interrupted another fixture run; the unchanged,
+stable-source run passes. These fixture failures are not reported as product
+generation failures.
+
+All 2,126 tests in 264 files, desktop type checking and build pass. The actual
+Writing Studio component passes owned headless checks at 1280×800, 800×660 and
+390×844: first action inside the viewport, zero overflow/renderer errors, native
+keyboard disclosures, exactly two draft submissions, retained source/tone/voice
+choices, default exclusion and explicit sensitive opt-in, unchanged Auto request
+shape, draft visibility/focus and editing. No provider generation, clipboard
+write, profile configuration/sample/reset or message transmission occurs. Owned
+initial/result screenshots were inspected. The check is now part of core CI;
+its owned screenshots/report are uploaded independently of success.
+
+The existing desktop Writing Studio profile/sample test now opens the voice
+disclosure, retaining its backend and consent assertions. The release-surface
+inventory also adds all three Writing disclosures at both desktop widths,
+bringing its intended coverage from 157 to 163 states. Those local Electron
+checks, the latest package/canonical refresh and new-head CI remain pending at
+this source checkpoint because the real app is open behind locked macOS.

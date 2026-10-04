@@ -10,7 +10,7 @@ import type {
   WritingProfileStatus,
   WritingResult,
 } from "@kestrel/shared-types";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Icon } from "../Icon";
 import { PageFrame } from "../ui";
 import { ModelSelector } from "./ModelSelector";
@@ -127,6 +127,7 @@ export function WritingStudio() {
   const [useAsExemplar, setUseAsExemplar] = useState(false);
   const [context, setContext] = useState<WritingContextPreview | null>(null);
   const [draft, setDraft] = useState<WritingResult | null>(null);
+  const draftHeadingRef = useRef<HTMLHeadingElement>(null);
   const [routes, setRoutes] = useState<ModelRoutingDecision[]>([]);
   const [busy, setBusy] = useState(false);
   const [profileBusy, setProfileBusy] = useState(false);
@@ -134,6 +135,13 @@ export function WritingStudio() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [previewError, setPreviewError] = useState("");
+
+  useEffect(() => {
+    const heading = draftHeadingRef.current;
+    if (!heading) return;
+    heading.scrollIntoView({ block: "start", behavior: "instant" });
+    heading.focus({ preventScroll: true });
+  }, [draft?.id]);
 
   const selectedManualAccount = accountForChoice(providerAccounts, modelChoice);
   const manualRouteReady = Boolean(
@@ -489,88 +497,15 @@ export function WritingStudio() {
               </label>
             </div>
             <label className="writing-field-wide">
-              <span>Purpose</span>
+              <span id="writing-purpose-label">Purpose</span>
               <textarea
+                aria-labelledby="writing-purpose-label"
                 value={purpose}
         placeholder="Outcome, key points, and details to keep."
                 maxLength={10_000}
                 required
                 onChange={(event) => setPurpose(event.target.value)}
               />
-            </label>
-            <label className="writing-field-wide">
-              <span>
-                Starting text <small>optional · adapt an existing draft</small>
-              </span>
-              <textarea
-                value={sourceText}
-        placeholder="Paste notes or a draft to improve."
-                maxLength={20_000}
-                onChange={(event) => setSourceText(event.target.value)}
-              />
-            </label>
-            <div className="writing-form-grid">
-              <label>
-                <span>
-                  Tone <small>optional</small>
-                </span>
-                <input
-                  value={tone}
-                  placeholder="Warm, direct, concise…"
-                  maxLength={300}
-                  onChange={(event) => setTone(event.target.value)}
-                />
-              </label>
-              <label>
-                <span>Model route</span>
-                <ModelSelector
-                  accounts={providerAccounts}
-                  choice={modelChoice}
-                  onChange={setModelChoice}
-                />
-                <small>
-                  Select an account and model to pin this draft, or leave
-                  routing automatic.
-                </small>
-              </label>
-            </div>
-            <fieldset className="writing-strength-fieldset">
-              <legend>Voice adaptation</legend>
-              <div className="writing-strength-options">
-                {adaptationStrengths.map((item) => (
-                  <label
-                    className={item.id === adaptationStrength ? "selected" : ""}
-                    key={item.id}
-                  >
-                    <input
-                      type="radio"
-                      name="writing-adaptation-strength"
-                      value={item.id}
-                      checked={item.id === adaptationStrength}
-                      onChange={() => setAdaptationStrength(item.id)}
-                    />
-                    <strong>{item.label}</strong>
-                    <small>{item.detail}</small>
-                  </label>
-                ))}
-              </div>
-              <p>
-        {selectedStrength?.detail}. Learned signals guide the draft; they do not
-        prove authorship.
-              </p>
-            </fieldset>
-            <label className="writing-sensitive-toggle">
-              <input
-                type="checkbox"
-                checked={includeSensitive}
-                onChange={(event) => setIncludeSensitive(event.target.checked)}
-              />
-              <span>
-                <strong>Include sensitive context for this draft</strong>
-                <small>
-          Opt in only if the recipient and purpose require it.
-                </small>
-              </span>
             </label>
             <div className="writing-submit-row">
               <button
@@ -584,8 +519,98 @@ export function WritingStudio() {
                     ? "Adapt draft"
                     : "Create draft"}
               </button>
-        <small>Drafts are never sent automatically.</small>
+              <small>
+                {includeSensitive
+                  ? "Sensitive context included."
+                  : "Sensitive context excluded."}{" "}
+                Drafts are never sent automatically.
+              </small>
             </div>
+            <details className="writing-draft-disclosure">
+              <summary>
+                {sourceText.trim() ? "Existing draft added" : "Use an existing draft"}
+              </summary>
+              <label className="writing-field-wide">
+                <span id="writing-source-label">
+                  Starting text <small>optional · adapt an existing draft</small>
+                </span>
+                <textarea
+                  aria-labelledby="writing-source-label"
+                  value={sourceText}
+          placeholder="Paste notes or a draft to improve."
+                  maxLength={20_000}
+                  onChange={(event) => setSourceText(event.target.value)}
+                />
+              </label>
+            </details>
+            <details className="writing-draft-disclosure">
+              <summary>Style, model and context</summary>
+              <div className="writing-draft-options">
+                <div className="writing-form-grid">
+                  <label>
+                    <span>
+                      Tone <small>optional</small>
+                    </span>
+                    <input
+                      value={tone}
+                      placeholder="Warm, direct, concise…"
+                      maxLength={300}
+                      onChange={(event) => setTone(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span>Model route</span>
+                    <ModelSelector
+                      accounts={providerAccounts}
+                      choice={modelChoice}
+                      onChange={setModelChoice}
+                    />
+                    <small>
+                      Select an account and model to pin this draft, or leave
+                      routing automatic.
+                    </small>
+                  </label>
+                </div>
+                <fieldset className="writing-strength-fieldset">
+                  <legend>Voice adaptation</legend>
+                  <div className="writing-strength-options">
+                    {adaptationStrengths.map((item) => (
+                      <label
+                        className={item.id === adaptationStrength ? "selected" : ""}
+                        key={item.id}
+                      >
+                        <input
+                          type="radio"
+                          name="writing-adaptation-strength"
+                          value={item.id}
+                          checked={item.id === adaptationStrength}
+                          onChange={() => setAdaptationStrength(item.id)}
+                        />
+                        <strong>{item.label}</strong>
+                        <small>{item.detail}</small>
+                      </label>
+                    ))}
+                  </div>
+                  <p>
+            {selectedStrength?.detail}. Learned signals guide the draft; they do not
+            prove authorship.
+                  </p>
+                </fieldset>
+                <label className="writing-sensitive-toggle">
+                  <input
+                    type="checkbox"
+                    checked={includeSensitive}
+                    onChange={(event) => setIncludeSensitive(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Include sensitive context for this draft</strong>
+                    <small>
+              Opt in only if the recipient and purpose require it.
+                    </small>
+                  </span>
+                </label>
+              </div>
+            </details>
           </form>
         </section>
 
@@ -659,11 +684,11 @@ export function WritingStudio() {
         </aside>
       </div>
 
-      <section
+      <details
         className="writing-profile-panel"
         aria-labelledby="writing-profile-title"
       >
-        <header>
+        <summary>
           <div>
             <span className="eyebrow">03 · Your voice</span>
       <h2 id="writing-profile-title">Your voice</h2>
@@ -682,7 +707,7 @@ export function WritingStudio() {
                   : "Learning"}
             </span>
           )}
-        </header>
+        </summary>
         {profilePanelPhase === "ready" && profile ? (
           <div className="writing-profile-content">
             <div className="writing-profile-controls">
@@ -757,8 +782,9 @@ export function WritingStudio() {
               onSubmit={(event) => void addSample(event)}
             >
               <label>
-                <span>Add a sample you wrote</span>
+                <span id="writing-sample-label">Add a sample you wrote</span>
                 <textarea
+                  aria-labelledby="writing-sample-label"
                   value={sampleText}
           placeholder="Paste an email, message, or paragraph to learn from."
                   maxLength={20_000}
@@ -819,7 +845,7 @@ export function WritingStudio() {
             Loading the encrypted profile…
           </p>
         ) : null}
-      </section>
+      </details>
 
       {draft && (
         <section
@@ -829,7 +855,7 @@ export function WritingStudio() {
           <header>
             <div>
               <span className="eyebrow">04 · Draft</span>
-              <h2 id="writing-result-title">Your editable draft</h2>
+              <h2 id="writing-result-title" ref={draftHeadingRef} tabIndex={-1}>Your editable draft</h2>
             </div>
             <div className="writing-result-actions">
               <span className={`writing-quality ${draft.quality.status}`}>
@@ -859,8 +885,9 @@ export function WritingStudio() {
               </label>
             )}
             <label>
-              <span>Body</span>
+              <span id="writing-body-label">Body</span>
               <textarea
+                aria-labelledby="writing-body-label"
                 value={draft.body}
                 onChange={(event) => updateDraft("body", event.target.value)}
               />

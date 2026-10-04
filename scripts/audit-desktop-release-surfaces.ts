@@ -211,6 +211,26 @@ try {
         assert(content.trim().length > 0, `${id} rendered no readable content`);
       });
     }
+		for (const [id, selector, field] of [
+			["source-text", ".writing-draft-disclosure:first-of-type", /^Starting text/],
+			["draft-options", ".writing-draft-disclosure:last-of-type", /^Tone/],
+			["voice-profile", ".writing-profile-panel", /Use my voice profile/],
+		] as const) {
+			await audit(`writing-${id}`, size.name, async () => {
+				await navigate("writing");
+				const disclosure = page.locator(selector);
+				if (!(await disclosure.evaluate(element => (element as HTMLDetailsElement).open))) {
+					await disclosure.locator("summary").focus();
+					await page.keyboard.press("Enter");
+				}
+				await page.getByLabel(field).waitFor({ state: "visible" });
+			});
+			const disclosure = page.locator(selector);
+			if (await disclosure.evaluate(element => (element as HTMLDetailsElement).open)) {
+				await disclosure.locator("summary").focus();
+				await page.keyboard.press("Enter");
+			}
+		}
 		await audit("agent-search-empty", size.name, async () => {
 			await navigate("agent");
 			const search = page.getByRole("searchbox", { name: "Find a system or task" });

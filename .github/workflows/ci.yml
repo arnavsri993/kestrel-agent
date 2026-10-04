@@ -32,6 +32,15 @@ jobs:
       - run: corepack pnpm typecheck
       - run: corepack pnpm test
       - run: corepack pnpm test:memory-cleanup-review
+      - run: corepack pnpm test:writing-studio-layout
+      - name: Upload owned Writing Studio layout evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: writing-studio-layout-${{ github.run_attempt }}
+          path: .tmp/writing-studio-layout/**
+          if-no-files-found: warn
+          retention-days: 14
       - run: KESTREL_SOURCE_BENCHMARK_REPORT=.tmp/source-ingestion-benchmark/ci.json corepack pnpm benchmark:source-ingestion
       - name: Upload source-ingestion benchmark report
         if: ${{ always() }}

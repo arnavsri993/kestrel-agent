@@ -67,6 +67,8 @@ try {
 		})
 		.waitFor();
 	await page.locator('[data-app-page="writing"]').waitFor();
+	await page.locator(".writing-profile-panel > summary").focus();
+	await page.keyboard.press("Enter");
 	await page.locator(".writing-profile-toggle input").first().waitFor();
 
 	await page.locator(".writing-profile-toggle input").first().click();
