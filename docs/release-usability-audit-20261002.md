@@ -592,3 +592,30 @@ pass. The full desktop layout test also passes compact native isolation, focus
 loop, Escape, navigation and 200% zoom checks. Latest-head remote checks and the
 canonical refresh remain pending at this source checkpoint. Provider generation
 and real-profile configuration were not used for these regressions.
+
+### Background Memory extraction repair — 2026-10-04
+
+An owned end-to-end Memory probe found that the background parser used numeric
+separators inside regex quantifiers (`{1,2_000}` and `{1,1_500}`). JavaScript did
+not interpret these as bounded counts, so ordinary preference, decision,
+correction, commitment, goal and project statements were ignored. The parser now
+uses valid bounded counts. A second regression showed that timeline grouping
+could run first and turn the event's `sessionId` into a timeline group ID;
+extraction then retried with “Runtime session not found.” Source-session ownership
+now remains authoritative, with a legacy fallback only for an actual known
+runtime session. Captured statements without a runtime owner remain ordinary
+shared Memory; agent-owned sources retain their isolated scope.
+
+Ten new cases exercise the maintenance path, all seven phrase categories,
+forced grouping-before-extraction, source-agent isolation, duplicate prevention,
+disabled/private capture, assistant and over-limit exclusions, redaction and
+inferred status. The eight initial parser cases fail before the quantifier fix;
+the forced-order case separately fails before the ownership repair. All 2,138
+tests in 264 files, repository type checking, the focused Memory/index privacy
+checks and the production browser secret scan pass. An additional disposable
+in-memory probe covers remember, correct, agent-memory and timeline extraction:
+changing only an owned synthetic password does not change the actual embedding
+job's content digest; changing public content does. Stored records and job
+payloads contain no fixture password. This bounded evidence does not dismiss
+CodeQL findings or replace independent review. Current packaging, installed
+Memory/UI verification and exact-head remote checks follow separately.

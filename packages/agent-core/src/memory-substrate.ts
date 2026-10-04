@@ -2132,7 +2132,13 @@ export class MemorySubstrate {
 		let extracted = 0;
 		if (candidate) {
 			const sourceId = event.sourceId ?? event.id;
-			const sessionId = event.sourceSessionId ?? event.sessionId;
+			// sessionize() uses sessionId for the timeline group. Only a source
+			// session, or a legacy ID that still names a runtime session, owns memory.
+			const sessionId = event.sourceSessionId ?? (
+				this.runtime?.listSessions().some((session) => session.id === event.sessionId)
+					? event.sessionId
+					: undefined
+			);
 			const privateAgent = sessionId && this.isPrivateMemorySession(sessionId);
 			const before = new Set(
 				privateAgent && event.agentId
@@ -2235,7 +2241,7 @@ export class MemorySubstrate {
 			layer: horizon,
 		});
 		const preference = trimmed.match(
-			/^(i\s+(?:prefer|like|always|never))\s+([\s\S]{1,2_000})$/i,
+			/^(i\s+(?:prefer|like|always|never))\s+([\s\S]{1,2000})$/i,
 		);
 		if (preference) {
 			const value = preference[2]!.toLocaleLowerCase().replace(/\s+/gu, " ").trim();
@@ -2249,42 +2255,42 @@ export class MemorySubstrate {
 			);
 		}
 		const decision = trimmed.match(
-			/^(?:we\s+decided(?:\s+that)?|decision\s*[:\-]|let['’]s\s+use|we['’]ll\s+use)\s+([\s\S]{1,2_000})$/i,
+			/^(?:we\s+decided(?:\s+that)?|decision\s*[:\-]|let['’]s\s+use|we['’]ll\s+use)\s+([\s\S]{1,2000})$/i,
 		);
 		if (decision) {
 			const value = decision[1]!.toLocaleLowerCase().replace(/\s+/gu, " ").trim();
 			return candidate("project", "long_term", 0.78, 0.84, "decision", `decision:${value.slice(0, 240)}`);
 		}
 		const correction = trimmed.match(
-			/^(?:actually\s*[,\-:]?|correction\s*[:\-]|update\s*[:\-])\s*([\s\S]{1,2_000})$/i,
+			/^(?:actually\s*[,\-:]?|correction\s*[:\-]|update\s*[:\-])\s*([\s\S]{1,2000})$/i,
 		);
 		if (correction) {
 			const value = correction[1]!.toLocaleLowerCase().replace(/\s+/gu, " ").trim();
 			return candidate("semantic", "long_term", 0.8, 0.88, "correction", `correction:${value.slice(0, 240)}`);
 		}
 		const contrast = trimmed.match(
-			/^not\s+([\s\S]{1,500})\s+(?:but|rather)\s+([\s\S]{1,1_500})$/i,
+			/^not\s+([\s\S]{1,500})\s+(?:but|rather)\s+([\s\S]{1,1500})$/i,
 		);
 		if (contrast) {
 			const key = contrast[1]!.toLocaleLowerCase().replace(/\s+/gu, " ").trim();
 			return candidate("semantic", "long_term", 0.8, 0.84, "correction", `correction:${key.slice(0, 240)}`);
 		}
 		const commitment = trimmed.match(
-			/^(?:i\s+(?:am|['’]m)\s+committed\s+to|i\s+promised(?:\s+to)?|i['’]ll|i\s+will|follow\s+up(?:\s+on)?|todo\s*[:\-]|to-do\s*[:\-])\s+([\s\S]{1,2_000})$/i,
+			/^(?:i\s+(?:am|['’]m)\s+committed\s+to|i\s+promised(?:\s+to)?|i['’]ll|i\s+will|follow\s+up(?:\s+on)?|todo\s*[:\-]|to-do\s*[:\-])\s+([\s\S]{1,2000})$/i,
 		);
 		if (commitment) {
 			const value = commitment[1]!.toLocaleLowerCase().replace(/\s+/gu, " ").trim();
 			return candidate("episodic", "mid_term", 0.76, 0.8, "commitment", `commitment:${value.slice(0, 240)}`);
 		}
 		const goal = trimmed.match(
-			/^(?:my\s+goal\s+is|goal\s*[:\-]|i\s+plan\s+to|i\s+need\s+to)\s+([\s\S]{1,2_000})$/i,
+			/^(?:my\s+goal\s+is|goal\s*[:\-]|i\s+plan\s+to|i\s+need\s+to)\s+([\s\S]{1,2000})$/i,
 		);
 		if (goal) {
 			const value = goal[1]!.toLocaleLowerCase().replace(/\s+/gu, " ").trim();
 			return candidate("project", "mid_term", 0.7, 0.78, "goal", `goal:${value.slice(0, 240)}`);
 		}
 		const projectState = trimmed.match(
-			/^(?:project\s+[^:]{1,200}\s*[:\-]|[^:]{1,200}\s+is\s+(?:blocked|in progress|active|complete|completed|paused))\s*([\s\S]{1,2_000})?$/i,
+			/^(?:project\s+[^:]{1,200}\s*[:\-]|[^:]{1,200}\s+is\s+(?:blocked|in progress|active|complete|completed|paused))\s*([\s\S]{1,2000})?$/i,
 		);
 		if (projectState) {
 			const value = (projectState[0] ?? trimmed).toLocaleLowerCase().replace(/\s+/gu, " ").trim();

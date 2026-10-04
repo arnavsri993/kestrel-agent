@@ -92,6 +92,100 @@ afterEach(() => {
 });
 
 describe("memory substrate", () => {
+	it.each([
+		["I prefer concise release notes.", "preference", "semantic"],
+		["We decided that releases require a smoke check.", "decision", "project"],
+		["Actually, the release branch is stable.", "correction", "semantic"],
+		["Not the beta build but the stable build.", "correction", "semantic"],
+		["I will review the release notes tomorrow.", "commitment", "episodic"],
+		["My goal is to ship a reliable browser.", "goal", "project"],
+		["Project Kestrel: release review is active.", "project_state", "project"],
+	])("extracts a captured user statement through maintenance: %s", async (text, category, type) => {
+		const state = fixture();
+		try {
+			const event = state.substrate.captureActivity({
+				eventType: "conversation", source: "test", actor: "user", textSummary: text,
+			});
+			expect(event).toBeDefined();
+			const result = await state.substrate.runMaintenance(100);
+			expect(result.memoriesExtracted).toBe(1);
+			expect(result.jobsFailed).toBe(0);
+			expect(state.legacyMemory.list()).toContainEqual(expect.objectContaining({
+				content: text.slice(0, -1), type, inferred: true, userConfirmed: false,
+				structuredData: expect.objectContaining({ category, timelineEventId: event!.id }),
+			}));
+			await state.substrate.runMaintenance(100);
+			expect(state.legacyMemory.list()).toHaveLength(1);
+		} finally { await state.close(); }
+	});
+
+	it("extracts after timeline grouping without treating the group as a runtime session", async () => {
+		const state = fixture();
+		try {
+			const event = state.substrate.captureActivity({ eventType: "conversation", source: "test",
+				actor: "user", textSummary: "I prefer concise release notes." })!;
+			const extract = state.database.listMemoryJobs({ kind: "extract" })[0]!;
+			state.database.queueMemoryJob({ ...extract, runAfter: "2026-07-22T12:01:00.000Z" });
+			await state.substrate.runMaintenance(100);
+			expect(state.database.getTimelineEvent(event.id)?.sessionId).toBeDefined();
+			expect(state.legacyMemory.list()).toHaveLength(0);
+			state.advance("2026-07-22T12:01:00.000Z");
+			const result = await state.substrate.runMaintenance(100);
+			expect(result).toMatchObject({ memoriesExtracted: 1, jobsRetried: 0, jobsFailed: 0 });
+			expect(state.legacyMemory.list()).toHaveLength(1);
+		} finally { await state.close(); }
+	});
+
+	it("preserves the source agent owner after timeline grouping", async () => {
+		const state = fixture();
+		try {
+			const owner = state.runtime.createSession({ title: "Owned extraction", kind: "agent" });
+			const other = state.runtime.createSession({ title: "Other extraction", kind: "agent" });
+			const event = state.substrate.captureActivity({ sessionId: owner.id, eventType: "conversation",
+				source: "test", actor: "user", textSummary: "I prefer isolated release notes." })!;
+			const extract = state.database.listMemoryJobs({ kind: "extract" }).find(job => job.payload.eventId === event.id)!;
+			state.database.queueMemoryJob({ ...extract, runAfter: "2026-07-22T12:01:00.000Z" });
+			await state.substrate.runMaintenance(100);
+			const grouped = state.database.getTimelineEvent(event.id)!;
+			expect(grouped.sessionId).not.toBe(owner.id);
+			expect(grouped.sourceSessionId).toBe(owner.id);
+			state.advance("2026-07-22T12:01:00.000Z");
+			expect(await state.substrate.runMaintenance(100)).toMatchObject({ memoriesExtracted: 1, jobsRetried: 0 });
+			expect(state.substrate.listForSession(owner.id)).toContainEqual(expect.objectContaining({
+				content: "I prefer isolated release notes", pinned: false, confidence: 0.82,
+			}));
+			expect(state.substrate.listForSession(other.id)).toHaveLength(0);
+			expect(state.substrate.listForSession(state.main.id)).toHaveLength(0);
+		} finally { await state.close(); }
+	});
+
+	it("keeps background extraction bounded, redacted and subject to capture policy", async () => {
+		const state = fixture();
+		try {
+			const blocked = state.runtime.createSession({ title: "Owned private fixture", privacyMode: "private" });
+			expect(state.substrate.captureActivity({ sessionId: blocked.id, eventType: "conversation",
+				source: "test", actor: "user", textSummary: "I prefer private information." })).toBeUndefined();
+			state.substrate.setCaptureEnabled(false);
+			expect(state.substrate.captureActivity({ eventType: "conversation", source: "test", actor: "user",
+				textSummary: "I prefer disabled capture." })).toBeUndefined();
+			state.substrate.setCaptureEnabled(true);
+			for (const [actor, textSummary] of [
+				["assistant", "I prefer assistant-owned information."],
+				["user", "A plain captured observation."],
+				["user", `I prefer ${"x".repeat(2001)}`],
+				["user", "I prefer concise notes password=owned-synthetic-password"],
+			] as const) state.substrate.captureActivity({ eventType: "conversation", source: "test", actor, textSummary });
+			const result = await state.substrate.runMaintenance(100);
+			expect(result.memoriesExtracted).toBe(1);
+			const memory = state.legacyMemory.list()[0]!;
+			expect(memory.content).toBe("I prefer concise notes password=[redacted]");
+			expect(memory.inferred).toBe(true);
+			expect(memory.userConfirmed).toBe(false);
+			expect(JSON.stringify(state.database.listMemoryJobs())).not.toContain("owned-synthetic-password");
+			expect(state.legacyMemory.list()).toHaveLength(1);
+		} finally { await state.close(); }
+	});
+
 	it("captures redacted runtime activity and builds searchable aggregates", async () => {
 		const state = fixture();
 		try {
