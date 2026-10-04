@@ -682,3 +682,22 @@ The preceding clean `3801775a` passed both full CI jobs in run 37242189705,
 including complete browser/autofill and packaged browser-agent checks. Aggregate
 CodeQL and independent review remain open; local foreground verification and
 native reopening await manual Mac unlock.
+
+
+### Readiness diagnostic panel spacing
+
+The canonical `416685f6` passed the complete owned surface audit: 167 states
+across desktop/compact destinations, Settings, menus, Agent, Memory, Work and
+Writing, with zero renderer errors. All 18 primary desktop page captures were
+visually inspected. These are disposable-profile results, not real-profile,
+provider-generation or native-menu proof.
+
+Readiness's diagnostic explanation and action were flush against the panel edge
+because their new panel was omitted from the shared account-check/backup styles.
+The diagnostic panel now shares their body spacing, secondary-copy typography
+and bottom padding. The owned installed preview reproduces zero paragraph/button
+inset before the change and confirms 18px insets at 1440, 800 and 390px afterward,
+with contained text/actions, no horizontal overflow and zero renderer errors.
+Screenshots were inspected. Desktop build and diff checking pass. Canonical
+refresh and checks against the compiled follow-up remain separate delivery
+steps; native verification still awaits Mac unlock.

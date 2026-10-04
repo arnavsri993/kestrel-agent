@@ -3348,11 +3348,13 @@ input[type="radio"] {
 	line-height: 1.5;
 }
 .model-check-panel,
-.backup-panel {
+.backup-panel,
+.diagnostic-panel {
 	padding-bottom: 17px;
 }
 .model-check-panel > p,
-.backup-panel > p {
+.backup-panel > p,
+.diagnostic-panel > p {
 	margin: 15px 18px;
 	color: var(--muted);
 	font-size: 11px;
@@ -3388,7 +3390,8 @@ input[type="radio"] {
 	line-height: 1.4;
 }
 .model-check-panel > .button,
-.backup-panel > .button {
+.backup-panel > .button,
+.diagnostic-panel > .button {
 	margin-left: 18px;
 }
 .verified-label {
