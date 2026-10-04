@@ -78,15 +78,15 @@ try {
 	assert.equal(await sidebar.getByRole("button", { name: "Code & Autonomy", exact: true }).count(), 0);
 	await sidebar.getByRole("button", { name: "Memory", exact: true }).click();
 	await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
-	await expect(page.locator(".memory-filters-disclosure > summary")).toHaveText("Robotics · Filters");
-	await page.locator(".memory-filters-disclosure > summary").click();
+	await expect(page.locator(".memory-workspace-header .memory-filters-disclosure > summary")).toHaveText("Robotics · Filters");
+	await page.locator(".memory-workspace-header .memory-filters-disclosure > summary").click();
 	const viewer = page.getByLabel("Viewing as", { exact: true });
 	const roboticsViewerId = await viewer.getByRole("option", { name: "Robotics", exact: true }).getAttribute("value");
 	assert(roboticsViewerId);
 	await expect(viewer).toHaveValue(roboticsViewerId);
 	await viewer.selectOption(roboticsViewerId);
 	await expect(page.locator(".memory-workspace-content")).toBeVisible();
-	await expect(page.locator(".memory-filters-disclosure > summary")).toHaveText("Robotics · Filters");
+	await expect(page.locator(".memory-workspace-header .memory-filters-disclosure > summary")).toHaveText("Robotics · Filters");
 	await page.getByLabel("More memory views", { exact: true }).selectOption("agent-history");
 	await page.getByRole("heading", { name: "Robotics history", exact: true }).waitFor();
 	await expect(page.getByLabel("Domain", { exact: true })).toBeDisabled();
@@ -106,7 +106,7 @@ try {
 	await page.screenshot({ path: join(evidence, "scoped-memory.png") });
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.reload();
-	await expect(page.locator(".memory-filters-disclosure > summary")).toHaveText("Robotics · Filters");
+	await expect(page.locator(".memory-workspace-header .memory-filters-disclosure > summary")).toHaveText("Robotics · Filters");
 	await page.getByLabel("More memory views", { exact: true }).selectOption("agent-history");
 	await page.getByRole("heading", { name: "Robotics history", exact: true }).waitFor();
  const seedResult = await page.evaluate(async parentId => {

@@ -142,7 +142,7 @@ try {
 	await life.getByText("The Kestrel capstone review is the highest-priority project this month.", { exact: true }).first().waitFor();
 	await page.screenshot({ path: memoryScreenshot });
 
-	await life.locator(".memory-filters-disclosure > summary").click();
+	await life.locator(".memory-workspace-header .memory-filters-disclosure > summary").click();
 	const viewer = life.getByLabel("Viewing as");
 	const domain = life.getByLabel("Domain");
 	assert.equal(await viewer.inputValue(), "user");

@@ -159,6 +159,8 @@ try {
 	await page.setViewportSize({ width: 1320, height: 860 });
 	await openKestrelDestination(page, "Settings");
 	await selectSettingsSection(page, "connections", "Connections");
+	await page.getByRole("button", { name: "Open Connections", exact: true }).click();
+	await page.getByRole("heading", { name: "Connections", exact: true }).waitFor();
 	await page.getByLabel("More connection settings").selectOption("models");
 	await page.getByRole("heading", { name: "Model provider", exact: true }).waitFor();
 	const chatGptConnection = page

@@ -324,7 +324,7 @@ try {
 		for (const label of ["Knowledge", "Work history", "Sources", "People", "Calendar", "Recovery"] as const) {
 			await audit(`memory-agent-history-${label.toLowerCase().replaceAll(" ", "-")}`, size.name, async () => {
 				await navigate("memory");
-				const filters = page.locator(".memory-filters-disclosure");
+				const filters = page.locator(".memory-workspace-header .memory-filters-disclosure");
 				if (!(await filters.evaluate(element => (element as HTMLDetailsElement).open))) await filters.locator("summary").click();
 				await page.getByLabel("Viewing as", { exact: true }).selectOption({ label: agentName });
 				await page.getByLabel("More memory views", { exact: true }).selectOption("agent-history");
@@ -345,7 +345,7 @@ try {
 			});
 		}
 		await navigate("memory");
-		const historyFilters = page.locator(".memory-filters-disclosure");
+		const historyFilters = page.locator(".memory-workspace-header .memory-filters-disclosure");
 		if (!(await historyFilters.evaluate(element => (element as HTMLDetailsElement).open))) await historyFilters.locator("summary").click();
 		await page.getByLabel("Viewing as", { exact: true }).selectOption("user");
 		await expect(page.locator(".scoped-agent-memory")).toHaveCount(0);

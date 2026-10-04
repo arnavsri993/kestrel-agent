@@ -295,7 +295,7 @@ try {
 			const name = id.includes("scope=") ? "scoped-memory" : id || "home";
 			if (name === "scoped-memory") {
 				await page.locator(".memory-workspace-content").waitFor();
-				await page.locator(".memory-filters-disclosure > summary").click();
+				await page.locator(".memory-workspace-header .memory-filters-disclosure > summary").click();
 			}
 			await capture(`${width}-${name}`);
 			if (name === "scoped-memory") {
@@ -619,7 +619,7 @@ try {
 	);
 	await route(`memory?scope=${session}`);
 	await page.locator(".memory-workspace-content").waitFor();
-	await page.locator(".memory-filters-disclosure > summary").click();
+	await page.locator(".memory-workspace-header .memory-filters-disclosure > summary").click();
 	assert.equal(await page.getByLabel("Viewing as", { exact: true }).locator("option:checked").innerText(), "Scoped memory fixture");
 	await capture("memory-200-percent");
 	assert.equal(

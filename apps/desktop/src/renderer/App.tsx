@@ -10195,7 +10195,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-intelligence-title">Memory and learning</h2>
-								<p>Turn shared learning on or off. Read or edit saved notes in Memory.</p>
+								<p>Manage memory and learning. Read or edit saved notes in Memory.</p>
 							</header>
 						<section
 							className="settings-stack"

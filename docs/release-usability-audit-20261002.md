@@ -307,3 +307,28 @@ trap URL. The Mac lock prevents fresh native delivery and local Electron
 fixtures for this integration. No profile data, credentials, primary checkout,
 original Cursor worktree, installed app, or public release was changed here.
 Source and synthetic checks are not installed-app or public-launch proof.
+
+## Connections navigation and scope-filter follow-up — October 4
+
+Clean `b719cbdd` was installed at the canonical path. Desktop/core manifests,
+independent hashes and the deep ad-hoc signature match. Installed setup, an
+unchanged repeat of the persona check, the 40-route/22-settings UI audit and
+smoke pass. The original persona failure could not acquire native keyboard
+focus before navigation; it remains recorded. Native About shows Development ·
+b719cbdd. The real Memory library loads all 54 earlier task results, the new
+Note filters and cleanup disclosure. No real cleanup or note edit was applied.
+Best quality, five ready Codex accounts, seven disabled provider groups and
+36 endpoints / zero local endpoints persist; no Ollama process was observed.
+
+Exact-head core/security CI passed and all four CodeQL checks passed. Desktop
+CI reached Readiness, then failed a remaining expectation for embedded
+Connections. Readiness now follows Open Connections while retaining provider
+checks. A local Memory fixture also found an ambiguous shared filter selector;
+scope tests now select the disclosure inside the workspace header. The fixed
+Readiness, full Memory editing/timeline/advanced-tools flow, persistent agents,
+40-route/22-settings UI audit and all 157 release surface states pass with no
+renderer errors. Assertions were retained; the earlier failures are preserved.
+Generated fixture images were moved into temporary evidence and original
+tracked screenshots restored. The Memory settings intro now describes managing
+learning without promising an unavailable toggle on that screen. The follow-up
+still requires its own clean package, canonical refresh and exact-head CI.
