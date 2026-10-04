@@ -362,3 +362,35 @@ surface states pass. Desktop and compact answer screenshots were inspected.
 No real-profile note edit or cleanup was applied. The preceding AI reviewer
 failure is HTTP 402 monthly quota exhaustion. This follow-up still needs clean
 canonical installation, installed and native verification, and exact-head CI.
+
+## Follow the latest answer through resize — October 4
+
+Clean `ca676a9d` was installed in place. Independent desktop/core identities,
+hashes and deep development signature match. Installed tool results, setup,
+Readiness, Life/Memory and smoke pass. Native About visibly shows Development ·
+ca676a9d, the owned earlier answer is readable in Agent, and Memory loads Notes
+and all 54 existing task results. Auto model, Automatic reasoning, Best quality,
+five enabled Codex accounts, seven disabled other provider groups and 36
+endpoints / zero local endpoints persist. No Ollama process was observed.
+
+Exact-head core/security CI and all four CodeQL checks pass. Desktop CI still
+fails answer visibility with correct width and window containment. An expanded
+local case independently reproduces a resize-follow defect: shrinking the
+transcript viewport from 540px to 320px leaves scrollTop unchanged at 446px,
+putting the answer below view. The transcript now observes its own size and
+follows the bottom only while the reader is following new results. Reviewing
+older text and transcript-target navigation retain their existing guards.
+
+The tool-result fixture now exercises a long owned prompt, a shorter desktop
+window and compact mode, preserving all visibility/overflow/detail assertions.
+It waits for actual native content dimensions and settled geometry rather than
+assuming the requested window height is supported by the host display. Resize
+while reading older text stays at the original position; new answers retain
+keyboard focus. Failures record geometry and an owned screenshot, which CI now
+uploads with its existing diagnostic evidence.
+
+All 2,126 unit tests, desktop type checking/build, the expanded tool-result
+fixture and approval recovery pass. The shorter-window screenshot was inspected.
+This follow-up still requires its clean canonical refresh and exact-head CI;
+the preceding AI reviewer is HTTP 402 quota blocked. No real Memory content
+was edited or removed during native verification.

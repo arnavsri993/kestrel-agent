@@ -150,6 +150,7 @@ jobs:
             .tmp/desktop-browser/**
             .tmp/desktop-layout/**
             .tmp/desktop-personas/**
+            .tmp/desktop-tool-results/**
             .tmp/browser-agent-benchmark/*.json
             .tmp/ci-diagnostics/**
             test-results/**

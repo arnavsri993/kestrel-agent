@@ -8,7 +8,7 @@ import { _electron as electron, expect } from "@playwright/test";
 // Renderer proof only. These stored fixture messages do not certify model work.
 const root = mkdtempSync(join(tmpdir(), "kestrel-tool-results-"));
 const packaged = process.env.KESTREL_DESKTOP_EXECUTABLE;
-const evidence = process.env.KESTREL_TOOL_RESULTS_EVIDENCE_DIR;
+const evidence = process.env.KESTREL_TOOL_RESULTS_EVIDENCE_DIR || (process.env.CI ? ".tmp/desktop-tool-results" : undefined);
 if (evidence) mkdirSync(evidence, { recursive: true });
 let app;
 try {
@@ -34,7 +34,7 @@ try {
 	const created = await request({ type: "runtime-create-session", title: "Tool result display fixture" });
 	const sessionId = created.session.id;
 	const append = (role, content) => request({ type: "runtime-append-message", sessionId, role, content });
-	await append("user", "Read the disposable fixture page.");
+	await append("user", "Read the disposable fixture page.\n\n" + "Owned resize context. ".repeat(90));
 	await append("tool", JSON.stringify({ status: "verified", output: { url: "https://example.test/check?private=value", accessibilityTree: "large-fixture-observation ".repeat(4_000) } }));
 	await append("tool", JSON.stringify({ status: "failed", error: "The fixture page was unavailable. Read a visible tab instead." }));
 	await append("assistant", "Fixture answer: the page was read; one subsequent read failed.");
@@ -48,29 +48,44 @@ try {
 	const list = chat.locator(".message-list");
 	const rows = chat.locator(".runtime-tool-message");
 	await expect(rows).toHaveCount(2);
-	for (const width of [1440, 1000]) {
-		await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows().find(window => !window.webContents.getURL().includes("petOverlay=1"))?.setSize(width, 900), width);
-		await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width);
+	const resize = async (width, height) => {
+		const actual = await app.evaluate(({ BrowserWindow }, { width, height }) => {
+			const window = BrowserWindow.getAllWindows().find(window => !window.webContents.getURL().includes("petOverlay=1"));
+			if (!window) throw new Error("Owned fixture window is missing.");
+			window.setSize(width, height);
+			return window.getContentSize();
+		}, { width, height });
+		await expect.poll(() => page.evaluate(() => [innerWidth, innerHeight])).toEqual(actual);
+		return actual;
+	};
+	for (const [width, height] of [[1440, 900], [1440, 680], [1000, 900]]) {
+		const actual = await resize(width, height);
 		await expect(rows.locator("details[open]")).toHaveCount(0);
 		await expect(rows.first().locator("pre")).toBeHidden();
 		await expect(rows.first().locator("summary")).toContainText("Done");
 		await expect(rows.first().locator("summary")).not.toContainText("private=value");
 		await expect(rows.last().locator(".runtime-tool-error")).toBeVisible();
-		const geometry = await list.evaluate(node => {
+		const measure = () => list.evaluate(node => {
 			const box = node.getBoundingClientRect();
 			const answer = node.querySelector(".assistant-message").getBoundingClientRect();
 			const result = node.querySelector(".runtime-tool-message").getBoundingClientRect();
 			const content = node.querySelector(".assistant-content").getBoundingClientRect();
 			return { listInWindow: box.top >= 0 && box.bottom <= innerHeight, answerVisible: answer.top >= box.top && answer.bottom <= box.bottom, answerUsesWidth: content.width >= answer.width - 2, compactResult: result.height < 90, overflow: node.scrollWidth > node.clientWidth };
 		});
-		assert.deepEqual(geometry, { listInWindow: true, answerVisible: true, answerUsesWidth: true, compactResult: true, overflow: false });
+		try {
+			await expect.poll(measure, { message: `Answer must remain visible at ${actual.join("x")}` }).toEqual({ listInWindow: true, answerVisible: true, answerUsesWidth: true, compactResult: true, overflow: false });
+		} catch (error) {
+			console.error("Owned answer geometry", { requested: [width, height], actual, geometry: await measure(), scroll: await list.evaluate(node => ({ top: node.scrollTop, height: node.scrollHeight, viewport: node.clientHeight })) });
+			if (evidence) await page.screenshot({ path: join(evidence, `failed-${width}-${height}.png`) });
+			throw error;
+		}
 		if (width === 1000) assert(await page.locator(".agent-sidebar-collapse").evaluate(button => {
 			const box = button.getBoundingClientRect();
 			const text = button.querySelector("span").getBoundingClientRect();
 			const icon = button.querySelector("svg").getBoundingClientRect();
 			return text.top >= box.top && text.bottom <= box.bottom && icon.right <= text.left && Math.abs((icon.top + icon.bottom) / 2 - (text.top + text.bottom) / 2) < 2;
 		}), "Compact Close's icon and label must share one contained row.");
-		if (evidence) await page.screenshot({ path: join(evidence, `tool-results-${width}.png`) });
+		if (evidence) await page.screenshot({ path: join(evidence, `tool-results-${actual.join("-")}.png`) });
 		await rows.first().locator("summary").focus();
 		await page.keyboard.press("Enter");
 		await expect(rows.first().locator("pre")).toBeVisible();
@@ -86,6 +101,9 @@ try {
 	await list.hover();
 	await page.mouse.wheel(0, -5_000);
 	await expect.poll(() => list.evaluate(node => node.scrollTop)).toBe(0);
+	await resize(1000, 680);
+	assert.equal(await list.evaluate(node => node.scrollTop), 0, "Resizing must not pull a reader away from earlier messages.");
+	await resize(1000, 900);
 	await append("assistant", "A new result arrived while you reviewed an older message.");
 	await expect(chat.locator(".assistant-message").last()).toContainText("A new result arrived");
 	assert.equal(await list.evaluate(node => node.scrollTop), 0, "New results must not pull a reader away from earlier messages.");

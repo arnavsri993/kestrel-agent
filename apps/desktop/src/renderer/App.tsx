@@ -3082,6 +3082,16 @@ function RuntimeConversation({
 			list.scrollTop = list.scrollHeight;
 		}
 	}, [visible, messages, streamText, optimisticUser, optimisticSteering, busy, pending, latestRun, transcriptTarget, loadingEarlierMessages]);
+	useLayoutEffect(() => {
+		const list = messageListRef.current;
+		if (!visible || !list || typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(() => {
+			if (followMessagesRef.current && !transcriptTarget && !loadingEarlierMessages)
+				list.scrollTop = list.scrollHeight;
+		});
+		observer.observe(list);
+		return () => observer.disconnect();
+	}, [visible, activeSessionId, messages.length, Boolean(optimisticUser), Boolean(streamText), transcriptTarget, loadingEarlierMessages]);
 	const streamIdRef = useRef<string | null>(null);
 	const streamSessionIdRef = useRef<string | null>(null);
 	const activeSessionIdRef = useRef(activeSessionId);
