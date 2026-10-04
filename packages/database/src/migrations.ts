@@ -98,18 +98,11 @@ export function resolveMigrationBackupDirectory(databasePath: string): string {
 	return join(dirname(databasePath), "backups");
 }
 
-export function backupDatabaseBeforeMigration(
+function copyDatabaseSnapshot(
 	databasePath: string,
-	nextVersion: number,
-	now: Date = new Date(),
+	backupPath: string,
 ): string {
-	const backupsDirectory = resolveMigrationBackupDirectory(databasePath);
-	mkdirSync(backupsDirectory, { recursive: true, mode: 0o700 });
-	const timestamp = now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
-	const backupName = `pre-migrate-v${String(nextVersion).padStart(3, "0")}-${timestamp}.sqlite`;
-	const backupPath = join(backupsDirectory, backupName);
 	const temporaryPath = `${backupPath}.${process.pid}.tmp`;
-
 	copyFileSync(databasePath, temporaryPath);
 	for (const suffix of ["-wal", "-shm"]) {
 		const sidecarPath = `${databasePath}${suffix}`;
@@ -125,4 +118,29 @@ export function backupDatabaseBeforeMigration(
 	}
 
 	return backupPath;
+}
+
+export function backupDatabaseBeforeMigration(
+	databasePath: string,
+	nextVersion: number,
+	now: Date = new Date(),
+): string {
+	const backupsDirectory = resolveMigrationBackupDirectory(databasePath);
+	mkdirSync(backupsDirectory, { recursive: true, mode: 0o700 });
+	const timestamp = now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
+	const backupName = `pre-migrate-v${String(nextVersion).padStart(3, "0")}-${timestamp}.sqlite`;
+	const backupPath = join(backupsDirectory, backupName);
+	return copyDatabaseSnapshot(databasePath, backupPath);
+}
+
+/** Snapshot the profile database before the first destructive memory fade purge. */
+export function backupDatabaseBeforeFade(
+	databasePath: string,
+	now: Date = new Date(),
+): string {
+	const backupsDirectory = resolveMigrationBackupDirectory(databasePath);
+	mkdirSync(backupsDirectory, { recursive: true, mode: 0o700 });
+	const timestamp = now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
+	const backupPath = join(backupsDirectory, `pre-fade-${timestamp}.sqlite`);
+	return copyDatabaseSnapshot(databasePath, backupPath);
 }

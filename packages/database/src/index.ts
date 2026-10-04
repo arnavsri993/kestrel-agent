@@ -198,6 +198,7 @@ function isSqliteDatabaseIntegrityFailure(error: unknown): boolean {
 }
 
 export {
+	backupDatabaseBeforeFade,
 	backupDatabaseBeforeMigration,
 	LATEST_SCHEMA_VERSION,
 	loadMigrationSql,
@@ -428,6 +429,11 @@ function timelineSummary(events: readonly TimelineEvent[], maximum: number): str
 export class KestrelDatabase {
 	readonly db: Database.Database;
 	readonly lastMigrationBackupPath: string | undefined;
+
+	/** Absolute path or `:memory:` for the open profile database. */
+	get path(): string {
+		return this.filename;
+	}
 
 	constructor(
 		private readonly filename: string,
@@ -3817,6 +3823,29 @@ export class KestrelDatabase {
                         embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;
                         pending.push(owner.id, `task:${owner.id}`);
                     } else {
+						const memory = this.getAgentMemory(owner.id);
+						// Recalled or pinned derived facts survive source expiry; detach the
+						// dying evidence instead of hard-deleting the knowledge.
+						if (
+							memory &&
+							(memory.pinned || (memory.accessCount ?? 0) >= 2)
+						) {
+							const nextSources = memory.sourceIds.filter(
+								(sourceId) =>
+									sourceId !== id &&
+									sourceId !== `timeline_event:${id}`,
+							);
+							this.upsertAgentMemory({
+								...memory,
+								sourceIds:
+									nextSources.length > 0
+										? nextSources
+										: ["retained-after-source-expiry"],
+								pinned: true,
+								updatedAt: timestamp,
+							});
+							continue;
+						}
                         const result = this.deleteAgentMemoryWithCounts(owner.id);
                         if (result.memory) deletedAgentMemories++;
                         embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;

@@ -297,6 +297,11 @@ export class MemoryManager {
 		}
 	}
 
+	/**
+	 * Soft maintenance only: relevance decay, grace fadesAt, archive durable stale
+	 * notes, and expire past validUntil. Hard deletes of faded automatic memories
+	 * are applied by MemorySubstrate after a dry-run backup.
+	 */
 	maintain(): MemoryRecord[] {
 		const timestamp = this.now();
 		const changed: MemoryRecord[] = [];
@@ -314,7 +319,7 @@ export class MemoryManager {
 				(memory.relevanceScore ?? memory.importance) -
 					Math.min(0.6, ageDays / 900),
 			);
-			const expired =
+			const expiredByValidity =
 				memory.validUntil !== undefined &&
 				Date.parse(memory.validUntil) < timestamp.getTime();
 			const durable =
@@ -334,20 +339,16 @@ export class MemoryManager {
 				).toISOString();
 				if (Date.parse(refreshed) > Date.parse(fadesAt ?? 0)) fadesAt = refreshed;
 			}
-			const faded =
-				!durable &&
-				Boolean(fadesAt) &&
-				Date.parse(fadesAt!) < timestamp.getTime();
-			if (faded || expired) {
-				this.forget(memory.id);
-				changed.push({
-					...memory,
-					status: "deleted",
-					updatedAt: timestamp.toISOString(),
-				});
-				continue;
-			}
+			const archive =
+				durable &&
+				!expiredByValidity &&
+				memory.layer !== "short_term" &&
+				memory.layer !== "archived" &&
+				ageDays >= 180 &&
+				decayed < 0.35;
 			if (
+				!expiredByValidity &&
+				!archive &&
 				Math.abs(decayed - (memory.relevanceScore ?? memory.importance)) < 0.01 &&
 				fadesAt === memory.fadesAt
 			)
@@ -355,13 +356,46 @@ export class MemoryManager {
 			const next: MemoryRecord = {
 				...memory,
 				relevanceScore: decayed,
-				...(fadesAt ? { fadesAt } : {}),
+				status: expiredByValidity ? "expired" : memory.status,
+				layer: archive ? "archived" : memory.layer,
+				...(archive ? { archivedAt: timestamp.toISOString() } : {}),
+				...(fadesAt && !durable ? { fadesAt } : {}),
 				updatedAt: timestamp.toISOString(),
 			};
 			this.database.upsertMemory(next);
 			changed.push(next);
 		}
 		return changed;
+	}
+
+	/** Automatic memories past fadesAt that substrate may hard-delete after backup. */
+	listFadeCandidates(): MemoryRecord[] {
+		const now = this.now().getTime();
+		return this.activeMemories().filter((memory) => {
+			const durable =
+				memory.pinned ||
+				memory.userConfirmed ||
+				memory.confirmationStatus === "explicit" ||
+				memory.confirmationStatus === "user_confirmed";
+			if (durable || !memory.inferred || !memory.fadesAt) return false;
+			return Date.parse(memory.fadesAt) < now;
+		});
+	}
+
+	purgeFadeCandidates(ids: readonly string[]): MemoryRecord[] {
+		const purged: MemoryRecord[] = [];
+		for (const id of ids) {
+			const memory = this.database.getMemory(id);
+			if (!memory || memory.status !== "active") continue;
+			const durable =
+				memory.pinned ||
+				memory.userConfirmed ||
+				memory.confirmationStatus === "explicit" ||
+				memory.confirmationStatus === "user_confirmed";
+			if (durable || !memory.inferred) continue;
+			purged.push(this.forget(id));
+		}
+		return purged;
 	}
 
 	private conflictsFor(input: MemoryInput): MemoryRecord[] {

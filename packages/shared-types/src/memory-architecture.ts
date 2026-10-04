@@ -606,7 +606,7 @@ export const MemoryFadeDryRunSchema = z.object({
 	legacyMemoryCandidates: z.number().int().nonnegative(),
 	timelineCandidates: z.number().int().nonnegative(),
 	sourceDerivedCandidates: z.number().int().nonnegative(),
-	backupKey: z.string().min(1).max(200),
+	backupKey: z.string().min(1).max(4_096),
 	applied: z.boolean(),
 });
 export type MemoryFadeDryRun = z.infer<typeof MemoryFadeDryRunSchema>;

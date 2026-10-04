@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import type {
-	KestrelDatabase,
-	MemoryDeleteResult,
-	TimelineEventListOptions,
+import {
+	backupDatabaseBeforeFade,
+	type KestrelDatabase,
+	type MemoryDeleteResult,
+	type TimelineEventListOptions,
 } from "@kestrel/database";
 import {
 	ActivityBlockSchema,
@@ -66,6 +67,8 @@ const SESSION_GAP_MS = 30 * 60_000;
 const BLOCK_GAP_MS = 12 * 60_000;
 /** New timeline events default to 30 days; stored capture config may override. */
 const DEFAULT_RETENTION_DAYS = 30;
+/** Unrecorded retention on pre-existing events keeps the prior 90-day default. */
+const LEGACY_UNRECORDED_RETENTION_DAYS = 90;
 const AUTO_FACT_FADE_DAYS = 90;
 const OUTCOME_FADE_DAYS = 60;
 const SOURCE_DERIVED_MIN_RECALLS = 2;
@@ -1190,7 +1193,12 @@ export class MemorySubstrate {
 			prompt,
 			createdAt: this.now().toISOString(),
 		});
-		this.touchAgentResults([...durable, ...current, ...retrieved], input.agentId);
+		const touched = [...durable, ...current, ...retrieved];
+		this.touchAgentResults(touched, input.agentId);
+		const legacyIds = touched
+			.filter((result) => result.kind === "memory")
+			.map((result) => result.id);
+		if (legacyIds.length > 0) this.legacyMemory.touch(legacyIds);
 		return bundle;
 	}
 
@@ -1675,6 +1683,9 @@ export class MemorySubstrate {
 		});
 		if (reconciled.outcomeSummary && reconciled.status === "completed") {
 			const timestamp = this.now().toISOString();
+			const existingOutcome = this.database.getAgentMemory(
+				`agent-outcome-${reconciled.id}`,
+			);
 			const memory = AgentMemoryRecordSchema.parse({
 				id: `agent-outcome-${reconciled.id}`,
 				agentId,
@@ -1690,11 +1701,13 @@ export class MemorySubstrate {
 				importance: 0.65,
 				sensitivity: "personal",
 				status: "active",
-				pinned: false,
-				fadesAt: fadesAtFrom(this.now(), OUTCOME_FADE_DAYS),
-				accessCount: 0,
-				lastAccessedAt: timestamp,
-				createdAt: timestamp,
+				pinned: existingOutcome?.pinned ?? false,
+				fadesAt:
+					existingOutcome?.fadesAt ??
+					fadesAtFrom(this.now(), OUTCOME_FADE_DAYS),
+				accessCount: existingOutcome?.accessCount ?? 0,
+				lastAccessedAt: existingOutcome?.lastAccessedAt ?? timestamp,
+				createdAt: existingOutcome?.createdAt ?? timestamp,
 				updatedAt: timestamp,
 			});
 			this.ensureAgentIdentityForId(agentId, agentId === "agent-main" ? "main" : "subagent");
@@ -2570,44 +2583,54 @@ export class MemorySubstrate {
 				!memory.pinned &&
 				Boolean(fadesAt) &&
 				timestampValue(fadesAt!) < now.getTime();
-			const expired = memory.validUntil
+			const expiredByValidity = memory.validUntil
 				? timestampValue(memory.validUntil) < now.getTime()
-				: memory.horizon === "short_term" && ageDays > 14;
-			if (faded || expired) {
+				: false;
+			const expiredShortTerm =
+				!memory.pinned &&
+				memory.horizon === "short_term" &&
+				ageDays > 14 &&
+				fadeDays !== null;
+			if (faded || expiredShortTerm) {
 				fadeDeletes.push(memory);
 				continue;
 			}
 			if (
 				Math.abs(nextImportance - memory.importance) < 0.01 &&
-				fadesAt === memory.fadesAt
+				fadesAt === memory.fadesAt &&
+				!expiredByValidity
 			)
 				continue;
 			this.database.upsertAgentMemory({
 				...memory,
 				importance: nextImportance,
-				...(fadesAt ? { fadesAt } : {}),
+				status: expiredByValidity ? "expired" : memory.status,
+				...(fadesAt && !memory.pinned ? { fadesAt } : {}),
 				updatedAt: now.toISOString(),
 			});
 			changed += 1;
 		}
-		if (fadeDeletes.length > 0) {
+		changed += this.legacyMemory.maintain().length;
+		const legacyFadeCandidates = this.legacyMemory.listFadeCandidates();
+		if (fadeDeletes.length > 0 || legacyFadeCandidates.length > 0) {
 			this.ensureFadeDryRunAndBackup({
 				agentMemories: fadeDeletes,
-				legacyMemories: [],
+				legacyMemories: legacyFadeCandidates,
 				timelineEventIds: [],
 				sourceDerivedIds: [],
 			});
 			for (const memory of fadeDeletes) {
 				if (this.database.deleteAgentMemory(memory.id)) changed += 1;
 			}
+			changed += this.legacyMemory.purgeFadeCandidates(
+				legacyFadeCandidates.map((memory) => memory.id),
+			).length;
 		}
-		changed += this.legacyMemory.maintain().length;
 		return changed;
 	}
 
 	private cleanupExpired(): number {
 		const now = this.now();
-		const defaultRetentionDays = this.getCaptureConfiguration().defaultRetentionDays;
 		let deleted = 0;
 		const deletedSourceKeys: string[] = [];
 		const timelineCandidates: string[] = [];
@@ -2631,7 +2654,10 @@ export class MemorySubstrate {
 					break;
 				}
 				case "days": {
-					const retentionDays = event.retentionDays ?? defaultRetentionDays;
+					// New events stamp retentionDays at capture. Unrecorded days on
+					// older rows keep the prior 90-day default instead of shrinking.
+					const retentionDays =
+						event.retentionDays ?? LEGACY_UNRECORDED_RETENTION_DAYS;
 					const retainedUntil =
 						timestampValue(event.source === "connected-source" ? event.createdAt : event.endedAt ?? event.startedAt) +
 						Math.max(1, retentionDays) * DAY_MS;
@@ -2708,14 +2734,20 @@ export class MemorySubstrate {
 			this.database.getPrivateState(FADE_DRY_RUN_KEY),
 		);
 		if (existing.success && existing.data.applied) return existing.data;
-		const backup = {
+		let backupKey = FADE_BACKUP_KEY;
+		let fileBackupPath: string | undefined;
+		if (this.database.path !== ":memory:") {
+			fileBackupPath = backupDatabaseBeforeFade(this.database.path, this.now());
+			backupKey = fileBackupPath;
+		}
+		this.database.setPrivateState(FADE_BACKUP_KEY, {
 			version: 1 as const,
 			createdAt: this.now().toISOString(),
-			agentMemories: input.agentMemories,
-			legacyMemories: input.legacyMemories,
+			fileBackupPath,
+			agentMemoryIds: input.agentMemories.map((memory) => memory.id),
+			legacyMemoryIds: input.legacyMemories.map((memory) => memory.id),
 			timelineEventIds: [...input.timelineEventIds],
-		};
-		this.database.setPrivateState(FADE_BACKUP_KEY, backup);
+		});
 		const dryRun = MemoryFadeDryRunSchema.parse({
 			version: 1,
 			createdAt: this.now().toISOString(),
@@ -2723,13 +2755,14 @@ export class MemorySubstrate {
 			legacyMemoryCandidates: input.legacyMemories.length,
 			timelineCandidates: input.timelineEventIds.length,
 			sourceDerivedCandidates: input.sourceDerivedIds.length,
-			backupKey: FADE_BACKUP_KEY,
+			backupKey,
 			applied: true,
 		});
 		this.database.setPrivateState(FADE_DRY_RUN_KEY, dryRun);
 		this.database.setPrivateState(FADE_APPLIED_KEY, {
 			applied: true,
 			appliedAt: this.now().toISOString(),
+			...(fileBackupPath ? { fileBackupPath } : {}),
 		});
 		return dryRun;
 	}
@@ -3097,11 +3130,18 @@ export class MemorySubstrate {
 	}
 
 	private touchAgentResults(results: readonly MemorySearchResult[], agentId?: string): void {
-		if (!agentId) return;
-		const ids = new Set(results.filter((result) => result.kind === "agent_memory").map((result) => result.id));
+		const ids = new Set(
+			results
+				.filter((result) => result.kind === "agent_memory")
+				.map((result) => result.id),
+		);
+		if (ids.size === 0) return;
 		const timestamp = this.now().toISOString();
 		const now = this.now();
-		for (const memory of this.database.listAgentMemories(agentId, { limit: 500 })) {
+		const memories = agentId
+			? this.database.listAgentMemories(agentId, { limit: 500 })
+			: this.database.listAllAgentMemories();
+		for (const memory of memories) {
 			if (!ids.has(memory.id)) continue;
 			const fadeDays = agentMemoryFadeDays(memory);
 			this.database.upsertAgentMemory({

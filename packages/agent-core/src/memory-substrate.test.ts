@@ -681,12 +681,10 @@ describe("memory substrate", () => {
 		}
 	});
 
-	it("purges faded inferred legacy memories instead of archiving them forever", () => {
-		let now = new Date("2026-01-01T00:00:00.000Z");
-		const database = new KestrelDatabase(":memory:", createEncryptionKey());
-		const manager = new MemoryManager(database, () => now);
+	it("purges faded inferred legacy memories only after substrate backup", async () => {
+		const state = fixture();
 		try {
-			const inferred = manager.remember({
+			const inferred = state.legacyMemory.remember({
 				type: "semantic",
 				content: "Incidental detail from an old email thread",
 				structuredData: { capture: "deterministic-extraction" },
@@ -701,19 +699,40 @@ describe("memory substrate", () => {
 				confirmationStatus: "inferred",
 			});
 			expect(inferred.fadesAt).toBeDefined();
-			expect(inferred.pinned).toBeFalsy();
-			expect(manager.list().some((memory) => memory.id === inferred.id)).toBe(true);
-
-			database.upsertMemory({
-				...manager.list().find((memory) => memory.id === inferred.id)!,
+			state.database.upsertMemory({
+				...state.legacyMemory.list().find((memory) => memory.id === inferred.id)!,
 				lastAccessedAt: "2025-10-01T00:00:00.000Z",
 				fadesAt: "2025-12-01T00:00:00.000Z",
 			});
-			now = new Date("2026-04-01T00:00:00.000Z");
-			manager.maintain();
-			expect(manager.list().some((memory) => memory.id === inferred.id)).toBe(false);
+			// Soft maintain alone must not hard-delete.
+			state.legacyMemory.maintain();
+			expect(state.legacyMemory.list().some((memory) => memory.id === inferred.id)).toBe(
+				true,
+			);
+			expect(state.legacyMemory.listFadeCandidates().map((memory) => memory.id)).toContain(
+				inferred.id,
+			);
+
+			state.advance("2026-04-01T00:00:00.000Z");
+			state.database.queueMemoryJob({
+				id: "memory-job-fade-legacy",
+				kind: "decay",
+				dedupeKey: "decay:test-legacy-fade",
+				status: "pending",
+				payload: {},
+				attempts: 0,
+				maxAttempts: 4,
+				runAfter: "2026-04-01T00:00:00.000Z",
+				createdAt: "2026-04-01T00:00:00.000Z",
+				updatedAt: "2026-04-01T00:00:00.000Z",
+			});
+			await state.substrate.runMaintenance(20);
+			expect(state.legacyMemory.list().some((memory) => memory.id === inferred.id)).toBe(
+				false,
+			);
+			expect(state.substrate.getFadeDryRun()?.applied).toBe(true);
 		} finally {
-			database.close();
+			await state.close();
 		}
 	});
 });
