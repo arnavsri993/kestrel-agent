@@ -26,11 +26,13 @@ export const THINKING_LEVELS: readonly {
 	description: string;
 }[] = [
 	{ id: "none", label: "Default", description: "Use the provider default" },
+	{ id: "minimal", label: "Minimal", description: "Minimal reasoning when advertised by this model" },
 	{ id: "low", label: "Low", description: "Less deliberation" },
 	{ id: "medium", label: "Medium", description: "Balanced deliberation" },
 	{ id: "high", label: "High", description: "More thorough reasoning" },
 	{ id: "xhigh", label: "Extra high", description: "Extended reasoning" },
 	{ id: "max", label: "Max", description: "Largest reasoning budget" },
+	{ id: "ultra", label: "Ultra", description: "Provider-advertised ultra effort" },
 ];
 
 export function providerGroups(
@@ -60,11 +62,34 @@ export function selectableModel(model: ProviderAccountModel): boolean {
 	return ["available", "unknown", "stale"].includes(model.availability);
 }
 
+export function hasVerifiedModelCapabilities(
+	model: Pick<ProviderAccountModel, "capabilities">,
+): boolean {
+	return ["confirmed", "metadata"].includes(
+		model.capabilities.capabilityProvenance,
+	);
+}
+
+/**
+ * Auto routing may only start when an enabled account exposes a model that the
+ * current catalog says can still be attempted. This keeps an empty profile
+ * from looking ready and sending a task that the runtime cannot route.
+ */
+export function automaticRouteAvailable(
+	accounts: readonly ProviderAccountSummary[],
+): boolean {
+	return accounts.some(
+		(account) => account.enabled && account.models.some(selectableModel),
+	);
+}
+
 export function modelAvailabilityLabel(model: ProviderAccountModel): string {
 	const capabilitiesUnverified =
-		model.capabilities.capabilityProvenance !== "confirmed";
+		!hasVerifiedModelCapabilities(model);
 	switch (model.availability) {
 		case "available":
+			if (model.capabilities.capabilityProvenance === "metadata")
+				return "Available · documented compatibility";
 			return capabilitiesUnverified
 				? "Available · capabilities unverified"
 				: "Available";
@@ -122,7 +147,8 @@ export function modelSupportsThinking(
 ): boolean {
 	const model = modelForChoice(accounts, choice);
 	return (
-		model?.capabilities.capabilityProvenance === "confirmed" &&
+		model !== undefined &&
+		hasVerifiedModelCapabilities(model) &&
 		(model.capabilities.reasoningEfforts.length ?? 0) > 1
 	);
 }
@@ -153,7 +179,7 @@ export function selectModel(
 	model: ProviderAccountModel,
 	current: ModelSelectorChoice,
 ): ModelSelectorChoice {
-	const efforts = model.capabilities.capabilityProvenance === "confirmed"
+	const efforts = hasVerifiedModelCapabilities(model)
 		? model.capabilities.reasoningEfforts
 		: [];
 	const reasoningEffort = efforts.includes(current.reasoningEffort)

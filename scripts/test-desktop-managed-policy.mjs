@@ -77,7 +77,7 @@ try {
 	await page.reload();
 	await page.locator("#runtime-prompt").waitFor();
 	await openKestrelDestination(page, "Settings");
-	await page.getByRole("heading", { name: "Settings" }).waitFor();
+	await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
 	await selectSettingsSection(page, "advanced", "Advanced");
 
 	const managedCard = page

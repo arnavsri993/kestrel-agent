@@ -1,4 +1,5 @@
 export * from "./configuration";
+export * from "./build-provenance";
 export * from "./communication";
 export * from "./chrome-web-store";
 export * from "./extension-compatibility";
@@ -16,5 +17,7 @@ export * from "./writing";
 export * from "./agent-templates";
 
 export * from "./resource-access";
+
+export * from "./sensitive-text";
 
 export * from "./source-observations";

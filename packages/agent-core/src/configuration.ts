@@ -57,7 +57,7 @@ export const DEFAULT_AGENT_CONFIGURATION: AgentConfigurationDocument =
 		tools: { enabled: ["*"], disabled: [] },
 		permissions: { additionalApprovalTools: [] },
 		workflows: {
-			maximumTurns: 12,
+			maximumTurns: 24,
 			codeChangeMode: "isolated_pull_request",
 			verifyBeforeApply: true,
 			reversibleByDefault: true,
@@ -1478,8 +1478,69 @@ export class AgentConfigurationManager {
 		if (
 			current &&
 			documentSha256(canonicalDocument(current.document)) === current.sha256
-		)
+		) {
+			const previousDefault = AgentConfigurationDocumentSchema.parse({
+				...DEFAULT_AGENT_CONFIGURATION,
+				workflows: {
+					...DEFAULT_AGENT_CONFIGURATION.workflows,
+					maximumTurns: 12,
+				},
+			});
+			const isInitialDefault =
+				versions.length === 1 &&
+				current.sequence === 1 &&
+				current.createdBy === "system" &&
+				current.knownGood &&
+				!current.parentVersionId &&
+				!current.sourceProposalId &&
+				!current.restoredFromVersionId &&
+				current.sha256 === documentSha256(previousDefault) &&
+				JSON.stringify(current.document) === JSON.stringify(previousDefault);
+			if (isInitialDefault) {
+				// A staged proposal or other audit activity means the profile is no longer pristine.
+				let pristineHistory = false;
+				try {
+					const audit = this.database.listAgentConfigurationAuditEvents();
+					pristineHistory =
+						this.database.listAgentConfigurationProposals().length === 0 &&
+						this.database.listAgentImprovementProposals().length === 0 &&
+						audit.length === 1 &&
+						audit[0]?.action === "initialized" &&
+						audit[0]?.actor === "system" &&
+						audit[0]?.versionId === current.id;
+				} catch {
+					// Leave a profile with unreadable history untouched.
+				}
+				if (pristineHistory) {
+					const createdAt = this.now().toISOString();
+					const document = canonicalDocument(DEFAULT_AGENT_CONFIGURATION);
+					const version = AgentConfigurationVersionSchema.parse({
+						id: `config-version-${randomUUID()}`,
+						sequence: current.sequence + 1,
+						parentVersionId: current.id,
+						document,
+						sha256: documentSha256(document),
+						knownGood: true,
+						createdBy: "system",
+						createdAt,
+					});
+					const auditEvent = configurationAudit({
+						action: "default_migrated",
+						actor: "system",
+						versionId: version.id,
+						detail: "Raised the untouched default agent turn limit from 12 to 24.",
+						evidence: [`previous version ${current.id}`, "old default document and digest matched"],
+						createdAt,
+					});
+					this.database.commitAgentConfigurationVersion({
+						expectedHeadVersionId: current.id,
+						version,
+						auditEvent,
+					});
+				}
+			}
 			return;
+		}
 		const knownGood = versions
 			.filter(
 				(version) =>

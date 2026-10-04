@@ -3,7 +3,12 @@ import { useEffect, useRef, useState, type ClipboardEvent, type FormEvent } from
 import { Icon } from "../Icon";
 import { ModelSelector } from "./ModelSelector";
 import { createPastedTextAttachment, LARGE_PASTE_MIN_LENGTH, removePastedTextAttachment } from "./composer-paste";
-import { accountForChoice, type ModelSelectorChoice } from "./model-selector";
+import {
+	accountForChoice,
+	automaticRouteAvailable,
+	type ModelSelectorChoice,
+} from "./model-selector";
+import { maskSensitiveText } from "@kestrel/shared-types";
 import type { NewTabComposerDraft } from "./new-tab-composer";
 import "./new-tab-composer.css";
 
@@ -15,16 +20,24 @@ function savedModelChoice(): ModelSelectorChoice {
 		providerId: localStorage.getItem("kestrel:provider-id") ?? "",
 		...(accountId ? { accountId } : {}),
 		model: localStorage.getItem("kestrel:model") ?? "",
-		reasoningEffort: effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh" || effort === "max" || effort === "none" ? effort : "none",
+		reasoningEffort: effort === "minimal" || effort === "ultra" || effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh" || effort === "max" || effort === "none" ? effort : "none",
 	};
 }
 
-export function NewTabComposer({ agentName, projects, onProjectsChange, onNavigate, onSubmitDraft }: {
+function isStandaloneNavigation(value: string): boolean {
+	return (
+		/^\S+$/.test(value) &&
+		/^(https?:\/\/|localhost(:\d+)?(\/|$)|[\w-]+\.[\w.-]+)/i.test(value)
+	);
+}
+
+export function NewTabComposer({ agentName, projects, onProjectsChange, onNavigate, onSubmitDraft, onOpenModelSettings }: {
 	agentName: string;
 	projects: Project[];
 	onProjectsChange(projects: Project[]): void;
 	onNavigate(input: string): void;
 	onSubmitDraft(draft: NewTabComposerDraft): boolean;
+	onOpenModelSettings(): void;
 }) {
 	const [input, setInput] = useState("");
 	const [expanded, setExpanded] = useState(false);
@@ -36,6 +49,7 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	const [workspaceRoot, setWorkspaceRoot] = useState("");
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [accounts, setAccounts] = useState<ProviderAccountSummary[]>([]);
+	const [accountsLoaded, setAccountsLoaded] = useState(false);
 	const [choice, setChoice] = useState(savedModelChoice);
 	const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
 	const [busy, setBusy] = useState(false);
@@ -48,14 +62,38 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	const accessRef = useRef<HTMLDivElement>(null);
 	const availableProjects = projects.filter((project) => project.available !== false);
 	const selectedProject = availableProjects.find((project) => project.path === workspaceRoot);
-	const canSend = Boolean(input.trim() || attachments.length);
+	const isExpanded = expanded || Boolean(input) || attachments.length > 0;
+	const promptPreview = input.trim();
+	const isNavigation =
+		!attachments.length && !workspaceRoot && isStandaloneNavigation(promptPreview);
+	const automaticRoutingReady =
+		accountsLoaded && automaticRouteAvailable(accounts);
+	const manualRoutingReady = Boolean(
+		accountsLoaded && choice.model.trim() && accountForChoice(accounts, choice),
+	);
+	const routingReady =
+		choice.executionMode === "automatic"
+			? automaticRoutingReady
+			: manualRoutingReady;
+	const canSend =
+		Boolean(promptPreview || attachments.length) && (isNavigation || routingReady);
+	const showModelReadiness =
+		isExpanded && !isNavigation && Boolean(promptPreview || attachments.length) && !routingReady;
 	const approvalLabel = approvalPolicy === "ask" ? "Ask for approval" : approvalPolicy === "full_access" ? "Full access" : "Approve for me";
 
 	useEffect(() => {
 		let active = true;
-		void window.kestrel.request({ type: "runtime-list-providers" }).then((response) => {
-			if (active && response.ok && "providerAccounts" in response) setAccounts(response.providerAccounts ?? []);
-		}).catch(() => undefined);
+		void window.kestrel
+			.request({ type: "runtime-list-providers" })
+			.then((response) => {
+				if (!active) return;
+				if (response.ok && "providerAccounts" in response)
+					setAccounts(response.providerAccounts ?? []);
+				setAccountsLoaded(true);
+			})
+			.catch(() => {
+				if (active) setAccountsLoaded(true);
+			});
 		return () => { active = false; };
 	}, []);
 	useEffect(() => {
@@ -125,11 +163,12 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	}
 
 	async function addFiles() {
-		const selectedRoot = workspaceRoot || await chooseProject();
-		if (!selectedRoot) return;
+		if (busy) return;
 		setBusy(true);
 		setError("");
 		try {
+			const selectedRoot = workspaceRoot || await chooseProject();
+			if (!selectedRoot) return;
 			const response = await window.kestrel.request({ type: "select-context-files", workspaceRoot: selectedRoot });
 			if (!response.ok) throw new Error(response.error);
 			if ("selectedAttachments" in response) setAttachments((current) => {
@@ -143,7 +182,7 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 
 	async function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
 		const text = event.clipboardData.getData("text/plain");
-		if (text.length < LARGE_PASTE_MIN_LENGTH) return;
+		if (text.length < LARGE_PASTE_MIN_LENGTH || maskSensitiveText(text) !== text) return;
 		event.preventDefault();
 		if (attachments.length >= 8) { setError("Remove an attachment before pasting more text."); return; }
 		setBusy(true);
@@ -158,15 +197,23 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 
 	function send(event?: FormEvent) {
 		event?.preventDefault();
-		if (busy || voiceState !== "idle" || !canSend) return;
+		if (busy || voiceState !== "idle") return;
 		const prompt = input.trim() || "Review the attached file.";
-		if (choice.executionMode === "manual" && (!choice.model.trim() || !accountForChoice(accounts, choice))) {
-			setError("Choose an available model account or switch to Auto.");
-			return;
-		}
-		if (!attachments.length && !workspaceRoot && /^\S+$/.test(prompt) && /^(https?:\/\/|localhost(:\d+)?(\/|$)|[\w-]+\.[\w.-]+)/i.test(prompt)) {
+		if (!attachments.length && !workspaceRoot && isStandaloneNavigation(prompt)) {
 			onNavigate(prompt);
 			setInput("");
+			return;
+		}
+		if (!accountsLoaded) {
+			setError("Checking model access. Try again in a moment.");
+			return;
+		}
+		if (!routingReady) {
+			setError("Connect a model in Settings before starting a task.");
+			return;
+		}
+		if (choice.executionMode === "manual" && (!choice.model.trim() || !accountForChoice(accounts, choice))) {
+			setError("Choose an available model account or switch to Auto.");
 			return;
 		}
 		const accepted = onSubmitDraft({ prompt, ...(workspaceRoot ? { workspaceRoot } : {}), ...(selectedProject ? { projectId: selectedProject.id } : {}), modelChoice: choice, approvalPolicy, attachments });
@@ -231,12 +278,11 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 		}
 	}
 
-	const isExpanded = expanded || Boolean(input) || attachments.length > 0;
-	return <div className={`kestrel-home-composer${isExpanded ? " is-expanded" : ""}`} onFocus={() => setExpanded(true)}>
+	return <div className={`kestrel-home-composer kestrel-task-composer${isExpanded ? " is-expanded" : ""}`} onFocus={() => setExpanded(true)}>
 		<form onSubmit={send}>
 			<label className="sr-only" htmlFor="new-tab-chat-input">Message {agentName} or enter a URL</label>
 			<textarea ref={inputRef} id="new-tab-chat-input" rows={1} value={input} placeholder={`Ask ${agentName} or enter a URL`} onChange={(event) => setInput(event.target.value)} onPaste={(event) => void onPaste(event)} onKeyDown={(event) => {
-				if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); }
+				if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); }
 			}} />
 			{attachments.length > 0 && <div className="new-tab-composer-attachments" aria-label="Attached files">{attachments.map((attachment) => <button type="button" key={attachment.path} aria-label={`Remove ${attachment.name}`} onClick={() => { removePastedTextAttachment(attachment); setAttachments((current) => current.filter((item) => item.path !== attachment.path)); }}><Icon name="file" /><span>{attachment.name}</span><Icon name="close" /></button>)}</div>}
 			<div className="new-tab-composer-footer" inert={isExpanded ? undefined : true} aria-hidden={!isExpanded}>
@@ -254,9 +300,10 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 						}}><div className="new-tab-access-heading">How should Kestrel actions be approved?</div><button type="button" role="menuitemradio" aria-checked={approvalPolicy === "ask"} onClick={() => applyApprovalPolicy("ask")}>Ask for approval<small>Ask before every action that changes data</small></button><button type="button" role="menuitemradio" aria-checked={approvalPolicy === "auto"} onClick={() => applyApprovalPolicy("auto")}>Approve for me<small>Only ask for sensitive or external actions</small></button><button type="button" className="new-tab-access-full" role="menuitemradio" aria-checked={approvalPolicy === "full_access"} onClick={() => applyApprovalPolicy("full_access")}>Full access<small>Skip routine prompts; hard safety boundaries still apply</small></button></div>}
 					</div>
 				</div>
-				<div className="new-tab-composer-send-actions"><ModelSelector accounts={accounts} choice={choice} onChange={applyChoice} /><button type="button" className={`new-tab-composer-icon${voiceState === "recording" ? " is-recording" : ""}`} aria-label={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} title={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} disabled={busy || voiceState === "transcribing"} onClick={() => voiceState === "recording" ? recorderRef.current?.stop() : void startVoice()}><Icon name="voice" /></button><button type="submit" className="kestrel-home-send" aria-label={`Send message to ${agentName}`} title={`Send message to ${agentName}`} disabled={!canSend || busy || voiceState !== "idle"}><Icon name="arrow" /></button></div>
+				<div className="new-tab-composer-send-actions"><ModelSelector accounts={accounts} choice={choice} onChange={applyChoice} /><button type="button" className={`new-tab-composer-icon${voiceState === "recording" ? " is-recording" : ""}`} aria-label={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} title={voiceState === "recording" ? "Stop and transcribe voice" : "Record voice"} disabled={busy || voiceState === "transcribing"} onClick={() => voiceState === "recording" ? recorderRef.current?.stop() : void startVoice()}><Icon name="voice" /></button><button type="submit" className="kestrel-home-send" aria-label={`Send message to ${agentName}`} title={!routingReady && !isNavigation ? "Connect a model to send tasks." : `Send message to ${agentName}`} disabled={!canSend || busy || voiceState !== "idle"}><Icon name="arrow" /></button></div>
 			</div>
 		</form>
+		{showModelReadiness && <div className="new-tab-composer-route-status" role="status"><span>{accountsLoaded ? "Connect a model to send tasks." : "Checking model access…"}</span>{accountsLoaded && <button type="button" onClick={onOpenModelSettings}>Connect a model</button>}</div>}
 		{voiceState !== "idle" && <span className="new-tab-composer-status" role="status">{voiceState === "recording" ? "Microphone live · tap to transcribe" : "Transcribing voice…"}</span>}
 		{error && <p className="new-tab-composer-error" role="alert">{error}</p>}
 	</div>;

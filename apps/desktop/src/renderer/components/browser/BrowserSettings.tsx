@@ -1196,7 +1196,8 @@ export function BrowserSettings({
                     return (
                       <li key={key}>
                         <span>
-                          {permission.origin} · {permission.permission} ·{" "}
+                          {permission.origin} · {permission.permission === "open-external:msteams" ? "Open Microsoft Teams" :
+                            permission.permission.startsWith("open-external:") ? "Open external app" : permission.permission} ·{" "}
                           {permission.decision}
                         </span>
                         <button

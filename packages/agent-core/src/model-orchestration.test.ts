@@ -12,6 +12,7 @@ import {
 } from "./model-orchestration";
 import type { ModelProvider } from "./providers";
 import { ModelCatalog } from "./providers/model-catalog";
+import { openAIModelMetadata } from "./providers/openai-model-metadata";
 import { AccountAvailabilityMonitor } from "./routing/account-availability";
 
 function provider(input: {
@@ -97,6 +98,205 @@ function fixture(providers: ModelProvider[]) {
 }
 
 describe("adaptive model orchestration", () => {
+	it("parses budget spacing without overlapping whitespace scans", () => {
+		const analyzer = new TaskRequirementAnalyzer();
+		const item = fixture([]);
+		const base = item.router.policy();
+		for (const prompt of ["under 2.50", "under $2.50", "budget of \t$ \t2.50"]) {
+			expect(analyzer.routingPolicy(prompt, base).maximumTaskCostUsd).toBe(2.5);
+		}
+		expect(analyzer.routingPolicy(`under${" ".repeat(100_000)}unlimited`, base)).toEqual(base);
+		item.database.close();
+	});
+
+	it("recognizes indented list items without rescanning blank lines", () => {
+		const analyzer = new TaskRequirementAnalyzer();
+		const plain = analyzer.analyze("plain", "Outline the steps.");
+		const blanks = analyzer.analyze("blanks", `Outline the steps.${"\n".repeat(100_000)}end`);
+		const numbered = analyzer.analyze("numbered", "Outline the steps.\n \t1. end");
+		expect(blanks.complexity).toBeLessThan(plain.complexity + 0.01);
+		expect(numbered.complexity).toBeGreaterThan(blanks.complexity + 0.07);
+	});
+
+	it.each([
+		"Inspect manifest.json and package.json before reviewing the diff.",
+		"Review the JSON input and explain the findings in prose.",
+		"Read data.csv and summarize the CSV input.",
+		"Review the database schema implementation.",
+		"Return findings after inspecting the JSON schema.",
+	])("does not require structured output for source formats: %s", (prompt) => {
+		expect(
+			new TaskRequirementAnalyzer().analyze("input-format", prompt)
+				.requiresStructuredOutput,
+		).toBe(false);
+	});
+
+	it.each([
+		"Return JSON with the findings.",
+		"Output valid CSV.",
+		"Respond in JSON.",
+		"Respond with JSON.",
+		"Return findings in a JSON object.",
+		"Reply with a CSV table.",
+		"Return the review findings as JSON.",
+		"Format the answer as CSV.",
+		"Use structured output for the response.",
+	])("requires structured output when requested: %s", (prompt) => {
+		expect(
+			new TaskRequirementAnalyzer().analyze("output-format", prompt)
+				.requiresStructuredOutput,
+		).toBe(true);
+	});
+
+	it("keeps an explicit structured-output requirement authoritative", () => {
+		expect(
+			new TaskRequirementAnalyzer().analyze("explicit-output", "Review this note.", {
+				requiresStructuredOutput: true,
+			}).requiresStructuredOutput,
+		).toBe(true);
+	});
+
+	it("routes JSON source inspection to a tool-capable endpoint without structured output", () => {
+		const base = provider({ id: "source-review", model: "reviewer", tools: true });
+		const endpoint: ModelProvider = {
+			...base,
+			profileHints: {
+				...base.profileHints,
+				features: { structuredOutput: false, reasoningLevels: false, fastMode: false },
+			},
+		};
+		const item = fixture([endpoint]);
+		expect(
+			item.router.route(
+				item.analyzer.analyze("manifest-review",
+					"Review the repository diff using manifest.json and the source files."),
+				{ role: "worker" },
+			).endpointId,
+		).toBe(endpoint.id);
+		expect(() => item.router.route(
+			item.analyzer.analyze("json-response",
+				"Review the repository diff and return findings as JSON."),
+			{ role: "worker" },
+		)).toThrow("No configured model satisfies");
+		item.database.close();
+	});
+
+	it("routes documented GPT-6 Sol and Luna account models by task, without pricing a Codex subscription", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const sol = openAIModelMetadata("gpt-6-sol")!;
+		const luna = openAIModelMetadata("gpt-6-luna")!;
+		const api: ModelProvider = {
+			id: "openai-api-account",
+			poolId: "openai",
+			account: {
+				id: "openai-api-account",
+				providerId: "openai",
+				displayName: "OpenAI API",
+				authTransport: "api_key",
+				enabled: true,
+			},
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: true,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			discoverModels: async () =>
+				["gpt-6-sol", "gpt-6-luna"].map((id) => ({
+					id,
+					availability: "available" as const,
+					source: "provider_api" as const,
+					capabilities: {
+						...(id === "gpt-6-sol" ? sol : luna).discoveryCapabilities,
+						capabilityProvenance: "metadata" as const,
+					},
+				})),
+			complete: async (request) => ({
+				providerId: "openai-api-account",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 0, outputTokens: 0 },
+				finishReason: "stop" as const,
+			}),
+		};
+		const catalog = new ModelCatalog(database, [api]);
+		await catalog.refresh([api]);
+		const registry = new ModelRegistry(database, [api], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 1);
+
+		expect(registry.get("openai-api-account:gpt-6-sol")).toMatchObject({
+			tier: "frontier",
+			cost: { inputPerMillion: 2, outputPerMillion: 10 },
+			features: { reasoningLevels: true, tools: true },
+		});
+		expect(registry.get("openai-api-account:gpt-6-luna")).toMatchObject({
+			tier: "standard",
+			cost: { inputPerMillion: 0.1, outputPerMillion: 0.5 },
+			features: { reasoningLevels: true, tools: true },
+		});
+
+		const analyzer = new TaskRequirementAnalyzer();
+		expect(
+			router.route(
+				analyzer.analyze("gpt6-cheap", "Summarize this short note."),
+				{
+					role: "worker",
+					policy: { ...router.policy(), mode: "cheapest" },
+				},
+			).selectedModelId,
+		).toBe("openai-api-account:gpt-6-luna");
+		expect(
+			router.route(
+				analyzer.analyze(
+					"gpt6-demanding",
+					"Design and implement a secure, multi-service agent workflow with a migration, approval boundaries, and a complete validation plan.",
+					{ requiresTools: true },
+				),
+				{ role: "orchestrator", policy: { ...router.policy(), mode: "best_quality" } },
+			).selectedModelId,
+		).toBe("openai-api-account:gpt-6-sol");
+
+		const subscription: ModelProvider = {
+			...api,
+			id: "codex-subscription-account",
+			poolId: "codex",
+			account: {
+				...api.account!,
+				id: "codex-subscription-account",
+				providerId: "codex",
+				displayName: "Codex subscription",
+				authTransport: "oauth",
+			},
+			discoverModels: async () => [
+				{
+					id: "gpt-6-sol",
+					availability: "available",
+					source: "protocol",
+					capabilities: {
+						...sol.discoveryCapabilities,
+						capabilityProvenance: "confirmed",
+					},
+				},
+			],
+		};
+		const subscriptionCatalog = new ModelCatalog(database, [subscription]);
+		await subscriptionCatalog.refresh([subscription]);
+		const subscriptionRegistry = new ModelRegistry(
+			database,
+			[subscription],
+			[],
+			undefined,
+			subscriptionCatalog,
+		);
+		expect(
+			subscriptionRegistry.get("codex-subscription-account:gpt-6-sol").cost,
+		).toEqual({});
+		database.close();
+	});
+
 	it("does not automatically route to an unavailable account model", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const unavailable: ModelProvider = {
@@ -250,7 +450,7 @@ describe("adaptive model orchestration", () => {
 			defaultModel: "gpt-catalog",
 			capabilities: {
 				streaming: true,
-				tools: false,
+				tools: true,
 				images: false,
 				audio: false,
 				documents: false,
@@ -267,7 +467,7 @@ describe("adaptive model orchestration", () => {
 					capabilities: {
 						capabilityProvenance: "confirmed",
 						streaming: true,
-						tools: false,
+						tools: true,
 						images: false,
 						audio: false,
 						documents: false,
@@ -305,6 +505,126 @@ describe("adaptive model orchestration", () => {
 			"codex-account-d",
 			"codex-account-a",
 		]);
+		const review = new TaskRequirementAnalyzer().analyze(
+			"review-pr-802",
+			"Review GitHub PR #802. Inspect the diff before giving findings.",
+		);
+		expect(review.requiresTools).toBe(true);
+		expect(router.route(review, { role: "worker" })).toMatchObject({
+			providerId: "codex",
+			endpointId: "codex-account-b",
+		});
+		database.close();
+	});
+
+	it("uses a review-capable model with high reasoning for a multi-file PR review", () => {
+		const item = fixture([
+			provider({ id: "fast", model: "gpt-6-luna", reasoningLevels: true }),
+			provider({ id: "strong", model: "gpt-6-astra", reasoningLevels: true }),
+		]);
+		const requirements = item.analyzer.analyze(
+			"review-pr-files",
+			"Review GitHub PR #802 in the browser. Inspect all four changed files and surrounding code before reporting correctness findings.",
+		);
+		expect(requirements.requiresTools).toBe(true);
+		expect(requirements.complexity).toBeGreaterThanOrEqual(0.7);
+		const decision = item.router.route(requirements, { role: "worker" });
+		expect(decision.selectedModelId).toBe("strong:gpt-6-astra");
+		expect(decision.reasoningLevel).toBe("high");
+		item.database.close();
+	});
+
+	it("uses catalog order to break equal Codex model scores for a PR review", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint: ModelProvider = {
+			...provider({ id: "codex-account", model: "gpt-5.5" }),
+			poolId: "codex",
+			account: {
+				id: "codex-account",
+				providerId: "codex",
+				displayName: "Codex",
+				authTransport: "oauth",
+				enabled: true,
+			},
+			discoverModels: async () =>
+				([
+					["gpt-5.5", 13],
+					["gpt-6-astra", 2],
+				] as const).map(([id, catalogPriority]) => ({
+					id,
+					catalogPriority,
+					availability: "available" as const,
+					source: "protocol" as const,
+					capabilities: {
+						capabilityProvenance: "confirmed" as const,
+						streaming: true,
+						tools: true,
+						images: true,
+						reasoningEfforts: ["low", "medium", "high"] as Array<"low" | "medium" | "high">,
+					},
+				})),
+		};
+		const catalog = new ModelCatalog(database, [endpoint]);
+		await catalog.refresh([endpoint]);
+		const registry = new ModelRegistry(database, [endpoint], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+		const requirements = new TaskRequirementAnalyzer().analyze(
+			"review-pr-catalog",
+			"Review the open GitHub PR #802. Inspect all four changed files and relevant surrounding behavior with browser tools.",
+		);
+		const decision = router.route(requirements, { role: "worker" });
+		expect(decision.model).toBe("gpt-6-astra");
+		expect(decision.reasoningLevel).toBe("high");
+		database.close();
+	});
+
+	it("uses live catalog descriptions to prefer Astra over a legacy model", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint: ModelProvider = {
+			...provider({ id: "codex-described", model: "gpt-5.5" }),
+			poolId: "codex",
+			account: {
+				id: "codex-described",
+				providerId: "codex",
+				displayName: "Codex",
+				authTransport: "oauth",
+				enabled: true,
+			},
+			discoverModels: async () =>
+				([
+				["gpt-5.5", "Legacy coding model."],
+				["gpt-6-sol", "Previous generation workhorse model."],
+				["gpt-6-astra", "Frontier intelligence for the most demanding work."],
+			] as const).map(([id, description]) => ({
+				id,
+				description,
+				availability: "available" as const,
+				source: "protocol" as const,
+				capabilities: {
+					capabilityProvenance: "confirmed" as const,
+					streaming: true,
+					tools: true,
+					reasoningEfforts: ["low", "medium", "high"] as Array<"low" | "medium" | "high">,
+				},
+			})),
+		};
+		const catalog = new ModelCatalog(database, [endpoint]);
+		await catalog.refresh([endpoint]);
+		const registry = new ModelRegistry(database, [endpoint], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+		const requirements = new TaskRequirementAnalyzer().analyze(
+			"review-pr-described",
+			"Review GitHub PR #802. Inspect all four changed files and surrounding behavior using browser tools.",
+		);
+		const decision = router.route(requirements, { role: "worker" });
+		expect(registry.get("codex-described:gpt-5.5").tier).toBe("standard");
+		expect(registry.get("codex-described:gpt-6-sol")).toMatchObject({
+			tier: "advanced",
+			capabilities: { complex_reasoning: 0.88, coding: 0.88 },
+		});
+		expect(registry.get("codex-described:gpt-6-astra").tier).toBe("frontier");
+		expect(decision.model).toBe("gpt-6-astra");
+		expect(decision.reasoningLevel).toBe("high");
 		database.close();
 	});
 
@@ -1239,6 +1559,32 @@ describe("adaptive model orchestration", () => {
 				requireReviewAboveRisk: "sensitive",
 			}).mode,
 		).toBe("best_quality");
+	});
+
+	it("keeps an explicit no-file-tools safety boundary on a plain-text route", () => {
+		const item = fixture([
+			provider({
+				id: "codex-read-only",
+				model: "gpt-6-sol",
+				tools: false,
+				capabilities: {
+					planning: 0.93,
+					instruction_following: 0.93,
+					reliability: 0.9,
+				},
+			}),
+		]);
+		const requirements = item.analyzer.analyze(
+			"codex-read-only-plan",
+			"Create a short launch-readiness plan. Do not call tools, access credentials, browse, run commands, edit files, or make changes.",
+		);
+
+		expect(requirements.requiresTools).toBe(false);
+		expect(requirements.capabilities.tool_use).toBeUndefined();
+		expect(
+			item.router.route(requirements, { role: "worker" }).selectedModelId,
+		).toBe("codex-read-only:gpt-6-sol");
+		item.database.close();
 	});
 
 	it("keeps trivial work off frontier models when a cheaper adequate model exists", () => {

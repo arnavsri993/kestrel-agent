@@ -296,6 +296,24 @@ describe("agent runtime", () => {
 		database.close();
 	});
 
+	it("masks credential-looking persistent-agent titles when renamed and retains ordinary names", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const agent = runtime.createSession({ title: "Research", kind: "agent" });
+		const secret = "fixture-title-key-123456789";
+		try {
+			const renamed = runtime.configureAgent(agent.id, {
+				title: `API_KEY=${secret}`, instructions: "Review source evidence.",
+			});
+			expect(renamed.title).toBe("API_KEY=[REDACTED]");
+			expect(database.getRuntimeSession(agent.id)?.title).toBe("API_KEY=[REDACTED]");
+			expect(JSON.stringify(runtime.listSessions())).not.toContain(secret);
+			expect(renamed.agentInstructions).toBe("Review source evidence.");
+			expect(runtime.configureAgent(agent.id, { title: "Release reviewer", instructions: "Review source evidence." }).title)
+				.toBe("Release reviewer");
+		} finally { runtime.close(); database.close(); }
+	});
+
 	it("persists message activity as session recency without allowing stale clocks to move it backward", () => {
 		const directory = mkdtempSync(join(tmpdir(), "kestrel-session-recency-"));
 		temporaryDirectories.push(directory);

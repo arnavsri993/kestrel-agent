@@ -1390,6 +1390,7 @@ export class KestrelDatabase {
 		interruptedAt: string;
 		reason: string;
 		expectedSessionClaimOwnerToken?: string;
+		recoveryReason?: "core_restarted" | "stale_owner";
 	}): RetiredAgentHistory {
 		if (!input.runId) throw new Error("Interrupted agent run ID is required.");
 		if (!Number.isFinite(Date.parse(input.interruptedAt)))
@@ -1462,7 +1463,7 @@ export class KestrelDatabase {
 				...base,
 				status: "failed",
 				recovery: {
-					reason: "core_restarted",
+					reason: input.recoveryReason ?? "core_restarted",
 					action: "retry_last_turn",
 				},
 				error: input.reason,
@@ -2197,10 +2198,10 @@ export class KestrelDatabase {
 		];
 		const parameters: Array<string | number> = [];
 		if (options.startAt && options.endAt) {
-			conditions.push("e.started_at < ?", "(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("e.started_at < ?", "COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.endAt, options.startAt);
 		} else if (options.startAt) {
-			conditions.push("(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.startAt);
 		} else if (options.endAt) {
 			conditions.push("e.started_at < ?");
@@ -2264,10 +2265,10 @@ export class KestrelDatabase {
 			this.hashMemoryTerm(term),
 		);
 		if (options.startAt && options.endAt) {
-			conditions.push("e.started_at < ?", "(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("e.started_at < ?", "COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.endAt, options.startAt);
 		} else if (options.startAt) {
-			conditions.push("(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.startAt);
 		} else if (options.endAt) {
 			conditions.push("e.started_at < ?");
@@ -4375,6 +4376,15 @@ export class KestrelDatabase {
 			this.encryptionKey,
 		);
 		return JSON.parse(value) as T;
+	}
+
+	/** Synchronous read/modify/write serialized across connections and processes. */
+	updatePrivateState<T>(key: string, update: (current: T | undefined) => T): T {
+		return this.db.transaction(() => {
+			const next = update(this.getPrivateState<T>(key));
+			this.setPrivateState(key, next);
+			return next;
+		}).immediate();
 	}
 
 	deletePrivateState(key: string): void {

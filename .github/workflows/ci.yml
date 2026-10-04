@@ -77,6 +77,7 @@ jobs:
       - run: corepack pnpm test:desktop-file-icon-guard
       - run: corepack pnpm test
       - run: corepack pnpm test:desktop-smoke
+      - run: corepack pnpm test:desktop-task-secrets
       - run: corepack pnpm test:desktop-single-instance
       - run: corepack pnpm test:desktop-restart-recovery
       - run: corepack pnpm test:desktop-workflow-reuse
@@ -88,15 +89,24 @@ jobs:
       - run: corepack pnpm test:desktop-personas
       - run: corepack pnpm test:desktop-kanban
       - run: corepack pnpm test:desktop-model-routing
+      - run: corepack pnpm test:desktop-provider-accounts
+      - run: corepack pnpm test:desktop-auth-links
       - run: corepack pnpm test:desktop-subscription-cli-safety
       - run: corepack pnpm test:desktop-readiness
       - run: corepack pnpm test:desktop-external-secrets
       - run: corepack pnpm test:desktop-observability
       - run: corepack pnpm test:desktop-life-context
       - run: corepack pnpm test:desktop-approvals
+      - run: corepack pnpm test:desktop-approval-failure
+      - run: corepack pnpm test:desktop-task-scope
+      - run: corepack pnpm test:desktop-tool-results
       - run: corepack pnpm test:desktop-chat-configuration
       - run: corepack pnpm test:desktop-managed-policy
       - run: corepack pnpm package:mac:dev
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-approval-failure
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-task-scope
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-tool-results
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-task-secrets
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
@@ -136,7 +146,9 @@ jobs:
         with:
           name: desktop-failure-evidence-${{ github.run_attempt }}
           path: |
+            .tmp/desktop-browser/**
             .tmp/desktop-layout/**
+            .tmp/desktop-personas/**
             .tmp/browser-agent-benchmark/*.json
             .tmp/ci-diagnostics/**
             test-results/**

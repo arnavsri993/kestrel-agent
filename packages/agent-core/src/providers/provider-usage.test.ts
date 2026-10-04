@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	parseCodexAccountUsageSnapshot,
-	earliestCodexResetAt,
+	codexAvailabilityResetAt,
 	CodexAppServerProvider,
 } from "./codex-app-server";
 import {
@@ -44,9 +44,57 @@ describe("Codex usage snapshot parsing", () => {
 			"5-hour",
 			"Weekly",
 		]);
-		expect(earliestCodexResetAt(snapshot)).toBe(
+		expect(codexAvailabilityResetAt(snapshot)).toBe(
 			new Date(2_000_000_000 * 1_000).toISOString(),
 		);
+	});
+
+	it("prefers legacy Codex windows over another named bucket", () => {
+		const snapshot = parseCodexAccountUsageSnapshot({
+			rateLimitsByLimitId: {
+				other: { primary: { usedPercent: 100, windowDurationMins: 300 } },
+			},
+			rateLimits: { primary: { usedPercent: 12, windowDurationMins: 300 } },
+		});
+		expect(snapshot.primary?.usedPercent).toBe(12);
+		expect(snapshot.rateLimitReached).toBe(false);
+	});
+
+	it("uses another named bucket only when Codex and legacy windows are absent", () => {
+		const snapshot = parseCodexAccountUsageSnapshot({
+			rateLimitsByLimitId: {
+				other: { primary: { usedPercent: 37, windowDurationMins: 300 } },
+			},
+		});
+		expect(snapshot.primary?.usedPercent).toBe(37);
+	});
+
+	it("waits for all exhausted windows and declines unknown reset times", () => {
+		const first = new Date(Date.now() + 60_000).toISOString();
+		const last = new Date(Date.now() + 120_000).toISOString();
+		const primary = { usedPercent: 100, resetsAt: first };
+		const secondary = { usedPercent: 100, resetsAt: last };
+		expect(codexAvailabilityResetAt({ rateLimitReached: true, primary, updatedAt: first })).toBe(first);
+		expect(codexAvailabilityResetAt({ rateLimitReached: true, secondary, updatedAt: first })).toBe(last);
+		expect(codexAvailabilityResetAt({ rateLimitReached: true, primary, secondary, updatedAt: first })).toBe(last);
+		expect(codexAvailabilityResetAt({ rateLimitReached: true, primary, secondary: { usedPercent: 100 }, updatedAt: first })).toBeUndefined();
+		expect(codexAvailabilityResetAt({ rateLimitReached: true, primary: { usedPercent: 100, resetsAt: "bad" }, updatedAt: first })).toBeUndefined();
+		expect(codexAvailabilityResetAt({ rateLimitReached: true, primary: { usedPercent: 100, resetsAt: new Date(Date.now() - 1000).toISOString() }, updatedAt: first })).toBeUndefined();
+		expect(codexAvailabilityResetAt({ rateLimitReached: true, primary: { usedPercent: 90, resetsAt: first }, updatedAt: first })).toBeUndefined();
+		expect(codexAvailabilityResetAt({ rateLimitReached: false, primary, updatedAt: first })).toBeUndefined();
+	});
+
+	it("authoritative recovery drops missing synthetic quota fields", () => {
+		const previous = parseCodexAccountUsageSnapshot({
+			ordinaryUsageAllowed: false,
+			rateLimits: { primary: { usedPercent: 100, windowDurationMins: 300 } },
+		});
+		const recovered = parseCodexAccountUsageSnapshot(
+			{ rateLimits: {} }, undefined, previous, true,
+		);
+		expect(recovered.rateLimitReached).toBe(false);
+		expect(recovered.ordinaryUsageAllowed).toBeUndefined();
+		expect(recovered.primary).toBeUndefined();
 	});
 
 	it("merges sparse rate-limit notifications without clearing known windows", () => {
@@ -225,6 +273,55 @@ describe("Account-backed Codex usage identity", () => {
 });
 
 describe("ProviderPool markUnavailable", () => {
+	it("records the cooldown for an explicitly selected endpoint without calling it", async () => {
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "selected",
+			defaultModel: "test",
+			capabilities: { streaming: false, tools: false, images: false, audio: false, documents: false, video: false, local: false },
+			async complete() {
+				calls += 1;
+				throw new Error("unexpected call");
+			},
+		};
+		const now = new Date("2026-07-29T12:00:00.000Z");
+		const pool = new ProviderPool([provider], () => now);
+		pool.markUnavailable("selected", "rate_limit", new Date("2026-07-29T12:01:00.000Z"));
+		await expect(pool.complete(
+			{ model: "test", messages: [{ role: "user", content: textContent("hi") }] },
+			{ providerIds: ["selected"], automaticRouting: false },
+		)).rejects.toMatchObject({
+			attempts: [{ providerId: "selected", status: "failed", error: "Provider temporarily unavailable (rate_limit) until 2026-07-29T12:01:00.000Z." }],
+		});
+		expect(calls).toBe(0);
+	});
+
+	it("fresh usage recovery restores automatic routing", async () => {
+		let nowMs = Date.now();
+		let calls = 0;
+		let exhausted = true;
+		const provider = new CodexAppServerProvider({ id: "codex-account", poolId: "codex" });
+		provider.readRateLimits = async () => parseCodexAccountUsageSnapshot({
+			rateLimits: { primary: { usedPercent: exhausted ? 100 : 25, windowDurationMins: 300, resetsAt: Math.floor((nowMs + 600_000) / 1000) } },
+		});
+		provider.lastRateLimits = () => undefined;
+		provider.complete = async () => {
+			calls += 1;
+			return { providerId: provider.id, model: "test", text: "ok", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" };
+		};
+		const pool = new ProviderPool([provider], () => new Date(nowMs));
+		const collector = new ProviderUsageCollector(pool, () => new Date(nowMs));
+		await collector.collect();
+		expect(pool.health()[0]?.unhealthyReason).toBe("rate_limit");
+		expect(calls).toBe(0);
+		exhausted = false;
+		nowMs += 61_000;
+		await collector.collect();
+		expect(pool.health()[0]?.unhealthyReason).toBeUndefined();
+		await pool.complete({ model: "auto", messages: [{ role: "user", content: textContent("hi") }] }, { providerIds: ["codex-account"], automaticRouting: true });
+		expect(calls).toBe(1);
+	});
+
 	it("skips exhausted providers during automatic routing", async () => {
 		const healthy: ModelProvider = {
 			id: "healthy",

@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
@@ -33,6 +32,7 @@ import {
 	sanitizeBrowserUrl,
 	sanitizeUntrustedBrowserValue,
 } from "./browser-tab-store";
+import { limitBrowserAccessibilityTree } from "./browser-accessibility-limit";
 import {
 	dispatchBrowserKey,
 	dispatchBrowserMouseClick,
@@ -574,17 +574,14 @@ export class ElectronBrowserService {
 		const annotated = annotateAccessibilityTree({
 			nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES),
 		});
-		const interactive = annotated.interactive.slice(0, MAX_INTERACTIVE_REFS);
-		const accessibilityTree = sanitizeUntrustedBrowserValue(
+		const sanitizedTree = sanitizeUntrustedBrowserValue(
 			annotated.accessibilityTree,
-		);
-		if (
-			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
-			MAX_AX_SNAPSHOT_BYTES
-		) {
-			this.elementRefs.set(id, new Map());
-			throw new Error("Isolated browser accessibility snapshot exceeds 1.5 MB.");
-		}
+		) as { nodes: unknown[] };
+		const bounded = limitBrowserAccessibilityTree(sanitizedTree, MAX_AX_SNAPSHOT_BYTES);
+		const interactive = annotated.interactive
+			.slice(0, MAX_INTERACTIVE_REFS)
+			.filter((item) => bounded.retainedRefs.has(item.ref));
+		const accessibilityTree = bounded.accessibilityTree;
 		this.elementRefs.set(id, rememberElementRefs(interactive));
 		return {
 			url:
@@ -594,6 +591,7 @@ export class ElectronBrowserService {
 			accessibilityTree,
 			interactive: publicInteractiveRefs(interactive),
 			truncated:
+				bounded.truncated ||
 				nodes.length > MAX_AX_SNAPSHOT_NODES ||
 				annotated.interactive.length > MAX_INTERACTIVE_REFS,
 		};
@@ -606,6 +604,8 @@ export class ElectronBrowserService {
 		const { window } = this.require(id);
 		if (signal.aborted) throw signal.reason;
 		const snapshot = await this.snapshot(id, signal);
+		if (snapshot.truncated)
+			throw new Error("Kestrel cannot share a screenshot when the page inspection is incomplete.");
 		if (
 			snapshot.interactive?.some(
 				(item) =>
@@ -734,57 +734,10 @@ export class ElectronBrowserService {
 	}
 
 	private async desktopAct(
-		action: DesktopAction,
-		signal: AbortSignal,
+		_action: DesktopAction,
+		_signal: AbortSignal,
 	): Promise<void> {
-		this.assertComputerUseEnabled();
-		if (signal.aborted) throw signal.reason;
-		if (process.platform !== "darwin")
-			throw new Error(
-				"Whole-desktop computer use is available only on macOS.",
-			);
-		if (!systemPreferences.isTrustedAccessibilityClient(false))
-			throw new Error(
-				"macOS Accessibility permission is required for whole-desktop control.",
-			);
-		const keyCodes: Record<
-			Extract<DesktopAction, { type: "key" }>["key"],
-			number
-		> = {
-			Enter: 36,
-			Escape: 53,
-			Tab: 48,
-			Backspace: 51,
-			ArrowUp: 126,
-			ArrowDown: 125,
-			ArrowLeft: 123,
-			ArrowRight: 124,
-		};
-		const script =
-			action.type === "click"
-				? `tell application "System Events" to click at {${action.x}, ${action.y}}`
-				: action.type === "type"
-					? 'tell application "System Events" to keystroke (system attribute "KESTREL_COMPUTER_TEXT")'
-					: `tell application "System Events" to key code ${keyCodes[action.key]}`;
-		await new Promise<void>((resolvePromise, reject) => {
-			const child = execFile(
-				"/usr/bin/osascript",
-				["-e", script],
-				{
-					timeout: 30_000,
-					env: {
-						PATH: "/usr/bin:/bin",
-						...(action.type === "type"
-							? { KESTREL_COMPUTER_TEXT: action.text }
-							: {}),
-					},
-				},
-				(error) => (error ? reject(error) : resolvePromise()),
-			);
-			const abort = () => child.kill("SIGTERM");
-			signal.addEventListener("abort", abort, { once: true });
-			child.once("exit", () => signal.removeEventListener("abort", abort));
-		});
+		throw new Error("Targetless desktop input is unavailable. Use computer_foreground_act with an observed app and window.");
 	}
 
 	private assertComputerUseEnabled(): void {

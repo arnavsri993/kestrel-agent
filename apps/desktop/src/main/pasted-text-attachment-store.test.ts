@@ -1,4 +1,4 @@
-import { chmodSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +11,13 @@ afterEach(() => {
 });
 
 describe("PastedTextAttachmentStore", () => {
+	it("rejects a credential-bearing paste before creating any file", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-paste-secret-"));
+		roots.push(root);
+		const store = new PastedTextAttachmentStore(join(root, "attachments"));
+		await expect(store.create(`notes ${"n".repeat(8_000)} API_KEY=fixture-paste-sensitive-123456`)).rejects.toThrow("cannot be saved as an attachment");
+		expect(readdirSync(root)).toEqual([]);
+	});
 	it("creates private bounded text files and removes them", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-paste-test-"));
 		roots.push(root);

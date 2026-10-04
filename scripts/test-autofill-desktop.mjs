@@ -42,11 +42,15 @@ try {
  await page.evaluate(()=>{localStorage.setItem('kestrel:onboarded','yes');localStorage.setItem('kestrel:default-browser-prompted','yes');});
  await page.reload();
  const request=(input)=>page.evaluate((input)=>window.kestrel.request(input),input);
- await page.getByRole('button', {name: /^Model:/}).click();
+ const chatToggle=page.locator('#browser-agent-toggle');
+ await chatToggle.waitFor();
+ if(await chatToggle.getAttribute('aria-expanded')!=='true') await chatToggle.click();
+ await page.locator('.agent-conversation-host').getByRole('button', {name: /^Model:/}).click();
  await expect(page.locator('.model-selector-menu')).toBeVisible();
  assert.equal(await page.locator('.model-selector-menu').evaluate(node=>getComputedStyle(node).backgroundImage),'none');
  if (evidence) await page.screenshot({path:join(evidence,'model-menu.png')});
  await page.keyboard.press('Escape');
+ if(await page.locator('.agent-sidebar').evaluate(node=>node.classList.contains('agent-sidebar-overlay'))) await page.locator('.agent-sidebar-collapse').click();
 
  await app.evaluate(async ({session})=>{
   await session.fromPartition('persist:kestrel-user-browser-v1').protocol.handle('https',(request)=>{

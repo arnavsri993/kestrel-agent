@@ -15,16 +15,16 @@ Personal memory, OAuth tokens, provider keys, selected files, schedules, message
 
 | Threat | Control |
 | --- | --- |
-| Prompt injection in an email/page | content origin labels; injection detector; unrelated-tool rejection; approval escalation |
+| Prompt injection in an email/page | content origin labels; injection detector; unrelated-tool rejection; approval escalation; fixture suite in `packages/agent-core/src/security/prompt-injection-fixtures.ts` |
 | Renderer compromise | sandbox, context isolation, no Node integration, narrow Zod-validated bridge |
-| Secret disclosure | Keychain/safeStorage broker; capability-scoped requests; log redaction; production bundle scan |
+| Secret disclosure | Keychain/safeStorage broker on stable builds; capability-scoped requests; log redaction; production bundle scan; lazy legacy-key migration without plaintext-as-default (see `docs/secure-storage.md`) |
 | Duplicate external action | operation idempotency keys and read-after-write verification |
 | Excessive autonomy/cost | initiative levels, resource governor, depth/task/cost limits, quiet hours |
 | Unsafe filesystem access | user-selected roots, normalized path checks, no full-disk scan |
 | Malicious websites or downloads | replaceable URL-reputation provider before top-level navigation and download destination selection; local interstitials and blocked-download records; normal macOS quarantine, Gatekeeper, notarization, and XProtect remain authoritative |
 | Malicious update | signed channel metadata, notarization/Gatekeeper release gates, no update during critical operations |
 | Local database theft | AES-256-GCM field encryption with a Keychain-protected key; future SQLCipher adapter |
-| Orphaned workers | bounded supervision, checkpointing, clean-quit process audit |
+| Orphaned workers | bounded supervision, checkpointing, clean-quit process audit; run heartbeats with `stale_owner` recovery |
 
 ## Release caveat
 

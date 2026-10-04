@@ -142,6 +142,9 @@ try {
   assert.equal(await clearHistory.getByRole("button", { name: "Clear history" }).count(), 1);
 
   await page.setViewportSize({ width: 600, height: 800 });
+  await page.waitForFunction(() => document.querySelector(".ai-browser-app")?.classList.contains("agent-sidebar-compact"));
+  const closeChat = page.getByRole("button", { name: "Close chat", exact: true });
+  if (await closeChat.isVisible()) await closeChat.click();
   const picker = page.locator(".settings-section-picker");
   await picker.waitFor({ state: "visible" });
   const pickerSelect = picker.locator("select");

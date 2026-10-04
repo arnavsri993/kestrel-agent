@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import {
 	mkdtempSync,
 	mkdirSync,
@@ -166,9 +167,9 @@ async function readInteractionDiagnostics(page) {
 	});
 }
 
-async function armAgentRailClickContinuityProbe(page) {
-	await page.evaluate(() => {
-		delete window.__kestrelAgentRailClickContinuity;
+async function armAgentRailInterruptionProbe(page, expectedWidth) {
+	await page.evaluate((targetWidth) => {
+		delete window.__kestrelAgentRailInterruption;
 		const readState = () => {
 			const shell = document.querySelector(".ai-browser-app");
 			const panel = document.querySelector(".agent-sidebar");
@@ -177,6 +178,7 @@ async function armAgentRailClickContinuityProbe(page) {
 				getComputedStyle(shell).getPropertyValue("--agent-panel-presented-width"),
 			);
 			return {
+				at: performance.now(),
 				width: panel.getBoundingClientRect().width,
 				presentedWidth: Number.isFinite(presentedWidth) ? presentedWidth : null,
 				settling: shell.classList.contains("agent-sidebar-settling"),
@@ -185,36 +187,87 @@ async function armAgentRailClickContinuityProbe(page) {
 					?.getAttribute("aria-label"),
 			};
 		};
-		const captureClick = (event) => {
-			const target =
-				event.target instanceof Element
-					? event.target.closest("#browser-agent-toggle")
-					: null;
-			if (!target) return;
-			document.removeEventListener("click", captureClick, true);
+		const result = {};
+		window.__kestrelAgentRailInterruption = result;
+		let phase = "opening";
+		const deadline = performance.now() + 10_000;
+		const activate = (stage, nextPhase) => {
+			const target = document.querySelector("#browser-agent-toggle");
+			const bounds = target.getBoundingClientRect();
+			const hit = document.elementFromPoint(
+				bounds.left + bounds.width / 2, bounds.top + bounds.height / 2,
+			);
+			if (hit !== target && !target.contains(hit)) {
+				result.error = "The moving rail covered its toggle.";
+				return;
+			}
 			const before = readState();
+			phase = "committing";
 			const observer = new MutationObserver(() => {
 				if (target.getAttribute("aria-label") === before.ariaLabel) return;
 				observer.disconnect();
-				window.__kestrelAgentRailClickContinuity = {
-					before,
-					after: readState(),
-				};
+				result[stage] = { before, after: readState() };
+				phase = nextPhase;
+				if (nextPhase === "resumed") {
+					requestAnimationFrame(() => requestAnimationFrame(() => {
+						result.afterTwoFrames = readState();
+						result.complete = true;
+					}));
+				}
 			});
 			observer.observe(target, {
 				attributes: true,
 				attributeFilter: ["aria-label"],
 			});
+			// Invoke the same button handler on an in-flight renderer frame. Waiting
+			// for another Playwright/CDP click can outlast the entire spring.
+			target.click();
 		};
-		document.addEventListener("click", captureClick, true);
-	});
+		const frame = () => {
+			if (result.error || result.complete) return;
+			if (performance.now() > deadline) {
+				result.error = `Rail interruption timed out in ${phase}.`;
+				return;
+			}
+			const state = readState();
+			if (state.settling && state.width > 8 && state.width < targetWidth - 8) {
+				if (phase === "opening") activate("reversal", "closing");
+				else if (phase === "closing" && state.width < result.reversal.before.width - 4)
+					activate("reopen", "resumed");
+			}
+			requestAnimationFrame(frame);
+		};
+		requestAnimationFrame(frame);
+	}, expectedWidth);
 }
 
-async function readAgentRailClickContinuityProbe(page) {
+async function readAgentRailInterruptionProbe(page) {
 	await page.waitForFunction(
-		() => window.__kestrelAgentRailClickContinuity?.after,
+		() => window.__kestrelAgentRailInterruption?.complete ||
+			window.__kestrelAgentRailInterruption?.error,
 	);
-	return page.evaluate(() => window.__kestrelAgentRailClickContinuity);
+	return page.evaluate(() => window.__kestrelAgentRailInterruption);
+}
+
+async function deferChatOpeningFocus(page) {
+	await page.evaluate(() => {
+		const original = window.requestAnimationFrame;
+		const pending = [];
+		window.requestAnimationFrame = function (callback) {
+			const source = callback.toString();
+			if (source.includes("runtime-prompt") && source.includes("browser-agent-toggle")) {
+				pending.push(callback);
+				return original.call(window, () => {});
+			}
+			return original.call(window, callback);
+		};
+		window.__kestrelFlushChatOpeningFocus = () => {
+			window.requestAnimationFrame = original;
+			for (const callback of pending) callback(performance.now());
+			delete window.__kestrelFlushChatOpeningFocus;
+			return pending.length;
+		};
+	});
 }
 
 function assertNear(actual, expected, message) {
@@ -238,14 +291,12 @@ function rectCenterY(rect) {
 }
 
 function expectedAgentPanelWidth(viewportWidth) {
-	if (viewportWidth <= 760) return 0;
-	if (viewportWidth <= 980) return 288;
-	if (viewportWidth <= 1_120) return 312;
-	return 336;
+	if (viewportWidth <= 1120) return viewportWidth;
+	return 560;
 }
 
 function expectedNavigationWidth(viewportWidth) {
-	return viewportWidth <= 1_120 ? 56 : 216;
+	return viewportWidth <= 800 ? 56 : 216;
 }
 
 async function readLayout(page) {
@@ -302,6 +353,15 @@ async function readTaskSettingsLayout(page) {
 		const sendActions = document.querySelector(
 			".agent-conversation-host .composer-send-actions",
 		);
+		const connectButton = document.querySelector(
+			".agent-conversation-host .composer-connect-model",
+		);
+		const voiceButton = document.querySelector(
+			".agent-conversation-host .composer-send-actions .voice-button",
+		);
+		const unavailableAddFiles = document.querySelector(
+			".agent-conversation-host .composer-footer.is-model-unavailable .composer-add-files",
+		);
 		const host = document.querySelector(".agent-conversation-host");
 		const footer = document.querySelector(
 			".agent-conversation-host .composer-footer",
@@ -349,6 +409,9 @@ async function readTaskSettingsLayout(page) {
 				ariaLabel: taskTrigger.getAttribute("aria-label"),
 			},
 			sendActions: rect(sendActions),
+			connectButton: connectButton ? rect(connectButton) : null,
+			voiceButtonPresent: Boolean(voiceButton),
+			unavailableAddFilesPresent: Boolean(unavailableAddFiles),
 			sendButton: rect(sendButton),
 			contextActions: rect(contextActions),
 			footer: rect(footer),
@@ -404,6 +467,32 @@ function assertTaskSettingsLayout(layout) {
 		layout.taskTrigger.right <= layout.sendActions.left + 1,
 		`Task settings must precede send actions: ${JSON.stringify({ task: layout.taskTrigger, send: layout.sendActions })}.`,
 	);
+	assert.ok(
+		layout.connectButton,
+		"No-provider composer must expose a visible Connect action.",
+	);
+	assert.equal(
+		layout.voiceButtonPresent,
+		false,
+		"No-provider composer must not show a voice action that cannot send work.",
+	);
+	assert.equal(
+		layout.unavailableAddFilesPresent,
+		false,
+		"No-provider composer must not show a file action that cannot submit work.",
+	);
+	for (const [label, control] of [
+		["model selector", layout.modelTrigger],
+		["task settings", layout.taskTrigger],
+		["Connect action", layout.connectButton],
+		["send actions", layout.sendActions],
+	]) {
+		assert.ok(
+			control.left >= layout.footer.left - 1 &&
+				control.right <= layout.footer.right + 1,
+			`${label} escaped the composer footer: ${JSON.stringify({ control, footer: layout.footer })}.`,
+		);
+	}
 	for (const [label, first, second] of [
 		["model and task-settings", layout.modelTrigger, layout.taskTrigger],
 		["task-settings and send", layout.taskTrigger, layout.sendActions],
@@ -596,41 +685,16 @@ async function assertAgentRailInterruption(page) {
 	const expectedWidth = expectedAgentPanelWidth(
 		await page.evaluate(() => innerWidth),
 	);
-	const readWidth = () =>
-		page.locator(".agent-sidebar").evaluate((element) =>
-			element.getBoundingClientRect().width,
-		);
-	const afterTwoFrames = () =>
-		page.evaluate(
-			() =>
-				new Promise((resolve) =>
-					requestAnimationFrame(() => requestAnimationFrame(resolve)),
-				),
-		);
-
+	await armAgentRailInterruptionProbe(page, expectedWidth);
 	await clickAfterHitTest(page, toggle, "#browser-agent-toggle");
-	await page.waitForFunction(
-		(target) => {
-			const shell = document.querySelector(".ai-browser-app");
-			const agent = document.querySelector(".agent-sidebar");
-			const width = agent?.getBoundingClientRect().width ?? 0;
-			return (
-				shell?.classList.contains("agent-sidebar-settling") &&
-				width > 8 &&
-				width < target - 8
-			);
-		},
-		expectedWidth,
-	);
-	// Measure both sides of the same click. A CDP round trip can span most of
-	// the spring, so comparing an earlier frame to two frames after the click
-	// confuses elapsed animation with a discontinuity.
-	await waitForHitTestTarget(page, "#browser-agent-toggle");
-	await armAgentRailClickContinuityProbe(page);
-	await toggle.click();
+	const interruption = await readAgentRailInterruptionProbe(page);
+	runtimeDiagnostics.railInterruption = interruption;
+	assert.equal(interruption.error, undefined);
 	const { before: openingState, after: reversedStart } =
-		await readAgentRailClickContinuityProbe(page);
+		interruption.reversal;
 	const openingWidth = openingState.width;
+	assert.ok(openingState.settling && openingWidth > 8 && openingWidth < expectedWidth - 8,
+		"The reversal must interrupt an in-flight opening spring.");
 	assert.ok(reversedStart.settling, "Rail reversal did not start a settling transition.");
 	assert.ok(
 		reversedStart.width > 0 && reversedStart.width < expectedWidth,
@@ -640,26 +704,11 @@ async function assertAgentRailInterruption(page) {
 		Math.abs(reversedStart.width - openingWidth) <= Math.max(24, expectedWidth * 0.16),
 		`Rail reversal jumped from ${openingWidth}px to ${reversedStart.width}px.`,
 	);
-	await page.waitForFunction(
-		(before) =>
-			(document.querySelector(".agent-sidebar")?.getBoundingClientRect().width ?? 0) <
-			before - 4,
-		openingWidth,
-	);
-	// Re-open before the close finishes. This proves the next input is accepted
-	// during motion and that the new spring starts from the rendered width. Read
-	// the first resumed frame before sampling two more frames; displacement over
-	// two frames is expected spring motion, not evidence of an endpoint jump.
-	// The close spring keeps moving while Playwright resolves the hit target.
-	// Capture the rendered width in the click's capture phase, then capture the
-	// committed React state from the aria-label mutation microtask. Both samples
-	// therefore belong to the same input event and land before the next spring
-	// animation frame, regardless of Playwright/CDP scheduling latency.
-	await waitForHitTestTarget(page, "#browser-agent-toggle");
-	await armAgentRailClickContinuityProbe(page);
-	await toggle.click();
 	const { before: closingStateBeforeReopen, after: reopenedStart } =
-		await readAgentRailClickContinuityProbe(page);
+		interruption.reopen;
+	assert.ok(closingStateBeforeReopen.settling && closingStateBeforeReopen.width > 8 &&
+		closingStateBeforeReopen.width < openingWidth - 4,
+		"The re-open must interrupt an in-flight closing spring.");
 	const continuityTolerance = Math.max(24, expectedWidth * 0.16);
 	assert.ok(
 		reopenedStart.settling,
@@ -675,8 +724,7 @@ async function assertAgentRailInterruption(page) {
 			`Interrupted re-open presented width diverged from its rendered width (${JSON.stringify(reopenedStart)}).`,
 		);
 	}
-	await afterTwoFrames();
-	const reopenedWidth = await readWidth();
+	const reopenedWidth = interruption.afterTwoFrames.width;
 	assert.ok(
 		reopenedWidth > 0 && reopenedWidth < expectedWidth,
 		`Interrupted re-open jumped to an endpoint (${reopenedWidth}px).`,
@@ -948,10 +996,10 @@ function assertOpenLayout(layout) {
 }
 
 function agentPanelWidthBounds(viewportWidth) {
-	if (viewportWidth <= 760) return { min: 0, max: 0 };
+	if (viewportWidth <= 1120) return { min: viewportWidth, max: viewportWidth };
 	return {
-		min: 288,
-		max: Math.max(288, Math.min(520, viewportWidth * 0.44)),
+		min: 480,
+		max: Math.max(480, Math.min(820, viewportWidth - 640)),
 	};
 }
 
@@ -1003,7 +1051,9 @@ async function setDesktopWindowWidth(application, page, width) {
 	);
 	assertNear(appliedWidth, width, "Electron window width");
 	await page.waitForFunction(
-		(expectedWidth) => Math.abs(innerWidth - expectedWidth) <= 2,
+		// The adjacent 1119/1120/1121 checks must observe their requested
+		// viewport, rather than accepting the previous width within a tolerance.
+		(expectedWidth) => innerWidth === expectedWidth,
 		width,
 	);
 }
@@ -1057,12 +1107,17 @@ async function waitForOpenAgentLayout(page, expectedWidth = null) {
 			const shell = document.querySelector(".ai-browser-app");
 			const agent = document.querySelector(".agent-sidebar");
 			const width = agent?.getBoundingClientRect().width ?? 0;
+			const desktopWidthMax = Math.max(480, Math.min(820, innerWidth - 640));
+			const responsiveLayoutReady = innerWidth > 1120
+				? !shell?.classList.contains("agent-sidebar-overlay-open") && width >= 479 && width <= desktopWidthMax + 1
+				: shell?.classList.contains("agent-sidebar-overlay-open") && Math.abs(width - innerWidth) <= 1;
 			return (
 				shell &&
 				agent &&
 				!shell.classList.contains("agent-sidebar-collapsed") &&
 				!shell.classList.contains("agent-sidebar-settling") &&
 				width > 0 &&
+				responsiveLayoutReady &&
 				(target === null || Math.abs(width - target) <= 1)
 			);
 		},
@@ -1070,10 +1125,114 @@ async function waitForOpenAgentLayout(page, expectedWidth = null) {
 	);
 }
 
+async function assertCompactChatInteraction(application, page) {
+	const originalMinimum = await application.evaluate(({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows().find(window => !/[?&]petOverlay=/.test(window.webContents.getURL()));
+		const minimum = window.getMinimumSize();
+		// Synthetic reflow coverage may narrow this disposable test window only.
+		window.setMinimumSize(640, minimum[1]);
+		return minimum;
+	});
+	const server = createServer((_request, response) => {
+		response.writeHead(200, { "Content-Type": "text/html" });
+		response.end("<!doctype html><title>Compact chat native fixture</title><h1>Native browser content</h1>");
+	});
+	await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+	const url = `http://127.0.0.1:${server.address().port}/`;
+	const nativeViews = () => application.evaluate(({ BrowserWindow }, url) =>
+		BrowserWindow.getAllWindows().flatMap(window => window.contentView.children
+			.filter(view => view.webContents?.getURL().startsWith(url))
+			.map(view => ({ visible: view.getVisible(), title: view.webContents.getTitle() }))), url);
+	const waitForNative = async visible => {
+		const deadline = Date.now() + 10000;
+		do {
+			const views = await nativeViews();
+			if (visible ? views.some(view => view.visible) : views.every(view => !view.visible)) return;
+			await page.waitForTimeout(50);
+		} while (Date.now() < deadline);
+		throw new Error(`Native browser visibility did not become ${visible}`);
+	};
+	try {
+		await setDesktopWindowWidth(application, page, 800);
+		await page.evaluate(async url => {
+			const result = await window.kestrel.request({ type: "browser-create-tab", input: url, active: true });
+			if (!result.ok) throw new Error(result.error);
+		}, url);
+		await waitForCollapsedLayout(page);
+		await waitForNative(true);
+		await deferChatOpeningFocus(page);
+		await page.locator("#browser-agent-toggle").click();
+		await waitForOpenAgentLayout(page, 800);
+		await page.getByRole("dialog", { name: /chat/ }).waitFor();
+		await waitForNative(false);
+		assert.equal(await page.locator(".browser-main-plane").evaluate(node => node.inert), true);
+		const focusBounds = await page.locator(".agent-sidebar").evaluate(node => {
+			const controls = [...node.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]')]
+				.filter(control => control.getClientRects().length && !control.closest("[inert]"));
+			controls.at(-1).focus();
+			return {
+				first: controls[0].outerHTML,
+				last: controls.at(-1).outerHTML,
+				active: document.activeElement?.outerHTML,
+				controls: controls.map(control => ({
+					name: control.getAttribute("aria-label") ?? control.textContent?.trim().slice(0, 80),
+					className: control.className,
+					tabIndex: control.tabIndex,
+					visibility: getComputedStyle(control).visibility,
+					visible: control.checkVisibility({ visibilityProperty: true }),
+					closedDetails: Boolean(control.closest("details:not([open])")),
+				})),
+			};
+		});
+		runtimeDiagnostics.compactFocus = focusBounds;
+		assert.equal(focusBounds.active, focusBounds.last, "The final compact Chat control must receive focus before checking the loop");
+		const deferredFocusCount = await page.evaluate(() => window.__kestrelFlushChatOpeningFocus());
+		runtimeDiagnostics.compactFocus.deferredOpeningCallbacks = deferredFocusCount;
+		assert.ok(deferredFocusCount > 0, "The compact Chat regression must defer its opening focus callback.");
+		assert.equal(await page.evaluate(() => document.activeElement.outerHTML), focusBounds.last,
+			"A delayed Chat opening callback must preserve the person's newer focus choice.");
+		await page.keyboard.press("Tab");
+		assert.equal(await page.evaluate(() => document.activeElement.outerHTML), focusBounds.first);
+		await page.keyboard.press("Shift+Tab");
+		assert.equal(await page.evaluate(() => document.activeElement.outerHTML), focusBounds.last);
+		await page.screenshot({ path: join(evidenceDirectory, `${evidenceStamp}-compact-chat-native.png`) });
+		await page.keyboard.press("Escape");
+		await waitForCollapsedLayout(page);
+		await waitForNative(true);
+		await page.waitForFunction(() => document.activeElement?.id === "browser-agent-toggle");
+		assert.equal(await page.locator(".browser-main-plane").evaluate(node => node.inert), false);
+		await page.locator("#browser-agent-toggle").click();
+		await waitForOpenAgentLayout(page, 800);
+		await page.locator(".agent-conversation-host .composer-connect-model").click();
+		await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+		await waitForCollapsedLayout(page);
+		assert.equal(await page.locator(".browser-main-plane").evaluate(node => node.inert), false);
+		await page.locator("#browser-agent-toggle").click();
+		await waitForOpenAgentLayout(page, 800);
+		await page.keyboard.press("Meta+K");
+		await page.getByLabel("Search Kestrel").waitFor();
+		await waitForCollapsedLayout(page);
+		await page.waitForFunction(() => document.activeElement?.id === "kestrel-directory-search");
+		await page.screenshot({ path: join(evidenceDirectory, `${evidenceStamp}-compact-chat-command-navigation.png`) });
+		await page.locator("#browser-agent-toggle").click();
+		await waitForOpenAgentLayout(page, 800);
+		await page.getByRole("button", { name: "Close chat", exact: true }).click();
+		await waitForCollapsedLayout(page);
+		await setDesktopWindowWidth(application, page, 1440);
+	} finally {
+		await new Promise(resolve => server.close(resolve));
+		await application.evaluate(({ BrowserWindow }, minimum) => {
+			const window = BrowserWindow.getAllWindows().find(window => !/[?&]petOverlay=/.test(window.webContents.getURL()));
+			window.setMinimumSize(...minimum);
+		}, originalMinimum);
+	}
+}
+
 async function assertTaskSettingsAtCurrentWidth(page) {
 	noteOperation("measure Task settings", runtimeDiagnostics.lastBreakpoint);
 	await waitForOpenAgentLayout(page);
 	assertResponsiveAgentPanelWidth(await readLayout(page));
+	await page.locator(".agent-conversation-host .composer-connect-model").waitFor();
 	const details = page.locator(".agent-conversation-host .task-settings");
 	await details.waitFor();
 	await details.evaluate((element) => element.removeAttribute("open"));
@@ -1455,6 +1614,9 @@ try {
 	page.on("pageerror", (error) => pageErrors.push(error.message));
 	await page.waitForLoadState("domcontentloaded");
 	await page.waitForFunction(() => typeof window.kestrel?.request === "function");
+	// Desktop rail/motion checks need a desktop baseline even on a small CI
+	// display. Compact modal, native isolation and every breakpoint run below.
+	await setDesktopWindowWidth(application, page, 1440);
 	await page.evaluate(() => {
 		localStorage.setItem("kestrel:onboarded", "yes");
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
@@ -1464,6 +1626,7 @@ try {
 	});
 	await page.reload();
 	await page.locator(".new-tab-page").waitFor();
+	await page.locator("#new-tab-chat-input").waitFor();
 	await clickAfterHitTest(
 		page,
 		page.locator("#browser-agent-toggle"),
@@ -1473,7 +1636,6 @@ try {
 		page,
 		expectedAgentPanelWidth(await page.evaluate(() => innerWidth)),
 	);
-	await page.locator("#new-tab-chat-input").waitFor();
 	await assertTaskSettingsAtCurrentWidth(page);
 	await clickAfterHitTest(
 		page,
@@ -1546,6 +1708,8 @@ try {
 	);
 	await waitForCollapsedLayout(page);
 
+	await assertCompactChatInteraction(application, page);
+
 	await openKestrelDestination(page, "Agent");
 	await page.waitForFunction(() => {
 		const shell = document.querySelector(".ai-browser-app");
@@ -1586,7 +1750,7 @@ try {
 	assert.deepEqual(pageErrors, []);
 	assert.deepEqual(await readUnhandledRejections(page), []);
 	process.stdout.write(
-		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, in-tab Agent route, and minimum-width 200% zoom reflow.\n",
+		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, in-tab Agent route, compact chat native isolation, focus loop, Escape, destination navigation, and minimum-width 200% zoom reflow.\n",
 	);
 } catch (error) {
 	const evidence = await captureFailureEvidence(error);

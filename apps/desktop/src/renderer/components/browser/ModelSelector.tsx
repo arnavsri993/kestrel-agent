@@ -6,6 +6,7 @@ import { KESTREL_MENU_TRANSITION } from "../../motion-contract";
 import { Icon } from "../Icon";
 import {
 	accountForChoice,
+	hasVerifiedModelCapabilities,
 	searchProviderGroups,
 	modelAvailabilityLabel,
 	providerGroups,
@@ -86,7 +87,7 @@ export function ModelSelector({
 	const activeModel = visibleModels.find((model) => model.id === activeModelId);
 	const showThinking =
 		activeModel && selectableModel(activeModel) &&
-		activeModel.capabilities.capabilityProvenance === "confirmed" &&
+		hasVerifiedModelCapabilities(activeModel) &&
 		activeModel.capabilities.reasoningEfforts.length > 1;
 
 	useEffect(() => {
@@ -103,7 +104,9 @@ export function ModelSelector({
 	const positionMenu = useCallback(() => {
 		if (!triggerRef.current || !menuRef.current) return;
 		const button = triggerRef.current.getBoundingClientRect();
-		const menu = menuRef.current.getBoundingClientRect();
+		// Motion transforms shrink the visible rect while opening. Position from
+		// layout dimensions so the final menu still fits after the animation.
+		const menu = { width: menuRef.current.offsetWidth, height: menuRef.current.offsetHeight };
 		let left = button.left;
 		let top = button.top - menu.height - 8;
 		let placement: "above" | "below" = "above";
@@ -114,6 +117,7 @@ export function ModelSelector({
 			top = Math.min(window.innerHeight - menu.height - 12, button.bottom + 8);
 			placement = "below";
 		}
+		top = Math.max(12, Math.min(top, window.innerHeight - menu.height - 12));
 		setMenuPos({ top, left, placement });
 	}, []);
 
@@ -186,7 +190,13 @@ export function ModelSelector({
 	}
 
 	return (
-		<div className="model-selector" data-open={open ? "true" : "false"}>
+		<div className="model-selector" data-open={open ? "true" : "false"}
+   onKeyDown={(event) => {
+    if (!open || event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenu({ restoreFocus: true });
+   }}>
 			<button
 				ref={triggerRef}
 				type="button"
@@ -209,7 +219,7 @@ export function ModelSelector({
 				</span>
 				<Icon name="chevron" />
 			</button>
-			{createPortal(
+			{typeof document !== "undefined" ? createPortal(
 				<AnimatePresence initial={false}>
 					{open ? (
 						<motion.div
@@ -354,7 +364,7 @@ export function ModelSelector({
 													choice.model === model.id;
 												const selectable = selectableModel(model);
 												const supportsThinking =
-													model.capabilities.capabilityProvenance === "confirmed" &&
+													hasVerifiedModelCapabilities(model) &&
 													model.capabilities.reasoningEfforts.length > 1;
 												return (
 													<button
@@ -441,7 +451,7 @@ export function ModelSelector({
 					) : null}
 				</AnimatePresence>,
 				document.body,
-			)}
+			) : null}
 		</div>
 	);
 }

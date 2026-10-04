@@ -23,6 +23,7 @@ import type {
   UserBrowserTab,
 } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
+import type { BrowserSettingsSection } from "../../settings-catalog";
 import {
   getAddressBarSuggestions,
   getInlineAddressCompletion,
@@ -360,7 +361,7 @@ export function BrowserToolbar({
   onOpenDevTools(): void;
   onSaveScreenshot(): Promise<string | undefined>;
   onToggleBookmark(): void;
-  onOpenSettings(section?: "browser-autofill"): void;
+  onOpenSettings(section?: BrowserSettingsSection): void;
   onOpenExtensionStore(): void;
   onToggleCalculator(): void;
   onOpenMenu(): void;
@@ -797,7 +798,9 @@ export function BrowserToolbar({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const input = inlineCompletionRef.current?.completed ?? address;
+    // Submit the text the person can see. A delayed suggestion or state update
+    // must never replace a newly typed address with an older completion.
+    const input = addressRef.current?.value ?? address;
     closeSuggestions();
     inlineCompletionRef.current = null;
     if (input.trim()) onNavigate(input);
@@ -986,21 +989,19 @@ export function BrowserToolbar({
               replacingAddressRef.current = false;
               clearSuggestionsCloseTimer();
               const input = event.currentTarget;
-              const needsUrlReset = Boolean(tab.url && address !== tab.url);
-              if (tab.url) setAddress(tab.url);
+              // Refocusing an unfinished edit must preserve its visible text.
+              // The tab URL effect already refreshes the field on navigation.
               setSuggestionQuery("");
               setSuggestionFilter("all");
               setActiveSuggestionIndex(-1);
               setSuggestionsOpen(addressBarSuggestionsEnabled);
               inlineCompletionRef.current = null;
               const selectAll = () => {
-                if (document.activeElement === input &&
-                    (!needsUrlReset || input.value === tab.url)) {
+                if (document.activeElement === input) {
                   input.setSelectionRange(0, input.value.length);
                 }
               };
-              if (needsUrlReset) window.requestAnimationFrame(selectAll);
-              else selectAll();
+              selectAll();
             }}
             onClick={(event) => {
               if (!selectAddressAfterPointerRef.current) return;
@@ -1206,17 +1207,6 @@ export function BrowserToolbar({
           )}
         </AnimatePresence>
         <div className="browser-extension-cluster browser-toolbar-secondary">
-          <button
-            type="button"
-            className={`browser-toolbar-menu-trigger ${openMenu === "extensions" ? "active" : ""}`}
-            aria-label="Extensions"
-            aria-haspopup="menu"
-            aria-expanded={openMenu === "extensions"}
-            title="Extensions"
-            onClick={(event) => toggleMenu("extensions", event)}
-          >
-            <Icon name="extensions" />
-          </button>
           {pinnedExtensions.map((extension) => (
             <button
               type="button"
@@ -1243,17 +1233,6 @@ export function BrowserToolbar({
           <Icon name="tools" />
         </button>
         <button
-          type="button"
-          className={`browser-toolbar-menu-trigger ${openMenu === "screen" ? "active" : ""}`}
-          aria-label="Page options"
-          aria-haspopup="menu"
-          aria-expanded={openMenu === "screen"}
-          title="Page options"
-          onClick={(event) => toggleMenu("screen", event)}
-        >
-          <Icon name="sliders" />
-        </button>
-        <button
           ref={historyTriggerRef}
           type="button"
           className={`browser-toolbar-menu-trigger browser-toolbar-secondary ${openMenu === "history" ? "active" : ""}`}
@@ -1261,20 +1240,10 @@ export function BrowserToolbar({
           aria-haspopup="menu"
           aria-expanded={openMenu === "history"}
           aria-keyshortcuts="Meta+H"
-          title="History (⌘H)"
+          title="History (⌘Y)"
           onClick={(event) => toggleMenu("history", event)}
         >
           <Icon name="history" />
-        </button>
-        <button
-          type="button"
-          className="browser-toolbar-secondary"
-          aria-label="Bookmarks"
-          aria-keyshortcuts="Meta+Shift+D"
-          title="Bookmarks (⌘⇧D)"
-          onClick={onOpenBookmarks}
-        >
-          <Icon name="star" />
         </button>
         <button
           ref={downloadsTriggerRef}
@@ -1430,7 +1399,7 @@ export function BrowserToolbar({
                     onClick={() => runAndClose(onOpenBookmarks)}
                   >
                     <Icon name="star" />
-                    <span>Favorites</span>
+                    <span>Bookmarks</span>
                     <kbd>⌘⇧D</kbd>
                   </button>
                   <button
@@ -1440,7 +1409,7 @@ export function BrowserToolbar({
                   >
                     <Icon name="history" />
                     <span>History</span>
-                    <kbd>⌘H</kbd>
+                    <kbd>⌘Y</kbd>
                   </button>
                   <button
                     type="button"
@@ -1483,7 +1452,7 @@ export function BrowserToolbar({
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={() => runAndClose(onOpenSettings)}
+                    onClick={() => runAndClose(() => onOpenSettings("browser-reset"))}
                   >
                     <Icon name="trash" />
                     <span>Clear browsing data…</span>
@@ -1628,7 +1597,7 @@ export function BrowserToolbar({
                   type="button"
                   role="menuitem"
                   className="browser-toolbar-menu-link"
-                  onClick={() => runAndClose(onOpenSettings)}
+                  onClick={() => runAndClose(() => onOpenSettings("browser-extensions"))}
                 >
                   <Icon name="settings" />
                   <span>Manage extensions</span>

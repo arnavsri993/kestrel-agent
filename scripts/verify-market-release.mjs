@@ -429,7 +429,7 @@ for (const marker of [
 }
 for (const marker of [
 	"latestRunActionReceipts",
-	"<ActionReceiptList receipts={latestReceipts} />",
+	"<ActionReceiptList receipts={latestReceipts} executions={executions} />",
 	'runtime-list-action-receipts',
 ]) {
 	if (!actionReceiptRenderer.includes(marker))

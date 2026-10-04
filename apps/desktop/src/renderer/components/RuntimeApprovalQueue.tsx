@@ -1,6 +1,7 @@
 import type { CoreResponse, WorkspaceSnapshot } from "@kestrel/shared-types";
 import { useEffect, useState } from "react";
 import { ApprovalCard } from "./ApprovalCard";
+import { RuntimeApprovalPreview } from "./RuntimeApprovalPreview";
 import { Icon } from "./Icon";
 import { EmptyState, PageFrame, Status } from "./ui";
 import "./surface-pages.css";
@@ -131,7 +132,7 @@ function RuntimeApprovalCard({
           : ""}
       </small>
       {typeof item.execution.output?.preview === "string" && (
-        <pre className="approval-preview">{item.execution.output.preview}</pre>
+        <RuntimeApprovalPreview execution={item.execution} />
       )}
       <div className="button-row">
         <button className="button primary" type="button" onClick={onOpen}>

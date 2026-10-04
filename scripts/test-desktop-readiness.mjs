@@ -21,11 +21,23 @@ const root = mkdtempSync(join(tmpdir(), "workstrand-readiness-test-"));
 const userData = join(root, "user-data");
 const backupParent = join(root, "backups");
 const codexFixture = join(root, "fake-codex-app-server");
+const codexFixtureCapture = join(root, "fake-codex-app-server.jsonl");
+const testHome = join(root, "home");
+const testCodexHome = join(root, "codex-home");
+const testTempDirectory = join(root, "tmp");
 const pluginRoot = join(userData, "plugins", "readiness-test", "1.0.0");
+const testEnvironment = Object.fromEntries(
+	["PATH", "SHELL", "LANG", "LC_ALL", "TERM", "CI"].flatMap((key) =>
+		process.env[key] === undefined ? [] : [[key, process.env[key]]],
+	),
+);
 let application;
 
 try {
 	mkdirSync(backupParent, { recursive: true });
+	mkdirSync(testHome, { recursive: true });
+	mkdirSync(testCodexHome, { recursive: true });
+	mkdirSync(testTempDirectory, { recursive: true });
 	mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
 	writeFileSync(
 		join(pluginRoot, ".codex-plugin", "plugin.json"),
@@ -61,16 +73,24 @@ try {
 	);
 	writeFileSync(
 		codexFixture,
-		`#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(resolve("scripts/fixtures/fake-codex-app-server.mjs"))} "$@"\n`,
+		`#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(resolve("scripts/fixtures/fake-codex-app-server.mjs"))} ${JSON.stringify(`--kestrel-test-capture=${codexFixtureCapture}`)} "$@"\n`,
 		{ mode: 0o700 },
 	);
 	chmodSync(codexFixture, 0o700);
 	application = await electron.launch({
 		args: [resolve("apps/desktop/out/main/index.js")],
 		env: {
-			...process.env,
+			...testEnvironment,
+			HOME: testHome,
+			USER: "kestrel-readiness-test",
+			LOGNAME: "kestrel-readiness-test",
+			CODEX_HOME: testCodexHome,
+			TMPDIR: testTempDirectory,
 			KESTREL_TEST_USER_DATA: userData,
 			KESTREL_CODEX_PATH: codexFixture,
+		KESTREL_DISABLE_UPDATES: "1",
+		KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
+		KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
 		},
 	});
 	const page = await application.firstWindow();
@@ -85,6 +105,16 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
+	const settingsTab = await page.evaluate(() =>
+		window.kestrel.request({
+			type: "browser-create-tab",
+			input: "kestrel://settings",
+			active: true,
+		}),
+	);
+	if (!settingsTab.ok)
+		throw new Error("Could not open the disposable Settings tab.");
+	await page.locator("#new-tab-title").waitFor({ state: "detached" });
 
 	await openKestrelDestination(page, "Settings");
 	await selectSettingsSection(page, "extensions", "Plugins");
@@ -129,7 +159,8 @@ try {
 	await page.setViewportSize({ width: 1320, height: 860 });
 	await openKestrelDestination(page, "Settings");
 	await selectSettingsSection(page, "connections", "Connections");
-	await page.locator("summary").filter({ hasText: "Model provider · ChatGPT" }).click();
+	await page.getByLabel("More connection settings").selectOption("models");
+	await page.getByRole("heading", { name: "Model provider", exact: true }).waitFor();
 	const chatGptConnection = page
 		.locator(".oauth-connection")
 		.filter({ has: page.getByText("ChatGPT", { exact: true }) });
@@ -156,6 +187,158 @@ try {
 			throw new Error("The enabled Codex account is missing from the provider catalog.");
 		return account.endpointId;
 	});
+	await page.waitForFunction(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-providers",
+		});
+		return (
+			response.ok &&
+			"providerAccounts" in response &&
+			response.providerAccounts.some(
+				(account) =>
+					account.providerId === "codex" &&
+					account.models.some((model) => model.id === "gpt-6-sol") &&
+					account.models.some((model) => model.id === "gpt-6-luna"),
+			)
+		);
+	});
+
+	// Exercise a real visible agent turn with the disposable fixture. This is
+	// deliberately account-free: the fixture returns an owned response and the
+	// protocol capture below proves Kestrel still requested read-only/no-network
+	// execution for both automatic routing and selected model routes.
+	await openKestrelDestination(page, "Agent");
+	await page.getByRole("button", { name: "Start a task", exact: true }).click();
+	const prompt = page.locator("#runtime-prompt");
+	await prompt.waitFor();
+	await page.evaluate(
+		() =>
+			new Promise((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(resolve)),
+			),
+	);
+	async function runFixtureTurn(input, response) {
+		await page.waitForFunction(() => {
+			const status = document.querySelector(".composer-status")?.textContent ?? "";
+			return !status.includes("Another chat is running");
+		});
+		await prompt.fill(input);
+		assert.equal(await prompt.inputValue(), input);
+		await page.waitForFunction(() => {
+			const button = document.querySelector(
+				'button[aria-label="Send message"]',
+			);
+			return Boolean(button && !button.disabled);
+		});
+		await prompt.press("Enter");
+		try {
+			await page.getByText(input, { exact: true }).last().waitFor();
+			await page.getByText(response, { exact: true }).waitFor();
+		} catch (error) {
+			const diagnostic = await page.evaluate(() => ({
+				error: document.querySelector(".chat-error")?.textContent?.trim() ?? null,
+				outcome: document.querySelector(".runtime-outcome")?.textContent?.trim() ?? null,
+				status: document.querySelector(".composer-status")?.textContent?.trim() ?? null,
+				model: document
+					.querySelector(".model-selector-trigger")
+					?.getAttribute("aria-label"),
+			}));
+			const capture = existsSync(codexFixtureCapture)
+				? readFileSync(codexFixtureCapture, "utf8")
+				: "(fixture received no requests)";
+			throw new Error(
+				`Fixture agent turn did not render ${response}: ${JSON.stringify({ diagnostic, capture })}`,
+				{ cause: error },
+			);
+		}
+		await page.waitForFunction(
+			() => ![...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Stop"),
+		);
+	}
+	await runFixtureTurn(
+		"Return the fixture response without changing files or using the network.",
+		"Fixture read-only response 1.",
+	);
+
+	const modelSelector = page.locator(".model-selector-trigger").first();
+	await modelSelector.click();
+	const modelDialog = page.getByRole("dialog", {
+		name: "Choose a provider, account, model, and thinking level",
+	});
+	await modelDialog.waitFor();
+	const modelColumn = modelDialog.locator(
+		'.model-selector-column[aria-label="Model"]',
+	);
+	await modelColumn.getByRole("button", { name: /^GPT-6 Sol/ }).waitFor();
+	await modelColumn.getByRole("button", { name: /^GPT-6 Luna/ }).waitFor();
+	await modelColumn.getByRole("button", { name: /^GPT-6 Luna/ }).click();
+	const thinkingColumn = modelDialog.locator(
+		'.model-selector-column[aria-label="Thinking level"]',
+	);
+	await thinkingColumn.getByRole("button", { name: /^Max/ }).waitFor();
+	assert.equal(
+		await thinkingColumn.getByRole("button", { name: /^Ultra/ }).count(),
+		0,
+		"GPT-6 Luna must not advertise GPT-6 Sol's Ultra reasoning level.",
+	);
+	await thinkingColumn.getByRole("button", { name: /^Max/ }).click();
+	await modelDialog.waitFor({ state: "detached" });
+	await runFixtureTurn(
+		"Return the fixture response without changing files or using the network.",
+		"Fixture read-only response 2.",
+	);
+
+	await modelSelector.click();
+	await modelDialog.waitFor();
+	await modelDialog
+		.locator('.model-selector-column[aria-label="Model"]')
+		.getByRole("button", { name: /^GPT-6 Sol/ })
+		.click();
+	await thinkingColumn.getByRole("button", { name: /^Ultra/ }).waitFor();
+	await thinkingColumn.getByRole("button", { name: /^Ultra/ }).click();
+	await modelDialog.waitFor({ state: "detached" });
+	await runFixtureTurn(
+		"Return the fixture response without changing files or using the network.",
+		"Fixture read-only response 3.",
+	);
+
+	const capturedCodexRequests = readFileSync(codexFixtureCapture, "utf8")
+		.trim()
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => JSON.parse(line));
+	const capturedCodexClientRequests = capturedCodexRequests
+		.filter((record) => record.direction === "in")
+		.map((record) => record.value);
+	const turnRequests = capturedCodexClientRequests.filter(
+		(request) =>
+			request.method === "turn/start" &&
+			JSON.stringify(request.params?.input ?? []).includes(
+				"Return the fixture response without changing files or using the network.",
+			),
+	);
+	assert.equal(turnRequests.length, 3);
+	for (const request of turnRequests) {
+		assert.equal(request.params?.approvalPolicy, "never");
+		assert.deepEqual(request.params?.sandboxPolicy, {
+			type: "readOnly",
+			networkAccess: false,
+		});
+	}
+	assert.ok(
+		["gpt-6-sol", "gpt-6-luna"].includes(turnRequests[0]?.params?.model),
+		"Automatic routing must choose one fixture-advertised model.",
+	);
+	assert.deepEqual(
+		turnRequests.slice(1).map((request) => ({
+			model: request.params?.model,
+			effort: request.params?.effort,
+		})),
+		[
+			{ model: "gpt-6-luna", effort: "max" },
+			{ model: "gpt-6-sol", effort: "ultra" },
+		],
+	);
 	await openKestrelDestination(page, "Extensions");
 	await page
 		.getByRole("button", { name: "Open readiness", exact: true })

@@ -87,6 +87,25 @@ describe("SandboxedCommandRunner", () => {
     return child;
   }
 
+  it("withholds split and encoded credential output and denies subprocesses", async () => {
+    vi.mocked(fs.accessSync).mockImplementation(() => {});
+    const child = mockSpawn();
+    const onProgress = vi.fn();
+    const fixtureKey = "fixture-command-secret-123456789";
+    const handle = runner.start({ ...defaultInput, environment: { SERVICE_API_KEY: fixtureKey }, protectSecrets: true }, { onProgress });
+    const args = vi.mocked(child_process.spawn).mock.calls[0]![1] as string[];
+    expect(args[1]).toContain("(deny process-fork)");
+    expect(args[1]).toContain("(deny network*)");
+    expect(args.join(" ")).not.toContain(fixtureKey);
+    child.stdout.emit("data", Buffer.from(fixtureKey.slice(0, 10)));
+    child.stdout.emit("data", Buffer.from(fixtureKey.slice(10)));
+    child.stderr.emit("data", Buffer.from(Buffer.from(fixtureKey).toString("base64")));
+    expect(onProgress).not.toHaveBeenCalled();
+    expect(handle.snapshot()).toMatchObject({ stdout: "", stderr: "" });
+    child.emit("close", 0, null);
+    expect(await handle.completion).toMatchObject({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
   it("runs the command successfully", async () => {
     vi.mocked(fs.accessSync).mockImplementation((path) => {
       if (path === "/usr/bin/ls") return; // Found

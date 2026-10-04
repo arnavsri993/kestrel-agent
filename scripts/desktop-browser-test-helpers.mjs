@@ -45,7 +45,9 @@ export async function openCommandCenter(page) {
 			await commandCenterButton.click();
 		},
 		async () => {
-			await page.locator("#new-tab-title").click({ force: true });
+			// Destination pages do not contain the New Tab heading. Foreground
+			// the fixture window before using its supported global shortcut.
+			await page.bringToFront();
 			await page.keyboard.press("Meta+K");
 		},
 		async () => {
@@ -107,6 +109,7 @@ export async function selectSettingsSection(page, value, label) {
 		Models: "Models & routing",
 		Memory: "Memory & context",
 		Plugins: "Tools, MCP & skills",
+		Privacy: "Permissions & sandbox",
 		Advanced: "Diagnostics",
 	};
 	const sectionLabel = legacyLabels[label] ?? label;

@@ -1,8 +1,10 @@
 import { SourceIngestion } from "./source-ingestion";
+import { stripTrailingCharacters } from "./text-boundaries";
 import { OnshapeClient, installOnshapeTools, parseOnshapeDocument } from "./onshape";
 export { OnshapeClient } from "./onshape";
 import { AgentMemoryRecovery } from "./memory-recovery";
 import { randomUUID } from "node:crypto";
+import { redactSensitiveContent } from "./tool-result-guardrails";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
@@ -155,6 +157,7 @@ import {
 	type RemoteExecutionConfiguration,
 } from "./remote";
 import { AgentRuntime } from "./runtime";
+import { independentReviewPrompt } from "./independent-review-context";
 import { SkinManager } from "./skins";
 import { UsageGovernor } from "./usage-governor";
 import type { UserModelStore } from "./user-model";
@@ -263,6 +266,7 @@ export class AgentCore {
 	readonly providerPool: ProviderPool;
 	readonly providerUsage: ProviderUsageCollector;
 	readonly modelCatalog: ModelCatalog;
+	private automaticCatalogRefresh: Promise<void> | undefined;
 	readonly accountAvailability: AccountAvailabilityMonitor;
 	readonly routingOutcomes: RoutingOutcomeStore;
 	readonly usageGovernor: UsageGovernor;
@@ -331,6 +335,13 @@ export class AgentCore {
 			: seedDevelopmentFixtures
 				? "waiting_approval"
 				: "idle";
+		// Keep the user's background pause separate from transient task state.
+		// Older profiles persisted the request only as agentState.
+		if (
+			deps.database.getState<unknown>("agent.pauseRequested") === undefined &&
+			this.state === "paused"
+		)
+			deps.database.setState("agent.pauseRequested", true);
 		const storedPersonalities =
 			deps.database.getPrivateState<Array<Omit<AgentPersonality, "builtin">>>(
 				this.customPersonalitiesKey,
@@ -613,8 +624,10 @@ export class AgentCore {
 			lifeContext: this.lifeContext,
 			userModel: this.userModel,
 			writingProfile: this.writingProfile,
-			resolveRoute: (taskId, prompt, providerIds, role) =>
-				this.automaticRoute(taskId, prompt, providerIds, [], role),
+			resolveRoute: async (taskId, prompt, providerIds, role) => {
+				await this.refreshAutomaticModelCatalog();
+				return this.automaticRoute(taskId, prompt, providerIds, [], role);
+			},
 			providerAllowed: (providerId, poolId) =>
 				this.providerAllowed(providerId, poolId),
 			now: () => this.now(),
@@ -689,7 +702,8 @@ export class AgentCore {
 			() => this.configuration.current().workflows.maximumTurns,
 			this.groupMemory,
 			this.memorySubstrate,
-			() => {
+			async () => {
+				await this.refreshAutomaticModelCatalog();
 				this.modelRegistry.syncProviderCatalog(
 					this.providerPool.list(),
 					this.modelCatalog,
@@ -764,7 +778,7 @@ export class AgentCore {
 		const workspaceRoots = this.deps.workspaceRoots ?? [];
 		return WorkspaceSnapshotSchema.parse({
 			productName: PRODUCT_IDENTITY.productName,
-			agentState: this.state,
+			agentState: this.isPaused ? "paused" : this.state,
 			autonomyLevel: "assistant",
 			opportunity: this.opportunity,
 			approvals: this.deps.database.listApprovals(),
@@ -914,6 +928,7 @@ export class AgentCore {
 		providerIds: string[] = ["auto"],
 		attachments: SelectedAttachment[] = [],
 		role: "worker" | "writer" | "reviewer" = "worker",
+		requireTools = false,
 	): {
 		route: ModelRoutingDecision;
 		execution: ReturnType<AdaptiveModelRouter["executionPlan"]>;
@@ -943,6 +958,7 @@ export class AgentCore {
 			attachments,
 		);
 		const requirements = this.requirementAnalyzer.analyze(taskId, message, {
+			requiresTools: requireTools,
 			requiresVision: attachments.some((attachment) =>
 				attachment.mediaType.startsWith("image/"),
 			),
@@ -1003,6 +1019,34 @@ export class AgentCore {
 		};
 	}
 
+	/** Resolve expired account entitlements before an Auto task selects a model. */
+	private async refreshAutomaticModelCatalog(): Promise<void> {
+		if (this.automaticCatalogRefresh) return this.automaticCatalogRefresh;
+		const controller = new AbortController();
+		let timer: ReturnType<typeof setTimeout>;
+		const deadline = new Promise<void>((resolve) => {
+			timer = setTimeout(() => {
+				controller.abort(new Error("Automatic model catalog refresh timed out."));
+				resolve();
+			}, 10_000);
+			timer.unref?.();
+		});
+		const work = this.refreshStaleProviderModels(controller.signal)
+			.then(() => undefined)
+			.catch(() => {
+				// An incomplete refresh leaves stale models ineligible for Auto.
+			});
+		const refresh = Promise.race([work, deadline]);
+		this.automaticCatalogRefresh = refresh;
+		void work.finally(() => {
+			clearTimeout(timer);
+			// Keep one discovery in flight even if a provider ignores cancellation.
+			if (this.automaticCatalogRefresh === refresh)
+				this.automaticCatalogRefresh = undefined;
+		});
+		await refresh;
+	}
+
 	private modelRoutingDecision(
 		taskId: string,
 		decision: ReturnType<AdaptiveModelRouter["route"]>,
@@ -1052,6 +1096,7 @@ export class AgentCore {
 				category !== "verification"
 			)
 				return undefined;
+			await this.refreshAutomaticModelCatalog();
 			this.modelRegistry.syncProviderCatalog(
 				this.providerPool.list(),
 				this.modelCatalog,
@@ -1180,7 +1225,7 @@ export class AgentCore {
 		return providerAccounts;
 	}
 
-	/** Refresh only missing or expired dynamic catalogs at process startup. */
+	/** Refresh only missing or expired dynamic catalogs before routing. */
 	async refreshStaleProviderModels(signal?: AbortSignal) {
 		const providerAccounts = await this.modelCatalog.refreshStale(
 			this.providerPool.list(),
@@ -1267,6 +1312,7 @@ export class AgentCore {
 			...(request.firstName ? { firstName: request.firstName } : {}),
 		};
 		const prompt = newTabGreetingUserPrompt(context);
+		await this.refreshAutomaticModelCatalog();
 		const automatic = this.automaticRoute(
 			"new-tab-greeting",
 			prompt,
@@ -1361,6 +1407,7 @@ export class AgentCore {
 		const prompt = browserTabFolderNamingPrompt(groups);
 		let automatic: ReturnType<AgentCore["automaticRoute"]>;
 		try {
+			await this.refreshAutomaticModelCatalog();
 			automatic = this.automaticRoute(
 				"browser-tab-folder-names",
 				"Generate concise, topic-specific labels for related browser-tab clusters.",
@@ -1641,11 +1688,18 @@ export class AgentCore {
 			review = await this.orchestrator.delegate({
 				parentSessionId: sessionId,
 				title: "Independent result review",
-				prompt: [
-					"Review the completed agent result below for correctness, safety, and evidence.",
-					"This is an independent review route. Do not delegate further. Your first line must be exactly `VERDICT: PASS` when the result is supported, or `VERDICT: FAIL` when you find a concrete defect, missing validation, or safety concern. Put a short evidence-based explanation after that line.",
-					`Result:\n${result.assistantMessage?.content.slice(0, 50_000) ?? "[No assistant text was returned.]"}`,
-				].join("\n\n"),
+				// Page/task evidence must not turn a review into an execution task or
+				// override the person's routing policy through embedded instructions.
+				routingPrompt: "Review the completed agent result for correctness, safety, and evidence.",
+				prompt: independentReviewPrompt({
+					sessionId,
+					run: result.run,
+					baseline: this.deps.database.getPrivateState<unknown>(`agent-run-baseline.${result.run.id}`),
+					messages: this.runtime.listMessages(sessionId),
+					executions: this.deps.database.listToolExecutions(sessionId),
+					...(result.assistantMessage ? { assistantMessage: result.assistantMessage } : {}),
+					redactKnownText: text => this.runtime.taskSecrets.redact(sessionId, text),
+				}),
 				model: "auto",
 				// Give the independent reviewer the entire policy-allowed pool, rather
 				// than only the executor's fallback ladder. That preserves the user's
@@ -1682,6 +1736,16 @@ export class AgentCore {
 				automatic.decision.traceId,
 				"ROUTE_VERIFIED",
 			);
+		if (result.run.turn >= Math.min(result.run.maximumTurns ?? 12, this.configuration.current().workflows.maximumTurns)) {
+			const error = "Independent review found incomplete or unsupported work, and the configured turn budget has been used.";
+			const run = { ...result.run, status: "failed" as const, error, updatedAt: this.now() };
+			this.deps.database.saveAgentRun(run);
+			const assistantMessage = this.runtime.appendMessage({
+				sessionId, role: "assistant",
+				content: `${error}\n\n${reviewerFeedback?.slice(0, 4_000) ?? "The result could not be verified."}`,
+			});
+			return { result: { ...result, run, assistantMessage }, verifierStatus: "failed" };
+		}
 		const corrected = await this.agentLoop.reworkAfterVerification({
 			runId: result.run.id,
 			maximumTurns: this.configuration.current().workflows.maximumTurns,
@@ -1904,7 +1968,13 @@ export class AgentCore {
 		return "I found incomplete device context. I can inspect the exact phone, OS, controller, symptoms, and prior attempts before ranking the next safe test.";
 	}
 
+	get isPaused(): boolean {
+		const requested = this.deps.database.getState<unknown>("agent.pauseRequested");
+		return typeof requested === "boolean" ? requested : this.state === "paused";
+	}
+
 	setPaused(paused: boolean): WorkspaceSnapshot {
+		this.deps.database.setState("agent.pauseRequested", paused);
 		this.state = paused
 			? "paused"
 			: this.deps.database
@@ -1969,6 +2039,7 @@ export class AgentCore {
 			store: this.memoryWorkspace,
 			canUseModel: () => this.configuration.current().memory.useSharedContext && !query.includeSensitive,
 			invokeModel: async (request: MemoryModelRequest) => {
+				await this.refreshAutomaticModelCatalog();
 				const automatic = this.automaticRoute("memory-consolidation", "Summarize recent activity and consolidate existing memory documents.", ["auto"]);
 				const lease = this.usageGovernor.acquire();
 				try {
@@ -2198,7 +2269,9 @@ export class AgentCore {
 					);
 				parts.push({
 					type: "text",
-					text: `[Attachment: ${name}]\n${bytes.toString("utf8")}`,
+					// Attached reference data never authorizes credential use. Redact
+					// its values without allocating resolvable task-secret references.
+					text: this.runtime.taskSecrets.redact(sessionId, `[Attachment: ${name}]\n${bytes.toString("utf8")}`),
 				});
 			} else if (attachment.mediaType.startsWith("image/"))
 				parts.push({
@@ -2234,8 +2307,12 @@ export class AgentCore {
 		return parts;
 	}
 
-	async handle(request: CoreRequest): Promise<CoreResponse> {
+	async handle(rawRequest: CoreRequest): Promise<CoreResponse> {
+		let taskSecretScopeId: string | undefined;
 		try {
+			const prepared = rawRequest.type === "runtime-run-agent" ? this.runtime.prepareTaskSecrets(rawRequest.sessionId, rawRequest.message) : undefined;
+			taskSecretScopeId = prepared?.scopeId;
+			const request = rawRequest.type === "runtime-run-agent" && prepared ? { ...rawRequest, message: prepared.text } : rawRequest;
 			switch (request.type) {
 				case "snapshot":
 					return { ok: true, snapshot: this.snapshot() };
@@ -2429,6 +2506,7 @@ export class AgentCore {
      const task = { ...prepared.task, status: "running" as const, updatedAt: this.now() };
      this.deps.database.upsertWorkingTask(task);
      try {
+      if (request.model === "auto") await this.refreshAutomaticModelCatalog();
       const route = request.model === "auto" ? this.automaticRoute(task.id, prepared.prompt, request.providerIds) : undefined;
       if (route?.route.reviewRequired) throw new Error("This route requires independent verification. Source review cannot bypass that requirement.");
       const result = await this.agentLoop.run({ sessionId: request.sessionId, workingTaskId: task.id,
@@ -2533,12 +2611,25 @@ export class AgentCore {
 					const priorMessage = this.runtime.retryLastTurnMessage(
 						request.sessionId,
 					);
+					if (request.model === "auto") await this.refreshAutomaticModelCatalog();
 					const route =
 						request.model === "auto"
 							? this.automaticRoute(
 									`retry-${request.sessionId}`,
 									priorMessage,
 									request.providerIds,
+									[],
+									"worker",
+									this.runtime.requiresToolProvider(
+										request.sessionId,
+										this.configuration.filterToolNames(
+											this.runtime
+												.discoverTools(request.sessionId)
+												.map((tool) => tool.name),
+											this.personalities.get(this.selectedPersonalityId)
+												.toolNames,
+										),
+									),
 								)
 							: undefined;
 					const controller = new AbortController();
@@ -2698,7 +2789,7 @@ export class AgentCore {
 								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
 							...(finalizedResult.pendingExecution
-								? { execution: finalizedResult.pendingExecution }
+								? { execution: this.runtime.approvalReview(finalizedResult.pendingExecution) }
 								: {}),
 						};
 					} catch (error) {
@@ -3760,8 +3851,8 @@ export class AgentCore {
 					const data = Buffer.from(request.dataBase64, "base64");
 					if (
 						data.byteLength === 0 ||
-						data.toString("base64").replace(/=+$/, "") !==
-							request.dataBase64.replace(/=+$/, "")
+						stripTrailingCharacters(data.toString("base64"), "=") !==
+							stripTrailingCharacters(request.dataBase64, "=")
 					)
 						throw new Error("Voice recording contains invalid base64 data.");
 					const result = await this.deps.transcriptionProvider.transcribe({
@@ -4007,6 +4098,7 @@ export class AgentCore {
 						const selectedProviderIds = personality.providerIds?.length
 							? personality.providerIds
 							: request.providerIds;
+						if (selectedModel === "auto") await this.refreshAutomaticModelCatalog();
 						route =
 							selectedModel === "auto"
 								? this.automaticRoute(
@@ -4014,6 +4106,16 @@ export class AgentCore {
 										request.message,
 										selectedProviderIds,
 										request.attachments,
+										"worker",
+										this.runtime.requiresToolProvider(
+											request.sessionId,
+											this.configuration.filterToolNames(
+												this.runtime
+													.discoverTools(request.sessionId)
+													.map((tool) => tool.name),
+												personality.toolNames,
+											),
+										),
 									)
 								: undefined;
 						const runtimeSession = this.runtime.getSession(request.sessionId);
@@ -4052,6 +4154,7 @@ export class AgentCore {
 							honchoContext,
 						});
 						const result = await this.agentLoop.run({
+							...(taskSecretScopeId ? { taskSecretScopeId } : {}),
 							...(workingTask ? { workingTaskId: workingTask.id } : {}),
 							sessionId: request.sessionId,
 							model: route?.execution.model ?? selectedModel,
@@ -4186,7 +4289,7 @@ export class AgentCore {
 								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
 							...(finalizedResult.pendingExecution
-								? { execution: finalizedResult.pendingExecution }
+								? { execution: this.runtime.approvalReview(finalizedResult.pendingExecution) }
 								: {}),
 						};
 					} catch (error) {
@@ -4300,7 +4403,7 @@ export class AgentCore {
 								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
 							...(finalizedResult.pendingExecution
-								? { execution: finalizedResult.pendingExecution }
+								? { execution: this.runtime.approvalReview(finalizedResult.pendingExecution) }
 								: {}),
 						};
 					} finally {
@@ -4320,7 +4423,16 @@ export class AgentCore {
 						throw new Error("Agent stream is not active for this session.");
 					if (active.steering.length >= 20)
 						throw new Error("Agent steering queue is full.");
-					active.steering.push(request.message);
+					const prepared = this.runtime.prepareTaskSecrets(request.sessionId, request.message);
+					if (prepared.scopeId) {
+						const run = this.deps.database.listAgentRuns(request.sessionId).find(candidate => candidate.status === "running");
+						if (!run) {
+							this.runtime.taskSecrets.clearScope(prepared.scopeId);
+							throw new Error("The task is still preparing. Wait for it to start before adding a temporary credential.");
+						}
+						this.runtime.taskSecrets.bind(prepared.scopeId, request.sessionId, run.id);
+					}
+					active.steering.push(prepared.text);
 					return { ok: true, answer: "Steering message queued." };
 				}
 				case "runtime-discover-tools":
@@ -4381,8 +4493,10 @@ export class AgentCore {
 			return {
 				ok: false,
 				error:
-					error instanceof Error ? error.message : "Agent Core request failed",
+					"sessionId" in rawRequest && typeof rawRequest.sessionId === "string" ? this.runtime.taskSecrets.redact(rawRequest.sessionId, error instanceof Error ? error.message : "Agent Core request failed") : redactSensitiveContent(error instanceof Error ? error.message : "Agent Core request failed"),
 			};
+		} finally {
+			if (taskSecretScopeId) this.runtime.taskSecrets.clearUnboundScope(taskSecretScopeId);
 		}
 	}
 
@@ -4471,6 +4585,7 @@ export class AgentCore {
 	}
 
 	async close(): Promise<void> {
+		this.orchestrator.shutdown();
 		if (this.memoryConsolidationTimer) clearInterval(this.memoryConsolidationTimer);
 		await this.memoryConsolidationWork;
         for (const controller of this.sourceReviews.values()) controller.abort(new Error("Agent Core is shutting down."));
@@ -4481,6 +4596,7 @@ export class AgentCore {
 		await this.honchoMemory.flush();
 		await this.observability.shutdown();
 		await this.providerPool.close();
+		await this.orchestrator.drain();
 		await this.memorySubstrate.close();
 		this.runtime.close();
 		this.deps.database.close();
@@ -4779,6 +4895,7 @@ export {
 	type WorkflowStep,
 } from "./orchestration";
 export { type AgentPersonality, PersonalityRegistry } from "./personality";
+export { installComputerUseTools, type ComputerUseBackend } from "./computer-use";
 export {
 	type PetHatchCapability,
 	type PetHatchDraft,

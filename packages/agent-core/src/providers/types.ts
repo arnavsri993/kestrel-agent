@@ -31,7 +31,7 @@ export interface ModelTool {
 
 export interface ModelRequest {
   model: string;
-  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   serviceTier?: "standard" | "priority";
   messages: ModelMessage[];
   tools?: ModelTool[];
@@ -136,7 +136,7 @@ export type ProviderModelAvailability =
 
 export interface DiscoveredModelCapabilities {
 	/** How confidently this adapter knows the per-model feature flags below. */
-	capabilityProvenance?: "confirmed" | "transport" | "unknown";
+	capabilityProvenance?: "confirmed" | "metadata" | "transport" | "unknown";
 	streaming?: boolean;
 	tools?: boolean;
 	images?: boolean;
@@ -145,7 +145,7 @@ export interface DiscoveredModelCapabilities {
 	video?: boolean;
 	structuredOutput?: boolean;
 	reasoningEfforts?: Array<
-		"none" | "low" | "medium" | "high" | "xhigh" | "max"
+		"none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 	>;
 	contextWindow?: number;
 	maxOutputTokens?: number;
@@ -154,6 +154,10 @@ export interface DiscoveredModelCapabilities {
 export interface DiscoveredModel {
 	id: string;
 	displayName?: string;
+	/** Non-secret capability description advertised by the provider. */
+	description?: string;
+	/** Provider catalog ordering; lower values are preferred when policy scores tie. */
+	catalogPriority?: number;
 	availability?: ProviderModelAvailability;
 	source: ProviderModelDiscoverySource;
 	capabilities?: DiscoveredModelCapabilities;
@@ -212,6 +216,8 @@ export interface ModelProvider {
   probe?(signal?: AbortSignal): Promise<void>;
 	/** Enumerates models through the adapter's supported provider or CLI surface. */
 	discoverModels?(signal?: AbortSignal): Promise<DiscoveredModel[]>;
+	/** A cached, model-specific image capability when the transport advertises a catalog. */
+	supportsModelImages?(model: string): boolean;
   complete(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResult>;
   close?(): Promise<void>;
 }

@@ -208,8 +208,13 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
+	// Compact windows start with Chat collapsed. Open its user-facing control
+	// before accessing the composer; hidden/inert controls are not a valid route.
+	const chatToggle = page.locator("#browser-agent-toggle");
+	await chatToggle.waitFor();
+	if (await chatToggle.getAttribute("aria-expanded") !== "true") await chatToggle.click();
 	await page.locator("#runtime-prompt").waitFor();
-	await page.getByRole("button", { name: /^Model:/ }).click();
+	await page.locator(".agent-conversation-host").getByRole("button", { name: /^Model:/ }).click();
 	const menu = page.getByRole("dialog", {
 		name: "Choose a provider, account, model, and thinking level",
 	});
@@ -227,7 +232,15 @@ try {
 		.locator(".agent-conversation-host")
 		.getByRole("button", { name: "Send message", exact: true })
 		.click();
-	await taskStarted;
+	await Promise.race([
+		taskStarted,
+		new Promise((_, reject) => {
+			const timeout = setTimeout(async () => reject(new Error(
+				`The selected fixture provider did not receive the submitted task. Visible state: ${await page.locator(".agent-conversation-host").innerText()}`,
+			)), 30_000);
+			taskStarted.then(() => clearTimeout(timeout));
+		}),
+	]);
 
 	process.kill(corePid(application.process().pid), "SIGKILL");
 

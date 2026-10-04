@@ -113,7 +113,7 @@ describe("Electron browser action cancellation", () => {
 				},
 				signal,
 			),
-		).rejects.toThrow("Whole-desktop computer use is disabled");
+		).rejects.toThrow("Targetless desktop input is unavailable");
 		expect(service.isComputerUseEnabled()).toBe(false);
 
 		service.setComputerUseEnabled(true);

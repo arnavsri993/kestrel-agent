@@ -1,5 +1,8 @@
 import { createServer, type RequestListener, type Server } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { KestrelDatabase } from "@kestrel/database";
+import { createEncryptionKey } from "@kestrel/encryption";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AgentRuntime } from "../runtime";
 import { AnthropicMessagesProvider } from "./anthropic-messages";
 import { createEnvironmentModelProviders } from "./environment";
 import { GeminiGenerateContentProvider } from "./gemini-generate-content";
@@ -77,7 +80,7 @@ describe("model provider adapters", () => {
 				tools: provider.capabilities.tools,
 			})),
 		).toEqual([
-			{ id: "codex-subscription", model: "gpt-subscription", tools: false },
+			{ id: "codex-subscription", model: "gpt-subscription", tools: true },
 			{ id: "claude-subscription", model: "opus", tools: false },
 			{ id: "opencode-subscription", model: "opencode-claude", tools: false },
 			{ id: "cursor-subscription", model: "cursor-auto", tools: false },
@@ -262,6 +265,59 @@ describe("model provider adapters", () => {
 		]);
 		expect(method).toBe("GET");
 		expect(authorization).toBe("Bearer probe-secret");
+	});
+
+	it("enriches only official OpenAI GPT-6 catalog rows with documented compatibility", async () => {
+		const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+			new Response(
+				JSON.stringify({
+					data: [
+						{ id: "gpt-6-sol", name: "GPT-6 Sol" },
+						{ id: "gpt-6-luna", context_window: 900_000 },
+						{ id: "unverified-model" },
+					],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		try {
+			const official = new OpenAIResponsesProvider({ apiKey: "not-a-real-key" });
+			expect(await official.discoverModels()).toMatchObject([
+				{
+					id: "gpt-6-sol",
+					capabilities: {
+						capabilityProvenance: "metadata",
+						tools: true,
+						structuredOutput: true,
+						reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+						contextWindow: 1_050_000,
+					},
+				},
+				{
+					id: "gpt-6-luna",
+					capabilities: {
+						capabilityProvenance: "metadata",
+						contextWindow: 900_000,
+					},
+				},
+				{
+					id: "unverified-model",
+					capabilities: { capabilityProvenance: "unknown" },
+				},
+			]);
+
+			const custom = new OpenAIResponsesProvider({
+				apiKey: "not-a-real-key",
+				baseUrl: "https://proxy.example/v1",
+			});
+			expect((await custom.discoverModels())[0]).toMatchObject({
+				id: "gpt-6-sol",
+				capabilities: { capabilityProvenance: "unknown" },
+			});
+			expect(fetch).toHaveBeenCalledTimes(2);
+		} finally {
+			fetch.mockRestore();
+		}
 	});
 
 	it("uses HTTP Retry-After to remember provider capacity availability", async () => {
@@ -632,6 +688,51 @@ describe("model provider adapters", () => {
 		});
 		expect(requestBody.options).toMatchObject({ num_ctx: 32_768 });
 		expect(requestBody.think).toBe(false);
+	});
+
+	it.each(["Ollama", "OpenAI-compatible"])("executes a corrected %s read instead of replaying an earlier turn's failure", async (adapter) => {
+		let generation = 0;
+		const baseUrl = await serve((_request, response) => {
+			generation += 1;
+			const args = { target: generation === 1 ? "missing" : "corrected" };
+			if (adapter === "Ollama") {
+				response.writeHead(200, { "content-type": "application/x-ndjson" });
+				response.end(`${JSON.stringify({ message: { role: "assistant", content: "", tool_calls: [{ function: { name: "test.observe", arguments: args } }] }, done: true })}\n`);
+			} else {
+				response.writeHead(200, { "content-type": "text/event-stream" });
+				response.end(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "test.observe", arguments: JSON.stringify(args) } }] }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`);
+			}
+		});
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Local corrected observation" });
+		const observed: unknown[] = [];
+		runtime.registerExternalTool({
+			descriptor: { name: "test.observe", title: "Read fixture", description: "Read one synthetic target", category: "browser", riskLevel: "read_only", readOnly: true, requiresWorkspace: false, source: "builtin", tags: [] },
+			inputSchema: { type: "object", properties: { target: { type: "string" } }, required: ["target"], additionalProperties: false },
+			execute: (_context, input) => {
+				observed.push(input.target);
+				if (input.target === "missing") throw new Error("Target is unavailable.");
+				return { observed: input.target };
+			},
+		});
+		runtime.allowTool(session.id, "test.observe");
+		try {
+			const provider = adapter === "Ollama"
+				? new OllamaChatProvider({ baseUrl })
+				: new OpenAIChatCompletionsProvider({ baseUrl, id: "local-compatible", defaultModel: "local-test", local: true });
+			const request = { model: "local-test", messages: [{ role: "user" as const, content: textContent("Read the fixture") }] };
+			const first = (await provider.complete(request)).toolCalls[0]!;
+			const failed = await runtime.callTool(session.id, first.name, first.arguments, { idempotencyKey: `fixture-run:${first.id}` });
+			expect(failed.status).toBe("failed");
+			const second = (await provider.complete(request)).toolCalls[0]!;
+			const corrected = await runtime.callTool(session.id, second.name, second.arguments, { idempotencyKey: `fixture-run:${second.id}` });
+			expect(corrected).toMatchObject({ status: "verified", output: { observed: "corrected" } });
+			expect(second.id).not.toBe(first.id);
+			expect(observed).toEqual(["missing", "corrected"]);
+		} finally {
+			database.close();
+		}
 	});
 
 	it("normalizes malformed Ollama usage metadata", async () => {
@@ -1066,6 +1167,28 @@ describe("model provider adapters", () => {
 			),
 		).rejects.toThrow("Select a specific account endpoint");
 		expect(calls).toEqual([]);
+	});
+
+	it("retains tools on account fallback and never calls text-only endpoints for an agent", async () => {
+		const calls: string[] = [];
+		const endpoint = (id: string, tools: boolean): ModelProvider => ({
+			id, poolId: "codex", defaultModel: "advertised-model",
+			capabilities: { streaming: false, tools, images: false, audio: false, documents: false, local: false },
+			complete: async (request) => {
+				calls.push(id);
+				expect(request.tools).toHaveLength(1);
+				expect(request.reasoningEffort).toBe("high");
+				if (id === "limited-account") throw new ModelProviderError("rate limit", id, true, 429);
+				return { providerId: id, model: request.model, text: "ok", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" };
+			},
+		});
+		const pool = new ProviderPool([endpoint("limited-account", true), endpoint("text-account", false), endpoint("healthy-account", true)]);
+		const request = { model: "advertised-model", reasoningEffort: "high" as const, messages: [{ role: "user" as const, content: textContent("Read scoped source") }], tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }] };
+		const result = await pool.complete(request, { providerIds: ["limited-account", "text-account", "healthy-account"], requireTools: true });
+		expect(result.result.providerId).toBe("healthy-account");
+		expect(calls).toEqual(["limited-account", "healthy-account"]);
+		expect(result.attempts.find(attempt => attempt.providerId === "text-account")?.error).toContain("text-only");
+		await expect(new ProviderPool([endpoint("text-account", false)]).complete(request, { providerIds: ["text-account"], requireTools: true })).rejects.toThrow();
 	});
 
 	it("gives an exact account endpoint precedence over a matching provider alias", async () => {

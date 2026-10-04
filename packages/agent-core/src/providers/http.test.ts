@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	PROVIDER_CONNECT_TIMEOUT_MS,
+	LOCAL_GENERATION_CONNECT_TIMEOUT_MS,
 	providerFetch,
 	quotaFromResponseHeaders,
 } from "./http";
@@ -108,10 +109,7 @@ describe("provider HTTP helpers", () => {
 	});
 
 	it("times out hung provider connects before the agent-level deadline", async () => {
-		const timeoutController = new AbortController();
-		const timeoutSpy = vi
-			.spyOn(AbortSignal, "timeout")
-			.mockReturnValue(timeoutController.signal);
+		vi.useFakeTimers();
 		const originalFetch = globalThis.fetch;
 		globalThis.fetch = async (_input, init) =>
 			new Promise((_resolve, reject) => {
@@ -127,15 +125,58 @@ describe("provider HTTP helpers", () => {
 				"https://provider.example.test",
 				{},
 			);
-			timeoutController.abort(new DOMException("Timed out", "TimeoutError"));
-			await expect(pending).rejects.toMatchObject({
+			const rejection = expect(pending).rejects.toMatchObject({
 				message: `Provider connect timed out after ${PROVIDER_CONNECT_TIMEOUT_MS / 1_000}s.`,
 				providerId: "fixture",
 				retryable: true,
 			});
-			expect(timeoutSpy).toHaveBeenCalledWith(PROVIDER_CONNECT_TIMEOUT_MS);
+			await vi.advanceTimersByTimeAsync(PROVIDER_CONNECT_TIMEOUT_MS);
+			await rejection;
 		} finally {
-			timeoutSpy.mockRestore();
+			vi.useRealTimers();
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("keeps a healthy response stream alive after the connect deadline and still honors cancellation", async () => {
+		vi.useFakeTimers();
+		let requestSignal: AbortSignal | undefined;
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async (_input, init) => {
+			requestSignal = init?.signal ?? undefined;
+			return new Response("still generating");
+		};
+		const caller = new AbortController();
+		try {
+			const response = await providerFetch("fixture", "https://provider.example.test", { signal: caller.signal });
+			await vi.advanceTimersByTimeAsync(PROVIDER_CONNECT_TIMEOUT_MS + 1);
+			expect(requestSignal!.aborted).toBe(false);
+			expect(await response.text()).toBe("still generating");
+			caller.abort();
+			expect(requestSignal!.aborted).toBe(true);
+		} finally {
+			vi.useRealTimers();
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("allows bounded local model prefill while retaining a connect deadline", async () => {
+		vi.useFakeTimers();
+		let requestSignal: AbortSignal | undefined;
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async (_input, init) => new Promise((_resolve, reject) => {
+			requestSignal = init?.signal ?? undefined;
+			requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason));
+		});
+		try {
+			const pending = providerFetch("local-fixture", "http://127.0.0.1:11434/api/chat", {}, "local_generation");
+			const rejection = expect(pending).rejects.toThrow(`Provider connect timed out after ${LOCAL_GENERATION_CONNECT_TIMEOUT_MS / 1_000}s.`);
+			await vi.advanceTimersByTimeAsync(PROVIDER_CONNECT_TIMEOUT_MS);
+			expect(requestSignal!.aborted).toBe(false);
+			await vi.advanceTimersByTimeAsync(LOCAL_GENERATION_CONNECT_TIMEOUT_MS - PROVIDER_CONNECT_TIMEOUT_MS);
+			await rejection;
+		} finally {
+			vi.useRealTimers();
 			globalThis.fetch = originalFetch;
 		}
 	});

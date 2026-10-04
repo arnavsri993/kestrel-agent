@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -33,6 +40,22 @@ function readMacQuarantine(path) {
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
 const userData = join(root, "user-data");
+const testHome = join(root, "home");
+const testCodexHome = join(root, "codex-home");
+const testTempDirectory = join(root, "tmp");
+mkdirSync(testHome, { recursive: true });
+mkdirSync(testCodexHome, { recursive: true });
+mkdirSync(testTempDirectory, { recursive: true });
+const testEnvironment = Object.fromEntries(
+	["PATH", "SHELL", "LANG", "LC_ALL", "TERM", "CI"].flatMap((key) =>
+		process.env[key] === undefined ? [] : [[key, process.env[key]]],
+	),
+);
+let observedFindWindow;
+const detachedPlacementCapturePath = join(
+	userData,
+	"detached-window-placement.json",
+);
 const heicUploadFixture = join(root, "kestrel-upload.HEIC");
 const heicSourcePng = join(root, "kestrel-upload-source.png");
 writeFileSync(
@@ -196,13 +219,19 @@ async function launch() {
 		executablePath,
 		args: launchArgs,
 		env: {
-			...process.env,
+			...testEnvironment,
+			HOME: testHome,
+			USER: "kestrel-browser-test",
+			LOGNAME: "kestrel-browser-test",
+			CODEX_HOME: testCodexHome,
+			TMPDIR: testTempDirectory,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
-		KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-		KESTREL_TEST_USER_DATA: userData,
-		KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
-		KESTREL_REAL_USER_PROFILE: "1",
+			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+			KESTREL_TEST_USER_DATA: userData,
+			KESTREL_TEST_DETACHED_WINDOW_PLACEMENT_PATH: detachedPlacementCapturePath,
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
+			KESTREL_REAL_USER_PROFILE: "1",
 		},
 	});
 	page = await application.firstWindow();
@@ -264,21 +293,26 @@ async function waitForPostLaunchRequest(label) {
 
 async function nativeViewState() {
 	return application.evaluate(({ BrowserWindow }) => {
-		const window = BrowserWindow.getAllWindows().find(
-			(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
-		);
-		if (!window) throw new Error("Kestrel main window is unavailable.");
-		const views = window.contentView.children
-			.filter((child) => "webContents" in child)
-			.map((child) => ({
-				url: child.webContents.getURL(),
-				title: child.webContents.getTitle(),
-				bounds: child.getBounds(),
-				destroyed: child.webContents.isDestroyed(),
+		const candidates = BrowserWindow.getAllWindows()
+			.filter(
+				(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+			)
+			.map((candidate) => ({
+				views: candidate.contentView.children
+					.filter((child) => "webContents" in child)
+					.map((child) => ({
+						url: child.webContents.getURL(),
+						title: child.webContents.getTitle(),
+						bounds: child.getBounds(),
+						destroyed: child.webContents.isDestroyed(),
+					})),
 			}));
+		const activeCandidate = candidates.find(
+			(candidate) => candidate.views.length > 0,
+		);
 		return {
 			browserWindowCount: BrowserWindow.getAllWindows().length,
-			views,
+			views: activeCandidate?.views ?? candidates[0]?.views ?? [],
 		};
 	});
 }
@@ -406,11 +440,42 @@ async function waitForDetachedKestrelWindow(tabId, label) {
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
 }
 
+async function waitForFindPopoverWindow(tabId) {
+	const deadline = Date.now() + 30_000;
+	let latest = [];
+	while (Date.now() < deadline) {
+		const windows = application
+			.windows()
+			.filter((candidate) => !candidate.isClosed());
+		latest = windows.map((candidate) => candidate.url());
+		for (const candidate of windows) {
+			let url;
+			try {
+				url = new URL(candidate.url());
+			} catch {
+				continue;
+			}
+			// The window event can arrive before navigation or for another popup.
+			// Identify the actual Find renderer for this tab once its URL is committed.
+			if (
+				url.searchParams.get("findPopover") === "1" &&
+				url.searchParams.get("tabId") === tabId
+			) {
+				await candidate.waitForLoadState("domcontentloaded");
+				return candidate;
+			}
+		}
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	throw new Error(`Find in page did not open for the active tab: ${JSON.stringify(latest)}`);
+}
+
 async function assertBrowserChromeLayout({
 	vertical = false,
 	sidebarVisible = true,
 } = {}) {
 	const layout = await page.evaluate(() => {
+		const agent = document.querySelector(".agent-sidebar");
 		const bounds = (selector) => {
 			const node = document.querySelector(selector);
 			if (!node) return null;
@@ -438,6 +503,9 @@ async function assertBrowserChromeLayout({
 			recommendations: bounds(".kestrel-widget-canvas"),
 			viewport: bounds("#browser-viewport"),
 			agent: bounds(".agent-sidebar"),
+			agentHidden: agent?.getAttribute("aria-hidden") === "true",
+			agentInert: agent?.inert === true,
+			agentOverlay: agent?.classList.contains("agent-sidebar-overlay") === true,
 			toolbarDragFill: bounds(".browser-toolbar-drag-fill"),
 			toolbarAppRegion: getComputedStyle(document.querySelector(".browser-toolbar")).getPropertyValue(
 				"-webkit-app-region",
@@ -526,11 +594,11 @@ async function assertBrowserChromeLayout({
 		1,
 		"Tools should remain available beside the address field",
 	);
-	assert.equal(
-		await page.locator('.browser-toolbar-actions button[aria-label="Page options"]').count(),
-		1,
-		"Page options should remain available beside the address field",
-	);
+	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Page options", exact: true }).click();
+	await page.getByRole("menu", { name: "Page options", exact: true }).waitFor();
+	await page.keyboard.press("Escape");
+	await page.getByRole("menu", { name: "Page options", exact: true }).waitFor({ state: "detached" });
 	assert.equal(
 		await page.locator('.browser-toolbar-actions button[aria-label="History"]').count(),
 		1,
@@ -585,7 +653,15 @@ async function assertBrowserChromeLayout({
 		layout.viewport.bottom <= layout.app.bottom,
 		"Browser content must stay inside the window",
 	);
-	if (layout.agent && layout.agent.width > 0) {
+	if (layout.agentHidden) {
+		assert(layout.agentInert, "Closed Chat must not expose interactive controls");
+		assert.equal(
+			layout.viewport.right,
+			layout.app.right,
+			"Closed Chat must leave the full browser width available",
+		);
+	} else if (layout.agent && layout.agent.width > 0) {
+		assert(!layout.agentOverlay, "Browser chrome checks require compact Chat to be closed");
 		assert(
 			layout.viewport.right <= layout.agent.x,
 			"Browser content must stay before the lower Agent rail",
@@ -664,12 +740,49 @@ async function assertKestrelSidebarResize() {
 	const targetWidth = Math.min(initial.max, initial.width + 72);
 	await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 120);
 	await page.mouse.down();
+	await page.waitForFunction(() =>
+		document
+			.querySelector(".ai-browser-app")
+			?.classList.contains("kestrel-sidebar-resizing"),
+	);
 	await page.mouse.move(
 		handleBox.x + handleBox.width / 2 + (targetWidth - initial.width),
 		handleBox.y + 120,
-		{ steps: 3 },
+		{ steps: 10 },
 	);
+	// Confirm the final physical move changed the live layout before pointerup
+	// persists it. This keeps the real pointer path under test without assuming
+	// a particular native input-dispatch cadence.
+	try {
+		await page.waitForFunction((expected) => {
+			const sidebar = document.querySelector(".kestrel-sidebar");
+			return sidebar && Math.abs(sidebar.getBoundingClientRect().width - expected) <= 1;
+		}, targetWidth);
+	} catch (error) {
+		const actual = await page.evaluate(() => {
+			const sidebar = document.querySelector(".kestrel-sidebar");
+			const shell = document.querySelector(".ai-browser-app");
+			return {
+				width: sidebar?.getBoundingClientRect().width ?? null,
+				storedWidth: localStorage.getItem("kestrel:navigation-sidebar-width"),
+				presentedWidth: shell?.style.getPropertyValue("--kestrel-sidebar-user-width") ?? null,
+				ariaValueNow: sidebar
+					?.querySelector(".kestrel-sidebar-resize-handle")
+					?.getAttribute("aria-valuenow") ?? null,
+				resizing: shell?.classList.contains("kestrel-sidebar-resizing") ?? false,
+			};
+		});
+		throw new Error(
+			`Sidebar pointer resize did not reach ${targetWidth}px: ${JSON.stringify(actual)}`,
+			{ cause: error },
+		);
+	}
 	await page.mouse.up();
+	await page.waitForFunction(() =>
+		!document
+			.querySelector(".ai-browser-app")
+			?.classList.contains("kestrel-sidebar-resizing"),
+	);
 	await page.waitForFunction(
 		({ expected, key }) => {
 			const sidebar = document.querySelector(".kestrel-sidebar");
@@ -882,24 +995,6 @@ async function createRuntimeSessionWithVisibleBrowser(kind = "agent") {
 	}, kind);
 }
 
-async function waitForRuntimeRunsToSettle(sessionId) {
-	const settled = await page.waitForFunction(async (id) => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-runs",
-			sessionId: id,
-		});
-		if (!response.ok || !("runs" in response)) return false;
-		const runs = response.runs ?? [];
-		return (
-			runs.length > 0 &&
-			runs.every((run) =>
-				["completed", "failed", "cancelled"].includes(run.status),
-			)
-		);
-	}, sessionId);
-	await settled.dispose();
-}
-
 async function callTool(sessionId, toolName, input, options = {}) {
 	let timeout;
 	try {
@@ -984,56 +1079,46 @@ try {
 		"The HEIC upload fixture tab did not close cleanly",
 	);
 	await page.locator("#new-tab-chat-input").focus();
-	const homeSend = page.getByRole("button", {
-		name: "Send message to Pragmatic",
-	});
+	const homeSend = page.locator(".kestrel-home-composer .kestrel-home-send");
 	assert.equal(await homeSend.isDisabled(), true);
 	const homePrompt = "Start with the smallest useful fix.";
-	const homeSessionIdsBefore = await page.evaluate(async () => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return response.ok && "sessions" in response
-			? (response.sessions ?? []).map((session) => session.id)
-			: [];
-	});
 	await page.locator("#new-tab-chat-input").fill(homePrompt);
-	await homeSend.click();
-	await page.waitForFunction(async (expected) => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return (
-			response.ok &&
-			"sessions" in response &&
-			(response.sessions ?? []).length === expected.length + 1
-		);
-	}, homeSessionIdsBefore);
-	assert.equal(await page.locator("#runtime-prompt").inputValue(), "");
-	const homeSessionId = await page.evaluate(async (existingIds) => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		if (!response.ok || !("sessions" in response)) return null;
-		return (
-			response.sessions ?? []
-		).find((session) => !existingIds.includes(session.id))?.id ?? null;
-	}, homeSessionIdsBefore);
-	assert(homeSessionId, "The home task did not expose its new runtime session.");
-	await waitForRuntimeRunsToSettle(homeSessionId);
-	const homeSessionsAfter = await page.evaluate(async () => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return response.ok && "sessions" in response
-			? (response.sessions ?? []).length
-			: -1;
-	});
-	assert.equal(homeSessionsAfter, homeSessionIdsBefore.length + 1);
 	await page
-		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New chat" })
-		.click();
+		.locator(".kestrel-home-composer")
+		.getByText("Connect a model to send tasks.", { exact: true })
+		.waitFor();
+	assert.equal(
+		await homeSend.isDisabled(),
+		true,
+		"A task must not be submitted until a model route is available.",
+	);
+	await page.locator("#new-tab-chat-input").fill(origin);
+	assert.equal(
+		await homeSend.isEnabled(),
+		true,
+		"Browsing a URL must remain available without a model route.",
+	);
+	await homeSend.click();
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/`,
+		"The home URL did not remain usable without a model route",
+	);
+	const homeNavigationTabId = (await browserState()).activeTabId;
+	assert(homeNavigationTabId);
+	await page.evaluate(async (tabId) => {
+		const created = await window.kestrel.request({
+			type: "browser-create-tab",
+			input: "",
+			active: true,
+		});
+		if (!created.ok) throw new Error("Could not restore a New Tab after navigation.");
+		const closed = await window.kestrel.request({
+			type: "browser-close-tab",
+			tabId,
+		});
+		if (!closed.ok) throw new Error("Could not close the temporary home navigation tab.");
+	}, homeNavigationTabId);
+	await page.locator("#new-tab-title").waitFor();
 
 	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
 	await openKestrelDestination(page, "Settings");
@@ -1058,8 +1143,12 @@ try {
 	await page.locator("#new-tab-title").waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 
-	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().click();
 	const agentSidebar = page.locator(".agent-sidebar");
+	const agentToggle = page.locator("#browser-agent-toggle");
+	if ((await agentToggle.getAttribute("aria-expanded")) !== "true") {
+		await agentToggle.click();
+	}
+	await agentSidebar.locator(".agent-sidebar-collapse").click();
 	assert.equal(await agentSidebar.getAttribute("aria-hidden"), "true");
 	assert.equal(
 		await agentSidebar.evaluate((sidebar) => sidebar.inert),
@@ -1075,13 +1164,28 @@ try {
 			}),
 		false,
 	);
-	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).waitFor();
+	await agentToggle.waitFor();
+	assert.equal(await agentToggle.getAttribute("aria-expanded"), "false");
 	await page.reload();
 	await page.locator("#new-tab-title").waitFor();
-	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
-	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().waitFor();
+	assert.equal(await agentToggle.getAttribute("aria-expanded"), "false");
+	await agentToggle.click();
+	await agentSidebar.locator(".agent-sidebar-collapse").waitFor();
 	assert.equal(await agentSidebar.evaluate((sidebar) => sidebar.inert), false);
 	await page.locator("#runtime-prompt").waitFor();
+	if (await agentSidebar.evaluate((sidebar) => sidebar.classList.contains("agent-sidebar-overlay"))) {
+		await agentSidebar.locator(".agent-sidebar-collapse").click();
+		// The remaining journey exercises tabs and Chat together. Compact Chat
+		// deliberately owns the workspace, so use the docked desktop layout.
+		await application.evaluate(({ BrowserWindow }) => {
+			const window = BrowserWindow.getAllWindows().find(
+				(candidate) => !candidate.isDestroyed() && !candidate.webContents.getURL().includes("petOverlay=1"),
+			);
+			if (!window) throw new Error("The Kestrel window is unavailable.");
+			window.setSize(1440, 900);
+		});
+		await page.waitForFunction(() => !document.querySelector(".agent-sidebar")?.classList.contains("agent-sidebar-overlay"));
+	}
 
 	assert.equal(await page.locator(".runtime-suggestions").count(), 0);
 	await page
@@ -1487,30 +1591,34 @@ try {
 	assert.equal(loaded.browserWindowCount, 1);
 	assert.equal(loaded.views[0].title, "Page one");
 	assert.equal(loaded.views[0].destroyed, false);
-	await page.evaluate(() => {
-		const active = document.activeElement;
-		if (active instanceof HTMLElement) active.blur();
-	});
-	await page.keyboard.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
-	const findInput = page.locator("#browser-find-input");
-	await findInput.waitFor();
-	await findInput.fill("Kestrel find verification token");
-	await page.getByText("1 of 3", { exact: true }).waitFor();
-	assert.equal(
-		await readActiveViewScript(
-			"String(window.getSelection())",
-			"Find in page did not select the first visible match",
-		),
-		"Kestrel find verification token",
+	const findTabId = (await browserState()).activeTabId;
+	assert(findTabId);
+	const findShortcutModifier = process.platform === "darwin" ? "meta" : "control";
+	await sendInputToActiveView(
+		{ type: "keyDown", keyCode: "F", modifiers: [findShortcutModifier] },
+		"The browser find shortcut could not reach the active page",
 	);
-	await page.getByRole("button", { name: "Next match", exact: true }).click();
-	await page.getByText("2 of 3", { exact: true }).waitFor();
-	await page.getByRole("button", { name: "Previous match", exact: true }).click();
-	await page.getByText("1 of 3", { exact: true }).waitFor();
+	await sendInputToActiveView(
+		{ type: "keyUp", keyCode: "F", modifiers: [findShortcutModifier] },
+		"The browser find shortcut could not finish on the active page",
+	);
+	const findWindow = await waitForFindPopoverWindow(findTabId);
+	observedFindWindow = findWindow;
+	const findInput = findWindow.getByRole("textbox", { name: "Find in page", exact: true });
+	await findInput.waitFor();
+	await findWindow.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Find in page");
+	await findInput.fill("Kestrel find verification token");
+	await findWindow.getByText("1/3", { exact: true }).waitFor();
+	await findWindow.getByRole("button", { name: "Next match", exact: true }).click();
+	await findWindow.getByText("2/3", { exact: true }).waitFor();
+	await findWindow.getByRole("button", { name: "Previous match", exact: true }).click();
+	await findWindow.getByText("1/3", { exact: true }).waitFor();
 	await findInput.fill("Kestrel absent verification token");
-	await page.getByText("0 of 0", { exact: true }).waitFor();
-	await page.keyboard.press("Escape");
-	await findInput.waitFor({ state: "detached" });
+	await findWindow.getByText("0/0", { exact: true }).waitFor();
+	assert.equal(await findWindow.getByRole("button", { name: "Next match", exact: true }).isDisabled(), true);
+	const findWindowClosed = findWindow.waitForEvent("close");
+	await findInput.press("Escape").catch(error => { if (!findWindow.isClosed()) throw error; });
+	await findWindowClosed;
 	await page.locator(".browser-address-suggestions").waitFor({ state: "detached" });
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
@@ -1582,16 +1690,60 @@ try {
 	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
 	const initialTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
 	await initialTabToolsMenu.waitFor();
+	assert.equal(
+		await initialTabToolsMenu.getByRole("menuitem", { name: "Open Tabs", exact: true }).getAttribute("aria-expanded"),
+		"true",
+		"Tab tools should show open tabs first",
+	);
+	assert.equal(
+		await initialTabToolsMenu.getByRole("menuitem", { name: "Recently Closed", exact: true }).getAttribute("aria-expanded"),
+		"false",
+		"Tab tools should keep closed history behind its disclosure",
+	);
+	await initialTabToolsMenu.getByRole("searchbox", { name: "Search Tabs" }).fill("one");
+	assert.equal(
+		await initialTabToolsMenu.getByRole("menuitem", { name: "Recently Closed", exact: true }).getAttribute("aria-expanded"),
+		"true",
+		"Searching should include recently closed tabs",
+	);
 	await assertNativePagePreviewVisible();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained above the tab tools menu",
 	);
-	await page.keyboard.press("Escape");
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
 	await assertNativeViewHiddenThroughOverlayExit(initialTabToolsMenu, "Tab tools menu");
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing tab tools",
+	);
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	const reopenedTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await reopenedTabToolsMenu.waitFor();
+	assert.equal(
+		await reopenedTabToolsMenu
+			.getByRole("menuitem", { name: "Open Tabs", exact: true })
+			.getAttribute("aria-expanded"),
+		"true",
+		"Closing Tab tools through its trigger should restore the open-tabs default",
+	);
+	assert.equal(
+		await reopenedTabToolsMenu
+			.getByRole("menuitem", { name: "Recently Closed", exact: true })
+			.getAttribute("aria-expanded"),
+		"false",
+		"Closing Tab tools through its trigger should restore the closed-history default",
+	);
+	assert.equal(
+		await reopenedTabToolsMenu.getByRole("searchbox", { name: "Search Tabs" }).inputValue(),
+		"",
+		"Closing Tab tools through its trigger should clear its search",
+	);
+	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(reopenedTabToolsMenu, "Reopened tab tools menu");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing reopened tab tools",
 	);
 	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
 	const browserMenu = page.getByRole("menu", { name: "Browser menu" });
@@ -1606,7 +1758,7 @@ try {
 		"Zoom out",
 		"Reset zoom to 100 percent",
 		"Zoom in",
-		"Favorites",
+		"Bookmarks",
 		"History",
 		"Tab groups",
 		"Downloads",
@@ -1659,7 +1811,8 @@ try {
 	await page.locator(".browser-zoom-feedback").filter({ hasText: "100%" }).waitFor();
 	const extensionsSourceTabId = (await browserState()).activeTabId;
 	assert(extensionsSourceTabId);
-	await page.getByRole("button", { name: "Extensions", exact: true }).click();
+	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Extensions", exact: true }).click();
 	const extensionsMenu = page.getByRole("menu", { name: "Extensions" });
 	await extensionsMenu.waitFor();
 	await assertNativePagePreviewVisible();
@@ -1806,17 +1959,16 @@ try {
 		},
 		"The browser address-bar shortcut could not reach the active page",
 	);
-	await sendInputToActiveView(
-		{
-			type: "keyUp",
-			keyCode: "L",
-			modifiers: ["meta"],
-		},
-		"The browser address-bar shortcut could not finish on the active page",
-	);
 	await page.waitForFunction(
 		() => document.activeElement?.id === "browser-address-input",
 	);
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Focusing the address bar did not hide the native page",
+	);
+	// Focus moved from the native page to the renderer on keyDown, so keyUp
+	// belongs to the renderer and the native view is intentionally detached.
+	await page.keyboard.up("L");
 	await assertNativePagePreviewVisible();
 	await page.keyboard.press("Escape");
 	await assertNativeViewHiddenThroughOverlayExit(
@@ -2076,7 +2228,7 @@ try {
 	let runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
 	await page.getByRole("button", { name: "Open Agent tab" }).click();
 	await page
-		.getByRole("heading", { name: "Agent Universe", exact: true })
+		.getByRole("heading", { name: "Agents", exact: true })
 		.waitFor();
 	await page.locator(".kestrel-sidebar").waitFor();
 	assert.equal(
@@ -2084,6 +2236,7 @@ try {
 		1,
 		"Agent Universe should expose an explicit persistent-agent creation control.",
 	);
+	await page.locator(".agent-workspace-options > summary").click();
 	await page.getByRole("button", { name: "Open agent settings", exact: true }).click();
 	await page
 		.getByRole("heading", { name: "Workspace and sessions", exact: true })
@@ -2094,7 +2247,7 @@ try {
 		.waitFor();
 	await openKestrelDestination(page, "Agent");
 	await page
-		.getByRole("heading", { name: "Agent Universe", exact: true })
+		.getByRole("heading", { name: "Agents", exact: true })
 		.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
@@ -2110,6 +2263,7 @@ try {
 			throw new Error("A delegated runtime session could not be created.");
 		return response.session.id;
 	}, runtimeSessionId);
+	await page.getByRole("group", { name: "Agent workspace view" }).getByRole("button", { name: "Map", exact: true }).click();
 	await page.locator(".agent-universe-scene").waitFor();
 	const rootNode = page.locator(`[data-node-id="${runtimeSessionId}"]`);
 	await rootNode.waitFor();
@@ -2246,18 +2400,27 @@ try {
 	await page
 		.getByRole("heading", { name: "Visible browser worker", exact: true })
 		.waitFor();
+	const workerComposer = page.locator(
+		".agent-universe-context-surface .agent-universe-context-composer textarea",
+	);
+	assert.equal(
+		await workerComposer.count(),
+		1,
+		"A delegated moon should expose its own conversation composer.",
+	);
+	await workerComposer.focus();
 	assert.equal(
 		await page.getByRole("button", { name: "Send message to Visible browser worker", exact: true }).count(),
 		1,
-		"A delegated moon should expose its own conversation composer.",
+		"The delegated moon composer should expose its send control when focused.",
 	);
 	await page
 		.getByRole("button", { name: "Back to the map from Visible browser worker" })
 		.click();
 	assert.equal(
-		await page.getByRole("button", { name: "List", exact: true }).count(),
-		0,
-		"Agent should have one spatial surface, not a list mode",
+		await page.getByRole("group", { name: "Agent workspace view" }).getByRole("button", { name: "List", exact: true }).getAttribute("aria-pressed"),
+		"false",
+		"List remains available while the optional Map is active",
 	);
 	await page.getByRole("button", { name: "Back to solar system", exact: true }).click();
 	await page.waitForFunction((id) => {
@@ -2289,9 +2452,9 @@ try {
 		"The main system should expose the primary conversation composer.",
 	);
 	assert.equal(
-		await page.getByText("Kestrel model system", { exact: true }).count(),
+		await page.locator(".agent-universe-context-composer .model-selector-trigger").count(),
 		1,
-		"The Agent Universe composer should use Kestrel's model system label.",
+		"The Agent Universe composer should expose the shared model picker.",
 	);
 	assert.equal(
 		await page.getByRole("button", { name: "Review approvals", exact: true }).count(),
@@ -2522,10 +2685,36 @@ try {
 		(value) => value.tabs.some((tab) => tab.id === detachableTabId && tab.url === `${origin}/two`),
 		"Detachable tab did not load",
 	);
+	assert.equal(
+		existsSync(detachedPlacementCapturePath),
+		false,
+		"Detached-window placement was captured before a tab was detached.",
+	);
 	const detachableTab = page.locator(
 		`.browser-tab[data-tab-id="${detachableTabId}"]`,
 	);
 	await detachableTab.waitFor();
+	// Native previews intentionally require the owner to be foregrounded.
+	// Earlier native dialogs can leave the test app visible but unfocused.
+	await application.evaluate(({ app, BrowserWindow }, url) => {
+		const owner = BrowserWindow.getAllWindows().find(
+			(candidate) => candidate.webContents.getURL() === url,
+		);
+		if (!owner) throw new Error("The fixture browser window is unavailable.");
+		owner.show();
+		app.focus({ steal: true });
+		owner.focus();
+	}, page.url());
+	const focusDeadline = Date.now() + 5_000;
+	let fixtureFocused = false;
+	while (Date.now() < focusDeadline && !fixtureFocused) {
+		fixtureFocused = await application.evaluate(({ BrowserWindow }, url) =>
+			BrowserWindow.getAllWindows().some(
+				(candidate) => candidate.webContents.getURL() === url && candidate.isFocused(),
+			), page.url());
+		if (!fixtureFocused) await page.waitForTimeout(75);
+	}
+	assert(fixtureFocused, "The fixture browser window did not receive focus before hover");
 	await detachableTab.hover();
 	// Real gestures often start after the hover preview opens. That native
 	// popup must not intercept the pointer on its way out of the tab rail.
@@ -2606,47 +2795,52 @@ try {
 		["application/x-kestrel-tab"],
 		"Detached tab drag did not advertise a Kestrel tab transfer",
 	);
-	const detachedPlacement = await application.evaluate(
-		({ BrowserWindow, screen }, expectedUrl) => {
-			const cursor = screen.getCursorScreenPoint();
-			const workArea = screen.getDisplayNearestPoint(cursor).workArea;
+	const detachedBounds = await application.evaluate(
+		({ BrowserWindow }, expectedUrl) => {
 			const detached = BrowserWindow.getAllWindows().find((candidate) =>
 				candidate.contentView.children.some(
 					(child) =>
 						"webContents" in child && child.webContents.getURL() === expectedUrl,
 				),
 			);
-			const bounds = detached?.getBounds() ?? null;
-			const clamp = (value, minimum, maximum) =>
-				Math.round(Math.max(minimum, Math.min(value, maximum)));
-			return {
-				cursor,
-				bounds,
-				workArea,
-				expectedBounds: bounds
-					? {
-						x: clamp(
-							cursor.x - 180,
-							workArea.x,
-							workArea.x + workArea.width - bounds.width,
-						),
-						y: clamp(
-							cursor.y - 20,
-							workArea.y,
-							workArea.y + workArea.height - bounds.height,
-						),
-					}
-					: null,
-			};
+			return detached?.getBounds() ?? null;
 		},
 		`${origin}/two`,
 	);
-	assert(
-		detachedPlacement.bounds &&
-			detachedPlacement.expectedBounds &&
-			Math.abs(detachedPlacement.bounds.x - detachedPlacement.expectedBounds.x) <= 1 &&
-			Math.abs(detachedPlacement.bounds.y - detachedPlacement.expectedBounds.y) <= 1,
-		`Detached window did not open at the pointer-relative, work-area-clamped position: ${JSON.stringify(detachedPlacement)}`,
+	assert.ok(
+		existsSync(detachedPlacementCapturePath),
+		"Detached-window placement was not captured during the tear-off gesture.",
+	);
+	const detachedPlacement = JSON.parse(
+		readFileSync(detachedPlacementCapturePath, "utf8"),
+	);
+	const clamp = (value, minimum, maximum) =>
+		Math.round(Math.max(minimum, Math.min(value, maximum)));
+	const detachedWidth = Math.min(1320, detachedPlacement.workArea.width);
+	const detachedHeight = Math.min(860, detachedPlacement.workArea.height);
+	const expectedDetachedBounds = {
+		x: clamp(
+			detachedPlacement.cursor.x - 180,
+			detachedPlacement.workArea.x,
+			detachedPlacement.workArea.x + detachedPlacement.workArea.width - detachedWidth,
+		),
+		y: clamp(
+			detachedPlacement.cursor.y - 20,
+			detachedPlacement.workArea.y,
+			detachedPlacement.workArea.y + detachedPlacement.workArea.height - detachedHeight,
+		),
+		width: detachedWidth,
+		height: detachedHeight,
+	};
+	assert.deepEqual(
+		detachedPlacement.bounds,
+		expectedDetachedBounds,
+		`Detached window did not calculate pointer-relative, work-area-clamped bounds: ${JSON.stringify(detachedPlacement)}`,
+	);
+	assert.deepEqual(
+		detachedBounds,
+		detachedPlacement.bounds,
+		`Detached window did not open at its calculated pointer-relative bounds: ${JSON.stringify({ detachedBounds, detachedPlacement })}`,
 	);
 	const rejectedForgedTransfer = await page.evaluate(async (tabId) => {
 		try {
@@ -2899,7 +3093,7 @@ try {
 	);
 
 	process.stdout.write("Browser smoke: history overlay\n");
-	await page.keyboard.press("Meta+H");
+	await page.keyboard.press("Meta+Y");
 	await page.getByPlaceholder("Search history").waitFor();
 	await page.getByPlaceholder("Search history").fill("Page one");
 	await page
@@ -3238,6 +3432,13 @@ try {
 		);
 		const selectedTab = page.locator(`.browser-tab[data-tab-id="${tabId}"]`);
 		await selectedTab.waitFor({ state: "visible" });
+		await page.waitForFunction(
+			(expectedOrientation) =>
+				document
+					.querySelector('[role="tablist"][aria-label="Browser tabs"]')
+					?.getAttribute("aria-orientation") === expectedOrientation,
+			orientation,
+		);
 		assert.equal(
 			await selectedTab.getByRole("tab").getAttribute("aria-selected"),
 			"true",
@@ -3364,6 +3565,32 @@ try {
 	);
 } catch (error) {
 	console.error("Visible browser smoke failed:", error);
+	const directory = resolve(".tmp/desktop-browser");
+	mkdirSync(directory, { recursive: true });
+	const prefix = join(
+		directory,
+		`${new Date().toISOString().replace(/[:.]/g, "-")}-${packagedExecutable ? "packaged" : "source"}`,
+	);
+	const diagnostics = {
+		error: String(error),
+		findWindowUrl: observedFindWindow?.url(),
+	};
+	try {
+		Object.assign(diagnostics, await application.evaluate(({ BrowserWindow, screen }) => ({
+			cursor: screen.getCursorScreenPoint(),
+			windows: BrowserWindow.getAllWindows().map((window) => ({
+				id: window.id,
+				url: window.webContents.getURL(),
+				visible: window.isVisible(),
+				focused: window.isFocused(),
+				bounds: window.getBounds(),
+			})),
+		})));
+		await page.screenshot({ path: `${prefix}-failure.png` });
+	} catch (captureError) {
+		diagnostics.captureError = String(captureError);
+	}
+	writeFileSync(`${prefix}-diagnostics.json`, `${JSON.stringify(diagnostics, null, 2)}\n`);
 	throw error;
 } finally {
 	await application?.close();

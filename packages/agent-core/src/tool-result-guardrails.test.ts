@@ -131,4 +131,62 @@ describe("model-facing tool result guardrails", () => {
 			}).success,
 		).toBe(true);
 	});
+
+	it("keeps a large browser snapshot usable without replaying its full tree", () => {
+		const nodes = Array.from({ length: 1_000 }, (_, index) => ({
+			role: { value: "generic" },
+			name: { value: `Repeated page text ${index} ${"x".repeat(400)}` },
+		}));
+		nodes.push({
+			role: { value: "heading" },
+			name: { value: "apps/desktop/src/renderer/TabStrip.tsx" },
+		});
+		nodes.push({
+			role: { value: "row" },
+			name: { value: "995 + onClick={() => dismissTabTools()}" },
+		});
+		nodes.push({
+			role: { value: "heading" },
+			name: { value: "scripts/test-desktop-browser.mjs" },
+		});
+		nodes.push({
+			role: { value: "heading" },
+			name: { value: `${"-".repeat(20_000)}.not-source` },
+		});
+		nodes.push({
+			role: { value: "row" },
+			name: { value: "1585 + assert.equal(openTabsExpanded, true)" },
+		});
+		const original = {
+			...execution({
+				url: "https://example.com/pull/802/changes",
+				accessibilityTree: { nodes },
+				interactive: [{ ref: "e1", name: "Files changed" }],
+			}),
+			toolName: "browser.visible-snapshot",
+		};
+		const visible = modelVisibleToolResult(original);
+		const output = JSON.parse(visible).output as {
+			accessibilityTree: { nodes: unknown[] };
+			modelDiffRows: Array<{ file: string; text: string }>;
+			truncated: boolean;
+			modelSummary: string;
+		};
+		expect(visible.length).toBeLessThan(33_000);
+		expect(output.truncated).toBe(true);
+		expect(output.modelSummary).toContain("browser.current-context");
+		expect(visible).toContain("TabStrip.tsx");
+		expect(output.modelDiffRows).toEqual([
+			{
+				file: "apps/desktop/src/renderer/TabStrip.tsx",
+				text: "995 + onClick={() => dismissTabTools()}",
+			},
+			{
+				file: "scripts/test-desktop-browser.mjs",
+				text: "1585 + assert.equal(openTabsExpanded, true)",
+			},
+		]);
+		expect(output.accessibilityTree.nodes.length).toBeLessThan(nodes.length);
+		expect((original.output?.accessibilityTree as { nodes: unknown[] }).nodes).toHaveLength(1_005);
+	});
 });

@@ -2,11 +2,12 @@
  * controls remain full-width above it, while the actual page viewport reserves
  * the rail width so native browser content never sits underneath the panel. */
 .ai-browser-app {
-	--agent-panel-default-width: 336px;
+	/* Chat needs real width; a ~320px rail leaves most of the window empty. */
+	--agent-panel-default-width: 560px;
 	--agent-panel-open-width: clamp(
-		288px,
+		480px,
 		var(--agent-panel-user-width, var(--agent-panel-default-width)),
-		min(520px, 44vw)
+		max(480px, min(820px, calc(100vw - 640px)))
 	);
 	--agent-panel-width: var(
 		--agent-panel-presented-width,
@@ -367,6 +368,31 @@
 	min-width: 0;
 }
 
+/* Keep the compact recovery controls in one predictable row. The explanatory
+ * readiness status renders directly beneath it instead of competing for the
+ * same narrow rail width. */
+.unified-ui .agent-conversation-host .composer-footer.is-model-unavailable {
+	gap: 4px;
+}
+
+.unified-ui .agent-conversation-host .composer-footer.is-model-unavailable
+	.composer-context-actions,
+.unified-ui .agent-conversation-host .composer-footer.is-model-unavailable
+	.composer-send-actions {
+	flex: 0 0 auto;
+	flex-wrap: nowrap;
+}
+
+.unified-ui
+	.agent-conversation-host
+	.composer-status.is-model-readiness {
+	display: block;
+	margin: 0 8px 8px;
+	color: var(--ink-secondary);
+	font-size: 11px;
+	line-height: 1.35;
+}
+
 .agent-sidebar-identity {
 	grid-template-columns: minmax(0, 1fr) auto auto auto;
 }
@@ -405,7 +431,37 @@
 }
 
 .agent-conversation-host .message-list {
-	overflow: auto;
+	width: 100%;
+	max-width: none;
+	margin: 0;
+	overflow-x: clip;
+	overflow-y: auto;
+	scrollbar-gutter: stable;
+}
+
+.agent-conversation-host .assistant-message,
+.agent-conversation-host .user-message,
+.agent-conversation-host .work-summary,
+.agent-conversation-host .assistant-message > div {
+	min-width: 0;
+	max-width: 100%;
+	overflow-x: clip;
+}
+
+.agent-conversation-host .work-summary {
+	display: flex;
+	align-items: flex-start;
+}
+
+.agent-conversation-host .work-summary span,
+.agent-conversation-host .assistant-message p,
+.agent-conversation-host .user-message p,
+.agent-conversation-host .message-list :is(pre, code) {
+	min-width: 0;
+	max-width: 100%;
+	overflow-x: clip;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .agent-conversation-host .runtime-new-composer,
@@ -437,7 +493,8 @@
 	right: auto;
 	bottom: auto;
 	display: grid;
-	grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+	/* Keep workspace compact so the conversation owns the window. */
+	grid-template-columns: minmax(200px, 240px) minmax(0, 1fr);
 	grid-template-rows: auto minmax(0, 1fr);
 	width: 100%;
 	height: 100vh;
@@ -524,16 +581,29 @@
 }
 
 .ai-browser-app.agent-full-page .agent-conversation-host .message-list {
-	overflow: auto;
-	padding: 24px 28px 12px;
+	width: 100%;
+	max-width: none;
+	margin: 0;
+	overflow-x: clip;
+	overflow-y: auto;
+	padding: 20px 28px 28px;
 }
 
 .ai-browser-app.agent-full-page .agent-conversation-host .runtime-new-composer,
 .ai-browser-app.agent-full-page .agent-conversation-host .thread-composer {
-	width: min(760px, 100%);
-	margin-inline: auto;
-	padding: 12px 24px 28px;
+	position: relative;
+	left: auto;
+	bottom: auto;
+	transform: none;
+	width: 100%;
+	max-width: none;
+	margin-inline: 0;
+	padding: 12px 28px 24px;
 	background: transparent;
+}
+
+.ai-browser-app.agent-full-page .agent-conversation-host .assistant-message p {
+	max-width: none;
 }
 
 .ai-browser-app.agent-full-page .agent-workspace {
@@ -620,13 +690,13 @@
 
 @media (max-width: 1120px) {
 	.ai-browser-app {
-		--agent-panel-default-width: 312px;
+		--agent-panel-default-width: 520px;
 	}
 }
 
 @media (max-width: 980px) {
 	.ai-browser-app {
-		--agent-panel-default-width: 288px;
+		--agent-panel-default-width: 480px;
 	}
 }
 
@@ -934,3 +1004,34 @@
 		background: Canvas;
 	}
 }
+
+/* Compact chat takes one workspace; the page retains its full layout behind it. */
+.ai-browser-app.agent-sidebar-compact {
+	--agent-panel-width: 0px;
+}
+.ai-browser-app.agent-sidebar-overlay-open .agent-sidebar.agent-sidebar-overlay {
+	position: absolute;
+	display: grid;
+	inset: 0;
+	z-index: 40;
+	width: 100%;
+	height: 100%;
+	max-height: 100%;
+	border: 0;
+	transform: none;
+	opacity: 1;
+	background: var(--sidebar);
+}
+.ai-browser-app.agent-sidebar-overlay-open .agent-compact-dock { display: none; }
+.ai-browser-app.agent-sidebar-overlay-open .browser-main-plane { visibility: hidden; }
+.ai-browser-app.agent-sidebar-overlay-open .agent-sidebar-collapse {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: auto;
+	min-width: 76px;
+	padding-inline: 10px;
+	gap: 6px;
+}
+.ai-browser-app.agent-sidebar-overlay-open .agent-sidebar-collapse-icon { transform: none; }
+.ai-browser-app.agent-sidebar-overlay-open .agent-sidebar-drag { height: 30px; }

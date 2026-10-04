@@ -50,6 +50,21 @@ function execution(
 }
 
 describe("action receipts", () => {
+	it.each([
+		["orchestration.delegate", "Delegated Kestrel task"],
+		["orchestration.delegate-team", "Delegated Kestrel team tasks"],
+		["automation.create", "Kestrel automation schedule"],
+	])("labels %s by its actual destination without copying the child prompt", (toolName, label) => {
+		const receipt = buildActionReceipt({
+			descriptor: { ...descriptor, name: toolName, title: "Delegate task", category: "automation" },
+			execution: execution({ toolName, input: { title: "Synthetic child", prompt: "private synthetic body" }, output: { delegated: { sessionId: "child-fixture", result: { text: "private synthetic result" } } } }),
+		});
+		expect(receipt?.destination.label).toBe(label);
+		expect(receipt?.outcome).toBe("verified");
+		expect(receipt?.verification?.method).toBe("filesystem-content-readback");
+		expect(JSON.stringify(receipt)).not.toContain("private synthetic");
+	});
+
 	it("summarizes a verified mutation without copying raw input and exposes only a tested undo", () => {
 		const receipt = buildActionReceipt({
 			descriptor,

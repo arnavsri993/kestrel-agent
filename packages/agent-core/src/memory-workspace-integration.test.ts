@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { CoreRequestSchema } from "@kestrel/shared-types";
+import { CoreRequestSchema, CoreResponseSchema, MemoryDocumentSaveSchema, MemoryWorkspaceSchema } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import { AgentCore, type ModelProvider } from "./index";
 
@@ -12,6 +12,62 @@ function setup(provider?: ModelProvider) {
 }
 
 describe("memory workspace integration", () => {
+
+	it("keeps historical point events out of the selected Memory period", async () => {
+		const { core, database, send } = setup();
+		try {
+			const startAt = "2026-09-16T00:00:00.000Z";
+			const endAt = "2026-09-23T00:00:00.000Z";
+			for (const [id, startedAt] of [["old-point", "2026-09-01T15:00:00.000Z"], ["current-point", "2026-09-16T15:00:00.000Z"], ["end-point", endAt]]) {
+				database.upsertTimelineEvent({ id: id!, startedAt: startedAt!, source: "synthetic-test", eventType: "project_activity", actor: "user", projectIds: [], personIds: [], entityIds: [], textSummary: "Synthetic period activity", structuredData: {}, importance: 0.5, sensitivity: "personal", retentionPolicy: "durable", embeddingStatus: "not_requested", status: "active", createdAt: startAt, updatedAt: startAt });
+			}
+			const response = await send({ type: "memory-workspace-read", query: { viewerId: "user", startAt, endAt } });
+			expect(response.ok).toBe(true);
+			if (!response.ok || !response.memoryWorkspace) throw new Error("Workspace missing");
+			expect(response.memoryWorkspace.days).toHaveLength(1);
+			expect(response.memoryWorkspace.days[0]?.events.map(event => [event.id, event.startedAt])).toEqual([["current-point", "2026-09-16T15:00:00.000Z"]]);
+		} finally { await core.close(); database.close(); }
+	});
+
+	it("loads notes and complete provenance for a busy day through the IPC contract", async () => {
+		const { core, database, send } = setup();
+		try {
+			const at = "2026-09-16T15:00:00.000Z";
+			const note = await send({ type: "memory-document-save", document: { kind: "memory", title: "Busy day", text: "Keep the useful note available." } });
+			if (!note.ok || !note.memoryDocument) throw new Error("Document missing");
+			for (let index = 0; index <= 2_000; index += 1) {
+				const suffix = String(index).padStart(4, "0");
+				database.upsertTimelineEvent({
+					id: `busy-event-${suffix}`, sourceId: `busy-source-${suffix}`, startedAt: at,
+					source: "synthetic-test", eventType: "project_activity", actor: "user",
+					projectIds: ["robotics"], personIds: [], entityIds: [],
+					textSummary: `Synthetic activity ${suffix}`, structuredData: {}, importance: 0.5,
+					sensitivity: "personal", retentionPolicy: "durable", embeddingStatus: "not_requested",
+					status: "active", createdAt: at, updatedAt: at,
+				});
+			}
+			const result = CoreResponseSchema.parse(await send({ type: "memory-workspace-read", query: { viewerId: "user", domainId: "robotics" } }));
+			expect(result.ok).toBe(true);
+			if (!result.ok || !result.memoryWorkspace) throw new Error("Workspace missing");
+			const workspace = result.memoryWorkspace;
+			const day = workspace.days[0]!;
+			expect(day.eventCount).toBe(2_000);
+			expect(day.events).toHaveLength(2_000);
+			expect(day.sourceIds).toEqual(day.events.flatMap(event => [event.id, event.sourceId]));
+			expect(day.sourceIds).toHaveLength(4_000);
+			expect(workspace.truncated).toBe(true);
+			expect(day.sourceIds).not.toContain("busy-event-2000");
+			const notes = await send({ type: "memory-workspace-read", query: { viewerId: "user" } });
+			expect(notes.ok && notes.memoryWorkspace?.documents.some(document => document.id === note.memoryDocument!.id)).toBe(true);
+			const unrelated = core.runtime.createSession({ title: "Unrelated scope", kind: "agent" });
+			const identity = core.memorySubstrate.ensureAgentIdentity(unrelated);
+			const scoped = await send({ type: "memory-workspace-read", query: { viewerId: identity.id } });
+			expect(scoped.ok && scoped.memoryWorkspace?.days).toEqual([]);
+			expect(MemoryWorkspaceSchema.safeParse({ ...workspace, days: [{ ...day, sourceIds: [...day.sourceIds, "overflow"] }] }).success).toBe(false);
+			expect(MemoryDocumentSaveSchema.safeParse({ kind: "memory", title: "Bounded note", text: "Context", sourceIds: day.sourceIds.slice(0, 501) }).success).toBe(false);
+		} finally { await core.close(); database.close(); }
+	});
+
 	it("persists, corrects, and forgets a person through the real IPC contract", async () => {
 		const { core, database, send } = setup();
 		try {

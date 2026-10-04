@@ -140,6 +140,8 @@ function destinationFor(
 	execution: RuntimeToolExecution,
 	descriptor: ReceiptDescriptor,
 ): string {
+	if (execution.toolName === "orchestration.delegate") return "Delegated Kestrel task";
+	if (execution.toolName === "orchestration.delegate-team") return "Delegated Kestrel team tasks";
 	if (descriptor.category === "workspace") return workspaceDestination(execution);
 	if (descriptor.category === "browser") return browserDestination(execution);
 	if (descriptor.category === "connector") return connectorDestination(execution);

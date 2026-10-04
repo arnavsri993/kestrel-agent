@@ -8,6 +8,46 @@ export const PREMATURE_BROWSER_COMPLETION_ERROR =
 export const OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR =
 	"Kestrel stopped before taking the required fresh browser observation. Retry the last turn or ask for a follow-up.";
 
+export const UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR =
+	"Kestrel could not verify the claimed browser click. No successful click was recorded in this run. Review the browser steps, then retry or send a follow-up.";
+
+export const UNEXECUTED_LOCAL_PLAN_ERROR =
+	"Kestrel returned an unfinished plan instead of carrying out its next step. No completion was verified. Retry or send a follow-up.";
+
+export function isUnexecutedLocalPlan(text: string): boolean {
+	const lastLine = text.trim().split("\n").at(-1)?.trim() ?? "";
+	return /^let['’]s (?:execute|begin|proceed|do it)[.!:]?$/i.test(lastLine);
+}
+
+function claimsExecutedClick(text: string): boolean {
+	let fenced = false;
+	const prose = text.split("\n").filter(line => {
+		const trimmed = line.trimStart();
+		if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+			fenced = !fenced;
+			return false;
+		}
+		return !fenced && !trimmed.startsWith(">") &&
+			!/^(?:[-*]\s+)?(?:if|when|once|unless|until|for example|example)\b/i.test(trimmed);
+	}).join("\n");
+	return /\b(?:I|we) (?:have )?(?:just )?(?:successfully )?clicked\b|\bclick (?:was|has been) (?:successfully )?(?:executed|performed|completed)\b|\b(?:button|link|element) (?:was|has been) (?:successfully )?clicked\b/i.test(prose);
+}
+
+export function unverifiedBrowserClickNarration(input: {
+	runId: string;
+	sessionId: string;
+	modelText: string;
+	listExecutions: (sessionId: string) => RuntimeToolExecution[];
+}): boolean {
+	return claimsExecutedClick(input.modelText) && !input.listExecutions(input.sessionId).some(execution => {
+		const action = execution.input.action;
+		return execution.idempotencyKey?.startsWith(`${input.runId}:`) === true &&
+			execution.status === "verified" &&
+			["browser.act", "browser.visible-act"].includes(execution.toolName) &&
+			typeof action === "object" && action !== null && "type" in action && action.type === "click";
+	});
+}
+
 export function prematureBrowserCompletionError(input: {
 	runId: string;
 	sessionId: string;
@@ -16,7 +56,6 @@ export function prematureBrowserCompletionError(input: {
 	listExecutions: (sessionId: string) => RuntimeToolExecution[];
 }): string | undefined {
 	const modelText = input.modelText.trim();
-	if (modelText) return undefined;
 
 	const runPrefix = `${input.runId}:`;
 	const browserExecutions = input.listExecutions(input.sessionId).filter(
@@ -25,6 +64,11 @@ export function prematureBrowserCompletionError(input: {
 			execution.toolName.startsWith("browser."),
 	);
 	if (browserExecutions.length === 0) return undefined;
+	if (modelText) {
+		if (unverifiedBrowserClickNarration({ ...input, listExecutions: () => browserExecutions }))
+			return UNVERIFIED_BROWSER_CLICK_COMPLETION_ERROR;
+		return undefined;
+	}
 
 	if (
 		input.browserRecoveryState.entries.some(

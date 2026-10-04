@@ -8,6 +8,7 @@ import {
 	type BrowserAction,
 	type BrowserAutomationBackend,
 	BrowserController,
+	type BrowserSnapshot,
 	installBrowserTools,
 	type ScreenshotFrame,
 	VisualValidator,
@@ -135,7 +136,7 @@ class FakeBrowser implements BrowserAutomationBackend {
 			trust: "untrusted_browser" as const,
 		};
 	}
-	async visibleSnapshot() {
+	async visibleSnapshot(): Promise<BrowserSnapshot & { trust: "untrusted_browser" }> {
 		return {
 			url: "https://example.test/",
 			title: "Visible",
@@ -351,18 +352,40 @@ describe("isolated browser automation and visual validation", () => {
 				trust: "untrusted_browser",
 			},
 		});
-		expect(
-			(
-				await runtime.callTool(
-					session.id,
-					"computer.act",
-					{ action: { type: "click", x: 10, y: 20 } },
-					{ approvalStatus: "approved", idempotencyKey: "desktop-click" },
-				)
-			).status,
-		).toBe("verified");
-		expect(backend.desktopActions).toEqual([{ type: "click", x: 10, y: 20 }]);
+		expect(runtime.discoverTools(session.id).map((tool) => tool.name)).not.toContain("computer.act");
+		const desktopFrame = await runtime.callTool(session.id, "computer.screenshot", {});
+		expect(desktopFrame.output?.pngBase64).toBeDefined();
+		expect(database.getToolExecution(desktopFrame.id)?.output).toMatchObject({
+			redacted: true, reason: "computer-use-screenshot", width: 1, height: 1,
+		});
 		database.close();
+	});
+
+	it("rejects malformed browser arguments before approval without changing session boundaries", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const backend = new FakeBrowser();
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Argument correction", approvalPolicy: "ask" });
+		installBrowserTools(runtime, new BrowserController(backend), session.id);
+		try {
+			const created = await runtime.callTool(session.id, "browser.create", { allowedOrigins: ["https://example.test"] }, { approvalStatus: "approved", idempotencyKey: "argument-browser" });
+			// An ask-policy session still needs a genuine one-time approval grant.
+			expect(created).toMatchObject({ status: "blocked", output: { approvalRequired: true } });
+			const malformed = await runtime.callTool(session.id, "browser.act", { browserSessionId: "browser-00000000-0000-4000-8000-000000000000", action: '{"selector":"h1"}' }, { idempotencyKey: "malformed-action" });
+			expect(malformed).toMatchObject({ status: "blocked", output: { approvalRequired: false, persistentApprovalAllowed: false }, error: expect.stringContaining("structured object") });
+			const missing = await runtime.callTool(session.id, "browser.snapshot", {});
+			expect(missing).toMatchObject({ status: "blocked", output: { approvalRequired: false } });
+			const wrongSurface = await runtime.callTool(session.id, "browser.snapshot", { browserSessionId: backend.visibleTabId });
+			expect(wrongSurface).toMatchObject({ status: "blocked", error: expect.stringContaining("browser.visible-snapshot") });
+			expect(backend.actions).toEqual([]);
+			expect(backend.snapshotCalls).toBe(0);
+			const visible = await runtime.callTool(session.id, "browser.visible-snapshot", { tabId: backend.visibleTabId });
+			expect(visible).toMatchObject({ status: "verified", output: { title: "Visible" } });
+			const extra = await runtime.callTool(session.id, "browser.visible-snapshot", { tabId: backend.visibleTabId, browserSessionId: "ignored" });
+			expect(extra).toMatchObject({ status: "blocked", output: { approvalRequired: false } });
+		} finally {
+			database.close();
+		}
 	});
 
 	it("persists typed recovery guidance and never replays a failed browser action", async () => {
@@ -551,6 +574,25 @@ describe("isolated browser automation and visual validation", () => {
 			),
 		).rejects.toThrow("tab ID is invalid");
 		database.close();
+	});
+
+	it("does not capture a visible screenshot from a truncated page inspection", async () => {
+		const backend = new FakeBrowser();
+		vi.spyOn(backend, "visibleSnapshot").mockResolvedValue({
+			url: "https://example.test/",
+			title: "Visible",
+			accessibilityTree: { role: "document" },
+			truncated: true,
+			trust: "untrusted_browser",
+		});
+		const capture = vi.spyOn(backend, "visibleScreenshot");
+		await expect(
+			new BrowserController(backend).visibleScreenshot(
+				backend.visibleTabId,
+				new AbortController().signal,
+			),
+		).rejects.toThrow("page inspection is incomplete");
+		expect(capture).not.toHaveBeenCalled();
 	});
 
 	it("rejects accessibility trees that cannot be serialized", async () => {
