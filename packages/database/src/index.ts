@@ -2198,10 +2198,10 @@ export class KestrelDatabase {
 		];
 		const parameters: Array<string | number> = [];
 		if (options.startAt && options.endAt) {
-			conditions.push("e.started_at < ?", "(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("e.started_at < ?", "COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.endAt, options.startAt);
 		} else if (options.startAt) {
-			conditions.push("(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.startAt);
 		} else if (options.endAt) {
 			conditions.push("e.started_at < ?");
@@ -2265,10 +2265,10 @@ export class KestrelDatabase {
 			this.hashMemoryTerm(term),
 		);
 		if (options.startAt && options.endAt) {
-			conditions.push("e.started_at < ?", "(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("e.started_at < ?", "COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.endAt, options.startAt);
 		} else if (options.startAt) {
-			conditions.push("(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.startAt);
 		} else if (options.endAt) {
 			conditions.push("e.started_at < ?");

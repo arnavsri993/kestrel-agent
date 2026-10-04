@@ -2488,7 +2488,8 @@ export function installOrchestrationTools(
 		runtime.registerExternalTool({
 			descriptor: {
 				name,
-				title,
+				title: name === "orchestration.delegate" ? "Delegate task"
+					: name === "orchestration.delegate-team" ? "Delegate team tasks" : title,
 				description: title,
 				category: "automation",
 				riskLevel,

@@ -3,6 +3,17 @@ import { describe, expect, it } from "vitest";
 import { RuntimeToolMessage, runtimeAssistantDisplayContent, runtimeToolMessagePresentation, runtimeToolTitle } from "./RuntimeToolMessage";
 
 describe("assistant action-request presentation", () => {
+	it("shows the delegated action while retaining the execution details", () => {
+		const calls = [{ id: "delegate-fixture", name: "orchestration.delegate", arguments: { allowedTools: [], resourceScope: [] } }];
+		expect(runtimeAssistantDisplayContent({ role: "assistant", content: "Requested tools: orchestration.delegate", modelToolCalls: calls })).toBe("Requested action: Delegate task.");
+		const message = { id: "delegate-message-fixture", toolName: "orchestration.delegate", content: JSON.stringify({ status: "verified", output: { delegated: { sessionId: "child-fixture" } } }) };
+		expect(runtimeToolMessagePresentation(message)?.title).toBe("Delegate task");
+		const markup = renderToStaticMarkup(<RuntimeToolMessage message={message} />);
+		expect(markup).toContain("Delegate task");
+		expect(markup).toContain("orchestration.delegate");
+		expect(markup).toContain("child-fixture");
+	});
+
 	const calls = [{ id: "call-1", name: "browser.create", arguments: { allowedOrigins: ["https://owned.test"] } }];
 	it("labels an exact tool-only request without changing its recorded text or arguments", () => {
 		const message = { role: "assistant" as const, content: "Requested tools: browser.create", modelToolCalls: calls };

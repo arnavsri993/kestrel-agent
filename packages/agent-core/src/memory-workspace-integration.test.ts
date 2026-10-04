@@ -12,6 +12,23 @@ function setup(provider?: ModelProvider) {
 }
 
 describe("memory workspace integration", () => {
+
+	it("keeps historical point events out of the selected Memory period", async () => {
+		const { core, database, send } = setup();
+		try {
+			const startAt = "2026-09-16T00:00:00.000Z";
+			const endAt = "2026-09-23T00:00:00.000Z";
+			for (const [id, startedAt] of [["old-point", "2026-09-01T15:00:00.000Z"], ["current-point", "2026-09-16T15:00:00.000Z"], ["end-point", endAt]]) {
+				database.upsertTimelineEvent({ id: id!, startedAt: startedAt!, source: "synthetic-test", eventType: "project_activity", actor: "user", projectIds: [], personIds: [], entityIds: [], textSummary: "Synthetic period activity", structuredData: {}, importance: 0.5, sensitivity: "personal", retentionPolicy: "durable", embeddingStatus: "not_requested", status: "active", createdAt: startAt, updatedAt: startAt });
+			}
+			const response = await send({ type: "memory-workspace-read", query: { viewerId: "user", startAt, endAt } });
+			expect(response.ok).toBe(true);
+			if (!response.ok || !response.memoryWorkspace) throw new Error("Workspace missing");
+			expect(response.memoryWorkspace.days).toHaveLength(1);
+			expect(response.memoryWorkspace.days[0]?.events.map(event => [event.id, event.startedAt])).toEqual([["current-point", "2026-09-16T15:00:00.000Z"]]);
+		} finally { await core.close(); database.close(); }
+	});
+
 	it("loads notes and complete provenance for a busy day through the IPC contract", async () => {
 		const { core, database, send } = setup();
 		try {

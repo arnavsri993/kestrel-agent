@@ -28,6 +28,8 @@ const titles: Record<string, string> = {
 	"agent.config.rollback": "Restore configuration version",
 	"memory.search": "Search Memory",
 	"memory.remember": "Save to Memory",
+	"orchestration.delegate": "Delegate task",
+	"orchestration.delegate-team": "Delegate team tasks",
 	"tools.search": "Find a tool",
 	"tools.activate": "Load a tool",
 };
