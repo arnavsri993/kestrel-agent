@@ -1,8 +1,8 @@
 import { tmpdir } from "node:os";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { CoreRequestSchema, CoreResponseSchema, MemoryDocumentSaveSchema, MemoryWorkspaceSchema } from "@kestrel/shared-types";
-import { describe, expect, it } from "vitest";
+import { AgentMemoryRecordSchema, CoreRequestSchema, CoreResponseSchema, MemoryDocumentSaveSchema, MemoryWorkspaceSchema, WorkingTaskSchema } from "@kestrel/shared-types";
+import { describe, expect, it, vi } from "vitest";
 import { AgentCore, type ModelProvider } from "./index";
 
 function setup(provider?: ModelProvider) {
@@ -12,6 +12,39 @@ function setup(provider?: ModelProvider) {
 }
 
 describe("memory workspace integration", () => {
+	it("stops remembering a chat atomically and keeps its transcript", async () => {
+		const { core, database, send } = setup();
+		try {
+			const session = core.runtime.ensureMainSession();
+			const message = core.runtime.appendMessage({ sessionId: session.id, role: "user", content: "Owned remembered fixture." });
+			const eventId = `timeline-message-${message.id}`;
+			const task = core.memorySubstrate.createWorkingTask(WorkingTaskSchema.parse({ id: "owned-running-task", sessionId: session.id, agentId: "agent-main", goal: "Owned pending work", status: "running", sourceIds: [`session:${session.id}`], plan: [], evidence: [], artifacts: [], failures: [], unresolvedQuestions: [], subtaskIds: [], startedAt: message.createdAt, createdAt: message.createdAt, updatedAt: message.createdAt }));
+			expect(database.getTimelineEvent(eventId)).toBeDefined();
+			const saved = await send({ type: "memory-document-save", document: { kind: "memory", title: "Owned source note", text: "Owned remembered fixture.", sourceIds: [eventId] } });
+			if (!saved.ok || !saved.memoryDocument) throw new Error("Document missing");
+			const forget = core.memorySubstrate.forgetSource.bind(core.memorySubstrate);
+			const failure = vi.spyOn(core.memorySubstrate, "forgetSource").mockImplementationOnce(sourceId => { forget(sourceId); throw new Error("Owned removal failure"); });
+			const failed = await send({ type: "runtime-stop-remembering-session", sessionId: session.id });
+			expect(failed.ok).toBe(false);
+			expect(core.runtime.getSession(session.id).privacyMode ?? "standard").toBe("standard");
+			expect(database.getTimelineEvent(eventId)).toBeDefined();
+			expect(core.memoryWorkspace.read().documents.some(document => document.id === saved.memoryDocument!.id)).toBe(true);
+			failure.mockRestore();
+			const stopped = await send({ type: "runtime-stop-remembering-session", sessionId: session.id });
+			expect(stopped.ok && stopped.session?.privacyMode).toBe("private");
+			expect(database.getTimelineEvent(eventId)).toBeUndefined();
+			expect(core.memoryWorkspace.read().documents.some(document => document.id === saved.memoryDocument!.id)).toBe(false);
+			expect(database.listRuntimeMessages(session.id).some(item => item.id === message.id)).toBe(true);
+			const next = core.runtime.appendMessage({ sessionId: session.id, role: "user", content: "Owned unremembered fixture." });
+			expect(database.getTimelineEvent(`timeline-message-${next.id}`)).toBeUndefined();
+			core.memorySubstrate.recordTaskOutcome({ ...task, status: "completed", outcomeSummary: "Owned completion after privacy changed" });
+			expect(database.getWorkingTask(task.id)).toBeUndefined();
+			expect(database.getAgentMemory(`agent-outcome-${task.id}`)).toBeUndefined();
+			core.memorySubstrate.createWorkingTask({ ...task, id: "owned-private-task" });
+			expect(database.getWorkingTask("owned-private-task")).toBeUndefined();
+			expect((await send({ type: "runtime-stop-remembering-session", sessionId: session.id })).ok).toBe(true);
+		} finally { await core.close(); database.close(); }
+	});
 
 	it("keeps historical point events out of the selected Memory period", async () => {
 		const { core, database, send } = setup();
@@ -68,6 +101,26 @@ describe("memory workspace integration", () => {
 		} finally { await core.close(); database.close(); }
 	});
 
+	it("reviews and applies an exact cleanup through the human contract without a model cleanup tool", async () => {
+		const { core, database, send } = setup();
+		try {
+			const session = core.runtime.ensureMainSession();
+			const identity = core.memorySubstrate.ensureAgentIdentity(session);
+			const record = AgentMemoryRecordSchema.parse({ id: "owned-cleanup-ipc", agentId: identity.id, kind: "outcome", horizon: "mid_term", content: "Owned cleanup contract fixture", sourceIds: ["synthetic:cleanup"], taskIds: [], projectIds: [], personIds: [], entityIds: [], confidence: .6, importance: .5, sensitivity: "personal", status: "active", pinned: false, accessCount: 0, createdAt: "2025-01-01T00:00:00.000Z", updatedAt: "2025-01-01T00:00:00.000Z", fadesAt: "2025-03-01T00:00:00.000Z" });
+			database.upsertAgentMemory(record);
+			const review = await send({ type: "memory-fade-plan" });
+			if (!review.ok || !review.memoryFadePreview) throw new Error("Cleanup preview missing");
+			expect(review.memoryFadePreview.candidates).toEqual([{ id: record.id, kind: "agent", content: record.content }]);
+			expect(database.getAgentMemory(record.id)).toEqual(record);
+			const names = [...core.runtime.discoverTools(session.id), ...core.runtime.discoverDeferredTools()].map(tool => tool.name);
+			expect(names.some(name => /memory[.-]fade/u.test(name))).toBe(false);
+			const applied = await send({ type: "memory-fade-apply", planId: review.memoryFadePreview.plan.id, approved: true });
+			expect(applied.ok && applied.memoryFadeDryRun?.applied).toBe(true);
+			expect(database.getAgentMemory(record.id)).toBeUndefined();
+			const replay = await send({ type: "memory-fade-apply", planId: review.memoryFadePreview.plan.id, approved: true });
+			expect(replay.ok).toBe(false);
+		} finally { await core.close(); database.close(); }
+	});
 	it("persists, corrects, and forgets a person through the real IPC contract", async () => {
 		const { core, database, send } = setup();
 		try {

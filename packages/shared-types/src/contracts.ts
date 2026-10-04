@@ -37,6 +37,8 @@ import {
 	MemoryContextBundleSchema,
 	MemoryDiagnosticsSchema,
 	MemoryDeleteResultSchema,
+	MemoryFadeDryRunSchema,
+	MemoryFadePreviewSchema,
 	MemoryMaintenanceResultSchema,
 	MemoryQuerySchema,
 	MemoryTimelineQueryResultSchema,
@@ -114,6 +116,11 @@ export const MemoryRecordSchema = z.object({
 	inferred: z.boolean(),
 	subject: z.string().min(1).max(500).optional(),
 	layer: z.enum(["short_term", "mid_term", "long_term", "archived"]).optional(),
+	/** User pin: durable until explicitly forgotten. */
+	pinned: z.boolean().optional(),
+	/** When set, unpinned automatic memories past this time are eligible to fade. */
+	fadesAt: z.string().datetime().optional(),
+	accessCount: z.number().int().nonnegative().optional(),
 	confirmationStatus: z
 		.enum([
 			"inferred",
@@ -3305,6 +3312,10 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		sessionId: z.string().min(1).nullable(),
 	}),
 	z.object({
+		type: z.literal("runtime-stop-remembering-session"),
+		sessionId: z.string().min(1),
+	}),
+	z.object({
 		type: z.literal("runtime-forget-session"),
 		sessionId: z.string().min(1),
 	}),
@@ -3439,6 +3450,8 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		id: z.string().min(1),
 	}),
 	z.object({ type: z.literal("memory-run-maintenance") }),
+	z.object({ type: z.literal("memory-fade-plan") }),
+	z.object({ type: z.literal("memory-fade-apply"), planId: z.string().min(1).max(200), approved: z.literal(true) }),
 	z.object({ type: z.literal("memory-user-model-list") }),
 	z.object({
 		type: z.literal("memory-user-model-review"),
@@ -3488,6 +3501,12 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("memory-agent-forget"),
 		sessionId: z.string().min(1),
 		id: z.string().min(1).max(200),
+	}),
+	z.object({
+		type: z.literal("memory-agent-pin"),
+		sessionId: z.string().min(1),
+		id: z.string().min(1).max(200),
+		pinned: z.boolean(),
 	}),
 	z.object({
 		type: z.literal("memory-agent-provenance-list"),
@@ -4039,6 +4058,8 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		memoryTimeline: MemoryTimelineQueryResultSchema.optional(),
 		memoryCaptureStatus: CaptureStatusSchema.optional(),
 		memoryDiagnostics: MemoryDiagnosticsSchema.optional(),
+		memoryFadePreview: MemoryFadePreviewSchema.optional(),
+		memoryFadeDryRun: MemoryFadeDryRunSchema.optional(),
 		memoryAgentIdentity: AgentIdentitySchema.optional(),
 		memoryAgentMemories: z.array(AgentMemoryRecordSchema).max(200).optional(),
 		memoryAgentTasks: z.array(WorkingTaskSchema).max(100).optional(),

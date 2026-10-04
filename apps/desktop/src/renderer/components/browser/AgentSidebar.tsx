@@ -405,15 +405,6 @@ export function AgentSidebar({
 					<div className="agent-chat-toolbar">
 						<button
 							type="button"
-							className="agent-sidebar-expand"
-							aria-label="Open Agent tab"
-							title="Open Agent tab"
-							onClick={onExpandChat}
-						>
-							<Icon name="expand" />
-						</button>
-						<button
-							type="button"
 							className="agent-sidebar-new"
 							aria-label="New task"
 							aria-keyshortcuts="Meta+N"
@@ -428,6 +419,15 @@ export function AgentSidebar({
 								<small title={projectName}>{projectName}</small>
 							) : null}
 						</div>
+						<button
+							type="button"
+							className="agent-sidebar-expand"
+							aria-label="Open Agent tab"
+							title="Open Agent tab"
+							onClick={onExpandChat}
+						>
+							<Icon name="expand" />
+						</button>
 						<button
 							type="button"
 							ref={closeRef}

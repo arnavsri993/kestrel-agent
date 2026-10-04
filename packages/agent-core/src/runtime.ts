@@ -1064,6 +1064,24 @@ export class AgentRuntime extends EventEmitter {
 		return session.id;
 	}
 
+	setSessionPrivacy(
+		sessionId: string,
+		privacyMode: NonNullable<RuntimeSession["privacyMode"]>,
+	): RuntimeSession {
+		const session = this.requireSession(sessionId);
+		const updated = this.saveSession({
+			...session,
+			privacyMode,
+			updatedAt: this.now(),
+		});
+		this.emitRuntimeEvent("session.updated", sessionId, {
+			action: "privacy-updated",
+			privacyMode,
+			sessionUpdatedAt: updated.updatedAt,
+		});
+		return updated;
+	}
+
 	forgetSession(sessionId: string): RuntimeSession {
 		const session = this.requireSession(sessionId);
 		const forgottenAt = this.now();

@@ -299,7 +299,14 @@ describe("memory substrate", () => {
 				}),
 			);
 			expect(globalQuery.results.some((item) => item.id === privateTask.id)).toBe(false);
-			expect(state.substrate.listForSession(child.id)).toContainEqual(privateMemory);
+			expect(state.substrate.listForSession(child.id)).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						id: privateMemory.id,
+						content: "Private worker checkpoint",
+					}),
+				]),
+			);
 			expect(state.substrate.listForSession(child.id)).not.toEqual(
 				expect.arrayContaining([
 					expect.objectContaining({ content: "Global user preference" }),
@@ -571,6 +578,167 @@ describe("memory substrate", () => {
 			expect(state.database.getTimelineEvent(`timeline-message-${message.id}`)).toBeDefined();
 			expect(state.legacyMemory.activeMemories()).toEqual([]);
 			expect(state.runtime.getSession(state.main.id).status).toBe("active");
+		} finally {
+			await state.close();
+		}
+	});
+
+	it("stages faded outcomes and requires reviewed approval before removal", async () => {
+		const state = fixture();
+		try {
+			expect(state.substrate.getCaptureConfiguration().defaultRetentionDays).toBe(30);
+
+			const durable = state.substrate.remember({
+				...memoryInput("Remember that my timezone is Pacific", "explicit-1"),
+				userConfirmed: true,
+				inferred: false,
+				confirmationStatus: "explicit",
+			});
+			expect(durable.pinned).toBe(true);
+			expect(durable.fadesAt).toBeUndefined();
+
+			const identity = state.substrate.ensureAgentIdentity(state.main);
+			const completed = state.substrate.recordTaskOutcome(
+				{
+					id: "fade-outcome-task",
+					sessionId: state.main.id,
+					agentId: identity.id,
+					sourceIds: [],
+					projectIds: [],
+					personIds: [],
+					entityIds: [],
+					goal: "Ship fade rules",
+					outcomeSummary: "Fade rules landed for unrecalled outcomes",
+					status: "completed",
+					plan: [],
+					evidence: [],
+					artifacts: [],
+					failures: [],
+					unresolvedQuestions: [],
+					subtaskIds: [],
+					dependencyTaskIds: [],
+					startedAt: "2026-07-22T12:00:00.000Z",
+					completedAt: "2026-07-22T12:05:00.000Z",
+					createdAt: "2026-07-22T12:00:00.000Z",
+					updatedAt: "2026-07-22T12:05:00.000Z",
+				},
+				identity.id,
+			);
+			expect(completed.status).toBe("completed");
+			const outcome = state.database.getAgentMemory("agent-outcome-fade-outcome-task");
+			expect(outcome?.fadesAt).toBeDefined();
+			expect(outcome?.pinned).toBe(false);
+
+			// First decay assigns grace / soft updates without mass-deleting existing facts.
+			state.advance("2026-07-22T12:20:00.000Z");
+			state.database.queueMemoryJob({
+				id: "memory-job-fade-decay-1",
+				kind: "decay",
+				dedupeKey: "decay:test-fade-1",
+				status: "pending",
+				payload: {},
+				attempts: 0,
+				maxAttempts: 4,
+				runAfter: "2026-07-22T12:20:00.000Z",
+				createdAt: "2026-07-22T12:20:00.000Z",
+				updatedAt: "2026-07-22T12:20:00.000Z",
+			});
+			await state.substrate.runMaintenance(20);
+			expect(state.database.getAgentMemory("agent-outcome-fade-outcome-task")).toBeDefined();
+			expect(state.legacyMemory.list().some((memory) => memory.id === durable.id)).toBe(true);
+
+			// Force the outcome past fadesAt and decay again.
+			state.database.upsertAgentMemory({
+				...outcome!,
+				lastAccessedAt: "2026-05-01T00:00:00.000Z",
+				fadesAt: "2026-07-01T00:00:00.000Z",
+				updatedAt: "2026-07-22T12:20:00.000Z",
+			});
+			state.advance("2026-09-22T12:00:00.000Z");
+			state.database.queueMemoryJob({
+				id: "memory-job-fade-decay-2",
+				kind: "decay",
+				dedupeKey: "decay:test-fade-2",
+				status: "pending",
+				payload: {},
+				attempts: 0,
+				maxAttempts: 4,
+				runAfter: "2026-09-22T12:00:00.000Z",
+				createdAt: "2026-09-22T12:00:00.000Z",
+				updatedAt: "2026-09-22T12:00:00.000Z",
+			});
+			await state.substrate.runMaintenance(20);
+			expect(state.database.getAgentMemory("agent-outcome-fade-outcome-task")).toBeDefined();
+			expect(state.legacyMemory.list().some((memory) => memory.id === durable.id)).toBe(true);
+			const dryRun = state.substrate.getFadeDryRun();
+			expect(dryRun?.applied).toBe(false);
+			expect(dryRun?.backupKey).toBeUndefined();
+			expect(dryRun?.agentMemoryCandidates).toBeGreaterThan(0);
+			const review = state.substrate.planFadeCleanup();
+			expect((await state.substrate.applyFadeCleanup(review.plan.id, true)).applied).toBe(true);
+			expect(state.database.getAgentMemory("agent-outcome-fade-outcome-task")).toBeUndefined();
+			expect(state.substrate.pinAgentMemory(state.main.id, `agent-memory-${durable.id}`, true).pinned).toBe(
+				true,
+			);
+		} finally {
+			await state.close();
+		}
+	});
+
+	it("preserves faded inferred notes until the reviewed cleanup is approved", async () => {
+		const state = fixture();
+		try {
+			const inferred = state.legacyMemory.remember({
+				type: "semantic",
+				content: "Incidental detail from an old email thread",
+				structuredData: { capture: "deterministic-extraction" },
+				sourceIds: ["email-1"],
+				sourceType: "deterministic-extraction",
+				confidence: 0.7,
+				importance: 0.4,
+				sensitivity: "personal",
+				entityIds: [],
+				userConfirmed: false,
+				inferred: true,
+				confirmationStatus: "inferred",
+			});
+			expect(inferred.fadesAt).toBeDefined();
+			state.database.upsertMemory({
+				...state.legacyMemory.list().find((memory) => memory.id === inferred.id)!,
+				lastAccessedAt: "2025-10-01T00:00:00.000Z",
+				fadesAt: "2025-12-01T00:00:00.000Z",
+			});
+			// Soft maintain alone must not hard-delete.
+			state.legacyMemory.maintain();
+			expect(state.legacyMemory.list().some((memory) => memory.id === inferred.id)).toBe(
+				true,
+			);
+			expect(state.legacyMemory.listFadeCandidates().map((memory) => memory.id)).toContain(
+				inferred.id,
+			);
+
+			state.advance("2026-04-01T00:00:00.000Z");
+			state.database.queueMemoryJob({
+				id: "memory-job-fade-legacy",
+				kind: "decay",
+				dedupeKey: "decay:test-legacy-fade",
+				status: "pending",
+				payload: {},
+				attempts: 0,
+				maxAttempts: 4,
+				runAfter: "2026-04-01T00:00:00.000Z",
+				createdAt: "2026-04-01T00:00:00.000Z",
+				updatedAt: "2026-04-01T00:00:00.000Z",
+			});
+			await state.substrate.runMaintenance(20);
+			expect(state.legacyMemory.list().some((memory) => memory.id === inferred.id)).toBe(
+				true,
+			);
+			expect(state.substrate.getFadeDryRun()?.applied).toBe(false);
+			const review = state.substrate.planFadeCleanup();
+			expect(review.candidates.some(candidate => candidate.id === inferred.id)).toBe(true);
+			await state.substrate.applyFadeCleanup(review.plan.id, true);
+			expect(state.database.getMemory(inferred.id)).toBeUndefined();
 		} finally {
 			await state.close();
 		}

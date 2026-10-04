@@ -7,6 +7,7 @@ import type {
 } from "@kestrel/shared-types";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ScopedAgentMemory } from "./ScopedAgentMemory";
+import { MemoryCleanupReview } from "./MemoryCleanupReview";
 import { isTaskResult, memoryDocumentTitle as documentTitle } from "../memory-document-display";
 import "./MemoryWorkspace.css";
 
@@ -106,6 +107,7 @@ function DocumentWorkspace({
 	onSaved,
 	onForgotten,
 	onDraftStateChange,
+	externalBusy = false,
 }: {
 	documents: MemoryDocument[];
 	kind: DocumentKind | "memory_and_knowledge";
@@ -113,8 +115,14 @@ function DocumentWorkspace({
 	onSaved(document: MemoryDocument): void;
 	onForgotten(id: string): void;
 	onDraftStateChange(state: { dirty: boolean; busy: boolean }): void;
+	externalBusy?: boolean;
 }) {
-	const visible = useMemo(() => documents.filter((item) => kind === "memory_and_knowledge" ? item.kind === "memory" : item.kind === kind).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [documents, kind]);
+	const [retentionFilter, setRetentionFilter] = useState("all");
+	const visible = useMemo(() => documents.filter((item) => kind === "memory_and_knowledge" ? item.kind === "memory" : item.kind === kind).filter(item => {
+		if (kind !== "memory_and_knowledge" || retentionFilter === "all") return true;
+		const kept = item.confirmation === "confirmed" || item.tier === "long_term";
+		return retentionFilter === "kept" ? kept : !kept;
+	}).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [documents, kind, retentionFilter]);
 	const [search, setSearch] = useState("");
 	const matches = visible.filter(item => `${item.title} ${item.text}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
 	const notes = matches.filter(item => !isTaskResult(item));
@@ -128,7 +136,8 @@ function DocumentWorkspace({
 	const [text, setText] = useState("");
 	const [tier, setTier] = useState<MemoryDocument["tier"]>(kind === "memory_and_knowledge" ? "mid_term" : "long_term");
 	const [dirty, setDirty] = useState(false);
-	const [busy, setBusy] = useState(false);
+	const [localBusy, setBusy] = useState(false);
+	const busy = localBusy || externalBusy;
 	const [error, setError] = useState("");
 	const selected = visible.find((item) => item.id === selectedId);
     const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -145,7 +154,7 @@ function DocumentWorkspace({
 		setSharing(next?.sharing ?? "owner_only");
 		setText(next?.text ?? "");
 		setTier(next?.tier ?? (kind === "memory_and_knowledge" ? "mid_term" : "long_term"));
-	}, [documents, selectedId, dirty, kind]);
+	}, [documents, selectedId, dirty, kind, retentionFilter]);
 
 	function select(document?: MemoryDocument) {
 		if (busy || (dirty && !window.confirm("Discard unsaved memory changes?"))) return false;
@@ -200,6 +209,17 @@ function DocumentWorkspace({
 		finally { setBusy(false); }
 	}
 
+	async function keep() {
+		if (!selected || busy) return;
+		setBusy(true); setError("");
+		try {
+			const response = await request({ type: "memory-document-save", document: { ...selected, viewerId, expectedVersion: selected.version, tier: "long_term" } });
+			if (!("memoryDocument" in response) || !response.memoryDocument) throw new Error("The kept note was not returned.");
+			onSaved(response.memoryDocument);
+		} catch (cause) { setError(cause instanceof Error ? cause.message : "Could not keep this note."); }
+		finally { setBusy(false); }
+	}
+
 	const noun = kind === "person" ? "person" : kind === "tool" ? "tool" : kind === "knowledge" ? "knowledge" : "memory";
 	function entry(document: MemoryDocument) {
 		return <button disabled={busy} className={document.id === selectedId ? "active" : ""} aria-pressed={document.id === selectedId} key={document.id} onClick={() => select(document)}><strong>{documentTitle(document)}</strong><small>{isTaskResult(document) ? `Task result · ${humanDate(document.updatedAt)}` : documentTitle(document) === document.title ? document.text.slice(0, 100) : `Updated ${humanDate(document.updatedAt)}`}</small></button>;
@@ -208,6 +228,10 @@ function DocumentWorkspace({
 		<div className="memory-library">
 			<aside aria-label={`${noun} documents`}>
 				<header><h2>{kind === "person" ? "People" : kind === "tool" ? "Tools" : kind === "knowledge" ? "Knowledge" : "Notes"}</h2><button disabled={busy} onClick={() => select(undefined)}>Add {noun === "memory" ? "note" : noun}</button></header>
+				{kind === "memory_and_knowledge" && documents.some(item => item.kind === "memory") && <details className="memory-filters-disclosure"><summary>Note filters</summary><label className="memory-search">Show notes<select aria-label="Note retention" disabled={busy} value={retentionFilter} onChange={event => {
+					if (busy || (dirty && !window.confirm("Discard unsaved memory changes?"))) return;
+					setRetentionFilter(event.target.value); setSelectedId(null); setCreating(false); setEditing(false); setDirty(false);
+				}}><option value="all">All notes</option><option value="kept">Kept notes</option><option value="automatic">Automatic notes</option></select></label></details>}
 				<label className="memory-search">Search {noun}<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={`Search ${noun}…`} /></label>
 				<p className="memory-result-count" aria-live="polite">{search.trim() ? `${matches.length} matching ${matches.length === 1 ? "entry" : "entries"}` : `${visible.filter(item => !isTaskResult(item)).length} saved · Recent first`}</p>
 				{notes.map(entry)}
@@ -219,23 +243,24 @@ function DocumentWorkspace({
 				{!visible.length && <p>No {noun === "memory" ? "notes" : noun} yet. Add something you want Kestrel to remember.</p>}
                 {!!visible.length && !matches.length && <p>No matching documents. <button onClick={() => setSearch("")}>Clear search</button></p>}
 			</aside>
-			{!selected && !creating ? <article className="memory-reader"><h2>{noun === "memory" ? "Your notes go here" : `Choose a ${noun}`}</h2><p>{noun === "memory" ? "Add something you want Kestrel to remember, or open a saved task result." : "Select an entry or add useful context."}</p></article> : selected && !editing ? <article className="memory-reader">{isTaskResult(selected) && <p className="memory-kicker">Task result · automatically saved</p>}<h2>{documentTitle(selected)}</h2><p>{selected.text}</p><button onClick={() => setEditing(true)}>Edit {noun === "memory" ? "note" : noun}</button><details><summary>Evidence and visibility</summary><p>{documentSubtitle(selected)} · {selected.domainIds.join(", ") || "No domain assigned"}</p><p>{selected.sourceIds.join(" · ")}</p></details></article> : <form className="memory-editor" onSubmit={save}>
+			{!selected && !creating ? <article className="memory-reader"><h2>{noun === "memory" ? "Your notes go here" : `Choose a ${noun}`}</h2><p>{noun === "memory" ? "Add something you want Kestrel to remember, or open a saved task result." : "Select an entry or add useful context."}</p></article> : selected && !editing ? <article className="memory-reader">{isTaskResult(selected) && <p className="memory-kicker">Task result · automatically saved</p>}<h2>{documentTitle(selected)}</h2><p>{selected.text}</p><div className="memory-lane-actions"><button disabled={busy} onClick={() => setEditing(true)}>Edit {noun === "memory" ? "note" : noun}</button>{kind === "memory_and_knowledge" && selected.confirmation !== "confirmed" && selected.tier !== "long_term" && <button disabled={busy} onClick={() => void keep()}>Keep</button>}</div>{error && <p className="memory-error" role="alert">{error}</p>}<details><summary>Evidence and visibility</summary><p>{documentSubtitle(selected)} · {selected.domainIds.join(", ") || "No domain assigned"}</p><p>{selected.sourceIds.join(" · ")}</p></details></article> : <form className="memory-editor" onSubmit={save}><fieldset disabled={externalBusy} className="memory-editor-fields">
 				<label>What Kestrel should know<textarea ref={editorRef} value={text} maxLength={100000} onChange={(event) => { setText(event.target.value); setDirty(true); }} placeholder={`Write the useful context about this ${noun}…`} /></label>
 				<label>Title (optional)<input value={title} maxLength={500} onChange={(event) => { setTitle(event.target.value); setDirty(true); }} placeholder="Use the first line, or give it a name" /></label>
 				<details><summary>Organization and sharing</summary><label>Domains<input value={domainsText} onChange={event => { setDomainsText(event.target.value); setDirty(true); }} placeholder="Separate domains with commas" /></label><label>Visibility<select value={sharing} onChange={event => { setSharing(event.target.value as typeof sharing); setDirty(true); }}><option value="owner_only">Only this viewer</option><option value="domain_shared">Relevant agents in these domains</option></select></label><label className="memory-tier-select">Remember for<select value={tier} onChange={(event) => { setTier(event.target.value as MemoryDocument["tier"]); setDirty(true); }}>{Object.entries(tierLabels).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label></details>
 				{selected && <details className="memory-provenance"><summary>Sources and provenance</summary><dl><dt>Origin</dt><dd>{selected.origin}</dd><dt>Status</dt><dd>{selected.confirmation}, {Math.round(selected.confidence * 100)}% confidence</dd><dt>Sharing</dt><dd>{selected.sharing.replace("_", " ")}</dd><dt>Updated</dt><dd>{humanDate(selected.updatedAt)}</dd><dt>Source IDs</dt><dd>{selected.sourceIds.length ? selected.sourceIds.join(", ") : "No source IDs"}</dd></dl></details>}
 				{error && <p className="memory-error" role="alert">{error}</p>}
 				<footer><button type="button" disabled={busy} onClick={() => { if (select(selected ?? visible[0])) setEditing(false); }}>Cancel</button><button className="primary" disabled={busy || !dirty || !text.trim()} type="submit">{busy ? "Saving…" : "Save"}</button>{selected && <button className="danger" disabled={busy} type="button" onClick={() => void forget()}>Forget</button>}<span aria-live="polite">{dirty ? "Unsaved changes" : selected ? "Saved" : ""}</span></footer>
-			</form>}
+			</fieldset></form>}
 		</div>
 	);
 }
 
 export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSessionId?: string; legacyTools?: ReactNode }) {
 	const [view, setView] = useState<WorkspaceView>("memory");
+	const [cleanupBusy, setCleanupBusy] = useState(false);
     const [draftState, setDraftState] = useState({ dirty: false, busy: false });
     function canNavigate() {
-        return !draftState.busy && (!draftState.dirty || window.confirm("Discard unsaved memory changes?"));
+        return !cleanupBusy && !draftState.busy && (!draftState.dirty || window.confirm("Discard unsaved memory changes?"));
     }
     function changeView(next: WorkspaceView) {
         if (next !== view && canNavigate()) {
@@ -310,7 +335,7 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 				{view === "agent-history" && selectedSessionId && <ScopedAgentMemory key={selectedSessionId} sessionId={selectedSessionId} />}
 				{view === "overview" && <><Overview documents={workspace.documents} workspace={workspace} /><section className="memory-recent"><button onClick={() => changeView("memory")}>Browse all notes →</button><h3>People</h3>{!workspace.documents.some(item => item.kind === "person") && <p className="memory-empty-copy">No people remembered in this scope.</p>}{workspace.documents.filter(item => item.kind === "person").slice(0, 5).map(item => <button key={item.id} onClick={() => changeView("people")}>{item.title}</button>)}<h3>Tools</h3>{!workspace.documents.some(item => item.kind === "tool") && <p className="memory-empty-copy">No tool experience recorded in this scope.</p>}{workspace.documents.filter(item => item.kind === "tool").slice(0, 5).map(item => <button key={item.id} onClick={() => changeView("tools")}>{item.title}</button>)}</section></>}
 				{view === "timeline" && <><div className="memory-week-controls"><button onClick={() => setWeekOffset(value => value - 1)}>Previous week</button><button onClick={() => setWeekOffset(0)}>This week</button><button disabled={weekOffset >= 0} onClick={() => setWeekOffset(value => value + 1)}>Next week</button><button disabled={consolidating} onClick={async () => { const generation = requestId.current; setConsolidating(true); try { const result = await request({ type: "memory-workspace-consolidate", query: workspace.query }); if (generation === requestId.current && "memoryWorkspace" in result && result.memoryWorkspace) setWorkspace(result.memoryWorkspace); } catch (cause) { if (generation === requestId.current) setError(cause instanceof Error ? cause.message : "Could not consolidate memory."); } finally { setConsolidating(false); } }}>{consolidating ? "Summarizing…" : "Summarize with model"}</button></div><Timeline workspace={workspace} /></>}
-				{view === "memory" && <DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="memory_and_knowledge" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} onDraftStateChange={setDraftState} />}
+				{view === "memory" && <><DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="memory_and_knowledge" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} onDraftStateChange={setDraftState} externalBusy={cleanupBusy} />{viewerId === "user" && !domainId && <MemoryCleanupReview onApplied={() => void load(true)} disabled={draftState.dirty || draftState.busy} onBusyStateChange={setCleanupBusy} />}</>}
 				{view === "people" && <DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="person" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} onDraftStateChange={setDraftState} />}
 				{view === "knowledge" && <DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="knowledge" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} onDraftStateChange={setDraftState} />}
 				{view === "tools" && <><DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="tool" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} onDraftStateChange={setDraftState} />{viewerId === "user" && legacyTools}</>}

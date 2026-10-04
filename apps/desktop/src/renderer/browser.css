@@ -558,15 +558,28 @@ body:has(.ai-browser-app),
 
 .agent-conversation-host .memory-recall-receipt {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: flex-start;
 	gap: 6px;
 	margin: 6px 0 0;
-	padding: 8px 10px;
-	border-radius: var(--radius-sm);
-	background: color-mix(in srgb, var(--accent-soft) 35%, transparent);
+	padding: 4px 0;
+	border: 0;
+	background: transparent;
 	color: var(--ink-secondary);
+	font: inherit;
 	font-size: 12px;
 	line-height: 1.45;
+	text-align: left;
+	cursor: pointer;
+}
+
+.agent-conversation-host .memory-recall-receipt-summary {
+	color: var(--ink-tertiary, var(--ink-secondary));
+}
+
+.agent-conversation-host .memory-recall-receipt-detail {
+	flex: 1 1 100%;
+	color: var(--ink-secondary);
 }
 
 .agent-conversation-host .memory-recall-receipt-icon {

@@ -367,7 +367,7 @@ async function runReturningPersona() {
 		.click();
 	for (const [label, heading] of [
 		["General", "Autonomy and behavior"],
-		["Connections", "Accounts and access"],
+		["Connections", "Connections"],
 		["Models", "Routing and providers"],
 		["Memory", "Memory and learning"],
 		["Plugins", "Plugins and publishers"],
@@ -385,10 +385,18 @@ async function runReturningPersona() {
 		}[label];
 		assert(value);
 		await selectSettingsSection(page, value, label);
+		if (label === "Connections") {
+			await page.getByRole("button", { name: "Open Connections", exact: true }).click();
+			await assertFocusedRoute(page, "connections");
+		}
 		await page.getByRole("heading", { name: heading }).waitFor();
 		if (label === "Memory")
 			await page.getByText("Honcho remote memory", { exact: true }).first().waitFor();
 		await assertNoStartupFailure(page, `Settings / ${label}`);
+		if (label === "Connections") {
+			await selectDestination(page, "Settings");
+			await assertFocusedRoute(page, "settings");
+		}
 	}
 
 	await page.setViewportSize({ width: 640, height: 760 });

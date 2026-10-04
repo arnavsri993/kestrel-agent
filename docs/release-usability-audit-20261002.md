@@ -259,3 +259,51 @@ results hidden after collapsing the group. After correction, the audit passed
 errors. Its new checks preserve manual titles, exercise keyboard disclosure,
 read full result text and reveal matching results through search. Installed and
 live evidence for the new candidate is recorded separately in PR #812.
+
+## Reviewed Cursor surface integration — October 4
+
+The isolated candidate integrates PR #813 at `e1000552` onto the verified
+`fb89e566` baseline. The six conflicts were reconciled without replacing the
+canonical Notes library, searchable Task results, drafts, focus handling,
+provider-route safeguards, source-deletion authority, or keyed Memory indexes.
+Kept and Automatic notes are secondary filters within Notes. Cleanup stays in a
+separate disclosure and requires the complete reviewed list and a checkbox;
+editing or applying cleanup protects navigation and unsaved drafts.
+
+Ordinary memory aging now stages an encrypted, profile-keyed exact-record plan.
+Every approved application revalidates it, takes a separate consistent SQLite
+online backup, and removes the reviewed records atomically. A stale record,
+backup failure, or replay is rejected. Pins check the owning session and never
+override connected-source deletion. Keeping an inferred note preserves its
+confidence and inferred status.
+
+Don't remember this chat now uses one human IPC action to remove local memories
+and set the session private in the same transaction. A failed removal rolls back;
+conversation history remains. Future messages and a task completing after the
+change cannot recreate the forgotten memory. This makes no claim about provider
+retention or copies in pre-existing backups.
+
+Validation on the integrated tree: all 2,125 unit tests in 264 files, workspace
+type checking, desktop build, dependency and production-secret scans pass.
+Settings parity (123 entries), the 1,117-page reference inventory, focused
+OpenClaw contract verification and the repository market gate pass. The real
+Memory component passes headless checks at 1280x800 and 390x844 with no renderer
+errors or horizontal overflow: complete cleanup text, keyboard disclosure,
+explicit approval, cancellation, stale approval, draft/busy protection, Keep
+semantics, and complete searchable task results. Both fixture screenshots were
+visually inspected. Persona/setup assertions follow Open Connections while
+preserving navigation, focus and account assertions.
+
+PR #813's standalone CI at `e1000552` failed its old downloader dependency audit
+and the returning-persona expectation for embedded Accounts and access. Its four
+diff-scoped CodeQL analyses passed. This integration retains the baseline's
+scoped downloader override and updates the persona route; its own exact-head CI
+must still run. The AI reviewer returned HTTP 402 monthly quota exhaustion.
+
+The canonical installed app remains the independently verified `fb89e566`, whose
+owned Codex-only Auto browser task passed four one-time approvals and the real
+click, exact page-only proof, headings, prices and sum without requesting the
+trap URL. The Mac lock prevents fresh native delivery and local Electron
+fixtures for this integration. No profile data, credentials, primary checkout,
+original Cursor worktree, installed app, or public release was changed here.
+Source and synthetic checks are not installed-app or public-launch proof.

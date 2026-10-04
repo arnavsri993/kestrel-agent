@@ -159,7 +159,6 @@ import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
 import { GoalKanban } from "./components/GoalKanban";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
 import { MemoryRecallReceiptLine } from "./components/MemoryRecallReceiptLine";
-import { MemoryRecallStatus } from "./components/MemoryRecallStatus";
 import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
@@ -4184,6 +4183,25 @@ function RuntimeConversation({
 		}
 	}
 
+	async function markChatPrivate() {
+		if (!activeSessionId || busy) return;
+		setError("");
+		try {
+			const privacy = (await window.kestrel.request({
+				type: "runtime-stop-remembering-session",
+				sessionId: activeSessionId,
+			})) as CoreResponse;
+			if (!privacy.ok) throw new Error(privacy.error);
+			await refreshSessions();
+		} catch (cause) {
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "Could not stop remembering this chat.",
+			);
+		}
+	}
+
 	async function restoreCheckpoint(checkpointId: string) {
 		if (!activeSessionId || busy) return;
 		const sessionId = activeSessionId;
@@ -4527,7 +4545,7 @@ function RuntimeConversation({
 								<p>{message.content}</p>
 								{parseExplicitMemoryCapture(message.content) && (
 									<p className="memory-capture-confirmation" role="status">
-										Saved to Life → Memory. Future chats can use this when shared
+										Saved to Memory. Future chats can use this when shared
 										context is on.
 									</p>
 								)}
@@ -4539,7 +4557,6 @@ function RuntimeConversation({
 								data-runtime-message-id={message.id}
 								tabIndex={-1}
 							>
-								<span className="assistant-avatar">K</span>
 								<div>
 									<AssistantMessageContent content={runtimeAssistantDisplayContent(message)} />
 									{message.memoryRecallReceipt && (
@@ -5007,6 +5024,18 @@ function RuntimeConversation({
 										</div>
 									)}
 									{taskControls}
+									{activeSessionId ? (
+										<button
+											type="button"
+											className="button secondary"
+											disabled={busy || activeSession?.privacyMode === "private"}
+											onClick={() => void markChatPrivate()}
+										>
+											{activeSession?.privacyMode === "private"
+												? "This chat is not remembered"
+												: "Don't remember this chat"}
+										</button>
+									) : null}
 									{activeSessionId && (
 										<div
 											className="runtime-lifecycle-controls"
@@ -5073,7 +5102,7 @@ function RuntimeConversation({
 								</div>
 							</details>
 						</div>
-						{executionReady ? (
+						{executionReady && (voiceState === "recording" || activeSessionBusy || backgroundSessionBusy || selectedGrant?.available === false) ? (
 							<span className="composer-status" role="status">
 								{composerStatus}
 							</span>
@@ -9435,6 +9464,8 @@ function Settings({
 	browser,
 	browserContextEnabled,
 	onToggleBrowserContext,
+	onOpenMemory,
+	onOpenConnections,
 	onBack,
 }: {
 	snapshot: WorkspaceSnapshot;
@@ -9445,6 +9476,8 @@ function Settings({
 	browser: UserBrowserController;
 	browserContextEnabled: boolean;
 	onToggleBrowserContext(): void;
+	onOpenMemory?(): void;
+	onOpenConnections?(): void;
 	onBack?(): void;
 }) {
 	const reduced = useReducedMotion();
@@ -9841,7 +9874,23 @@ function Settings({
 						)}
 					{section === "agent-connections" && (
 						<>
-							<Connections snapshot={snapshot} />
+							<section className="settings-stack" aria-label="Account connections">
+								<article className="setting-row">
+									<div>
+										<strong>Connections</strong>
+										<p>Manage provider accounts and project access in one place.</p>
+									</div>
+									{onOpenConnections ? (
+										<button
+											type="button"
+											className="button secondary"
+											onClick={onOpenConnections}
+										>
+											Open Connections
+										</button>
+									) : null}
+								</article>
+							</section>
 							<section className="settings-stack" aria-label="Subscription connections">
 								<SubscriptionCliSettings hideCodexDuplicate />
 							</section>
@@ -10146,13 +10195,21 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-intelligence-title">Memory and learning</h2>
-
+								<p>Turn shared learning on or off. Read or edit saved notes in Memory.</p>
 							</header>
 						<section
 							className="settings-stack"
 							aria-label="Memory and behavior settings"
 						>
-							<MemoryRecallStatus snapshot={snapshot} />
+							{onOpenMemory ? (
+								<button
+									type="button"
+									className="button secondary"
+									onClick={onOpenMemory}
+								>
+									Open Memory
+								</button>
+							) : null}
 							<HonchoMemorySettings />
 							<PresenceSettings />
 						</section>
@@ -11435,6 +11492,8 @@ export function App() {
 					browser={browser}
 					browserContextEnabled={browserContextEnabled}
 					onToggleBrowserContext={toggleBrowserContext}
+					onOpenMemory={() => void openAppPage("memory")}
+					onOpenConnections={() => navigate("connections")}
 				/>
 			)}
 			{appPageId === "readiness" && <Readiness />}

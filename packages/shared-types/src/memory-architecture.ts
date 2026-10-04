@@ -294,6 +294,12 @@ export const AgentMemoryRecordSchema = z.object({
 	importance: z.number().min(0).max(1),
 	sensitivity: z.enum(["public", "personal", "sensitive", "restricted"]),
 	status: z.enum(["active", "superseded", "expired", "deleted"]),
+	/** User or system pin: durable until explicitly forgotten. */
+	pinned: z.boolean().optional(),
+	/** When set, active memories past this time are eligible to fade/delete. */
+	fadesAt: z.string().datetime().optional(),
+	/** Successful recalls; used to protect source-derived facts. */
+	accessCount: z.number().int().nonnegative().optional(),
 	validUntil: z.string().datetime().optional(),
 	lastAccessedAt: z.string().datetime().optional(),
 	createdAt: z.string().datetime(),
@@ -593,6 +599,30 @@ export const MemoryDiagnosticsSchema = z.object({
 });
 export type MemoryDiagnostics = z.infer<typeof MemoryDiagnosticsSchema>;
 
+export const MemoryFadeDryRunSchema = z.object({
+	version: z.literal(1),
+	id: z.string().min(1).max(200),
+	createdAt: z.string().datetime(),
+	agentMemoryCandidates: z.number().int().nonnegative(),
+	legacyMemoryCandidates: z.number().int().nonnegative(),
+	timelineCandidates: z.number().int().nonnegative(),
+	sourceDerivedCandidates: z.number().int().nonnegative(),
+	backupKey: z.string().min(1).max(4_096).optional(),
+	applied: z.boolean(),
+});
+export type MemoryFadeDryRun = z.infer<typeof MemoryFadeDryRunSchema>;
+
+/** Full review is returned only to the explicit user cleanup surface. */
+export const MemoryFadePreviewSchema = z.object({
+	plan: MemoryFadeDryRunSchema,
+	candidates: z.array(z.object({
+		id: z.string().min(1).max(200),
+		kind: z.enum(["agent", "legacy"]),
+		content: z.string().min(1).max(100_000),
+	})).max(200),
+});
+export type MemoryFadePreview = z.infer<typeof MemoryFadePreviewSchema>;
+
 export const MemoryMaintenanceResultSchema = z.object({
 	jobsProcessed: z.number().int().nonnegative(),
 	jobsCompleted: z.number().int().nonnegative(),
@@ -603,6 +633,7 @@ export const MemoryMaintenanceResultSchema = z.object({
 	memoriesExtracted: z.number().int().nonnegative(),
 	memoriesChanged: z.number().int().nonnegative(),
 	deletedArtifacts: z.number().int().nonnegative(),
+	fadeDryRun: MemoryFadeDryRunSchema.optional(),
 	updatedAt: z.string().datetime(),
 });
 export type MemoryMaintenanceResult = z.infer<
