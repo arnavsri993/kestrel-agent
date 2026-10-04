@@ -27,6 +27,7 @@ export type MemoryInput = Pick<
 		Pick<
 			MemoryRecord,
 			| "subject"
+			| "pinned"
 			| "layer"
 			| "confirmationStatus"
 			| "validFrom"
@@ -299,8 +300,8 @@ export class MemoryManager {
 
 	/**
 	 * Soft maintenance only: relevance decay, grace fadesAt, archive durable stale
-	 * notes, and expire past validUntil. Hard deletes of faded automatic memories
-	 * are applied by MemorySubstrate after a dry-run backup.
+	 * notes, and expire past validUntil. Removing faded automatic memories
+	 * requires an explicitly reviewed MemorySubstrate cleanup and backup.
 	 */
 	maintain(): MemoryRecord[] {
 		const timestamp = this.now();
@@ -337,7 +338,7 @@ export class MemoryManager {
 				const refreshed = new Date(
 					new Date(memory.lastAccessedAt).getTime() + 90 * 86_400_000,
 				).toISOString();
-				if (Date.parse(refreshed) > Date.parse(fadesAt ?? 0)) fadesAt = refreshed;
+				if (Date.parse(refreshed) > (fadesAt ? Date.parse(fadesAt) : 0)) fadesAt = refreshed;
 			}
 			const archive =
 				durable &&
@@ -368,7 +369,7 @@ export class MemoryManager {
 		return changed;
 	}
 
-	/** Automatic memories past fadesAt that substrate may hard-delete after backup. */
+	/** Automatic notes eligible for explicit review; this never removes records. */
 	listFadeCandidates(): MemoryRecord[] {
 		const now = this.now().getTime();
 		return this.activeMemories().filter((memory) => {
@@ -380,22 +381,6 @@ export class MemoryManager {
 			if (durable || !memory.inferred || !memory.fadesAt) return false;
 			return Date.parse(memory.fadesAt) < now;
 		});
-	}
-
-	purgeFadeCandidates(ids: readonly string[]): MemoryRecord[] {
-		const purged: MemoryRecord[] = [];
-		for (const id of ids) {
-			const memory = this.database.getMemory(id);
-			if (!memory || memory.status !== "active") continue;
-			const durable =
-				memory.pinned ||
-				memory.userConfirmed ||
-				memory.confirmationStatus === "explicit" ||
-				memory.confirmationStatus === "user_confirmed";
-			if (durable || !memory.inferred) continue;
-			purged.push(this.forget(id));
-		}
-		return purged;
 	}
 
 	private conflictsFor(input: MemoryInput): MemoryRecord[] {

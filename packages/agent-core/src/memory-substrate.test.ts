@@ -583,7 +583,7 @@ describe("memory substrate", () => {
 		}
 	});
 
-	it("fades unrecalled outcomes, keeps pinned remembers, and dry-runs the first purge", async () => {
+	it("stages faded outcomes and requires reviewed approval before removal", async () => {
 		const state = fixture();
 		try {
 			expect(state.substrate.getCaptureConfiguration().defaultRetentionDays).toBe(30);
@@ -668,12 +668,16 @@ describe("memory substrate", () => {
 				updatedAt: "2026-09-22T12:00:00.000Z",
 			});
 			await state.substrate.runMaintenance(20);
-			expect(state.database.getAgentMemory("agent-outcome-fade-outcome-task")).toBeUndefined();
+			expect(state.database.getAgentMemory("agent-outcome-fade-outcome-task")).toBeDefined();
 			expect(state.legacyMemory.list().some((memory) => memory.id === durable.id)).toBe(true);
 			const dryRun = state.substrate.getFadeDryRun();
-			expect(dryRun?.applied).toBe(true);
+			expect(dryRun?.applied).toBe(false);
+			expect(dryRun?.backupKey).toBeUndefined();
 			expect(dryRun?.agentMemoryCandidates).toBeGreaterThan(0);
-			expect(state.substrate.pinAgentMemory(`agent-memory-${durable.id}`, true).pinned).toBe(
+			const review = state.substrate.planFadeCleanup();
+			expect((await state.substrate.applyFadeCleanup(review.plan.id, true)).applied).toBe(true);
+			expect(state.database.getAgentMemory("agent-outcome-fade-outcome-task")).toBeUndefined();
+			expect(state.substrate.pinAgentMemory(state.main.id, `agent-memory-${durable.id}`, true).pinned).toBe(
 				true,
 			);
 		} finally {
@@ -681,7 +685,7 @@ describe("memory substrate", () => {
 		}
 	});
 
-	it("purges faded inferred legacy memories only after substrate backup", async () => {
+	it("preserves faded inferred notes until the reviewed cleanup is approved", async () => {
 		const state = fixture();
 		try {
 			const inferred = state.legacyMemory.remember({
@@ -728,9 +732,13 @@ describe("memory substrate", () => {
 			});
 			await state.substrate.runMaintenance(20);
 			expect(state.legacyMemory.list().some((memory) => memory.id === inferred.id)).toBe(
-				false,
+				true,
 			);
-			expect(state.substrate.getFadeDryRun()?.applied).toBe(true);
+			expect(state.substrate.getFadeDryRun()?.applied).toBe(false);
+			const review = state.substrate.planFadeCleanup();
+			expect(review.candidates.some(candidate => candidate.id === inferred.id)).toBe(true);
+			await state.substrate.applyFadeCleanup(review.plan.id, true);
+			expect(state.database.getMemory(inferred.id)).toBeUndefined();
 		} finally {
 			await state.close();
 		}

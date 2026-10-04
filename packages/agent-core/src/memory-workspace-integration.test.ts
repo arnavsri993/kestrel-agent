@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { CoreRequestSchema } from "@kestrel/shared-types";
+import { AgentMemoryRecordSchema, CoreRequestSchema } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import { AgentCore, type ModelProvider } from "./index";
 
@@ -12,6 +12,26 @@ function setup(provider?: ModelProvider) {
 }
 
 describe("memory workspace integration", () => {
+	it("reviews and applies an exact cleanup through the human contract without a model cleanup tool", async () => {
+		const { core, database, send } = setup();
+		try {
+			const session = core.runtime.ensureMainSession();
+			const identity = core.memorySubstrate.ensureAgentIdentity(session);
+			const record = AgentMemoryRecordSchema.parse({ id: "owned-cleanup-ipc", agentId: identity.id, kind: "outcome", horizon: "mid_term", content: "Owned cleanup contract fixture", sourceIds: ["synthetic:cleanup"], taskIds: [], projectIds: [], personIds: [], entityIds: [], confidence: .6, importance: .5, sensitivity: "personal", status: "active", pinned: false, accessCount: 0, createdAt: "2025-01-01T00:00:00.000Z", updatedAt: "2025-01-01T00:00:00.000Z", fadesAt: "2025-03-01T00:00:00.000Z" });
+			database.upsertAgentMemory(record);
+			const review = await send({ type: "memory-fade-plan" });
+			if (!review.ok || !review.memoryFadePreview) throw new Error("Cleanup preview missing");
+			expect(review.memoryFadePreview.candidates).toEqual([{ id: record.id, kind: "agent", content: record.content }]);
+			expect(database.getAgentMemory(record.id)).toEqual(record);
+			const names = [...core.runtime.discoverTools(session.id), ...core.runtime.discoverDeferredTools()].map(tool => tool.name);
+			expect(names.some(name => /memory[.-]fade/u.test(name))).toBe(false);
+			const applied = await send({ type: "memory-fade-apply", planId: review.memoryFadePreview.plan.id, approved: true });
+			expect(applied.ok && applied.memoryFadeDryRun?.applied).toBe(true);
+			expect(database.getAgentMemory(record.id)).toBeUndefined();
+			const replay = await send({ type: "memory-fade-apply", planId: review.memoryFadePreview.plan.id, approved: true });
+			expect(replay.ok).toBe(false);
+		} finally { await core.close(); database.close(); }
+	});
 	it("persists, corrects, and forgets a person through the real IPC contract", async () => {
 		const { core, database, send } = setup();
 		try {

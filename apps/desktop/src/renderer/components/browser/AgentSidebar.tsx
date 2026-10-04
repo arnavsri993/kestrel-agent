@@ -354,6 +354,15 @@ export function AgentSidebar({
 						</div>
 						<button
 							type="button"
+							className="agent-sidebar-expand"
+							aria-label="Open Agent tab"
+							title="Open Agent tab"
+							onClick={onExpandChat}
+						>
+							<Icon name="expand" />
+						</button>
+						<button
+							type="button"
 							className="agent-sidebar-collapse"
 							aria-label={`Hide ${agentName}`}
 							title={`Hide ${agentName}`}

@@ -132,15 +132,3 @@ export function backupDatabaseBeforeMigration(
 	const backupPath = join(backupsDirectory, backupName);
 	return copyDatabaseSnapshot(databasePath, backupPath);
 }
-
-/** Snapshot the profile database before the first destructive memory fade purge. */
-export function backupDatabaseBeforeFade(
-	databasePath: string,
-	now: Date = new Date(),
-): string {
-	const backupsDirectory = resolveMigrationBackupDirectory(databasePath);
-	mkdirSync(backupsDirectory, { recursive: true, mode: 0o700 });
-	const timestamp = now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
-	const backupPath = join(backupsDirectory, `pre-fade-${timestamp}.sqlite`);
-	return copyDatabaseSnapshot(databasePath, backupPath);
-}

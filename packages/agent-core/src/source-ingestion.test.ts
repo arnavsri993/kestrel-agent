@@ -33,8 +33,9 @@ it.each(["expired", "delete-source"] as const)("removes transitive and mixed-sou
   await f.core.sourceIngestion.ingest({ ...f.base, captureId: "derived", observations: [message] });
   const event = f.core.sourceIngestion.page(f.base).events[0]!;
   const base = { agentId: event.agentId!, kind: "fact" as const, horizon: "mid_term" as const, content: "Synthetic derived source content", taskIds: [], projectIds: [], personIds: [], entityIds: [], confidence: 0, importance: 0, sensitivity: "sensitive" as const, status: "active" as const, createdAt: event.createdAt, updatedAt: event.createdAt };
-  f.database.upsertAgentMemory({ ...base, id: "derived-first", sourceIds: [event.id, "unrelated-evidence"] });
-  f.database.upsertAgentMemory({ ...base, id: "derived-second", sourceIds: ["memory:derived-first"], status: "superseded" });
+  // A pin or successful recall cannot erase provenance or override source deletion.
+  f.database.upsertAgentMemory({ ...base, id: "derived-first", sourceIds: [event.id, "unrelated-evidence"], pinned: true, accessCount: 5 });
+  f.database.upsertAgentMemory({ ...base, id: "derived-second", sourceIds: ["memory:derived-first"], status: "superseded", accessCount: 2 });
   f.database.upsertAgentMemory({ ...base, id: "derived-third", sourceIds: ["agent_memory:derived-second", "derived-third"] });
   f.database.upsertAgentMemory({ ...base, id: "unrelated", sourceIds: ["unrelated-evidence"] });
   const review = f.core.sourceIngestion.queueReview(f.parent.id, event.id);

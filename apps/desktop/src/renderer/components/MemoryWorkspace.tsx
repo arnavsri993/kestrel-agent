@@ -1,6 +1,7 @@
 import type {
 	MemoryDocument,
 	MemoryDocumentSave,
+	MemoryFadePreview,
 	MemoryWorkspace as MemoryWorkspaceData,
 	MemoryWorkspaceQuery,
 	RendererRequest,
@@ -57,17 +58,22 @@ function MemoryLane({
 	onForgotten(id: string): void;
 }) {
 	const [busyId, setBusyId] = useState<string | null>(null);
+	const [error, setError] = useState("");
 	async function forget(id: string) {
+		setError("");
 		setBusyId(id);
 		try {
 			await request({ type: "memory-document-forget", id });
 			onForgotten(id);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Could not forget this note.");
 		} finally {
 			setBusyId(null);
 		}
 	}
 	async function keep(document: MemoryDocument) {
 		if (!onKeep) return;
+		setError("");
 		setBusyId(document.id);
 		try {
 			const response = await request({
@@ -84,8 +90,8 @@ function MemoryLane({
 					...(document.ownerAgentId ? { ownerAgentId: document.ownerAgentId } : {}),
 					sharing: document.sharing,
 					sourceIds: document.sourceIds,
-					confidence: Math.max(document.confidence, 0.95),
-					confirmation: "confirmed",
+					confidence: document.confidence,
+					confirmation: document.confirmation,
 					sensitivity: document.sensitivity,
 					passages: document.passages,
 					...(document.canonicalEntityId
@@ -96,6 +102,8 @@ function MemoryLane({
 			});
 			if ("memoryDocument" in response && response.memoryDocument)
 				onKeep(response.memoryDocument);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Could not keep this note.");
 		} finally {
 			setBusyId(null);
 		}
@@ -106,10 +114,11 @@ function MemoryLane({
 				<h2>{title}</h2>
 				<p>
 					{fading
-						? "These notes fade unless you keep them or Kestrel keeps using them."
-						: "Pinned and confirmed notes stay until you forget them."}
+						? "Automatic notes stay here until you choose to forget them. Keep a note to save it."
+						: "Saved notes stay until you forget them."}
 				</p>
 			</header>
+			{error && <p role="alert">{error}</p>}
 			{documents.length ? (
 				documents.map((document) => (
 					<article key={document.id}>
@@ -145,6 +154,52 @@ function MemoryLane({
 			)}
 		</div>
 	);
+}
+
+function FadeCleanupReview({ onApplied }: { onApplied(): void }) {
+	const [preview, setPreview] = useState<MemoryFadePreview | null>(null);
+	const [confirmed, setConfirmed] = useState(false);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState("");
+	const [receipt, setReceipt] = useState("");
+	async function review() {
+		setBusy(true); setError(""); setPreview(null); setConfirmed(false); setReceipt("");
+		try {
+			const response = await request({ type: "memory-fade-plan" });
+			if (!("memoryFadePreview" in response) || !response.memoryFadePreview) throw new Error("The cleanup review was not returned.");
+			setPreview(response.memoryFadePreview);
+		} catch (cause) { setError(cause instanceof Error ? cause.message : "Could not review cleanup."); }
+		finally { setBusy(false); }
+	}
+	async function apply() {
+		if (!preview || !confirmed) return;
+		setBusy(true); setError("");
+		try {
+			const response = await request({ type: "memory-fade-apply", planId: preview.plan.id, approved: true });
+			if (!("memoryFadeDryRun" in response) || !response.memoryFadeDryRun?.applied) throw new Error("Cleanup was not confirmed.");
+			setReceipt(response.memoryFadeDryRun.backupKey ?? ""); setPreview(null); setConfirmed(false); onApplied();
+		} catch (cause) {
+			setPreview(null); setConfirmed(false);
+			setError(cause instanceof Error ? cause.message : "Could not clean up notes.");
+		} finally { setBusy(false); }
+	}
+	return <details className="memory-cleanup-review">
+		<summary>Review old automatic notes</summary>
+		<p>Review up to 200 notes across all agents and domains. Saved notes are excluded from this cleanup. Nothing is removed until you approve this list; Kestrel takes a backup first.</p>
+		<button type="button" disabled={busy} onClick={() => void review()}>{busy ? "Working…" : "Review cleanup"}</button>
+		{error && <p role="alert">{error}</p>}
+		{receipt && <p role="status">Reviewed notes removed. Backup: <code>{receipt}</code></p>}
+		{preview && <div>
+			<p>{preview.candidates.length ? `${preview.candidates.length} ${preview.candidates.length === 1 ? "note is" : "notes are"} ready for review. Some notes have separate agent copies.` : "No old automatic notes are ready to remove."}</p>
+			{preview.candidates.length > 0 && <>
+				<div className="memory-cleanup-candidates" tabIndex={0} role="region" aria-label="Notes in cleanup review">{preview.candidates.map(candidate => <article key={`${candidate.kind}:${candidate.id}`}><h4>{candidate.kind === "agent" ? "Agent note" : "Automatic note"}</h4><p>{candidate.content}</p></article>)}</div>
+				<label className="memory-cleanup-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={event => setConfirmed(event.target.checked)} />I reviewed these records and want to remove them.</label>
+				<div className="memory-cleanup-actions"><button type="button" className="danger" disabled={busy || !confirmed} onClick={() => void apply()}>Remove reviewed notes</button>
+				<button type="button" disabled={busy} onClick={() => { setPreview(null); setConfirmed(false); }}>Cancel</button>
+				</div>
+			</>}
+		</div>}
+	</details>;
 }
 
 function Timeline({ workspace }: { workspace: MemoryWorkspaceData }) {
@@ -367,6 +422,7 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 					</>
 				)}
 				{view === "fading" && (
+					<>
 					<MemoryLane
 						documents={workspace.documents.filter(isFadingDocument)}
 						viewerId={viewerId}
@@ -376,6 +432,8 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 						onKeep={updateDocument}
 						onForgotten={removeDocument}
 					/>
+					{viewerId === "user" && !domainId && <FadeCleanupReview onApplied={() => void load(true)} />}
+					</>
 				)}
 				{view === "timeline" && <><div className="memory-week-controls"><button onClick={() => setWeekOffset(value => value - 1)}>Previous week</button><button onClick={() => setWeekOffset(0)}>This week</button><button disabled={weekOffset >= 0} onClick={() => setWeekOffset(value => value + 1)}>Next week</button><button disabled={consolidating} onClick={async () => { const generation = requestId.current; setConsolidating(true); try { const result = await request({ type: "memory-workspace-consolidate", query: workspace.query }); if (generation === requestId.current && "memoryWorkspace" in result && result.memoryWorkspace) setWorkspace(result.memoryWorkspace); } catch (cause) { if (generation === requestId.current) setError(cause instanceof Error ? cause.message : "Could not consolidate memory."); } finally { setConsolidating(false); } }}>{consolidating ? "Summarizing…" : "Summarize with model"}</button></div><Timeline workspace={workspace} /></>}
 				{view === "people" && <DocumentWorkspace key={`${viewerId}:${domainId}:${view}`} documents={workspace.documents} kind="person" viewerId={viewerId} onSaved={updateDocument} onForgotten={removeDocument} />}

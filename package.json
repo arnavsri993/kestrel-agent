@@ -31,6 +31,7 @@
     "benchmark:source-ingestion": "KESTREL_SOURCE_INGESTION_BENCHMARK=1 vitest run packages/agent-core/src/source-ingestion.test.ts",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
+    "test:memory-cleanup-review": "node scripts/test-memory-cleanup-review.mjs",
     "test:watch": "vitest",
     "evaluate:model-routing": "tsx scripts/evaluate-model-routing.ts",
     "test:security": "tsx scripts/scan-production-secrets.ts",

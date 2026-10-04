@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { z } from "zod";
 import {
-	backupDatabaseBeforeFade,
 	type KestrelDatabase,
 	type MemoryDeleteResult,
 	type TimelineEventListOptions,
@@ -18,6 +18,7 @@ import {
 	MemoryHorizonSchema,
 	MemoryJobSchema,
 	MemoryFadeDryRunSchema,
+	MemoryFadePreviewSchema,
 	MemoryMaintenanceResultSchema,
 	MemoryQuerySchema,
 	MemorySearchResultSchema,
@@ -40,6 +41,7 @@ import {
 	type MemoryContextBundle,
 	type MemoryHorizon,
 	type MemoryFadeDryRun,
+	type MemoryFadePreview,
 	type MemoryJob,
 	type MemoryMaintenanceResult,
 	type MemoryProject,
@@ -71,10 +73,19 @@ const DEFAULT_RETENTION_DAYS = 30;
 const LEGACY_UNRECORDED_RETENTION_DAYS = 90;
 const AUTO_FACT_FADE_DAYS = 90;
 const OUTCOME_FADE_DAYS = 60;
-const SOURCE_DERIVED_MIN_RECALLS = 2;
 const FADE_DRY_RUN_KEY = "memory.fade.dryRun.v1";
-const FADE_BACKUP_KEY = "memory.fade.backup.v1";
-const FADE_APPLIED_KEY = "memory.fade.applied.v1";
+const FADE_PLAN_KEY = "memory.fade.plan.v1";
+const FadeReferenceSchema = z.object({
+	id: z.string().min(1).max(200),
+	fingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+const FadePlanSchema = z.object({
+	summary: MemoryFadeDryRunSchema,
+	agentMemories: z.array(FadeReferenceSchema).max(200),
+	legacyMemories: z.array(FadeReferenceSchema).max(200),
+});
+type FadeReference = z.infer<typeof FadeReferenceSchema>;
+type FadePlan = z.infer<typeof FadePlanSchema>;
 const MAX_CONTEXT_CHARACTERS = 24_000;
 const MAX_BACKGROUND_JOBS_PER_TICK = 12;
 const MAINTENANCE_BUCKET_MS = 15 * 60_000;
@@ -1309,6 +1320,7 @@ export class MemorySubstrate {
 			content: normalized,
 			sourceIds: uniqueStrings([...memory.sourceIds, `correction:${id}`], 500),
 			confidence: 1,
+			pinned: true,
 			status: "active",
 			updatedAt: timestamp,
 		});
@@ -2613,18 +2625,10 @@ export class MemorySubstrate {
 		changed += this.legacyMemory.maintain().length;
 		const legacyFadeCandidates = this.legacyMemory.listFadeCandidates();
 		if (fadeDeletes.length > 0 || legacyFadeCandidates.length > 0) {
-			this.ensureFadeDryRunAndBackup({
+			this.prepareFadeCleanup({
 				agentMemories: fadeDeletes,
 				legacyMemories: legacyFadeCandidates,
-				timelineEventIds: [],
-				sourceDerivedIds: [],
 			});
-			for (const memory of fadeDeletes) {
-				if (this.database.deleteAgentMemory(memory.id)) changed += 1;
-			}
-			changed += this.legacyMemory.purgeFadeCandidates(
-				legacyFadeCandidates.map((memory) => memory.id),
-			).length;
 		}
 		return changed;
 	}
@@ -2632,7 +2636,6 @@ export class MemorySubstrate {
 	private cleanupExpired(): number {
 		const now = this.now();
 		let deleted = 0;
-		const deletedSourceKeys: string[] = [];
 		const timelineCandidates: string[] = [];
 		for (const event of this.database.listTimelineEvents({
 			limit: 2_000,
@@ -2673,98 +2676,139 @@ export class MemorySubstrate {
 			}
 			if (!shouldDelete) continue;
 			timelineCandidates.push(event.id);
-			if (event.source === "connected-source") {
-				deletedSourceKeys.push(event.sourceId ?? event.id);
-				deletedSourceKeys.push(event.id);
-			}
-		}
-		const sourceDerived = this.collectSourceDerivedFadeCandidates(deletedSourceKeys);
-		if (timelineCandidates.length > 0 || sourceDerived.agentMemories.length > 0) {
-			this.ensureFadeDryRunAndBackup({
-				agentMemories: sourceDerived.agentMemories,
-				legacyMemories: sourceDerived.legacyMemories,
-				timelineEventIds: timelineCandidates,
-				sourceDerivedIds: [
-					...sourceDerived.agentMemories.map((memory) => memory.id),
-					...sourceDerived.legacyMemories.map((memory) => memory.id),
-				],
-			});
 		}
 		for (const eventId of timelineCandidates) {
 			if (this.database.deleteTimelineEvent(eventId)) deleted += 1;
 		}
-		for (const memory of sourceDerived.agentMemories) {
-			if (this.database.deleteAgentMemory(memory.id)) deleted += 1;
-		}
-		for (const memory of sourceDerived.legacyMemories) {
-			this.legacyMemory.forget(memory.id);
-			deleted += 1;
-		}
 		return deleted;
 	}
 
-	private collectSourceDerivedFadeCandidates(sourceKeys: readonly string[]): {
-		agentMemories: AgentMemoryRecord[];
-		legacyMemories: MemoryRecord[];
-	} {
-		if (sourceKeys.length === 0) return { agentMemories: [], legacyMemories: [] };
-		const keys = new Set(sourceKeys);
-		const agentMemories = this.database.listAllAgentMemories().filter((memory) => {
-			if (memory.status !== "active" || memory.pinned) return false;
-			if ((memory.accessCount ?? 0) >= SOURCE_DERIVED_MIN_RECALLS) return false;
-			return memory.sourceIds.some((sourceId) => keys.has(sourceId));
-		});
-		const legacyMemories = this.legacyMemory.activeMemories().filter((memory) => {
-			if (memory.pinned || memory.userConfirmed) return false;
-			if ((memory.accessCount ?? 0) >= SOURCE_DERIVED_MIN_RECALLS) return false;
-			return memory.sourceIds.some((sourceId) => keys.has(sourceId));
-		});
-		return { agentMemories, legacyMemories };
+	private readFadePlan(): FadePlan | undefined {
+		const parsed = FadePlanSchema.safeParse(this.database.getPrivateState(FADE_PLAN_KEY));
+		return parsed.success ? parsed.data : undefined;
 	}
 
-	private ensureFadeDryRunAndBackup(input: {
+	private prepareFadeCleanup(input: {
 		agentMemories: readonly AgentMemoryRecord[];
 		legacyMemories: readonly MemoryRecord[];
-		timelineEventIds: readonly string[];
-		sourceDerivedIds: readonly string[];
-	}): MemoryFadeDryRun | undefined {
-		const applied = this.database.getPrivateState<{ applied?: boolean }>(FADE_APPLIED_KEY);
-		if (applied?.applied) return undefined;
-		const existing = MemoryFadeDryRunSchema.safeParse(
-			this.database.getPrivateState(FADE_DRY_RUN_KEY),
-		);
-		if (existing.success && existing.data.applied) return existing.data;
-		let backupKey = FADE_BACKUP_KEY;
-		let fileBackupPath: string | undefined;
-		if (this.database.path !== ":memory:") {
-			fileBackupPath = backupDatabaseBeforeFade(this.database.path, this.now());
-			backupKey = fileBackupPath;
+	}): MemoryFadeDryRun {
+		const previous = this.readFadePlan();
+		const agentMemories = new Map<string, FadeReference>();
+		const legacyMemories = new Map<string, FadeReference>();
+		for (const [kind, prior, next] of [
+			["agent", previous?.summary.applied ? [] : previous?.agentMemories ?? [], agentMemories],
+			["legacy", previous?.summary.applied ? [] : previous?.legacyMemories ?? [], legacyMemories],
+		] as const) {
+			for (const reference of prior) {
+				const record = this.fadeRecord(kind, reference.id);
+				if (record && this.referenceStillEligible(kind, reference, record)) next.set(reference.id, reference);
+			}
 		}
-		this.database.setPrivateState(FADE_BACKUP_KEY, {
-			version: 1 as const,
-			createdAt: this.now().toISOString(),
-			fileBackupPath,
-			agentMemoryIds: input.agentMemories.map((memory) => memory.id),
-			legacyMemoryIds: input.legacyMemories.map((memory) => memory.id),
-			timelineEventIds: [...input.timelineEventIds],
-		});
+		for (const [kind, records, next] of [["agent", input.agentMemories, agentMemories], ["legacy", input.legacyMemories, legacyMemories]] as const) {
+			for (const record of records) {
+				if (!this.fadeRemovalAllowed(kind, record.id) || !this.fadeAgeEligible(kind, record)) continue;
+				next.set(record.id, { id: record.id, fingerprint: this.database.memoryCleanupFingerprint(kind, record) });
+			}
+		}
+		// Never remove the legacy source while retaining an unreviewed projection.
+		for (const id of legacyMemories.keys()) {
+			const projection = this.database.getAgentMemory(`agent-memory-${id}`);
+			if (projection && !agentMemories.has(projection.id)) legacyMemories.delete(id);
+		}
+		const references = {
+			agentMemories: [...agentMemories.values()].sort((a, b) => a.id.localeCompare(b.id)).slice(0, 100),
+			legacyMemories: [...legacyMemories.values()].sort((a, b) => a.id.localeCompare(b.id)).slice(0, 100),
+		};
+		// A bounded plan must retain closure after slicing as well.
+		references.legacyMemories = references.legacyMemories.filter(reference =>
+			!this.database.getAgentMemory(`agent-memory-${reference.id}`) || references.agentMemories.some(agent => agent.id === `agent-memory-${reference.id}`));
+		if (previous && !previous.summary.applied && JSON.stringify(references) === JSON.stringify({ agentMemories: previous.agentMemories, legacyMemories: previous.legacyMemories })) return previous.summary;
 		const dryRun = MemoryFadeDryRunSchema.parse({
 			version: 1,
+			id: `fade-plan-${randomUUID()}`,
 			createdAt: this.now().toISOString(),
-			agentMemoryCandidates: input.agentMemories.length,
-			legacyMemoryCandidates: input.legacyMemories.length,
-			timelineCandidates: input.timelineEventIds.length,
-			sourceDerivedCandidates: input.sourceDerivedIds.length,
-			backupKey,
-			applied: true,
+			agentMemoryCandidates: references.agentMemories.length,
+			legacyMemoryCandidates: references.legacyMemories.length,
+			timelineCandidates: 0,
+			sourceDerivedCandidates: 0,
+			applied: false,
 		});
+		this.database.setPrivateState(FADE_PLAN_KEY, { summary: dryRun, ...references });
 		this.database.setPrivateState(FADE_DRY_RUN_KEY, dryRun);
-		this.database.setPrivateState(FADE_APPLIED_KEY, {
-			applied: true,
-			appliedAt: this.now().toISOString(),
-			...(fileBackupPath ? { fileBackupPath } : {}),
-		});
 		return dryRun;
+	}
+
+	private fadeRecord(kind: "agent" | "legacy", id: string): AgentMemoryRecord | MemoryRecord | undefined {
+		return kind === "agent" ? this.database.getAgentMemory(id) : this.database.getMemory(id);
+	}
+
+	private fadeRemovalAllowed(kind: "agent" | "legacy", id: string): boolean {
+		const record = this.fadeRecord(kind, id);
+		if (!record || record.status !== "active" || record.pinned) return false;
+		if (kind === "agent" && agentMemoryFadeDays(record as AgentMemoryRecord) === null) return false;
+		// Any authored workspace override is user-owned, including an edited inference.
+		if (this.database.getMemoryWorkspaceDocument(`workspace:${kind === "agent" ? "agent" : "legacy"}-memory:${id}`)) return false;
+		const legacyId = kind === "legacy" ? id : id.startsWith("agent-memory-") ? id.slice("agent-memory-".length) : undefined;
+		const legacy = legacyId ? this.database.getMemory(legacyId) : undefined;
+		if (legacyId && this.database.getMemoryWorkspaceDocument(`workspace:legacy-memory:${legacyId}`)) return false;
+		return !legacy || Boolean(legacy.inferred && !legacy.pinned && !legacy.userConfirmed && !["explicit", "user_confirmed"].includes(legacy.confirmationStatus ?? ""));
+	}
+
+	private fadeAgeEligible(kind: "agent" | "legacy", record: AgentMemoryRecord | MemoryRecord): boolean {
+		const fadeDays = kind === "agent" ? agentMemoryFadeDays(record as AgentMemoryRecord) : AUTO_FACT_FADE_DAYS;
+		if (fadeDays === null || !record.fadesAt) return false;
+		const effectiveFade = Math.max(timestampValue(record.fadesAt), record.lastAccessedAt ? timestampValue(record.lastAccessedAt) + fadeDays * DAY_MS : 0);
+		return effectiveFade > 0 && effectiveFade < this.now().getTime();
+	}
+
+	private referenceStillEligible(kind: "agent" | "legacy", reference: FadeReference, record: AgentMemoryRecord | MemoryRecord): boolean {
+		return this.database.memoryCleanupFingerprint(kind, record) === reference.fingerprint
+			&& this.fadeRemovalAllowed(kind, reference.id)
+			&& this.fadeAgeEligible(kind, record);
+	}
+
+	/** Review does not change relevance, recall history, or fade dates. */
+	planFadeCleanup(): MemoryFadePreview {
+		const agentMemories = this.database.listAllAgentMemories().filter(memory =>
+			this.fadeRemovalAllowed("agent", memory.id) && this.fadeAgeEligible("agent", memory));
+		this.prepareFadeCleanup({ agentMemories, legacyMemories: this.legacyMemory.listFadeCandidates() });
+		const plan = this.readFadePlan()!;
+		return MemoryFadePreviewSchema.parse({ plan: plan.summary, candidates: [
+			...plan.agentMemories.map(reference => ({ kind: "agent", id: reference.id, content: this.database.getAgentMemory(reference.id)!.content })),
+			...plan.legacyMemories.map(reference => ({ kind: "legacy", id: reference.id, content: this.database.getMemory(reference.id)!.content })),
+		] });
+	}
+
+	async applyFadeCleanup(planId: string, approved: boolean): Promise<MemoryFadeDryRun> {
+		if (approved !== true) throw new Error("Explicit cleanup approval is required.");
+		const plan = this.readFadePlan();
+		if (!plan || plan.summary.id !== planId || plan.summary.applied) throw new Error("Cleanup plan expired. Review a fresh plan.");
+		if (!plan.agentMemories.length && !plan.legacyMemories.length) throw new Error("There are no reviewed notes to remove.");
+		const verify = () => {
+			const current = this.readFadePlan();
+			if (!current || current.summary.id !== planId || current.summary.applied) throw new Error("Cleanup plan expired. Review a fresh plan.");
+			for (const [kind, references] of [["agent", plan.agentMemories], ["legacy", plan.legacyMemories]] as const) for (const reference of references) {
+				const record = this.fadeRecord(kind, reference.id);
+				if (!record || !this.referenceStillEligible(kind, reference, record)) throw new Error("Memory changed after review. Review a fresh cleanup plan.");
+			}
+		};
+		verify();
+		const backupKey = this.database.path !== ":memory:"
+			? await this.database.backupBeforeMemoryCleanup(this.now())
+			: `memory.fade.backup:${planId}`;
+		return this.database.runMemoryCleanupTransaction(() => {
+			verify();
+			if (this.database.path === ":memory:") this.database.setPrivateState(backupKey, {
+				agentMemories: plan.agentMemories.map(reference => this.database.getAgentMemory(reference.id)),
+				legacyMemories: plan.legacyMemories.map(reference => this.database.getMemory(reference.id)),
+			});
+			for (const reference of plan.agentMemories) this.database.deleteAgentMemory(reference.id);
+			for (const reference of plan.legacyMemories) this.legacyMemory.forget(reference.id);
+			const summary = MemoryFadeDryRunSchema.parse({ ...plan.summary, backupKey, applied: true });
+			this.database.setPrivateState(FADE_PLAN_KEY, { ...plan, summary });
+			this.database.setPrivateState(FADE_DRY_RUN_KEY, summary);
+			return summary;
+		});
 	}
 
 	private lexicalScore(query: string, text: string): number {
@@ -3157,9 +3201,8 @@ export class MemorySubstrate {
 	}
 
 	/** Pin an agent memory so fade rules never delete it. */
-	pinAgentMemory(id: string, pinned = true): AgentMemoryRecord {
-		const memory = this.database.getAgentMemory(id);
-		if (!memory) throw new Error("Memory not found.");
+	pinAgentMemory(sessionId: string, id: string, pinned = true): AgentMemoryRecord {
+		const { memory } = this.requireAgentMemory(sessionId, id);
 		const { fadesAt: _previousFadesAt, ...rest } = memory;
 		const fadeDays = agentMemoryFadeDays({ ...memory, pinned });
 		const next = AgentMemoryRecordSchema.parse({
@@ -3170,7 +3213,12 @@ export class MemorySubstrate {
 				: {}),
 			updatedAt: this.now().toISOString(),
 		});
-		this.database.upsertAgentMemory(next);
+		this.database.runMemoryCleanupTransaction(() => {
+			const legacyId = id.startsWith("agent-memory-") ? id.slice("agent-memory-".length) : undefined;
+			const legacy = legacyId ? this.database.getMemory(legacyId) : undefined;
+			if (legacy) this.database.upsertMemory({ ...legacy, pinned, updatedAt: this.now().toISOString() });
+			this.database.upsertAgentMemory(next);
+		});
 		return next;
 	}
 

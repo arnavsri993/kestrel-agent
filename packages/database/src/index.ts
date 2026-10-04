@@ -1,6 +1,6 @@
-import { createHash, createHmac } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { createHash, createHmac, randomUUID } from "node:crypto";
+import { chmodSync, closeSync, mkdirSync, openSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { decryptText, encryptText } from "@kestrel/encryption";
 import {
 	type ActionReceipt,
@@ -198,7 +198,6 @@ function isSqliteDatabaseIntegrityFailure(error: unknown): boolean {
 }
 
 export {
-	backupDatabaseBeforeFade,
 	backupDatabaseBeforeMigration,
 	LATEST_SCHEMA_VERSION,
 	loadMigrationSql,
@@ -3823,29 +3822,7 @@ export class KestrelDatabase {
                         embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;
                         pending.push(owner.id, `task:${owner.id}`);
                     } else {
-						const memory = this.getAgentMemory(owner.id);
-						// Recalled or pinned derived facts survive source expiry; detach the
-						// dying evidence instead of hard-deleting the knowledge.
-						if (
-							memory &&
-							(memory.pinned || (memory.accessCount ?? 0) >= 2)
-						) {
-							const nextSources = memory.sourceIds.filter(
-								(sourceId) =>
-									sourceId !== id &&
-									sourceId !== `timeline_event:${id}`,
-							);
-							this.upsertAgentMemory({
-								...memory,
-								sourceIds:
-									nextSources.length > 0
-										? nextSources
-										: ["retained-after-source-expiry"],
-								pinned: true,
-								updatedAt: timestamp,
-							});
-							continue;
-						}
+                        // Pins and recall counts never override source retention or deletion.
                         const result = this.deleteAgentMemoryWithCounts(owner.id);
                         if (result.memory) deletedAgentMemories++;
                         embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;
@@ -5002,6 +4979,37 @@ export class KestrelDatabase {
 			throw new Error("Idempotency claim key and owner token are required.");
 		if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0)
 			throw new Error("Idempotency claim owner PID is invalid.");
+	}
+
+	/** Bind reviewed records without retaining a guessable content hash. */
+	memoryCleanupFingerprint(kind: "agent" | "legacy", record: AgentMemoryRecord | MemoryRecord): string {
+		return createHmac("sha256", this.encryptionKey)
+			.update(`memory-cleanup-review:v1:${kind}:`)
+			.update(JSON.stringify(record))
+			.digest("hex");
+	}
+
+	/** SQLite's online backup includes committed WAL pages in one consistent file. */
+	async backupBeforeMemoryCleanup(now: Date): Promise<string> {
+		if (this.path === ":memory:") throw new Error("A file database is required for a SQLite backup.");
+		const directory = join(dirname(this.path), "backups");
+		mkdirSync(directory, { recursive: true, mode: 0o700 });
+		const timestamp = now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
+		const path = join(directory, `pre-fade-${timestamp}-${randomUUID()}.sqlite`);
+		closeSync(openSync(path, "wx", 0o600));
+		try {
+			await this.db.backup(path);
+			chmodSync(path, 0o600);
+			return path;
+		} catch (error) {
+			rmSync(path, { force: true });
+			throw error;
+		}
+	}
+
+	/** A cleanup either commits all reviewed record removals or none of them. */
+	runMemoryCleanupTransaction<T>(work: () => T): T {
+		return this.db.transaction(work)();
 	}
 
 	close(): void {
