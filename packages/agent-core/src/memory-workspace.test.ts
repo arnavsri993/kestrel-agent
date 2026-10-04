@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { MemoryDocumentSaveSchema } from "@kestrel/shared-types";
+import { AgentMemoryRecordSchema, MemoryDocumentSaveSchema } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import { AgentCore } from "./index";
 import { dayFingerprint } from "./memory-consolidation";
@@ -35,6 +35,35 @@ describe("canonical memory workspace", () => {
    expect(scoped.documents).toHaveLength(1); expect(scoped.documents[0]?.text).toBe("Robotics context");
    expect(scoped.documents[0]?.sourceIds).toEqual(["r"]);
   } finally { await f.close(); }
+ });
+ it("persists an edited task result as a note while preserving its inference and source", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kestrel-edited-task-note-"));
+  const path = join(root, "profile.sqlite"); const key = createEncryptionKey();
+  const first = fixture(path, key);
+  const session = first.core.runtime.ensureMainSession();
+  const identity = first.core.memorySubstrate.ensureAgentIdentity(session);
+  const source = AgentMemoryRecordSchema.parse({
+   id: "agent-outcome-edited-fixture", agentId: identity.id, kind: "outcome", horizon: "mid_term",
+   content: "Generated comparison.\nOriginal task evidence.", sourceIds: ["task:edited-fixture"],
+   taskIds: ["edited-fixture"], projectIds: [],
+   confidence: .6, importance: .5, sensitivity: "personal", status: "active",
+   createdAt: "2025-01-01T00:00:00.000Z", updatedAt: "2025-01-01T00:00:00.000Z",
+   fadesAt: "2025-03-01T00:00:00.000Z",
+  });
+  first.database.upsertAgentMemory(source);
+  const prior = first.core.memoryWorkspace.read().documents.find(item => item.id === `workspace:agent-memory:${source.id}`)!;
+  expect(first.core.memorySubstrate.planFadeCleanup().candidates.map(item => item.id)).toContain(source.id);
+  const edited = first.save({ ...prior, expectedVersion: prior.version, title: "My comparison", text: "My corrected comparison.", passages: [], origin: "manual" });
+  expect(edited).toMatchObject({ title: "My comparison", text: "My corrected comparison.", origin: "manual", sourceIds: source.sourceIds, confirmation: "inferred", confidence: .6 });
+  expect(first.core.memorySubstrate.planFadeCleanup().candidates.map(item => item.id)).not.toContain(source.id);
+  expect(first.database.getAgentMemory(source.id)).toEqual(source);
+  await first.close();
+  const second = fixture(path, key);
+  try {
+   const restored = second.core.memoryWorkspace.read().documents.find(item => item.id === edited.id);
+   expect(restored).toEqual(edited);
+   expect(second.core.memorySubstrate.planFadeCleanup().candidates.map(item => item.id)).not.toContain(source.id);
+  } finally { await second.close(); rmSync(root, { recursive: true, force: true }); }
  });
  it("inherits only explicitly shared domain context and prevents editing inherited documents", async () => {
   const f = fixture(); try {

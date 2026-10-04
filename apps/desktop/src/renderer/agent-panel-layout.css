@@ -448,6 +448,10 @@
 	overflow-x: clip;
 }
 
+.agent-conversation-host .assistant-message:not(.approval-message) {
+	grid-template-columns: minmax(0, 1fr);
+}
+
 .agent-conversation-host .work-summary {
 	display: flex;
 	align-items: flex-start;

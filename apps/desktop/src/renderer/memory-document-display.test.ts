@@ -14,7 +14,7 @@ describe("memory entry presentation", () => {
 		expect(memoryDocumentTitle(result)).toBe("Compared the two owned pages.");
 		expect(result.text).toContain("Full retained result.");
 	});
-	it("preserves explicit titles and placement of manually saved or edited notes", () => {
+	it("preserves explicit titles and placement of manual notes", () => {
 		for (const document of [{ ...result, origin: "manual" as const }, { ...result, id: "manual-note" }]) {
 			expect(isTaskResult(document)).toBe(false);
 			expect(memoryDocumentTitle(document)).toBe("outcome");

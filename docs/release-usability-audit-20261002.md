@@ -332,3 +332,33 @@ Generated fixture images were moved into temporary evidence and original
 tracked screenshots restored. The Memory settings intro now describes managing
 learning without promising an unavailable toggle on that screen. The follow-up
 still requires its own clean package, canonical refresh and exact-head CI.
+
+## Answer width, startup transition and edited notes — October 4
+
+Canonical `c835fe29` installation passed independent manifest/hash/signature
+checks and installed Readiness, Life/Memory and smoke fixtures. Exact-head
+core/security CI and all four CodeQL checks passed. Desktop CI then failed
+the tool-result answer-visibility assertion; the failure was reproduced locally.
+The removed assistant avatar left an old 22px grid column, forcing the answer
+into that column. Ordinary answers now use the full width while approval
+messages retain their separate icon layout. The original assertions remain,
+with additional transcript viewport and answer-width checks.
+
+Visual inspection of the owned fixture also caught the fading startup screen
+briefly occupying a full window above the entering workspace. Loading and
+onboarding now overlay it, avoiding the displacement during the transition.
+The fixture waits for the loading screen to leave before capturing stable UI.
+
+Editing a generated task result's title or text now marks the saved override
+manual, so it appears in Notes with its explicit title. Source IDs, confidence
+and inference status remain unchanged; Keep alone retains the existing origin.
+The actual Memory component exercises edit/save at both headless viewports,
+and a real encrypted database test verifies restart persistence, preserved source
+records and exclusion from automatic cleanup.
+
+All 2,126 tests in 264 files, workspace type checking, desktop build, setup,
+tool-result scrolling/focus/formatting, Life/Memory and all 157 registered
+surface states pass. Desktop and compact answer screenshots were inspected.
+No real-profile note edit or cleanup was applied. The preceding AI reviewer
+failure is HTTP 402 monthly quota exhaustion. This follow-up still needs clean
+canonical installation, installed and native verification, and exact-head CI.

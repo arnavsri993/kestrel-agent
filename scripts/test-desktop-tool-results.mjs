@@ -40,6 +40,7 @@ try {
 	await append("assistant", "Fixture answer: the page was read; one subsequent read failed.");
 	await request({ type: "runtime-select-session", sessionId });
 	await page.reload();
+	await expect(page.locator(".loading-screen")).toHaveCount(0);
 	const chatToggle = page.locator("#browser-agent-toggle");
 	await chatToggle.waitFor();
 	if (await chatToggle.getAttribute("aria-expanded") !== "true") await chatToggle.click();
@@ -49,6 +50,7 @@ try {
 	await expect(rows).toHaveCount(2);
 	for (const width of [1440, 1000]) {
 		await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows().find(window => !window.webContents.getURL().includes("petOverlay=1"))?.setSize(width, 900), width);
+		await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width);
 		await expect(rows.locator("details[open]")).toHaveCount(0);
 		await expect(rows.first().locator("pre")).toBeHidden();
 		await expect(rows.first().locator("summary")).toContainText("Done");
@@ -58,9 +60,10 @@ try {
 			const box = node.getBoundingClientRect();
 			const answer = node.querySelector(".assistant-message").getBoundingClientRect();
 			const result = node.querySelector(".runtime-tool-message").getBoundingClientRect();
-			return { answerVisible: answer.top >= box.top && answer.bottom <= box.bottom, compactResult: result.height < 90, overflow: node.scrollWidth > node.clientWidth };
+			const content = node.querySelector(".assistant-content").getBoundingClientRect();
+			return { listInWindow: box.top >= 0 && box.bottom <= innerHeight, answerVisible: answer.top >= box.top && answer.bottom <= box.bottom, answerUsesWidth: content.width >= answer.width - 2, compactResult: result.height < 90, overflow: node.scrollWidth > node.clientWidth };
 		});
-		assert.deepEqual(geometry, { answerVisible: true, compactResult: true, overflow: false });
+		assert.deepEqual(geometry, { listInWindow: true, answerVisible: true, answerUsesWidth: true, compactResult: true, overflow: false });
 		if (width === 1000) assert(await page.locator(".agent-sidebar-collapse").evaluate(button => {
 			const box = button.getBoundingClientRect();
 			const text = button.querySelector("span").getBoundingClientRect();

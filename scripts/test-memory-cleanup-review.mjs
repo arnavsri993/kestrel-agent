@@ -19,11 +19,11 @@ import { createRoot } from 'react-dom/client';
 import { MemoryWorkspace } from '/apps/desktop/src/renderer/components/MemoryWorkspace.tsx';
 const record = { id: 'owned-fixture', kind: 'memory', title: 'Owned automatic fixture', text: 'Complete owned text with a second line.\\nThis proof must remain readable.', tier: 'mid_term', domainIds: ['personal'], sourceIds: ['synthetic:fixture'], sharing: 'owner_only', confidence: .6, confirmation: 'inferred', sensitivity: 'personal', passages: [], origin: 'legacy', version: 1, createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2026-07-22T12:00:00.000Z' };
 const taskResult = {...record, id: 'workspace:agent-memory:agent-outcome-owned-task', title: 'agent-outcome-owned-task', text: 'Owned browser task finished\\nFull owned task proof: TASK-42.', sourceIds: ['task:owned-task']};
-window.fixture = { calls: [], document: record, failNextApply: false, applied: 0, holdApply: false };
+window.fixture = { calls: [], document: record, taskResult, failNextApply: false, applied: 0, holdApply: false };
 window.kestrel = { request: async input => {
  const f = window.fixture; f.calls.push(input);
- if(input.type === 'memory-workspace-read') return {ok:true, memoryWorkspace:{query: input.query, documents: [...(f.document ? [f.document] : []), taskResult], domains: [], viewers: [{id:'user', label:'You'}]}};
- if(input.type === 'memory-document-save') { f.document={...f.document, ...input.document}; return {ok:true,memoryDocument:f.document}; }
+ if(input.type === 'memory-workspace-read') return {ok:true, memoryWorkspace:{query: input.query, documents: [...(f.document ? [f.document] : []), f.taskResult], domains: [], viewers: [{id:'user', label:'You'}]}};
+ if(input.type === 'memory-document-save') { const key=input.document.id===f.taskResult.id?'taskResult':'document'; f[key]={...f[key], ...input.document, version:f[key].version+1}; return {ok:true,memoryDocument:f[key]}; }
  if(input.type === 'memory-fade-plan') return {ok:true,memoryFadePreview:{plan:{version:1,id:'owned-plan',createdAt:'2026-07-22T12:00:00.000Z',agentMemoryCandidates:1,legacyMemoryCandidates:0,timelineCandidates:0,sourceDerivedCandidates:0,applied:false}, candidates:[{kind:'agent',id:record.id,content:record.text}]}};
  if(input.type === 'memory-fade-apply') {
   if(f.failNextApply){f.failNextApply=false;return {ok:false,error:'Memory changed after review. Review a fresh cleanup plan.'};}
@@ -66,6 +66,20 @@ try {
 		assert.match(await page.locator(".memory-reader").innerText(), /Full owned task proof: TASK-42/);
 		await search.fill("");
 		assert.equal(await taskResults.evaluate(element => element.open), false);
+		await page.getByRole("button", { name: "Edit note", exact: true }).click();
+		await page.getByLabel("Title (optional)").fill("My browser comparison");
+		await page.getByLabel("What Kestrel should know").fill("My corrected comparison.\nKeep the source proof: TASK-42.");
+		await page.locator(".memory-editor").getByRole("button", { name: "Save", exact: true }).click();
+		await page.getByRole("heading", { name: "My browser comparison", exact: true }).waitFor();
+		assert.equal(await page.locator(".memory-task-results").count(), 0);
+		assert.equal(await page.locator(".memory-kicker").count(), 0);
+		const editedTask = await page.evaluate(() => window.fixture.taskResult);
+		assert.equal(editedTask.origin, "manual");
+		assert.equal(editedTask.title, "My browser comparison");
+		assert.deepEqual(editedTask.sourceIds, ["task:owned-task"]);
+		assert.equal(editedTask.confidence, .6);
+		assert.equal(editedTask.confirmation, "inferred");
+		await page.locator(".memory-library aside").getByRole("button").filter({ hasText: "My browser comparison" }).waitFor();
 		await page.locator(".memory-library aside").getByRole("button").filter({ hasText: "Owned automatic fixture" }).click();
 		await page.getByRole("button", { name: "Edit note", exact: true }).click();
 		await page.getByLabel("What Kestrel should know").fill("Unsaved owned draft");
@@ -118,7 +132,7 @@ try {
 		assert.equal(await page.evaluate(() => window.fixture.document.confirmation), "inferred");
 		assert.equal(await page.evaluate(() => window.fixture.document.confidence), .6);
 		assert.equal(await page.evaluate(() => window.fixture.document.tier), "long_term");
-		report.push({ viewport, approvalOrder: "pass", staleApproval: "pass", cancel: "pass", draftProtection: "pass", busyProtection: "pass", taskResultSearch: "pass", keepInference: "pass", rendererErrors: errors });
+		report.push({ viewport, approvalOrder: "pass", staleApproval: "pass", cancel: "pass", draftProtection: "pass", busyProtection: "pass", taskResultSearch: "pass", taskResultEdit: "pass", keepInference: "pass", rendererErrors: errors });
 		await page.close();
 	}
 	writeFileSync(join(output, "report.json"), JSON.stringify(report, null, 2));

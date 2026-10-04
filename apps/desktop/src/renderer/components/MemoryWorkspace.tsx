@@ -176,6 +176,7 @@ function DocumentWorkspace({
 		if (!text.trim()) return;
 		setBusy(true);
 		setError("");
+		const contentEdited = selected && (title.trim() !== selected.title || text.trim() !== selected.text);
 		const document: MemoryDocumentSave = {
 			...(selected ? { id: selected.id, expectedVersion: selected.version } : {}),
 			viewerId,
@@ -185,7 +186,7 @@ function DocumentWorkspace({
 			sharing, sourceIds: selected?.sourceIds ?? [],
 			confidence: selected?.confidence ?? 1, confirmation: selected?.confirmation ?? "confirmed",
 			sensitivity: selected?.sensitivity ?? "personal", passages: text === selected?.text ? selected.passages : [],
-			canonicalEntityId: selected?.canonicalEntityId, origin: selected?.origin ?? "manual",
+			canonicalEntityId: selected?.canonicalEntityId, origin: contentEdited ? "manual" : selected?.origin ?? "manual",
 		};
 		try {
 			const response = await request({ type: "memory-document-save", document });
