@@ -22,6 +22,7 @@ import {
 	MemoryTimelineQueryResultSchema,
 	MemoryProjectSchema,
 	parseExplicitMemoryCapture,
+	replacePrivateKeyBlocks,
 	ProvenanceRecordSchema,
 	TimelineEventSchema,
 	TimelineSessionSchema,
@@ -241,11 +242,11 @@ function naturalTimeRange(query: string, now: Date): { startAt?: string; endAt?:
 }
 
 function redactText(value: string): string {
-	const locallyRedacted = redactSensitiveContent(value)
-		.replace(
-			/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu,
-			"[redacted-private-key]",
-		)
+	const locallyRedacted = replacePrivateKeyBlocks(
+		redactSensitiveContent(value),
+		() => "[redacted-private-key]",
+		{ caseInsensitive: true },
+	)
 		.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/giu, "$1[redacted]")
 		.replace(/\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,})\b/gu, "[redacted-secret]")
 		.replace(
@@ -1795,7 +1796,7 @@ export class MemorySubstrate {
 		const timestamp = this.now().toISOString();
 		this.database.queueMemoryJob(
 			MemoryJobSchema.parse({
-				id: `memory-job-${createHash("sha256").update(dedupeKey).digest("hex").slice(0, 40)}`,
+				id: this.database.memoryJobId(dedupeKey),
 				kind,
 				dedupeKey,
 				status: "pending",

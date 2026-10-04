@@ -236,6 +236,13 @@ export class BrowserRecoveryError extends KestrelError {
 	}
 }
 
+// Fixed-term searches avoid retrying a wildcard suffix at every repeated prefix.
+// Splitting on JavaScript dot's four line terminators preserves the old .* scope.
+function hasOrderedTerms(line: string, first: string, second: string): boolean {
+	const start = line.indexOf(first);
+	return start !== -1 && line.indexOf(second, start + first.length) !== -1;
+}
+
 export function browserRecoveryReason(
 	error: unknown,
 ): BrowserRecoveryReasonCode | undefined {
@@ -261,19 +268,30 @@ export function browserRecoveryReason(
 		)
 	)
 		return "obscured";
+	const lines = message.split(/[\n\r\u2028\u2029]/);
 	if (
-		/execution context.*destroyed|frame.*detached|page (?:has )?changed|navigation (?:has )?changed|target closed|cannot find context/.test(
-			message,
-		)
+		lines.some(
+			(line) =>
+				hasOrderedTerms(line, "execution context", "destroyed") ||
+				hasOrderedTerms(line, "frame", "detached"),
+		) ||
+		/page (?:has )?changed|navigation (?:has )?changed|target closed|cannot find context/.test(message)
 	)
 		return "navigation_changed";
 	if (
-		/(?:authentication|login|sign[ -]?in).*(?:required|expired)|(?:required|expired).*(?:authentication|login|sign[ -]?in)|(?:browser|fixture|user) session expired/.test(
-			message,
-		)
+		lines.some(
+			(line) =>
+				/(?:authentication|login|sign[ -]?in)/.test(line) &&
+				/(?:required|expired)/.test(line),
+		) ||
+		/(?:browser|fixture|user) session expired/.test(message)
 	)
 		return "auth_required";
-	if (/popup.*(?:denied|blocked)|(?:denied|blocked).*popup/.test(message))
+	if (
+		lines.some(
+			(line) => line.includes("popup") && /(?:denied|blocked)/.test(line),
+		)
+	)
 		return "popup_denied";
 	if (
 		/\b(?:network error|network disconnected|network unavailable|failed to fetch|load failed|internet disconnected)\b|net::err_|err_(?:internet_disconnected|network_changed|connection_[a-z_]+|name_not_resolved|timed_out)|\b(?:enotfound|econnreset|econnrefused)\b/.test(

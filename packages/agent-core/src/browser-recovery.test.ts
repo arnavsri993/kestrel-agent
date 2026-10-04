@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
 	applyBrowserRecoveryBudget,
@@ -25,6 +26,58 @@ describe("typed browser recovery guidance", () => {
 	] as const)("classifies %s as %s", (message, reasonCode) => {
 		expect(browserRecoveryReason(new Error(message))).toBe(reasonCode);
 	});
+
+	it.each([
+		["destroyed execution context", undefined],
+		["detached frame", undefined],
+		["frame is detached", "navigation_changed"],
+		["Execution context destroyed; login required", "navigation_changed"],
+		["stale browser state; execution context destroyed", "stale_target"],
+		["login required but operation canceled", undefined],
+		["required: SIGN IN", "auth_required"],
+		["expired authentication", "auth_required"],
+		["blocked popup", "popup_denied"],
+		["popup denied; network error", "popup_denied"],
+	] as const)("preserves ordering and precedence for %s", (message, reason) => {
+		expect(browserRecoveryReason(new Error(message))).toBe(reason);
+	});
+
+	it.each(["\n", "\r", "\u2028", "\u2029"])(
+		"does not join wildcard terms across line terminator %j",
+		(separator) => {
+			for (const [first, second] of [
+				["execution context", "destroyed"],
+				["frame", "detached"],
+				["login", "required"],
+				["expired", "authentication"],
+				["popup", "denied"],
+			]) {
+				expect(browserRecoveryReason(new Error(`${first}${separator}${second}`)))
+					.toBeUndefined();
+			}
+		},
+	);
+
+	it("classifies large repeated prefixes within a strict subprocess deadline", () => {
+		const moduleUrl = new URL("./browser-recovery.ts", import.meta.url).href;
+		const child = spawnSync(process.execPath, [
+			"--import", "tsx", "--input-type=module", "-e",
+			`
+				import assert from "node:assert/strict";
+				import { browserRecoveryReason } from ${JSON.stringify(moduleUrl)};
+				const start = performance.now();
+				for (const prefix of ["frame ", "execution context ", "login ", "required ", "popup ", "blocked "]) {
+					assert.equal(browserRecoveryReason(new Error(prefix.repeat(50_000) + "!")), undefined);
+				}
+				assert.equal(browserRecoveryReason(new Error("login ".repeat(50_000) + "expired")), "auth_required");
+				assert.equal(browserRecoveryReason(new Error("frame ".repeat(50_000) + "detached")), "navigation_changed");
+				assert.ok(performance.now() - start < 500, "classification exceeded 500 ms");
+			`,
+		], { timeout: 5_000, encoding: "utf8" });
+		expect(child.error).toBeUndefined();
+		expect(child.stderr).toBe("");
+		expect(child.status).toBe(0);
+	}, 7_000);
 
 	it("returns advisory read-only reobservation hints without permitting replay", () => {
 		const error = toBrowserRecoveryError(

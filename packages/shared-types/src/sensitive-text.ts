@@ -1,7 +1,38 @@
 export type SensitiveTextReplacement = (kind: string, secret: string) => string;
 
-const PRIVATE_KEY_PATTERN =
-	/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+/**
+ * Find the first BEGIN, then scan forward for its next END. The two searches
+ * advance over disjoint regions; a missing END searches the suffix only once.
+ * Search only the delimiter needed in the current state so irrelevant markers
+ * cannot consume hyphens that overlap a relevant marker. Incomplete blocks
+ * retain their text rather than removing unrelated trailing instructions.
+ */
+export function replacePrivateKeyBlocks(
+	value: string,
+	replace: SensitiveTextReplacement,
+	options: { caseInsensitive?: boolean } = {},
+): string {
+	const flags = options.caseInsensitive ? "giu" : "g";
+	const begins = new RegExp("-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----", flags);
+	const ends = new RegExp("-----END [A-Z0-9 ]*PRIVATE KEY-----", flags);
+	const parts: string[] = [];
+	let copiedThrough = 0;
+	let begin: RegExpExecArray | null;
+	while ((begin = begins.exec(value)) !== null) {
+		ends.lastIndex = begins.lastIndex;
+		if (ends.exec(value) === null) break;
+		parts.push(
+			value.slice(copiedThrough, begin.index),
+			replace("PRIVATE_KEY", value.slice(begin.index, ends.lastIndex)),
+		);
+		copiedThrough = ends.lastIndex;
+		begins.lastIndex = copiedThrough;
+	}
+	if (parts.length === 0) return value;
+	parts.push(value.slice(copiedThrough));
+	return parts.join("");
+}
+
 const URL_CREDENTIAL_PATTERN =
 	/\b(https?:\/\/)([^:/?#@\s]+):([^@/?#\s]+)@/gi;
 const URL_QUERY_PATTERN = /([?&])([^=?#&\s]{1,80})(=)([^&#\s"'<>]+)/g;
@@ -127,9 +158,7 @@ export function replaceSensitiveText(
 	let result = value.replace(OPAQUE_PLACEHOLDER_PATTERN, (placeholder) =>
 		protect(placeholder),
 	);
-	result = result.replace(PRIVATE_KEY_PATTERN, (secret) =>
-		replaceSecret("PRIVATE_KEY", secret),
-	);
+	result = replacePrivateKeyBlocks(result, replaceSecret);
 	result = result.replace(
 		URL_CREDENTIAL_PATTERN,
 		(_match, scheme: string, username: string, password: string) =>

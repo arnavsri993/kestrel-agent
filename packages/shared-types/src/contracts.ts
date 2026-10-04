@@ -506,6 +506,11 @@ const CapabilityScoresSchema = z.record(
  * Keep recognizable credential formats out of policy, traces, and renderer
  * state even if an upstream provider adapter accidentally supplies one.
  */
+// Every routing metadata schema below is limited to at most 300 UTF-16 units.
+// Zod string max checks are continuable, so refinements still see oversized
+// values. Reject them here before any recognizer can inspect unbounded input.
+const MAX_ROUTING_METADATA_LENGTH = 300;
+
 const ROUTING_SECRET_LABEL_PATTERN =
 	/(?:^|[-_.:])(?:sk|pk|api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|credential|password|secret)(?:[-_.:]|$)/i;
 const ROUTING_KNOWN_SECRET_PATTERN =
@@ -523,6 +528,7 @@ export function isRoutingSecretLikeValue(value: string): boolean {
 }
 
 export function isRoutingUnsafeMetadataValue(value: string): boolean {
+	if (value.length > MAX_ROUTING_METADATA_LENGTH) return true;
 	return (
 		isRoutingSecretLikeValue(value) ||
 		ROUTING_EMAIL_PATTERN.test(value) ||

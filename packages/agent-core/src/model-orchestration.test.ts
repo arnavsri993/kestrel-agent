@@ -1,6 +1,16 @@
+import { spawnSync } from "node:child_process";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { ModelProfileSchema, RoutingPolicySchema } from "@kestrel/shared-types";
+import {
+	isRoutingUnsafeMetadataValue,
+	ModelProfileSchema,
+	RoutingDisplayNameSchema,
+	RoutingModelIdentifierSchema,
+	RoutingOpaqueIdentifierSchema,
+	RoutingPolicySchema,
+	RoutingProfileIdentifierSchema,
+	RoutingSafeLabelSchema,
+} from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import {
 	AdaptiveModelRouter,
@@ -1179,6 +1189,70 @@ describe("adaptive model orchestration", () => {
 		).not.toContain(secret);
 		item.database.close();
 	});
+
+	it.each([
+		[RoutingOpaqueIdentifierSchema, 100],
+		[RoutingModelIdentifierSchema, 200],
+		[RoutingProfileIdentifierSchema, 300],
+		[RoutingSafeLabelSchema, 200],
+		[RoutingDisplayNameSchema, 300],
+	] as const)("preserves routing metadata's %s length boundary at %s", (schema, maximum) => {
+		const value = "a".repeat(maximum);
+		expect(schema.safeParse(value).success).toBe(true);
+		expect(schema.safeParse(`  ${value}  `).success).toBe(true);
+		expect(schema.safeParse(`${value}a`).success).toBe(false);
+	});
+
+	it("retains Unicode labels and UTF-16 schema limits", () => {
+		for (const value of ["模型", "Équipe personnelle", "模型 😀", "😀".repeat(100)]) {
+			expect(RoutingSafeLabelSchema.safeParse(value).success).toBe(true);
+		}
+		expect(RoutingDisplayNameSchema.safeParse("😀".repeat(150)).success).toBe(true);
+		expect(RoutingDisplayNameSchema.safeParse("😀".repeat(151)).success).toBe(false);
+		expect(RoutingSafeLabelSchema.safeParse("😀".repeat(101)).success).toBe(false);
+		expect(RoutingOpaqueIdentifierSchema.safeParse("模型").success).toBe(false);
+	});
+
+	it.each([
+		"HTTPS://provider.example/v1",
+		"Account (custom+model.v1://provider.example)",
+		"模型https://provider.example",
+		"www.provider.example",
+		"owner@example.com",
+		"preferred-api-key",
+		"ghp_synthetic_test_token",
+	])("preserves unsafe routing label rejection for %s", (value) => {
+		expect(isRoutingUnsafeMetadataValue(value)).toBe(true);
+		expect(RoutingSafeLabelSchema.safeParse(value).success).toBe(false);
+		expect(RoutingDisplayNameSchema.safeParse(value).success).toBe(false);
+	});
+
+	it("rejects oversized metadata before continuable Zod refinements inspect it", () => {
+		const moduleUrl = new URL("../../shared-types/src/contracts.ts", import.meta.url).href;
+		const child = spawnSync(process.execPath, [
+			"--import", "tsx", "--input-type=module", "-e",
+			`
+				import assert from "node:assert/strict";
+				import * as contracts from ${JSON.stringify(moduleUrl)};
+				const schemas = [
+					contracts.RoutingOpaqueIdentifierSchema, contracts.RoutingModelIdentifierSchema,
+					contracts.RoutingProfileIdentifierSchema, contracts.RoutingSafeLabelSchema,
+					contracts.RoutingDisplayNameSchema,
+				];
+				const start = performance.now();
+				for (const count of [1_000, 2_000, 4_000, 100_000, 250_000]) {
+					for (const value of ["a+".repeat(count), "a.".repeat(count)]) {
+						assert.equal(contracts.isRoutingUnsafeMetadataValue(value), true);
+						for (const schema of schemas) assert.equal(schema.safeParse(value).success, false);
+					}
+				}
+				assert.ok(performance.now() - start < 500, "routing schema validation exceeded 500 ms");
+			`,
+		], { timeout: 5_000, encoding: "utf8" });
+		expect(child.error).toBeUndefined();
+		expect(child.stderr).toBe("");
+		expect(child.status).toBe(0);
+	}, 7_000);
 
 	it("rejects known secret-like provider preferences before policy can be persisted", () => {
 		const item = fixture([provider({ id: "safe", model: "one" })]);

@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { maskSensitiveText, replaceSensitiveText } from "./sensitive-text";
+import { maskSensitiveText, replacePrivateKeyBlocks, replaceSensitiveText } from "./sensitive-text";
 
 const fixtureSecret = "fixture-sensitive-Alpha123456789";
 
@@ -75,5 +76,124 @@ describe("sensitive text ingress", () => {
 			`https://fixture-user:fixture-password@example.invalid/?access_token=${fixtureSecret}%2Bvalue&mode=setup`,
 		);
 		expect(safe).toBe("https://[REDACTED]@example.invalid/?access_token=[REDACTED]&mode=setup");
+	});
+});
+
+
+describe("private key delimiter scanner", () => {
+	const block = (label: string, material = "synthetic-material\nsecond-line") =>
+		`-----BEGIN ${label}PRIVATE KEY-----\n${material}\n-----END ${label}PRIVATE KEY-----`;
+
+	it("replaces multiline and consecutive blocks once each and protects callback output", () => {
+		const first = block("RSA ");
+		const second = block("ENCRYPTED ");
+		const captured: [string, string][] = [];
+		const safe = replaceSensitiveText(`before\n${first}${second}\nafter`, (kind, secret) => {
+			captured.push([kind, secret]);
+			return `[TASK_SECRET:fixture-${captured.length}]`;
+		});
+		expect(captured).toEqual([["PRIVATE_KEY", first], ["PRIVATE_KEY", second]]);
+		expect(safe).toBe("before\n[TASK_SECRET:fixture-1][TASK_SECRET:fixture-2]\nafter");
+		expect(replacePrivateKeyBlocks(first, () => second)).toBe(second);
+	});
+
+	it.each(["", "RSA ", "EC ", "ENCRYPTED ", "OPENSSH ", "LABEL 123 "])(
+		"retains the allowed header label %s",
+		(label) => {
+			expect(maskSensitiveText(`before ${block(label)} after`)).toBe("before [REDACTED] after");
+		},
+	);
+
+	it("keeps shared ingress case sensitive and supports memory's case insensitive mode", () => {
+		const lower = block("RSA ").toLowerCase();
+		expect(maskSensitiveText(lower)).toBe(lower);
+		const captured: [string, string][] = [];
+		expect(replacePrivateKeyBlocks(lower, (kind, secret) => {
+			captured.push([kind, secret]);
+			return "[redacted-private-key]";
+		}, { caseInsensitive: true })).toBe("[redacted-private-key]");
+		expect(captured).toEqual([["PRIVATE_KEY", lower]]);
+	});
+
+	it("retains first-BEGIN/next-END behavior with nested and mismatched labels", () => {
+		const unmatched = "-----BEGIN RSA PRIVATE KEY-----\nsynthetic-prefix\n";
+		const mismatched = "-----BEGIN EC PRIVATE KEY-----\nsynthetic-material\n-----END RSA PRIVATE KEY-----";
+		const orphanEnd = "-----END PRIVATE KEY-----";
+		const captured: string[] = [];
+		expect(replacePrivateKeyBlocks(`${orphanEnd} before ${unmatched}${mismatched} after`, (_kind, secret) => {
+			captured.push(secret);
+			return "[REDACTED]";
+		})).toBe(`${orphanEnd} before [REDACTED] after`);
+		expect(captured).toEqual([unmatched + mismatched]);
+	});
+
+	it("finds an END marker overlapping an irrelevant nested BEGIN delimiter", () => {
+		const input = "-----BEGIN PRIVATE KEY-----" + "-----BEGIN A PRIVATE KEY----" + "-----END PRIVATE KEY-----";
+		const captured: string[] = [];
+		expect(replacePrivateKeyBlocks(input, (_kind, secret) => {
+			captured.push(secret);
+			return "[REDACTED]";
+		})).toBe("[REDACTED]");
+		expect(captured).toEqual([input]);
+		expect(maskSensitiveText(input)).toBe("[REDACTED]");
+		expect(replacePrivateKeyBlocks(input.toLowerCase(), () => "[REDACTED]", { caseInsensitive: true })).toBe("[REDACTED]");
+	});
+
+	it("finds a BEGIN marker overlapping an irrelevant orphan END delimiter", () => {
+		const orphan = "-----END A PRIVATE KEY----";
+		const key = "-----BEGIN PRIVATE KEY-----x-----END PRIVATE KEY-----";
+		const captured: string[] = [];
+		expect(replacePrivateKeyBlocks(orphan + key, (_kind, secret) => {
+			captured.push(secret);
+			return "[REDACTED]";
+		})).toBe(orphan + "[REDACTED]");
+		expect(captured).toEqual([key]);
+		expect(maskSensitiveText(orphan + key)).toBe(orphan + "[REDACTED]");
+		expect(replacePrivateKeyBlocks((orphan + key).toLowerCase(), () => "[REDACTED]", { caseInsensitive: true })).toBe(orphan.toLowerCase() + "[REDACTED]");
+	});
+
+	it.each([
+		"before -----BEGIN PRIVATE KEY-----\nsynthetic-incomplete-material\nKeep the instructions.",
+		"-----BEGIN PRIVATE KEY-----\n-----BEGIN RSA PRIVATE KEY-----\nKeep the instructions.",
+		"-----BEGIN RSA-PRIVATE KEY-----\nsynthetic-material\n-----END PRIVATE KEY-----",
+		"-----BEGIN PUBLIC KEY-----\nsynthetic-material\n-----END PRIVATE KEY-----",
+		"-----BEGIN PRIVATE KEY----\nsynthetic-material\n-----END PRIVATE KEY-----",
+		"-----END PRIVATE KEY-----\nKeep the instructions.",
+	])("preserves incomplete or malformed markers without deleting trailing text: %s", (input) => {
+		let calls = 0;
+		expect(replacePrivateKeyBlocks(input, () => {
+			calls += 1;
+			return "[REDACTED]";
+		})).toBe(input);
+		expect(maskSensitiveText(input)).toBe(input);
+		expect(calls).toBe(0);
+	});
+
+	it("preserves incomplete trailing text after replacing a complete block", () => {
+		const trailing = "\n-----BEGIN PRIVATE KEY-----\nsynthetic-unfinished-material\nKeep the instructions.";
+		expect(maskSensitiveText(block("") + trailing)).toBe("[REDACTED]" + trailing);
+	});
+
+	it("finishes adversarial megabyte inputs in a strictly bounded subprocess", () => {
+		// A subprocess deadline actually terminates a blocking regex regression;
+		// an in-process test timeout cannot interrupt synchronous backtracking.
+		const source = new URL("./sensitive-text.ts", import.meta.url).href;
+		const script = `
+			import assert from "node:assert/strict";
+			import { maskSensitiveText, replacePrivateKeyBlocks } from ${JSON.stringify(source)};
+			const unmatched = "-----BEGIN PRIVATE KEY-----\\n".repeat(40_000);
+			const malformed = "-----BEGIN " + "A ".repeat(600_000) + "PRIVATE KEY----";
+			for (const input of [unmatched, malformed]) {
+				assert.equal(maskSensitiveText(input), input);
+				assert.equal(replacePrivateKeyBlocks(input.toLowerCase(), () => "[REDACTED]", { caseInsensitive: true }), input.toLowerCase());
+			}
+			console.log("bounded-private-key-scan-ok");
+		`;
+		expect(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+			encoding: "utf8",
+			timeout: 3_000,
+			killSignal: "SIGKILL",
+			maxBuffer: 16_384,
+		})).toBe("bounded-private-key-scan-ok\n");
 	});
 });

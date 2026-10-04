@@ -546,6 +546,7 @@ export class KestrelDatabase {
 							continue;
 						}
 						this.db.exec(loadMigrationSql(version));
+						if (version === 19) this.protectMemoryFingerprintIndexes();
 					this.db
 						.prepare(
 							"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
@@ -3046,41 +3047,110 @@ export class KestrelDatabase {
 			.changes === 1;
 	}
 
-	queueMemoryJob(job: MemoryJob): MemoryJob {
-		const parsed = MemoryJobSchema.parse(job);
-		this.upsertMemoryPayload(
-			"memory_jobs",
-			parsed.id,
-			parsed,
-			{
-				kind: parsed.kind,
-				dedupe_key: parsed.dedupeKey,
-				status: parsed.status,
-				attempts: parsed.attempts,
-				max_attempts: parsed.maxAttempts,
-				run_after: parsed.runAfter,
-				locked_at: parsed.lockedAt ?? null,
-				lease_until: parsed.leaseUntil ?? null,
-				last_error: parsed.lastError ?? null,
-				created_at: parsed.createdAt,
-			},
-			parsed.updatedAt,
+	memoryJobId(dedupeKey: string): string {
+		return `memory-job-${this.memoryIndexHash("job-id", dedupeKey).slice(0, 40)}`;
+	}
+
+	private memoryIndexHash(purpose: string, value: string): string {
+		return createHmac("sha256", this.encryptionKey)
+			.update(`kestrel-memory-index-v1:${purpose}:`)
+			.update(value)
+			.digest("hex");
+	}
+
+	private protectMemoryFingerprintIndexes(): void {
+		const jobs = this.db.prepare("SELECT * FROM memory_jobs").all() as MemorySubstrateRow[];
+		const updateJob = this.db.prepare(
+			`UPDATE memory_jobs SET id=?, dedupe_key=?, payload_ciphertext=?,
+			 payload_iv=?, payload_auth_tag=? WHERE id=?`,
 		);
+		const updateDedupe = this.db.prepare("UPDATE memory_jobs SET dedupe_key=? WHERE id=?");
+		const insertAlias = this.db.prepare(
+			"INSERT INTO memory_job_id_aliases (alias_hash, job_id) VALUES (?, ?)",
+		);
+		for (const row of jobs) {
+			const payload = MemoryJobSchema.parse(this.decryptPayload(row));
+			const legacyId = `memory-job-${createHash("sha256").update(payload.dedupeKey).digest("hex").slice(0, 40)}`;
+			const id = row.id === legacyId ? this.memoryJobId(payload.dedupeKey) : row.id;
+			const dedupeHash = this.memoryIndexHash("job-dedupe", payload.dedupeKey);
+			if (id !== row.id) {
+				const encrypted = encryptText(JSON.stringify({ ...payload, id }), this.encryptionKey);
+				updateJob.run(id, dedupeHash, encrypted.ciphertext, encrypted.iv, encrypted.authTag, row.id);
+				insertAlias.run(this.memoryIndexHash("job-alias", row.id), id);
+			} else {
+				updateDedupe.run(dedupeHash, row.id);
+			}
+		}
+		const updateEmbedding = this.db.prepare("UPDATE memory_embeddings SET content_hash=? WHERE id=?");
+		for (const row of this.db.prepare("SELECT * FROM memory_embeddings").all() as MemorySubstrateRow[]) {
+			const payload = EmbeddingRecordSchema.parse(this.decryptPayload(row));
+			updateEmbedding.run(this.memoryIndexHash("embedding-content", payload.contentHash), row.id);
+		}
+	}
+
+	private parseMemoryJobRow(row: MemorySubstrateRow): MemoryJob {
+		// Claim and completion update normalized columns without rewriting the
+		// encrypted payload. Those columns are authoritative for mutable state.
+		return MemoryJobSchema.parse({
+			...this.decryptPayload(row),
+			id: row.id,
+			status: row.status,
+			attempts: row.attempts,
+			maxAttempts: row.max_attempts,
+			runAfter: row.run_after,
+			lockedAt: row.locked_at ?? undefined,
+			leaseUntil: row.lease_until ?? undefined,
+			lastError: row.last_error ?? undefined,
+			createdAt: row.created_at,
+			updatedAt: row.updated_at,
+		});
+	}
+
+	queueMemoryJob(job: MemoryJob): MemoryJob {
+		const requested = MemoryJobSchema.parse(job);
+		const legacyId = `memory-job-${createHash("sha256").update(requested.dedupeKey).digest("hex").slice(0, 40)}`;
+		const parsed = requested.id === legacyId ? { ...requested, id: this.memoryJobId(requested.dedupeKey) } : requested;
+		this.db.transaction(() => {
+			this.upsertMemoryPayload(
+				"memory_jobs",
+				parsed.id,
+				parsed,
+				{
+					kind: parsed.kind,
+					dedupe_key: this.memoryIndexHash("job-dedupe", parsed.dedupeKey),
+					status: parsed.status,
+					attempts: parsed.attempts,
+					max_attempts: parsed.maxAttempts,
+					run_after: parsed.runAfter,
+					locked_at: parsed.lockedAt ?? null,
+					lease_until: parsed.leaseUntil ?? null,
+					last_error: parsed.lastError ?? null,
+					created_at: parsed.createdAt,
+				},
+				parsed.updatedAt,
+			);
+			if (parsed.id !== requested.id) {
+				this.db.prepare(
+					`INSERT INTO memory_job_id_aliases (alias_hash, job_id) VALUES (?, ?)
+					 ON CONFLICT(alias_hash) DO UPDATE SET job_id=excluded.job_id`,
+				).run(this.memoryIndexHash("job-alias", requested.id), parsed.id);
+			}
+		})();
 		return parsed;
 	}
 
 	getMemoryJob(id: string): MemoryJob | undefined {
 		const row = this.db
-			.prepare("SELECT * FROM memory_jobs WHERE id = ?")
-			.get(id) as MemorySubstrateRow | undefined;
-		return row ? MemoryJobSchema.parse(this.decryptPayload(row)) : undefined;
+			.prepare("SELECT * FROM memory_jobs WHERE id = ? OR id = (SELECT job_id FROM memory_job_id_aliases WHERE alias_hash = ?) LIMIT 1")
+			.get(id, this.memoryIndexHash("job-alias", id)) as MemorySubstrateRow | undefined;
+		return row ? this.parseMemoryJobRow(row) : undefined;
 	}
 
 	getMemoryJobByDedupeKey(dedupeKey: string): MemoryJob | undefined {
 		const row = this.db
 			.prepare("SELECT * FROM memory_jobs WHERE dedupe_key = ?")
-			.get(dedupeKey) as MemorySubstrateRow | undefined;
-		return row ? MemoryJobSchema.parse(this.decryptPayload(row)) : undefined;
+			.get(this.memoryIndexHash("job-dedupe", dedupeKey)) as MemorySubstrateRow | undefined;
+		return row ? this.parseMemoryJobRow(row) : undefined;
 	}
 
 	listMemoryJobs(options: {
@@ -3107,7 +3177,7 @@ export class KestrelDatabase {
 				 ORDER BY run_after ASC, created_at ASC, id ASC LIMIT ?`,
 			)
 			.all(...parameters, limit) as MemorySubstrateRow[];
-		return rows.map((row) => MemoryJobSchema.parse(this.decryptPayload(row)));
+		return rows.map((row) => this.parseMemoryJobRow(row));
 	}
 
 	claimMemoryJob(now = new Date().toISOString(), leaseMs = 60_000): MemoryJob | undefined {
@@ -3144,11 +3214,12 @@ export class KestrelDatabase {
 			const claimed = this.db
 				.prepare("SELECT * FROM memory_jobs WHERE id = ?")
 				.get(row.id) as MemorySubstrateRow;
-			return MemoryJobSchema.parse(this.decryptPayload(claimed));
+			return this.parseMemoryJobRow(claimed);
 		})();
 	}
 
 	completeMemoryJob(id: string, now = new Date().toISOString()): boolean {
+		id = this.getMemoryJob(id)?.id ?? id;
 		return this.db
 			.prepare(
 				`UPDATE memory_jobs SET status='completed', locked_at=NULL, lease_until=NULL, last_error=NULL, updated_at=?
@@ -3196,7 +3267,7 @@ export class KestrelDatabase {
 				parsed.ownerId,
 				parsed.provider,
 				parsed.model,
-				parsed.contentHash,
+				this.memoryIndexHash("embedding-content", parsed.contentHash),
 			) as { id: string } | undefined;
 		const id = existing?.id ?? parsed.id;
 		const stored = id === parsed.id ? parsed : { ...parsed, id };
@@ -3210,7 +3281,7 @@ export class KestrelDatabase {
 				provider: stored.provider,
 				model: stored.model,
 				dimension: stored.dimension,
-				content_hash: stored.contentHash,
+				content_hash: this.memoryIndexHash("embedding-content", stored.contentHash),
 				status: stored.status,
 				created_at: stored.createdAt,
 			},
@@ -4072,7 +4143,7 @@ export class KestrelDatabase {
 
 	private listAllMemoryJobsForDeletion(): MemoryJob[] {
 		const rows = this.db.prepare("SELECT * FROM memory_jobs").all() as MemorySubstrateRow[];
-		return rows.map((row) => MemoryJobSchema.parse(this.decryptPayload(row)));
+		return rows.map((row) => this.parseMemoryJobRow(row));
 	}
 
 	listAllAgentMemories(): AgentMemoryRecord[] {

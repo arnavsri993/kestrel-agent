@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { describe, expect, it } from "vitest";
@@ -167,6 +168,91 @@ describe("unified life context", () => {
 		});
 		database.close();
 	});
+
+	it.each([
+		["I have x every weekday from 0 to 23.", "x", 0, 0, 23, 0],
+		["  I have  My\t  school every weekday from 8\t AM to 2:30 PM!  ", "My\t  school", 8, 0, 14, 30],
+		["I have school every weekday from noon to midnight", "school", 12, 0, 0, 0],
+		["I have school every weekday from 12 am to 12 pm", "school", 0, 0, 12, 0],
+		["I have school every weekday from 22:30 to 6:15", "school", 22, 30, 6, 15],
+		["I have school every weekday from 8\n to 14 .", "school", 8, 0, 14, 0],
+		[`I have ${"a".repeat(200)} every weekday from 8 to 14`, "a".repeat(200), 8, 0, 14, 0],
+	] as const)("preserves title and clocks in %s", (statement, title, sh, sm, eh, em) => {
+		const { database, life } = fixture();
+		try {
+			const [event] = life.captureConversation(statement, "synthetic-schedule");
+			expect(event?.title).toBe(title);
+			const start = new Date(event!.startsAt);
+			const end = new Date(event!.endsAt);
+			expect([start.getHours(), start.getMinutes(), end.getHours(), end.getMinutes()])
+				.toEqual([sh, sm, eh, em]);
+			expect(end.getTime()).toBeGreaterThan(start.getTime());
+		} finally {
+			database.close();
+		}
+	});
+
+	it.each([
+		`I have ${"a".repeat(201)} every weekday from 8 to 14`,
+		"I have school\nclub every weekday from 8 to 14",
+		"I have school every  weekday from 8 to 14",
+		"I  have school every weekday from 8 to 14",
+		"I have school every weekday from 24 to 14",
+		"I have school every weekday from 13 pm to 14",
+		"I have school every weekday from 8:60 to 14",
+		"I have school every weekday from 8 to 14 trailing",
+	])("rejects unsupported statement %s", (statement) => {
+		const { database, life } = fixture();
+		try {
+			expect(life.captureConversation(statement, "synthetic-invalid")).toEqual([]);
+			expect(database.listCalendarEvents()).toEqual([]);
+		} finally {
+			database.close();
+		}
+	});
+
+	it.each(["My school ends at 1\tpm on Friday!", "school ends at 13 on Fridays."])(
+		"preserves Friday title and meridiem handling for %s",
+		(statement) => {
+			const { database, life } = fixture();
+			try {
+				life.captureConversation("I have school every weekday from 8 to 14", "synthetic-base");
+				const [friday] = life.captureConversation(statement, "synthetic-friday");
+				expect(friday?.title).toBe("school");
+				expect(friday?.recurrenceDays).toEqual([5]);
+				expect(new Date(friday!.endsAt).getHours()).toBe(13);
+			} finally {
+				database.close();
+			}
+		},
+	);
+
+	it("rejects oversized whitespace near-misses within a strict subprocess deadline", () => {
+		const moduleUrl = new URL("./life-context.ts", import.meta.url).href;
+		const child = spawnSync(process.execPath, [
+			"--import", "tsx", "--input-type=module", "-e",
+			`
+				import assert from "node:assert/strict";
+				import { LifeContextService } from ${JSON.stringify(moduleUrl)};
+				// Malformed input must never reach storage; no database or profile is opened.
+				const database = new Proxy({}, { get() { throw new Error("unexpected storage access"); } });
+				const life = new LifeContextService(database);
+				const whitespace = " ".repeat(200_000);
+				const start = performance.now();
+				for (const statement of [
+					"I have school every weekday from 8" + whitespace + "!",
+					"school ends at 8" + whitespace + "!",
+					"I have " + whitespace + "!",
+					"school" + whitespace + "!",
+					"I have school every weekday from 8 to 14" + whitespace + "?",
+				]) assert.deepEqual(life.captureConversation(statement, "synthetic"), []);
+				assert.ok(performance.now() - start < 500, "calendar capture exceeded 500 ms");
+			`,
+		], { timeout: 5_000, encoding: "utf8" });
+		expect(child.error).toBeUndefined();
+		expect(child.stderr).toBe("");
+		expect(child.status).toBe(0);
+	}, 7_000);
 
 	it("normalizes and idempotently refreshes Google Calendar detail", async () => {
 		let calls = 0;

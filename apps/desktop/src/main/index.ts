@@ -4,7 +4,7 @@ import {
   forwardFindPopoverEvent,
   updateFindPopoverAnchor,
 } from "./find-popover";
-import { normalizeWhatsAppTimestamp } from "./whatsapp-source";
+import { isWhatsAppWebUrl, normalizeWhatsAppTimestamp } from "./whatsapp-source";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -1029,6 +1029,30 @@ function providerAccountStore(): ProviderAccountStore {
 		app.getPath("userData"),
 	);
 	return appProviderAccountStore;
+}
+
+async function warmEnabledManagedLocalRuntime(): Promise<boolean> {
+  const enabled = await providerAccountStore()
+    .hasEnabledManagedOllamaAccount(OLLAMA_ORIGIN)
+    .catch(() => false);
+  await localRuntimeManager().ensureChatReady(enabled);
+  if (!enabled) return false;
+  // Account updates can arrive while readiness waits for the local service.
+  const stillEnabled = await providerAccountStore()
+    .hasEnabledManagedOllamaAccount(OLLAMA_ORIGIN)
+    .catch(() => false);
+  if (!stillEnabled) await localRuntimeManager().ensureChatReady(false);
+  return stillEnabled;
+}
+
+async function seedExplicitLocalSetup(model: string): Promise<void> {
+  // Successful explicit setup can register a first-run route. Migration keeps
+  // existing disabled accounts and disconnect tombstones authoritative.
+  await providerAccountStore().ensureLegacyAccounts({
+    KESTREL_ENABLE_OLLAMA: "1",
+    KESTREL_OLLAMA_BASE_URL: OLLAMA_ORIGIN,
+    KESTREL_OLLAMA_MODEL: model,
+  });
 }
 
 function passwordVault(): PasswordVault {
@@ -2220,7 +2244,7 @@ function createDetachedBrowserWindow(
     ...(!connectionMode ? { nameTabFolders: nameBrowserTabFolders } : {}),
   });
   browserWindowServices.set(window, service);
-  if (connectionMode && !service.getState().tabs.some(item => item.url.startsWith("https://web.whatsapp.com"))) void service.createTab("https://web.whatsapp.com", true);
+  if (connectionMode && !service.getState().tabs.some(item => isWhatsAppWebUrl(item.url))) void service.createTab("https://web.whatsapp.com", true);
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternalSafely((target) => shell.openExternal(target), url);
     return { action: "deny" };
@@ -2617,23 +2641,23 @@ async function initializeCore(
     secureEnvironment.KESTREL_ENABLE_CURSOR_SUBSCRIPTION = "1";
     secureEnvironment.KESTREL_CURSOR_PATH = cursorPath;
   }
+	// Migrate configured routes before optional local discovery so persisted
+	// enablement and disconnects govern whether the managed runtime is touched.
+	// Credential bytes remain in their original protected broker slots.
+	const accounts = providerAccountStore();
+	await accounts.ensureLegacyAccounts(secureEnvironment);
   try {
-    const localRuntime = localRuntimeManager();
-    await localRuntime.startManagedIfInstalled();
-    const localModels = await listLocalModels(5_000);
-    if (localModels.length > 0) {
-      secureEnvironment.KESTREL_ENABLE_OLLAMA = "1";
-      secureEnvironment.KESTREL_OLLAMA_MODEL ??=
-        (await localRuntime.preferredModel(localModels)) ?? localModels[0]!.name;
+    if (await warmEnabledManagedLocalRuntime()) {
+      const localModels = await listLocalModels(5_000);
+      if (localModels.length > 0) {
+        secureEnvironment.KESTREL_ENABLE_OLLAMA = "1";
+        secureEnvironment.KESTREL_OLLAMA_MODEL ??=
+          (await localRuntimeManager().preferredModel(localModels)) ?? localModels[0]!.name;
+      }
     }
   } catch {
     // A local model server is optional and must not delay or block startup.
   }
-	// Migrate existing brokered/API and trusted CLI routes as account metadata.
-	// This is additive and reversible: credential bytes remain in their original
-	// protected broker slots until a person removes the legacy account.
-	const accounts = providerAccountStore();
-	await accounts.ensureLegacyAccounts(secureEnvironment);
 	const providerAccounts = (await accounts.runtimeAccounts(secureEnvironment)).flatMap(
 		(account) => {
 			const cliId =
@@ -2702,7 +2726,7 @@ async function initializeCore(
   }
   // Local runtime warmup is optional and must never tear down a started core.
   void Promise.resolve()
-    .then(() => localRuntimeManager().ensureChatReady())
+    .then(() => warmEnabledManagedLocalRuntime())
     .catch(() => undefined);
 }
 
@@ -2898,9 +2922,7 @@ function registerIpc(): void {
       ? browserServiceForWindow(paymentOverlayOwner)
       : null;
     if (request.type === "runtime-run-agent") {
-      await localRuntimeManager()
-        .ensureChatReady()
-        .catch(() => undefined);
+      await warmEnabledManagedLocalRuntime().catch(() => undefined);
     }
     const overlayAccess =
       senderWindow === petOverlayWindow
@@ -3947,7 +3969,10 @@ function registerIpc(): void {
         memoryBytes: totalmem(),
         logicalCpus: Math.max(1, cpus().length),
       };
-      const localRuntime = await localRuntimeManager().status();
+      const enabled = await providerAccountStore()
+        .hasEnabledManagedOllamaAccount(OLLAMA_ORIGIN)
+        .catch(() => false);
+      const localRuntime = await localRuntimeManager().status(enabled);
       return {
         ok: true,
         systemProfile,
@@ -3958,18 +3983,19 @@ function registerIpc(): void {
     }
     if (request.type === "local-model-pull") {
       const downloadedModel = await pullLocalModel(request.model);
+      const localModels = await listLocalModels(5_000);
+      await seedExplicitLocalSetup(downloadedModel.name);
       await supervisor.stop();
       await initializeCore();
-      return {
-        ok: true,
-        downloadedModel,
-        localModels: await listLocalModels(5_000),
-      };
+      return { ok: true, downloadedModel, localModels };
     }
     if (request.type === "local-runtime-bootstrap") {
-      const localRuntime = await localRuntimeManager().bootstrap(request.model);
+      const verifiedRuntime = await localRuntimeManager().bootstrap(request.model);
+      await seedExplicitLocalSetup(verifiedRuntime.verifiedModel ?? request.model);
       await supervisor.stop();
       await initializeCore();
+      const enabled = await providerAccountStore().hasEnabledManagedOllamaAccount(OLLAMA_ORIGIN);
+      const localRuntime = enabled ? verifiedRuntime : await localRuntimeManager().status(false);
       return { ok: true, localRuntime };
     }
     if (request.type === "local-runtime-cancel") {

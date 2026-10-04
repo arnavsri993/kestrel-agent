@@ -76,12 +76,13 @@ function Overview({ documents, workspace }: { documents: MemoryDocument[]; works
 }
 
 function Timeline({ workspace }: { workspace: MemoryWorkspaceData }) {
+	const momentCount = workspace.days.reduce((sum, day) => sum + day.eventCount, 0);
 	return (
 		<div className="memory-timeline">
 			<header>
 				<p className="memory-kicker">The last seven days</p>
 				<h2>Your week in context</h2>
-				<p>{workspace.days.length ? `${workspace.days.reduce((sum, day) => sum + day.eventCount, 0)} captured moments across ${workspace.days.length} days.` : "No activity was captured in this period."}</p>
+				<p>{workspace.days.length ? `${momentCount} captured ${momentCount === 1 ? "moment" : "moments"} across ${workspace.days.length} ${workspace.days.length === 1 ? "day" : "days"}.` : "No activity was captured in this period."}</p>
 			</header>
 			<div className="memory-days">
 				{workspace.days.map((day) => (
