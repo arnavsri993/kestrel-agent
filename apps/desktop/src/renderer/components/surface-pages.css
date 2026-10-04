@@ -21,5 +21,23 @@
 }
 .runtime-activity-trail .activity-list > li { border-radius: 0; }
 .runtime-activity-trail .activity-item-focused { outline: 2px solid var(--focus); outline-offset: -2px; }
+.runtime-activity-trail .activity-list > li { grid-template-columns: 34px minmax(0, 1fr); }
+.runtime-activity-trail .activity-title strong { font-size: 13px; overflow-wrap: anywhere; }
+.runtime-activity-trail .activity-title time { flex-shrink: 0; }
+.runtime-activity-trail .activity-list p { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.runtime-activity-trail .activity-status { color: var(--ink); }
+.runtime-activity-trail .activity-status-failed,
+.runtime-activity-trail .activity-status-blocked { color: var(--danger); }
+.activity-evidence { min-width: 0; font-size: 12px; }
+.activity-evidence summary { display: list-item; width: fit-content; min-height: 40px; padding-block: 10px; color: var(--muted); cursor: pointer; }
+.activity-evidence summary:hover { color: var(--ink); }
+.activity-evidence summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-control); }
+.activity-evidence dl { margin: 0 0 12px; line-height: 1.5; }
+.activity-evidence dt { margin-top: 8px; color: var(--muted); }
+.activity-evidence dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.activity-evidence code { font-size: 11px; }
+.runtime-activity-trail .activity-evidence ul { margin: 0; padding: 0; list-style: none; }
+.runtime-activity-trail .activity-evidence li { display: block; padding: 0; background: none; }
+.runtime-activity-trail .activity-evidence li::before { display: none; }
 .event-applications-page .event-safety-note { display: contents; }
 .event-applications-page .event-status { border-radius: var(--radius-control); }

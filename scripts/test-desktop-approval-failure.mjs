@@ -232,8 +232,11 @@ try {
 	assert.equal(await history.getAttribute("open"), null);
 	assert.equal(await history.locator(".action-receipt-status").isVisible(), false);
 	for (const width of [1440, 1000]) {
-		await page.setViewportSize({ width, height: 900 });
 		await history.locator(":scope > summary").focus();
+		await page.setViewportSize({ width, height: 900 });
+		await page.waitForFunction(compact => document.querySelector(".ai-browser-app")?.classList.contains("agent-sidebar-compact") === compact, width === 1000);
+		assert(await history.locator(":scope > summary").evaluate(node => document.activeElement === node),
+			"Resizing into compact Chat must preserve the focused receipt disclosure.");
 		await page.keyboard.press("Enter");
 		assert.equal(await history.locator(".action-receipt-status").innerText(), "Waiting for approval");
 		assert.match(await history.locator(":scope > summary").evaluate(element => getComputedStyle(element).boxShadow), /rgba?\(/);

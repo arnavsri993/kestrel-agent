@@ -172,6 +172,14 @@ try {
 		} });
 	});
 	if (!memorySeed.ok || !memorySeed.memoryDocument?.id) throw new Error("Could not seed the isolated Memory fixture.");
+	const activitySeed = await page.evaluate(async () => {
+		const created = await window.kestrel.request({ type: "runtime-create-session", title: "Release Activity fixture" });
+		if (!created.ok || !created.session) throw new Error("Could not create the isolated Activity fixture.");
+		const result = await window.kestrel.request({ type: "runtime-call-tool", sessionId: created.session.id,
+			toolName: "tools.search", input: { query: "browser" } });
+		if (!result.ok || result.execution?.status !== "verified") throw new Error("Could not seed a verified Activity result.");
+		return { executionId: result.execution.id, sessionId: created.session.id };
+	});
 
 	await page.setViewportSize({ width: 1320, height: 860 });
 	await audit("agent-header-with-navigation-and-chat", "desktop-split", async () => {
@@ -211,6 +219,24 @@ try {
         assert(content.trim().length > 0, `${id} rendered no readable content`);
       });
     }
+		const activity = page.locator(`#activity-item-${activitySeed.executionId}`);
+		await audit("activity-result-collapsed", size.name, async () => {
+			await navigate("activity");
+			await expect(activity.locator("strong")).toHaveText("Find a tool");
+			await expect(activity.locator(".activity-status")).toHaveText("Verified");
+			assert.equal(await activity.locator("details").evaluate(node => node.open), false);
+			await expect(activity.getByText(activitySeed.sessionId, { exact: true })).not.toBeVisible();
+		});
+		await audit("activity-result-details", size.name, async () => {
+			const summary = activity.locator("summary");
+			await summary.focus();
+			await summary.press("Enter");
+			assert.equal(await activity.locator("details").evaluate(node => node.open), true);
+			await expect(activity.getByText(activitySeed.sessionId, { exact: true })).toBeVisible();
+			await expect(activity.getByText("tools.search", { exact: true })).toBeVisible();
+		});
+		await activity.locator("summary").press("Space");
+		assert.equal(await activity.locator("details").evaluate(node => node.open), false);
 		for (const [id, selector, field] of [
 			["source-text", ".writing-draft-disclosure:first-of-type", /^Starting text/],
 			["draft-options", ".writing-draft-disclosure:last-of-type", /^Tone/],

@@ -2585,6 +2585,11 @@ export class AgentRuntime extends EventEmitter {
 			const verificationResult = definition.descriptor.readOnly
 				? undefined
 				: await this.verifyMutation(definition, context, input, output);
+			// Read-back checks use the actual evidence. Persist only a digest of
+			// its protected projection so credentials cannot become guessable hashes.
+			const verificationEvidence = verificationResult
+				? this.protectedTaskOutput(session.id, { evidence: verificationResult.evidence }).evidence
+				: undefined;
 			effectVerified = true;
 			const verifiedAt = this.now();
 			const verification = verificationResult
@@ -2592,8 +2597,8 @@ export class AgentRuntime extends EventEmitter {
 						method: verificationResult.method,
 						evidenceSha256: createHash("sha256")
 							.update(
-								JSON.stringify(verificationResult.evidence) ??
-									String(verificationResult.evidence),
+								JSON.stringify(verificationEvidence) ??
+									String(verificationEvidence),
 							)
 							.digest("hex"),
 						verifiedAt,

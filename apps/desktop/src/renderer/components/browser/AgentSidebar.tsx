@@ -267,7 +267,9 @@ export function AgentSidebar({
 		const previouslyInert = main?.inert ?? false;
 		const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		if (main) main.inert = true;
-		closeRef.current?.focus();
+		// A resize can turn an already focused Chat into a modal. Keep that
+		// control focused; only move focus when it starts outside the panel.
+		if (!previousFocus || !sidebarRef.current?.contains(previousFocus)) closeRef.current?.focus();
 		const onKeyDown = (event: globalThis.KeyboardEvent) => {
 			if (event.defaultPrevented) return;
 			if (event.key === "Escape") {

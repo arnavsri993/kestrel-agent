@@ -958,6 +958,40 @@ describe("agent runtime", () => {
 		database.close();
 	});
 
+	it("fingerprints public verification evidence without secret-dependent digests", async () => {
+		const { database, runtime, session } = fixture();
+		let password = "synthetic-first-password";
+		let receipt = "owned-receipt-one";
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "fixture.secret-evidence",
+				title: "Synthetic verification evidence",
+				description: "Verify that credentials cannot influence persisted evidence digests.",
+				category: "connector",
+				riskLevel: "low",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "plugin",
+				tags: ["test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({ receipt }),
+			verify: async () => ({ method: "owned-readback", evidence: { receipt, password } }),
+		});
+		runtime.allowTool(session.id, "fixture.secret-evidence");
+		const first = await runtime.callTool(session.id, "fixture.secret-evidence", {}, { idempotencyKey: "evidence-one" });
+		password = "synthetic-second-password";
+		const second = await runtime.callTool(session.id, "fixture.secret-evidence", {}, { idempotencyKey: "evidence-two" });
+		receipt = "owned-receipt-two";
+		const third = await runtime.callTool(session.id, "fixture.secret-evidence", {}, { idempotencyKey: "evidence-three" });
+		expect([first, second, third].every(execution => execution.status === "verified")).toBe(true);
+		expect(first.verification?.evidenceSha256).toMatch(/^[a-f0-9]{64}$/);
+		expect(second.verification?.evidenceSha256).toBe(first.verification?.evidenceSha256);
+		expect(third.verification?.evidenceSha256).not.toBe(first.verification?.evidenceSha256);
+		expect(database.getToolExecution(first.id)?.verification).toEqual(first.verification);
+		database.close();
+	});
+
 	it("journals uncertain mutation failures and never replays the side effect", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);

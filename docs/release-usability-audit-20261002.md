@@ -554,3 +554,41 @@ origins, and iframe setup passes URLs as structured evaluation arguments. All
 production browser secret scan pass. Latest-head full CI, aggregate CodeQL and
 the refreshed canonical package are pending at this source checkpoint; remaining
 digest findings require their actual data flow to be assessed, not gate bypasses.
+
+## Readable Activity, protected evidence and resize focus — October 4
+
+The clean `0732653e` canonical package passes all seven installed surface/setup
+checks and additional authentication, browser and persistent-agent fixtures.
+Core CI passes, and the source authentication regression passes remotely. Desktop
+CI reaches the packaged approval-history check and fails there. CodeQL now reports
+seven digest findings; URL-origin and iframe-construction findings are cleared.
+Independent AI review remains HTTP 402 quota blocked. These remaining gates have
+not been dismissed or bypassed.
+
+Populated Activity rows now use the same plain action names as Chat, retain status
+and failure/uncertain outcomes immediately, and place original tool names, result
+details and full source references inside native Details. Long references wrap at
+compact widths. Following an evidence link opens and highlights the corresponding
+details. Owned renderer checks pass collapsed/expanded keyboard interaction at
+1280×800, 800×660 and 390×844 with zero overflow/errors; screenshots were inspected.
+The isolated full surface inventory now seeds one real read-only catalog execution
+and checks its closed/open Activity states at both widths: 167/167 pass.
+
+A new runtime regression shows that an external verifier's credential field could
+influence the persisted SHA256 evidence digest. Verification still reads actual
+evidence; hashing now uses the existing protected/redacted projection afterward.
+Changing only the synthetic password leaves the digest unchanged, while changing
+public receipt evidence changes it. The regression fails before and passes after
+the repair; no credential-derived digest or raw evidence is added to persistence.
+
+The packaged approval-history failure reproduces locally. An owned diagnostic
+shows compact Chat's modal entry moving focus from its disclosure to Close Chat
+during resizing. The modal now preserves focus already inside Chat while retaining
+outside-focus entry, background isolation, Escape and focus-loop behavior. The
+strengthened fixture fails on the previous package and passes on current source;
+all original approval/history and no-replay assertions remain. All 2,128 unit tests
+in 264 files, repository type checking, desktop build and production secret scan
+pass. The full desktop layout test also passes compact native isolation, focus
+loop, Escape, navigation and 200% zoom checks. Latest-head remote checks and the
+canonical refresh remain pending at this source checkpoint. Provider generation
+and real-profile configuration were not used for these regressions.
