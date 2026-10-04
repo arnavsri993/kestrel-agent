@@ -9,7 +9,8 @@ import {
 	type FallbackFindInPageResult,
 } from "./find-in-page-scripts";
 import { execFile as execFileCallback } from "node:child_process";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { copyPasswordWithExpiry } from "./password-clipboard";
 import {
   existsSync,
   mkdirSync,
@@ -3550,21 +3551,7 @@ export class UserBrowserService {
 		const entry = await this.passwordEntryForSettings(id);
 		try {
 			await this.requirePasswordUserPresence("Copy saved password");
-			const copiedPasswordDigest = createHash("sha256")
-				.update(entry.password, "utf8")
-				.digest("hex");
-			clipboard.writeText(entry.password);
-			const clearTimer = setTimeout(() => {
-				try {
-					const currentClipboardDigest = createHash("sha256")
-						.update(clipboard.readText(), "utf8")
-						.digest("hex");
-					if (currentClipboardDigest === copiedPasswordDigest) clipboard.clear();
-				} catch {
-					// Clipboard access can be revoked while Kestrel is in the background.
-				}
-			}, 60_000);
-			clearTimer.unref?.();
+			copyPasswordWithExpiry(clipboard, entry.password);
 		} finally {
 			discardPasswordEntry(entry);
 		}

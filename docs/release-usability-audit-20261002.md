@@ -619,3 +619,30 @@ job's content digest; changing public content does. Stored records and job
 payloads contain no fixture password. This bounded evidence does not dismiss
 CodeQL findings or replace independent review. Current packaging, installed
 Memory/UI verification and exact-head remote checks follow separately.
+
+
+### Clipboard expiry and isolated browser protocol boundary
+
+Saved-password copies now use a fresh private 32-byte HMAC key for each copy,
+with comparison buffers cleared after expiry, cancellation or clipboard failure.
+The timer keeps no stable password digest. A successful new copy cancels the
+preceding timer, so copying the same password twice gives the latest copy its
+full minute; an unsuccessful write leaves the earlier copy protected. Local
+device verification and best-effort decrypted-entry disposal remain required.
+
+The isolated browser request guard now accepts HTTP/HTTPS and allowlisted
+HTTP/HTTPS blob origins explicitly, with its existing about:blank exception.
+Session setup still requires HTTPS or explicit loopback HTTP, excludes embedded
+credentials and bounds the origin list. Unsupported protocols are denied even
+if an invalid origin set reaches the request guard.
+
+The actual service regression fails against the preceding source because the
+first timer clears a later same-password copy early. Three request-guard cases
+also fail against that source when supplied unsupported origins. All 2,158 unit
+tests in 265 files, repository type checking, the production secret scan and
+diff checking pass after the repair. Added cases cover copy timing, preserving
+new clipboard content, private per-copy keys and cleanup, revoked clipboard
+access, failed writes, local authentication, decrypted-entry disposal, unsupported
+protocols, lookalike origins and retained supported browser behavior. Clean
+packaging, installed verification and exact-head CI remain separate delivery
+evidence; this repair does not resolve the other security/review/signing gates.

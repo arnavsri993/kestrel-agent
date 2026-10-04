@@ -201,7 +201,7 @@ vi.mock("electron", () => ({
   WebContentsView: electron.MockView,
   session: { fromPartition: electron.fromPartition },
   Menu: { buildFromTemplate: electron.buildFromTemplate },
-  clipboard: { writeText: vi.fn() },
+  clipboard: { writeText: vi.fn(), readText: vi.fn(() => ""), clear: vi.fn() },
   dialog: {
     showMessageBox: vi.fn(async () => ({ response: 1 })),
     showSaveDialog: vi.fn(async () => ({ canceled: true })),
@@ -223,7 +223,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { nativeImage } from "electron";
+import { clipboard, nativeImage } from "electron";
 import { dialog } from "electron";
 import { shell } from "electron";
 import { BrowserTabStore, MAX_AX_SNAPSHOT_BYTES } from "./browser-tab-store";
@@ -253,6 +253,13 @@ const directories: string[] = [];
 afterEach(() => {
   electron.reset();
   vi.clearAllMocks();
+  vi.mocked(clipboard.writeText).mockReset();
+  vi.mocked(clipboard.readText).mockReset();
+  vi.mocked(clipboard.clear).mockReset();
+  if (vi.isFakeTimers()) {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
 });
@@ -264,6 +271,7 @@ function createService(options: {
   allowDevTools?: boolean;
 	onLastTabClosed?: () => void;
 	passwordVault?: PasswordVault;
+	requestPasswordUserPresence?: (reason: string) => Promise<void>;
 	onPasswordPrompt?: (prompt: unknown) => void;
 	paymentCardVault?: PaymentCardVault;
   onPaymentPrompt?: (prompt: unknown) => void;
@@ -314,6 +322,9 @@ function createService(options: {
 		...(options.passwordVault
 			? { passwordVault: options.passwordVault }
 			: {}),
+		...(options.requestPasswordUserPresence
+			? { requestPasswordUserPresence: options.requestPasswordUserPresence }
+			: {}),
 		...(options.onPaymentPrompt
 			? { onPaymentPrompt: options.onPaymentPrompt }
 			: {}),
@@ -361,6 +372,81 @@ function downloadItem(url: string, filename = "report.txt") {
 		cancel: vi.fn(),
 	};
 }
+
+describe("saved password clipboard access", () => {
+	function ownedPassword() {
+		return {
+			id: "password-owned-clipboard",
+			origin: "https://clipboard.example.test",
+			username: "owned-fixture",
+			password: "owned-clipboard-fixture-alpha",
+		};
+	}
+
+	it("waits for local user presence before writing and discards the decrypted entry", async () => {
+		const entry = ownedPassword();
+		let confirm!: () => void;
+		let started!: () => void;
+		const presenceStarted = new Promise<void>((resolve) => { started = resolve; });
+		const presence = vi.fn(() => new Promise<void>((resolve) => { confirm = resolve; started(); }));
+		const { service } = createService({
+			passwordVault: { get: vi.fn(async () => entry) } as unknown as PasswordVault,
+			requestPasswordUserPresence: presence,
+		});
+		vi.useFakeTimers();
+		const copying = service.copyPassword(entry.id);
+		await presenceStarted;
+		expect(presence).toHaveBeenCalledWith("Copy saved password");
+		expect(clipboard.writeText).not.toHaveBeenCalled();
+		confirm();
+		await copying;
+		expect(clipboard.writeText).toHaveBeenCalledWith("owned-clipboard-fixture-alpha");
+		expect(entry.password).toBe("");
+	});
+
+	it("does not copy when local verification is cancelled and discards the entry", async () => {
+		const entry = ownedPassword();
+		const { service } = createService({
+			passwordVault: { get: vi.fn(async () => entry) } as unknown as PasswordVault,
+			requestPasswordUserPresence: vi.fn(async () => { throw new Error("Cancelled"); }),
+		});
+		await expect(service.copyPassword(entry.id)).rejects.toThrow("Cancelled");
+		expect(clipboard.writeText).not.toHaveBeenCalled();
+		expect(entry.password).toBe("");
+	});
+
+	it("discards the decrypted entry when the clipboard write fails", async () => {
+		const entry = ownedPassword();
+		const { service } = createService({
+			passwordVault: { get: vi.fn(async () => entry) } as unknown as PasswordVault,
+			requestPasswordUserPresence: vi.fn(async () => {}),
+		});
+		vi.mocked(clipboard.writeText).mockImplementationOnce(() => { throw new Error("Unavailable"); });
+		await expect(service.copyPassword(entry.id)).rejects.toThrow("Unavailable");
+		expect(entry.password).toBe("");
+	});
+
+	it("keeps a freshly copied password for a full minute when the same password is copied again", async () => {
+		const { service } = createService({
+			passwordVault: { get: vi.fn(async () => ownedPassword()) } as unknown as PasswordVault,
+			requestPasswordUserPresence: vi.fn(async () => {}),
+		});
+		let value = "";
+		vi.mocked(clipboard.writeText).mockImplementation((text) => { value = text; });
+		vi.mocked(clipboard.readText).mockImplementation(() => value);
+		vi.mocked(clipboard.clear).mockImplementation(() => { value = ""; });
+		vi.useFakeTimers();
+		await service.copyPassword("password-owned-clipboard");
+		vi.advanceTimersByTime(30_000);
+		await service.copyPassword("password-owned-clipboard");
+		vi.advanceTimersByTime(30_000);
+		expect(clipboard.clear).not.toHaveBeenCalled();
+		expect(value).toBe("owned-clipboard-fixture-alpha");
+		vi.advanceTimersByTime(30_000);
+		expect(clipboard.clear).toHaveBeenCalledTimes(1);
+		expect(value).toBe("");
+	});
+});
 
 describe("UserBrowserService", () => {
 	it("restores the committed page when a download event follows loadURL completion", async () => {

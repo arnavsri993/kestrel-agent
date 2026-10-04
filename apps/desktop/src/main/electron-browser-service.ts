@@ -104,19 +104,17 @@ export function isolatedBrowserShouldCancelRequest(
 	try {
 		const url = new URL(value);
 		if (url.protocol === "about:" && url.pathname === "blank") return false;
-		if (
-			url.protocol === "data:" ||
-			url.protocol === "javascript:" ||
-			url.protocol === "file:" ||
-			url.protocol === "about:"
-		)
-			return true;
 		if (url.protocol === "blob:") {
 			const origin = url.origin === "null" ? undefined : url.origin;
-			return origin === undefined || !allowedOrigins.has(origin);
+			if (!origin) return true;
+			const protocol = new URL(origin).protocol;
+			return (
+				(protocol !== "http:" && protocol !== "https:") ||
+				!allowedOrigins.has(origin)
+			);
 		}
-		const origin = url.origin;
-		return !origin || origin === "null" || !allowedOrigins.has(origin);
+		if (url.protocol !== "http:" && url.protocol !== "https:") return true;
+		return !allowedOrigins.has(url.origin);
 	} catch {
 		return true;
 	}
