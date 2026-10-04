@@ -108,6 +108,34 @@ try {
 		});
 	}
 	await size(1320, 860);
+	await page.evaluate(async () => {
+		for (const document of [
+			{ title: "outcome", text: "A deliberately named manual note.", sourceIds: [], origin: "manual" },
+			{ id: "workspace:agent-memory:agent-outcome-ui-fixture", title: "outcome", text: "Completed the owned page comparison.\nFull result remains readable.", sourceIds: ["task:ui-fixture"], origin: "legacy" },
+		]) {
+			const response = await window.kestrel.request({ type: "memory-document-save", document: { kind: "memory", ...document } });
+			if (!response.ok) throw new Error(response.error);
+		}
+	});
+	await route("memory");
+	const resultGroup = page.locator(".memory-task-results");
+	await expect.poll(() => resultGroup.getAttribute("open")).toBeNull();
+	await expect(page.locator(".memory-reader h2")).toHaveText("outcome");
+	await expect(page.locator(".memory-reader")).toContainText("A deliberately named manual note.");
+	await resultGroup.locator("summary").focus();
+	await page.keyboard.press("Enter");
+	await expect(resultGroup.getByRole("button")).toBeVisible();
+	await resultGroup.getByRole("button").click();
+	await expect(page.locator(".memory-reader h2")).toHaveText("Completed the owned page comparison.");
+	await expect(page.locator(".memory-reader")).toContainText("Full result remains readable.");
+	await expect(page.locator(".memory-reader")).toContainText("Task result · automatically saved");
+	await resultGroup.locator("summary").click();
+	await page.getByRole("searchbox").fill("owned page comparison");
+	await expect(resultGroup.getByRole("button")).toBeVisible();
+	await page.getByRole("searchbox").fill("");
+	await expect.poll(() => resultGroup.getAttribute("open")).toBeNull();
+	await capture("memory-notes-task-results");
+	report.checks.push({ memoryTaskResults: "passed", manualTitlesPreserved: true, keyboardDisclosure: true, fullTextReadable: true, searchIncludesResults: true });
 	await route("agent");
 	const expandNavigation = page.getByRole("button", { name: "Expand sidebar", exact: true });
 	if (await expandNavigation.isVisible()) await expandNavigation.click();

@@ -56,4 +56,41 @@ describe("browser approval preview", () => {
 		expect(markup).toContain("&lt;script&gt;");
 		expect(markup).not.toMatch(/<(?:script|a)\b/);
 	});
+
+	it.each([
+		[{ type: "click", target: "e12" }, "Click an observed page element", ["e12"]],
+		[{ type: "type", target: "e2", text: "Complete text\nSecond line" }, "Enter text", ["e2", "Complete text\nSecond line"]],
+		[{ type: "select", target: "e3", value: "Exact option" }, "Select an option", ["e3", "Exact option"]],
+		[{ type: "key", key: "Enter" }, "Press a key", ["Enter"]],
+		[{ type: "scroll", x: 0, y: -250 }, "Scroll the page", ["Horizontal: 0", "Vertical: -250"]],
+	])("explains known actions and retains their complete arguments: %j", (action, description, values) => {
+		const item = execution("browser.act", { browserSessionId: "opaque-fixture", action });
+		const preview = browserApprovalPreview(item);
+		expect(preview?.description).toContain(description);
+		expect(preview?.values).toEqual(values);
+		const markup = renderToStaticMarkup(createElement(RuntimeApprovalPreview, { execution: item }));
+		expect(markup).toContain("Action details");
+		expect(markup).toContain("opaque-fixture");
+	});
+
+	it("never recovers private typing arguments from an expired or redacted preview", () => {
+		const input = { browserSessionId: "opaque", action: { type: "type", target: "e2", text: "private-fixture" } };
+		for (const preview of ["Private request expired.", JSON.stringify({ ...input, action: { ...input.action, text: "[REDACTED]" } })]) {
+			const markup = renderToStaticMarkup(createElement(RuntimeApprovalPreview, { execution: execution("browser.act", input, preview) }));
+			expect(markup).not.toContain("private-fixture");
+			expect(markup).toContain(preview.startsWith("{") ? "[REDACTED]" : "Private request expired.");
+		}
+	});
+
+	it.each([
+		{ type: "click", target: "e1", futureFlag: true },
+		{ type: "click", target: "#page-selector" },
+		{ type: "scroll", x: null, y: 10 },
+		{ type: "key", key: "" },
+		{ type: "submit", target: "e1" },
+	])("keeps unsupported action previews complete: %j", action => {
+		const item = execution("browser.act", { browserSessionId: "opaque", action });
+		expect(browserApprovalPreview(item)).toBeNull();
+		expect(approvalPreviewText(item)).toBe(JSON.stringify(item.input, null, 2));
+	});
 });

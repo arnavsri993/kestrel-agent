@@ -7,6 +7,7 @@ import type {
 } from "@kestrel/shared-types";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ScopedAgentMemory } from "./ScopedAgentMemory";
+import { isTaskResult, memoryDocumentTitle as documentTitle } from "../memory-document-display";
 import "./MemoryWorkspace.css";
 
 type WorkspaceView = "overview" | "timeline" | "memory" | "people" | "knowledge" | "tools" | "agent-history";
@@ -28,22 +29,13 @@ function humanDate(value: string) {
 	return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-function documentTitle(document: MemoryDocument) {
-    // Older memories used their storage category as the title.
-    if (["semantic", "episodic", "procedural", "project", "relationship"].includes(document.title.toLowerCase())) {
-        const line = document.text.trim().split("\n")[0] || document.title;
-        return line.length > 72 ? `${line.slice(0, 69)}…` : line;
-    }
-    return document.title;
-}
-
 function documentSubtitle(document: MemoryDocument) {
 	return `${tierLabels[document.tier]} · ${document.confirmation === "confirmed" ? "Confirmed" : `${Math.round(document.confidence * 100)}% inferred`}`;
 }
 
 function Overview({ documents, workspace }: { documents: MemoryDocument[]; workspace: MemoryWorkspaceData }) {
 	const today = new Date(); const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
-	const memory = documents.filter((item) => item.kind === "memory");
+	const memory = documents.filter((item) => item.kind === "memory" && !isTaskResult(item));
 	return (
 		<div className="memory-overview">
 			<header>
@@ -63,7 +55,7 @@ function Overview({ documents, workspace }: { documents: MemoryDocument[]; works
 						</div>
 						{entries.length ? entries.slice(0, 3).map((document) => (
 							<article key={document.id}>
-								<h4>{document.title}</h4>
+								<h4>{documentTitle(document)}</h4>
 								<p className="memory-preview">{document.text}</p>
 								<small>{document.confirmation === "inferred" ? `${Math.round(document.confidence * 100)}% inferred` : "Confirmed"} · updated {humanDate(document.updatedAt)}</small>
 							</article>
@@ -125,6 +117,8 @@ function DocumentWorkspace({
 	const visible = useMemo(() => documents.filter((item) => kind === "memory_and_knowledge" ? item.kind === "memory" : item.kind === kind).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [documents, kind]);
 	const [search, setSearch] = useState("");
 	const matches = visible.filter(item => `${item.title} ${item.text}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+	const notes = matches.filter(item => !isTaskResult(item));
+	const taskResults = matches.filter(isTaskResult);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [creating, setCreating] = useState(false);
 	const [editing, setEditing] = useState(false);
@@ -144,7 +138,7 @@ function DocumentWorkspace({
 
 	useEffect(() => {
 		if (dirty || creating) return;
-		const next = selected ?? visible[0];
+		const next = selected ?? visible.find(item => !isTaskResult(item));
 		setSelectedId(next?.id ?? null);
 		setTitle(next?.title ?? "");
 		setDomainsText(next?.domainIds.join(", ") ?? "");
@@ -207,17 +201,25 @@ function DocumentWorkspace({
 	}
 
 	const noun = kind === "person" ? "person" : kind === "tool" ? "tool" : kind === "knowledge" ? "knowledge" : "memory";
+	function entry(document: MemoryDocument) {
+		return <button disabled={busy} className={document.id === selectedId ? "active" : ""} aria-pressed={document.id === selectedId} key={document.id} onClick={() => select(document)}><strong>{documentTitle(document)}</strong><small>{isTaskResult(document) ? `Task result · ${humanDate(document.updatedAt)}` : documentTitle(document) === document.title ? document.text.slice(0, 100) : `Updated ${humanDate(document.updatedAt)}`}</small></button>;
+	}
 	return (
 		<div className="memory-library">
 			<aside aria-label={`${noun} documents`}>
 				<header><h2>{kind === "person" ? "People" : kind === "tool" ? "Tools" : kind === "knowledge" ? "Knowledge" : "Notes"}</h2><button disabled={busy} onClick={() => select(undefined)}>Add {noun === "memory" ? "note" : noun}</button></header>
 				<label className="memory-search">Search {noun}<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={`Search ${noun}…`} /></label>
-				<p className="memory-result-count" aria-live="polite">{search.trim() ? `${matches.length} matching ${matches.length === 1 ? "note" : "notes"}` : `${visible.length} saved · Recent first`}</p>
-				{matches.map((document) => <button disabled={busy} className={document.id === selectedId ? "active" : ""} aria-pressed={document.id === selectedId} key={document.id} onClick={() => select(document)}><strong>{documentTitle(document)}</strong><small>{documentTitle(document) === document.title ? document.text.slice(0, 100) : `Updated ${humanDate(document.updatedAt)}`}</small></button>)}
+				<p className="memory-result-count" aria-live="polite">{search.trim() ? `${matches.length} matching ${matches.length === 1 ? "entry" : "entries"}` : `${visible.filter(item => !isTaskResult(item)).length} saved · Recent first`}</p>
+				{notes.map(entry)}
+				{!!taskResults.length && <details className="memory-task-results" key={search.trim() ? "search-results" : "saved-results"} open={Boolean(search.trim())}>
+					<summary>Task results ({taskResults.length})</summary>
+					<p>Automatically saved from completed tasks.</p>
+					{taskResults.map(entry)}
+				</details>}
 				{!visible.length && <p>No {noun === "memory" ? "notes" : noun} yet. Add something you want Kestrel to remember.</p>}
                 {!!visible.length && !matches.length && <p>No matching documents. <button onClick={() => setSearch("")}>Clear search</button></p>}
 			</aside>
-			{selected && !editing ? <article className="memory-reader"><h2>{documentTitle(selected)}</h2><p>{selected.text}</p><button onClick={() => setEditing(true)}>Edit {noun === "memory" ? "note" : noun}</button><details><summary>Evidence and visibility</summary><p>{documentSubtitle(selected)} · {selected.domainIds.join(", ") || "No domain assigned"}</p><p>{selected.sourceIds.join(" · ")}</p></details></article> : <form className="memory-editor" onSubmit={save}>
+			{!selected && !creating ? <article className="memory-reader"><h2>{noun === "memory" ? "Your notes go here" : `Choose a ${noun}`}</h2><p>{noun === "memory" ? "Add something you want Kestrel to remember, or open a saved task result." : "Select an entry or add useful context."}</p></article> : selected && !editing ? <article className="memory-reader">{isTaskResult(selected) && <p className="memory-kicker">Task result · automatically saved</p>}<h2>{documentTitle(selected)}</h2><p>{selected.text}</p><button onClick={() => setEditing(true)}>Edit {noun === "memory" ? "note" : noun}</button><details><summary>Evidence and visibility</summary><p>{documentSubtitle(selected)} · {selected.domainIds.join(", ") || "No domain assigned"}</p><p>{selected.sourceIds.join(" · ")}</p></details></article> : <form className="memory-editor" onSubmit={save}>
 				<label>What Kestrel should know<textarea ref={editorRef} value={text} maxLength={100000} onChange={(event) => { setText(event.target.value); setDirty(true); }} placeholder={`Write the useful context about this ${noun}…`} /></label>
 				<label>Title (optional)<input value={title} maxLength={500} onChange={(event) => { setTitle(event.target.value); setDirty(true); }} placeholder="Use the first line, or give it a name" /></label>
 				<details><summary>Organization and sharing</summary><label>Domains<input value={domainsText} onChange={event => { setDomainsText(event.target.value); setDirty(true); }} placeholder="Separate domains with commas" /></label><label>Visibility<select value={sharing} onChange={event => { setSharing(event.target.value as typeof sharing); setDirty(true); }}><option value="owner_only">Only this viewer</option><option value="domain_shared">Relevant agents in these domains</option></select></label><label className="memory-tier-select">Remember for<select value={tier} onChange={(event) => { setTier(event.target.value as MemoryDocument["tier"]); setDirty(true); }}>{Object.entries(tierLabels).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label></details>

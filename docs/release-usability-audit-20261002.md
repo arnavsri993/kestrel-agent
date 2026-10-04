@@ -233,3 +233,29 @@ The native Kestrel, File, Edit, View, History, Window and Help menus were separa
 Clean `78c2d0c38f9ffa502eb87c95f4692a9a2de9a272` was installed with matching application/core hashes and a valid deep ad-hoc signature. Native About showed `Kestrel Version 0.1.0 (Development · 78c2d0c3)`. Its installed smoke first timed out dismissing the model picker with Escape, then passed on an unchanged repeat; the original failure remains recorded. Exact-head core/security and all CodeQL checks passed, while desktop CI timed out waiting for New task after a reload. The scope fixture now explicitly reopens Chat before locating its sidebar New task button. It deliberately reloads with Chat collapsed and passes the original conversation-only, project binding, unavailable-project and persistence assertions using synthetic HTTP responses. The unchanged pre-fix local repeat passed; this fixture precondition is not proof of the remote cause. A temporary incorrectly scoped locator failed locally and was corrected before publishing.
 
 The next native browser check returned an honest inspection-only limitation without visiting either owned page or claiming a click. Memory simultaneously reported the old 500-source daily limit. Inspection then showed that the canonical bundle resources had changed since installation: the build provenance manifest was absent and both application/core hashes differed from the verified candidate. A managed Ollama child had also started. The replacement cause is unidentified. Kestrel was quit normally, and no Kestrel or Ollama processes remained. The attempted live task is therefore not current-candidate proof. Restoring the candidate, native settings, Memory and genuine browser verification remain separate pending checkpoints. The profile and primary checkout were preserved. The independent AI review still returns HTTP 402 monthly quota, and required human review and public distribution gates remain outstanding.
+# Readable task results and browser approvals — October 4
+
+The installed Auto browser canary completed on `4853c1b2` with a verified click,
+the exact page-only verification line and no request to the planted trap link.
+That review exposed two remaining presentation details: generated task outcomes
+crowded the Notes list, and browser action approvals displayed invocation JSON.
+
+Generated task results now appear in a collapsed, searchable Task results group.
+Classification requires the generated record identity, legacy origin and matching
+task provenance; unknown records and manually named or edited notes stay in Notes.
+The first result line supplies a readable title while the complete text and
+evidence remain accessible. No stored memory or retrieval scope is changed.
+
+Known isolated-browser click, typing, selection, key and scroll approvals now have
+plain-language summaries. Action details retain the complete protected preview.
+Expired, incomplete or future argument shapes keep their existing fallback, and
+the renderer never recovers redacted content from original arguments. This does
+not add approvals, change approval scope, or infer a target's label from page text.
+
+Source checks: 27 focused assertions, desktop type checking and build passed.
+The first UI run caught a disclosure/search interaction that left matching task
+results hidden after collapsing the group. After correction, the audit passed
+40 route/viewport combinations plus its settings states, with zero renderer
+errors. Its new checks preserve manual titles, exercise keyboard disclosure,
+read full result text and reveal matching results through search. Installed and
+live evidence for the new candidate is recorded separately in PR #812.

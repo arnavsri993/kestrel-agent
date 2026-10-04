@@ -16,6 +16,10 @@ export function RuntimeApprovalPreview({ execution }: { execution: RuntimeToolEx
 				<dt>{preview.label}</dt>
 				<dd>{preview.values.map((value, index) => <div key={index}>{value}</div>)}</dd>
 			</dl>
+			{preview.showArguments && <details>
+				<summary>Action details</summary>
+				<pre>{approvalPreviewText(execution)}</pre>
+			</details>}
 		</section>
 	);
 }
