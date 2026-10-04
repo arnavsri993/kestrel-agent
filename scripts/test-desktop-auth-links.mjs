@@ -145,7 +145,13 @@ try {
   assert.equal(await run('window.fixturePopup.closed'), true);
   await until(async () => (await state()).activeTabId === tabId, 'Closing sign-in must restore its opener');
   await navigate();
-  await run(`(() => { const frame = document.createElement('iframe'); frame.src = ${JSON.stringify(`${iframeOrigin}/button`)}; frame.width = 300; frame.height = 80; document.body.append(frame); })()`);
+  const providerFixturePage = app.context().pages().find(candidate => candidate.url() === `${origin}/one`);
+  assert(providerFixturePage, 'Owned provider fixture page missing');
+  await providerFixturePage.evaluate(frameUrl => {
+    const frame = document.createElement('iframe');
+    frame.src = frameUrl; frame.width = 300; frame.height = 80;
+    document.body.append(frame);
+  }, `${iframeOrigin}/button`);
   const providerIframeState = () => app.evaluate(async ({webContents}, {url, frameUrl}) => {
     const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
     const frame = wc?.mainFrame.frames.find(candidate => candidate.url === frameUrl);
@@ -276,8 +282,13 @@ try {
     for (const frameOrigin of [origin, foreignOrigin]) {
       await navigate();
       const frameUrl = `${frameOrigin}/frame`;
-      await run(`(() => { const frame = document.createElement('iframe'); frame.src = ${JSON.stringify(frameUrl)}; frame.style.cssText = 'position:fixed;left:8px;top:8px;width:600px;height:250px;border:0'; document.body.append(frame); })()`);
       const fixturePage = app.context().pages().find(candidate => candidate.url() === `${origin}/one`);
+      assert(fixturePage, 'Owned handoff fixture page missing');
+      await fixturePage.evaluate(frameUrl => {
+        const frame = document.createElement('iframe'); frame.src = frameUrl;
+        frame.style.cssText = 'position:fixed;left:8px;top:8px;width:600px;height:250px;border:0';
+        document.body.append(frame);
+      }, frameUrl);
       await fixturePage.frameLocator('iframe').locator('#handoff').waitFor({state:'visible'});
       const frameRun = script => app.evaluate(({webContents}, {url, frameUrl, script}) => {
         const wc = webContents.getAllWebContents().find(w => w.getURL() === url);

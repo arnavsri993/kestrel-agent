@@ -1,10 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import type { RuntimeToolExecution } from "@kestrel/shared-types";
 import { replaceSensitiveText } from "@kestrel/shared-types";
 export { replaceSensitiveText } from "@kestrel/shared-types";
 
 interface RedactionState {
 	redactions: number;
+	fingerprintKey: Buffer;
 	tokens: Map<string, string>;
 	nextTokenByKind: Map<string, number>;
 }
@@ -20,13 +21,18 @@ export const MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS = 250_000;
 function createRedactionState(): RedactionState {
 	return {
 		redactions: 0,
+		fingerprintKey: randomBytes(32),
 		tokens: new Map(),
 		nextTokenByKind: new Map(),
 	};
 }
 
 function tokenFor(kind: string, value: string, state: RedactionState): string {
-	const fingerprint = createHash("sha256").update(value).digest("hex");
+	// This only deduplicates placeholders within one redaction operation. A
+	// private ephemeral key keeps low-entropy secrets out of a reusable digest.
+	const fingerprint = createHmac("sha256", state.fingerprintKey)
+		.update(value)
+		.digest("hex");
 	const existing = state.tokens.get(fingerprint);
 	if (existing) {
 		state.redactions += 1;

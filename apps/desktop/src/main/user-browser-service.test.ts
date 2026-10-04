@@ -3430,6 +3430,28 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 		expect(isAuthenticationFlowUrl(authentication.url)).toBe(true);
 	});
 
+	it("restores a popup's opener after recreating its destroyed native view", async () => {
+		const { service } = createService();
+		const openerId = service.getState().activeTabId!;
+		await service.navigate(openerId, "https://opener.example/");
+		const opener = electron.state.views.at(-1)!.webContents;
+		await service.createTab("https://other.example/", false);
+		await service.selectTab(openerId);
+		expect(opener.windowOpenHandler?.({
+			url: "https://sign-in.example/callback",
+			disposition: "foreground-tab",
+		})).toMatchObject({ action: "allow" });
+		const popupId = service.getState().activeTabId!;
+		expect(popupId).not.toBe(openerId);
+		const originalPopup = electron.state.views.at(-1)!;
+		originalPopup.webContents.destroyed = true;
+		await service.selectTab(popupId);
+		expect(electron.state.views.at(-1)).not.toBe(originalPopup);
+		await service.closeTab(popupId);
+		expect(service.getState().activeTabId).toBe(openerId);
+		expect(service.getState().tabs).toHaveLength(2);
+	});
+
   it("cleans up crashed views and recreates a destroyed view on the next navigation", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;

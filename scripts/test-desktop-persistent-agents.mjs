@@ -154,8 +154,14 @@ try {
  const connectionWindow = await nextWindow;
  await connectionWindow.waitForLoadState("domcontentloaded");
  await expect(connectionWindow.getByRole("button", { name: "Move tab back to main window", exact: true })).toHaveCount(0);
- await expect.poll(() => application.evaluate(({ webContents }) => webContents.getAllWebContents().some(item => item.getURL().startsWith("https://web.whatsapp.com"))), { timeout: 30_000, message: "Dedicated WhatsApp page starts navigation" }).toBe(true);
- const isolation = await application.evaluate(({ webContents }) => webContents.getAllWebContents().filter(item => item.getURL().startsWith("https://web.whatsapp.com")).map(item => ({ url: item.getURL(), path: item.session.getStoragePath() })));
+ await expect.poll(() => application.evaluate(({ webContents }) => webContents.getAllWebContents().some(item => {
+  try { return new URL(item.getURL()).origin === "https://web.whatsapp.com"; }
+  catch { return false; }
+ })), { timeout: 30_000, message: "Dedicated WhatsApp page starts navigation" }).toBe(true);
+ const isolation = await application.evaluate(({ webContents }) => webContents.getAllWebContents().filter(item => {
+  try { return new URL(item.getURL()).origin === "https://web.whatsapp.com"; }
+  catch { return false; }
+ }).map(item => ({ url: item.getURL(), path: item.session.getStoragePath() })));
  assert(isolation.length > 0); assert(isolation.every(item => item.path.includes("kestrel-connection-whatsapp")));
  await connectionWindow.close();
  const detached = await page.evaluate(async input => {

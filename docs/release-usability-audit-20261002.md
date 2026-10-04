@@ -530,3 +530,27 @@ omitted the synthetic snapshot's approvals array and was corrected before the
 before/after comparison; it is not a product failure. Desktop type checking
 and build pass. Latest-head CI and canonical verification remain the next gates
 at this source checkpoint. No provider or real-profile settings were changed.
+
+## Authentication popup and security follow-up — October 4
+
+The clean `4fe312c1` canonical installation passes seven installed fixtures,
+including all 163 release-surface states with zero renderer errors. Native About,
+Writing Studio, Activity and routing checks confirm that exact installed build;
+Auto model/reasoning, Best quality and Codex-only routes remain selected.
+Its core CI passes, but desktop CI fails the provider iframe popup opener check.
+The aggregate CodeQL check reports 12 findings despite successful language jobs;
+the independent AI review fails with HTTP 402 quota. Release remains held.
+
+A regression reproduces a popup returning to the wrong tab after its destroyed
+native view is recreated. The rebuilt view now retains its tab's opener without
+copying authentication grants or changing close/approval policy. The regression
+fails before the fix and passes afterward. The complete source authentication
+fixture also passes, retaining callback, POST, trusted-click and handoff denials.
+
+Redaction placeholder deduplication now uses a private per-operation HMAC key
+instead of an unkeyed secret digest. Synthetic browser checks compare exact URL
+origins, and iframe setup passes URLs as structured evaluation arguments. All
+2,127 unit tests in 264 files, repository type checking, desktop build and the
+production browser secret scan pass. Latest-head full CI, aggregate CodeQL and
+the refreshed canonical package are pending at this source checkpoint; remaining
+digest findings require their actual data flow to be assessed, not gate bypasses.

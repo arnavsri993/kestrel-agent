@@ -5881,7 +5881,12 @@ export class UserBrowserService {
 		webContents.setUserAgent(this.browserUserAgent);
 		view.setBackgroundColor("#ffffff");
 		this.applyViewBrowserPreferences(webContents);
-		const record: ViewRecord = { view, navigationGeneration: 0 };
+		// The opener belongs to the tab and must survive a native-view rebuild.
+		const record: ViewRecord = {
+			view,
+			navigationGeneration: 0,
+			...(existing?.openerTabId ? { openerTabId: existing.openerTabId } : {}),
+		};
 		this.views.set(tab.id, record);
 		this.webContentsToTab.set(webContents.id, tab.id);
 		this.configureView(tab, record);
