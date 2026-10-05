@@ -1786,6 +1786,23 @@
 .unified-ui .settings-content .custom-agent-setup > .button {
 	margin-top: 12px;
 }
+.unified-ui .settings-content .channel-interaction-setting {
+	grid-template-columns: minmax(0, 1fr);
+}
+.unified-ui .settings-content .channel-interaction-grid {
+	grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+	max-width: none;
+}
+.unified-ui .settings-content .channel-interaction-grid label,
+.unified-ui .settings-content .channel-interaction-grid select {
+	min-width: 0;
+}
+.unified-ui .settings-content .channel-interaction-grid select {
+	width: 100%;
+}
+.unified-ui .settings-content .channel-interaction-setup > .button {
+	margin-top: 12px;
+}
 @container kestrel-browser-viewport (max-width: 860px) {
 	.unified-ui .settings-content .honcho-key-row,
 	.unified-ui .settings-content .credential-entry {

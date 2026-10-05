@@ -31,6 +31,12 @@ async function keyboardToggle(details) {
 	await details.locator("summary").first().focus();
 	await page.keyboard.press("Enter");
 }
+async function desktopChat(open) {
+	const toggle = page.locator("#browser-agent-toggle");
+	await toggle.waitFor({ state: "attached" });
+	if (await toggle.getAttribute("aria-expanded") !== String(open)) await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-expanded", String(open));
+}
 async function compactCapture(name, row) {
 	await page.setViewportSize({ width: 800, height: 760 });
 	await page.waitForFunction(() => document.querySelector(".ai-browser-app")?.classList.contains("agent-sidebar-compact"));
@@ -49,6 +55,80 @@ async function compactCapture(name, row) {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.waitForFunction(() => !document.querySelector(".ai-browser-app")?.classList.contains("agent-sidebar-compact"));
 }
+async function channelControlsFit(name, row) {
+	await row.scrollIntoViewIfNeeded();
+	const escaped = await row.locator(".channel-interaction-grid").evaluate(grid => {
+		const bounds = grid.getBoundingClientRect();
+		return [...grid.querySelectorAll("label, select")].filter(node => {
+			const box = node.getBoundingClientRect();
+			return box.left < bounds.left - 1 || box.right > bounds.right + 1;
+		}).map(node => node.getAttribute("aria-label") ?? node.textContent.trim());
+	});
+	assert.deepEqual(escaped, [], `${name}: all four channel controls must fit the form itself`);
+	if (evidence) await page.screenshot({ path: join(evidence, `${name}.png`) });
+}
+async function checkChannelSettings() {
+	await desktopChat(false);
+	const row = page.locator(".channel-interaction-setting");
+	const setup = row.locator(".channel-interaction-setup");
+	await setup.waitFor();
+	assert.equal(await setup.getAttribute("open"), null, "No-channel policy setup starts folded");
+	await expect(row).toContainText("No messaging channels configured yet.");
+	await keyboardToggle(setup);
+	const progress = row.getByRole("combobox", { name: "Channel progress mode", exact: true });
+	const typing = row.getByRole("combobox", { name: "Channel typing mode", exact: true });
+	const interval = row.getByRole("combobox", { name: "Typing refresh interval", exact: true });
+	const reaction = row.getByRole("combobox", { name: "Channel reaction level", exact: true });
+	const selections = async () => Promise.all([progress.inputValue(), typing.inputValue(), interval.inputValue(), reaction.inputValue()]);
+	const save = row.getByRole("button", { name: "Save channel policy", exact: true });
+	await progress.selectOption("off"); await typing.selectOption("never"); await interval.selectOption("20"); await reaction.selectOption("extensive");
+	const desired = ["off", "never", "20", "extensive"];
+	await channelControlsFit("channel-policy-chat-closed", row);
+	await desktopChat(true);
+	await page.waitForFunction(() => !document.querySelector(".ai-browser-app")?.classList.contains("agent-sidebar-collapsed"));
+	await channelControlsFit("channel-policy-chat-docked", row);
+	await desktopChat(false);
+	await compactCapture("channel-policy", row);
+
+	// Hold the real persisted GET result, save new selections, then deliver the
+	// stale result. This recreates the refresh/save race without mocking storage.
+	await application.evaluate(() => { globalThis.__kestrelChannelFixture.holdGets = true; });
+	await keyboardToggle(setup);
+	await expect.poll(() => application.evaluate(() => globalThis.__kestrelChannelFixture.pendingGets.length), { timeout: 25_000 }).toBeGreaterThan(0);
+	assert.equal(await setup.getAttribute("open"), null, "Refresh retains the user's folded state");
+	await keyboardToggle(setup);
+	assert.deepEqual(await selections(), desired, "Folding and a pending refresh retain edits");
+	await save.click();
+	await expect(row.getByRole("status")).toHaveText("Channel interaction policy saved.");
+	await application.evaluate(() => { const fixture = globalThis.__kestrelChannelFixture; fixture.holdGets = false; fixture.pendingGets.splice(0).forEach(release => release()); });
+	await expect.poll(() => application.evaluate(() => globalThis.__kestrelChannelFixture.inFlightGets)).toBe(0);
+	assert.deepEqual(await selections(), desired, "A pre-save refresh cannot replace successful saved selections");
+	await keyboardToggle(setup); await expect(row.getByRole("status")).toBeVisible();
+	await page.reload(); await openKestrelDestination(page, "Settings"); await section("agent-memory", "Memory & context");
+	assert.equal(await setup.getAttribute("open"), null);
+	await keyboardToggle(setup); assert.deepEqual(await selections(), desired, "All four values persist through the real core and reload");
+
+	await application.evaluate(() => { globalThis.__kestrelChannelFixture.failSave = true; });
+	await reaction.selectOption("ack"); await save.click();
+	await expect(row.getByRole("alert")).toHaveText("Owned channel save failure.");
+	await keyboardToggle(setup); await expect(row.getByRole("alert")).toBeVisible();
+	const beforePoll = await application.evaluate(() => globalThis.__kestrelChannelFixture.completedGets);
+	await expect.poll(() => application.evaluate(() => globalThis.__kestrelChannelFixture.completedGets), { timeout: 25_000 }).toBeGreaterThan(beforePoll);
+	assert.equal(await setup.getAttribute("open"), null);
+	await keyboardToggle(setup); assert.deepEqual(await selections(), ["off", "never", "20", "ack"], "A refresh after failed save cannot discard the unsaved draft");
+	await application.evaluate(() => { const fixture = globalThis.__kestrelChannelFixture; fixture.failSave = false; fixture.channels = [
+		{ id: "owned-slack", kind: "slack", inbound: true, editableProgress: true, typingSignals: false, reactions: true },
+		{ id: "owned-webhook", kind: "webhook", inbound: false, editableProgress: false, typingSignals: true, reactions: false },
+	]; });
+	await page.reload(); await openKestrelDestination(page, "Settings"); await section("agent-memory", "Memory & context");
+	await expect(setup).toHaveAttribute("open", "");
+	await expect(row).toContainText("1 editable · 1 with typing · 1 with reactions · 2 configured");
+	assert.deepEqual(await selections(), desired, "Configured-channel summaries preserve actual persisted values");
+	await keyboardToggle(setup);
+	const configuredPoll = await application.evaluate(() => globalThis.__kestrelChannelFixture.completedGets);
+	await expect.poll(() => application.evaluate(() => globalThis.__kestrelChannelFixture.completedGets), { timeout: 25_000 }).toBeGreaterThan(configuredPoll);
+	assert.equal(await setup.getAttribute("open"), null, "Configured-channel refresh also retains a user-collapsed form");
+}
 try {
 	application = await electron.launch({
 		executablePath: executablePath ?? requireFromDesktop("electron"),
@@ -58,6 +138,27 @@ try {
 	});
 	page = await application.firstWindow(); page.setDefaultTimeout(30_000);
 	page.on("pageerror", error => runtimeErrors.push(error.message));
+	// Fixture-only IPC interception supplies synthetic channel capability counts
+	// and controlled response timing/failure. Real GET/SET storage stays in use.
+	await application.evaluate(({ ipcMain }) => {
+		const original = ipcMain._invokeHandlers?.get("kestrel:request");
+		if (typeof original !== "function") throw new Error("Owned channel fixture cannot capture the desktop request handler.");
+		const fixture = { channels: null, holdGets: false, pendingGets: [], inFlightGets: 0, completedGets: 0, failSave: false };
+		globalThis.__kestrelChannelFixture = fixture;
+		ipcMain.removeHandler("kestrel:request");
+		ipcMain.handle("kestrel:request", async (event, request) => {
+			if (request.type === "channel-list" && fixture.channels) return { ok: true, channels: fixture.channels };
+			if (request.type === "channel-interaction-set" && fixture.failSave) return { ok: false, error: "Owned channel save failure." };
+			if (request.type !== "channel-interaction-get") return original(event, request);
+			fixture.inFlightGets += 1;
+			try {
+				const result = await original(event, request);
+				if (fixture.holdGets) await new Promise(done => fixture.pendingGets.push(done));
+				fixture.completedGets += 1;
+				return result;
+			} finally { fixture.inFlightGets -= 1; }
+		});
+	});
 	await page.waitForLoadState("domcontentloaded");
 	await page.evaluate(() => { localStorage.setItem("kestrel:onboarded", "yes"); localStorage.setItem("kestrel:default-browser-prompted", "yes"); });
 	await page.reload();
@@ -67,6 +168,7 @@ try {
 	if (await closeChat.isVisible()) await closeChat.click();
 
 	await section("agent-memory", "Memory & context");
+	await checkChannelSettings();
 	const honcho = page.locator(".honcho-memory-setting");
 	const connection = honcho.locator(".honcho-connection");
 	await connection.waitFor();
@@ -176,7 +278,7 @@ try {
 	await custom.locator(".workspace-grants").getByRole("button", { name: "Remove", exact: true }).click();
 	await expect(custom.locator(".workspace-grants")).toHaveCount(0);
 	assert.deepEqual(runtimeErrors, []);
-	console.log("Settings disclosures passed: keyboard/draft retention, explicit remote-data consent, configuration persistence, visible failures, write-only credential mappings/save/remove, isolated custom profiles, compact control geometry. Owned disposable profile/mock keychain and HTTP server; no model generation or real user data.");
+	console.log("Settings disclosures passed: channel four-field storage, configured/unused disclosure defaults, live polling draft retention and stale refresh/save race, docked/closed/compact control geometry, keyboard/draft retention, explicit remote-data consent, visible failures, write-only credential mappings/save/remove, isolated custom profiles. Owned disposable profile/mock keychain and HTTP server; no model generation or real user data.");
 } catch (error) {
 	if (page && evidence) await page.screenshot({ path: join(evidence, "failure.png") });
 	throw error;

@@ -840,3 +840,39 @@ Settings parity and diff checking pass. A bounded independent code review found
 no consequential disclosure/consent regression; it is not security signoff.
 Public signing/notarization, protected independent security review and the broad
 release goal remain open.
+
+### Channel policy layout and refresh-safe editing
+
+Native inspection found that Channel progress, typing, and reactions clipped
+the Reaction level field when Chat narrowed the Settings column. Its old grid
+required at least 507 pixels and only changed at a whole-window breakpoint.
+The form now adapts to its own available width. Unused channel setup starts
+folded; configured channels start expanded. Channel capability counts, save
+confirmation and errors remain visible when the form is folded.
+
+The existing 15-second presence refresh also replaced unsaved policy selections.
+Edits now remain until a successful save or leaving the section. Save start and
+completion invalidate in-flight reads so an older response cannot replace a
+newly saved policy. Presence and channel counts continue to refresh. Failed saves
+keep the draft. The backend request types, configuration schema and all four
+policy options are unchanged; no real channel was configured during this work.
+
+The disposable Electron check passes keyboard folding, no-channel and synthetic
+configured-channel defaults, actual four-field core storage across reload,
+draft retention after a failed save and real periodic refresh, and delivery of
+a delayed pre-save GET after a successful save. All four fields fit the form's
+bounding rectangle with Chat docked, Chat closed and at compact width. These
+three fixture captures were manually inspected. Type checking, desktop build,
+all 2,158 unit tests, production secret scanning, Settings parity and diff
+checking pass. Packaged and real-profile verification of this channel revision
+remain separate until the canonical refresh.
+
+The preceding clean installed `a238bf3c` candidate passes both full CI jobs,
+four installed Settings/scope suites, responsive layout and all 167 catalog
+surface states. Its real-profile Agent task also completed an owned isolated
+two-page browser check: four inspected one-time approvals, one actual reveal,
+the exact generated verification value, Beta at $7, a $19 total, a completed
+delegated review and zero injected trap visits. This bounded proof is distinct
+from fixture checks and does not establish every autonomous workflow. Twelve
+full CodeQL findings, required independent review and public signing remain
+open; the broad release goal remains active.
