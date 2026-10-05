@@ -181,7 +181,7 @@
 }
 
 .unified-ui :is(.assistant-message, .user-message) p,
-.unified-ui .assistant-message-content {
+.unified-ui .assistant-content {
 	font-size: 15px;
 	line-height: 1.65;
 }
@@ -255,6 +255,7 @@
 	}
 	:root[data-kestrel-material="native"] .ai-browser-app :is(.kestrel-sidebar, .agent-sidebar) {
 		background-color: rgb(37 38 40 / 88%);
+		background-clip: padding-box;
 		backdrop-filter: none;
 		-webkit-backdrop-filter: none;
 	}
