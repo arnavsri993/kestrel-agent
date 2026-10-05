@@ -100,6 +100,32 @@ function tabCanDetach(tab: UserBrowserTab | undefined): boolean {
 	return Boolean(tab && !tab.file && !tab.error);
 }
 
+function revealTabInStrip(
+	container: HTMLElement,
+	tab: HTMLElement,
+	orientation: "horizontal" | "vertical",
+) {
+	const containerRect = container.getBoundingClientRect();
+	const tabRect = tab.getBoundingClientRect();
+	if (orientation === "horizontal") {
+		const delta =
+			tabRect.left < containerRect.left
+				? tabRect.left - containerRect.left
+				: tabRect.right > containerRect.right
+					? tabRect.right - containerRect.right
+					: 0;
+		if (Math.abs(delta) >= 1) container.scrollLeft += delta;
+		return;
+	}
+	const delta =
+		tabRect.top < containerRect.top
+			? tabRect.top - containerRect.top
+			: tabRect.bottom > containerRect.bottom
+				? tabRect.bottom - containerRect.bottom
+				: 0;
+	if (Math.abs(delta) >= 1) container.scrollTop += delta;
+}
+
 export function TabStrip({
 	tabs,
 	originFavicons,
@@ -293,12 +319,33 @@ export function TabStrip({
 		}
 	}, [orientation, releaseLockedTabWidth, tabs.length]);
 
-	useEffect(() => {
-		const activeTab = tabsContainerRef.current?.querySelector<HTMLElement>(
-			".browser-tab.active",
-		);
-		activeTab?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" });
-	}, [activeTabId, orientation, tabs.length]);
+	useLayoutEffect(() => {
+		const container = tabsContainerRef.current;
+		if (!container) return;
+		let frame = 0;
+		const revealActiveTab = () => {
+			window.cancelAnimationFrame(frame);
+			frame = window.requestAnimationFrame(() => {
+				const activeTab = container.querySelector<HTMLElement>(
+					".browser-tab.active",
+				);
+				if (activeTab) revealTabInStrip(container, activeTab, orientation);
+			});
+		};
+		revealActiveTab();
+
+		if (typeof ResizeObserver === "undefined") {
+			return () => window.cancelAnimationFrame(frame);
+		}
+		const observer = new ResizeObserver(revealActiveTab);
+		observer.observe(container);
+		const activeTab = container.querySelector<HTMLElement>(".browser-tab.active");
+		if (activeTab) observer.observe(activeTab);
+		return () => {
+			observer.disconnect();
+			window.cancelAnimationFrame(frame);
+		};
+	}, [activeTabId, collapsedFolderIds, orientation, tabSizing, tabs.length]);
 
 	const dismissTabTools = useCallback(() => {
 		setTabToolsOpen(false);
@@ -464,7 +511,12 @@ export function TabStrip({
 					? buttons.length - 1
 					: (index + (event.key === nextKey ? 1 : -1) + buttons.length) %
 						buttons.length;
-		buttons[next]?.focus();
+		const nextButton = buttons[next];
+		nextButton?.focus();
+		const tab = nextButton?.closest<HTMLElement>(".browser-tab");
+		if (tab && tabsContainerRef.current) {
+			revealTabInStrip(tabsContainerRef.current, tab, orientation);
+		}
 	}
 
 	function handleTabAuxClick(event: ReactMouseEvent, tabId: string) {

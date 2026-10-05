@@ -1,3 +1,4 @@
+import "../schema-runtime";
 import { normalizeWhatsAppTimestamp } from "./whatsapp-source";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";

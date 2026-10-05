@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { UserBrowserSettings } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
 import { CUSTOM_BACKGROUND_MAX_BYTES, NEW_TAB_BACKGROUND_OPTIONS, SUPPORTED_BACKGROUND_MIME_TYPES, readBackgroundFile, type FrequentBrowserSite } from "./new-tab";
@@ -22,6 +22,24 @@ export function NewTabPersonalization({ frequent, showFrequent = true, shortcuts
  const [error, setError] = useState("");
  const [saving, setSaving] = useState(false);
  const links = homeShortcuts(shortcuts, frequent, showFrequent);
+ const shortcutRow = useRef<HTMLElement>(null);
+ const [shortcutCapacity, setShortcutCapacity] = useState(6);
+ const [shortcutPage, setShortcutPage] = useState(0);
+ const shortcutCount = links.length + (shortcuts.length < 12 ? 1 : 0);
+ const shortcutPages = Math.max(1, Math.ceil(shortcutCount / shortcutCapacity));
+ const currentShortcutPage = Math.min(shortcutPage, shortcutPages - 1);
+ const firstShortcut = currentShortcutPage * shortcutCapacity;
+ const visibleLinks = links.slice(firstShortcut, firstShortcut + shortcutCapacity);
+ const showAddShortcut = shortcuts.length < 12 && links.length >= firstShortcut && links.length < firstShortcut + shortcutCapacity;
+ useEffect(() => {
+  const row = shortcutRow.current;
+  if (!row) return;
+  const measure = () => setShortcutCapacity(Math.max(1, Math.floor((row.clientWidth - 96) / 72)));
+  measure();
+  const observer = new ResizeObserver(measure);
+  observer.observe(row);
+  return () => observer.disconnect();
+ }, []);
  async function save(next: Partial<UserBrowserSettings>) {
   setSaving(true); setError("");
   try { await onUpdate(next); return true; }
@@ -29,6 +47,8 @@ export function NewTabPersonalization({ frequent, showFrequent = true, shortcuts
   finally { setSaving(false); }
  }
  return <>
+
+  <nav className={`home-site-shortcuts${links.length === 0 ? " is-empty" : ""}`} aria-label="Site shortcuts" ref={shortcutRow}>
   <details className="home-personalize" ref={panel} onKeyDown={(event) => {
    if (event.key === "Escape") { event.preventDefault(); panel.current!.open = false; panel.current?.querySelector("summary")?.focus(); }
   }}>
@@ -50,17 +70,20 @@ export function NewTabPersonalization({ frequent, showFrequent = true, shortcuts
     <button type="button" onClick={() => { setAdding(true); panel.current!.open = false; }}>Add a shortcut<Icon name="plus" /></button>
    </div>
   </details>
-  <nav className={`home-site-shortcuts${links.length === 0 ? " is-empty" : ""}`} aria-label="Site shortcuts">
-   {links.map((link) => <div className="home-site-shortcut" key={link.url}>
+   {shortcutPages > 1 && <button type="button" className="home-shortcut-page-arrow" aria-label="Previous shortcut page" disabled={currentShortcutPage === 0} onClick={() => setShortcutPage(currentShortcutPage - 1)}><Icon name="chevron" /></button>}
+   <div className="home-shortcut-page">
+   {visibleLinks.map((link) => <div className="home-site-shortcut" key={link.url}>
     <button type="button" title={link.title + " · " + link.url} onClick={() => onNavigate(link.url)}>
      <span className="home-site-glyph">{link.faviconDataUrl ? <img src={link.faviconDataUrl} alt="" /> : link.title.slice(0, 1).toUpperCase()}</span>
      <span className="home-site-label">{link.title}</span>
     </button>
     {link.pinned && <button type="button" className="home-shortcut-remove" aria-label={`Remove ${link.title} shortcut`} disabled={saving} onClick={() => void save({ newTabShortcuts: shortcuts.filter((item) => item.url !== link.url) })}><Icon name="close" /></button>}
    </div>)}
-   {shortcuts.length < 12 && <div className="home-site-shortcut"><button type="button" onClick={() => setAdding((value) => !value)} aria-expanded={adding}><span className="home-site-glyph"><Icon name="plus" /></span><span className="home-site-label">Add shortcut</span></button></div>}
+   {showAddShortcut && <div className="home-site-shortcut"><button type="button" onClick={() => setAdding((value) => !value)} aria-expanded={adding}><span className="home-site-glyph"><Icon name="plus" /></span><span className="home-site-label">Add shortcut</span></button></div>}
+   </div>
+   {shortcutPages > 1 && <button type="button" className="home-shortcut-page-arrow" aria-label="Next shortcut page" disabled={currentShortcutPage === shortcutPages - 1} onClick={() => setShortcutPage(currentShortcutPage + 1)}><Icon name="chevron" /></button>}
   </nav>
-  {adding && <form className="home-shortcut-form" onSubmit={async (event) => {
+  {adding && <form role="dialog" aria-label="Add shortcut" className="home-shortcut-form" onSubmit={async (event) => {
    event.preventDefault();
    const normalized = normalizeShortcutUrl(url);
    if (!normalized) { setError("Enter a website address without a username or password."); return; }

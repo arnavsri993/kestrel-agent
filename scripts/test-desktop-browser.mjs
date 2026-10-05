@@ -67,9 +67,11 @@ const verifyRealChromeWebStoreInstall =
 const executablePath = packagedExecutable
 	? resolve(packagedExecutable)
 	: requireFromDesktop("electron");
-const launchArgs = packagedExecutable
-	? ["--use-mock-keychain"]
-	: [resolve("apps/desktop")];
+const launchArgs = process.env.KESTREL_DESKTOP_USE_SOURCE === "1"
+	? [resolve("apps/desktop"), "--use-mock-keychain"]
+	: packagedExecutable
+		? ["--use-mock-keychain"]
+		: [resolve("apps/desktop")];
 
 const postLaunchRequests = [];
 const server = createServer((request, response) => {
@@ -1288,14 +1290,16 @@ try {
 			]?.classList.contains("active") === true,
 		state.tabs.length - 1,
 	);
-	const activeTabVisibility = await tabRail.evaluate((node) => {
-		const active = node.querySelector(".browser-tab.active");
-		if (!active) return false;
+	// Selection and ResizeObserver reveal the tab on the next animation frame.
+	// Account for subpixel layout while requiring the whole selected tab to fit.
+	await page.waitForFunction(() => {
+		const node = document.querySelector(".browser-tabs");
+		const active = node?.querySelector(".browser-tab.active");
+		if (!node || !active) return false;
 		const rail = node.getBoundingClientRect();
 		const tab = active.getBoundingClientRect();
-		return tab.left >= rail.left && tab.right <= rail.right;
+		return tab.left >= rail.left - 1 && tab.right <= rail.right + 1;
 	});
-	assert(activeTabVisibility);
 	const widthsBeforeClose = await tabRail
 		.locator(".browser-tab")
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));

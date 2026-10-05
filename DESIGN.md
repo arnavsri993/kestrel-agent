@@ -1,3 +1,39 @@
+# Calm, space-aware Kestrel — October 2026
+
+Thesis: a legible browser and agent workspace that fits its window. Normal tabs,
+solid edge-to-edge navigation rails, and a balanced Home surface make the next
+action obvious. Existing React/Electron redesign, frequent desktop use, medium
+information density, low motion intensity. The user's review and screenshots
+supersede the earlier capsule-tab and inset-rail direction.
+
+- Tabs are aligned rounded-top rectangles, bounded by available chrome width;
+  long titles truncate, selected tabs remain reachable, controls keep their space.
+- Side rails fill their reserved area with solid graphite. No transparent frame,
+  wallpaper gutter, inset border, or nested outline. Keep native browser bounds.
+- Rounded rectangles for navigation, menus, fields and multiline composers;
+  true circles for square icon controls; pills only for short compact actions.
+  Use 12px control, 18px menu, 22px composer/widget corners and a 4px spacing grid.
+- Home never scrolls. Measure available width and height, compact widget contents
+  and page excess widgets when necessary. Keep configured content accessible.
+  Center the greeting and entry; equal card tracks, insets and row alignment.
+- Restrained liquid glass on wallpaper widgets and entry: translucent graphite,
+  bounded blur/saturation, one light inner edge and soft depth. Preserve contrast;
+  reduce transparency and forced colors use solid surfaces. No refractive SVG.
+- System fonts, 32–46px greeting where space allows, 15–17px reading and entry,
+  14px everyday controls. Short labels, fewer redundant explanatory paragraphs.
+- Input focus changes one existing border. Keyboard focus remains visible, with
+  no nested rings or oval multiline fields. Preserve access and approval controls.
+- Intermediate agent activity is collapsed as Thinking; answers remain readable.
+  Errors, permission requests and actions needed from the person stay visible.
+  Evidence remains inspectable; never rewrite historical answer content.
+- Retain profiles, credentials, projects, widget choices and continuation identity.
+  No new dependencies, animations, model greeting request or decorative gradients.
+- Verify many long tabs, narrow/short windows, zoom, focus, menus, adaptive Home,
+  transcript disclosure and actionable errors; inspect screenshots and refine.
+  Build/install the one canonical app with the existing integration preserved.
+- This design follows Kestrel's actual tabs, resumable work and approval boundary;
+  material and density are chosen for those flows rather than decorative cards.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

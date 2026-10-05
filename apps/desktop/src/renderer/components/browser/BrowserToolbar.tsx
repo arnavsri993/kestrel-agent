@@ -136,7 +136,6 @@ function BrowserDownloadsPopover({
         <Icon name="downloads" />
         <span>
           <strong>Downloads</strong>
-          <small>Track progress and drag finished files to upload fields.</small>
         </span>
       </header>
       {downloads.length === 0 ? (
@@ -1108,7 +1107,7 @@ export function BrowserToolbar({
                     </span>
                     {suggestion.kind === "tab" && suggestion.tabId !== activeTabId ? (
                       <span className="browser-address-suggestion-action">
-                        Switch to this tab
+                        Switch tab
                       </span>
                     ) : suggestion.kind === "tab" ? (
                       <span className="browser-address-suggestion-action">
@@ -1127,7 +1126,7 @@ export function BrowserToolbar({
                 Local only
               </span>
               <span className="browser-address-suggestions-filter-label">
-                Filter your search:
+                Search in
               </span>
               <div className="browser-address-suggestion-filters" role="group" aria-label="Suggestion filters">
                 {(

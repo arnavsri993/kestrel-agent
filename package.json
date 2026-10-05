@@ -46,6 +46,8 @@
     "test:desktop-single-instance": "node scripts/test-desktop-single-instance.mjs",
     "test:desktop-browser": "node scripts/test-desktop-browser.mjs",
     "test:desktop-tab-interactions": "node scripts/test-desktop-tab-interactions.mjs",
+    "test:desktop-tab-fit": "node scripts/test-desktop-tab-fit.mjs",
+    "test:desktop-thinking": "node scripts/test-desktop-thinking.mjs",
     "test:desktop-autofill": "node --import tsx scripts/test-autofill-preload.mjs && node scripts/test-autofill-desktop.mjs",
     "test:desktop-auth-links": "node scripts/test-desktop-auth-links.mjs",
     "test:desktop-layout": "node scripts/test-desktop-layout.mjs",

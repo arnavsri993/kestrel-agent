@@ -1,3 +1,4 @@
+import "../schema-runtime";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
@@ -19,6 +20,10 @@ import "./materials.css";
 import "./instrument-workbench.css";
 import "./action-motion.css";
 import "./glass-menus.css";
+import "./apple-glass.css";
+import "./components/browser/home-fit.css";
+import "./tab-layout.css";
+import "./components/thinking-disclosure.css";
 import { ActionMotion } from "./components/ActionMotion";
 import { App } from "./App";
 import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";

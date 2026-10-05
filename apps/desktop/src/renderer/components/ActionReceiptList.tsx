@@ -22,14 +22,20 @@ export function ActionReceiptList({
 	receipts: ActionReceipt[];
 }) {
 	if (receipts.length === 0) return null;
+	const needsAttention = receipts.some((receipt) =>
+		["waiting_approval", "blocked", "failed", "uncertain"].includes(
+			receipt.outcome,
+		),
+	);
 	return (
-		<details className="action-receipts" aria-label="Action receipts">
+		<details
+			className="action-receipts"
+			aria-label="Action receipts"
+			open={needsAttention || undefined}
+		>
 			<summary>
-				<span>Action receipts</span>
-				<small>
-					{receipts.length} consequential action
-					{receipts.length === 1 ? "" : "s"}
-				</small>
+				<span>Details</span>
+				{needsAttention && <small>Needs attention</small>}
 			</summary>
 			<div className="action-receipt-list">
 				{receipts.map((receipt) => (

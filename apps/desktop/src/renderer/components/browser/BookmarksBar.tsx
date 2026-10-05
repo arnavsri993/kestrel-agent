@@ -436,7 +436,7 @@ export function BookmarksBar({
 		<div className="browser-bookmarks-bar" aria-label="Bookmarks bar">
 			{!hasBookmarkItems ? (
 				<p className="browser-bookmarks-bar-empty">
-					Bookmark a page with ⌘D to pin it here.
+					Add favorites with ⌘D.
 				</p>
 			) : (
 				<ul className="browser-bookmarks-bar-list">
