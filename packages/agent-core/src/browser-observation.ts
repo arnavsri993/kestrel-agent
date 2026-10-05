@@ -216,7 +216,7 @@ function publicNode(node: InternalObservationNode): BrowserObservationNode {
 	return value;
 }
 
-function observationUrl(value: string): string {
+export function sanitizeBrowserObservationUrl(value: string): string {
 	const candidate = boundedText(value, MAX_OBSERVATION_URL);
 	try {
 		const url = new URL(candidate);
@@ -272,8 +272,8 @@ export function diffBrowserSnapshots(
 			after: publicNode(node),
 		}));
 
-	const beforeUrl = observationUrl(before.url);
-	const afterUrl = observationUrl(after.url);
+	const beforeUrl = sanitizeBrowserObservationUrl(before.url);
+	const afterUrl = sanitizeBrowserObservationUrl(after.url);
 	const beforeTitle = observationTitle(before.title);
 	const afterTitle = observationTitle(after.title);
 	const collapsedBeforeTitle = before.title.replace(/\s+/g, " ").trim();

@@ -26,6 +26,7 @@ import {
 } from "./browser-element-refs";
 import {
 	diffBrowserSnapshots,
+	sanitizeBrowserObservationUrl,
 	type BrowserObservationDiff,
 } from "./browser-observation";
 import { withBrowserRecovery } from "./browser-recovery";
@@ -45,6 +46,18 @@ export interface BrowserSnapshot {
 	interactive?: BrowserInteractiveRef[];
 	truncated?: boolean;
 }
+export type BrowserApprovalTargetContext = {
+	browserTarget: {
+		surface: "isolated" | "visible";
+		target: string;
+		role: string;
+		observedLabel?: string;
+		url: string;
+		browserSessionId?: string;
+		tabId?: string;
+		trust: "untrusted_browser";
+	};
+};
 export type BrowserActionResult = {
 	performed: true;
 	observation: BrowserObservationDiff;
@@ -301,6 +314,69 @@ export class BrowserController {
 		private readonly backend: BrowserAutomationBackend,
 		private readonly now: () => Date = () => new Date(),
 	) {}
+
+	private approvalTarget(
+		snapshot: BrowserSnapshot | undefined,
+		action: BrowserAction,
+		scope: { surface: "isolated"; browserSessionId: string } | { surface: "visible"; tabId: string },
+		protectText: (text: string) => string,
+	): BrowserApprovalTargetContext | undefined {
+		if (!(action.type === "click" || action.type === "type" || action.type === "select")) return undefined;
+		const ref = normalizeBrowserElementRef(action.target);
+		if (!ref || ref !== action.target) return undefined;
+		if (!snapshot) return undefined;
+		const observed = snapshot.interactive?.find((item) => item.ref === ref);
+		if (!observed) return undefined;
+		// Mask complete source strings before URL normalization or display bounds;
+		// truncating first could retain a prefix of a known task credential.
+		const role = protectText(observed.role);
+		const name = observed.name ? protectText(observed.name) : undefined;
+		let url = protectText(snapshot.url);
+		try {
+			const decodedUrl = decodeURIComponent(snapshot.url);
+			if (url === snapshot.url && protectText(decodedUrl) !== decodedUrl) {
+				// A browser may percent-encode a known credential in a path. Keep
+				// only the protected origin rather than expose its encoded echo.
+				url = protectText(new URL(url).origin);
+			}
+		} catch { /* Malformed URL text retains the existing sanitizer fallback. */ }
+		if (role.length > 100 || url.length > 2_048) return undefined;
+		return {
+			browserTarget: {
+				...scope,
+				target: ref,
+				role,
+				...(name && name.length <= 500 ? { observedLabel: name } : {}),
+				url: sanitizeBrowserObservationUrl(url),
+				trust: "untrusted_browser",
+			},
+		};
+	}
+
+	approvalContext(
+		ownerSessionId: string,
+		browserSessionId: string,
+		action: BrowserAction,
+		protectText: (text: string) => string = (text) => text,
+	): BrowserApprovalTargetContext | undefined {
+		const session = this.require(ownerSessionId, browserSessionId);
+		return this.approvalTarget(session.lastSnapshot, action, {
+			surface: "isolated",
+			browserSessionId,
+		}, protectText);
+	}
+
+	visibleApprovalContext(
+		tabId: string,
+		action: BrowserAction,
+		protectText: (text: string) => string = (text) => text,
+	): BrowserApprovalTargetContext | undefined {
+		this.validateVisibleTabId(tabId);
+		return this.approvalTarget(this.lastVisibleSnapshots.get(tabId), action, {
+			surface: "visible",
+			tabId,
+		}, protectText);
+	}
 
 	async create(
 		ownerSessionId: string,
@@ -1217,6 +1293,7 @@ export function installBrowserTools(
 		inputSchema: Record<string, unknown>,
 		execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"],
 		extraDescription?: string,
+		approvalContext?: Parameters<AgentRuntime["registerExternalTool"]>[0]["approvalContext"],
 	) => {
 		runtime.registerExternalTool({
 			descriptor: {
@@ -1232,6 +1309,7 @@ export function installBrowserTools(
 			},
 			inputSchema,
 			validateInput: validateBrowserInput(inputSchema),
+			...(approvalContext ? { approvalContext } : {}),
 			execute,
 		});
 		runtime.allowTool(sessionId, name);
@@ -1244,6 +1322,7 @@ export function installBrowserTools(
 		inputSchema: Record<string, unknown>,
 		execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"],
 		extraDescription?: string,
+		approvalContext?: Parameters<AgentRuntime["registerExternalTool"]>[0]["approvalContext"],
 	) => {
 		runtime.registerExternalTool({
 			descriptor: {
@@ -1259,6 +1338,7 @@ export function installBrowserTools(
 			},
 			inputSchema,
 			validateInput: validateBrowserInput(inputSchema),
+			...(approvalContext ? { approvalContext } : {}),
 			execute,
 		});
 		runtime.allowTool(sessionId, name);
@@ -1395,6 +1475,12 @@ export function installBrowserTools(
 				signal,
 			),
 		`${snapshotTargetDescription} ${recoveryContractDescription}`,
+		(input, session) => controller.approvalContext(
+			session.id,
+			String(input.browserSessionId),
+			input.action as BrowserAction,
+			(text) => runtime.taskSecrets.redact(session.id, text),
+		),
 	);
 	add(
 		"browser.snapshot",
@@ -1737,6 +1823,11 @@ export function installBrowserTools(
 				signal,
 			),
 		`${snapshotTargetDescription} ${recoveryContractDescription}`,
+		(input, session) => controller.visibleApprovalContext(
+			String(input.tabId),
+			input.action as BrowserAction,
+			(text) => runtime.taskSecrets.redact(session.id, text),
+		),
 	);
 	addVisible(
 		"browser.navigate-tab",

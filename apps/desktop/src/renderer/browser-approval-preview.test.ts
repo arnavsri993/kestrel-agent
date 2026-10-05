@@ -73,6 +73,79 @@ describe("browser approval preview", () => {
 		expect(markup).toContain("opaque-fixture");
 	});
 
+	it("shows the manager-observed label, exact ref, and sanitized page for a correlated click", () => {
+		const input = { browserSessionId: "opaque-fixture", action: { type: "click", target: "e1" } };
+		const item = execution("browser.act", input);
+		item.output = { ...item.output, approvalContext: { browserTarget: {
+			surface: "isolated", browserSessionId: input.browserSessionId,
+			target: "e1", role: "button", observedLabel: "Reveal verification",
+			url: "https://example.test/verify?step=1", trust: "untrusted_browser",
+		} } };
+
+		expect(browserApprovalPreview(item)).toMatchObject({
+			label: "Observed target",
+			values: [
+				"Reveal verification (button)",
+				"Reference: e1",
+				"Page: https://example.test/verify?step=1",
+			],
+		});
+		const markup = renderToStaticMarkup(createElement(RuntimeApprovalPreview, { execution: item }));
+		expect(markup).toContain("Reveal verification");
+		expect(markup).toContain("Reference: e1");
+		expect(markup).toContain("opaque-fixture");
+	});
+
+	it("ignores hostile or mismatched display metadata and preserves the exact action preview", () => {
+		const input = { browserSessionId: "opaque", action: { type: "click", target: "e1" } };
+		for (const browserTarget of [
+			{ surface: "isolated", browserSessionId: "other", target: "e1" },
+			{ surface: "isolated", browserSessionId: "opaque", target: "e2" },
+			{ surface: "visible", tabId: "opaque", target: "e1" },
+		]) {
+			const item = execution("browser.act", input);
+			item.output = { ...item.output, approvalContext: { browserTarget: {
+				...browserTarget,
+				role: "button", observedLabel: "Model supplied override",
+				url: "https://attacker.test/", trust: "untrusted_browser",
+			} } };
+			expect(browserApprovalPreview(item)?.values).toEqual(["e1"]);
+			expect(approvalPreviewText(item)).toBe(JSON.stringify(input, null, 2));
+		}
+	});
+
+	it("renders correlated observed targets for the visible browser scope", () => {
+		const tabId = "tab-00000000-0000-4000-8000-000000000000";
+		const item = execution("browser.visible-act", { tabId, action: { type: "click", target: "e1" } });
+		item.output = { ...item.output, approvalContext: { browserTarget: {
+			surface: "visible", tabId, target: "e1", role: "button",
+			observedLabel: "Reveal verification", url: "https://example.test/", trust: "untrusted_browser",
+		} } };
+		expect(browserApprovalPreview(item)).toMatchObject({
+			description: expect.stringContaining("user-visible browser"),
+			values: expect.arrayContaining(["Reveal verification (button)", "Reference: e1"]),
+		});
+	});
+
+	it("renders browser-supplied labels as inert text and bounds malformed context", () => {
+		const input = { browserSessionId: "opaque", action: { type: "click", target: "e1" } };
+		const target = {
+			surface: "isolated", browserSessionId: "opaque", target: "e1", role: "button",
+			observedLabel: '<script>ownedFixture()</script>', url: "https://example.test/", trust: "untrusted_browser",
+		};
+		const item = execution("browser.act", input);
+		item.output = { approvalContext: { browserTarget: target } };
+		const markup = renderToStaticMarkup(createElement(RuntimeApprovalPreview, { execution: item }));
+		expect(markup).toContain("&lt;script&gt;");
+		expect(markup).not.toMatch(/<(?:script|a)\b/);
+		for (const override of [
+			{ trust: "trusted" }, { observedLabel: "x".repeat(501) }, { role: "x".repeat(101) }, { url: "x".repeat(2_049) },
+		]) {
+			item.output = { approvalContext: { browserTarget: { ...target, ...override } } };
+			expect(browserApprovalPreview(item)?.values).toEqual(["e1"]);
+		}
+	});
+
 	it("never recovers private typing arguments from an expired or redacted preview", () => {
 		const input = { browserSessionId: "opaque", action: { type: "type", target: "e2", text: "private-fixture" } };
 		for (const preview of ["Private request expired.", JSON.stringify({ ...input, action: { ...input.action, text: "[REDACTED]" } })]) {

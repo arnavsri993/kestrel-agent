@@ -27,6 +27,48 @@ const runtimeErrors = [];
 async function section(value, label) {
 	await selectSettingsSection(page, value, label);
 }
+async function checkDelayedSettingsNavigation() {
+	await page.locator(".honcho-memory-setting").scrollIntoViewIfNeeded();
+	let navigationSettled = false;
+	let navigationError;
+	const navigation = openKestrelDestination(page, "Settings", {
+		beforeSelect: () => application.evaluate(() => {
+			globalThis.__kestrelChannelFixture.blockNextTabSelection = true;
+		}),
+	}).then(
+		() => { navigationSettled = true; },
+		(error) => { navigationSettled = true; navigationError = error; },
+	);
+	await expect.poll(() => application.evaluate(() => globalThis.__kestrelChannelFixture.pendingTabSelections.length)).toBe(1);
+	await new Promise(done => setImmediate(done));
+	assert.equal(navigationSettled, false, "Settings navigation must not resolve while its tab selection is still blocked");
+	await application.evaluate(() => {
+		globalThis.__kestrelChannelFixture.pendingTabSelections.splice(0).forEach(release => release());
+	});
+	await navigation;
+	if (navigationError) throw navigationError;
+	await section("agent-memory", "Memory & context");
+	const geometry = await page.evaluate(() => {
+		const viewport = document.querySelector("#browser-viewport").getBoundingClientRect();
+		const route = document.querySelector('.browser-app-page[data-app-page="settings"]');
+		const button = [...route.querySelectorAll(".settings-nav button")].find(node => node.textContent?.trim() === "Memory & context");
+		const picker = route.querySelector(".settings-section-picker select");
+		const target = button.checkVisibility() ? button : picker;
+		const bounds = target.getBoundingClientRect();
+		const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+		const rect = value => Object.fromEntries(["x", "y", "top", "right", "bottom", "left", "width", "height"].map(key => [key, value[key]]));
+		return {
+			insideViewport: bounds.left >= viewport.left && bounds.right <= viewport.right && bounds.top >= viewport.top && bounds.bottom <= viewport.bottom,
+			hitTarget: target === hit || target.contains(hit),
+			target: target === button ? "sticky navigation" : "compact picker",
+			position: getComputedStyle(route.querySelector(".settings-nav")).position,
+			viewport: rect(viewport),
+			button: rect(bounds),
+			hit: hit ? { tag: hit.tagName, id: hit.id, className: typeof hit.className === "string" ? hit.className : "" } : null,
+		};
+	});
+	assert(geometry.insideViewport && geometry.hitTarget && (geometry.target === "compact picker" || geometry.position === "sticky"), `A delayed Settings route must leave its responsive section control inside the active viewport and hit-testable: ${JSON.stringify(geometry)}`);
+}
 async function keyboardToggle(details) {
 	await details.locator("summary").first().focus();
 	await page.keyboard.press("Enter");
@@ -143,10 +185,14 @@ try {
 	await application.evaluate(({ ipcMain }) => {
 		const original = ipcMain._invokeHandlers?.get("kestrel:request");
 		if (typeof original !== "function") throw new Error("Owned channel fixture cannot capture the desktop request handler.");
-		const fixture = { channels: null, holdGets: false, pendingGets: [], inFlightGets: 0, completedGets: 0, failSave: false };
+		const fixture = { channels: null, holdGets: false, pendingGets: [], inFlightGets: 0, completedGets: 0, failSave: false, blockNextTabSelection: false, pendingTabSelections: [] };
 		globalThis.__kestrelChannelFixture = fixture;
 		ipcMain.removeHandler("kestrel:request");
 		ipcMain.handle("kestrel:request", async (event, request) => {
+			if (request.type === "browser-select-tab" && fixture.blockNextTabSelection) {
+				fixture.blockNextTabSelection = false;
+				await new Promise(done => fixture.pendingTabSelections.push(done));
+			}
 			if (request.type === "channel-list" && fixture.channels) return { ok: true, channels: fixture.channels };
 			if (request.type === "channel-interaction-set" && fixture.failSave) return { ok: false, error: "Owned channel save failure." };
 			if (request.type !== "channel-interaction-get") return original(event, request);
@@ -168,6 +214,7 @@ try {
 	if (await closeChat.isVisible()) await closeChat.click();
 
 	await section("agent-memory", "Memory & context");
+	await checkDelayedSettingsNavigation();
 	await checkChannelSettings();
 	const honcho = page.locator(".honcho-memory-setting");
 	const connection = honcho.locator(".honcho-connection");

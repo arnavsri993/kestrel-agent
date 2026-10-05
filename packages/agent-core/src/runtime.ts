@@ -211,6 +211,11 @@ interface RuntimeToolDefinition {
 	inputSchema: z.ZodType<Record<string, unknown>>;
 	jsonSchema?: Record<string, unknown>;
 	validateInput?(input: Record<string, unknown>): string | undefined;
+	/** Trusted, display-only context correlated with the validated request. */
+	approvalContext?(
+		input: Record<string, unknown>,
+		session: RuntimeSession,
+	): Record<string, unknown> | undefined;
 	redactInput?(input: Record<string, unknown>): Record<string, unknown>;
 	redactOutput?(output: Record<string, unknown>): Record<string, unknown>;
 	outputSchema: z.ZodType<Record<string, unknown>>;
@@ -252,6 +257,11 @@ export interface ExternalRuntimeTool {
 	inputSchema: Record<string, unknown>;
 	/** Trusted adapter validation runs before policy or approval; errors contain no input values. */
 	validateInput?(input: Record<string, unknown>): string | undefined;
+	/** Trusted, display-only context. It never changes the executable request or approval identity. */
+	approvalContext?(
+		input: Record<string, unknown>,
+		session: RuntimeSession,
+	): Record<string, unknown> | undefined;
 	/** The durable journal receives this bounded projection; execution uses the original input. */
 	redactInput?(input: Record<string, unknown>): Record<string, unknown>;
 	/** The model receives the result, while durable journals receive this projection. */
@@ -1892,6 +1902,7 @@ export class AgentRuntime extends EventEmitter {
 			inputSchema: z.record(z.string(), z.unknown()),
 			jsonSchema: tool.inputSchema,
 			...(tool.validateInput ? { validateInput: tool.validateInput } : {}),
+			...(tool.approvalContext ? { approvalContext: tool.approvalContext } : {}),
 			outputSchema: z.record(z.string(), z.unknown()),
 			execute: ({ session, executionId, signal, workspaceRoot, progress }, input) =>
 				tool.execute(
@@ -2419,6 +2430,10 @@ export class AgentRuntime extends EventEmitter {
 				definition.descriptor,
 			);
 		}
+		const approvalContext = !policy.allowed && policy.approvalRequired &&
+			!inputValidationError && !options.executionBlock
+				? this.trustedApprovalContext(definition, input, session)
+				: undefined;
 		let execution = RuntimeToolExecutionSchema.parse({
 			id: `tool-${randomUUID()}`,
 			sessionId: session.id,
@@ -2434,6 +2449,7 @@ export class AgentRuntime extends EventEmitter {
 						output: {
 							...(options.executionBlock?.output ?? {}),
 							preview: this.approvalPreview(session, toolName, input),
+							...(approvalContext ? { approvalContext } : {}),
 							approvalRequired: policy.approvalRequired,
 							persistentApprovalAllowed:
 								!inputValidationError && !options.executionBlock && !requiresExplicitApproval,
@@ -4926,6 +4942,23 @@ export class AgentRuntime extends EventEmitter {
 				.slice(0, 20_000);
 		} catch {
 			return JSON.stringify(input, null, 2).slice(0, 20_000);
+		}
+	}
+
+	private trustedApprovalContext(
+		definition: RuntimeToolDefinition,
+		input: Record<string, unknown>,
+		session: RuntimeSession,
+	): Record<string, unknown> | undefined {
+		try {
+			const context = definition.approvalContext?.(input, session);
+			if (!context) return undefined;
+			const serialized = JSON.stringify(context);
+			return serialized.length <= 20_000 ? context : undefined;
+		} catch {
+			// Missing or stale observation context must never block the ordinary,
+			// complete approval preview.
+			return undefined;
 		}
 	}
 

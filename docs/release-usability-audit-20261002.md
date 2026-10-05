@@ -1015,3 +1015,81 @@ review/security gates. The new fixture is included in local verification and
 source/packaged CI. Installation and native proof for this follow-up must still
 be recorded separately from the completed `5f464791` browser journey. Required
 CodeQL/review, AI-review quota and public signing/notarization remain open.
+
+### Installed menu and Settings verification — October 5
+
+The canonical `/Applications/Kestrel.app` independently identifies clean source
+`e334df9de93d9cd5917ca125bcb9c2ce26a06da2`. Desktop/core artifact hashes and
+deep development-signature verification pass. Its main process runs from that
+canonical bundle. The previously locked Mac is now available for native checks:
+Down Arrow moves project-menu focus to New chat, End moves it to Project
+settings, and Escape restores the project trigger. The menu was inspected in
+the real profile without changing any projects or chats.
+
+Native Settings inspection passes compact Memory navigation beside docked Chat,
+then desktop General-to-Memory navigation after closing Chat. Best quality,
+enabled Codex accounts, disabled other listed providers and zero local endpoints
+remain visible. No real-profile screenshots or accessibility dumps were saved.
+The complete owned installed Settings disclosure/storage/draft fixture passes
+again from the resumed checkout. The preceding saved sixteen-cycle navigation
+stress run also finished successfully; that historical run is distinct from
+the fresh complete fixture. The exact-head desktop CI failure remains recorded
+until a corrected navigation regression and a new remote run establish its
+status.
+
+Current public-release checks still find zero valid local signing identities
+and no repository or `macos-release` environment secret names. These checks do
+not establish public notarization, updater continuity or clean-machine release
+readiness. CodeQL annotations and required independent review remain open.
+
+### Settings navigation synchronization — October 5
+
+The desktop fixture's destination helper returned after dispatching the command,
+while the renderer was still awaiting the existing Settings tab selection. An
+exiting Settings subtree remains visible during the route transition with
+pointer events disabled, so a global section locator could select controls from
+that subtree. The helper now clicks the real command control, waits for one
+interactive, non-inert Settings page, scopes section controls to that page, and
+checks the selected section after both desktop and compact navigation. A failed
+desktop click includes viewport, route, navigation, target and hit-test geometry.
+
+The owned regression explicitly holds tab selection and requires the navigation
+promise to remain pending until release. Removing only the route wait reproduces
+premature completion; restoring it passes the full installed disposable-profile
+disclosure fixture. This proves the synchronization defect and its correction.
+The previous exact-head remote pointer-interception failure is retained until
+new CI verifies the follow-up; the test does not force clicks or add sleeps to
+conceal hit-test failures.
+
+### Readable observed browser approvals — October 5
+
+Click, type and select approvals can now show the latest manager-observed
+element label, role, exact reference and protected page URL. The isolated
+session or visible tab must match the approved action. This display context is
+separate from the executable input and its protected preview; missing, stale,
+oversized or mismatched context retains the original reference and complete
+Action details. Browser labels remain untrusted inert text and confer no
+permission. Navigation invalidates the prior observation. The same ownership,
+origin, input validation and one-time approval checks continue to govern actions.
+
+Complete observed strings pass through task-secret masking before URL
+normalization and display bounds. Oversized fields fall back without slicing
+credential prefixes, URL user information and sensitive parameters are removed,
+and detected percent-encoded credential echoes retain only the protected origin.
+Runtime projection also protects the context before database and model output.
+Regression coverage checks unchanged inputs and approval correlation, actual
+approved execution, ownership/stale references, credential masking in returned,
+persisted and model-visible metadata, long/whitespace/encoded credentials,
+visible-tab correlation and inert rendering of hostile markup.
+
+All 2,220 unit tests in 265 files pass with two workers, repository type checks
+pass, and the final desktop build and production browser secret scan pass. The
+initial unrestricted parallel unit run exhausted disk space and is invalid as
+behavioral evidence. Cleanup was limited to identified temporary fixtures and
+rebuildable outputs from this audit; saved evidence, source and user data remain.
+Source desktop approval-failure/recovery, conversation-only task-scope and the
+complete Settings disclosure fixtures also pass. They use synthetic providers or
+owned HTTP fixtures and disposable
+profiles and do not establish a genuine provider/browser journey. Fresh canonical
+installation, native approval proof and exact-head CI remain separate delivery
+checks. Required official review, CodeQL and public signing remain open.
