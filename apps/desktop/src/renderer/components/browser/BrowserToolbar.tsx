@@ -888,6 +888,7 @@ export function BrowserToolbar({
   return (
     <div
       className="browser-toolbar"
+      role="group"
       aria-label="Browser toolbar"
     >
       <div
@@ -1048,8 +1049,6 @@ export function BrowserToolbar({
           <motion.div
             key="browser-address-suggestions"
             className="browser-address-suggestions"
-            id="browser-address-suggestions"
-            aria-label="Address suggestions"
             initial={reducedMotion ? false : { opacity: 0, y: -4, scale: 0.992 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={
@@ -1062,6 +1061,7 @@ export function BrowserToolbar({
           >
             <div
               className="browser-address-suggestion-list"
+              id="browser-address-suggestions"
               role="listbox"
               aria-label="Address suggestions"
             >

@@ -56,7 +56,8 @@ export function Button({
       aria-busy={busy || undefined}
       disabled={busy || props.disabled}
     >
-      {busy ? <span className="ui-spinner" aria-hidden="true" /> : children}
+      <span className="ui-button-label">{children}</span>
+      {busy ? <span className="ui-spinner" aria-hidden="true" /> : null}
     </button>
   );
 }

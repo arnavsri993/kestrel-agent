@@ -1,3 +1,10 @@
+# Control details — October 5, 2026
+
+The current refinement's locked system and acceptance criteria are in
+[docs/design/thoughtful-ui.md](docs/design/thoughtful-ui.md). It extends the
+existing designs below with quieter navigation, consistent control states,
+compact widget presentation and a visible keyboard focus boundary.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

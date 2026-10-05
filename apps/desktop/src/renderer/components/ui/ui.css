@@ -1,4 +1,5 @@
 .ui-button {
+	position: relative;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -18,6 +19,23 @@
 		color var(--motion-feedback) var(--ease-kestrel),
 		transform var(--motion-feedback) var(--ease-kestrel),
 		box-shadow var(--motion-state) var(--ease-kestrel);
+}
+
+/* Loading retains the action's name and intrinsic width. Opacity keeps the
+   label in the accessibility tree while the centered spinner is decorative. */
+.ui-button-label {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: inherit;
+	min-width: 0;
+}
+
+.ui-button[aria-busy="true"] .ui-button-label { opacity: 0; }
+.ui-button[aria-busy="true"] > .ui-spinner {
+	position: absolute;
+	inset: 0;
+	margin: auto;
 }
 
 .ui-button:focus-visible {

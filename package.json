@@ -49,6 +49,7 @@
     "test:desktop-autofill": "node --import tsx scripts/test-autofill-preload.mjs && node scripts/test-autofill-desktop.mjs",
     "test:desktop-auth-links": "node scripts/test-desktop-auth-links.mjs",
     "test:desktop-layout": "node scripts/test-desktop-layout.mjs",
+    "test:desktop-ui-details": "node scripts/test-desktop-ui-details.mjs",
     "test:desktop-project-system": "node scripts/test-desktop-project-system.mjs",
     "test:desktop-settings": "node scripts/test-desktop-settings.mjs",
     "test:desktop-writing-studio": "node scripts/test-desktop-writing-studio.mjs",

@@ -1,0 +1,177 @@
+/* A small shared vocabulary for Kestrel's high-frequency controls.
+   Layout, glass material, permissions and component behavior stay local. */
+.ai-browser-app.unified-ui {
+	--detail-hover: color-mix(in srgb, var(--ink) 7%, transparent);
+	--detail-pressed: color-mix(in srgb, var(--ink) 12%, transparent);
+	--detail-selected: color-mix(in srgb, var(--ink) 9%, transparent);
+}
+
+/* One visible keyboard boundary, independent of hover or material support. */
+.ai-browser-app.unified-ui :is(
+	.ui-button, .browser-navigation button, .browser-toolbar-actions button,
+	.kestrel-sidebar-row, .kestrel-sidebar-new-task, .home-add-shortcut,
+	.home-personalize > summary, .kestrel-widget-page-arrow
+):focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+
+.ai-browser-app.unified-ui :is(.ui-button, .button) {
+	border-radius: 12px;
+	font-size: 14px;
+	font-weight: 550;
+}
+
+.ai-browser-app.unified-ui .ui-button-icon {
+	width: 36px;
+	min-width: 36px;
+	height: 36px;
+	min-height: 36px;
+	padding: 0;
+	border-radius: 50%;
+}
+
+.ai-browser-app.unified-ui .ui-button[aria-busy="true"] {
+	opacity: 1;
+	cursor: progress;
+}
+
+/* Navigation is a rail, not a stack of competing action panels. */
+.ai-browser-app.unified-ui .kestrel-sidebar-new-task {
+	border: 1px solid var(--line);
+	background: transparent;
+	color: var(--ink);
+}
+
+.ai-browser-app.unified-ui .kestrel-sidebar-new-task:hover {
+	border-color: var(--line-strong);
+	background: var(--detail-hover);
+}
+
+.ai-browser-app.unified-ui .kestrel-sidebar-primary .kestrel-sidebar-nav-item.active {
+	background: var(--detail-selected);
+	box-shadow: inset 3px 0 0 var(--ink-secondary);
+	font-weight: 600;
+}
+
+.ai-browser-app.unified-ui .kestrel-sidebar-section-heading h2 {
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 550;
+	letter-spacing: 0;
+	text-transform: none;
+}
+
+/* Utility actions stay quiet until hover, focus or an open menu. */
+.ai-browser-app.unified-ui .browser-toolbar-actions button:not(:disabled):is(:hover, [aria-expanded="true"]) {
+	background: var(--detail-hover);
+	color: var(--ink);
+}
+
+.ai-browser-app.unified-ui .browser-agent-toggle-quick {
+	margin-inline-start: 6px;
+	box-shadow: -7px 0 0 -6px var(--line-strong);
+}
+
+.ai-browser-app.unified-ui .browser-navigation button:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.ai-browser-app.unified-ui .browser-address:focus-within {
+	border-color: var(--ink-secondary);
+	box-shadow: 0 0 0 1px var(--ink-secondary);
+}
+
+/* Widget titles and rows share a rhythm; icons identify content without
+   surrounding every glyph with another nested elevated surface. */
+.ai-browser-app.unified-ui .kestrel-widget-card-header {
+	align-items: center;
+	gap: 8px;
+	padding: 16px 16px 10px;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-card-icon {
+	width: 20px;
+	height: 20px;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: var(--muted);
+	box-shadow: none;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-card-heading h3 {
+	font: 600 14px / 20px var(--sans);
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-list-icon:not(:has(img)) {
+	border-color: transparent;
+	background: transparent;
+	box-shadow: none;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-list strong {
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 20px;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-list small {
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-empty {
+	padding: 12px 6px;
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-small-action:last-child {
+	margin-inline-start: 5px;
+	border-inline-start: 1px solid var(--line-strong);
+}
+
+/* Keep short lists compact instead of stretching them through blank panels.
+   Editing retains the user's explicitly selected widget sizes. */
+.ai-browser-app.unified-ui .new-tab-page.kestrel-home .kestrel-widget-canvas:not(.is-editing) .kestrel-widget-shelves {
+	flex: 0 1 auto;
+	align-content: start;
+	grid-auto-rows: minmax(0, auto);
+	grid-template-rows: repeat(var(--kestrel-widget-page-rows, 1), minmax(0, auto));
+}
+
+.ai-browser-app.unified-ui .new-tab-page.kestrel-home .kestrel-widget-canvas:not(.is-editing) .kestrel-widget-card {
+	grid-row: auto;
+	min-height: 152px;
+}
+
+.ai-browser-app.unified-ui :is(.kestrel-home-composer, .composer):focus-within {
+	border-color: var(--ink-secondary);
+	outline: 2px solid var(--focus);
+	outline-offset: 3px;
+}
+
+@media (max-height: 650px) {
+	.ai-browser-app.unified-ui .kestrel-widget-card-header { padding-block: 10px 6px; }
+	.ai-browser-app.unified-ui .new-tab-page.kestrel-home .kestrel-widget-canvas:not(.is-editing) .kestrel-widget-card { min-height: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ai-browser-app.unified-ui :is(.ui-button, .browser-address, .kestrel-sidebar-new-task) { transition: none; }
+	.ui-button[aria-busy="true"] > .ui-spinner { animation: none; }
+}
+
+@media (forced-colors: active) {
+	.ai-browser-app.unified-ui .kestrel-sidebar-primary .kestrel-sidebar-nav-item.active {
+		border-inline-start: 3px solid Highlight;
+		box-shadow: none;
+	}
+	.ai-browser-app.unified-ui :is(.kestrel-home-composer, .composer, .browser-address):focus-within {
+		outline-color: Highlight;
+		border-color: Highlight;
+		box-shadow: none;
+	}
+}
