@@ -113,6 +113,37 @@ try {
  });
  assert((await request({ type: "browser-update-settings", settings: { ...state.settings, tabLayout: "vertical" } })).ok);
  await expect(page.locator(".browser-tab-row-vertical .browser-tab.active")).toBeVisible();
+ for (const zoom of [1, 2]) {
+  await app.evaluate(({ BrowserWindow }, zoom) => {
+   const w = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/renderer/index.html"));
+   w.setSize(1024, 684); w.webContents.setZoomFactor(zoom);
+  }, zoom);
+  await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+  const menu = page.getByRole("menu", { name: "Tab tools", exact: true });
+  await expect(menu).toBeVisible();
+  const openTabs = menu.getByRole("menuitem", { name: "Open Tabs", exact: true });
+  if (await openTabs.getAttribute("aria-expanded") !== "true") await openTabs.click();
+  await expect(menu.locator(".browser-tab-search-results button")).toHaveCount(15);
+  await expect.poll(() => menu.evaluate(node => {
+   const box = node.getBoundingClientRect();
+   return {
+    fits: box.left >= 0 && box.right <= innerWidth + 1 && box.top >= 0 && box.bottom <= innerHeight - 8,
+    x: box.x, y: box.y, width: box.width, height: box.height, viewport: [innerWidth, innerHeight],
+    maxHeight: getComputedStyle(node).maxHeight,
+   };
+  })).toMatchObject({ fits: true });
+  // Keyboard users must still reach the last action when the menu is constrained.
+  const lastAction = menu.getByRole("menuitem").last();
+  await lastAction.focus();
+  await expect.poll(() => lastAction.evaluate(node => {
+   const box = node.getBoundingClientRect();
+   const menuBox = node.closest('[role="menu"]').getBoundingClientRect();
+   return box.top >= menuBox.top - 1 && box.bottom <= menuBox.bottom + 1;
+  })).toBe(true);
+  await page.screenshot({ animations: "disabled", path: join(evidence, `vertical-menu-${zoom}.png`) });
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+ }
  assert.deepEqual(errors, []);
- console.log("Tab fit smoke passed: compact four-tab rail, 15 long tabs, both sizing modes, narrow width, 200% zoom, selected-tab visibility and vertical mode.");
+ console.log("Tab fit smoke passed: compact four-tab rail, 15 long tabs, both sizing modes, narrow width, 200% zoom, selected-tab visibility and contained vertical menus with reachable actions.");
 } finally { await app?.close(); rmSync(root, { recursive: true, force: true }); }

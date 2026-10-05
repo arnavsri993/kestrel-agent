@@ -125,6 +125,11 @@
 :is(.browser-toolbar-popover, .model-selector-menu, .new-tab-access-menu, .agent-history-popover, .browser-tab-tools-menu, .browser-tab-menu, .browser-bookmarks-bar-folder-menu, .kestrel-sidebar-context-menu, .kestrel-widget-add-popover, .kestrel-widget-size-popover, .agent-universe-create-agent-popover) :is(button[role="menuitem"], button[role="menuitemradio"], button[role="menuitemcheckbox"]) {
  min-height: 36px; border-radius: 10px; font-size: 14px; line-height: 20px;
 }
+.browser-tab-tools-menu { box-sizing: border-box; }
+.browser-tab-row-vertical .browser-tab-tools-menu {
+ /* Reserve the toolbar, bookmarks row, vertical trigger and a bottom gap. */
+ max-height: min(640px, calc(100dvh - 132px));
+}
 
 @supports (backdrop-filter: blur(16px)) {
  .ai-browser-app .kestrel-home .kestrel-home-composer {
