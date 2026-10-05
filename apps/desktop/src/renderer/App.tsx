@@ -3097,6 +3097,33 @@ function RuntimeConversation({
 	const streamSessionIdRef = useRef<string | null>(null);
 	const activeSessionIdRef = useRef(activeSessionId);
 	const taskSettingsRef = useRef<HTMLDetailsElement>(null);
+	useEffect(() => {
+		function dismissOutside(event: Event) {
+			const details = taskSettingsRef.current;
+			if (details?.open && event.target instanceof Node && !details.contains(event.target)) details.open = false;
+		}
+		function dismissOnEscape(event: globalThis.KeyboardEvent) {
+			const details = taskSettingsRef.current;
+			if (event.key !== "Escape" || !details?.open) return;
+			event.preventDefault();
+			event.stopPropagation();
+			details.open = false;
+			details.querySelector<HTMLElement>("summary")?.focus();
+		}
+		window.addEventListener("pointerdown", dismissOutside);
+		window.addEventListener("focusin", dismissOutside);
+		// The popover owns the first Escape; compact chat keeps its next Escape.
+		window.addEventListener("keydown", dismissOnEscape, true);
+		return () => {
+			window.removeEventListener("pointerdown", dismissOutside);
+			window.removeEventListener("focusin", dismissOutside);
+			window.removeEventListener("keydown", dismissOnEscape, true);
+		};
+	}, []);
+	useEffect(() => {
+		// Conversation and task transitions must expose results and approvals.
+		if (taskSettingsRef.current) taskSettingsRef.current.open = false;
+	}, [activeSessionId, busy, pending, visible]);
 	const externalIntakeRequestIdRef = useRef(0);
 	const sessionLoadSequenceRef = useRef(0);
 	const transcriptLoadKeyRef = useRef<string | null>(null);

@@ -69,12 +69,12 @@ export function AgentSettingsDialog({ session, sessions, onClose, onSaved }: {
 				<details key={item.id}><summary>{item.title}{item.specialistDefinition?.enabled ? "" : " · disabled"}</summary>{editor(item)}</details>)}
 			{sessions.some(item => item.parentSessionId === session.id && item.specialistDefinition?.archived) && <details><summary>Archived specialists</summary>
 				<p>History and memory are retained. Restore a specialist, then enable it when needed.</p>
-				{sessions.filter(item => item.parentSessionId === session.id && item.specialistDefinition?.archived).map(item => <p key={item.id}>{item.title} <button type="button" disabled={busy} onClick={() => void archive(item, false)}>Restore {item.title}</button></p>)}
+				{sessions.filter(item => item.parentSessionId === session.id && item.specialistDefinition?.archived).map(item => <p key={item.id}>{item.title} <button type="button" className="button secondary" disabled={busy} onClick={() => void archive(item, false)}>Restore {item.title}</button></p>)}
 			</details>}
 			<details><summary>Add specialist</summary><form onSubmit={event => { event.preventDefault(); void add(event.currentTarget); }}>
 				<label>Name<input name="name" required maxLength={200} /></label>
 				<label>Purpose<textarea name="purpose" required maxLength={2000} /></label>
-				<button type="submit" disabled={busy}>Add specialist</button>
+				<button type="submit" className="button primary" disabled={busy}>Add specialist</button>
 			</form></details>
 		</>}
 	</dialog>;

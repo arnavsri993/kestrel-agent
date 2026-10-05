@@ -734,3 +734,39 @@ saved. CI `37245549757` passed the core job and prior desktop steps but failed
 at the new surface audit setup; later packaged steps were skipped. A new exact
 head CI run is required for this repair. These checks do not establish a new
 current-head provider generation, independent security review or public signing.
+
+### Task-settings dismissal and specialist action targets
+
+The native `2ef788d0` Auto/Codex browser journey completed in a newly created
+Agent-tab agent using owned loopback pages only. Four actions received one-time
+approval. Alpha cost $12, Beta $7, and the observed sum was $19. The owned server
+independently recorded one Reveal request, the exact displayed verification
+value, and no visit to the unrelated trap. Kestrel also ran its own independent
+result review; its caveats about build/settings/approval-history proof remain
+separate from native About/settings observations. Both exact-head CI jobs passed,
+including the new packaged 167/167 surface audit, with zero renderer errors.
+
+That live task exposed a Task settings popover left open above its approval
+buttons. It did not dismiss with Escape or outside interaction. The conversation
+popover now closes on Escape with focus returned to its trigger, on outside
+pointer/focus interaction without taking focus from the next control, and on
+conversation/task visibility transitions so it cannot hide a new approval.
+The existing desktop layout regression now checks dismissal, model-picker
+interaction and focus return at its responsive widths. It fails on installed
+`2ef788d0` at the Escape assertion and passes against the changed source. The
+first outside-click test attempted a textarea covered by the popover; the final
+check uses the visible model-picker trigger and verifies its actual dialog opens.
+
+Manual review of the Agent settings/add/editor/archive, Memory editor and toolbar
+menu captures also found Add specialist and Restore using default short buttons.
+Both now use the shared dialog button styles. The owned full source catalog tour
+passes all 167 states and measures both actions at 40px in desktop and compact
+layouts; creation, archive and restore still run through the actual fixture UI.
+The Add desktop and archived compact screenshots were inspected after the change.
+Desktop build, type checking, production secret scan and diff checking pass.
+A disposable-home audit temporarily changed local pnpm dependency metadata;
+the dependency directory was preserved for recovery and restored from the frozen
+lockfile to the normal store before repeating type checking and the secret scan.
+Canonical installed/native evidence and exact-head CI for this follow-up still
+need refreshing. None of these results establishes public signing, independent
+security signoff or full comparative superiority over another product.

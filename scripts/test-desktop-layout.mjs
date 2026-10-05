@@ -1245,7 +1245,21 @@ async function assertTaskSettingsAtCurrentWidth(page) {
 		.locator('.agent-conversation-host .task-settings[open] .task-settings-panel')
 		.waitFor();
 	assertTaskSettingsLayout(await readTaskSettingsLayout(page));
-	await details.evaluate((element) => element.removeAttribute("open"));
+	await page.keyboard.press("Escape");
+	assert.equal(await details.evaluate(element => element.open), false, "Escape dismisses Task settings");
+	assert.equal(await page.locator(".agent-conversation-host .task-settings-trigger").evaluate(element => element === document.activeElement), true, "Escape returns focus to Task settings");
+	assert.equal(await page.locator("#browser-agent-toggle").getAttribute("aria-expanded"), "true", "Dismissing Task settings keeps the compact chat open");
+	await page.locator(".agent-conversation-host .task-settings-trigger").click();
+	await details.locator(".task-settings-panel").waitFor();
+	await page.locator(".agent-conversation-host .model-selector-trigger").click();
+	assert.equal(await details.evaluate(element => element.open), false, "Opening the model picker dismisses Task settings");
+	await page.getByRole("dialog", { name: "Choose a provider, account, model, and thinking level" }).waitFor();
+	await page.keyboard.press("Escape");
+	await page.locator(".agent-conversation-host .task-settings-trigger").click();
+	await details.locator(".task-settings-panel").waitFor();
+	await page.locator("#runtime-prompt").focus();
+	assert.equal(await details.evaluate(element => element.open), false, "Moving focus to the composer dismisses Task settings");
+	assert.equal(await page.locator("#runtime-prompt").evaluate(element => element === document.activeElement), true, "Outside dismissal preserves the new control's focus");
 }
 
 async function readZoomReflow(page) {
