@@ -971,3 +971,47 @@ The probe now waits for enough opening distance before reversing, retaining its
 in-flight continuity, closing, reopening and completion assertions. It passes
 against the installed candidate; no production animation requirement or timeout
 was weakened. Required review, CodeQL and public signing remain separate gates.
+
+### Current native browser proof and project-menu follow-up
+
+Exact-head CI at `5f464791` passed both core/website/security and desktop/packaged
+arm64 jobs. The canonical app independently matched that clean source identity;
+native About visibly confirmed it, with existing projects and chats preserved.
+All four channel fields and Save fit beside the docked chat. Auto, Automatic
+reasoning, Best quality, Codex-only accounts and zero local endpoints were
+visibly confirmed without changing settings. A fresh native Agent browser task
+completed through four inspected one-time approvals: one actual reveal, the
+fresh server value `BROWSER-fc42f204029ca44e`, Beta at $7, total $19 and a verified
+delegated review. The owned server recorded one reveal and zero injected trap
+visits and was stopped normally. This proves that bounded scenario at that head.
+
+Read-only native inspection then found that Down Arrow did not move focus in
+the project context menu. A clean owned installed-head fixture additionally
+showed a long chat menu extending below short windows, fixed sizing estimates
+failing at the right edge, and delayed page focus taking focus from an open menu.
+The initial reproduction hit a full-disk error; its later checks are invalid.
+After removing only this task's rebuildable dependency/native fixture outputs,
+the clean rerun reproduced twelve failed checks with zero renderer errors.
+Source, evidence, canonical app, Trash, profiles and credentials were preserved.
+
+Project/chat menus now size consistently, measure their actual dimensions and
+retain an eight-pixel window margin across resize and content growth. Arrow,
+Home and End keys move among enabled items; unavailable/current targets remain
+disabled, and Escape restores the trigger. Delayed page focus respects a menu,
+dialog or later interaction that already owns focus. The thirteen-check owned
+fixture passes desktop and 900-pixel menu entry, long lists, exact edge anchors,
+open-menu resize to 800 pixels, keyboard move/remove of the synthetic chat,
+held-read focus recovery, explicit synthetic DOM growth and settled animation
+completion/removal. It does not claim IPC content-change coverage, intermediate
+animation trajectories or every responsive state. At 800 pixels and below, the
+existing icon rail uses the Projects page instead of showing project/chat rows.
+
+The focused source passes desktop type checking/build, nineteen project/sidebar
+unit tests, the thirteen menu checks, the 174-state surface audit without renderer
+errors, production secret scanning, syntax and diff checks. An independent
+bounded review records matching hashes of all six focused source/configuration
+files and no remaining findings; it did not launch the app or clear official
+review/security gates. The new fixture is included in local verification and
+source/packaged CI. Installation and native proof for this follow-up must still
+be recorded separately from the completed `5f464791` browser journey. Required
+CodeQL/review, AI-review quota and public signing/notarization remain open.

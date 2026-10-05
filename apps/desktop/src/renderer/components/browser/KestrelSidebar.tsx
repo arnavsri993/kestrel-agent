@@ -77,10 +77,10 @@ function persistExpandedProjectId(projectId: string | null): void {
 	}
 }
 
-function clampContextMenuPosition(top: number, left: number): { top: number; left: number } {
+function clampContextMenuPosition(top: number, left: number, width: number, height: number): { top: number; left: number } {
 	return {
-		top: Math.max(8, Math.min(top, window.innerHeight - 280)),
-		left: Math.max(8, Math.min(left, window.innerWidth - 236)),
+		top: Math.max(8, Math.min(top, window.innerHeight - height - 8)),
+		left: Math.max(8, Math.min(left, window.innerWidth - width - 8)),
 	};
 }
 
@@ -153,14 +153,43 @@ function SidebarContextMenu({
 	onMoveSession(sessionId: string, projectId: string | null): void;
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
+	const [position, setPosition] = useState({ top: menu.top, left: menu.left });
 
-	useEffect(() => {
+	useLayoutEffect(() => {
+		const element = menuRef.current;
+		if (!element) return;
+		const updatePosition = () => {
+			// offset dimensions exclude the entrance animation's scale/translation.
+			const next = clampContextMenuPosition(menu.top, menu.left, element.offsetWidth, element.offsetHeight);
+			setPosition(current => current.top === next.top && current.left === next.left ? current : next);
+		};
+		updatePosition();
+		const observer = new ResizeObserver(updatePosition);
+		observer.observe(element);
+		window.addEventListener("resize", updatePosition);
+		return () => { observer.disconnect(); window.removeEventListener("resize", updatePosition); };
+	}, [menu.top, menu.left, menu.id, menu.kind, menuRef]);
+
+	useLayoutEffect(() => {
 		menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-	}, [menu.id, menu.kind, menuRef]);
+	}, [menu, menuRef]);
 
 	function action(run: () => void) {
 		onClose({ restoreFocus: true });
 		run();
+	}
+
+	function navigateWithKeyboard(event: ReactKeyboardEvent<HTMLDivElement>) {
+		if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+		const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)')];
+		if (items.length === 0) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const current = items.findIndex(item => item === document.activeElement);
+		const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+			: event.key === "ArrowDown" ? (current + 1) % items.length
+			: current <= 0 ? items.length - 1 : current - 1;
+		items[next]?.focus();
 	}
 
 	return (
@@ -176,8 +205,9 @@ function SidebarContextMenu({
 					: { opacity: 0, y: -2, scale: 0.985, pointerEvents: "none" }
 			}
 			transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
-			style={{ top: menu.top, left: menu.left, transformOrigin: "top left" }}
+			style={{ ...position, transformOrigin: "top left" }}
 			onContextMenu={(event) => event.preventDefault()}
+			onKeyDown={navigateWithKeyboard}
 		>
 			{menu.kind === "project" && project ? (
 				<>
@@ -533,7 +563,8 @@ export function KestrelSidebar({
 		setContextMenu({
 			kind: "project",
 			id: project.id,
-			...clampContextMenuPosition(event.clientY, event.clientX),
+			top: event.clientY,
+			left: event.clientX,
 		});
 	}
 
@@ -543,7 +574,8 @@ export function KestrelSidebar({
 		setContextMenu({
 			kind: "chat",
 			id: chat.id,
-			...clampContextMenuPosition(event.clientY, event.clientX),
+			top: event.clientY,
+			left: event.clientX,
 		});
 	}
 
@@ -560,7 +592,8 @@ export function KestrelSidebar({
 		setContextMenu({
 			kind,
 			id,
-			...clampContextMenuPosition(rect.bottom + 4, rect.left + 8),
+			top: rect.bottom + 4,
+			left: rect.left + 8,
 		});
 	}
 

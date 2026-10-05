@@ -98,6 +98,7 @@ jobs:
       - run: corepack pnpm test:desktop-fresh-profile
       - run: corepack pnpm test:desktop-personas
       - run: corepack pnpm test:desktop-kanban
+      - run: corepack pnpm test:desktop-project-menus
       - run: corepack pnpm test:desktop-model-routing
       - run: corepack pnpm test:desktop-provider-accounts
       - run: corepack pnpm test:desktop-auth-links
@@ -114,6 +115,7 @@ jobs:
       - run: corepack pnpm test:desktop-chat-configuration
       - run: corepack pnpm test:desktop-managed-policy
       - run: corepack pnpm package:mac:dev
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-project-menus
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-approval-failure
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-task-scope
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-settings-disclosures
@@ -163,6 +165,7 @@ jobs:
             .tmp/desktop-browser/**
             .tmp/desktop-layout/**
             .tmp/release-surfaces/**
+            .tmp/project-menus/**
             .tmp/desktop-personas/**
             .tmp/desktop-tool-results/**
             .tmp/browser-agent-benchmark/*.json

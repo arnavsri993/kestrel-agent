@@ -10463,6 +10463,7 @@ export function App() {
 		() => localStorage.getItem("kestrel:browser-context") !== "off",
 	);
 	const pendingToolRouteFocusRef = useRef<KestrelAppPageId | null>(null);
+	const pendingToolRouteFocusOriginRef = useRef<Element | null>(null);
 	const routeFocusFrameRef = useRef<number | null>(null);
 	const focusToolRoute = useCallback((node: HTMLDivElement | null) => {
 		const expected = pendingToolRouteFocusRef.current;
@@ -10473,6 +10474,15 @@ export function App() {
 			routeFocusFrameRef.current = null;
 			if (pendingToolRouteFocusRef.current !== expected || !node.isConnected)
 				return;
+			const currentFocus = document.activeElement;
+			// A menu or later interaction owns focus even when route loading
+			// finishes after it opens. Consume the old navigation request.
+			if (currentFocus?.closest('[role="menu"], [role="dialog"]') ||
+				(currentFocus !== pendingToolRouteFocusOriginRef.current && currentFocus !== document.body)) {
+				pendingToolRouteFocusRef.current = null;
+				pendingToolRouteFocusOriginRef.current = null;
+				return;
+			}
 			const target =
 				expected === "commands"
 					? node.querySelector<HTMLElement>(".command-search input")
@@ -10481,6 +10491,7 @@ export function App() {
 						: node.querySelector<HTMLElement>("h1, h2");
 			if (!target || target.closest("[inert]")) return;
 			pendingToolRouteFocusRef.current = null;
+			pendingToolRouteFocusOriginRef.current = null;
 			if (target.matches("input, button, select, textarea, [tabindex]")) {
 				target.focus();
 				return;
@@ -10873,6 +10884,7 @@ export function App() {
 	const openAppPage = useCallback(
 		async (id: KestrelAppPageId, section?: SettingsSection, scopeSessionId?: string) => {
 			pendingToolRouteFocusRef.current = id;
+			pendingToolRouteFocusOriginRef.current = document.activeElement;
 			dismissChatForDestination(id);
 			if (id === "projects")
 				await refreshProjects().catch((cause) => {

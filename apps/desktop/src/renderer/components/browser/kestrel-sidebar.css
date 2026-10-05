@@ -887,8 +887,9 @@
 	position: fixed;
 	z-index: 100;
 	display: grid;
-	min-width: 196px;
-	max-width: 236px;
+	width: max-content;
+	min-width: min(196px, calc(100vw - 16px));
+	max-width: min(236px, calc(100vw - 16px));
 	max-height: min(420px, calc(100vh - 16px));
 	gap: 2px;
 	overflow-y: auto;
@@ -919,6 +920,11 @@
 .kestrel-sidebar-context-menu button:hover:not(:disabled) {
 	background: color-mix(in srgb, var(--ink) 9%, transparent);
 	color: var(--ink);
+}
+
+.kestrel-sidebar-context-menu button > span:last-child {
+	min-width: 0;
+	overflow-wrap: anywhere;
 }
 
 .kestrel-sidebar-context-menu button:disabled {
