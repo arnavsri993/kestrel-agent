@@ -1,3 +1,33 @@
+# Quiet Apple-inspired workspace — October 2026
+
+Thesis: Kestrel is a calm browser workspace with short, legible text, soft capsule
+controls, and fully rounded left and right panels framing one useful work area.
+Existing React/Electron redesign; frequent desktop use, medium density, low
+visual and motion intensity. The classifier's marketing-page inference does not
+apply to this established browser and agent application.
+
+- Retain the user's wallpaper, profile, widget choices, navigation and approvals.
+- System display/text fonts only; 32–46px Home title, 30–38px page titles,
+  15–17px reading and task entry, 14–15px everyday controls, 12px metadata.
+- 4px spacing rhythm; 24–28px content gaps. Reserved rail geometry stays intact;
+  6px transparent borders inset their material without changing browser bounds.
+- Graphite and neutral ink; capsule controls, 22–30px reading/composer surfaces,
+  32px rail corners. Larger multiline fields never become capsule text areas.
+- One quiet translucent composer over wallpaper; dense reading is near opaque.
+  Native shell material remains available without stacked renderer blur. Replace
+  the refractive SVG composer effect with bounded 16px blur; no new dependencies.
+- Opaque baseline plus reduced-transparency, contrast and forced-colors fallbacks.
+  Preserve keyboard names, focus, resize handles, menu dismissal and permissions.
+- Short deterministic local greeting; no model inference on New Tab open.
+- Motion roles: existing state transitions and control feedback only. No loops,
+  entry choreography, decorative gradients or new motion system.
+- Why this is not generic: its hierarchy serves Kestrel's actual local browsing,
+  resumable tasks, native material and persistent rails; glass is tied to the
+  wallpaper entry, and rounded shapes are explicitly requested.
+- Verify source build/typecheck, New Tab and shell interactions, 1440px/760px
+  and short laptop layouts, keyboard/contrast/motion fallbacks, then installed
+  canonical app with the existing integration preserved. Keep screenshots local.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

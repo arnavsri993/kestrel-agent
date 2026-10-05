@@ -23,7 +23,6 @@ import {
 	frequentBrowserSites,
 	newTabGreetingContext,
 	newTabGreetingFallback,
-	validateNewTabGreeting,
 	originFaviconMap,
 	suggestedAgentActions,
 } from "./new-tab";
@@ -128,32 +127,17 @@ export function NewTabPage({
 			),
 		[greetingActivityAtOpen, greetingName, greetingNow],
 	);
-	const [greeting, setGreeting] = useState(() =>
-		newTabGreetingFallback(greetingName, greetingContext.currentTimeOfDay),
-	);
+	// A short local greeting keeps Home quiet and avoids a model request at open.
+	const greeting = newTabGreetingFallback(
+		greetingName,
+		greetingContext.currentTimeOfDay,
+	).replace(/[.!?].*$/u, "");
 	const recordedGreetingTabRef = useRef<string | undefined>(undefined);
 	useEffect(() => {
 		if (recordedGreetingTabRef.current === tabId) return;
 		recordedGreetingTabRef.current = tabId;
 		onRecordGreetingVisit(greetingNow);
 	}, [greetingNow, onRecordGreetingVisit, tabId]);
-	useEffect(() => {
-		let active = true;
-		setGreeting(
-			newTabGreetingFallback(greetingName, greetingContext.currentTimeOfDay),
-		);
-		void window.kestrel
-			.request({ type: "new-tab-greeting", ...greetingContext })
-			.then((response) => {
-				if (!active || !response.ok || !("newTabGreeting" in response)) return;
-				const generated = validateNewTabGreeting(response.newTabGreeting);
-				if (generated) setGreeting(generated);
-			})
-			.catch(() => undefined);
-		return () => {
-			active = false;
-		};
-	}, [greetingContext, greetingName]);
 	const faviconByOrigin = useMemo(
 		() => originFaviconMap(originFavicons, tabs),
 		[originFavicons, tabs],

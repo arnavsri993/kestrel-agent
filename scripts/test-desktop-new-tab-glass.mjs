@@ -70,7 +70,9 @@ try {
  });
  assert(download.x < 0.6 && download.y < 0.6, `Download icon must be centered: ${JSON.stringify(download)}`);
  assert.equal(download.radius, "50%");
- assert((await composer.evaluate((node) => getComputedStyle(node).backdropFilter)).includes("kestrel-glass-refraction"));
+ const composerMaterial = await composer.evaluate((node) => getComputedStyle(node).backdropFilter);
+ assert(composerMaterial.includes("blur(16px)"), "The wallpaper entry uses a bounded glass blur");
+ assert(!composerMaterial.includes("url("), "Task entry must not require SVG refraction");
  await page.screenshot({ animations: "disabled", path: join(evidence, "desktop.png") });
  await input.focus();
  await page.screenshot({ animations: "disabled", path: join(evidence, "composer.png") });
