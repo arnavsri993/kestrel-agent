@@ -118,7 +118,7 @@ function visibleItemCount(size: NewTabWidgetSize): number {
 
 /** Route usage needs room for several Codex accounts plus status-only routes. */
 function routeUsageVisibleItemCount(size: NewTabWidgetSize): number {
-	if (size === "small") return 2;
+	if (size === "small") return 1;
 	if (size === "medium") return 4;
 	return 10;
 }
@@ -782,21 +782,8 @@ function RouteUsageWidget({
 		(row) => !shownIds.has(row.providerId),
 	);
 
-	return (
-		<div className="kestrel-widget-route-usage">
-			{loading && rows.length === 0 ? (
-				<p className="kestrel-widget-empty">Checking Codex accounts…</p>
-			) : error && rows.length === 0 ? (
-				<p className="kestrel-widget-empty">{error}</p>
-			) : visibleRows.length === 0 ? (
-				<p className="kestrel-widget-empty">
-					{rankedRows.length === 0
-						? "No Codex accounts are configured yet."
-						: "All accounts are hidden. Show one below."}
-				</p>
-			) : (
-				<ul className="kestrel-widget-route-usage-list">
-					{visibleRows.map((row) => {
+	const accountDialog = useRef<HTMLDialogElement>(null);
+	function renderUsageRow(row: ProviderUsageSnapshot) {
 						const name = accountDisplayName(row);
 						const windows = row.windows ?? [];
 						const primary = windows[0];
@@ -873,9 +860,31 @@ function RouteUsageWidget({
 								</button>
 							</li>
 						);
-					})}
+
+	}
+
+	return (
+		<div className="kestrel-widget-route-usage">
+			{loading && rows.length === 0 ? (
+				<p className="kestrel-widget-empty">Checking Codex accounts…</p>
+			) : error && rows.length === 0 ? (
+				<p className="kestrel-widget-empty">{error}</p>
+			) : visibleRows.length === 0 ? (
+				<p className="kestrel-widget-empty">
+					{rankedRows.length === 0
+						? "No Codex accounts are configured yet."
+						: "All accounts are hidden. Show one below."}
+				</p>
+			) : (
+				<ul className="kestrel-widget-route-usage-list">
+					{visibleRows.map(renderUsageRow)}
 				</ul>
 			)}
+			{rankedRows.length > 0 && <>
+				<button className="kestrel-widget-accounts-trigger" type="button" onClick={() => accountDialog.current?.showModal()}>Accounts</button>
+				<dialog className="kestrel-widget-accounts-dialog" ref={accountDialog} aria-label="Codex accounts">
+					<header><h3>Accounts</h3><button type="button" aria-label="Close accounts" onClick={() => accountDialog.current?.close()}><Icon name="close" /></button></header>
+					<ul className="kestrel-widget-route-usage-list">{rankedRows.filter(row => shownIds.has(row.providerId)).map(renderUsageRow)}</ul>
 			{hiddenConfigured.length > 0 && (
 				<div className="kestrel-widget-route-usage-hidden">
 					<small>Hidden</small>
@@ -899,6 +908,8 @@ function RouteUsageWidget({
 					))}
 				</div>
 			)}
+				</dialog>
+			</>}
 		</div>
 	);
 }
@@ -1146,7 +1157,7 @@ function WidgetCard({
 			className={`kestrel-widget-card kestrel-widget-card-${displaySize}${
 				dragging ? " is-dragging" : ""
 			}`}
-			layout={!reducedMotion}
+			layout={editing && !reducedMotion}
 			animate={
 				dragging
 					? { x: dragDelta.x, y: dragDelta.y, scale: reducedMotion ? 1 : 1.015 }

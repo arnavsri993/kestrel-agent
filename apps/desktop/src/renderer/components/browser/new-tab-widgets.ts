@@ -242,7 +242,7 @@ export function widgetViewportPlan(
 		rows,
 		pageSize,
 		pageCount,
-		density: cardHeight < 188 ? "compact" : "comfortable",
+		density: cardHeight < 280 ? "compact" : "comfortable",
 	};
 }
 

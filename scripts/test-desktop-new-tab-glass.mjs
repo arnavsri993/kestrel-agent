@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -61,6 +61,8 @@ try {
  await page.locator(".kestrel-widget-canvas.is-editing").waitFor({ state: "visible" });
  await page.getByRole("button", { name: "Done", exact: true }).click();
  async function showWidget(id) {
+  const previous = page.getByRole("button", { name: "Previous widget page", exact: true });
+  while (await previous.isVisible() && await previous.isEnabled()) await previous.click();
   for (let attempt = 0; attempt < 20; attempt++) {
    const widget = page.locator(`[data-kestrel-widget-id="${id}"]`);
    if (await widget.isVisible()) return widget;
@@ -110,6 +112,9 @@ try {
    const win = BrowserWindow.getAllWindows().find(win => !win.webContents.getURL().includes("petOverlay"));
    win.setSize(width, height); win.webContents.setZoomFactor(zoom);
   }, { width, height, zoom });
+  await page.waitForFunction(({ width, zoom }) => Math.abs(innerWidth - width / zoom) < 12, { width, zoom });
+  const agentToggle = page.locator("#browser-agent-toggle");
+  if (width / zoom < 1100 && await agentToggle.getAttribute("aria-expanded") === "true") await page.locator(".agent-sidebar-collapse").click();
   await input.focus();
   await page.waitForFunction(() => {
    const home = document.querySelector(".new-tab-page");
@@ -118,17 +123,20 @@ try {
   assert(await page.locator(".kestrel-home").evaluate(node => {
    node.scrollTop = 100; return node.scrollTop === 0;
   }), "Home must not scroll when entry is expanded");
-  assert(await page.locator(".kestrel-widget-card").evaluateAll(cards => cards.every(node => {
+  assert(await page.locator(".kestrel-home .kestrel-widget-card").evaluateAll(cards => cards.every(node => {
    const box = node.getBoundingClientRect(); const home = node.closest(".kestrel-home").getBoundingClientRect();
    return box.top >= home.top - 1 && box.bottom <= home.bottom + 1;
   })), "Visible widgets must fit inside Home, including at 200% zoom");
-  assert(await page.locator(".kestrel-widget-card").evaluateAll(cards => cards.length > 0 && cards.every(card => {
+  const boxes = await page.locator(".kestrel-home .kestrel-widget-card").evaluateAll(cards => cards.map(node => { const b = node.getBoundingClientRect(); return { x: b.x, y: b.y, right: b.right, bottom: b.bottom }; }));
+  assert(boxes.every((a, i) => boxes.every((b, j) => i === j || a.right <= b.x - 11 || b.right <= a.x - 11 || a.bottom <= b.y - 11 || b.bottom <= a.y - 11)), `Widgets must retain a visible gap: ${JSON.stringify(boxes)}`);
+  const clipped = await page.locator(".kestrel-home .kestrel-widget-card").evaluateAll(cards => cards.flatMap(card => {
    const bounds = card.getBoundingClientRect();
-   return [...card.querySelectorAll("button, h3, .kestrel-widget-empty")].filter(node => getComputedStyle(node).display !== "none").every(node => {
+   return [...card.querySelectorAll("button, h3, .kestrel-widget-empty")].filter(node => getComputedStyle(node).display !== "none").flatMap(node => {
     const box = node.getBoundingClientRect();
-    return box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1;
+    return box.width === 0 || box.height === 0 || (box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1) ? [] : [{ widget: card.dataset.kestrelWidgetId, label: node.textContent, top: box.top, bottom: box.bottom, boundsTop: bounds.top, boundsBottom: bounds.bottom }];
    });
-  })), "Widget content and actions must remain usable rather than clipped");
+  }));
+  assert.deepEqual(clipped, [], `Widget actions must remain usable at ${width}x${height}, zoom ${zoom}`);
   const reached = new Set();
   const previousShortcut = page.getByRole("button", { name: "Previous shortcut page", exact: true });
   while (await previousShortcut.isVisible() && await previousShortcut.isEnabled()) await previousShortcut.click();
@@ -139,7 +147,11 @@ try {
    await nextShortcut.click();
   }
   assert.equal(reached.size, 12, "All configured shortcuts must remain reachable without scrolling Home");
-  await page.screenshot({ animations: "disabled", path: join(evidence, `fit-${width}-${height}-${zoom}.png`) });
+  const pixels = await application.evaluate(async ({ BrowserWindow }) => {
+   const win = BrowserWindow.getAllWindows().find(win => !win.webContents.getURL().includes("petOverlay"));
+   return (await win.capturePage()).toPNG().toString("base64");
+  });
+  writeFileSync(join(evidence, `fit-${width}-${height}-${zoom}.png`), Buffer.from(pixels, "base64"));
  }
  await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows().find((win) => !win.webContents.getURL().includes("petOverlay")); win.webContents.setZoomFactor(1); win.setSize(1440, 1000); });
  await page.emulateMedia({ contrast: "more" });

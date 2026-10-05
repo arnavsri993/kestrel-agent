@@ -3,9 +3,12 @@
 .new-tab-page.kestrel-home {
 	overflow: hidden;
 	overscroll-behavior: none;
+	container: home-viewport / size;
 }
 
 .new-tab-page.kestrel-home .kestrel-home-content {
+	display: flex;
+	flex-direction: column;
 	box-sizing: border-box;
 	height: 100%;
 	min-height: 0;
@@ -54,7 +57,8 @@
 .new-tab-page.kestrel-home .kestrel-widget-shelves .kestrel-widget-card {
 	grid-column: auto / span 2;
 	grid-row: auto / span 1;
-	height: 100%;
+	box-sizing: border-box;
+	height: auto;
 	min-height: 0;
 	border-radius: 22px;
 }
@@ -333,3 +337,36 @@
  .new-tab-page.kestrel-home .home-site-shortcut > button:first-child { gap: 0; }
  .ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer textarea { min-height: 30px; height: 30px; }
 }
+
+/* Fit to Home itself, including the browser chrome at large text sizes. */
+@container home-viewport (max-height: 380px) {
+ .new-tab-page.kestrel-home .kestrel-home-content { padding-block: 6px; gap: 8px; }
+ .new-tab-page.kestrel-home .kestrel-home-hero h1 { display: none; }
+ .new-tab-page.kestrel-home .kestrel-home-hero { gap: 0; }
+ .ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer,
+ .ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer.is-expanded { min-height: 48px; padding-block: 5px; gap: 4px; }
+ .ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer textarea { box-sizing: border-box; min-height: 30px; height: 30px; max-height: 30px; padding-block: 2px; }
+ .new-tab-page.kestrel-home .home-site-label { display: none; }
+ .new-tab-page.kestrel-home .home-site-glyph { width: 26px; height: 26px; }
+ .new-tab-page.kestrel-home .home-site-shortcut > button:first-child { gap: 0; }
+ .new-tab-page.kestrel-home .kestrel-widget-canvas { gap: 8px; }
+ .new-tab-page.kestrel-home .kestrel-widget-canvas[data-density="compact"] .kestrel-widget-card-header { padding-top: 8px; padding-bottom: 4px; }
+ .new-tab-page.kestrel-home .kestrel-widget-canvas[data-density="compact"] .kestrel-widget-list li button,
+ .new-tab-page.kestrel-home .kestrel-widget-canvas[data-density="compact"] .kestrel-widget-action-list li button { min-height: 30px; }
+}
+
+.kestrel-widget-accounts-trigger {
+ position: absolute; top: 12px; right: 10px; border: 0; border-radius: 8px;
+ padding: 4px 6px; background: var(--surface); color: var(--ink); font: 12px/18px var(--sans); cursor: pointer;
+}
+.kestrel-widget-card:has(.kestrel-widget-accounts-trigger) .kestrel-widget-card-heading { padding-right: 64px; }
+.kestrel-widget-accounts-dialog {
+ box-sizing: border-box; width: min(500px, calc(100vw - 32px)); max-height: calc(100vh - 32px);
+ padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--glass-shell); color: var(--ink);
+ box-shadow: 0 20px 70px rgb(0 0 0 / 35%); overflow: auto;
+}
+.kestrel-widget-accounts-dialog::backdrop { background: rgb(0 0 0 / 35%); }
+.kestrel-widget-accounts-dialog > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.kestrel-widget-accounts-dialog h3 { margin: 0; font: 650 20px/26px var(--sans); }
+.kestrel-widget-accounts-dialog > header button { display: grid; place-items: center; width: 28px; height: 28px; padding: 5px; border: 0; border-radius: 50%; background: var(--surface); color: var(--ink); cursor: pointer; }
+.kestrel-widget-accounts-dialog .kestrel-widget-route-usage-row { min-height: 44px; }
