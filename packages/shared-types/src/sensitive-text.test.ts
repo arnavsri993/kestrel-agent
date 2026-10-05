@@ -1,6 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { maskSensitiveText, replacePrivateKeyBlocks, replaceSensitiveText } from "./sensitive-text";
+import {
+	MAX_KNOWN_SENSITIVE_VALUES,
+	maskSensitiveText,
+	replacePrivateKeyBlocks,
+	replaceSensitiveText,
+	sensitiveKeyKind,
+	SensitiveTextLimitError,
+} from "./sensitive-text";
 
 const fixtureSecret = "fixture-sensitive-Alpha123456789";
 
@@ -53,6 +60,58 @@ describe("sensitive text ingress", () => {
 		expect(captured).toEqual([fixtureSecret]);
 		expect(safe).toContain("api_key=[TASK_SECRET:task-secret-fixture]");
 		expect(maskSensitiveText(safe)).toBe(safe);
+	});
+
+	it.each([
+		["passwords", "PASSWORD"],
+		["provider.APIKeys", "API_KEY"],
+		["refreshTokens", "REFRESH_TOKEN"],
+		["account.access_tokens", "ACCESS_TOKEN"],
+		["credentials", "CREDENTIAL"],
+		["clientSecrets", "SECRET"],
+		["privateKeys", "PRIVATE_KEY"],
+		["sessionCookies", "SESSION_COOKIE"],
+		["IDTokens", "ID_TOKEN"],
+		["auth.tokens", "TOKEN"],
+		["token", "TOKEN"],
+	])("shares the structured and text classification for %s", (key, kind) => {
+		expect(sensitiveKeyKind(key)).toBe(kind);
+		const captured: string[] = [];
+		expect(replaceSensitiveText(`${key}=${fixtureSecret}`, (foundKind) => {
+			captured.push(foundKind);
+			return "[REDACTED]";
+		})).toBe(`${key}=[REDACTED]`);
+		expect(captured).toEqual([kind]);
+	});
+
+	it.each(["status", "name", "label", "hint", "count", "passwordConfigured", "tokenCount", "prompt_tokens", "inputTokens", "output_tokens", "totalTokens", "max_tokens", "min_tokens", "context_tokens"])(
+		"keeps metadata %s outside inherited credential context",
+		(key) => {
+			expect(sensitiveKeyKind(key, "CREDENTIAL")).toBeUndefined();
+			expect(maskSensitiveText(`${key}=ordinary-value`)).toBe(`${key}=ordinary-value`);
+		},
+	);
+
+	it("uses supplied short and overlapping secrets without rewriting opaque references", () => {
+		const knownValues = new Map([["fixture", "PASSWORD"], ["fixture-long", "TOKEN"], ["PASSWORD", "PASSWORD"], ["1", "PASSWORD"]]);
+		const input = "fixture-long fixture PASSWORD [PASSWORD_1] [TASK_SECRET:fixture-long] task-secret-10000000-0000-0000-0000-000000000000";
+		const captured: [string, string][] = [];
+		expect(replaceSensitiveText(input, (kind, secret) => {
+			captured.push([kind, secret]);
+			return `[TASK_SECRET:${secret}]`;
+		}, { knownValues })).toBe(
+			"[TASK_SECRET:fixture-long] [TASK_SECRET:fixture] [TASK_SECRET:PASSWORD] [PASSWORD_1] [TASK_SECRET:fixture-long] task-secret-10000000-0000-0000-0000-000000000000",
+		);
+		expect(captured).toEqual([["TOKEN", "fixture-long"], ["PASSWORD", "fixture"], ["PASSWORD", "PASSWORD"]]);
+		expect(knownValues.size).toBe(4);
+	});
+
+	it("fails closed with a non-secret error for excessive known values or matching work", () => {
+		const tooMany = new Map(Array.from({ length: MAX_KNOWN_SENSITIVE_VALUES + 1 }, (_, index) => [`sensitive-fixture-${index}`, "PASSWORD"]));
+		expect(() => replaceSensitiveText("ordinary text", () => "[REDACTED]", { knownValues: tooMany })).toThrow(SensitiveTextLimitError);
+		const knownValues = new Map(Array.from({ length: 64 }, (_, index) => [`sensitive-fixture-${index}`, "PASSWORD"]));
+		expect(() => replaceSensitiveText("x".repeat(600_000), () => "[REDACTED]", { knownValues })).toThrow("Sensitive-value redaction exceeded its processing limit.");
+		expect(() => replaceSensitiveText("password=sensitive-fixture; ".repeat(4_097), () => "[REDACTED]")).toThrow(SensitiveTextLimitError);
 	});
 
 	it("leaves non-secret boolean and status metadata unchanged", () => {

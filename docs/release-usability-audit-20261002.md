@@ -876,3 +876,39 @@ delegated review and zero injected trap visits. This bounded proof is distinct
 from fixture checks and does not establish every autonomous workflow. Twelve
 full CodeQL findings, required independent review and public signing remain
 open; the broad release goal remains active.
+
+### Returned-credential redaction and trusted receipt identities
+
+Independent owned in-memory probes found a real confidentiality flaw: sensitive
+array elements, refresh-token/token/credentials aliases, and unlabeled echoes
+could survive tool-result redaction. Normal tool journals and model projections
+retained those values, and secret-only changes could alter verification hashes.
+The new actual-runtime regression failed on the preceding code.
+
+Text and structured results now share key classification. Discovery precedes
+replacement, preserves sensitive context through arrays and objects, and masks
+earlier sibling/error echoes. Valid JSON strings retain their string type and
+format while decoded scalar values are protected, including escaped strings and
+scientific-notation numbers. Active task-vault callbacks reach decoded numbers
+and strings. Metadata quantities, status/configured fields and opaque references
+retain their intended semantics. Excessive values, nesting, cycles or matching
+work fail with a generic error before returning a partial result. Operation-local
+HMAC keys are cleared and maps released; JavaScript string zeroization is not
+established.
+
+Runtime storage limits cross-value discovery to untrusted payload compartments.
+A tool cannot rewrite trusted execution/session identities by labeling those
+same values as credentials. Run/provider-call correlation is protected separately
+so approval recovery retains its exact identity and pending original arguments.
+Verifier method labels are protected with evidence before storage; execute output
+already reaches custom verification in protected form. This does not establish
+that every custom verifier's original-output assumptions are unchanged.
+
+Independent reprobes and actual-runtime regressions now pass string/numeric
+confidentiality, plaintext-journal/model projection, secret-only versus public
+evidence hash changes, decoded task-vault numbers, trusted receipt identities and
+blocked-approval correlation. Stable source passes all 2,208 unit tests in 265
+files, repository type checking, desktop build, production secret scan, Settings
+parity and diff checking. This is bounded advisory validation, not official
+CodeQL or PR review clearance. No real profile, provider or retrospective history
+purge was part of the probes; detection remains bounded by its key/text policy.

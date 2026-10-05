@@ -16,6 +16,7 @@ import { createEncryptionKey } from "@kestrel/encryption";
 import type { Project, RuntimeEvent } from "@kestrel/shared-types";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentRuntime } from "./runtime";
+import { modelVisibleToolResult } from "./tool-result-guardrails";
 
 const temporaryDirectories: string[] = [];
 
@@ -990,6 +991,159 @@ describe("agent runtime", () => {
 		expect(third.verification?.evidenceSha256).not.toBe(first.verification?.evidenceSha256);
 		expect(database.getToolExecution(first.id)?.verification).toEqual(first.verification);
 		database.close();
+	});
+
+	it.each([
+		["owned-returned-first-credential", "owned-returned-second-credential"],
+		[12345, 67890],
+	])("keeps returned structured credentials out of journals, model context and evidence fingerprints (%s)", async (firstSecret, secondSecret) => {
+		const { database, runtime, session } = fixture();
+		let secret = firstSecret;
+		let receipt = "owned-public-receipt-one";
+		const shapes = () => ({
+			before: `The returned value was ${secret}.`,
+			password: [secret, [secret]],
+			refresh_token: secret,
+			token: secret,
+			credentials: [{ value: secret }],
+			nested: { echo: secret, password: secret },
+			tokenCount: 4,
+			passwordConfigured: true,
+			status: "ready",
+			receipt,
+		});
+		let originalOutput = shapes();
+		let verificationCalls = 0;
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "fixture.returned-credentials",
+				title: "Owned returned credentials",
+				description: "Check returned credentials without an active task-secret vault.",
+				category: "connector",
+				riskLevel: "low",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "plugin",
+				tags: ["test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => { originalOutput = shapes(); return originalOutput; },
+			verify: async () => {
+				verificationCalls += 1;
+				return { method: `Owned readback for ${secret}`, evidence: shapes() };
+			},
+		});
+		runtime.allowTool(session.id, "fixture.returned-credentials");
+		try {
+			const first = await runtime.callTool(session.id, "fixture.returned-credentials", {}, { idempotencyKey: "returned-credentials-one" });
+			expect(first.status).toBe("verified");
+			expect(first.verification?.method).not.toContain(String(secret));
+			expect(originalOutput.password[0]).toBe(secret);
+			expect(first.output).toMatchObject({ tokenCount: 4, passwordConfigured: true, status: "ready", receipt });
+			expect(JSON.stringify(first)).not.toContain(String(secret));
+			expect(JSON.stringify(database.getToolExecution(first.id))).not.toContain(String(secret));
+			expect(modelVisibleToolResult(first)).not.toContain(String(secret));
+			const firstPayload = database.db.prepare("SELECT payload FROM tool_executions WHERE id = ?").get(first.id) as { payload: string };
+			expect(firstPayload.payload).not.toContain(String(secret));
+
+			secret = secondSecret;
+			const second = await runtime.callTool(session.id, "fixture.returned-credentials", {}, { idempotencyKey: "returned-credentials-two" });
+			expect(second.status).toBe("verified");
+			expect(JSON.stringify(second)).not.toContain(String(secret));
+			expect(second.verification?.evidenceSha256).toBe(first.verification?.evidenceSha256);
+			receipt = "owned-public-receipt-two";
+			const third = await runtime.callTool(session.id, "fixture.returned-credentials", {}, { idempotencyKey: "returned-credentials-three" });
+			expect(third.status).toBe("verified");
+			expect(third.verification?.evidenceSha256).not.toBe(first.verification?.evidenceSha256);
+			expect(verificationCalls).toBe(3);
+			const allPayloads = database.db.prepare("SELECT payload FROM tool_executions").all() as Array<{ payload: string }>;
+			for (const value of [firstSecret, secondSecret]) expect(JSON.stringify(allPayloads)).not.toContain(String(value));
+		} finally {
+			runtime.close(); database.close();
+		}
+	});
+
+	it("keeps trusted tool receipt identities when payloads label those values as credentials", async () => {
+		const { database, runtime, session } = fixture();
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "fixture.receipt-identity",
+				title: "Owned receipt identity",
+				description: "Untrusted payloads cannot rewrite trusted receipt identities.",
+				category: "connector", riskLevel: "read_only", readOnly: true,
+				requiresWorkspace: false, source: "plugin", tags: ["test"],
+			},
+			inputSchema: { type: "object", properties: { password: { type: "string" } }, additionalProperties: false },
+			execute: async context => ({ password: context.executionId, token: session.id, echo: context.executionId }),
+		});
+		runtime.allowTool(session.id, "fixture.receipt-identity");
+		try {
+			const result = await runtime.callTool(session.id, "fixture.receipt-identity", { password: session.id });
+			expect(result.status).toBe("verified");
+			expect(result.sessionId).toBe(session.id);
+			expect(result.id).toMatch(/^tool-[a-f0-9-]{36}$/);
+			expect(database.getToolExecution(result.id)).toMatchObject({ id: result.id, sessionId: session.id, status: "verified" });
+			expect(JSON.stringify(result.output)).not.toContain(session.id);
+			expect(JSON.stringify(result.output)).not.toContain(result.id);
+			expect(JSON.stringify(database.getToolExecution(result.id)?.input)).not.toContain(session.id);
+		} finally { runtime.close(); database.close(); }
+	});
+
+	it("keeps the approval recovery idempotency key independent of credential labels in input", async () => {
+		const { database, runtime, session } = fixture();
+		const runId = "owned-run-identity";
+		const idempotencyKey = `${runId}:owned-provider-call`;
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "fixture.recovery-identity", title: "Owned recovery identity",
+				description: "Preserve approval recovery correlation while protecting input.",
+				category: "connector", riskLevel: "external", readOnly: false,
+				requiresWorkspace: false, source: "plugin", tags: ["test"],
+			},
+			inputSchema: { type: "object", properties: { password: { type: "string" } }, additionalProperties: false },
+			execute: async () => ({ performed: true }),
+			verify: async () => ({ method: "owned-readback", evidence: { performed: true } }),
+		});
+		runtime.allowTool(session.id, "fixture.recovery-identity");
+		try {
+			const blocked = await runtime.callTool(session.id, "fixture.recovery-identity", { password: runId }, { idempotencyKey });
+			expect(blocked.status).toBe("blocked");
+			expect(blocked.idempotencyKey).toBe(idempotencyKey);
+			const stored = database.getToolExecution(blocked.id)!;
+			expect(stored.idempotencyKey).toBe(idempotencyKey);
+			expect(JSON.stringify(stored.input)).not.toContain(runId);
+			expect(runtime.approvalInput(stored)).toEqual({ password: runId });
+		} finally { runtime.close(); database.close(); }
+	});
+
+	it("protects known task-vault numbers and scientific JSON output before storage and model replay", async () => {
+		const { database, runtime, session } = fixture();
+		const secret = "12345678";
+		const prepared = runtime.prepareTaskSecrets(session.id, `password=${secret}`);
+		expect(prepared.scopeId).toBeDefined();
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "fixture.numeric-vault", title: "Owned numeric vault check",
+				description: "Protect known numeric credentials without output labels.",
+				category: "connector", riskLevel: "read_only", readOnly: true,
+				requiresWorkspace: false, source: "plugin", tags: ["test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({ value: Number(secret), content: '{\n  "value": 1.2345678e7, "tokenCount": 4\n}', tokenCount: 4 }),
+		});
+		runtime.allowTool(session.id, "fixture.numeric-vault");
+		try {
+			const result = await runtime.callTool(session.id, "fixture.numeric-vault", {});
+			expect(result.status).toBe("verified");
+			expect(result.output?.value).toBe("[REDACTED]");
+			expect(result.output?.tokenCount).toBe(4);
+			expect(JSON.parse(String(result.output?.content))).toEqual({ value: "[REDACTED]", tokenCount: 4 });
+			const stored = database.db.prepare("SELECT payload FROM tool_executions WHERE id = ?").get(result.id) as { payload: string };
+			for (const projected of [JSON.stringify(result), stored.payload, modelVisibleToolResult(result)]) {
+				expect(projected).not.toContain(secret);
+				expect(projected).not.toContain("1.2345678e7");
+			}
+		} finally { runtime.close(); database.close(); }
 	});
 
 	it("journals uncertain mutation failures and never replays the side effect", async () => {

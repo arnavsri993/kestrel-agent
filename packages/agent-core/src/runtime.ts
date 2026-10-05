@@ -605,9 +605,32 @@ export class AgentRuntime extends EventEmitter {
 
 	private executionForStorage(execution: RuntimeToolExecution): RuntimeToolExecution {
 		const browserSafe = this.redactedExecutionForStorage(execution);
-		return redactSensitiveValue(browserSafe, text =>
+		// Discover echoes within untrusted payloads, without letting a tool mark
+		// a trusted receipt/session identity as a credential and rewrite it.
+		const payload = redactSensitiveValue({
+			input: browserSafe.input,
+			...(browserSafe.output !== undefined ? { output: browserSafe.output } : {}),
+			...(browserSafe.error !== undefined ? { error: browserSafe.error } : {}),
+			...(browserSafe.verification ? { verificationMethod: browserSafe.verification.method } : {}),
+		}, text =>
 			this.taskSecrets.redact(execution.sessionId, text),
-		) as RuntimeToolExecution;
+		) as Pick<RuntimeToolExecution, "input" | "output" | "error"> & { verificationMethod?: string };
+		const { verificationMethod, ...safePayload } = payload;
+		// This correlates an internal run/provider call across approval recovery.
+		// Preserve its identity independently of labels supplied in tool payloads;
+		// retain the existing direct-text/known-vault protection on the key itself.
+		const safeIdentity = browserSafe.idempotencyKey !== undefined
+			? redactSensitiveValue({ idempotencyKey: browserSafe.idempotencyKey }, text => this.taskSecrets.redact(execution.sessionId, text)) as { idempotencyKey: string }
+			: {};
+		return {
+			...browserSafe,
+			...safePayload,
+			...safeIdentity,
+			...(browserSafe.verification ? { verification: {
+				...browserSafe.verification,
+				method: verificationMethod ?? browserSafe.verification.method,
+			} } : {}),
+		};
 	}
 
 	private assertSafeMutationContent(sessionId: string, ...contents: (string | undefined)[]): void {
@@ -2587,14 +2610,15 @@ export class AgentRuntime extends EventEmitter {
 				: await this.verifyMutation(definition, context, input, output);
 			// Read-back checks use the actual evidence. Persist only a digest of
 			// its protected projection so credentials cannot become guessable hashes.
-			const verificationEvidence = verificationResult
-				? this.protectedTaskOutput(session.id, { evidence: verificationResult.evidence }).evidence
+			const protectedVerification = verificationResult
+				? this.protectedTaskOutput(session.id, { evidence: verificationResult.evidence, method: verificationResult.method })
 				: undefined;
+			const verificationEvidence = protectedVerification?.evidence;
 			effectVerified = true;
 			const verifiedAt = this.now();
 			const verification = verificationResult
 				? {
-						method: verificationResult.method,
+						method: String(protectedVerification?.method ?? verificationResult.method),
 						evidenceSha256: createHash("sha256")
 							.update(
 								JSON.stringify(verificationEvidence) ??

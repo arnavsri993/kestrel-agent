@@ -1,5 +1,6 @@
 import {
 	RuntimeMessageSchema,
+	SensitiveTextLimitError,
 	type RuntimeToolExecution,
 } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
@@ -7,6 +8,7 @@ import {
 	MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
 	modelVisibleToolResult,
 	redactSensitiveContent,
+	redactSensitiveValue,
 } from "./tool-result-guardrails";
 
 function execution(output: Record<string, unknown>): RuntimeToolExecution {
@@ -64,6 +66,111 @@ describe("model-facing tool result guardrails", () => {
 		expect(visible).not.toContain(privateKey);
 		expect(visible).not.toContain("c".repeat(24));
 		expect(original.output).toEqual({ privateKey });
+	});
+
+	it("carries sensitive context through mixed arrays and objects and masks earlier echoes", () => {
+		const secrets = ["synthetic-before-value", "p!2", "synthetic-array-value", "synthetic-object-value", "synthetic-refresh-value", "synthetic-token-value", "synthetic-credential-value"];
+		const output = {
+			before: `first ${secrets[0]}; ${secrets[3]}`,
+			password: [secrets[0], [secrets[1], secrets[2]], { value: secrets[3], status: "active", count: 12, configured: true, name: "primary" }],
+			refresh_token: secrets[4],
+			token: secrets[5],
+			credentials: secrets[6],
+			nested: { password: secrets[0], echo: secrets[0] },
+		};
+		const original = structuredClone(output);
+		const safe = JSON.parse(modelVisibleToolResult(execution(output)));
+		for (const secret of secrets) expect(JSON.stringify(safe)).not.toContain(secret);
+		expect(safe.output.before).toBe(`first ${safe.output.password[0]}; ${safe.output.password[2].value}`);
+		expect(safe.output.nested.echo).toBe(safe.output.password[0]);
+		expect(safe.output.password[1][0]).toMatch(/^\[PASSWORD_\d+\]$/);
+		expect(safe.output.password[2]).toMatchObject({ status: "active", count: 12, configured: true, name: "primary" });
+		expect(output).toEqual(original);
+	});
+
+	it.each([
+		["passwords", "PASSWORD"], ["provider.APIKeys", "API_KEY"], ["refreshTokens", "REFRESH_TOKEN"],
+		["account.access_tokens", "ACCESS_TOKEN"], ["credentials", "CREDENTIAL"], ["clientSecrets", "SECRET"],
+		["privateKeys", "PRIVATE_KEY"], ["sessionCookies", "SESSION_COOKIE"], ["IDTokens", "ID_TOKEN"], ["auth.tokens", "TOKEN"],
+	])("redacts structured alias %s using the shared kind", (key, kind) => {
+		expect(redactSensitiveValue({ [key]: ["synthetic-alias-value"] })).toEqual({ [key]: [`[${kind}_1]`] });
+	});
+
+	it("preserves metadata and token usage while protecting numeric credentials", () => {
+		const metadata = {
+			tokenCount: 12, passwordConfigured: true, status: "active", count: 3,
+			prompt_tokens: 12, inputTokens: 12, output_tokens: 12, totalTokens: 12,
+			max_tokens: 12, min_tokens: 12, context_tokens: 12,
+		};
+		expect(redactSensitiveValue({ ...metadata, credentials: { value: "synthetic-value", ...metadata }, password: [12345], token: 67890 })).toEqual({
+			...metadata, credentials: { value: "[CREDENTIAL_1]", ...metadata }, password: ["[PASSWORD_1]"], token: "[TOKEN_1]",
+		});
+	});
+
+	it("masks unlabelled numeric echoes while preserving equal metadata quantities", () => {
+		const json = '{ "before": 12345, "password": [12345], "tokenCount": 12345 }';
+		expect(redactSensitiveValue({ before: 12345, password: [12345], tokenCount: 12345, content: json })).toEqual({
+			before: "[PASSWORD_1]", password: ["[PASSWORD_1]"], tokenCount: 12345,
+			content: '{ "before": "[PASSWORD_1]", "password": ["[PASSWORD_1]"], "tokenCount": 12345 }',
+		});
+	});
+
+	it("protects short secrets and overlapping echoes without rewriting placeholders", () => {
+		const references = ["[PASSWORD_1]", "[TASK_SECRET:fixture]", "task-secret-10000000-0000-0000-0000-000000000000"];
+		const safe = redactSensitiveValue({
+			before: `fixture-long fixture PASSWORD 1 ${references.join(" ")}`,
+			password: ["fixture", "PASSWORD", "1", ...references],
+			token: "fixture-long",
+		}) as { before: string; password: string[]; token: string };
+		expect(safe.password.slice(3)).toEqual(references);
+		expect(safe.before).toBe(`${safe.token} ${safe.password[0]} ${safe.password[1]} ${safe.password[2]} ${references.join(" ")}`);
+		expect(redactSensitiveValue(safe)).toEqual(safe);
+	});
+
+	it("discovers secrets in serialized errors and content while preserving JSON formatting", () => {
+		const secret = "synthetic-json-value";
+		const short = "q!7";
+		const json = `{\n  "before": "${secret}",\n  "password": ["${short}"], "credentials": [{"value": "${secret}", "status": "active"}],\n  "tokenCount": 12\n}`;
+		const tool = { ...execution({ before: secret, content: json }), error: json };
+		const safe = JSON.parse(modelVisibleToolResult(tool));
+		for (const value of [safe.output.content, safe.error, redactSensitiveContent(json)]) {
+			expect(value).not.toContain(secret);
+			expect(value).not.toContain(short);
+			expect(value).toContain('{\n  "before": "');
+			expect(value).toContain('"tokenCount": 12\n}');
+			expect(JSON.parse(value).credentials[0].status).toBe("active");
+		}
+		expect(safe.output.before).toBe(JSON.parse(safe.error).credentials[0].value);
+		expect(tool.error).toBe(json);
+	});
+
+	it("handles escaped JSON strings and nested serialized JSON during legacy replay", () => {
+		const secret = 'synthetic-"quoted"\\value\nnext';
+		const nested = JSON.stringify({ before: secret, credentials: [{ value: secret }], tokenCount: 12 });
+		const content = JSON.stringify({ before: secret, content: nested });
+		const safe = JSON.parse(redactSensitiveContent(content));
+		expect(safe.before).toBe(JSON.parse(safe.content).credentials[0].value);
+		expect(safe.before).toMatch(/^\[CREDENTIAL_\d+\]$/);
+		expect(JSON.parse(safe.content).tokenCount).toBe(12);
+	});
+
+	it("applies caller-known redaction to decoded unlabelled JSON scalars", () => {
+		const known = 'synthetic-"vault"\\value\nnext';
+		const json = `{\n  "note": ${JSON.stringify(known)}, "tokenCount": 12\n}`;
+		const safe = redactSensitiveValue({ content: json, error: json }, text => text.replaceAll(known, "[REDACTED]")) as { content: string; error: string };
+		expect(safe.content).toBe('{\n  "note": "[REDACTED]", "tokenCount": 12\n}');
+		expect(safe.error).toBe(safe.content);
+		expect(JSON.parse(safe.content).note).toBe("[REDACTED]");
+	});
+
+	it("fails closed before returning a partial record when discovery exceeds limits", () => {
+		const output = { passwords: Array.from({ length: 513 }, (_, index) => `synthetic-secret-${index}`) };
+		expect(() => redactSensitiveValue(output)).toThrow(SensitiveTextLimitError);
+		expect(() => modelVisibleToolResult(execution(output))).toThrow("Sensitive-value redaction exceeded its processing limit.");
+		const cyclic: Record<string, unknown> = {};
+		cyclic.self = cyclic;
+		expect(() => redactSensitiveValue(cyclic)).toThrow(SensitiveTextLimitError);
+		expect(output.passwords).toHaveLength(513);
 	});
 
 	it("redacts legacy persisted tool payloads before context replay", () => {
