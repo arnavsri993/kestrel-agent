@@ -1,3 +1,4 @@
+import "../schema-runtime";
 import {
 	AgentStreamEventSchema,
 	ExternalIntakeSchema,

@@ -24,7 +24,25 @@ try {
  await page.reload();
  await page.locator("#new-tab-title").waitFor();
  const request = input => page.evaluate(input => window.kestrel.request(input), input);
- for (let index = 0; index < 14; index++) assert((await request({ type: "browser-create-tab", input: "", active: true })).ok);
+ await app.evaluate(({ BrowserWindow }) => {
+  const window = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/renderer/index.html"));
+  window.setSize(1440, 900);
+ });
+ for (let index = 0; index < 3; index++) assert((await request({ type: "browser-create-tab", input: "", active: true })).ok);
+ await expect(page.locator(".browser-tab")).toHaveCount(4);
+ const lowCountState = (await request({ type: "browser-get-state" })).browserState;
+ for (const sizing of ["scrolling", "shrinking"]) {
+  assert((await request({ type: "browser-update-settings", settings: { ...lowCountState.settings, tabSizing: sizing } })).ok);
+  await expect.poll(() => page.evaluate(() => {
+   const rail = document.querySelector(".browser-tabs").getBoundingClientRect();
+   const tabs = [...document.querySelectorAll(".browser-tabs .browser-tab")].map(node => node.getBoundingClientRect());
+   const plus = document.querySelector(".browser-new-tab").getBoundingClientRect();
+   return tabs.length === 4 && tabs.every(tab => tab.width >= 112 && tab.width <= 221) &&
+    Math.abs(tabs[0].left - rail.left) <= 2 && Math.abs(tabs.at(-1).right - rail.right) <= 2 &&
+    plus.left - tabs.at(-1).right >= 0 && plus.left - tabs.at(-1).right <= 10 && plus.right <= innerWidth + 1;
+  })).toBe(true);
+ }
+ for (let index = 0; index < 11; index++) assert((await request({ type: "browser-create-tab", input: "", active: true })).ok);
  await expect(page.locator(".browser-tab")).toHaveCount(15);
  const state = (await request({ type: "browser-get-state" })).browserState;
 	 const first = state.tabs[0].id;
@@ -96,5 +114,5 @@ try {
  assert((await request({ type: "browser-update-settings", settings: { ...state.settings, tabLayout: "vertical" } })).ok);
  await expect(page.locator(".browser-tab-row-vertical .browser-tab.active")).toBeVisible();
  assert.deepEqual(errors, []);
- console.log("Tab fit smoke passed: 15 long tabs, both sizing modes, narrow width, 200% zoom, selected-tab visibility and vertical mode.");
+ console.log("Tab fit smoke passed: compact four-tab rail, 15 long tabs, both sizing modes, narrow width, 200% zoom, selected-tab visibility and vertical mode.");
 } finally { await app?.close(); rmSync(root, { recursive: true, force: true }); }

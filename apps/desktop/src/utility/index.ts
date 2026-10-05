@@ -1,3 +1,4 @@
+import "../schema-runtime";
 import { startCoreService } from "@kestrel/core-service/service";
 import { nodeParentPort } from "@kestrel/core-service/node-port";
 import type { CoreParentPort } from "@kestrel/core-service/transport";

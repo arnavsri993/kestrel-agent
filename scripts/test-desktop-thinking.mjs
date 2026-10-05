@@ -10,7 +10,7 @@ mkdirSync(evidence, { recursive: true });
 const executable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 let app;
 try {
- app = await electron.launch({ executablePath: executable || createRequire(resolve("apps/desktop/package.json"))("electron"), args: process.env.KESTREL_DESKTOP_USE_SOURCE === "1" ? [resolve("apps/desktop"), "--use-mock-keychain"] : executable ? ["--use-mock-keychain"] : [resolve("apps/desktop")], env: { ...process.env, KESTREL_TEST_USER_DATA: root, KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1", KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1" } });
+ app = await electron.launch({ executablePath: executable || createRequire(resolve("apps/desktop/package.json"))("electron"), args: [...(process.env.KESTREL_DESKTOP_USE_SOURCE === "1" ? [resolve("apps/desktop"), "--use-mock-keychain"] : executable ? ["--use-mock-keychain"] : [resolve("apps/desktop")]), "--js-flags=--jitless"], env: { ...process.env, KESTREL_TEST_USER_DATA: root, KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1", KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1" } });
  const page = await app.firstWindow();
  const errors = [];
  page.on("pageerror", e => errors.push(e.message));

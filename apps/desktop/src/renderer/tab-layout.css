@@ -85,21 +85,27 @@
 }
 
 .browser-tab-row-horizontal.browser-tab-row-scrolling > .browser-tabs {
+	/* Wrap a short tab list so New Tab stays immediately beside it. */
+	flex: 0 1 auto;
+	width: auto;
 	overflow-x: auto;
 }
 
 .browser-tab-row-horizontal.browser-tab-row-scrolling .browser-tab {
-	flex: 0 0 clamp(112px, 18vw, 220px);
+	flex: 0 1 clamp(112px, 18vw, 220px);
+	width: clamp(112px, 18vw, 220px);
 }
 
 .browser-tab-row-horizontal.browser-tab-row-shrinking > .browser-tabs {
+	flex: 0 1 auto;
+	width: auto;
 	overflow-x: hidden;
 }
 
 .browser-tab-row-horizontal.browser-tab-row-shrinking .browser-tab {
 	grid-template-columns: minmax(0, 1fr) auto;
-	flex: 1 1 0;
-	width: 0;
+	flex: 1 1 220px;
+	width: 220px;
 	min-width: 0;
 	max-width: 220px;
 }
