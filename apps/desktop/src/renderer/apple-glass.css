@@ -27,7 +27,11 @@
 .ai-browser-app .kestrel-sidebar {
 	--kestrel-sidebar-row-height: 42px;
 	--kestrel-sidebar-child-row-height: 36px;
-	padding: 14px 10px 12px;
+	padding: 14px 10px;
+}
+
+.ai-browser-app .agent-sidebar-header {
+	padding-inline: 10px;
 }
 
 .ai-browser-app .kestrel-sidebar.is-collapsed {
@@ -43,6 +47,7 @@
 
 .ai-browser-app .kestrel-sidebar-header-actions .kestrel-sidebar-icon-button {
 	width: 24px;
+	height: 24px;
 }
 
 .ai-browser-app .agent-sidebar.is-collapsed {
@@ -75,8 +80,11 @@
 }
 
 /* Round every corner of a tab, including the two that used to meet the toolbar. */
-.ai-browser-app .browser-tab-row-horizontal .browser-tab {
+.ai-browser-app :is(.browser-tab-row-horizontal, .browser-tab-row-vertical) .browser-tab {
 	border-radius: 999px;
+}
+
+.ai-browser-app .browser-tab-row-horizontal .browser-tab {
 	margin-block: 4px;
 }
 
