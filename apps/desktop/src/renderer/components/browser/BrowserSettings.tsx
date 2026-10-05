@@ -1259,29 +1259,6 @@ export function BrowserSettings({
               <span />
             </button>
           </div>
-          <div
-            className="setting-row browser-setting-row"
-            id="setting-browser-payment-autofill"
-          >
-            <div className="browser-setting-copy">
-              <strong>Payment autofill</strong>
-              <p>Fill saved cards only after you confirm.</p>
-            </div>
-            <button
-              type="button"
-              className={`switch ${settings.paymentAutofillEnabled ? "on" : ""}`}
-              role="switch"
-              aria-label="Payment autofill"
-              aria-checked={settings.paymentAutofillEnabled}
-              onClick={() =>
-                void persist({
-                  paymentAutofillEnabled: !settings.paymentAutofillEnabled,
-                })
-              }
-            >
-              <span />
-            </button>
-          </div>
           <PasswordSettings browser={browser} />
           <PaymentSettings browser={browser} />
         </section>

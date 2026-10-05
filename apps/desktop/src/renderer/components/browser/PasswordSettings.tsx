@@ -163,7 +163,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 
 	return (
 		<section className="settings-stack browser-settings-panel password-settings-panel" aria-labelledby="password-settings-title">
-			<header className="settings-panel-header"><h2 id="password-settings-title"><Icon name="lock" /> Passwords and autofill</h2><p>Saved passwords and form info stay in protected storage on this Mac.</p></header>
+			<header className="settings-panel-header"><h2 id="password-settings-title"><Icon name="lock" /> Passwords and personal info</h2></header>
 			<div className="password-settings-group" aria-labelledby="password-behavior-title">
 				<h3 id="password-behavior-title">Password behavior</h3>
 				{toggle("offerToSavePasswords", "Offer to save passwords", "Ask before storing a new or changed login after a supported HTTPS sign-in.")}

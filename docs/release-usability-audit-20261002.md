@@ -770,3 +770,30 @@ lockfile to the normal store before repeating type checking and the secret scan.
 Canonical installed/native evidence and exact-head CI for this follow-up still
 need refreshing. None of these results establishes public signing, independent
 security signoff or full comparative superiority over another product.
+
+### Duplicate Autofill and shortcut controls
+
+The installed `2ba81da4` completes both full CI jobs, the 167-state disposable
+surface audit, responsive Task settings checks and a genuine Auto/Codex text
+task. Native About and routing confirm the same build, Automatic reasoning,
+Best quality, five enabled Codex accounts, zero local endpoints and all seven
+non-Codex routes disabled. The earlier genuine browser-click evidence remains
+separately identified at `2ef788d0`.
+
+Manual review found two payment-autofill switches writing the same preference,
+repeated storage copy and a duplicate Open bookmarks keyboard-shortcut entry.
+Keep the payment switch beside saved cards, preserving its Settings search
+anchor, and give the password/personal-info section one clear title. Keep the
+distinct password master switch and detailed password choices. The bookmarks
+shortcut appears once in Navigation & Actions; the command itself is unchanged.
+
+The owned source protected-autofill check passes persisted card-toggle changes
+across reload, restoration, search-to-control focus and the single shortcut at
+desktop/compact widths. Its complete password add/edit and native protected
+payment/form-fill checks also pass. Desktop build, repository type checking,
+production secret scan and diff checking pass. The first compact capture was
+hidden by the fixture's open Chat modal; closing that modal using its existing
+control makes the check pass. Shortcut captures must wait for the opening
+animation to finish before assessing transparency or readability. Installed,
+native and CI evidence for these duplicate-control changes remains separate
+until the canonical refresh is verified.
