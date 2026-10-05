@@ -138,7 +138,7 @@
 
 .ai-browser-app .kestrel-home .kestrel-home-composer textarea {
 	font: 450 17px / 25px var(--sans);
-	padding-inline: 8px;
+	padding: 5px 8px;
 }
 
 .ai-browser-app .kestrel-home .kestrel-home-composer textarea::placeholder {
