@@ -141,6 +141,18 @@
 	padding: 5px 8px;
 }
 
+/* The composite owns the visible focus ring. Keep its multiline editor flat,
+ * including builds whose generic form-focus rule has higher specificity. */
+.ai-browser-app .kestrel-home .kestrel-home-composer textarea,
+.ai-browser-app .kestrel-home .kestrel-home-composer textarea:focus,
+.ai-browser-app .kestrel-home .kestrel-home-composer textarea:focus-visible {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	outline: none;
+	box-shadow: none;
+}
+
 .ai-browser-app .kestrel-home .kestrel-home-composer textarea::placeholder {
 	color: var(--ink-secondary);
 }
