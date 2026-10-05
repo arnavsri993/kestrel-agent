@@ -540,16 +540,17 @@
 }
 
 .agent-universe-session-notice {
-  position: absolute;
-  top: 76px;
-  left: 50%;
-  z-index: 5;
+  position: relative;
+  grid-column: 1 / -1;
+  justify-self: start;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
-  width: max-content;
-  max-width: calc(100% - 40px);
-  min-height: 28px;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 40px;
   margin: 0;
   padding: 6px 10px;
   border: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
@@ -557,8 +558,19 @@
   background: #15181f;
   box-shadow: 0 12px 28px rgb(0 0 0 / 24%);
   color: var(--muted);
-  font-size: 10px;
-  transform: translateX(-50%);
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.agent-universe-session-notice > span:not(.agent-universe-notice-dot) {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.agent-universe-session-notice button {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 40px;
 }
 
 .agent-universe-notice-dot,
@@ -587,7 +599,6 @@
   opacity: 0.55;
 }
 
-.agent-universe-session-notice button,
 .agent-universe-runtime-status button {
   padding: 0;
   border: 0;
@@ -597,7 +608,6 @@
   cursor: pointer;
 }
 
-.agent-universe-session-notice button:hover,
 .agent-universe-runtime-status button:hover {
   color: var(--ink);
   text-decoration: underline;

@@ -357,9 +357,9 @@ function AgentUniverseSessionNotice({
 					: "The local session list is unavailable. Showing the last known map."}
 			</span>
 			{!refreshing && onRetry ? (
-				<button type="button" onClick={onRetry}>
+				<Button variant="bordered" size="compact" onClick={onRetry}>
 					Retry
-				</button>
+				</Button>
 			) : null}
 		</div>
 	);
@@ -992,14 +992,14 @@ export function AgentWorkspace({
 							</button>
 						</div>
 					</div>
+					{hasSystems && sessionLoadState !== "ready" ? (
+						<AgentUniverseSessionNotice
+							state={sessionLoadState}
+							{...(onRetrySessions ? { onRetry: onRetrySessions } : {})}
+						/>
+					) : null}
 				</header>
 
-				{hasSystems && sessionLoadState !== "ready" ? (
-					<AgentUniverseSessionNotice
-						state={sessionLoadState}
-						{...(onRetrySessions ? { onRetry: onRetrySessions } : {})}
-					/>
-				) : null}
 				{hasSystems ? (
 					<div className="agent-universe-map-footer">
 						<AgentUniverseRuntimeStatus

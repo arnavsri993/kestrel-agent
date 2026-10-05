@@ -190,6 +190,9 @@ async function armAgentRailInterruptionProbe(page, expectedWidth) {
 		const result = {};
 		window.__kestrelAgentRailInterruption = result;
 		let phase = "opening";
+		// Leave room to observe a closing frame above 8px and at least 4px
+		// below the reversal. Reversing at 9px makes those bounds impossible.
+		const openingMinimum = Math.min(64, targetWidth / 4);
 		const deadline = performance.now() + 10_000;
 		const activate = (stage, nextPhase) => {
 			const target = document.querySelector("#browser-agent-toggle");
@@ -231,7 +234,8 @@ async function armAgentRailInterruptionProbe(page, expectedWidth) {
 			}
 			const state = readState();
 			if (state.settling && state.width > 8 && state.width < targetWidth - 8) {
-				if (phase === "opening") activate("reversal", "closing");
+				if (phase === "opening" && state.width >= openingMinimum)
+					activate("reversal", "closing");
 				else if (phase === "closing" && state.width < result.reversal.before.width - 4)
 					activate("reopen", "resumed");
 			}

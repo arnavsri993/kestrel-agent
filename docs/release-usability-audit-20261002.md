@@ -940,3 +940,34 @@ remain unproven until rerun. Current official CodeQL has the same twelve rule/pa
 findings and eight failing annotations, with line movements from changed source;
 AI review again exhausted its quota. Those gates remain open, and this follow-up
 does not establish public release readiness or current canonical installation.
+
+### Agent retry layout and CI interruption sampling
+
+Clean `d17ba25b` was installed at the canonical path with independently matching
+desktop/core provenance, hashes and deep ad-hoc signature. All four installed
+Settings/scope checks and installed desktop layout passed. The expanded owned
+surface audit passed 174 states without renderer errors, including initial Agent
+load failure, keyboard retry, retained stale sessions and compact Connections
+subsections. Manual inspection exposed a defect that ordinary overflow checks
+missed: the absolutely positioned stale-session notice covered Agent search and
+List/Map controls at desktop and compact widths.
+
+The notice now occupies its own normal header row, wraps inside the available
+column and uses readable text with the shared bordered Retry button. Retained
+list content begins below it. The official surface audit now checks the failure
+states, actual retry recovery, header-control overlap and retry geometry; it also
+captures all three deeper Connections subsections at compact width and records
+packaged source identity. Mock Keychain and owned session-list failure injection
+remain confined to disposable fixture profiles.
+
+The preceding full local run stopped at an intermittent 50,000-record benchmark
+failure with no useful reporter message. Its structured-diagnostic rerun passed
+all nine cases, and every remaining verification stage passed in a separately
+recorded sequential continuation; that is not a single-run full-pass claim.
+Exact-head remote core CI passed, while packaged desktop layout failed in its
+interruption probe. Downloaded owned diagnostic JSON showed reversal at 9.609375
+pixels, then a wait requiring a width both greater than 8 and less than 5.609375.
+The probe now waits for enough opening distance before reversing, retaining its
+in-flight continuity, closing, reopening and completion assertions. It passes
+against the installed candidate; no production animation requirement or timeout
+was weakened. Required review, CodeQL and public signing remain separate gates.

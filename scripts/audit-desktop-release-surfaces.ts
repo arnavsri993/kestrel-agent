@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,7 +17,7 @@ const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 const packaged = process.env.KESTREL_DESKTOP_EXECUTABLE;
 const application = await electron.launch({
   executablePath: packaged ? resolve(packaged) : requireFromDesktop("electron"),
-  args: packaged ? ["--use-mock-keychain"] : [resolve("apps/desktop")],
+  args: [...(packaged ? [] : [resolve("apps/desktop")]), "--use-mock-keychain"],
   env: {
     ...process.env,
     KESTREL_TEST_USER_DATA: join(fixture, "profile"),
@@ -29,6 +29,8 @@ const application = await electron.launch({
 });
 const page = await application.firstWindow();
 page.setDefaultTimeout(12_000);
+await page.setViewportSize({ width: 1024, height: 684 });
+const specialistTargets = [];
 const results: Array<{ id: string; viewport: string; status: string; file?: string; error?: string }> = [];
 const pageErrors: string[] = [];
 const lifecycle: string[] = [];
@@ -150,8 +152,39 @@ try {
 		// Keep the conversation dock from stealing compact destination-page width.
 		localStorage.setItem("kestrel:agent-sidebar", "collapsed");
   });
+  // Owned-fixture failure injection applies only to session-list reads.
+  await application.evaluate(({ ipcMain }) => {
+    const original = ipcMain._invokeHandlers?.get("kestrel:request");
+    if (typeof original !== "function") throw new Error("Cannot inspect owned request handler");
+    const fixture = { fail: true, failures: 0 };
+    globalThis.__ownedSessionListFailure = fixture;
+    ipcMain.removeHandler("kestrel:request");
+    ipcMain.handle("kestrel:request", (event, request) => {
+      if (request.type === "runtime-list-sessions" && fixture.fail) {
+        fixture.failures += 1;
+        return { ok: false, error: "Owned session-list failure." };
+      }
+      return original(event, request);
+    });
+  });
   await page.reload();
   await page.locator("#browser-address-input").waitFor();
+  await navigate("agent");
+  for (const size of [{name:"desktop",width:1440,height:900},{name:"compact",width:800,height:660}]) {
+    await page.setViewportSize(size);
+    await audit("agent-initial-load-failure",size.name,async()=>{
+      const alert=page.locator(".agent-universe-state-message[role=alert]");
+      await expect(alert).toContainText("Agent systems could not be loaded");
+      const retry=alert.getByRole("button",{name:"Try again",exact:true});
+      await retry.focus(); await expect(retry).toBeFocused();
+      const bounds=await retry.boundingBox(); assert(bounds && bounds.x>=0 && bounds.x+bounds.width<=size.width+1);
+    });
+  }
+  await application.evaluate(()=>{globalThis.__ownedSessionListFailure.fail=false;});
+  await page.locator(".agent-universe-state-message").getByRole("button",{name:"Try again",exact:true}).press("Enter");
+  await expect(page.locator(".agent-universe-state-message.is-error")).toHaveCount(0);
+  await page.getByRole("heading",{name:"No agents yet",exact:true}).waitFor();
+  await page.setViewportSize({width:1024,height:684});
   await page.emulateMedia({ reducedMotion: "reduce" });
 
 	// Seed one persistent agent through the supported UI flow so list/search/map,
@@ -170,6 +203,34 @@ try {
 		await navigate("agent");
 		await page.getByRole("button", { name: `Open settings for ${agentName}`, exact: true }).waitFor();
 	}
+  await application.evaluate(()=>{globalThis.__ownedSessionListFailure.fail=true;});
+  const refreshTrigger=await page.evaluate(()=>window.kestrel.request({type:"runtime-create-session",title:"Owned refresh trigger"}));
+  assert(refreshTrigger.ok);
+  for (const size of [{name:"desktop",width:1440,height:900},{name:"compact",width:800,height:660}]) {
+    await page.setViewportSize(size);
+    await audit("agent-stale-list-retry",size.name,async()=>{
+      const notice=page.locator(".agent-universe-session-notice[role=status]");
+      await expect(notice).toContainText("Showing the last known map.");
+      await expect(page.getByRole("button",{name:`Open settings for ${agentName}`,exact:true})).toBeVisible();
+      const retry=notice.getByRole("button",{name:"Retry",exact:true}); await retry.focus(); await expect(retry).toBeFocused();
+      const bounds=await retry.boundingBox(); assert(bounds && bounds.x>=0 && bounds.x+bounds.width<=size.width+1);
+      assert(bounds.height >= 40, "Retry keeps a usable pointer target");
+      const geometry = await notice.evaluate(element => {
+        const box = element.getBoundingClientRect();
+        const header = document.querySelector(".agent-universe-mapbar");
+        const controls = [...header.querySelectorAll("button, input, summary")].filter(control => !element.contains(control) && control.checkVisibility());
+        const overlaps = controls.filter(control => { const other = control.getBoundingClientRect(); return box.left < other.right && other.left < box.right && box.top < other.bottom && other.top < box.bottom; }).map(control => control.getAttribute("aria-label") ?? control.textContent);
+        return {overlaps, noticeBottom: box.bottom, listTop: document.querySelector(".agent-workspace-list").getBoundingClientRect().top};
+      });
+      assert.deepEqual(geometry.overlaps, [], "Session notice cannot cover Agent navigation or search");
+      assert(geometry.listTop >= geometry.noticeBottom - 1, "Retained agents begin below the session notice");
+    });
+  }
+  await application.evaluate(()=>{globalThis.__ownedSessionListFailure.fail=false;});
+  await page.locator(".agent-universe-session-notice").getByRole("button",{name:"Retry",exact:true}).press("Enter");
+  await expect(page.locator(".agent-universe-session-notice")).toHaveCount(0);
+  await expect(page.getByRole("button",{name:`Open settings for ${agentName}`,exact:true})).toBeVisible();
+  await page.setViewportSize({width:1024,height:684});
 	const memorySeed = await page.evaluate(async () => {
 		const now = new Date().toISOString();
 		return window.kestrel.request({ type: "memory-document-save", document: {
@@ -341,6 +402,8 @@ try {
 		await audit("agent-add-specialist-form", size.name, async () => {
 			await settings.getByText("Add specialist", { exact: true }).first().click();
 			await settings.locator("details[open] input[name='name']").waitFor();
+      const target = await settings.getByRole("button", {name:"Add specialist",exact:true}).evaluate(el => ({label:el.textContent, height:el.getBoundingClientRect().height,width:el.getBoundingClientRect().width}));
+      assert(target.height >= 40); specialistTargets.push({viewport:size.name,...target});
 		});
 		if (size.name === "desktop") {
 			const addForm = settings.locator("details[open] form");
@@ -357,6 +420,8 @@ try {
 		await audit("agent-archived-specialists", size.name, async () => {
 			await settings.getByText("Archived specialists", { exact: true }).click();
 			await settings.getByRole("button", { name: "Restore Release audit specialist", exact: true }).waitFor();
+      const target = await settings.getByRole("button", {name:"Restore Release audit specialist",exact:true}).evaluate(el => ({label:el.textContent,height:el.getBoundingClientRect().height,width:el.getBoundingClientRect().width}));
+      assert(target.height >= 40); specialistTargets.push({viewport:size.name,...target});
 		});
 		await settings.getByRole("button", { name: "Restore Release audit specialist", exact: true }).click();
 		await settings.getByText("Release audit specialist · disabled", { exact: true }).waitFor();
@@ -428,19 +493,16 @@ try {
 				assert((await page.locator('.browser-app-page[data-app-page="work"]').innerText()).trim().length > 0);
 			});
 		}
-		if (size.name === "desktop") {
-			// Include deeper controls as independent evidence states, not only each
-			// route's empty landing panel.
-			await navigate("connections");
-			const connectionMore = page.getByLabel("More connection settings", { exact: true });
-			for (const section of ["local", "models", "access"]) {
-				if (await connectionMore.locator(`option[value="${section}"]`).count()) {
-					await audit(`connections-${section}`, size.name, async () => {
-						await connectionMore.selectOption(section);
-						assert((await page.locator(".browser-app-page").last().innerText()).trim().length > 0);
-					});
-				}
-			}
+		// Review deeper Connections controls at both actual viewport widths.
+		await navigate("connections");
+		const connectionMore = page.getByLabel("More connection settings", { exact: true });
+		for (const section of ["local", "models", "access"]) {
+			await audit(`connections-${section}`, size.name, async () => {
+				assert.equal(await connectionMore.locator(`option[value="${section}"]`).count(), 1);
+				await connectionMore.selectOption(section);
+				await expect(connectionMore).toHaveValue(section);
+				await assertReadableSurface(`connections-${section}`);
+			});
 		}
     await navigate("settings");
     for (const section of SETTINGS_SECTIONS.filter(section => section.id !== "browser")) {
@@ -489,7 +551,8 @@ try {
 	await page.screenshot({ path: join(evidence, "audit-abort-failure.png") }).catch(() => {});
 	throw error;
 } finally {
-  writeFileSync(join(evidence, "manifest.json"), JSON.stringify({ mode: packaged ? "packaged" : "source", fixture, results, lifecycle, pageErrors }, null, 2) + "\n");
+  writeFileSync(join(evidence,"specialist-targets.json"),JSON.stringify(specialistTargets,null,2));
+  writeFileSync(join(evidence, "manifest.json"), JSON.stringify({ mode: packaged ? "packaged" : "source", sourceCommit: packaged ? JSON.parse(readFileSync(resolve(packaged, "../../Resources/build-provenance.json"), "utf8")).sourceCommit : undefined, fixture, results, lifecycle, pageErrors }, null, 2) + "\n");
   await application.close();
   rmSync(fixture, { recursive: true, force: true });
   console.log(`Release surface evidence: ${evidence}`);
