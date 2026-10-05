@@ -709,3 +709,28 @@ owned desktop evidence artifact. The local counterpart passed 167 states on
 canonical `416685f6`. This expands coverage beyond the separate layout test;
 it does not replace native menus, real-profile routing or genuine provider
 execution. Remote execution of this new CI step remains to be verified.
+
+### Compact audit setup and current native browser evidence
+
+The packaged catalog audit added in `3ce7ea21` exposed a setup error on CI's
+1024×684 initial window: creating the fixture agent successfully opened its
+compact chat modal, which hid the Agent list settings control. An owned local
+reproduction confirmed the agent existed and the expected browser page remained
+mounted; the setup was waiting behind the conversation overlay. The audit now
+waits for creation to finish, closes the conversation through its supported UI
+control, and returns to the Agent page before checking the list. Aborted setup
+or navigation also records a failed manifest state and a screenshot. It no
+longer prints a misleading 1/1 result for a tour that never started.
+
+The same owned 1024×684 initial-window reproduction now completes all 167 catalog
+states without renderer errors, against the installed `3ce7ea21` executable.
+The complete installed browser check also passes after Mac unlock, including
+foreground focus, task resume, popup/detached windows, downloads and restart
+restore. Native CUA confirms that build's About identifier, Auto model,
+Automatic reasoning, Best quality, five enabled Codex accounts, 36 endpoints
+and zero local endpoints; all seven non-Codex categories remain disabled.
+The existing profile was reopened normally and no real-profile screenshots were
+saved. CI `37245549757` passed the core job and prior desktop steps but failed
+at the new surface audit setup; later packaged steps were skipped. A new exact
+head CI run is required for this repair. These checks do not establish a new
+current-head provider generation, independent security review or public signing.

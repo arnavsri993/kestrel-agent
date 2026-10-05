@@ -102,8 +102,14 @@ async function audit(id: string, viewport: string, action: () => Promise<void>) 
 }
 
 async function navigate(id: string) {
+	// Creating an agent opens its conversation. At compact widths that modal
+	// hides the browser toolbar, so close it before trying to use the address.
+	const compactClose = page.locator(".agent-sidebar").getByRole("button", { name: "Close chat", exact: true });
 	const chatToggle = page.locator("#browser-agent-toggle");
-	if (await chatToggle.isVisible().catch(() => false) && await chatToggle.getAttribute("aria-expanded") === "true") {
+	if (await compactClose.isVisible().catch(() => false)) {
+		await compactClose.click();
+		await expect(chatToggle).toHaveAttribute("aria-expanded", "false");
+	} else if (await chatToggle.isVisible().catch(() => false) && await chatToggle.getAttribute("aria-expanded") === "true") {
 		await chatToggle.click();
 	}
   const address = page.locator("#browser-address-input");
@@ -160,7 +166,9 @@ try {
 		const create = page.getByRole("dialog", { name: "Create persistent agent" });
 		await create.locator("input").fill(agentName);
 		await create.getByRole("button", { name: "Create agent", exact: true }).click();
-	await page.getByRole("button", { name: `Open settings for ${agentName}`, exact: true }).waitFor();
+		await expect(create).not.toBeVisible();
+		await navigate("agent");
+		await page.getByRole("button", { name: `Open settings for ${agentName}`, exact: true }).waitFor();
 	}
 	const memorySeed = await page.evaluate(async () => {
 		const now = new Date().toISOString();
@@ -473,6 +481,13 @@ try {
 			});
 		}
   }
+} catch (error) {
+	// Setup failures occur outside individual audits. Keep them visible in the
+	// manifest and save the actual failing state, rather than reporting 1/1.
+	results.push({ id: "audit-setup-or-navigation", viewport: "current", status: "failed",
+		error: error instanceof Error ? error.message : String(error) });
+	await page.screenshot({ path: join(evidence, "audit-abort-failure.png") }).catch(() => {});
+	throw error;
 } finally {
   writeFileSync(join(evidence, "manifest.json"), JSON.stringify({ mode: packaged ? "packaged" : "source", fixture, results, lifecycle, pageErrors }, null, 2) + "\n");
   await application.close();
