@@ -797,3 +797,46 @@ control makes the check pass. Shortcut captures must wait for the opening
 animation to finish before assessing transparency or readability. Installed,
 native and CI evidence for these duplicate-control changes remains separate
 until the canonical refresh is verified.
+
+### Optional Settings setup and compact project-scope verification
+
+Manual review of all 22 initial Settings views found optional remote-memory
+setup, many empty credential forms and custom-profile creation dominating
+ordinary Settings. Disabled Honcho now starts with one Connection settings
+disclosure; an existing enabled configuration starts expanded. The full data
+boundary, consent guard, protected credential entry, configuration controls,
+verification, disable and remove actions remain. Notices and failures stay
+outside the disclosure. Consent and optional memory checkboxes align with their
+text and the actual Settings column.
+
+Protected credentials keep saved entries visible. Add a credential now offers
+all supported mappings through a chooser and one protected form, retaining
+unsaved values by credential ID when switching or folding. Successful saves
+clear the entry and chooser. Custom-agent creation sits in its own disclosure;
+existing profiles, removal and errors remain visible. No route, memory policy,
+provider-owned sign-in, real credential or real-profile preference was changed.
+
+The new disposable-profile/mock-Keychain desktop check passes keyboard access,
+draft retention, full credential-choice inventory, explicit remote-data consent,
+Honcho configuration persistence, enabled-state disclosure, visible failures,
+write-only credential save/remove, custom-profile isolation and compact control
+geometry. Only an owned loopback memory server receives explicit verification;
+configuration saves make no server requests. No model generation or real data is
+part of that check. Settled compact captures were manually inspected. Existing
+Settings and synthetic external-secret setup checks also pass.
+
+Exact preceding `0bfa04c0` CI retry passed the complete core job and development
+checks but failed the packaged task-scope fixture on its hidden Beta project
+row. The fixture now deliberately uses 1024px, closes compact Chat and expands
+the sidebar through the existing UI before project settings. It reopens Chat
+and keeps every scope assertion; the helper accepts an already-open compact
+Chat without waiting for its hidden background toggle. This source check passes
+Conversation only across refresh/submit, explicit project binding and unavailable
+folder/removal behavior using a synthetic HTTP provider. Installed and native
+proof for this revision remains pending until the canonical refresh completes.
+
+Repository type checking, all 2,158 unit tests, production secret scanning,
+Settings parity and diff checking pass. A bounded independent code review found
+no consequential disclosure/consent regression; it is not security signoff.
+Public signing/notarization, protected independent security review and the broad
+release goal remain open.

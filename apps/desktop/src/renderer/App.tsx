@@ -7462,13 +7462,18 @@ function CredentialSettings({
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
+	const [loaded, setLoaded] = useState(false);
+	const [selectedCredential, setSelectedCredential] = useState("");
 	async function load() {
 		const response = await window.kestrel.request({ type: "credential-list" });
 		if (!response.ok)
 			throw new Error(
 				"error" in response ? response.error : "Credential status failed.",
 			);
-		if ("credentials" in response) setCredentials(response.credentials);
+		if ("credentials" in response) {
+			setCredentials(response.credentials);
+			setLoaded(true);
+		}
 	}
 	useEffect(() => {
 		void load().catch((cause) =>
@@ -7497,6 +7502,7 @@ function CredentialSettings({
 				);
 			if ("credentials" in response) setCredentials(response.credentials);
 			setValues((current) => ({ ...current, [credentialId]: "" }));
+			setSelectedCredential("");
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : "Credential save failed.",
@@ -7526,71 +7532,102 @@ function CredentialSettings({
 			setBusy("");
 		}
 	}
+	const configured = credentials.filter((credential) => credential.configured);
+	const available = credentials.filter((credential) => !credential.configured);
+	const credentialToAdd = available.find(
+		(credential) => credential.id === selectedCredential,
+	);
+	const renderCredential = (credential: BrokeredCredentialSummary) => (
+		<div className="credential-entry" key={credential.id}>
+			<label>
+				<span>
+					{credential.label} ·{" "}
+					<span
+						className={`connection-status ${credential.configured ? "connected" : "not_connected"}`}
+					>
+						{credential.configured
+							? "configured"
+							: "not configured"}
+					</span>
+				</span>
+				<input
+					type="password"
+					autoComplete="off"
+					spellCheck={false}
+					value={values[credential.id] ?? ""}
+					placeholder={
+						credential.configured
+							? "Enter replacement"
+							: "Enter credential"
+					}
+					onChange={(event) =>
+						setValues((current) => ({
+							...current,
+							[credential.id]: event.target.value,
+						}))
+					}
+				/>
+			</label>
+			<button
+				className="button secondary"
+				disabled={Boolean(busy)}
+				onClick={() => void save(credential.id)}
+			>
+				{credential.configured ? "Replace" : "Save"}
+			</button>
+			{credential.configured && (
+				<button
+					className="quiet-link"
+					disabled={Boolean(busy)}
+					onClick={() => void remove(credential.id)}
+				>
+					Remove
+				</button>
+			)}
+		</div>
+	);
 	return (
 		<>
-		<article className="setting-row credential-setting">
-			<div>
-				<strong>Protected provider credentials</strong>
-				<p>
-					Encrypted in macOS secure storage, sent only to Kestrel's isolated
-					core, and never shown again.
-				</p>
-				<div className="credential-list">
-						{credentials.map((credential) => (
-							<div className="credential-entry" key={credential.id}>
-								<label>
-									<span>
-										{credential.label} ·{" "}
-										<span
-											className={`connection-status ${credential.configured ? "connected" : "not_connected"}`}
-										>
-											{credential.configured
-												? "configured"
-												: "not configured"}
-										</span>
-									</span>
-									<input
-										type="password"
-										autoComplete="off"
-										spellCheck={false}
-										value={values[credential.id] ?? ""}
-										placeholder={
-											credential.configured
-												? "Enter replacement"
-												: "Enter credential"
-										}
-										onChange={(event) =>
-											setValues((current) => ({
-												...current,
-												[credential.id]: event.target.value,
-											}))
-										}
-									/>
-								</label>
-								<button
-									className="button secondary"
+			<article className="setting-row credential-setting">
+				<div>
+					<strong>Protected provider credentials</strong>
+					<p>
+						Encrypted in macOS secure storage, sent only to Kestrel's isolated
+						core, and never shown again.
+					</p>
+					{configured.length > 0 && (
+						<div className="credential-list">
+							{configured.map(renderCredential)}
+						</div>
+					)}
+					{loaded && configured.length === 0 && <p>No credentials saved here.</p>}
+					{available.length > 0 && (
+						<details className="settings-disclosure credential-setup">
+							<summary>Add a credential</summary>
+							<label className="credential-choice">
+								<span>Credential to add</span>
+								<select
+									value={credentialToAdd?.id ?? ""}
 									disabled={Boolean(busy)}
-									onClick={() => void save(credential.id)}
+									onChange={(event) => setSelectedCredential(event.target.value)}
 								>
-									{credential.configured ? "Replace" : "Save"}
-								</button>
-								{credential.configured && (
-									<button
-										className="quiet-link"
-										disabled={Boolean(busy)}
-										onClick={() => void remove(credential.id)}
-									>
-										Remove
-									</button>
-								)}
-							</div>
-						))}
-					</div>
+									<option value="">Choose a credential</option>
+									{available.map((credential) => (
+										<option key={credential.id} value={credential.id}>
+											{credential.label}
+										</option>
+									))}
+								</select>
+							</label>
+							{credentialToAdd && (
+								<div className="credential-list">{renderCredential(credentialToAdd)}</div>
+							)}
+						</details>
+					)}
 					{error && <small role="alert">{error}</small>}
 				</div>
 				<span className="status">
-					{credentials.filter((credential) => credential.configured).length}{" "}
-					protected
+					{loaded ? `${configured.length} protected` : "Loading…"}
 				</span>
 			</article>
 			<ExternalSecretSettings />
@@ -8304,67 +8341,77 @@ function CustomAgentsSettings({
 			<div>
 				<strong>Custom agents</strong>
 				<p>
-					Encrypted profiles with a fixed route, least-privilege tools, and
-					optional isolation from shared memory.
+					Optional profiles with their own instructions, tool access, and
+					memory scope.
 				</p>
-				<div className="custom-agent-grid">
-					<label>
-						Agent ID
-						<input
-							value={id}
-							placeholder="release-reviewer"
-							onChange={(event) => setId(event.target.value)}
-						/>
-					</label>
-					<label>
-						Name
-						<input
-							value={name}
-							placeholder="Release reviewer"
-							onChange={(event) => setName(event.target.value)}
-						/>
-					</label>
-					<label>
-						Preferred model
-						<input
-							value={model}
-							placeholder="optional"
-							onChange={(event) => setModel(event.target.value)}
-						/>
-					</label>
-					<label>
-						Provider IDs
-						<input
-							value={providers}
-							placeholder="comma separated"
-							onChange={(event) => setProviders(event.target.value)}
-						/>
-					</label>
-					<label>
-						Allowed tools
-						<input
-							value={tools}
-							placeholder="workspace.read, git.diff"
-							onChange={(event) => setTools(event.target.value)}
-						/>
-					</label>
-					<label>
-						Instructions
-						<textarea
-							value={instructions}
-							placeholder="Review changes and cite exact evidence."
-							onChange={(event) => setInstructions(event.target.value)}
-						/>
-					</label>
-					<label className="checkbox-label">
-						<input
-							type="checkbox"
-							checked={isolated}
-							onChange={(event) => setIsolated(event.target.checked)}
-						/>{" "}
-						Isolate from shared user memory
-					</label>
-				</div>
+				<details className="settings-disclosure custom-agent-setup">
+					<summary>Create a custom profile</summary>
+					<div className="custom-agent-grid">
+						<label>
+							Agent ID
+							<input
+								value={id}
+								placeholder="release-reviewer"
+								onChange={(event) => setId(event.target.value)}
+							/>
+						</label>
+						<label>
+							Name
+							<input
+								value={name}
+								placeholder="Release reviewer"
+								onChange={(event) => setName(event.target.value)}
+							/>
+						</label>
+						<label>
+							Preferred model
+							<input
+								value={model}
+								placeholder="optional"
+								onChange={(event) => setModel(event.target.value)}
+							/>
+						</label>
+						<label>
+							Provider IDs
+							<input
+								value={providers}
+								placeholder="comma separated"
+								onChange={(event) => setProviders(event.target.value)}
+							/>
+						</label>
+						<label>
+							Allowed tools
+							<input
+								value={tools}
+								placeholder="workspace.read, git.diff"
+								onChange={(event) => setTools(event.target.value)}
+							/>
+						</label>
+						<label>
+							Instructions
+							<textarea
+								value={instructions}
+								placeholder="Review changes and cite exact evidence."
+								onChange={(event) => setInstructions(event.target.value)}
+							/>
+						</label>
+						<label className="checkbox-label">
+							<input
+								type="checkbox"
+								checked={isolated}
+								onChange={(event) => setIsolated(event.target.checked)}
+							/>
+							<span>Isolate from shared user memory</span>
+						</label>
+					</div>
+					<button
+						className="button secondary"
+						disabled={!id || !name || !instructions}
+						onClick={() => void create()}
+					>
+						Create agent
+					</button>
+				</details>
 				{custom.length > 0 && (
 					<ul className="workspace-grants">
 						{custom.map((personality) => (
@@ -8385,13 +8432,7 @@ function CustomAgentsSettings({
 				)}
 				{error && <small role="alert">{error}</small>}
 			</div>
-			<button
-				className="button secondary"
-				disabled={!id || !name || !instructions}
-				onClick={() => void create()}
-			>
-				Create agent
-			</button>
+			<span className="status">{custom.length} profiles</span>
 		</article>
 	);
 }

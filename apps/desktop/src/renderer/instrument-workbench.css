@@ -1727,6 +1727,81 @@
 	flex: 1 1 220px;
 }
 
+.unified-ui .settings-disclosure {
+	margin-top: 12px;
+}
+.unified-ui .settings-disclosure > summary {
+	width: fit-content;
+	min-height: 40px;
+	padding-block: 10px;
+	color: var(--ink);
+	font: 500 13px / 20px var(--sans);
+	cursor: pointer;
+}
+.unified-ui .settings-disclosure > summary:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+.unified-ui .settings-content .honcho-disclosure {
+	font: 12px / 1.55 var(--sans);
+}
+.unified-ui .settings-content .honcho-actions {
+	min-width: 0;
+	flex-direction: row;
+	align-items: center;
+	flex-wrap: wrap;
+	margin-top: 16px;
+}
+.unified-ui .settings-content .honcho-check,
+.unified-ui .settings-content .custom-agent-setting .checkbox-label {
+	display: flex;
+	align-items: flex-start;
+	max-width: none;
+	gap: 8px;
+	line-height: 1.5;
+}
+.unified-ui .settings-content .honcho-check input,
+.unified-ui .settings-content .custom-agent-setting .checkbox-label input {
+	flex: 0 0 15px;
+	width: 15px;
+	min-height: 15px;
+	height: 15px;
+	padding: 0;
+	margin: 2px 0 0;
+}
+.unified-ui .settings-content .honcho-key-row label,
+.unified-ui .settings-content .honcho-form label {
+	max-width: none;
+	min-width: 0;
+	margin-top: 0;
+}
+.unified-ui .settings-content .credential-choice {
+	width: min(360px, 100%);
+	max-width: none;
+}
+.unified-ui .settings-content .credential-choice select {
+	width: 100%;
+}
+.unified-ui .settings-content .custom-agent-setup > .button {
+	margin-top: 12px;
+}
+@container kestrel-browser-viewport (max-width: 860px) {
+	.unified-ui .settings-content .honcho-key-row,
+	.unified-ui .settings-content .credential-entry {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+	.unified-ui .settings-content .honcho-key-row label,
+	.unified-ui .settings-content .credential-entry label {
+		grid-column: 1 / -1;
+	}
+}
+@container kestrel-browser-viewport (max-width: 600px) {
+	.unified-ui .settings-content .honcho-form {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
 /* Route tools wrap before they can squeeze a library title to one word. */
 .unified-ui .browser-library { background: var(--workbench); }
 @container kestrel-browser-viewport (max-width: 860px) {

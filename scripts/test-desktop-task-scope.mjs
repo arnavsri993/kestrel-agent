@@ -36,7 +36,7 @@ let page;
 const runtimeErrors = [];
 async function openChat() {
 	const toggle = page.locator("#browser-agent-toggle");
-	await toggle.waitFor();
+	await toggle.waitFor({ state: "attached" });
 	if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
 	await page.locator(".agent-conversation-host").waitFor();
 }
@@ -99,13 +99,24 @@ try {
 	assert.equal(await choice.select.inputValue(), projects[0].path);
 	await choice.select.selectOption("");
 	await choice.details.locator("summary").click();
-	const beta = page.locator(".kestrel-sidebar-project-open").filter({ hasText: "Beta" });
+	// CI's smaller display presents Chat as a modal over the project sidebar.
+	// Exercise that layout explicitly and dismiss it through the visible control.
+	await page.setViewportSize({ width: 1024, height: 900 });
+	await page.waitForFunction(() => document.querySelector(".ai-browser-app")?.classList.contains("agent-sidebar-compact"));
+	const closeChat = page.getByRole("button", { name: "Close chat", exact: true });
+	if (await closeChat.isVisible()) await closeChat.click();
+	await page.waitForFunction(() => !document.querySelector(".browser-main-plane")?.inert);
+	const sidebar = page.locator(".kestrel-sidebar");
+	const expandSidebar = sidebar.getByRole("button", { name: "Expand sidebar", exact: true });
+	if (await expandSidebar.isVisible()) await expandSidebar.click();
+	const beta = sidebar.locator(".kestrel-sidebar-project-open").filter({ hasText: "Beta" });
 	await beta.click({ button: "right" });
 	await page.getByRole("menuitem", { name: "Project settings", exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: "Project settings" });
 	await dialog.getByLabel("Project name").fill("Beta refreshed");
 	await dialog.getByRole("button", { name: "Save changes", exact: true }).click();
 	await dialog.waitFor({ state: "detached" });
+	await openChat();
 	choice = await settings();
 	assert.equal(await choice.select.inputValue(), "", "Refreshing project metadata must preserve Conversation only.");
 	await submitAndCheck("Conversation-only scope fixture", undefined, undefined);
