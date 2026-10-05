@@ -873,7 +873,7 @@ function RouteUsageWidget({
 				<p className="kestrel-widget-empty">
 					{rankedRows.length === 0
 						? "No Codex accounts are configured yet."
-						: "All accounts are hidden. Show one below."}
+						: "All accounts are hidden. Choose Accounts to show one."}
 				</p>
 			) : (
 				<ul className="kestrel-widget-route-usage-list">

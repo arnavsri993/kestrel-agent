@@ -370,3 +370,10 @@
 .kestrel-widget-accounts-dialog h3 { margin: 0; font: 650 20px/26px var(--sans); }
 .kestrel-widget-accounts-dialog > header button { display: grid; place-items: center; width: 28px; height: 28px; padding: 5px; border: 0; border-radius: 50%; background: var(--surface); color: var(--ink); cursor: pointer; }
 .kestrel-widget-accounts-dialog .kestrel-widget-route-usage-row { min-height: 44px; }
+
+@container home-viewport (max-height: 380px) {
+ .new-tab-page.kestrel-home .home-site-shortcuts { position: relative; box-sizing: border-box; padding-right: 36px; }
+ .new-tab-page.kestrel-home .home-personalize { top: 0; right: 0; }
+ .new-tab-page.kestrel-home .home-personalize > summary { box-sizing: border-box; width: 28px; height: 28px; padding: 5px; border-radius: 50%; }
+ .new-tab-page.kestrel-home .home-personalize > summary > span { display: none; }
+}

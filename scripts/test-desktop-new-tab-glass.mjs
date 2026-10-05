@@ -61,8 +61,11 @@ try {
  await page.locator(".kestrel-widget-canvas.is-editing").waitFor({ state: "visible" });
  await page.getByRole("button", { name: "Done", exact: true }).click();
  async function showWidget(id) {
+  await page.waitForFunction(() => { const canvas = document.querySelector(".kestrel-widget-canvas"); return canvas && Number(canvas.dataset.viewportHeight) > 0 && Math.abs(Number(canvas.dataset.viewportHeight) - canvas.getBoundingClientRect().height) < 2; });
+  const existing = page.locator(`[data-kestrel-widget-id="${id}"]`);
+  if (await existing.isVisible()) return existing;
   const previous = page.getByRole("button", { name: "Previous widget page", exact: true });
-  while (await previous.isVisible() && await previous.isEnabled()) await previous.click();
+  while (await previous.isVisible() && await previous.isEnabled({ timeout: 1000 }).catch(() => false)) await previous.click();
   for (let attempt = 0; attempt < 20; attempt++) {
    const widget = page.locator(`[data-kestrel-widget-id="${id}"]`);
    if (await widget.isVisible()) return widget;
@@ -137,6 +140,11 @@ try {
    });
   }));
   assert.deepEqual(clipped, [], `Widget actions must remain usable at ${width}x${height}, zoom ${zoom}`);
+  const overlaps = await page.locator(".home-personalize > summary").evaluate(node => {
+   const a = node.getBoundingClientRect();
+   return [...document.querySelectorAll(".kestrel-home-composer button, .kestrel-home-composer textarea")].some(control => { const b = control.getBoundingClientRect(); return b.width > 0 && b.height > 0 && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; });
+  });
+  assert.equal(overlaps, false, "Customize must not cover text entry or its controls");
   const reached = new Set();
   const previousShortcut = page.getByRole("button", { name: "Previous shortcut page", exact: true });
   while (await previousShortcut.isVisible() && await previousShortcut.isEnabled()) await previousShortcut.click();

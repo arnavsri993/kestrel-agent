@@ -34,7 +34,7 @@ export function NewTabPersonalization({ frequent, showFrequent = true, shortcuts
  useEffect(() => {
   const row = shortcutRow.current;
   if (!row) return;
-  const measure = () => setShortcutCapacity(Math.max(1, Math.floor((row.clientWidth - 64) / 72)));
+  const measure = () => setShortcutCapacity(Math.max(1, Math.floor((row.clientWidth - 96) / 72)));
   measure();
   const observer = new ResizeObserver(measure);
   observer.observe(row);
@@ -47,6 +47,8 @@ export function NewTabPersonalization({ frequent, showFrequent = true, shortcuts
   finally { setSaving(false); }
  }
  return <>
+
+  <nav className={`home-site-shortcuts${links.length === 0 ? " is-empty" : ""}`} aria-label="Site shortcuts" ref={shortcutRow}>
   <details className="home-personalize" ref={panel} onKeyDown={(event) => {
    if (event.key === "Escape") { event.preventDefault(); panel.current!.open = false; panel.current?.querySelector("summary")?.focus(); }
   }}>
@@ -68,7 +70,6 @@ export function NewTabPersonalization({ frequent, showFrequent = true, shortcuts
     <button type="button" onClick={() => { setAdding(true); panel.current!.open = false; }}>Add a shortcut<Icon name="plus" /></button>
    </div>
   </details>
-  <nav className={`home-site-shortcuts${links.length === 0 ? " is-empty" : ""}`} aria-label="Site shortcuts" ref={shortcutRow}>
    {shortcutPages > 1 && <button type="button" className="home-shortcut-page-arrow" aria-label="Previous shortcut page" disabled={currentShortcutPage === 0} onClick={() => setShortcutPage(currentShortcutPage - 1)}><Icon name="chevron" /></button>}
    <div className="home-shortcut-page">
    {visibleLinks.map((link) => <div className="home-site-shortcut" key={link.url}>
