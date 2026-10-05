@@ -145,7 +145,7 @@
 
 .ai-browser-app.unified-ui .new-tab-page.kestrel-home .kestrel-widget-canvas:not(.is-editing) .kestrel-widget-card {
 	grid-row: auto;
-	min-height: 152px;
+	min-height: 0;
 }
 
 .ai-browser-app.unified-ui :is(.kestrel-home-composer, .composer):focus-within {
