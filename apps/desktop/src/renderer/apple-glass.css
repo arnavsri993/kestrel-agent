@@ -1,332 +1,161 @@
-/* Quiet, rounded macOS surfaces. Geometry stays on the existing layout grid;
- * the transparent shell borders create breathing room inside each reserved
- * rail, so native browser bounds and the resize controls keep their contract. */
+/* Shared geometry and material. Layout-specific rules live beside Home/tabs. */
 :root {
-	--radius-xs: 8px;
-	--radius-sm: 12px;
-	--radius-control: 999px;
-	--radius-row: 18px;
-	--radius-surface: 26px;
-	--radius-stage: 32px;
-	--radius-text-entry: 999px;
-	--glass-shell: #252628;
-	--glass-reading: #202226;
+ --radius-xs: 8px;
+ --radius-sm: 12px;
+ --radius-control: 12px;
+ --radius-row: 12px;
+ --radius-surface: 22px;
+ --radius-stage: 22px;
+ --radius-text-entry: 12px;
+ --glass-shell: #252628;
+ --glass-reading: #202226;
 }
 
-/* Solid reading surfaces are the baseline. Glass only enhances a few controls
- * that actually have wallpaper or native material underneath them. */
+/* Rails fill the reserved area. There is no inset frame or wallpaper gutter. */
 .ai-browser-app .kestrel-sidebar,
-.ai-browser-app .agent-sidebar {
-	border: 6px solid transparent;
-	border-radius: 32px;
-	background: var(--glass-shell);
-	background-clip: padding-box;
-	box-shadow: inset 0 0 0 1px var(--line);
+.ai-browser-app .agent-sidebar,
+:root[data-kestrel-material="native"] .ai-browser-app .kestrel-sidebar,
+:root[data-kestrel-material="native"] .ai-browser-app .agent-sidebar {
+ border: 0;
+ border-radius: 0;
+ background: var(--glass-shell);
+ background-clip: border-box;
+ box-shadow: none;
+ backdrop-filter: none;
+ -webkit-backdrop-filter: none;
 }
-
 .ai-browser-app .kestrel-sidebar {
-	--kestrel-sidebar-row-height: 42px;
-	--kestrel-sidebar-child-row-height: 36px;
-	padding: 14px 10px;
+ --kestrel-sidebar-row-height: 40px;
+ --kestrel-sidebar-child-row-height: 34px;
+ padding: 12px;
 }
-
-.ai-browser-app .agent-sidebar-header {
-	padding-inline: 10px;
-}
-
-.ai-browser-app .kestrel-sidebar.is-collapsed {
-	padding-inline: 2px;
-	border-width: 4px;
-	border-radius: 24px;
-}
-
-.ai-browser-app .kestrel-sidebar-brand {
-	font-size: 18px;
-	line-height: 26px;
-}
-
-.ai-browser-app .kestrel-sidebar-header-actions .kestrel-sidebar-icon-button {
-	width: 24px;
-	height: 24px;
-}
-
-.ai-browser-app .agent-sidebar.is-collapsed {
-	border-width: 0;
-	box-shadow: none;
-}
-
+.ai-browser-app .kestrel-sidebar.is-collapsed { padding-inline: 6px; }
+.ai-browser-app .agent-sidebar-header { padding-inline: 12px; }
+.ai-browser-app .kestrel-sidebar-brand { font-size: 18px; line-height: 26px; }
 .ai-browser-app :is(.kestrel-sidebar-new-task, .kestrel-sidebar-nav-item, .kestrel-sidebar-footer-item) {
-	min-height: 42px;
-	border-radius: 999px;
-	font-size: 15px;
-	line-height: 22px;
+ min-height: 40px;
+ border-radius: 12px;
+ font-size: 15px;
+ line-height: 22px;
 }
-
-.ai-browser-app .kestrel-sidebar-list-item {
-	border-radius: 18px;
-	font-size: 14px;
-	line-height: 21px;
-}
-
-.ai-browser-app :is(.kestrel-sidebar-icon-button, .agent-sidebar-new, .agent-sidebar-expand, .agent-sidebar-collapse) {
-	border-radius: 50%;
-}
-
+.ai-browser-app .kestrel-sidebar-list-item { border-radius: 10px; font-size: 14px; line-height: 20px; }
 .ai-browser-app .kestrel-sidebar-section-heading {
-	font-size: 12px;
-	line-height: 18px;
-	letter-spacing: 0;
-	text-transform: none;
+ font-size: 12px; line-height: 18px; letter-spacing: 0; text-transform: none;
 }
-
-/* Round every corner of a tab, including the two that used to meet the toolbar. */
-.ai-browser-app :is(.browser-tab-row-horizontal, .browser-tab-row-vertical) .browser-tab {
-	border-radius: 999px;
+.ai-browser-app .kestrel-sidebar-header-actions .kestrel-sidebar-icon-button { width: 28px; height: 28px; }
+.ai-browser-app :is(.kestrel-sidebar-icon-button, .agent-sidebar-new, .agent-sidebar-expand, .agent-sidebar-collapse):not(:has(span)) {
+ aspect-ratio: 1; border-radius: 50%; padding: 0;
 }
-
-.ai-browser-app .browser-tab-row-horizontal .browser-tab {
-	margin-block: 4px;
-}
-
-.ai-browser-app .browser-tab-row-horizontal .browser-tab.active {
-	border-color: var(--line-strong);
-	background: var(--surface);
-	box-shadow: none;
+.ai-browser-app .agent-sidebar-collapse:has(span) {
+ aspect-ratio: auto; border-radius: 12px; padding: 6px 10px;
 }
 
 .ai-browser-app .browser-tab-title,
-.ai-browser-app .browser-address input {
-	font-size: 14px;
-}
-
-.ai-browser-app .browser-address {
-	border-radius: 999px;
-	padding-inline: 12px;
-	background: var(--glass-reading);
-}
-
+.ai-browser-app .browser-address input { font-size: 14px; }
+.ai-browser-app .browser-address { border-radius: 12px; padding-inline: 12px; background: var(--glass-reading); }
 .ai-browser-app .browser-toolbar :is(.browser-toolbar-button, .browser-agent-toggle, .browser-menu-trigger) {
-	border-radius: 50%;
+ border-radius: 50%; aspect-ratio: 1;
 }
-
-/* Keep the first screen focused on one short greeting and one generous entry. */
-.ai-browser-app .kestrel-home-content {
-	width: min(1120px, calc(100% - 48px));
-	gap: 28px;
-	padding-top: clamp(64px, 10vh, 96px);
-}
-
-.ai-browser-app .kestrel-home-hero {
-	width: min(720px, 100%);
-	gap: 28px;
+:root[data-kestrel-material="native"] .ai-browser-app :is(.browser-toolbar, .browser-bookmarks-bar) {
+ background: var(--glass-shell); backdrop-filter: none; -webkit-backdrop-filter: none;
 }
 
 .ai-browser-app .kestrel-home-hero h1 {
-	font: 650 clamp(32px, 3.8vw, 46px) / 1.12 var(--display);
-	letter-spacing: -0.035em;
-	text-wrap: balance;
+ font: 650 clamp(30px, 3.5vw, 44px) / 1.12 var(--display);
+ letter-spacing: -0.035em; text-wrap: balance;
 }
-
 .ai-browser-app .kestrel-home .kestrel-home-composer {
-	min-height: 58px;
-	padding: 8px 14px;
-	border-radius: 999px;
-	background: var(--glass-reading);
-	border-color: rgb(255 255 255 / 24%);
-	box-shadow: var(--edge-light), var(--shadow-sm);
-	backdrop-filter: none;
-	-webkit-backdrop-filter: none;
+ min-height: 56px; padding: 8px 14px; border-radius: 22px;
+ background: var(--glass-reading); border: 1px solid rgb(255 255 255 / 22%);
+ box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%), 0 6px 22px rgb(0 0 0 / 12%);
 }
-
 .ai-browser-app .kestrel-home .kestrel-home-composer.is-expanded {
-	min-height: 126px;
-	padding: 14px;
-	border-radius: 30px;
+ min-height: 116px; padding: 12px 14px; border-radius: 22px;
 }
-
-.ai-browser-app .kestrel-home .kestrel-home-composer textarea {
-	font: 450 17px / 25px var(--sans);
-	padding: 5px 8px;
-}
-
-/* The composite owns the visible focus ring. Keep its multiline editor flat,
- * including builds whose generic form-focus rule has higher specificity. */
+.ai-browser-app .kestrel-home .kestrel-home-composer textarea { font: 450 17px / 25px var(--sans); padding: 5px 8px; }
+/* The container owns the only focus boundary, including generic form rules. */
 .ai-browser-app .kestrel-home .kestrel-home-composer textarea,
 .ai-browser-app .kestrel-home .kestrel-home-composer textarea:focus,
-.ai-browser-app .kestrel-home .kestrel-home-composer textarea:focus-visible {
-	border: 0;
-	border-radius: 0;
-	background: transparent;
-	outline: none;
-	box-shadow: none;
+.ai-browser-app .kestrel-home .kestrel-home-composer textarea:focus-visible,
+.unified-ui .composer textarea,
+.unified-ui .composer textarea:focus,
+.unified-ui .composer textarea:focus-visible {
+ border: 0; border-radius: 0; background: transparent; outline: none; box-shadow: none;
 }
-
-.ai-browser-app .kestrel-home .kestrel-home-composer textarea::placeholder {
-	color: var(--ink-secondary);
-}
-
+.ai-browser-app .kestrel-home .kestrel-home-composer textarea::placeholder { color: var(--ink-secondary); }
 .ai-browser-app .kestrel-home .kestrel-home-composer:focus-within {
-	border-color: var(--ink);
-	box-shadow: var(--edge-light), 0 0 0 2px rgb(255 255 255 / 14%);
+ border-color: rgb(255 255 255 / 48%);
+ outline: none;
+ box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%), 0 6px 22px rgb(0 0 0 / 12%);
 }
-
-.ai-browser-app .kestrel-widget-card {
-	border-radius: 28px;
-	background: color-mix(in srgb, var(--glass-reading) 94%, transparent);
-	border-color: var(--line);
-	box-shadow: none;
-	backdrop-filter: none;
-	-webkit-backdrop-filter: none;
+.ai-browser-app .kestrel-home .kestrel-widget-card {
+ border-radius: 22px;
+ border: 1px solid rgb(255 255 255 / 20%);
+ background: var(--glass-reading);
+ box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 8px 28px rgb(0 0 0 / 14%);
 }
-
-.ai-browser-app .kestrel-widget-card-header h3 {
-	font-size: 16px;
-	line-height: 22px;
-}
-
-.ai-browser-app :is(.kestrel-widget-card-icon, .home-site-glyph) {
-	border-radius: 50%;
-}
-
-.ai-browser-app :is(.home-add-shortcut, .home-personalize > summary, .kestrel-widget-customize) {
-	border-radius: 999px;
-	font-size: 14px;
-}
-
-/* A comfortable reading scale, including the narrow Agent panel. Its controls
- * and permission details remain visible; only visual density changes. */
-.ai-browser-app .agent-chat-heading strong {
-	font-size: 15px;
-	line-height: 22px;
-}
-
+.ai-browser-app .kestrel-widget-card-header h3 { font-size: 16px; line-height: 22px; }
+.ai-browser-app .kestrel-widget-card-icon,
+.ai-browser-app .home-site-glyph { border-radius: 10px; }
+.ai-browser-app :is(.home-add-shortcut, .home-personalize > summary, .kestrel-widget-customize) { border-radius: 999px; font-size: 14px; }
+.ai-browser-app .kestrel-widget-list strong { font-size: 14px; line-height: 20px; }
+.ai-browser-app .agent-chat-heading strong { font-size: 15px; line-height: 22px; }
 .unified-ui :is(.assistant-message, .user-message) p,
-.unified-ui .assistant-content {
-	font-size: 15px;
-	line-height: 1.65;
-}
-
-.unified-ui .user-message p {
-	border-radius: 24px;
-}
-
-.ai-browser-app .kestrel-widget-list strong {
-	font-size: 14px;
-	line-height: 20px;
-}
-
-.unified-ui .settings-panel-header h2 {
-	font-size: 20px;
-	line-height: 28px;
-}
-
-.unified-ui .settings-row strong {
-	font-size: 15px;
-	line-height: 22px;
-}
-
-.unified-ui .composer {
-	border-radius: 28px;
-	background: var(--glass-reading);
-	box-shadow: var(--edge-light);
-}
-
-.unified-ui .composer textarea {
-	font-size: 16px;
-	line-height: 24px;
-}
-
-.unified-ui :is(.button, .ui-button) {
-	border-radius: 999px;
-	font-size: 14px;
-	line-height: 20px;
-}
-
+.unified-ui .assistant-content { font-size: 15px; line-height: 1.65; }
+.unified-ui .user-message p { border-radius: 18px; }
+.unified-ui .composer { border-radius: 22px; background: var(--glass-reading); box-shadow: none; }
+.unified-ui .composer:focus-within { border-color: var(--ink-secondary); box-shadow: none; outline: none; }
+.unified-ui .composer textarea { font-size: 16px; line-height: 24px; }
+.unified-ui .settings-panel-header h2 { font-size: 22px; line-height: 28px; }
+.unified-ui .settings-row strong { font-size: 15px; line-height: 22px; }
+.unified-ui :is(.button, .ui-button) { border-radius: 12px; font-size: 14px; line-height: 20px; }
 .unified-ui :is(.ui-input, .settings-panel input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), .settings-panel select) {
-	border-radius: 999px;
-	font-size: 15px;
+ border-radius: 12px; font-size: 15px;
 }
+.unified-ui :is(.ui-textarea, .settings-panel textarea) { border-radius: 12px; }
+.unified-ui .ui-page-frame h1 { font: 650 clamp(28px, 3vw, 36px) / 1.16 var(--display); letter-spacing: -0.035em; }
+.unified-ui .ui-page-frame-description { font-size: 15px; line-height: 24px; }
+.unified-ui .settings-nav button { border-radius: 10px; font-size: 14px; }
 
-.unified-ui .ui-textarea,
-.unified-ui .settings-panel textarea {
-	border-radius: 22px;
+/* Menus share one rounded rectangle and a regular row rhythm. */
+:is(.browser-toolbar-popover, .model-selector-menu, .new-tab-access-menu, .agent-history-popover, .browser-tab-tools-menu, .browser-tab-menu, .browser-bookmarks-bar-folder-menu, .kestrel-sidebar-context-menu, .kestrel-widget-add-popover, .kestrel-widget-size-popover, .agent-universe-create-agent-popover) {
+ border-radius: 18px; max-width: calc(100vw - 24px);
+ font-size: 14px; line-height: 1.45;
 }
-
-.unified-ui .ui-page-frame h1 {
-	font: 650 clamp(30px, 3vw, 38px) / 1.16 var(--display);
-	letter-spacing: -0.035em;
-}
-
-.unified-ui .ui-page-frame-description {
-	font-size: 15px;
-	line-height: 24px;
-}
-
-.unified-ui .settings-nav button {
-	border-radius: 999px;
-	font-size: 14px;
+:is(.browser-toolbar-popover, .model-selector-menu, .new-tab-access-menu, .agent-history-popover, .browser-tab-tools-menu, .browser-tab-menu, .browser-bookmarks-bar-folder-menu, .kestrel-sidebar-context-menu, .kestrel-widget-add-popover, .kestrel-widget-size-popover, .agent-universe-create-agent-popover) :is(button[role="menuitem"], button[role="menuitemradio"], button[role="menuitemcheckbox"]) {
+ min-height: 36px; border-radius: 10px; font-size: 14px; line-height: 20px;
 }
 
 @supports (backdrop-filter: blur(16px)) {
-	.ai-browser-app .kestrel-home .kestrel-home-composer {
-		background: rgb(28 30 34 / 78%);
-		backdrop-filter: blur(16px) saturate(115%);
-		-webkit-backdrop-filter: blur(16px) saturate(115%);
-	}
-	:root[data-kestrel-material="native"] .ai-browser-app :is(.kestrel-sidebar, .agent-sidebar) {
-		background-color: rgb(37 38 40 / 88%);
-		background-clip: padding-box;
-		backdrop-filter: none;
-		-webkit-backdrop-filter: none;
-	}
+ .ai-browser-app .kestrel-home .kestrel-home-composer {
+  background: rgb(28 30 34 / 62%);
+  backdrop-filter: blur(16px) saturate(135%);
+  -webkit-backdrop-filter: blur(16px) saturate(135%);
+ }
+ .ai-browser-app .kestrel-home .kestrel-widget-card {
+  background: rgb(28 30 34 / 58%);
+  backdrop-filter: blur(28px) saturate(145%);
+  -webkit-backdrop-filter: blur(28px) saturate(145%);
+ }
 }
-
-@media (max-width: 800px) {
-	.ai-browser-app .kestrel-home-content {
-		width: calc(100% - 32px);
-		padding-top: 64px;
-	}
-	.ai-browser-app .kestrel-home-hero {
-		gap: 22px;
-	}
-	.ai-browser-app .kestrel-home-hero h1 {
-		font-size: 32px;
-	}
-}
-
 @media (max-height: 650px) {
-	.ai-browser-app .kestrel-home-content {
-		padding-top: 56px;
-		gap: 22px;
-	}
-	.ai-browser-app .kestrel-sidebar {
-		--kestrel-sidebar-row-height: 38px;
-		padding-block: 10px;
-	}
+ .ai-browser-app .kestrel-sidebar { --kestrel-sidebar-row-height: 36px; padding-block: 8px; }
+ .ai-browser-app :is(.kestrel-sidebar-new-task, .kestrel-sidebar-nav-item, .kestrel-sidebar-footer-item) { min-height: 36px; }
 }
-
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-	.ai-browser-app .kestrel-home .kestrel-home-composer,
-	:root[data-kestrel-material="native"] .ai-browser-app :is(.kestrel-sidebar, .agent-sidebar),
-	.ai-browser-app .kestrel-widget-card {
-		background-color: var(--glass-reading);
-		backdrop-filter: none;
-		-webkit-backdrop-filter: none;
-	}
-	.ai-browser-app .kestrel-home .kestrel-home-composer:focus-within {
-		outline: 2px solid var(--ink);
-		outline-offset: 3px;
-	}
+ .ai-browser-app .kestrel-home .kestrel-home-composer,
+ .ai-browser-app .kestrel-home .kestrel-widget-card {
+  background: var(--glass-reading); backdrop-filter: none; -webkit-backdrop-filter: none;
+ }
+ .ai-browser-app .kestrel-home .kestrel-home-composer:focus-within,
+ .unified-ui .composer:focus-within { border-color: var(--ink); }
 }
-
 @media (forced-colors: active) {
-	.ai-browser-app :is(.kestrel-sidebar, .agent-sidebar, .kestrel-widget-card, .browser-tab.active),
-	.ai-browser-app .kestrel-home .kestrel-home-composer {
-		background: Canvas;
-		color: CanvasText;
-		border-color: CanvasText;
-		box-shadow: none;
-		backdrop-filter: none;
-		-webkit-backdrop-filter: none;
-	}
+ .ai-browser-app { --glass-shell: Canvas; --glass-reading: Canvas; }
+ .ai-browser-app :is(.kestrel-sidebar, .agent-sidebar, .kestrel-widget-card, .browser-tab.active),
+ .ai-browser-app .kestrel-home .kestrel-widget-card,
+ .ai-browser-app .kestrel-home .kestrel-home-composer,
+ .unified-ui .composer { background: Canvas; color: CanvasText; border-color: CanvasText; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+ .ai-browser-app .kestrel-home .kestrel-home-composer:focus-within,
+ .unified-ui .composer:focus-within { border: 1px solid Highlight; }
 }

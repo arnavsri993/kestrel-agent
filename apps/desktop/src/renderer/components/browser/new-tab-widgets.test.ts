@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
 	addWidget,
 	columnsForLayoutClass,
+	fittedWidgetSize,
 	layoutClassForWidth,
 	layoutItemsForClass,
 	moveWidget,
@@ -22,6 +23,9 @@ import {
 	setRouteUsageProviderVisible,
 	usageBatteryLevel,
 	visibleRouteUsageProviderIds,
+	widgetPages,
+	widgetPageGeometry,
+	widgetViewportPlan,
 } from "./new-tab-widgets";
 
 const baseSettings: NewTabWidgetSettings = {
@@ -41,6 +45,58 @@ describe("New Tab widget layout model", () => {
 		expect(columnsForLayoutClass("standard")).toBe(2);
 		expect(columnsForLayoutClass("wide")).toBe(3);
 		expect(columnsForLayoutClass("ultrawide")).toBe(4);
+	});
+
+	it("fits widgets to both viewport axes and balances short pages", () => {
+		const short = widgetViewportPlan("wide", 210, 4);
+		expect(short).toMatchObject({
+			columns: 3,
+			rows: 1,
+			pageSize: 2,
+			pageCount: 2,
+			density: "compact",
+		});
+		expect(widgetPages(["a", "b", "c", "d"], short.pageSize)).toEqual([
+			["a", "b"],
+			["c", "d"],
+		]);
+
+		const tall = widgetViewportPlan("wide", 440, 4);
+		expect(tall).toMatchObject({ rows: 2, pageCount: 1, pageSize: 4 });
+		expect(fittedWidgetSize("large", "compact")).toBe("small");
+		expect(fittedWidgetSize("large", "comfortable")).toBe("medium");
+		expect(fittedWidgetSize("medium", "comfortable")).toBe("medium");
+	});
+
+	it("reserves edit controls without dropping configured widgets", () => {
+		const plan = widgetViewportPlan("standard", 250, 5, true);
+		const pages = widgetPages([1, 2, 3, 4, 5], plan.pageSize);
+		expect(plan.columns).toBe(2);
+		expect(plan.pageCount).toBeGreaterThan(1);
+		expect(pages.flat()).toEqual([1, 2, 3, 4, 5]);
+		expect(Math.max(...pages.map((page) => page.length))).toBeLessThanOrEqual(
+			plan.columns * plan.rows,
+		);
+	});
+
+	it("centers incomplete rows while keeping every card on an equal track", () => {
+		expect(widgetPageGeometry(3, 4)).toEqual({
+			columns: 2,
+			rows: 2,
+			lastRowStartIndex: -1,
+		});
+		expect(widgetPageGeometry(3, 5)).toEqual({
+			columns: 3,
+			rows: 2,
+			lastRowStartIndex: 3,
+			centeredColumnStart: 2,
+		});
+		expect(widgetPageGeometry(4, 7)).toEqual({
+			columns: 4,
+			rows: 2,
+			lastRowStartIndex: 4,
+			centeredColumnStart: 2,
+		});
 	});
 
 	it("keeps the first view curated while exposing more local widget sources", () => {

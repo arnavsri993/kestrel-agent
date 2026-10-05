@@ -27,6 +27,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	type CSSProperties,
 	type PointerEvent as ReactPointerEvent,
 } from "react";
 import { agentSessionRecency } from "../../agent-workspace";
@@ -40,6 +41,7 @@ import type { FrequentBrowserSite, SuggestedAgentAction } from "./new-tab";
 import {
 	addWidget,
 	columnSpanForSize,
+	fittedWidgetSize,
 	layoutClassForWidth,
 	layoutItemsForClass,
 	moveWidget,
@@ -57,7 +59,11 @@ import {
 	visibleRouteUsageProviderIds,
 	WIDGET_SIZE_DESCRIPTIONS,
 	WIDGET_SIZE_LABELS,
+	widgetPageGeometry,
+	widgetPages,
+	widgetViewportPlan,
 	type NewTabWidgetDefinition,
+	type NewTabWidgetViewportDensity,
 } from "./new-tab-widgets";
 import { bookmarkBarFaviconDataUrl } from "./bookmarks-bar";
 import "./new-tab-widgets.css";
@@ -112,8 +118,8 @@ function visibleItemCount(size: NewTabWidgetSize): number {
 
 /** Route usage needs room for several Codex accounts plus status-only routes. */
 function routeUsageVisibleItemCount(size: NewTabWidgetSize): number {
-	if (size === "small") return 4;
-	if (size === "medium") return 6;
+	if (size === "small") return 2;
+	if (size === "medium") return 4;
 	return 10;
 }
 
@@ -1094,6 +1100,8 @@ function WidgetCard({
 	item,
 	definition,
 	layoutClass,
+	density,
+	columnStart,
 	editing,
 	dragging,
 	dragDelta,
@@ -1108,6 +1116,8 @@ function WidgetCard({
 	item: NewTabWidgetLayoutItem;
 	definition: NewTabWidgetDefinition;
 	layoutClass: NewTabWidgetLayoutClass;
+	density: NewTabWidgetViewportDensity;
+	columnStart?: number;
 	editing: boolean;
 	dragging: boolean;
 	dragDelta: { x: number; y: number };
@@ -1124,14 +1134,16 @@ function WidgetCard({
 }) {
 	const definitionForItem = definition;
 	const reducedMotion = useReducedMotion() ?? false;
+	const displaySize = fittedWidgetSize(item.size, density);
 	const style = {
-		"--kestrel-widget-column-span": columnSpanForSize(item.size, layoutClass),
-		"--kestrel-widget-row-span": rowSpanForSize(item.size, item.id),
+		"--kestrel-widget-column-span": columnSpanForSize(displaySize, layoutClass),
+		"--kestrel-widget-row-span": rowSpanForSize(displaySize, item.id),
+		...(columnStart ? { gridColumnStart: columnStart } : {}),
 	} as MotionStyle;
 
 	return (
 		<motion.article
-			className={`kestrel-widget-card kestrel-widget-card-${item.size}${
+			className={`kestrel-widget-card kestrel-widget-card-${displaySize}${
 				dragging ? " is-dragging" : ""
 			}`}
 			layout={!reducedMotion}
@@ -1151,6 +1163,8 @@ function WidgetCard({
 							}
 			}
 			data-kestrel-widget-id={item.id}
+			data-configured-size={item.size}
+			data-display-size={displaySize}
 			style={style}
 			aria-label={`${definitionForItem.title} widget`}
 		>
@@ -1201,7 +1215,10 @@ function WidgetCard({
 				)}
 			</header>
 			<div className="kestrel-widget-card-body">
-				<WidgetBody definition={definitionForItem} context={{ ...context, size: item.size }} />
+				<WidgetBody
+					definition={definitionForItem}
+					context={{ ...context, size: displaySize }}
+				/>
 			</div>
 		</motion.article>
 	);
@@ -1297,6 +1314,8 @@ export function NewTabWidgets({
 }: NewTabWidgetsProps) {
 	const canvasRef = useRef<HTMLDivElement | null>(null);
 	const [width, setWidth] = useState(0);
+	const [height, setHeight] = useState(0);
+	const [pageIndex, setPageIndex] = useState(0);
 	const [editing, setEditing] = useState(false);
 	useEffect(() => { if (customizeRequestId > 0) setEditing(true); }, [customizeRequestId]);
 	const [workingSettings, setWorkingSettings] = useState(() =>
@@ -1333,8 +1352,11 @@ export function NewTabWidgets({
 		const node = canvasRef.current;
 		if (!node) return;
 		const measure = () => {
-			const nextWidth = Math.round(node.getBoundingClientRect().width);
+			const rect = node.getBoundingClientRect();
+			const nextWidth = Math.round(rect.width);
+			const nextHeight = Math.round(rect.height);
 			setWidth((current) => (current === nextWidth ? current : nextWidth));
+			setHeight((current) => (current === nextHeight ? current : nextHeight));
 		};
 		const observer = new ResizeObserver(measure);
 		observer.observe(node);
@@ -1347,6 +1369,26 @@ export function NewTabWidgets({
 		() => layoutItemsForClass(workingSettings, layoutClass),
 		[layoutClass, workingSettings],
 	);
+	const viewportPlan = useMemo(
+		() => widgetViewportPlan(layoutClass, height, items.length, editing),
+		[editing, height, items.length, layoutClass],
+	);
+	const pages = useMemo(
+		() => widgetPages(items, viewportPlan.pageSize),
+		[items, viewportPlan.pageSize],
+	);
+	const boundedPageIndex = Math.min(pageIndex, pages.length - 1);
+	const visibleItems = pages[boundedPageIndex] ?? [];
+	const pageGeometry = widgetPageGeometry(
+		viewportPlan.columns,
+		visibleItems.length,
+	);
+	const pageColumns = pageGeometry.columns;
+	const pageRows = pageGeometry.rows;
+
+	useEffect(() => {
+		setPageIndex((current) => Math.min(current, pages.length - 1));
+	}, [pages.length]);
 
 	useEffect(() => {
 		if (!width || workingSettings.layouts[layoutClass]) return;
@@ -1485,6 +1527,12 @@ export function NewTabWidgets({
 		},
 		[layoutClass, updateWorkingSettings],
 	);
+	const gridStyle = {
+		"--kestrel-widget-page-columns": pageColumns,
+		"--kestrel-widget-page-tracks": pageColumns * 2,
+		"--kestrel-widget-page-rows": pageRows,
+		"--kestrel-widget-page-width": `${pageColumns * 320 + (pageColumns - 1) * 12}px`,
+	} as CSSProperties;
 
 	return (
 		<section
@@ -1494,6 +1542,10 @@ export function NewTabWidgets({
 			}`}
 			aria-label="New Tab widgets"
 			data-layout-class={layoutClass}
+			data-density={viewportPlan.density}
+			data-page-count={pages.length}
+			data-current-page={boundedPageIndex + 1}
+			data-viewport-height={height}
 		>
 			<div className="kestrel-widget-canvas-toolbar" hidden={!editing}>
 				<div className="kestrel-widget-canvas-actions">
@@ -1513,8 +1565,16 @@ export function NewTabWidgets({
 			</div>
 
 			{items.length > 0 ? (
-				<div className="kestrel-widget-grid kestrel-widget-shelves" aria-label="New Tab widgets">
-					{items.map((item) => {
+				<>
+				<div
+					className="kestrel-widget-grid kestrel-widget-shelves"
+					aria-label={`New Tab widgets, page ${boundedPageIndex + 1} of ${pages.length}`}
+					data-page={boundedPageIndex + 1}
+					data-page-columns={pageColumns}
+					data-page-items={visibleItems.length}
+					style={gridStyle}
+				>
+					{visibleItems.map((item, index) => {
 						const definition = NEW_TAB_WIDGET_DEFINITIONS[item.id];
 						return (
 							<WidgetCard
@@ -1522,6 +1582,11 @@ export function NewTabWidgets({
 								item={item}
 								definition={definition}
 								layoutClass={layoutClass}
+								density={viewportPlan.density}
+								{...(index === pageGeometry.lastRowStartIndex &&
+								pageGeometry.centeredColumnStart
+									? { columnStart: pageGeometry.centeredColumnStart }
+									: {})}
 								editing={editing}
 								dragging={draggingId === item.id}
 								dragDelta={dragDelta}
@@ -1541,6 +1606,45 @@ export function NewTabWidgets({
 						);
 					})}
 				</div>
+				{pages.length > 1 && (
+					<nav className="kestrel-widget-pager" aria-label="Widget pages">
+						<button
+							type="button"
+							className="kestrel-widget-page-arrow"
+							aria-label="Previous widget page"
+							disabled={boundedPageIndex === 0}
+							onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
+						>
+							<Icon name="back" />
+						</button>
+						<div className="kestrel-widget-page-dots">
+							{pages.map((_, index) => (
+								<button
+									key={index}
+									type="button"
+									aria-label={`Show widget page ${index + 1} of ${pages.length}`}
+									aria-current={index === boundedPageIndex ? "page" : undefined}
+									onClick={() => setPageIndex(index)}
+								/>
+							))}
+						</div>
+						<span className="kestrel-widget-page-status" aria-live="polite">
+							{boundedPageIndex + 1} of {pages.length}
+						</span>
+						<button
+							type="button"
+							className="kestrel-widget-page-arrow"
+							aria-label="Next widget page"
+							disabled={boundedPageIndex === pages.length - 1}
+							onClick={() =>
+								setPageIndex((current) => Math.min(pages.length - 1, current + 1))
+							}
+						>
+							<Icon name="forward" />
+						</button>
+					</nav>
+				)}
+				</>
 			) : (
 				<div className="kestrel-widget-canvas-empty">
 					<span className="kestrel-widget-canvas-empty-icon" aria-hidden="true">

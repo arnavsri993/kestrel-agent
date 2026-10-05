@@ -60,10 +60,21 @@ try {
  await page.getByRole("button", { name: "Arrange widgets" }).click();
  await page.locator(".kestrel-widget-canvas.is-editing").waitFor({ state: "visible" });
  await page.getByRole("button", { name: "Done", exact: true }).click();
+ async function showWidget(id) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+   const widget = page.locator(`[data-kestrel-widget-id="${id}"]`);
+   if (await widget.isVisible()) return widget;
+   const next = page.getByRole("button", { name: "Next widget page", exact: true });
+   if (!await next.isVisible() || !await next.isEnabled()) break;
+   await next.click();
+  }
+  throw new Error(`Configured widget ${id} must remain reachable`);
+ }
+ await showWidget("route-usage");
  await page.locator('[data-kestrel-widget-id="route-usage"]').getByRole("heading", { name: "Codex usage", exact: true }).waitFor();
  await page.locator('[data-kestrel-widget-id="route-usage"]').getByText("No Codex accounts are configured yet.", { exact: true }).waitFor();
  const gap = await page.locator(".kestrel-widget-shelves").evaluate((node) => parseFloat(getComputedStyle(node).gap));
- assert(gap >= 16, "Widgets must be separated");
+ assert(gap >= 12, "Widgets must be separated even in compact viewports");
  const download = await page.locator(".browser-download-trigger").evaluate((button) => {
   const b = button.getBoundingClientRect(); const i = button.querySelector(".browser-download-trigger-icon > svg").getBoundingClientRect();
   return { x: Math.abs(b.x + b.width / 2 - i.x - i.width / 2), y: Math.abs(b.y + b.height / 2 - i.y - i.height / 2), radius: getComputedStyle(button).borderRadius };
@@ -73,6 +84,15 @@ try {
  const composerMaterial = await composer.evaluate((node) => getComputedStyle(node).backdropFilter);
  assert(composerMaterial.includes("blur(16px)"), "The wallpaper entry uses a bounded glass blur");
  assert(!composerMaterial.includes("url("), "Task entry must not require SVG refraction");
+ const widgetMaterial = await page.locator(".kestrel-widget-card").first().evaluate(node => getComputedStyle(node).backdropFilter);
+ assert(widgetMaterial.includes("blur("), "Widgets must sample the wallpaper through glass");
+ const rail = await page.locator(".kestrel-sidebar").evaluate(node => {
+  const css = getComputedStyle(node); return { border: css.borderWidth, radius: css.borderRadius, background: css.backgroundColor };
+ });
+ assert.equal(rail.border, "0px", "Navigation rail must have no inset border frame");
+ assert.equal(rail.radius, "0px", "Navigation rail fills its reserved area");
+ const focus = await input.evaluate(node => ({ outline: getComputedStyle(node).outlineStyle, shadow: getComputedStyle(node).boxShadow, border: getComputedStyle(node).borderWidth }));
+ assert.deepEqual(focus, { outline: "none", shadow: "none", border: "0px" }, "Text entry must not add a nested selection ring");
  await page.screenshot({ animations: "disabled", path: join(evidence, "desktop.png") });
  await input.focus();
  await page.screenshot({ animations: "disabled", path: join(evidence, "composer.png") });
@@ -80,7 +100,29 @@ try {
  await page.emulateMedia({ reducedMotion: "reduce" });
  await page.screenshot({ animations: "disabled", path: join(evidence, "narrow.png") });
  assert.equal(await page.locator(".new-tab-page").evaluate((node) => node.scrollWidth > node.clientWidth + 1), false, "Home must not overflow horizontally");
- await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows().find((win) => !win.webContents.getURL().includes("petOverlay")); win.setSize(1440, 1000); });
+ for (const [width, height, zoom] of [[1440, 1000, 1], [1440, 700, 1], [1000, 680, 1], [760, 760, 1], [1440, 1000, 2]]) {
+  await application.evaluate(({ BrowserWindow }, { width, height, zoom }) => {
+   const win = BrowserWindow.getAllWindows().find(win => !win.webContents.getURL().includes("petOverlay"));
+   win.setSize(width, height); win.webContents.setZoomFactor(zoom);
+  }, { width, height, zoom });
+  await input.focus();
+  await page.waitForFunction(() => {
+   const home = document.querySelector(".new-tab-page");
+   return home && home.scrollHeight <= home.clientHeight + 1 && home.scrollWidth <= home.clientWidth + 1;
+  });
+  assert(await page.locator(".kestrel-home").evaluate(node => {
+   node.scrollTop = 100; return node.scrollTop === 0;
+  }), "Home must not scroll when entry is expanded");
+  assert(await page.locator(".kestrel-widget-card").evaluateAll(cards => cards.every(node => {
+   const box = node.getBoundingClientRect(); const home = node.closest(".kestrel-home").getBoundingClientRect();
+   return box.top >= home.top - 1 && box.bottom <= home.bottom + 1;
+  })), "Visible widgets must fit inside Home, including at 200% zoom");
+  await page.screenshot({ animations: "disabled", path: join(evidence, `fit-${width}-${height}-${zoom}.png`) });
+ }
+ await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows().find((win) => !win.webContents.getURL().includes("petOverlay")); win.webContents.setZoomFactor(1); win.setSize(1440, 1000); });
+ await page.emulateMedia({ contrast: "more" });
+ assert.equal(await page.locator(".kestrel-widget-card").first().evaluate(node => getComputedStyle(node).backdropFilter), "none", "Increased contrast uses an opaque material");
+ await page.emulateMedia({ contrast: "no-preference" });
  // Continuing a suggestion must reopen its source, never create a second task.
  const title = "New Tab continuation verification";
  await page.evaluate(async (title) => {
@@ -88,6 +130,7 @@ try {
   if (!response.ok || !response.session) throw new Error("Could not create continuation fixture");
  }, title);
  await page.reload();
+ await showWidget("recent-work");
  const continuation = page.locator('[data-kestrel-widget-id="recent-work"] button').filter({ hasText: title });
  await continuation.waitFor();
  const before = await page.evaluate(async () => (await window.kestrel.request({ type: "runtime-list-sessions" })).sessions.map(item => item.id));
@@ -96,5 +139,5 @@ try {
  const after = await page.evaluate(async () => (await window.kestrel.request({ type: "runtime-list-sessions" })).sessions.map(item => item.id));
  assert.deepEqual(after.sort(), before.sort(), "Continue must preserve session identity without creating a new task");
  assert.deepEqual(errors, []);
- console.log("New Tab glass smoke passed: expansion, paste, shortcuts, wallpaper, widgets, narrow layout, exact-session continuation.");
+ console.log("New Tab smoke passed: glass, single focus boundary, solid rails, non-scrolling responsive widgets through 200% zoom, shortcuts and exact-session continuation.");
 } catch (error) { const page = application ? await application.firstWindow() : null; await page?.screenshot({ animations: "disabled", path: join(evidence, "failure.png") }).catch(() => {}); throw error; } finally { await application?.close(); rmSync(root, { recursive: true, force: true }); }

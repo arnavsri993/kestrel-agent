@@ -177,6 +177,125 @@ export function columnsForLayoutClass(
 	}
 }
 
+export type NewTabWidgetViewportDensity = "compact" | "comfortable";
+
+export type NewTabWidgetViewportPlan = {
+	columns: number;
+	rows: number;
+	pageSize: number;
+	pageCount: number;
+	density: NewTabWidgetViewportDensity;
+};
+
+/**
+ * Fit the configured widgets into the measured Home remainder. Pagination is
+ * balanced so the final page never turns into one oversized, off-center card
+ * when the widgets can be split more evenly.
+ */
+export function widgetViewportPlan(
+	layoutClass: NewTabWidgetLayoutClass,
+	height: number,
+	itemCount: number,
+	editing = false,
+): NewTabWidgetViewportPlan {
+	const columns = columnsForLayoutClass(layoutClass);
+	const safeCount = Math.max(0, Math.floor(itemCount));
+	const safeHeight = Number.isFinite(height) ? Math.max(0, height) : 0;
+	const toolbarHeight = editing ? 46 : 0;
+	const rowGap = 12;
+	const targetCardHeight = 146;
+	const availableWithoutPager = Math.max(0, safeHeight - toolbarHeight);
+	let rows = Math.max(
+		1,
+		Math.min(
+			2,
+			Math.floor((availableWithoutPager + rowGap) / (targetCardHeight + rowGap)),
+		),
+	);
+	let capacity = Math.max(1, columns * rows);
+	let pageCount = safeCount === 0 ? 1 : Math.ceil(safeCount / capacity);
+
+	if (pageCount > 1) {
+		const availableWithPager = Math.max(0, availableWithoutPager - 34);
+		rows = Math.max(
+			1,
+			Math.min(
+				2,
+				Math.floor((availableWithPager + rowGap) / (targetCardHeight + rowGap)),
+			),
+		);
+		capacity = Math.max(1, columns * rows);
+		pageCount = Math.ceil(safeCount / capacity);
+	}
+
+	const pageSize = safeCount === 0 ? capacity : Math.ceil(safeCount / pageCount);
+	const itemsOnLargestPage = Math.min(pageSize, safeCount);
+	const pageColumns = Math.max(1, Math.min(columns, itemsOnLargestPage || columns));
+	const occupiedRows = Math.max(1, Math.ceil(itemsOnLargestPage / pageColumns));
+	const pagerHeight = pageCount > 1 ? 34 : 0;
+	const cardHeight =
+		(safeHeight - toolbarHeight - pagerHeight - rowGap * (occupiedRows - 1)) /
+		occupiedRows;
+
+	return {
+		columns,
+		rows,
+		pageSize,
+		pageCount,
+		density: cardHeight < 188 ? "compact" : "comfortable",
+	};
+}
+
+export function widgetPages<T>(
+	items: readonly T[],
+	pageSize: number,
+): T[][] {
+	if (items.length === 0) return [[]];
+	const safePageSize = Math.max(1, Math.floor(pageSize));
+	const pages: T[][] = [];
+	for (let index = 0; index < items.length; index += safePageSize) {
+		pages.push(items.slice(index, index + safePageSize));
+	}
+	return pages;
+}
+
+export function widgetPageGeometry(maxColumns: number, itemCount: number): {
+	columns: number;
+	rows: number;
+	lastRowStartIndex: number;
+	centeredColumnStart?: number;
+} {
+	const safeMaxColumns = Math.max(1, Math.floor(maxColumns));
+	const safeItemCount = Math.max(0, Math.floor(itemCount));
+	const balancedRows = Math.max(1, Math.ceil(safeItemCount / safeMaxColumns));
+	const columns = Math.max(
+		1,
+		Math.min(
+			safeMaxColumns,
+			Math.ceil((safeItemCount || safeMaxColumns) / balancedRows),
+		),
+	);
+	const rows = Math.max(1, Math.ceil(safeItemCount / columns));
+	const finalRowCount = safeItemCount % columns;
+	if (rows === 1 || finalRowCount === 0) {
+		return { columns, rows, lastRowStartIndex: -1 };
+	}
+	return {
+		columns,
+		rows,
+		lastRowStartIndex: safeItemCount - finalRowCount,
+		centeredColumnStart: columns - finalRowCount + 1,
+	};
+}
+
+export function fittedWidgetSize(
+	size: NewTabWidgetSize,
+	density: NewTabWidgetViewportDensity,
+): NewTabWidgetSize {
+	if (density === "compact") return "small";
+	return size === "large" ? "medium" : size;
+}
+
 export function columnSpanForSize(
 	size: NewTabWidgetSize,
 	layoutClass: NewTabWidgetLayoutClass,

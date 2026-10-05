@@ -90,6 +90,13 @@ import { BrandMark } from "./components/BrandMark";
 import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
 import { RuntimeQuestionCard } from "./components/RuntimeQuestionCard";
+import {
+	groupTranscriptMessages,
+	isIntermediateTranscriptMessage,
+	ThinkingDisclosure,
+	toolAttentionCopy,
+	toolMessageNeedsAttention,
+} from "./components/ThinkingDisclosure";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
 import { ActionReceiptList } from "./components/ActionReceiptList";
 import {
@@ -3609,6 +3616,8 @@ function RuntimeConversation({
 				`[data-runtime-message-id="${CSS.escape(transcriptTarget.messageId)}"]`,
 			);
 			if (!target) return;
+			const thinking = target.closest<HTMLDetailsElement>(".thinking-disclosure");
+			if (thinking) thinking.open = true;
 			target.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
 			target.focus({ preventScroll: true });
 			onTranscriptTargetHandled?.();
@@ -4285,6 +4294,22 @@ function RuntimeConversation({
 	const visibleMessages = messages.filter(
 		(message) => message.role !== "system",
 	);
+	const transcriptGroups = groupTranscriptMessages(
+		visibleMessages,
+		(message) =>
+			isIntermediateTranscriptMessage(
+				message,
+				executions,
+				message.role === "tool" && Boolean(parseUIPresentationMessage(message)),
+			),
+	);
+	const latestUserGroupIndex = transcriptGroups.reduce(
+		(latest, group, index) => group.kind === "message" && group.message.role === "user" ? index : latest,
+		-1,
+	);
+	const latestTurnHasThinking = transcriptGroups
+		.slice(latestUserGroupIndex + 1)
+		.some((group) => group.kind === "thinking");
 	const taskControls = (
 		<div className="runtime-task-controls">
 			{executionMode === "automatic" && (
@@ -4488,7 +4513,28 @@ function RuntimeConversation({
 								: "Load earlier messages"}
 						</button>
 					)}
-					{visibleMessages.map((message) => {
+					{transcriptGroups.map((group) => {
+						if (group.kind === "thinking")
+							return (
+								<ThinkingDisclosure key={group.id}>
+									{group.messages.map((message) => (
+										<div
+											className="work-summary"
+											key={message.id}
+											data-runtime-message-id={message.id}
+											tabIndex={-1}
+										>
+											<Icon name={message.role === "tool" ? "check" : "arrow"} />
+											<span>
+												{message.role === "tool"
+													? `${message.toolName ?? "Tool result"}: ${message.content}`
+													: message.content}
+											</span>
+										</div>
+									))}
+								</ThinkingDisclosure>
+							);
+						const message = group.message;
 						const presentation =
 							message.role === "tool"
 								? parseUIPresentationMessage(message)
@@ -4549,19 +4595,28 @@ function RuntimeConversation({
 							>
 								<PresentationCard presentation={presentation} />
 							</div>
-						) : (
-							<div
-								className="work-summary"
-								key={message.id}
-								data-runtime-message-id={message.id}
-								tabIndex={-1}
-							>
-								<Icon name="check" />
-								<span>
-									{message.toolName ?? "Tool result"}: {message.content}
-								</span>
-							</div>
-						);
+						) : (() => {
+							const attention = toolAttentionCopy(message, executions);
+							return (
+								<div
+									className="runtime-tool-attention"
+									key={message.id}
+									data-runtime-message-id={message.id}
+									tabIndex={-1}
+									role="alert"
+								>
+									<Icon name="warning" />
+									<div>
+										<strong>{attention.title}</strong>
+										<p>{attention.detail}</p>
+										<details>
+											<summary>Technical details</summary>
+											<pre>{message.content}</pre>
+										</details>
+									</div>
+								</div>
+							);
+						})();
 					})}
 					{humanInputRequests.map((request) => (
 						<RuntimeQuestionCard
@@ -4589,74 +4644,58 @@ function RuntimeConversation({
 							<small>Queued update</small>
 						</div>
 					))}
-					{activeSessionBusy && (
-						<div
-							className="runtime-current-action"
-							role="status"
-							aria-live="polite"
-						>
-							<div className="runtime-current-action-header">
-								<span className="assistant-avatar">K</span>
-								<div className="runtime-current-action-copy">
-									<span className="runtime-section-label">Current action</span>
+					{(activeSessionBusy ||
+						(!latestTurnHasThinking && (visibleToolActivity.length > 0 ||
+						Boolean(verifiedApprovalEvidence && onOpenActivity)))) && (
+						<ThinkingDisclosure active={activeSessionBusy}>
+							{activeSessionBusy && (
+								<div className="thinking-current-action">
 									<strong>{currentAction}</strong>
 									<small>{currentActionDetail}</small>
+									{streamText && (
+										<pre className="thinking-stream-preview">{streamText}</pre>
+									)}
+									{guidedFirstTaskActive && (
+										<small>{FIRST_TASK_SLOW_MODEL_NOTICE}</small>
+									)}
 								</div>
-							</div>
-							{streamText && (
-								<p className="runtime-stream-preview">{streamText}</p>
 							)}
-							{guidedFirstTaskActive && (
-								<p className="runtime-first-task-notice">
-									{FIRST_TASK_SLOW_MODEL_NOTICE}
-								</p>
+							{visibleToolActivity.map((event) => (
+								<div className="work-summary" key={event.id}>
+									<Icon
+										name={event.type === "tool.completed" ? "check" : "arrow"}
+									/>
+									<span>
+										{event.type.replace("tool.", "Tool ")} ·{" "}
+										{String(
+											event.payload.toolName ??
+												event.executionId ??
+											"execution",
+										)}
+										{event.type === "tool.progress"
+											? ` · ${JSON.stringify(event.payload)}`
+											: ""}
+									</span>
+								</div>
+							))}
+							{verifiedApprovalEvidence && onOpenActivity && (
+								<div className="work-summary">
+									<Icon name="check" />
+									<span>
+										{verifiedApprovalEvidence.toolName} verified.{" "}
+										<button
+											type="button"
+											className="quiet-link"
+											onClick={() =>
+												onOpenActivity(verifiedApprovalEvidence.executionId)
+											}
+										>
+											View evidence in Activity
+										</button>
+									</span>
+								</div>
 							)}
-						</div>
-					)}
-					{visibleToolActivity.length > 0 && (
-						<details className="runtime-activity">
-							<summary>
-								<span>Recent activity</span>
-								<small>{visibleToolActivity.length} updates</small>
-							</summary>
-							<div className="runtime-activity-list">
-								{visibleToolActivity.map((event) => (
-									<div className="work-summary" key={event.id}>
-										<Icon
-											name={event.type === "tool.completed" ? "check" : "arrow"}
-										/>
-										<span>
-											{event.type.replace("tool.", "Tool ")} ·{" "}
-											{String(
-												event.payload.toolName ??
-													event.executionId ??
-												"execution",
-											)}
-											{event.type === "tool.progress"
-												? ` · ${JSON.stringify(event.payload)}`
-												: ""}
-										</span>
-									</div>
-								))}
-							</div>
-						</details>
-					)}
-					{verifiedApprovalEvidence && onOpenActivity && (
-						<div className="runtime-activity-handoff" role="status">
-							<Icon name="check" />
-							<span>
-								{verifiedApprovalEvidence.toolName} verified.{" "}
-								<button
-									type="button"
-									className="quiet-link"
-									onClick={() =>
-										onOpenActivity(verifiedApprovalEvidence.executionId)
-									}
-								>
-									View evidence in Activity
-								</button>
-							</span>
-						</div>
+						</ThinkingDisclosure>
 					)}
 					{pending && !busy && (
 						<div className="assistant-message approval-message">
@@ -4731,20 +4770,21 @@ function RuntimeConversation({
 							</div>
 						</div>
 					)}
-					{latestOutcome && (
+					{latestOutcome === "completed" && (
+						<div className="runtime-completion" role="status">
+							<Icon name="check" />
+							<span>{outcomeCopy?.title}</span>
+							<ActionReceiptList receipts={latestReceipts} />
+						</div>
+					)}
+					{latestOutcome && latestOutcome !== "completed" && (
 						<section
 							className={`runtime-outcome runtime-outcome-${latestOutcome}`}
 							aria-label="Latest task outcome"
 						>
 							<div className="runtime-outcome-icon">
 								<Icon
-									name={
-										latestOutcome === "completed"
-											? "check"
-											: latestOutcome === "failed"
-												? "warning"
-												: "pause"
-										}
+									name={latestOutcome === "failed" ? "warning" : "pause"}
 								/>
 							</div>
 							<div className="runtime-outcome-copy">

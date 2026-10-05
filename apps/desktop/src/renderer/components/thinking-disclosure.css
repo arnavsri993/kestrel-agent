@@ -1,0 +1,196 @@
+.agent-conversation-host .thinking-disclosure {
+	min-width: 0;
+	margin: 0 0 18px;
+	color: var(--muted);
+}
+
+.agent-conversation-host .thinking-disclosure > summary {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 30px;
+	padding: 2px 3px;
+	border-radius: 7px;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 620;
+	list-style: none;
+}
+
+.agent-conversation-host .thinking-disclosure > summary::-webkit-details-marker {
+	display: none;
+}
+
+.agent-conversation-host .thinking-disclosure > summary:hover {
+	color: var(--ink);
+}
+
+.agent-conversation-host .thinking-disclosure > summary:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 3px;
+}
+
+.agent-conversation-host .thinking-disclosure-chevron {
+	width: 7px;
+	height: 7px;
+	margin: -3px 3px 0 2px;
+	border-right: 1.5px solid currentColor;
+	border-bottom: 1.5px solid currentColor;
+	transform: rotate(45deg);
+	transition: transform 140ms ease;
+}
+
+.agent-conversation-host .thinking-disclosure[open] .thinking-disclosure-chevron {
+	margin-top: 2px;
+	transform: rotate(225deg);
+}
+
+.agent-conversation-host .thinking-disclosure.is-active > summary {
+	color: var(--ink);
+}
+
+.agent-conversation-host .thinking-disclosure-content {
+	display: grid;
+	gap: 0;
+	min-width: 0;
+	margin: 3px 0 0 10px;
+	padding: 4px 0 2px 15px;
+	border-left: 1px solid var(--line);
+}
+
+.agent-conversation-host .thinking-disclosure-content .work-summary {
+	margin: 0;
+	padding: 6px 0;
+	font-size: 11px;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.agent-conversation-host .thinking-current-action {
+	display: grid;
+	gap: 2px;
+	padding: 5px 0 8px;
+	font-size: 11px;
+	line-height: 1.45;
+}
+
+.agent-conversation-host .thinking-current-action strong {
+	color: var(--ink);
+	font-weight: 640;
+	overflow-wrap: anywhere;
+}
+
+.agent-conversation-host .thinking-current-action small,
+.agent-conversation-host .thinking-stream-preview {
+	color: var(--muted);
+}
+
+.agent-conversation-host .thinking-stream-preview {
+	max-height: 160px;
+	margin: 4px 0 2px;
+	padding: 8px;
+	overflow: auto;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--surface) 76%, transparent);
+	font: 11px/1.5 ui-monospace, monospace;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.agent-conversation-host .runtime-tool-attention {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr);
+	gap: 8px;
+	margin: 0 0 18px;
+	padding: 9px 10px;
+	border: 1px solid color-mix(in srgb, var(--status-ink) 42%, var(--line));
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--status-fill) 42%, var(--panel));
+	color: var(--status-ink);
+}
+
+.agent-conversation-host .runtime-tool-attention > svg {
+	width: 15px;
+	height: 15px;
+	margin-top: 1px;
+}
+
+.agent-conversation-host .runtime-tool-attention > div {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+}
+
+.agent-conversation-host .runtime-tool-attention strong {
+	font-size: 14px;
+	font-weight: 660;
+}
+
+.agent-conversation-host .runtime-tool-attention p {
+	margin: 0;
+	color: var(--ink);
+	font-size: 13px;
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+
+.agent-conversation-host .runtime-tool-attention details {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.agent-conversation-host .runtime-tool-attention summary {
+	cursor: pointer;
+}
+
+.agent-conversation-host .runtime-tool-attention pre {
+	max-height: 180px;
+	margin: 6px 0 0;
+	padding: 8px;
+	overflow: auto;
+	border: 1px solid var(--line);
+	border-radius: 7px;
+	background: var(--surface);
+	color: var(--muted);
+	font: 11px/1.45 ui-monospace, monospace;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.agent-conversation-host .runtime-completion {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+	margin: 8px 0 14px;
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.agent-conversation-host .runtime-completion > svg {
+	width: 14px;
+	height: 14px;
+	color: var(--status-ink);
+}
+
+.agent-conversation-host .runtime-completion > .action-receipts {
+	flex: 1;
+	margin: 0 0 0 4px;
+	padding: 0 0 0 10px;
+	border-top: 0;
+	border-left: 1px solid var(--line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-conversation-host .thinking-disclosure-chevron {
+		transition: none;
+	}
+}
+
+@media (forced-colors: active) {
+	.agent-conversation-host .runtime-tool-attention {
+		border-color: CanvasText;
+	}
+}
