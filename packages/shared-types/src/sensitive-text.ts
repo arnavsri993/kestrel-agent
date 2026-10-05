@@ -162,6 +162,9 @@ export function replaceSensitiveText(
 	const protectedValues: string[] = [];
 	const knownReplacements = new Map<string, string>();
 	const knownKinds = new Map<string, string>();
+	const literalNodes: Array<{ children: Map<string, number>; secret?: string }> = [
+		{ children: new Map() },
+	];
 	let knownCharacters = 0;
 	let sensitiveMatches = 0;
 	const remember = (secret: string, kind: string) => {
@@ -271,25 +274,82 @@ export function replaceSensitiveText(
 		const markerPattern = `${escapePattern(markerPrefix)}(\\d+)${markerSuffix}`;
 		// Match protected markers first. This also masks unlabelled repetitions of
 		// any detected value without rewriting opaque references or replacements.
-		if (result.length * knownKinds.size > MAX_REPEATED_VALUE_WORK)
-			throw new SensitiveTextLimitError();
-		const repeatedValues = [...knownKinds.keys()]
-			.sort((a, b) => b.length - a.length).map(escapePattern);
-		const finalPattern = new RegExp(
-			[markerPattern, ...repeatedValues].join("|"), "g",
-		);
-		return result.replace(finalPattern, (match, index: string | undefined) => {
-			if (index !== undefined) return protectedValues[Number(index)] ?? match;
-			const existing = knownReplacements.get(match);
-			if (existing !== undefined) return existing;
-			if (++sensitiveMatches > MAX_SENSITIVE_MATCHES) throw new SensitiveTextLimitError();
-			return replace(knownKinds.get(match)!, match);
-		});
+		for (const secret of knownKinds.keys()) {
+			let node = 0;
+			// Index UTF-16 units, matching String.replace's exact literal behavior.
+			for (let index = 0; index < secret.length; index += 1) {
+				const character = secret[index]!;
+				let next = literalNodes[node]!.children.get(character);
+				if (next === undefined) {
+					next = literalNodes.length;
+					literalNodes[node]!.children.set(character, next);
+					literalNodes.push({ children: new Map() });
+				}
+				node = next;
+			}
+			literalNodes[node]!.secret = secret;
+		}
+		let literalWork = 0;
+		const replaceLiteralSegment = (segment: string): string => {
+			if (knownKinds.size === 0) return segment;
+			const parts: string[] = [];
+			let copiedThrough = 0;
+			let position = 0;
+			while (position < segment.length) {
+				let node = 0;
+				let cursor = position;
+				let longest: string | undefined;
+				let matchedThrough = position;
+				while (cursor < segment.length) {
+					// Count actual trie comparisons rather than rejecting a large
+					// attachment for every value that could theoretically match.
+					if (++literalWork > MAX_REPEATED_VALUE_WORK) throw new SensitiveTextLimitError();
+					const next = literalNodes[node]!.children.get(segment[cursor]!);
+					if (next === undefined) break;
+					node = next;
+					cursor += 1;
+					if (literalNodes[node]!.secret !== undefined) {
+						longest = literalNodes[node]!.secret;
+						matchedThrough = cursor;
+					}
+				}
+				if (longest === undefined) {
+					position += 1;
+					continue;
+				}
+				let replacement = knownReplacements.get(longest);
+				if (replacement === undefined) {
+					if (++sensitiveMatches > MAX_SENSITIVE_MATCHES) throw new SensitiveTextLimitError();
+					replacement = replace(knownKinds.get(longest)!, longest);
+				}
+				parts.push(segment.slice(copiedThrough, position), replacement);
+				position = matchedThrough;
+				copiedThrough = position;
+			}
+			parts.push(segment.slice(copiedThrough));
+			return parts.join("");
+		};
+		const finalParts: string[] = [];
+		const markers = new RegExp(markerPattern, "g");
+		let copiedThrough = 0;
+		let marker: RegExpExecArray | null;
+		while ((marker = markers.exec(result)) !== null) {
+			finalParts.push(replaceLiteralSegment(result.slice(copiedThrough, marker.index)),
+				protectedValues[Number(marker[1])] ?? marker[0]);
+			copiedThrough = markers.lastIndex;
+		}
+		finalParts.push(replaceLiteralSegment(result.slice(copiedThrough)));
+		return finalParts.join("");
 	} finally {
 		// Release operation-local references; JavaScript strings cannot be zeroized.
 		protectedValues.length = 0;
 		knownReplacements.clear();
 		knownKinds.clear();
+		for (const node of literalNodes) {
+			node.children.clear();
+			delete node.secret;
+		}
+		literalNodes.length = 0;
 	}
 }
 

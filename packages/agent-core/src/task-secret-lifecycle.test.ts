@@ -37,6 +37,34 @@ function result(text: string, toolCalls: Array<{ id: string; name: string; argum
 }
 
 describe("task credential lifecycle", () => {
+	it("sends a supported large source attachment with credentials redacted and ordinary context retained", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-large-attachment-secrets-"));
+		roots.push(root);
+		const path = join(root, "reference.js");
+		const values = Array.from({ length: 128 }, (_, index) => `fixture-reference-${index}-Alpha123456789`);
+		const ordinary = "// ordinary source attachment context\n".repeat(24_000);
+		const source = `${values.join(" ")}\n${ordinary}${values.map((value, index) => `const PASSWORD_${index} = "${value}";`).join("\n")}\n${values.join(" ")}`;
+		writeFileSync(path, source);
+		expect(Buffer.byteLength(source)).toBeGreaterThan(872_418);
+		expect(Buffer.byteLength(source)).toBeLessThan(1_000_000);
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let modelRequest = "";
+		const model = provider(async request => { modelRequest = JSON.stringify(request); return result("Reviewed the redacted source."); });
+		const core = new AgentCore({ database, workspaceRoots: [root], modelProviders: [model] });
+		try {
+			const session = core.runtime.createSession({ title: "Review source", workspaceRoot: root });
+			const response = await core.handle({ type: "runtime-run-agent", sessionId: session.id,
+				message: "Review the attached source.", model: "fixture", providerIds: [model.id],
+				attachments: [{ path, name: "reference.js", mediaType: "application/javascript", size: Buffer.byteLength(source), source: "workspace" }] });
+			expect(response.ok).toBe(true);
+			expect(modelRequest).toContain("ordinary source attachment context");
+			expect(modelRequest).toContain("PASSWORD_127 = \\\"[REDACTED]\\\"");
+			const history = JSON.stringify(core.runtime.listMessages(session.id));
+			for (const value of values) { expect(modelRequest).not.toContain(value); expect(history).not.toContain(value); }
+			expect(core.runtime.taskSecrets.hasSession(session.id)).toBe(false);
+			expect(readFileSync(path, "utf8")).toBe(source);
+		} finally { await core.close(); }
+	});
 	it("redacts credential-like attachment data without allocating task credentials", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-attachment-secrets-"));
 		roots.push(root);

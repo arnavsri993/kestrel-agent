@@ -912,3 +912,31 @@ files, repository type checking, desktop build, production secret scan, Settings
 parity and diff checking. This is bounded advisory validation, not official
 CodeQL or PR review clearance. No real profile, provider or retrospective history
 purge was part of the probes; detection remains bounded by its key/text policy.
+
+### Supported source attachment and restart recovery follow-up
+
+The complete local verification and exact-head desktop CI at `f22cbcf8` both
+failed restart recovery before its synthetic provider received the initial task.
+The fixture had the owned bundled source file open as its current attachment.
+Its 872,418 characters contained 115 distinct detected values totaling 2,413
+characters, but the redactor's conservative length-times-value-count estimate
+exceeded its 32-million processing limit. This was a new regression, not a
+successful broad validation or a reason to omit the attachment.
+
+Literal echo matching now uses a UTF-16 trie with longest-match selection and
+counts actual comparisons against the same processing limit. Protected markers
+remain outside literal matching; known-value, character and match-count limits
+and generic failure behavior remain. Operation-local trie references are
+released with the other redaction state. An adversarial shared-prefix case still
+fails closed. A supported nearly 1 MB source attachment with 128 credential
+labels and earlier/later echoes reaches the actual model boundary with ordinary
+context retained and credentials masked, without changing the user-owned file
+or allocating task-secret references. The same owned bundle redacts in about
+50 ms in the recorded local probe. The focused security/lifecycle cases and
+desktop crash recovery, no-automatic-replay and explicit retry now pass.
+
+The preceding complete verification stopped at restart recovery, so later stages
+remain unproven until rerun. Current official CodeQL has the same twelve rule/path
+findings and eight failing annotations, with line movements from changed source;
+AI review again exhausted its quota. Those gates remain open, and this follow-up
+does not establish public release readiness or current canonical installation.

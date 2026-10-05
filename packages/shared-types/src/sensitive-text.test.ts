@@ -110,8 +110,37 @@ describe("sensitive text ingress", () => {
 		const tooMany = new Map(Array.from({ length: MAX_KNOWN_SENSITIVE_VALUES + 1 }, (_, index) => [`sensitive-fixture-${index}`, "PASSWORD"]));
 		expect(() => replaceSensitiveText("ordinary text", () => "[REDACTED]", { knownValues: tooMany })).toThrow(SensitiveTextLimitError);
 		const knownValues = new Map(Array.from({ length: 64 }, (_, index) => [`sensitive-fixture-${index}`, "PASSWORD"]));
-		expect(() => replaceSensitiveText("x".repeat(600_000), () => "[REDACTED]", { knownValues })).toThrow("Sensitive-value redaction exceeded its processing limit.");
+		const ordinary = "x".repeat(600_000);
+		expect(replaceSensitiveText(ordinary, () => "[REDACTED]", { knownValues })).toBe(ordinary);
+		const adversarial = new Map([[`${"a".repeat(8_192)}b`, "PASSWORD"]]);
+		expect(() => replaceSensitiveText("a".repeat(16_384), () => "[REDACTED]", { knownValues: adversarial })).toThrow("Sensitive-value redaction exceeded its processing limit.");
 		expect(() => replaceSensitiveText("password=sensitive-fixture; ".repeat(4_097), () => "[REDACTED]")).toThrow(SensitiveTextLimitError);
+	});
+
+	it("redacts a supported source attachment with many labels and earlier overlapping echoes", () => {
+		const secrets = Array.from({ length: 128 }, (_, index) => `synthetic-source-credential-${index}`);
+		const declarations = secrets.map((secret, index) => `const PASSWORD_${index} = "${secret}";`).join("\n");
+		const source = "// ordinary source attachment context\n".repeat(24_000);
+		const input = `[Attachment: index.js]\n${secrets.join(" ")}\n${source}${declarations}\n${secrets.join(" ")}\n[TASK_SECRET:synthetic-source-credential-1]`;
+		expect(input.length).toBeGreaterThan(872_418);
+		expect(input.length).toBeLessThan(1_000_000);
+		const captured: string[] = [];
+		const safe = replaceSensitiveText(input, (_kind, secret) => {
+			captured.push(secret);
+			return `[PASSWORD_${secrets.indexOf(secret) + 1}]`;
+		});
+		expect(captured).toEqual(secrets);
+		expect(safe).toBe(`[Attachment: index.js]\n${secrets.map((_secret, index) => `[PASSWORD_${index + 1}]`).join(" ")}\n${source}${secrets.map((_secret, index) => `const PASSWORD_${index} = "[PASSWORD_${index + 1}]";`).join("\n")}\n${secrets.map((_secret, index) => `[PASSWORD_${index + 1}]`).join(" ")}\n[TASK_SECRET:synthetic-source-credential-1]`);
+	});
+
+	it("keeps UTF-16 exact and longest-first literal matching for supplied values", () => {
+		const knownValues = new Map([["\uD83D", "SECRET"], ["😀", "PASSWORD"], ["😀long", "TOKEN"]]);
+		const captured: [string, string][] = [];
+		expect(replaceSensitiveText("😀long 😀 \uD83D [TASK_SECRET:😀long]", (kind, secret) => {
+			captured.push([kind, secret]);
+			return `[${kind}_1]`;
+		}, { knownValues })).toBe("[TOKEN_1] [PASSWORD_1] [SECRET_1] [TASK_SECRET:[TOKEN_1]]");
+		expect(captured).toEqual([["TOKEN", "😀long"], ["PASSWORD", "😀"], ["SECRET", "\uD83D"], ["TOKEN", "😀long"]]);
 	});
 
 	it("leaves non-secret boolean and status metadata unchanged", () => {
