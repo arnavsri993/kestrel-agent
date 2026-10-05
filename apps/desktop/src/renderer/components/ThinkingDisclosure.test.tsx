@@ -48,8 +48,8 @@ describe("thinking disclosure", () => {
 		const input = [
 			message("user", "user"),
 			requested,
-			message("tool-1", "tool"),
-			message("tool-2", "tool"),
+			message("tool-1", "tool", JSON.stringify({ status: "verified" })),
+			message("tool-2", "tool", JSON.stringify({ status: "verified" })),
 			message("answer", "assistant", "Readable final answer"),
 		];
 		const grouped = groupTranscriptMessages(
@@ -109,6 +109,16 @@ describe("thinking disclosure", () => {
 			toolExecutionId: "execution-1",
 		};
 		expect(toolMessageNeedsAttention(referenced, [failedExecution])).toBe(true);
+	});
+
+	it("keeps plain failures and unverified results visible", () => {
+		const plain = message("plain", "tool", "Error: Could not open this page.");
+		const unknown = message("unknown", "tool", "Unlinked result needs inspection.");
+		expect(toolMessageNeedsAttention(plain, [])).toBe(true);
+		expect(isIntermediateTranscriptMessage(plain, [])).toBe(false);
+		expect(toolAttentionCopy(plain).detail).toBe(plain.content);
+		expect(toolMessageNeedsAttention(unknown, [])).toBe(false);
+		expect(isIntermediateTranscriptMessage(unknown, [])).toBe(false);
 	});
 
 	it("collapses verified technical results while treating nonzero commands as failures", () => {

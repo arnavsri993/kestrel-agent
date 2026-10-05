@@ -55,7 +55,7 @@ export function toolMessageNeedsAttention(
 		return true;
 
 	const envelope = toolResultEnvelope(message);
-	if (!envelope) return false;
+	if (!envelope) return /^\s*(error|failed|failure|blocked|cancelled)\b[:\s]/i.test(message.content);
 	if (["failed", "blocked", "cancelled"].includes(String(envelope.status)))
 		return true;
 	if (typeof envelope.error === "string" && envelope.error.trim()) return true;
@@ -86,8 +86,9 @@ export function toolAttentionCopy(
 	);
 	const executionOutput = objectValue(execution?.output);
 	const status = execution?.status ?? String(envelope?.status ?? "");
+	const plainError = !envelope && toolMessageNeedsAttention(message, executions) ? message.content.trim() : "";
 	const error =
-		execution?.error?.trim() ||
+		plainError || execution?.error?.trim() ||
 		(typeof envelope?.error === "string" ? envelope.error.trim() : "");
 	const exitCode =
 		typeof output?.exitCode === "number" && Number.isFinite(output.exitCode)
@@ -119,7 +120,9 @@ export function isIntermediateTranscriptMessage(
 		message.role === "tool" &&
 		!message.toolName?.startsWith("agent.config.") &&
 		!hasPresentation &&
-		!toolMessageNeedsAttention(message, executions)
+		!toolMessageNeedsAttention(message, executions) &&
+		(referencedExecutions(message, executions).some((execution) => execution.status === "verified") ||
+		 ["verified", "completed", "success", "succeeded"].includes(String(toolResultEnvelope(message)?.status)))
 	);
 }
 

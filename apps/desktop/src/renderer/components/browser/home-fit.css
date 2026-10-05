@@ -261,8 +261,13 @@
 		font-size: clamp(24px, 3vw, 30px);
 	}
 
-	.new-tab-page.kestrel-home .kestrel-home-composer {
+	.ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer {
 		min-height: 50px;
+		padding-block: 5px;
+	}
+
+	.ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer.is-expanded {
+		min-height: 84px;
 		padding-block: 5px;
 	}
 
@@ -299,4 +304,32 @@
 	.kestrel-widget-page-dots > button::before {
 		transition: none;
 	}
+}
+
+/* Shortcuts page inside one row so a full set never consumes the canvas. */
+.new-tab-page.kestrel-home .home-site-shortcuts {
+ width: 100%; flex: 0 0 auto; flex-wrap: nowrap; gap: 8px;
+}
+.home-shortcut-page {
+ display: flex; justify-content: center; gap: 8px; min-width: 0;
+}
+.new-tab-page.kestrel-home .home-site-shortcut { width: 64px; flex: 0 0 64px; }
+.new-tab-page.kestrel-home .home-site-shortcuts.is-empty .home-site-shortcut { width: auto; flex-basis: auto; }
+.home-shortcut-page-arrow {
+ display: grid; place-items: center; flex: 0 0 24px; width: 24px; height: 28px;
+ padding: 4px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); cursor: pointer;
+}
+.home-shortcut-page-arrow:first-child svg { transform: rotate(180deg); }
+.home-shortcut-page-arrow:disabled { opacity: .3; cursor: default; }
+.home-shortcut-page-arrow:focus-visible { outline: 2px solid var(--solid); outline-offset: 1px; }
+.new-tab-page.kestrel-home .home-shortcut-form {
+ position: absolute; z-index: 45; top: 50%; left: 50%; transform: translate(-50%, -50%);
+ box-sizing: border-box; width: min(560px, calc(100% - 32px)); border-radius: 18px;
+ background: var(--glass-shell); box-shadow: 0 16px 50px rgb(0 0 0 / 25%);
+}
+.new-tab-page.kestrel-home .home-shortcut-form input { width: min(190px, 100%); border-radius: 12px; }
+@media (max-height: 560px) {
+ .new-tab-page.kestrel-home .home-site-glyph { width: 30px; height: 30px; }
+ .new-tab-page.kestrel-home .home-site-shortcut > button:first-child { gap: 0; }
+ .ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer textarea { min-height: 30px; height: 30px; }
 }

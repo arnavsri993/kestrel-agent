@@ -13,7 +13,7 @@ let app;
 try {
  app = await electron.launch({
   executablePath: executable || createRequire(resolve("apps/desktop/package.json"))("electron"),
-  args: executable ? ["--use-mock-keychain"] : [resolve("apps/desktop")],
+  args: process.env.KESTREL_DESKTOP_USE_SOURCE === "1" ? [resolve("apps/desktop"), "--use-mock-keychain"] : executable ? ["--use-mock-keychain"] : [resolve("apps/desktop")],
   env: { ...process.env, KESTREL_TEST_USER_DATA: root, KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1", KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1" },
  });
  const page = await app.firstWindow();
@@ -27,20 +27,52 @@ try {
  for (let index = 0; index < 14; index++) assert((await request({ type: "browser-create-tab", input: "", active: true })).ok);
  await expect(page.locator(".browser-tab")).toHaveCount(15);
  const state = (await request({ type: "browser-get-state" })).browserState;
- const first = state.tabs[0].id;
- const last = state.tabs.at(-1).id;
- for (const sizing of ["scrolling", "shrinking"]) {
+	 const first = state.tabs[0].id;
+	 const last = state.tabs.at(-1).id;
+	 const applyAndCheckLongTitles = async () => {
+	  const result = await page.locator(".browser-tab-title").evaluateAll(nodes => {
+	   const prefix = "A long fixture tab title that must stay contained";
+	   nodes.forEach((node, index) => { node.textContent = `${prefix} ${index + 1}`; });
+	   const measurements = nodes.map((node, index) => {
+	    const css = getComputedStyle(node);
+	    const box = node.getBoundingClientRect();
+	    const tabBox = node.closest(".browser-tab").getBoundingClientRect();
+	    return {
+	     exact: node.textContent === `${prefix} ${index + 1}`,
+	     hidden: css.display === "none",
+	     ellipsis: css.overflowX === "hidden" && css.textOverflow === "ellipsis" && css.whiteSpace === "nowrap",
+	     truncated: node.scrollWidth > node.clientWidth + 1,
+	     contained: box.left >= tabBox.left - 1 && box.right <= tabBox.right + 1,
+	    };
+	   });
+	   return {
+	    count: measurements.length,
+	    exact: measurements.every(item => item.exact),
+	    contained: measurements.every(item => item.hidden || item.contained),
+	    titleTreatment: measurements.every(item => item.hidden || item.ellipsis),
+	    stressed: measurements.some(item => item.hidden || item.truncated),
+	   };
+	  });
+	  assert.equal(result.count, 15, "The long-title fixture must cover every tab");
+	  assert(result.exact, "React must render the intended long-title fixture before measurement");
+	  assert(result.contained, "Long tab titles must remain inside their tab bounds");
+	  assert(result.titleTreatment, "Visible long titles must use single-line ellipsis containment");
+	  assert(result.stressed, "The fixture must exercise truncation or the crowded favicon-only treatment");
+	 };
+	 for (const sizing of ["scrolling", "shrinking"]) {
   assert((await request({ type: "browser-update-settings", settings: { ...state.settings, tabSizing: sizing } })).ok);
   for (const [width, height, zoom] of [[1440, 900, 1], [760, 680, 1], [1440, 900, 2]]) {
    await app.evaluate(({ BrowserWindow }, { width, height, zoom }) => {
     const window = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/renderer/index.html"));
     window.setMinimumSize(400, 400); window.setSize(width, height); window.webContents.setZoomFactor(zoom);
    }, { width, height, zoom });
-   // Long stored page titles exercise the same DOM structure without network access.
-   await page.locator(".browser-tab-title").evaluateAll(nodes => nodes.forEach((node, index) => { node.textContent = `A long fixture tab title that must stay contained ${index + 1}`; }));
-   for (const tabId of [first, last]) {
-    assert((await request({ type: "browser-select-tab", tabId })).ok);
-    await expect.poll(() => page.evaluate(() => {
+	   for (const tabId of [first, last]) {
+	    assert((await request({ type: "browser-select-tab", tabId })).ok);
+	    await expect(page.locator(`.browser-tab[data-tab-id="${tabId}"]`)).toHaveClass(/active/);
+	    // Apply after selection settles so the React state update cannot replace
+	    // the offline long-title fixture before geometry is measured.
+	    await applyAndCheckLongTitles();
+	    await expect.poll(() => page.evaluate(() => {
      const row = document.querySelector(".browser-tab-row-horizontal").getBoundingClientRect();
      const list = document.querySelector(".browser-tabs").getBoundingClientRect();
      const selected = document.querySelector(".browser-tab.active").getBoundingClientRect();

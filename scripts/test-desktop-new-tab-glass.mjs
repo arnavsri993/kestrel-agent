@@ -11,7 +11,7 @@ const executable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 const require = createRequire(resolve("apps/desktop/package.json"));
 let application;
 try {
- application = await electron.launch({ executablePath: executable || require("electron"), args: executable ? ["--use-mock-keychain"] : [resolve("apps/desktop")], env: { ...process.env, KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1", KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_REAL_USER_PROFILE: "1" } });
+ application = await electron.launch({ executablePath: executable || require("electron"), args: process.env.KESTREL_DESKTOP_USE_SOURCE === "1" ? [resolve("apps/desktop"), "--use-mock-keychain"] : executable ? ["--use-mock-keychain"] : [resolve("apps/desktop")], env: { ...process.env, KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1", KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_REAL_USER_PROFILE: "1" } });
  const page = await application.firstWindow();
  const errors = [];
  page.on("pageerror", (error) => errors.push(error.message));
@@ -100,6 +100,11 @@ try {
  await page.emulateMedia({ reducedMotion: "reduce" });
  await page.screenshot({ animations: "disabled", path: join(evidence, "narrow.png") });
  assert.equal(await page.locator(".new-tab-page").evaluate((node) => node.scrollWidth > node.clientWidth + 1), false, "Home must not overflow horizontally");
+ await page.evaluate(async () => {
+  const state = await window.kestrel.request({ type: "browser-get-state" });
+  const result = await window.kestrel.request({ type: "browser-update-settings", settings: { ...state.browserState.settings, newTabShortcuts: Array.from({ length: 12 }, (_, i) => ({ title: `Fixture ${i + 1}`, url: `https://example.com/${i + 1}` })) } });
+  if (!result.ok) throw new Error(result.error);
+ });
  for (const [width, height, zoom] of [[1440, 1000, 1], [1440, 700, 1], [1000, 680, 1], [760, 760, 1], [1440, 1000, 2]]) {
   await application.evaluate(({ BrowserWindow }, { width, height, zoom }) => {
    const win = BrowserWindow.getAllWindows().find(win => !win.webContents.getURL().includes("petOverlay"));
@@ -117,6 +122,23 @@ try {
    const box = node.getBoundingClientRect(); const home = node.closest(".kestrel-home").getBoundingClientRect();
    return box.top >= home.top - 1 && box.bottom <= home.bottom + 1;
   })), "Visible widgets must fit inside Home, including at 200% zoom");
+  assert(await page.locator(".kestrel-widget-card").evaluateAll(cards => cards.length > 0 && cards.every(card => {
+   const bounds = card.getBoundingClientRect();
+   return [...card.querySelectorAll("button, h3, .kestrel-widget-empty")].filter(node => getComputedStyle(node).display !== "none").every(node => {
+    const box = node.getBoundingClientRect();
+    return box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1;
+   });
+  })), "Widget content and actions must remain usable rather than clipped");
+  const reached = new Set();
+  const previousShortcut = page.getByRole("button", { name: "Previous shortcut page", exact: true });
+  while (await previousShortcut.isVisible() && await previousShortcut.isEnabled()) await previousShortcut.click();
+  for (let i = 0; i < 12; i++) {
+   for (const title of await page.locator(".home-site-shortcut > button:first-child").evaluateAll(nodes => nodes.map(node => node.title))) if (title) reached.add(title);
+   const nextShortcut = page.getByRole("button", { name: "Next shortcut page", exact: true });
+   if (!await nextShortcut.isVisible() || !await nextShortcut.isEnabled()) break;
+   await nextShortcut.click();
+  }
+  assert.equal(reached.size, 12, "All configured shortcuts must remain reachable without scrolling Home");
   await page.screenshot({ animations: "disabled", path: join(evidence, `fit-${width}-${height}-${zoom}.png`) });
  }
  await application.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows().find((win) => !win.webContents.getURL().includes("petOverlay")); win.webContents.setZoomFactor(1); win.setSize(1440, 1000); });

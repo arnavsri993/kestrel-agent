@@ -4596,16 +4596,17 @@ function RuntimeConversation({
 								<PresentationCard presentation={presentation} />
 							</div>
 						) : (() => {
-							const attention = toolAttentionCopy(message, executions);
+							const needsAttention = toolMessageNeedsAttention(message, executions);
+							const attention = needsAttention ? toolAttentionCopy(message, executions) : { title: "Action result", detail: message.content };
 							return (
 								<div
 									className="runtime-tool-attention"
 									key={message.id}
 									data-runtime-message-id={message.id}
 									tabIndex={-1}
-									role="alert"
+									role={needsAttention ? "alert" : undefined}
 								>
-									<Icon name="warning" />
+									<Icon name={needsAttention ? "warning" : "check"} />
 									<div>
 										<strong>{attention.title}</strong>
 										<p>{attention.detail}</p>
