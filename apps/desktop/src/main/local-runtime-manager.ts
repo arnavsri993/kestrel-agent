@@ -68,6 +68,11 @@ interface ManagerDependencies {
 	manifest?: LocalRuntimeManifest;
 	now?: () => Date;
 	origin?: string;
+	/**
+	 * Keeps disposable test profiles from probing a developer's loopback
+	 * service. Production construction leaves discovery enabled.
+	 */
+	modelDiscoveryDisabled?: boolean;
 }
 
 function loopbackOllamaOrigin(value: string): URL {
@@ -178,8 +183,10 @@ export class LocalRuntimeManager {
 	private readonly now: () => Date;
 	private readonly ollamaOrigin: string;
 	private readonly ollamaHost: string;
+	private readonly modelDiscoveryDisabled: boolean;
 	private child: ChildProcess | null = null;
 	private operation: AbortController | null = null;
+	private chatWarmup: { controller: AbortController; promise: Promise<void> } | null = null;
 
 	constructor(
 		private readonly root: string,
@@ -206,6 +213,7 @@ export class LocalRuntimeManager {
 		);
 		this.ollamaOrigin = origin.origin;
 		this.ollamaHost = origin.host;
+		this.modelDiscoveryDisabled = dependencies.modelDiscoveryDisabled ?? false;
 	}
 
 	private installRoot(): string {
@@ -244,6 +252,7 @@ export class LocalRuntimeManager {
 		timeoutMs = 1_500,
 		signal?: AbortSignal,
 	): Promise<LocalModelSummary[]> {
+		if (this.modelDiscoveryDisabled) return [];
 		const response = await this.fetcher(`${this.ollamaOrigin}/api/tags`, {
 			signal: signal
 				? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
@@ -281,9 +290,19 @@ export class LocalRuntimeManager {
 		}
 	}
 
-	async status(): Promise<LocalRuntimeStatus> {
+	async status(discoverModels = true): Promise<LocalRuntimeStatus> {
 		const automaticSupported = this.automaticSupported();
 		const managedRuntime = await this.hasManagedInstall();
+		if (this.modelDiscoveryDisabled || !discoverModels)
+			return {
+				automaticSupported,
+				managedRuntime,
+				ollamaAvailable: false,
+				source: managedRuntime ? "managed" : "none",
+				runtimeVersion: this.manifest.version,
+				runtimeDownloadBytes: this.manifest.bytes,
+				localModels: [],
+			};
 		try {
 			const localModels = await this.listModels();
 			const verification = await this.readVerification(localModels);
@@ -559,12 +578,14 @@ export class LocalRuntimeManager {
 	}
 
 	private async start(signal: AbortSignal): Promise<void> {
+		signal.throwIfAborted();
 		this.progress({
 			stage: "starting-runtime",
 			message: "Starting the local model service on this Mac only.",
 		});
 		if (!(await this.hasManagedInstall()))
 			throw new Error("The managed local runtime is not installed.");
+		signal.throwIfAborted();
 		if (this.child && this.child.exitCode === null) return;
 		const modelsRoot = join(this.root, "local-models");
 		const managedHome = join(this.root, "local-runtime-home");
@@ -572,6 +593,8 @@ export class LocalRuntimeManager {
 			mkdir(modelsRoot, { recursive: true, mode: 0o700 }),
 			mkdir(managedHome, { recursive: true, mode: 0o700 }),
 		]);
+		signal.throwIfAborted();
+		if (this.child && this.child.exitCode === null) return;
 		const child = this.spawnProcess(this.binaryPath(), ["serve"], {
 			cwd: this.installRoot(),
 			stdio: "ignore",
@@ -732,6 +755,8 @@ export class LocalRuntimeManager {
 	}
 
 	async stop(): Promise<void> {
+		this.chatWarmup?.controller.abort();
+		this.chatWarmup = null;
 		this.cancel();
 		const child = this.child;
 		this.child = null;
@@ -744,16 +769,37 @@ export class LocalRuntimeManager {
 		if (child.exitCode === null) child.kill("SIGKILL");
 	}
 
-	async startManagedIfInstalled(): Promise<void> {
+	async startManagedIfInstalled(signal?: AbortSignal): Promise<void> {
+		if (this.modelDiscoveryDisabled) return;
+		signal?.throwIfAborted();
 		if (!(await this.hasManagedInstall())) return;
+		signal?.throwIfAborted();
 		try {
-			await this.listModels(700);
+			await this.listModels(700, signal);
 		} catch {
-			await this.start(AbortSignal.timeout(20_000));
+			signal?.throwIfAborted();
+			const deadline = AbortSignal.timeout(20_000);
+			await this.start(signal ? AbortSignal.any([signal, deadline]) : deadline);
 		}
 	}
 
-	async ensureChatReady(): Promise<void> {
-		await this.startManagedIfInstalled();
+	async ensureChatReady(enabled = true): Promise<void> {
+		if (!enabled) {
+			this.chatWarmup?.controller.abort();
+			this.chatWarmup = null;
+			// An explicit setup operation owns its own lifecycle. Background
+			// chat warmup must neither probe nor cancel that user-requested setup.
+			if (!this.operation) await this.stop();
+			return;
+		}
+		if (this.chatWarmup) return this.chatWarmup.promise;
+		const controller = new AbortController();
+		const warmup = { controller, promise: this.startManagedIfInstalled(controller.signal) };
+		this.chatWarmup = warmup;
+		try {
+			await warmup.promise;
+		} finally {
+			if (this.chatWarmup === warmup) this.chatWarmup = null;
+		}
 	}
 }

@@ -84,10 +84,19 @@
 :is(.password-overlay-error, .payment-overlay-error) { margin: 10px 0 0; color: #ffb4b0; font-size: 12px; line-height: 1.45; }
 
 /* OS-owned menus already use native materials; these are renderer-owned menus. */
+:root[data-kestrel-material="native"] .browser-toolbar:has(.browser-toolbar-popover) {
+ /* A backdrop filter creates a containing block for fixed descendants.
+    Popover coordinates are measured in the window, so keep this ancestor
+    unfiltered while its menu is present. */
+ background: #252628;
+ backdrop-filter: none;
+ -webkit-backdrop-filter: none;
+}
 :is(.browser-toolbar-popover, .model-selector-menu, .new-tab-access-menu, .agent-history-popover, .browser-tab-tools-menu, .browser-tab-menu, .browser-bookmarks-bar-folder-menu, .kestrel-sidebar-context-menu, .kestrel-widget-add-popover, .kestrel-widget-size-popover, .agent-universe-create-agent-popover) {
  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
  border-radius: 14px;
- background: color-mix(in srgb, var(--panel) 94%, transparent);
+ /* Commands need stable contrast over pages with dense text. */
+ background: var(--panel);
  backdrop-filter: blur(24px) saturate(120%);
  -webkit-backdrop-filter: blur(24px) saturate(120%);
  box-shadow: 0 12px 36px rgb(0 0 0 / 24%), inset 0 1px 0 rgb(255 255 255 / 7%);

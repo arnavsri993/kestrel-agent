@@ -77,10 +77,10 @@ function persistExpandedProjectId(projectId: string | null): void {
 	}
 }
 
-function clampContextMenuPosition(top: number, left: number): { top: number; left: number } {
+function clampContextMenuPosition(top: number, left: number, width: number, height: number): { top: number; left: number } {
 	return {
-		top: Math.max(8, Math.min(top, window.innerHeight - 280)),
-		left: Math.max(8, Math.min(left, window.innerWidth - 236)),
+		top: Math.max(8, Math.min(top, window.innerHeight - height - 8)),
+		left: Math.max(8, Math.min(left, window.innerWidth - width - 8)),
 	};
 }
 
@@ -153,14 +153,43 @@ function SidebarContextMenu({
 	onMoveSession(sessionId: string, projectId: string | null): void;
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
+	const [position, setPosition] = useState({ top: menu.top, left: menu.left });
 
-	useEffect(() => {
+	useLayoutEffect(() => {
+		const element = menuRef.current;
+		if (!element) return;
+		const updatePosition = () => {
+			// offset dimensions exclude the entrance animation's scale/translation.
+			const next = clampContextMenuPosition(menu.top, menu.left, element.offsetWidth, element.offsetHeight);
+			setPosition(current => current.top === next.top && current.left === next.left ? current : next);
+		};
+		updatePosition();
+		const observer = new ResizeObserver(updatePosition);
+		observer.observe(element);
+		window.addEventListener("resize", updatePosition);
+		return () => { observer.disconnect(); window.removeEventListener("resize", updatePosition); };
+	}, [menu.top, menu.left, menu.id, menu.kind, menuRef]);
+
+	useLayoutEffect(() => {
 		menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-	}, [menu.id, menu.kind, menuRef]);
+	}, [menu, menuRef]);
 
 	function action(run: () => void) {
 		onClose({ restoreFocus: true });
 		run();
+	}
+
+	function navigateWithKeyboard(event: ReactKeyboardEvent<HTMLDivElement>) {
+		if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+		const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)')];
+		if (items.length === 0) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const current = items.findIndex(item => item === document.activeElement);
+		const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+			: event.key === "ArrowDown" ? (current + 1) % items.length
+			: current <= 0 ? items.length - 1 : current - 1;
+		items[next]?.focus();
 	}
 
 	return (
@@ -176,8 +205,9 @@ function SidebarContextMenu({
 					: { opacity: 0, y: -2, scale: 0.985, pointerEvents: "none" }
 			}
 			transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
-			style={{ top: menu.top, left: menu.left, transformOrigin: "top left" }}
+			style={{ ...position, transformOrigin: "top left" }}
 			onContextMenu={(event) => event.preventDefault()}
+			onKeyDown={navigateWithKeyboard}
 		>
 			{menu.kind === "project" && project ? (
 				<>
@@ -250,6 +280,7 @@ export function KestrelSidebar({
 	onNewTask,
 	onOpenBrowser,
 	onOpenAgent,
+	onOpenProjects,
 	onOpenConnections,
 	onOpenMemory,
 	onOpenCapabilities,
@@ -271,6 +302,7 @@ export function KestrelSidebar({
 	onNewTask(): void;
 	onOpenBrowser(): void;
 	onOpenAgent(): void;
+	onOpenProjects(): void;
 	onOpenConnections(): void;
 	onOpenMemory(): void;
 	onOpenCapabilities(): void;
@@ -531,7 +563,8 @@ export function KestrelSidebar({
 		setContextMenu({
 			kind: "project",
 			id: project.id,
-			...clampContextMenuPosition(event.clientY, event.clientX),
+			top: event.clientY,
+			left: event.clientX,
 		});
 	}
 
@@ -541,7 +574,8 @@ export function KestrelSidebar({
 		setContextMenu({
 			kind: "chat",
 			id: chat.id,
-			...clampContextMenuPosition(event.clientY, event.clientX),
+			top: event.clientY,
+			left: event.clientX,
 		});
 	}
 
@@ -558,7 +592,8 @@ export function KestrelSidebar({
 		setContextMenu({
 			kind,
 			id,
-			...clampContextMenuPosition(rect.bottom + 4, rect.left + 8),
+			top: rect.bottom + 4,
+			left: rect.left + 8,
 		});
 	}
 
@@ -620,24 +655,6 @@ export function KestrelSidebar({
 				<div className="kestrel-sidebar-header-actions">
 					<button
 						type="button"
-						className="kestrel-sidebar-icon-button"
-						aria-label="Open command center"
-						title="Open command center (⌘K)"
-						onClick={onOpenCapabilities}
-					>
-						<Icon name="search" />
-					</button>
-					<button
-						type="button"
-						className="kestrel-sidebar-icon-button"
-						aria-label="Open settings"
-						title="Settings"
-						onClick={onOpenSettings}
-					>
-						<Icon name="settings" />
-					</button>
-					<button
-						type="button"
 						className="kestrel-sidebar-icon-button kestrel-sidebar-collapse"
 						aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
 						aria-expanded={!collapsed}
@@ -662,23 +679,22 @@ export function KestrelSidebar({
 				<kbd>⌘N</kbd>
 			</button>
 			<nav className="kestrel-sidebar-primary" aria-label="Primary">
-				<SidebarNavItem
-					icon="agent"
-					label="Agent"
-					destination="agent"
-					active={activeDestination === "agent"}
-					onClick={onOpenAgent}
-				/>
-				<SidebarNavItem icon="connections" label="Connections" destination="connections"
-					active={activeDestination === "connections"} onClick={onOpenConnections} />
-				<SidebarNavItem icon="memory" label="Memory" destination="memory"
-					active={activeDestination === "memory"} onClick={onOpenMemory} />
+				<SidebarNavItem icon="browser" label="Browser" destination="browser"
+					active={activeDestination === "browser"} onClick={onOpenBrowser} />
+				<SidebarNavItem icon="agent" label="Agent" destination="agent"
+					active={activeDestination === "agent"} onClick={onOpenAgent} />
+				<SidebarNavItem icon="folder" label="Projects" destination="projects"
+					active={activeDestination === "projects"} onClick={onOpenProjects} />
+				<button type="button" className="kestrel-sidebar-row kestrel-sidebar-nav-item"
+					aria-label="Open search" title="Search Kestrel (⌘K)" onClick={onOpenCapabilities}>
+					<Icon name="search" /><span>Search Kestrel</span>
+				</button>
 			</nav>
 
 			<div className="kestrel-sidebar-scroll">
 				<section className="kestrel-sidebar-section" aria-labelledby="kestrel-sidebar-projects">
 					<div className="kestrel-sidebar-section-heading">
-						<h2 id="kestrel-sidebar-projects">Projects</h2>
+						<h2 id="kestrel-sidebar-projects">Your projects</h2>
 						<button
 							type="button"
 							className="kestrel-sidebar-section-action"
@@ -786,7 +802,7 @@ export function KestrelSidebar({
 
 				<section className="kestrel-sidebar-section kestrel-sidebar-chats" aria-labelledby="kestrel-sidebar-chats">
 					<div className="kestrel-sidebar-section-heading">
-						<h2 id="kestrel-sidebar-chats">Chats</h2>
+						<h2 id="kestrel-sidebar-chats">Recent chats</h2>
 					</div>
 					{chats.length > 0 ? (
 						<ul>
@@ -816,6 +832,15 @@ export function KestrelSidebar({
 					) : null}
 				</section>
 			</div>
+
+			<nav className="kestrel-sidebar-utilities" aria-label="Manage Kestrel">
+				<SidebarNavItem icon="memory" label="Memory" destination="memory"
+					active={activeDestination === "memory"} onClick={onOpenMemory} />
+				<SidebarNavItem icon="connections" label="Connections" destination="connections"
+					active={activeDestination === "connections"} onClick={onOpenConnections} />
+				<SidebarNavItem icon="settings" label="Settings" destination="settings"
+					active={activeDestination === "settings"} onClick={onOpenSettings} />
+			</nav>
 
 			<AnimatePresence initial={false}>
 				{contextMenu && (contextProject || contextChat) ? (

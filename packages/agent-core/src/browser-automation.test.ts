@@ -8,12 +8,14 @@ import {
 	type BrowserAction,
 	type BrowserAutomationBackend,
 	BrowserController,
+	type BrowserSnapshot,
 	installBrowserTools,
 	type ScreenshotFrame,
 	VisualValidator,
 } from "./browser-automation";
 import type { BrowserInteractiveRef } from "./browser-element-refs";
 import { AgentRuntime } from "./runtime";
+import { modelVisibleToolResult } from "./tool-result-guardrails";
 
 class FakeBrowser implements BrowserAutomationBackend {
 	actions: BrowserAction[] = [];
@@ -35,11 +37,7 @@ class FakeBrowser implements BrowserAutomationBackend {
 	async act(_id: string, action: BrowserAction): Promise<void> {
 		this.actions.push(action);
 	}
-	async snapshot(): Promise<{
-		url: string;
-		title: string;
-		accessibilityTree: unknown;
-	}> {
+	async snapshot(): Promise<BrowserSnapshot> {
 		this.snapshotCalls += 1;
 		return {
 			url: "https://example.test/",
@@ -135,7 +133,7 @@ class FakeBrowser implements BrowserAutomationBackend {
 			trust: "untrusted_browser" as const,
 		};
 	}
-	async visibleSnapshot() {
+	async visibleSnapshot(): Promise<BrowserSnapshot & { trust: "untrusted_browser" }> {
 		return {
 			url: "https://example.test/",
 			title: "Visible",
@@ -351,18 +349,40 @@ describe("isolated browser automation and visual validation", () => {
 				trust: "untrusted_browser",
 			},
 		});
-		expect(
-			(
-				await runtime.callTool(
-					session.id,
-					"computer.act",
-					{ action: { type: "click", x: 10, y: 20 } },
-					{ approvalStatus: "approved", idempotencyKey: "desktop-click" },
-				)
-			).status,
-		).toBe("verified");
-		expect(backend.desktopActions).toEqual([{ type: "click", x: 10, y: 20 }]);
+		expect(runtime.discoverTools(session.id).map((tool) => tool.name)).not.toContain("computer.act");
+		const desktopFrame = await runtime.callTool(session.id, "computer.screenshot", {});
+		expect(desktopFrame.output?.pngBase64).toBeDefined();
+		expect(database.getToolExecution(desktopFrame.id)?.output).toMatchObject({
+			redacted: true, reason: "computer-use-screenshot", width: 1, height: 1,
+		});
 		database.close();
+	});
+
+	it("rejects malformed browser arguments before approval without changing session boundaries", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const backend = new FakeBrowser();
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Argument correction", approvalPolicy: "ask" });
+		installBrowserTools(runtime, new BrowserController(backend), session.id);
+		try {
+			const created = await runtime.callTool(session.id, "browser.create", { allowedOrigins: ["https://example.test"] }, { approvalStatus: "approved", idempotencyKey: "argument-browser" });
+			// An ask-policy session still needs a genuine one-time approval grant.
+			expect(created).toMatchObject({ status: "blocked", output: { approvalRequired: true } });
+			const malformed = await runtime.callTool(session.id, "browser.act", { browserSessionId: "browser-00000000-0000-4000-8000-000000000000", action: '{"selector":"h1"}' }, { idempotencyKey: "malformed-action" });
+			expect(malformed).toMatchObject({ status: "blocked", output: { approvalRequired: false, persistentApprovalAllowed: false }, error: expect.stringContaining("structured object") });
+			const missing = await runtime.callTool(session.id, "browser.snapshot", {});
+			expect(missing).toMatchObject({ status: "blocked", output: { approvalRequired: false } });
+			const wrongSurface = await runtime.callTool(session.id, "browser.snapshot", { browserSessionId: backend.visibleTabId });
+			expect(wrongSurface).toMatchObject({ status: "blocked", error: expect.stringContaining("browser.visible-snapshot") });
+			expect(backend.actions).toEqual([]);
+			expect(backend.snapshotCalls).toBe(0);
+			const visible = await runtime.callTool(session.id, "browser.visible-snapshot", { tabId: backend.visibleTabId });
+			expect(visible).toMatchObject({ status: "verified", output: { title: "Visible" } });
+			const extra = await runtime.callTool(session.id, "browser.visible-snapshot", { tabId: backend.visibleTabId, browserSessionId: "ignored" });
+			expect(extra).toMatchObject({ status: "blocked", output: { approvalRequired: false } });
+		} finally {
+			database.close();
+		}
 	});
 
 	it("persists typed recovery guidance and never replays a failed browser action", async () => {
@@ -553,6 +573,25 @@ describe("isolated browser automation and visual validation", () => {
 		database.close();
 	});
 
+	it("does not capture a visible screenshot from a truncated page inspection", async () => {
+		const backend = new FakeBrowser();
+		vi.spyOn(backend, "visibleSnapshot").mockResolvedValue({
+			url: "https://example.test/",
+			title: "Visible",
+			accessibilityTree: { role: "document" },
+			truncated: true,
+			trust: "untrusted_browser",
+		});
+		const capture = vi.spyOn(backend, "visibleScreenshot");
+		await expect(
+			new BrowserController(backend).visibleScreenshot(
+				backend.visibleTabId,
+				new AbortController().signal,
+			),
+		).rejects.toThrow("page inspection is incomplete");
+		expect(capture).not.toHaveBeenCalled();
+	});
+
 	it("rejects accessibility trees that cannot be serialized", async () => {
 		const backend = new FakeBrowser();
 		backend.snapshot = async () => ({
@@ -605,6 +644,128 @@ describe("isolated browser automation and visual validation", () => {
 		);
 		expect(backend.snapshotCalls).toBe(afterExplicit + 1);
 		expect(backend.actions).toEqual([{ type: "click", target: "#buy" }]);
+	});
+
+	it("binds approval display metadata to the manager-owned snapshot without changing approval identity", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const backend = new FakeBrowser();
+		const credential = "approval-label-secret";
+		backend.interactive = [{ ref: "e1", role: "button", name: `Reveal verification credential=${credential}` }];
+		vi.spyOn(backend, "snapshot").mockResolvedValue({
+			url: `https://user:password@example.test/verify?token=${credential}&step=1#private`,
+			title: "Verification",
+			accessibilityTree: { role: "document" },
+			interactive: backend.interactive,
+		});
+		const controller = new BrowserController(backend);
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Observed approval target", approvalPolicy: "ask" });
+		installBrowserTools(runtime, controller, session.id);
+		try {
+			runtime.prepareTaskSecrets(session.id, `password=${credential}`);
+			const { browserSessionId } = await controller.create(session.id, ["https://example.test"]);
+			await runtime.callTool(session.id, "browser.snapshot", { browserSessionId });
+			const input = { browserSessionId, action: { type: "click" as const, target: "e1" } };
+			const pending = await runtime.callTool(session.id, "browser.act", input, {
+				idempotencyKey: "observed-target-pending",
+			});
+
+			expect(pending).toMatchObject({
+				status: "blocked",
+				input,
+				idempotencyKey: "observed-target-pending",
+				output: {
+					preview: JSON.stringify(input, null, 2),
+					approvalContext: { browserTarget: {
+						surface: "isolated", browserSessionId, target: "e1",
+						role: "button", trust: "untrusted_browser",
+					} },
+				},
+			});
+			const serialized = JSON.stringify(pending);
+			expect(serialized).not.toContain(credential);
+			expect(serialized).not.toContain("user:password");
+			expect(serialized).not.toContain("token=");
+			expect(serialized).not.toContain("#private");
+			expect(serialized).toContain("Reveal verification credential=");
+			expect(JSON.stringify(database.getToolExecution(pending.id))).not.toContain(credential);
+			expect(modelVisibleToolResult(pending)).not.toContain(credential);
+
+			const approved = await runtime.callTool(session.id, "browser.act", input, {
+				approvalStatus: "approved",
+				approvalGrantExecutionId: pending.id,
+				idempotencyKey: "observed-target-approved",
+			});
+			expect(approved.status).toBe("verified");
+			expect(backend.actions).toEqual([input.action]);
+		} finally {
+			runtime.close();
+			database.close();
+		}
+	});
+
+	it.each([
+		["owned  passphrase with spaces", false],
+		[`owned-${"x".repeat(2_400)}`, false],
+		["owned  passphrase with spaces", true],
+	] as const)(
+		"protects complete observed strings before normalization or display bounds (%#)", async (credential, encoded) => {
+			const database = new KestrelDatabase(":memory:", createEncryptionKey());
+			const backend = new FakeBrowser();
+			backend.interactive = [{ ref: "e1", role: "button", name: `Reveal ${credential}` }];
+			vi.spyOn(backend, "snapshot").mockResolvedValue({
+				url: `https://example.test/${encoded ? encodeURIComponent(credential) : credential}?step=1`, title: "Owned fixture",
+				accessibilityTree: { role: "document" }, interactive: backend.interactive,
+			});
+			const controller = new BrowserController(backend);
+			const runtime = new AgentRuntime(database);
+			const session = runtime.createSession({ title: "Protected observed approval", approvalPolicy: "ask" });
+			installBrowserTools(runtime, controller, session.id);
+			try {
+				const prepared = runtime.prepareTaskSecrets(session.id, `password="${credential}"`);
+				expect(prepared.scopeId).toBeDefined();
+				const { browserSessionId } = await controller.create(session.id, ["https://example.test"]);
+				await controller.snapshot(session.id, browserSessionId, new AbortController().signal);
+				const input = { browserSessionId, action: { type: "click", target: "e1" } };
+				const pending = await runtime.callTool(session.id, "browser.act", input, { idempotencyKey: "protected-observed-target" });
+				expect(pending.output?.approvalContext).toMatchObject({ browserTarget: {
+					observedLabel: "Reveal [REDACTED]", url: encoded ? "https://example.test/" : "https://example.test/[REDACTED]?step=1",
+				} });
+				const payload = database.db.prepare("SELECT payload FROM tool_executions WHERE id = ?").get(pending.id) as { payload: string };
+				for (const projection of [JSON.stringify(pending), payload.payload, modelVisibleToolResult(pending)]) {
+					expect(projection).not.toContain(credential);
+					expect(projection).not.toContain(encodeURIComponent(credential));
+					expect(projection).not.toContain(credential.replace(/\s+/g, " ").slice(0, 100));
+				}
+				expect(pending.input).toEqual(input);
+			} finally { runtime.close(); database.close(); }
+		},
+	);
+
+	it("omits observed target metadata for missing, stale, cross-session, or cross-tab refs", async () => {
+		const backend = new FakeBrowser();
+		backend.interactive = [{ ref: "e1", role: "button", name: "Reveal verification" }];
+		const controller = new BrowserController(backend);
+		const isolated = await controller.create("owner", ["https://example.test"]);
+		const click = { type: "click" as const, target: "e1" };
+		expect(controller.approvalContext("owner", isolated.browserSessionId, click)).toBeUndefined();
+		await controller.snapshot("owner", isolated.browserSessionId, new AbortController().signal);
+		expect(controller.approvalContext("owner", isolated.browserSessionId, click)?.browserTarget.observedLabel)
+			.toBe("Reveal verification");
+		expect(controller.approvalContext("owner", isolated.browserSessionId, { ...click, target: "e2" }))
+			.toBeUndefined();
+		expect(() => controller.approvalContext("other", isolated.browserSessionId, click))
+			.toThrow("unavailable to this agent session");
+		await controller.navigate("owner", isolated.browserSessionId, "https://example.test/next", new AbortController().signal);
+		expect(controller.approvalContext("owner", isolated.browserSessionId, click)).toBeUndefined();
+
+		await controller.visibleSnapshot(backend.visibleTabId, new AbortController().signal);
+		expect(controller.visibleApprovalContext(backend.visibleTabId, click)?.browserTarget.observedLabel)
+			.toBe("Reveal verification");
+		const otherTab = "tab-11111111-1111-4111-8111-111111111111";
+		expect(controller.visibleApprovalContext(otherTab, click)).toBeUndefined();
+		await controller.visibleNavigate(backend.visibleTabId, "https://example.test/next", new AbortController().signal);
+		expect(controller.visibleApprovalContext(backend.visibleTabId, click)).toBeUndefined();
 	});
 
 	it("resumes the exact private typing input without persisting it, and fails closed after expiry or restart", async () => {

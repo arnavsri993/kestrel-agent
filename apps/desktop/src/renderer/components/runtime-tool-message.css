@@ -1,0 +1,16 @@
+.runtime-tool-message { min-width: 0; margin: 0 0 18px; color: var(--muted); font-size: 12px; }
+.runtime-tool-message summary { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto auto; align-items: center; gap: 9px; padding: 8px 0; border-radius: 6px; cursor: pointer; list-style: none; }
+.runtime-tool-message summary::-webkit-details-marker { display: none; }
+.runtime-tool-message summary:hover { color: var(--ink); }
+.runtime-tool-message summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.runtime-tool-message svg { width: 14px; height: 14px; }
+.runtime-tool-copy { display: grid; min-width: 0; gap: 3px; }
+.runtime-tool-copy strong { font-weight: 500; color: var(--ink); }
+.runtime-tool-copy :is(strong, small) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-tool-copy small, .runtime-tool-status, .runtime-tool-disclosure { font-size: 11px; }
+.runtime-tool-status, .runtime-tool-disclosure { white-space: nowrap; }
+.runtime-tool-disclosure { display: inline-flex; align-items: center; gap: 3px; }
+.runtime-tool-message details[open] .runtime-tool-disclosure svg { transform: rotate(90deg); }
+.runtime-tool-message pre { max-height: 220px; margin: 5px 0 0; padding: 10px; overflow-y: auto; overflow-x: hidden; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font: 11px/1.5 ui-monospace, monospace; }
+.runtime-tool-error, .runtime-tool-note { margin: 4px 0 0 23px; overflow-wrap: anywhere; line-height: 1.5; }
+.runtime-tool-message-failed .runtime-tool-status, .runtime-tool-error { color: var(--danger, #e9a0a0); }

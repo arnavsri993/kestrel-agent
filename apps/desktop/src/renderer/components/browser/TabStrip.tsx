@@ -38,6 +38,7 @@ import {
 	TAB_CLOSE_REFIT_DELAY_MS,
 } from "./tab-strip-layout";
 import { recentTabFavicon, TabFavicon } from "./TabFavicon";
+import { findTabToolMatches } from "./tab-tools-search";
 import { KESTREL_TAB_TRANSFER_MIME, parseBrowserTabTransfer, serializeBrowserTabTransfer } from "./tab-transfer";
 
 // A tab only needs to leave the chrome by roughly two-thirds of its height to
@@ -189,8 +190,8 @@ export function TabStrip({
 	const [tabToolsOpen, setTabToolsOpen] = useState(false);
 	const menuOpenRef = useRef(false);
 	const [tabSearch, setTabSearch] = useState("");
-	const [openTabsExpanded, setOpenTabsExpanded] = useState(false);
-	const [recentlyClosedExpanded, setRecentlyClosedExpanded] = useState(true);
+	const [openTabsExpanded, setOpenTabsExpanded] = useState(true);
+	const [recentlyClosedExpanded, setRecentlyClosedExpanded] = useState(false);
 	const [collapsedFolderIds, setCollapsedFolderIds] = useState(
 		readCollapsedTabFolders,
 	);
@@ -303,6 +304,8 @@ export function TabStrip({
 	const dismissTabTools = useCallback(() => {
 		setTabToolsOpen(false);
 		setTabSearch("");
+		setOpenTabsExpanded(true);
+		setRecentlyClosedExpanded(false);
 	}, []);
 
 	const closeTabTools = useCallback(() => {
@@ -945,8 +948,11 @@ export function TabStrip({
 		}
 	}
 
-	const filteredTabs = tabs.filter((tab) =>
-		`${tab.title} ${tab.url}`.toLowerCase().includes(tabSearch.toLowerCase()),
+	const filteredTabs = findTabToolMatches(tabs, tabSearch);
+	const filteredRecentlyClosedTabs = findTabToolMatches(
+		recentlyClosedTabs,
+		tabSearch,
+		8,
 	);
 
 	const tabStyle = computeLockedTabStyle(lockedWidth, orientation);
@@ -988,10 +994,8 @@ export function TabStrip({
 					title="Tab tools"
 					onClick={(event) => {
 						tabToolsTriggerRef.current = event.currentTarget;
-						setTabToolsOpen((value) => {
-							if (value) setTabSearch("");
-							return !value;
-						});
+						if (tabToolsOpen) dismissTabTools();
+						else setTabToolsOpen(true);
 					}}
 				>
 					<Icon name="tabActions" />
@@ -1147,6 +1151,7 @@ export function TabStrip({
 								onChange={(event) => {
 									setTabSearch(event.target.value);
 									setOpenTabsExpanded(true);
+									if (event.target.value.trim()) setRecentlyClosedExpanded(true);
 								}}
 							/>
 						</label>
@@ -1167,7 +1172,7 @@ export function TabStrip({
 							{openTabsExpanded && (
 								<div className="browser-tab-tools-list browser-tab-search-results">
 									{filteredTabs.length > 0 ? (
-										filteredTabs.map((tab) => (
+										filteredTabs.map(({ entry: tab }) => (
 											<button
 												type="button"
 												role="menuitem"
@@ -1189,7 +1194,7 @@ export function TabStrip({
 											</button>
 										))
 									) : (
-										<small>No matching tabs</small>
+										<small>{tabSearch.trim() ? "No matching open tabs" : "No open tabs"}</small>
 									)}
 								</div>
 							)}
@@ -1210,14 +1215,14 @@ export function TabStrip({
 							</button>
 							{recentlyClosedExpanded && (
 								<div className="browser-tab-tools-list browser-tab-search-results">
-									{recentlyClosedTabs.length > 0 ? (
-										recentlyClosedTabs.slice(0, 8).map((tab, index) => (
+									{filteredRecentlyClosedTabs.length > 0 ? (
+										filteredRecentlyClosedTabs.map(({ entry: tab, originalIndex }) => (
 											<button
 												type="button"
 												role="menuitem"
-												key={`${tab.url}-${tab.closedAt}-${index}`}
+												key={`${tab.url}-${tab.closedAt}-${originalIndex}`}
 												onClick={() => {
-													onReopenClosedTab?.(index);
+													onReopenClosedTab?.(originalIndex);
 													closeTabTools();
 												}}
 											>
@@ -1233,7 +1238,7 @@ export function TabStrip({
 											</button>
 										))
 									) : (
-										<small>No recently closed tabs</small>
+										<small>{tabSearch.trim() ? "No matching recently closed tabs" : "No recently closed tabs"}</small>
 									)}
 								</div>
 							)}

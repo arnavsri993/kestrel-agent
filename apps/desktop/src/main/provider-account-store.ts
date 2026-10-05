@@ -502,6 +502,25 @@ function isLoopbackBaseUrl(value: string | undefined): boolean {
 	}
 }
 
+function managedOllamaEndpoint(value: string): string | undefined {
+	try {
+		const url = new URL(value);
+		// Ordinary localhost is an intentional alias for the managed IPv4
+		// listener. Other ports, paths, IPv6 listeners, and remote services
+		// must not authorize this runtime unless they are its exact endpoint.
+		const hostname = url.hostname === "localhost" ? "127.0.0.1" : url.hostname;
+		if (
+			url.protocol !== "http:" ||
+			!["127.0.0.1", "[::1]"].includes(hostname) ||
+			!url.port || url.pathname !== "/" ||
+			url.username || url.password || url.search || url.hash
+		) return undefined;
+		return `${hostname}:${url.port}`;
+	} catch {
+		return undefined;
+	}
+}
+
 function normalizeBaseUrl(
 	value: string | undefined,
 	_adapter: ProviderAccountAdapter,
@@ -812,6 +831,16 @@ export class ProviderAccountStore {
 		return (await this.load()).accounts.map(accountSummary);
 	}
 
+	/** Reads account metadata only; never resolves protected provider secrets. */
+	async hasEnabledManagedOllamaAccount(managedOrigin: string): Promise<boolean> {
+		const managedEndpoint = managedOllamaEndpoint(managedOrigin);
+		if (!managedEndpoint) return false;
+		return (await this.load()).accounts.some((account) =>
+			account.enabled && account.adapter === "ollama" &&
+			managedOllamaEndpoint(account.baseUrl ?? "http://127.0.0.1:11434") === managedEndpoint,
+		);
+	}
+
 	async account(accountId: string): Promise<StoredProviderAccount | undefined> {
 		return (await this.load()).accounts.find((account) => account.id === accountId);
 	}
@@ -965,10 +994,19 @@ export class ProviderAccountStore {
 			environment.KESTREL_OLLAMA_BASE_URL ?? "http://127.0.0.1:11434",
 			"ollama",
 		);
+		const legacyOllamaEndpoint = legacyOllamaBaseUrl &&
+			(managedOllamaEndpoint(legacyOllamaBaseUrl) ?? legacyOllamaBaseUrl);
+		// A custom account already represents this route, including an explicit
+		// disabled choice. Do not add an enabled legacy duplicate beside it.
+		const existingOllamaRoute = state.accounts.some((account) =>
+			account.adapter === "ollama" &&
+			(managedOllamaEndpoint(account.baseUrl ?? "http://127.0.0.1:11434") ?? account.baseUrl) === legacyOllamaEndpoint,
+		);
 		if (
 			(environment.KESTREL_ENABLE_OLLAMA === "1" ||
 				environment.KESTREL_OLLAMA_BASE_URL) &&
 			legacyOllamaBaseUrl &&
+			!existingOllamaRoute &&
 			!existing.has("legacy-ollama") &&
 			!retired.has("legacy-ollama")
 		) {
@@ -1099,9 +1137,15 @@ export class ProviderAccountStore {
 		const account = state.accounts.find((candidate) => candidate.id === accountId);
 		if (!account) throw new Error("Provider account no longer exists.");
 		state.accounts = state.accounts.filter((candidate) => candidate.id !== accountId);
-		if (isLegacyAccountId(account.id)) {
+		const retiredIds = isLegacyAccountId(account.id) ? [account.id] : [];
+		if (
+			account.adapter === "ollama" &&
+			managedOllamaEndpoint(account.baseUrl ?? "http://127.0.0.1:11434") ===
+				managedOllamaEndpoint("http://127.0.0.1:11434")
+		) retiredIds.push("legacy-ollama");
+		if (retiredIds.length) {
 			state.retiredLegacyAccountIds = [
-				...new Set([...state.retiredLegacyAccountIds, account.id]),
+				...new Set([...state.retiredLegacyAccountIds, ...retiredIds]),
 			];
 		}
 		await this.save(state);

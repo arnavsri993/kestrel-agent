@@ -16,8 +16,14 @@ import { agentStateLabel } from "../../agent-workspace";
 import { Icon } from "../Icon";
 import { Button } from "../ui";
 import { SurfaceBackButton } from "./SurfaceBackButton";
+import { AgentWorkspaceList } from "./agent-universe/AgentWorkspaceList";
 import { AgentUniverseScene } from "./agent-universe/AgentUniverseScene";
 import { AgentUniverseStarfield } from "./agent-universe/AgentUniverseStarfield";
+import {
+	readAgentWorkspaceView,
+	type AgentWorkspaceView,
+	writeAgentWorkspaceView,
+} from "./agent-universe/agent-workspace-view";
 import {
 	projectAgentUniverse,
 	type AgentUniverseActivity,
@@ -150,8 +156,8 @@ function AgentUniverseEmptyState({
 				<>
 					<h2>No agents yet</h2>
 					<p>
-						Create a persistent agent. Chats stay in Chat; delegated agents appear
-						as moons.
+						Create an agent to keep its instructions and conversations together.
+						Delegated tasks appear under their agent.
 					</p>
 					<div className="agent-universe-empty-actions">
 						<Button
@@ -178,9 +184,24 @@ function AgentUniverseCreateAgentMenu({
 	onCreateAgent(title: string, template?: AgentTemplate): Promise<void> | void;
 }) {
 	const [open, setOpen] = useState(false);
+	const menuRef = useRef<HTMLDivElement>(null);
+	const triggerRef = useRef<HTMLButtonElement>(null);
+	const closeMenu = useCallback(() => {
+		setOpen(false);
+		window.requestAnimationFrame(() => triggerRef.current?.focus());
+	}, []);
+	useEffect(() => {
+		if (!open) return;
+		function dismissOutside(event: PointerEvent) {
+			if (event.target instanceof Node && !menuRef.current?.contains(event.target)) setOpen(false);
+		}
+		document.addEventListener("pointerdown", dismissOutside);
+		return () => document.removeEventListener("pointerdown", dismissOutside);
+	}, [open]);
 	return (
-		<div className="agent-universe-create-agent-menu">
+		<div ref={menuRef} className="agent-universe-create-agent-menu">
 			<button
+				ref={triggerRef}
 				type="button"
 				className="agent-universe-create-agent-trigger"
 				aria-expanded={open}
@@ -195,6 +216,12 @@ function AgentUniverseCreateAgentMenu({
 					className="agent-universe-create-agent-popover"
 					role="dialog"
 					aria-label="Create persistent agent"
+					onKeyDown={(event) => {
+						if (event.key !== "Escape") return;
+						event.preventDefault();
+						event.stopPropagation();
+						closeMenu();
+					}}
 				>
 					<div className="agent-universe-create-agent-popover-header">
 						<strong>Create a persistent agent</strong>
@@ -202,15 +229,15 @@ function AgentUniverseCreateAgentMenu({
 							type="button"
 							className="agent-universe-create-agent-popover-close"
 							aria-label="Close create agent"
-							onClick={() => setOpen(false)}
+							onClick={closeMenu}
 						>
 							<Icon name="close" />
 						</button>
 					</div>
-					<p>Chats stay in Chat; delegated agents appear as moons.</p>
+					<p>Delegated tasks stay grouped under their agent.</p>
 					<AgentUniverseCreateAgentForm
 						onCreateAgent={onCreateAgent}
-						onCancel={() => setOpen(false)}
+						onCancel={closeMenu}
 					/>
 				</div>
 			) : null}
@@ -224,6 +251,72 @@ function AgentUniverseLoadingState() {
 			<span className="agent-universe-loading-mark" aria-hidden="true" />
 			<strong>Loading agents</strong>
 		</div>
+	);
+}
+
+function AgentWorkspaceOptions({
+	onOpenWork,
+	onOpenSettings,
+	onToggleAgentSidebar,
+	agentSidebarOpen,
+}: {
+	onOpenWork?(): void;
+	onOpenSettings(): void;
+	onToggleAgentSidebar?(): void;
+	agentSidebarOpen: boolean;
+}) {
+	const disclosureRef = useRef<HTMLDetailsElement>(null);
+	const summaryRef = useRef<HTMLElement>(null);
+	useEffect(() => {
+		function dismissOutside(event: PointerEvent) {
+			const disclosure = disclosureRef.current;
+			if (disclosure?.open && event.target instanceof Node && !disclosure.contains(event.target)) {
+				disclosure.open = false;
+			}
+		}
+		document.addEventListener("pointerdown", dismissOutside);
+		return () => document.removeEventListener("pointerdown", dismissOutside);
+	}, []);
+	function invoke(action: () => void) {
+		if (disclosureRef.current) disclosureRef.current.open = false;
+		action();
+	}
+	return (
+		<details
+			ref={disclosureRef}
+			className="agent-workspace-options"
+			onBlur={(event) => {
+				if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) {
+					event.currentTarget.open = false;
+				}
+			}}
+			onKeyDown={(event) => {
+				if (event.key !== "Escape" || !event.currentTarget.open) return;
+				event.preventDefault();
+				event.stopPropagation();
+				event.currentTarget.open = false;
+				summaryRef.current?.focus();
+			}}
+		>
+			<summary ref={summaryRef} aria-label="More agent options" title="More agent options">
+				<Icon name="more" />
+			</summary>
+			<div className="agent-workspace-options-panel" role="group" aria-label="Agent options">
+				{onOpenWork ? (
+					<Button variant="quiet" size="compact" onClick={() => invoke(onOpenWork)}>
+						<Icon name="work" />All work
+					</Button>
+				) : null}
+				<Button variant="quiet" size="compact" aria-label="Open agent settings" onClick={() => invoke(onOpenSettings)}>
+					<Icon name="settings" />Agent settings
+				</Button>
+				{onToggleAgentSidebar ? (
+					<Button variant="quiet" size="compact" onClick={() => invoke(onToggleAgentSidebar)}>
+						<Icon name="chat" />{agentSidebarOpen ? "Close Chat" : "Open Chat"}
+					</Button>
+				) : null}
+			</div>
+		</details>
 	);
 }
 
@@ -264,9 +357,9 @@ function AgentUniverseSessionNotice({
 					: "The local session list is unavailable. Showing the last known map."}
 			</span>
 			{!refreshing && onRetry ? (
-				<button type="button" onClick={onRetry}>
+				<Button variant="bordered" size="compact" onClick={onRetry}>
 					Retry
-				</button>
+				</Button>
 			) : null}
 		</div>
 	);
@@ -311,6 +404,7 @@ export function AgentWorkspace({
 	onOpenSettings,
 	onRetrySessions,
 	onToggleAgentSidebar,
+	agentSidebarOpen = false,
 	onBack,
 }: {
 	sessions: RuntimeSession[];
@@ -326,9 +420,11 @@ export function AgentWorkspace({
 	onOpenSettings(): void;
 	onRetrySessions?(): void;
 	onToggleAgentSidebar?(): void;
+	agentSidebarOpen?: boolean;
 	onBack?(): void;
 }) {
 	const [query, setQuery] = useState("");
+	const [view, setView] = useState<AgentWorkspaceView>(readAgentWorkspaceView);
 	const [settingsSessionId, setSettingsSessionId] = useState<string | null>(null);
 	const [focusedSystemId, setFocusedSystemId] = useState<string | null>(null);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -643,6 +739,11 @@ export function AgentWorkspace({
 		[],
 	);
 
+	const selectView = useCallback((nextView: AgentWorkspaceView) => {
+		setView(nextView);
+		writeAgentWorkspaceView(nextView);
+	}, []);
+
 	const focusSearchResult = useCallback(() => {
 		const needle = query.trim().toLocaleLowerCase();
 		if (!needle) return;
@@ -690,22 +791,48 @@ export function AgentWorkspace({
 
 	return (
 		<main
-			className="agent-workspace agent-universe-workspace"
+			className={`agent-workspace agent-universe-workspace is-${view}-view`}
 			aria-labelledby="agent-workspace-title"
 			onKeyDown={handleKeyDown}
 		>
 			<h1 id="agent-workspace-title" className="sr-only">
-				Agent Universe
+				Agents
 			</h1>
 			{settingsSessionId && sessions.find(item => item.id === settingsSessionId) && <AgentSettingsDialog
 				session={sessions.find(item => item.id === settingsSessionId)!} sessions={sessions}
 				onClose={() => setSettingsSessionId(null)} onSaved={() => onRetrySessions?.()} />}
 			<div className="agent-universe-stage">
 				<div className="agent-universe-visual-plane">
-					{!hasSystems ? (
+					{view === "map" && !hasSystems ? (
 						<AgentUniverseStarfield reducedMotion={reducedMotion} />
 					) : null}
-					{sessionLoadState === "loading" && !hasSystems ? (
+					{view === "list" ? (
+						<AgentWorkspaceList
+							snapshot={universe}
+							query={query}
+							{...(sessionLoadState === "loading" && !hasSystems
+								? { loadingState: <AgentUniverseLoadingState /> }
+								: {})}
+							{...(sessionLoadState === "error" && !hasSystems
+								? {
+										errorState: (
+											<AgentUniverseErrorState
+												{...(onRetrySessions ? { onRetry: onRetrySessions } : {})}
+											/>
+										),
+									}
+								: {})}
+							emptyState={
+								<AgentUniverseEmptyState
+									onNewTask={onNewTask}
+									onCreateAgent={onCreateAgent}
+								/>
+							}
+							onOpenSession={onOpenSession}
+							onOpenSettings={setSettingsSessionId}
+							onClearSearch={() => setQuery("")}
+						/>
+					) : sessionLoadState === "loading" && !hasSystems ? (
 						<AgentUniverseLoadingState />
 					) : sessionLoadState === "error" && !hasSystems ? (
 						<AgentUniverseErrorState
@@ -767,15 +894,15 @@ export function AgentWorkspace({
 						<div className="agent-universe-map-identity">
 							{onBack ? <SurfaceBackButton onBack={onBack} /> : null}
 							<div>
-								<p className="agent-universe-map-eyebrow">Agent Universe</p>
+								<p className="agent-universe-map-eyebrow">Agents</p>
 								<p className="agent-universe-map-summary">
 									{hasSystems
-										? `${universe.overviewSystemIds.length} planet${universe.overviewSystemIds.length === 1 ? "" : "s"}${universe.overflowSystemIds.length > 0 ? ` · ${universe.overflowSystemIds.length} more system${universe.overflowSystemIds.length === 1 ? "" : "s"}` : ""} · ${universe.sessionCount} session${universe.sessionCount === 1 ? "" : "s"}`
+										? `${universe.systems.length} agent${universe.systems.length === 1 ? "" : "s"} · ${universe.sessionCount} session${universe.sessionCount === 1 ? "" : "s"}`
 										: "Create an agent to get started."}
 								</p>
 							</div>
 						</div>
-						{hasSystems ? (
+						{view === "map" && hasSystems ? (
 							<div className="agent-universe-map-key" aria-label="Map key">
 								<span>
 									<i className="is-core" aria-hidden="true" />
@@ -792,8 +919,30 @@ export function AgentWorkspace({
 							</div>
 						) : null}
 					</div>
-					<div className="agent-universe-map-actions">
-						{focusedSystem ? (
+					<div className="agent-universe-map-actions agent-universe-map-commands">
+						<AgentUniverseCreateAgentMenu onCreateAgent={onCreateAgent} />
+						<Button
+							variant="solid"
+							size="compact"
+							className="agent-universe-new-task"
+							onClick={onNewTask}
+						>
+							<Icon name="plus" />
+							Start task
+						</Button>
+						<AgentWorkspaceOptions
+							agentSidebarOpen={agentSidebarOpen}
+							{...(hasSystems ? { onOpenWork } : {})}
+							onOpenSettings={() => {
+								const id = selectedNode?.id ?? focusedGroupId;
+								if (id) setSettingsSessionId(id);
+								else onOpenSettings();
+							}}
+							{...(onToggleAgentSidebar ? { onToggleAgentSidebar } : {})}
+						/>
+					</div>
+					<div className="agent-universe-map-actions agent-universe-map-tools">
+						{view === "map" && focusedSystem ? (
 							<Button
 								variant="quiet"
 								size="compact"
@@ -808,7 +957,6 @@ export function AgentWorkspace({
 							</Button>
 						) : null}
 						{hasSystems ? (
-							<>
 								<label className="agent-universe-search">
 									<Icon name="search" />
 									<span className="sr-only">Find a system or task</span>
@@ -824,51 +972,34 @@ export function AgentWorkspace({
 										}}
 									/>
 								</label>
-								<AgentUniverseCreateAgentMenu onCreateAgent={onCreateAgent} />
-								<Button variant="quiet" size="compact" onClick={onOpenWork}>
-									<Icon name="work" />
-									Work
-								</Button>
-							</>
 						) : null}
-						<button
-							type="button"
-							className="agent-universe-settings"
-							aria-label="Open agent settings"
-							title="Open agent settings"
-							onClick={() => { const id = selectedNode?.id ?? focusedGroupId; if (id) setSettingsSessionId(id); else onOpenSettings(); }}
-						>
-							<Icon name="settings" />
-						</button>
-						{onToggleAgentSidebar ? (
+						<div className="agent-workspace-view-switch" role="group" aria-label="Agent workspace view">
 							<button
 								type="button"
-								className="agent-universe-rail-toggle"
-								aria-label="Open agent conversation rail"
-								title="Open agent conversation rail"
-								onClick={onToggleAgentSidebar}
+								aria-pressed={view === "list"}
+								onClick={() => selectView("list")}
 							>
-								<Icon name="chat" />
+								<Icon name="tabActions" />
+								List
 							</button>
-						) : null}
-						<button
-							type="button"
-							className="agent-universe-new-task"
-							aria-label="Start a new task"
-							title="Start a new task"
-							onClick={onNewTask}
-						>
-							<Icon name="plus" />
-						</button>
+							<button
+								type="button"
+								aria-pressed={view === "map"}
+								onClick={() => selectView("map")}
+							>
+								<Icon name="globe" />
+								Map
+							</button>
+						</div>
 					</div>
+					{hasSystems && sessionLoadState !== "ready" ? (
+						<AgentUniverseSessionNotice
+							state={sessionLoadState}
+							{...(onRetrySessions ? { onRetry: onRetrySessions } : {})}
+						/>
+					) : null}
 				</header>
 
-				{hasSystems && sessionLoadState !== "ready" ? (
-					<AgentUniverseSessionNotice
-						state={sessionLoadState}
-						{...(onRetrySessions ? { onRetry: onRetrySessions } : {})}
-					/>
-				) : null}
 				{hasSystems ? (
 					<div className="agent-universe-map-footer">
 						<AgentUniverseRuntimeStatus
@@ -876,9 +1007,11 @@ export function AgentWorkspace({
 							pendingApprovals={pendingApprovals}
 							onOpenApprovals={onOpenApprovals}
 						/>
-						<span className="agent-universe-map-hint">
-							Select a planet or moon to chat or inspect · drag planets to place them anywhere
-						</span>
+						{view === "map" ? (
+							<span className="agent-universe-map-hint">
+								Select a planet or moon to chat or inspect · drag planets to place them anywhere
+							</span>
+						) : null}
 					</div>
 				) : null}
 			</div>

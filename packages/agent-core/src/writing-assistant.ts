@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { stripTrailingCharacters } from "./text-boundaries";
 import { z } from "zod";
 import {
 	type AgentContextBundle,
@@ -255,7 +256,7 @@ function normalizeRepair(value: unknown): unknown {
 function extractAnchors(text: string): string[] {
 	const anchors: string[] = [];
 	const add = (value: string) => {
-		const trimmed = value.replace(/[.,;:!?]+$/u, "");
+		const trimmed = stripTrailingCharacters(value, ".,;:!?");
 		if (trimmed && !anchors.includes(trimmed)) anchors.push(trimmed);
 	};
 	for (const match of text.matchAll(/https?:\/\/[^\s)\]}>,]+/giu)) add(match[0]);
@@ -441,7 +442,7 @@ export type WritingRouteResolver = (
 	prompt: string,
 	providerIds: string[],
 	role: "writer" | "reviewer",
-) => WritingAutomaticRoute;
+) => WritingAutomaticRoute | Promise<WritingAutomaticRoute>;
 
 interface WritingAssistantDependencies {
 	providerPool: ProviderPool;
@@ -812,7 +813,7 @@ export class WritingAssistant {
 		const routePrompt = `${input.prompt}\n\nReturn the structured tool response now.`;
 		const plan = input.modelOverride
 			? undefined
-			: this.deps.resolveRoute(
+			: await this.deps.resolveRoute(
 				input.taskId,
 				routePrompt,
 				input.providerIds,

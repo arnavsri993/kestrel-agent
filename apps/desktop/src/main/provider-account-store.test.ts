@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	CredentialBroker,
 	PlaintextSecretProtection,
@@ -341,5 +341,96 @@ describe("provider account store", () => {
 		await expect(
 			store.create({ ...account, baseUrl: "ftp://127.0.0.1:1234/v1" }),
 		).rejects.toThrow("must use a loopback local base URL");
+	});
+});
+
+
+describe("managed Ollama enablement", () => {
+	const origin = "http://127.0.0.1:11434";
+	const seed = { KESTREL_ENABLE_OLLAMA: "1", KESTREL_OLLAMA_BASE_URL: origin, KESTREL_OLLAMA_MODEL: "fixture:test" };
+
+	it.each([
+		[undefined, true],
+		[origin, true],
+		[origin + "/", true],
+		["http://localhost:11434", true],
+		["http://[::1]:11434", false],
+		["http://127.0.0.1:11435", false],
+		[origin + "/v1", false],
+		["https://localhost:11434", false],
+		["https://ollama.example.test", false],
+	])("checks the actual Ollama endpoint %s without reading credentials", async (baseUrl, expected) => {
+		const { store, broker } = createStore();
+		await store.create({
+			providerId: "custom-ollama", adapter: "ollama", displayName: "Fixture Ollama",
+			authTransport: "local", enabled: true, headers: [],
+			...(baseUrl ? { baseUrl } : {}),
+		});
+		const secrets = vi.spyOn(broker, "getOpaqueSecret").mockRejectedValue(new Error("No credential reads allowed"));
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(expected);
+		expect(secrets).not.toHaveBeenCalled();
+	});
+
+	it("does not authorize Ollama from an unrelated enabled local gateway", async () => {
+		const { store } = createStore();
+		await store.create({
+			providerId: "local-gateway", adapter: "openai-compatible", displayName: "Fixture Gateway",
+			authTransport: "local", enabled: true, baseUrl: origin, headers: [],
+		});
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(false);
+	});
+
+	it("seeds an eligible first-run route after explicit local setup", async () => {
+		const { store } = createStore();
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(false);
+		await store.ensureLegacyAccounts(seed);
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(true);
+		expect(await store.account("legacy-ollama")).toMatchObject({ enabled: true, defaultModel: "fixture:test", baseUrl: origin });
+	});
+
+	it("keeps a disabled route disabled through migration and explicit setup seeds", async () => {
+		const { store } = createStore();
+		await store.ensureLegacyAccounts(seed);
+		await store.update({ id: "legacy-ollama", enabled: false });
+		await store.ensureLegacyAccounts(seed);
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(false);
+		expect(await store.account("legacy-ollama")).toMatchObject({ enabled: false });
+	});
+
+	it("does not add an enabled legacy duplicate beside a disabled custom managed account", async () => {
+		const { store } = createStore();
+		const [account] = await store.create({
+			providerId: "custom-ollama", adapter: "ollama", displayName: "Custom managed route",
+			authTransport: "local", enabled: false, baseUrl: "http://localhost:11434", headers: [],
+		});
+		await store.ensureLegacyAccounts(seed);
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(false);
+		expect(await store.list()).toHaveLength(1);
+		await store.update({ id: account!.id, enabled: true });
+		await store.ensureLegacyAccounts(seed);
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(true);
+		expect(await store.list()).toHaveLength(1);
+	});
+
+	it("preserves a removed custom managed route's disconnect through legacy setup seeds", async () => {
+		const { root, store } = createStore();
+		const [account] = await store.create({
+			providerId: "custom-ollama", adapter: "ollama", displayName: "Custom managed route",
+			authTransport: "local", enabled: true, baseUrl: origin, headers: [],
+		});
+		await store.remove(account!.id);
+		await store.ensureLegacyAccounts(seed);
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(false);
+		expect(await store.list()).toEqual([]);
+		expect(JSON.parse(readFileSync(join(root, "provider-accounts.json"), "utf8")).retiredLegacyAccountIds).toContain("legacy-ollama");
+	});
+
+	it("never recreates a removed legacy route from startup or explicit setup seeds", async () => {
+		const { store } = createStore();
+		await store.ensureLegacyAccounts(seed);
+		await store.remove("legacy-ollama");
+		await store.ensureLegacyAccounts(seed);
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(false);
+		expect(await store.list()).toEqual([]);
 	});
 });

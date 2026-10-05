@@ -82,14 +82,18 @@ export interface LoginCodeChallengeInput {
 export function isLoginCodeChallenge(
 	input: LoginCodeChallengeInput,
 ): boolean {
-	const formText = input.forms
+	const fields = input.forms.filter(form =>
+		["", "text", "tel", "number", "password", "email", "search", "textarea", "sensitive"].includes(form.type.toLowerCase()),
+	);
+	if (fields.length === 0) return false;
+	const formText = fields
 		.map((form) => `${form.label} ${form.type} ${form.name}`)
 		.join(" ");
 	const text = `${input.title}\n${input.visibleText}\n${formText}`.slice(
 		0,
 		60_000,
 	);
-	const hasCodeField = input.forms.some((form) =>
+	const hasCodeField = fields.some((form) =>
 		/(one-time|otp|verification|security|passcode|auth|code|pin)/i.test(
 			`${form.label} ${form.type} ${form.name}`,
 		),

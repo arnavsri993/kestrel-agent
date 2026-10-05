@@ -42,11 +42,15 @@ try {
  await page.evaluate(()=>{localStorage.setItem('kestrel:onboarded','yes');localStorage.setItem('kestrel:default-browser-prompted','yes');});
  await page.reload();
  const request=(input)=>page.evaluate((input)=>window.kestrel.request(input),input);
- await page.getByRole('button', {name: /^Model:/}).click();
+ const chatToggle=page.locator('#browser-agent-toggle');
+ await chatToggle.waitFor();
+ if(await chatToggle.getAttribute('aria-expanded')!=='true') await chatToggle.click();
+ await page.locator('.agent-conversation-host').getByRole('button', {name: /^Model:/}).click();
  await expect(page.locator('.model-selector-menu')).toBeVisible();
  assert.equal(await page.locator('.model-selector-menu').evaluate(node=>getComputedStyle(node).backgroundImage),'none');
  if (evidence) await page.screenshot({path:join(evidence,'model-menu.png')});
  await page.keyboard.press('Escape');
+ if(await page.locator('.agent-sidebar').evaluate(node=>node.classList.contains('agent-sidebar-overlay'))) await page.locator('.agent-sidebar-collapse').click();
 
  await app.evaluate(async ({session})=>{
   await session.fromPartition('persist:kestrel-user-browser-v1').protocol.handle('https',(request)=>{
@@ -213,6 +217,31 @@ try {
  await addForm.getByRole('button',{name:'Add login',exact:true}).click();
  await expect(page.locator('.password-login-card')).toHaveCount(2);
  await expect(addForm.getByLabel('Password',{exact:true})).toHaveValue('');
+ // A wide window can still give Settings a narrow column when Chat is docked.
+ // Inspect populated records and actions at the actual available width.
+ await app.evaluate(({BrowserWindow})=>{
+  const window=BrowserWindow.getAllWindows().find(window=>!window.webContents.getURL().includes('petOverlay'));
+  window.setMinimumSize(300,300);
+  window.setSize(1280,900);
+ });
+ if(await chatToggle.getAttribute('aria-expanded')!=='true') await chatToggle.click();
+ for(const width of [1280,800,390]) {
+  await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows().find(window=>!window.webContents.getURL().includes('petOverlay')).setSize(width,900),width);
+  await page.waitForFunction(width=>innerWidth===width,width);
+  if(width<1280&&await chatToggle.getAttribute('aria-expanded')==='true') await page.locator('.agent-sidebar-collapse').click();
+  const cards=page.locator('.password-login-card');
+  await cards.first().scrollIntoViewIfNeeded();
+  const layout=await cards.evaluateAll(cards=>cards.map(card=>{
+   const rect=card.getBoundingClientRect();
+   return {
+    readable:[...card.querySelectorAll('.password-entry-details strong,.password-entry-details span,.password-entry-details small')].every(node=>node.clientWidth>0&&node.scrollWidth<=node.clientWidth+1),
+    actionsInside:[...card.querySelectorAll('.password-entry-actions button')].every(button=>{const action=button.getBoundingClientRect();return action.left>=rect.left-1&&action.right<=rect.right+1;}),
+   };
+  }));
+  assert(layout.every(card=>card.readable&&card.actionsInside),`${width}: saved login metadata and actions must remain readable together`);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${width}: no horizontal overflow`);
+  if(evidence) await page.screenshot({path:join(evidence,`saved-logins-${width}.png`)});
+ }
  await page.getByRole('searchbox',{name:'Search saved passwords'}).scrollIntoViewIfNeeded();
  await page.screenshot({path:'/tmp/kestrel-password-settings-fixture.png'});
  console.log('PASS: saved login search, authenticated edit/add, stable record ID and cleared secret input.');

@@ -1,4 +1,10 @@
+import { commandDestinations } from "./app-directory";
+import { dismissCompactChatForDestination } from "./agent-panel-navigation";
+import { observeTextareaSize } from "./textarea-sizing";
+import "./Connections.css";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
+import { BuildProvenance } from "./components/BuildProvenance";
+import { maskSensitiveText } from "@kestrel/shared-types";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
 import type { AgentTemplate } from "@kestrel/shared-types";
@@ -89,6 +95,7 @@ import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 import { BrandMark } from "./components/BrandMark";
 import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
+import { RuntimeApprovalPreview } from "./components/RuntimeApprovalPreview";
 import { RuntimeQuestionCard } from "./components/RuntimeQuestionCard";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
 import { ActionReceiptList } from "./components/ActionReceiptList";
@@ -102,6 +109,7 @@ import { ProjectSettingsDialog } from "./components/browser/ProjectSettingsDialo
 import { ModelSelector } from "./components/browser/ModelSelector";
 import {
 	accountForChoice,
+	automaticRouteAvailable,
 	type ModelSelectorChoice,
 } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
@@ -137,9 +145,10 @@ import { WritingStudio } from "./components/browser/WritingStudio";
 import { KeyboardShortcutsModal } from "./components/browser/KeyboardShortcutsModal";
 import {
 	CommandCenter,
-	type CommandDestination,
 } from "./components/browser/CommandCenter";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
+import { RuntimeToolMessage, runtimeAssistantDisplayContent, runtimeToolTitle } from "./components/RuntimeToolMessage";
+import { AssistantMessageContent } from "./components/AssistantMessageContent";
 import { ComputerUseSettings } from "./components/ComputerUseSettings";
 import {
 	parseUIPresentationMessage,
@@ -151,7 +160,6 @@ import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
 import { GoalKanban } from "./components/GoalKanban";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
 import { MemoryRecallReceiptLine } from "./components/MemoryRecallReceiptLine";
-import { MemoryRecallStatus } from "./components/MemoryRecallStatus";
 import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
@@ -294,148 +302,6 @@ type SkillReviewRequest = {
 	proposalId: string;
 	requestId: number;
 };
-const commandDestinations: CommandDestination[] = [
-	{
-		id: "browser",
-		label: "Browser",
-		detail: "Browse the web",
-		icon: "browser",
-		group: "Browse",
-	},
-	{
-		id: "organize-tabs",
-		label: "Organize tabs",
-		detail: "Group related tabs",
-		icon: "folder",
-		group: "Browse",
-	},
-	{
-		id: "agent",
-		label: "Agent",
-		detail: "Start or resume work",
-		icon: "agent",
-		group: "Agent",
-	},
-	{
-		id: "projects",
-		label: "Projects",
-		detail: "Keep related work together",
-		icon: "folder",
-		group: "Agent",
-	},
-	{
-		id: "writing",
-		label: "Writing Studio",
-		detail: "Draft with your context",
-		icon: "writing",
-		group: "Agent",
-	},
-	{
-		id: "history",
-		label: "History",
-		detail: "Pages you visited",
-		icon: "history",
-		group: "Browse",
-	},
-	{
-		id: "bookmarks",
-		label: "Bookmarks",
-		detail: "Pages you saved",
-		icon: "star",
-		group: "Browse",
-	},
-	{
-		id: "downloads",
-		label: "Downloads",
-		detail: "Downloaded files",
-		icon: "downloads",
-		group: "Browse",
-	},
-	{
-		id: "approvals",
-		label: "Approvals",
-		detail: "Review agent actions",
-		icon: "approvals",
-		group: "Agent",
-	},
-	{
-		id: "work",
-		label: "Work",
-		detail: "Goals, delegates, and schedules",
-		icon: "work",
-		group: "Agent",
-	},
-	{
-		id: "events",
-		label: "Opportunities",
-		detail: "Event applications",
-		icon: "events",
-		group: "Agent",
-	},
-	{
-		id: "connections",
-		label: "Connections",
-		detail: "Manage connected accounts and access",
-		icon: "connections",
-		group: "Context",
-	},
-	{
-		id: "memory",
-		label: "Memory",
-		detail: "Calendar, people, and memory",
-		icon: "memory",
-		group: "Context",
-	},
-	{
-		id: "research",
-		label: "Research",
-		detail: "Sources and findings",
-		icon: "research",
-		group: "Context",
-	},
-	{
-		id: "artifacts",
-		label: "Artifacts",
-		detail: "Files and results",
-		icon: "artifacts",
-		group: "Context",
-	},
-	{
-		id: "activity",
-		label: "Activity",
-		detail: "Runs and evidence",
-		icon: "activity",
-		group: "Context",
-	},
-	{
-		id: "extensions",
-		label: "Extensions",
-		detail: "Plugins and tools",
-		icon: "extensions",
-		group: "Build",
-	},
-	{
-		id: "readiness",
-		label: "Readiness",
-		detail: "Check what is ready",
-		icon: "readiness",
-		group: "System",
-	},
-	{
-		id: "settings",
-		label: "Settings",
-		detail: "Browser, agent, and privacy",
-		icon: "settings",
-		group: "System",
-	},
-	{
-		id: "shortcuts",
-		label: "Keyboard Shortcuts",
-		detail: "Keyboard shortcuts",
-		icon: "command",
-		group: "System",
-	},
-];
 type ExecutionMode = "automatic" | "manual";
 const SETUP_ASSISTANT_PROMPT =
 	"Help me finish setting up Kestrel. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings, or to provider-owned sign-in. Verify one working route before adding more.";
@@ -3075,6 +2941,8 @@ function RuntimeConversation({
 	mentionTabs = [],
 	mentionBookmarks = [],
 	newAgentRequestId,
+	newAgentHandledRequest,
+	onNewAgentRequestHandled,
 	newAgentPrompt,
 	newAgentWorkspace,
 	newAgentProjectId,
@@ -3087,6 +2955,7 @@ function RuntimeConversation({
 	onTranscriptTargetHandled,
 	onOpenActivity,
 	onReviewLearnedSkill,
+	onOpenModelSettings,
 }: {
 	visible: boolean;
 	activeSessionId: string | null;
@@ -3103,6 +2972,8 @@ function RuntimeConversation({
 	mentionTabs?: UserBrowserTab[];
 	mentionBookmarks?: UserBrowserBookmark[];
 	newAgentRequestId: number;
+	newAgentHandledRequest: { current: number };
+	onNewAgentRequestHandled(): void;
 	newAgentPrompt: string;
 	newAgentWorkspace: string | null;
 	newAgentProjectId: string | null;
@@ -3115,6 +2986,7 @@ function RuntimeConversation({
 	onTranscriptTargetHandled?(): void;
 	onOpenActivity?(executionId: string): void;
 	onReviewLearnedSkill(proposalId: string): void;
+	onOpenModelSettings(): void;
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
@@ -3122,6 +2994,7 @@ function RuntimeConversation({
 	const [providerAccounts, setProviderAccounts] = useState<
 		ProviderAccountSummary[]
 	>([]);
+	const [providerAccountsLoaded, setProviderAccountsLoaded] = useState(false);
 	const [providerId, setProviderId] = useState(
 		() => localStorage.getItem("kestrel:provider-id") ?? "",
 	);
@@ -3139,6 +3012,7 @@ function RuntimeConversation({
 				stored === "high" ||
 				stored === "xhigh" ||
 				stored === "max" ||
+				stored === "ultra" ||
 				stored === "none"
 				? stored
 				: "none";
@@ -3150,10 +3024,18 @@ function RuntimeConversation({
 			: "automatic",
 	);
 	const grants = projects;
-	const [workspace, setWorkspace] = useState("");
+	const [{ workspace, projectId: draftProjectId }, setTaskScope] = useState<{
+		workspace: string;
+		projectId: string | null;
+	}>({ workspace: "", projectId: null });
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [mentionFiles, setMentionFiles] = useState<SelectedAttachment[]>([]);
 	const shouldAutoSubmitFirstTaskRef = useRef(false);
+	const pendingNewAgentAutoSubmitRef = useRef<{
+		prompt: string;
+		draft?: NewTabComposerDraft;
+		scope: { workspaceRoot: string; projectId: string | null };
+	} | null>(null);
 	const [guidedFirstTaskActive, setGuidedFirstTaskActive] = useState(false);
 	const [input, setInput] = useState(() => {
 		if (localStorage.getItem("kestrel:first-task") === "yes") {
@@ -3180,6 +3062,8 @@ function RuntimeConversation({
 	const [actionReceipts, setActionReceipts] = useState<ActionReceipt[]>([]);
 	const [humanInputRequests, setHumanInputRequests] = useState<HumanInputRequest[]>([]);
 	const [executions, setExecutions] = useState<RuntimeToolExecution[]>([]);
+	const messageListRef = useRef<HTMLDivElement | null>(null);
+	const followMessagesRef = useRef(true);
 	const [skillBusy, setSkillBusy] = useState(false);
 	const [skillNotice, setSkillNotice] =
 		useState<SkillLearningProposal | null>(null);
@@ -3189,11 +3073,57 @@ function RuntimeConversation({
 		execution: RuntimeToolExecution;
 	} | null>(null);
 	const [error, setError] = useState("");
+	useEffect(() => {
+		followMessagesRef.current = true;
+	}, [activeSessionId]);
+	useLayoutEffect(() => {
+		if (!visible || !followMessagesRef.current || transcriptTarget || loadingEarlierMessages) return;
+		const list = messageListRef.current;
+		if (list) {
+			list.scrollTop = list.scrollHeight;
+		}
+	}, [visible, messages, streamText, optimisticUser, optimisticSteering, busy, pending, latestRun, transcriptTarget, loadingEarlierMessages]);
+	useLayoutEffect(() => {
+		const list = messageListRef.current;
+		if (!visible || !list || typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(() => {
+			if (followMessagesRef.current && !transcriptTarget && !loadingEarlierMessages)
+				list.scrollTop = list.scrollHeight;
+		});
+		observer.observe(list);
+		return () => observer.disconnect();
+	}, [visible, activeSessionId, messages.length, Boolean(optimisticUser), Boolean(streamText), transcriptTarget, loadingEarlierMessages]);
 	const streamIdRef = useRef<string | null>(null);
 	const streamSessionIdRef = useRef<string | null>(null);
 	const activeSessionIdRef = useRef(activeSessionId);
-	const previousNewAgentRequestIdRef = useRef(newAgentRequestId);
 	const taskSettingsRef = useRef<HTMLDetailsElement>(null);
+	useEffect(() => {
+		function dismissOutside(event: Event) {
+			const details = taskSettingsRef.current;
+			if (details?.open && event.target instanceof Node && !details.contains(event.target)) details.open = false;
+		}
+		function dismissOnEscape(event: globalThis.KeyboardEvent) {
+			const details = taskSettingsRef.current;
+			if (event.key !== "Escape" || !details?.open) return;
+			event.preventDefault();
+			event.stopPropagation();
+			details.open = false;
+			details.querySelector<HTMLElement>("summary")?.focus();
+		}
+		window.addEventListener("pointerdown", dismissOutside);
+		window.addEventListener("focusin", dismissOutside);
+		// The popover owns the first Escape; compact chat keeps its next Escape.
+		window.addEventListener("keydown", dismissOnEscape, true);
+		return () => {
+			window.removeEventListener("pointerdown", dismissOutside);
+			window.removeEventListener("focusin", dismissOutside);
+			window.removeEventListener("keydown", dismissOnEscape, true);
+		};
+	}, []);
+	useEffect(() => {
+		// Conversation and task transitions must expose results and approvals.
+		if (taskSettingsRef.current) taskSettingsRef.current.open = false;
+	}, [activeSessionId, busy, pending, visible]);
 	const externalIntakeRequestIdRef = useRef(0);
 	const sessionLoadSequenceRef = useRef(0);
 	const transcriptLoadKeyRef = useRef<string | null>(null);
@@ -3253,8 +3183,18 @@ function RuntimeConversation({
 		reasoningEffort,
 	};
 	const selectedManualAccount = accountForChoice(providerAccounts, modelChoice);
-	const manualRoutingReady = Boolean(selectedManualAccount && model.trim());
-	const executionReady = executionMode === "automatic" || manualRoutingReady;
+	const automaticRoutingReady =
+		providerAccountsLoaded && automaticRouteAvailable(providerAccounts);
+	const manualRoutingReady = Boolean(
+		providerAccountsLoaded && selectedManualAccount && model.trim(),
+	);
+	const executionReady =
+		executionMode === "automatic" ? automaticRoutingReady : manualRoutingReady;
+	const modelReadinessMessage = !providerAccountsLoaded
+		? "Checking model access…"
+		: executionMode === "automatic"
+			? "Connect a model to send tasks."
+			: "Choose an available model to send tasks.";
 	activeSessionIdRef.current = activeSessionId;
 
 	function applyModelChoice(next: ModelSelectorChoice) {
@@ -3274,18 +3214,17 @@ function RuntimeConversation({
 		localStorage.setItem("kestrel:reasoning-effort", next.reasoningEffort);
 	}
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const prompt = promptRef.current;
-		if (!prompt) return;
-		prompt.style.height = "auto";
-		const nextHeight = Math.min(prompt.scrollHeight, 180);
-		prompt.style.height = `${nextHeight}px`;
-		prompt.style.overflowY = prompt.scrollHeight > 180 ? "auto" : "hidden";
-	}, [input]);
+		if (!visible || !prompt) return;
+		return observeTextareaSize(prompt);
+	}, [input, visible]);
 
 	useEffect(() => {
-		if (previousNewAgentRequestIdRef.current === newAgentRequestId) return;
-		previousNewAgentRequestIdRef.current = newAgentRequestId;
+		if (newAgentHandledRequest.current === newAgentRequestId) return;
+		newAgentHandledRequest.current = newAgentRequestId;
+		pendingNewAgentAutoSubmitRef.current = null;
+		onNewAgentRequestHandled();
 		if (busy) {
 			setError("Finish or cancel the active task before starting a new one.");
 			window.setTimeout(() => promptRef.current?.focus(), 0);
@@ -3294,7 +3233,10 @@ function RuntimeConversation({
 		activeSessionIdRef.current = null;
 		onActiveSession(null);
 		setInput(newAgentPrompt);
-		setWorkspace(newAgentWorkspace ?? "");
+		setTaskScope({
+			workspace: newAgentWorkspace ?? "",
+			projectId: newAgentProjectId,
+		});
 		setAttachments(newAgentDraft?.attachments ?? []);
 		if (newAgentDraft) applyModelChoice(newAgentDraft.modelChoice);
 		setCheckpointSummary("");
@@ -3310,17 +3252,39 @@ function RuntimeConversation({
 			}
 			promptRef.current?.focus();
 		}, 0);
-		if (newAgentPrompt.trim()) void submit(newAgentPrompt, newAgentDraft ?? undefined);
+		if (newAgentPrompt.trim()) {
+			const pendingSubmission = {
+				prompt: newAgentPrompt,
+				scope: { workspaceRoot: newAgentWorkspace ?? "", projectId: newAgentProjectId },
+				...(newAgentDraft ? { draft: newAgentDraft } : {}),
+			};
+			if (!providerAccountsLoaded) {
+				pendingNewAgentAutoSubmitRef.current = pendingSubmission;
+				return;
+			}
+			void submit(pendingSubmission.prompt, pendingSubmission.draft, pendingSubmission.scope);
+		}
 	}, [
 		busy,
 		newAgentFocusTarget,
 		newAgentPrompt,
 		newAgentProjectId,
 		newAgentRequestId,
+		newAgentHandledRequest,
+		onNewAgentRequestHandled,
+		providerAccountsLoaded,
+		providerAccounts,
 		newAgentWorkspace,
 		newAgentDraft,
 		onActiveSession,
 	]);
+
+	useEffect(() => {
+		const pendingSubmission = pendingNewAgentAutoSubmitRef.current;
+		if (!pendingSubmission || !providerAccountsLoaded) return;
+		pendingNewAgentAutoSubmitRef.current = null;
+		void submit(pendingSubmission.prompt, pendingSubmission.draft, pendingSubmission.scope);
+	}, [providerAccountsLoaded]);
 
 	useEffect(() => {
 		if (
@@ -3481,8 +3445,21 @@ function RuntimeConversation({
 	useEffect(() => {
 		if (!visible) return;
 		let cancelled = false;
+		const providerRequest = window.kestrel.request({
+			type: "runtime-list-providers",
+		});
+		void providerRequest
+			.then((providerResponse) => {
+				if (cancelled) return;
+				if (providerResponse.ok && "providerAccounts" in providerResponse)
+					setProviderAccounts(providerResponse.providerAccounts ?? []);
+				setProviderAccountsLoaded(true);
+			})
+			.catch(() => {
+				if (!cancelled) setProviderAccountsLoaded(true);
+			});
 		void Promise.all([
-			window.kestrel.request({ type: "runtime-list-providers" }),
+			providerRequest,
 			window.kestrel.request({ type: "runtime-list-sessions" }),
 		])
 			.then(
@@ -3495,17 +3472,6 @@ function RuntimeConversation({
 						providerResponse.ok && "providerAccounts" in providerResponse
 							? (providerResponse.providerAccounts ?? [])
 							: [];
-					if (providerResponse.ok && "providerAccounts" in providerResponse) {
-						setProviderAccounts(available);
-					}
-					const availableGrants = availableWorkspaceGrants(projects);
-					setWorkspace(
-						(current) =>
-							(current &&
-							availableGrants.some((grant) => grant.path === current)
-								? current
-								: availableGrants[0]?.path) ?? "",
-					);
 					if (sessionResponse.ok && "sessions" in sessionResponse)
 						onSessions(sessionResponse.sessions ?? []);
 					const visibleSessionId = activeSessionIdRef.current;
@@ -3519,26 +3485,19 @@ function RuntimeConversation({
 				},
 			)
 			.catch((cause) => {
-				if (!cancelled)
+				if (!cancelled) {
+					setProviderAccountsLoaded(true);
 					setError(
 						cause instanceof Error
 							? cause.message
 							: "Could not load task options.",
 					);
+				}
 			});
 		return () => {
 			cancelled = true;
 		};
 	}, [onSessions, projects, visible]);
-
-	useEffect(() => {
-		const availableGrants = availableWorkspaceGrants(projects);
-		setWorkspace((current) =>
-			current && availableGrants.some((grant) => grant.path === current)
-				? current
-				: availableGrants[0]?.path ?? "",
-		);
-	}, [projects]);
 
 	useEffect(() => {
 		if (!transcriptTarget || transcriptTarget.sessionId !== activeSessionId) return;
@@ -3609,6 +3568,7 @@ function RuntimeConversation({
 				`[data-runtime-message-id="${CSS.escape(transcriptTarget.messageId)}"]`,
 			);
 			if (!target) return;
+			followMessagesRef.current = false;
 			target.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
 			target.focus({ preventScroll: true });
 			onTranscriptTargetHandled?.();
@@ -3621,6 +3581,38 @@ function RuntimeConversation({
 		if (previousRefreshRevisionRef.current === refreshRevision) return;
 		previousRefreshRevisionRef.current = refreshRevision;
 		if (!visible) return;
+		let cancelled = false;
+		// Settings updates arrive as snapshots while this conversation remains
+		// mounted. Re-read the account catalog here so a newly enabled route is
+		// usable from the composer immediately, without asking someone to reload
+		// Kestrel or reopen their task.
+		void (async () => {
+			try {
+				const providerResponse = await window.kestrel.request({
+					type: "runtime-list-providers",
+				});
+				if (cancelled) return;
+				if (!providerResponse.ok || !("providerAccounts" in providerResponse)) {
+					setProviderAccountsLoaded(true);
+					return;
+				}
+				const accounts = providerResponse.providerAccounts ?? [];
+				setProviderAccounts(accounts);
+				setProviderAccountsLoaded(true);
+				if (!catalogNeedsBackgroundRefresh(accounts)) return;
+				const refreshed = await window.kestrel.request({
+					type: "runtime-refresh-provider-models",
+				});
+				if (
+					!cancelled &&
+					refreshed.ok &&
+					"providerAccounts" in refreshed
+				)
+					setProviderAccounts(refreshed.providerAccounts ?? []);
+			} catch {
+				if (!cancelled) setProviderAccountsLoaded(true);
+			}
+		})();
 		const sessionId = activeSessionIdRef.current;
 		void Promise.all([
 			refreshSessions(),
@@ -3635,8 +3627,11 @@ function RuntimeConversation({
 						cause instanceof Error
 							? cause.message
 							: "Could not refresh the recovered task.",
-					);
-			});
+						);
+				});
+		return () => {
+			cancelled = true;
+		};
 	}, [refreshRevision, visible]);
 
 	useEffect(() => {
@@ -3693,6 +3688,8 @@ function RuntimeConversation({
 		() =>
 			window.kestrel.onRuntimeEvent((event) => {
 				if (event.sessionId !== activeSessionIdRef.current) return;
+				if (event.type === "message.appended" && streamSessionIdRef.current !== event.sessionId)
+					void loadSession(event.sessionId).catch(() => undefined);
 				if (event.type.startsWith("tool."))
 					setToolActivity((current) => [...current, event].slice(-12));
 				if (event.type === "question.created" || event.type === "question.updated")
@@ -3818,7 +3815,7 @@ function RuntimeConversation({
 
 	async function attachLargePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
 		const text = event.clipboardData.getData("text/plain");
-		if (busy || text.length < LARGE_PASTE_MIN_LENGTH) return;
+		if (busy || text.length < LARGE_PASTE_MIN_LENGTH || maskSensitiveText(text) !== text) return;
 		event.preventDefault();
 		if (attachments.length >= 8) {
 			setError("Remove an attachment before pasting more text.");
@@ -3907,15 +3904,12 @@ function RuntimeConversation({
 			const added = responseProjects.find(
 				(grant) => grant.available !== false && !previousPaths.has(grant.path),
 			);
-			setWorkspace(
-				selectedWorkspacePath ??
-					added?.path ??
-					(activeGrants.some((grant) => grant.path === workspace)
-						? workspace
-						: undefined) ??
-					availableGrants[0]?.path ??
-					"",
-			);
+			const nextWorkspace = selectedWorkspacePath ?? added?.path ?? workspace;
+			setTaskScope({
+				workspace: nextWorkspace,
+				projectId:
+					responseProjects.find((project) => project.path === nextWorkspace)?.id ?? null,
+			});
 			setAttachments([]);
 		} catch (cause) {
 			setError(
@@ -3924,13 +3918,21 @@ function RuntimeConversation({
 		}
 	}
 
-	async function submit(promptOverride?: string, draft?: NewTabComposerDraft) {
+	async function submit(
+		promptOverride?: string,
+		draft?: NewTabComposerDraft,
+		scopeOverride?: { workspaceRoot: string; projectId: string | null },
+	) {
 		const prompt = (promptOverride ?? input).trim();
 		if (!prompt) return;
 		const runChoice = draft?.modelChoice ?? modelChoice;
 		const runApprovalPolicy = draft?.approvalPolicy ?? "auto";
-		const runWorkspace = draft ? (draft.workspaceRoot ?? "") : workspace;
-		const runProjectId = draft ? (draft.projectId ?? null) : newAgentProjectId;
+		const runWorkspace = draft
+			? (draft.workspaceRoot ?? "")
+			: (scopeOverride?.workspaceRoot ?? workspace);
+		const runProjectId = draft
+			? (draft.projectId ?? null)
+			: scopeOverride ? scopeOverride.projectId : draftProjectId;
 		const runAttachments = draft?.attachments ?? promptAttachments;
 		if (busy) {
 			const streamId = streamIdRef.current;
@@ -3957,13 +3959,24 @@ function RuntimeConversation({
 				setError(response.error);
 				return;
 			}
-			setOptimisticSteering((current) => [...current, prompt]);
+			setOptimisticSteering((current) => [...current, maskSensitiveText(prompt)]);
 			return;
 		}
 		if (runChoice.executionMode === "manual" && !accountForChoice(providerAccounts, runChoice)) {
 			setError(
 				"The selected provider account is unavailable. Choose another account or switch execution back to Automatic.",
 			);
+			return;
+		}
+		if (runChoice.executionMode === "automatic" && !providerAccountsLoaded) {
+			setError("Checking model access. Try again in a moment.");
+			return;
+		}
+		if (
+			runChoice.executionMode === "automatic" &&
+			!automaticRouteAvailable(providerAccounts)
+		) {
+			setError("Connect a model in Settings before starting a task.");
 			return;
 		}
 		if (runChoice.executionMode === "manual" && !runChoice.model.trim()) {
@@ -3976,7 +3989,7 @@ function RuntimeConversation({
 		setStreamText("");
 		setToolActivity([]);
 		setPending(null);
-		setOptimisticUser(prompt);
+		setOptimisticUser(maskSensitiveText(prompt));
 		setInput("");
 		let sessionId = activeSessionIdRef.current;
 		let streamId: string | null = null;
@@ -4063,11 +4076,27 @@ function RuntimeConversation({
 	}
 
 	useEffect(() => {
-		if (!shouldAutoSubmitFirstTaskRef.current) return;
+		if (!shouldAutoSubmitFirstTaskRef.current || !providerAccountsLoaded) return;
 		shouldAutoSubmitFirstTaskRef.current = false;
+		const firstTaskReady =
+			executionMode === "automatic"
+				? automaticRouteAvailable(providerAccounts)
+				: Boolean(selectedManualAccount && model.trim());
+		if (!firstTaskReady) {
+			setGuidedFirstTaskActive(false);
+			setError(modelReadinessMessage);
+			return;
+		}
 		setGuidedFirstTaskActive(true);
 		void submit(FIRST_TASK_PROMPT);
-	}, []);
+	}, [
+		providerAccountsLoaded,
+		providerAccounts,
+		executionMode,
+		model,
+		selectedManualAccount,
+		modelReadinessMessage,
+	]);
 
 	useEffect(() => {
 		if (!guidedFirstTaskActive || busy || pending) return;
@@ -4115,12 +4144,20 @@ function RuntimeConversation({
 			)
 				onSnapshot(snapshotResponse.snapshot);
 		} catch (cause) {
-			if (activeSessionIdRef.current === sessionId)
-				setError(
-					cause instanceof Error
-						? cause.message
-						: "Could not resolve the approval.",
-				);
+			if (activeSessionIdRef.current === sessionId) {
+				const failure = cause instanceof Error
+					? cause.message
+					: "Could not resolve the approval.";
+				// A failed approved tool may have retired the durable run and grant.
+				// Reload that state before presenting recovery instead of retaining
+				// an approval button that can no longer execute this action.
+				try {
+					await loadSession(sessionId);
+				} catch {
+					// Preserve the action's failure when the state refresh also fails.
+				}
+				if (activeSessionIdRef.current === sessionId) setError(failure);
+			}
 		} finally {
 			if (!streamId || streamIdRef.current === streamId) {
 				streamIdRef.current = null;
@@ -4177,6 +4214,25 @@ function RuntimeConversation({
 				cause instanceof Error
 					? cause.message
 					: "Could not create the checkpoint.",
+			);
+		}
+	}
+
+	async function markChatPrivate() {
+		if (!activeSessionId || busy) return;
+		setError("");
+		try {
+			const privacy = (await window.kestrel.request({
+				type: "runtime-stop-remembering-session",
+				sessionId: activeSessionId,
+			})) as CoreResponse;
+			if (!privacy.ok) throw new Error(privacy.error);
+			await refreshSessions();
+		} catch (cause) {
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "Could not stop remembering this chat.",
 			);
 		}
 	}
@@ -4324,10 +4380,9 @@ function RuntimeConversation({
 			)}
 		</button>
 	);
-	const canAddContextFiles =
-		Boolean(taskWorkspace) && selectedGrant?.available !== false;
 	const projectFilesUnavailable =
-		Boolean(taskWorkspace) && selectedGrant?.available === false;
+		Boolean(taskWorkspace) && (!selectedGrant || selectedGrant.available === false);
+	const canAddContextFiles = Boolean(taskWorkspace) && !projectFilesUnavailable;
 	const needsNewTaskForFiles = !canAddContextFiles && Boolean(activeSessionId);
 	const composerFilesLabel = canAddContextFiles
 		? "Add context files"
@@ -4373,11 +4428,7 @@ function RuntimeConversation({
 		: [];
 	const latestToolEvent = toolActivity.at(-1);
 	const currentAction = latestToolEvent
-		? String(
-				latestToolEvent.payload.toolName ??
-					latestToolEvent.executionId ??
-					"Tool activity",
-		  )
+		? runtimeToolTitle(String(latestToolEvent.payload.toolName ?? ""), "Working on an action")
 		: streamText
 			? "Drafting a response"
 			: "Starting the task";
@@ -4385,8 +4436,8 @@ function RuntimeConversation({
 		? latestToolEvent.type === "tool.progress"
 			? "Progress update received"
 			: latestToolEvent.type === "tool.completed"
-				? "Tool result received"
-				: "Tool started"
+				? "Result received"
+				: "Action started"
 		: latestRun
 			? `Isolated core · ${runRouteLabel(latestRun)}`
 			: "Kestrel is working in this chat.";
@@ -4430,12 +4481,28 @@ function RuntimeConversation({
 			: backgroundSessionBusy
 				? "Kestrel is working in another chat."
 				: pending
-					? `Kestrel needs your approval for ${pending.execution.toolName}.`
+					? `Kestrel needs your approval: ${runtimeToolTitle(pending.execution.toolName, "Requested action")}.`
 					: latestRun?.status === "completed"
 						? "Kestrel finished the latest response."
 						: humanInputRequests.some((request) => request.status === "waiting")
 							? "Kestrel is waiting for your answer."
 							: "";
+	const composerStatus =
+		voiceState === "recording"
+			? "Microphone live · tap Stop to transcribe"
+			: activeSessionBusy
+				? "Send an update at the next safe turn boundary"
+				: backgroundSessionBusy
+					? "Another chat is running · return there to update or cancel"
+					: !executionReady
+						? modelReadinessMessage
+						: selectedGrant?.available === false
+							? `${selectedGrant.name} · unavailable; reconnect or remove it in Settings`
+							: taskWorkspace
+								? `${selectedGrant?.name ?? "Project"} · files and tools stay scoped`
+								: activeSessionId
+									? "Conversation only · start a new chat to add a project"
+									: "Conversation only";
 	const hasQuestionSurface = humanInputRequests.length > 0;
 	return (
 		<section
@@ -4475,7 +4542,17 @@ function RuntimeConversation({
 					</p>
 				</div>
 			) : (
-				<div className="message-list">
+				<div className="message-list" ref={messageListRef} onScroll={(event) => {
+					const list = event.currentTarget;
+					if (list.scrollHeight - list.scrollTop - list.clientHeight <= 80)
+						followMessagesRef.current = true;
+				}} onWheel={(event) => {
+					if (event.deltaY < 0) followMessagesRef.current = false;
+				}} onPointerDown={() => {
+					followMessagesRef.current = false;
+				}} onKeyDown={(event) => {
+					if (["ArrowUp", "PageUp", "Home"].includes(event.key)) followMessagesRef.current = false;
+				}}>
 					{hasEarlierMessages && (
 						<button
 							type="button"
@@ -4503,7 +4580,7 @@ function RuntimeConversation({
 								<p>{message.content}</p>
 								{parseExplicitMemoryCapture(message.content) && (
 									<p className="memory-capture-confirmation" role="status">
-										Saved to Life → Memory. Future chats can use this when shared
+										Saved to Memory. Future chats can use this when shared
 										context is on.
 									</p>
 								)}
@@ -4515,9 +4592,8 @@ function RuntimeConversation({
 								data-runtime-message-id={message.id}
 								tabIndex={-1}
 							>
-								<span className="assistant-avatar">K</span>
 								<div>
-									<p>{message.content}</p>
+									<AssistantMessageContent content={runtimeAssistantDisplayContent(message)} />
 									{message.memoryRecallReceipt && (
 										<MemoryRecallReceiptLine
 											receipt={message.memoryRecallReceipt}
@@ -4550,17 +4626,7 @@ function RuntimeConversation({
 								<PresentationCard presentation={presentation} />
 							</div>
 						) : (
-							<div
-								className="work-summary"
-								key={message.id}
-								data-runtime-message-id={message.id}
-								tabIndex={-1}
-							>
-								<Icon name="check" />
-								<span>
-									{message.toolName ?? "Tool result"}: {message.content}
-								</span>
-							</div>
+							<RuntimeToolMessage key={message.id} message={message} />
 						);
 					})}
 					{humanInputRequests.map((request) => (
@@ -4645,7 +4711,7 @@ function RuntimeConversation({
 						<div className="runtime-activity-handoff" role="status">
 							<Icon name="check" />
 							<span>
-								{verifiedApprovalEvidence.toolName} verified.{" "}
+								{runtimeToolTitle(verifiedApprovalEvidence.toolName, "Action")} verified.{" "}
 								<button
 									type="button"
 									className="quiet-link"
@@ -4669,35 +4735,11 @@ function RuntimeConversation({
 									· {pending.execution.riskLevel.replaceAll("_", " ")}
 								</strong>
 								<small className="runtime-approval-owner">
-									Policy level {policyGateCopy(pending.execution).level} paused
-									this run. The pause is restart-safe in encrypted local state
-									until you allow or reject it.
+									This action is waiting for your approval.
 								</small>
-								<p>{pending.execution.toolName}</p>
-								<small>
-									Route {runRouteLabel(pending.run)}
-									{pending.execution.idempotencyKey
-										? ` · ${pending.execution.idempotencyKey}`
-										: ""}
-								</small>
-								<p>{policyGateCopy(pending.execution).reason}</p>
-								{typeof pending.execution.output?.preview === "string" && (
-									<pre className="approval-preview">
-										{pending.execution.output.preview}
-									</pre>
-								)}
-								<details>
-									<summary>
-										{pending.execution.toolName.startsWith("agent.config.")
-											? "Plan identifiers and exact input"
-											: "Raw tool input"}
-									</summary>
-									<pre>{JSON.stringify(pending.execution.input, null, 2)}</pre>
-								</details>
-								<div
-									className="button-row"
-									style={{ display: "flex", flexDirection: "column" }}
-								>
+								<p className="runtime-approval-action">{runtimeToolTitle(pending.execution.toolName, pending.execution.toolName)}</p>
+								<RuntimeApprovalPreview execution={pending.execution} />
+								<div className="button-row runtime-approval-once">
 									<button
 										className="button primary"
 										onClick={() => void decide("approved")}
@@ -4706,28 +4748,30 @@ function RuntimeConversation({
 											? "Apply this version"
 											: "Allow once"}
 									</button>
-									{pending.execution.output?.persistentApprovalAllowed !==
-										false && (
-										<button
-											className="button secondary"
-											onClick={() => void decidePersistently("allow")}
-										>
-											Always allow here
-										</button>
-									)}
 									<button
 										className="button secondary"
 										onClick={() => void decide("rejected")}
 									>
 										Reject once
 									</button>
-									<button
-										className="button secondary"
-										onClick={() => void decidePersistently("deny")}
-									>
-										Always deny here
-									</button>
 								</div>
+								<details key={`choices-${pending.execution.id}`} className="runtime-approval-details">
+									<summary>Remember a choice</summary>
+									<p>Applies to all requests for <code>{pending.execution.toolName}</code> in this conversation, including different inputs.</p>
+									{pending.execution.output?.persistentApprovalAllowed === false && <p>This action requires approval each time. You can still deny future requests.</p>}
+									<div className="button-row">
+										{pending.execution.output?.persistentApprovalAllowed !== false && (
+											<button className="button secondary" onClick={() => void decidePersistently("allow")}>Always allow here</button>
+										)}
+										<button className="button secondary" onClick={() => void decidePersistently("deny")}>Always deny here</button>
+									</div>
+								</details>
+								<details key={`input-${pending.execution.id}`} className="runtime-approval-details">
+									<summary>{pending.execution.toolName.startsWith("agent.config.") ? "Plan identifiers and exact input" : "Raw tool input"}</summary>
+									<p>Policy level {policyGateCopy(pending.execution).level}: {policyGateCopy(pending.execution).reason}</p>
+									<small>Route {runRouteLabel(pending.run)}{pending.execution.idempotencyKey ? ` · ${pending.execution.idempotencyKey}` : ""}</small>
+									<pre tabIndex={0}>{JSON.stringify(pending.execution.input, null, 2)}</pre>
+								</details>
 							</div>
 						</div>
 					)}
@@ -4747,7 +4791,7 @@ function RuntimeConversation({
 										}
 								/>
 							</div>
-							<div className="runtime-outcome-copy">
+							<div className="runtime-outcome-copy" role="status">
 								<strong>{outcomeCopy?.title}</strong>
 								<p>{outcomeCopy?.detail}</p>
 							</div>
@@ -4788,7 +4832,7 @@ function RuntimeConversation({
 									Retry last turn
 								</button>
 							)}
-							<ActionReceiptList receipts={latestReceipts} />
+							<ActionReceiptList receipts={latestReceipts} executions={executions} />
 						</section>
 					)}
 					{latestRun?.status === "completed" &&
@@ -4796,20 +4840,20 @@ function RuntimeConversation({
 						!pending &&
 						!skillNotice &&
 						!latestRunHasConfigurationMessage && (
-							<div className="workflow-memory-action">
-								<div>
-									<strong>Keep this workflow</strong>
+							<details key={latestRun.id} className="workflow-memory-action">
+								<summary>Keep this workflow</summary>
+								<div className="workflow-memory-action-content">
 									<small>Save the approved sequence as a reusable skill.</small>
+									<button
+										type="button"
+										className="button secondary"
+										disabled={skillBusy}
+										onClick={() => void saveWorkflowAsSkill()}
+									>
+										{skillBusy ? "Saving…" : "Save as skill"}
+									</button>
 								</div>
-								<button
-									type="button"
-									className="button secondary"
-									disabled={skillBusy}
-									onClick={() => void saveWorkflowAsSkill()}
-								>
-									{skillBusy ? "Saving…" : "Save as skill"}
-								</button>
-							</div>
+							</details>
 						)}
 					{skillNotice && (
 						<div
@@ -4918,20 +4962,24 @@ function RuntimeConversation({
 							}}
 							onDismiss={() => setInput((current) => `${current} `)}
 						/>
-					<div className="composer-footer">
+					<div
+						className={`composer-footer${!executionReady ? " is-model-unavailable" : ""}`}
+					>
 						<div className="button-row composer-context-actions">
-							<button
-								type="button"
-								className="composer-icon composer-add-files"
-								aria-label={composerFilesLabel}
-								title={composerFilesTitle}
-								disabled={
-									busy || voiceState !== "idle" || needsNewTaskForFiles
-								}
-								onClick={addComposerContext}
-							>
-								<Icon name="plus" />
-							</button>
+							{executionReady ? (
+								<button
+									type="button"
+									className="composer-icon composer-add-files"
+									aria-label={composerFilesLabel}
+									title={composerFilesTitle}
+									disabled={
+										busy || voiceState !== "idle" || needsNewTaskForFiles
+									}
+									onClick={addComposerContext}
+								>
+									<Icon name="plus" />
+								</button>
+							) : null}
 							<ModelSelector
 								accounts={providerAccounts}
 								choice={modelChoice}
@@ -4963,11 +5011,20 @@ function RuntimeConversation({
 												<select
 													value={workspace}
 													onChange={(event) => {
-														setWorkspace(event.target.value);
+														setTaskScope({
+															workspace: event.target.value,
+															projectId:
+																projects.find((project) => project.path === event.target.value)?.id ?? null,
+														});
 														setAttachments([]);
 													}}
 												>
 													<option value="">Conversation only</option>
+													{workspace && !activeGrants.some((grant) => grant.path === workspace) && (
+														<option value={workspace} disabled>
+															{selectedGrant?.name ?? workspace.split("/").filter(Boolean).at(-1) ?? "Project"} · unavailable
+														</option>
+													)}
 													{activeGrants.map((grant) => (
 														<option value={grant.path} key={grant.path}>
 															{grant.name}
@@ -5002,6 +5059,18 @@ function RuntimeConversation({
 										</div>
 									)}
 									{taskControls}
+									{activeSessionId ? (
+										<button
+											type="button"
+											className="button secondary"
+											disabled={busy || activeSession?.privacyMode === "private"}
+											onClick={() => void markChatPrivate()}
+										>
+											{activeSession?.privacyMode === "private"
+												? "This chat is not remembered"
+												: "Don't remember this chat"}
+										</button>
+									) : null}
 									{activeSessionId && (
 										<div
 											className="runtime-lifecycle-controls"
@@ -5068,21 +5137,11 @@ function RuntimeConversation({
 								</div>
 							</details>
 						</div>
-						<span className="composer-status">
-							{voiceState === "recording"
-								? "Microphone live · tap Stop to transcribe"
-								: activeSessionBusy
-									? "Send an update at the next safe turn boundary"
-									: backgroundSessionBusy
-										? "Another chat is running · return there to update or cancel"
-										: selectedGrant?.available === false
-											? `${selectedGrant.name} · unavailable; reconnect or remove it in Settings`
-											: taskWorkspace
-												? `${selectedGrant?.name ?? "Project"} · files and tools stay scoped`
-												: activeSessionId
-													? "Conversation only · start a new chat to add a project"
-													: "Conversation only"}
-						</span>
+						{executionReady && (voiceState === "recording" || activeSessionBusy || backgroundSessionBusy || selectedGrant?.available === false) ? (
+							<span className="composer-status" role="status">
+								{composerStatus}
+							</span>
+						) : null}
 						{activeSessionBusy || backgroundSessionBusy ? (
 							<div className="button-row composer-send-actions">
 								{voiceButton}
@@ -5106,10 +5165,22 @@ function RuntimeConversation({
 							</div>
 						) : (
 							<div className="button-row composer-send-actions">
-								{voiceButton}
+								{executionReady ? voiceButton : null}
+								{!executionReady && providerAccountsLoaded ? (
+									<button
+										type="button"
+										className="button secondary composer-connect-model"
+										onClick={onOpenModelSettings}
+										aria-label="Connect a model"
+										title="Connect a model"
+									>
+										Connect
+									</button>
+								) : null}
 								<button
 									className="send-button"
 									aria-label="Send message"
+									title={!executionReady ? modelReadinessMessage : "Send message"}
 									disabled={
 										backgroundSessionBusy ||
 										!input.trim() ||
@@ -5122,6 +5193,11 @@ function RuntimeConversation({
 							</div>
 						)}
 					</div>
+					{!executionReady ? (
+						<span className="composer-status is-model-readiness" role="status">
+							{composerStatus}
+						</span>
+					) : null}
 				</form>
 				{error && !latestOutcome && (
 					<p className="chat-error" role="alert">
@@ -5959,6 +6035,7 @@ function Work({
 	sessions: RuntimeSession[];
 	onSessions(sessions: RuntimeSession[]): void;
 }) {
+	const [section, setSection] = useState<"Goals" | "Schedules" | "Delegation" | "Teams">("Goals");
 	const [goals, setGoals] = useState<GoalRecordContract[]>([]);
 	const [teams, setTeams] = useState<TeamRecordContract[]>([]);
 	const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
@@ -5983,11 +6060,14 @@ function Work({
 				...(accountId ? { accountId } : {}),
 				model: localStorage.getItem("kestrel:model") ?? "auto",
 				reasoningEffort:
+					storedReasoningEffort === "minimal" ||
+					storedReasoningEffort === "ultra" ||
 					storedReasoningEffort === "low" ||
 					storedReasoningEffort === "medium" ||
 					storedReasoningEffort === "high" ||
 					storedReasoningEffort === "xhigh" ||
 					storedReasoningEffort === "max" ||
+					storedReasoningEffort === "ultra" ||
 					storedReasoningEffort === "none"
 						? storedReasoningEffort
 						: "none",
@@ -6009,6 +6089,7 @@ function Work({
 	const [handoffSummary, setHandoffSummary] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const createGoalDetailsRef = useRef<HTMLDetailsElement>(null);
 	const createGoalFormRef = useRef<HTMLFormElement>(null);
 	const children = sessions.filter(
 		(session) => session.parentSessionId === parentSessionId,
@@ -6181,73 +6262,50 @@ function Work({
 			.reverse()
 			.find((item) => item.status === "planned" || item.status === "running") ??
 		routingTraces.at(-1);
-	const routedProgress =
-		routedTask?.status === "planned"
-			? 12
-			: routedTask?.status === "running"
-				? 58
-				: 100;
 
 	return (
-		<PageFrame
-			title="Work"
-			measure="wide"
-		>
-			{routedTask && (
-				<section
-					className={`orchestration-status status-${routedTask.status}`}
-					aria-label="Current routed task"
-				>
-					<div>
-						<small>Current task</small>
-						<strong>{routedTask.summary}</strong>
-						<span>
-							{routedTask.decisions
-								.map((decision) => decision.role)
-								.join(" · ")}{" "}
-							· {routedTask.status.replaceAll("_", " ")}
-						</span>
-					</div>
-					<progress
-						value={routedProgress}
-						max="100"
-						aria-label={`Approximate progress: ${routedProgress}%`}
-					/>
-					{(routedTask.escalationCount > 0 ||
-						routedTask.status === "failed" ||
-						routedTask.status === "cancelled") && (
-						<p role={routedTask.status === "failed" ? "alert" : "status"}>
-							{routedTask.status === "failed"
-								? "The routed task failed. Open details to inspect the route."
-								: routedTask.status === "cancelled"
-									? "The routed task was cancelled."
-									: `Kestrel escalated ${routedTask.escalationCount} time${routedTask.escalationCount === 1 ? "" : "s"} to protect result quality.`}
+		<PageFrame title="Work" text="Keep goals, scheduled work, and delegated tasks in order." measure="wide" className="work-workspace">
+			<div className="workspace-sections" role="group" aria-label="Work sections">
+				{(["Goals", "Schedules", "Delegation", "Teams"] as const).map(item => (
+					<button type="button" key={item} aria-pressed={section === item} aria-controls={`work-${item.toLowerCase()}`} onClick={() => setSection(item)}>{item}</button>
+				))}
+			</div>
+			<div className="work-context">
+
+				<label>
+					Parent task
+						<select
+							value={parentSessionId}
+							onChange={(event) => {
+								setParentSessionId(event.target.value);
+								setTeamMembers([]);
+							}}
+						>
+							{sessions.map((session) => (
+								<option key={session.id} value={session.id}>
+									{sessionTitleForDisplay(session.title)}
+								</option>
+							))}
+						</select>
+					</label>
+					<details className="work-routing-override" hidden={section === "Goals" || section === "Teams"}>
+						<summary>Override automatic routing</summary>
+						<p className="work-card-note">
+							Choose one connected account only when this work must bypass
+							Kestrel's automatic router.
 						</p>
-					)}
-					<details>
-						<summary>Model and cost details</summary>
-						{routedTask.decisions.map((decision) => (
-							<div key={decision.id} className="orchestration-route-detail">
-								<strong>{decision.role}</strong>
-								<span>
-									{decision.model} via {decision.providerId} ·{" "}
-									{decision.reasoningLevel} reasoning · Fast{" "}
-									{decision.fastMode ? "on" : "off"}
-								</span>
-								<small>
-									{Math.round(decision.confidence * 100)}% routing confidence
-									{decision.estimatedCost === undefined
-										? ""
-										: ` · about $${decision.estimatedCost.toFixed(3)}`}
-								</small>
-							</div>
-						))}
+						<ModelSelector
+							accounts={providerAccounts}
+							choice={workModelChoice}
+							onChange={setWorkModelChoice}
+						/>
 					</details>
-				</section>
-			)}
+			</div>
+			<section id="work-goals" aria-label="Goals" hidden={section !== "Goals"}>
+
 			<header className="kanban-header work-board-tools">
 				<div>
-					<small>From the active session</small>
+					<small>From the selected task</small>
 				</div>
 				<button
 					className="button secondary"
@@ -6267,8 +6325,9 @@ function Work({
 				sessions={sessions}
 				busy={busy}
 				onCreateGoal={() => {
+					if (createGoalDetailsRef.current) createGoalDetailsRef.current.open = true;
 					createGoalFormRef.current?.scrollIntoView({
-						behavior: "smooth",
+						behavior: "auto",
 						block: "nearest",
 					});
 					createGoalFormRef.current
@@ -6292,103 +6351,9 @@ function Work({
 					})
 				}
 			/>
-			<section className="work-grid">
-				<form
-					className="work-card"
-					onSubmit={(event) => {
-						event.preventDefault();
-						if (!parentSessionId || !workRoutingReady) return;
-						void mutate(
-							{
-								type: "orchestration-delegate",
-								parentSessionId,
-								title: delegateTitle,
-								prompt: delegatePrompt,
-								...workRouting,
-								...(workModelChoice.executionMode === "manual" &&
-								workModelChoice.reasoningEffort !== "none"
-									? { reasoningEffort: workModelChoice.reasoningEffort }
-									: {}),
-								isolateWorktree,
-							},
-							() => {
-								setDelegateTitle("");
-								setDelegatePrompt("");
-							},
-						);
-					}}
-				>
-				<h2>Delegate a task</h2>
-				<p className="work-card-note">
-					Kestrel selects a verified worker based on capability, cost, privacy,
-					and your preferences.
-				</p>
-				<label>
-					Parent task
-						<select
-							value={parentSessionId}
-							onChange={(event) => {
-								setParentSessionId(event.target.value);
-								setTeamMembers([]);
-							}}
-						>
-							{sessions.map((session) => (
-								<option key={session.id} value={session.id}>
-									{sessionTitleForDisplay(session.title)}
-								</option>
-							))}
-						</select>
-					</label>
-					<label>
-						Title
-						<input
-							value={delegateTitle}
-							onChange={(event) => setDelegateTitle(event.target.value)}
-						/>
-					</label>
-					<label>
-						Prompt
-						<textarea
-							rows={3}
-							value={delegatePrompt}
-							onChange={(event) => setDelegatePrompt(event.target.value)}
-						/>
-					</label>
-					<details className="work-routing-override">
-						<summary>Override automatic routing</summary>
-						<p className="work-card-note">
-							Choose one connected account only when this work must bypass
-							Kestrel's automatic router.
-						</p>
-						<ModelSelector
-							accounts={providerAccounts}
-							choice={workModelChoice}
-							onChange={setWorkModelChoice}
-						/>
-					</details>
-					{delegationEvidence && (
-						<small role="status">{delegationEvidence}</small>
-					)}
-					<label className="work-check">
-						<input
-							type="checkbox"
-							checked={isolateWorktree}
-							onChange={(event) => setIsolateWorktree(event.target.checked)}
-						/>
-						Create an isolated Git worktree
-					</label>
-					<button
-						className="button primary"
-						disabled={
-							busy ||
-							!delegateTitle.trim() ||
-							!delegatePrompt.trim() ||
-							!workRoutingReady
-						}
-					>
-						Run delegate
-					</button>
-				</form>
+			<details className="work-create-goal" ref={createGoalDetailsRef}>
+				<summary>Create a goal</summary>
+
 				<form
 					ref={createGoalFormRef}
 					className="work-card"
@@ -6410,7 +6375,7 @@ function Work({
 						);
 					}}
 				>
-					<h2>Create a goal</h2>
+					<p className="work-card-note">Name the goal, then describe the outcome and its tasks.</p>
 					<label>
 						Title
 						<input
@@ -6428,11 +6393,64 @@ function Work({
 					</label>
 					<button
 						className="button primary"
-						disabled={busy || !goalTitle.trim() || !goalObjective.trim()}
+						disabled={busy || !parentSessionId || !goalTitle.trim() || !goalObjective.trim()}
 					>
 						Create goal
 					</button>
 				</form>
+			</details>
+			</section>
+			<section id="work-schedules" aria-label="Schedules" hidden={section !== "Schedules"}>
+			<p className="work-section-description">Review scheduled runs or set up background work.</p>
+
+			<section className="work-section">
+				<h2>Scheduled work</h2>
+				{jobs.length === 0 ? (
+					<p>No scheduled jobs yet.</p>
+				) : (
+					jobs.map((job) => (
+						<article className="work-row" key={job.id}>
+							<div>
+								<strong>{job.title}</strong>
+								<p>
+									{job.status} · next{" "}
+									{new Date(job.schedule.nextRunAt).toLocaleString()}
+								</p>
+								{job.error && <small>{job.error}</small>}
+							</div>
+							<div className="button-row">
+								{job.status === "waiting_approval" && (
+									<button
+										className="button primary"
+										disabled={busy}
+										onClick={() =>
+											void mutate({
+												type: "orchestration-job-resume",
+												jobId: job.id,
+											})
+										}
+									>
+										Approve & resume
+									</button>
+								)}
+								{job.status === "pending" && (
+									<button
+										className="button secondary"
+										disabled={busy}
+										onClick={() =>
+											void mutate({
+												type: "orchestration-job-cancel",
+												jobId: job.id,
+											})
+										}
+									>
+										Cancel
+									</button>
+								)}
+							</div>
+						</article>
+					))
+				)}
 			</section>
 			<section className="work-grid">
 				<form
@@ -6488,6 +6506,7 @@ function Work({
 					className="button primary"
 					disabled={
 						busy ||
+						!parentSessionId ||
 						!scheduleTitle.trim() ||
 						!schedulePrompt.trim() ||
 						!scheduleExpression.trim() ||
@@ -6497,13 +6516,156 @@ function Work({
 					Schedule
 				</button>
 				</form>
-				<article className="work-card">
-					<h2>Automation boundary</h2>
+				<details className="work-card work-schedule-help">
+					<summary>How scheduled work runs</summary>
 					<p>
 						Runs stay local and encrypted. Sensitive actions wait for approval;
 						recurring work continues only after a run completes.
 					</p>
-				</article>
+				</details>
+			</section>
+			</section>
+			<section id="work-delegation" aria-label="Delegation" hidden={section !== "Delegation"}>
+			<p className="work-section-description">Give a child agent a focused task and track its latest route.</p>
+
+			{routedTask && (
+				<section
+					className={`orchestration-status status-${routedTask.status}`}
+					aria-label="Current routed task"
+				>
+					<div>
+						<small>Current task</small>
+						<strong>{routedTask.summary}</strong>
+						<span>
+							{routedTask.decisions
+								.map((decision) => decision.role)
+								.join(" · ")}{" "}
+							· {routedTask.status.replaceAll("_", " ")}
+						</span>
+					</div>
+					{(routedTask.escalationCount > 0 ||
+						routedTask.status === "failed" ||
+						routedTask.status === "cancelled") && (
+						<p role={routedTask.status === "failed" ? "alert" : "status"}>
+							{routedTask.status === "failed"
+								? "The routed task failed. Open details to inspect the route."
+								: routedTask.status === "cancelled"
+									? "The routed task was cancelled."
+									: `Kestrel escalated ${routedTask.escalationCount} time${routedTask.escalationCount === 1 ? "" : "s"} to protect result quality.`}
+						</p>
+					)}
+					<details>
+						<summary>Model and cost details</summary>
+						{routedTask.decisions.map((decision) => (
+							<div key={decision.id} className="orchestration-route-detail">
+								<strong>{decision.role}</strong>
+								<span>
+									{decision.model} via {decision.providerId} ·{" "}
+									{decision.reasoningLevel} reasoning · Fast{" "}
+									{decision.fastMode ? "on" : "off"}
+								</span>
+								<small>
+									{Math.round(decision.confidence * 100)}% routing confidence
+									{decision.estimatedCost === undefined
+										? ""
+										: ` · about $${decision.estimatedCost.toFixed(3)}`}
+								</small>
+							</div>
+						))}
+					</details>
+				</section>
+			)}
+				<form
+					className="work-card"
+					onSubmit={(event) => {
+						event.preventDefault();
+						if (!parentSessionId || !workRoutingReady) return;
+						void mutate(
+							{
+								type: "orchestration-delegate",
+								parentSessionId,
+								title: delegateTitle,
+								prompt: delegatePrompt,
+								...workRouting,
+								...(workModelChoice.executionMode === "manual" &&
+								workModelChoice.reasoningEffort !== "none"
+									? { reasoningEffort: workModelChoice.reasoningEffort }
+									: {}),
+								isolateWorktree,
+							},
+							() => {
+								setDelegateTitle("");
+								setDelegatePrompt("");
+							},
+						);
+					}}
+				>
+				<h2>Delegate a task</h2>
+				<p className="work-card-note">
+					Kestrel selects a verified worker based on capability, cost, privacy,
+					and your preferences.
+				</p>
+					<label>
+						Title
+						<input
+							value={delegateTitle}
+							onChange={(event) => setDelegateTitle(event.target.value)}
+						/>
+					</label>
+					<label>
+						Prompt
+						<textarea
+							rows={3}
+							value={delegatePrompt}
+							onChange={(event) => setDelegatePrompt(event.target.value)}
+						/>
+					</label>
+					{delegationEvidence && (
+						<small role="status">{delegationEvidence}</small>
+					)}
+					<label className="work-check">
+						<input
+							type="checkbox"
+							checked={isolateWorktree}
+							onChange={(event) => setIsolateWorktree(event.target.checked)}
+						/>
+						Create an isolated Git worktree
+					</label>
+					<button
+						className="button primary"
+						disabled={
+							busy ||
+							!parentSessionId ||
+							!delegateTitle.trim() ||
+							!delegatePrompt.trim() ||
+							!workRoutingReady
+						}
+					>
+						Run delegate
+					</button>
+				</form>
+			</section>
+			<section id="work-teams" aria-label="Teams" hidden={section !== "Teams"}>
+			<p className="work-section-description">Coordinate child agents and review their handoffs.</p>
+
+			<section className="work-section">
+				<h2>Teams</h2>
+				{teams.length === 0 ? <p>No teams yet. Delegate a task first, then group its child agents here.</p> : null}
+				{teams.map((team) => (
+					<article className="work-row" key={team.id}>
+						<div>
+							<strong>{team.title}</strong>
+							<p>{team.sharedPlan.join(" → ") || "No shared plan"}</p>
+							<small>
+								{team.memberSessionIds.length} members · {team.messages.length}{" "}
+								peer messages · {team.usage?.runs ?? 0} runs ·{" "}
+								{team.usage?.inputTokens ?? 0} in /{" "}
+								{team.usage?.outputTokens ?? 0} out
+							</small>
+						</div>
+						<span className="status">Active</span>
+					</article>
+				))}
 			</section>
 			<section className="work-grid">
 				<form
@@ -6617,73 +6779,8 @@ function Work({
 					</button>
 				</form>
 			</section>
-			<section className="work-section">
-				<h2>Teams</h2>
-				{teams.map((team) => (
-					<article className="work-row" key={team.id}>
-						<div>
-							<strong>{team.title}</strong>
-							<p>{team.sharedPlan.join(" → ") || "No shared plan"}</p>
-							<small>
-								{team.memberSessionIds.length} members · {team.messages.length}{" "}
-								peer messages · {team.usage?.runs ?? 0} runs ·{" "}
-								{team.usage?.inputTokens ?? 0} in /{" "}
-								{team.usage?.outputTokens ?? 0} out
-							</small>
-						</div>
-						<span className="status">Active</span>
-					</article>
-				))}
 			</section>
-			<section className="work-section">
-				<h2>Background review queue</h2>
-				{jobs.length === 0 ? (
-					<p>No scheduled jobs yet.</p>
-				) : (
-					jobs.map((job) => (
-						<article className="work-row" key={job.id}>
-							<div>
-								<strong>{job.title}</strong>
-								<p>
-									{job.status} · next{" "}
-									{new Date(job.schedule.nextRunAt).toLocaleString()}
-								</p>
-								{job.error && <small>{job.error}</small>}
-							</div>
-							<div className="button-row">
-								{job.status === "waiting_approval" && (
-									<button
-										className="button primary"
-										disabled={busy}
-										onClick={() =>
-											void mutate({
-												type: "orchestration-job-resume",
-												jobId: job.id,
-											})
-										}
-									>
-										Approve & resume
-									</button>
-								)}
-								{job.status === "pending" && (
-									<button
-										className="button secondary"
-										disabled={busy}
-										onClick={() =>
-											void mutate({
-												type: "orchestration-job-cancel",
-												jobId: job.id,
-											})
-										}
-									>
-										Cancel
-									</button>
-								)}
-							</div>
-						</article>
-					))
-				)}
-			</section>
+
 			{error && (
 				<p className="connection-error" role="alert">
 					{error}
@@ -6700,6 +6797,7 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 		CommunicationSourceStatus[]
 	>([]);
 	const [busy, setBusy] = useState(false);
+	const [section, setSection] = useState("apps");
 	const [grantError, setGrantError] = useState("");
 	const [googleStatus, setGoogleStatus] = useState<GoogleWorkspaceOAuthStatus>({
 		connected: false,
@@ -6707,6 +6805,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 		bundledClientAvailable: false,
 	});
 	const [googleClientId, setGoogleClientId] = useState("");
+	const googleSetupRef = useRef<HTMLDetailsElement>(null);
+	const googleClientInputRef = useRef<HTMLInputElement>(null);
 	const [googleBusy, setGoogleBusy] = useState(false);
 	const [googleError, setGoogleError] = useState("");
 	const [subscriptionClis, setSubscriptionClis] = useState<
@@ -6912,11 +7012,20 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 					access remain explicit and revocable.
 				</p>
 			</header>}
-			<WhatsAppConnection session={scopeSession} />
-			<OnshapeConnection key={scopeSession?.id ?? "global"} session={scopeSession} />
-			{scopeSession && <AgentResourceAccess key={scopeSession.id} session={scopeSession} {...(googleStatus.connected && googleStatus.email ? { googleEmail: googleStatus.email } : {})} />}
-			<div className="connection-list">
-				<details className="connection-advanced"><summary>Model provider · ChatGPT</summary>
+			<nav className="connection-sections" aria-label="Connection sections">
+                <button aria-current={section === "apps" ? "page" : undefined} onClick={() => setSection("apps")}>Apps & accounts</button>
+                <select aria-label="More connection settings" value={section === "apps" ? "" : section} onChange={event => { if (event.target.value) setSection(event.target.value as typeof section); }}>
+                    <option value="" disabled>More settings</option><option value="local">Files & this Mac</option><option value="models">AI account</option><option value="access">Agent permissions</option>
+                </select>
+            </nav>
+            <div hidden={section !== "access"} className="connection-section">
+                <h2>Agent access</h2>
+                <p className="connection-section-description">Choose which connected resources the selected agent can use.</p>
+                {scopeSession ? <AgentResourceAccess key={scopeSession.id} session={scopeSession} {...(googleStatus.connected && googleStatus.email ? { googleEmail: googleStatus.email } : {})} /> : <p>{standalone ? "Select an agent in “Access for” above to review its resources." : "Open Connections from the sidebar and select an agent to review its resources."} Connecting an account and assigning agent access are separate steps.</p>}
+            </div>
+            <div hidden={section !== "models"} className="connection-list connection-section">
+                <h2>Model provider</h2>
+                <p className="connection-section-description">Manage the ChatGPT sign-in used by the Codex model route.</p>
 				<article className="oauth-connection">
 					<div className="connection-monogram">CG</div>
 					<div>
@@ -6964,8 +7073,10 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						)}
 					</div>
 				</article>
-				</details>
-				<article className="oauth-connection">
+            </div>
+            <div hidden={section !== "apps"} className="connection-list connection-section">
+                <p className="connection-section-description">Choose an app to connect or manage. You control what Kestrel can access.</p>
+				<details className="connection-app"><summary><strong>Google</strong><span>Gmail and Calendar</span><small>{googleStatus.connected ? googleStatus.email || "Connected" : "Not connected"}</small></summary><article className="oauth-connection">
 					<div className="connection-monogram">GW</div>
 					<div>
 						<strong>Google Workspace</strong>
@@ -6974,13 +7085,14 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 								? `${googleStatus.email} · Gmail, Calendar events and availability, and login-code lookup`
 								: googleStatus.bundledClientAvailable
 									? "Connect Gmail and Calendar with Kestrel's verified Google sign-in."
-									: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar event and availability access."}
+									: "Google setup is needed on this build. Open the setup instructions below to get started."}
 						</p>
 						{!googleStatus.connected && !googleStatus.bundledClientAvailable && (
-							<>
+							<details ref={googleSetupRef} className="connection-advanced"><summary>Set up Google connection</summary><p>Allows sending Gmail, reading recent email and login codes, and reading or updating Calendar events and availability.</p>
 								<label>
 									Desktop OAuth client ID
 									<input
+                                        ref={googleClientInputRef}
 										value={googleClientId}
 										autoComplete="off"
 										spellCheck={false}
@@ -7000,7 +7112,7 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 									, enable Gmail and Calendar APIs, then sign in in Google's
 									browser.
 								</small>
-							</>
+							</details>
 						)}
 						{!googleStatus.connected && googleStatus.bundledClientAvailable && (
 							<small>
@@ -7062,17 +7174,24 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						) : (
 							<button
 								className="button secondary"
-								disabled={
-									!googleStatus.bundledClientAvailable &&
-									!googleClientId.trim()
-								}
-								onClick={() => void connectGoogle()}
+								onClick={() => {
+                                    if (!googleStatus.bundledClientAvailable && !googleClientId.trim()) {
+                                        if (googleSetupRef.current) googleSetupRef.current.open = true;
+                                        googleClientInputRef.current?.focus();
+                                    } else void connectGoogle();
+                                }}
 							>
-								Connect with Google
+								{!googleStatus.bundledClientAvailable && !googleClientId.trim() ? "Set up Google" : "Connect with Google"}
 							</button>
 						)}
 					</div>
-				</article>
+				</article></details>
+                <details className="connection-app"><summary><strong>WhatsApp</strong><span>Choose conversations to remember</span><small>Browser connection</small></summary><WhatsAppConnection session={scopeSession} /></details>
+                <details className="connection-app"><summary><strong>Onshape</strong><span>Read your CAD documents</span><small>Manage access</small></summary><OnshapeConnection key={scopeSession?.id ?? "global"} session={scopeSession} /></details>
+            </div>
+            <div hidden={section !== "local"} className="connection-list connection-section">
+                <h2>On this Mac</h2>
+                <p className="connection-section-description">Review local permissions and the folders you have selected.</p>
 				<article className="oauth-connection communication-source-connection">
 					<div className="connection-monogram">MS</div>
 					<div>
@@ -7119,6 +7238,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						)}
 					</div>
 				</article>
+			</div>
+            <div hidden={section !== "apps" || !channels.length} className="connection-list connection-section"><h2>Messaging channels</h2>
 				{channels.map((channel) => (
 					<article key={`channel-${channel.id}`}>
 						<div className="connection-monogram">
@@ -7138,6 +7259,8 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 						<span className="honest-status">Owner-configured</span>
 					</article>
 				))}
+			</div>
+            <div hidden={section !== "local"} className="connection-list connection-section">
 				{snapshot.connections
 					.filter(
 						(connection) =>
@@ -7339,13 +7462,18 @@ function CredentialSettings({
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
+	const [loaded, setLoaded] = useState(false);
+	const [selectedCredential, setSelectedCredential] = useState("");
 	async function load() {
 		const response = await window.kestrel.request({ type: "credential-list" });
 		if (!response.ok)
 			throw new Error(
 				"error" in response ? response.error : "Credential status failed.",
 			);
-		if ("credentials" in response) setCredentials(response.credentials);
+		if ("credentials" in response) {
+			setCredentials(response.credentials);
+			setLoaded(true);
+		}
 	}
 	useEffect(() => {
 		void load().catch((cause) =>
@@ -7374,6 +7502,7 @@ function CredentialSettings({
 				);
 			if ("credentials" in response) setCredentials(response.credentials);
 			setValues((current) => ({ ...current, [credentialId]: "" }));
+			setSelectedCredential("");
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : "Credential save failed.",
@@ -7403,71 +7532,102 @@ function CredentialSettings({
 			setBusy("");
 		}
 	}
+	const configured = credentials.filter((credential) => credential.configured);
+	const available = credentials.filter((credential) => !credential.configured);
+	const credentialToAdd = available.find(
+		(credential) => credential.id === selectedCredential,
+	);
+	const renderCredential = (credential: BrokeredCredentialSummary) => (
+		<div className="credential-entry" key={credential.id}>
+			<label>
+				<span>
+					{credential.label} ·{" "}
+					<span
+						className={`connection-status ${credential.configured ? "connected" : "not_connected"}`}
+					>
+						{credential.configured
+							? "configured"
+							: "not configured"}
+					</span>
+				</span>
+				<input
+					type="password"
+					autoComplete="off"
+					spellCheck={false}
+					value={values[credential.id] ?? ""}
+					placeholder={
+						credential.configured
+							? "Enter replacement"
+							: "Enter credential"
+					}
+					onChange={(event) =>
+						setValues((current) => ({
+							...current,
+							[credential.id]: event.target.value,
+						}))
+					}
+				/>
+			</label>
+			<button
+				className="button secondary"
+				disabled={Boolean(busy)}
+				onClick={() => void save(credential.id)}
+			>
+				{credential.configured ? "Replace" : "Save"}
+			</button>
+			{credential.configured && (
+				<button
+					className="quiet-link"
+					disabled={Boolean(busy)}
+					onClick={() => void remove(credential.id)}
+				>
+					Remove
+				</button>
+			)}
+		</div>
+	);
 	return (
 		<>
-		<article className="setting-row credential-setting">
-			<div>
-				<strong>Protected provider credentials</strong>
-				<p>
-					Encrypted in macOS secure storage, sent only to Kestrel's isolated
-					core, and never shown again.
-				</p>
-				<div className="credential-list">
-						{credentials.map((credential) => (
-							<div className="credential-entry" key={credential.id}>
-								<label>
-									<span>
-										{credential.label} ·{" "}
-										<span
-											className={`connection-status ${credential.configured ? "connected" : "not_connected"}`}
-										>
-											{credential.configured
-												? "configured"
-												: "not configured"}
-										</span>
-									</span>
-									<input
-										type="password"
-										autoComplete="off"
-										spellCheck={false}
-										value={values[credential.id] ?? ""}
-										placeholder={
-											credential.configured
-												? "Enter replacement"
-												: "Enter credential"
-										}
-										onChange={(event) =>
-											setValues((current) => ({
-												...current,
-												[credential.id]: event.target.value,
-											}))
-										}
-									/>
-								</label>
-								<button
-									className="button secondary"
+			<article className="setting-row credential-setting">
+				<div>
+					<strong>Protected provider credentials</strong>
+					<p>
+						Encrypted in macOS secure storage, sent only to Kestrel's isolated
+						core, and never shown again.
+					</p>
+					{configured.length > 0 && (
+						<div className="credential-list">
+							{configured.map(renderCredential)}
+						</div>
+					)}
+					{loaded && configured.length === 0 && <p>No credentials saved here.</p>}
+					{available.length > 0 && (
+						<details className="settings-disclosure credential-setup">
+							<summary>Add a credential</summary>
+							<label className="credential-choice">
+								<span>Credential to add</span>
+								<select
+									value={credentialToAdd?.id ?? ""}
 									disabled={Boolean(busy)}
-									onClick={() => void save(credential.id)}
+									onChange={(event) => setSelectedCredential(event.target.value)}
 								>
-									{credential.configured ? "Replace" : "Save"}
-								</button>
-								{credential.configured && (
-									<button
-										className="quiet-link"
-										disabled={Boolean(busy)}
-										onClick={() => void remove(credential.id)}
-									>
-										Remove
-									</button>
-								)}
-							</div>
-						))}
-					</div>
+									<option value="">Choose a credential</option>
+									{available.map((credential) => (
+										<option key={credential.id} value={credential.id}>
+											{credential.label}
+										</option>
+									))}
+								</select>
+							</label>
+							{credentialToAdd && (
+								<div className="credential-list">{renderCredential(credentialToAdd)}</div>
+							)}
+						</details>
+					)}
 					{error && <small role="alert">{error}</small>}
 				</div>
 				<span className="status">
-					{credentials.filter((credential) => credential.configured).length}{" "}
-					protected
+					{loaded ? `${configured.length} protected` : "Loading…"}
 				</span>
 			</article>
 			<ExternalSecretSettings />
@@ -8181,67 +8341,77 @@ function CustomAgentsSettings({
 			<div>
 				<strong>Custom agents</strong>
 				<p>
-					Encrypted profiles with a fixed route, least-privilege tools, and
-					optional isolation from shared memory.
+					Optional profiles with their own instructions, tool access, and
+					memory scope.
 				</p>
-				<div className="custom-agent-grid">
-					<label>
-						Agent ID
-						<input
-							value={id}
-							placeholder="release-reviewer"
-							onChange={(event) => setId(event.target.value)}
-						/>
-					</label>
-					<label>
-						Name
-						<input
-							value={name}
-							placeholder="Release reviewer"
-							onChange={(event) => setName(event.target.value)}
-						/>
-					</label>
-					<label>
-						Preferred model
-						<input
-							value={model}
-							placeholder="optional"
-							onChange={(event) => setModel(event.target.value)}
-						/>
-					</label>
-					<label>
-						Provider IDs
-						<input
-							value={providers}
-							placeholder="comma separated"
-							onChange={(event) => setProviders(event.target.value)}
-						/>
-					</label>
-					<label>
-						Allowed tools
-						<input
-							value={tools}
-							placeholder="workspace.read, git.diff"
-							onChange={(event) => setTools(event.target.value)}
-						/>
-					</label>
-					<label>
-						Instructions
-						<textarea
-							value={instructions}
-							placeholder="Review changes and cite exact evidence."
-							onChange={(event) => setInstructions(event.target.value)}
-						/>
-					</label>
-					<label className="checkbox-label">
-						<input
-							type="checkbox"
-							checked={isolated}
-							onChange={(event) => setIsolated(event.target.checked)}
-						/>{" "}
-						Isolate from shared user memory
-					</label>
-				</div>
+				<details className="settings-disclosure custom-agent-setup">
+					<summary>Create a custom profile</summary>
+					<div className="custom-agent-grid">
+						<label>
+							Agent ID
+							<input
+								value={id}
+								placeholder="release-reviewer"
+								onChange={(event) => setId(event.target.value)}
+							/>
+						</label>
+						<label>
+							Name
+							<input
+								value={name}
+								placeholder="Release reviewer"
+								onChange={(event) => setName(event.target.value)}
+							/>
+						</label>
+						<label>
+							Preferred model
+							<input
+								value={model}
+								placeholder="optional"
+								onChange={(event) => setModel(event.target.value)}
+							/>
+						</label>
+						<label>
+							Provider IDs
+							<input
+								value={providers}
+								placeholder="comma separated"
+								onChange={(event) => setProviders(event.target.value)}
+							/>
+						</label>
+						<label>
+							Allowed tools
+							<input
+								value={tools}
+								placeholder="workspace.read, git.diff"
+								onChange={(event) => setTools(event.target.value)}
+							/>
+						</label>
+						<label>
+							Instructions
+							<textarea
+								value={instructions}
+								placeholder="Review changes and cite exact evidence."
+								onChange={(event) => setInstructions(event.target.value)}
+							/>
+						</label>
+						<label className="checkbox-label">
+							<input
+								type="checkbox"
+								checked={isolated}
+								onChange={(event) => setIsolated(event.target.checked)}
+							/>
+							<span>Isolate from shared user memory</span>
+						</label>
+					</div>
+					<button
+						className="button secondary"
+						disabled={!id || !name || !instructions}
+						onClick={() => void create()}
+					>
+						Create agent
+					</button>
+				</details>
 				{custom.length > 0 && (
 					<ul className="workspace-grants">
 						{custom.map((personality) => (
@@ -8262,13 +8432,7 @@ function CustomAgentsSettings({
 				)}
 				{error && <small role="alert">{error}</small>}
 			</div>
-			<button
-				className="button secondary"
-				disabled={!id || !name || !instructions}
-				onClick={() => void create()}
-			>
-				Create agent
-			</button>
+			<span className="status">{custom.length} profiles</span>
 		</article>
 	);
 }
@@ -9324,6 +9488,7 @@ function AgentDiagnosticsSettings() {
 		<article className="setting-row" id="setting-agent-diagnostics">
 			<div>
 				<strong>Health and diagnostic reports</strong>
+				<BuildProvenance />
 				<p>
 					Run a content-free readiness check or export a local report. Reports omit
 					prompts, credentials, and page content.
@@ -9375,6 +9540,8 @@ function Settings({
 	browser,
 	browserContextEnabled,
 	onToggleBrowserContext,
+	onOpenMemory,
+	onOpenConnections,
 	onBack,
 }: {
 	snapshot: WorkspaceSnapshot;
@@ -9385,6 +9552,8 @@ function Settings({
 	browser: UserBrowserController;
 	browserContextEnabled: boolean;
 	onToggleBrowserContext(): void;
+	onOpenMemory?(): void;
+	onOpenConnections?(): void;
 	onBack?(): void;
 }) {
 	const reduced = useReducedMotion();
@@ -9781,7 +9950,23 @@ function Settings({
 						)}
 					{section === "agent-connections" && (
 						<>
-							<Connections snapshot={snapshot} />
+							<section className="settings-stack" aria-label="Account connections">
+								<article className="setting-row">
+									<div>
+										<strong>Connections</strong>
+										<p>Manage provider accounts and project access in one place.</p>
+									</div>
+									{onOpenConnections ? (
+										<button
+											type="button"
+											className="button secondary"
+											onClick={onOpenConnections}
+										>
+											Open Connections
+										</button>
+									) : null}
+								</article>
+							</section>
 							<section className="settings-stack" aria-label="Subscription connections">
 								<SubscriptionCliSettings hideCodexDuplicate />
 							</section>
@@ -10086,13 +10271,21 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-intelligence-title">Memory and learning</h2>
-
+								<p>Manage memory and learning. Read or edit saved notes in Memory.</p>
 							</header>
 						<section
 							className="settings-stack"
 							aria-label="Memory and behavior settings"
 						>
-							<MemoryRecallStatus snapshot={snapshot} />
+							{onOpenMemory ? (
+								<button
+									type="button"
+									className="button secondary"
+									onClick={onOpenMemory}
+								>
+									Open Memory
+								</button>
+							) : null}
 							<HonchoMemorySettings />
 							<PresenceSettings />
 						</section>
@@ -10247,6 +10440,16 @@ export function App() {
 	const [agentUniverseRailOpen, setAgentUniverseRailOpen] = useState(
 		() => localStorage.getItem("kestrel:agent-universe-rail") === "open",
 	);
+	const dismissChatForDestination = useCallback((destination?: string) => {
+		if (!dismissCompactChatForDestination(window.innerWidth, destination)) return;
+		setAgentSidebarOpen(false);
+		setAgentUniverseRailOpen(false);
+		localStorage.setItem("kestrel:agent-sidebar", "collapsed");
+		localStorage.setItem("kestrel:agent-universe-rail", "collapsed");
+	}, []);
+	const activeRouteTab = browser.state?.tabs.find(tab => tab.id === browser.state?.activeTabId);
+	const activeRouteKey = activeRouteTab ? `${activeRouteTab.id}:${activeRouteTab.url}` : "";
+	const activeRoutePageId = parseKestrelAppPage(activeRouteTab?.url ?? "")?.id;
 	const [settingsSectionRequest, setSettingsSectionRequest] = useState<{
 		section: SettingsSection | null;
 		requestId: number;
@@ -10260,7 +10463,59 @@ export function App() {
 		() => localStorage.getItem("kestrel:browser-context") !== "off",
 	);
 	const pendingToolRouteFocusRef = useRef<KestrelAppPageId | null>(null);
+	const pendingToolRouteFocusOriginRef = useRef<Element | null>(null);
 	const routeFocusFrameRef = useRef<number | null>(null);
+	const focusToolRoute = useCallback((node: HTMLDivElement | null) => {
+		const expected = pendingToolRouteFocusRef.current;
+		if (!node || !expected) return;
+		if (routeFocusFrameRef.current !== null)
+			window.cancelAnimationFrame(routeFocusFrameRef.current);
+		routeFocusFrameRef.current = window.requestAnimationFrame(() => {
+			routeFocusFrameRef.current = null;
+			if (pendingToolRouteFocusRef.current !== expected || !node.isConnected)
+				return;
+			const currentFocus = document.activeElement;
+			// A menu or later interaction owns focus even when route loading
+			// finishes after it opens. Consume the old navigation request.
+			if (currentFocus?.closest('[role="menu"], [role="dialog"]') ||
+				(currentFocus !== pendingToolRouteFocusOriginRef.current && currentFocus !== document.body)) {
+				pendingToolRouteFocusRef.current = null;
+				pendingToolRouteFocusOriginRef.current = null;
+				return;
+			}
+			const target =
+				expected === "commands"
+					? node.querySelector<HTMLElement>(".command-search input")
+					: expected === "agent"
+						? document.getElementById("agent-workspace-title")
+						: node.querySelector<HTMLElement>("h1, h2");
+			if (!target || target.closest("[inert]")) return;
+			pendingToolRouteFocusRef.current = null;
+			pendingToolRouteFocusOriginRef.current = null;
+			if (target.matches("input, button, select, textarea, [tabindex]")) {
+				target.focus();
+				return;
+			}
+			const previousTabIndex = target.getAttribute("tabindex");
+			target.tabIndex = -1;
+			target.focus();
+			target.addEventListener(
+				"blur",
+				() => {
+					if (previousTabIndex === null) target.removeAttribute("tabindex");
+					else target.setAttribute("tabindex", previousTabIndex);
+				},
+				{ once: true },
+			);
+		});
+	}, []);
+	// Address-bar, tab selection and host IPC can navigate without openAppPage.
+	// Depend only on the route so starting a task on the same page keeps its chat.
+	useLayoutEffect(() => {
+		if (!activeRouteKey) return;
+		dismissChatForDestination(activeRoutePageId);
+	}, [activeRouteKey, activeRoutePageId, dismissChatForDestination]);
+
 	const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
 	const [runtimeSessionsLoadState, setRuntimeSessionsLoadState] = useState<
 		"loading" | "ready" | "error"
@@ -10290,8 +10545,14 @@ export function App() {
 		() => localStorage.getItem("kestrel:active-project-id"),
 	);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
+	// Ownership survives the conversation panel's first mount and later remounts.
+	const newAgentHandledRequest = useRef(0);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
 	const [newAgentDraft, setNewAgentDraft] = useState<NewTabComposerDraft | null>(null);
+	const clearNewAgentRequest = useCallback(() => {
+		setNewAgentPrompt("");
+		setNewAgentDraft(null);
+	}, []);
 	const [newAgentFocusTarget, setNewAgentFocusTarget] = useState<
 		"prompt" | "task-settings"
 	>("prompt");
@@ -10622,6 +10883,9 @@ export function App() {
 	const runtimeWaiting = runtimeAgentState === "waiting_approval";
 	const openAppPage = useCallback(
 		async (id: KestrelAppPageId, section?: SettingsSection, scopeSessionId?: string) => {
+			pendingToolRouteFocusRef.current = id;
+			pendingToolRouteFocusOriginRef.current = document.activeElement;
+			dismissChatForDestination(id);
 			if (id === "projects")
 				await refreshProjects().catch((cause) => {
 					setDeepLinkNotice(
@@ -10635,7 +10899,6 @@ export function App() {
 					section: section ?? null,
 					requestId: current.requestId + 1,
 				}));
-			pendingToolRouteFocusRef.current = id;
 			const tabs = browser.state?.tabs ?? [];
 			const existing = tabs.find(
 				(tab) => parseKestrelAppPage(tab.url)?.url === kestrelAppPageUrl(id, scopeSessionId),
@@ -10643,11 +10906,14 @@ export function App() {
 			if (existing) {
 				if (existing.id !== browser.state?.activeTabId)
 					await browser.selectTab(existing.id);
+				focusToolRoute(document.querySelector<HTMLDivElement>(
+					`.browser-app-page[data-app-page="${id}"]`,
+				));
 				return;
 			}
 			await browser.createTab(kestrelAppPageUrl(id, scopeSessionId));
 		},
-		[browser, refreshProjects],
+		[browser, refreshProjects, dismissChatForDestination, focusToolRoute],
 	);
 	const openTranscriptResult = useCallback(
 		(result: TranscriptSearchResult) => {
@@ -10800,6 +11066,7 @@ export function App() {
 		[refreshRuntimeSessions, selectProject],
 	);
 	const openBrowserWorkspace = useCallback(async () => {
+		dismissChatForDestination();
 		const tabs = browser.state?.tabs ?? [];
 		const webTab = tabs.find((tab) => !parseKestrelAppPage(tab.url));
 		if (webTab) {
@@ -10808,7 +11075,7 @@ export function App() {
 			return;
 		}
 		await browser.createTab();
-	}, [browser]);
+	}, [browser, dismissChatForDestination]);
 	const reviewApprovals = useCallback(() => {
 		if (
 			sidebarReviewTarget({
@@ -10822,6 +11089,17 @@ export function App() {
 		void openAppPage("approvals");
 	}, [focusRuntimeApproval, openAppPage, runtimeWaiting, snapshotPendingCount]);
 	const toggleAgentSidebar = useCallback(() => {
+		const focusBeforeToggle = document.activeElement;
+		const focusAfterToggle = (open: boolean) => {
+			window.requestAnimationFrame(() => {
+				// Respect focus already moved by the compact dialog or the person.
+				if (document.activeElement !== focusBeforeToggle &&
+					document.activeElement !== document.body) return;
+				document
+					.getElementById(open ? "runtime-prompt" : "browser-agent-toggle")
+					?.focus();
+			});
+		};
 		const activeTab = browser.state?.tabs.find(
 			(tab) => tab.id === browser.state?.activeTabId,
 		);
@@ -10833,11 +11111,7 @@ export function App() {
 					"kestrel:agent-universe-rail",
 					next ? "open" : "collapsed",
 				);
-				window.requestAnimationFrame(() => {
-					document
-						.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
-						?.focus();
-				});
+				focusAfterToggle(next);
 				return next;
 			});
 			return;
@@ -10848,11 +11122,7 @@ export function App() {
 				"kestrel:agent-sidebar",
 				next ? "open" : "collapsed",
 			);
-			window.requestAnimationFrame(() => {
-				document
-					.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
-					?.focus();
-			});
+			focusAfterToggle(next);
 			return next;
 		});
 	}, [browser]);
@@ -11046,40 +11316,12 @@ export function App() {
 		const timer = window.setInterval(beacon, 45_000);
 		return () => window.clearInterval(timer);
 	}, []);
-	const focusToolRoute = useCallback((node: HTMLDivElement | null) => {
-		const expected = pendingToolRouteFocusRef.current;
-		if (!node || !expected) return;
-		if (routeFocusFrameRef.current !== null)
-			window.cancelAnimationFrame(routeFocusFrameRef.current);
-		routeFocusFrameRef.current = window.requestAnimationFrame(() => {
-			routeFocusFrameRef.current = null;
-			if (pendingToolRouteFocusRef.current !== expected || !node.isConnected)
-				return;
-			const target =
-				expected === "commands"
-					? node.querySelector<HTMLElement>(".command-search input")
-					: expected === "agent"
-						? document.getElementById("agent-workspace-title")
-						: node.querySelector<HTMLElement>("h1, h2");
-			if (!target) return;
-			pendingToolRouteFocusRef.current = null;
-			if (target.matches("input, button, select, textarea, [tabindex]")) {
-				target.focus();
-				return;
-			}
-			const previousTabIndex = target.getAttribute("tabindex");
-			target.tabIndex = -1;
-			target.focus();
-			target.addEventListener(
-				"blur",
-				() => {
-					if (previousTabIndex === null) target.removeAttribute("tabindex");
-					else target.setAttribute("tabindex", previousTabIndex);
-				},
-				{ once: true },
-			);
-		});
-	}, []);
+	useLayoutEffect(() => {
+		if (pendingToolRouteFocusRef.current && activeRoutePageId === pendingToolRouteFocusRef.current)
+			focusToolRoute(document.querySelector<HTMLDivElement>(
+				`.browser-app-page[data-app-page="${activeRoutePageId}"]`,
+			));
+	}, [activeRouteKey, activeRoutePageId, agentSidebarOpen, agentUniverseRailOpen, focusToolRoute]);
 	useEffect(
 		() => () => {
 			if (routeFocusFrameRef.current !== null)
@@ -11290,12 +11532,15 @@ export function App() {
 					onOpenWork={() => navigate("work")}
 					onOpenSettings={() => openSettings("agent-workspace")}
 					onToggleAgentSidebar={toggleAgentSidebar}
+					agentSidebarOpen={presentedAgentSidebarOpen}
 					onRetrySessions={() => void refreshRuntimeSessions().catch(() => undefined)}
 					onBack={() => void openBrowserWorkspace()}
 				/>
 			)}
 			{appPageId === "projects" && (
 				<ProjectsWorkspace
+					onOpenProject={openProject}
+					onShowAllProjects={() => selectProject(null)}
 					projects={projects}
 					projectAppearances={projectAppearances}
 					sessions={runtimeSessions}
@@ -11308,16 +11553,16 @@ export function App() {
 				/>
 			)}
 			{appPageId === "connections" && (
-				<PageFrame title="Connections" text="Manage connected accounts and access.">
-					<label className="memory-scope-selector">Access for
+				<PageFrame title="Connections" text="Connect the apps you use.">
+					<details className="connection-scope-disclosure"><summary>{currentAppPage?.scopeSessionId ? `For ${runtimeSessions.find(session => session.id === currentAppPage.scopeSessionId)?.title ?? "this agent"}` : "For you"} · Change</summary><label className="memory-scope-selector">Access for
       <select aria-label="Connection scope" value={currentAppPage?.scopeSessionId ?? ""} onChange={event => {
        const tabId = browser.state?.activeTabId;
        if (tabId) void browser.navigate(tabId, kestrelAppPageUrl("connections", event.target.value || undefined));
       }}>
-       <option value="">Personal / global accounts</option>
+       <option value="">Your accounts</option>
        {runtimeSessions.filter(session => session.kind === "agent" || session.specialistDefinition).map(session => <option key={session.id} value={session.id}>{session.parentSessionId ? "↳ " : ""}{session.title}</option>)}
       </select>
-     </label>
+     </label></details>
      <Connections snapshot={snapshot} standalone scopeSession={runtimeSessions.find(session => session.id === currentAppPage?.scopeSessionId)} />
 				</PageFrame>
 			)}
@@ -11335,6 +11580,8 @@ export function App() {
 					browser={browser}
 					browserContextEnabled={browserContextEnabled}
 					onToggleBrowserContext={toggleBrowserContext}
+					onOpenMemory={() => void openAppPage("memory")}
+					onOpenConnections={() => navigate("connections")}
 				/>
 			)}
 			{appPageId === "readiness" && <Readiness />}
@@ -11401,6 +11648,7 @@ export function App() {
 			onNewTask={() => startNewAgent()}
 			onOpenBrowser={openBrowser}
 			onOpenAgent={openAgent}
+			onOpenProjects={() => { selectProject(null); navigate("projects"); }}
 			onOpenConnections={() => navigate("connections")}
 			onOpenMemory={() => {
 				const session = runtimeSessions.find(item => item.id === activeRuntimeSessionId);
@@ -11455,7 +11703,8 @@ export function App() {
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}
 						onOpenTaskSettings={openTaskSettings}
-						onOpenSettings={() => openSettings("browser")}
+						onOpenSettings={(section) => openSettings(section ?? "browser")}
+						onOpenModelSettings={() => openSettings("agent-connections")}
 						onOpenWorkspaces={() => openSettings("connections")}
 						onOpenHistory={openBrowserHistory}
 						onOpenDownloads={openBrowserDownloads}
@@ -11517,6 +11766,8 @@ export function App() {
 						externalIntake={externalIntake}
 						externalIntakeRequestId={externalIntakeRequestId}
 						newAgentRequestId={newAgentRequestId}
+						newAgentHandledRequest={newAgentHandledRequest}
+						onNewAgentRequestHandled={clearNewAgentRequest}
 						newAgentPrompt={newAgentPrompt}
 						newAgentWorkspace={newAgentWorkspace}
 						newAgentProjectId={newAgentProjectId}
@@ -11537,6 +11788,7 @@ export function App() {
 							navigate("activity");
 						}}
 						onReviewLearnedSkill={reviewLearnedSkill}
+						onOpenModelSettings={() => openSettings("agent-connections")}
 					/>
 				</AgentSidebar>
 				<DefaultBrowserPrompt

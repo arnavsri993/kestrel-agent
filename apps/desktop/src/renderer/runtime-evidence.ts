@@ -76,6 +76,36 @@ export function latestRunActionReceipts(
 		.sort((left, right) => left.startedAt.localeCompare(right.startedAt));
 }
 
+export function groupActionReceipts(
+	receipts: ActionReceipt[],
+	executions: RuntimeToolExecution[],
+): { latest: ActionReceipt; history: ActionReceipt[] }[] {
+	const byExecution = new Map(executions.map(execution => [execution.id, execution]));
+	const groups = new Map<string, [ActionReceipt, ...ActionReceipt[]]>();
+	for (const receipt of receipts) {
+		const execution = byExecution.get(receipt.toolExecutionId);
+		const callKey = execution?.sessionId === receipt.sessionId &&
+			execution.toolName === receipt.toolName &&
+			(!receipt.runId || execution.idempotencyKey?.startsWith(`${receipt.runId}:`))
+			? execution.idempotencyKey : undefined;
+		// Approval and execution have distinct IDs but share an explicit call key.
+		// Never infer a shared action from its title, destination or tool name.
+		const key = JSON.stringify([receipt.sessionId, receipt.runId ?? null,
+			receipt.toolName, callKey ? ["call", callKey] : ["execution", receipt.toolExecutionId]]);
+		const group = groups.get(key);
+		if (group) group.push(receipt);
+		else groups.set(key, [receipt]);
+	}
+	return [...groups.values()]
+		.sort((left, right) => left[0].startedAt.localeCompare(right[0].startedAt))
+		.map(group => {
+			const chronological = [...group].sort((left, right) =>
+				(left.completedAt ?? left.startedAt).localeCompare(right.completedAt ?? right.startedAt) ||
+				left.startedAt.localeCompare(right.startedAt));
+			return { latest: chronological.at(-1)!, history: chronological.slice(0, -1) };
+		});
+}
+
 export function actionReceiptOutcomeLabel(
 	outcome: ActionReceipt["outcome"],
 ): string {

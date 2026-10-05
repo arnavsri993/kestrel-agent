@@ -233,6 +233,7 @@
 		.browser-library .library-search,
 		.command-search,
 		.agent-task-search,
+		.agent-universe-search,
 		.browser-history-popover-search,
 		.projects-workspace-search
 	) {
@@ -249,6 +250,7 @@
 		.browser-library .library-search input,
 		.command-search input,
 		.agent-task-search input,
+		.agent-universe-search input,
 		.browser-history-popover-search input,
 		.projects-workspace-search input,
 		.kestrel-home-composer > input
@@ -268,12 +270,28 @@
 		.browser-library .library-search input,
 		.command-search input,
 		.agent-task-search input,
+		.agent-universe-search input,
 		.browser-history-popover-search input,
 		.projects-workspace-search input,
 		.kestrel-home-composer > input
 	):focus {
 	border-color: transparent;
 	box-shadow: none;
+}
+
+.unified-ui .agent-conversation-host .composer textarea {
+	border: 0;
+	background: transparent;
+}
+
+.unified-ui .agent-conversation-host .composer textarea:focus {
+	outline: none;
+	box-shadow: none;
+}
+
+.unified-ui .agent-conversation-host .composer:has(textarea:focus-visible) {
+	outline: 2px solid var(--ink);
+	outline-offset: 2px;
 }
 /* Settings ---------------------------------------------------------------- */
 .settings-section-picker {
@@ -807,6 +825,32 @@
 	font-size: 11px;
 }
 
+.unified-ui .computer-use-foreground-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 18px;
+	max-width: 600px;
+	margin-top: 15px;
+	padding: 11px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-control);
+}
+
+.unified-ui .computer-use-foreground-row > span {
+	display: grid;
+	gap: 3px;
+}
+
+.unified-ui .computer-use-foreground-row strong {
+	font-size: 11px;
+}
+
+.unified-ui .computer-use-foreground-row small {
+	color: var(--faint);
+	font-size: 10px;
+}
+
 .unified-ui .computer-use-loading,
 .unified-ui .computer-use-error {
 	margin-top: 12px;
@@ -1323,7 +1367,7 @@
 	letter-spacing: -0.025em;
 }
 
-.unified-ui .life-switcher {
+.unified-ui .life-header + .life-switcher {
 	margin-top: -20px;
 }
 
@@ -1333,6 +1377,13 @@
 }
 
 /* Loading/setup: one focal decision, no decorative panel stack. */
+.loading-screen,
+.onboarding {
+	position: fixed;
+	inset: 0;
+	z-index: 20;
+}
+
 .loading-screen {
 	background: var(--canvas);
 }
@@ -1674,4 +1725,105 @@
 .unified-ui .settings-content .extension-url-input {
 	min-width: 0;
 	flex: 1 1 220px;
+}
+
+.unified-ui .settings-disclosure {
+	margin-top: 12px;
+}
+.unified-ui .settings-disclosure > summary {
+	width: fit-content;
+	min-height: 40px;
+	padding-block: 10px;
+	color: var(--ink);
+	font: 500 13px / 20px var(--sans);
+	cursor: pointer;
+}
+.unified-ui .settings-disclosure > summary:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+.unified-ui .settings-content .honcho-disclosure {
+	font: 12px / 1.55 var(--sans);
+}
+.unified-ui .settings-content .honcho-actions {
+	min-width: 0;
+	flex-direction: row;
+	align-items: center;
+	flex-wrap: wrap;
+	margin-top: 16px;
+}
+.unified-ui .settings-content .honcho-check,
+.unified-ui .settings-content .custom-agent-setting .checkbox-label {
+	display: flex;
+	align-items: flex-start;
+	max-width: none;
+	gap: 8px;
+	line-height: 1.5;
+}
+.unified-ui .settings-content .honcho-check input,
+.unified-ui .settings-content .custom-agent-setting .checkbox-label input {
+	flex: 0 0 15px;
+	width: 15px;
+	min-height: 15px;
+	height: 15px;
+	padding: 0;
+	margin: 2px 0 0;
+}
+.unified-ui .settings-content .honcho-key-row label,
+.unified-ui .settings-content .honcho-form label {
+	max-width: none;
+	min-width: 0;
+	margin-top: 0;
+}
+.unified-ui .settings-content .credential-choice {
+	width: min(360px, 100%);
+	max-width: none;
+}
+.unified-ui .settings-content .credential-choice select {
+	width: 100%;
+}
+.unified-ui .settings-content .custom-agent-setup > .button {
+	margin-top: 12px;
+}
+.unified-ui .settings-content .channel-interaction-setting {
+	grid-template-columns: minmax(0, 1fr);
+}
+.unified-ui .settings-content .channel-interaction-grid {
+	grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+	max-width: none;
+}
+.unified-ui .settings-content .channel-interaction-grid label,
+.unified-ui .settings-content .channel-interaction-grid select {
+	min-width: 0;
+}
+.unified-ui .settings-content .channel-interaction-grid select {
+	width: 100%;
+}
+.unified-ui .settings-content .channel-interaction-setup > .button {
+	margin-top: 12px;
+}
+@container kestrel-browser-viewport (max-width: 860px) {
+	.unified-ui .settings-content .honcho-key-row,
+	.unified-ui .settings-content .credential-entry {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+	.unified-ui .settings-content .honcho-key-row label,
+	.unified-ui .settings-content .credential-entry label {
+		grid-column: 1 / -1;
+	}
+}
+@container kestrel-browser-viewport (max-width: 600px) {
+	.unified-ui .settings-content .honcho-form {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+/* Route tools wrap before they can squeeze a library title to one word. */
+.unified-ui .browser-library { background: var(--workbench); }
+@container kestrel-browser-viewport (max-width: 860px) {
+ .unified-ui .browser-library .ui-page-frame-header { display: grid; gap: 16px; }
+ .unified-ui .browser-library .ui-page-frame-actions { justify-content: flex-start; min-width: 0; }
+ .unified-ui .browser-library .library-search { width: min(360px, 100%); }
+ .unified-ui .browser-library .ui-page-frame-actions > button { white-space: nowrap; }
 }

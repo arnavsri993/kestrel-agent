@@ -36,6 +36,7 @@ import {
 	type ModelCatalog,
 	type CatalogModelRecord,
 } from "./providers";
+import { openAIModelMetadata } from "./providers/openai-model-metadata";
 import type { AccountAvailabilityMonitor } from "./routing/account-availability";
 
 const CAPABILITIES: ModelCapability[] = [
@@ -305,10 +306,18 @@ function normalizedModelId(model: string): string {
 	return model.toLowerCase();
 }
 
+// These family labels affect quality ranking only. Tool, context, modality,
+// availability, and reasoning support still come from the live model catalog.
 function isCompactModelName(model: string): boolean {
-	return /\b(haiku|mini|nano|lite|tiny|small|flash-lite|gpt-oss|8b|7b|3b|1b)\b/.test(
+	return /\b(haiku|mini|nano|lite|tiny|small|flash-lite|gpt-oss|gpt-6-luna|8b|7b|3b|1b)\b/.test(
 		model,
 	);
+}
+
+function hasVerifiedModelCapabilities(
+	provenance: CatalogModelRecord["capabilities"]["capabilityProvenance"] | undefined,
+): boolean {
+	return provenance === "confirmed" || provenance === "metadata";
 }
 
 function isPermissiveModelName(model: string, providerId: string): boolean {
@@ -324,7 +333,9 @@ function isPermissiveModelName(model: string, providerId: string): boolean {
 
 function isFrontierModelName(model: string): boolean {
 	if (isCompactModelName(model)) return false;
+	if (openAIModelMetadata(model)?.tier === "frontier") return true;
 	return (
+		model.includes("gpt-6-astra") ||
 		/\bgpt-5(?:\.\d+)?(?:-|$)/.test(model) ||
 		/\b(?:o1|o3|o4)(?:-|$)/.test(model) ||
 		model.includes("gpt-4.5") ||
@@ -343,6 +354,7 @@ function isFrontierModelName(model: string): boolean {
 function isAdvancedModelName(model: string): boolean {
 	if (isCompactModelName(model) || isFrontierModelName(model)) return false;
 	return (
+		model.includes("gpt-6-sol") ||
 		model.includes("claude-sonnet") ||
 		model.includes("claude-3-5-sonnet") ||
 		model.includes("gpt-4o") ||
@@ -385,6 +397,46 @@ function applyModelNamePriors(
 		scores.code_review = Math.max(scores.code_review, 0.84);
 		scores.instruction_following = Math.max(scores.instruction_following, 0.86);
 		scores.reliability = Math.max(scores.reliability, 0.84);
+	}
+}
+
+/** Use the provider's own capability description when a live catalog supplies one. */
+function catalogDescriptionTier(description?: string): ModelTier | undefined {
+	if (!description) return undefined;
+	const normalized = description.toLowerCase();
+	if (/frontier intelligence|most demanding work/.test(normalized))
+		return "frontier";
+	if (/workhorse model/.test(normalized)) return "advanced";
+	if (/fast and affordable|easier tasks|legacy coding model/.test(normalized))
+		return "standard";
+	return undefined;
+}
+
+function applyCatalogDescriptionPriors(
+	description: string,
+	scores: Record<ModelCapability, number>,
+): void {
+	const tier = catalogDescriptionTier(description);
+	if (tier === "frontier") {
+		scores.complex_reasoning = Math.max(scores.complex_reasoning, 0.96);
+		scores.coding = Math.max(scores.coding, 0.94);
+		scores.planning = Math.max(scores.planning, 0.93);
+		scores.code_review = Math.max(scores.code_review, 0.92);
+		scores.instruction_following = Math.max(scores.instruction_following, 0.93);
+		scores.reliability = Math.max(scores.reliability, 0.9);
+	} else if (tier === "advanced") {
+		scores.complex_reasoning = Math.max(scores.complex_reasoning, 0.88);
+		scores.coding = Math.max(scores.coding, 0.88);
+		scores.planning = Math.max(scores.planning, 0.84);
+		scores.code_review = Math.max(scores.code_review, 0.84);
+		scores.instruction_following = Math.max(scores.instruction_following, 0.86);
+		scores.reliability = Math.max(scores.reliability, 0.84);
+	} else if (/fast and affordable|easier tasks/i.test(description)) {
+		scores.speed = Math.max(scores.speed, 0.92);
+		scores.cost_efficiency = Math.max(scores.cost_efficiency, 0.93);
+	} else if (/legacy coding model/i.test(description)) {
+		scores.coding = Math.max(scores.coding, 0.72);
+		scores.code_review = Math.max(scores.code_review, 0.68);
 	}
 }
 
@@ -479,9 +531,9 @@ function baselineCapabilities(
 	provider: ModelProvider,
 	model?: CatalogModelRecord,
 ): Record<ModelCapability, number> {
-	const modelCapabilitiesAreConfirmed =
-		model?.capabilities.capabilityProvenance === "confirmed";
-	const useModelCapabilities = Boolean(model?.isFallback) || modelCapabilitiesAreConfirmed;
+	const modelCapabilitiesAreVerified =
+		hasVerifiedModelCapabilities(model?.capabilities.capabilityProvenance);
+	const useModelCapabilities = Boolean(model?.isFallback) || modelCapabilitiesAreVerified;
 	const scores = emptyScores(0.5);
 	scores.speed = provider.capabilities.local ? 0.82 : 0.58;
 	scores.cost_efficiency = provider.capabilities.local ? 0.95 : 0.5;
@@ -494,7 +546,8 @@ function baselineCapabilities(
 			? 0.68
 			: 0.48;
 	scores.tool_use =
-		(useModelCapabilities ? model?.capabilities.tools : provider.capabilities.tools)
+		(provider.capabilities.tools &&
+		(!useModelCapabilities || model?.capabilities.tools))
 			? 0.75
 			: 0;
 	scores.image_understanding =
@@ -507,10 +560,22 @@ function baselineCapabilities(
 		model?.capabilities.contextWindow ??
 		provider.profileHints?.limits?.contextWindow;
 	scores.long_context = contextWindow ? bounded(contextWindow / 200_000) : 0.55;
-	// Name priors were the old compatibility fallback. Keep them only for a
-	// clearly-labelled fallback record; dynamic records rely on advertised
-	// capability/limit data and measured outcomes instead.
-	if (model?.isFallback && provider.defaultModel)
+	const documented = openAIModelMetadata(model?.id ?? provider.defaultModel ?? "");
+	// A recognized live description takes precedence over compatibility priors.
+	if (documented && !catalogDescriptionTier(model?.description) &&
+		(model?.isFallback || modelCapabilitiesAreVerified)) {
+		for (const [capability, score] of Object.entries(documented.capabilities)) {
+			if (CAPABILITIES.includes(capability as ModelCapability))
+				scores[capability as ModelCapability] = Math.max(
+					scores[capability as ModelCapability],
+					bounded(score),
+				);
+		}
+	}
+	// Dynamic records use the provider's advertised description. Name priors
+	// remain only for a clearly labelled fallback with no live catalog record.
+	if (model?.description) applyCatalogDescriptionPriors(model.description, scores);
+	else if (model?.isFallback && provider.defaultModel)
 		applyModelNamePriors(provider.defaultModel, scores);
 	for (const [capability, score] of Object.entries(
 		provider.profileHints?.capabilities ?? {},
@@ -537,16 +602,20 @@ function profileFromProvider(
 	const profileId = `${endpoint.data}:${modelId.data}`;
 	if (!RoutingProfileIdentifierSchema.safeParse(profileId).success) return undefined;
 	const capabilities = baselineCapabilities(provider, model);
-	const modelCapabilitiesAreConfirmed =
-		model?.capabilities.capabilityProvenance === "confirmed";
-	const useModelCapabilities = Boolean(model?.isFallback) || modelCapabilitiesAreConfirmed;
+	const modelCapabilitiesAreVerified =
+		hasVerifiedModelCapabilities(model?.capabilities.capabilityProvenance);
+	const useModelCapabilities = Boolean(model?.isFallback) || modelCapabilitiesAreVerified;
 	// Older providers have no account identity. Their fallback stays a legacy
 	// static profile instead of being mistaken for an unverified account catalog
 	// record. Dynamic discovery is still authoritative whenever it exists.
 	const useCatalogMetadata = Boolean(
 		model && (provider.account || !model.isFallback),
 	);
-	const tier = inferModelTier(
+	const documentedCost =
+		model?.capabilities.capabilityProvenance === "metadata"
+			? openAIModelMetadata(modelId.data)?.cost
+			: undefined;
+	const tier = catalogDescriptionTier(model?.description) ?? inferModelTier(
 		modelId.data,
 		endpoint.data,
 		provider.capabilities.local,
@@ -578,6 +647,9 @@ function profileFromProvider(
 			: {}),
 		model: modelId.data,
 		displayName: displayName?.success ? displayName.data : modelId.data,
+		...(model?.catalogPriority !== undefined
+			? { catalogPriority: model.catalogPriority }
+			: {}),
 		enabled:
 			model?.availability !== "authentication_required" &&
 			model?.availability !== "permission_denied" &&
@@ -586,7 +658,10 @@ function profileFromProvider(
 		local: provider.capabilities.local,
 		tier,
 		capabilities,
-		cost: provider.profileHints?.cost ?? {},
+		cost: {
+			...(documentedCost ?? {}),
+			...(provider.profileHints?.cost ?? {}),
+		},
 		latency: provider.profileHints?.latency ?? {},
 		limits: {
 			...(provider.profileHints?.limits ?? {}),
@@ -598,9 +673,9 @@ function profileFromProvider(
 				: {}),
 		},
 		features: {
-			tools: useModelCapabilities
-				? (model?.capabilities.tools ?? false)
-				: provider.capabilities.tools,
+			tools:
+				provider.capabilities.tools &&
+				(!useModelCapabilities || (model?.capabilities.tools ?? false)),
 			vision: useModelCapabilities
 				? (model?.capabilities.vision ?? false)
 				: provider.capabilities.images,
@@ -933,11 +1008,43 @@ function routingSummary(profile: RoutingTaskProfile): string {
 		.slice(0, 240);
 }
 
+/**
+ * A safety boundary such as "do not edit files" is not an instruction to use
+ * file tools. Keep that distinction at routing time: otherwise a person can
+ * make a plain-text request unroutable simply by spelling out the actions the
+ * agent must not take.
+ */
+function isExplicitlyProhibitedFileAction(
+	normalizedPrompt: string,
+	actionIndex: number,
+): boolean {
+	const sentenceStart = Math.max(
+		normalizedPrompt.lastIndexOf(".", actionIndex),
+		normalizedPrompt.lastIndexOf("!", actionIndex),
+		normalizedPrompt.lastIndexOf("?", actionIndex),
+		normalizedPrompt.lastIndexOf("\n", actionIndex),
+	) + 1;
+	const leadingDirective = normalizedPrompt
+		.slice(sentenceStart, actionIndex)
+		.trim();
+	return /\b(?:do not|don't|never|without)\b/.test(leadingDirective);
+}
+
+function requestsFileToolUse(normalizedPrompt: string): boolean {
+	const pattern = /\b(?:edit|open|read|write)\b.{0,24}\bfiles?\b/g;
+	for (const match of normalizedPrompt.matchAll(pattern)) {
+		const index = match.index ?? 0;
+		if (!isExplicitlyProhibitedFileAction(normalizedPrompt, index))
+			return true;
+	}
+	return false;
+}
+
 export class TaskRequirementAnalyzer {
 	routingPolicy(prompt: string, base: RoutingPolicySeed): RoutingPolicy {
 		const normalized = prompt.toLowerCase();
 		const amount = normalized.match(
-			/\b(?:under|below|no more than|budget(?: of)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\b/,
+			/\b(?:under|below|no more than|budget(?: of)?)\s*(?:\$\s*)?(\d+(?:\.\d{1,2})?)\b/,
 		);
 		let mode = base.mode;
 		let allowExternal = base.allowExternal;
@@ -1027,6 +1134,12 @@ export class TaskRequirementAnalyzer {
 			/\b(kernel|driver|firmware|assembly|embedded|cuda|matrix|tensor|quantum|cryptograph|algebra|calculus|differential)\b/.test(
 				normalized,
 			);
+		const pullRequestReview =
+			/\b(review|verify|inspect|audit)\b/.test(normalized) &&
+			/\b(pull request|pr\s*#\d+|diff)\b/.test(normalized);
+		const broadPullRequestReview = pullRequestReview &&
+			(/\b(all|multiple|several|four|five|six|\d+)\b.{0,24}\bfiles?\b/.test(normalized) ||
+				/\bsurrounding (?:code|behavior)\b/.test(normalized));
 
 		if (
 			/\b(code|coding|software|typescript|javascript|python|rust|golang|refactor|bug|fix|implement(?:ation)?|function|handler)\b/.test(
@@ -1096,7 +1209,9 @@ export class TaskRequirementAnalyzer {
 			/\b(repository|repo|git|deploy|publish|shell command|run the command|browser automation)\b/.test(
 				normalized,
 			) ||
-			/\b(edit|open|read|write)\b.{0,24}\bfiles?\b/.test(normalized)
+			(/\b(review|inspect|check|analy[sz]e)\b/.test(normalized) &&
+				/\b(github|gitlab|pull request|pr\s*#\d+)\b/.test(normalized)) ||
+			requestsFileToolUse(normalized)
 		)
 			mark("tool_use", 0.88);
 		if (
@@ -1106,8 +1221,13 @@ export class TaskRequirementAnalyzer {
 			mark("image_understanding", 0.86);
 		if (
 			input.requiresStructuredOutput ||
-			/\b(json|structured output|csv)\b/.test(normalized) ||
-			(/\bschema\b/.test(normalized) && softwareContext)
+			/\bstructured output\b/.test(normalized) ||
+			/\b(?:return|output|emit|produce)\s+(?:(?:only|valid|strict|raw)\s+){0,3}(?:json|csv)\b(?![\w-]|\.[\w-])/.test(
+				normalized,
+			) ||
+			/\b(?:return|respond|reply|answer|output|emit|format|produce)\b[^.!?\n]{0,80}\b(?:as|in|with)\s+(?:an?\s+)?(?:(?:valid|strict|raw|only)\s+){0,3}(?:json|csv)\b(?![\w-]|\.[\w-])/.test(
+				normalized,
+			)
 		)
 			mark("structured_output", 0.86);
 		if (input.requiresWriting) {
@@ -1135,10 +1255,13 @@ export class TaskRequirementAnalyzer {
 				(isLowLevelOrMath ? 0.2 : 0) +
 				(Object.keys(capabilities).length >= 6 ? 0.18 : 0) +
 				(/```/.test(prompt) ? 0.08 : 0) +
-				(/\n\s*\d+[.)]\s+\S/.test(prompt) ? 0.08 : 0),
+				(/\n[^\S\r\n]*\d+[.)][^\S\r\n]+\S/.test(prompt) ? 0.08 : 0),
 		);
+		if (pullRequestReview)
+			complexity = Math.max(complexity, broadPullRequestReview ? 0.72 : 0.6);
 		const shortQuestion =
 			words < 28 &&
+			!pullRequestReview &&
 			/^(?:what|why|who|when|where|how|is|are|can|does|should)\b/i.test(
 				prompt.trim(),
 			) &&
@@ -1307,7 +1430,7 @@ export class AdaptiveModelRouter {
 		const policy = RoutingPolicySchema.parse(options.policy ?? this.policy());
 		const allowed = new Set(options.allowedProviderIds ?? []);
 		const excluded = new Set(options.excludeModelIds ?? []);
-		const needsConfirmedModelCapabilities =
+		const needsVerifiedModelCapabilities =
 			requirements.requiresTools ||
 			requirements.requiresVision ||
 			requirements.requiresStructuredOutput;
@@ -1325,10 +1448,11 @@ export class AdaptiveModelRouter {
 						profile.availability === "available") &&
 					// A listing proves that a model is available for plain-text work,
 					// but not its feature matrix. A capability-demanding task needs a
-					// model-level confirmation, never a transport-wide inference.
-					(!needsConfirmedModelCapabilities ||
+					// model-level verification, never a transport-wide inference.
+					(!needsVerifiedModelCapabilities ||
 						profile.availability === undefined ||
-						profile.capabilityProvenance === "confirmed") &&
+						profile.capabilityProvenance === "confirmed" ||
+						profile.capabilityProvenance === "metadata") &&
 					!excluded.has(profile.id) &&
 					this.providerAllowed(profile.provider, profile.endpointId) &&
 					!policy.avoidedProviderIds.includes(profile.provider) &&
@@ -1359,7 +1483,10 @@ export class AdaptiveModelRouter {
 		}
 		if (candidates.length === 0)
 			throw new Error(
-				"No configured model satisfies the task features, context, provider policy, and privacy constraints.",
+				"No configured model satisfies the task features, context, provider policy, and privacy constraints." +
+					(requirements.requiresTools
+						? " This task needs Kestrel tool support. Select an available tool-capable provider in Settings; text-only routes cannot execute agent work."
+						: ""),
 			);
 		const availableScored = candidates
 			.map((profile) => this.score(profile, requirements, policy, options))
@@ -1401,7 +1528,20 @@ export class AdaptiveModelRouter {
 		);
 		if (withinLatency.length === 0)
 			throw new Error("No configured model fits the task latency limits.");
-		const scoredCandidates = withinLatency;
+		// Prefer review-capable routes for broad repository reviews while keeping
+		// cheaper routes in the fallback ladder and honoring explicit speed/cost modes.
+		const prioritizeReview =
+			(requirements.capabilities.code_review ?? 0) >= 0.8 &&
+			requirements.complexity >= 0.7 &&
+			requirements.requiresTools &&
+			policy.mode !== "cheapest" && policy.mode !== "fastest";
+		const scoredCandidates = withinLatency.map((candidate) => ({
+			...candidate,
+			score: candidate.score + (prioritizeReview &&
+				((candidate.profile.capabilities.code_review ?? 0) >= 0.8 ||
+					candidate.profile.tier === "frontier" ||
+					candidate.profile.tier === "advanced") ? 0.2 : 0),
+		}));
 		const minimumQuality = bounded(
 			0.45 +
 				requirements.complexity * 0.3 +
@@ -1421,6 +1561,10 @@ export class AdaptiveModelRouter {
 			(left, right) =>
 				right.score - left.score ||
 				left.estimatedCost - right.estimatedCost ||
+				(left.profile.provider === right.profile.provider
+					? (left.profile.catalogPriority ?? Number.MAX_SAFE_INTEGER) -
+						(right.profile.catalogPriority ?? Number.MAX_SAFE_INTEGER)
+					: 0) ||
 				left.profile.id.localeCompare(right.profile.id),
 		);
 		const selected = this.selectBalancedAccountCandidate(scored, policy);
@@ -1455,7 +1599,13 @@ export class AdaptiveModelRouter {
 		const candidateSummaries: RoutingCandidate[] = [...scoredCandidates]
 			.sort(
 				(left, right) =>
-					right.score - left.score || left.profile.id.localeCompare(right.profile.id),
+					right.score - left.score ||
+					left.estimatedCost - right.estimatedCost ||
+					(left.profile.provider === right.profile.provider
+						? (left.profile.catalogPriority ?? Number.MAX_SAFE_INTEGER) -
+							(right.profile.catalogPriority ?? Number.MAX_SAFE_INTEGER)
+						: 0) ||
+					left.profile.id.localeCompare(right.profile.id),
 			)
 			.slice(0, 32)
 			.map((candidate) => ({
@@ -1902,11 +2052,15 @@ export class AdaptiveModelRouter {
 		if (escalationReason) {
 			const escalationLadder: Record<ReasoningEffort, ReasoningEffort> = {
 				none: "low",
+				minimal: "low",
 				low: "medium",
 				medium: "high",
 				high: "xhigh",
 				xhigh: "max",
+				// Per-model level availability is preserved for manual selection. Keep
+				// automatic escalation at max until the router carries that detail.
 				max: "max",
+				ultra: "ultra",
 			};
 			level = escalationLadder[level];
 		}

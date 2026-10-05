@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { parse, type DefaultTreeAdapterTypes } from "parse5";
 import type { KestrelDatabase } from "@kestrel/database";
 import { readBoundedResponseBytes } from "./bounded-http";
 import type { AgentRuntime } from "./runtime";
@@ -141,30 +142,27 @@ export function isPrivateNetworkAddress(address: string): boolean {
 	);
 }
 
-function readableText(contentType: string, raw: string): string {
-	if (!contentType.includes("html")) return raw;
-	return raw
-		.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-		.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-		.replace(/<[^>]+>/g, " ")
-		.replace(/&nbsp;/gi, " ")
-		.replace(/&amp;/gi, "&")
-		.replace(/&lt;/gi, "<")
-		.replace(/&gt;/gi, ">")
-		.replace(/\s+/g, " ")
-		.trim();
-}
-
-function pageTitle(contentType: string, raw: string, url: string): string {
-	if (contentType.includes("html")) {
-		const title = raw
-			.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]
-			?.replace(/<[^>]+>/g, " ")
-			.replace(/\s+/g, " ")
-			.trim();
-		if (title) return title.slice(0, 500);
-	}
-	return new URL(url).hostname;
+function pageText(contentType: string, raw: string, url: string): { content: string; title: string } {
+ const fallbackTitle = new URL(url).hostname;
+ if (!contentType.includes("html")) return { content: raw, title: fallbackTitle };
+ // Parsing decodes text entities once and recognizes browser-valid closing
+ // tags. Never execute or fetch page resources, and retain the untrusted label.
+ const stack: DefaultTreeAdapterTypes.Node[] = [parse(raw)];
+ const parts: string[] = [];
+ let title: string | undefined;
+ while (stack.length) {
+  const node = stack.pop()!;
+  if ("tagName" in node) {
+   if (["script", "style", "template", "noscript"].includes(node.tagName)) continue;
+   if (node.tagName === "title" && title === undefined) {
+    title = node.childNodes.filter((child): child is DefaultTreeAdapterTypes.TextNode => child.nodeName === "#text")
+     .map(child => child.value).join("").replace(/\s+/g, " ").trim().slice(0, 500);
+   }
+  }
+  if ("value" in node && node.nodeName === "#text") parts.push(node.value);
+  if ("childNodes" in node) for (let index = node.childNodes.length - 1; index >= 0; index--) stack.push(node.childNodes[index]!);
+ }
+ return { content: parts.join(" ").replace(/\s+/g, " ").trim(), title: title || fallbackTitle };
 }
 
 function boundedSearchResultCount(value: number): number {
@@ -225,7 +223,7 @@ export class NetworkPolicyWebClient {
 		else signal?.addEventListener("abort", relay, { once: true });
 		try {
 			let current = await this.validate(url);
-			const cacheKey = `fetch:${createHash("sha256").update(current).digest("hex")}`;
+			const cacheKey = `fetch:html-parser-v2:${createHash("sha256").update(current).digest("hex")}`;
 			const cached =
 				this.options.cache?.get<
 					Awaited<ReturnType<NetworkPolicyWebClient["fetch"]>>
@@ -261,14 +259,15 @@ export class NetworkPolicyWebClient {
 					"Web response exceeds the configured byte limit.",
 				);
 				const raw = new TextDecoder().decode(bytes);
+				const extracted = pageText(contentType, raw, current);
 				const result = {
 					url: current,
 					status: response.status,
 					contentType,
-					content: readableText(contentType, raw),
+					content: extracted.content,
 					trust: "untrusted_external" as const,
 					citation: {
-						title: pageTitle(contentType, raw, current),
+						title: extracted.title,
 						url: current,
 						retrievedAt: this.now().toISOString(),
 					},

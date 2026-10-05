@@ -21,6 +21,7 @@ import {
 	type UserBrowserTabOrganizationPreview,
 } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
+import type { BrowserSettingsSection } from "../../settings-catalog";
 import {
   parseKestrelAppPage,
   parseKestrelFilePage,
@@ -59,9 +60,10 @@ export function BrowserWorkspace({
   navigationSidebar,
   agentOpen,
   onToggleAgent,
-  onNewAgent,
+	onNewAgent,
 	onOpenTaskSettings,
   onOpenSettings,
+	onOpenModelSettings,
   onOpenWorkspaces,
   onOpenHistory,
   onOpenDownloads,
@@ -89,7 +91,8 @@ export function BrowserWorkspace({
   onToggleAgent(): void;
   onNewAgent(prompt?: string): void;
 	onOpenTaskSettings(): void;
-  onOpenSettings(): void;
+  onOpenSettings(section?: BrowserSettingsSection): void;
+	onOpenModelSettings(): void;
   onOpenWorkspaces?(): void;
   onOpenHistory(): void;
   onOpenDownloads(): void;
@@ -123,10 +126,6 @@ export function BrowserWorkspace({
         input.select();
     });
   }, []);
-  const findRef = useRef<HTMLInputElement | null>(null);
-  const findTabIdRef = useRef<string | null>(null);
-  const [findOpen, setFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState("");
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [openChromeMenus, setOpenChromeMenus] = useState({
     tab: false,
@@ -134,11 +133,15 @@ export function BrowserWorkspace({
   });
   const [tabDragActive, setTabDragActive] = useState(false);
   const tabDragActiveRef = useRef(false);
+  const [sidebarResizeActive, setSidebarResizeActive] = useState(false);
+  const sidebarResizeActiveRef = useRef(false);
   const [organizeTabsPreview, setOrganizeTabsPreview] =
     useState<UserBrowserTabOrganizationPreview | null>(null);
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
   const [organizeTabsPresent, setOrganizeTabsPresent] = useState(false);
   const [historyPopoverRequestId, setHistoryPopoverRequestId] = useState(0);
+  const [agentOverlayOpen, setAgentOverlayOpen] = useState(false);
+  const agentOverlayOpenRef = useRef(false);
   const [nativePagePreview, setNativePagePreview] = useState<{
     tabId: string;
     dataUrl: string;
@@ -185,8 +188,6 @@ export function BrowserWorkspace({
     muteTab,
     duplicateTab,
     closeOtherTabs,
-    findInPage,
-    stopFindInPage,
     printTab,
     openDevTools,
     saveScreenshot,
@@ -337,8 +338,9 @@ export function BrowserWorkspace({
       !activeAppPage &&
       !activeFilePage,
   );
-  const nativePageVisible =
+  const nativePageCanBeVisible =
     nativePageEligible &&
+    !agentOverlayOpen &&
     // Keep the renderer in the input path while a tab is being dragged;
     // native WebContentsView siblings sit above the renderer surface.
     !tabDragActive &&
@@ -349,6 +351,7 @@ export function BrowserWorkspace({
     !organizeTabsPresent &&
     !bookmarkDialogPresent &&
     !extensionCompatibilityDialogPresent;
+  const nativePageVisible = nativePageCanBeVisible && !sidebarResizeActive;
   const showChromeWebStoreInstall = Boolean(
     nativePageEligible &&
       activeTab?.url &&
@@ -418,35 +421,13 @@ export function BrowserWorkspace({
   );
 
   const openFind = useCallback(() => {
-    findTabIdRef.current = activeTab?.id ?? null;
-    setFindOpen(true);
-    window.requestAnimationFrame(() => {
-      findRef.current?.focus();
-      findRef.current?.select();
-    });
-  }, [activeTab?.id]);
-
-  const closeFind = useCallback(() => {
-    setFindOpen(false);
-    setFindQuery("");
-    const searchedTabId = findTabIdRef.current ?? activeTab?.id;
-    findTabIdRef.current = null;
-    if (searchedTabId) {
-      void stopFindInPage(searchedTabId);
-    }
-    // Closing the Find row changes the viewport bounds, whose sync restores
-    // the attached native page. Do not focus the omnibox here:
-    // doing so opens suggestions and hides the page a person just returned to.
-  }, [activeTab, stopFindInPage]);
-
-  useEffect(() => {
-    const searchedTabId = findTabIdRef.current;
-    if (!findOpen || !searchedTabId || searchedTabId === activeTab?.id) return;
-    setFindOpen(false);
-    setFindQuery("");
-    findTabIdRef.current = null;
-    void stopFindInPage(searchedTabId);
-  }, [activeTab?.id, findOpen, stopFindInPage]);
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    void window.kestrel.request({ type: "browser-open-find", bounds: {
+      x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)),
+      width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)),
+    }});
+  }, []);
 
   const handleTabMenuOpenChange = useCallback((open: boolean) => {
     setOpenChromeMenus((current) =>
@@ -471,7 +452,11 @@ export function BrowserWorkspace({
     };
     const targetTabId = activeTab?.id ?? null;
     const targetVisible =
-      visibleOverride ?? (!tabDragActiveRef.current && nativePageVisible);
+      visibleOverride ??
+      (!agentOverlayOpenRef.current &&
+        !tabDragActiveRef.current &&
+        !sidebarResizeActiveRef.current &&
+        nativePageCanBeVisible);
     const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${targetVisible}:${targetTabId ?? ""}`;
     if (lastBoundsRef.current === key) return;
     lastBoundsRef.current = key;
@@ -491,7 +476,7 @@ export function BrowserWorkspace({
         }
       })
       .catch(() => undefined);
-  }, [activeTab?.id, nativePageVisible, setContentBounds]);
+  }, [activeTab?.id, nativePageCanBeVisible, setContentBounds]);
 
   const handleTabDragStateChange = useCallback((dragging: boolean) => {
     tabDragActiveRef.current = dragging;
@@ -523,7 +508,30 @@ export function BrowserWorkspace({
     const mutationObserver = new MutationObserver(syncFromRef);
     if (root) mutationObserver.observe(root, { childList: true });
     const appShell = node.closest(".ai-browser-app");
-    const shellObserver = new MutationObserver(scheduleFromRef);
+    const syncSidebarResizeState = () => {
+      const overlayOpen = appShell?.classList.contains("agent-sidebar-overlay-open") ?? false;
+      agentOverlayOpenRef.current = overlayOpen;
+      setAgentOverlayOpen(overlayOpen);
+      if (overlayOpen) {
+        syncBoundsRef.current(false);
+        return;
+      }
+      const resizing = appShell?.classList.contains("kestrel-sidebar-resizing") ?? false;
+      if (sidebarResizeActiveRef.current !== resizing) {
+        sidebarResizeActiveRef.current = resizing;
+        setSidebarResizeActive(resizing);
+      }
+      if (resizing) {
+        // The embedded page is a native sibling above the renderer. Remove it
+        // before the pointer crosses the sidebar edge so DOM pointer capture
+        // continues to receive the full resize drag. The existing preview path
+        // keeps the page visually continuous while it is temporarily hidden.
+        syncBoundsRef.current(false);
+        return;
+      }
+      scheduleFromRef();
+    };
+    const shellObserver = new MutationObserver(syncSidebarResizeState);
     if (appShell) {
       shellObserver.observe(appShell, {
         attributes: true,
@@ -544,6 +552,7 @@ export function BrowserWorkspace({
     window.addEventListener("resize", syncFromRef);
     const frame = window.requestAnimationFrame(syncFromRef);
     const settleTimer = window.setTimeout(syncFromRef, 320);
+    syncSidebarResizeState();
     syncFromRef();
     return () => {
       observer.disconnect();
@@ -573,7 +582,7 @@ export function BrowserWorkspace({
 
   useLayoutEffect(() => {
     syncBounds();
-  }, [findOpen, openChromeMenus, organizeTabsPreview, syncBounds]);
+  }, [openChromeMenus, organizeTabsPreview, syncBounds]);
 
   useEffect(
     () =>
@@ -624,11 +633,6 @@ export function BrowserWorkspace({
 			'[aria-modal="true"], .model-selector-menu, [role="menu"], .browser-address-suggestions',
 		);
 		if (foregroundOverlay) return;
-        if (findOpen) {
-          event.preventDefault();
-          closeFind();
-          return;
-        }
         if (activeTab?.loading) {
           event.preventDefault();
           void stop(activeTab.id);
@@ -750,7 +754,7 @@ export function BrowserWorkspace({
       } else if (key === "r" && activeTab) {
         event.preventDefault();
         void reload(activeTab.id, event.shiftKey);
-      } else if (key === "h" || key === "y") {
+      } else if ((key === "h" && !event.metaKey) || key === "y") {
         event.preventDefault();
         openHistoryPopover();
       } else if (key === "j") {
@@ -807,7 +811,6 @@ export function BrowserWorkspace({
     back,
     browser,
     closeTab,
-    closeFind,
     createTab,
     forward,
     onNewAgent,
@@ -826,8 +829,6 @@ export function BrowserWorkspace({
     selectTab,
     state,
     stop,
-    stopFindInPage,
-    findOpen,
     focusAddress,
     bookmarkDialogPresent,
     toggleBookmarkFromChrome,
@@ -873,9 +874,7 @@ export function BrowserWorkspace({
     <main
       className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
         showBookmarksBar ? " browser-workspace-bookmarks" : ""
-      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}${
-        findOpen ? " browser-workspace-find-open" : ""
-      }`}
+      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}`}
       aria-label="Browser"
     >
       {navigationSidebar}
@@ -1038,74 +1037,7 @@ export function BrowserWorkspace({
 			}
         />
       )}
-      <AnimatePresence initial={false}>
-      {findOpen && (
-        <motion.form
-          key="browser-find-bar"
-          className="browser-find-bar"
-          initial={
-            reducedMotion
-              ? false
-              : { height: 0, opacity: 0, y: -4, pointerEvents: "none" }
-          }
-          animate={{ height: 40, opacity: 1, y: 0, pointerEvents: "auto" }}
-          exit={
-            reducedMotion
-              ? { height: 0, opacity: 1, y: 0, pointerEvents: "none" }
-              : { height: 0, opacity: 0, y: -4, pointerEvents: "none" }
-          }
-          transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (activeTab?.url)
-              void findInPage(activeTab.id, findQuery, { findNext: true });
-          }}
-        >
-          <label className="sr-only" htmlFor="browser-find-input">
-            Find in page
-          </label>
-          <input
-            id="browser-find-input"
-            ref={findRef}
-            value={findQuery}
-            placeholder="Find in page"
-            onChange={(event) => {
-              const value = event.target.value;
-              setFindQuery(value);
-              if (activeTab?.url) void findInPage(activeTab.id, value);
-            }}
-          />
-          <span>
-            {browser.findMatch && findQuery
-              ? `${browser.findMatch.activeMatchOrdinal} of ${browser.findMatch.matches}`
-              : "Find"}
-          </span>
-          <button
-            type="button"
-            aria-label="Previous match"
-            onClick={() =>
-              activeTab?.url &&
-              void findInPage(activeTab.id, findQuery, {
-                findNext: true,
-                forward: false,
-              })
-            }
-          >
-            <Icon name="back" />
-          </button>
-          <button type="submit" aria-label="Next match">
-            <Icon name="forward" />
-          </button>
-          <button
-            type="button"
-            aria-label="Close find"
-            onClick={closeFind}
-          >
-            <Icon name="close" />
-          </button>
-        </motion.form>
-      )}
-      </AnimatePresence>
+
 			<AnimatePresence initial={false}>
 				{browser.error && (
           <motion.p
@@ -1227,8 +1159,9 @@ export function BrowserWorkspace({
 			}
             onNavigate={(input) => void navigate(activeTab.id, input)}
 			onOpenTab={(tabId) => void selectTab(tabId)}
-            onNewAgent={onNewAgent}
+			onNewAgent={onNewAgent}
 			onOpenTaskSettings={onOpenTaskSettings}
+			onOpenModelSettings={onOpenModelSettings}
 			projects={projects}
 			onProjectsChange={onProjectsChange}
 			onSubmitDraft={onSubmitNewTabDraft}

@@ -17,6 +17,15 @@ import { MemoryManager } from "./memory";
 
 const DAY_MS = 86_400_000;
 
+// Titles retain their original interior whitespace and 200-character limit.
+// Requiring non-whitespace title edges makes separators disjoint. A clock's
+// optional whitespace must lead to am/pm when another separator follows it;
+// otherwise adjacent whitespace repetitions can backtrack quadratically.
+const WEEKDAY_CAPTURE =
+	/^I have\s+(\S(?:.{0,198}?\S)?)\s+every weekday\s+from\s+(noon|midnight|\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?)\s+to\s+(noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?)[.!]?$/i;
+const FRIDAY_CAPTURE =
+	/^(\S(?:.{0,198}?\S)?)\s+ends at\s+(noon|midnight|\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?)\s+on Fridays?[.!]?$/i;
+
 function normalized(value: string): string {
 	return value
 		.normalize("NFKC")
@@ -719,11 +728,7 @@ export class LifeContextService {
 
 	captureConversation(text: string, sourceId: string): UnifiedCalendarEvent[] {
 		const created: UnifiedCalendarEvent[] = [];
-		const weekday = text
-			.trim()
-			.match(
-				/^I have\s+(.{1,200}?)\s+every weekday\s+from\s+((?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?))\s+to\s+((?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?))[.!]?$/i,
-			);
+		const weekday = text.trim().match(WEEKDAY_CAPTURE);
 		if (weekday) {
 			const title = weekday[1]!.trim();
 			const startClock = parseClock(weekday[2]!);
@@ -790,11 +795,7 @@ export class LifeContextService {
 			}
 		}
 
-		const dayOverride = text
-			.trim()
-			.match(
-				/^(.{1,200}?)\s+ends at\s+((?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?))\s+on Fridays?[.!]?$/i,
-			);
+		const dayOverride = text.trim().match(FRIDAY_CAPTURE);
 		if (dayOverride) {
 			const title = dayOverride[1]!.trim().replace(/^my\s+/i, "");
 			const endClock = parseClock(dayOverride[2]!);

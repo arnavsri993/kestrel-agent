@@ -92,6 +92,100 @@ afterEach(() => {
 });
 
 describe("memory substrate", () => {
+	it.each([
+		["I prefer concise release notes.", "preference", "semantic"],
+		["We decided that releases require a smoke check.", "decision", "project"],
+		["Actually, the release branch is stable.", "correction", "semantic"],
+		["Not the beta build but the stable build.", "correction", "semantic"],
+		["I will review the release notes tomorrow.", "commitment", "episodic"],
+		["My goal is to ship a reliable browser.", "goal", "project"],
+		["Project Kestrel: release review is active.", "project_state", "project"],
+	])("extracts a captured user statement through maintenance: %s", async (text, category, type) => {
+		const state = fixture();
+		try {
+			const event = state.substrate.captureActivity({
+				eventType: "conversation", source: "test", actor: "user", textSummary: text,
+			});
+			expect(event).toBeDefined();
+			const result = await state.substrate.runMaintenance(100);
+			expect(result.memoriesExtracted).toBe(1);
+			expect(result.jobsFailed).toBe(0);
+			expect(state.legacyMemory.list()).toContainEqual(expect.objectContaining({
+				content: text.slice(0, -1), type, inferred: true, userConfirmed: false,
+				structuredData: expect.objectContaining({ category, timelineEventId: event!.id }),
+			}));
+			await state.substrate.runMaintenance(100);
+			expect(state.legacyMemory.list()).toHaveLength(1);
+		} finally { await state.close(); }
+	});
+
+	it("extracts after timeline grouping without treating the group as a runtime session", async () => {
+		const state = fixture();
+		try {
+			const event = state.substrate.captureActivity({ eventType: "conversation", source: "test",
+				actor: "user", textSummary: "I prefer concise release notes." })!;
+			const extract = state.database.listMemoryJobs({ kind: "extract" })[0]!;
+			state.database.queueMemoryJob({ ...extract, runAfter: "2026-07-22T12:01:00.000Z" });
+			await state.substrate.runMaintenance(100);
+			expect(state.database.getTimelineEvent(event.id)?.sessionId).toBeDefined();
+			expect(state.legacyMemory.list()).toHaveLength(0);
+			state.advance("2026-07-22T12:01:00.000Z");
+			const result = await state.substrate.runMaintenance(100);
+			expect(result).toMatchObject({ memoriesExtracted: 1, jobsRetried: 0, jobsFailed: 0 });
+			expect(state.legacyMemory.list()).toHaveLength(1);
+		} finally { await state.close(); }
+	});
+
+	it("preserves the source agent owner after timeline grouping", async () => {
+		const state = fixture();
+		try {
+			const owner = state.runtime.createSession({ title: "Owned extraction", kind: "agent" });
+			const other = state.runtime.createSession({ title: "Other extraction", kind: "agent" });
+			const event = state.substrate.captureActivity({ sessionId: owner.id, eventType: "conversation",
+				source: "test", actor: "user", textSummary: "I prefer isolated release notes." })!;
+			const extract = state.database.listMemoryJobs({ kind: "extract" }).find(job => job.payload.eventId === event.id)!;
+			state.database.queueMemoryJob({ ...extract, runAfter: "2026-07-22T12:01:00.000Z" });
+			await state.substrate.runMaintenance(100);
+			const grouped = state.database.getTimelineEvent(event.id)!;
+			expect(grouped.sessionId).not.toBe(owner.id);
+			expect(grouped.sourceSessionId).toBe(owner.id);
+			state.advance("2026-07-22T12:01:00.000Z");
+			expect(await state.substrate.runMaintenance(100)).toMatchObject({ memoriesExtracted: 1, jobsRetried: 0 });
+			expect(state.substrate.listForSession(owner.id)).toContainEqual(expect.objectContaining({
+				content: "I prefer isolated release notes", pinned: false, confidence: 0.82,
+			}));
+			expect(state.substrate.listForSession(other.id)).toHaveLength(0);
+			expect(state.substrate.listForSession(state.main.id)).toHaveLength(0);
+		} finally { await state.close(); }
+	});
+
+	it("keeps background extraction bounded, redacted and subject to capture policy", async () => {
+		const state = fixture();
+		try {
+			const blocked = state.runtime.createSession({ title: "Owned private fixture", privacyMode: "private" });
+			expect(state.substrate.captureActivity({ sessionId: blocked.id, eventType: "conversation",
+				source: "test", actor: "user", textSummary: "I prefer private information." })).toBeUndefined();
+			state.substrate.setCaptureEnabled(false);
+			expect(state.substrate.captureActivity({ eventType: "conversation", source: "test", actor: "user",
+				textSummary: "I prefer disabled capture." })).toBeUndefined();
+			state.substrate.setCaptureEnabled(true);
+			for (const [actor, textSummary] of [
+				["assistant", "I prefer assistant-owned information."],
+				["user", "A plain captured observation."],
+				["user", `I prefer ${"x".repeat(2001)}`],
+				["user", "I prefer concise notes password=owned-synthetic-password"],
+			] as const) state.substrate.captureActivity({ eventType: "conversation", source: "test", actor, textSummary });
+			const result = await state.substrate.runMaintenance(100);
+			expect(result.memoriesExtracted).toBe(1);
+			const memory = state.legacyMemory.list()[0]!;
+			expect(memory.content).toBe("I prefer concise notes password=[redacted]");
+			expect(memory.inferred).toBe(true);
+			expect(memory.userConfirmed).toBe(false);
+			expect(JSON.stringify(state.database.listMemoryJobs())).not.toContain("owned-synthetic-password");
+			expect(state.legacyMemory.list()).toHaveLength(1);
+		} finally { await state.close(); }
+	});
+
 	it("captures redacted runtime activity and builds searchable aggregates", async () => {
 		const state = fixture();
 		try {
@@ -299,7 +393,14 @@ describe("memory substrate", () => {
 				}),
 			);
 			expect(globalQuery.results.some((item) => item.id === privateTask.id)).toBe(false);
-			expect(state.substrate.listForSession(child.id)).toContainEqual(privateMemory);
+			expect(state.substrate.listForSession(child.id)).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						id: privateMemory.id,
+						content: "Private worker checkpoint",
+					}),
+				]),
+			);
 			expect(state.substrate.listForSession(child.id)).not.toEqual(
 				expect.arrayContaining([
 					expect.objectContaining({ content: "Global user preference" }),
@@ -571,6 +672,167 @@ describe("memory substrate", () => {
 			expect(state.database.getTimelineEvent(`timeline-message-${message.id}`)).toBeDefined();
 			expect(state.legacyMemory.activeMemories()).toEqual([]);
 			expect(state.runtime.getSession(state.main.id).status).toBe("active");
+		} finally {
+			await state.close();
+		}
+	});
+
+	it("stages faded outcomes and requires reviewed approval before removal", async () => {
+		const state = fixture();
+		try {
+			expect(state.substrate.getCaptureConfiguration().defaultRetentionDays).toBe(30);
+
+			const durable = state.substrate.remember({
+				...memoryInput("Remember that my timezone is Pacific", "explicit-1"),
+				userConfirmed: true,
+				inferred: false,
+				confirmationStatus: "explicit",
+			});
+			expect(durable.pinned).toBe(true);
+			expect(durable.fadesAt).toBeUndefined();
+
+			const identity = state.substrate.ensureAgentIdentity(state.main);
+			const completed = state.substrate.recordTaskOutcome(
+				{
+					id: "fade-outcome-task",
+					sessionId: state.main.id,
+					agentId: identity.id,
+					sourceIds: [],
+					projectIds: [],
+					personIds: [],
+					entityIds: [],
+					goal: "Ship fade rules",
+					outcomeSummary: "Fade rules landed for unrecalled outcomes",
+					status: "completed",
+					plan: [],
+					evidence: [],
+					artifacts: [],
+					failures: [],
+					unresolvedQuestions: [],
+					subtaskIds: [],
+					dependencyTaskIds: [],
+					startedAt: "2026-07-22T12:00:00.000Z",
+					completedAt: "2026-07-22T12:05:00.000Z",
+					createdAt: "2026-07-22T12:00:00.000Z",
+					updatedAt: "2026-07-22T12:05:00.000Z",
+				},
+				identity.id,
+			);
+			expect(completed.status).toBe("completed");
+			const outcome = state.database.getAgentMemory("agent-outcome-fade-outcome-task");
+			expect(outcome?.fadesAt).toBeDefined();
+			expect(outcome?.pinned).toBe(false);
+
+			// First decay assigns grace / soft updates without mass-deleting existing facts.
+			state.advance("2026-07-22T12:20:00.000Z");
+			state.database.queueMemoryJob({
+				id: "memory-job-fade-decay-1",
+				kind: "decay",
+				dedupeKey: "decay:test-fade-1",
+				status: "pending",
+				payload: {},
+				attempts: 0,
+				maxAttempts: 4,
+				runAfter: "2026-07-22T12:20:00.000Z",
+				createdAt: "2026-07-22T12:20:00.000Z",
+				updatedAt: "2026-07-22T12:20:00.000Z",
+			});
+			await state.substrate.runMaintenance(20);
+			expect(state.database.getAgentMemory("agent-outcome-fade-outcome-task")).toBeDefined();
+			expect(state.legacyMemory.list().some((memory) => memory.id === durable.id)).toBe(true);
+
+			// Force the outcome past fadesAt and decay again.
+			state.database.upsertAgentMemory({
+				...outcome!,
+				lastAccessedAt: "2026-05-01T00:00:00.000Z",
+				fadesAt: "2026-07-01T00:00:00.000Z",
+				updatedAt: "2026-07-22T12:20:00.000Z",
+			});
+			state.advance("2026-09-22T12:00:00.000Z");
+			state.database.queueMemoryJob({
+				id: "memory-job-fade-decay-2",
+				kind: "decay",
+				dedupeKey: "decay:test-fade-2",
+				status: "pending",
+				payload: {},
+				attempts: 0,
+				maxAttempts: 4,
+				runAfter: "2026-09-22T12:00:00.000Z",
+				createdAt: "2026-09-22T12:00:00.000Z",
+				updatedAt: "2026-09-22T12:00:00.000Z",
+			});
+			await state.substrate.runMaintenance(20);
+			expect(state.database.getAgentMemory("agent-outcome-fade-outcome-task")).toBeDefined();
+			expect(state.legacyMemory.list().some((memory) => memory.id === durable.id)).toBe(true);
+			const dryRun = state.substrate.getFadeDryRun();
+			expect(dryRun?.applied).toBe(false);
+			expect(dryRun?.backupKey).toBeUndefined();
+			expect(dryRun?.agentMemoryCandidates).toBeGreaterThan(0);
+			const review = state.substrate.planFadeCleanup();
+			expect((await state.substrate.applyFadeCleanup(review.plan.id, true)).applied).toBe(true);
+			expect(state.database.getAgentMemory("agent-outcome-fade-outcome-task")).toBeUndefined();
+			expect(state.substrate.pinAgentMemory(state.main.id, `agent-memory-${durable.id}`, true).pinned).toBe(
+				true,
+			);
+		} finally {
+			await state.close();
+		}
+	});
+
+	it("preserves faded inferred notes until the reviewed cleanup is approved", async () => {
+		const state = fixture();
+		try {
+			const inferred = state.legacyMemory.remember({
+				type: "semantic",
+				content: "Incidental detail from an old email thread",
+				structuredData: { capture: "deterministic-extraction" },
+				sourceIds: ["email-1"],
+				sourceType: "deterministic-extraction",
+				confidence: 0.7,
+				importance: 0.4,
+				sensitivity: "personal",
+				entityIds: [],
+				userConfirmed: false,
+				inferred: true,
+				confirmationStatus: "inferred",
+			});
+			expect(inferred.fadesAt).toBeDefined();
+			state.database.upsertMemory({
+				...state.legacyMemory.list().find((memory) => memory.id === inferred.id)!,
+				lastAccessedAt: "2025-10-01T00:00:00.000Z",
+				fadesAt: "2025-12-01T00:00:00.000Z",
+			});
+			// Soft maintain alone must not hard-delete.
+			state.legacyMemory.maintain();
+			expect(state.legacyMemory.list().some((memory) => memory.id === inferred.id)).toBe(
+				true,
+			);
+			expect(state.legacyMemory.listFadeCandidates().map((memory) => memory.id)).toContain(
+				inferred.id,
+			);
+
+			state.advance("2026-04-01T00:00:00.000Z");
+			state.database.queueMemoryJob({
+				id: "memory-job-fade-legacy",
+				kind: "decay",
+				dedupeKey: "decay:test-legacy-fade",
+				status: "pending",
+				payload: {},
+				attempts: 0,
+				maxAttempts: 4,
+				runAfter: "2026-04-01T00:00:00.000Z",
+				createdAt: "2026-04-01T00:00:00.000Z",
+				updatedAt: "2026-04-01T00:00:00.000Z",
+			});
+			await state.substrate.runMaintenance(20);
+			expect(state.legacyMemory.list().some((memory) => memory.id === inferred.id)).toBe(
+				true,
+			);
+			expect(state.substrate.getFadeDryRun()?.applied).toBe(false);
+			const review = state.substrate.planFadeCleanup();
+			expect(review.candidates.some(candidate => candidate.id === inferred.id)).toBe(true);
+			await state.substrate.applyFadeCleanup(review.plan.id, true);
+			expect(state.database.getMemory(inferred.id)).toBeUndefined();
 		} finally {
 			await state.close();
 		}

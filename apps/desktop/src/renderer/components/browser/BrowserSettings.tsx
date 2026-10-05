@@ -1196,7 +1196,8 @@ export function BrowserSettings({
                     return (
                       <li key={key}>
                         <span>
-                          {permission.origin} · {permission.permission} ·{" "}
+                          {permission.origin} · {permission.permission === "open-external:msteams" ? "Open Microsoft Teams" :
+                            permission.permission.startsWith("open-external:") ? "Open external app" : permission.permission} ·{" "}
                           {permission.decision}
                         </span>
                         <button
@@ -1252,29 +1253,6 @@ export function BrowserSettings({
               onClick={() =>
                 void persist({
                   passwordAutofillEnabled: !settings.passwordAutofillEnabled,
-                })
-              }
-            >
-              <span />
-            </button>
-          </div>
-          <div
-            className="setting-row browser-setting-row"
-            id="setting-browser-payment-autofill"
-          >
-            <div className="browser-setting-copy">
-              <strong>Payment autofill</strong>
-              <p>Fill saved cards only after you confirm.</p>
-            </div>
-            <button
-              type="button"
-              className={`switch ${settings.paymentAutofillEnabled ? "on" : ""}`}
-              role="switch"
-              aria-label="Payment autofill"
-              aria-checked={settings.paymentAutofillEnabled}
-              onClick={() =>
-                void persist({
-                  paymentAutofillEnabled: !settings.paymentAutofillEnabled,
                 })
               }
             >

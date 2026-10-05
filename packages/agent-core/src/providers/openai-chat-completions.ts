@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
 	providerFetch,
 	quotaFromResponseHeaders,
@@ -230,6 +231,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
 			number,
 			{ id: string; name: string; arguments: string }
 		>();
+		const toolCallPrefix = `compatible-call-${randomUUID()}`;
 		await readServerSentEvents(response, this.id, ({ data }) => {
 			if (data === "[DONE]") return;
 			let event: Record<string, unknown>;
@@ -270,7 +272,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
 				const index = Number(raw.index ?? 0);
 				const fn = raw.function as Record<string, unknown> | undefined;
 				const existing = calls.get(index) ?? {
-					id: String(raw.id ?? `call-${index}`),
+					id: String(raw.id ?? `${toolCallPrefix}-${index}`),
 					name: "",
 					arguments: "",
 				};

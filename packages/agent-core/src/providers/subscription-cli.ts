@@ -279,6 +279,7 @@ function openCodeModelsFromOutput(value: string): DiscoveredModel[] {
 		"high",
 		"xhigh",
 		"max",
+		"ultra",
 	]);
 	const models = new Map<string, DiscoveredModel>();
 	for (const record of jsonObjectsFromOutput(value)) {
@@ -296,7 +297,9 @@ function openCodeModelsFromOutput(value: string): DiscoveredModel[] {
 		const variants = asObject(record.variants) ?? {};
 		const reasoningEfforts = Object.keys(variants).filter((level) =>
 			knownLevels.has(level),
-		) as Array<"none" | "low" | "medium" | "high" | "xhigh" | "max">;
+		) as Array<
+			"none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+		>;
 		const contextWindow = Number(limits.context);
 		const maxOutputTokens = Number(limits.output);
 		models.set(id, {

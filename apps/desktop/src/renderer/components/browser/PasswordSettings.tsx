@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutofillProfile, PasswordEntrySummary } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import { Icon } from "../Icon";
+import { userFacingError } from "../../error-copy";
 
 type PasswordSettingKey =
 	| "offerToSavePasswords"
@@ -57,7 +58,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 	}, [syncEntries]);
 
 	useEffect(() => {
-		void loadEntries().catch((cause) => setError(cause instanceof Error ? cause.message : "Passwords could not be loaded."));
+		void loadEntries().catch((cause) => setError(userFacingError(cause, "Passwords could not be loaded.")));
 	}, [loadEntries]);
 
 	const visibleEntries = useMemo(
@@ -78,7 +79,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			if (!response.ok) throw new Error(responseError(response));
 			setNotice(type === "password-copy" ? "Password copied. Kestrel clears it if it remains unchanged." : "Password revealed after local device verification.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Password operation failed.");
+			setError(userFacingError(cause, type === "password-copy" ? "Password was not copied. Confirm device access and try again." : "Password was not revealed. Confirm device access and try again."));
 		} finally { setBusy(""); }
 	}
 
@@ -100,7 +101,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			setEditingEntryId(null);
 			setNotice(password ? "Saved login and password updated." : "Saved login name updated.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Saved login could not be updated.");
+			setError(userFacingError(cause, "Saved login could not be updated."));
 		} finally { setBusy(""); }
 	}
 
@@ -113,7 +114,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			setAddOrigin(""); setAddUsername(""); setAddPassword("");
 			setNotice("Saved login added.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Saved login could not be added.");
+			setError(userFacingError(cause, "Saved login could not be added."));
 		} finally { setBusy(""); }
 	}
 
@@ -125,7 +126,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			if ("passwords" in response) syncEntries(response.passwords);
 			setRemovalConfirmation(null); setEditingEntryId(null); setNotice("Saved login removed.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Password could not be removed.");
+			setError(userFacingError(cause, "Password could not be removed."));
 		} finally { setBusy(""); }
 	}
 
@@ -136,7 +137,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			await browser.updateSettings({ neverSavePasswordOrigins: settings.neverSavePasswordOrigins.filter((item) => item !== origin) });
 			setNotice("Never-save exception removed.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Setting could not be updated.");
+			setError(userFacingError(cause, "Setting could not be updated."));
 		} finally { setBusy(""); }
 	}
 
@@ -148,7 +149,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			if ("autofillProfile" in response) setProfile(response.autofillProfile);
 			setNotice(clear ? "Saved form info removed." : "Form info saved securely on this Mac.");
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Form info could not be saved.");
+			setError(userFacingError(cause, "Form info could not be saved."));
 		} finally { setBusy(""); }
 	}
 
@@ -162,7 +163,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 
 	return (
 		<section className="settings-stack browser-settings-panel password-settings-panel" aria-labelledby="password-settings-title">
-			<header className="settings-panel-header"><h2 id="password-settings-title"><Icon name="lock" /> Passwords and autofill</h2><p>Saved passwords and form info stay in protected storage on this Mac.</p></header>
+			<header className="settings-panel-header"><h2 id="password-settings-title"><Icon name="lock" /> Passwords and personal info</h2></header>
 			<div className="password-settings-group" aria-labelledby="password-behavior-title">
 				<h3 id="password-behavior-title">Password behavior</h3>
 				{toggle("offerToSavePasswords", "Offer to save passwords", "Ask before storing a new or changed login after a supported HTTPS sign-in.")}
@@ -182,7 +183,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 			<details className="password-entry-card password-profile-card"><summary>Saved personal info</summary><p>Edit the details Kestrel can fill. Blank fields are skipped.</p>
 				<form onSubmit={(event) => { event.preventDefault(); void saveProfile(); }} className="autofill-profile-grid">
 					{([ ["name", "Full name"], ["given-name", "First name"], ["additional-name", "Middle name"], ["family-name", "Last name"], ["email", "Email"], ["tel", "Phone"], ["organization", "Company"], ["bday", "Birthday"], ["address-line1", "Street address"], ["address-line2", "Apartment / suite"], ["address-level2", "City"], ["address-level1", "State / province"], ["postal-code", "ZIP / postal code"], ["country", "Country code"], ["country-name", "Country"], ["street-address", "Full address"], ["address-line3", "Address line 3"], ["bday-day", "Birth day"], ["bday-month", "Birth month"], ["bday-year", "Birth year"] ] as const).map(([key, label]) => <label key={key}><span>{label}</span><input type={key === "bday" ? "date" : key === "email" ? "email" : "text"} autoComplete="off" maxLength={500} value={profile[key] || ""} onChange={(event) => setProfile((previous) => ({ ...previous, [key]: event.target.value }))} /></label>)}
-					<button type="submit" disabled={Boolean(busy)}>Save info</button><button type="button" disabled={Boolean(busy)} onClick={() => void saveProfile(true)}>Clear saved info</button>
+					<button type="submit" className="button primary" disabled={Boolean(busy)}>Save info</button><button type="button" className="button secondary" disabled={Boolean(busy)} onClick={() => void saveProfile(true)}>Clear saved info</button>
 				</form>
 			</details>
 
@@ -194,7 +195,7 @@ export function PasswordSettings({ browser }: { browser: UserBrowserController }
 					const confirmingRemoval = removalConfirmation === entry.id;
 					return <article className="password-entry-card password-login-card" key={entry.id}><div className="password-entry-details"><strong>{entry.title}</strong><span>{entry.origin}</span>{editing ? <><label><span>Login name</span><input type="text" value={usernameDrafts[entry.id] ?? entry.username} onChange={(event) => setUsernameDrafts((drafts) => ({ ...drafts, [entry.id]: event.target.value }))} autoComplete="username" maxLength={500} spellCheck={false} /></label><label><span>New password</span><input type="password" value={password} onChange={(event) => setPasswordDrafts((drafts) => ({ ...drafts, [entry.id]: event.target.value }))} autoComplete="new-password" maxLength={4096} /><small>Leave blank to keep the current password.</small></label></> : <span>{entry.username || "No login name"}</span>}<small>Last used {displayDate(entry.lastUsedAt)} · Updated {displayDate(entry.updatedAt)}</small></div><div className="password-entry-actions">{editing ? <><button type="button" className="button quiet-action-link" onClick={() => void updateEntry(entry)} disabled={Boolean(busy) || ((usernameDrafts[entry.id] ?? entry.username) === entry.username && !password)}>{busy === `update-${entry.id}` ? "Updating…" : password ? "Update login and password" : "Update login"}</button><button type="button" className="button quiet-action-link" onClick={() => cancelEdit(entry)} disabled={Boolean(busy)}>Cancel</button></> : <button type="button" className="button quiet-action-link" onClick={() => { setEditingEntryId(entry.id); setPasswordDrafts((drafts) => ({ ...drafts, [entry.id]: "" })); }} disabled={Boolean(busy)}>Edit</button>}<button type="button" className="button quiet-action-link" onClick={() => void runPasswordAction(entry, "password-copy")} disabled={Boolean(busy)}>Copy password</button><button type="button" className="button quiet-action-link" onClick={() => void runPasswordAction(entry, "password-reveal")} disabled={Boolean(busy)}>Reveal</button>{confirmingRemoval ? <span className="password-remove-confirmation" role="group"><span>Remove this login?</span><button type="button" className="button quiet-action-link" onClick={() => setRemovalConfirmation(null)} disabled={Boolean(busy)}>Cancel</button><button type="button" className="button quiet-action-link danger" onClick={() => void removeEntry(entry)} disabled={Boolean(busy)}>{busy === `remove-${entry.id}` ? "Removing…" : "Remove"}</button></span> : <button type="button" className="button quiet-action-link danger" onClick={() => setRemovalConfirmation(entry.id)} disabled={Boolean(busy)}>Remove</button>}</div></article>;
 				})}
-				<details className="password-entry-card password-add-card"><summary>Add a saved login</summary><p>Save a login for an exact HTTPS site. Kestrel asks for local device verification before it writes the password.</p><form className="password-add-form" onSubmit={(event) => { event.preventDefault(); void addEntry(); }}><label><span>Website</span><input type="url" value={addOrigin} onChange={(event) => setAddOrigin(event.target.value)} placeholder="https://example.com" autoComplete="url" required /></label><label><span>Login name</span><input type="text" value={addUsername} onChange={(event) => setAddUsername(event.target.value)} autoComplete="username" maxLength={500} /></label><label><span>Password</span><input type="password" value={addPassword} onChange={(event) => setAddPassword(event.target.value)} autoComplete="new-password" maxLength={4096} required /></label><button type="submit" disabled={Boolean(busy) || !addOrigin || !addPassword}>{busy === "add" ? "Adding…" : "Add login"}</button></form></details>
+				<details className="password-entry-card password-add-card"><summary>Add a saved login</summary><p>Save a login for an exact HTTPS site. Kestrel asks for local device verification before it writes the password.</p><form className="password-add-form" onSubmit={(event) => { event.preventDefault(); void addEntry(); }}><label><span>Website</span><input type="url" value={addOrigin} onChange={(event) => setAddOrigin(event.target.value)} placeholder="https://example.com" autoComplete="url" required /></label><label><span>Login name</span><input type="text" value={addUsername} onChange={(event) => setAddUsername(event.target.value)} autoComplete="username" maxLength={500} /></label><label><span>Password</span><input type="password" value={addPassword} onChange={(event) => setAddPassword(event.target.value)} autoComplete="new-password" maxLength={4096} required /></label><button type="submit" className="button primary" disabled={Boolean(busy) || !addOrigin || !addPassword}>{busy === "add" ? "Adding…" : "Add login"}</button></form></details>
 			</div>
 			<div className="password-entry-list" aria-labelledby="never-save-title"><h3 id="never-save-title">Never save passwords for</h3>{settings.neverSavePasswordOrigins.length === 0 ? <span className="password-empty-state">No exceptions. Use “Never for this site” from a save prompt to add one.</span> : settings.neverSavePasswordOrigins.map((origin) => <div className="password-entry-card" key={origin}><span>{origin}</span><button type="button" className="button quiet-action-link" onClick={() => void removeNeverSaveOrigin(origin)} disabled={Boolean(busy)}>Remove</button></div>)}</div>
 			<p className="password-settings-footnote">Saved passwords are never shared with the agent.</p>

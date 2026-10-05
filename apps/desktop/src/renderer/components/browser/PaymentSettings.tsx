@@ -74,7 +74,10 @@ export function PaymentSettings({
 				</h2>
 			</header>
 
-			<div className="setting-row browser-setting-row payment-autofill-toggle">
+			<div
+				className="setting-row browser-setting-row payment-autofill-toggle"
+				id="setting-browser-payment-autofill"
+			>
 				<div className="browser-setting-copy">
 					<strong>Offer payment card autofill</strong>
 					<p>Kestrel only offers cards on HTTPS pages and never fills until you choose.</p>

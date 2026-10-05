@@ -30,6 +30,28 @@ function download(id: string, status: "completed" | "progressing") {
 describe("isolated browser origin policy", () => {
 	const allowed = new Set(["https://example.test"]);
 
+	it.each([
+		"ftp://example.test/file",
+		"ws://example.test/socket",
+		"wss://example.test/socket",
+		"vbscript:msgbox(1)",
+		"javascript:alert(1)",
+		"file:///tmp/owned-browser-policy-fixture",
+		"data:text/html,owned-browser-policy-fixture",
+		"kestrel://settings",
+	])("rejects unsupported schemes even if an origin was supplied (%s)", (value) => {
+		const origin = new URL(value).origin;
+		expect(isolatedBrowserShouldCancelRequest(value, new Set([origin]))).toBe(true);
+	});
+
+	it("retains explicit loopback HTTP and denies lookalike HTTPS origins", () => {
+		expect(isolatedBrowserShouldCancelRequest("http://127.0.0.1:64123/task", new Set(["http://127.0.0.1:64123"]))).toBe(false);
+		expect(isolatedBrowserShouldCancelRequest("https://example.test.evil.test/task", allowed)).toBe(true);
+		expect(isolatedBrowserShouldCancelRequest("https://example.test:444/task", allowed)).toBe(true);
+		expect(isolatedBrowserShouldCancelRequest("blob:null/owned", new Set(["null"]))).toBe(true);
+		expect(isolatedBrowserShouldCancelRequest("not a URL", allowed)).toBe(true);
+	});
+
 	it("cancels opaque and unallowlisted navigations, including data and blob holes", () => {
 		expect(
 			isolatedBrowserShouldCancelRequest("https://example.test/app", allowed),
@@ -113,7 +135,7 @@ describe("Electron browser action cancellation", () => {
 				},
 				signal,
 			),
-		).rejects.toThrow("Whole-desktop computer use is disabled");
+		).rejects.toThrow("Targetless desktop input is unavailable");
 		expect(service.isComputerUseEnabled()).toBe(false);
 
 		service.setComputerUseEnabled(true);

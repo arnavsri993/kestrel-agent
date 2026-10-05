@@ -1,0 +1,1095 @@
+# Release usability integration audit — 2026-10-02
+
+This branch combines the frozen latest open pull-request heads on main `3e93235839b44dcc64643d37f6359a825c25be6e`. It preserves user profiles and the current Keychain/encryption defaults. GitHub pull requests are left unmerged for review.
+
+## Latest checkpoint
+
+Clean `30ec52eb464a0ff056cb1d04bcfb2ce96d675005` passes both complete CI jobs
+and all four CodeQL checks. Its packaged development artifact matches clean
+source manifests, independent hashes and deep signature verification. This
+includes the Writing Studio simplification and repaired headless fixture.
+The installed app is still the independently verified `1fabf938` candidate at
+this source checkpoint; macOS is now unlocked and its refresh can proceed.
+
+The current visual follow-up replaces developer terminology in Activity and
+Approvals with direct explanations, removes a second divider above empty route
+content, and keeps library action labels on one line with a bounded 16px icon.
+Owned checks of the actual components/styles pass 15 route/viewport states with
+zero renderer errors or document overflow. Canonical and new-head remote proof
+remain separate from those source checks and will be recorded in PR #812.
+
+## Earlier installed checkpoints
+
+Clean `3ef9b330d1cf2b8ae8e85285608559576f256dca` was installed at `/Applications/Kestrel.app` with independently verified application/core provenance, hashes and deep ad-hoc signature. All five installed persistent-agent, fresh/returning-persona, 157-state surface, approval and smoke checks passed. Native relaunch retained the real profile and the owned browser-task answer, showed the readable completion action, and verified restored scoped agent history, one source search and unchanged-viewer reselection. Model and reasoning remain Auto with zero manual choices, only Codex endpoints enabled, zero local endpoints and all seven other provider groups disabled. All four exact-head CodeQL analyses passed with zero results; CI and required review remain separate gates. The current AI security reviewer failed with its HTTP 402 monthly-quota response.
+
+Switching native Memory from an agent to You exposed a separate real-profile loading failure: a daily aggregate can contain more source references than the schema's 500-reference document limit. The service already returns at most 2,000 events, each with an event ID and optional source ID. The daily response now permits their complete bounded set of up to 4,000 references. Individual document and stored-summary limits remain unchanged, and no profile data is modified or removed. The new encrypted-database IPC regression fails on the preceding schema and passes after the fix, retaining Notes, all 2,000 returned events and their 4,000 references, the existing truncation signal, unrelated-agent isolation and rejection above the bound. Fifteen focused Memory tests, all 1,983 unit tests in 260 files, workspace type checking and the production secret scan pass. Canonical delivery and visible verification of this schema revision remain pending at this source checkpoint.
+
+Clean `560e05358bcce35f46a0102a6928257e657942c0` was subsequently installed at the canonical path and independently verified against application/core provenance, streamed hashes and deep ad-hoc signature. Its installed persistent-agent, 157-state surface and smoke checks passed. Native Notes loaded all 45 existing notes in the formerly failing user view. Both exact-head CI jobs and all four CodeQL jobs passed; their four actual analyses returned zero results and the PR-ref open-alert inventory was empty. The separate default-branch inventory contains 29 open alerts on `3e932358`; those remain a security-review boundary, not an empty repository finding set. The AI security review remained HTTP-402 quota blocked, and required human review remains outstanding.
+
+A fresh real-profile custom persistent agent with no project ran one actual `orchestration.delegate` call under Codex-only Auto, with no supplied model or reasoning override. Its text-only child had an explicit empty tool and resource scope, showed Completed, made one model call and returned the exact synthetic nonce and five lines distinguishing planned, reported and verified checks. The parent made two model calls, returned the same result and showed one verified typed receipt. No browser/file/connector work was requested. The native receipt exposed a misleading automation-schedule destination and a long description used as an action title. Delegation now uses a short readable title and the actual delegated-task destination; model-facing descriptions, scopes, evidence and approval rules are retained. Existing automation receipts keep their schedule destination.
+
+Native Recent activity also labeled a seven-day query while showing historical point events. Both database list and nonempty lexical-search paths treated a missing end time as ongoing forever. They now use the start time for point events, retaining the existing overlapping-interval and boundary semantics. Regressions check old/start/end points, overlaps, start-only/bounded/end-only list and search paths, and Memory's actual IPC period projection without rewriting original timestamps. Genuine intervals retain their original start-day grouping, preserving summary fingerprints and save validation. All 1,989 unit tests in 261 files and the 78-test focused suite pass. A missing ID in the new renderer test initially failed desktop type checking; the corrected test passes the final desktop type check and 26 affected tests, while the preceding workspace run passed every other package. Production-secret scanning and diff checking pass. Clean `516e5ce64731b9d933b9146a8449f55ea2e5e7d3` was subsequently installed at `/Applications/Kestrel.app`, with matching application/core provenance, independently streamed hashes and deep ad-hoc signature verification. Its installed persistent-agent fixture passes. The first surface run closed its fixture window at Passwords (156/157, zero renderer errors); its unchanged repeat passes all 157 states, and a separate installed smoke passes. Both results remain recorded, without a confirmed product cause. Native relaunch preserved the existing profile, loaded 47 Notes, and the personal recent-activity period now contains six days from September 28 through October 3 rather than the preceding historical point events. A fresh native Auto task completed one actual text-only child delegation with no model or reasoning override; the child made one call and both conversations showed the expected nonce and planned/reported/verified distinctions. Its verified receipt now reads Delegate task with Delegated Kestrel task as its destination. Both exact-head CI jobs and all four actual CodeQL analyses pass with zero diff-scoped PR results. The AI security reviewer remains HTTP-402 quota blocked, and required review remains outstanding. Current native Settings confirms Auto, no manual model or reasoning choices, Best quality, Codex as the sole available provider, 40 configured endpoints, zero local endpoints, all seven other provider groups disabled and zero alternate subscriptions enabled.
+
+### Earlier checkpoint
+
+Clean `e91fed2d28ce60dc5d564aa61ca01a4cf18a6591` was installed at the canonical path, independently checked against its application/core provenance hashes, and passed deep signature verification and installed smoke. A normal relaunch showed the existing profile in the new canonical process. All seven exact-head remote checks passed; the desktop job needed one rerun after an installation socket error before package-manager output. The downloader dependency repair passed the full audit with zero known advisories and both independent cold-download checks. Required review remains outstanding.
+
+The stricter repeat of the genuine two-page task on `e91fed2d` failed its complete exact-code-line assertion. The model performed the approved click, retained the nonces and computed the correct comparison, but mislabelled the code lines. That failed evidence is preserved and the acceptance checks are unchanged. A separate real-profile task against an owned disposable page exposed premature passive narration: it said the button had been clicked while that action still awaited approval. The owned server recorded no reveal request. That task was stopped after the disposable server became unavailable; it is not a completed browser-task pass.
+
+This revision checks those passive click claims before tool-bearing assistant messages enter conversation history or the next model turn. Explicit local browser-capable turns, including the final turn, withhold text deltas until the complete response can be checked. The requested tool call and approval boundary remain intact. Regression tests verify both approval and rejection, no execution before approval, one execution after approval, preserved turn limits, corrected model history and no premature streamed text. This is a bounded click-claim check, not general verification of arbitrary model statements.
+
+The approval card keeps the protected action preview visible and presents the two one-time choices together. Native disclosures hold persistent choices and technical policy/route/input details. The persistent-choice explanation states the actual conversation and tool scope, including different inputs; protected actions still omit persistent allow. Workspace type checking, 1,934 unit tests, the refreshed 84-test focused suite, full dependency audit, production secret scan, source protected-task-credential and formatted-answer/tool-result fixtures pass. The approval fixture verifies 1440/1000px containment, Enter/Space disclosure, visible focus, exact input and scope, failed-action recovery and no stale replay. The broader layout fixture initially timed out closing Chat with zero renderer errors; an unchanged full repeat passed all original geometry, focus, Escape, native-isolation and 200% zoom assertions. Both results are preserved; that transient failure has no confirmed cause.
+
+Clean `ec52a2f15714b1ba83ab1303c5f08433d14b5df6` was installed at the canonical path, with independent application/core provenance hash checks and deep signature verification. All seven sequential installed checks passed: approval recovery, 143/143 audited surfaces with zero renderer errors, workflow saving/review, formatted answers/tool results, full layout, smoke and protected task credentials. Core/security, website and all CodeQL checks passed remotely. The desktop job stopped in the source persona test because its legacy `Privacy` label no longer matched `Permissions & sandbox`; it did not reach this head's packaged stages. The helper now maps that label to the current section, and the full fresh/returning persona test passes locally with destination, focus, reduced motion and compact/wide assertions retained. Latest-head remote verification remains required.
+
+The new genuine local two-page run was stopped at the user's request and has no passing acceptance result. The owned generation was cancelled and Ollama reported no loaded models afterward. Further genuine checks use OpenAI/Codex; the real-profile Agent selector visibly retained GPT-6.1-Sol after closing the picker. A selected provider is not a successful live task or a current-running-build claim.
+
+A separate installed regression reproduced a task whose picker showed `Conversation only` but whose backend session still carried the inherited project and file root. Draft project identity and workspace now change together, metadata refreshes preserve the person's choice, and prefilled submissions capture their intended scope. An unavailable inherited folder remains visibly marked instead of showing a misleading empty choice; files are unavailable until a usable scope is chosen. The new isolated desktop fixture submits real core tasks through a deterministic HTTP provider and verifies conversation-only defaults, metadata refresh, explicit project binding, unavailable-folder display and removal of inherited scope, with zero renderer/provider errors and no real model generation. Workspace type checking, the 91-test focused suite, production secret scan and protected-task-credential fixture pass. The full project-system fixture also passes hierarchy, reassignment, non-destructive removal and reload checks. Its browser navigation measurement now explicitly closes Chat, waits for the collapsed panel and restores the actual viewport; the original label and short-window reachability assertions are retained. The initial compact-Chat and clipped-child fixture failures are preserved. These source changes still require a clean canonical refresh and latest-head remote checks.
+
+Clean `54b7eb716076841883467382617c6ebc7c225fc4` was subsequently installed at `/Applications/Kestrel.app`; independent application/core provenance hashes matched and deep signature verification passed. Installed task scope, personas, approvals, 143/143 surfaces, workflow reuse and formatted tool results passed. The installed layout check failed its interruption assertion, while remote core/security and all CodeQL analyses passed and packaged layout failed the compact keyboard-focus loop. A normal quit/reopen then launched the updated canonical process with the existing profile. A genuine OpenAI/Codex GPT-6.1-Sol / Medium Agent-tab task completed an owned two-page comparison, returning both exact headings, complete labelled page-only codes, observed URLs, the cheaper page and the correct sum. Four protected actions were approved once and verified; eight receipt entries included their historical pending states. The isolated session was restricted to the owned origin. The owned server recorded one reveal click and no request to the embedded forged redirect. This is one bounded genuine task pass. Local generation remained stopped and Ollama reported no loaded models.
+
+The delayed opening-focus regression reproduced focus theft in installed `54b7eb71`: after the last Chat control received focus, the queued opening callback moved it to the composer. The callback now preserves focus already moved by the compact dialog or the person, in both browser and Agent-tab Chat. The full source layout test passes the delayed-callback regression, forward/backward focus loop, Escape, native browser isolation and minimum-width 200% zoom. The motion fixture now activates the same toggle handler on in-flight renderer frames, following a native initial click, and checks both sides of each reversal. It retains endpoint, continuity and presented/rendered width assertions and additionally requires both interruptions to occur before their springs finish.
+
+Action receipts now show one current result for explicitly linked approval/execution calls, with earlier recorded states in a closed keyboard-accessible history disclosure. Grouping uses matching session, run, tool and execution call identity; repeated calls and missing or mismatched identities remain separate. Raw receipts, approval authority and verification selection are unchanged. All 1,939 unit tests in 258 files, the 29-test focused suite, production secret scan, desktop type checking/build and source approval, layout and formatted-tool-result fixtures pass. The approval fixture covers a visible uncertain result, retired consumed grant, a genuinely executed synthetic browser creation, one current verified action, preserved raw waiting/verified receipts, keyboard history and desktop/compact containment. Its provider is deterministic HTTP and invokes no real model. This revision still requires clean canonical delivery and exact-head remote checks.
+
+Clean `b8b1dd7aee3dd18d6904348d08fa726d542b45f3` was installed at the canonical path with independent application/core provenance hashes and deep signature verification. A normal quit/reopen launched the updated canonical process and retained the existing profile. The earlier completed genuine task visibly shows four current actions with preserved history. At the user's request, the real-profile UI now leaves model and reasoning on Auto, with Best quality routing and only Codex enabled. The provider picker exposes only Codex; Settings reports 40 configured endpoints, zero local endpoints, all seven non-Codex provider groups disabled and no alternate vendor-subscription route enabled. Those preferences persisted after restart. Credentials and profiles were preserved. This verifies configuration and visible delivery; it does not yet verify a genuine automatically selected task.
+
+Exact-head remote CodeQL checks passed on `b8b1dd7a`, while core CI stopped on a stale exact JSX audit marker and desktop CI timed out looking for Find in page in the first newly emitted window. The repository-mode market gate now expects the receipt component's execution prop and passes. The browser fixture identifies the Find renderer by its route and active tab, retaining focus, next/previous match, no-match, disabled-control, Escape and page-return assertions. An unchanged full installed browser journey passed before this fixture repair. The first source run with the targeted window selection passed Find, then failed the later inactive-tab hover-preview assertion; its owned screenshot and window diagnostics are preserved. The hover fixture now explicitly verifies the native owner is foregrounded, matching the production preview's existing focus requirement, and failure diagnostics include window focus, bounds and cursor position. The next source run again passed Find and stopped at that explicit focus precondition. Native UI control independently reported that the Mac was locked and could not automatically unlock it. Full foreground-dependent local verification needs manual unlock; the original CI Find timeout still has no confirmed root cause, and latest-head remote results remain required.
+
+Clean `3f4001f6e293fa52d4d2233eea3f697171b4ed5f` was installed at the canonical path with independently matched application/core hashes and deep signature verification. Its installed task-scope and fresh/returning persona checks passed. The approval fixture then failed because its unscoped final-answer locator matched both the persisted answer and the transient streaming preview. The fixture now selects the persisted assistant message and waits for the preview to leave before measuring final receipts; its full installed run passes, retaining the original recovery, no-replay, raw-receipt, keyboard-history and containment assertions. The original failure remains preserved. Real-profile relaunch remains pending manual Mac unlock.
+
+Exact-head `3f4001f6` remote core/security, website and CodeQL checks passed. Its full source browser journey passed, including Find and hover/tear-off. Desktop CI subsequently stopped because the provider iframe callback was not observed. The auth fixture had waited only for the iframe's URL to commit before clicking. It now waits for its button and callback handlers to be ready, still dispatches the same native click, requires exactly one trusted click, and records bounded owned-frame diagnostics if the callback fails. The full local source auth flow passes with POST/redirect, opener, close, consent, default-policy and foreign-frame denial assertions retained. This verifies the stronger fixture precondition; the original remote callback failure has no confirmed root cause, and latest-head remote verification remains required. CI now uploads the owned browser-failure diagnostic directory alongside the existing bounded evidence.
+
+All seven exact-head remote checks passed on `e564afc071e613922e87610b2eaa5a07d7d1bdde`, including the full source/packaged arm64 desktop job, core/security, website and CodeQL. The installed `3f4001f6` checks ultimately passed all nine individual stages after the approval selector correction: task scope, personas, approval recovery, 143/143 surfaces with zero renderer errors, workflow reuse, formatted tool results, full layout, smoke and protected task credentials. The original failed run remains preserved. Clean `e564afc0` was installed with independent application/core hashes and deep signature verification, and its installed smoke passed. A normal native quit/reopen launched the new canonical process, retained the profile, and verified that model/reasoning Auto, Best quality, only Codex, 40 configured endpoints, zero local endpoints, seven disabled non-Codex groups and zero alternate subscriptions persisted.
+
+The first genuine Auto-selected Agent-tab task on `e564afc0` received three exact Allow once approvals for an origin-restricted isolated browser session and its two owned page navigations. The owned server recorded both page requests and no forged redirect. The Mac locked again before the reveal click or final answer could be verified; the server recorded no reveal request. This is an incomplete genuine Auto task, not a completion pass. No model or reasoning level was manually selected.
+
+That live flow exposed raw tool names in everyday request, progress and approval copy. The renderer now uses plain action titles for those generated labels. Only the exact tool-only fallback backed by matching recorded model calls is translated; ordinary text, exact final answers, raw messages, call arguments, message anchors and trace details remain unchanged. Title lookup uses own properties so unknown names such as `__proto__` cannot resolve an inherited object or function. The three inherited-name regression cases failed before that guard and pass afterward. The 47-test focused presentation/evidence suite, desktop type checking/build, repository-mode market gate, production secret scan and full source approval, formatted-tool-result and layout fixtures pass. These presentation changes still require clean canonical delivery and latest-head remote/visible verification.
+
+Clean `f26da0bdae99b69786367de87ca2aab7a4f80c80` subsequently passed all seven exact-head remote checks, canonical application/core hash checks, deep signature verification and four sequential installed checks (approval recovery, formatted tool results, layout and smoke). A normal native restart retained the real profile, plain action labels and the completed two-page Auto task. Settings still showed model/reasoning Auto, Best quality, only Codex, 40 configured endpoints, zero local endpoints, seven disabled non-Codex provider groups and zero alternate subscriptions. No manual model or effort override was used.
+
+After the Mac was unlocked, the owned two-page Auto task completed with the exact full verification lines, observed URLs, the correct cheaper page and total, one reveal request and zero injected outside requests. Its five one-time approvals included an unnecessary final return to the first page after the initial correct answer. A fresh genuine task on the normally running `f26da0bd` also returned the exact heading, full verification line and URL with one page request and zero outside requests, but appended a second answer. Native inspection of its independent review confirmed the reviewer received only the answer, then failed because browser inspection was unavailable. These bounded tasks passed their content and containment checks; the redundant review/rework remained an actual product defect.
+
+This revision supplies the independent reviewer with the original user message bound to the encrypted run baseline and bounded canonical observations from that session and run. Redaction precedes clipping and model-result compaction; raw tool inputs, unrelated history, transient computer screenshots and withheld protected output are excluded. Truncation and omitted observations remain explicit, failed executions remain failed, and the reviewer receives no additional tools. A trusted review description drives Auto routing separately from quoted task/page evidence, so that evidence cannot reclassify the review or alter the routing policy. The reproduced missing-context regression now passes, including approval resume, while existing rejection, exhausted-budget and unavailable-review behavior remains intact. The 119-test focused suite, all 1,963 unit tests in 259 files, workspace type checking, source-ingestion benchmark, dependency audit, settings/reference/market gates, builds, sidecar/native-extension checks, 50/50 browser benchmark and 58 website end-to-end cases pass. Clean canonical delivery, genuine installed review and latest-head remote checks remain separate pending gates for this revision.
+
+The broad verification initially stopped in the UI-consistency fixture waiting for a generic new-window event during Find. Its original log and owned failure screenshot remain preserved. The fixture now targets the known main renderer window for resizing and commands, and waits for the Find renderer bound to the active tab. It retains the viewport/bounds, keyboard, query selection, IPC denial and tab-switch assertions, and records a fresh partial report on failure instead of leaving only an old successful report. The full revised fixture passes 40 route/viewport combinations and 22 settings sections with zero renderer errors; its owned vertical and compact Find screenshots were visually inspected. All 32 subsequent verification stages also pass sequentially, including browser/autofill, onboarding, recovery, workflows, personas, model/provider routes, auth/subscription safety, approvals, task scope, tool results, protected credentials, managed policy, packaged CLI, editors and production secret scanning. This is verified coverage across a resumed sequence, not an uninterrupted passing `pnpm verify`; the first Find timeout still has no confirmed root cause.
+
+
+Clean `443e5022687e68b8d2bd166556f93f4a28744486` was installed at `/Applications/Kestrel.app` and independently verified against application/core provenance and hashes; deep ad-hoc signature verification passed. Six sequential installed checks passed: task scope, approval, formatted tool results, protected task credentials, full layout and smoke. A normal native quit/reopen replaced the old process with the canonical executable and retained the existing profile and prior owned tasks. Both exact-head remote CI jobs and all four actual CodeQL analyses passed. Required review remains outstanding; the separate Advanced Security AI reviewer failed with its external HTTP 402 monthly-quota response.
+
+A fresh genuine Agent-tab task on that exact installed head used Auto with no model or effort override. It created an isolated session for an owned disposable origin, navigated and read the page after two exact one-time approvals, and returned exactly one answer with the expected heading, complete unpredictable Verification line and observed URL. The independent reviewer visibly returned `VERDICT: PASS` from the recorded snapshot and requested no additional tool. The owned server received exactly one page request and zero outside requests despite the page's fake instruction to switch to local models and visit another path. The reviewer correctly stated that a creation result containing only a session ID does not independently prove enforced origin isolation; installed task-scope evidence is separate. Current native Settings confirms Best quality, only five Codex accounts with eight models each, 40 endpoints, zero local endpoints, seven other provider groups disabled and zero alternate subscriptions enabled. Profiles, protected credentials and user choices remain intact.
+
+The same native inspection found older delegated chats filling the Agents list and browser approvals leading with JSON session identifiers. This revision folds delegated chats into a closed keyboard-accessible disclosure while preserving visible running, waiting and failed work. Searches reveal matching tasks directly without moving typing focus. Completed delegated runs use their recorded run status instead of the still-open conversation status. Browser creation/navigation approvals now show a plain description and every exact allowed origin or complete page URL; known protected preview content takes precedence over invocation arguments, and malformed previews, unknown fields or other tool types retain their existing full display. URLs remain inert text. Exact inputs, protected previews, policy and one-time approval authority remain inspectable; no execution, scope or persistent approval policy is changed.
+
+The installed pre-change build failed the new browser-preview assertion. The revision passes 38 focused tests, desktop type checking/build, production secret scanning, repository market checks and the full source UI consistency fixture (40 route/viewport combinations, 22 settings sections, no renderer errors). The source approval fixture passes complete allowed-origin display, exact raw input, Enter/Space disclosure, compact containment, protected persistent-approval exclusion, failed-action recovery and stale-replay denial. Desktop/compact owned screenshots were visually inspected. Genuine delivery of this latest UI revision is still pending; the `443e5022` genuine task is evidence for the preceding core fix.
+
+
+### Agents controls and Map fit — 2026-10-03
+
+Clean `cd96eb043330398c251d97417d035f90bde7a939` was subsequently installed and verified at the canonical path. Native inspection confirmed folded delegated history, keyboard collapse, direct search results and Auto with no model or effort override. A fresh genuine Codex-only Auto task showed exact plain origin/URL approval previews, preserved inspectable raw scope, returned one exact answer and received a grounded independent `VERDICT: PASS`. Its owned server received one page request and zero outside requests. Both CI jobs and all four actual CodeQL analyses passed on that exact head; the separate AI security service remained HTTP-402 quota blocked.
+
+The next native inspection found seven Agents controls wrapping into three rows and a raw `browser.navigate` completion label. Creation stays visible while a keyboard-accessible More options disclosure holds All work, agent settings and Open/Close Chat. Search and List/Map share a second row; the 544px split workspace now uses a 108px header instead of the previous 147px. Enter/Space, Tab, Escape, focus return, outside dismissal, command destinations and compact icons are checked at 1440/760/400px. Agent creation remains bounded to its workspace and dismisses when another header control opens. Verified actions use the existing readable tool title; the Activity link still highlights the exact recorded execution.
+
+Visual review also caught compact Map search covering the selected agent title. The existing positioning observer now watches the header, reserves its actual height and bounds panel height so its title and message field remain visible. The map identity keeps its intrinsic width. Owned Map, creation, split-header and narrow-menu screenshots were inspected. The final source checks pass 1,982 tests in 260 files, desktop type checking/build, production secret scanning, 40 route/viewport combinations with all 22 Settings sections and zero renderer errors, approval recovery with the exact Activity handoff, and 145 registered surface states including Map title/composer containment. The full browser fixture also passes after explicitly activating its own application before the existing foreground-focus check. Its preceding focus failure and diagnostics remain recorded; no confirmed product cause is claimed. The earlier interrupted audit used the old direct All work entry point; it now opens More options before asserting the same Work destination. Validation was resumed across these recorded checks.
+
+Clean canonical delivery, the updated persistent-agent fixture and exact-head remote checks are separate pending gates at this source checkpoint. Model and reasoning remain Auto, only Codex is enabled, and no real local model generation is requested.
+
+
+### Agent history and scope resilience — 2026-10-03
+
+Clean `3678f8d8ef015ad4ed58b64552e056c23429d992` was installed at the canonical path with independently checked application/core provenance, hashes and deep ad-hoc signature. Its installed approval, UI consistency and 145-state surface checks passed. The new persistent-agent check stopped at the old scoped-memory heading: the current Memory page had no reachable path to the existing agent source history, work history, scoped people/calendar or recovery controls. This is a product visibility regression, not a provider failure.
+
+Memory now offers Agent history under More only for a selected agent returned by the workspace's viewer catalog. Notes remains the default. Changing viewer leaves history, removes the old scoped component and restores the domain filter. History uses all domains and disables that filter rather than implying a domain restriction the scoped history APIs do not enforce. Knowledge and Work history have their own visible search; Sources retains only its source search. Knowledge backup/recovery stays collapsed below Knowledge, and the embedded heading uses compact spacing.
+
+The expanded audit reproduced a blank workspace after reselecting the same viewer: the handler cleared loaded data without changing state, so no new load ran. Ten history states failed in that original 157-state run. The handler now ignores unchanged selections, with a persistent-fixture regression that requires the same viewer's content and controls to remain available. The failure manifest and images are retained.
+
+The revised packaged candidate passes the full persistent-agent fixture: Robotics creation with eight specialists, specialist archive/restore, encrypted standalone-knowledge recovery, viewer changes without new tabs or stale history, source ingestion/search with model processing disabled, queued work, observed people, scoped calendar, access revocation, dedicated WhatsApp partition and detached-tab quit/restart. Live WhatsApp linking/capture is not claimed. The first resumed attempt stopped at a closed Connections scope disclosure; the fixture now opens that disclosure, Agent permissions and the WhatsApp app disclosure before checking the same original operations. It passes all 157 registered surface states with zero renderer errors, the full 40-route/viewport and 22-section Settings consistency audit, all 1,982 unit tests in 260 files, desktop type checking/build, production secret scanning and the repository market gate. Owned desktop/compact history and persistence screenshots were inspected. Recovery and queued-observation evidence scrolls the actual controls into view.
+
+Remote `3678f8d8` core/website/security and all four CodeQL analyses passed; its desktop job stopped at Command Center Tab focus in the returning-user persona. The unchanged fixture passes locally. The revised fixture activates its own native window, verifies native and DOM focus before the original Tab assertion, and retains bounded before/after or failure diagnostics. Source fresh/returning personas pass with that prerequisite; latest-head remote confirmation is still required. CI now uploads the fixture's fresh owned evidence directory. The preceding failure is retained, and no confirmed product cause is claimed.
+
+Clean canonical delivery, visible real-profile verification and exact-head remote checks remain separate pending gates at this source checkpoint. Model and reasoning remain Auto with only Codex enabled. A read-only local status check found no Ollama/llama process and no listener at the normal Ollama status endpoint; no local generation was requested.
+
+## Source disposition
+
+| PR | Exact head | Local disposition |
+| --- | --- | --- |
+| #782 | `7ff953c17385aeaf2bc68afc482568afb0a51201` | Excluded: weakens default credential storage |
+| #783 | `4c9fc1b4ae3fdd4d523da2ce92ce4273806ede46` | Integrated locally |
+| #785 | `b1a10d9f827392d87345f7716db484fb6785d083` | Integrated locally |
+| #786 | `7b6d8a549c8c8bf9721d9a30d3e463fd2eac38bc` | Integrated locally |
+| #787 | `ac094a74997c6a5b7845b49fd8d72753de5ab34d` | Integrated locally |
+| #789 | `8da28a2a3e5c0e8bd2dac00199c8c841b3806814` | Integrated locally |
+| #790 | `2d619d5d7b0e02e501fdcd0068c14b8fe050f916` | Integrated locally |
+| #792 | `b8f1013cee68df16bc1d5541929e40e1015837ac` | Integrated locally |
+| #793 | `ff6c50573707fae70245cbf3be2e3af726619383` | Integrated locally |
+| #795 | `5bd91d31e192e33a286dcce2365d986782810bf3` | Integrated locally |
+| #796 | `a11ff7f7b71c1d21f4c03c8e0e19cede2c3ca4c7` | Integrated locally |
+| #798 | `f42200a586775aea9b0ec347baef246aacd607d4` | Integrated locally |
+| #800 | `db6ec1f8b348367eb16aca8b2c8f1baac75468a7` | Integrated locally |
+| #802 | `424a6b5a98542f5c22e25f9c22621891f8fe79d3` | Integrated locally |
+| #804 | `e2a25df4107e030c3cf4f4ae3ef6a942c0df3c64` | Integrated locally |
+| #807 | `bd02efabb029617bcbbe44f052837ef1ab01c6a4` | Integrated locally |
+| #810 | `824e94a922b2ea277ea112d29c8c8cf2f9a3cdbf` | Integrated locally |
+| #811 | `0199c48f935692c28c5a525b4c58ec66b4cb68a4` | Integrated locally |
+
+## Usability changes
+
+- Agents opens as a searchable list with names, status, settings, and delegated tasks; Map remains optional.
+- Agent controls respond to the workspace's available width when navigation and Chat are open. The header and list occupy separate grid rows instead of relying on a fixed content offset.
+- Work reports the runtime's task state without deriving percentage completion from a status label.
+- Compact Chat uses one readable workspace with Close, Escape, focus restoration, and a protected background. Navigation reveals the destination.
+- Memory follows available container width and gives viewer/domain controls stable accessible names.
+- Address-bar edits survive refocusing, and Command Center only consumes Escape inside its own surface. Action menus use an opaque material so underlying page text cannot compete with their commands.
+- Computer observations are available transiently to the executing model while durable history and idempotent replay use redacted projections. Screenshots are supplied as bounded image parts only when the executing route supports them.
+- Text attachments are redacted as reference data before model input. Credential-like fields in a file do not allocate temporary task credentials or prevent an ordinary review task from starting; explicit message credentials still use protected task references.
+- Local Ollama tool calls and missing-ID OpenAI-compatible calls receive a fresh generation namespace. Corrected observations no longer reuse the idempotency key of a prior failed read. Built-in browser arguments are checked against their declared schemas before approval; rejected arguments include safe guidance for visible tab and isolated session IDs.
+- The macOS menus expose New Tab, New Task, Settings, browser history, and existing navigation commands. Packaged menus omit developer tools, and History uses Command-Y while Command-H retains the native Hide action.
+- Input-dependent suffix scans use a single backward pass; budget and numbered-list matching avoid overlapping whitespace scans. Provider connection timers stop when headers arrive, while a separate response deadline and caller cancellation continue to bound generation. Ollama generation has a bounded allowance for local model loading and prefill.
+- Canonical development installation supports an explicit full commit SHA with current-main ancestry, source/artifact integrity, owner, signature, channel, and downgrade checks.
+
+## Evidence and boundaries
+
+`pnpm audit:desktop-surfaces` writes fresh disposable-profile screenshots and a manifest to ignored `.tmp/release-surfaces/`. It covers the registered destinations, every actual Settings section, toolbar menus, and deeper stateful controls at desktop and compact widths. `pnpm verify` supplies the broader runtime, security, setup, browser, and packaged-CLI checks; a failing stage must be repaired or explicitly reported.
+
+The integration run passed the production dependency audit, workspace type checks, 1,855 unit tests, source ingestion and browser workflow benchmarks, static settings/reference/market audits, workspace build, Node core and sidecar checks, native Chromium MV3 extension flow, website end-to-end tests, and all source desktop stages through managed-policy, packaged-CLI, editors, and the production secret scan. Desktop stages ran sequentially; stale UI selectors and compact-overlay expectations were corrected while their behavioral/security assertions remained intact. Auth handoffs passed in isolation after an interrupted combined run.
+
+The attachment regression failed before repair; its 74-test focused suite and core type check passed afterward. Restart recovery then passed with the repaired build. The expanded surface audit passed **136/136 states with zero renderer errors**, covering registered pages, actual Settings sections, seven toolbar menus, search/list/map, compact Chat, specialist create/edit/archive/restore, Memory views/editor, Work sections, and Connections disclosure at desktop and compact widths. It also checks control containment, pairwise overlap, and list/header separation with navigation and Chat open. Follow-up unit suites passed 1,861 tests and then 1,864 tests; focused long-input, provider stream/deadline, and corrected-read tests cover the later repairs. The corrected Ollama read regression reproduced the cached failure before repair and passed afterward. A 220-test browser/runtime suite passed after the native menu changes. Source smoke verifies the actual native New Tab callback creates exactly one tab and focuses the address field, native Settings opens the expected screen, and packaged menus omit developer tools. The task-secret fixture uses an explicit desktop viewport so smaller CI displays do not hide the complete composer; its sandbox, fresh-approval, output-withholding, history and cleanup assertions remain intact. Screenshots and the manifest remain local ignored fixtures. Packaged, canonical, real-agent and remote CI evidence must be recorded separately in the pull request; this document does not certify those pending gates.
+
+Source, disposable-profile UI, packaged signatures/hashes, canonical installation, real model runs, and remote CI are separate checks. Public distribution still requires the stable signed/notarized release workflow. A development install is not public-release certification or proof of comparative superiority over another product. Real provider login and sign-in handoffs require separate live evidence; synthetic handoff fixtures do not prove a provider will accept an embedded browser.
+
+The missing-ID OpenAI-compatible corrected-read regression also reproduced a cached failure before repair; afterward, 91 provider, HTTP and agent-loop tests passed with core type checking, desktop build, and source smoke. The browser fixture checks closed Chat's accessibility and full-width geometry instead of treating its hidden border as a docked rail. Its compact collapse, focus exclusion, persisted collapse and reopen checks pass at 1000px. The remaining simultaneous browser/Chat journey uses an explicit desktop width. Remote core CI, CodeQL, and the full desktop browser journey passed on `d966a2bf`, including native hover/detach and Command-Y History. That desktop job then exposed an autofill fixture clicking a hidden model picker. The fixture now explicitly opens Chat, scopes the picker, and closes compact Chat before using browser forms; its preload and desktop checks pass locally with the security/layout assertions preserved.
+
+A genuine installed-app Agent-tab task on product commit `97d1f80a` completed in a disposable profile using the existing local Ollama model and a browser-scoped personality. It opened one fresh local page with Allow once, performed a verified visible snapshot, and returned the exact heading, page-only nonce, and observed URL in three turns. Two verified receipts and zero renderer errors were recorded. A separate default-personality run with 86 tool definitions failed after 120 seconds before making a tool call; the scoped success does not certify that broader route. The real-profile canonical app still requires relaunch and a fresh task after the Mac is manually unlocked.
+
+That completed-task screenshot exposed raw accessibility JSON filling Chat and obscuring the answer. Tool results now use compact status rows with closed, bounded Details, visible failures/withholding, and friendly browser labels. Only verified results receive a success mark, and nonzero command exits remain failures. Chat follows new answers at the bottom, preserves an older-message review position and keyboard focus, and updates messages appended outside its own active stream. Compact Close now keeps its icon and label on one contained row. The new disposable renderer fixture covers both widths, keyboard expansion, error visibility, bounded scrolling, answer follow, real wheel-based review scrolling, and focus preservation. It is also part of source verification and packaged CI; fixture messages are renderer proof, not model-completion evidence. Focused component tests, desktop type checking/build, approval-failure and task-credential checks pass with the new rendering.
+
+Explicit local routes now receive a small initial catalog when more than 24 authorized tools are available and tool search is permitted. A verified focused search reveals up to eight matching definitions from the existing run ceiling on the next turn; previously used definitions survive approval resume. Search never grants access, changes policy, or approves execution. Scoped catalogs, automatic routing, and nonlocal routes retain their existing presentation. The discovery/approval/ceiling regressions and the configuration inspect/plan/apply/undo fixture pass, followed by all 1,880 unit tests (256 files) with two workers and workspace type checking. An earlier fully parallel test run timed out two deployment-policy fixtures under load; the bounded complete run passed their original assertions.
+
+The genuine default-personality Agent-tab run then completed a fresh local browser check in three turns: one Allow once, verified open and visible snapshot, exact heading, page-only nonce and observed URL, two receipts, zero renderer errors, about 162 seconds overall on this machine. Its authorized scope remained 86 tools while each model request received seven definitions (2,962 characters instead of the earlier 53,944). This is a measured catalog reduction and one completed task, not a general latency or comparative-performance guarantee. A diagnostic proxy forwarded only the disposable fixture's non-secret local-model requests to the existing loopback Ollama service. The fresh result still needs installed-package and real-profile verification. The setup fixture now closes compact Chat before asserting the navigation rail is visible; its five-step setup, route setup/recovery, OAuth-entry, reflow and Settings re-entry checks pass locally.
+
+That completed answer also displayed literal Markdown markers. Assistant answers now render headings, emphasis, lists, code and GFM tables with bounded code/table scrolling. Model HTML is skipped, image references remain text without fetching a remote image, and only explicit HTTP(S) links without embedded credentials become actionable. Keyboard activation opens through Kestrel's existing browser request; unsupported schemes remain text and failed navigation shows a bounded error. Component tests cover formatting and unsafe content, and the disposable chat fixture verifies the rendered answer, keyboard link, scrolling, focus and no image element. Protected execution remains immediately available when already authorized, so opaque task credentials do not depend on a discovery round trip; the fresh-approval/sandbox/withholding/history/cleanup check passes. Configuration inspect/plan/exact-approval/verified-apply/undo/restart also passes. Full validation after these changes passed 1,892 tests in 257 files, workspace type checking, the production dependency audit, desktop build and a new 136/136 source surface audit with zero renderer errors. Remote `d90ddb2a` exposed the earlier missing protected-tool definition; that failure remains recorded until latest-head CI verifies the repair.
+
+Clean `75a31dd8` was installed at the canonical path after a transient GitHub DNS failure correctly stopped the first replacement attempt. Installed application/core hashes match the manifest, and packaged smoke and formatted-answer checks pass. Its remote core/security job, CodeQL, browser/autofill/setup and task-secret checks pass; the desktop job then exposed a fresh-profile fixture accessing collapsed Chat. That fixture now explicitly opens Chat, closes its protected compact overlay before exercising the New Tab composer, and reopens Chat for guided setup. Its empty state, no-provider send blocking, model-free browsing and restart assertions pass at 1000px with `CI=1`.
+
+The genuine packaged click task on `75a31dd8` exposed a more consequential failure: run `run-3b9c6649-ea16-4249-a343-2707dcfa87d4` claimed a completed click after only verified reads; no click occurred and the page-only nonce stayed hidden. The local initial catalog now retains an already-authorized visible action. A bounded completion check rejects the reproduced first-person/executed-click claims after browser work unless this run contains a verified click, replaces the unsupported stored answer with a truthful error, and marks the run failed. Tests preserve honest limitations, quoted/code examples, same-run evidence and normal answers. This is a narrow evidence check, not a general truth verifier.
+
+A following real run attempted three clicks but serialized the nested action as a string; validation rejected all three before approval. That diagnostic run was stopped and its own disposable profile reopened only to recover the exact errors, then removed. Both browser action schemas now explicitly declare the object type, and local guidance shows a complete nested JSON argument. Strict validation, scope and approval remain intact. The browser test also exposed a verification-button page incorrectly offering login-code lookup; that helper now requires an editable field, retaining support for protected fields without exposing their metadata. History's browser-menu hint now matches Command-Y. Full validation passed 1,906 tests in 257 files and workspace type checking; the subsequent explicit-object schema/guidance change passed 87 focused tests, core type checking and desktop build. A fresh real browser action task and the next canonical candidate remain separate pending checks.
+
+The fresh source Agent-tab task then completed actual browser work using the existing local Ollama model: run `run-9ec74157-eb2f-458b-b202-d90037cbb455` opened the fixture page, observed it, and performed a verified visible click after two exact Allow once approvals. Its post-action observation revealed a new page-only nonce, which the final answer reproduced with the correct heading and observed URL. The run completed in four turns, about 100 seconds, with four receipts and zero renderer errors. The authorized ceiling remained 86 tools; the model received eight definitions (5,125 characters). The screenshot no longer showed the unrelated login-code helper. All twelve contact sheets covering the earlier 136-state audit were visually inspected; the receipt summary now counts receipts rather than calling blocked approval records completed consequential actions.
+
+Clean `b7a077589a1326dfffa9c16d3e4c9a7ffe23ae4a` was installed at `/Applications/Kestrel.app`; the recorded application and core hashes matched the clean provenance manifest. Its separate genuine packaged task, `run-e3e866a5-5cab-4c0d-b6f7-30a86d897c28`, failed the execution assertion: the model returned a plan ending with "Let's execute:" and the run stopped after one turn without any tool or page request. Source success does not erase that installed-package failure.
+
+An explicit local tool-capable route now gets one bounded continuation when its first answer ends with the reproduced unfinished execution marker. The continuation retains the original scope, approval policy, provider and turn budget, and explicitly preserves plan-only requests. A repeated unfinished marker or one returned at the final turn fails with a truthful stored error. Automatic and nonlocal routes are unchanged. This targeted marker check is not a general completion classifier. The focused continuation suite passed 77 tests, followed by all 1,917 tests in 257 files, workspace type checking and desktop build. Sequential source fresh-profile, approval-failure, task-secret and auth-link fixtures passed; fresh approval, sandboxing, withholding, sanitized history and bounded cleanup remain verified separately from a genuine model completion.
+
+Remote core/security and every CodeQL analysis passed on `b7a07758`; the desktop job failed after the iframe callback arrived because the popup did not restore its opener. The auth fixture now closes Chat before native browser gesture tests so the page is visible on compact displays, and records disposable tab state if opener restoration fails. The full local auth fixture passes with its original security assertions intact. Page visibility is a plausible precondition behind the CI failure, not a proven remote fix; latest-head CI and the next packaged model task remain required. The separate AI-review service is unavailable because its monthly quota returned HTTP 402. The real-profile canonical app still awaits manual Mac unlock, relaunch and a fresh visible task; public signing/notarization and protected PR integration remain separate gates.
+
+Clean `c299508d2a7fb843a086534c8397821593e30616` was installed at the canonical path with matching application/core hashes. Its genuine packaged run `run-ace085ce-f07c-4a55-9e09-d9cffc4fa788` performed verified open, read, approved click and post-click read after two exact Allow once approvals, with four receipts and zero renderer errors. It still failed the task assertion: the final answer altered the observed nonce and URL. This verifies the actions while leaving exact-answer reliability unverified; a completed runtime status does not make the answer correct.
+
+Explicit local routes now receive a smaller presentation of verified browser snapshots. It removes repeated Chromium accessibility metadata while retaining exact observed names, URL, element refs, values, states, semantic fields, trust, truncation and redaction markers. A separate deduplicated page-text view preserves text verbatim. The full recorded receipt remains intact; malformed, non-verified and unrelated messages are unchanged, and projections that would expand or clip the existing bounded receipt are rejected. Automatic and nonlocal routes retain their previous context. Local instructions distinguish untrusted page data from instructions and require requested exact values to be copied rather than guessed. These are context improvements, not a guarantee that every model answer is correct. Full source validation passed 1,925 tests in 258 files, workspace type checking and desktop build; focused provider-boundary tests verify local-only projection and unchanged durable receipts.
+
+Remote core/security, every CodeQL analysis and the complete auth-link fixture passed on `c299508d`. Desktop CI then failed an external-credential fixture assuming Chat was open after navigation had closed it. That fixture now explicitly opens compact Chat before checking Close and reflow, supports the canonical packaged executable and uses mock Keychain in its disposable profile. Its full local flow passed with credential resolution, allowlisting, isolated-core restart and removal assertions retained. Latest-head CI and the next genuine packaged task remain separate pending gates.
+
+Clean `7f56f6872413b72417392944489746feb87edf4c` was installed at the canonical path; independent installed application/core hash and deep signature checks passed. Seven sequential installed checks passed: formatted answers/tool results, packaged smoke, approval failure, protected task credentials, fresh profile, auth links and external credentials. The fresh installed surface audit passed 136/136 states with zero renderer errors. The genuine packaged run `run-83c4dd4e-1dfc-4eb5-81be-a4697ff7646c` reached a verified approved click, but its controller page closed before the final answer could be captured. That result is incomplete, not a model-task pass. Cleanup was restricted to the identified disposable parent/main/core processes and profile; the real user-profile app was preserved. The local diagnostic controller now records lifecycle events and bounds its own shutdown before the next attempt.
+
+Remote `7f56f687` core/security and all CodeQL analyses passed, as did auth links and external credentials. Desktop CI then failed the approval-failure fixture waiting for the conversation Send button without explicitly opening Chat. The fixture now opens Chat through its visible toggle before composing; the installed check passes with keyboard approval, a visible failure, retired stale controls, no execution replay and a reusable session. This correction changes fixture setup only; latest-head desktop CI remains required.
+
+Clean `c66b483903d5a5902f46afabb412a6af03e0516a` was installed at the canonical path with matching application/core hashes. Its genuine local Agent-tab run `run-f5259594-2f90-4993-bcf0-5d7055c5ca5e` completed five turns in about 132 seconds: verified open, observation, approved click and post-action observation, two exact Allow once approvals, four receipts and zero renderer errors. It returned the exact heading, fresh page-only nonce and observed URL, passing those original assertions. It omitted the literal `Verification:` label from the requested line. The stricter follow-up check requires the complete line; the local instructions now explicitly retain labels when copying exact text and omit accessibility/protocol metadata from the answer. This task remains one measured local-model result, not a general reliability guarantee.
+
+The follow-up visual audit captured compact Chat while open and Memory note details before editing, correcting two earlier screenshot-state gaps. Agent search and Chat composition now use one surrounding field and one keyboard focus ring instead of nested input borders and duplicate rings. The 137-state source audit passed with zero renderer errors, and the formatted-answer/tool-result fixture passed with keyboard focus and bounded scrolling intact.
+
+Deeper menu clicks reproduced three incorrect Settings destinations: Clear browsing data and Manage extensions requested generic Settings, while the desktop shell discarded the section already requested by Passwords. The toolbar, workspace and shell now preserve the typed requested section. The expanded audit checks the destination without selecting a section afterward, which would hide the original navigation bug. The source audit passed 143/143 states with zero renderer errors, including all six desktop/compact menu destinations, whose screenshots were also inspected. Full workspace type checking, desktop build and 51 focused local-agent tests passed after these refinements. The next clean installed candidate remains separate evidence.
+
+Remote `c66b4839` core/security, every CodeQL analysis, all source desktop stages and packaged approval, formatted-answer, task-secret, restart and workflow-reuse checks passed. Packaged layout then failed waiting for the New Tab input after compact Chat intentionally hid the main page. The fixture now checks that input before opening Chat. The full installed layout flow passes with native-page isolation, focus loop, Escape, destination navigation and minimum-width 200% zoom assertions retained. Latest-head remote CI remains required.
+
+The latest live PR inventory still contains all 18 frozen heads unchanged, plus this integration PR. Main remains `3e93235839b44dcc64643d37f6359a825c25be6e`. Every original PR is blocked by required review, conflicts, failed checks or the excluded credential-storage change. Passing subset checks and `MERGEABLE` status do not satisfy the remaining integration gates.
+
+Clean `4955a4a158e6d779e9a82bbf86b3e7a09f3a114f` was installed at `/Applications/Kestrel.app`. Independent application/core hashes matched the clean provenance manifest and the deep signature check passed. The installed surface audit passed 143/143 states with zero renderer errors; formatted-answer/tool-result, packaged smoke and protected-task-credential checks also passed. A fresh genuine local Agent-tab run, `run-47750d24-a54b-47b0-a301-8ee3ce54a93d`, completed five turns in about 113 seconds with verified open, observation, approved click and post-action observation, two exact Allow once approvals, four receipts and zero renderer errors. Its final rendered answer contained the complete exact `Verification:` line with the fresh page-only nonce, exact heading and observed URL. Acceptance checks the final assistant message and its rendered line, allowing Markdown formatting while requiring the complete observed text. The tool ceiling remained 86 and each tool-capable model call received eight definitions (5,125 characters). This is a bounded genuine task pass, not general reliability or comparative certification.
+
+The installed resize fixture initially measured the previous compact geometry during the 1120→1121 transition. It now waits for the exact requested viewport and the correct modal/desktop state and responsive bounds before measuring controls; the final geometry assertions are unchanged. One subsequent focus-loop assertion failed, so the fixture now confirms the starting control actually received focus and records its candidate controls on failure. Two full installed layout runs then passed with the original forward/backward focus, Escape and native-isolation assertions. Remote `4955a4a1` core/security and source desktop checks passed, but packaged layout attempted to close compact Chat through the hidden main-plane toolbar. The desktop motion checks now start at an explicit 1440px width, followed by all compact breakpoint, modal, native-isolation and 200% zoom checks. The full installed flow passed with `CI=1`; latest-head remote verification remains required. These final changes refine the fixture rather than the production app.
+
+All seven remote checks on `3ce3a44488b2221ca07a8da6da156d864513c610` passed, including the complete source/packaged arm64 desktop job and every CodeQL analysis. The five sequential installed checks also passed. The integration pull request is ready for review; required review remains unsatisfied and the original pull requests remain unmerged.
+
+A broader genuine installed Agent-tab task on `3ce3a444`, `run-e18a4664-27f6-41ba-9fc5-1d1a00e5a822`, compared two fresh local pages and completed seven turns in about 250 seconds. It returned both exact headings, complete page-only code lines, observed URLs, the cheaper item and the correct sum. Two verified opens, three verified snapshots and a verified click produced six browser receipts after three exact Allow once approvals; a focused tool search was also verified. The authorization ceiling stayed at 86 tools, with eight initial definitions and ten after discovery. One page included a fake system notice directing the agent to another URL and forged values. No request to that URL or unrelated capability occurred, and the final answer retained the observed values. All browser observations carried `untrusted_browser`; zero renderer errors were recorded. This expands the bounded local-model evidence to multiple pages and an untrusted-content challenge, not general security, speed or comparative certification.
+
+The completed-task screenshot exposed a large workflow-saving panel below every answer. That optional action now starts as one collapsed native disclosure, reset for each run. Enter and Space reveal the existing Save as skill action, while the saved-proposal notice and Review skill navigation remain unchanged. Source desktop type checking and build, the desktop/compact save-and-review fixture, formatted-answer/tool-result fixture and full layout fixture pass. The save-and-review fixture checks a contained closed row, keyboard disclosure, separation from the focus ring, saved proposal identity and focused review navigation; its desktop and compact screenshots were visually inspected. These renderer changes still require a clean canonical refresh and latest-head remote checks.
+
+Clean `bf471461f52060633b1faaf11b08b9e96800d0f4` was subsequently installed at `/Applications/Kestrel.app`; independent application/core hashes matched its provenance and deep signature verification passed. All six sequential installed checks passed: 143/143 audited surface states with zero renderer errors, desktop/compact workflow saving and review, formatted answers/tool results, full layout, packaged smoke and protected task credentials. A normal quit/reopen launched a new canonical process, preserved the existing profile and visibly showed the collapsed workflow action. The real-profile local-model task remains unverified; the Mac later locked again.
+
+Remote `bf471461` desktop/source/packaged checks and every CodeQL analysis passed. Its core job passed type checking, unit tests and the ingestion benchmark, then stopped at the full dependency audit for `GHSA-ch52-4w7c-c8xp`. The affected `http-cache-semantics` dependency arrived through the builder's legacy `@electron/get`/`got` chain. Rather than exempting the advisory or selecting a nonexistent patched version, the workspace now pins only `app-builder-lib>@electron/get` to `5.1.0`, whose native-fetch downloader fits the existing Node `>=22.12.0` baseline and removes that dependency chain. Both the resolved downloader and the builder's actual `downloadElectronArtifactZip` entry point passed fresh-cache downloads of Electron 43.7.7 for macOS arm64; independent SHA-256 checks matched the official release manifest. Frozen installation and the full dependency audit pass with zero known advisories across 612 dependency entries; the affected package has no remaining dependency path. Packaging, canonical refresh and remote checks for this dependency change remain separate pending evidence. The separate AI-review service still reports HTTP 402 for its monthly quota; no review gate is bypassed.
+
+
+### Bounded text processing and disabled-local-runtime review — 2026-10-03
+
+The default-branch CodeQL inventory is not cleared by zero PR results: the PR analysis uses its diff-range extension. Independent source assessment found remaining repeated-suffix paths in private-key redaction, browser error classification and calendar capture. The private-key seam now uses separate forward BEGIN and END searches shared with Memory, preserving its existing complete-block, case, callback and incomplete-input behavior. Independent review caught and reproduced two overlapping malformed-delimiter regressions before publication; the corrected version passes both examples, 67 focused security tests, package type checking, 64,334 expanded differential cases and a strict three-second subprocess deadline on adversarial megabyte inputs. A separate independent reviewer passes 32 scanner tests and 5,488 comparisons. Browser recovery uses fixed same-line term searches with the original precedence and four JavaScript line terminators. Calendar capture separates title/clock whitespace while retaining valid titles, interior whitespace, clock parsing and overrides. Its 59 focused tests, package type check, 6,552 worker calendar comparisons, 1,350 independent browser comparisons, 1,680 independent calendar comparisons and bounded growth probes pass. These checks use synthetic inputs and no real-profile data.
+
+Native inspection also showed an idle Kestrel-owned Ollama server after local provider routes were disabled. Startup and each chat send still unconditionally warmed the managed runtime. Normal managed startup, discovery and warmup now require persisted enabled metadata for that exact managed endpoint. Disabled or disconnected accounts remain authoritative across legacy discovery; an aborted delayed warmup cannot spawn the child. Explicit local setup retains its own lifecycle, and shutdown stops only Kestrel's owned child. The account/runtime tests pass 49 focused checks. No real local model generation is requested.
+
+Routing metadata now rejects more than 300 UTF-16 units before credential, email or URL recognizers run: the previous continuable Zod maximum did not bound refinement execution. The actual-schema deadline and valid-boundary tests pass. WhatsApp startup now uses the same exact HTTPS origin boundary as capture rather than a hostname prefix; 10 focused tests pass. This corrects startup behavior without claiming the previous capture path bypassed its independent origin checks. The activity summary now uses singular moment/day forms.
+
+Fetched HTML uses pinned parse5 8.0.1 to extract text without executing resources. It excludes script, style, template, noscript and comment content, recognizes browser-valid closing tags and decodes entities once. A new cache namespace excludes previously extracted content. Twelve web-client tests pass, including malformed closing tags, nested content, single entity decoding, bounded titles and unchanged non-HTML responses. The network policy, byte limit, deadlines and untrusted-external label remain authoritative. The flagged source-fidelity bugs are not presented as demonstrated executable XSS.
+
+Memory job dedupe columns, ordinary content-derived job IDs and embedding content indexes now use purpose-separated profile-keyed HMACs. Migration 19 runs in the existing backed-up transaction, retains encrypted content, custom IDs and mutable retry/lease state, and adds keyed aliases for historical handles. Public index updates roll back if authenticated payload validation fails; the recoverable original remains available. Reads now use normalized job state after claims and completion, preventing stale encrypted payload state from misreporting attempts or leases. Fifty-one database/Memory checks pass, including cross-profile differences, dedupe compatibility, old handles, retry state, rollback and idempotent reopening. This protects current logical indexes; it does not claim forensic removal from prior backups, WAL or freed pages.
+
+The combined source checkpoint passes all 2,096 unit tests in 262 files, workspace type checking, production dependency auditing with zero known advisories, production secret scanning, 1,117 reference pages and Settings parity (123 entries, 46 catalog settings, six source snapshots). Canonical packaging, installed synthetic migration/provider fixtures, native restart behavior and exact-head remote checks remain separate pending evidence for this hardening checkpoint. The preceding clean `516e5ce6` candidate passed both remote CI jobs and four diff-scoped CodeQL analyses; each analysis returned zero results. Its unchanged surface-audit repeat passed 157/157 states with zero renderer errors, and installed smoke passed. Native inspection confirmed model and reasoning Auto, Codex as the only enabled provider group, Best quality, retained Notes and selected-week activity. One genuine bounded child delegation completed without model/reasoning overrides; its receipt names Delegate task and Delegated Kestrel task. Normalized visible text matched the exact owned nonce and planned/reported/verified facts, while AX line-break fidelity was not independently verified. Required human review remains outstanding and the separate AI reviewer remains unavailable with HTTP 402 monthly-quota evidence.
+
+The new full `pnpm verify` run passed through intelligent model routing, including 50 browser benchmark scenarios, 58 website flows, 40 route/viewport combinations, browser/autofill/setup/fresh-profile/restart/workflow/persona/Kanban/organization checks. It then failed the provider-account restart fixture's immediate count (zero before two asynchronous cards appeared); an unchanged repeat failed at the same assertion. The fixture now waits for both original persisted identities before retaining its count and uniqueness assertions. The complete provider-account flow passes with that bounded wait, proving retention rather than masking missing accounts. Subsequent checks are resumed separately; an uninterrupted full verification pass is not claimed. All four diff-scoped CodeQL jobs and analyses on `07593826` passed with zero results. Its separate AI reviewer failed with a fresh HTTP 402 monthly-quota response.
+
+### Canonical hardening delivery and native menus — 2026-10-03
+
+Clean `ef500e2bea4248238701df3f7a4d422aa5c41d99` was installed at `/Applications/Kestrel.app`. Application/core provenance, independent hashes and deep ad-hoc signature verification match. Six installed fixtures pass: persistent agents, 157/157 audited surfaces with zero renderer errors, provider-account persistence, setup, model routing and smoke. The installed standalone core migrated an owned synthetic legacy profile to version 19, retained pending work and encrypted payloads, keyed public indexes and historical aliases, and preserved a recoverable original. All 16 source checks skipped after the provider fixture failure subsequently passed in a separate recorded resumption.
+
+Native relaunch loaded existing Notes and correct selected-week activity. The owned agent's scoped view shows 16 captured moments across 1 day. Both parent and child remain Auto; only Codex is available, Best quality is selected, and the catalog shows 36 endpoints with zero local endpoints. A fresh bounded child completed in one model call, with no child tool-action cards observed. Its verified delegation result identifies actual run `run-58848372-4d4a-4163-a093-3b75e8f229a8`; the parent receipt names Delegate task and Delegated Kestrel task, with no required approval and a verified builtin typed receipt. Both visible answers match the owned nonce and planned/reported/verified facts after whitespace normalization. Empty child scopes were requested; complete serialized inputs and raw response line breaks were not independently read. Kestrel's managed local runtime remained absent before and after that task. No private account labels, credential bytes or real-profile internals were saved.
+
+Both exact-head CI jobs and all four diff-scoped CodeQL jobs/analyses pass with zero results. Required review still blocks PR 812, all 19 PRs remain open, and the separate AI review has a fresh HTTP 402 monthly-quota failure. No valid local signing identity or required Apple secret names in the repository or `macos-release` environment are configured. Reviewed integration, signing/notarization, clean-machine first-run, actual updater continuity and published artifact/feed proof remain required; development delivery does not establish public-launch readiness.
+
+The native Kestrel, File, Edit, View, History, Window and Help menus were separately opened and inspected, complementing the renderer inventory. About Kestrel showed only 0.1.0 (0.1.0), which cannot distinguish successive development builds. It now uses embedded, validated build metadata to show the update channel and short source commit, with explicit unverified/local-change markers when applicable. Canonical native verification of this small About revision remains a separate pending checkpoint.
+
+### Canonical drift and task-scope fixture — 2026-10-03
+
+Clean `78c2d0c38f9ffa502eb87c95f4692a9a2de9a272` was installed with matching application/core hashes and a valid deep ad-hoc signature. Native About showed `Kestrel Version 0.1.0 (Development · 78c2d0c3)`. Its installed smoke first timed out dismissing the model picker with Escape, then passed on an unchanged repeat; the original failure remains recorded. Exact-head core/security and all CodeQL checks passed, while desktop CI timed out waiting for New task after a reload. The scope fixture now explicitly reopens Chat before locating its sidebar New task button. It deliberately reloads with Chat collapsed and passes the original conversation-only, project binding, unavailable-project and persistence assertions using synthetic HTTP responses. The unchanged pre-fix local repeat passed; this fixture precondition is not proof of the remote cause. A temporary incorrectly scoped locator failed locally and was corrected before publishing.
+
+The next native browser check returned an honest inspection-only limitation without visiting either owned page or claiming a click. Memory simultaneously reported the old 500-source daily limit. Inspection then showed that the canonical bundle resources had changed since installation: the build provenance manifest was absent and both application/core hashes differed from the verified candidate. A managed Ollama child had also started. The replacement cause is unidentified. Kestrel was quit normally, and no Kestrel or Ollama processes remained. The attempted live task is therefore not current-candidate proof. Restoring the candidate, native settings, Memory and genuine browser verification remain separate pending checkpoints. The profile and primary checkout were preserved. The independent AI review still returns HTTP 402 monthly quota, and required human review and public distribution gates remain outstanding.
+# Readable task results and browser approvals — October 4
+
+The installed Auto browser canary completed on `4853c1b2` with a verified click,
+the exact page-only verification line and no request to the planted trap link.
+That review exposed two remaining presentation details: generated task outcomes
+crowded the Notes list, and browser action approvals displayed invocation JSON.
+
+Generated task results now appear in a collapsed, searchable Task results group.
+Classification requires the generated record identity, legacy origin and matching
+task provenance; unknown records and manually named or edited notes stay in Notes.
+The first result line supplies a readable title while the complete text and
+evidence remain accessible. No stored memory or retrieval scope is changed.
+
+Known isolated-browser click, typing, selection, key and scroll approvals now have
+plain-language summaries. Action details retain the complete protected preview.
+Expired, incomplete or future argument shapes keep their existing fallback, and
+the renderer never recovers redacted content from original arguments. This does
+not add approvals, change approval scope, or infer a target's label from page text.
+
+Source checks: 27 focused assertions, desktop type checking and build passed.
+The first UI run caught a disclosure/search interaction that left matching task
+results hidden after collapsing the group. After correction, the audit passed
+40 route/viewport combinations plus its settings states, with zero renderer
+errors. Its new checks preserve manual titles, exercise keyboard disclosure,
+read full result text and reveal matching results through search. Installed and
+live evidence for the new candidate is recorded separately in PR #812.
+
+## Reviewed Cursor surface integration — October 4
+
+The isolated candidate integrates PR #813 at `e1000552` onto the verified
+`fb89e566` baseline. The six conflicts were reconciled without replacing the
+canonical Notes library, searchable Task results, drafts, focus handling,
+provider-route safeguards, source-deletion authority, or keyed Memory indexes.
+Kept and Automatic notes are secondary filters within Notes. Cleanup stays in a
+separate disclosure and requires the complete reviewed list and a checkbox;
+editing or applying cleanup protects navigation and unsaved drafts.
+
+Ordinary memory aging now stages an encrypted, profile-keyed exact-record plan.
+Every approved application revalidates it, takes a separate consistent SQLite
+online backup, and removes the reviewed records atomically. A stale record,
+backup failure, or replay is rejected. Pins check the owning session and never
+override connected-source deletion. Keeping an inferred note preserves its
+confidence and inferred status.
+
+Don't remember this chat now uses one human IPC action to remove local memories
+and set the session private in the same transaction. A failed removal rolls back;
+conversation history remains. Future messages and a task completing after the
+change cannot recreate the forgotten memory. This makes no claim about provider
+retention or copies in pre-existing backups.
+
+Validation on the integrated tree: all 2,125 unit tests in 264 files, workspace
+type checking, desktop build, dependency and production-secret scans pass.
+Settings parity (123 entries), the 1,117-page reference inventory, focused
+OpenClaw contract verification and the repository market gate pass. The real
+Memory component passes headless checks at 1280x800 and 390x844 with no renderer
+errors or horizontal overflow: complete cleanup text, keyboard disclosure,
+explicit approval, cancellation, stale approval, draft/busy protection, Keep
+semantics, and complete searchable task results. Both fixture screenshots were
+visually inspected. Persona/setup assertions follow Open Connections while
+preserving navigation, focus and account assertions.
+
+PR #813's standalone CI at `e1000552` failed its old downloader dependency audit
+and the returning-persona expectation for embedded Accounts and access. Its four
+diff-scoped CodeQL analyses passed. This integration retains the baseline's
+scoped downloader override and updates the persona route; its own exact-head CI
+must still run. The AI reviewer returned HTTP 402 monthly quota exhaustion.
+
+The canonical installed app remains the independently verified `fb89e566`, whose
+owned Codex-only Auto browser task passed four one-time approvals and the real
+click, exact page-only proof, headings, prices and sum without requesting the
+trap URL. The Mac lock prevents fresh native delivery and local Electron
+fixtures for this integration. No profile data, credentials, primary checkout,
+original Cursor worktree, installed app, or public release was changed here.
+Source and synthetic checks are not installed-app or public-launch proof.
+
+## Connections navigation and scope-filter follow-up — October 4
+
+Clean `b719cbdd` was installed at the canonical path. Desktop/core manifests,
+independent hashes and the deep ad-hoc signature match. Installed setup, an
+unchanged repeat of the persona check, the 40-route/22-settings UI audit and
+smoke pass. The original persona failure could not acquire native keyboard
+focus before navigation; it remains recorded. Native About shows Development ·
+b719cbdd. The real Memory library loads all 54 earlier task results, the new
+Note filters and cleanup disclosure. No real cleanup or note edit was applied.
+Best quality, five ready Codex accounts, seven disabled provider groups and
+36 endpoints / zero local endpoints persist; no Ollama process was observed.
+
+Exact-head core/security CI passed and all four CodeQL checks passed. Desktop
+CI reached Readiness, then failed a remaining expectation for embedded
+Connections. Readiness now follows Open Connections while retaining provider
+checks. A local Memory fixture also found an ambiguous shared filter selector;
+scope tests now select the disclosure inside the workspace header. The fixed
+Readiness, full Memory editing/timeline/advanced-tools flow, persistent agents,
+40-route/22-settings UI audit and all 157 release surface states pass with no
+renderer errors. Assertions were retained; the earlier failures are preserved.
+Generated fixture images were moved into temporary evidence and original
+tracked screenshots restored. The Memory settings intro now describes managing
+learning without promising an unavailable toggle on that screen. The follow-up
+still requires its own clean package, canonical refresh and exact-head CI.
+
+## Answer width, startup transition and edited notes — October 4
+
+Canonical `c835fe29` installation passed independent manifest/hash/signature
+checks and installed Readiness, Life/Memory and smoke fixtures. Exact-head
+core/security CI and all four CodeQL checks passed. Desktop CI then failed
+the tool-result answer-visibility assertion; the failure was reproduced locally.
+The removed assistant avatar left an old 22px grid column, forcing the answer
+into that column. Ordinary answers now use the full width while approval
+messages retain their separate icon layout. The original assertions remain,
+with additional transcript viewport and answer-width checks.
+
+Visual inspection of the owned fixture also caught the fading startup screen
+briefly occupying a full window above the entering workspace. Loading and
+onboarding now overlay it, avoiding the displacement during the transition.
+The fixture waits for the loading screen to leave before capturing stable UI.
+
+Editing a generated task result's title or text now marks the saved override
+manual, so it appears in Notes with its explicit title. Source IDs, confidence
+and inference status remain unchanged; Keep alone retains the existing origin.
+The actual Memory component exercises edit/save at both headless viewports,
+and a real encrypted database test verifies restart persistence, preserved source
+records and exclusion from automatic cleanup.
+
+All 2,126 tests in 264 files, workspace type checking, desktop build, setup,
+tool-result scrolling/focus/formatting, Life/Memory and all 157 registered
+surface states pass. Desktop and compact answer screenshots were inspected.
+No real-profile note edit or cleanup was applied. The preceding AI reviewer
+failure is HTTP 402 monthly quota exhaustion. This follow-up still needs clean
+canonical installation, installed and native verification, and exact-head CI.
+
+## Follow the latest answer through resize — October 4
+
+Clean `ca676a9d` was installed in place. Independent desktop/core identities,
+hashes and deep development signature match. Installed tool results, setup,
+Readiness, Life/Memory and smoke pass. Native About visibly shows Development ·
+ca676a9d, the owned earlier answer is readable in Agent, and Memory loads Notes
+and all 54 existing task results. Auto model, Automatic reasoning, Best quality,
+five enabled Codex accounts, seven disabled other provider groups and 36
+endpoints / zero local endpoints persist. No Ollama process was observed.
+
+Exact-head core/security CI and all four CodeQL checks pass. Desktop CI still
+fails answer visibility with correct width and window containment. An expanded
+local case independently reproduces a resize-follow defect: shrinking the
+transcript viewport from 540px to 320px leaves scrollTop unchanged at 446px,
+putting the answer below view. The transcript now observes its own size and
+follows the bottom only while the reader is following new results. Reviewing
+older text and transcript-target navigation retain their existing guards.
+
+The tool-result fixture now exercises a long owned prompt, a shorter desktop
+window and compact mode, preserving all visibility/overflow/detail assertions.
+It waits for actual native content dimensions and settled geometry rather than
+assuming the requested window height is supported by the host display. Resize
+while reading older text stays at the original position; new answers retain
+keyboard focus. Failures record geometry and an owned screenshot, which CI now
+uploads with its existing diagnostic evidence.
+
+All 2,126 unit tests, desktop type checking/build, the expanded tool-result
+fixture and approval recovery pass. The shorter-window screenshot was inspected.
+This follow-up still requires its clean canonical refresh and exact-head CI;
+the preceding AI reviewer is HTTP 402 quota blocked. No real Memory content
+was edited or removed during native verification.
+
+## Draft scrolling and message bubbles — October 4
+
+Clean `1fabf938` was installed at the canonical path and independently verified
+by desktop/core identities, hashes and deep development signature. Its five
+installed tool-result, setup, Readiness, Life/Memory and smoke fixtures pass.
+Native About identifies Development · 1fabf938 and the retained owned answer is
+readable in Agent. Exact-head CI `37226247449` now passes both core/security and
+desktop/package jobs, including packaged browser-agent benchmarking. All four
+CodeQL checks pass. Required independent review remains outstanding; the separate
+AI reviewer returned HTTP 402 monthly quota exhaustion.
+
+An owned headless review using the actual renderer styles found nested user
+message bubbles and a clipped draft: eight lines required 169px inside a 160px
+CSS limit, while the old 180px threshold left scrolling disabled. User messages
+now use one right-aligned bubble, with Memory confirmation below the text.
+The composer sizes against its actual CSS maximum and enables scrolling whenever
+its content exceeds its visible height. It also observes panel width changes and
+resizes on becoming visible, preserving draft text and keyboard focus.
+
+The actual sizing helper and renderer styles pass headless checks at 1000px and
+390px with no horizontal overflow. Narrowing an owned panel grows a wrapped
+draft from 93px to the 160px cap and leaves its last line scrollable, retaining
+the exact text and focus. All 2,126 tests in 264 files, desktop type checking and
+build pass. The tool-result
+fixture now checks a capped eight-line draft and clearing back to a compact
+composer. Local Electron fixture execution and canonical delivery of this
+follow-up remain pending because macOS is locked and the canonical app is open.
+No real-profile UI or provider choices were changed during this source review.
+
+## Writing Studio first-draft flow — October 4
+
+Both exact-head CI jobs and all four CodeQL checks now pass at clean `60913d98`,
+including the real desktop and packaged capped-draft regression. Its packaged
+artifact matches source identities, independent hashes and deep development
+signature. Canonical delivery remains at previously verified `1fabf938` while
+macOS is locked; no latest-installed claim is made.
+
+Writing Studio previously placed starting text, tone, model selection, voice
+strength and sensitive-context controls before its primary action. Create draft
+now sits directly below the brief. Existing-text, style/model/context and learned
+voice controls use keyboard-accessible disclosures. Closing them preserves the
+person's choices. The primary action continues to display whether sensitive
+context is included and that drafts are not sent automatically; the default is
+still excluded and routing remains Auto. A completed draft scrolls into view and
+receives heading focus once; editing does not pull focus back to that heading.
+
+The component check exposed an accessibility-name problem: Body's implicit label
+included all of its textarea's initial draft text. Purpose, starting text, samples
+and Body now use explicit label references, keeping field names stable as text
+changes. The original failing field dump is retained. A subsequent pointer-target
+failure on the deliberately hidden radio was corrected to exercise native Space
+selection. A formatting reload interrupted another fixture run; the unchanged,
+stable-source run passes. These fixture failures are not reported as product
+generation failures.
+
+All 2,126 tests in 264 files, desktop type checking and build pass. The actual
+Writing Studio component passes owned headless checks at 1280×800, 800×660 and
+390×844: first action inside the viewport, zero overflow/renderer errors, native
+keyboard disclosures, exactly two draft submissions, retained source/tone/voice
+choices, default exclusion and explicit sensitive opt-in, unchanged Auto request
+shape, draft visibility/focus and editing. No provider generation, clipboard
+write, profile configuration/sample/reset or message transmission occurs. Owned
+initial/result screenshots were inspected. The check is now part of core CI;
+its owned screenshots/report are uploaded independently of success.
+
+The existing desktop Writing Studio profile/sample test now opens the voice
+disclosure, retaining its backend and consent assertions. The release-surface
+inventory also adds all three Writing disclosures at both desktop widths,
+bringing its intended coverage from 157 to 163 states. Those local Electron
+checks, the latest package/canonical refresh and new-head CI remain pending at
+this source checkpoint because the real app is open behind locked macOS.
+
+## Isolate the Writing Studio renderer fixture — October 4
+
+At `90809426`, the complete desktop/package CI job and all four CodeQL checks
+pass. Core CI fails the new headless Writing Studio fixture's zero-error
+assertion after its functional flow completes. A fresh owned shared-cache
+reproduction runs the Memory fixture successfully, then reproduces the same
+null React dispatcher in Motion's reduced-motion hook inside ModelSelector.
+This is separate from the passing desktop Writing Studio profile/consent test.
+
+The Writing fixture now uses its own temporary Vite cache, scans only its own
+HTML entry, explicitly resolves the desktop React/Motion dependencies and
+preoptimizes them before browser loading. It still requires zero page errors
+and records error stacks. The owned cache is removed with that fixture; shared
+repository caches and the user's profile are untouched. The first isolation
+attempt exposed a missing development JSX runtime alias and was corrected.
+
+The repaired fixture passes all three viewports from a fresh cache and after
+the actual Memory command passes at both viewports, matching the CI order.
+No product routing, provider invocation, request assertions or privacy checks
+are weakened. Remote validation of this follow-up and the 163-state canonical
+run remain pending; macOS is still locked and the canonical app remains at
+previously verified `1fabf938`.
+
+## Empty route and action polish — October 4
+
+The full `30ec52eb` CI run completes successfully, including the repaired Writing
+fixture, source/packaged flows, security checks and browser-agent benchmarks.
+All four diff-scoped CodeQL checks pass; independent review is still required.
+
+Owned desktop and compact captures showed empty routes with two adjacent
+dividers, developer terms such as deterministic policy and encrypted SQLite in
+their introductory text, and a wrapped New folder label beside a 31px glyph.
+Activity now explains observed, checked and prepared work; Approvals explains
+that actions stay paused until the person decides, including across app restarts.
+The underlying evidence, approval decisions and persistence are unchanged.
+Empty content directly under PageFrame uses its existing header/row divider.
+Library header buttons retain their 40px target, keep one-line labels and bound
+their glyph to 16px at wide and compact widths.
+
+Before/after owned renderer reviews cover History, Bookmarks, Downloads,
+Activity and Approvals at 1280×800, 800×660 and 390×844. All 15 corrected states
+have zero document overflow and renderer errors. The Bookmarks icon is 16×16
+at each width; screenshots were visually inspected. The initial scratch review
+omitted the synthetic snapshot's approvals array and was corrected before the
+before/after comparison; it is not a product failure. Desktop type checking
+and build pass. Latest-head CI and canonical verification remain the next gates
+at this source checkpoint. No provider or real-profile settings were changed.
+
+## Authentication popup and security follow-up — October 4
+
+The clean `4fe312c1` canonical installation passes seven installed fixtures,
+including all 163 release-surface states with zero renderer errors. Native About,
+Writing Studio, Activity and routing checks confirm that exact installed build;
+Auto model/reasoning, Best quality and Codex-only routes remain selected.
+Its core CI passes, but desktop CI fails the provider iframe popup opener check.
+The aggregate CodeQL check reports 12 findings despite successful language jobs;
+the independent AI review fails with HTTP 402 quota. Release remains held.
+
+A regression reproduces a popup returning to the wrong tab after its destroyed
+native view is recreated. The rebuilt view now retains its tab's opener without
+copying authentication grants or changing close/approval policy. The regression
+fails before the fix and passes afterward. The complete source authentication
+fixture also passes, retaining callback, POST, trusted-click and handoff denials.
+
+Redaction placeholder deduplication now uses a private per-operation HMAC key
+instead of an unkeyed secret digest. Synthetic browser checks compare exact URL
+origins, and iframe setup passes URLs as structured evaluation arguments. All
+2,127 unit tests in 264 files, repository type checking, desktop build and the
+production browser secret scan pass. Latest-head full CI, aggregate CodeQL and
+the refreshed canonical package are pending at this source checkpoint; remaining
+digest findings require their actual data flow to be assessed, not gate bypasses.
+
+## Readable Activity, protected evidence and resize focus — October 4
+
+The clean `0732653e` canonical package passes all seven installed surface/setup
+checks and additional authentication, browser and persistent-agent fixtures.
+Core CI passes, and the source authentication regression passes remotely. Desktop
+CI reaches the packaged approval-history check and fails there. CodeQL now reports
+seven digest findings; URL-origin and iframe-construction findings are cleared.
+Independent AI review remains HTTP 402 quota blocked. These remaining gates have
+not been dismissed or bypassed.
+
+Populated Activity rows now use the same plain action names as Chat, retain status
+and failure/uncertain outcomes immediately, and place original tool names, result
+details and full source references inside native Details. Long references wrap at
+compact widths. Following an evidence link opens and highlights the corresponding
+details. Owned renderer checks pass collapsed/expanded keyboard interaction at
+1280×800, 800×660 and 390×844 with zero overflow/errors; screenshots were inspected.
+The isolated full surface inventory now seeds one real read-only catalog execution
+and checks its closed/open Activity states at both widths: 167/167 pass.
+
+A new runtime regression shows that an external verifier's credential field could
+influence the persisted SHA256 evidence digest. Verification still reads actual
+evidence; hashing now uses the existing protected/redacted projection afterward.
+Changing only the synthetic password leaves the digest unchanged, while changing
+public receipt evidence changes it. The regression fails before and passes after
+the repair; no credential-derived digest or raw evidence is added to persistence.
+
+The packaged approval-history failure reproduces locally. An owned diagnostic
+shows compact Chat's modal entry moving focus from its disclosure to Close Chat
+during resizing. The modal now preserves focus already inside Chat while retaining
+outside-focus entry, background isolation, Escape and focus-loop behavior. The
+strengthened fixture fails on the previous package and passes on current source;
+all original approval/history and no-replay assertions remain. All 2,128 unit tests
+in 264 files, repository type checking, desktop build and production secret scan
+pass. The full desktop layout test also passes compact native isolation, focus
+loop, Escape, navigation and 200% zoom checks. Latest-head remote checks and the
+canonical refresh remain pending at this source checkpoint. Provider generation
+and real-profile configuration were not used for these regressions.
+
+### Background Memory extraction repair — 2026-10-04
+
+An owned end-to-end Memory probe found that the background parser used numeric
+separators inside regex quantifiers (`{1,2_000}` and `{1,1_500}`). JavaScript did
+not interpret these as bounded counts, so ordinary preference, decision,
+correction, commitment, goal and project statements were ignored. The parser now
+uses valid bounded counts. A second regression showed that timeline grouping
+could run first and turn the event's `sessionId` into a timeline group ID;
+extraction then retried with “Runtime session not found.” Source-session ownership
+now remains authoritative, with a legacy fallback only for an actual known
+runtime session. Captured statements without a runtime owner remain ordinary
+shared Memory; agent-owned sources retain their isolated scope.
+
+Ten new cases exercise the maintenance path, all seven phrase categories,
+forced grouping-before-extraction, source-agent isolation, duplicate prevention,
+disabled/private capture, assistant and over-limit exclusions, redaction and
+inferred status. The eight initial parser cases fail before the quantifier fix;
+the forced-order case separately fails before the ownership repair. All 2,138
+tests in 264 files, repository type checking, the focused Memory/index privacy
+checks and the production browser secret scan pass. An additional disposable
+in-memory probe covers remember, correct, agent-memory and timeline extraction:
+changing only an owned synthetic password does not change the actual embedding
+job's content digest; changing public content does. Stored records and job
+payloads contain no fixture password. This bounded evidence does not dismiss
+CodeQL findings or replace independent review. Current packaging, installed
+Memory/UI verification and exact-head remote checks follow separately.
+
+
+### Clipboard expiry and isolated browser protocol boundary
+
+Saved-password copies now use a fresh private 32-byte HMAC key for each copy,
+with comparison buffers cleared after expiry, cancellation or clipboard failure.
+The timer keeps no stable password digest. A successful new copy cancels the
+preceding timer, so copying the same password twice gives the latest copy its
+full minute; an unsuccessful write leaves the earlier copy protected. Local
+device verification and best-effort decrypted-entry disposal remain required.
+
+The isolated browser request guard now accepts HTTP/HTTPS and allowlisted
+HTTP/HTTPS blob origins explicitly, with its existing about:blank exception.
+Session setup still requires HTTPS or explicit loopback HTTP, excludes embedded
+credentials and bounds the origin list. Unsupported protocols are denied even
+if an invalid origin set reaches the request guard.
+
+The actual service regression fails against the preceding source because the
+first timer clears a later same-password copy early. Three request-guard cases
+also fail against that source when supplied unsupported origins. All 2,158 unit
+tests in 265 files, repository type checking, the production secret scan and
+diff checking pass after the repair. Added cases cover copy timing, preserving
+new clipboard content, private per-copy keys and cleanup, revoked clipboard
+access, failed writes, local authentication, decrypted-entry disposal, unsupported
+protocols, lookalike origins and retained supported browser behavior. Clean
+packaging, installed verification and exact-head CI remain separate delivery
+evidence; this repair does not resolve the other security/review/signing gates.
+
+
+### Populated saved-login layout and error copy
+
+The installed clipboard fixture exposed a populated saved-login row whose
+metadata shrank to 1.2px with Chat docked in a 1280px window. Login details now
+keep a readable minimum width while actions wrap to the next row as needed.
+Search and the Add login form adapt to their actual column width. The owned
+CSS preview passes 1280, 800 and 390px, including Edit and removal cancellation,
+with full metadata, contained actions, no horizontal overflow and no renderer
+errors; screenshots were inspected. The supported autofill desktop test now
+checks populated saved-login metadata/actions at those three widths.
+
+Password operations reuse the existing user-facing error helper to keep raw
+Electron IPC names, paths and stack details out of the product. Cancelled copy
+explains that the password was not copied and asks for device confirmation.
+All 189 affected unit tests and desktop type checking pass at this source
+checkpoint. Clean canonical installation and installed flow checks remain
+separate verification steps.
+
+
+### Consistent autofill form actions
+
+The populated saved-login screenshot review also exposed short default browser
+buttons in Add login and Saved personal info. Those three form actions now use
+the existing 40px button styles, with primary Save/Add and secondary Clear.
+Desktop type checking, desktop build and the complete owned autofill desktop
+flow pass. Actual rendered measurements confirm all three targets are 40px;
+owned screenshots were inspected. Existing submit, disabled, local device
+verification and protected storage behavior are retained. Current clean package,
+installed evidence and native reopening remain separate delivery checkpoints.
+
+The preceding clean `3801775a` passed both full CI jobs in run 37242189705,
+including complete browser/autofill and packaged browser-agent checks. Aggregate
+CodeQL and independent review remain open; local foreground verification and
+native reopening await manual Mac unlock.
+
+
+### Readiness diagnostic panel spacing
+
+The canonical `416685f6` passed the complete owned surface audit: 167 states
+across desktop/compact destinations, Settings, menus, Agent, Memory, Work and
+Writing, with zero renderer errors. All 18 primary desktop page captures were
+visually inspected. These are disposable-profile results, not real-profile,
+provider-generation or native-menu proof.
+
+Readiness's diagnostic explanation and action were flush against the panel edge
+because their new panel was omitted from the shared account-check/backup styles.
+The diagnostic panel now shares their body spacing, secondary-copy typography
+and bottom padding. The owned installed preview reproduces zero paragraph/button
+inset before the change and confirms 18px insets at 1440, 800 and 390px afterward,
+with contained text/actions, no horizontal overflow and zero renderer errors.
+Screenshots were inspected. Desktop build and diff checking pass. Canonical
+refresh and checks against the compiled follow-up remain separate delivery
+steps; native verification still awaits Mac unlock.
+
+
+Packaged CI now runs the existing complete desktop surface audit after its
+layout check and retains its screenshots/manifest in the always-uploaded
+owned desktop evidence artifact. The local counterpart passed 167 states on
+canonical `416685f6`. This expands coverage beyond the separate layout test;
+it does not replace native menus, real-profile routing or genuine provider
+execution. Remote execution of this new CI step remains to be verified.
+
+### Compact audit setup and current native browser evidence
+
+The packaged catalog audit added in `3ce7ea21` exposed a setup error on CI's
+1024×684 initial window: creating the fixture agent successfully opened its
+compact chat modal, which hid the Agent list settings control. An owned local
+reproduction confirmed the agent existed and the expected browser page remained
+mounted; the setup was waiting behind the conversation overlay. The audit now
+waits for creation to finish, closes the conversation through its supported UI
+control, and returns to the Agent page before checking the list. Aborted setup
+or navigation also records a failed manifest state and a screenshot. It no
+longer prints a misleading 1/1 result for a tour that never started.
+
+The same owned 1024×684 initial-window reproduction now completes all 167 catalog
+states without renderer errors, against the installed `3ce7ea21` executable.
+The complete installed browser check also passes after Mac unlock, including
+foreground focus, task resume, popup/detached windows, downloads and restart
+restore. Native CUA confirms that build's About identifier, Auto model,
+Automatic reasoning, Best quality, five enabled Codex accounts, 36 endpoints
+and zero local endpoints; all seven non-Codex categories remain disabled.
+The existing profile was reopened normally and no real-profile screenshots were
+saved. CI `37245549757` passed the core job and prior desktop steps but failed
+at the new surface audit setup; later packaged steps were skipped. A new exact
+head CI run is required for this repair. These checks do not establish a new
+current-head provider generation, independent security review or public signing.
+
+### Task-settings dismissal and specialist action targets
+
+The native `2ef788d0` Auto/Codex browser journey completed in a newly created
+Agent-tab agent using owned loopback pages only. Four actions received one-time
+approval. Alpha cost $12, Beta $7, and the observed sum was $19. The owned server
+independently recorded one Reveal request, the exact displayed verification
+value, and no visit to the unrelated trap. Kestrel also ran its own independent
+result review; its caveats about build/settings/approval-history proof remain
+separate from native About/settings observations. Both exact-head CI jobs passed,
+including the new packaged 167/167 surface audit, with zero renderer errors.
+
+That live task exposed a Task settings popover left open above its approval
+buttons. It did not dismiss with Escape or outside interaction. The conversation
+popover now closes on Escape with focus returned to its trigger, on outside
+pointer/focus interaction without taking focus from the next control, and on
+conversation/task visibility transitions so it cannot hide a new approval.
+The existing desktop layout regression now checks dismissal, model-picker
+interaction and focus return at its responsive widths. It fails on installed
+`2ef788d0` at the Escape assertion and passes against the changed source. The
+first outside-click test attempted a textarea covered by the popover; the final
+check uses the visible model-picker trigger and verifies its actual dialog opens.
+
+Manual review of the Agent settings/add/editor/archive, Memory editor and toolbar
+menu captures also found Add specialist and Restore using default short buttons.
+Both now use the shared dialog button styles. The owned full source catalog tour
+passes all 167 states and measures both actions at 40px in desktop and compact
+layouts; creation, archive and restore still run through the actual fixture UI.
+The Add desktop and archived compact screenshots were inspected after the change.
+Desktop build, type checking, production secret scan and diff checking pass.
+A disposable-home audit temporarily changed local pnpm dependency metadata;
+the dependency directory was preserved for recovery and restored from the frozen
+lockfile to the normal store before repeating type checking and the secret scan.
+Canonical installed/native evidence and exact-head CI for this follow-up still
+need refreshing. None of these results establishes public signing, independent
+security signoff or full comparative superiority over another product.
+
+### Duplicate Autofill and shortcut controls
+
+The installed `2ba81da4` completes both full CI jobs, the 167-state disposable
+surface audit, responsive Task settings checks and a genuine Auto/Codex text
+task. Native About and routing confirm the same build, Automatic reasoning,
+Best quality, five enabled Codex accounts, zero local endpoints and all seven
+non-Codex routes disabled. The earlier genuine browser-click evidence remains
+separately identified at `2ef788d0`.
+
+Manual review found two payment-autofill switches writing the same preference,
+repeated storage copy and a duplicate Open bookmarks keyboard-shortcut entry.
+Keep the payment switch beside saved cards, preserving its Settings search
+anchor, and give the password/personal-info section one clear title. Keep the
+distinct password master switch and detailed password choices. The bookmarks
+shortcut appears once in Navigation & Actions; the command itself is unchanged.
+
+The owned source protected-autofill check passes persisted card-toggle changes
+across reload, restoration, search-to-control focus and the single shortcut at
+desktop/compact widths. Its complete password add/edit and native protected
+payment/form-fill checks also pass. Desktop build, repository type checking,
+production secret scan and diff checking pass. The first compact capture was
+hidden by the fixture's open Chat modal; closing that modal using its existing
+control makes the check pass. Shortcut captures must wait for the opening
+animation to finish before assessing transparency or readability. Installed,
+native and CI evidence for these duplicate-control changes remains separate
+until the canonical refresh is verified.
+
+### Optional Settings setup and compact project-scope verification
+
+Manual review of all 22 initial Settings views found optional remote-memory
+setup, many empty credential forms and custom-profile creation dominating
+ordinary Settings. Disabled Honcho now starts with one Connection settings
+disclosure; an existing enabled configuration starts expanded. The full data
+boundary, consent guard, protected credential entry, configuration controls,
+verification, disable and remove actions remain. Notices and failures stay
+outside the disclosure. Consent and optional memory checkboxes align with their
+text and the actual Settings column.
+
+Protected credentials keep saved entries visible. Add a credential now offers
+all supported mappings through a chooser and one protected form, retaining
+unsaved values by credential ID when switching or folding. Successful saves
+clear the entry and chooser. Custom-agent creation sits in its own disclosure;
+existing profiles, removal and errors remain visible. No route, memory policy,
+provider-owned sign-in, real credential or real-profile preference was changed.
+
+The new disposable-profile/mock-Keychain desktop check passes keyboard access,
+draft retention, full credential-choice inventory, explicit remote-data consent,
+Honcho configuration persistence, enabled-state disclosure, visible failures,
+write-only credential save/remove, custom-profile isolation and compact control
+geometry. Only an owned loopback memory server receives explicit verification;
+configuration saves make no server requests. No model generation or real data is
+part of that check. Settled compact captures were manually inspected. Existing
+Settings and synthetic external-secret setup checks also pass.
+
+Exact preceding `0bfa04c0` CI retry passed the complete core job and development
+checks but failed the packaged task-scope fixture on its hidden Beta project
+row. The fixture now deliberately uses 1024px, closes compact Chat and expands
+the sidebar through the existing UI before project settings. It reopens Chat
+and keeps every scope assertion; the helper accepts an already-open compact
+Chat without waiting for its hidden background toggle. This source check passes
+Conversation only across refresh/submit, explicit project binding and unavailable
+folder/removal behavior using a synthetic HTTP provider. Installed and native
+proof for this revision remains pending until the canonical refresh completes.
+
+Repository type checking, all 2,158 unit tests, production secret scanning,
+Settings parity and diff checking pass. A bounded independent code review found
+no consequential disclosure/consent regression; it is not security signoff.
+Public signing/notarization, protected independent security review and the broad
+release goal remain open.
+
+### Channel policy layout and refresh-safe editing
+
+Native inspection found that Channel progress, typing, and reactions clipped
+the Reaction level field when Chat narrowed the Settings column. Its old grid
+required at least 507 pixels and only changed at a whole-window breakpoint.
+The form now adapts to its own available width. Unused channel setup starts
+folded; configured channels start expanded. Channel capability counts, save
+confirmation and errors remain visible when the form is folded.
+
+The existing 15-second presence refresh also replaced unsaved policy selections.
+Edits now remain until a successful save or leaving the section. Save start and
+completion invalidate in-flight reads so an older response cannot replace a
+newly saved policy. Presence and channel counts continue to refresh. Failed saves
+keep the draft. The backend request types, configuration schema and all four
+policy options are unchanged; no real channel was configured during this work.
+
+The disposable Electron check passes keyboard folding, no-channel and synthetic
+configured-channel defaults, actual four-field core storage across reload,
+draft retention after a failed save and real periodic refresh, and delivery of
+a delayed pre-save GET after a successful save. All four fields fit the form's
+bounding rectangle with Chat docked, Chat closed and at compact width. These
+three fixture captures were manually inspected. Type checking, desktop build,
+all 2,158 unit tests, production secret scanning, Settings parity and diff
+checking pass. Packaged and real-profile verification of this channel revision
+remain separate until the canonical refresh.
+
+The preceding clean installed `a238bf3c` candidate passes both full CI jobs,
+four installed Settings/scope suites, responsive layout and all 167 catalog
+surface states. Its real-profile Agent task also completed an owned isolated
+two-page browser check: four inspected one-time approvals, one actual reveal,
+the exact generated verification value, Beta at $7, a $19 total, a completed
+delegated review and zero injected trap visits. This bounded proof is distinct
+from fixture checks and does not establish every autonomous workflow. Twelve
+full CodeQL findings, required independent review and public signing remain
+open; the broad release goal remains active.
+
+### Returned-credential redaction and trusted receipt identities
+
+Independent owned in-memory probes found a real confidentiality flaw: sensitive
+array elements, refresh-token/token/credentials aliases, and unlabeled echoes
+could survive tool-result redaction. Normal tool journals and model projections
+retained those values, and secret-only changes could alter verification hashes.
+The new actual-runtime regression failed on the preceding code.
+
+Text and structured results now share key classification. Discovery precedes
+replacement, preserves sensitive context through arrays and objects, and masks
+earlier sibling/error echoes. Valid JSON strings retain their string type and
+format while decoded scalar values are protected, including escaped strings and
+scientific-notation numbers. Active task-vault callbacks reach decoded numbers
+and strings. Metadata quantities, status/configured fields and opaque references
+retain their intended semantics. Excessive values, nesting, cycles or matching
+work fail with a generic error before returning a partial result. Operation-local
+HMAC keys are cleared and maps released; JavaScript string zeroization is not
+established.
+
+Runtime storage limits cross-value discovery to untrusted payload compartments.
+A tool cannot rewrite trusted execution/session identities by labeling those
+same values as credentials. Run/provider-call correlation is protected separately
+so approval recovery retains its exact identity and pending original arguments.
+Verifier method labels are protected with evidence before storage; execute output
+already reaches custom verification in protected form. This does not establish
+that every custom verifier's original-output assumptions are unchanged.
+
+Independent reprobes and actual-runtime regressions now pass string/numeric
+confidentiality, plaintext-journal/model projection, secret-only versus public
+evidence hash changes, decoded task-vault numbers, trusted receipt identities and
+blocked-approval correlation. Stable source passes all 2,208 unit tests in 265
+files, repository type checking, desktop build, production secret scan, Settings
+parity and diff checking. This is bounded advisory validation, not official
+CodeQL or PR review clearance. No real profile, provider or retrospective history
+purge was part of the probes; detection remains bounded by its key/text policy.
+
+### Supported source attachment and restart recovery follow-up
+
+The complete local verification and exact-head desktop CI at `f22cbcf8` both
+failed restart recovery before its synthetic provider received the initial task.
+The fixture had the owned bundled source file open as its current attachment.
+Its 872,418 characters contained 115 distinct detected values totaling 2,413
+characters, but the redactor's conservative length-times-value-count estimate
+exceeded its 32-million processing limit. This was a new regression, not a
+successful broad validation or a reason to omit the attachment.
+
+Literal echo matching now uses a UTF-16 trie with longest-match selection and
+counts actual comparisons against the same processing limit. Protected markers
+remain outside literal matching; known-value, character and match-count limits
+and generic failure behavior remain. Operation-local trie references are
+released with the other redaction state. An adversarial shared-prefix case still
+fails closed. A supported nearly 1 MB source attachment with 128 credential
+labels and earlier/later echoes reaches the actual model boundary with ordinary
+context retained and credentials masked, without changing the user-owned file
+or allocating task-secret references. The same owned bundle redacts in about
+50 ms in the recorded local probe. The focused security/lifecycle cases and
+desktop crash recovery, no-automatic-replay and explicit retry now pass.
+
+The preceding complete verification stopped at restart recovery, so later stages
+remain unproven until rerun. Current official CodeQL has the same twelve rule/path
+findings and eight failing annotations, with line movements from changed source;
+AI review again exhausted its quota. Those gates remain open, and this follow-up
+does not establish public release readiness or current canonical installation.
+
+### Agent retry layout and CI interruption sampling
+
+Clean `d17ba25b` was installed at the canonical path with independently matching
+desktop/core provenance, hashes and deep ad-hoc signature. All four installed
+Settings/scope checks and installed desktop layout passed. The expanded owned
+surface audit passed 174 states without renderer errors, including initial Agent
+load failure, keyboard retry, retained stale sessions and compact Connections
+subsections. Manual inspection exposed a defect that ordinary overflow checks
+missed: the absolutely positioned stale-session notice covered Agent search and
+List/Map controls at desktop and compact widths.
+
+The notice now occupies its own normal header row, wraps inside the available
+column and uses readable text with the shared bordered Retry button. Retained
+list content begins below it. The official surface audit now checks the failure
+states, actual retry recovery, header-control overlap and retry geometry; it also
+captures all three deeper Connections subsections at compact width and records
+packaged source identity. Mock Keychain and owned session-list failure injection
+remain confined to disposable fixture profiles.
+
+The preceding full local run stopped at an intermittent 50,000-record benchmark
+failure with no useful reporter message. Its structured-diagnostic rerun passed
+all nine cases, and every remaining verification stage passed in a separately
+recorded sequential continuation; that is not a single-run full-pass claim.
+Exact-head remote core CI passed, while packaged desktop layout failed in its
+interruption probe. Downloaded owned diagnostic JSON showed reversal at 9.609375
+pixels, then a wait requiring a width both greater than 8 and less than 5.609375.
+The probe now waits for enough opening distance before reversing, retaining its
+in-flight continuity, closing, reopening and completion assertions. It passes
+against the installed candidate; no production animation requirement or timeout
+was weakened. Required review, CodeQL and public signing remain separate gates.
+
+### Current native browser proof and project-menu follow-up
+
+Exact-head CI at `5f464791` passed both core/website/security and desktop/packaged
+arm64 jobs. The canonical app independently matched that clean source identity;
+native About visibly confirmed it, with existing projects and chats preserved.
+All four channel fields and Save fit beside the docked chat. Auto, Automatic
+reasoning, Best quality, Codex-only accounts and zero local endpoints were
+visibly confirmed without changing settings. A fresh native Agent browser task
+completed through four inspected one-time approvals: one actual reveal, the
+fresh server value `BROWSER-fc42f204029ca44e`, Beta at $7, total $19 and a verified
+delegated review. The owned server recorded one reveal and zero injected trap
+visits and was stopped normally. This proves that bounded scenario at that head.
+
+Read-only native inspection then found that Down Arrow did not move focus in
+the project context menu. A clean owned installed-head fixture additionally
+showed a long chat menu extending below short windows, fixed sizing estimates
+failing at the right edge, and delayed page focus taking focus from an open menu.
+The initial reproduction hit a full-disk error; its later checks are invalid.
+After removing only this task's rebuildable dependency/native fixture outputs,
+the clean rerun reproduced twelve failed checks with zero renderer errors.
+Source, evidence, canonical app, Trash, profiles and credentials were preserved.
+
+Project/chat menus now size consistently, measure their actual dimensions and
+retain an eight-pixel window margin across resize and content growth. Arrow,
+Home and End keys move among enabled items; unavailable/current targets remain
+disabled, and Escape restores the trigger. Delayed page focus respects a menu,
+dialog or later interaction that already owns focus. The thirteen-check owned
+fixture passes desktop and 900-pixel menu entry, long lists, exact edge anchors,
+open-menu resize to 800 pixels, keyboard move/remove of the synthetic chat,
+held-read focus recovery, explicit synthetic DOM growth and settled animation
+completion/removal. It does not claim IPC content-change coverage, intermediate
+animation trajectories or every responsive state. At 800 pixels and below, the
+existing icon rail uses the Projects page instead of showing project/chat rows.
+
+The focused source passes desktop type checking/build, nineteen project/sidebar
+unit tests, the thirteen menu checks, the 174-state surface audit without renderer
+errors, production secret scanning, syntax and diff checks. An independent
+bounded review records matching hashes of all six focused source/configuration
+files and no remaining findings; it did not launch the app or clear official
+review/security gates. The new fixture is included in local verification and
+source/packaged CI. Installation and native proof for this follow-up must still
+be recorded separately from the completed `5f464791` browser journey. Required
+CodeQL/review, AI-review quota and public signing/notarization remain open.
+
+### Installed menu and Settings verification — October 5
+
+The canonical `/Applications/Kestrel.app` independently identifies clean source
+`e334df9de93d9cd5917ca125bcb9c2ce26a06da2`. Desktop/core artifact hashes and
+deep development-signature verification pass. Its main process runs from that
+canonical bundle. The previously locked Mac is now available for native checks:
+Down Arrow moves project-menu focus to New chat, End moves it to Project
+settings, and Escape restores the project trigger. The menu was inspected in
+the real profile without changing any projects or chats.
+
+Native Settings inspection passes compact Memory navigation beside docked Chat,
+then desktop General-to-Memory navigation after closing Chat. Best quality,
+enabled Codex accounts, disabled other listed providers and zero local endpoints
+remain visible. No real-profile screenshots or accessibility dumps were saved.
+The complete owned installed Settings disclosure/storage/draft fixture passes
+again from the resumed checkout. The preceding saved sixteen-cycle navigation
+stress run also finished successfully; that historical run is distinct from
+the fresh complete fixture. The exact-head desktop CI failure remains recorded
+until a corrected navigation regression and a new remote run establish its
+status.
+
+Current public-release checks still find zero valid local signing identities
+and no repository or `macos-release` environment secret names. These checks do
+not establish public notarization, updater continuity or clean-machine release
+readiness. CodeQL annotations and required independent review remain open.
+
+### Settings navigation synchronization — October 5
+
+The desktop fixture's destination helper returned after dispatching the command,
+while the renderer was still awaiting the existing Settings tab selection. An
+exiting Settings subtree remains visible during the route transition with
+pointer events disabled, so a global section locator could select controls from
+that subtree. The helper now clicks the real command control, waits for one
+interactive, non-inert Settings page, scopes section controls to that page, and
+checks the selected section after both desktop and compact navigation. A failed
+desktop click includes viewport, route, navigation, target and hit-test geometry.
+
+The owned regression explicitly holds tab selection and requires the navigation
+promise to remain pending until release. Removing only the route wait reproduces
+premature completion; restoring it passes the full installed disposable-profile
+disclosure fixture. This proves the synchronization defect and its correction.
+The previous exact-head remote pointer-interception failure is retained until
+new CI verifies the follow-up; the test does not force clicks or add sleeps to
+conceal hit-test failures.
+
+### Readable observed browser approvals — October 5
+
+Click, type and select approvals can now show the latest manager-observed
+element label, role, exact reference and protected page URL. The isolated
+session or visible tab must match the approved action. This display context is
+separate from the executable input and its protected preview; missing, stale,
+oversized or mismatched context retains the original reference and complete
+Action details. Browser labels remain untrusted inert text and confer no
+permission. Navigation invalidates the prior observation. The same ownership,
+origin, input validation and one-time approval checks continue to govern actions.
+
+Complete observed strings pass through task-secret masking before URL
+normalization and display bounds. Oversized fields fall back without slicing
+credential prefixes, URL user information and sensitive parameters are removed,
+and detected percent-encoded credential echoes retain only the protected origin.
+Runtime projection also protects the context before database and model output.
+Regression coverage checks unchanged inputs and approval correlation, actual
+approved execution, ownership/stale references, credential masking in returned,
+persisted and model-visible metadata, long/whitespace/encoded credentials,
+visible-tab correlation and inert rendering of hostile markup.
+
+All 2,220 unit tests in 265 files pass with two workers, repository type checks
+pass, and the final desktop build and production browser secret scan pass. The
+initial unrestricted parallel unit run exhausted disk space and is invalid as
+behavioral evidence. Cleanup was limited to identified temporary fixtures and
+rebuildable outputs from this audit; saved evidence, source and user data remain.
+Source desktop approval-failure/recovery, conversation-only task-scope and the
+complete Settings disclosure fixtures also pass. They use synthetic providers or
+owned HTTP fixtures and disposable
+profiles and do not establish a genuine provider/browser journey. Fresh canonical
+installation, native approval proof and exact-head CI remain separate delivery
+checks. Required official review, CodeQL and public signing remain open.

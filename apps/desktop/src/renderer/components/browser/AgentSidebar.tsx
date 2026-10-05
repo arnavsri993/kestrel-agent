@@ -11,6 +11,8 @@ import { agentWorkspaceName } from "../../agent-workspace";
 import { sessionTitleForDisplay } from "../../chat-title";
 import {
 	clampAgentPanelWidth,
+	agentPanelUsesOverlay,
+	AGENT_PANEL_MIN_WIDTH,
 	handoffSpringVelocity,
 	projectedPanelWidth,
 	springStep,
@@ -20,9 +22,9 @@ import { Icon } from "../Icon";
 const AGENT_PANEL_WIDTH_KEY = "kestrel:agent-panel-width";
 
 function defaultAgentPanelWidth(viewportWidth: number): number {
-	if (viewportWidth <= 980) return 288;
-	if (viewportWidth <= 1_120) return 312;
-	return 336;
+	if (viewportWidth <= 980) return 480;
+	if (viewportWidth <= 1_120) return 520;
+	return 560;
 }
 
 export function AgentSidebar({
@@ -46,6 +48,10 @@ export function AgentSidebar({
 	onToggleAgent(): void;
 	onExpandChat(): void;
 }) {
+	const sidebarRef = useRef<HTMLElement | null>(null);
+	const closeRef = useRef<HTMLButtonElement | null>(null);
+	const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+	const compact = agentPanelUsesOverlay(viewportWidth);
 	const resizeRef = useRef<{
 		pointerId: number;
 		startX: number;
@@ -74,7 +80,7 @@ export function AgentSidebar({
 		const root = shell();
 		if (!root) return;
 		root.style.setProperty("--agent-panel-user-width", `${width.toFixed(2)}px`);
-		resizeHandleRef.current?.setAttribute("aria-valuenow", String(Math.round(width)));
+		resizeHandleRef.current?.setAttribute("aria-valuenow", String(Math.round(clampAgentPanelWidth(width, window.innerWidth))));
 	}
 
 	function writePresentedPanelWidth(width: number) {
@@ -87,7 +93,7 @@ export function AgentSidebar({
 		);
 		resizeHandleRef.current?.setAttribute(
 			"aria-valuenow",
-			String(Math.round(safeWidth)),
+			String(Math.round(clampAgentPanelWidth(safeWidth, window.innerWidth))),
 		);
 	}
 
@@ -152,7 +158,7 @@ export function AgentSidebar({
 	}
 
 	function startResize(event: PointerEvent<HTMLDivElement>) {
-		if (event.button !== 0 || collapsed) return;
+		if (event.button !== 0 || collapsed || compact) return;
 		const root = shell();
 		if (!root) return;
 		/* Read the rendered width, not the unresolved clamp() custom property.
@@ -202,14 +208,14 @@ export function AgentSidebar({
 	}
 
 	function resizeWithKeyboard(event: KeyboardEvent<HTMLDivElement>) {
-		if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+		if (compact || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
 		const root = shell();
 		if (!root) return;
 		const current = currentPanelWidth();
 		const maximum = clampAgentPanelWidth(Number.POSITIVE_INFINITY, window.innerWidth);
 		const next = clampAgentPanelWidth(
 			event.key === "Home"
-				? 288
+				? AGENT_PANEL_MIN_WIDTH
 				: event.key === "End"
 					? maximum
 					: current + (event.key === "ArrowLeft" ? 16 : -16),
@@ -225,12 +231,25 @@ export function AgentSidebar({
 
 	useLayoutEffect(() => {
 		const stored = Number.parseFloat(localStorage.getItem(AGENT_PANEL_WIDTH_KEY) ?? "");
-		if (Number.isFinite(stored)) {
-			const width = clampAgentPanelWidth(stored, window.innerWidth);
-			writePanelWidth(width);
-			setPanelWidth(width);
-		}
+		const width = clampAgentPanelWidth(Number.isFinite(stored) ? stored :
+			defaultAgentPanelWidth(window.innerWidth), window.innerWidth);
+		writePanelWidth(width);
+		setPanelWidth(width);
+		const onResize = () => {
+			setViewportWidth(window.innerWidth);
+			cancelSettle();
+			resizeRef.current = null;
+			shell()?.classList.remove("agent-sidebar-resizing");
+			shell()?.style.removeProperty("--agent-panel-presented-width");
+			setPanelWidth(current => {
+				const next = clampAgentPanelWidth(current, window.innerWidth);
+				writePanelWidth(next);
+				return next;
+			});
+		};
+		window.addEventListener("resize", onResize);
 		return () => {
+			window.removeEventListener("resize", onResize);
 			cancelSettle();
 			const root = shell();
 			root?.style.removeProperty("--agent-panel-presented-width");
@@ -241,6 +260,53 @@ export function AgentSidebar({
 	useLayoutEffect(() => {
 		const root = shell();
 		if (!root) return;
+		root.classList.toggle("agent-sidebar-compact", compact);
+		root.classList.toggle("agent-sidebar-overlay-open", compact && !collapsed);
+		if (!compact || collapsed) return;
+		const main = root.querySelector<HTMLElement>(".browser-main-plane");
+		const previouslyInert = main?.inert ?? false;
+		const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		if (main) main.inert = true;
+		// A resize can turn an already focused Chat into a modal. Keep that
+		// control focused; only move focus when it starts outside the panel.
+		if (!previousFocus || !sidebarRef.current?.contains(previousFocus)) closeRef.current?.focus();
+		const onKeyDown = (event: globalThis.KeyboardEvent) => {
+			if (event.defaultPrevented) return;
+			if (event.key === "Escape") {
+				event.preventDefault();
+				onToggleAgent();
+			} else if (event.key === "Tab") {
+				const controls = [...(sidebarRef.current?.querySelectorAll<HTMLElement>(
+					'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]',
+				) ?? [])].filter(node => node.getClientRects().length > 0 && !node.closest("[inert]"));
+				const first = controls[0];
+				const last = controls.at(-1);
+				if (event.shiftKey && document.activeElement === first) {
+					event.preventDefault(); last?.focus();
+				} else if (!event.shiftKey && document.activeElement === last) {
+					event.preventDefault(); first?.focus();
+				}
+			}
+		};
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("keydown", onKeyDown);
+			if (main) main.inert = previouslyInert;
+			root.classList.remove("agent-sidebar-overlay-open");
+			if (previousFocus?.isConnected) previousFocus.focus();
+		};
+	}, [compact, collapsed]);
+
+	useLayoutEffect(() => {
+		const root = shell();
+		if (!root) return;
+		if (compact) {
+			cancelSettle();
+			root.style.removeProperty("--agent-panel-presented-width");
+			previousCollapsedRef.current = collapsed;
+			visibilityMountedRef.current = true;
+			return;
+		}
 		if (!visibilityMountedRef.current) {
 			visibilityMountedRef.current = true;
 			previousCollapsedRef.current = collapsed;
@@ -291,7 +357,7 @@ export function AgentSidebar({
 			settleFrameRef.current = window.requestAnimationFrame(frame);
 		};
 		settleFrameRef.current = window.requestAnimationFrame(frame);
-	}, [collapsed]);
+	}, [collapsed, compact]);
 
 	const activeSession = sessions.find((session) => session.id === activeSessionId);
 	const currentTaskTitle = activeSession
@@ -311,19 +377,22 @@ export function AgentSidebar({
 	return (
 		<>
 			<aside
-				className={`agent-sidebar ${collapsed ? "is-collapsed" : ""}`}
+				ref={sidebarRef}
+				role={compact ? "dialog" : undefined}
+				aria-modal={compact && !collapsed ? true : undefined}
+				className={`agent-sidebar ${compact ? "agent-sidebar-overlay" : ""} ${collapsed ? "is-collapsed" : ""}`}
 				aria-label={`${agentName} chat`}
 				aria-hidden={collapsed}
 				inert={collapsed}
 			>
-				<div
+				{!compact && <div
 					ref={resizeHandleRef}
 					className="agent-sidebar-resize-handle"
 					role="separator"
 					aria-label="Resize Agent panel"
 					aria-orientation="vertical"
-					aria-valuemin={288}
-					aria-valuemax={Math.round(clampAgentPanelWidth(Number.POSITIVE_INFINITY, window.innerWidth))}
+					aria-valuemin={AGENT_PANEL_MIN_WIDTH}
+					aria-valuemax={Math.round(clampAgentPanelWidth(Number.POSITIVE_INFINITY, viewportWidth))}
 					aria-valuenow={Math.round(panelWidth)}
 					tabIndex={0}
 					onPointerDown={startResize}
@@ -332,19 +401,10 @@ export function AgentSidebar({
 					onPointerCancel={finishResize}
 					onLostPointerCapture={finishResize}
 					onKeyDown={resizeWithKeyboard}
-				/>
+				/>}
 				<div className="agent-sidebar-header">
 					<div className="agent-sidebar-drag" />
 					<div className="agent-chat-toolbar">
-						<button
-							type="button"
-							className="agent-sidebar-expand"
-							aria-label="Open Agent tab"
-							title="Open Agent tab"
-							onClick={onExpandChat}
-						>
-							<Icon name="expand" />
-						</button>
 						<button
 							type="button"
 							className="agent-sidebar-new"
@@ -363,12 +423,23 @@ export function AgentSidebar({
 						</div>
 						<button
 							type="button"
+							className="agent-sidebar-expand"
+							aria-label="Open Agent tab"
+							title="Open Agent tab"
+							onClick={onExpandChat}
+						>
+							<Icon name="expand" />
+						</button>
+						<button
+							type="button"
+							ref={closeRef}
 							className="agent-sidebar-collapse"
-							aria-label={`Hide ${agentName}`}
-							title={`Hide ${agentName}`}
+							aria-label={compact ? "Close chat" : `Hide ${agentName}`}
+							title={compact ? "Close chat" : `Hide ${agentName}`}
 							onClick={onToggleAgent}
 						>
-							<Icon name="chevron" className="agent-sidebar-collapse-icon" />
+							<Icon name={compact ? "close" : "chevron"} className="agent-sidebar-collapse-icon" />
+							{compact && <span>Close</span>}
 						</button>
 					</div>
 				</div>
@@ -382,7 +453,7 @@ export function AgentSidebar({
 					type="button"
 					className="agent-compact-entry"
 					aria-label={`Open ${agentName} and continue ${currentTaskTitle}`}
-					onClick={onExpandChat}
+					onClick={onToggleAgent}
 				>
 					<span
 						className={`agent-compact-state ${activeSession?.status ?? "ready"}`}
@@ -402,7 +473,6 @@ export function AgentSidebar({
 					title="New task"
 					onClick={() => {
 						onNewAgent();
-						onExpandChat();
 					}}
 				>
 					<Icon name="plus" />

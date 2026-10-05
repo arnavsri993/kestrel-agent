@@ -1,9 +1,22 @@
-import { normalizeWhatsAppTimestamp } from "./whatsapp-source";
+import {
+  findPopoverForSender,
+  openFindPopover,
+  forwardFindPopoverEvent,
+  updateFindPopoverAnchor,
+} from "./find-popover";
+import { isWhatsAppWebUrl, normalizeWhatsAppTimestamp } from "./whatsapp-source";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  constants,
+  existsSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import {
   copyFile,
   lstat,
@@ -53,12 +66,16 @@ import {
 	type Project,
 	type UserBrowserState,
   type UserBrowserTab,
+  type UserBrowserCommand,
   type WorkspaceGrant,
   type WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
+import { applicationMenuTemplate } from "./application-menu";
+import { desktopBuildProvenance } from "./build-provenance";
 import { desktopCoreProcess } from "./electron-core-process";
 import { CredentialBroker } from "./credential-broker";
+import { embeddedBuildIdentity, maskSensitiveText } from "@kestrel/shared-types";
 import {
   BrokerCredentialStore,
   MacOSKeychainCredentialStore,
@@ -169,6 +186,20 @@ import {
 // use an isolated mock because ad-hoc signatures cannot retain durable access.
 if (!shouldUseRealKeychain(process.env, PRODUCT_IDENTITY.updateChannel))
 	app.commandLine.appendSwitch("use-mock-keychain");
+// Chromium advertises FedCM to Google Identity Services inside Electron, but
+// Electron's native browser view cannot complete the button token request. GIS
+// then leaves the button inert instead of opening its supported popup flow.
+// Preserve any existing Chromium feature switches while using that popup flow.
+const disabledChromiumFeatures = app.commandLine
+	.getSwitchValue("disable-features")
+	.split(",")
+	.map((feature) => feature.trim())
+	.filter(Boolean);
+if (!disabledChromiumFeatures.includes("FedCm"))
+	app.commandLine.appendSwitch(
+		"disable-features",
+		[...disabledChromiumFeatures, "FedCm"].join(","),
+	);
 installDiagnosticFailureHooks();
 installMacFileIconCrashGuard(app);
 
@@ -541,6 +572,8 @@ function updatePaymentOverlay(
 
 const supervisor = new CoreSupervisor(
   (request, signal) => {
+    if (request.operation === "computer-use")
+      return computerUseManager().handle(request.request, signal);
     if (isUserBrowserBackendWireRequest(request)) {
       if (request.operation === "visible-tabs") {
         return Promise.resolve(
@@ -694,6 +727,45 @@ function browserServiceForWindow(
   window: BrowserWindow | null,
 ): UserBrowserService | null {
   return window ? browserWindowServices.get(window) ?? null : null;
+}
+
+function installApplicationMenu(): void {
+  const targetWindow = () => {
+    const focused = BrowserWindow.getFocusedWindow();
+    const service = browserServiceForWindow(focused);
+    if (focused && !focused.isDestroyed() && service && !service.connectionMode) return focused;
+    showMainWindow();
+    return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  };
+  const command = (value: UserBrowserCommand) => {
+    const window = targetWindow();
+    if (!window) return;
+    window.webContents.focus();
+    window.webContents.send("kestrel:browser-command", value);
+  };
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate({
+    command,
+    newTab: () => {
+      const window = targetWindow();
+      const service = browserServiceForWindow(window);
+      if (!window || !service) return;
+      void service.createTab(undefined, true).then(() => {
+        if (window.isDestroyed()) return;
+        window.webContents.focus();
+        window.webContents.send("kestrel:browser-command", "focus-address");
+      }).catch(recordDiagnosticFailure);
+    },
+    closeTab: () => {
+      const service = browserServiceForWindow(targetWindow());
+      const tabId = service?.getState().activeTabId;
+      if (service && tabId) void service.closeTab(tabId).catch(recordDiagnosticFailure);
+    },
+    reload: () => {
+      const service = browserServiceForWindow(targetWindow());
+      const tabId = service?.getState().activeTabId;
+      if (service && tabId) service.reload(tabId);
+    },
+  }, { platform: process.platform, productName: PRODUCT_IDENTITY.productName, packaged: isPackagedKestrelApp })));
 }
 
 function sendWindowFocusState(window: BrowserWindow, focused: boolean): void {
@@ -937,6 +1009,10 @@ function localRuntimeManager(): LocalRuntimeManager {
     (progress) => {
       mainWindow?.webContents.send("kestrel:local-runtime-progress", progress);
     },
+    {
+      modelDiscoveryDisabled:
+        process.env.KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY === "1",
+    },
   );
   return managedLocalRuntime;
 }
@@ -953,6 +1029,30 @@ function providerAccountStore(): ProviderAccountStore {
 		app.getPath("userData"),
 	);
 	return appProviderAccountStore;
+}
+
+async function warmEnabledManagedLocalRuntime(): Promise<boolean> {
+  const enabled = await providerAccountStore()
+    .hasEnabledManagedOllamaAccount(OLLAMA_ORIGIN)
+    .catch(() => false);
+  await localRuntimeManager().ensureChatReady(enabled);
+  if (!enabled) return false;
+  // Account updates can arrive while readiness waits for the local service.
+  const stillEnabled = await providerAccountStore()
+    .hasEnabledManagedOllamaAccount(OLLAMA_ORIGIN)
+    .catch(() => false);
+  if (!stillEnabled) await localRuntimeManager().ensureChatReady(false);
+  return stillEnabled;
+}
+
+async function seedExplicitLocalSetup(model: string): Promise<void> {
+  // Successful explicit setup can register a first-run route. Migration keeps
+  // existing disabled accounts and disconnect tombstones authoritative.
+  await providerAccountStore().ensureLegacyAccounts({
+    KESTREL_ENABLE_OLLAMA: "1",
+    KESTREL_OLLAMA_BASE_URL: OLLAMA_ORIGIN,
+    KESTREL_OLLAMA_MODEL: model,
+  });
 }
 
 function passwordVault(): PasswordVault {
@@ -1023,6 +1123,7 @@ function detectedSubscriptionCli(id: SubscriptionCliId): string | undefined {
     id === "codex"
       ? [
           configured,
+          "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
           "/Applications/ChatGPT.app/Contents/Resources/codex",
           "/opt/homebrew/bin/codex",
           "/usr/local/bin/codex",
@@ -1911,6 +2012,7 @@ function createMainWindow(): BrowserWindow {
           onEvent: (event) => {
             if (!window.isDestroyed())
               window.webContents.send("kestrel:browser-event", event);
+            forwardFindPopoverEvent(window, event);
           },
           onPasswordPrompt: (prompt) => updatePasswordOverlay(window, prompt),
           onPaymentPrompt: (prompt) => updatePaymentOverlay(window, prompt),
@@ -2012,26 +2114,59 @@ function detachedBrowserState(
   return state;
 }
 
-function detachedBrowserWindowBounds(): {
+type DetachedBrowserWindowBounds = {
 	x: number;
 	y: number;
 	width: number;
 	height: number;
-} {
-	const width = 1320;
-	const height = 860;
+};
+
+type DetachedBrowserWindowPlacement = {
+	cursor: { x: number; y: number };
+	workArea: { x: number; y: number; width: number; height: number };
+	bounds: DetachedBrowserWindowBounds;
+};
+
+function writeDetachedBrowserWindowPlacementForTest(
+	placement: DetachedBrowserWindowPlacement,
+): void {
+	const testUserData = process.env.KESTREL_TEST_USER_DATA;
+	const capturePath = process.env.KESTREL_TEST_DETACHED_WINDOW_PLACEMENT_PATH;
+	if (!testUserData || !capturePath) return;
+	const captureRelativePath = relative(testUserData, capturePath);
+	if (
+		captureRelativePath === "" ||
+		captureRelativePath === ".." ||
+		captureRelativePath.startsWith(`..${sep}`) ||
+		captureRelativePath.startsWith(sep)
+	)
+		return;
+	writeFileSync(capturePath, `${JSON.stringify(placement)}\n`, { mode: 0o600 });
+}
+
+function detachedBrowserWindowPlacement(): DetachedBrowserWindowPlacement {
 	const cursor = screen.getCursorScreenPoint();
 	const workArea = screen.getDisplayNearestPoint(cursor).workArea;
+	// A tear-off must stay usable on a smaller external display instead of
+	// relying on macOS to silently resize an oversized BrowserWindow request.
+	const width = Math.min(1320, workArea.width);
+	const height = Math.min(860, workArea.height);
 	const clamp = (value: number, minimum: number, maximum: number) =>
 		Math.round(Math.max(minimum, Math.min(value, maximum)));
-	return {
-		// Put the new tab strip under the pointer instead of letting the OS pick
-		// an unrelated default window location.
-		x: clamp(cursor.x - 180, workArea.x, workArea.x + workArea.width - width),
-		y: clamp(cursor.y - 20, workArea.y, workArea.y + workArea.height - height),
-		width,
-		height,
+	const placement = {
+		cursor,
+		workArea,
+		bounds: {
+			// Put the new tab strip under the pointer instead of letting the OS pick
+			// an unrelated default window location.
+			x: clamp(cursor.x - 180, workArea.x, workArea.x + workArea.width - width),
+			y: clamp(cursor.y - 20, workArea.y, workArea.y + workArea.height - height),
+			width,
+			height,
+		},
 	};
+	writeDetachedBrowserWindowPlacementForTest(placement);
+	return placement;
 }
 
 function createDetachedBrowserWindow(
@@ -2041,10 +2176,14 @@ function createDetachedBrowserWindow(
   restoredStatePath?: string,
 ): BrowserWindow {
   const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
+  const placement = detachedBrowserWindowPlacement();
   const window = new BrowserWindow({
-    ...detachedBrowserWindowBounds(),
-    minWidth: 920,
-    minHeight: 680,
+    ...placement.bounds,
+    // Do not let a minimum larger than the active display undo the fitted
+    // placement above. The renderer remains responsive below the preferred
+    // desktop size.
+    minWidth: Math.min(920, placement.bounds.width),
+    minHeight: Math.min(680, placement.bounds.height),
     show: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     // Keep the detached browser window on the same native-material footing as
@@ -2089,6 +2228,7 @@ function createDetachedBrowserWindow(
     onEvent: (event) => {
       if (!window.isDestroyed())
         window.webContents.send("kestrel:browser-event", event);
+      forwardFindPopoverEvent(window, event);
     },
     onPasswordPrompt: (prompt) => updatePasswordOverlay(window, prompt),
     onPaymentPrompt: (prompt) => updatePaymentOverlay(window, prompt),
@@ -2104,7 +2244,7 @@ function createDetachedBrowserWindow(
     ...(!connectionMode ? { nameTabFolders: nameBrowserTabFolders } : {}),
   });
   browserWindowServices.set(window, service);
-  if (connectionMode && !service.getState().tabs.some(item => item.url.startsWith("https://web.whatsapp.com"))) void service.createTab("https://web.whatsapp.com", true);
+  if (connectionMode && !service.getState().tabs.some(item => isWhatsAppWebUrl(item.url))) void service.createTab("https://web.whatsapp.com", true);
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternalSafely((target) => shell.openExternal(target), url);
     return { action: "deny" };
@@ -2501,23 +2641,23 @@ async function initializeCore(
     secureEnvironment.KESTREL_ENABLE_CURSOR_SUBSCRIPTION = "1";
     secureEnvironment.KESTREL_CURSOR_PATH = cursorPath;
   }
+	// Migrate configured routes before optional local discovery so persisted
+	// enablement and disconnects govern whether the managed runtime is touched.
+	// Credential bytes remain in their original protected broker slots.
+	const accounts = providerAccountStore();
+	await accounts.ensureLegacyAccounts(secureEnvironment);
   try {
-    const localRuntime = localRuntimeManager();
-    await localRuntime.startManagedIfInstalled();
-    const localModels = await listLocalModels(5_000);
-    if (localModels.length > 0) {
-      secureEnvironment.KESTREL_ENABLE_OLLAMA = "1";
-      secureEnvironment.KESTREL_OLLAMA_MODEL ??=
-        (await localRuntime.preferredModel(localModels)) ?? localModels[0]!.name;
+    if (await warmEnabledManagedLocalRuntime()) {
+      const localModels = await listLocalModels(5_000);
+      if (localModels.length > 0) {
+        secureEnvironment.KESTREL_ENABLE_OLLAMA = "1";
+        secureEnvironment.KESTREL_OLLAMA_MODEL ??=
+          (await localRuntimeManager().preferredModel(localModels)) ?? localModels[0]!.name;
+      }
     }
   } catch {
     // A local model server is optional and must not delay or block startup.
   }
-	// Migrate existing brokered/API and trusted CLI routes as account metadata.
-	// This is additive and reversible: credential bytes remain in their original
-	// protected broker slots until a person removes the legacy account.
-	const accounts = providerAccountStore();
-	await accounts.ensureLegacyAccounts(secureEnvironment);
 	const providerAccounts = (await accounts.runtimeAccounts(secureEnvironment)).flatMap(
 		(account) => {
 			const cliId =
@@ -2573,6 +2713,10 @@ async function initializeCore(
       throw new Error("Agent Core returned no workspace state during startup.");
     setAgentState(response.snapshot.agentState);
     publishMacWidgetSnapshot(response.snapshot);
+    // Core restarts can change the available model routes while the renderer's
+    // task composer remains mounted. Send the same authoritative snapshot used
+    // for other runtime changes so it can refresh that catalog immediately.
+    mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
   } catch (error) {
     // A bootstrap can fail after the utility process has been created. Tear it
     // down before the recovery dialog retries, or the next attempt sees a
@@ -2582,7 +2726,7 @@ async function initializeCore(
   }
   // Local runtime warmup is optional and must never tear down a started core.
   void Promise.resolve()
-    .then(() => localRuntimeManager().ensureChatReady())
+    .then(() => warmEnabledManagedLocalRuntime())
     .catch(() => undefined);
 }
 
@@ -2628,12 +2772,6 @@ async function selectPluginDirectory(
 async function restartCoreAfterGrantChange(): Promise<Project[]> {
   await supervisor.stop();
   await initializeCore();
-  const response = await supervisor.request({ type: "snapshot" });
-  if (response.ok && response.snapshot) {
-    setAgentState(response.snapshot.agentState);
-    publishMacWidgetSnapshot(response.snapshot);
-    mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
-  }
   return new WorkspaceGrantStore(
     join(app.getPath("userData"), "workspace-grants.json"),
   ).statusList();
@@ -2708,6 +2846,7 @@ function registerIpc(): void {
 
 	ipcMain.handle("kestrel:request", async (event, raw) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    const findPopover = senderWindow ? findPopoverForSender(senderWindow) : undefined;
     const isCalculatorOverlayWindow = Boolean(
       senderWindow && calculatorOverlayWindows.has(senderWindow),
     );
@@ -2723,6 +2862,7 @@ function registerIpc(): void {
       !senderWindow ||
       (!browserWindowServices.has(senderWindow) &&
         !isCalculatorOverlayWindow &&
+        !findPopover &&
         !isPasswordOverlayWindow &&
         !isPaymentOverlayWindow &&
         senderWindow !== petOverlayWindow) ||
@@ -2734,6 +2874,17 @@ function registerIpc(): void {
     )
       throw new Error("Kestrel rejected a request from an untrusted renderer.");
     const request = RendererRequestSchema.parse(raw);
+    if (findPopover) {
+      if (request.type === "browser-close-find") { senderWindow.close(); return { ok: true }; }
+      if (request.type !== "browser-find-in-page" || request.tabId !== findPopover.tabId || findPopover.service.getState().activeTabId !== findPopover.tabId)
+        throw new Error("Find popovers can only search their bound active tab or close themselves.");
+      findPopover.service.findInPage(findPopover.tabId, request.query, { findNext: request.findNext ?? false, forward: request.forward ?? true });
+      return { ok: true };
+    }
+
+    if (request.type === "build-provenance") return { ok: true,
+      buildProvenance: desktopBuildProvenance({ renderer: request.rendererBuild,
+        preload: request.preloadBuild ?? null, core: supervisor.getBuildIdentity() }) };
     if (
       isCalculatorOverlayWindow &&
       request.type !== "browser-close-calculator"
@@ -2771,9 +2922,7 @@ function registerIpc(): void {
       ? browserServiceForWindow(paymentOverlayOwner)
       : null;
     if (request.type === "runtime-run-agent") {
-      await localRuntimeManager()
-        .ensureChatReady()
-        .catch(() => undefined);
+      await warmEnabledManagedLocalRuntime().catch(() => undefined);
     }
     const overlayAccess =
       senderWindow === petOverlayWindow
@@ -3187,6 +3336,7 @@ function registerIpc(): void {
       );
       if (request.bounds.width > 0 && request.bounds.height > 0)
         updateCalculatorOverlayAnchor(senderWindow, request.bounds);
+      updateFindPopoverAnchor(senderWindow, request.bounds);
       return {
         ok: true,
         ...(browserPagePreview ? { browserPagePreview } : {}),
@@ -3579,6 +3729,14 @@ function registerIpc(): void {
         browserWindowRole: senderWindow === mainWindow ? "main" : "detached",
       };
     }
+    if (request.type === "browser-open-find") {
+      if (!requestBrowserService) throw new Error("The visible user browser is unavailable.");
+      openFindPopover({ owner: senderWindow, service: requestBrowserService, anchor: request.bounds,
+        preload: join(__dirname, "../preload/index.cjs"), renderer: RENDERER_ENTRY_PATH,
+        ...(DEVELOPMENT_RENDERER_URL ? { developmentUrl: DEVELOPMENT_RENDERER_URL } : {}),
+        protect: contents => protectRendererNavigation(contents, trustedRendererUrl) });
+      return { ok: true };
+    }
     if (request.type === "browser-find-in-page") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
@@ -3739,7 +3897,10 @@ function registerIpc(): void {
       return { ok: true, computerUseStatus };
     }
     if (request.type === "computer-use-update") {
-      const settings = await computerUseManager().setEnabled(request.enabled);
+      const settings = await computerUseManager().setEnabled(
+        request.enabled,
+        request.foregroundEnabled,
+      );
       browserService.setComputerUseEnabled(settings.enabled);
       const computerUseStatus = await computerUseManager().status();
       return { ok: true, computerUseStatus };
@@ -3808,7 +3969,10 @@ function registerIpc(): void {
         memoryBytes: totalmem(),
         logicalCpus: Math.max(1, cpus().length),
       };
-      const localRuntime = await localRuntimeManager().status();
+      const enabled = await providerAccountStore()
+        .hasEnabledManagedOllamaAccount(OLLAMA_ORIGIN)
+        .catch(() => false);
+      const localRuntime = await localRuntimeManager().status(enabled);
       return {
         ok: true,
         systemProfile,
@@ -3819,18 +3983,19 @@ function registerIpc(): void {
     }
     if (request.type === "local-model-pull") {
       const downloadedModel = await pullLocalModel(request.model);
+      const localModels = await listLocalModels(5_000);
+      await seedExplicitLocalSetup(downloadedModel.name);
       await supervisor.stop();
       await initializeCore();
-      return {
-        ok: true,
-        downloadedModel,
-        localModels: await listLocalModels(5_000),
-      };
+      return { ok: true, downloadedModel, localModels };
     }
     if (request.type === "local-runtime-bootstrap") {
-      const localRuntime = await localRuntimeManager().bootstrap(request.model);
+      const verifiedRuntime = await localRuntimeManager().bootstrap(request.model);
+      await seedExplicitLocalSetup(verifiedRuntime.verifiedModel ?? request.model);
       await supervisor.stop();
       await initializeCore();
+      const enabled = await providerAccountStore().hasEnabledManagedOllamaAccount(OLLAMA_ORIGIN);
+      const localRuntime = enabled ? verifiedRuntime : await localRuntimeManager().status(false);
       return { ok: true, localRuntime };
     }
     if (request.type === "local-runtime-cancel") {
@@ -4859,7 +5024,7 @@ function registerIpc(): void {
 		if (trackedStreamId) {
 			activeAgentStreams.add(trackedStreamId);
 			if (request.type === "runtime-run-agent")
-				activeAgentTaskLabel = request.message.split(/\r?\n/, 1)[0]!.slice(0, 120);
+				activeAgentTaskLabel = maskSensitiveText(request.message).split(/\r?\n/, 1)[0]!.slice(0, 120);
 			setAgentState("working");
 		}
 		if (
@@ -5071,6 +5236,13 @@ void app
   .whenReady()
   .then(async () => {
     if (!singleInstance) return;
+    const build = embeddedBuildIdentity();
+    const channel = PRODUCT_IDENTITY.updateChannel;
+    app.setAboutPanelOptions({
+      applicationName: PRODUCT_IDENTITY.productName,
+      applicationVersion: app.getVersion(),
+      version: `${channel.charAt(0).toUpperCase()}${channel.slice(1)} · ${build?.sourceCommit.slice(0, 8) ?? "unverified"}${build?.dirty ? " · local changes" : ""}`,
+    });
     startAutomaticUpdates(autoUpdater, {
       packaged: isPackagedKestrelApp,
       channel: PRODUCT_IDENTITY.updateChannel,
@@ -5116,6 +5288,7 @@ void app
 		initializeDock();
 		const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
 		if (!mainWindow) mainWindow = createMainWindow();
+		installApplicationMenu();
 		await restoreDetachedBrowserWindows();
 		for (const deepLink of initialExternalIntakeLinks)
 			handleIncomingUrl(deepLink);

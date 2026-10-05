@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
+	chmod,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -16,6 +17,9 @@ import {
 	LocalRuntimeManager,
 	type LocalRuntimeManifest,
 } from "./local-runtime-manager";
+
+import { CredentialBroker, PlaintextSecretProtection } from "./credential-broker";
+import { ProviderAccountStore } from "./provider-account-store";
 
 const roots: string[] = [];
 
@@ -223,6 +227,30 @@ describe("managed local runtime", () => {
 		).toThrow("explicit loopback HTTP port");
 	});
 
+	it("does not probe a loopback service when model discovery is disabled", async () => {
+		const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+		roots.push(root);
+		let fetches = 0;
+		const manager = new LocalRuntimeManager(root, () => undefined, {
+			fetch: (async () => {
+				fetches += 1;
+				throw new Error("The isolated profile must not contact Ollama.");
+			}) as typeof fetch,
+			platform: "darwin",
+			architecture: "arm64",
+			modelDiscoveryDisabled: true,
+		});
+
+		await expect(manager.listModels()).resolves.toEqual([]);
+		await expect(manager.status()).resolves.toMatchObject({
+			ollamaAvailable: false,
+			source: "none",
+			localModels: [],
+		});
+		await manager.startManagedIfInstalled();
+		expect(fetches).toBe(0);
+	});
+
 	it("prefers the recorded verified model over the first listed tag", async () => {
 		const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
 		roots.push(root);
@@ -417,5 +445,160 @@ describe("managed local runtime", () => {
 			"local model service response exceeds 1 MB",
 		);
 		expect(cancelled).toBe(true);
+	});
+});
+
+
+async function guardedRuntimeFixture() {
+	const root = await mkdtemp(join(tmpdir(), "kestrel-guarded-runtime-"));
+	roots.push(root);
+	const origin = "http://127.0.0.1:43123";
+	const manifest = testManifest(new TextEncoder().encode("fixture-archive"));
+	const install = join(root, "local-runtime", "ollama", manifest.version);
+	await mkdir(install, { recursive: true });
+	await writeFile(join(install, "ollama"), "fixture-binary");
+	await chmod(join(install, "ollama"), 0o700);
+	await writeFile(join(install, "workstrand-install.json"), JSON.stringify({ version: manifest.version, sha256: manifest.sha256, binaryPath: manifest.binaryPath }));
+	const store = new ProviderAccountStore(join(root, "provider-accounts.json"), new CredentialBroker(join(root, "secure"), new PlaintextSecretProtection()), root);
+	const counts = { fetches: 0, spawns: 0, kills: 0 };
+	let ready = false;
+	let verificationGate: Promise<void> | undefined;
+	let verificationStarted: (() => void) | undefined;
+	let probeGate: Promise<void> | undefined;
+	let probeStarted: (() => void) | undefined;
+	const manager = new LocalRuntimeManager(root, () => undefined, {
+		manifest, origin, platform: "darwin", architecture: "arm64",
+		fetch: (async (input) => {
+			counts.fetches += 1;
+			const url = String(input);
+			if (url === `${origin}/api/tags`) {
+				if (!ready) {
+					probeStarted?.();
+					await probeGate;
+					throw new TypeError("fixture connection refused");
+				}
+				return Response.json({ models: [{ name: "fixture:test", size: 42 }] });
+			}
+			if (url === `${origin}/api/chat`) {
+				verificationStarted?.();
+				await verificationGate;
+				return Response.json({ done: true, message: { content: "READY" } });
+			}
+			throw new Error("Unexpected fixture request");
+		}) as typeof fetch,
+		spawn: (() => {
+			counts.spawns += 1;
+			ready = true;
+			const child = fakeChild();
+			const kill = child.kill;
+			child.kill = (signal) => {
+				counts.kills += 1;
+				ready = false;
+				return kill(signal);
+			};
+			return child;
+		}) as unknown as typeof import("node:child_process").spawn,
+	});
+	return {
+		store, manager, counts, origin,
+		seed: { KESTREL_ENABLE_OLLAMA: "1", KESTREL_OLLAMA_BASE_URL: origin, KESTREL_OLLAMA_MODEL: "fixture:test" },
+		markExternalReady: () => { ready = true; },
+		holdInitialProbe: () => {
+			let release!: () => void;
+			probeGate = new Promise<void>((resolve) => { release = resolve; });
+			const started = new Promise<void>((resolve) => { probeStarted = resolve; });
+			return { release, started };
+		},
+		holdVerification: () => {
+			let release!: () => void;
+			verificationGate = new Promise<void>((resolve) => { release = resolve; });
+			const started = new Promise<void>((resolve) => { verificationStarted = resolve; });
+			return { release, started };
+		},
+	};
+}
+
+describe("persisted account and managed runtime lifecycle", () => {
+	it.each(["absent", "disabled", "removed", "custom-port", "remote", "gateway"])(
+		"does not fetch or spawn for an %s managed route, including onboarding status",
+		async (state) => {
+			const fixture = await guardedRuntimeFixture();
+			const { store, manager, counts, origin, seed } = fixture;
+			if (state === "disabled" || state === "removed") {
+				await store.ensureLegacyAccounts(seed);
+				if (state === "disabled") await store.update({ id: "legacy-ollama", enabled: false });
+				else await store.remove("legacy-ollama");
+				await store.ensureLegacyAccounts(seed);
+			} else if (state !== "absent") {
+				await store.create({
+					providerId: "fixture-local", displayName: "Fixture local", authTransport: "local", enabled: true, headers: [],
+					adapter: state === "gateway" ? "openai-compatible" : "ollama",
+					baseUrl: state === "custom-port" ? "http://127.0.0.1:43124" : state === "remote" ? "https://models.example.test" : origin,
+				});
+			}
+			const enabled = await store.hasEnabledManagedOllamaAccount(origin);
+			expect(enabled).toBe(false);
+			await manager.ensureChatReady(enabled);
+			await expect(manager.status(enabled)).resolves.toMatchObject({ managedRuntime: true, ollamaAvailable: false, localModels: [] });
+			expect(counts).toEqual({ fetches: 0, spawns: 0, kills: 0 });
+		},
+	);
+
+	it("starts the enabled managed route and stops only its owned child when disabled", async () => {
+		const { store, manager, counts, origin, seed } = await guardedRuntimeFixture();
+		await store.ensureLegacyAccounts(seed);
+		await manager.ensureChatReady(await store.hasEnabledManagedOllamaAccount(origin));
+		expect(counts.spawns).toBe(1);
+		await expect(manager.status(true)).resolves.toMatchObject({ ollamaAvailable: true });
+		const fetches = counts.fetches;
+		await store.update({ id: "legacy-ollama", enabled: false });
+		await manager.ensureChatReady(await store.hasEnabledManagedOllamaAccount(origin));
+		await manager.ensureChatReady(await store.hasEnabledManagedOllamaAccount(origin));
+		expect(counts).toEqual({ fetches, spawns: 1, kills: 1 });
+	});
+
+	it("cancels a delayed normal readiness probe before it can spawn after disable", async () => {
+		const { store, manager, counts, origin, seed, holdInitialProbe } = await guardedRuntimeFixture();
+		await store.ensureLegacyAccounts(seed);
+		const probe = holdInitialProbe();
+		const warming = manager.ensureChatReady(await store.hasEnabledManagedOllamaAccount(origin));
+		const rejected = expect(warming).rejects.toMatchObject({ name: "AbortError" });
+		await probe.started;
+		await store.update({ id: "legacy-ollama", enabled: false });
+		await manager.ensureChatReady(await store.hasEnabledManagedOllamaAccount(origin));
+		probe.release();
+		await rejected;
+		await manager.ensureChatReady(false);
+		expect(counts).toEqual({ fetches: 1, spawns: 0, kills: 0 });
+	});
+
+	it("leaves an externally owned service running when the local route is disabled", async () => {
+		const { store, manager, counts, origin, seed, markExternalReady } = await guardedRuntimeFixture();
+		await store.ensureLegacyAccounts(seed);
+		markExternalReady();
+		await manager.ensureChatReady(await store.hasEnabledManagedOllamaAccount(origin));
+		const fetches = counts.fetches;
+		await store.update({ id: "legacy-ollama", enabled: false });
+		await manager.ensureChatReady(await store.hasEnabledManagedOllamaAccount(origin));
+		expect(counts).toEqual({ fetches, spawns: 0, kills: 0 });
+	});
+
+	it("allows explicit first-run setup and seeds its route without chat warmup cancelling setup", async () => {
+		const { store, manager, counts, origin, seed, holdVerification } = await guardedRuntimeFixture();
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(false);
+		await manager.ensureChatReady(false);
+		expect(counts.fetches).toBe(0);
+		const verification = holdVerification();
+		const setup = manager.bootstrap("fixture:test");
+		await verification.started;
+		await manager.ensureChatReady(false);
+		expect(counts.kills).toBe(0);
+		verification.release();
+		await expect(setup).resolves.toMatchObject({ verifiedModel: "fixture:test", ollamaAvailable: true });
+		await store.ensureLegacyAccounts(seed);
+		expect(await store.hasEnabledManagedOllamaAccount(origin)).toBe(true);
+		await manager.ensureChatReady(await store.hasEnabledManagedOllamaAccount(origin));
+		expect(counts.spawns).toBe(1);
+		await manager.stop();
 	});
 });

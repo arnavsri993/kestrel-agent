@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
+import { openKestrelDestination, selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-setup-test-"));
 const testHome = join(root, "home");
@@ -15,14 +16,23 @@ const testEnvironment = Object.fromEntries(
 		process.env[key] === undefined ? [] : [[key, process.env[key]]],
 	),
 );
+const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
+const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
+const executablePath = packagedExecutable
+	? resolve(packagedExecutable)
+	: requireFromDesktop("electron");
+const launchArgs = packagedExecutable
+	? ["--use-mock-keychain"]
+	: [
+			resolve("apps/desktop/out/main/index.js"),
+			...(process.platform === "darwin" ? ["--use-mock-keychain"] : []),
+		];
 let application;
 
 try {
 	application = await electron.launch({
-		args: [
-			resolve("apps/desktop/out/main/index.js"),
-			...(process.platform === "darwin" ? ["--use-mock-keychain"] : []),
-		],
+		executablePath,
+		args: launchArgs,
 		env: {
 			...testEnvironment,
 			HOME: testHome,
@@ -30,7 +40,13 @@ try {
 			LOGNAME: "kestrel-test",
 			CODEX_HOME: testCodexHome,
 			KESTREL_DISABLE_UPDATES: "1",
+		// This onboarding test covers an intentionally unconfigured profile. Do
+		// not let an Ollama instance running on the developer or CI host turn it
+		// into a different, ready-to-send experience.
+		KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
+			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 			KESTREL_TEST_USER_DATA: join(root, "user-data"),
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
 		},
 	});
 	const page = await application.firstWindow();
@@ -424,6 +440,8 @@ try {
 	);
 
 	await page.setViewportSize({ width: 640, height: 760 });
+	const compactChatClose = page.getByRole("button", { name: "Close chat", exact: true });
+	if (await compactChatClose.isVisible()) await compactChatClose.click();
 	const overflow = await page.evaluate(
 		() =>
 			document.documentElement.scrollWidth >
@@ -469,9 +487,16 @@ try {
 	await page
 		.getByRole("heading", { name: /You're set\.|Ready for a first task/ })
 		.waitFor();
-	await page
-		.getByRole("button", { name: "Finish with setup help" })
-		.click({ timeout: 120_000 });
+	const finishWithSetupHelp = page.getByRole("button", {
+		name: "Finish with setup help",
+	});
+	await finishWithSetupHelp.waitFor();
+	assert.equal(
+		await finishWithSetupHelp.isEnabled(),
+		true,
+		"An unconfigured profile must be able to leave setup and explore Kestrel.",
+	);
+	await finishWithSetupHelp.click();
 	await page
 		.getByRole("button", { name: "New chat", exact: true })
 		.first()
@@ -585,11 +610,16 @@ try {
 		await newAgentButton.getAttribute("aria-keyshortcuts"),
 		"Meta+N",
 	);
-	await page
-		.getByRole("button", {
-			name: /Add (?:context files|files or choose folder)/,
-		})
-		.waitFor();
+	await page.getByRole("button", { name: "Connect a model" }).waitFor();
+	assert.equal(
+		await page
+			.getByRole("button", {
+				name: /Add (?:context files|files or choose folder)/,
+			})
+			.count(),
+		0,
+		"A first-run composer must make its unavailable model route explicit instead of offering task context it cannot send.",
+	);
 	await page.locator("#runtime-prompt").waitFor();
 	assert.equal(await page.getByRole("button", { name: /Review a project/ }).count(), 0);
 	assert.equal(await page.getByRole("button", { name: /Plan a task/ }).count(), 0);
@@ -604,13 +634,16 @@ try {
 		.filter({ has: page.getByText("Settings", { exact: true }) })
 		.first()
 		.click();
-	await page.getByRole("heading", { name: "Settings" }).waitFor();
+	await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
 	assert.equal(
 		await page.getByLabel("Message Kestrel").inputValue(),
 		preservedDraft,
 	);
 	await page.getByLabel("Message Kestrel").fill("");
 	await page.setViewportSize({ width: 640, height: 760 });
+	await page.locator(".agent-sidebar-overlay").waitFor({ state: "visible" });
+	assert.equal(await page.locator(".browser-main-plane").evaluate(node => node.inert), true);
+	await page.getByRole("button", { name: "Close chat", exact: true }).click();
 	await page.locator(".kestrel-sidebar").waitFor({ state: "visible" });
 	assert.equal(
 		await page.locator(".kestrel-sidebar-brand span").evaluate(
@@ -673,11 +706,14 @@ try {
 	await page.locator(".command-center").waitFor({ state: "detached" });
 	assert.equal(await page.locator(".command-center").count(), 0);
 	await page.setViewportSize({ width: 1320, height: 860 });
-	await page.getByRole("heading", { name: "Settings" }).waitFor();
+	await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
 	assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
 	assert.equal(await page.locator(".page-header > p").count(), 0);
-	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
-	await page.locator("summary").filter({ hasText: "Model provider · ChatGPT" }).click();
+	await selectSettingsSection(page, "connections", "Connections");
+	await page.getByRole("button", { name: "Open Connections", exact: true }).click();
+	await page.getByRole("heading", { name: "Connections", exact: true }).waitFor();
+	await page.getByLabel("More connection settings").selectOption("models");
+	await page.getByRole("heading", { name: "Model provider", exact: true }).waitFor();
 	const chatGptConnection = page
 		.locator(".oauth-connection")
 		.filter({ hasText: "ChatGPT" });
@@ -690,13 +726,15 @@ try {
 			.count(),
 		1,
 	);
+	await page.getByRole("button", { name: "Apps & accounts", exact: true }).click();
+	await page.locator("summary").filter({ hasText: "Gmail and Calendar" }).click();
+	await page.getByRole("button", { name: "Set up Google", exact: true }).click();
 	await page.getByLabel("Desktop OAuth client ID").waitFor();
 	assert.equal(
-		await page
-			.getByRole("button", { name: "Connect with Google" })
-			.isDisabled(),
+		await page.getByLabel("Desktop OAuth client ID").evaluate(input => input === document.activeElement),
 		true,
 	);
+	assert.equal(await page.getByRole("button", { name: "Connect with Google", exact: true }).count(), 0);
 	await page
 		.getByLabel("Desktop OAuth client ID")
 		.fill(
@@ -707,6 +745,8 @@ try {
 		true,
 	);
 	await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
+	await openKestrelDestination(page, "Settings");
+	await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
 	await selectSettingsSection(page, "general", "General");
 	const communicationStyle = page.getByRole("group", {
 		name: "Communication style",
@@ -749,28 +789,124 @@ try {
 		await page.evaluate(() => localStorage.getItem("kestrel:onboarded")),
 		null,
 	);
+	const existingProviderAccounts = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "provider-account-list",
+		});
+		if (!response.ok || !("providerAccounts" in response))
+			throw new Error("Could not list the disposable profile's provider accounts.");
+		return response.providerAccounts.map((account) => account.id);
+	});
+	for (const accountId of existingProviderAccounts) {
+		const removed = await page.evaluate(
+			async (id) =>
+				window.kestrel.request({
+					type: "provider-account-remove",
+					accountId: id,
+				}),
+			accountId,
+		);
+		assert.equal(removed.ok, true);
+	}
+	const sessionsBeforeGuidedFirstTask = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-sessions",
+		});
+		if (!response.ok || !("sessions" in response))
+			throw new Error("Could not read sessions before the guided first task.");
+		return response.sessions.map((session) => session.id);
+	});
 	await page.evaluate(() => {
 		localStorage.setItem("kestrel:onboarded", "yes");
 		localStorage.setItem("kestrel:first-task", "yes");
 	});
 	await page.reload();
-	await page.locator("#runtime-prompt").waitFor();
-	await page
-		.getByText(/just finished Kestrel setup/i)
-		.first()
-		.waitFor({ timeout: 10_000 });
+	const guidedConversation = page.locator(".agent-conversation-host");
+	await guidedConversation.locator("#runtime-prompt").waitFor();
+	try {
+		await page.waitForFunction(
+			() => {
+				const prompt = document.querySelector("#runtime-prompt");
+				return (
+					prompt instanceof HTMLTextAreaElement &&
+					prompt.value.startsWith("I just finished Kestrel setup.")
+				);
+			},
+			undefined,
+			{ timeout: 10_000 },
+		);
+	} catch (cause) {
+		const state = await page.evaluate(async () => {
+			const [providers, sessions] = await Promise.all([
+				window.kestrel.request({ type: "runtime-list-providers" }),
+				window.kestrel.request({ type: "runtime-list-sessions" }),
+			]);
+			return {
+				onboarded: localStorage.getItem("kestrel:onboarded"),
+				firstTask: localStorage.getItem("kestrel:first-task"),
+				promptPresent: Boolean(document.querySelector("#runtime-prompt")?.value),
+				providerAccountCount:
+					providers.ok && "providerAccounts" in providers
+						? providers.providerAccounts.length
+						: null,
+				sessionCount:
+					sessions.ok && "sessions" in sessions ? sessions.sessions.length : null,
+			};
+		});
+		throw new Error(
+			`Guided first-task recovery did not load its draft: ${JSON.stringify(state)}`,
+			{ cause },
+		);
+	}
+	try {
+		await guidedConversation
+			.locator(".chat-error")
+			.filter({ hasText: "Connect a model to send tasks." })
+			.waitFor({ timeout: 10_000 });
+	} catch (cause) {
+		const input = await guidedConversation.getByLabel("Message Kestrel").inputValue();
+		const errors = await guidedConversation.locator(".chat-error").allTextContents();
+		throw new Error(
+			`Guided first-task recovery did not reach the no-provider state: ${JSON.stringify({ input, errors })}`,
+			{ cause },
+		);
+	}
+	assert.match(
+		await guidedConversation.getByLabel("Message Kestrel").inputValue(),
+		/^I just finished Kestrel setup\./,
+		"First-task onboarding should preserve the guided prompt until a model is connected.",
+	);
 	assert.equal(
-		await page.getByLabel("Message Kestrel").inputValue(),
-		"",
-		"First-task onboarding should auto-send and clear the composer.",
+		await guidedConversation
+			.getByRole("button", { name: "Connect a model" })
+			.isEnabled(),
+		true,
+	);
+	assert.equal(
+		await guidedConversation
+			.getByRole("button", { name: "Send message" })
+			.isDisabled(),
+		true,
 	);
 	assert.equal(
 		await page.evaluate(() => localStorage.getItem("kestrel:first-task")),
 		null,
 	);
+	assert.deepEqual(
+		await page.evaluate(async () => {
+			const response = await window.kestrel.request({
+				type: "runtime-list-sessions",
+			});
+			if (!response.ok || !("sessions" in response))
+				throw new Error("Could not read sessions after the guided first task.");
+			return response.sessions.map((session) => session.id);
+		}),
+		sessionsBeforeGuidedFirstTask,
+		"First-task onboarding must not create a run without a configured model.",
+	);
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Five-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, guided first-task auto-send, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n",
+		"Five-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, safe no-provider guided first-task recovery, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n",
 	);
 } finally {
 	await application?.close();

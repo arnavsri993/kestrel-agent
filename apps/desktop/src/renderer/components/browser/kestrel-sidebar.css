@@ -302,9 +302,13 @@
 
 .browser-workspace-vertical .browser-tab-tools-menu {
 	width: min(318px, calc(100vw - var(--kestrel-sidebar-space) - 12px));
+	/* The trigger sits 46px below the lower workspace's chrome: 8px rail
+	 * padding, a 30px control, and the menu's 8px gap. Reserve that anchor
+	 * offset plus an 8px bottom gutter so a scrollable menu cannot escape a
+	 * short window. */
 	max-height: min(
 		640px,
-		calc(100vh - var(--browser-chrome-height) - 16px)
+		calc(100vh - var(--browser-chrome-height) - 54px)
 	);
 }
 
@@ -341,13 +345,7 @@
 	);
 }
 
-.browser-workspace-vertical .browser-find-bar {
-	position: absolute;
-	top: var(--browser-chrome-height);
-	left: calc(var(--kestrel-sidebar-space) + var(--browser-tab-rail-width));
-	right: var(--agent-panel-width);
-	z-index: 9;
-}
+
 
 .kestrel-sidebar-header {
 	display: flex;
@@ -720,8 +718,12 @@
 	display: block;
 	min-width: 0;
 	overflow: hidden;
-	text-overflow: ellipsis;
+	text-overflow: clip;
 	white-space: nowrap;
+	mask-image: linear-gradient(to right, #000 0, #000 calc(100% - var(--kestrel-sidebar-title-fade-width)), transparent 100%);
+}
+@media (forced-colors: active) {
+	.kestrel-sidebar-title { mask-image: none; text-overflow: ellipsis; }
 }
 
 .kestrel-sidebar-project-open > svg:last-child {
@@ -885,8 +887,9 @@
 	position: fixed;
 	z-index: 100;
 	display: grid;
-	min-width: 196px;
-	max-width: 236px;
+	width: max-content;
+	min-width: min(196px, calc(100vw - 16px));
+	max-width: min(236px, calc(100vw - 16px));
 	max-height: min(420px, calc(100vh - 16px));
 	gap: 2px;
 	overflow-y: auto;
@@ -917,6 +920,11 @@
 .kestrel-sidebar-context-menu button:hover:not(:disabled) {
 	background: color-mix(in srgb, var(--ink) 9%, transparent);
 	color: var(--ink);
+}
+
+.kestrel-sidebar-context-menu button > span:last-child {
+	min-width: 0;
+	overflow-wrap: anywhere;
 }
 
 .kestrel-sidebar-context-menu button:disabled {
@@ -1278,7 +1286,7 @@
 	-webkit-backdrop-filter: blur(20px) saturate(125%);
 }
 
-@media (max-width: 1120px) {
+@media (max-width: 800px) {
 	.ai-browser-app,
 	.ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
 		--kestrel-sidebar-width: 56px;
@@ -1366,9 +1374,25 @@
    own box rather than beyond the parent's overflow clip. */
 .kestrel-sidebar-section ul > li { min-width: 0; max-width: 100%; }
 .kestrel-sidebar-title { max-width: 100%; }
-@media (max-width: 1120px) {
+@media (max-width: 800px) {
  .kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-header-actions {
   display: flex; flex-direction: column; gap: 4px; width: 32px;
  }
  .kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-icon-button { border-radius: 50%; }
+}
+
+/* Everyday destinations stay above the user's work; management stays anchored. */
+.kestrel-sidebar-utilities {
+ display: grid;
+ flex: 0 0 auto;
+ gap: 2px;
+ padding-top: 8px;
+ border-top: 1px solid var(--line);
+}
+.kestrel-sidebar-scroll { margin-top: 14px; }
+.kestrel-sidebar-utilities .kestrel-sidebar-nav-item { min-height: 34px; }
+.browser-extension-cluster:empty { display: none; }
+@media (max-height: 600px) {
+ .kestrel-sidebar { --kestrel-sidebar-row-height: 32px; padding-top: 6px; padding-bottom: 6px; }
+ .kestrel-sidebar-utilities .kestrel-sidebar-nav-item { min-height: 30px; }
 }

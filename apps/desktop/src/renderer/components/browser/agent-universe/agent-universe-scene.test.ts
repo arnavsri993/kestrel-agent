@@ -176,7 +176,7 @@ describe("agent universe circle surface", () => {
 		expect(rendered).toContain('aria-label="Chat with Research"');
 		expect(rendered).toContain("agent-universe-context-conversation");
 		expect(rendered).toContain('aria-label="Research settings"');
-		expect(rendered).toContain("Kestrel model system");
+		expect(rendered).toContain('aria-label="Model: Auto"');
 		expect(rendered).toContain('aria-label="Send message to Research"');
 	});
 });

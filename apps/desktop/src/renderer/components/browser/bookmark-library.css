@@ -1,3 +1,14 @@
+.browser-library .ui-page-frame-actions > .ui-button {
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+
+.browser-library .ui-page-frame-actions > .ui-button > svg {
+	flex: 0 0 16px;
+	width: 16px;
+	height: 16px;
+}
+
 .bookmark-library-controls {
 	display: flex;
 	align-items: center;

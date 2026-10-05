@@ -31,6 +31,16 @@ jobs:
       - run: corepack pnpm exec playwright install chromium
       - run: corepack pnpm typecheck
       - run: corepack pnpm test
+      - run: corepack pnpm test:memory-cleanup-review
+      - run: corepack pnpm test:writing-studio-layout
+      - name: Upload owned Writing Studio layout evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: writing-studio-layout-${{ github.run_attempt }}
+          path: .tmp/writing-studio-layout/**
+          if-no-files-found: warn
+          retention-days: 14
       - run: KESTREL_SOURCE_BENCHMARK_REPORT=.tmp/source-ingestion-benchmark/ci.json corepack pnpm benchmark:source-ingestion
       - name: Upload source-ingestion benchmark report
         if: ${{ always() }}
@@ -77,6 +87,7 @@ jobs:
       - run: corepack pnpm test:desktop-file-icon-guard
       - run: corepack pnpm test
       - run: corepack pnpm test:desktop-smoke
+      - run: corepack pnpm test:desktop-task-secrets
       - run: corepack pnpm test:desktop-single-instance
       - run: corepack pnpm test:desktop-restart-recovery
       - run: corepack pnpm test:desktop-workflow-reuse
@@ -87,19 +98,34 @@ jobs:
       - run: corepack pnpm test:desktop-fresh-profile
       - run: corepack pnpm test:desktop-personas
       - run: corepack pnpm test:desktop-kanban
+      - run: corepack pnpm test:desktop-project-menus
       - run: corepack pnpm test:desktop-model-routing
+      - run: corepack pnpm test:desktop-provider-accounts
+      - run: corepack pnpm test:desktop-auth-links
       - run: corepack pnpm test:desktop-subscription-cli-safety
       - run: corepack pnpm test:desktop-readiness
       - run: corepack pnpm test:desktop-external-secrets
       - run: corepack pnpm test:desktop-observability
       - run: corepack pnpm test:desktop-life-context
       - run: corepack pnpm test:desktop-approvals
+      - run: corepack pnpm test:desktop-approval-failure
+      - run: corepack pnpm test:desktop-task-scope
+      - run: corepack pnpm test:desktop-settings-disclosures
+      - run: corepack pnpm test:desktop-tool-results
       - run: corepack pnpm test:desktop-chat-configuration
       - run: corepack pnpm test:desktop-managed-policy
       - run: corepack pnpm package:mac:dev
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-project-menus
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-approval-failure
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-task-scope
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-settings-disclosures
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-tool-results
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-task-secrets
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
+      - name: Audit packaged desktop surfaces
+        run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm audit:desktop-surfaces
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-file-icon-guard
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-subscription-cli-safety
       - run: corepack pnpm test:packaged-desktop:arm64
@@ -136,7 +162,12 @@ jobs:
         with:
           name: desktop-failure-evidence-${{ github.run_attempt }}
           path: |
+            .tmp/desktop-browser/**
             .tmp/desktop-layout/**
+            .tmp/release-surfaces/**
+            .tmp/project-menus/**
+            .tmp/desktop-personas/**
+            .tmp/desktop-tool-results/**
             .tmp/browser-agent-benchmark/*.json
             .tmp/ci-diagnostics/**
             test-results/**

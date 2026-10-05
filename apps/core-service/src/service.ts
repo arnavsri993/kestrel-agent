@@ -7,6 +7,7 @@ import {
 	type BrowserAction,
 	type BrowserAutomationBackend,
 	BrowserController,
+	type ComputerUseBackend,
 	type BrowserDiagnostic,
 	type BrowserDownload,
 	type BrowserSnapshot,
@@ -21,6 +22,7 @@ import {
 	environmentRemoteExecutionConfiguration,
 	environmentWebAccessOptions,
 	installBrowserTools,
+	installComputerUseTools,
 	installCodeIntelligenceTools,
 	installGoogleWorkspaceTools,
 	installUIPresentationTools,
@@ -36,7 +38,7 @@ import {
 	KestrelDatabase,
 	PROTECTED_DATABASE_ERROR_CODE,
 } from "@kestrel/database";
-import { CoreRequestSchema } from "@kestrel/shared-types";
+import { CoreRequestSchema, embeddedBuildIdentity, type ComputerUseRequest, type ComputerUseResponse } from "@kestrel/shared-types";
 import type { CoreParentPort } from "./transport";
 
 export function startCoreService(port: CoreParentPort): void {
@@ -98,6 +100,11 @@ export function startCoreService(port: CoreParentPort): void {
 			port.postMessage({ type: "browser-backend-request", requestId, request });
 		});
 	}
+
+	const computerUseBackend: ComputerUseBackend = {
+		request: (request: ComputerUseRequest, signal: AbortSignal) =>
+			browserRequest<ComputerUseResponse>({ operation: "computer-use", request }, signal),
+	};
 
 	const browserBackend: BrowserAutomationBackend = {
 		createSession: async ({ allowedOrigins }) =>
@@ -356,14 +363,6 @@ export function startCoreService(port: CoreParentPort): void {
 					delete account.apiKey;
 					delete account.headers;
 				}
-				// A new or expired dynamic catalog is resolved before Auto is offered.
-				// ModelCatalog limits discovery concurrency and this short deadline keeps
-				// startup responsive if an account endpoint is unreachable.
-				try {
-					await agentCore.refreshStaleProviderModels(AbortSignal.timeout(4_000));
-				} catch {
-					console.warn("Kestrel provider model catalog startup refresh did not complete.");
-				}
 				const mainSession = agentCore.runtime.ensureMainSession();
 				if (googleWorkspace)
 					installGoogleWorkspaceTools(
@@ -371,17 +370,22 @@ export function startCoreService(port: CoreParentPort): void {
 						googleWorkspace,
 						mainSession.id,
 					);
-				const browserToolNames = installBrowserTools(
+			const browserToolNames = installBrowserTools(
 					agentCore.runtime,
 					new BrowserController(browserBackend),
 					mainSession.id,
 					new VisualValidator(database, artifactRoot),
-				);
+			);
+			const computerUseToolNames = installComputerUseTools(
+				agentCore.runtime,
+				computerUseBackend,
+				mainSession.id,
+			);
 				const uiToolNames = installUIPresentationTools(
 					agentCore.runtime,
 					mainSession.id,
 				);
-				const installedToolNames = [...browserToolNames, ...uiToolNames];
+			const installedToolNames = [...browserToolNames, ...computerUseToolNames, ...uiToolNames];
 				// Sessions created after registration inherit these tools automatically.
 				// Preserve conversation timestamps while making the new browser layer
 				// available to conversations that already existed before this release.
@@ -400,6 +404,16 @@ export function startCoreService(port: CoreParentPort): void {
 					url: browserMcpEndpoint.url,
 					token: browserMcpEndpoint.token,
 				});
+				// Discovery can start the Codex app-server. Attach the browser MCP
+				// before its first process launch because that config is not hot-reloaded.
+				// A new or expired dynamic catalog is resolved before Auto is offered.
+				// ModelCatalog limits discovery concurrency and this short deadline keeps
+				// startup responsive if an account endpoint is unreachable.
+				try {
+					await agentCore.refreshStaleProviderModels(AbortSignal.timeout(4_000));
+				} catch {
+					console.warn("Kestrel provider model catalog startup refresh did not complete.");
+				}
 				const configuredLanguageServer = await environmentLanguageServerClient();
 				if (configuredLanguageServer) {
 					languageServer = configuredLanguageServer.client;
@@ -414,13 +428,14 @@ export function startCoreService(port: CoreParentPort): void {
 					port.postMessage({ type: "runtime-event", event }),
 				);
 				automationTimer = setInterval(() => {
-					if (!core || automationRunning) return;
+					if (!core || automationRunning || core.isPaused) return;
 					automationRunning = true;
 					const controller = new AbortController();
 					automationController = controller;
 					const checkedAt = new Date();
 					const task = Promise.resolve()
 						.then(async () => {
+							if (!core || core.isPaused || controller.signal.aborted) return [];
 							await core!.runAmbientMaintenance(checkedAt);
 							return core!.orchestrator.runDue(checkedAt, controller.signal);
 						})
@@ -460,7 +475,7 @@ export function startCoreService(port: CoreParentPort): void {
 					void task;
 				}, 30_000);
 				automationTimer.unref();
-				port.postMessage({ type: "ready" });
+				port.postMessage({ type: "ready", buildIdentity: embeddedBuildIdentity() });
 			} catch (error) {
 				await browserMcp?.stop();
 				browserMcp = undefined;

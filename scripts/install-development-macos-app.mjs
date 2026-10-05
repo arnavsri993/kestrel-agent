@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   renameSync,
+  realpathSync,
   rmSync,
 } from "node:fs";
 import {
@@ -14,6 +15,8 @@ import {
   resolve,
 } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { enterDeploymentLock } from "./macos-deployment-lock.mjs";
+import { assertDeploymentCandidate, claimDeploymentOwner } from "./macos-deployment-policy.mjs";
 import {
   defaultSearchRoots,
   isKestrelBundle,
@@ -36,10 +39,49 @@ if (process.platform !== "darwin") {
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const defaultSource = join(repositoryRoot, "release", "mac-arm64", "Kestrel.app");
-const source = resolve(process.argv[2] ?? defaultSource);
+const options = new Map();
+let sourceArgument;
+for (let index = 2; index < process.argv.length; index++) {
+  const argument = process.argv[index];
+  if (argument.startsWith("--")) {
+    if (!["--claim-owner", "--deployment-lock-token", "--handoff-from", "--candidate-commit"].includes(argument) || options.has(argument))
+      throw new Error(`Unknown or repeated installer option: ${argument}`);
+    if (argument === "--claim-owner") options.set(argument, true);
+    else {
+      const value = process.argv[++index];
+      if (!value || value.startsWith("--")) throw new Error(`Missing value for ${argument}`);
+      options.set(argument, value);
+    }
+  } else {
+    if (sourceArgument) throw new Error("Pass only one source bundle path.");
+    sourceArgument = argument;
+  }
+}
+const candidateCommit = options.get("--candidate-commit");
+if (candidateCommit !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(candidateCommit))
+  throw new Error("--candidate-commit requires an exact full lowercase commit SHA.");
+const source = resolve(options.has("--claim-owner") ? defaultSource : sourceArgument ?? defaultSource);
 const home = process.env.HOME ?? homedir() ?? tmpdir();
 const installRoot = resolve(process.env.KESTREL_MACOS_INSTALL_ROOT ?? "/Applications");
 const destination = join(installRoot, "Kestrel.app");
+const assertLock = enterDeploymentLock(import.meta.filename, installRoot, {
+  workspace: repositoryRoot, intendedArtifact: source,
+  intendedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, encoding: "utf8" }).trim(),
+});
+if (options.has("--claim-owner")) {
+  assertLock();
+  const owner = claimDeploymentOwner(repositoryRoot, installRoot, options.get("--handoff-from"), { candidateCommit });
+  console.log(`Canonical deployment owner: ${owner.workspace} (${owner.sourceCommit})`);
+  process.exit(0);
+}
+// Existing installer fixtures are restricted to dedicated temporary install
+// roots. This switch can never bypass policy at /Applications or a real profile.
+const fixtureInstall = candidateCommit === undefined && process.env.KESTREL_MACOS_TEST_INSTALL === "1" &&
+  realpathSync(installRoot).startsWith(`${realpathSync(tmpdir())}/kestrel-installer-`);
+function assertCandidate(bundlePath = source) {
+  assertLock();
+  if (!fixtureInstall) return assertDeploymentCandidate({ repositoryRoot, installRoot, source: bundlePath, destination, candidateCommit });
+}
 const trashRoot = resolve(process.env.KESTREL_MACOS_TRASH_ROOT ?? join(home, ".Trash"));
 const searchRoots = uniquePaths(
   (process.env.KESTREL_MACOS_SEARCH_ROOTS
@@ -67,6 +109,13 @@ function validateSource(bundlePath) {
     !supportedBundleIdentifiers.has(identifier)
   ) {
     throw new Error(`Not a verified Kestrel app bundle: ${bundlePath}`);
+  }
+  if (!fixtureInstall) {
+    // Validate every signed resource, including framework links and the
+    // provenance manifest, before touching the previous canonical bundle.
+    execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", bundlePath], { stdio: "ignore" });
+    if (candidateCommit !== undefined)
+      execFileSync(process.execPath, [join(repositoryRoot, "scripts/verify-development-macos-app.mjs"), bundlePath], { stdio: "pipe" });
   }
 }
 
@@ -100,6 +149,7 @@ function stageBundle() {
 
 function install() {
   validateSource(source);
+  assertCandidate();
   preventSpotlightIndexing(repositoryRoot);
   mkdirSync(installRoot, { recursive: true });
   if (existsSync(destination) && !isKestrelBundle(destination)) {
@@ -112,16 +162,29 @@ function install() {
   if (!samePath(source, destination)) {
     staged = stageBundle();
     try {
+      // Revalidate owner, integrated source and the copied artifact immediately
+      // before moving the previous app. A changed source/build cannot slip in.
+      validateSource(staged.stagedBundle);
+      assertCandidate(staged.stagedBundle);
+      let previousPath;
       if (existsSync(destination)) {
+        previousPath = moveToTrash(destination, { trashRoot, reason: "previous" });
         moved.push({
           from: destination,
-          to: moveToTrash(destination, { trashRoot, reason: "previous" }),
+          to: previousPath,
         });
       }
       // Unregister the temporary path before the atomic rename so LaunchServices
       // cannot retain a second path for the same bundle.
       unregister(staged.stagedBundle);
-      renameSync(staged.stagedBundle, destination);
+      try {
+        assertLock();
+        renameSync(staged.stagedBundle, destination);
+      } catch (error) {
+        // Retain a runnable canonical path if replacement fails after backup.
+        if (previousPath && !existsSync(destination)) renameSync(previousPath, destination);
+        throw error;
+      }
       unregister(source);
     } finally {
       unregister(staged.stagedBundle);

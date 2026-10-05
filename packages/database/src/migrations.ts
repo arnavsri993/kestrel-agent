@@ -65,6 +65,7 @@ export const MIGRATION_SQL_FILES: Record<number, string> = {
 	16: "016_memory_timeline_source_metadata.sql",
  17: "017_source_observation_lookup.sql",
 	18: "018_memory_workspace.sql",
+	19: "019_private_memory_indexes.sql",
 };
 
 export const LATEST_SCHEMA_VERSION = Math.max(

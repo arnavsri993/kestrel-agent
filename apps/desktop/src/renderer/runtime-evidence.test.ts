@@ -10,6 +10,7 @@ import {
 	actionReceiptRollbackLabel,
 	actionReceiptVerificationLabel,
 	activityItemsFromExecutions,
+	groupActionReceipts,
 	isConsumedApprovalCheckpoint,
 	latestRunActionReceipts,
 	pendingToolApprovals,
@@ -269,6 +270,62 @@ describe("verified approval evidence handoff", () => {
 });
 
 describe("action receipt presentation", () => {
+	it("shows the latest state of an explicitly linked approval and retains its earlier receipt", () => {
+		const waiting = receipt({ outcome: "waiting_approval", verification: undefined,
+			approval: { required: true, result: "pending" }, completedAt: "2026-08-19T12:01:00.000Z" });
+		const verified = receipt({ id: "receipt-verified", toolExecutionId: "tool-2",
+			startedAt: "2026-08-19T12:01:30.000Z" });
+		const receipts = [verified, waiting];
+		const groups = groupActionReceipts(receipts, [
+			execution({ toolName: "workspace.write", status: "cancelled" }),
+			execution({ id: "tool-2", toolName: "workspace.write", status: "verified" }),
+		]);
+		expect(groups).toEqual([{ latest: verified, history: [waiting] }]);
+		expect(receipts).toEqual([verified, waiting]);
+		expect(waiting.outcome).toBe("waiting_approval");
+	});
+
+	it("preserves the newest failed state rather than preferring an earlier verified result", () => {
+		const verified = receipt();
+		const failed = receipt({ id: "receipt-failed", outcome: "uncertain", verification: undefined,
+			completedAt: "2026-08-19T12:03:00.000Z" });
+		expect(groupActionReceipts([failed, verified], [])).toEqual([
+			{ latest: failed, history: [verified] },
+		]);
+	});
+
+	it("keeps repeated calls to the same tool separate", () => {
+		const receipts = [receipt(), receipt({ id: "receipt-2", toolExecutionId: "tool-2" })];
+		const groups = groupActionReceipts(receipts, [
+			execution({ toolName: "workspace.write" }),
+			execution({ id: "tool-2", toolName: "workspace.write", idempotencyKey: "run-1:call-2" }),
+		]);
+		expect(groups.map(group => group.latest)).toEqual(receipts);
+		expect(groups.every(group => group.history.length === 0)).toBe(true);
+	});
+
+	it("does not infer an approval link without matching execution scope", () => {
+		const first = receipt();
+		const second = receipt({ id: "receipt-2", toolExecutionId: "tool-2" });
+		const matching = execution({ toolName: "workspace.write" });
+		for (const overrides of [
+			{ sessionId: "another-session" }, { toolName: "browser.act" }, { idempotencyKey: "run-2:call-1" },
+		]) {
+			expect(groupActionReceipts([first, second], [matching,
+				{ ...matching, id: "tool-2", ...overrides }])).toHaveLength(2);
+		}
+		expect(groupActionReceipts([first, second], [])).toHaveLength(2);
+	});
+
+	it("keeps receipts from different runs and sessions separate", () => {
+		const base = receipt();
+		const matching = execution({ toolName: "workspace.write" });
+		for (const receiptScope of [{ runId: "run-2" }, { sessionId: "session-2" }]) {
+			expect(groupActionReceipts([base, receipt({ id: "receipt-2", ...receiptScope })], [matching]))
+				.toHaveLength(2);
+		}
+	});
+
 	it("selects only the latest run and hides consumed approval checkpoints", () => {
 		const consumed = receipt({
 			id: "action-receipt-consumed",

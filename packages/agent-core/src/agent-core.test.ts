@@ -791,6 +791,37 @@ describe("core agent request path", () => {
 		await core.close();
 	});
 
+	it("returns a durable failed outcome when verifier correction has no remaining turn budget", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const calls: string[] = [];
+    const makeProvider = (id: string, capabilities: Record<string, number>): ModelProvider => ({
+      id, defaultModel: `${id}-model`,
+      capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: false },
+      profileHints: { capabilities, features: { reasoningLevels: true } },
+      probe: async () => undefined,
+      complete: async request => {
+        calls.push(id);
+        return { providerId: id, model: request.model,
+          text: id === "reviewer" ? "VERDICT: FAIL\nThe answer lacks source evidence." : "Unverified answer.",
+          toolCalls: [], usage: { inputTokens: 3, outputTokens: 1 }, finishReason: "stop" };
+      },
+    });
+    const core = new AgentCore({ database, modelProviders: [
+      makeProvider("primary", { coding: 0.99, backend_architecture: 0.99, reliability: 0.98 }),
+      makeProvider("reviewer", { code_review: 0.99, reliability: 0.99 }),
+    ] });
+    try {
+      const session = core.runtime.ensureMainSession();
+      const response = await core.handle({ type: "runtime-run-agent", sessionId: session.id,
+        message: "Implement this production backend architecture change.", model: "auto", providerIds: ["auto"], maximumTurns: 1 });
+      expect(response).toMatchObject({ ok: true, run: { status: "failed", turn: 1, maximumTurns: 1 },
+        messages: [{ content: expect.stringContaining("The answer lacks source evidence.") }] });
+      expect(calls).toEqual(["primary", "reviewer"]);
+      expect(database.listAgentRuns(session.id)).toEqual([expect.objectContaining({ status: "failed", turn: 1 })]);
+      expect(core.routingOutcomes.list()).toContainEqual(expect.objectContaining({ verifierStatus: "failed", success: false }));
+    } finally { await core.close(); }
+  });
+
 	it("applies one verifier-requested correction through the preserved automatic run", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const calls: string[] = [];
@@ -1645,6 +1676,9 @@ describe("core agent request path", () => {
 			ok: false,
 			error: "Voice recording contains invalid base64 data.",
 		});
+		expect(
+			await core.handle({ type: "media-transcribe", dataBase64: `YWJj${"=".repeat(100_000)}x`, mediaType: "audio/webm" }),
+		).toMatchObject({ ok: false, error: "Voice recording contains invalid base64 data." });
 		await core.close();
 	});
 

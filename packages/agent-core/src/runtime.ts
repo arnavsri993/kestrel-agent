@@ -65,6 +65,9 @@ import {
 	type HumanInputCreateInput,
 } from "./human-input";
 import type { HumanInputRequest } from "@kestrel/shared-types";
+import { maskSensitiveText } from "@kestrel/shared-types";
+import { modelVisibleToolResult, redactSensitiveValue } from "./tool-result-guardrails";
+import { TaskSecretVault, type PreparedTaskSecrets } from "./task-secrets";
 
 export type RuntimeHookEvent = "pre_tool" | "post_tool" | "tool_error";
 
@@ -117,6 +120,13 @@ export interface DeclarativeRuntimeHook {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function canonicalJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+	if (isRecord(value))
+		return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+	return JSON.stringify(value) ?? String(value);
 }
 
 const REDACTED_BROWSER_TYPING_TEXT = "[redacted browser input]";
@@ -188,6 +198,7 @@ function hookField(
 
 interface RuntimeToolContext {
 	session: RuntimeSession;
+	runId?: string;
 	executionId: string;
 	signal: AbortSignal;
 	workspaceRoot?: string;
@@ -199,6 +210,14 @@ interface RuntimeToolDefinition {
 	descriptor: RuntimeToolDescriptor;
 	inputSchema: z.ZodType<Record<string, unknown>>;
 	jsonSchema?: Record<string, unknown>;
+	validateInput?(input: Record<string, unknown>): string | undefined;
+	/** Trusted, display-only context correlated with the validated request. */
+	approvalContext?(
+		input: Record<string, unknown>,
+		session: RuntimeSession,
+	): Record<string, unknown> | undefined;
+	redactInput?(input: Record<string, unknown>): Record<string, unknown>;
+	redactOutput?(output: Record<string, unknown>): Record<string, unknown>;
 	outputSchema: z.ZodType<Record<string, unknown>>;
 	execute(
 		context: RuntimeToolContext,
@@ -236,9 +255,21 @@ export interface ExternalRuntimeTool {
  resourceAccess?: (input: Record<string, unknown>, session: RuntimeSession) => ResourceAccess[];
 	descriptor: RuntimeToolDescriptor;
 	inputSchema: Record<string, unknown>;
+	/** Trusted adapter validation runs before policy or approval; errors contain no input values. */
+	validateInput?(input: Record<string, unknown>): string | undefined;
+	/** Trusted, display-only context. It never changes the executable request or approval identity. */
+	approvalContext?(
+		input: Record<string, unknown>,
+		session: RuntimeSession,
+	): Record<string, unknown> | undefined;
+	/** The durable journal receives this bounded projection; execution uses the original input. */
+	redactInput?(input: Record<string, unknown>): Record<string, unknown>;
+	/** The model receives the result, while durable journals receive this projection. */
+	redactOutput?(output: Record<string, unknown>): Record<string, unknown>;
 	execute(
 		context: {
 			session: RuntimeSession;
+			executionId: string;
 			signal: AbortSignal;
 			workspaceRoot?: string;
 			progress(payload: Record<string, unknown>): void;
@@ -248,6 +279,7 @@ export interface ExternalRuntimeTool {
 	verify?(
 		context: {
 			session: RuntimeSession;
+			executionId: string;
 			signal: AbortSignal;
 			workspaceRoot?: string;
 			progress(payload: Record<string, unknown>): void;
@@ -514,31 +546,167 @@ function parsePersistedCheckpointState(
 }
 
 export class AgentRuntime extends EventEmitter {
-	// Typing text must not enter journals, but approval must execute the exact
-	// original input. Keep a bounded, expiring in-process copy only.
-	private readonly pendingBrowserInputs = new Map<string, { input: Record<string, unknown>; expiresAt: number }>();
+	// Private tool input is available for one approval resume in this process only.
+	private readonly pendingPrivateInputs = new Map<string, { input: Record<string, unknown>; expiresAt: number }>();
+
+	private redactedExecutionForStorage(execution: RuntimeToolExecution): RuntimeToolExecution {
+		const browserSafe = redactBrowserTypingForStorage(execution);
+		if (browserSafe.toolName === "computer.screenshot" && browserSafe.output) {
+			const { width, height } = browserSafe.output;
+			return RuntimeToolExecutionSchema.parse({
+				...browserSafe,
+				output: {
+					redacted: true,
+					reason: "computer-use-screenshot",
+					...(typeof width === "number" ? { width } : {}),
+					...(typeof height === "number" ? { height } : {}),
+				},
+			});
+		}
+		const definition = this.tools.get(execution.toolName);
+		if (!definition?.redactInput && !definition?.redactOutput) return browserSafe;
+		const input = definition.redactInput?.(browserSafe.input) ?? browserSafe.input;
+		let output = browserSafe.output && definition.redactOutput
+			? definition.redactOutput(browserSafe.output)
+			: browserSafe.output;
+		if (browserSafe.status === "blocked" && browserSafe.output && output) {
+			output = {
+				...output,
+				...(typeof browserSafe.output.approvalRequired === "boolean"
+					? { approvalRequired: browserSafe.output.approvalRequired } : {}),
+				...(typeof browserSafe.output.persistentApprovalAllowed === "boolean"
+					? { persistentApprovalAllowed: browserSafe.output.persistentApprovalAllowed } : {}),
+				preview: JSON.stringify(input, null, 2),
+			};
+		}
+		return RuntimeToolExecutionSchema.parse({ ...browserSafe, input, ...(output ? { output } : {}) });
+	}
+
+	private inputContainsRedaction(value: unknown): boolean {
+		if (value === REDACTED_BROWSER_TYPING_TEXT || (typeof value === "string" &&
+			/\[(?:[A-Z][A-Z0-9_]*_\d+|REDACTED)\]/.test(value))) return true;
+		if (Array.isArray(value)) return value.some((item) => this.inputContainsRedaction(item));
+		if (!isRecord(value)) return false;
+		if (value.redacted === true) return true;
+		return Object.values(value).some((item) => this.inputContainsRedaction(item));
+	}
+	readonly taskSecrets = new TaskSecretVault();
+
+	prepareTaskSecrets(sessionId: string, text: string): PreparedTaskSecrets {
+		this.requireSession(sessionId);
+		return this.taskSecrets.prepare(sessionId, text);
+	}
+
+	finishTaskSecrets(runId: string): RuntimeMessage | undefined {
+		const run = this.database.getAgentRun(runId);
+		if (!run || !["completed", "failed", "cancelled"].includes(run.status))
+			return;
+		if ([...this.activeExecutions.values()].some(execution => execution.sessionId === run.sessionId))
+			return;
+		const cleanup = this.taskSecrets.clearRun(runId);
+		if (!cleanup) return;
+		this.database.setPrivateState(`task-secret-cleanup.${runId}`, cleanup);
+		return this.appendMessage({
+			sessionId: run.sessionId,
+			role: "assistant",
+			content: `Temporary credential cleanup ${cleanup.verified ? "verified" : "incomplete"}: ${cleanup.removed} credential(s) removed from Kestrel's temporary store; ${cleanup.remaining} remain. ${cleanup.limits}`,
+		});
+	}
+
+	private executionForStorage(execution: RuntimeToolExecution): RuntimeToolExecution {
+		const browserSafe = this.redactedExecutionForStorage(execution);
+		// Discover echoes within untrusted payloads, without letting a tool mark
+		// a trusted receipt/session identity as a credential and rewrite it.
+		const payload = redactSensitiveValue({
+			input: browserSafe.input,
+			...(browserSafe.output !== undefined ? { output: browserSafe.output } : {}),
+			...(browserSafe.error !== undefined ? { error: browserSafe.error } : {}),
+			...(browserSafe.verification ? { verificationMethod: browserSafe.verification.method } : {}),
+		}, text =>
+			this.taskSecrets.redact(execution.sessionId, text),
+		) as Pick<RuntimeToolExecution, "input" | "output" | "error"> & { verificationMethod?: string };
+		const { verificationMethod, ...safePayload } = payload;
+		// This correlates an internal run/provider call across approval recovery.
+		// Preserve its identity independently of labels supplied in tool payloads;
+		// retain the existing direct-text/known-vault protection on the key itself.
+		const safeIdentity = browserSafe.idempotencyKey !== undefined
+			? redactSensitiveValue({ idempotencyKey: browserSafe.idempotencyKey }, text => this.taskSecrets.redact(execution.sessionId, text)) as { idempotencyKey: string }
+			: {};
+		return {
+			...browserSafe,
+			...safePayload,
+			...safeIdentity,
+			...(browserSafe.verification ? { verification: {
+				...browserSafe.verification,
+				method: verificationMethod ?? browserSafe.verification.method,
+			} } : {}),
+		};
+	}
+
+	private assertSafeMutationContent(sessionId: string, ...contents: (string | undefined)[]): void {
+		if (contents.some(content => content !== undefined &&
+			this.taskSecrets.redact(sessionId, content) !== content))
+			throw new Error(
+				"Credential-bearing files cannot enter undo history. Use the approved protected command for credential setup or removal.",
+			);
+	}
+
+	private protectedTaskOutput(sessionId: string, output: Record<string, unknown>): Record<string, unknown> {
+		const protectedTask = this.taskSecrets.hasSession(sessionId);
+		let withheld = false;
+		const visit = (value: unknown): unknown => {
+			if (Array.isArray(value)) return value.map(visit);
+			if (!value || typeof value !== "object") return value;
+			return Object.fromEntries(Object.entries(value).map(([key, child]) => {
+				if (protectedTask && ["stdout", "stderr", "dataBase64"].includes(key) && typeof child === "string") {
+					withheld = true;
+					return [key, ""];
+				}
+				return [key, visit(child)];
+			}));
+		};
+		const safe = redactSensitiveValue(visit(output),
+			text => this.taskSecrets.redact(sessionId, text),
+		) as Record<string, unknown>;
+		return withheld ? { ...safe, outputWithheld: true } : safe;
+	}
 
 	approvalInput(execution: RuntimeToolExecution): Record<string, unknown> {
-		if (redactBrowserTypingForStorage(execution) === execution) return execution.input;
-		const pending = this.pendingBrowserInputs.get(execution.id);
-		if (pending && pending.expiresAt <= Date.now()) this.pendingBrowserInputs.delete(execution.id);
-		if (!pending || pending.expiresAt <= Date.now()) throw new Error("The private browser typing request expired or the core restarted. Request a fresh approval; redacted text will not be executed.");
+		const pending = this.pendingPrivateInputs.get(execution.id);
+		if (pending && pending.expiresAt <= Date.now()) this.pendingPrivateInputs.delete(execution.id);
+		if (!pending || pending.expiresAt <= Date.now()) {
+			if (!this.inputContainsRedaction(execution.input)) return execution.input;
+			throw new Error("The private tool request expired or the core restarted. Request a fresh approval; redacted input will not be executed.");
+		}
 		return structuredClone(pending.input);
 	}
 
 	/** Transient trusted-host review projection; never written back to storage. */
 	approvalReview(execution: RuntimeToolExecution): RuntimeToolExecution {
-		if (execution.status !== "blocked" || redactBrowserTypingForStorage(execution) === execution) return execution;
+		if (execution.status !== "blocked" || !this.inputContainsRedaction(execution.input)) return execution;
 		try {
 			const input = this.approvalInput(execution);
 			return { ...execution, input, output: { ...execution.output, preview: JSON.stringify(input, null, 2) } };
 		} catch {
-			return { ...execution, output: { ...execution.output, preview: "Typing request expired. Request a fresh approval." } };
+			return { ...execution, output: { ...execution.output, preview: "Private request expired. Request a fresh approval." } };
 		}
 	}
 
 	discardApprovalInput(executionId: string): void {
-		this.pendingBrowserInputs.delete(executionId);
+		this.pendingPrivateInputs.delete(executionId);
+	}
+
+	/** Retire one pending grant without cancelling its reusable agent session. */
+	cancelPendingApproval(executionId: string, reason: string): void {
+		const execution = this.database.getToolExecution(executionId);
+		if (execution?.status !== "blocked" || execution.output?.approvalRequired !== true) return;
+		this.journalToolExecution(RuntimeToolExecutionSchema.parse({
+			...execution,
+			status: "cancelled",
+			output: { ...execution.output, approvalRequired: false, persistentApprovalAllowed: false },
+			error: reason,
+			completedAt: this.now(),
+		}), { required: true, result: "denied" });
 	}
 
 	private readonly tools = new Map<string, RuntimeToolDefinition>();
@@ -722,7 +890,7 @@ export class AgentRuntime extends EventEmitter {
 			id: `session-${randomUUID()}`,
 			agentInstructions: input.agentInstructions,
 			specialistDefinition: input.specialistDefinition,
-			title: input.title,
+			title: maskSensitiveText(input.title),
 			kind: input.kind ?? "conversation",
 			...(input.parentSessionId
 				? { parentSessionId: input.parentSessionId }
@@ -929,6 +1097,24 @@ export class AgentRuntime extends EventEmitter {
 		return session.id;
 	}
 
+	setSessionPrivacy(
+		sessionId: string,
+		privacyMode: NonNullable<RuntimeSession["privacyMode"]>,
+	): RuntimeSession {
+		const session = this.requireSession(sessionId);
+		const updated = this.saveSession({
+			...session,
+			privacyMode,
+			updatedAt: this.now(),
+		});
+		this.emitRuntimeEvent("session.updated", sessionId, {
+			action: "privacy-updated",
+			privacyMode,
+			sessionUpdatedAt: updated.updatedAt,
+		});
+		return updated;
+	}
+
 	forgetSession(sessionId: string): RuntimeSession {
 		const session = this.requireSession(sessionId);
 		const forgottenAt = this.now();
@@ -985,6 +1171,7 @@ export class AgentRuntime extends EventEmitter {
 			runId: request.runId,
 			status: request.status,
 		});
+		this.finishTaskSecrets(request.runId);
 		return request;
 	}
 
@@ -1003,6 +1190,7 @@ export class AgentRuntime extends EventEmitter {
 			runId: request.runId,
 			status: request.status,
 		});
+		this.finishTaskSecrets(request.runId);
 		return request;
 	}
 
@@ -1025,6 +1213,7 @@ export class AgentRuntime extends EventEmitter {
 				error: "Human input timed out.",
 				updatedAt: this.now(),
 			});
+			this.finishTaskSecrets(run.id);
 		}
 	}
 
@@ -1036,7 +1225,7 @@ export class AgentRuntime extends EventEmitter {
 			throw new Error("A specialist's stable key cannot change.");
 		if (this.database.listAgentRuns(sessionId).some(run => ["running", "waiting_approval", "waiting_input"].includes(run.status)))
 			throw new Error("Stop the current run before changing this agent's definition.");
-		const updated = RuntimeSessionSchema.parse({ ...current, title: input.title,
+		const updated = RuntimeSessionSchema.parse({ ...current, title: maskSensitiveText(input.title),
 			agentInstructions: input.specialistDefinition ? `${input.specialistDefinition.purpose}\n${input.instructions}` : input.instructions,
 			...(input.specialistDefinition ? { specialistDefinition: input.specialistDefinition } : {}), updatedAt: this.now() });
 		this.database.saveRuntimeSession(updated);
@@ -1319,6 +1508,7 @@ export class AgentRuntime extends EventEmitter {
 				updatedAt: cancelledAt,
 			});
 			if (id === sessionId) updated = next;
+			this.retireActiveAgentHistory(id, cancelledAt, "Cancelled because the owning agent session was cancelled.");
 			this.emitRuntimeEvent(id === sessionId ? "session.updated" : "session.updated", id, {
 				action: "cancel",
 				...(id === sessionId ? {} : { ancestorSessionId: sessionId }),
@@ -1332,6 +1522,13 @@ export class AgentRuntime extends EventEmitter {
 		input: Omit<RuntimeMessage, "id" | "createdAt">,
 	): RuntimeMessage {
 		this.requireSession(input.sessionId);
+		// Computer observations may be used in the current model step, but
+		// durable transcripts must use the same projection as tool journals.
+		const storedExecution = input.role === "tool" && input.toolExecutionId
+			? this.database.getToolExecution(input.toolExecutionId) : undefined;
+		const content = storedExecution && storedExecution.sessionId === input.sessionId &&
+			(this.tools.get(storedExecution.toolName)?.redactOutput || storedExecution.toolName === "computer.screenshot")
+			? modelVisibleToolResult(this.executionForStorage(storedExecution)) : input.content;
         const sourceToolExecutionIds = input.role === "assistant"
             ? [...new Set([...(input.sourceToolExecutionIds ?? []), ...this.listMessages(input.sessionId).flatMap(message => [
                 ...(message.sourceToolExecutionIds ?? []),
@@ -1339,6 +1536,8 @@ export class AgentRuntime extends EventEmitter {
             ])])] : input.sourceToolExecutionIds;
 		const message = RuntimeMessageSchema.parse({
 			...input,
+			content: this.taskSecrets.redact(input.sessionId, content),
+			...(input.modelToolCalls ? { modelToolCalls: redactSensitiveValue(input.modelToolCalls, text => this.taskSecrets.redact(input.sessionId, text)) } : {}),
             ...(sourceToolExecutionIds?.length ? { sourceToolExecutionIds } : {}),
 			id: `message-${randomUUID()}`,
 			createdAt: this.now(),
@@ -1626,6 +1825,7 @@ export class AgentRuntime extends EventEmitter {
 	}
 
 	close(): void {
+		for (const session of this.database.listRuntimeSessions()) this.taskSecrets.clearSession(session.id);
 		for (const process of this.backgroundProcesses.values())
 			process.handle.stop();
 		this.backgroundProcesses.clear();
@@ -1697,13 +1897,18 @@ export class AgentRuntime extends EventEmitter {
 		this.registerTool({
 			descriptor: tool.descriptor,
  ...(tool.resourceAccess ? { resourceAccess: tool.resourceAccess } : {}),
+			...(tool.redactInput ? { redactInput: tool.redactInput } : {}),
+			...(tool.redactOutput ? { redactOutput: tool.redactOutput } : {}),
 			inputSchema: z.record(z.string(), z.unknown()),
 			jsonSchema: tool.inputSchema,
+			...(tool.validateInput ? { validateInput: tool.validateInput } : {}),
+			...(tool.approvalContext ? { approvalContext: tool.approvalContext } : {}),
 			outputSchema: z.record(z.string(), z.unknown()),
-			execute: ({ session, signal, workspaceRoot, progress }, input) =>
+			execute: ({ session, executionId, signal, workspaceRoot, progress }, input) =>
 				tool.execute(
 					{
 						session,
+						executionId,
 						signal,
 						...(workspaceRoot ? { workspaceRoot } : {}),
 						progress,
@@ -1713,13 +1918,14 @@ export class AgentRuntime extends EventEmitter {
 			...(tool.verify
 				? {
 						verify: (
-							{ session, signal, workspaceRoot, progress },
+						{ session, executionId, signal, workspaceRoot, progress },
 							input,
 							output,
 						) =>
 							tool.verify!(
 								{
 									session,
+									executionId,
 									signal,
 									...(workspaceRoot ? { workspaceRoot } : {}),
 									progress,
@@ -1868,6 +2074,15 @@ export class AgentRuntime extends EventEmitter {
 			.sort((a, b) => a.name.localeCompare(b.name));
 	}
 
+	/** Persistent execution must retain its authorized tools through routing and fallback. */
+	requiresToolProvider(sessionId: string, allowedTools?: string[]): boolean {
+		const session = this.getSession(sessionId);
+		if (session.kind !== "agent" && !session.specialistDefinition) return false;
+		return this.discoverTools(sessionId).some(
+			(tool) => allowedTools === undefined || allowedTools.includes(tool.name),
+		);
+	}
+
 	modelTools(sessionId: string): RuntimeModelTool[] {
 		const available = new Set(
 			this.discoverTools(sessionId).map((tool) => tool.name),
@@ -1977,6 +2192,7 @@ export class AgentRuntime extends EventEmitter {
   const session = this.requireSession(sessionId);
   const run = options.runId ? this.database.getAgentRun(options.runId) : undefined;
   if (options.runId && (!run || run.sessionId !== sessionId)) throw new Error("Tool run identity does not match its session.");
+  if (run && !["running", "waiting_approval", "waiting_input"].includes(run.status)) throw new Error("Tool run is no longer active.");
   if (run?.toolScope && !run.toolScope.includes(definition.descriptor.name)) throw new Error("Tool exceeds the delegated task scope.");
   const chain: RuntimeSession[] = [];
   let current: RuntimeSession | undefined = session;
@@ -2040,6 +2256,12 @@ export class AgentRuntime extends EventEmitter {
 			: undefined;
 		if (repeated) {
 			const execution = RuntimeToolExecutionSchema.parse(repeated);
+			if (definition.redactInput) {
+				if (canonicalJson(execution.input) !== canonicalJson(definition.redactInput(rawInput)))
+					throw new Error("This idempotency key was already used with different input; use a new key for a new mutation.");
+				if (this.inputContainsRedaction(execution.input))
+					throw new Error("A private action already used this idempotency key. Its original input cannot be compared after storage; use a new key for a new mutation.");
+			}
  this.assertResourceAccess(sessionId, definition, execution.input, options);
 			this.ensureActionReceipt(execution, definition.descriptor);
 			return execution;
@@ -2050,8 +2272,12 @@ export class AgentRuntime extends EventEmitter {
 			: undefined;
 		if (activeExecution) {
    const completed = await this.waitForPromise(activeExecution, options.signal);
+   if (definition.redactInput && canonicalJson(completed.input) !== canonicalJson(rawInput))
+    throw new Error("This idempotency key was already used with different input; use a new key for a new mutation.");
    this.assertResourceAccess(sessionId, definition, completed.input, options);
-   return completed;
+   // Concurrent callers replay the durable projection. Only the caller that
+   // executes the observation receives its transient original output.
+   return definition.redactOutput ? this.executionForStorage(completed) : completed;
   }
 
 		const pendingExecution = this.executeToolCall(
@@ -2088,10 +2314,11 @@ export class AgentRuntime extends EventEmitter {
 		idempotencyKey: string | undefined,
 	): Promise<RuntimeToolExecution> {
 		const input = definition.inputSchema.parse(rawInput);
+		const inputValidationError = definition.validateInput?.(input);
 		const assessment = options.externalContent
 			? assessExternalContent(options.externalContent)
 			: undefined;
-		const configuredPolicy = options.executionBlock
+		const configuredPolicy = options.executionBlock || inputValidationError
 			? {}
 			: (this.toolPolicyResolver?.({
 					session,
@@ -2115,7 +2342,7 @@ export class AgentRuntime extends EventEmitter {
 			alwaysRequireApproval ||
 			(sessionApprovalPolicy === "ask" && !definition.descriptor.readOnly);
 		const oneTimeApprovalGrant =
-			options.approvalStatus === "approved" && requiresExplicitApproval
+			!inputValidationError && options.approvalStatus === "approved" && requiresExplicitApproval
 				? this.validOneTimeApprovalGrant(
 						session.id,
 						toolName,
@@ -2138,6 +2365,8 @@ export class AgentRuntime extends EventEmitter {
 					approvalRequired: false,
 					reason: options.executionBlock.reason,
 				}
+			: inputValidationError
+			? { allowed: false, approvalRequired: false, reason: inputValidationError }
 			: configuredPolicy.denied
 			? {
 					allowed: false,
@@ -2172,10 +2401,10 @@ export class AgentRuntime extends EventEmitter {
 		if (!policy.allowed && policy.approvalRequired && configuredPolicy.reason)
 			policy.reason = configuredPolicy.reason;
 		const receiptApprovalRequired =
-			requiresExplicitApproval ||
+			!inputValidationError && (requiresExplicitApproval ||
 			effectiveRisk === "external" ||
 			effectiveRisk === "sensitive" ||
-			effectiveRisk === "high_consequence";
+			effectiveRisk === "high_consequence");
 		const receiptApproval: ActionReceiptApprovalContext = !policy.allowed
 			? {
 					required: receiptApprovalRequired,
@@ -2193,6 +2422,7 @@ export class AgentRuntime extends EventEmitter {
 				RuntimeToolExecutionSchema.parse({
 					...oneTimeApprovalGrant,
 					status: "cancelled",
+					output: { ...oneTimeApprovalGrant.output, approvalRequired: false, persistentApprovalAllowed: false },
 					error: "The approved one-time grant was consumed.",
 					completedAt: startedAt,
 				}),
@@ -2200,6 +2430,10 @@ export class AgentRuntime extends EventEmitter {
 				definition.descriptor,
 			);
 		}
+		const approvalContext = !policy.allowed && policy.approvalRequired &&
+			!inputValidationError && !options.executionBlock
+				? this.trustedApprovalContext(definition, input, session)
+				: undefined;
 		let execution = RuntimeToolExecutionSchema.parse({
 			id: `tool-${randomUUID()}`,
 			sessionId: session.id,
@@ -2215,9 +2449,10 @@ export class AgentRuntime extends EventEmitter {
 						output: {
 							...(options.executionBlock?.output ?? {}),
 							preview: this.approvalPreview(session, toolName, input),
+							...(approvalContext ? { approvalContext } : {}),
 							approvalRequired: policy.approvalRequired,
 							persistentApprovalAllowed:
-								!options.executionBlock && !requiresExplicitApproval,
+								!inputValidationError && !options.executionBlock && !requiresExplicitApproval,
 						},
 					}
 				: {}),
@@ -2244,7 +2479,7 @@ export class AgentRuntime extends EventEmitter {
 				{ toolName, status: execution.status, error: execution.error },
 				{ executionId: execution.id },
 			);
-			return execution;
+			return this.executionForStorage(execution);
 		}
 
 		const preHook = await this.runHooks(
@@ -2277,7 +2512,7 @@ export class AgentRuntime extends EventEmitter {
 				{ toolName, status: execution.status, error: execution.error },
 				{ executionId: execution.id },
 			);
-			return execution;
+			return this.executionForStorage(execution);
 		}
 
 		if (options.signal?.aborted) {
@@ -2362,6 +2597,7 @@ export class AgentRuntime extends EventEmitter {
 			});
 			const context: RuntimeToolContext = {
 				session,
+				...(options.runId ? { runId: options.runId } : {}),
 				executionId: activeExecutionId,
 				signal: controller.signal,
 				progress: (payload) =>
@@ -2381,22 +2617,28 @@ export class AgentRuntime extends EventEmitter {
     for (const key of resources) { this.mutationResourceOwners.set(key, activeExecutionId); heldResources.push(key); }
    }
 			effectStarted = true;
-			const output = definition.outputSchema.parse(
+			const output = this.protectedTaskOutput(session.id, definition.outputSchema.parse(
 				await definition.execute(context, input),
-			);
+			));
 			if (definition.descriptor.readOnly) this.assertResourceAccess(session.id, definition, input, options);
 			const verificationResult = definition.descriptor.readOnly
 				? undefined
 				: await this.verifyMutation(definition, context, input, output);
+			// Read-back checks use the actual evidence. Persist only a digest of
+			// its protected projection so credentials cannot become guessable hashes.
+			const protectedVerification = verificationResult
+				? this.protectedTaskOutput(session.id, { evidence: verificationResult.evidence, method: verificationResult.method })
+				: undefined;
+			const verificationEvidence = protectedVerification?.evidence;
 			effectVerified = true;
 			const verifiedAt = this.now();
 			const verification = verificationResult
 				? {
-						method: verificationResult.method,
+						method: String(protectedVerification?.method ?? verificationResult.method),
 						evidenceSha256: createHash("sha256")
 							.update(
-								JSON.stringify(verificationResult.evidence) ??
-									String(verificationResult.evidence),
+								JSON.stringify(verificationEvidence) ??
+									String(verificationEvidence),
 							)
 							.digest("hex"),
 						verifiedAt,
@@ -2458,7 +2700,7 @@ export class AgentRuntime extends EventEmitter {
 				error: uncertainMutation
 					? "Cancellation arrived after this mutation started, so Kestrel could not confirm whether it completed. The action will not be retried automatically."
 					: error instanceof Error
-						? error.message
+						? this.taskSecrets.redact(session.id, error.message)
 						: "Tool execution failed.",
 				...(uncertainMutation ? { outcomeUncertain: true } : {}),
 				...(recoveryOutput ? { output: recoveryOutput } : {}),
@@ -2533,6 +2775,7 @@ export class AgentRuntime extends EventEmitter {
 					);
 				}
 			}
+			for (const run of this.database.listAgentRuns(session.id)) this.finishTaskSecrets(run.id);
 		}
 	}
 
@@ -2541,14 +2784,14 @@ export class AgentRuntime extends EventEmitter {
 		approval?: ActionReceiptApprovalContext,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
-		const persistedExecution = redactBrowserTypingForStorage(execution);
-		if (persistedExecution !== execution && execution.status === "blocked" && execution.output?.approvalRequired === true) {
-			if (this.pendingBrowserInputs.size >= 64) this.pendingBrowserInputs.delete(this.pendingBrowserInputs.keys().next().value!);
+		const persistedExecution = this.executionForStorage(execution);
+		if (JSON.stringify(persistedExecution.input) !== JSON.stringify(execution.input) && execution.status === "blocked" && execution.output?.approvalRequired === true) {
+			if (this.pendingPrivateInputs.size >= 64) this.pendingPrivateInputs.delete(this.pendingPrivateInputs.keys().next().value!);
 			const pending = { input: structuredClone(execution.input), expiresAt: Date.now() + 10 * 60_000 };
-			this.pendingBrowserInputs.set(execution.id, pending);
+			this.pendingPrivateInputs.set(execution.id, pending);
 			const executionId = execution.id;
 			// Timer captures the ID only, not the private input or execution.
-			setTimeout(() => this.pendingBrowserInputs.delete(executionId), 10 * 60_000).unref();
+			setTimeout(() => this.pendingPrivateInputs.delete(executionId), 10 * 60_000).unref();
 		} else if (execution.status !== "blocked") this.discardApprovalInput(execution.id);
 		this.database.saveToolExecution(persistedExecution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
@@ -2594,13 +2837,16 @@ export class AgentRuntime extends EventEmitter {
 		);
 		for (const execution of retired.toolExecutions)
 			this.journalToolExecution(execution);
+		if (![...this.activeExecutions.values()].some(execution => execution.sessionId === sessionId)) {
+			for (const run of this.database.listAgentRuns(sessionId)) this.finishTaskSecrets(run.id);
+		}
 	}
 
 	private ensureActionReceipt(
 		execution: RuntimeToolExecution,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
-		const persistedExecution = redactBrowserTypingForStorage(execution);
+		const persistedExecution = this.executionForStorage(execution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
 			persistedExecution.id,
 		);
@@ -2621,10 +2867,15 @@ export class AgentRuntime extends EventEmitter {
 		const completion = this.database.completeIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
-			redactBrowserTypingForStorage(execution),
+			this.executionForStorage(execution),
 		);
 		const result = RuntimeToolExecutionSchema.parse(completion.result);
 		this.journalToolExecution(result, approval, descriptor);
+		// Preserve the first authorized observation for this executing caller;
+		// ownership conflicts and every replay retain the durable projection.
+		if (completion.completed && result.id === execution.id && execution.status === "verified" &&
+			descriptor?.readOnly && this.tools.get(execution.toolName)?.redactOutput && execution.output !== undefined)
+			return { ...result, output: this.protectedTaskOutput(execution.sessionId, execution.output) };
 		return result;
 	}
 
@@ -2634,9 +2885,7 @@ export class AgentRuntime extends EventEmitter {
 		signal?: AbortSignal,
 	): Promise<RuntimeToolExecution | undefined> {
 		const waitStartedAt = Date.now();
-		const persistedPendingExecution = redactBrowserTypingForStorage(
-			pendingExecution,
-		);
+		const persistedPendingExecution = this.executionForStorage(pendingExecution);
 		const initial = this.database.claimIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
@@ -2922,9 +3171,11 @@ export class AgentRuntime extends EventEmitter {
 				chunkSha256: z.string(),
 				truncated: z.boolean(),
 			}),
-			execute: ({ workspaceRoot }, input) => {
+			execute: ({ session, workspaceRoot }, input) => {
 				if (!workspaceRoot) throw new Error("Workspace root is unavailable.");
 				const parsed = binaryReadInputSchema.parse(input);
+				if (this.taskSecrets.hasSession(session.id))
+					throw new Error("Binary reads are withheld while temporary credentials are active. Verify credential files through a non-secret status check.");
 				const path = resolveExistingPath(workspaceRoot, parsed.path);
 				const metadata = statSync(path);
 				if (!metadata.isFile())
@@ -3031,6 +3282,7 @@ export class AgentRuntime extends EventEmitter {
 					);
 				const operation =
 					before === undefined ? ("create" as const) : ("update" as const);
+				this.assertSafeMutationContent(session.id, before, parsed.content);
 				this.writeTextAtomically(path, parsed.content);
 				const mutation = WorkspaceMutationSchema.parse({
 					id: `mutation-${randomUUID()}`,
@@ -3085,6 +3337,7 @@ export class AgentRuntime extends EventEmitter {
 					throw new Error(
 						"Workspace file changed since it was read; refusing to delete it.",
 					);
+				this.assertSafeMutationContent(session.id, before);
 				unlinkSync(path);
 				const mutation = WorkspaceMutationSchema.parse({
 					id: `mutation-${randomUUID()}`,
@@ -3250,6 +3503,7 @@ export class AgentRuntime extends EventEmitter {
 						replacements += 1;
 					}
 				}
+				this.assertSafeMutationContent(session.id, before, after);
 				this.writeTextAtomically(path, after);
 				const mutation = WorkspaceMutationSchema.parse({
 					id: `mutation-${randomUUID()}`,
@@ -3366,6 +3620,46 @@ export class AgentRuntime extends EventEmitter {
 
 		this.registerTool({
 			descriptor: {
+				name: "execution.run-with-secrets",
+				title: "Run command with temporary credentials",
+				description: "Use task-local credential references as environment variables in one approved allowlisted command. Output is withheld; network, subprocesses, and writes outside the workspace are denied. A CLI may retain credentials in workspace files: disclose the exact destination and verify it separately. Never put secrets in arguments or claim this command erased files or provider copies.",
+				category: "execution",
+				riskLevel: "sensitive",
+				readOnly: false,
+				requiresWorkspace: true,
+				source: "builtin",
+				approvalMode: "always",
+				tags: ["credentials", "setup", "terminal", "sandbox"],
+			},
+			inputSchema: commandInputSchema.extend({
+				secretEnvironment: z.record(
+					z.string().min(1).max(100),
+					z.string().regex(/^task-secret-[a-f0-9-]{36}$/),
+				).refine(value => Object.keys(value).length > 0 && Object.keys(value).length <= 16),
+			}),
+			outputSchema: commandOutputSchema.extend({ outputWithheld: z.literal(true) }),
+			execute: async ({ session, runId, workspaceRoot, signal, progress }, input) => {
+				if (!workspaceRoot || !runId)
+					throw new Error("Temporary credential commands require an active owning task and a granted workspace.");
+				const parsed = commandInputSchema.parse(input);
+				const cwd = resolveExistingPath(workspaceRoot, parsed.cwd);
+				if (!statSync(cwd).isDirectory())
+					throw new Error("Command cwd must be a directory.");
+				const environment = this.taskSecrets.resolve(session.id, runId, input.secretEnvironment as Record<string, string>);
+				try {
+					const result = await this.commandRunner.run({
+						...parsed, cwd, workspaceRoot,
+						mode: "workspace_write", environment, protectSecrets: true,
+					}, { signal, onProgress: progress });
+					return { ...result, stdout: "", stderr: "", outputWithheld: true as const };
+				} finally {
+					for (const key of Object.keys(environment)) delete environment[key];
+				}
+			},
+		});
+
+		this.registerTool({
+			descriptor: {
 				name: "execution.run-readonly",
 				title: "Run read-only command",
 				description:
@@ -3440,6 +3734,8 @@ export class AgentRuntime extends EventEmitter {
 			}),
 			execute: ({ session, workspaceRoot, progress }, input) => {
 				if (!workspaceRoot) throw new Error("Workspace root is unavailable.");
+				if (this.taskSecrets.hasSession(session.id))
+					throw new Error("Temporary credential tasks use bounded foreground commands; background processes are unavailable until cleanup completes.");
 				const parsed = backgroundCommandInputSchema.parse(input);
 				const cwd = resolveExistingPath(workspaceRoot, parsed.cwd);
 				if (!statSync(cwd).isDirectory())
@@ -4438,7 +4734,7 @@ export class AgentRuntime extends EventEmitter {
 				},
 			};
 		}
-		if (tool === "execution.run")
+		if (tool === "execution.run" || tool === "execution.run-with-secrets")
 			return {
 				method: "sandbox-process-exit",
 				evidence: {
@@ -4649,6 +4945,23 @@ export class AgentRuntime extends EventEmitter {
 		}
 	}
 
+	private trustedApprovalContext(
+		definition: RuntimeToolDefinition,
+		input: Record<string, unknown>,
+		session: RuntimeSession,
+	): Record<string, unknown> | undefined {
+		try {
+			const context = definition.approvalContext?.(input, session);
+			if (!context) return undefined;
+			const serialized = JSON.stringify(context);
+			return serialized.length <= 20_000 ? context : undefined;
+		} catch {
+			// Missing or stale observation context must never block the ordinary,
+			// complete approval preview.
+			return undefined;
+		}
+	}
+
 	private validOneTimeApprovalGrant(
 		sessionId: string,
 		toolName: string,
@@ -4756,6 +5069,10 @@ export class AgentRuntime extends EventEmitter {
 	}
 
 	private saveProcessJournal(record: Record<string, unknown>): void {
+		const sessionId = String(record.sessionId ?? "");
+		record = redactSensitiveValue(this.protectedTaskOutput(sessionId, record),
+			text => this.taskSecrets.redact(sessionId, text),
+		) as Record<string, unknown>;
 		const records = this.processJournalRecords();
 		this.database.setPrivateState(
 			this.processJournalKey,
@@ -4789,6 +5106,9 @@ export class AgentRuntime extends EventEmitter {
 		payload: Record<string, unknown>,
 		references: { executionId?: string; messageId?: string } = {},
 	): void {
+		// Fragments cannot be reliably redacted in isolation. Protected tasks
+		// retain status events but never forward potentially encoded output chunks.
+		if (type === "tool.progress" && this.taskSecrets.hasSession(sessionId)) return;
 		const event = RuntimeEventSchema.parse({
 			id: `event-${randomUUID()}`,
 			type,
@@ -4797,7 +5117,7 @@ export class AgentRuntime extends EventEmitter {
 				? { executionId: references.executionId }
 				: {}),
 			...(references.messageId ? { messageId: references.messageId } : {}),
-			payload,
+			payload: redactSensitiveValue(payload, text => this.taskSecrets.redact(sessionId, text)),
 			createdAt: this.now(),
 		});
 		this.emit("event", event);

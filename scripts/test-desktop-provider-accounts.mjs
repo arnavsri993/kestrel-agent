@@ -135,6 +135,9 @@ try {
 	);
 
 	await openKestrelDestination(page, "Work");
+	await page.getByRole("group", { name: "Work sections" }).getByRole("button", { name: "Schedules", exact: true }).click();
+	const chatToggle = page.locator("#browser-agent-toggle");
+	if (await chatToggle.getAttribute("aria-expanded") === "true") await chatToggle.click();
 	await page.getByText("Override automatic routing", { exact: true }).waitFor();
 	const override = page.locator(".work-routing-override");
 	await override.locator("summary").click();
@@ -158,6 +161,13 @@ try {
 	}
 	await page.setViewportSize({ width: 600, height: 450 });
 	await menu.getByRole("button", { name: /Local simulation/ }).scrollIntoViewIfNeeded();
+	// Native resize, React positioning and the menu animation settle on
+	// separate frames. Keep the same bounds requirement after they settle.
+	await page.waitForFunction(() => {
+		const menu = document.querySelector('[role="dialog"][aria-label="Choose a provider, account, model, and thinking level"]');
+		const bounds = menu?.getBoundingClientRect();
+		return bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.right <= 600 && bounds.bottom <= 450;
+	}, undefined, { timeout: 3_000 });
 	const bounds = await menu.boundingBox();
 	assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 600 && bounds.y + bounds.height <= 450);
 	if (screenshotPath) await page.screenshot({ path: resolve(screenshotPath).replace(/\.png$/, "-narrow.png") });
@@ -173,6 +183,11 @@ try {
 	application = undefined;
 	page = await launch();
 	await openProviderAccounts(page);
+	// The section heading renders before the asynchronous protected account
+	// read completes. Wait for both persisted identities before counting;
+	// missing or renamed accounts still fail the existing bounded UI timeout.
+	await page.locator(".provider-account-card").getByText("Personal local", { exact: true }).waitFor();
+	await page.locator(".provider-account-card").getByText("Work local", { exact: true }).waitFor();
 	assert.equal(await page.locator(".provider-account-card").count(), 2);
 	assert.equal(await page.locator(".provider-account-card").getByText("Personal local", { exact: true }).count(), 1);
 	assert.equal(await page.locator(".provider-account-card").getByText("Work local", { exact: true }).count(), 1);

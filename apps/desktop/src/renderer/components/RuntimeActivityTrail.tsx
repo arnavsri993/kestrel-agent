@@ -7,6 +7,17 @@ import { useEffect, useMemo, useState } from "react";
 import { EmptyState, PageFrame } from "./ui";
 import "./surface-pages.css";
 import { activityItemsFromExecutions } from "../runtime-evidence";
+import { runtimeToolTitle } from "./RuntimeToolMessage";
+
+const statusLabels: Record<ActivityItem["status"], string> = {
+  observed: "Observed",
+  reasoned: "Reasoned",
+  waiting: "Needs approval",
+  verified: "Verified",
+  blocked: "Blocked",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
 
 export function RuntimeActivityTrail({
   snapshot,
@@ -54,6 +65,8 @@ export function RuntimeActivityTrail({
       `activity-item-${highlightExecutionId}`,
     );
     if (!node) return;
+    const evidence = node.querySelector("details");
+    if (evidence) evidence.open = true;
     node.scrollIntoView({ block: "nearest" });
     node.classList.add("activity-item-focused");
     return () => node.classList.remove("activity-item-focused");
@@ -62,7 +75,7 @@ export function RuntimeActivityTrail({
   return (
     <PageFrame
       title="What happened"
-      description="Verified tool results and the local audit trail. Hashes are evidence, not a claim that the task worked."
+      description="See what Kestrel observed, checked, and prepared."
       measure="wide"
       className="runtime-activity-trail"
     >
@@ -73,8 +86,8 @@ export function RuntimeActivityTrail({
       )}
       {items.length === 0 ? (
         <EmptyState
-          title="No verified work yet"
-          detail="After a tool runs, this trail shows the status, verification method, and evidence hash stored in encrypted SQLite."
+          title="No activity yet"
+          detail="Tool results will appear here with their status and supporting evidence."
         />
       ) : (
         <ol className="activity-list">
@@ -85,7 +98,7 @@ export function RuntimeActivityTrail({
               </span>
               <div>
                 <div className="activity-title">
-                  <strong>{item.title}</strong>
+                  <strong>{runtimeToolTitle(item.title, item.title)}</strong>
                   <time>
                     {new Date(item.timestamp).toLocaleTimeString([], {
                       hour: "numeric",
@@ -93,10 +106,35 @@ export function RuntimeActivityTrail({
                     })}
                   </time>
                 </div>
-                <p>{item.detail}</p>
-                <small>
-                  {item.status} · {item.sourceIds.join(" · ")}
-                </small>
+                <p className={`activity-status activity-status-${item.status}`}>
+                  {statusLabels[item.status]}
+                </p>
+                {item.status !== "verified" && (
+                  <p>
+                    {item.status === "waiting" && /^Approval level \d+ is required before this action can execute\.$/.test(item.detail)
+                      ? "Waiting for your approval before this action runs."
+                      : item.detail}
+                  </p>
+                )}
+                <details className="activity-evidence">
+                  <summary>Details</summary>
+                  <dl>
+                    <dt>Action</dt>
+                    <dd><code>{item.title}</code></dd>
+                    <dt>Result</dt>
+                    <dd>{item.detail}</dd>
+                    {item.sourceIds.length > 0 && (
+                      <>
+                        <dt>Source references</dt>
+                        <dd>
+                          <ul>{item.sourceIds.map((sourceId, sourceIndex) => (
+                            <li key={`${sourceIndex}:${sourceId}`}><code>{sourceId}</code></li>
+                          ))}</ul>
+                        </dd>
+                      </>
+                    )}
+                  </dl>
+                </details>
               </div>
             </li>
           ))}

@@ -82,7 +82,7 @@
 
 .writing-brief-panel > header,
 .writing-context-panel > header,
-.writing-profile-panel > header,
+.writing-profile-panel > summary,
 .writing-result-panel > header {
 	display: flex;
 	align-items: flex-start;
@@ -112,6 +112,28 @@
 	font: 600 11px var(--mono);
 }
 
+.writing-profile-panel > summary {
+	cursor: pointer;
+}
+
+.writing-profile-panel > summary::before {
+	content: "›";
+	color: var(--muted);
+	font-size: 20px;
+}
+
+.writing-profile-panel[open] > summary::before {
+	transform: rotate(90deg);
+}
+
+.writing-profile-panel > summary > div {
+	flex: 1;
+}
+
+#writing-result-title {
+	scroll-margin-top: 16px;
+}
+
 .writing-brief-panel > form {
 	display: grid;
 	gap: 17px;
@@ -122,6 +144,27 @@
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 12px;
+}
+
+.writing-draft-disclosure {
+	border-top: 1px solid var(--surface-rule);
+	padding-top: 12px;
+}
+
+.writing-draft-disclosure > summary {
+	color: var(--ink-secondary);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.writing-draft-disclosure > .writing-field-wide,
+.writing-draft-options {
+	margin-top: 14px;
+}
+
+.writing-draft-options {
+	display: grid;
+	gap: 17px;
 }
 
 .writing-studio label,
@@ -271,8 +314,13 @@
 }
 
 .writing-submit-row > small {
-	color: var(--faint);
-	font-size: 10px;
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.writing-submit-row .button {
+	flex: 0 0 auto;
+	white-space: nowrap;
 }
 
 .writing-submit-row .button svg {
@@ -418,11 +466,11 @@
 	margin-top: 14px;
 }
 
-.writing-profile-panel > header > div:first-child {
+.writing-profile-panel > summary > div:first-child {
 	max-width: 690px;
 }
 
-.writing-profile-panel > header p {
+.writing-profile-panel > summary p {
 	max-width: 660px;
 	margin: 8px 0 0;
 	color: var(--muted);
@@ -718,7 +766,7 @@
 
 	.writing-brief-panel > header,
 	.writing-context-panel > header,
-	.writing-profile-panel > header,
+	.writing-profile-panel > summary,
 	.writing-result-panel > header,
 	.writing-brief-panel > form,
 	.writing-profile-content,

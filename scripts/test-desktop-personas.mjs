@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { _electron as electron } from "@playwright/test";
+import { _electron as electron, expect } from "@playwright/test";
 import {
 	dismissDefaultBrowserPrompt,
 	openCommandCenter as openCommandCenterSurface,
@@ -11,6 +11,12 @@ import {
 } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-personas-"));
+const evidenceRoot = resolve(".tmp/desktop-personas");
+mkdirSync(evidenceRoot, { recursive: true });
+const evidence = process.env.KESTREL_PERSONA_EVIDENCE_DIR
+	? resolve(process.env.KESTREL_PERSONA_EVIDENCE_DIR)
+	: mkdtempSync(join(evidenceRoot, "run-"));
+mkdirSync(evidence, { recursive: true });
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 const executablePath = packagedExecutable
@@ -43,11 +49,11 @@ const commandDestinationLabels = [
 	"Approvals",
 	"Work",
 	"Opportunities",
-	"Connections",
-	"Memory",
 	"Research",
+	"Memory",
 	"Artifacts",
 	"Activity",
+	"Connections",
 	"Extensions",
 	"Readiness",
 	"Settings",
@@ -104,6 +110,34 @@ async function launchPersona(paths, { realProfile }) {
 async function closeApplication() {
 	await application?.close();
 	application = undefined;
+}
+
+async function commandKeyboardState(page) {
+	return {
+		windows: await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(owner => ({
+			url: owner.webContents.getURL(), visible: owner.isVisible(), focused: owner.isFocused(),
+		}))),
+		dom: await page.evaluate(() => ({
+			focused: document.hasFocus(),
+			active: { tag: document.activeElement?.tagName, id: document.activeElement?.id },
+			controls: Array.from(document.querySelectorAll('.command-center button, .command-center input')).map(node => ({
+				tag: node.tagName, label: node.getAttribute('aria-label') ?? node.textContent?.trim().slice(0, 80),
+				tabIndex: node.tabIndex, visible: node.checkVisibility(),
+			})),
+		})),
+	};
+}
+
+async function foregroundFixture(page) {
+	const url = page.url();
+	await application.evaluate(({ app, BrowserWindow }, expectedUrl) => {
+		const owner = BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === expectedUrl);
+		if (!owner) throw new Error("The persona fixture window is unavailable.");
+		owner.show(); app.focus({ steal: true }); owner.focus();
+	}, url);
+	await expect.poll(() => application.evaluate(({ BrowserWindow }, expectedUrl) =>
+		BrowserWindow.getAllWindows().some(owner => owner.webContents.getURL() === expectedUrl && owner.isFocused()), url),
+		{ timeout: 5_000, message: "Persona fixture receives native focus before keyboard navigation" }).toBe(true);
 }
 
 async function markReturningUser(page) {
@@ -267,12 +301,16 @@ async function runReturningPersona() {
 	// Native macOS window focus and DOM focus are separate. Target the input
 	// after foregrounding the window, then wait for the keyboard result rather
 	// than sampling it before the renderer has processed the event.
-	await page.bringToFront();
+	await foregroundFixture(page);
+	await search.focus();
+	await expect(search).toBeFocused();
+	writeFileSync(join(evidence, "command-keyboard-before.json"), JSON.stringify(await commandKeyboardState(page), null, 2));
 	await search.press("Tab");
 	await page.waitForFunction(() => {
 		const active = document.activeElement;
 		return active?.tagName === "BUTTON" && active.closest(".command-center");
 	});
+	writeFileSync(join(evidence, "command-keyboard-after.json"), JSON.stringify(await commandKeyboardState(page), null, 2));
 	const reducedMotion = await page.locator(".command-center").evaluate((element) => ({
 		matches: matchMedia("(prefers-reduced-motion: reduce)").matches,
 		transitionDuration: getComputedStyle(element).transitionDuration,
@@ -329,7 +367,7 @@ async function runReturningPersona() {
 		.click();
 	for (const [label, heading] of [
 		["General", "Autonomy and behavior"],
-		["Connections", "Accounts and access"],
+		["Connections", "Connections"],
 		["Models", "Routing and providers"],
 		["Memory", "Memory and learning"],
 		["Plugins", "Plugins and publishers"],
@@ -347,10 +385,18 @@ async function runReturningPersona() {
 		}[label];
 		assert(value);
 		await selectSettingsSection(page, value, label);
+		if (label === "Connections") {
+			await page.getByRole("button", { name: "Open Connections", exact: true }).click();
+			await assertFocusedRoute(page, "connections");
+		}
 		await page.getByRole("heading", { name: heading }).waitFor();
 		if (label === "Memory")
 			await page.getByText("Honcho remote memory", { exact: true }).first().waitFor();
 		await assertNoStartupFailure(page, `Settings / ${label}`);
+		if (label === "Connections") {
+			await selectDestination(page, "Settings");
+			await assertFocusedRoute(page, "settings");
+		}
 	}
 
 	await page.setViewportSize({ width: 640, height: 760 });
@@ -383,7 +429,15 @@ async function runReturningPersona() {
 try {
 	await runFreshPersona();
 	await runReturningPersona();
+} catch (error) {
+	const page = await application?.firstWindow().catch(() => undefined);
+	if (page) {
+		await page.screenshot({ path: join(evidence, "failure.png") }).catch(() => {});
+		await commandKeyboardState(page).then(state => writeFileSync(join(evidence, "failure.json"), JSON.stringify(state, null, 2))).catch(() => {});
+	}
+	throw error;
 } finally {
 	await closeApplication();
 	rmSync(root, { recursive: true, force: true });
+	console.log(`Persona evidence: ${evidence}`);
 }

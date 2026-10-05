@@ -15,7 +15,6 @@ import type {
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { DreamingPanel } from "./DreamingPanel";
 import { Icon } from "./Icon";
-import { MemoryRecallStatus } from "./MemoryRecallStatus";
 import { MemoryWorkspace } from "./MemoryWorkspace";
 
 type LegacyLifeView = "calendar" | "timeline" | "people" | "memory";
@@ -1205,7 +1204,6 @@ function MemoryView({
 
 	return (
 		<div className="life-memory">
-			<MemoryRecallStatus snapshot={snapshot} />
 			<section className="memory-commandbar">
 				<label>
 					<span className="sr-only">Search memories</span>

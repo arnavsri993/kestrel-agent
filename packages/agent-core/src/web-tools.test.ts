@@ -63,6 +63,29 @@ describe("network-policy web tools", () => {
 		database.close();
 	});
 
+ it("removes raw and inert HTML contents and decodes each text entity once", async () => {
+  const client = new NetworkPolicyWebClient({
+   allowedHosts: ["docs.example.test"], resolveHost: async () => ["203.0.113.20"],
+   fetcher: async () => new Response('<title>Guide &amp;lt;literal&amp;gt; &#x1f642;</title><script>hidden-script</script ><STYLE>hidden-style</STYLE ><template>hidden-template</template><noscript>hidden-noscript</noscript><!--hidden-comment--><p>&amp;lt;synthetic&amp;gt; &lt;once&gt; &#169; &nbsp; &#x1f642;</p>', { headers: { "content-type": "text/html" } }),
+  });
+  const result = await client.fetch("https://docs.example.test/");
+  expect(result).toMatchObject({ content: "Guide &lt;literal&gt; 🙂 &lt;synthetic&gt; <once> © 🙂", trust: "untrusted_external", citation: { title: "Guide &lt;literal&gt; 🙂" } });
+  expect(result.content).not.toContain("hidden-");
+ });
+
+ it("preserves non-HTML source text without entity rewriting", async () => {
+  const client = new NetworkPolicyWebClient({ allowedHosts: ["docs.example.test"], resolveHost: async () => ["203.0.113.20"], fetcher: async () => new Response("<script>literal</script> &amp;lt;", { headers: { "content-type": "text/plain" } }) });
+  expect(await client.fetch("https://docs.example.test/")).toMatchObject({ content: "<script>literal</script> &amp;lt;", citation: { title: "docs.example.test" }, trust: "untrusted_external" });
+ });
+
+ it("bounds titles and walks nested markup without recursive traversal", async () => {
+  const client = new NetworkPolicyWebClient({ allowedHosts: ["docs.example.test"], resolveHost: async () => ["203.0.113.20"], fetcher: async () => new Response(`<title>${"T".repeat(700)}</title>${"<div>".repeat(500)}visible${"</div>".repeat(500)}<script>unfinished-hidden`, { headers: { "content-type": "text/html" } }) });
+  const result = await client.fetch("https://docs.example.test/");
+  expect(result.citation.title).toBe("T".repeat(500));
+  expect(result.content).toContain("visible");
+  expect(result.content).not.toContain("unfinished-hidden");
+ });
+
 	it("rejects non-HTTPS, unlisted hosts, private DNS, unsafe redirects, and oversized bodies", async () => {
 		const client = new NetworkPolicyWebClient({
 			allowedHosts: ["safe.example.test"],

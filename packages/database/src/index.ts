@@ -1,6 +1,6 @@
-import { createHash, createHmac } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { createHash, createHmac, randomUUID } from "node:crypto";
+import { chmodSync, closeSync, mkdirSync, openSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { decryptText, encryptText } from "@kestrel/encryption";
 import {
 	type ActionReceipt,
@@ -429,6 +429,11 @@ export class KestrelDatabase {
 	readonly db: Database.Database;
 	readonly lastMigrationBackupPath: string | undefined;
 
+	/** Absolute path or `:memory:` for the open profile database. */
+	get path(): string {
+		return this.filename;
+	}
+
 	constructor(
 		private readonly filename: string,
 		private readonly encryptionKey: Buffer,
@@ -546,6 +551,7 @@ export class KestrelDatabase {
 							continue;
 						}
 						this.db.exec(loadMigrationSql(version));
+						if (version === 19) this.protectMemoryFingerprintIndexes();
 					this.db
 						.prepare(
 							"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
@@ -579,6 +585,11 @@ export class KestrelDatabase {
 			...(parsed.layer ? { layer: parsed.layer } : {}),
 			...(parsed.confirmationStatus
 				? { confirmationStatus: parsed.confirmationStatus }
+				: {}),
+			...(parsed.pinned !== undefined ? { pinned: parsed.pinned } : {}),
+			...(parsed.fadesAt ? { fadesAt: parsed.fadesAt } : {}),
+			...(parsed.accessCount !== undefined
+				? { accessCount: parsed.accessCount }
 				: {}),
 			...(parsed.lastAccessedAt
 				? { lastAccessedAt: parsed.lastAccessedAt }
@@ -1390,6 +1401,7 @@ export class KestrelDatabase {
 		interruptedAt: string;
 		reason: string;
 		expectedSessionClaimOwnerToken?: string;
+		recoveryReason?: "core_restarted" | "stale_owner";
 	}): RetiredAgentHistory {
 		if (!input.runId) throw new Error("Interrupted agent run ID is required.");
 		if (!Number.isFinite(Date.parse(input.interruptedAt)))
@@ -1462,7 +1474,7 @@ export class KestrelDatabase {
 				...base,
 				status: "failed",
 				recovery: {
-					reason: "core_restarted",
+					reason: input.recoveryReason ?? "core_restarted",
 					action: "retry_last_turn",
 				},
 				error: input.reason,
@@ -2197,10 +2209,10 @@ export class KestrelDatabase {
 		];
 		const parameters: Array<string | number> = [];
 		if (options.startAt && options.endAt) {
-			conditions.push("e.started_at < ?", "(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("e.started_at < ?", "COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.endAt, options.startAt);
 		} else if (options.startAt) {
-			conditions.push("(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.startAt);
 		} else if (options.endAt) {
 			conditions.push("e.started_at < ?");
@@ -2264,10 +2276,10 @@ export class KestrelDatabase {
 			this.hashMemoryTerm(term),
 		);
 		if (options.startAt && options.endAt) {
-			conditions.push("e.started_at < ?", "(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("e.started_at < ?", "COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.endAt, options.startAt);
 		} else if (options.startAt) {
-			conditions.push("(e.ended_at IS NULL OR e.ended_at >= ?)");
+			conditions.push("COALESCE(e.ended_at, e.started_at) >= ?");
 			parameters.push(options.startAt);
 		} else if (options.endAt) {
 			conditions.push("e.started_at < ?");
@@ -3045,41 +3057,110 @@ export class KestrelDatabase {
 			.changes === 1;
 	}
 
-	queueMemoryJob(job: MemoryJob): MemoryJob {
-		const parsed = MemoryJobSchema.parse(job);
-		this.upsertMemoryPayload(
-			"memory_jobs",
-			parsed.id,
-			parsed,
-			{
-				kind: parsed.kind,
-				dedupe_key: parsed.dedupeKey,
-				status: parsed.status,
-				attempts: parsed.attempts,
-				max_attempts: parsed.maxAttempts,
-				run_after: parsed.runAfter,
-				locked_at: parsed.lockedAt ?? null,
-				lease_until: parsed.leaseUntil ?? null,
-				last_error: parsed.lastError ?? null,
-				created_at: parsed.createdAt,
-			},
-			parsed.updatedAt,
+	memoryJobId(dedupeKey: string): string {
+		return `memory-job-${this.memoryIndexHash("job-id", dedupeKey).slice(0, 40)}`;
+	}
+
+	private memoryIndexHash(purpose: string, value: string): string {
+		return createHmac("sha256", this.encryptionKey)
+			.update(`kestrel-memory-index-v1:${purpose}:`)
+			.update(value)
+			.digest("hex");
+	}
+
+	private protectMemoryFingerprintIndexes(): void {
+		const jobs = this.db.prepare("SELECT * FROM memory_jobs").all() as MemorySubstrateRow[];
+		const updateJob = this.db.prepare(
+			`UPDATE memory_jobs SET id=?, dedupe_key=?, payload_ciphertext=?,
+			 payload_iv=?, payload_auth_tag=? WHERE id=?`,
 		);
+		const updateDedupe = this.db.prepare("UPDATE memory_jobs SET dedupe_key=? WHERE id=?");
+		const insertAlias = this.db.prepare(
+			"INSERT INTO memory_job_id_aliases (alias_hash, job_id) VALUES (?, ?)",
+		);
+		for (const row of jobs) {
+			const payload = MemoryJobSchema.parse(this.decryptPayload(row));
+			const legacyId = `memory-job-${createHash("sha256").update(payload.dedupeKey).digest("hex").slice(0, 40)}`;
+			const id = row.id === legacyId ? this.memoryJobId(payload.dedupeKey) : row.id;
+			const dedupeHash = this.memoryIndexHash("job-dedupe", payload.dedupeKey);
+			if (id !== row.id) {
+				const encrypted = encryptText(JSON.stringify({ ...payload, id }), this.encryptionKey);
+				updateJob.run(id, dedupeHash, encrypted.ciphertext, encrypted.iv, encrypted.authTag, row.id);
+				insertAlias.run(this.memoryIndexHash("job-alias", row.id), id);
+			} else {
+				updateDedupe.run(dedupeHash, row.id);
+			}
+		}
+		const updateEmbedding = this.db.prepare("UPDATE memory_embeddings SET content_hash=? WHERE id=?");
+		for (const row of this.db.prepare("SELECT * FROM memory_embeddings").all() as MemorySubstrateRow[]) {
+			const payload = EmbeddingRecordSchema.parse(this.decryptPayload(row));
+			updateEmbedding.run(this.memoryIndexHash("embedding-content", payload.contentHash), row.id);
+		}
+	}
+
+	private parseMemoryJobRow(row: MemorySubstrateRow): MemoryJob {
+		// Claim and completion update normalized columns without rewriting the
+		// encrypted payload. Those columns are authoritative for mutable state.
+		return MemoryJobSchema.parse({
+			...this.decryptPayload(row),
+			id: row.id,
+			status: row.status,
+			attempts: row.attempts,
+			maxAttempts: row.max_attempts,
+			runAfter: row.run_after,
+			lockedAt: row.locked_at ?? undefined,
+			leaseUntil: row.lease_until ?? undefined,
+			lastError: row.last_error ?? undefined,
+			createdAt: row.created_at,
+			updatedAt: row.updated_at,
+		});
+	}
+
+	queueMemoryJob(job: MemoryJob): MemoryJob {
+		const requested = MemoryJobSchema.parse(job);
+		const legacyId = `memory-job-${createHash("sha256").update(requested.dedupeKey).digest("hex").slice(0, 40)}`;
+		const parsed = requested.id === legacyId ? { ...requested, id: this.memoryJobId(requested.dedupeKey) } : requested;
+		this.db.transaction(() => {
+			this.upsertMemoryPayload(
+				"memory_jobs",
+				parsed.id,
+				parsed,
+				{
+					kind: parsed.kind,
+					dedupe_key: this.memoryIndexHash("job-dedupe", parsed.dedupeKey),
+					status: parsed.status,
+					attempts: parsed.attempts,
+					max_attempts: parsed.maxAttempts,
+					run_after: parsed.runAfter,
+					locked_at: parsed.lockedAt ?? null,
+					lease_until: parsed.leaseUntil ?? null,
+					last_error: parsed.lastError ?? null,
+					created_at: parsed.createdAt,
+				},
+				parsed.updatedAt,
+			);
+			if (parsed.id !== requested.id) {
+				this.db.prepare(
+					`INSERT INTO memory_job_id_aliases (alias_hash, job_id) VALUES (?, ?)
+					 ON CONFLICT(alias_hash) DO UPDATE SET job_id=excluded.job_id`,
+				).run(this.memoryIndexHash("job-alias", requested.id), parsed.id);
+			}
+		})();
 		return parsed;
 	}
 
 	getMemoryJob(id: string): MemoryJob | undefined {
 		const row = this.db
-			.prepare("SELECT * FROM memory_jobs WHERE id = ?")
-			.get(id) as MemorySubstrateRow | undefined;
-		return row ? MemoryJobSchema.parse(this.decryptPayload(row)) : undefined;
+			.prepare("SELECT * FROM memory_jobs WHERE id = ? OR id = (SELECT job_id FROM memory_job_id_aliases WHERE alias_hash = ?) LIMIT 1")
+			.get(id, this.memoryIndexHash("job-alias", id)) as MemorySubstrateRow | undefined;
+		return row ? this.parseMemoryJobRow(row) : undefined;
 	}
 
 	getMemoryJobByDedupeKey(dedupeKey: string): MemoryJob | undefined {
 		const row = this.db
 			.prepare("SELECT * FROM memory_jobs WHERE dedupe_key = ?")
-			.get(dedupeKey) as MemorySubstrateRow | undefined;
-		return row ? MemoryJobSchema.parse(this.decryptPayload(row)) : undefined;
+			.get(this.memoryIndexHash("job-dedupe", dedupeKey)) as MemorySubstrateRow | undefined;
+		return row ? this.parseMemoryJobRow(row) : undefined;
 	}
 
 	listMemoryJobs(options: {
@@ -3106,7 +3187,7 @@ export class KestrelDatabase {
 				 ORDER BY run_after ASC, created_at ASC, id ASC LIMIT ?`,
 			)
 			.all(...parameters, limit) as MemorySubstrateRow[];
-		return rows.map((row) => MemoryJobSchema.parse(this.decryptPayload(row)));
+		return rows.map((row) => this.parseMemoryJobRow(row));
 	}
 
 	claimMemoryJob(now = new Date().toISOString(), leaseMs = 60_000): MemoryJob | undefined {
@@ -3143,11 +3224,12 @@ export class KestrelDatabase {
 			const claimed = this.db
 				.prepare("SELECT * FROM memory_jobs WHERE id = ?")
 				.get(row.id) as MemorySubstrateRow;
-			return MemoryJobSchema.parse(this.decryptPayload(claimed));
+			return this.parseMemoryJobRow(claimed);
 		})();
 	}
 
 	completeMemoryJob(id: string, now = new Date().toISOString()): boolean {
+		id = this.getMemoryJob(id)?.id ?? id;
 		return this.db
 			.prepare(
 				`UPDATE memory_jobs SET status='completed', locked_at=NULL, lease_until=NULL, last_error=NULL, updated_at=?
@@ -3195,7 +3277,7 @@ export class KestrelDatabase {
 				parsed.ownerId,
 				parsed.provider,
 				parsed.model,
-				parsed.contentHash,
+				this.memoryIndexHash("embedding-content", parsed.contentHash),
 			) as { id: string } | undefined;
 		const id = existing?.id ?? parsed.id;
 		const stored = id === parsed.id ? parsed : { ...parsed, id };
@@ -3209,7 +3291,7 @@ export class KestrelDatabase {
 				provider: stored.provider,
 				model: stored.model,
 				dimension: stored.dimension,
-				content_hash: stored.contentHash,
+				content_hash: this.memoryIndexHash("embedding-content", stored.contentHash),
 				status: stored.status,
 				created_at: stored.createdAt,
 			},
@@ -3812,6 +3894,7 @@ export class KestrelDatabase {
                         embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;
                         pending.push(owner.id, `task:${owner.id}`);
                     } else {
+                        // Pins and recall counts never override source retention or deletion.
                         const result = this.deleteAgentMemoryWithCounts(owner.id);
                         if (result.memory) deletedAgentMemories++;
                         embeddings += result.embeddings; jobs += result.jobs; provenance += result.provenance;
@@ -4071,7 +4154,7 @@ export class KestrelDatabase {
 
 	private listAllMemoryJobsForDeletion(): MemoryJob[] {
 		const rows = this.db.prepare("SELECT * FROM memory_jobs").all() as MemorySubstrateRow[];
-		return rows.map((row) => MemoryJobSchema.parse(this.decryptPayload(row)));
+		return rows.map((row) => this.parseMemoryJobRow(row));
 	}
 
 	listAllAgentMemories(): AgentMemoryRecord[] {
@@ -4375,6 +4458,15 @@ export class KestrelDatabase {
 			this.encryptionKey,
 		);
 		return JSON.parse(value) as T;
+	}
+
+	/** Synchronous read/modify/write serialized across connections and processes. */
+	updatePrivateState<T>(key: string, update: (current: T | undefined) => T): T {
+		return this.db.transaction(() => {
+			const next = update(this.getPrivateState<T>(key));
+			this.setPrivateState(key, next);
+			return next;
+		}).immediate();
 	}
 
 	deletePrivateState(key: string): void {
@@ -4968,6 +5060,37 @@ export class KestrelDatabase {
 			throw new Error("Idempotency claim key and owner token are required.");
 		if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0)
 			throw new Error("Idempotency claim owner PID is invalid.");
+	}
+
+	/** Bind reviewed records without retaining a guessable content hash. */
+	memoryCleanupFingerprint(kind: "agent" | "legacy", record: AgentMemoryRecord | MemoryRecord): string {
+		return createHmac("sha256", this.encryptionKey)
+			.update(`memory-cleanup-review:v1:${kind}:`)
+			.update(JSON.stringify(record))
+			.digest("hex");
+	}
+
+	/** SQLite's online backup includes committed WAL pages in one consistent file. */
+	async backupBeforeMemoryCleanup(now: Date): Promise<string> {
+		if (this.path === ":memory:") throw new Error("A file database is required for a SQLite backup.");
+		const directory = join(dirname(this.path), "backups");
+		mkdirSync(directory, { recursive: true, mode: 0o700 });
+		const timestamp = now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
+		const path = join(directory, `pre-fade-${timestamp}-${randomUUID()}.sqlite`);
+		closeSync(openSync(path, "wx", 0o600));
+		try {
+			await this.db.backup(path);
+			chmodSync(path, 0o600);
+			return path;
+		} catch (error) {
+			rmSync(path, { force: true });
+			throw error;
+		}
+	}
+
+	/** A cleanup either commits all reviewed record removals or none of them. */
+	runMemoryCleanupTransaction<T>(work: () => T): T {
+		return this.db.transaction(work)();
 	}
 
 	close(): void {

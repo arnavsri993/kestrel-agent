@@ -16,6 +16,7 @@ export function HonchoMemorySettings() {
 	const [busy, setBusy] = useState("");
 	const [notice, setNotice] = useState("");
 	const [error, setError] = useState("");
+	const [connectionOpen, setConnectionOpen] = useState<boolean | null>(null);
 
 	async function load() {
 		const [memoryRaw, credentialsRaw] = await Promise.all([
@@ -26,8 +27,10 @@ export function HonchoMemorySettings() {
 		if (!memory.ok) throw new Error(memory.error);
 		if (!memory.honchoMemoryStatus)
 			throw new Error("Honcho memory status is unavailable.");
+		const configuration = memory.honchoMemoryStatus.configuration;
 		setStatus(memory.honchoMemoryStatus);
-		setDraft(memory.honchoMemoryStatus.configuration);
+		setDraft(configuration);
+		setConnectionOpen((current) => current ?? configuration.enabled);
 		if (credentialsRaw.ok && "credentials" in credentialsRaw)
 			setCredential(
 				credentialsRaw.credentials.find((item) => item.id === "honcho") ?? null,
@@ -66,7 +69,7 @@ export function HonchoMemorySettings() {
 			setNotice(
 				enabled
 					? "Honcho memory settings saved."
-					: "Honcho is disabled; local memory remains active.",
+					: "Honcho is disabled; local memory settings were not changed.",
 			);
 		} catch (cause) {
 			setError(
@@ -171,100 +174,112 @@ export function HonchoMemorySettings() {
 		<article className="setting-row honcho-memory-setting">
 			<div>
 				<strong>Honcho remote memory</strong>
-				<small className="honcho-disclosure">
-					{status.remoteDataDisclosure}
-				</small>
+				<p>
+					Optional connection to a memory server. Local memory works without it.
+				</p>
+				<details
+					className="settings-disclosure honcho-connection"
+					open={connectionOpen ?? false}
+					onToggle={(event) => setConnectionOpen(event.currentTarget.open)}
+				>
+					<summary>Connection settings</summary>
+					<small className="honcho-disclosure">
+						{status.remoteDataDisclosure}
+					</small>
 
-				<div className="honcho-key-row">
-					<label>
-						<span>
-							Honcho API key ·{" "}
-							{credential?.configured ? "protected" : "not configured"}
-						</span>
-						<input
-							type="password"
-							autoComplete="off"
-							spellCheck={false}
-							value={apiKey}
-							placeholder={
-								credential?.configured ? "Enter replacement" : "Enter API key"
-							}
-							onChange={(event) => setApiKey(event.target.value)}
-						/>
-					</label>
-					<button
-						className="button secondary"
-						disabled={Boolean(busy)}
-						onClick={() => void saveKey()}
-					>
-						{credential?.configured ? "Replace key" : "Save key"}
-					</button>
-					{credential?.configured && (
+					<div className="honcho-key-row">
+						<label>
+							<span>
+								Honcho API key ·{" "}
+								{credential?.configured ? "protected" : "not configured"}
+							</span>
+							<input
+								type="password"
+								autoComplete="off"
+								spellCheck={false}
+								value={apiKey}
+								placeholder={
+									credential?.configured ? "Enter replacement" : "Enter API key"
+								}
+								onChange={(event) => setApiKey(event.target.value)}
+							/>
+						</label>
 						<button
-							className="quiet-link"
+							className="button secondary"
 							disabled={Boolean(busy)}
-							onClick={() => void removeKey()}
+							onClick={() => void saveKey()}
 						>
-							Remove
+							{credential?.configured ? "Replace key" : "Save key"}
 						</button>
+						{credential?.configured && (
+							<button
+								className="quiet-link"
+								disabled={Boolean(busy)}
+								onClick={() => void removeKey()}
+							>
+								Remove
+							</button>
+						)}
+					</div>
+
+					<HonchoConfigurationForm draft={draft} setDraft={setDraft} />
+
+					{!status.configuration.enabled && (
+						<label className="honcho-check honcho-consent">
+							<input
+								type="checkbox"
+								checked={acknowledged}
+								onChange={(event) => setAcknowledged(event.target.checked)}
+							/>
+							<span>
+								I understand that enabling Honcho sends the disclosed data to the
+								configured server.
+							</span>
+						</label>
 					)}
-				</div>
-
-				<HonchoConfigurationForm draft={draft} setDraft={setDraft} />
-
-				{!status.configuration.enabled && (
-					<label className="honcho-check honcho-consent">
-						<input
-							type="checkbox"
-							checked={acknowledged}
-							onChange={(event) => setAcknowledged(event.target.checked)}
-						/>
-						I understand that enabling Honcho sends the disclosed data to the
-						configured server.
-					</label>
-				)}
+					<div className="honcho-actions">
+						{status.configuration.enabled ? (
+							<>
+								<button
+									className="button secondary"
+									disabled={Boolean(busy)}
+									onClick={() => void configure(true)}
+								>
+									Save settings
+								</button>
+								<button
+									className="button secondary"
+									disabled={Boolean(busy)}
+									onClick={() => void verify()}
+								>
+									Verify connection
+								</button>
+								<button
+									className="quiet-link"
+									disabled={Boolean(busy)}
+									onClick={() => void configure(false)}
+								>
+									Disable
+								</button>
+							</>
+						) : (
+							<button
+								className="button secondary"
+								disabled={Boolean(busy) || !acknowledged}
+								onClick={() => void configure(true)}
+							>
+								Enable Honcho
+							</button>
+						)}
+						<small>{status.syncedMessages} messages synced</small>
+					</div>
+				</details>
 				{notice && <small role="status">{notice}</small>}
 				{error && <small role="alert">{error}</small>}
 			</div>
-			<div className="honcho-actions">
-				<span className={`status status-${status.state}`}>
-					{status.state.replaceAll("_", " ")}
-				</span>
-				{status.configuration.enabled ? (
-					<>
-						<button
-							className="button secondary"
-							disabled={Boolean(busy)}
-							onClick={() => void configure(true)}
-						>
-							Save settings
-						</button>
-						<button
-							className="button secondary"
-							disabled={Boolean(busy)}
-							onClick={() => void verify()}
-						>
-							Verify connection
-						</button>
-						<button
-							className="quiet-link"
-							disabled={Boolean(busy)}
-							onClick={() => void configure(false)}
-						>
-							Disable
-						</button>
-					</>
-				) : (
-					<button
-						className="button secondary"
-						disabled={Boolean(busy) || !acknowledged}
-						onClick={() => void configure(true)}
-					>
-						Enable Honcho
-					</button>
-				)}
-				<small>{status.syncedMessages} messages synced</small>
-			</div>
+			<span className={`status status-${status.state}`}>
+				{status.state.replaceAll("_", " ")}
+			</span>
 		</article>
 	);
 }
@@ -472,7 +487,7 @@ function HonchoConfigurationForm({
 						setDraft({ ...draft, saveMessages: event.target.checked })
 					}
 				/>
-				Save bounded user and assistant messages to Honcho
+			<span>Save bounded user and assistant messages to Honcho</span>
 			</label>
 			<label className="honcho-check">
 				<input
@@ -485,7 +500,7 @@ function HonchoConfigurationForm({
 						})
 					}
 				/>
-				Scale reasoning for longer queries, capped at high
+			<span>Scale reasoning for longer queries, capped at high</span>
 			</label>
 		</details>
 	);

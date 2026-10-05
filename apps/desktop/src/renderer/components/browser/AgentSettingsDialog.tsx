@@ -50,17 +50,17 @@ export function AgentSettingsDialog({ session, sessions, onClose, onSaved }: {
 		finally { setBusy(false); }
 	}
 	const editor = (target: RuntimeSession) => <form onSubmit={event => { event.preventDefault(); void save(target, event.currentTarget); }}>
-		<label>Name<input name="name" defaultValue={target.title} required maxLength={200} /></label>
+		<label>Name<input aria-label="Name" name="name" defaultValue={target.title} required maxLength={200} /></label>
 		{target.specialistDefinition && <>
-			<label>Purpose<textarea name="purpose" required maxLength={2000} defaultValue={target.specialistDefinition.purpose} /></label>
-			<label><input type="checkbox" name="enabled" defaultChecked={target.specialistDefinition.enabled} />Available for delegation</label>
+			<label>Purpose<textarea aria-label="Purpose" name="purpose" required maxLength={2000} defaultValue={target.specialistDefinition.purpose} /></label>
+			<label className="persistent-agent-enabled"><input type="checkbox" name="enabled" defaultChecked={target.specialistDefinition.enabled} />Available for delegation</label>
 		</>}
-		<label>Instructions<textarea name="instructions" maxLength={20000} defaultValue={target.specialistDefinition?.instructions ?? target.agentInstructions ?? ""} /></label>
+		<label>Instructions<textarea aria-label="Instructions" name="instructions" maxLength={20000} defaultValue={target.specialistDefinition?.instructions ?? target.agentInstructions ?? ""} /></label>
 		<button type="submit" className="button secondary" disabled={busy}>Save</button>
 		{target.specialistDefinition && <button type="button" className="button secondary" disabled={busy} onClick={() => void archive(target, true)}>Archive specialist</button>}
 	</form>;
 	return <dialog ref={ref} className="persistent-agent-settings" aria-labelledby="persistent-agent-settings-title" onCancel={onClose}>
-		<header><h2 id="persistent-agent-settings-title">{session.title} settings</h2><button type="button" onClick={onClose}>Close</button></header>
+		<header><h2 id="persistent-agent-settings-title">{session.title} settings</h2><button type="button" className="button secondary" onClick={onClose}>Close</button></header>
 		{error && <p role="alert">{error}</p>}
 		{editor(session)}
 		{session.kind === "agent" && <>
@@ -69,12 +69,12 @@ export function AgentSettingsDialog({ session, sessions, onClose, onSaved }: {
 				<details key={item.id}><summary>{item.title}{item.specialistDefinition?.enabled ? "" : " · disabled"}</summary>{editor(item)}</details>)}
 			{sessions.some(item => item.parentSessionId === session.id && item.specialistDefinition?.archived) && <details><summary>Archived specialists</summary>
 				<p>History and memory are retained. Restore a specialist, then enable it when needed.</p>
-				{sessions.filter(item => item.parentSessionId === session.id && item.specialistDefinition?.archived).map(item => <p key={item.id}>{item.title} <button type="button" disabled={busy} onClick={() => void archive(item, false)}>Restore {item.title}</button></p>)}
+				{sessions.filter(item => item.parentSessionId === session.id && item.specialistDefinition?.archived).map(item => <p key={item.id}>{item.title} <button type="button" className="button secondary" disabled={busy} onClick={() => void archive(item, false)}>Restore {item.title}</button></p>)}
 			</details>}
 			<details><summary>Add specialist</summary><form onSubmit={event => { event.preventDefault(); void add(event.currentTarget); }}>
 				<label>Name<input name="name" required maxLength={200} /></label>
 				<label>Purpose<textarea name="purpose" required maxLength={2000} /></label>
-				<button type="submit" disabled={busy}>Add specialist</button>
+				<button type="submit" className="button primary" disabled={busy}>Add specialist</button>
 			</form></details>
 		</>}
 	</dialog>;
