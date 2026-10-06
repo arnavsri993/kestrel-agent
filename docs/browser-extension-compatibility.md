@@ -139,3 +139,14 @@ optionally exercise a live Chrome Web Store package when
 a replacement for deterministic local tests. Live package availability and
 Google's delivery service are external dependencies, so a passing local test
 does not claim permanent third-party compatibility.
+
+## Native development browsing
+
+`corepack pnpm dev:native-browser` connects the native CEF Kestrel shell to a
+separate Chrome-style CEF browser process. Chrome's own extension manager is
+available through **Manage Chrome extensions**. This lane uses isolated temporary
+profiles and does not import the Electron extension inventory or change the
+installed app. The privileged shell remains extension-free; extension pages and
+websites never receive Kestrel's bridge or Core credentials. See
+[the runtime migration guide](./desktop-runtime-migration.md#native-shell-with-chrome-extension-browsing)
+for commands, current verification scope and remaining cutover boundaries.

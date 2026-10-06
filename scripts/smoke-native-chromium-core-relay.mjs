@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 
-const app = await buildNativeChromiumHost();
+const app = process.env.KESTREL_NATIVE_TEST_APP ?? await buildNativeChromiumHost();
 const resources = join(app, "Contents", "Resources");
 const node = join(resources, "agent-core", "node", "bin", "node");
 const relay = join(resources, "native-core-relay.mjs");

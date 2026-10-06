@@ -23,6 +23,7 @@ import { PaymentSettings } from "./PaymentSettings";
 import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
 import { browserExtensionOperationErrorMessage } from "../../../browser-extension-error";
 import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
+import { NativeBrowserControls } from "./NativeBrowserControls";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
   NEW_TAB_BACKGROUND_OPTIONS,
@@ -1616,10 +1617,14 @@ export function BrowserSettings({
               <Icon name="extensions" /> Web extensions and add-ons
             </h2>
             <p>
-              Only verified store packages or explicitly enabled development
-              packages are loaded.
+              Choose the native browser for Chrome extensions, or review
+              packages for the embedded browser below.
             </p>
           </header>
+          <NativeBrowserControls
+            currentUrl={browser.state?.tabs.find((tab) => tab.id === browser.state?.activeTabId)?.url}
+          />
+          <h3>Embedded browser extensions</h3>
           {extensionMessage && (
             <div
               className={`extension-alert ${extensionMessage.type}`}

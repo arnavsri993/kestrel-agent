@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const app = await buildNativeChromiumHost();
+const app = process.env.KESTREL_NATIVE_TEST_APP ?? await buildNativeChromiumHost();
 const executable = join(app, "Contents", "MacOS", "Kestrel");
 // Older CEF builds started GCM registration shortly after startup, after the
 // host-ready marker. Keep each clean-profile instance alive long enough to

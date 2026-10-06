@@ -1,5 +1,6 @@
 const { join } = require("node:path");
 const { verifyAgentCoreSidecar } = require("./agent-core-sidecar.cjs");
+const { verifyNativeBrowserSidecar } = require("./native-browser-sidecar.cjs");
 
 exports.default = async function verifySignedAgentCoreSidecar(context) {
 	if (process.platform !== "darwin") return;
@@ -11,4 +12,5 @@ exports.default = async function verifySignedAgentCoreSidecar(context) {
 	// from Resources. Verify the standalone Node executable itself after the
 	// final signer has processed the bundle.
 	verifyAgentCoreSidecar(appPath, { verifySignature: true });
+	verifyNativeBrowserSidecar(appPath);
 };

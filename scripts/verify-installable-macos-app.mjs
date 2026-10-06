@@ -8,6 +8,7 @@ import { auditPackagedMacApp } from "./macos-architecture-audit.cjs";
 
 const require = createRequire(import.meta.url);
 const { verifyAgentCoreSidecar } = require("../apps/desktop/build/agent-core-sidecar.cjs");
+const { verifyNativeBrowserSidecar } = require("../apps/desktop/build/native-browser-sidecar.cjs");
 
 const appArgument = process.argv[2];
 if (process.platform !== "darwin")
@@ -100,4 +101,5 @@ if (signature.status !== 0)
 
 auditPackagedMacApp(appPath);
 verifyAgentCoreSidecar(appPath, { verifySignature: true });
+verifyNativeBrowserSidecar(appPath);
 console.log(`Verified local installable Kestrel app: ${appPath}`);

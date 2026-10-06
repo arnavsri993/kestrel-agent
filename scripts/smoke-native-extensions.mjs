@@ -52,7 +52,7 @@ try {
   const children = execFileSync("/bin/ps", ["-axo", "pid,ppid,command"], { encoding: "utf8" });
   const workers = children.split("\n").filter(line => line.includes(join(app, "Contents/Frameworks/")) && /--type=(renderer|gpu-process|utility)/.test(line));
   assert(workers.length > 0);
-  assert(workers.every(line => /--seatbelt-client=\d+/.test(line) && !/--no-sandbox\b/.test(line)));
+  assert(workers.every(line => /--seatbelt-client=\d+/.test(line) && !/--no-sandbox\b/.test(line)), JSON.stringify(workers));
   assert(!workers.some(line => /Electron Framework/.test(line)));
   await page.goto(`http://127.0.0.1:${server.address().port}/probe`);
   await page.waitForFunction(() => document.documentElement.dataset.kestrelExtensionProbe);
