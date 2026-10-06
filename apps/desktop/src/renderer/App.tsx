@@ -156,6 +156,7 @@ import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
+import { runAtLoginDescription } from "./components/RunAtLoginSettings";
 import { ProviderAccountsSettings } from "./components/ProviderAccountsSettings";
 import {
 	EmptyState,
@@ -4466,8 +4467,9 @@ function RuntimeConversation({
 			) : null}
 			{((!activeSessionId && visibleMessages.length === 0) || emptySession) &&
 				!hasQuestionSurface ? (
-				<div className="chat-welcome" aria-hidden="true">
-					<h1>{emptySession ? "Pick up where you left off." : "How can I help?"}</h1>
+				<div className="chat-welcome">
+					<span className="chat-welcome-mark" aria-hidden="true"><Icon name="agent" /></span>
+					<h2>{emptySession ? "Pick up where you left off." : "What are we working on?"}</h2>
 					<p>
 						{emptySession
 							? "Send a message to continue this chat."
@@ -9625,6 +9627,7 @@ function Settings({
 	return (
 		<PageFrame
 			title="Settings"
+			text="Make Kestrel work the way you do."
 			measure="wide"
 			className="settings-page-frame"
 			{...(onBack ? { onBack } : {})}
@@ -9795,12 +9798,13 @@ function Settings({
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-general-title">Autonomy and behavior</h2>
-
+							<p>Choose how Kestrel responds and when it works.</p>
 						</header>
 						<section className="settings-stack" aria-label="General settings">
 						<article className="setting-row">
 							<div>
 								<strong>Setup guide</strong>
+								<small>Review your model connection and initial setup.</small>
 							</div>
 							<button className="button secondary" onClick={reopenSetup}>
 								Open setup guide
@@ -9809,6 +9813,7 @@ function Settings({
 						<article className="setting-row">
 							<div>
 								<strong>Background work</strong>
+								<small>{snapshot.agentState === "paused" ? "Background work is paused." : "Kestrel can continue background work while you browse."}</small>
 							</div>
 							<button
 								className="button secondary"
@@ -9822,7 +9827,7 @@ function Settings({
 						<article className="setting-row routing-setting">
 							<div>
 								<strong>Communication style</strong>
-
+								<small>{snapshot.personality.available.find((personality) => personality.id === snapshot.personality.selectedId)?.description}</small>
 							</div>
 								<div
 									className="segmented"
@@ -9851,7 +9856,7 @@ function Settings({
 							<article className="setting-row">
 								<div>
 									<strong>Run at login</strong>
-									{login && <small>System status: {login.status}</small>}
+									<small>{runAtLoginDescription(login?.status)}</small>
 								</div>
 								<button
 									className={`switch ${login?.enabled ? "on" : ""}`}

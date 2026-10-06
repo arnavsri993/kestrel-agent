@@ -1,5 +1,25 @@
 # Kestrel control details
 
+## Workspace composition refinement
+
+The second pass treats the whole page as a working surface. A 28px page title,
+13px purpose line, shared 32px top inset and bounded page measure replace the
+competing title sizes and very long settings rows. Settings uses a compact
+section rail, a bounded search field and one inset preference group per panel;
+control rows reflow using the pane's actual width, including alongside chat.
+Communication style explains the current choice and normal login copy describes
+the user's action rather than exposing a system enum.
+
+Memory separates note selection from the document surface and aligns its header
+and tab strip to the same inset. Projects has a sized, centered empty state with
+a clear folder action instead of a full-width dashed placeholder. Connections
+uses expandable app rows. Home's greeting and sidebar typography recede from
+the composer; an empty chat now has visible, accessible orientation text.
+
+Verify default and narrow settings, nested configuration panels, note reading
+and editing, populated and empty project views, Home at 200% zoom, and live
+canonical delivery. Existing synthetic profiles remain separate from user data.
+
 ## Product and system lock
 
 This is a focused redesign of a frequently used macOS workspace, built with React

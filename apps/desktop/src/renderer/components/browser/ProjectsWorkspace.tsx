@@ -231,9 +231,11 @@ export function ProjectsWorkspace({
 					</div>
 				) : (
 					<section className="projects-workspace-empty projects-workspace-no-projects">
+						<span className="projects-workspace-empty-mark" aria-hidden="true"><Icon name="folder" /></span>
 						<h1 id="projects-workspace-title">No projects yet</h1>
 						<p>
-							Add a folder for related chats and context.
+							Give related work a home. Choose a folder to keep its chats,
+							files, and instructions together.
 						</p>
 						<button
 							type="button"

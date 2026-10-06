@@ -240,6 +240,15 @@ async function main() {
 		await windowSize(760, 760);
 		assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, "Settings controls must reflow");
 		await page.screenshot({ animations: "disabled", path: join(output, "settings-reduced-motion-narrow.png") });
+		await windowSize(540, 760);
+		const compactSettings = await page.locator(".settings-content").evaluate((node) => {
+			const bounds = node.getBoundingClientRect();
+			return [...node.querySelectorAll("button, input, select")]
+				.filter((control) => control.checkVisibility())
+				.map((control) => ({ label: control.getAttribute("aria-label") || control.textContent, left: control.getBoundingClientRect().left - bounds.left, right: control.getBoundingClientRect().right - bounds.right }));
+		});
+		assert(compactSettings.every((control) => control.left >= -1 && control.right <= 1), `Compact settings controls must stay inside their pane: ${JSON.stringify(compactSettings)}`);
+		await page.screenshot({ animations: "disabled", path: join(output, "settings-540x760.png") });
 		assert.deepEqual(pageErrors, [], "Renderer must stay free of uncaught errors");
 	}
 
