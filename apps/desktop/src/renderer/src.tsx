@@ -25,6 +25,8 @@ import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";
 import { PasswordOverlay } from "./components/browser/PasswordOverlay";
 import { PaymentOverlay } from "./components/browser/PaymentOverlay";
 import { WindowControls } from "./components/WindowControls";
+import "./thoughtful-ui.css";
+import "./workspace-layout.css";
 
 const isPetOverlay =
 	new URLSearchParams(location.search).get("petOverlay") === "1";

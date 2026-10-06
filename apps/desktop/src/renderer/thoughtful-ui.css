@@ -1,0 +1,384 @@
+/* Final shared control contract. Pills are single-line fields and actions;
+   circles are icon actions; reading surfaces and menus keep their own corners.
+   Layout, material, permissions and component behavior stay local. */
+.ai-browser-app.unified-ui {
+	--radius-sm: 12px;
+	--radius-control: 12px;
+	--radius-row: 12px;
+	--radius-surface: 22px;
+	--radius-stage: 22px;
+	--radius-text-entry: var(--radius-pill);
+	--detail-hover: color-mix(in srgb, var(--ink) 7%, transparent);
+	--detail-pressed: color-mix(in srgb, var(--ink) 12%, transparent);
+	--detail-selected: color-mix(in srgb, var(--ink) 9%, transparent);
+}
+
+.ai-browser-app.unified-ui :is(.ui-textarea, .settings-panel textarea, .ui-page-frame textarea) {
+	border-radius: var(--radius-surface);
+}
+
+.ai-browser-app.unified-ui :is(
+	.browser-toolbar-popover, .model-selector-menu, .new-tab-access-menu,
+	.agent-history-popover, .browser-tab-tools-menu, .browser-tab-menu,
+	.browser-bookmarks-bar-folder-menu, .kestrel-sidebar-context-menu,
+	.kestrel-widget-add-popover, .kestrel-widget-size-popover,
+	.agent-universe-create-agent-popover
+) {
+	border-radius: 18px;
+}
+
+/* One visible keyboard boundary, independent of hover or material support. */
+.ai-browser-app.unified-ui :is(
+	.ui-button, .browser-navigation button, .browser-toolbar-actions button,
+	.kestrel-sidebar-row, .kestrel-sidebar-new-task, .home-add-shortcut,
+	.home-personalize > summary, .kestrel-widget-page-arrow
+):focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+
+.ai-browser-app.unified-ui :is(.ui-button, .button) {
+	border-radius: var(--radius-pill);
+	font-size: 14px;
+	font-weight: 550;
+}
+
+.ai-browser-app.unified-ui .ui-button-icon {
+	width: 36px;
+	min-width: 36px;
+	height: 36px;
+	min-height: 36px;
+	padding: 0;
+	border-radius: 50%;
+}
+
+.ai-browser-app.unified-ui .ui-button[aria-busy="true"] {
+	opacity: 1;
+	cursor: progress;
+}
+
+/* Navigation is a rail, not a stack of competing action panels. */
+.ai-browser-app.unified-ui .kestrel-sidebar-new-task {
+	border: 1px solid var(--line);
+	background: transparent;
+	color: var(--ink);
+}
+
+.ai-browser-app.unified-ui .kestrel-sidebar-new-task:hover {
+	border-color: var(--line-strong);
+	background: var(--detail-hover);
+}
+
+.ai-browser-app.unified-ui .kestrel-sidebar-primary .kestrel-sidebar-nav-item.active {
+	background: var(--detail-selected);
+	box-shadow: inset 3px 0 0 var(--ink-secondary);
+	font-weight: 600;
+}
+
+.ai-browser-app.unified-ui .kestrel-sidebar-section-heading h2 {
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 550;
+	letter-spacing: 0;
+	text-transform: none;
+}
+
+/* Utility actions stay quiet until hover, focus or an open menu. */
+.ai-browser-app.unified-ui .browser-toolbar-actions button:not(:disabled):is(:hover, [aria-expanded="true"]) {
+	background: var(--detail-hover);
+	color: var(--ink);
+}
+
+.ai-browser-app.unified-ui .browser-agent-toggle-quick {
+	margin-inline-start: 0;
+	box-shadow: none;
+}
+
+/* Width, height and flex basis agree: an aspect-ratio alone cannot fix the
+   old agent toggle's 28px width and inherited 32px minimum height. */
+.ai-browser-app.unified-ui :is(.browser-navigation, .browser-toolbar-actions) > button,
+.ai-browser-app.unified-ui .browser-toolbar-extensions > button {
+	flex: 0 0 32px;
+	width: 32px;
+	height: 32px;
+	min-width: 32px;
+	min-height: 32px;
+	padding: 0;
+	border-radius: 50%;
+}
+
+.ai-browser-app.unified-ui .browser-toolbar-actions > button > svg {
+	flex: 0 0 auto;
+}
+
+.ai-browser-app.unified-ui .browser-address {
+	border-radius: var(--radius-pill);
+	padding-inline: 10px;
+}
+
+.ai-browser-app.unified-ui :is(
+	.ui-input, .model-selector-trigger,
+	.browser-tab-tools-search, .command-search, .agent-task-search,
+	.browser-history-popover-search, .projects-workspace-search,
+	.browser-library .library-search, .settings-search-field
+) {
+	border-radius: var(--radius-pill);
+}
+
+.ai-browser-app.unified-ui .model-selector-trigger {
+	font-size: 14px;
+	line-height: 20px;
+}
+
+.ai-browser-app.unified-ui :is(.settings-panel, .ui-page-frame, .memory-workspace) :is(
+	input:not([type]), input[type="text"], input[type="search"], input[type="email"],
+	input[type="password"], input[type="url"], input[type="tel"], select
+) {
+	border-radius: var(--radius-pill);
+}
+
+.ai-browser-app.unified-ui .settings-scope-switcher {
+	gap: 4px;
+	padding: 4px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-pill);
+	background: var(--surface);
+}
+
+.ai-browser-app.unified-ui .settings-scope-switcher > button {
+	border: 0;
+	border-radius: var(--radius-pill);
+	background: transparent;
+	box-shadow: none;
+}
+
+.ai-browser-app.unified-ui .settings-scope-switcher > button.active {
+	background: var(--raised);
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+/* A text menu item is a row, even when it invokes the same command as an
+   icon-only toolbar button. It must never inherit the toolbar's circle. */
+.ai-browser-app.unified-ui .browser-toolbar-settings-list > button {
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr) 18px;
+	align-items: center;
+	justify-content: normal;
+	gap: 10px;
+	text-align: left;
+}
+.ai-browser-app.unified-ui .browser-toolbar-settings-list > button > span:not(.pragmatic-logo) {
+	justify-self: start;
+	text-align: left;
+}
+.ai-browser-app.unified-ui .browser-toolbar-popover .browser-agent-toggle-menu {
+	aspect-ratio: auto;
+	width: 100%;
+	height: auto;
+	min-width: 0;
+	min-height: 36px;
+	padding: 8px 10px;
+	border: 0;
+	border-radius: var(--radius-row);
+	box-shadow: none;
+}
+.ai-browser-app.unified-ui .browser-toolbar-popover .browser-agent-toggle-menu > span:not(.pragmatic-logo) {
+	display: block;
+}
+
+/* Off means inactive, not an error. Position and contrast express toggle
+   state using the same graphite/aluminum palette as the rest of the app. */
+.ai-browser-app.unified-ui .switch {
+	border-color: var(--line-strong);
+	background: var(--raised);
+}
+
+.ai-browser-app.unified-ui .switch span { background: var(--muted); }
+.ai-browser-app.unified-ui .switch.on {
+	border-color: var(--solid);
+	background: var(--solid);
+}
+.ai-browser-app.unified-ui .switch.on span { background: var(--on-solid); }
+
+.ai-browser-app.unified-ui .memory-editor button.primary {
+	background: var(--solid);
+	color: var(--on-solid);
+}
+
+.ai-browser-app.unified-ui :is(
+	.memory-editor button, .memory-library header button, .memory-state button,
+	.memory-week-controls button, .memory-reader button
+) {
+	border-radius: var(--radius-pill);
+}
+
+.ai-browser-app.unified-ui .memory-editor :is(textarea, .ui-textarea) {
+	border-radius: var(--radius-surface);
+}
+.ai-browser-app.unified-ui .memory-library > aside > header {
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+/* An inset selection has one boundary, never leftover dividers from the
+   older adjoining-button implementation. Wrapping preserves custom styles. */
+.ai-browser-app.unified-ui .segmented {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	max-width: 100%;
+	padding: 4px;
+	overflow: visible;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-pill);
+	background: var(--surface);
+}
+
+.ai-browser-app.unified-ui .segmented > button {
+	flex: 1 1 auto;
+	min-height: 34px;
+	padding: 6px 14px;
+	border: 0;
+	border-radius: var(--radius-pill);
+	background: transparent;
+	color: var(--ink-secondary);
+	font: 500 14px / 20px var(--sans);
+	box-shadow: none;
+	cursor: pointer;
+}
+
+.ai-browser-app.unified-ui .segmented > button:hover:not(:disabled) {
+	background: var(--detail-hover);
+	color: var(--ink);
+}
+
+.ai-browser-app.unified-ui .segmented > button:is(.selected, [aria-pressed="true"]) {
+	background: var(--raised);
+	color: var(--ink);
+	font-weight: 600;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.ai-browser-app.unified-ui .segmented > button:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 1px;
+}
+
+.ai-browser-app.unified-ui .segmented > button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.ai-browser-app.unified-ui .kestrel-home-composer:not(.is-expanded) {
+	border-radius: var(--radius-pill);
+}
+
+/* Setup is rendered before the browser shell exists. It uses the same
+   action/field family rather than a second first-run visual system. */
+.setup-onboarding :is(.button, .ui-button),
+.setup-onboarding :is(input[type="text"], input[type="password"], input[type="url"], select) {
+	border-radius: var(--radius-pill);
+}
+
+.ai-browser-app.unified-ui .browser-navigation button:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.ai-browser-app.unified-ui .browser-address:focus-within {
+	border-color: var(--ink-secondary);
+	box-shadow: 0 0 0 1px var(--ink-secondary);
+}
+
+/* Widget titles and rows share a rhythm; icons identify content without
+   surrounding every glyph with another nested elevated surface. */
+.ai-browser-app.unified-ui .kestrel-widget-card-header {
+	align-items: center;
+	gap: 8px;
+	padding: 16px 16px 10px;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-card-icon {
+	width: 20px;
+	height: 20px;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: var(--muted);
+	box-shadow: none;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-card-heading h3 {
+	font: 600 14px / 20px var(--sans);
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-list-icon:not(:has(img)) {
+	border-color: transparent;
+	background: transparent;
+	box-shadow: none;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-list strong {
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 20px;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-list small {
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-empty {
+	padding: 12px 6px;
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.ai-browser-app.unified-ui .kestrel-widget-small-action:last-child {
+	margin-inline-start: 5px;
+	border-inline-start: 1px solid var(--line-strong);
+}
+
+/* Keep short lists compact instead of stretching them through blank panels.
+   Editing retains the user's explicitly selected widget sizes. */
+.ai-browser-app.unified-ui .new-tab-page.kestrel-home .kestrel-widget-canvas:not(.is-editing) .kestrel-widget-shelves {
+	flex: 0 1 auto;
+	align-content: start;
+	grid-auto-rows: minmax(0, auto);
+	grid-template-rows: repeat(var(--kestrel-widget-page-rows, 1), minmax(0, auto));
+}
+
+.ai-browser-app.unified-ui .new-tab-page.kestrel-home .kestrel-widget-canvas:not(.is-editing) .kestrel-widget-card {
+	grid-row: auto;
+	min-height: 0;
+}
+
+.ai-browser-app.unified-ui :is(.kestrel-home-composer, .composer):focus-within {
+	border-color: var(--ink-secondary);
+	outline: 2px solid var(--focus);
+	outline-offset: 3px;
+}
+
+@media (max-height: 650px) {
+	.ai-browser-app.unified-ui .kestrel-widget-card-header { padding-block: 10px 6px; }
+	.ai-browser-app.unified-ui .new-tab-page.kestrel-home .kestrel-widget-canvas:not(.is-editing) .kestrel-widget-card { min-height: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ai-browser-app.unified-ui :is(.ui-button, .browser-address, .kestrel-sidebar-new-task) { transition: none; }
+	.ui-button[aria-busy="true"] > .ui-spinner { animation: none; }
+}
+
+@media (forced-colors: active) {
+	.ai-browser-app.unified-ui .kestrel-sidebar-primary .kestrel-sidebar-nav-item.active {
+		border-inline-start: 3px solid Highlight;
+		box-shadow: none;
+	}
+	.ai-browser-app.unified-ui :is(.kestrel-home-composer, .composer, .browser-address):focus-within {
+		outline-color: Highlight;
+		border-color: Highlight;
+		box-shadow: none;
+	}
+}

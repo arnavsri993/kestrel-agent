@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
 
+export function runAtLoginDescription(status?: string): string {
+	if (status === "requires-approval") return "Allow Kestrel in System Settings → General → Login Items.";
+	if (status === "not-found") return "macOS could not find Kestrel’s login item. Try turning this on again.";
+	return "Open Kestrel when you sign in to this Mac.";
+}
+
 export function RunAtLoginSettings() {
 	const [login, setLogin] = useState<{
 		enabled: boolean;
@@ -34,7 +40,7 @@ export function RunAtLoginSettings() {
 		<article className="setting-row">
 			<div>
 				<strong>Run at login</strong>
-				{login && <small>System status: {login.status}</small>}
+				<small>{runAtLoginDescription(login?.status)}</small>
 			</div>
 			<button
 				className={`switch ${login?.enabled ? "on" : ""}`}
