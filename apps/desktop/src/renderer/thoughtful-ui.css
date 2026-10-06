@@ -2,9 +2,29 @@
    circles are icon actions; reading surfaces and menus keep their own corners.
    Layout, material, permissions and component behavior stay local. */
 .ai-browser-app.unified-ui {
+	--radius-sm: 12px;
+	--radius-control: 12px;
+	--radius-row: 12px;
+	--radius-surface: 22px;
+	--radius-stage: 22px;
+	--radius-text-entry: var(--radius-pill);
 	--detail-hover: color-mix(in srgb, var(--ink) 7%, transparent);
 	--detail-pressed: color-mix(in srgb, var(--ink) 12%, transparent);
 	--detail-selected: color-mix(in srgb, var(--ink) 9%, transparent);
+}
+
+.ai-browser-app.unified-ui :is(.ui-textarea, .settings-panel textarea, .ui-page-frame textarea) {
+	border-radius: var(--radius-surface);
+}
+
+.ai-browser-app.unified-ui :is(
+	.browser-toolbar-popover, .model-selector-menu, .new-tab-access-menu,
+	.agent-history-popover, .browser-tab-tools-menu, .browser-tab-menu,
+	.browser-bookmarks-bar-folder-menu, .kestrel-sidebar-context-menu,
+	.kestrel-widget-add-popover, .kestrel-widget-size-popover,
+	.agent-universe-create-agent-popover
+) {
+	border-radius: 18px;
 }
 
 /* One visible keyboard boundary, independent of hover or material support. */
