@@ -1,5 +1,6 @@
-/* A small shared vocabulary for Kestrel's high-frequency controls.
-   Layout, glass material, permissions and component behavior stay local. */
+/* Final shared control contract. Pills are single-line fields and actions;
+   circles are icon actions; reading surfaces and menus keep their own corners.
+   Layout, material, permissions and component behavior stay local. */
 .ai-browser-app.unified-ui {
 	--detail-hover: color-mix(in srgb, var(--ink) 7%, transparent);
 	--detail-pressed: color-mix(in srgb, var(--ink) 12%, transparent);
@@ -17,7 +18,7 @@
 }
 
 .ai-browser-app.unified-ui :is(.ui-button, .button) {
-	border-radius: 12px;
+	border-radius: var(--radius-pill);
 	font-size: 14px;
 	font-weight: 550;
 }
@@ -69,8 +70,187 @@
 }
 
 .ai-browser-app.unified-ui .browser-agent-toggle-quick {
-	margin-inline-start: 6px;
-	box-shadow: -7px 0 0 -6px var(--line-strong);
+	margin-inline-start: 0;
+	box-shadow: none;
+}
+
+/* Width, height and flex basis agree: an aspect-ratio alone cannot fix the
+   old agent toggle's 28px width and inherited 32px minimum height. */
+.ai-browser-app.unified-ui :is(.browser-navigation, .browser-toolbar-actions) > button,
+.ai-browser-app.unified-ui .browser-toolbar-extensions > button {
+	flex: 0 0 32px;
+	width: 32px;
+	height: 32px;
+	min-width: 32px;
+	min-height: 32px;
+	padding: 0;
+	border-radius: 50%;
+}
+
+.ai-browser-app.unified-ui .browser-toolbar-actions > button > svg {
+	flex: 0 0 auto;
+}
+
+.ai-browser-app.unified-ui .browser-address {
+	border-radius: var(--radius-pill);
+	padding-inline: 10px;
+}
+
+.ai-browser-app.unified-ui :is(
+	.ui-input, .model-selector-trigger,
+	.browser-tab-tools-search, .command-search, .agent-task-search,
+	.browser-history-popover-search, .projects-workspace-search,
+	.browser-library .library-search, .settings-search-field
+) {
+	border-radius: var(--radius-pill);
+}
+
+.ai-browser-app.unified-ui .model-selector-trigger {
+	font-size: 14px;
+	line-height: 20px;
+}
+
+.ai-browser-app.unified-ui :is(.settings-panel, .ui-page-frame, .memory-workspace) :is(
+	input:not([type]), input[type="text"], input[type="search"], input[type="email"],
+	input[type="password"], input[type="url"], input[type="tel"], select
+) {
+	border-radius: var(--radius-pill);
+}
+
+.ai-browser-app.unified-ui .settings-scope-switcher {
+	gap: 4px;
+	padding: 4px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-pill);
+	background: var(--surface);
+}
+
+.ai-browser-app.unified-ui .settings-scope-switcher > button {
+	border: 0;
+	border-radius: var(--radius-pill);
+	background: transparent;
+	box-shadow: none;
+}
+
+.ai-browser-app.unified-ui .settings-scope-switcher > button.active {
+	background: var(--raised);
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+/* A text menu item is a row, even when it invokes the same command as an
+   icon-only toolbar button. It must never inherit the toolbar's circle. */
+.ai-browser-app.unified-ui .browser-toolbar-settings-list > button {
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr) 18px;
+	align-items: center;
+	justify-content: normal;
+	gap: 10px;
+	text-align: left;
+}
+.ai-browser-app.unified-ui .browser-toolbar-settings-list > button > span:not(.pragmatic-logo) {
+	justify-self: start;
+	text-align: left;
+}
+.ai-browser-app.unified-ui .browser-toolbar-popover .browser-agent-toggle-menu {
+	aspect-ratio: auto;
+	width: 100%;
+	height: auto;
+	min-width: 0;
+	min-height: 36px;
+	padding: 8px 10px;
+	border: 0;
+	border-radius: var(--radius-row);
+	box-shadow: none;
+}
+
+/* Off means inactive, not an error. Position and contrast express toggle
+   state using the same graphite/aluminum palette as the rest of the app. */
+.ai-browser-app.unified-ui .switch {
+	border-color: var(--line-strong);
+	background: var(--raised);
+}
+
+.ai-browser-app.unified-ui .switch span { background: var(--muted); }
+.ai-browser-app.unified-ui .switch.on {
+	border-color: var(--solid);
+	background: var(--solid);
+}
+.ai-browser-app.unified-ui .switch.on span { background: var(--on-solid); }
+
+.ai-browser-app.unified-ui .memory-editor button.primary {
+	background: var(--solid);
+	color: var(--on-solid);
+}
+
+.ai-browser-app.unified-ui :is(
+	.memory-editor button, .memory-library header button, .memory-state button,
+	.memory-week-controls button, .memory-reader button
+) {
+	border-radius: var(--radius-pill);
+}
+
+.ai-browser-app.unified-ui .memory-editor :is(textarea, .ui-textarea) {
+	border-radius: var(--radius-surface);
+}
+
+/* An inset selection has one boundary, never leftover dividers from the
+   older adjoining-button implementation. Wrapping preserves custom styles. */
+.ai-browser-app.unified-ui .segmented {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	max-width: 100%;
+	padding: 4px;
+	overflow: visible;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-pill);
+	background: var(--surface);
+}
+
+.ai-browser-app.unified-ui .segmented > button {
+	flex: 1 1 auto;
+	min-height: 34px;
+	padding: 6px 14px;
+	border: 0;
+	border-radius: var(--radius-pill);
+	background: transparent;
+	color: var(--ink-secondary);
+	font: 500 14px / 20px var(--sans);
+	box-shadow: none;
+	cursor: pointer;
+}
+
+.ai-browser-app.unified-ui .segmented > button:hover:not(:disabled) {
+	background: var(--detail-hover);
+	color: var(--ink);
+}
+
+.ai-browser-app.unified-ui .segmented > button:is(.selected, [aria-pressed="true"]) {
+	background: var(--raised);
+	color: var(--ink);
+	font-weight: 600;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.ai-browser-app.unified-ui .segmented > button:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 1px;
+}
+
+.ai-browser-app.unified-ui .segmented > button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.ai-browser-app.unified-ui .kestrel-home-composer:not(.is-expanded) {
+	border-radius: var(--radius-pill);
+}
+
+/* Setup is rendered before the browser shell exists. It uses the same
+   action/field family rather than a second first-run visual system. */
+.setup-onboarding :is(.button, .ui-button),
+.setup-onboarding :is(input[type="text"], input[type="password"], input[type="url"], select) {
+	border-radius: var(--radius-pill);
 }
 
 .ai-browser-app.unified-ui .browser-navigation button:disabled {

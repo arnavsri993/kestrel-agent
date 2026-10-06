@@ -17,7 +17,9 @@ composer the focal surface, navigation quieter, and every control's state precis
 - Color: existing graphite surfaces and aluminum text, with a solid primary action.
 - Material: preserve local wallpaper and the existing glass system; remove redundant
   boxed icon treatments rather than adding more layers.
-- Geometry: 12px control corners, circular icon actions, existing composer geometry.
+- Geometry: fully rounded single-line fields/actions and segmented choices; exact
+  square dimensions for circular icon actions; 22px reading/editor surfaces and
+  18px menus. Each role uses one shared geometry contract.
 - Motion: only existing state and press feedback; no focal animation or dependency.
 - Avoid: uniform heavy panels, ornamental badges, floating controls, unlabelled
   loading indicators, multiple focus frames, and font or branding replacements.
@@ -34,6 +36,12 @@ Navigation selection uses weight, a surface and an inset edge as well as color.
 Widgets group their title and content without putting every icon in another box.
 Address suggestions expose one listbox controlled by the combobox, with matching
 active-descendant IDs. Existing keyboard selection and Escape behavior are retained.
+
+The full-app finish pass covers Browser/Home, Agent, Memory, Connections, Projects,
+Writing Studio, libraries, Settings, onboarding, dialogs and error/empty surfaces.
+The address field must be a true pill. Communication style has one pill-shaped
+track with inset choices and no inherited button dividers. Toolbar icon actions
+must be square circles with optically centered glyphs in selected and idle states.
 
 Desktop, compact windows and 200% zoom must retain operable controls and no horizontal
 Home overflow. Reduced motion disables added feedback transitions. High contrast,
@@ -58,3 +66,18 @@ and made short widget lists content-sized. Source desktop typechecking/build, 32
 focused unit tests, UI-details keyboard/focus/loading geometry, narrow/200% reflow,
 reduced-motion capture and Settings persistence checks passed. The source comparison
 captures are in .tmp/ui-details-before and .tmp/ui-details-after.
+
+The app-wide review used 174 synthetic desktop/compact surface states, covering
+all internal pages, Settings sections, libraries, dialogs and toolbar menus.
+It confirmed three remaining system defects: inherited corners/dividers in
+segmented controls, mismatched toolbar circle dimensions, and a text Page options
+row inheriting an icon aspect ratio. The shared finish layer fixes these and
+extends the field/action shape contract to setup, Memory and Settings. Memory
+now uses the existing semantic graphite/aluminum tokens; inactive toggles no
+longer use an error color. Narrow layouts, native keyboard selection and focus
+remain part of the acceptance tests. Reading-width limits remain intentional.
+
+Geometry regression assertions cover address/search capsules, square toolbar
+circles, compact Page options rows and divider-free segmented choices. The
+production dependency audit also required the source-map-js 1.2.2 maintainer
+patch (GHSA-68fv-2mgg-jv7q); the override and lockfile now resolve that patch.

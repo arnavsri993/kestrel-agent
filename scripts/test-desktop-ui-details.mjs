@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { _electron as electron } from "@playwright/test";
+import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 
 const profileRoot = mkdtempSync(join(tmpdir(), "kestrel-ui-details-"));
 const output = resolve(process.env.KESTREL_UI_DETAILS_OUTPUT || ".tmp/ui-details");
@@ -27,6 +28,14 @@ async function assertNoHorizontalOverflow() {
 	if (baseline) return;
 	assert.equal(await page.locator(".new-tab-page").evaluate((node) => node.scrollWidth > node.clientWidth + 1), false, "Home must not overflow horizontally");
 	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, "The application must reflow without document overflow");
+}
+
+async function assertPill(selector) {
+	const shape = await page.locator(selector).first().evaluate((node) => {
+		const box = node.getBoundingClientRect();
+		return { radius: parseFloat(getComputedStyle(node).borderTopLeftRadius), height: box.height };
+	});
+	assert(shape.radius >= shape.height / 2, `${selector} must have fully rounded ends: ${JSON.stringify(shape)}`);
 }
 
 async function main() {
@@ -68,6 +77,17 @@ async function main() {
 	};
 
 	await windowSize(1440, 900);
+	if (!baseline) {
+		await assertPill(".browser-address");
+		const icons = await page.locator(".browser-toolbar-actions > button").evaluateAll((nodes) => nodes.map((node) => {
+			const box = node.getBoundingClientRect();
+			return { label: node.getAttribute("aria-label"), width: box.width, height: box.height, visible: node.checkVisibility(), radius: getComputedStyle(node).borderRadius };
+		}));
+		for (const icon of icons.filter((item) => item.visible)) {
+			assert(Math.abs(icon.width - icon.height) < 1, `Toolbar icon must be square: ${JSON.stringify(icon)}`);
+			assert.equal(icon.radius, "50%");
+		}
+	}
 	await assertNoHorizontalOverflow();
 	await page.screenshot({ animations: "disabled", path: join(output, "home-1440x900.png") });
 
@@ -171,10 +191,42 @@ async function main() {
 		assert.equal(buttonStates.label, "Save changes");
 		assert.equal(buttonStates.opacity, "0");
 		await page.screenshot({ animations: "disabled", path: join(output, "composer-keyboard-focus.png") });
+
+		// A text menu row must not inherit the toolbar toggle's circular shape.
+		await menuTrigger.click();
+		await page.getByRole("menuitem", { name: "Page options", exact: true }).click();
+		const agentMenuRow = page.locator(".browser-agent-toggle-menu");
+		await agentMenuRow.waitFor();
+		const row = await agentMenuRow.evaluate((node) => ({ height: node.getBoundingClientRect().height, aspectRatio: getComputedStyle(node).aspectRatio }));
+		assert(row.height <= 48, `Page options must use compact text rows: ${JSON.stringify(row)}`);
+		assert.equal(row.aspectRatio, "auto");
+		await page.screenshot({ animations: "disabled", path: join(output, "page-options-rows.png") });
+		await page.keyboard.press("Escape");
+
+		await page.evaluate(async () => {
+			const response = await window.kestrel.request({ type: "browser-create-tab", input: "kestrel://settings", active: true });
+			if (!response.ok) throw new Error(response.error);
+		});
+		await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+		await selectSettingsSection(page, "agent-general", "General");
+		const styleChoices = page.getByRole("group", { name: "Communication style", exact: true });
+		await styleChoices.waitFor();
+		await assertPill(".segmented");
+		await assertPill(".settings-search-field");
+		const choices = await styleChoices.locator("button").evaluateAll((nodes) => nodes.map((node) => {
+			const style = getComputedStyle(node);
+			return { divider: style.borderRightWidth, radius: parseFloat(style.borderRadius), height: node.getBoundingClientRect().height };
+		}));
+		assert(choices.every((choice) => choice.divider === "0px" && choice.radius >= choice.height / 2), "Segment choices must be inset pills without old dividers");
+		const friendly = styleChoices.getByRole("button", { name: "Friendly", exact: true });
+		await friendly.focus();
+		await page.keyboard.press("Space");
+		await page.waitForFunction(() => document.querySelector('.segmented button[aria-pressed="true"]')?.textContent === "Friendly");
+		await page.screenshot({ animations: "disabled", path: join(output, "settings-unified-controls.png") });
 		await page.emulateMedia({ reducedMotion: "reduce" });
 		await windowSize(760, 760);
-		await assertNoHorizontalOverflow();
-		await page.screenshot({ animations: "disabled", path: join(output, "home-reduced-motion.png") });
+		assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, "Settings controls must reflow");
+		await page.screenshot({ animations: "disabled", path: join(output, "settings-reduced-motion-narrow.png") });
 		assert.deepEqual(pageErrors, [], "Renderer must stay free of uncaught errors");
 	}
 
