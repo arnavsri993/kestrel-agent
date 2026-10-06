@@ -30,6 +30,7 @@ import {
   type AddressBarSuggestionFilter,
 } from "./address-bar-suggestions";
 import { BrowserHistoryPopover } from "./BrowserHistoryPopover";
+import { NativeBrowserControls } from "./NativeBrowserControls";
 import {
   downloadProgress,
   downloadSizeLabel,
@@ -624,7 +625,7 @@ export function BrowserToolbar({
     const frame = window.requestAnimationFrame(() => {
       menuRef.current
         ?.querySelector<HTMLElement>(
-          "button[role='menuitem'], button[role='menuitemcheckbox']",
+          "button[role='menuitem']:not(:disabled), button[role='menuitemcheckbox']:not(:disabled)",
         )
         ?.focus();
     });
@@ -657,7 +658,7 @@ export function BrowserToolbar({
         return;
       const items = Array.from(
         menuRef.current.querySelectorAll<HTMLElement>(
-          "button[role='menuitem'], button[role='menuitemcheckbox'], input",
+          "button[role='menuitem']:not(:disabled), button[role='menuitemcheckbox']:not(:disabled), input:not(:disabled)",
         ),
       );
       if (items.length === 0) return;
@@ -1574,9 +1575,10 @@ export function BrowserToolbar({
 					<small>Pin extensions to the toolbar.</small>
                   </span>
                 </header>
+                <NativeBrowserControls currentUrl={tab.url} menu onOpened={() => closeMenu()} />
                 {extensions.length === 0 ? (
                   <p className="browser-toolbar-popover-empty">
-                    No browser extensions installed yet.
+                    No embedded browser extensions installed yet.
                   </p>
                 ) : (
                   <div className="browser-extension-list">
@@ -1631,7 +1633,7 @@ export function BrowserToolbar({
                   onClick={() => runAndClose(onOpenSettings)}
                 >
                   <Icon name="settings" />
-                  <span>Manage extensions</span>
+                  <span>Manage embedded extensions</span>
                   <Icon name="chevron" />
                 </button>
               </>

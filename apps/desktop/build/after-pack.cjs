@@ -11,6 +11,7 @@ const {
 const { join } = require("node:path");
 const { auditPackagedMacApp } = require("../../../scripts/macos-architecture-audit.cjs");
 const { verifyAgentCoreSidecar } = require("./agent-core-sidecar.cjs");
+const { verifyNativeBrowserSidecar } = require("./native-browser-sidecar.cjs");
 
 exports.default = async function architectureAudit(context) {
 	if (process.platform !== "darwin") return;
@@ -19,6 +20,7 @@ exports.default = async function architectureAudit(context) {
 		`${context.packager.appInfo.productFilename}.app`,
 	);
 	installAgentCoreSidecar(appPath);
+	installNativeBrowserSidecar(appPath);
 	installAskKestrelService(appPath);
 	const configuredIdentity = context.packager?.platformSpecificBuildOptions?.identity;
 	const identity =
@@ -59,6 +61,17 @@ exports.default = async function architectureAudit(context) {
 		}
 	}
 };
+
+function installNativeBrowserSidecar(appPath) {
+	const source = join(__dirname, "../../../.tmp/native-browser-sidecar");
+	const target = join(appPath, "Contents", "Resources", "native-browser");
+	if (!existsSync(source))
+		throw new Error("Native browser sidecar is missing. Run scripts/prepare-native-browser-sidecar.mjs before packaging.");
+	rmSync(target, { recursive: true, force: true });
+	// Preserve CEF framework symlinks, resource seals, and sandbox helper signatures.
+	execFileSync("/usr/bin/ditto", ["--rsrc", "--extattr", "--acl", source, target], { stdio: "inherit" });
+	verifyNativeBrowserSidecar(appPath, { verifyOuterIdentity: false });
+}
 
 function installAgentCoreSidecar(appPath) {
 	const source = join(__dirname, "../../../.tmp/agent-core-sidecar");

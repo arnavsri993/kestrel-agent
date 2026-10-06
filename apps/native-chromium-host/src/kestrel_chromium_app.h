@@ -3,6 +3,7 @@
 #pragma once
 
 #include <functional>
+#include <string>
 
 #include "include/cef_app.h"
 #include "include/cef_browser_process_handler.h"
@@ -12,6 +13,9 @@
 
 // The browser and renderer sides must use identical message-router names.
 CefMessageRouterConfig KestrelBridgeRouterConfig();
+
+// Match both Chromium's --name and --name=value forms when enforcing policy.
+bool KestrelHasCommandLineSwitch(int argc, char* argv[], const std::string& name);
 
 // This object is supplied to both the browser executable and every CEF helper.
 // It owns only host-neutral CEF policy and renderer bindings; AppKit window
@@ -24,7 +28,8 @@ class KestrelChromiumApp final : public CefApp,
 
   explicit KestrelChromiumApp(
       BrowserContextInitialized on_context_initialized = {},
-      bool extension_workbench = false);
+      bool extension_workbench = false,
+      bool persistent_browser = false);
 
   void OnBeforeCommandLineProcessing(
       const CefString& process_type,
@@ -53,6 +58,7 @@ class KestrelChromiumApp final : public CefApp,
  private:
   BrowserContextInitialized on_context_initialized_;
   bool extension_workbench_;
+  bool persistent_browser_;
   CefRefPtr<CefMessageRouterRendererSide> renderer_router_;
 
   IMPLEMENT_REFCOUNTING(KestrelChromiumApp);

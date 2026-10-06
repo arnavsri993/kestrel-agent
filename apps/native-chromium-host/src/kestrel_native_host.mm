@@ -2364,7 +2364,33 @@ std::string bundled_shell_url() {
   return std::string([[url absoluteString] UTF8String]);
 }
 
+// Production browser children accept only manager-owned mode and profile
+// arguments. Chromium runtime overrides and development probes cannot cross
+// this boundary, including --flag=value spellings or duplicate profile flags.
+bool persistent_browser_arguments_valid(int argc, char* argv[]) {
+  std::set<std::string> flags;
+  for (int index = 1; index < argc; ++index) {
+    const std::string argument(argv[index]);
+    if (argument != "--kestrel-persistent-browser" &&
+        argument != "--kestrel-browser-child" &&
+        argument != "--kestrel-extension-workbench" &&
+        argument != "--kestrel-cache-path") return false;
+    if (!flags.insert(argument).second) return false;
+    if (argument == "--kestrel-cache-path") {
+      if (++index >= argc || argv[index][0] != '/') return false;
+    }
+  }
+  return flags.size() == 4;
+}
+
 int main(int argc, char* argv[]) {
+  const bool persistent_browser = KestrelHasCommandLineSwitch(
+      argc, argv, "--kestrel-persistent-browser");
+  if (persistent_browser && !persistent_browser_arguments_valid(argc, argv)) {
+    std::cerr << "Persistent browsing requires only the isolated Chrome child modes and an explicit profile path."
+              << std::endl;
+    return 1;
+  }
   CefScopedLibraryLoader library_loader;
   if (!library_loader.LoadInMain()) {
     std::cerr << "Kestrel could not load the bundled Chromium framework." << std::endl;
@@ -2511,7 +2537,7 @@ int main(int argc, char* argv[]) {
               new KestrelAlloyBrowserViewDelegate());
       CefWindow::CreateTopLevelWindow(
           new KestrelWindowDelegate(browser_view));
-    }, extension_workbench));
+    }, extension_workbench, persistent_browser));
     if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
       std::cerr << "Kestrel could not initialize Chromium." << std::endl;
       return CefGetExitCode();

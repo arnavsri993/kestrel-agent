@@ -142,8 +142,24 @@ class ExtensionWorkbenchClient final : public CefClient,
       std::string url = type == "browser-open-native-extensions"
           ? "chrome://extensions/" : request->GetString("input").ToString();
       if (url.empty()) url = "about:blank";
+      if (type == "browser-open-native-extensions") {
+        for (const auto& [id, candidate] : browsers_) {
+          const auto current = candidate->GetMainFrame()->GetURL().ToString();
+          if (current == "chrome://extensions/" || (browsers_.size() == 1 && current == "about:blank")) {
+            browser = candidate;
+            active_ = id;
+            if (current != url) browser->GetMainFrame()->LoadURL(url);
+            browser->GetHost()->SetFocus(true);
+            NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+            [view.window makeKeyAndOrderFront:nil];
+            break;
+          }
+        }
+      }
       if (!browser_child_url(url)) error = "Enter an HTTP or HTTPS address.";
-      else if (browsers_.size() >= 32) error = "The native browser window limit was reached.";
+      else if (type == "browser-open-native-extensions" && browser) {
+        // Reuse the manager or initial blank window instead of opening duplicates.
+      } else if (browsers_.size() >= 32) error = "The native browser window limit was reached.";
       else {
         CefWindowInfo info;
         info.runtime_style = CEF_RUNTIME_STYLE_CHROME;

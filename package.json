@@ -91,7 +91,8 @@
     "cleanup:mac:apps": "node scripts/cleanup-kestrel-macos-apps.mjs",
     "test:desktop-new-tab": "node scripts/test-desktop-new-tab-glass.mjs",
     "dev:native-browser": "node scripts/dev-native-chromium-host.mjs --native-browser",
-    "test:native-browser": "node --import tsx scripts/smoke-native-browser.mjs"
+    "test:native-browser": "node --import tsx scripts/smoke-native-browser.mjs",
+    "test:native-browser-manager": "node --import tsx scripts/smoke-native-browser-manager.mjs"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.3.0",

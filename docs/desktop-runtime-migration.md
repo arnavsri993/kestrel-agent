@@ -265,3 +265,42 @@ once, excluding the privileged shell; navigation and close events refresh the
 sidebar. A shared 16-tab limit also applies to popups, and excess pages close.
 Closing a tab releases capacity. Remote pages and their popups never receive the
 shell binding. Browser history and document navigation remain Chromium-owned.
+
+## Installed native extension browser
+
+The packaged Kestrel app bundles the native browser under
+`Contents/Resources/native-browser/Kestrel.app`. It is a signed CEF sidecar,
+with no additional installed app or Dock tile. The existing agent/window shell
+continues to use Electron; website and extension execution in the native
+browser uses Chromium's Chrome runtime directly.
+
+Open **Extensions → Manage Chrome extensions** in the toolbar's Native browser
+section, or use the same controls in browser Settings. **Open current page in
+native browser** opens an HTTP(S) page there. Chrome owns the native toolbar,
+extension permission review, install/remove controls and extension windows.
+Existing embedded-browser extensions and browsing data are preserved and are
+not imported. Native data lives in a separately marked owner-only persistent
+profile below Kestrel's userData; unknown profiles, symlinked managed ancestors
+and mock/system storage mode changes are rejected.
+
+The persistent entrypoint accepts only workbench child mode, the persistent
+browser flag and its explicit cache path. It rejects mock Keychain, debugger,
+sandbox-disabling, renderer/Core and override flags before CEF loads. Persistent
+browsing uses upstream Chromium's standard macOS Keychain provider; the pinned
+runtime uses Chromium's shared service identity rather than a Kestrel-only key
+namespace. The whole profile is not encrypted. Credential storage remains
+unverified until a disposable OS-user/VM cookie/password encryption test passes;
+existing application credentials and Keychain identity are not migrated.
+
+The Node manager validates the native executable manifest/signature before
+launch, uses private bounded typed pipes, strips provider environment variables,
+waits for owned child exit and blocks profile deletion until shutdown. Faults
+invalidate the connection and escalate TERM/KILL without deleting the profile.
+It has no agent, file, credential or arbitrary-evaluation command.
+
+`test:native-browser-manager` exercises this real Node-to-CEF path on disposable
+mock profiles: MV3, native manager reuse, extension restart storage, incompatible
+profile-mode rejection, ancestor symlink rejection and process shutdown. It does
+not prove native Keychain encryption or arbitrary Web Store compatibility.
+Canonical installation and real-profile UI verification are separate from these
+fixture tests and remote CI.

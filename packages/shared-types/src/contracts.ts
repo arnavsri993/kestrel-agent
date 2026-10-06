@@ -4403,6 +4403,15 @@ export const InstalledExtensionSchema = z.object({
 });
 export type InstalledExtension = z.infer<typeof InstalledExtensionSchema>;
 
+export const NativeBrowserStatusSchema = z.object({
+  available: z.boolean(),
+  running: z.boolean(),
+  profile: z.literal("persistent"),
+  credentialStorage: z.literal("system_keychain_unverified"),
+  error: z.string().max(500).optional(),
+});
+export type NativeBrowserStatus = z.infer<typeof NativeBrowserStatusSchema>;
+
 export const UserBrowserStateSchema = z.object({
 	// Native Chrome browsing uses a separate extension-isolated window.
 	presentation: z.enum(["embedded", "native_window"]).optional(),
@@ -4853,6 +4862,8 @@ export const RendererRequestSchema = z.union([
 		workspaceRoot: z.string().min(1),
 		query: z.string().max(200).optional(),
 	}),
+	z.object({ type: z.literal("browser-native-status") }),
+	z.object({ type: z.literal("browser-open-native"), input: z.string().max(8192).optional() }),
 	z.object({ type: z.literal("browser-open-native-extensions") }),
 	z.object({ type: z.literal("browser-list-extensions") }),
 	z.object({
@@ -5266,6 +5277,7 @@ export type RendererResponse =
 		}
 	| { ok: true; filePreview: FilePreview }
 	| { ok: true; browserPagePreview?: string }
+	| { ok: true; nativeBrowser: NativeBrowserStatus }
 	| { ok: true; extensions: InstalledExtension[] }
 	| { ok: true; extension: InstalledExtension }
 	| {

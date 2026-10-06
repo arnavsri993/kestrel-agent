@@ -41,6 +41,10 @@ fileAssociations:
     name: HTML Document
     role: Viewer
 mac:
+  # CEF and its sandbox helpers are built and signed before Electron's native
+  # dependency rebuild. Preserve their native entitlements and resource seals.
+  signIgnore:
+    - "/Contents/Resources/native-browser(?:/|$)"
   category: public.app-category.productivity
   icon: build/icon.icns
   extendInfo:

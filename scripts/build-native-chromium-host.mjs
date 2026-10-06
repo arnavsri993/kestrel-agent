@@ -110,6 +110,13 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			join(nativeHostRoot, "build", "Info.plist"),
 			join(paths.app, "Contents", "Info.plist"),
 		);
+		if (process.argv.includes("--browser-sidecar")) {
+			// The desktop owns the user-facing Dock tile. Set the embedded native
+			// browser's agent-app metadata before signing its resource seal.
+			const info = join(paths.app, "Contents", "Info.plist");
+			run("/usr/bin/plutil", ["-insert", "LSUIElement", "-bool", "true", info]);
+			run("/usr/bin/plutil", ["-insert", "CFBundleDisplayName", "-string", "Kestrel Browser", info]);
+		}
 		await copyFile(join(runtime, "LICENSE.txt"), join(paths.resources, "CEF_LICENSE.txt"));
 		run("/usr/bin/ditto", [
 			"--rsrc",
