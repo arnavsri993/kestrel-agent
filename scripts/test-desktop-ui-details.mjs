@@ -193,6 +193,13 @@ async function main() {
 		await page.screenshot({ animations: "disabled", path: join(output, "composer-keyboard-focus.png") });
 
 		// A text menu row must not inherit the toolbar toggle's circular shape.
+		// Compact chat intentionally becomes a modal; close it before testing
+		// browser controls so the browser remains the active surface.
+		const chatToggle = page.locator("#browser-agent-toggle");
+		if (await chatToggle.getAttribute("aria-expanded") === "true") {
+			await chatToggle.click();
+			await page.waitForFunction(() => document.querySelector("#browser-agent-toggle")?.getAttribute("aria-expanded") === "false");
+		}
 		await menuTrigger.click();
 		await page.getByRole("menuitem", { name: "Page options", exact: true }).click();
 		const agentMenuRow = page.locator(".browser-agent-toggle-menu");
