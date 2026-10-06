@@ -169,12 +169,58 @@ reaching a permission dialog alone is not evidence of complete store support.
 CEF's upstream [extension management issue](https://github.com/chromiumembedded/cef/issues/3450)
 documents Chrome-style management and the remaining programmatic API boundary.
 
-The next integration step is to connect extension-capable Chrome-style user
-browsing to Kestrel's shell while keeping the privileged renderer in a separate
-extension-free security boundary. Then add explicit durable native-profile
-ownership, install/update/removal and permission tests, and the remaining
-browser/agent parity gates before any canonical-app cutover. Do not enable
-extensions globally in the current Alloy shell to shortcut this separation.
+## Native shell with Chrome extension browsing
+
+`corepack pnpm dev:native-browser` now connects the existing Kestrel renderer
+and standalone Node Core to an extension-capable Chrome-style browser. This is
+an opt-in development lane on Apple Silicon macOS. It does not replace
+`/Applications/Kestrel.app` or migrate an existing profile.
+
+The shell and websites run in two CEF browser processes. The Alloy shell keeps
+extensions disabled and owns the Kestrel bridge and ephemeral Core. It launches
+the exact bundled executable in extension-workbench child mode with a separate
+`extension-browser` profile. That child owns Chrome's browser windows, toolbar,
+extension manager, permissions UI and extension pages. It has no Kestrel scheme,
+renderer bridge, Core relay, provider environment or credential authority.
+
+The shell relays only browser state, create/select/close, navigation,
+back/forward/reload/stop and a dedicated extension-manager command over private
+inherited pipes. JSON messages have a version, bounded sizes and pending request
+limits. Requests expire, canceled renderer queries discard their callbacks, and
+late replies from a retired child generation are ignored. All CEF mutations run
+on the UI thread. Shell shutdown waits for owned children, with bounded targeted
+termination if a child cannot consume EOF, before the launcher removes its
+profile.
+
+Pages open in separate native Chrome windows rather than embedded Alloy views.
+Kestrel shows this handoff, offers **Show browser window** and **Manage Chrome
+extensions**, and receives navigation/title/loading/close updates. Chrome-created
+popups are tracked and share the extension browser's isolated profile. The shell
+represents these windows as browsing records; full Chrome tab-strip selection,
+background-tab creation and product session restore remain incomplete.
+
+Both profiles are temporary and deleted by the development launcher after a clean exit.
+A failed or force-killed host preserves its temporary profile for recovery.
+Extension storage can survive a browser-child restart within that launch; this
+is not durable profile migration. Keychain-backed credential storage, production
+provider login, native agent browser tools, Kestrel download/permission policy,
+updates/signing and canonical-app cutover remain separate gates. The native
+extension manager owns install/review; Kestrel's existing Electron extension
+records are not imported or silently marked compatible.
+
+Run `corepack pnpm test:native-browser` to build and exercise the real native
+processes with a local MV3 fixture. The fixture checks content scripts, service
+worker messaging, storage, tabs queries, action badge state, scripting API
+availability and a declarative-net-request block. The smoke also checks shell
+navigation, native-manager handoff, popups, typed browser-state validation,
+bridge isolation, helper sandbox arguments and shutdown with a suspended child.
+It uses test profiles and a local HTTP server; it does not install a third-party
+package or prove arbitrary Chrome Web Store compatibility. Screenshots live in
+`.tmp/native-browser-evidence`.
+
+A built artifact can be reused by setting `KESTREL_NATIVE_TEST_APP` to its
+absolute `.app` path. The native browser smoke follows the workbench smoke in
+macOS CI and `verify`, reusing that freshly built artifact.
 
 ## Next boundaries
 

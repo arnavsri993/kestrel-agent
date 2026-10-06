@@ -49,6 +49,8 @@ jobs:
       - run: corepack pnpm test:node-core
       - run: corepack pnpm test:chromium-host
       - run: corepack pnpm test:native-extensions
+      - name: Native shell and Chrome extension browser
+        run: KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" corepack pnpm test:native-browser
       - run: corepack pnpm test:e2e
       - run: corepack pnpm test:packaged-cli
       - run: corepack pnpm test:editors

@@ -4404,6 +4404,8 @@ export const InstalledExtensionSchema = z.object({
 export type InstalledExtension = z.infer<typeof InstalledExtensionSchema>;
 
 export const UserBrowserStateSchema = z.object({
+	// Native Chrome browsing uses a separate extension-isolated window.
+	presentation: z.enum(["embedded", "native_window"]).optional(),
 	tabs: z.array(UserBrowserTabSchema),
 	tabFolders: z.array(UserBrowserTabFolderSchema).max(32).default([]),
 	activeTabId: z
@@ -4851,6 +4853,7 @@ export const RendererRequestSchema = z.union([
 		workspaceRoot: z.string().min(1),
 		query: z.string().max(200).optional(),
 	}),
+	z.object({ type: z.literal("browser-open-native-extensions") }),
 	z.object({ type: z.literal("browser-list-extensions") }),
 	z.object({
 		type: z.literal("browser-inspect-extension-url"),

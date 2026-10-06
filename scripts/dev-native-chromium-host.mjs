@@ -7,15 +7,28 @@ import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 // This launcher deliberately owns a unique disposable profile. It must never
 // fall back to the Electron profile, a home-directory default, or a persistent
 // native profile while credential/profile migration is still deferred.
+const nativeBrowser = process.argv.includes("--native-browser");
 const extensionWorkbench = process.argv.includes("--extensions");
 if (extensionWorkbench) {
 	console.log("Opening the native Chromium extension workbench. Its temporary profile is deleted on exit; Kestrel data and accounts are not connected.");
 }
+if (nativeBrowser && extensionWorkbench) throw new Error("Choose the native shell or extension workbench.");
+if (nativeBrowser) console.log("Opening the native Kestrel shell with a separate Chrome extension browser. Both profiles are temporary; no existing Kestrel data is imported.");
 const profile = await mkdtemp(join(tmpdir(), "kestrel-native-chromium-dev-"));
 let child;
 
 async function stopChild() {
-	if (child?.exitCode === null && !child.killed) child.kill("SIGTERM");
+  if (child?.exitCode === null && child.signalCode === null) {
+    child.kill("SIGTERM");
+    await Promise.race([
+      new Promise(resolve => child.once("exit", resolve)),
+      new Promise(resolve => setTimeout(resolve, 8_000)),
+    ]);
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await new Promise(resolve => child.once("exit", resolve));
+    }
+  }
 }
 
 const forwardSignal = () => {
@@ -30,6 +43,7 @@ try {
 	child = spawn(
 		executable,
 		[
+			...(nativeBrowser ? ["--kestrel-native-browser"] : []),
 			"--kestrel-cache-path",
 			profile,
 			...(extensionWorkbench
@@ -53,5 +67,9 @@ try {
 	process.off("SIGINT", forwardSignal);
 	process.off("SIGTERM", forwardSignal);
 	await stopChild();
-	await rm(profile, { recursive: true, force: true });
+  if (!child || child.exitCode === 0) {
+    await rm(profile, { recursive: true, force: true });
+  } else {
+    console.error(`Native host did not exit cleanly; its temporary profile was preserved at ${profile}.`);
+  }
 }
