@@ -185,7 +185,7 @@ function DocumentWorkspace({
 		finally { setBusy(false); }
 	}
 
-	const noun = kind === "person" ? "person" : kind === "tool" ? "tool" : "memory";
+	const noun = kind === "person" ? "person" : kind === "tool" ? "tool" : kind === "knowledge" ? "knowledge entry" : "memory";
 	return (
 		<div className="memory-library">
 			<aside aria-label={`${noun} documents`}>

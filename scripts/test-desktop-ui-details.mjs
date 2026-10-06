@@ -201,7 +201,13 @@ async function main() {
 		assert(row.height <= 48, `Page options must use compact text rows: ${JSON.stringify(row)}`);
 		assert.equal(row.aspectRatio, "auto");
 		await page.screenshot({ animations: "disabled", path: join(output, "page-options-rows.png") });
+		await windowSize(760, 760);
+		const menuLabel = agentMenuRow.locator("span:not(.pragmatic-logo)");
+		assert.equal(await menuLabel.isVisible(), true, "Compact Page options must retain its command label");
+		assert((await menuLabel.innerText()).trim().length > 0);
+		await page.screenshot({ animations: "disabled", path: join(output, "page-options-narrow.png") });
 		await page.keyboard.press("Escape");
+		await windowSize(1440, 900);
 
 		await page.evaluate(async () => {
 			const response = await window.kestrel.request({ type: "browser-create-tab", input: "kestrel://settings", active: true });

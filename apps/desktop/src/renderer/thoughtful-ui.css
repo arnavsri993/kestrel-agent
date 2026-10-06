@@ -182,6 +182,9 @@
 	border-radius: var(--radius-row);
 	box-shadow: none;
 }
+.ai-browser-app.unified-ui .browser-toolbar-popover .browser-agent-toggle-menu > span:not(.pragmatic-logo) {
+	display: block;
+}
 
 /* Off means inactive, not an error. Position and contrast express toggle
    state using the same graphite/aluminum palette as the rest of the app. */
@@ -211,6 +214,10 @@
 
 .ai-browser-app.unified-ui .memory-editor :is(textarea, .ui-textarea) {
 	border-radius: var(--radius-surface);
+}
+.ai-browser-app.unified-ui .memory-library > aside > header {
+	flex-wrap: wrap;
+	gap: 8px;
 }
 
 /* An inset selection has one boundary, never leftover dividers from the
