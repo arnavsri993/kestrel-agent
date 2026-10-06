@@ -2470,6 +2470,16 @@ int main(int argc, char* argv[]) {
     }
 
     CefSettings settings;
+    // Chromium defaults to the outermost .app. This executable may be a
+    // sidecar inside Kestrel's Electron bundle; own every CEF path explicitly
+    // so framework/resources/helpers remain inside the signed native bundle.
+    NSString* native_bundle = NSBundle.mainBundle.bundlePath;
+    NSString* native_frameworks = [native_bundle stringByAppendingPathComponent:@"Contents/Frameworks"];
+    CefString(&settings.main_bundle_path) = std::string(native_bundle.fileSystemRepresentation);
+    CefString(&settings.framework_dir_path) = std::string(
+        [native_frameworks stringByAppendingPathComponent:@"Chromium Embedded Framework.framework"].fileSystemRepresentation);
+    CefString(&settings.browser_subprocess_path) = std::string(
+        [native_frameworks stringByAppendingPathComponent:@"Kestrel Helper.app/Contents/MacOS/Kestrel Helper"].fileSystemRepresentation);
     // The production path is sandboxed. This switch exists only to make a
     // failed local signing diagnosis explicit; it is never a shipping fallback.
     settings.no_sandbox = has_argument(argc, argv, "--kestrel-allow-no-sandbox");
