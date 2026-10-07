@@ -1,32 +1,37 @@
 .kestrel-home .kestrel-home-composer {
 	display: block;
 	width: 100%;
-	min-height: 48px;
-	padding: 4px 8px;
-	border-radius: 999px;
+	min-height: 64px;
+	padding: 8px 12px;
+	border-radius: 22px;
 	background: color-mix(in srgb, var(--raised, var(--overlay)) 62%, transparent);
 	backdrop-filter: blur(24px);
 	-webkit-backdrop-filter: blur(24px);
 	transition: min-height 220ms ease, padding 220ms ease, border-radius 220ms ease, box-shadow 220ms ease;
 }
-.kestrel-home .kestrel-home-composer.is-expanded { min-height: 116px; padding: 12px; border-radius: 28px; box-shadow: var(--shadow-lg); }
+.kestrel-home .kestrel-home-composer.is-expanded { min-height: 126px; padding: 12px; border-radius: 24px; box-shadow: var(--shadow-lg); }
 .kestrel-home .kestrel-home-composer form { width: 100%; }
 .kestrel-home .kestrel-home-composer textarea {
 	display: block;
 	width: 100%;
-	height: 38px;
-	min-height: 38px;
+	height: 46px;
+	min-height: 46px;
 	max-height: 180px;
-	padding: 5px 8px;
+	padding: 12px 8px;
 	border: 0;
 	outline: 0;
 	background: transparent;
 	color: var(--ink);
-	font: 500 14px/21px var(--body, inherit);
+	font: 400 16px/22px var(--sans);
 	resize: none;
 	transition: height 220ms ease, min-height 220ms ease;
 }
-.kestrel-home .kestrel-home-composer.is-expanded textarea { min-height: 55px; }
+.home-composer-entry { display: flex; align-items: flex-start; min-width: 0; }
+.home-composer-mark { display: grid; place-items: center; flex: 0 0 32px; height: 46px; color: var(--ink-secondary); }
+.home-composer-mark svg { width: 20px; height: 20px; }
+.kestrel-home .kestrel-home-composer.is-expanded textarea { min-height: 66px; }
+.kestrel-home .kestrel-home-composer textarea { min-width: 0; }
+
 .kestrel-home .kestrel-home-composer textarea::placeholder { color: var(--muted); }
 .new-tab-composer-footer, .new-tab-composer-actions, .new-tab-composer-send-actions { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .new-tab-composer-footer {
@@ -121,4 +126,13 @@
  .new-tab-composer-footer { flex-wrap: wrap; gap: 8px; }
  .kestrel-home-composer.is-expanded .new-tab-composer-footer { max-height: 90px; }
  .new-tab-composer-send-actions { margin-left: auto; }
+}
+
+/* The sidebar can narrow Home without changing the window breakpoint. */
+@container (max-width: 560px) {
+ .new-tab-composer-footer { flex-wrap: wrap; gap: 8px; }
+ .kestrel-home-composer.is-expanded .new-tab-composer-footer { max-height: 140px; }
+ .new-tab-composer-actions { gap: 2px; }
+ .new-tab-composer-send-actions { margin-left: auto; max-width: 100%; flex-wrap: wrap; }
+ .new-tab-access-trigger { max-width: 160px; }
 }

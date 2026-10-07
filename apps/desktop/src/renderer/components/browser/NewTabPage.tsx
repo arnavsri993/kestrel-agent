@@ -18,6 +18,7 @@ import type {
 	UserBrowserTab,
 } from "@kestrel/shared-types";
 import { NewTabComposer } from "./NewTabComposer";
+import { Icon } from "../Icon";
 import type { NewTabComposerDraft } from "./new-tab-composer";
 import {
 	frequentBrowserSites,
@@ -31,8 +32,8 @@ import { normalizedWidgetSettings } from "./new-tab-widgets";
 import { NewTabPersonalization } from "./NewTabPersonalization";
 import { NewTabWidgets } from "./NewTabWidgets";
 import "./new-tab.css";
-import "./liquid-glass.css";
 import "./new-tab-composer.css";
+import "./liquid-glass.css";
 
 export function NewTabPage({
 	tabId,
@@ -196,6 +197,13 @@ export function NewTabPage({
         <NewTabPersonalization frequent={frequent} showFrequent={!normalizedWidgetSettings(widgetSettings).enabled.includes("frequent-tabs")} shortcuts={shortcutSettings ?? []}
           background={background} onUpdate={onUpdateHomeSettings} onNavigate={onNavigate}
           onEditWidgets={() => setCustomizeRequestId((value) => value + 1)} />
+        <section className="home-continuity" aria-labelledby="home-continuity-title">
+          <div className="home-continuity-heading">
+            <h2 id="home-continuity-title">Your workspace</h2>
+            <button type="button" className="home-edit-widgets" onClick={() => setCustomizeRequestId((value) => value + 1)}>
+              <Icon name="sliders" /><span>Edit widgets</span>
+            </button>
+          </div>
 		<NewTabWidgets
             customizeRequestId={customizeRequestId}
 			frequent={frequent}
@@ -220,6 +228,7 @@ export function NewTabPage({
 			settings={widgetSettings}
 			onSettingsChange={onUpdateWidgetSettings}
 		/>
+        </section>
       </div>
     </section>
   );

@@ -235,9 +235,12 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	return <div className={`kestrel-home-composer${isExpanded ? " is-expanded" : ""}`} onFocus={() => setExpanded(true)}>
 		<form onSubmit={send}>
 			<label className="sr-only" htmlFor="new-tab-chat-input">Message {agentName} or enter a URL</label>
+			<div className="home-composer-entry">
+				<span className="home-composer-mark" aria-hidden="true"><Icon name="sparkle" /></span>
 			<textarea ref={inputRef} id="new-tab-chat-input" rows={1} value={input} placeholder={`Ask ${agentName} or enter a URL`} onChange={(event) => setInput(event.target.value)} onPaste={(event) => void onPaste(event)} onKeyDown={(event) => {
 				if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); }
 			}} />
+			</div>
 			{attachments.length > 0 && <div className="new-tab-composer-attachments" aria-label="Attached files">{attachments.map((attachment) => <button type="button" key={attachment.path} aria-label={`Remove ${attachment.name}`} onClick={() => { removePastedTextAttachment(attachment); setAttachments((current) => current.filter((item) => item.path !== attachment.path)); }}><Icon name="file" /><span>{attachment.name}</span><Icon name="close" /></button>)}</div>}
 			<div className="new-tab-composer-footer" inert={isExpanded ? undefined : true} aria-hidden={!isExpanded}>
 				<div className="new-tab-composer-actions">

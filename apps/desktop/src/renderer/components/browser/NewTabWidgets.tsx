@@ -1298,7 +1298,28 @@ export function NewTabWidgets({
 	const canvasRef = useRef<HTMLDivElement | null>(null);
 	const [width, setWidth] = useState(0);
 	const [editing, setEditing] = useState(false);
-	useEffect(() => { if (customizeRequestId > 0) setEditing(true); }, [customizeRequestId]);
+	const editButtonRef = useRef<HTMLButtonElement>(null);
+	const editReturnFocusRef = useRef<HTMLElement | null>(null);
+	const rememberEditTrigger = () => {
+		const active = document.activeElement;
+		if (!(active instanceof HTMLElement)) return;
+		editReturnFocusRef.current = active.closest("details")?.querySelector("summary") ?? active;
+	};
+	useEffect(() => {
+		if (customizeRequestId <= 0) return;
+		if (!editReturnFocusRef.current) rememberEditTrigger();
+		setEditing(true);
+	}, [customizeRequestId]);
+	useEffect(() => {
+		if (editing) {
+			editButtonRef.current?.focus();
+		} else if (editReturnFocusRef.current) {
+			const trigger = editReturnFocusRef.current;
+			editReturnFocusRef.current = null;
+			if (trigger.isConnected) trigger.focus();
+			else document.querySelector<HTMLElement>(".home-edit-widgets")?.focus();
+		}
+	}, [editing]);
 	const [workingSettings, setWorkingSettings] = useState(() =>
 		normalizedWidgetSettings(settings),
 	);
@@ -1502,8 +1523,9 @@ export function NewTabWidgets({
 					)}
 					<button
 						type="button"
+						ref={editButtonRef}
 						className={`kestrel-widget-customize ${editing ? "is-active" : ""}`}
-						onClick={() => setEditing((current) => !current)}
+						onClick={() => { if (!editing) rememberEditTrigger(); setEditing((current) => !current); }}
 						aria-pressed={editing}
 					>
 						<Icon name={editing ? "check" : "sliders"} />
@@ -1550,7 +1572,7 @@ export function NewTabWidgets({
 						<strong>Customize New Tab.</strong>
 						<p>Add a widget.</p>
 						{!editing && (
-							<button type="button" onClick={() => setEditing(true)}>
+							<button type="button" onClick={() => { rememberEditTrigger(); setEditing(true); }}>
 								Customize New Tab
 							</button>
 						)}

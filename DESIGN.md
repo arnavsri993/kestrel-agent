@@ -889,3 +889,54 @@ the scrolling data region. Native OS menus retain their platform rendering.
 
 The source implementation uses existing CSS/React only. Catalog candidates were
 considered but no external code, assets, or new motion dependency was incorporated.
+
+## Home composition — October 2026
+
+Existing React/Electron desktop redesign, page scope. Home is an everyday
+browser/agent launchpad, not a marketing landing page; repository and rendered
+evidence override the classifier's generic marketing assumptions.
+
+Thesis: one generous task field anchors a calm, wallpaper-led workspace, with
+saved destinations close by and recent work grouped on a readable shelf.
+Density: dense-app controls with a moderate-density Home composition. Preserve
+platform display/body fonts because this is a native macOS workspace. Type scale:
+36px greeting, 16px section heading, 16px task entry, 13px rows, 11–12px metadata.
+Spacing: 4px base; 8/12px inside controls, 16/20px within groups, 32px between
+task entry and continuity. Colors reuse graphite canvas, neutral raised reading
+surfaces, light ink, muted metadata, and the existing focus accent.
+Material: wallpaper remains user-owned; limited translucent controls and stable
+reading surfaces. No new image, font, dependency, or animation. Existing state
+and feedback motion retain reduced-motion fallbacks; no new focal motion.
+
+First viewport: greeting and one task field, a compact saved-shortcut row, then
+a titled workspace shelf with a direct widget-edit action. Saved widget order,
+sizes, paging, approval policy, model choice, wallpaper, and profile remain owned
+by their existing components. Narrow layouts stack and retain control size.
+Avoid tiny text floating over photos, redundant empty tiles, broad card shadows,
+invented activity, and decorative gradients.
+Why this is not generic: the structure follows real Kestrel conversation entry,
+user-selected shortcuts, browser history, memory, and saved customizable widgets.
+
+Baseline review identified three weaknesses: the task field is undersized; the
+shortcut action floats between unrelated groups; the widget grid lacks a clear
+section boundary and direct editing affordance. Refine these and compare desktop,
+compact, focused, keyboard, long-content, and reduced-motion states. Keep real
+profile screenshots local; published evidence uses isolated synthetic fixtures.
+
+### Home refinement evidence
+
+The initial canonical desktop review and first source screenshots exposed the
+undersized task entry, isolated shortcut group, and untitled widget shelf. The
+refinement enlarges the task field, aligns shortcuts with it, adds a real workspace
+heading/edit action, and keeps controls readable over the chosen wallpaper.
+Recaptured isolated-profile desktop, focused, 760px and 520px screenshots were
+inspected. Composer actions also stay contained at 200% zoom; keyboard editing
+focuses Done and returns to either Edit widgets or the Customize summary.
+
+Source checks: desktop TypeScript check and production build passed; 27 focused
+New Tab/shortcut/widget tests passed; expanded `test:desktop-new-tab` passed
+expansion, attachments, shortcut persistence, wallpaper, refractive material,
+widget editing/focus, reduced-motion reflow, zoom, and exact-session continuation
+with no renderer errors. Full repository verification is outside this page-only
+change. Local canonical integration preserves the previously installed features
+and has separate package/runtime proof; it is not the focused PR head.

@@ -257,7 +257,7 @@
 
 .kestrel-widget-card:hover {
 	border-color: var(--line-strong);
-	box-shadow: var(--shadow-sm);
+	box-shadow: none;
 }
 
 .kestrel-widget-card.is-dragging {
@@ -728,7 +728,7 @@
 .kestrel-widget-shelves .kestrel-widget-card {
  min-height: 170px;
  border: 1px solid var(--line);
- border-radius: 16px;
+ border-radius: 20px;
  background: color-mix(in srgb, var(--panel) 94%, transparent);
  box-shadow: var(--shadow-sm);
 }
@@ -737,7 +737,7 @@
 }
 .kestrel-widget-card-header { padding: 16px 16px 10px; }
 .kestrel-widget-card-body { padding: 0 10px 12px; }
-.kestrel-widget-list strong, .kestrel-widget-action-list li button { font-size: 12px; line-height: 1.45; }
+.kestrel-widget-list strong, .kestrel-widget-action-list li button { font-size: 13px; line-height: 1.45; }
 .kestrel-widget-list small { font-size: 11px; }
 .kestrel-widget-frequent-list li button { grid-template-columns: 28px minmax(0, 1fr); min-height: 42px; }
 .kestrel-widget-action-list li button > span:last-child { overflow-wrap: anywhere; }
