@@ -28,7 +28,12 @@
 	border-radius: 12px;
 }
 .ai-browser-app.unified-ui .settings-page-frame .settings-search-field input {
+	min-width: 0;
+	padding: 0;
+	border: 0;
 	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
 	font-size: 13px;
 }
 .ai-browser-app.unified-ui .settings-page-frame input[type="search"]::-webkit-search-cancel-button {
@@ -174,6 +179,16 @@
 .ai-browser-app.unified-ui .settings-page-frame .setting-row :is(input, select, textarea) { max-width: 100%; }
 .ai-browser-app.unified-ui .settings-page-frame .setting-row .button-row { flex-wrap: wrap; }
 .ai-browser-app.unified-ui .settings-page-frame .plugin-supply-setting { grid-template-columns: minmax(0, 1fr); }
+.ai-browser-app.unified-ui .settings-page-frame .switch {
+	border-color: var(--line-strong);
+	background: var(--raised);
+}
+.ai-browser-app.unified-ui .settings-page-frame .switch span { background: var(--muted); }
+.ai-browser-app.unified-ui .settings-page-frame .switch.on {
+	border-color: var(--solid);
+	background: var(--solid);
+}
+.ai-browser-app.unified-ui .settings-page-frame .switch.on span { background: var(--on-solid); }
 
 @container settings-page (max-width: 760px) {
 	.ai-browser-app.unified-ui .settings-page-frame .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; }
