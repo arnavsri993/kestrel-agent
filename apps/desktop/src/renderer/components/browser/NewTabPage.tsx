@@ -59,6 +59,7 @@ export function NewTabPage({
 	onOpenHistory,
 	onOpenDownloads,
 	onOpenBookmarks,
+	onOpenModelSettings,
 	onOpenSession,
 	projects = [],
 	onProjectsChange,
@@ -92,6 +93,7 @@ export function NewTabPage({
 	onOpenTab(tabId: string): void;
 	onNewAgent(prompt?: string): void;
 	onOpenTaskSettings(): void;
+	onOpenModelSettings(): void;
 	onOpenLifeMemory?(): void;
 	onOpenHistory(): void;
 	onOpenDownloads(): void;
@@ -205,6 +207,7 @@ export function NewTabPage({
 			downloads={downloads}
 			tabs={tabs}
 			sessions={primarySessions}
+			projects={projects}
 			suggestedActions={suggestedActions}
 			memories={memories}
 			memoryRecall={memoryRecall}
@@ -214,6 +217,7 @@ export function NewTabPage({
 			onNewAgent={chooseAction}
 			onOpenSession={onOpenSession}
 			{...(onOpenLifeMemory ? { onOpenLifeMemory } : {})}
+			onOpenModelSettings={onOpenModelSettings}
 			onOpenHistory={onOpenHistory}
 			onOpenDownloads={onOpenDownloads}
 			onOpenBookmarks={onOpenBookmarks}

@@ -889,3 +889,22 @@ the scrolling data region. Native OS menus retain their platform rendering.
 
 The source implementation uses existing CSS/React only. Catalog candidates were
 considered but no external code, assets, or new motion dependency was incorporated.
+
+
+## Home widget usefulness — October 2026
+
+Widgets should help a person reopen real work, reuse saved context, and decide
+whether an account has room for another task. The surrounding Home composition
+stays stable. Each card has readable content, a truthful status, and a clear
+existing destination; no invented activity or sample preferences.
+
+Frequent pages show title/domain and switch to an exact matching open tab.
+Recent work prioritizes attention and recovery, then recency, with project and
+checkpoint context. Memory favors confirmed useful records and opens the real
+Memory view. Codex windows show labels, remaining capacity, reset times, and a
+refresh action. Quiet opaque reading surfaces, consistent rows and footers,
+internal scrolling, keyboard focus, and contrast fallbacks serve those actions.
+Saved widget order, sizes, paging, and visibility remain the person's choices.
+Validation covers routing identity, filtering/ranking, limits and dates, narrow
+layouts, and the canonical installed app. This is specific to Kestrel's actual
+local browser history, sessions, Memory, projects, and provider usage.

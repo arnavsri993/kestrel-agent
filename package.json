@@ -89,7 +89,8 @@
     "verify:meetup": "node scripts/verify-meetup-preflight.mjs && pnpm verify && pnpm assets:verify && pnpm test:local-ai:real && pnpm package:mac:dev && pnpm test:packaged-desktop:arm64 && pnpm benchmark:browser-agent:packaged:arm64",
     "check:presentation-warmup": "node scripts/presentation-warmup-check.mjs",
     "cleanup:mac:apps": "node scripts/cleanup-kestrel-macos-apps.mjs",
-    "test:desktop-new-tab": "node scripts/test-desktop-new-tab-glass.mjs"
+    "test:desktop-new-tab": "node scripts/test-desktop-new-tab-glass.mjs",
+    "test:desktop-widget-quality": "node scripts/test-desktop-widget-quality.mjs"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.3.0",

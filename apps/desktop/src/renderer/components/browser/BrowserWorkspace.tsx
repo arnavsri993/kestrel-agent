@@ -61,6 +61,7 @@ export function BrowserWorkspace({
   onToggleAgent,
   onNewAgent,
 	onOpenTaskSettings,
+	onOpenModelSettings,
   onOpenSettings,
   onOpenWorkspaces,
   onOpenHistory,
@@ -89,6 +90,7 @@ export function BrowserWorkspace({
   onToggleAgent(): void;
   onNewAgent(prompt?: string): void;
 	onOpenTaskSettings(): void;
+	onOpenModelSettings(): void;
   onOpenSettings(): void;
   onOpenWorkspaces?(): void;
   onOpenHistory(): void;
@@ -1229,6 +1231,7 @@ export function BrowserWorkspace({
 			onOpenTab={(tabId) => void selectTab(tabId)}
             onNewAgent={onNewAgent}
 			onOpenTaskSettings={onOpenTaskSettings}
+			onOpenModelSettings={onOpenModelSettings}
 			projects={projects}
 			onProjectsChange={onProjectsChange}
 			onSubmitDraft={onSubmitNewTabDraft}
