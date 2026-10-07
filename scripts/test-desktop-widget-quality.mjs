@@ -366,15 +366,18 @@ try {
 		const { contextBridge } = require("electron");
 		const expose = contextBridge.exposeInMainWorld.bind(contextBridge);
 		let count = 0;
+		let releaseReading;
+		const firstReading = new Promise(resolve => { releaseReading = resolve; });
 		contextBridge.exposeInMainWorld = (name, bridge) => {
 			if (name === "kestrel") {
 				const request = bridge.request.bind(bridge);
 				bridge = { ...bridge, request: async (input) => {
 					if (input.type !== "runtime-provider-usage") return request(input);
 					count += 1;
+					await firstReading;
 					return { ok: true, providerUsage: [${JSON.stringify(usageFixture)}] };
 				} };
-				expose("widgetUsageFixture", { requestCount: () => count });
+				expose("widgetUsageFixture", { requestCount: () => count, releaseReading: () => releaseReading() });
 			}
 			return expose(name, bridge);
 		};
@@ -390,6 +393,10 @@ try {
 	await page.waitForFunction(() => typeof window.kestrel?.request === "function");
 	await openHome();
 	const populatedUsage = await revealWidget("route-usage");
+	await populatedUsage.getByText("Checking Codex accounts…", { exact: true }).waitFor();
+	assert.equal(await populatedUsage.getByRole("button", { name: "Set up Codex", exact: true }).count(), 0, "Loading account status must not imply setup is required.");
+	assert.equal(await populatedUsage.getByRole("button", { name: "Refresh Codex usage", exact: true }).isDisabled(), true);
+	await page.evaluate(() => window.widgetUsageFixture.releaseReading());
 	// Exclude the canonical Accounts dialog's duplicate readings until opened.
 	const usageRows = populatedUsage.locator(".kestrel-widget-route-usage > .kestrel-widget-route-usage-list");
 	await usageRows.getByText("Widget fixture", { exact: true }).waitFor();

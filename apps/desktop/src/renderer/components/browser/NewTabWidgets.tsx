@@ -998,7 +998,7 @@ function RouteUsageWidget({
 							? "Checking…"
 							: "Limits remaining"}
 				</span>
-				{rankedRows.length === 0 && onOpenModelSettings ? (
+				{!loading && !error && rankedRows.length === 0 && onOpenModelSettings ? (
 					<button type="button" onClick={onOpenModelSettings}>
 						Set up Codex
 						<Icon name="forward" />
