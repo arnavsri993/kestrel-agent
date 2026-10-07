@@ -9622,154 +9622,198 @@ function Settings({
 	}
 	const route = snapshot.modelRouting.currentDecision;
 	const scopeLabel = scope === "browser" ? "Browser" : "Agent";
+	const settingsSearch = (
+		<div className="settings-search" role="search">
+			<label className="settings-search-field">
+				<Icon name="search" />
+				<span className="sr-only">Search settings</span>
+				<input
+					ref={settingsSearchRef}
+					value={settingsQuery}
+					onChange={(event) => setSettingsQuery(event.target.value)}
+					type="search"
+					placeholder="Search settings"
+					aria-label="Search Browser and Agent settings"
+					aria-controls={settingsQuery ? "settings-search-results" : undefined}
+					aria-describedby="settings-search-help"
+					onKeyDown={(event) => {
+						if (event.key === "Escape") {
+							event.preventDefault();
+							setSettingsQuery("");
+						}
+					}}
+				/>
+				{settingsQuery && (
+					<button
+						type="button"
+						className="settings-search-clear"
+						aria-label="Clear settings search"
+						onClick={() => {
+							setSettingsQuery("");
+							settingsSearchRef.current?.focus();
+						}}
+					>
+						<Icon name="close" />
+					</button>
+				)}
+			</label>
+			<span id="settings-search-help" className="sr-only">
+				Search Browser and Agent settings. Tab to a result and press Enter to open it. Escape clears search.
+			</span>
+			{settingsQuery && (
+				<div
+					id="settings-search-results"
+					className="settings-search-results"
+					role="region"
+					aria-label="Matching settings"
+					aria-live="polite"
+				>
+					{searchResults.length === 0 ? (
+						<p className="settings-search-empty">
+							No settings match “{settingsQuery}”.
+						</p>
+					) : (
+						<>
+							<p className="settings-search-count">
+								{searchResults.length} matching setting
+								{searchResults.length === 1 ? "" : "s"}
+							</p>
+							{searchResults.map((entry) => (
+								<button
+									key={entry.id}
+									type="button"
+									className="settings-search-result"
+									onClick={() => chooseSection(entry.section, entry.anchor)}
+								>
+									<span className="settings-search-result-copy">
+										<strong>{entry.label}</strong>
+										<small>{entry.description}</small>
+									</span>
+									<span className="settings-search-result-category">
+										{entry.scope === "browser" ? "Browser" : "Agent"} · {sectionDefinition(entry.section).label}
+									</span>
+								</button>
+							))}
+						</>
+					)}
+				</div>
+			)}
+		</div>
+	);
 	return (
 		<PageFrame
 			title="Settings"
 			measure="wide"
 			className="settings-page-frame"
+			actions={settingsSearch}
 			{...(onBack ? { onBack } : {})}
 		>
-			<div className="settings-toolbar">
-				<div
-					className="settings-scope-switcher"
-					role="tablist"
-					aria-label="Settings category"
-				>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={scope === "browser"}
-						className={scope === "browser" ? "active" : ""}
-						onClick={() => chooseSection("browser")}
-					>
-						<Icon name="browser" />
-						<span>
-							<strong>Browser</strong>
-						</span>
-					</button>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={scope === "agent"}
-						className={scope === "agent" ? "active" : ""}
-						onClick={() => chooseSection("agent-general")}
-					>
-						<Icon name="agent" />
-						<span>
-							<strong>Agent</strong>
-						</span>
-					</button>
-				</div>
-				<label className="settings-section-picker">
-					<span>{scopeLabel} settings section</span>
-					<select
-						aria-label={`${scopeLabel} settings section`}
-						value={section}
-						onChange={(event) => {
-							const next = event.target.value as SettingsSection;
-							chooseSection(next);
+			<div className="settings-layout">
+				<aside className="settings-navigation" aria-label="Settings navigation">
+					<div
+						className="settings-scope-switcher"
+						role="tablist"
+						aria-label="Settings category"
+						onKeyDown={(event) => {
+							if (event.altKey || event.ctrlKey || event.metaKey ||
+								!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+							event.preventDefault();
+							const nextScope = event.key === "Home"
+								? "browser"
+								: event.key === "End"
+									? "agent"
+									: scope === "browser" ? "agent" : "browser";
+							chooseSection(nextScope === "browser" ? "browser" : "agent-general");
+							event.currentTarget
+								.querySelector<HTMLButtonElement>(`[data-settings-scope="${nextScope}"]`)
+								?.focus();
 						}}
 					>
-						{navigationGroups.map((group) => (
-							<optgroup key={group.id} label={group.label}>
-								{group.sections.map((id) => (
-									<option key={id} value={id}>
-										{sectionDefinition(id).label}
-									</option>
-								))}
-							</optgroup>
-						))}
-					</select>
-				</label>
-				<div className="settings-search" role="search">
-					<label className="settings-search-field">
-						<Icon name="search" />
-						<span className="sr-only">Search settings</span>
-						<input
-							ref={settingsSearchRef}
-							value={settingsQuery}
-							onChange={(event) => setSettingsQuery(event.target.value)}
-							placeholder="Search Browser and Agent settings"
-							aria-label="Search Browser and Agent settings"
-							aria-controls="settings-search-results"
-						/>
-						{settingsQuery && (
-							<button
-								type="button"
-								className="settings-search-clear"
-								aria-label="Clear settings search"
-								onClick={() => {
-									setSettingsQuery("");
-									settingsSearchRef.current?.focus();
-								}}
-							>
-								<Icon name="close" />
-							</button>
-						)}
-					</label>
-					{settingsQuery && (
-						<div
-							id="settings-search-results"
-							className="settings-search-results"
-							aria-live="polite"
+						<button
+							type="button"
+							role="tab"
+							aria-selected={scope === "browser"}
+							id="settings-scope-browser"
+							aria-controls="settings-scope-panel"
+							data-settings-scope="browser"
+							tabIndex={scope === "browser" ? 0 : -1}
+							className={scope === "browser" ? "active" : ""}
+							onClick={() => chooseSection("browser")}
 						>
-							{searchResults.length === 0 ? (
-								<p className="settings-search-empty">
-									No settings match “{settingsQuery}”.
-								</p>
-							) : (
-								<>
-									<p className="settings-search-count">
-										{searchResults.length} matching setting
-										{searchResults.length === 1 ? "" : "s"}
-									</p>
-									{searchResults.map((entry) => (
-										<button
-											key={entry.id}
-											type="button"
-											className="settings-search-result"
-											onClick={() => chooseSection(entry.section, entry.anchor)}
-										>
-											<span className="settings-search-result-copy">
-												<strong>{entry.label}</strong>
-												<small>{entry.description}</small>
-											</span>
-											<span className="settings-search-result-category">
-												{entry.scope === "browser" ? "Browser" : "Agent"} · {sectionDefinition(entry.section).label}
-											</span>
-										</button>
+							<Icon name="browser" />
+							<span>
+								<strong>Browser</strong>
+							</span>
+						</button>
+						<button
+							type="button"
+							role="tab"
+							aria-selected={scope === "agent"}
+							id="settings-scope-agent"
+							aria-controls="settings-scope-panel"
+							data-settings-scope="agent"
+							tabIndex={scope === "agent" ? 0 : -1}
+							className={scope === "agent" ? "active" : ""}
+							onClick={() => chooseSection("agent-general")}
+						>
+							<Icon name="agent" />
+							<span>
+								<strong>Agent</strong>
+							</span>
+						</button>
+					</div>
+					<label className="settings-section-picker">
+						<span>{scopeLabel} settings section</span>
+						<select
+							aria-label={`${scopeLabel} settings section`}
+							value={section}
+							onChange={(event) => {
+								const next = event.target.value as SettingsSection;
+								chooseSection(next);
+							}}
+						>
+							{navigationGroups.map((group) => (
+								<optgroup key={group.id} label={group.label}>
+									{group.sections.map((id) => (
+										<option key={id} value={id}>
+											{sectionDefinition(id).label}
+										</option>
 									))}
-								</>
-							)}
-						</div>
-					)}
-				</div>
-			</div>
-			<div className="settings-layout">
-				<nav className="settings-nav" aria-label="Settings sections">
-					{navigationGroups.map((group) => (
-						<div
-							className="settings-nav-group"
-							key={group.id}
-							role="group"
-							aria-labelledby={`settings-group-${group.id}`}
-						>
-							<h3 id={`settings-group-${group.id}`}>{group.label}</h3>
-							{group.sections.map((id) => (
-								<button
-									key={id}
-									type="button"
-									className={section === id ? "active" : ""}
-									aria-current={section === id ? "page" : undefined}
-									onClick={() => chooseSection(id)}
-								>
-									{sectionDefinition(id).label}
-								</button>
+								</optgroup>
 							))}
-						</div>
-					))}
-				</nav>
-					<div className="settings-content-stage">
+						</select>
+					</label>
+
+					<nav className="settings-nav" aria-label="Settings sections">
+						{navigationGroups.map((group) => (
+							<div
+								className="settings-nav-group"
+								key={group.id}
+								role="group"
+								aria-labelledby={`settings-group-${group.id}`}
+							>
+								<h3 id={`settings-group-${group.id}`}>{group.label}</h3>
+								{group.sections.map((id) => (
+									<button
+										key={id}
+										type="button"
+										className={section === id ? "active" : ""}
+										aria-current={section === id ? "page" : undefined}
+										onClick={() => chooseSection(id)}
+									>
+										{sectionDefinition(id).label}
+									</button>
+								))}
+							</div>
+						))}
+					</nav>
+				</aside>
+					<div
+						className="settings-content-stage"
+						id="settings-scope-panel"
+						role="tabpanel"
+						aria-labelledby={`settings-scope-${scope}`}
+					>
 					<div key={section} className="settings-content">
 						{(section === "browser" || section.startsWith("browser-")) && (
 							<BrowserSettings

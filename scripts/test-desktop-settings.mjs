@@ -69,6 +69,8 @@ try {
   });
   const page = await application.firstWindow();
   page.setDefaultTimeout(30_000);
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(String(error)));
   await page.waitForLoadState("domcontentloaded");
   await page.evaluate(() => {
     localStorage.setItem("kestrel:onboarded", "yes");
@@ -80,6 +82,52 @@ try {
   await page.setViewportSize({ width: 1800, height: 1000 });
   await openKestrelDestination(page, "Settings");
   await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+  const search = page.getByRole("searchbox", { name: "Search Browser and Agent settings" });
+  const headerGeometry = await page.evaluate(() => {
+    const frame = document.querySelector(".settings-page-frame");
+    const heading = frame?.querySelector(":scope > .ui-page-frame-header");
+    const search = frame?.querySelector(".settings-search");
+    const title = heading?.querySelector("h1");
+    if (!heading || !frame || !search || !title) return null;
+    const headerRect = heading.getBoundingClientRect();
+    const frameRect = frame.getBoundingClientRect();
+    const titleRect = title.getBoundingClientRect();
+    const searchRect = search.getBoundingClientRect();
+    const rect = (value) => ({
+      left: value.left,
+      right: value.right,
+      top: value.top,
+      bottom: value.bottom,
+      width: value.width,
+      height: value.height,
+    });
+    return { header: rect(headerRect), frame: rect(frameRect), title: rect(titleRect), search: rect(searchRect) };
+  });
+  assert.ok(headerGeometry, "Settings header and search must render together");
+  assert.ok(
+    headerGeometry.search.top < headerGeometry.title.bottom &&
+      headerGeometry.search.bottom > headerGeometry.title.top &&
+      headerGeometry.search.right <= headerGeometry.frame.right + 1,
+    `Settings search must sit beside the page title: ${JSON.stringify(headerGeometry)}`,
+  );
+
+  const scopeTabs = page.locator(".settings-navigation [role=tab]");
+  assert.equal(await scopeTabs.count(), 2, "Settings scope navigation must expose Browser and Agent tabs");
+  await scopeTabs.filter({ hasText: "Browser" }).click();
+  await page.waitForFunction(() => document.querySelector(".settings-navigation [role=tab][aria-selected='true']")?.textContent?.includes("Browser"));
+  assert.equal(await scopeTabs.filter({ hasText: "Browser" }).getAttribute("tabindex"), "0");
+  assert.equal(await scopeTabs.filter({ hasText: "Agent" }).getAttribute("tabindex"), "-1");
+  await scopeTabs.filter({ hasText: "Browser" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(() => document.activeElement?.textContent?.includes("Agent"));
+  assert.equal(await scopeTabs.filter({ hasText: "Agent" }).getAttribute("aria-selected"), "true");
+  assert.equal(await scopeTabs.filter({ hasText: "Agent" }).getAttribute("tabindex"), "0");
+  await page.keyboard.press("Home");
+  await page.waitForFunction(() => document.activeElement?.textContent?.includes("Browser"));
+  await page.keyboard.press("End");
+  await page.waitForFunction(() => document.activeElement?.textContent?.includes("Agent"));
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForFunction(() => document.activeElement?.textContent?.includes("Browser"));
   await page.getByRole("tab", { name: "Browser", exact: true }).click();
   await page.locator('[data-settings-panel="browser-startup"]').waitFor();
   assert.equal(await page.locator(".browser-settings-panel").count(), 1,
@@ -99,15 +147,27 @@ try {
   assert.deepEqual(await page.locator(".settings-nav-group h3").allTextContents(),
     ["Setup & intelligence", "Work & tools", "Safety & maintenance"]);
   if (evidence) await page.screenshot({ path: join(evidence, "agent-desktop.png") });
-  const search = page.getByLabel("Search Browser and Agent settings");
+  await page.getByRole("tab", { name: "Agent", exact: true }).click();
+  await page.locator(".settings-nav").getByRole("button", { name: "Models & routing", exact: true }).click();
+  await page.locator("#setting-agent-models").waitFor();
+  if (evidence) await page.screenshot({ path: join(evidence, "models-wide.png") });
+  assert.equal(await search.getAttribute("aria-controls"), null);
+  assert.equal(await search.getAttribute("aria-describedby"), "settings-search-help");
   await search.fill("sleeping tab timeout");
+  assert.equal(await search.getAttribute("aria-controls"), "settings-search-results");
   const result = page
     .locator(".settings-search-result")
     .filter({ hasText: "Sleeping tab timeout" });
   await result.waitFor();
+  const resultsRegion = page.getByRole("region", { name: "Matching settings" });
+  await resultsRegion.waitFor();
   assert.match(await result.textContent(), /Browser · Performance/);
   await waitForStableSearchResult(page);
-  await result.click();
+  for (let tab = 0; tab < 3 && !(await page.locator(".settings-search-result:focus").count()); tab += 1)
+    await page.keyboard.press("Tab");
+  assert.equal(await page.locator(".settings-search-result:focus").count(), 1,
+    "Tab must reach a Settings search result");
+  await page.keyboard.press("Enter");
 
   const timeout = page.getByLabel("Sleeping tab timeout", { exact: true });
   await timeout.waitFor();
@@ -141,7 +201,27 @@ try {
   const clearHistory = page.locator("#setting-browser-clear-history");
   assert.equal(await clearHistory.getByRole("button", { name: "Clear history" }).count(), 1);
 
+  await search.fill("sleeping tab timeout");
+  await search.press("Escape");
+  assert.equal(await search.inputValue(), "", "Escape must clear Settings search");
+  assert.equal(await page.locator(":focus").getAttribute("aria-label"), "Search Browser and Agent settings");
+
+  for (const width of [360, 520, 900]) {
+    await page.setViewportSize({ width, height: 800 });
+    const viewportLayout = await page.evaluate(() => ({
+      width: innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      settingsWidth: document.querySelector(".settings-content")?.getBoundingClientRect().width ?? 0,
+    }));
+    assert.ok(
+      viewportLayout.documentWidth <= viewportLayout.width + 1,
+      `Settings overflowed at ${width}px: ${JSON.stringify(viewportLayout)}`,
+    );
+  }
+
   await page.setViewportSize({ width: 600, height: 800 });
+  const closeChat = page.getByRole("button", { name: "Close chat", exact: true });
+  if (await closeChat.isVisible()) await closeChat.click();
   const picker = page.locator(".settings-section-picker");
   await picker.waitFor({ state: "visible" });
   const pickerSelect = picker.locator("select");
@@ -181,21 +261,94 @@ try {
 
   if (evidence) await page.screenshot({ path: join(evidence, "extensions-narrow.png") });
 
-  const sections = await page.locator(".settings-section-picker option").evaluateAll(
+  await pickerSelect.selectOption("browser-appearance");
+  await page.locator('[data-settings-panel="browser-appearance"]').waitFor();
+  const backgroundColumns = async () => page.locator(".background-option-grid .background-option").evaluateAll((cards) => {
+    const rows = new Set(cards.map((card) => Math.round(card.getBoundingClientRect().top)));
+    const content = document.querySelector(".settings-content");
+    return {
+      count: cards.length,
+      rows: rows.size,
+      width: cards[0]?.getBoundingClientRect().width ?? 0,
+      contentWidth: content?.getBoundingClientRect().width ?? 0,
+    };
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  const wallpaper360 = await backgroundColumns();
+  assert.equal(wallpaper360.rows, wallpaper360.count, "Wallpaper cards must collapse to one column below 420px content");
+  if (evidence) await page.screenshot({ path: join(evidence, "wallpaper-360.png") });
+  await page.setViewportSize({ width: 520, height: 800 });
+  const wallpaper520 = await backgroundColumns();
+  const wallpaper520Rows = wallpaper520.contentWidth <= 420
+    ? wallpaper520.count
+    : Math.ceil(wallpaper520.count / 2);
+  assert.equal(wallpaper520.rows, wallpaper520Rows,
+    `Wallpaper cards must follow available content width at compact width: ${JSON.stringify(wallpaper520)}`);
+  if (evidence) await page.screenshot({ path: join(evidence, "wallpaper-520.png") });
+
+  await page.setViewportSize({ width: 1800, height: 1000 });
+  await page.evaluate(() => {
+    const layout = document.querySelector(".settings-layout");
+    if (layout instanceof HTMLElement) layout.style.gridTemplateColumns = "184px 700px";
+  });
+  const constrainedWallpaper = await backgroundColumns();
+  assert.equal(constrainedWallpaper.rows, Math.ceil(constrainedWallpaper.count / 2), "Wallpaper cards must adapt to a constrained 700px Settings container fixture");
+  await page.evaluate(() => {
+    const layout = document.querySelector(".settings-layout");
+    if (layout instanceof HTMLElement) layout.style.removeProperty("grid-template-columns");
+  });
+  await page.setViewportSize({ width: 520, height: 800 });
+  await search.fill("tab");
+  const longResult = page.locator(".settings-search-result").first();
+  await longResult.waitFor();
+  const longResultLayout = await longResult.evaluate((element) => ({
+    width: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+    copyWhiteSpace: getComputedStyle(element.querySelector(".settings-search-result-copy") ?? element).whiteSpace,
+  }));
+  assert.ok(longResultLayout.scrollWidth <= longResultLayout.width + 1,
+    `Long Settings search result overflowed: ${JSON.stringify(longResultLayout)}`);
+  assert.notEqual(longResultLayout.copyWhiteSpace, "nowrap", "Settings search result copy must be allowed to wrap");
+  if (evidence) await page.screenshot({ path: join(evidence, "search-narrow.png") });
+  await search.press("Escape");
+  await page.setViewportSize({ width: 1800, height: 1000 });
+
+
+  const readPickerSections = async () => page.locator(".settings-section-picker option").evaluateAll(
     (options) => options.map((option) => ({ value: option.value, label: option.textContent.trim() })),
   );
+  const scopeSections = [];
+  for (const scopeTab of ["Browser", "Agent"]) {
+    await page.getByRole("tab", { name: scopeTab, exact: true }).click();
+    const sections = await readPickerSections();
+    scopeSections.push({ scopeTab, sections });
+  }
   for (const width of [1800, 1000, 600]) {
     await page.setViewportSize({ width, height: 1000 });
-    for (const section of sections) {
-      await selectSettingsSection(page, section.value, section.label);
-      const overflow = await page.locator(".settings-content").evaluate((element) => ({
-        width: element.clientWidth,
-        scrollWidth: element.scrollWidth,
-      }));
-      assert.ok(overflow.scrollWidth <= overflow.width + 1,
-        `${section.value} overflows at ${width}px: ${JSON.stringify(overflow)}`);
+    for (const { scopeTab, sections } of scopeSections) {
+      await page.getByRole("tab", { name: scopeTab, exact: true }).click();
+      for (const section of sections) {
+        await selectSettingsSection(page, section.value, section.label);
+        const overflow = await page.locator(".settings-content").evaluate((element) => ({
+          width: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+        }));
+        assert.ok(overflow.scrollWidth <= overflow.width + 1,
+          `${scopeTab} ${section.value} overflows at ${width}px: ${JSON.stringify(overflow)}`);
+      }
     }
   }
+
+  await page.setViewportSize({ width: 1800, height: 480 });
+  await page.getByRole("tab", { name: "Agent", exact: true }).click();
+  const lastSection = page.locator(".settings-nav").getByRole("button", { name: "Migration", exact: true });
+  await lastSection.focus();
+  await page.keyboard.press("Enter");
+  const lastSectionBounds = await lastSection.boundingBox();
+  assert.ok(lastSectionBounds && lastSectionBounds.y >= 80 &&
+    lastSectionBounds.y + lastSectionBounds.height <= 480,
+    `Last Settings section must remain reachable in a short window: ${JSON.stringify(lastSectionBounds)}`);
+  if (evidence) await page.screenshot({ path: join(evidence, "agent-short.png") });
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   const reducedMotion = await page.locator(".settings-search-field").evaluate((element) => {
@@ -204,6 +357,7 @@ try {
   });
   assert.equal(reducedMotion.transitionDuration, "0s");
   await page.screenshot({ path: join(root, "desktop-settings.png"), fullPage: true });
+  assert.deepEqual(pageErrors, [], `Settings renderer page errors: ${pageErrors.join(" | ")}`);
   process.stdout.write(
     `Rendered ${packagedExecutable ? "packaged" : "development"} settings, search deep-link focus, persistence, and narrow-layout checks passed.\n`,
   );
