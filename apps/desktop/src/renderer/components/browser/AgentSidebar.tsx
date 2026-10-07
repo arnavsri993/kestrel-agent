@@ -298,10 +298,9 @@ export function AgentSidebar({
 		? sessionTitleForDisplay(activeSession.title)
 		: "New task";
 	const projectName = agentWorkspaceName(activeSession?.workspaceRoot);
-	const showProjectName = projectName.length > 0;
 	const compactStatus = activeSession
 		? {
-				active: "Working",
+				active: "Open",
 				waiting: "Needs input",
 				completed: "Complete",
 				cancelled: "Cancelled",
@@ -338,15 +337,6 @@ export function AgentSidebar({
 					<div className="agent-chat-toolbar">
 						<button
 							type="button"
-							className="agent-sidebar-expand"
-							aria-label="Open Agent tab"
-							title="Open Agent tab"
-							onClick={onExpandChat}
-						>
-							<Icon name="expand" />
-						</button>
-						<button
-							type="button"
 							className="agent-sidebar-new"
 							aria-label="New task"
 							aria-keyshortcuts="Meta+N"
@@ -357,19 +347,33 @@ export function AgentSidebar({
 						</button>
 						<div className="agent-chat-heading">
 							<strong title={currentTaskTitle}>{currentTaskTitle}</strong>
-							{showProjectName ? (
-								<small title={projectName}>{projectName}</small>
-							) : null}
+							<div className="agent-chat-context">
+								<small className="agent-chat-status">{compactStatus}</small>
+								{projectName ? (
+									<small className="agent-chat-project" title={projectName}>{projectName}</small>
+								) : null}
+							</div>
 						</div>
-						<button
-							type="button"
-							className="agent-sidebar-collapse"
-							aria-label={`Hide ${agentName}`}
-							title={`Hide ${agentName}`}
-							onClick={onToggleAgent}
-						>
-							<Icon name="chevron" className="agent-sidebar-collapse-icon" />
-						</button>
+						<div className="agent-chat-toolbar-actions">
+							<button
+								type="button"
+								className="agent-sidebar-expand"
+								aria-label="Open Agent tab"
+								title="Open Agent tab"
+								onClick={onExpandChat}
+							>
+								<Icon name="expand" />
+							</button>
+							<button
+								type="button"
+								className="agent-sidebar-collapse"
+								aria-label={`Hide ${agentName}`}
+								title={`Hide ${agentName}`}
+								onClick={onToggleAgent}
+							>
+								<Icon name="chevron" className="agent-sidebar-collapse-icon" />
+							</button>
+						</div>
 					</div>
 				</div>
 				<div className="agent-sidebar-assist">{communicationAssistant}</div>

@@ -1,3 +1,28 @@
+# Friendly task header — October 7, 2026
+
+Thesis: a compact, readable task header keeps the current work and its real state
+in view, with stable new, expand, and hide actions at every panel width.
+Existing React/macOS component refinement; dense-app, low visual intensity.
+The classifier's landing-page suggestions do not apply to this browser utility.
+
+- Preserve SF system headings and controls: 13.5–15px title, 11.5px context,
+  existing graphite background/surface/text/muted/focus roles and 4px rhythm.
+  Native type and restrained material are deliberate platform conventions.
+- One row: New task, left-aligned title/context, grouped Expand and Hide actions.
+  Title and project truncate; the actual task status and actions remain visible.
+  No invented activity, additional cards, fonts, icons, dependencies, or animation.
+- Share real session status labels with the dock; active means Open, since a
+  newly created conversation has not necessarily started work. The subtitle adds project context
+  only when a workspace exists. Full-page navigation keeps its existing owner.
+- Motion stays with existing state/feedback controls; reduced motion remains
+  authoritative. Keyboard focus is explicit and all buttons retain their names.
+- Fix three observed weaknesses: Hide wrapping into a second row in the installed
+  UI, long titles competing with controls, and no visible task state in the header.
+- Verify long titles/project paths, small/wide rails, short/narrow windows,
+  keyboard hide/reopen/expand/new actions, full view, and the installed app.
+- Why this is not generic: it follows Kestrel's actual resumable tasks, local
+  workspace context, and browser-to-Agent navigation without adding decoration.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

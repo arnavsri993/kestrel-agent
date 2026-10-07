@@ -253,9 +253,20 @@
 
 .agent-chat-toolbar {
 	display: grid;
-	grid-template-columns: auto auto minmax(0, 1fr) auto;
+	grid-template-columns: auto minmax(0, 1fr) auto;
 	align-items: center;
 	gap: 4px;
+}
+
+.agent-chat-toolbar-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.agent-chat-toolbar button:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
 }
 
 .agent-sidebar-new,
@@ -289,8 +300,8 @@
 .agent-chat-heading {
 	min-width: 0;
 	display: grid;
-	justify-items: center;
-	text-align: center;
+	justify-items: start;
+	text-align: left;
 }
 
 .agent-chat-heading strong,
@@ -302,6 +313,8 @@
 }
 
 .agent-chat-heading strong {
+	min-width: 0;
+	width: 100%;
 	color: var(--ink);
 	font-size: 13.5px;
 	font-weight: 650;
@@ -313,6 +326,27 @@
 	font-size: 11.5px;
 	font-weight: 500;
 	line-height: 15px;
+}
+
+.agent-chat-context {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.agent-chat-context .agent-chat-status {
+	flex-shrink: 0;
+}
+
+.agent-chat-project::before {
+	content: "·";
+	margin-right: 7px;
+}
+
+.agent-chat-project {
+	min-width: 0;
 }
 
 .agent-conversation-host .chat-welcome {
@@ -475,6 +509,10 @@
 
 .ai-browser-app.agent-full-page .agent-sidebar-identity {
 	grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.ai-browser-app.agent-full-page .agent-chat-toolbar-actions {
+	display: none;
 }
 
 /* AgentWorkspace owns the visible route-level back affordance in full view. */
