@@ -1,3 +1,30 @@
+# Settings workspace — October 7, 2026
+
+Thesis: one compact Settings workspace pairs grouped navigation with readable
+preferences, bringing controls into view and adapting to the space beside chat.
+Existing React/macOS redesign, daily utility use, low visual and motion intensity.
+The classifier's landing-page direction does not apply to this native workspace.
+
+- Keep system type, graphite/light semantic colors, visible focus, 4px rhythm,
+  12px search/scope corners and 16px preference surfaces. No new dependencies,
+  decorative media or motion. Reduced motion and forced colors retain their owners.
+- One header: Settings and Search settings. Browser/Agent scope belongs to the
+  section rail; scope, responsive picker and section groups share the catalog.
+- Bounded page and aligned URL/select controls; rows stack from actual content
+  width. Switches remain beside their labels, wallpaper choices and routing
+  cards reflow independently of the window width.
+- Correct three observed weaknesses: redundant title/toolbar vertical space,
+  detached scope/navigation, and content-width blind spots in wallpaper/control
+  grids. Search results stay in a labelled region, wrap scope/destination text,
+  and preserve Tab/Enter deep links and Escape recovery.
+- Scope tabs use roving focus and Left/Right/Home/End navigation. Preserve all
+  settings values, protected credential controls, approval gates and data.
+- Verify Browser/Agent, search/empty/clear/deep-link focus, saved preferences,
+  all categories, narrow/short views, a constrained pane, keyboard navigation,
+  reduced motion, packaged UI and the canonical installed app.
+- Why this is not generic: the layout follows Kestrel's separate browser and
+  agent configuration, task groups and real protected provider controls.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

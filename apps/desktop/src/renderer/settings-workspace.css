@@ -1,0 +1,218 @@
+/* Settings owns its composition here. Keep rules scoped to this page so
+   browser chrome and the provider's protected controls retain their owners. */
+.ai-browser-app.unified-ui .browser-secondary-surface .settings-page-frame {
+	width: min(calc(100% - 40px), 1040px);
+	max-width: 1040px;
+	padding: 24px 0 48px;
+	container: settings-page / inline-size;
+}
+.ai-browser-app.unified-ui .settings-page-frame > .ui-page-frame-header {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	margin-bottom: 24px;
+	padding: 0;
+	border: 0;
+}
+.ai-browser-app.unified-ui .settings-page-frame .ui-page-frame-actions {
+	flex: 0 1 360px;
+	min-width: 0;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-search {
+	width: 100%;
+	min-width: 0;
+	margin: 0;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-search-field {
+	min-height: 40px;
+	border-radius: 12px;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-search-field input {
+	border-radius: 0;
+	font-size: 13px;
+}
+.ai-browser-app.unified-ui .settings-page-frame input[type="search"]::-webkit-search-cancel-button {
+	display: none;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-search-results {
+	position: absolute;
+	z-index: 20;
+	inset: calc(100% + 8px) 0 auto;
+	margin: 0;
+	border-radius: 14px;
+	background: var(--surface);
+	box-shadow: var(--shadow-md);
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-search-result {
+	grid-template-columns: minmax(0, 1fr);
+	gap: 5px;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-search-result :is(strong, small) {
+	overflow-wrap: anywhere;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-search-result-category {
+	justify-self: start;
+	white-space: normal;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-layout {
+	display: grid;
+	grid-template-columns: 208px minmax(0, 1fr);
+	align-items: start;
+	gap: 24px;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-navigation {
+	position: sticky;
+	top: 16px;
+	min-width: 0;
+	max-height: calc(100dvh - 160px);
+	overflow: auto;
+	padding: 4px;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-scope-switcher {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	width: 100%;
+	max-width: none;
+	gap: 2px;
+	margin: 0 0 20px;
+	padding: 3px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--surface);
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-scope-switcher > button {
+	min-width: 0;
+	min-height: 34px;
+	gap: 6px;
+	padding: 6px;
+	border-radius: 9px;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-scope-switcher strong {
+	font: 550 12px / 18px var(--sans);
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-nav {
+	position: static;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-nav-group + .settings-nav-group {
+	margin-top: 16px;
+	padding-top: 0;
+	border: 0;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-nav-group h3 {
+	margin: 0 10px 6px;
+	color: var(--muted);
+	font: 550 11px / 16px var(--sans);
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-nav button {
+	min-height: 34px;
+	padding: 7px 10px;
+	border-radius: 9px;
+	font: 450 13px / 19px var(--sans);
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-nav button.active {
+	background: var(--selected);
+	font-weight: 600;
+	box-shadow: none;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-section-picker { display: none; }
+.ai-browser-app.unified-ui .settings-page-frame .settings-content-stage {
+	min-width: 0;
+	container: settings-content / inline-size;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-content { gap: 20px; }
+.ai-browser-app.unified-ui .settings-page-frame .settings-content :is(.settings-panel, .browser-settings-panel) {
+	padding: 20px 24px 4px;
+	border: 1px solid var(--line);
+	border-radius: 16px;
+	background: var(--panel);
+	box-shadow: none;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-content .settings-panel :is(.settings-panel, .browser-settings-panel) {
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-panel-header {
+	padding: 0 0 14px;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-panel-header h2 {
+	font: 600 18px / 25px var(--sans);
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-content :is(.settings-panel, .browser-settings-panel) > .settings-stack {
+	border: 0;
+	box-shadow: none;
+}
+.ai-browser-app.unified-ui .settings-page-frame .settings-content .setting-row {
+	grid-template-columns: minmax(160px, 1fr) auto;
+	align-items: center;
+	gap: 12px 20px;
+	min-height: 68px;
+	padding: 14px 0;
+}
+.ai-browser-app.unified-ui .settings-page-frame .setting-row > * { min-width: 0; }
+.ai-browser-app.unified-ui .settings-page-frame .setting-row > div:first-child > :is(p, small) {
+	max-width: 48ch;
+	line-height: 19px;
+}
+.ai-browser-app.unified-ui .settings-page-frame .setting-row > :is(input, select, .browser-inline-control, .browser-startup-pages-control) {
+	width: 320px;
+	max-width: 100%;
+}
+.ai-browser-app.unified-ui .settings-page-frame .setting-row > :last-child { justify-self: end; }
+.ai-browser-app.unified-ui .settings-page-frame .setting-row:has(> :only-child) {
+	grid-template-columns: minmax(0, 1fr);
+}
+.ai-browser-app.unified-ui .settings-page-frame .setting-row > :only-child { justify-self: stretch; }
+.ai-browser-app.unified-ui .settings-page-frame .setting-row :is(input, select, textarea) { max-width: 100%; }
+.ai-browser-app.unified-ui .settings-page-frame .setting-row .button-row { flex-wrap: wrap; }
+.ai-browser-app.unified-ui .settings-page-frame .plugin-supply-setting { grid-template-columns: minmax(0, 1fr); }
+
+@container settings-page (max-width: 760px) {
+	.ai-browser-app.unified-ui .settings-page-frame .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+	.ai-browser-app.unified-ui .settings-page-frame .settings-navigation {
+		position: static;
+		display: grid;
+		grid-template-columns: 208px minmax(0, 1fr);
+		align-items: end;
+		gap: 16px;
+		max-height: none;
+		overflow: visible;
+	}
+	.ai-browser-app.unified-ui .settings-page-frame .settings-scope-switcher { margin: 0; }
+	.ai-browser-app.unified-ui .settings-page-frame .settings-nav { display: none; }
+	.ai-browser-app.unified-ui .settings-page-frame .settings-section-picker {
+		display: grid;
+		gap: 6px;
+		min-width: 0;
+		margin: 0;
+	}
+	.ai-browser-app.unified-ui .settings-page-frame .settings-section-picker select { width: 100%; }
+}
+@container settings-page (max-width: 480px) {
+	.ai-browser-app.unified-ui .settings-page-frame > .ui-page-frame-header { flex-wrap: wrap; gap: 12px; }
+	.ai-browser-app.unified-ui .settings-page-frame .ui-page-frame-actions { flex-basis: 100%; }
+	.ai-browser-app.unified-ui .settings-page-frame .settings-navigation { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+	.ai-browser-app.unified-ui .settings-page-frame .settings-content :is(.settings-panel, .browser-settings-panel) { padding: 16px 16px 4px; }
+}
+@container settings-content (max-width: 760px) {
+	.ai-browser-app.unified-ui .settings-page-frame .background-option-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container settings-content (max-width: 580px) {
+	.ai-browser-app.unified-ui .settings-page-frame .settings-content .setting-row { grid-template-columns: minmax(0, 1fr); }
+	.ai-browser-app.unified-ui .settings-page-frame .setting-row > :last-child { justify-self: start; }
+	.ai-browser-app.unified-ui .settings-page-frame .setting-row > :is(input, select, .browser-inline-control, .browser-startup-pages-control) { width: 100%; }
+	.ai-browser-app.unified-ui .settings-page-frame .setting-row:has(> .switch) { grid-template-columns: minmax(0, 1fr) auto; }
+	.ai-browser-app.unified-ui .settings-page-frame .setting-row > .switch { justify-self: end; }
+	.ai-browser-app.unified-ui .settings-page-frame .routing-mode-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@container settings-content (max-width: 420px) {
+	.ai-browser-app.unified-ui .settings-page-frame .background-option-grid { grid-template-columns: minmax(0, 1fr); }
+}
