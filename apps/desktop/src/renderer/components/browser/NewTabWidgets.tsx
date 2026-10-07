@@ -4,6 +4,7 @@ import type {
 	NewTabWidgetLayoutItem,
 	NewTabWidgetSettings,
 	NewTabWidgetSize,
+	Project,
 	MemoryRecord,
 	MemoryRecallStatus,
 	ProviderUsageSnapshot,
@@ -29,7 +30,11 @@ import {
 	useState,
 	type PointerEvent as ReactPointerEvent,
 } from "react";
-import { agentSessionRecency } from "../../agent-workspace";
+import {
+	agentSessionRecency,
+	agentSessionStatusLabel,
+	agentWorkspaceName,
+} from "../../agent-workspace";
 import { sessionTitleForDisplay } from "../../chat-title";
 import {
 	KESTREL_CRITICAL_SPRING,
@@ -60,6 +65,15 @@ import {
 	type NewTabWidgetDefinition,
 } from "./new-tab-widgets";
 import { bookmarkBarFaviconDataUrl } from "./bookmarks-bar";
+import {
+	homeWidgetMemories,
+	matchingOpenSiteTab,
+	memoryConfirmationLabel,
+	recentWidgetSessions,
+	usageResetLabel,
+	usageSnapshotStale,
+	usageWindowsForWidget,
+} from "./home-widget-content";
 import "./new-tab-widgets.css";
 
 type WidgetContext = {
@@ -76,6 +90,7 @@ type WidgetContext = {
 		"id" | "title" | "url" | "faviconDataUrl" | "pinned"
 	>[];
 	sessions: RuntimeSession[];
+	projects?: Project[];
 	suggestedActions: SuggestedAgentAction[];
 	memories: MemoryRecord[];
 	memoryRecall: MemoryRecallStatus;
@@ -88,6 +103,7 @@ type WidgetContext = {
 	onOpenHistory(): void;
 	onOpenDownloads(): void;
 	onOpenBookmarks(): void;
+	onOpenModelSettings?(): void;
 };
 
 type WidgetRenderContext = WidgetContext & {
@@ -182,10 +198,12 @@ function BookmarkGlyph({
 function EmptyWidgetState({
 	icon,
 	children,
+	description,
 	action,
 }: {
 	icon: string;
 	children: React.ReactNode;
+	description?: string;
 	action?: { label: string; onClick(): void };
 }) {
 	return (
@@ -195,9 +213,11 @@ function EmptyWidgetState({
 			</span>
 			<div>
 				<strong>{children}</strong>
+				{description && <p>{description}</p>}
 				{action && (
 					<button type="button" onClick={action.onClick}>
 						{action.label}
+						<Icon name="forward" />
 					</button>
 				)}
 			</div>
@@ -205,44 +225,85 @@ function EmptyWidgetState({
 	);
 }
 
+function WidgetFooter({
+	label,
+	onClick,
+	detail,
+}: {
+	label: string;
+	onClick(): void;
+	detail?: string;
+}) {
+	return (
+		<div className="kestrel-widget-footer">
+			<span>{detail}</span>
+			<button type="button" onClick={onClick}>
+				{label}
+				<Icon name="forward" />
+			</button>
+		</div>
+	);
+}
+
 function FrequentTabsWidget({
 	frequent,
+	tabs,
 	size,
 	onNavigate,
+	onOpenTab,
 	onOpenHistory,
-}: Pick<WidgetContext, "frequent" | "onNavigate" | "onOpenHistory"> & {
-	size: NewTabWidgetSize;
-}) {
+}: Pick<
+	WidgetContext,
+	"frequent" | "tabs" | "onNavigate" | "onOpenTab" | "onOpenHistory"
+> & { size: NewTabWidgetSize }) {
 	const items = frequent.slice(0, visibleItemCount(size));
-	if (items.length === 0) {
+	if (!items.length)
 		return (
 			<EmptyWidgetState
 				icon="history"
+				description="Your most-used pages appear as you browse."
 				action={{ label: "Open history", onClick: onOpenHistory }}
 			>
-				Frequent tabs appear here.
+				Return to a useful page
 			</EmptyWidgetState>
 		);
-	}
 	return (
-		<ul className="kestrel-widget-list kestrel-widget-frequent-list">
-			{items.map((site) => (
-				<li key={site.origin}>
-					<button
-						type="button"
-						onClick={() => onNavigate(site.url)}
-						title={`${site.title} · ${site.hostname}`}
-					>
-						<SiteGlyph site={site} />
-						<span>
-							<strong>{site.hostname.replace(/^www\./, "")}</strong>
-
-						</span>
-
-					</button>
-				</li>
-			))}
-		</ul>
+		<div className="kestrel-widget-content">
+			<ul className="kestrel-widget-list kestrel-widget-useful-list kestrel-widget-frequent-list">
+				{items.map((site) => {
+					const openTab = matchingOpenSiteTab(site.url, tabs);
+					return (
+						<li key={site.origin}>
+							<button
+								type="button"
+								onClick={() =>
+									openTab ? onOpenTab(openTab.id) : onNavigate(site.url)
+								}
+								aria-label={`${openTab ? "Switch to" : "Open"} ${site.title || site.hostname}`}
+								title={`${site.title} · ${site.url}`}
+							>
+								<SiteGlyph site={site} />
+								<span>
+									<strong>{site.title || site.hostname}</strong>
+									<small>
+										{site.hostname} ·{" "}
+										{openTab
+											? "Tab open"
+											: `${site.visits} ${site.visits === 1 ? "visit" : "visits"}`}
+									</small>
+								</span>
+								<Icon name={openTab ? "browser" : "forward"} />
+							</button>
+						</li>
+					);
+				})}
+			</ul>
+			<WidgetFooter
+				label="History"
+				onClick={onOpenHistory}
+				detail={`${frequent.length} ${frequent.length === 1 ? "site" : "sites"}`}
+			/>
+		</div>
 	);
 }
 
@@ -358,45 +419,84 @@ function DownloadsWidget({
 
 function RecentWorkWidget({
 	sessions,
+	projects = [],
 	size,
 	onOpenSession,
 	onNewAgent,
-}: Pick<WidgetContext, "sessions" | "onOpenSession" | "onNewAgent"> & {
-	size: NewTabWidgetSize;
-}) {
-	const items = sessions.slice(0, visibleItemCount(size));
-	if (items.length === 0) {
+}: Pick<
+	WidgetContext,
+	"sessions" | "projects" | "onOpenSession" | "onNewAgent"
+> & { size: NewTabWidgetSize }) {
+	const eligible = recentWidgetSessions(sessions, sessions.length);
+	const items = eligible.slice(0, visibleItemCount(size));
+	if (!items.length)
 		return (
 			<EmptyWidgetState
 				icon="agent"
-				action={{ label: "Start a task", onClick: () => onNewAgent() }}
+				description="Keep your conversations and project work within reach."
+				action={{ label: "Start a chat", onClick: () => onNewAgent() }}
 			>
-				Recent chats appear here.
+				Pick up where you left off
 			</EmptyWidgetState>
 		);
-	}
 	return (
-		<ul className="kestrel-widget-list">
-			{items.map((session) => (
-				<li key={session.id}>
-					<button
-						type="button"
-						disabled={!onOpenSession}
-						onClick={() => onOpenSession?.(session.id)}
-						title={sessionTitleForDisplay(session.title)}
-					>
-						<span className="kestrel-widget-list-icon" aria-hidden="true">
-							<Icon name="agent" />
-						</span>
-						<span>
-							<strong>{sessionTitleForDisplay(session.title)}</strong>
-							<small>{agentSessionRecency(session.updatedAt)}</small>
-						</span>
-						<Icon name="forward" />
-					</button>
-				</li>
-			))}
-		</ul>
+		<div className="kestrel-widget-content">
+			<ul className="kestrel-widget-list kestrel-widget-useful-list kestrel-widget-work-list">
+				{items.map((session) => {
+					const title = sessionTitleForDisplay(session.title);
+					const project =
+						projects.find((project) => project.id === session.projectId)
+							?.name || agentWorkspaceName(session.workspaceRoot);
+					const checkpoint = session.checkpoints.at(-1)?.summary;
+					return (
+						<li key={session.id}>
+							<button
+								type="button"
+								disabled={!onOpenSession}
+								onClick={() => onOpenSession?.(session.id)}
+								aria-label={`Open ${title}`}
+								title={title}
+							>
+								<span className="kestrel-widget-list-icon" aria-hidden="true">
+									<Icon
+										name={
+											session.status === "waiting"
+												? "history"
+												: session.status === "failed"
+													? "warning"
+													: "agent"
+										}
+									/>
+								</span>
+								<span>
+									<strong>{title}</strong>
+									<small>
+										<span
+											className={`kestrel-widget-work-status is-${session.status}`}
+										>
+											{agentSessionStatusLabel(session.status)}
+										</span>
+										{project && ` · ${project}`} ·{" "}
+										{agentSessionRecency(session.updatedAt)}
+									</small>
+									{checkpoint && (
+										<span className="kestrel-widget-preview">
+											{widgetText(checkpoint, 120)}
+										</span>
+									)}
+								</span>
+								<Icon name="forward" />
+							</button>
+						</li>
+					);
+				})}
+			</ul>
+			<WidgetFooter
+				label="New chat"
+				onClick={() => onNewAgent()}
+				detail={`${eligible.length} ${eligible.length === 1 ? "conversation" : "conversations"}`}
+			/>
+		</div>
 	);
 }
 
@@ -409,66 +509,69 @@ function RecentMemoriesWidget({
 }: Pick<
 	WidgetContext,
 	"memories" | "memoryRecall" | "onOpenLifeMemory" | "onNewAgent"
-> & {
-	size: NewTabWidgetSize;
-}) {
-	const items = useMemo(
-		() =>
-			memories
-				.filter((memory) => memory.status === "active")
-				.slice()
-				.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-				.slice(0, visibleItemCount(size)),
-		[memories, size],
-	);
-	if (items.length === 0) {
-		const emptyAction = memoryRecall.explicitCapture
-			? {
-					label: "Try a remember command",
-					onClick: () =>
-						onNewAgent("Remember that I prefer concise status updates"),
-				}
-			: onOpenLifeMemory
-				? { label: "Open Life → Memory", onClick: onOpenLifeMemory }
-				: undefined;
+> & { size: NewTabWidgetSize }) {
+	const eligible = homeWidgetMemories(memories, memories.length);
+	const items = eligible.slice(0, visibleItemCount(size));
+	if (!items.length)
 		return (
 			<EmptyWidgetState
 				icon="memory"
-				{...(emptyAction ? { action: emptyAction } : {})}
+				description={
+					memoryRecall.explicitCapture
+						? "Save preferences and project facts so Kestrel can use them again."
+						: "Memory capture is off. Review it in Settings → Memory."
+				}
+				action={
+					onOpenLifeMemory
+						? { label: "Open Memory", onClick: onOpenLifeMemory }
+						: { label: "Start a chat", onClick: () => onNewAgent() }
+				}
 			>
-				{memoryRecall.explicitCapture
-					? "Say remember that … in chat."
-					: "Memory capture is off. Turn it on in Settings → Memory."}
+				Useful context, ready to reuse
 			</EmptyWidgetState>
 		);
-	}
 	return (
-		<ul className="kestrel-widget-list">
-			{items.map((memory) => (
-				<li key={memory.id}>
-					<button
-						type="button"
-						onClick={() => onOpenLifeMemory?.()}
-						title={memory.content}
-					>
-						<span className="kestrel-widget-list-icon" aria-hidden="true">
-							<Icon name="memory" />
-						</span>
-						<span>
-							<strong>{widgetText(memory.subject ?? memory.content, 38)}</strong>
-							<small>
-								{memory.confirmationStatus === "explicit" ||
-								memory.userConfirmed
-									? "Confirmed"
-									: "Inferred"}{" "}
-								· {agentSessionRecency(memory.updatedAt)}
-							</small>
-						</span>
-						<Icon name="forward" />
-					</button>
-				</li>
-			))}
-		</ul>
+		<div className="kestrel-widget-content">
+			<ul className="kestrel-widget-list kestrel-widget-useful-list kestrel-widget-memory-list">
+				{items.map((memory) => (
+					<li key={memory.id}>
+						<button
+							type="button"
+							disabled={!onOpenLifeMemory}
+							onClick={() => onOpenLifeMemory?.()}
+							aria-label={`Open Memory: ${memory.subject || widgetText(memory.content, 60)}`}
+							title="Open Memory to review this saved context"
+						>
+							<span className="kestrel-widget-list-icon" aria-hidden="true">
+								<Icon name="memory" />
+							</span>
+							<span>
+								<strong>
+									{memory.subject || widgetText(memory.content, 100)}
+								</strong>
+								{memory.subject && memory.subject !== memory.content && (
+									<span className="kestrel-widget-preview">
+										{widgetText(memory.content, 120)}
+									</span>
+								)}
+								<small>
+									{memoryConfirmationLabel(memory)} ·{" "}
+									{agentSessionRecency(memory.updatedAt)}
+								</small>
+							</span>
+							<Icon name="forward" />
+						</button>
+					</li>
+				))}
+			</ul>
+			{onOpenLifeMemory && (
+				<WidgetFooter
+					label="Open Memory"
+					onClick={onOpenLifeMemory}
+					detail={`${eligible.length} saved`}
+				/>
+			)}
+		</div>
 	);
 }
 
@@ -713,20 +816,99 @@ export function UsageBattery({
 	);
 }
 
+function UsageAccountRow({
+	row,
+	onHide,
+}: {
+	row: ProviderUsageSnapshot;
+	onHide(): void;
+}) {
+	const windows = usageWindowsForWidget(row.windows ?? []);
+	const stale = usageSnapshotStale(row.updatedAt);
+	const name = accountDisplayName(row);
+	return (
+		<li className="kestrel-widget-route-usage-row kestrel-widget-usage-account" data-status={row.status} data-stale={stale}>
+			<div className="kestrel-widget-usage-account-heading">
+				<ProviderUsageGlyph providerId={row.providerId} />
+				<div className="kestrel-widget-route-usage-copy">
+					<strong title={row.email ?? row.label}>{name}</strong>
+					<small>
+						{row.status !== "ready"
+							? statusChipLabel(row.status)
+							: stale
+								? "Last reading"
+								: row.plan || "Codex account"}
+					</small>
+				</div>
+				<button
+					type="button"
+					className="kestrel-widget-route-usage-hide"
+					aria-label={`Hide ${name}`}
+					title={`Hide ${name}`}
+					onClick={onHide}
+				>
+					<Icon name="close" />
+				</button>
+			</div>
+			{windows.length ? (
+				<div className="kestrel-widget-usage-windows">
+					{windows.map((window) => {
+						const remaining = remainingUsagePercent(window.usedPercent);
+						const reset = usageResetLabel(window.resetsAt);
+						return (
+							<div
+								className="kestrel-widget-usage-window"
+								key={`${row.providerId}-${window.label}`}
+							>
+								<span className="kestrel-widget-usage-window-label">
+									{window.label}
+								</span>
+								<span className="kestrel-widget-usage-window-value">
+									<strong>{remaining}% left</strong>
+									<UsageBattery
+										remainingPercent={remaining}
+										label={window.label}
+									/>
+								</span>
+								{reset && <small>{reset}</small>}
+							</div>
+						);
+					})}
+				</div>
+			) : (
+				<p className="kestrel-widget-usage-note">
+					{row.statusDetail || "Usage limits are unavailable."}
+				</p>
+			)}
+			{stale && (
+				<small className="kestrel-widget-usage-note">
+					Last checked {agentSessionRecency(row.updatedAt).toLowerCase()}
+				</small>
+			)}
+		</li>
+	);
+}
+
 function RouteUsageWidget({
 	size,
 	widgetSettings,
 	onWidgetSettingsChange,
+	onOpenModelSettings,
 }: WidgetRenderContext) {
 	const [rows, setRows] = useState<ProviderUsageSnapshot[]>([]);
 	const [error, setError] = useState<string | undefined>();
 	const [loading, setLoading] = useState(true);
 	const visible = useRef(true);
+	const [refresh, setRefresh] = useState(0);
 
 	useEffect(() => {
 		visible.current = true;
 		let cancelled = false;
+		let inFlight = false;
 		const load = async () => {
+			if (inFlight) return;
+			inFlight = true;
+			setLoading(true);
 			try {
 				const response = await window.kestrel.request({
 					type: "runtime-provider-usage",
@@ -734,7 +916,6 @@ function RouteUsageWidget({
 				if (cancelled || !visible.current) return;
 				if (!response.ok || !("providerUsage" in response)) {
 					setError("Could not load route usage.");
-					setRows([]);
 					return;
 				}
 				setRows(response.providerUsage ?? []);
@@ -743,6 +924,7 @@ function RouteUsageWidget({
 				if (cancelled || !visible.current) return;
 				setError("Could not load route usage.");
 			} finally {
+				inFlight = false;
 				if (!cancelled && visible.current) setLoading(false);
 			}
 		};
@@ -761,7 +943,7 @@ function RouteUsageWidget({
 			window.clearInterval(timer);
 			document.removeEventListener("visibilitychange", onVisibility);
 		};
-	}, []);
+	}, [refresh]);
 
 	const rankedRows = prioritizeCodexUsageRows(rows);
 	const configuredIds = rankedRows.map((row) => row.providerId);
@@ -790,86 +972,49 @@ function RouteUsageWidget({
 				</p>
 			) : (
 				<ul className="kestrel-widget-route-usage-list">
-					{visibleRows.map((row) => {
-						const name = accountDisplayName(row);
-						const windows = row.windows ?? [];
-						const primary = windows[0];
-						const secondary = windows[1];
-						const primaryLeft = primary
-							? remainingUsagePercent(primary.usedPercent)
-							: undefined;
-						const secondaryLeft = secondary
-							? remainingUsagePercent(secondary.usedPercent)
-							: undefined;
-						const headlineLeft = primaryLeft ?? secondaryLeft;
-						const detail =
-							row.status !== "ready"
-								? statusChipLabel(row.status)
-								: row.email
-									? row.email
-									: undefined;
-						return (
-							<li
-								key={row.providerId}
-								className="kestrel-widget-route-usage-row"
-							>
-								<ProviderUsageGlyph providerId={row.providerId} />
-								<div className="kestrel-widget-route-usage-copy">
-									<strong title={row.email ?? row.label}>
-										{widgetText(name, 28)}
-									</strong>
-									{detail && (
-										<small title={detail}>{widgetText(detail, 34)}</small>
-									)}
-								</div>
-								<span
-									className={`kestrel-widget-route-usage-percent${
-										headlineLeft === undefined ? " is-muted" : ""
-									}`}
-								>
-									{headlineLeft === undefined ? "—" : `${headlineLeft}%`}
-								</span>
-								<div className="kestrel-widget-route-usage-batteries">
-									{windows.length > 0 ? (
-										windows.map((windowRow) => (
-											<UsageBattery
-												key={`${row.providerId}-${windowRow.label}`}
-												remainingPercent={remainingUsagePercent(
-													windowRow.usedPercent,
-												)}
-												label={windowRow.label}
-											/>
-										))
-									) : (
-										<UsageBattery
-											remainingPercent={undefined}
-											label={statusChipLabel(row.status)}
-										/>
-									)}
-								</div>
-								<button
-									type="button"
-									className="kestrel-widget-route-usage-hide"
-									aria-label={`Hide ${name}`}
-									title={`Hide ${name}`}
-									onClick={() =>
-										onWidgetSettingsChange(
-											setRouteUsageProviderVisible(
-												widgetSettings,
-												row.providerId,
-												false,
-												configuredIds,
-											),
-										)
-									}
-								>
-									<span aria-hidden="true">×</span>
-								</button>
-							</li>
-						);
-					})}
+					{visibleRows.map((row) => (
+						<UsageAccountRow
+							key={row.providerId}
+							row={row}
+							onHide={() =>
+								onWidgetSettingsChange(
+									setRouteUsageProviderVisible(
+										widgetSettings,
+										row.providerId,
+										false,
+										configuredIds,
+									),
+								)
+							}
+						/>
+					))}
 				</ul>
 			)}
+			<div className="kestrel-widget-footer kestrel-widget-usage-footer">
+				<span role="status">
+					{error
+						? "Could not refresh"
+						: loading
+							? "Checking…"
+							: "Limits remaining"}
+				</span>
+				{rankedRows.length === 0 && onOpenModelSettings ? (
+					<button type="button" onClick={onOpenModelSettings}>
+						Set up Codex
+						<Icon name="forward" />
+					</button>
+				) : (
+					<button
+						type="button"
+						disabled={loading}
+						onClick={() => setRefresh((value) => value + 1)}
+						aria-label="Refresh Codex usage"
+					>
+						<Icon name="reload" />
+						Refresh
+					</button>
+				)}
+			</div>
 			{hiddenConfigured.length > 0 && (
 				<div className="kestrel-widget-route-usage-hidden">
 					<small>Hidden</small>
