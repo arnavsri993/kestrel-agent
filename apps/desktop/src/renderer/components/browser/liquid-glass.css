@@ -1,6 +1,6 @@
 /* Clear refractive material. Distort only the backdrop; text and icons are
    painted afterward and remain sharp. The static map costs no animation loop. */
-.kestrel-home .kestrel-home-composer,
+.ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer,
 .home-site-glyph,
 .home-personalize > summary {
  background: rgb(25 28 33 / 72%);
@@ -9,13 +9,21 @@
  border: 1px solid rgb(255 255 255 / 32%);
  box-shadow: inset 0 1px 0 rgb(255 255 255 / 40%), inset 0 -1px 0 rgb(255 255 255 / 13%), 0 8px 26px rgb(0 0 0 / 15%);
 }
-.kestrel-home .kestrel-home-composer textarea::placeholder { color: rgb(255 255 255 / 78%); }
-.kestrel-home .kestrel-home-composer.is-expanded { background-color: rgb(17 22 29 / 78%); }
+.ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer textarea::placeholder { color: rgb(255 255 255 / 78%); }
+.ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer.is-expanded { background-color: rgb(17 22 29 / 78%); }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
- .kestrel-home .kestrel-home-composer,
+ .ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer,
   .home-site-glyph,
  .home-personalize > summary {
   background: var(--panel); backdrop-filter: none; -webkit-backdrop-filter: none;
   border-color: var(--ink-secondary); box-shadow: none;
+ }
+}
+
+@media (forced-colors: active) {
+ .ai-browser-app .new-tab-page.kestrel-home .kestrel-home-composer,
+ .home-site-glyph,
+ .home-personalize > summary {
+  background: Canvas; color: CanvasText; border-color: CanvasText;
  }
 }

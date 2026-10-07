@@ -61,6 +61,7 @@ async function assertFocused(page, selector, message) {
 }
 
 async function revealPagedItem(page, item) {
+ await page.locator(".kestrel-widget-canvas").waitFor();
  for (let index = 0; index < 12 && !(await item.count()); index++) {
   const next = page.getByRole("button", { name: "Next widget page", exact: true });
   if (!(await next.count()) || await next.isDisabled()) break;
