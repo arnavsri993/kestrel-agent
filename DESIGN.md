@@ -947,3 +947,9 @@ retains that remaining-height contract, and a scoped 16px grid gap survives the
 fit stylesheet. The acceptance check reaches usage and continuation widgets
 through their actual pager when present. Compact add-shortcut labels retain an
 accessible name even when a height-constrained layout hides their visual text.
+
+Real-profile review exposed three inherited horizontal alignments: centered task
+entry, full-width shortcut paging, and centered fixed-width widget pages. Scoped
+Home rules now give the entry, shortcuts, and widget grid one left edge while
+retaining saved page sizes. The smoke asserts that shared edge and verifies that
+increased contrast and forced colors remove the backdrop effect.

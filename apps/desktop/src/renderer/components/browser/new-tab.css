@@ -762,3 +762,14 @@
 .new-tab-page.kestrel-home .home-continuity .kestrel-widget-canvas .kestrel-widget-shelves { gap: 16px; }
 
 .home-shortcut-page .home-add-shortcut .home-site-label { white-space: normal; text-overflow: clip; line-height: 1.3; }
+
+/* Use one left edge even when the saved widget page is narrower than Home. */
+.new-tab-page.kestrel-home .kestrel-home-content .kestrel-home-hero {
+ margin-inline: 0;
+}
+.new-tab-page.kestrel-home .kestrel-home-content .home-site-shortcuts {
+ width: min(780px, 100%); margin-inline: 0;
+}
+.new-tab-page.kestrel-home .home-continuity .kestrel-widget-grid {
+ align-self: flex-start;
+}

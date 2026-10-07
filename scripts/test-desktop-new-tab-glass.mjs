@@ -117,6 +117,11 @@ try {
 	 await page.reload();
 	 await page.locator(".home-site-shortcut button[title='Example · https://example.com/']").waitFor();
 	 await page.getByRole("heading", { name: "Your workspace", level: 2, exact: true }).waitFor();
+ const rail = await page.locator(".kestrel-home-content").evaluate((content) => {
+  const left = content.getBoundingClientRect().left;
+  return [".kestrel-home-hero", ".home-site-shortcuts", ".kestrel-widget-grid"].map((selector) => ({ selector, offset: Math.abs(content.querySelector(selector).getBoundingClientRect().left - left) }));
+ });
+ for (const item of rail) assert(item.offset < 1, `${item.selector} must share Home's left edge: ${item.offset}px`);
 	 const editWidgets = page.getByRole("button", { name: "Edit widgets", exact: true });
 	 await editWidgets.focus();
 	 await editWidgets.press("Enter");
@@ -148,6 +153,11 @@ try {
  assert(download.x < 0.6 && download.y < 0.6, `Download icon must be centered: ${JSON.stringify(download)}`);
  assert.equal(download.radius, "50%");
  assert((await composer.evaluate((node) => getComputedStyle(node).backdropFilter)).includes("kestrel-glass-refraction"));
+ await page.emulateMedia({ contrast: "more" });
+ assert.equal(await composer.evaluate((node) => getComputedStyle(node).backdropFilter), "none", "Increased contrast must use an opaque composer");
+ await page.emulateMedia({ contrast: "no-preference", forcedColors: "active" });
+ assert.equal(await composer.evaluate((node) => getComputedStyle(node).backdropFilter), "none", "Forced colors must remove backdrop effects");
+ await page.emulateMedia({ forcedColors: "none" });
  await page.screenshot({ animations: "disabled", path: join(evidence, "desktop.png") });
  await input.focus();
 	 await page.screenshot({ animations: "disabled", path: join(evidence, "composer.png") });
