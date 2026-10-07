@@ -84,9 +84,9 @@ try {
   await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
   const search = page.getByRole("searchbox", { name: "Search Browser and Agent settings" });
   const headerGeometry = await page.evaluate(() => {
-    const heading = document.querySelector(".ui-page-frame-header");
     const frame = document.querySelector(".settings-page-frame");
-    const search = document.querySelector(".settings-search");
+    const heading = frame?.querySelector(":scope > .ui-page-frame-header");
+    const search = frame?.querySelector(".settings-search");
     const title = heading?.querySelector("h1");
     if (!heading || !frame || !search || !title) return null;
     const headerRect = heading.getBoundingClientRect();
