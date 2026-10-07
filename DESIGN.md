@@ -940,3 +940,10 @@ widget editing/focus, reduced-motion reflow, zoom, and exact-session continuatio
 with no renderer errors. Full repository verification is outside this page-only
 change. Local canonical integration preserves the previously installed features
 and has separate package/runtime proof; it is not the focused PR head.
+
+The canonical integration additionally revealed that the workspace wrapper must
+carry the flex height through to the existing paged canvas. The wrapper now
+retains that remaining-height contract, and a scoped 16px grid gap survives the
+fit stylesheet. The acceptance check reaches usage and continuation widgets
+through their actual pager when present. Compact add-shortcut labels retain an
+accessible name even when a height-constrained layout hides their visual text.

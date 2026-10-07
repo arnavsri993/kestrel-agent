@@ -60,6 +60,17 @@ async function assertFocused(page, selector, message) {
 	assert(await page.locator(selector).evaluate((node) => node === document.activeElement), message);
 }
 
+async function revealPagedItem(page, item) {
+ for (let index = 0; index < 12 && !(await item.count()); index++) {
+  const next = page.getByRole("button", { name: "Next widget page", exact: true });
+  if (!(await next.count()) || await next.isDisabled()) break;
+  const before = await page.locator(".kestrel-widget-canvas").getAttribute("data-current-page");
+  await next.click();
+  await page.waitForFunction((value) => document.querySelector(".kestrel-widget-canvas")?.getAttribute("data-current-page") !== value, before);
+ }
+ await item.waitFor();
+}
+
 try {
  application = await electron.launch({ executablePath: executable || require("electron"), args: executable ? ["--use-mock-keychain"] : [resolve("apps/desktop")], env: { ...process.env, KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1", KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_REAL_USER_PROFILE: "1" } });
  const page = await application.firstWindow();
@@ -122,8 +133,11 @@ try {
 	 await assertFocused(page, ".kestrel-widget-customize", "Arrange widgets must focus Done");
 	 await done.press("Enter");
 	 await assertFocused(page, ".home-personalize summary", "Done must restore focus to Customize New Tab");
+ await revealPagedItem(page, page.locator('[data-kestrel-widget-id="route-usage"]'));
  await page.locator('[data-kestrel-widget-id="route-usage"]').getByRole("heading", { name: "Codex usage", exact: true }).waitFor();
  await page.locator('[data-kestrel-widget-id="route-usage"]').getByText("No Codex accounts are configured yet.", { exact: true }).waitFor();
+ const firstWidgetPage = page.getByRole("button", { name: /^Show widget page 1 of / });
+ if (await firstWidgetPage.count()) await firstWidgetPage.click();
  const gap = await page.locator(".kestrel-widget-shelves").evaluate((node) => parseFloat(getComputedStyle(node).gap));
  assert(gap >= 16, "Widgets must be separated");
  const download = await page.locator(".browser-download-trigger").evaluate((button) => {
@@ -170,7 +184,7 @@ try {
  }, title);
  await page.reload();
  const continuation = page.locator('[data-kestrel-widget-id="recent-work"] button').filter({ hasText: title });
- await continuation.waitFor();
+ await revealPagedItem(page, continuation);
  const before = await page.evaluate(async () => (await window.kestrel.request({ type: "runtime-list-sessions" })).sessions.map(item => item.id));
  await continuation.click();
  await page.locator(".kestrel-sidebar-list-item[aria-current='page']").filter({ hasText: title }).waitFor();

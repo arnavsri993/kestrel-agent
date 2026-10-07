@@ -725,11 +725,12 @@
 
 /* Section chrome describes actual local content and offers the existing edit flow. */
 .home-continuity {
- width: 100%; min-width: 0; margin-top: 16px;
+ display: flex; flex-direction: column; flex: 1 1 0;
+ width: 100%; min-width: 0; min-height: 0; margin-top: 16px;
 }
 .home-continuity-heading {
  display: flex; align-items: center; justify-content: space-between;
- gap: 12px; margin-bottom: 14px;
+ flex: 0 0 auto; gap: 12px; margin-bottom: 14px;
 }
 .home-continuity-heading h2 {
  margin: 0; font: 600 16px/24px var(--display); letter-spacing: -0.015em;
@@ -756,3 +757,8 @@
 @media (max-height: 720px) and (min-width: 681px) {
  .kestrel-home-content { padding-top: 68px; padding-bottom: 32px; }
 }
+
+/* Keep the remaining-height canvas intact when Home uses paged widgets. */
+.new-tab-page.kestrel-home .home-continuity .kestrel-widget-canvas .kestrel-widget-shelves { gap: 16px; }
+
+.home-shortcut-page .home-add-shortcut .home-site-label { white-space: normal; text-overflow: clip; line-height: 1.3; }

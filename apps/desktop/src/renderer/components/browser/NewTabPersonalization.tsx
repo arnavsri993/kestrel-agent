@@ -58,7 +58,7 @@ export function NewTabPersonalization({ frequent, showFrequent = true, shortcuts
     </button>
     {link.pinned && <button type="button" className="home-shortcut-remove" aria-label={`Remove ${link.title} shortcut`} disabled={saving} onClick={() => void save({ newTabShortcuts: shortcuts.filter((item) => item.url !== link.url) })}><Icon name="close" /></button>}
    </div>)}
-   {shortcuts.length < 12 && <div className="home-site-shortcut"><button type="button" onClick={() => setAdding((value) => !value)} aria-expanded={adding}><span className="home-site-glyph"><Icon name="plus" /></span><span className="home-site-label">Add shortcut</span></button></div>}
+   {shortcuts.length < 12 && <div className="home-site-shortcut"><button type="button" className="home-add-shortcut" aria-label="Add shortcut" title="Add shortcut" onClick={() => setAdding((value) => !value)} aria-expanded={adding}><span className="home-site-glyph"><Icon name="plus" /></span><span className="home-site-label">Add shortcut</span></button></div>}
   </nav>
   {adding && <form className="home-shortcut-form" onSubmit={async (event) => {
    event.preventDefault();
