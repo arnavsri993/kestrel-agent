@@ -79,6 +79,32 @@ describe("agent work overview model", () => {
 		expect(itemsIn(groups, "working")).toHaveLength(0);
 	});
 
+	it("falls back to terminal and attention session status when no run exists", () => {
+		const groups = overview([
+			session("waiting", "Waiting agent", { status: "waiting" }),
+			session("failed", "Failed agent", { status: "failed" }),
+			session("completed", "Completed agent", { status: "completed" }),
+			session("cancelled", "Cancelled agent", { status: "cancelled" }),
+		]);
+
+		expect(itemsIn(groups, "needs-attention")).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ id: "waiting", statusLabel: "Needs input" }),
+				expect.objectContaining({ id: "failed", statusLabel: "Needs recovery" }),
+			]),
+		);
+		expect(itemsIn(groups, "finished")).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					id: "completed",
+					statusLabel: "Session finished",
+				}),
+				expect.objectContaining({ id: "cancelled", statusLabel: "Cancelled" }),
+			]),
+		);
+		expect(JSON.stringify(groups).toLocaleLowerCase()).not.toContain("verified");
+	});
+
 	it("treats an active session's latest completed run as finished only", () => {
 		const groups = overview(
 			[session("root", "Coordinator", { status: "active" })],
@@ -117,12 +143,56 @@ describe("agent work overview model", () => {
 		});
 	});
 
+	it("lets a no-run child session raise its owner and keeps child ownership", () => {
+		const sessions = [
+			session("root", "Coordinator", { status: "completed" }),
+			session("waiting-child", "Waiting research", {
+				kind: "subagent",
+				parentSessionId: "root",
+				status: "waiting",
+			}),
+			session("failed-child", "Failed review", {
+				kind: "subagent",
+				parentSessionId: "root",
+				status: "failed",
+				updatedAt: "2026-10-08T17:30:00.000Z",
+			}),
+		];
+		const groups = overview(sessions);
+		const owner = itemsIn(groups, "needs-attention")[0]!;
+		expect(owner).toMatchObject({
+			id: "root",
+			statusLabel: "Delegated work: needs recovery",
+			delegatedCount: 2,
+		});
+		expect(owner.children).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					id: "waiting-child",
+					statusLabel: "Needs input",
+				}),
+				expect.objectContaining({
+					id: "failed-child",
+					statusLabel: "Needs recovery",
+				}),
+			]),
+		);
+	});
+
 	it("reports loading, unavailable, and cached stale status honestly", () => {
-		const sessions = [session("cached", "Cached"), session("unknown", "Unknown")];
+		const sessions = [
+			session("cached", "Cached"),
+			session("unknown", "Unknown", { status: "failed" }),
+		];
 		const loading = overview(sessions, [], "", { runsLoading: true });
-		expect(
-			itemsIn(loading, "ready").map((item) => item.statusLabel),
-		).toEqual(["Checking status", "Checking status"]);
+		expect(itemsIn(loading, "ready")[0]).toMatchObject({
+			id: "cached",
+			statusLabel: "Checking status",
+		});
+		expect(itemsIn(loading, "needs-attention")[0]).toMatchObject({
+			id: "unknown",
+			statusLabel: "Checking status",
+		});
 
 		const unavailable = overview(sessions, [run("cached", "running")], "", {
 			runsError: "offline",
@@ -131,7 +201,7 @@ describe("agent work overview model", () => {
 			statusLabel: "Last known: Working",
 			statusStale: true,
 		});
-		expect(itemsIn(unavailable, "ready")[0]).toMatchObject({
+		expect(itemsIn(unavailable, "needs-attention")[0]).toMatchObject({
 			id: "unknown",
 			statusLabel: "Status unavailable",
 			statusStale: false,

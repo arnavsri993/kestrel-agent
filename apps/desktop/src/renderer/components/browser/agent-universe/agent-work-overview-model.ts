@@ -80,13 +80,46 @@ function latestNode(
 		)[0];
 }
 
-function attentionStatusLabel(run: AgentRun, delegated: boolean): string {
-	const label =
-		run.status === "waiting_approval"
+function latestAttentionNode(
+	nodes: readonly AgentNodeProjection[],
+): AgentNodeProjection | undefined {
+	return nodes
+		.filter((node) =>
+			node.latestRun
+				? ATTENTION_RUN_STATUSES.has(node.latestRun.status)
+				: node.status === "waiting" || node.status === "failed",
+		)
+		.sort((left, right) => {
+			const leftUpdatedAt = left.latestRun?.updatedAt ?? left.updatedAt;
+			const rightUpdatedAt = right.latestRun?.updatedAt ?? right.updatedAt;
+			return (
+				timestampValue(rightUpdatedAt) - timestampValue(leftUpdatedAt) ||
+				left.id.localeCompare(right.id)
+			);
+		})[0];
+}
+
+function sessionFallbackStatusLabel(node: AgentNodeProjection): string {
+	return {
+		active: "Ready",
+		waiting: "Needs input",
+		completed: "Session finished",
+		cancelled: "Cancelled",
+		failed: "Needs recovery",
+	}[node.status];
+}
+
+function attentionStatusLabel(
+	node: AgentNodeProjection,
+	delegated: boolean,
+): string {
+	const label = node.latestRun
+		? node.latestRun.status === "waiting_approval"
 			? "Needs approval"
-			: run.status === "waiting_input"
+			: node.latestRun.status === "waiting_input"
 				? "Waiting for input"
-				: "Run failed";
+				: "Run failed"
+		: sessionFallbackStatusLabel(node);
 	return delegated ? `Delegated work: ${label.toLocaleLowerCase()}` : label;
 }
 
@@ -126,16 +159,14 @@ function classifySystem(
 	const root =
 		system.nodes.find((node) => node.id === system.rootNodeId) ??
 		system.nodes[0];
-	const attention = latestNode(system.nodes, (run) =>
-		ATTENTION_RUN_STATUSES.has(run.status),
-	);
-	if (attention?.latestRun) {
+	const attention = latestAttentionNode(system.nodes);
+	if (attention) {
 		const status = availabilityLabel(
 			attentionStatusLabel(
-				attention.latestRun,
+				attention,
 				attention.id !== system.rootNodeId,
 			),
-			true,
+			Boolean(attention.latestRun),
 			options,
 		);
 		return {
@@ -164,13 +195,15 @@ function classifySystem(
 		};
 	}
 
-	if (
-		root?.latestRun?.status === "completed" ||
-		root?.latestRun?.status === "cancelled"
-	) {
+	const rootIsFinished = root?.latestRun
+		? root.latestRun.status === "completed" || root.latestRun.status === "cancelled"
+		: root?.status === "completed" || root?.status === "cancelled";
+	if (root && rootIsFinished) {
 		const status = availabilityLabel(
-			runStatusLabel(root.latestRun),
-			true,
+			root.latestRun
+				? runStatusLabel(root.latestRun)
+				: sessionFallbackStatusLabel(root),
+			Boolean(root.latestRun),
 			options,
 		);
 		return {
@@ -192,7 +225,9 @@ function childStatus(
 	node: AgentNodeProjection,
 	options: AgentWorkOverviewOptions,
 ): { label: string; stale: boolean } {
-	const label = node.latestRun ? runStatusLabel(node.latestRun) : "Ready";
+	const label = node.latestRun
+		? runStatusLabel(node.latestRun)
+		: sessionFallbackStatusLabel(node);
 	return availabilityLabel(label, Boolean(node.latestRun), options);
 }
 
@@ -203,7 +238,11 @@ function searchableText(
 	return [
 		node?.name ?? system.name,
 		node?.workspaceName ?? system.workspaceName ?? "",
-		node?.latestRun ? runStatusLabel(node.latestRun) : "ready",
+		node?.latestRun
+			? runStatusLabel(node.latestRun)
+			: node
+				? sessionFallbackStatusLabel(node)
+				: "ready",
 	]
 		.join(" ")
 		.toLocaleLowerCase();

@@ -70,3 +70,5 @@
 .agent-work-home .agent-work-search input:focus-visible { outline: none !important; box-shadow: none; }
 .agent-sidebar.is-focused .thread-composer textarea:focus { outline: none !important; box-shadow: none; }
 .agent-sidebar.is-focused .thread-composer:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* An open reusable session is not a live work state; the overview owns that status. */
+.agent-sidebar.is-focused .agent-chat-status { display: none; }
