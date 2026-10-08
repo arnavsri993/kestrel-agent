@@ -89,7 +89,14 @@ body { font-size: var(--type-body); }
 	grid-template-columns: repeat(3, minmax(0, 1fr));
 	gap: 8px;
 }
-.ai-browser-app.unified-ui .routing-mode-grid button { min-height: 44px; padding: 12px; }
+.ai-browser-app.unified-ui .routing-mode-grid button {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	min-height: 44px;
+	padding: 12px;
+}
+.ai-browser-app.unified-ui .routing-mode-grid button strong { min-width: 0; overflow-wrap: normal; }
 .ai-browser-app.unified-ui .routing-mode-grid button strong { font-size: var(--type-body); }
 .ai-browser-app.unified-ui .routing-mode-grid .routing-mode-icon { display: none; }
 .ai-browser-app.unified-ui .provider-account-card {

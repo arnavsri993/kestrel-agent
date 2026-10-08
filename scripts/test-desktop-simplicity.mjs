@@ -230,6 +230,12 @@ try {
 	await settingsPicker.focus();
 	assert.equal(await settingsPicker.evaluate((node) => document.activeElement === node), true);
 	await settingsPicker.selectOption("agent-models");
+	await page.locator(".routing-mode-grid button strong").first().waitFor();
+	const routingLabels = await page.locator(".routing-mode-grid button strong").evaluateAll(labels =>
+		labels.map(label => ({ text: label.textContent, height: label.getBoundingClientRect().height,
+			lineHeight: Number.parseFloat(getComputedStyle(label).lineHeight) })));
+	assert.ok(routingLabels.every(label => label.height <= label.lineHeight * 2 + 1),
+		`Routing labels should fit readable lines: ${JSON.stringify(routingLabels)}`);
 	await capture("agent-wide", "settings-agent", { heading: ".settings-page-frame h1", section: ".settings-panel-header h2", metadata: ".settings-panel-header p", control: ".settings-content select" });
 
 	for (const [width, label] of [[760, "compact"], [520, "narrow"]]) {

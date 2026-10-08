@@ -17,6 +17,18 @@ const testEnvironment = Object.fromEntries(
 );
 let application;
 
+async function resizeKestrel(page, size) {
+	await application.evaluate(({ BrowserWindow }, dimensions) => {
+		const window = BrowserWindow.getAllWindows().find(candidate =>
+			candidate.webContents.getURL().endsWith("/renderer/index.html"));
+		if (!window) throw new Error("Kestrel renderer window is unavailable.");
+		window.setMinimumSize(400, 400);
+		window.setContentSize(dimensions.width, dimensions.height);
+	}, size);
+	await page.waitForFunction(dimensions =>
+		innerWidth === dimensions.width && innerHeight === dimensions.height, size);
+}
+
 try {
 	application = await electron.launch({
 		args: [
@@ -423,7 +435,7 @@ try {
 		],
 	);
 
-	await page.setViewportSize({ width: 640, height: 760 });
+	await resizeKestrel(page, { width: 640, height: 760 });
 	const overflow = await page.evaluate(
 		() =>
 			document.documentElement.scrollWidth >
@@ -459,7 +471,7 @@ try {
 	await page
 		.getByRole("button", { name: "Model setup, current step" })
 		.waitFor();
-	await page.setViewportSize({ width: 1320, height: 860 });
+	await resizeKestrel(page, { width: 1320, height: 860 });
 	const doThisLater = page.getByRole("button", { name: "Do this later" });
 	if ((await doThisLater.count()) > 0) {
 		await doThisLater.click();
@@ -609,8 +621,13 @@ try {
 		await page.getByLabel("Message Kestrel").inputValue(),
 		preservedDraft,
 	);
+	assert.equal(await page.getByLabel("Message Kestrel").isVisible(), false);
+	await page.locator("#browser-agent-toggle").click();
+	await page.getByLabel("Message Kestrel").waitFor({ state: "visible" });
+	assert.equal(await page.getByLabel("Message Kestrel").inputValue(), preservedDraft);
 	await page.getByLabel("Message Kestrel").fill("");
-	await page.setViewportSize({ width: 640, height: 760 });
+	await page.locator("#browser-agent-toggle").click();
+	await resizeKestrel(page, { width: 640, height: 760 });
 	await page.locator(".kestrel-sidebar").waitFor({ state: "visible" });
 	assert.equal(
 		await page.locator(".kestrel-sidebar-brand span").evaluate(
@@ -631,9 +648,11 @@ try {
 	await page.getByLabel("Search Kestrel").waitFor();
 	const compactCommandCenter = page.locator(".command-center");
 	await compactCommandCenter.evaluate(async (element) => {
+		const animations = element.getAnimations({ subtree: true });
+		for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement)
+			animations.push(...ancestor.getAnimations());
 		await Promise.all(
-			element
-				.getAnimations({ subtree: true })
+			animations
 				.map((animation) => animation.finished.catch(() => undefined)),
 		);
 	});
@@ -646,7 +665,7 @@ try {
 				scrollable: element.scrollHeight >= element.clientHeight,
 			};
 		});
-	assert.ok(compactCommands.bottom <= compactCommands.viewport);
+	assert.ok(compactCommands.bottom <= compactCommands.viewport, JSON.stringify(compactCommands));
 	assert.equal(compactCommands.scrollable, true);
 	// Keep the compact destination in view, as for Settings below. Nested
 	// scroll restoration can otherwise move it beneath the browser viewport.
@@ -672,7 +691,7 @@ try {
 		.click();
 	await page.locator(".command-center").waitFor({ state: "detached" });
 	assert.equal(await page.locator(".command-center").count(), 0);
-	await page.setViewportSize({ width: 1320, height: 860 });
+	await resizeKestrel(page, { width: 1320, height: 860 });
 	await page.getByRole("heading", { name: "Settings" }).waitFor();
 	assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
 	assert.equal(await page.locator(".page-header > p").count(), 0);
@@ -754,15 +773,20 @@ try {
 		localStorage.setItem("kestrel:first-task", "yes");
 	});
 	await page.reload();
+	if (!(await page.locator("#runtime-prompt").isVisible()))
+		await page.locator("#browser-agent-toggle").click();
 	await page.locator("#runtime-prompt").waitFor();
-	await page
-		.getByText(/just finished Kestrel setup/i)
-		.first()
-		.waitFor({ timeout: 10_000 });
+	// The fixture has no live provider. Verify the persisted handoff rather than
+	// mistaking a matching sidebar title for successful model execution.
+	await page.waitForFunction(async () => {
+		const response = await window.kestrel.request({ type: "runtime-list-sessions" });
+		return response.ok && response.sessions?.some(session =>
+			session.title.startsWith("I just finished Kestrel setup."));
+	});
 	assert.equal(
 		await page.getByLabel("Message Kestrel").inputValue(),
 		"",
-		"First-task onboarding should auto-send and clear the composer.",
+		"First-task onboarding should hand off the task and clear the composer.",
 	);
 	assert.equal(
 		await page.evaluate(() => localStorage.getItem("kestrel:first-task")),
@@ -770,7 +794,7 @@ try {
 	);
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Five-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, guided first-task auto-send, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n",
+		"Five-step desktop setup persistence, simulated local setup, setup-assistant handoff, persisted first-task handoff, OAuth entries, compact reflow, completion, and Settings re-entry passed. Live provider execution was not tested.\n",
 	);
 } finally {
 	await application?.close();
