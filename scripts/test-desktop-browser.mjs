@@ -1983,7 +1983,8 @@ try {
 		if (!window) throw new Error("The Kestrel window is unavailable.");
 		return window.getSize();
 	});
-	const narrowBookmarksWindowWidth = 1200;
+	// Utility pages now use the full workspace, without a default chat rail.
+	const narrowBookmarksWindowWidth = 760;
 	if (bookmarksWindowSize[0] !== narrowBookmarksWindowWidth) {
 		await application.evaluate(
 			({ BrowserWindow }, [width, height]) => {
@@ -1993,6 +1994,7 @@ try {
 						!candidate.webContents.getURL().includes("petOverlay=1"),
 				);
 				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setMinimumSize(640, 400);
 				window.setSize(width, height);
 			},
 			[narrowBookmarksWindowWidth, bookmarksWindowSize[1]],
@@ -2075,6 +2077,8 @@ try {
 	assert(tabId);
 	let runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
 	await page.getByRole("button", { name: "Open Agent tab" }).click();
+	await page.getByRole("button", { name: "Back to agents", exact: true }).click();
+	await page.getByRole("button", { name: "Map view", exact: true }).click();
 	await page
 		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
@@ -2093,6 +2097,7 @@ try {
 		.getByRole("combobox", { name: "Planet for Visible browser test", exact: true })
 		.waitFor();
 	await openKestrelDestination(page, "Agent");
+	await page.getByRole("button", { name: "Map view", exact: true }).click();
 	await page
 		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
@@ -2976,7 +2981,7 @@ try {
 	await page.getByLabel("Tab sizing", { exact: true }).selectOption("shrinking");
 	await selectSettingsSection(page, "browser-privacy", "Privacy & permissions");
 	const useCurrentPage = page.getByRole("switch", {
-		name: "Use current page context with agent",
+		name: "Share the current page with agents",
 	});
 	if ((await useCurrentPage.getAttribute("aria-checked")) === "true")
 		await useCurrentPage.click();

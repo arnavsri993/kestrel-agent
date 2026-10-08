@@ -404,26 +404,20 @@ export function ProviderAccountsSettings() {
 		<article className="setting-row provider-accounts-setting">
 			<div className="provider-accounts-content">
 				<header className="provider-accounts-heading">
-					<div>
-						<strong>Provider accounts</strong>
-						<p>
-							Each account has its own protected credential or profile, model catalog,
-							and routing endpoint.
-						</p>
-					</div>
+					<strong>Accounts</strong>
 					<button
 						type="button"
 						className="button secondary"
 						disabled={Boolean(busy)}
 						onClick={() => void refreshModels()}
 					>
-						{busy === "refresh:all" ? "Refreshing…" : "Refresh all models"}
+						{busy === "refresh:all" ? "Refreshing…" : "Refresh all"}
 					</button>
 				</header>
 
 				{accountGroups.length === 0 ? (
 					<p className="provider-account-empty">
-						Add a provider account to discover models available to it.
+						No accounts yet. Add one to see its available models.
 					</p>
 				) : (
 					<div className="provider-account-groups">
@@ -580,21 +574,22 @@ export function ProviderAccountsSettings() {
 					</div>
 				)}
 
-				<aside className="provider-account-unsupported" aria-label="Unsupported subscription connectors">
-					<strong>Unsupported subscription connectors</strong>
+				<details className="provider-account-unsupported">
+					<summary>Other sign-in options</summary>
 					<p>
 						Cursor is available in Existing vendor subscriptions through its official
 						CLI sign-in. Google AI subscription profiles do not yet have a tested,
 						account-isolated Kestrel transport. Kestrel never imports browser cookies
 						or copied login state.
 					</p>
-				</aside>
+				</details>
 
-				<form className="provider-account-add" onSubmit={(event) => void addAccount(event)}>
-					<header>
-						<strong>Add account</strong>
-						<small>Credentials are saved only in Kestrel's protected native storage.</small>
-					</header>
+				<details className="provider-account-add">
+					<summary>Add account</summary>
+					<form onSubmit={(event) => void addAccount(event)}>
+						<p className="provider-account-kind-description">
+							Credentials are saved in Kestrel's protected native storage.
+						</p>
 					<div className="provider-account-add-grid">
 						<label>
 							Connection type
@@ -684,10 +679,11 @@ export function ProviderAccountsSettings() {
 							Loopback runtime detected: Kestrel will use this local endpoint without an API key.
 						</p>
 					) : null}
-					<button type="submit" className="button primary" disabled={Boolean(busy)}>
-						{busy === "add" ? "Adding…" : "Add account"}
-					</button>
-				</form>
+						<button type="submit" className="button primary" disabled={Boolean(busy)}>
+							{busy === "add" ? "Adding…" : "Add account"}
+						</button>
+					</form>
+				</details>
 				{error ? <small className="provider-account-global-error" role="alert">{error}</small> : null}
 			</div>
 		</article>

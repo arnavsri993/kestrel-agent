@@ -8376,8 +8376,8 @@ function RoutingPolicySettings() {
 		return (
 			<article className="setting-row">
 				<div>
-					<strong>How Kestrel chooses models</strong>
-					<p>Loading the encrypted routing policy…</p>
+					<strong>Model preference</strong>
+					<p>Loading…</p>
 					{error && <small role="alert">{error}</small>}
 				</div>
 			</article>
@@ -8398,11 +8398,7 @@ function RoutingPolicySettings() {
 	return (
 		<article className="setting-row routing-policy-setting">
 			<div>
-				<strong>How Kestrel chooses models</strong>
-				<p>
-					Choose an outcome. Kestrel still selects the model, provider,
-					reasoning, and review for each task.
-				</p>
+				<strong>Model preference</strong>
 				<div
 					className="routing-mode-grid"
 					role="radiogroup"
@@ -8416,6 +8412,7 @@ function RoutingPolicySettings() {
 							aria-checked={policy.mode === option.id}
 							className={policy.mode === option.id ? "selected" : ""}
 							disabled={busy}
+							title={option.description}
 							onClick={() =>
 								void save({
 									...policy,
@@ -8431,7 +8428,7 @@ function RoutingPolicySettings() {
 								<Icon name={option.icon} />
 							</span>
 							<strong>{option.label}</strong>
-							<span>{option.description}</span>
+							<span className="sr-only">{option.description}</span>
 						</button>
 					))}
 				</div>
@@ -9661,7 +9658,7 @@ function Settings({
 					</button>
 				</div>
 				<label className="settings-section-picker">
-					<span>{scopeLabel} settings section</span>
+					<span>Section</span>
 					<select
 						aria-label={`${scopeLabel} settings section`}
 						value={section}
@@ -9689,7 +9686,7 @@ function Settings({
 							ref={settingsSearchRef}
 							value={settingsQuery}
 							onChange={(event) => setSettingsQuery(event.target.value)}
-							placeholder="Search Browser and Agent settings"
+							placeholder="Search settings"
 							aria-label="Search Browser and Agent settings"
 							aria-controls="settings-search-results"
 						/>
@@ -9873,7 +9870,7 @@ function Settings({
 						aria-labelledby="settings-models-title"
 					>
 						<header className="settings-panel-header">
-							<h2 id="settings-models-title">Routing and providers</h2>
+							<h2 id="settings-models-title">Models</h2>
 
 						</header>
 					<section
@@ -9914,8 +9911,11 @@ function Settings({
 									</div>
 									</article>
 							</details>
-						<ProviderVerificationSettings />
 						<ProviderAccountsSettings />
+						<details className="settings-provider-checks">
+							<summary>Check account access</summary>
+							<ProviderVerificationSettings />
+						</details>
 						<UsagePolicySettings />
 					</section>
 					</section>
@@ -10245,8 +10245,16 @@ export function App() {
 		() => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
 	);
 	const [agentUniverseRailOpen, setAgentUniverseRailOpen] = useState(
-		() => localStorage.getItem("kestrel:agent-universe-rail") === "open",
+		false,
 	);
+	const [pageAgentSidebarOpen, setPageAgentSidebarOpen] = useState<KestrelAppPageId | null>(null);
+	const [compactWindow, setCompactWindow] = useState(() => window.innerWidth <= 760);
+	useEffect(() => {
+		const media = window.matchMedia("(max-width: 760px)");
+		const update = () => setCompactWindow(media.matches);
+		media.addEventListener("change", update);
+		return () => media.removeEventListener("change", update);
+	}, []);
 	const [settingsSectionRequest, setSettingsSectionRequest] = useState<{
 		section: SettingsSection | null;
 		requestId: number;
@@ -10476,17 +10484,31 @@ export function App() {
 		else localStorage.removeItem("kestrel:active-project-id");
 		localStorage.removeItem("kestrel:active-project");
 	}, []);
+	const openFocusedAgent = useCallback(async () => {
+		setAgentUniverseRailOpen(true);
+		const existing = browser.state?.tabs.find((tab) => parseKestrelAppPage(tab.url)?.id === "agent");
+		if (existing) await browser.selectTab(existing.id);
+		else await browser.createTab(kestrelAppPageUrl("agent"));
+		window.requestAnimationFrame(() => document.getElementById("runtime-prompt")?.focus());
+	}, [browser]);
 	const revealAgentSidebar = useCallback(() => {
 		setAgentSidebarOpen(true);
 		localStorage.setItem("kestrel:agent-sidebar", "open");
 		const activeTab = browser.state?.tabs.find(
 			(tab) => tab.id === browser.state?.activeTabId,
 		);
-		if (parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent") {
+		const toolPage = parseKestrelAppPage(activeTab?.url ?? "")?.id;
+		if (compactWindow && toolPage !== "agent") {
+			void openFocusedAgent();
+			return;
+		}
+		if (toolPage === "agent") {
 			setAgentUniverseRailOpen(true);
 			localStorage.setItem("kestrel:agent-universe-rail", "open");
+		} else if (toolPage) {
+			setPageAgentSidebarOpen(toolPage);
 		}
-	}, [browser]);
+	}, [browser, compactWindow, openFocusedAgent]);
 	const acceptExternalIntake = useCallback(
 		(intake: ExternalIntake) => {
 			setExternalIntake(intake);
@@ -10672,16 +10694,16 @@ export function App() {
 			if (project.available === false) return;
 			selectProject(project.id);
 			startNewAgent("", project.path, "prompt", project.id);
-			void openAppPage("agent");
+			if (!compactWindow) void openFocusedAgent();
 		},
-		[openAppPage, selectProject, startNewAgent],
+		[compactWindow, openFocusedAgent, selectProject, startNewAgent],
 	);
 	const openProjectSession = useCallback(
 		(sessionId: string) => {
 			openSidebarSession(sessionId);
-			void openAppPage("agent");
+			if (!compactWindow) void openFocusedAgent();
 		},
-		[openAppPage, openSidebarSession],
+		[compactWindow, openFocusedAgent, openSidebarSession],
 	);
 	const createProject = useCallback(async () => {
 		try {
@@ -10825,7 +10847,12 @@ export function App() {
 		const activeTab = browser.state?.tabs.find(
 			(tab) => tab.id === browser.state?.activeTabId,
 		);
-		const onAgentUniverse = parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent";
+		const toolPage = parseKestrelAppPage(activeTab?.url ?? "")?.id;
+		const onAgentUniverse = toolPage === "agent";
+		if (!onAgentUniverse && window.innerWidth <= 760) {
+			void openFocusedAgent();
+			return;
+		}
 		if (onAgentUniverse) {
 			setAgentUniverseRailOpen((current) => {
 				const next = !current;
@@ -10837,6 +10864,16 @@ export function App() {
 					document
 						.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
 						?.focus();
+				});
+				return next;
+			});
+			return;
+		}
+		if (toolPage) {
+			setPageAgentSidebarOpen((current) => {
+				const next = current === toolPage ? null : toolPage;
+				window.requestAnimationFrame(() => {
+					document.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")?.focus();
 				});
 				return next;
 			});
@@ -10855,11 +10892,12 @@ export function App() {
 			});
 			return next;
 		});
-	}, [browser]);
+	}, [browser, openFocusedAgent]);
 	const openBrowser = useCallback(() => {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
 	const openAgent = useCallback(() => {
+		setAgentUniverseRailOpen(false);
 		void openAppPage("agent");
 	}, [openAppPage]);
 	const openWritingStudio = useCallback(() => {
@@ -11223,7 +11261,16 @@ export function App() {
 		(project) => project.id === projectSettingsProjectId,
 	);
 	const presentedAgentSidebarOpen =
-		appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen;
+		appPageId === "agent" ? agentUniverseRailOpen : compactWindow ? false : appPageId ? pageAgentSidebarOpen === appPageId : agentSidebarOpen;
+	const agentWorkFocused = appPageId === "agent" && agentUniverseRailOpen;
+	const backToAgents = () => {
+		setAgentUniverseRailOpen(false);
+		window.requestAnimationFrame(() => {
+			const row = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-agent-session-id]"))
+				.find(item => item.dataset.agentSessionId === activeRuntimeSessionId);
+			(row ?? document.getElementById("agent-workspace-title"))?.focus();
+		});
+	};
 	const appPage = appPageId ? (
 		<motion.div
 			key={appPageId}
@@ -11247,6 +11294,8 @@ export function App() {
 					: ""
 			}${appPageId === "memory" ? " life-product-surface" : ""}`}
 			data-app-page={appPageId}
+			hidden={agentWorkFocused}
+			inert={agentWorkFocused}
 			initial={reduced ? false : { opacity: 0, y: 3 }}
 			animate={{ opacity: 1, y: 0, pointerEvents: "auto" }}
 			exit={
@@ -11401,6 +11450,7 @@ export function App() {
 			onNewTask={() => startNewAgent()}
 			onOpenBrowser={openBrowser}
 			onOpenAgent={openAgent}
+			onOpenProjects={() => void openAppPage("projects")}
 			onOpenConnections={() => navigate("connections")}
 			onOpenMemory={() => {
 				const session = runtimeSessions.find(item => item.id === activeRuntimeSessionId);
@@ -11420,7 +11470,7 @@ export function App() {
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${presentedAgentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${presentedAgentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""}${agentWorkFocused ? " agent-work-focused" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
@@ -11500,7 +11550,9 @@ export function App() {
 					collapsed={!presentedAgentSidebarOpen}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
-					onExpandChat={openAgent}
+					onExpandChat={() => { setAgentUniverseRailOpen(true); void openAppPage("agent"); }}
+					focused={agentWorkFocused}
+					onBackToAgents={backToAgents}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so
             streams, steering, cancellation, and approval boundaries remain intact. */}

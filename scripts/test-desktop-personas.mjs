@@ -330,7 +330,7 @@ async function runReturningPersona() {
 	for (const [label, heading] of [
 		["General", "Autonomy and behavior"],
 		["Connections", "Accounts and access"],
-		["Models", "Routing and providers"],
+		["Models", "Models"],
 		["Memory", "Memory and learning"],
 		["Plugins", "Plugins and publishers"],
 		["Privacy", "Permissions and sandbox"],

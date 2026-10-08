@@ -736,8 +736,8 @@ export function BrowserSettings({
             id="setting-browser-homepage"
           >
             <div className="browser-setting-copy">
-              <strong>Homepage URL</strong>
-              <p>Leave blank for New Tab.</p>
+              <strong>Homepage</strong>
+              <p>Leave blank to use New Tab.</p>
             </div>
             <div className="browser-inline-control">
               <input
@@ -762,7 +762,7 @@ export function BrowserSettings({
             id="setting-browser-startup-pages"
           >
             <div className="browser-setting-copy">
-              <strong>Specific startup pages</strong>
+              <strong>Startup pages</strong>
 
             </div>
             <div className="browser-startup-pages-control">
@@ -927,7 +927,7 @@ export function BrowserSettings({
           >
             <header className="settings-panel-header">
               <h2>
-                <Icon name="browser" /> Tabs and appearance
+                <Icon name="browser" /> Tabs and pages
               </h2>
             </header>
             <div
@@ -1029,11 +1029,11 @@ export function BrowserSettings({
         >
           <header className="settings-panel-header">
             <h2>
-              <Icon name="search" /> Search and address bar
+              <Icon name="search" /> Search and suggestions
             </h2>
             <p>
-              Address-bar suggestions are local to this profile; typed text is
-              not sent anywhere for suggestions.
+              Suggestions stay on this Mac. Typed text is not sent anywhere for
+              suggestions.
             </p>
           </header>
           <div
@@ -1141,14 +1141,14 @@ export function BrowserSettings({
             <div
               className="browser-setting-copy"
             >
-              <strong>Use current page context with agent</strong>
-              <p>Kestrel uses the page only when you ask.</p>
+              <strong>Share the current page with agents</strong>
+              <p>Agents use page content only when you ask.</p>
             </div>
             <button
               type="button"
               className={`switch ${contextEnabled ? "on" : ""}`}
               role="switch"
-              aria-label="Use current page context with agent"
+              aria-label="Share the current page with agents"
               aria-checked={contextEnabled}
               onClick={onToggleContext}
             >
@@ -1240,14 +1240,14 @@ export function BrowserSettings({
             id="setting-browser-password-autofill"
           >
             <div className="browser-setting-copy">
-              <strong>Password autofill and save prompts</strong>
-              <p>Fill saved logins on matching HTTPS sites and remember new logins after sign-in.</p>
+              <strong>Password autofill</strong>
+              <p>Fill saved logins on matching HTTPS sites and offer to save new ones.</p>
             </div>
             <button
               type="button"
               className={`switch ${settings.passwordAutofillEnabled ? "on" : ""}`}
               role="switch"
-              aria-label="Password autofill and save prompts"
+              aria-label="Password autofill"
               aria-checked={settings.passwordAutofillEnabled}
               onClick={() =>
                 void persist({
@@ -1294,12 +1294,9 @@ export function BrowserSettings({
         >
           <header className="settings-panel-header">
             <h2>
-              <Icon name="sparkles" /> Performance and memory saver
+              <Icon name="sparkles" /> Performance
             </h2>
-            <p>
-              Sleeping tabs discard inactive page views while keeping the tab
-              record and URL.
-            </p>
+            <p>Sleeping tabs free memory without closing your tabs.</p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1355,13 +1352,13 @@ export function BrowserSettings({
                 id="setting-browser-memory-saver"
               >
                 <div className="browser-setting-copy">
-                  <strong>Memory Saver mode</strong>
+                  <strong>Save more memory</strong>
                 </div>
                 <button
                   type="button"
                   className={`switch ${(settings.memorySaverMode ?? true) ? "on" : ""}`}
                   role="switch"
-                  aria-label="Memory Saver mode"
+                  aria-label="Save more memory"
                   aria-checked={settings.memorySaverMode ?? true}
                   onClick={() =>
                     void persist({
@@ -1374,7 +1371,7 @@ export function BrowserSettings({
               </div>
               <div className="setting-row browser-setting-row">
                 <div className="browser-setting-copy">
-                  <strong>Manual tab hibernation</strong>
+                  <strong>Sleep inactive tabs now</strong>
                 </div>
                 <button
                   type="button"
@@ -1387,7 +1384,7 @@ export function BrowserSettings({
               </div>
               <div className="excluded-domains-setting">
                 <div className="browser-setting-copy">
-                  <strong>Never put tabs to sleep on these sites</strong>
+                  <strong>Always keep these sites active</strong>
                 </div>
                 <div className="excluded-domain-input-group">
                   <input
@@ -1517,7 +1514,7 @@ export function BrowserSettings({
         >
           <header className="settings-panel-header">
             <h2>
-              <Icon name="writing" /> Languages and accessibility
+              <Icon name="writing" /> Language and text
             </h2>
           </header>
           <div
@@ -1564,7 +1561,6 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Default font</strong>
-              <p>Used when a page doesn't choose its own font.</p>
             </div>
             <select
               aria-label="Default font"
@@ -1583,7 +1579,6 @@ export function BrowserSettings({
           <div className="setting-row browser-setting-row">
             <div className="browser-setting-copy">
               <strong>Minimum text size</strong>
-              <p>Default keeps the page's size.</p>
             </div>
             <select
               aria-label="Minimum text size"
@@ -1613,12 +1608,9 @@ export function BrowserSettings({
         >
           <header className="settings-panel-header">
             <h2>
-              <Icon name="extensions" /> Web extensions and add-ons
+              <Icon name="extensions" /> Extensions
             </h2>
-            <p>
-              Only verified store packages or explicitly enabled development
-              packages are loaded.
-            </p>
+            <p>Only verified store packages and enabled development packages can load.</p>
           </header>
           {extensionMessage && (
             <div
@@ -1677,11 +1669,10 @@ export function BrowserSettings({
             Review extension access before installing. Some Chrome APIs are unsupported.
           </p>
           <div className="installed-extensions-section">
-            <h4>Installed extensions ({extensions.length})</h4>
+            <h4>Installed ({extensions.length})</h4>
             {extensions.length === 0 ? (
               <div className="empty-extensions-state">
                 <p>No browser extensions installed yet.</p>
-                <small>Install from the Chrome Web Store above.</small>
               </div>
             ) : (
               <div className="extensions-grid">
@@ -1831,7 +1822,7 @@ export function BrowserSettings({
         >
           <header className="settings-panel-header">
             <h2>
-              <Icon name="system" /> System integration
+              <Icon name="system" /> System
             </h2>
           </header>
           <div
@@ -1897,7 +1888,7 @@ export function BrowserSettings({
         >
           <header className="settings-panel-header">
             <h2>
-              <Icon name="reset" /> Data and reset
+              <Icon name="reset" /> Browser data
             </h2>
           </header>
           <div
@@ -1905,7 +1896,7 @@ export function BrowserSettings({
             id="setting-browser-data-transfer"
           >
             <div className="browser-setting-copy">
-              <strong>Import and export browser data</strong>
+              <strong>Import or export</strong>
               <small>Passwords, cards, cookies, and active sessions are never included.</small>
             </div>
             <div className="button-row">
@@ -1932,7 +1923,7 @@ export function BrowserSettings({
             id="setting-browser-clear-history"
           >
             <div className="browser-setting-copy">
-              <strong>Clear browsing history</strong>
+              <strong>Browsing history</strong>
               <p>Keeps open tabs.</p>
             </div>
             <button
@@ -1952,7 +1943,7 @@ export function BrowserSettings({
             id="setting-browser-clear-site-data"
           >
             <div className="browser-setting-copy">
-              <strong>Clear cookies and site data</strong>
+              <strong>Cookies and site data</strong>
               <p>Removes cookies, cache, and saved permissions.</p>
             </div>
             <button
@@ -1970,7 +1961,7 @@ export function BrowserSettings({
             id="setting-browser-reset-settings"
           >
             <div className="browser-setting-copy">
-              <strong>Reset browser settings</strong>
+              <strong>Reset settings</strong>
               <p>Keeps history, saved pages, credentials, and extensions.</p>
             </div>
             <div className="button-row">

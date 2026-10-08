@@ -31,10 +31,7 @@ import {
 } from "react";
 import { agentSessionRecency } from "../../agent-workspace";
 import { sessionTitleForDisplay } from "../../chat-title";
-import {
-	KESTREL_CRITICAL_SPRING,
-	KESTREL_STATE_TRANSITION,
-} from "../../motion-contract";
+import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 import { Icon } from "../Icon";
 import type { FrequentBrowserSite, SuggestedAgentAction } from "./new-tab";
 import {
@@ -1054,12 +1051,12 @@ function SizeMenu({
 						className="kestrel-widget-size-popover"
 						role="menu"
 						aria-label={`Change ${definition.title} size`}
-						initial={reducedMotion ? false : { opacity: 0, y: -4, scale: 0.98 }}
-						animate={{ opacity: 1, y: 0, scale: 1 }}
+						initial={reducedMotion ? false : { opacity: 0, y: -4 }}
+						animate={{ opacity: 1, y: 0 }}
 						exit={
 							reducedMotion
-								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
-								: { opacity: 0, y: -4, scale: 0.98, pointerEvents: "none" }
+								? { opacity: 1, y: 0, pointerEvents: "none" }
+								: { opacity: 0, y: -4, pointerEvents: "none" }
 						}
 						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 						onKeyDown={moveWidgetPopoverFocus}
@@ -1137,18 +1134,15 @@ function WidgetCard({
 			layout={!reducedMotion}
 			animate={
 				dragging
-					? { x: dragDelta.x, y: dragDelta.y, scale: reducedMotion ? 1 : 1.015 }
-					: { x: 0, y: 0, scale: 1 }
+					? { x: dragDelta.x, y: dragDelta.y }
+					: { x: 0, y: 0 }
 			}
 			transition={
 				dragging
 					? { duration: 0 }
 					: reducedMotion
 						? { duration: 0 }
-						: {
-								default: KESTREL_CRITICAL_SPRING,
-								layout: KESTREL_CRITICAL_SPRING,
-							}
+						: KESTREL_STATE_TRANSITION
 			}
 			data-kestrel-widget-id={item.id}
 			style={style}
@@ -1160,7 +1154,6 @@ function WidgetCard({
 				</span>
 				<div className="kestrel-widget-card-heading">
 					<h3>{definitionForItem.title}</h3>
-					<p>{definitionForItem.description}</p>
 				</div>
 				{editing && (
 					<div className="kestrel-widget-card-actions">
@@ -1244,18 +1237,17 @@ function AddWidgetMenu({
 						className="kestrel-widget-add-popover"
 						role="dialog"
 						aria-label="Add widget"
-						initial={reducedMotion ? false : { opacity: 0, y: -4, scale: 0.985 }}
-						animate={{ opacity: 1, y: 0, scale: 1 }}
+						initial={reducedMotion ? false : { opacity: 0, y: -4 }}
+						animate={{ opacity: 1, y: 0 }}
 						exit={
 							reducedMotion
-								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
-								: { opacity: 0, y: -4, scale: 0.985, pointerEvents: "none" }
+								? { opacity: 1, y: 0, pointerEvents: "none" }
+								: { opacity: 0, y: -4, pointerEvents: "none" }
 						}
 						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 						onKeyDown={moveWidgetPopoverFocus}
 					>
 						<strong>Widgets</strong>
-						<p>Choose widgets for New Tab.</p>
 						{available.length > 0 ? (
 							<ul>
 								{available.map((definition) => (
@@ -1547,11 +1539,10 @@ export function NewTabWidgets({
 						<Icon name="sparkle" />
 					</span>
 					<div>
-						<strong>Customize New Tab.</strong>
-						<p>Add a widget.</p>
+						<strong>No widgets yet</strong>
 						{!editing && (
 							<button type="button" onClick={() => setEditing(true)}>
-								Customize New Tab
+								Add widgets
 							</button>
 						)}
 					</div>

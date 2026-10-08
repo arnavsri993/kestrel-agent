@@ -1,0 +1,316 @@
+import type { AgentRun } from "@kestrel/shared-types";
+import { agentSessionRecency } from "../../../agent-workspace";
+import type {
+	AgentNodeProjection,
+	AgentSystemProjection,
+	AgentUniverseSnapshot,
+} from "./agent-universe-model";
+
+export type AgentWorkGroupId =
+	| "needs-attention"
+	| "working"
+	| "finished"
+	| "ready";
+
+export interface AgentWorkOverviewChild {
+	id: string;
+	name: string;
+	statusLabel: string;
+	workspaceName: string;
+	recency: string;
+	updatedAt: string;
+	statusStale: boolean;
+}
+
+export interface AgentWorkOverviewItem {
+	id: string;
+	name: string;
+	groupId: AgentWorkGroupId;
+	statusLabel: string;
+	workspaceName: string;
+	recency: string;
+	updatedAt: string;
+	statusStale: boolean;
+	delegatedCount: number;
+	children: AgentWorkOverviewChild[];
+	revealChildren: boolean;
+}
+
+export interface AgentWorkOverviewGroup {
+	id: AgentWorkGroupId;
+	label: string;
+	items: AgentWorkOverviewItem[];
+}
+
+export interface AgentWorkOverviewOptions {
+	runsLoading?: boolean;
+	runsError?: string;
+	now?: number;
+}
+
+const GROUPS: ReadonlyArray<Pick<AgentWorkOverviewGroup, "id" | "label">> = [
+	{ id: "needs-attention", label: "Needs attention" },
+	{ id: "working", label: "Working" },
+	{ id: "finished", label: "Finished" },
+	{ id: "ready", label: "Ready" },
+];
+
+const ATTENTION_RUN_STATUSES = new Set<AgentRun["status"]>([
+	"waiting_approval",
+	"waiting_input",
+	"failed",
+]);
+
+function timestampValue(value: string): number {
+	const parsed = Date.parse(value);
+	return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function latestNode(
+	nodes: readonly AgentNodeProjection[],
+	predicate: (run: AgentRun) => boolean,
+): AgentNodeProjection | undefined {
+	return nodes
+		.filter((node) => node.latestRun && predicate(node.latestRun))
+		.sort(
+			(left, right) =>
+				timestampValue(right.latestRun!.updatedAt) -
+					timestampValue(left.latestRun!.updatedAt) ||
+				left.id.localeCompare(right.id),
+		)[0];
+}
+
+function latestAttentionNode(
+	nodes: readonly AgentNodeProjection[],
+): AgentNodeProjection | undefined {
+	return nodes
+		.filter((node) =>
+			node.latestRun
+				? ATTENTION_RUN_STATUSES.has(node.latestRun.status)
+				: node.status === "waiting" || node.status === "failed",
+		)
+		.sort((left, right) => {
+			const leftUpdatedAt = left.latestRun?.updatedAt ?? left.updatedAt;
+			const rightUpdatedAt = right.latestRun?.updatedAt ?? right.updatedAt;
+			return (
+				timestampValue(rightUpdatedAt) - timestampValue(leftUpdatedAt) ||
+				left.id.localeCompare(right.id)
+			);
+		})[0];
+}
+
+function sessionFallbackStatusLabel(node: AgentNodeProjection): string {
+	return {
+		active: "Ready",
+		waiting: "Needs input",
+		completed: "Session finished",
+		cancelled: "Cancelled",
+		failed: "Needs recovery",
+	}[node.status];
+}
+
+function attentionStatusLabel(
+	node: AgentNodeProjection,
+	delegated: boolean,
+): string {
+	const label = node.latestRun
+		? node.latestRun.status === "waiting_approval"
+			? "Needs approval"
+			: node.latestRun.status === "waiting_input"
+				? "Waiting for input"
+				: "Run failed"
+		: sessionFallbackStatusLabel(node);
+	return delegated ? `Delegated work: ${label.toLocaleLowerCase()}` : label;
+}
+
+function runStatusLabel(run: AgentRun): string {
+	return {
+		running: "Working",
+		waiting_approval: "Needs approval",
+		waiting_input: "Waiting for input",
+		completed: "Run finished",
+		cancelled: "Cancelled",
+		failed: "Run failed",
+	}[run.status];
+}
+
+function availabilityLabel(
+	label: string,
+	hasRun: boolean,
+	options: AgentWorkOverviewOptions,
+): { label: string; stale: boolean } {
+	if (options.runsError) {
+		return hasRun
+			? { label: `Last known: ${label}`, stale: true }
+			: { label: "Status unavailable", stale: false };
+	}
+	if (options.runsLoading) {
+		return hasRun
+			? { label: `Last known: ${label}`, stale: true }
+			: { label: "Checking status", stale: false };
+	}
+	return { label, stale: false };
+}
+
+function classifySystem(
+	system: AgentSystemProjection,
+	options: AgentWorkOverviewOptions,
+): { groupId: AgentWorkGroupId; statusLabel: string; statusStale: boolean } {
+	const root =
+		system.nodes.find((node) => node.id === system.rootNodeId) ??
+		system.nodes[0];
+	const attention = latestAttentionNode(system.nodes);
+	if (attention) {
+		const status = availabilityLabel(
+			attentionStatusLabel(
+				attention,
+				attention.id !== system.rootNodeId,
+			),
+			Boolean(attention.latestRun),
+			options,
+		);
+		return {
+			groupId: "needs-attention",
+			statusLabel: status.label,
+			statusStale: status.stale,
+		};
+	}
+
+	const running = latestNode(
+		system.nodes,
+		(run) => run.status === "running",
+	);
+	if (running?.latestRun) {
+		const status = availabilityLabel(
+			running.id === system.rootNodeId
+				? "Working"
+				: "Delegated work is working",
+			true,
+			options,
+		);
+		return {
+			groupId: "working",
+			statusLabel: status.label,
+			statusStale: status.stale,
+		};
+	}
+
+	const rootIsFinished = root?.latestRun
+		? root.latestRun.status === "completed" || root.latestRun.status === "cancelled"
+		: root?.status === "completed" || root?.status === "cancelled";
+	if (root && rootIsFinished) {
+		const status = availabilityLabel(
+			root.latestRun
+				? runStatusLabel(root.latestRun)
+				: sessionFallbackStatusLabel(root),
+			Boolean(root.latestRun),
+			options,
+		);
+		return {
+			groupId: "finished",
+			statusLabel: status.label,
+			statusStale: status.stale,
+		};
+	}
+
+	const status = availabilityLabel("Ready", Boolean(root?.latestRun), options);
+	return {
+		groupId: "ready",
+		statusLabel: status.label,
+		statusStale: status.stale,
+	};
+}
+
+function childStatus(
+	node: AgentNodeProjection,
+	options: AgentWorkOverviewOptions,
+): { label: string; stale: boolean } {
+	const label = node.latestRun
+		? runStatusLabel(node.latestRun)
+		: sessionFallbackStatusLabel(node);
+	return availabilityLabel(label, Boolean(node.latestRun), options);
+}
+
+function searchableText(
+	system: AgentSystemProjection,
+	node?: AgentNodeProjection,
+): string {
+	return [
+		node?.name ?? system.name,
+		node?.workspaceName ?? system.workspaceName ?? "",
+		node?.latestRun
+			? runStatusLabel(node.latestRun)
+			: node
+				? sessionFallbackStatusLabel(node)
+				: "ready",
+	]
+		.join(" ")
+		.toLocaleLowerCase();
+}
+
+/**
+ * Builds one truthful row per persistent agent. Descendants can raise the
+ * owner's priority, but never become duplicate top-level rows.
+ */
+export function buildAgentWorkOverview(
+	snapshot: AgentUniverseSnapshot,
+	query: string,
+	options: AgentWorkOverviewOptions = {},
+): AgentWorkOverviewGroup[] {
+	const needle = query.trim().toLocaleLowerCase();
+	const groups = new Map<AgentWorkGroupId, AgentWorkOverviewItem[]>(
+		GROUPS.map(({ id }) => [id, []]),
+	);
+
+	for (const system of snapshot.systems) {
+		const root =
+			system.nodes.find((node) => node.id === system.rootNodeId) ??
+			system.nodes[0];
+		if (!root) continue;
+		const descendants = system.nodes.filter(
+			(node) => node.id !== system.rootNodeId,
+		);
+		const rootMatches = !needle || searchableText(system, root).includes(needle);
+		const matchingChildren = needle
+			? descendants.filter((node) => searchableText(system, node).includes(needle))
+			: descendants;
+		if (!rootMatches && matchingChildren.length === 0) continue;
+
+		const classification = classifySystem(system, options);
+		const visibleChildren = rootMatches ? descendants : matchingChildren;
+		const children = visibleChildren.map((node): AgentWorkOverviewChild => {
+			const status = childStatus(node, options);
+			return {
+				id: node.id,
+				name: node.name,
+				statusLabel: status.label,
+				workspaceName:
+					node.workspaceName ?? system.workspaceName ?? "No project",
+				recency: agentSessionRecency(node.updatedAt, options.now),
+				updatedAt: node.updatedAt,
+				statusStale: status.stale,
+			};
+		});
+		const item: AgentWorkOverviewItem = {
+			id: system.rootNodeId,
+			name: system.name,
+			groupId: classification.groupId,
+			statusLabel: classification.statusLabel,
+			workspaceName:
+				root.workspaceName ?? system.workspaceName ?? "No project",
+			recency: agentSessionRecency(system.lastActivityAt, options.now),
+			updatedAt: system.lastActivityAt,
+			statusStale: classification.statusStale,
+			delegatedCount: descendants.length,
+			children,
+			revealChildren: Boolean(needle && matchingChildren.length > 0),
+		};
+		groups.get(classification.groupId)!.push(item);
+	}
+
+	return GROUPS.map(({ id, label }) => ({
+		id,
+		label,
+		items: groups.get(id)!,
+	}));
+}

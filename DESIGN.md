@@ -889,3 +889,51 @@ the scrolling data region. Native OS menus retain their platform rendering.
 
 The source implementation uses existing CSS/React only. Catalog candidates were
 considered but no external code, assets, or new motion dependency was incorporated.
+
+## Agents work clarity — October 2026
+
+The Agents destination is a work overview with one representation of each agent.
+Its focal point is a grouped list: Needs attention, Working, Finished, and Ready.
+Each row shows the agent name, plain-language latest-run state, project, recency,
+and a compact delegated-work summary. Finished means the run ended; verification
+and delivered results stay in the conversation. An active reusable session alone
+never means work is running. Unknown or failed run loading must be visible.
+
+Opening a row presents one full-width conversation below the browser chrome with
+Back to agents. The conversation remains mounted when moving between overview
+and detail. Hide duplicate project/chat trees on this destination, preserving
+navigation, saved data, and access through Projects and Browser. Keep the map as
+an optional secondary view, with no animated scene in the default overview.
+
+Use existing native system typography, graphite semantic colors, restrained
+borders, 24–32px content gutters, a 28px page heading, 15px row titles and 13px
+metadata. No new fonts, dependencies, gradients, decorative cards or progress
+percentages. This is a dense native utility, overriding the classifier's generic
+marketing-page inference with the screenshot and repository evidence. Motion is
+limited to existing control feedback; reduced motion and keyboard focus retain
+clear states. Rows recompose and text wraps at narrow widths and 200% zoom.
+
+Validation covers public/private projection, latest-run truth, stale loading,
+search, child ownership, overview/detail/back continuity, and canonical installed
+screenshots at desktop and compact widths. Review screenshots, identify three
+concrete weaknesses, refine, then recapture. Existing runtime approval authority
+and user-owned profiles are unchanged. This design follows actual Kestrel agents,
+runs and delegated tasks rather than a generic dashboard template.
+
+## App-wide simplification — October 2026
+
+Thesis: Kestrel presents a clear page title, one readable work area, and short action labels; optional explanations and advanced controls appear only where they help a decision.
+
+Mode: existing-redesign / design-system, multi-page native macOS workspace. The guidance classifier returned a marketing page; verified repository and running desktop evidence override that classification. This is a frequent-use utility with low visual and motion intensity, not a landing page.
+
+Visual system: dense-app with relaxed reading. Preserve SF Pro Display and SF Pro Text, the user's native macOS preference, as the intentional type pair. Scale: page title 32px, section 21px, item 18px, body/control 17px, supporting metadata 15px, compact browser chrome 14px. Four-pixel spacing; 24px between sections and 12–16px within them. Graphite canvas and neutral surfaces, readable white text and gray metadata; one light primary action. Simple dividers group content; avoid nested cards, decorative badges, gradients, and extra introductions.
+
+Composition: persistent compact navigation, one main page, a useful heading and action group. Keep essential settings, errors, authorization details, setup/recovery instructions, and user content. Remove redundant page subtitles and prose that describes an already labelled control. Explain advanced behavior within disclosures; do not blanket-hide paragraphs or metadata with CSS. Keep honest loading/empty/error states and reachable recovery actions.
+
+Motion: feedback (100ms colors/borders) and state (140ms opacity/short panel transitions). No focal animation, hover scaling, decorative pulsing, or delayed navigation. Reduced motion settles immediately without moving content. Preserve focus, keyboard, draft, selection, session and approval ownership.
+
+Verification: representative Home, Agents/chat, Projects, Memory, Connections and Browser/Agent Settings plus menus/overlays. Test wide, compact, zoom, long labels, keyboard/focus, reduced motion, empty/error/recovery paths; compare rendered before/after and fix three highest-impact visual weaknesses. Install and reopen only the canonical app, retaining existing profile and installed features. Keep Ollama disabled and use hosted Codex workers.
+
+Why this is not generic: the shared system is built around Kestrel's browser chrome, persistent agents, project context, memory and provider setup rather than a dashboard template.
+
+Refinement evidence: the first rendered pass exposed small chat text, duplicate focus outlines, and competing navigation or chat surfaces. Corrected the type hierarchy, gave the composer one focus border, replaced the second settings navigation with a section picker, and kept utility pages clear by default. Compact chat actions now open the full conversation; the duplicate compact dock is removed. Retain generous blank space and readable line lengths. The final disposable-profile audit passed 24 captures at 1360, 760 and 520px, including note creation/editing, IPC-injected read failure and Retry, keyboard panel access, and reduced motion. Existing motion-contract widget transitions use the short 160ms selection family.

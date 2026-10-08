@@ -16,6 +16,7 @@ import { agentStateLabel } from "../../agent-workspace";
 import { Icon } from "../Icon";
 import { Button } from "../ui";
 import { SurfaceBackButton } from "./SurfaceBackButton";
+import { AgentWorkOverview } from "./agent-universe/AgentWorkOverview";
 import { AgentUniverseScene } from "./agent-universe/AgentUniverseScene";
 import { AgentUniverseStarfield } from "./agent-universe/AgentUniverseStarfield";
 import {
@@ -178,9 +179,24 @@ function AgentUniverseCreateAgentMenu({
 	onCreateAgent(title: string, template?: AgentTemplate): Promise<void> | void;
 }) {
 	const [open, setOpen] = useState(false);
+	const menuRef = useRef<HTMLDivElement>(null);
+	const triggerRef = useRef<HTMLButtonElement>(null);
+	const closeMenu = useCallback(() => {
+		setOpen(false);
+		window.requestAnimationFrame(() => triggerRef.current?.focus());
+	}, []);
+	useEffect(() => {
+		if (!open) return;
+		function dismissOutside(event: PointerEvent) {
+			if (event.target instanceof Node && !menuRef.current?.contains(event.target)) setOpen(false);
+		}
+		document.addEventListener("pointerdown", dismissOutside);
+		return () => document.removeEventListener("pointerdown", dismissOutside);
+	}, [open]);
 	return (
-		<div className="agent-universe-create-agent-menu">
+		<div ref={menuRef} className="agent-universe-create-agent-menu">
 			<button
+				ref={triggerRef}
 				type="button"
 				className="agent-universe-create-agent-trigger"
 				aria-expanded={open}
@@ -195,6 +211,12 @@ function AgentUniverseCreateAgentMenu({
 					className="agent-universe-create-agent-popover"
 					role="dialog"
 					aria-label="Create persistent agent"
+					onKeyDown={(event) => {
+						if (event.key !== "Escape") return;
+						event.preventDefault();
+						event.stopPropagation();
+						closeMenu();
+					}}
 				>
 					<div className="agent-universe-create-agent-popover-header">
 						<strong>Create a persistent agent</strong>
@@ -202,15 +224,15 @@ function AgentUniverseCreateAgentMenu({
 							type="button"
 							className="agent-universe-create-agent-popover-close"
 							aria-label="Close create agent"
-							onClick={() => setOpen(false)}
+							onClick={closeMenu}
 						>
 							<Icon name="close" />
 						</button>
 					</div>
-					<p>Chats stay in Chat; delegated agents appear as moons.</p>
+					<p>Delegated tasks stay grouped under their agent.</p>
 					<AgentUniverseCreateAgentForm
 						onCreateAgent={onCreateAgent}
-						onCancel={() => setOpen(false)}
+						onCancel={closeMenu}
 					/>
 				</div>
 			) : null}
@@ -329,6 +351,10 @@ export function AgentWorkspace({
 	onBack?(): void;
 }) {
 	const [query, setQuery] = useState("");
+	const [view, setView] = useState<"overview" | "map">("overview");
+	const [overviewRunsLoading, setOverviewRunsLoading] = useState(true);
+	const [overviewRunsError, setOverviewRunsError] = useState("");
+	const [runsRefreshRevision, setRunsRefreshRevision] = useState(0);
 	const [settingsSessionId, setSettingsSessionId] = useState<string | null>(null);
 	const [focusedSystemId, setFocusedSystemId] = useState<string | null>(null);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -390,9 +416,14 @@ export function AgentWorkspace({
 	}, [runsBySession]);
 
 	useEffect(() => {
-		if (universeSessionIds.length === 0) return;
+		if (universeSessionIds.length === 0) { setOverviewRunsLoading(false); setOverviewRunsError(""); return; }
 		let active = true;
+		let refreshing = false;
+		let refreshFailed = false;
 		const refresh = async (sessionIds: readonly string[]) => {
+			if (refreshing) return;
+			refreshing = true;
+			if (sessionIds.some(id => runsBySessionRef.current[id] === undefined)) setOverviewRunsLoading(true);
 			const entries = await Promise.all(
 				sessionIds.map(async (sessionId): Promise<[string, AgentRun[]] | null> => {
 					try {
@@ -408,10 +439,14 @@ export function AgentWorkspace({
 					}
 				}),
 			);
+			refreshing = false;
 			if (!active) return;
 			const successful = entries.filter(
 				(entry): entry is [string, AgentRun[]] => entry !== null,
 			);
+			refreshFailed = successful.length < entries.length;
+			setOverviewRunsLoading(false);
+			setOverviewRunsError(successful.length < entries.length ? "Some run statuses could not be refreshed. Shown history may be out of date." : "");
 			if (successful.length === 0) return;
 			setRunsBySession((current) => {
 				let changed = false;
@@ -436,7 +471,7 @@ export function AgentWorkspace({
 
 		void refresh(universeSessionIds);
 		const timer = window.setInterval(() => {
-			const activeSessionIds = universeSessionIds.filter((sessionId) =>
+			const activeSessionIds = refreshFailed ? universeSessionIds : universeSessionIds.filter((sessionId) =>
 				(runsBySessionRef.current[sessionId] ?? []).some(
 					(run) =>
 						run.status === "running" ||
@@ -450,7 +485,7 @@ export function AgentWorkspace({
 			active = false;
 			window.clearInterval(timer);
 		};
-	}, [universeSessionIds, universeSessionKey]);
+	}, [universeSessionIds, universeSessionKey, runsRefreshRevision]);
 
 	const loadGroupMemory = useCallback(async (groupId: string) => {
 		const requestId = ++groupMemoryRequestRef.current;
@@ -688,6 +723,33 @@ export function AgentWorkspace({
 		[focusedSystemId, selectedNodeId],
 	);
 
+	if (view === "overview") return (
+		<main className="agent-workspace agent-work-home" aria-labelledby="agent-workspace-title">
+			{settingsSessionId && sessions.find(item => item.id === settingsSessionId) && <AgentSettingsDialog
+				session={sessions.find(item => item.id === settingsSessionId)!} sessions={sessions}
+				onClose={() => setSettingsSessionId(null)} onSaved={() => onRetrySessions?.()} />}
+			<header className="agent-work-header">
+				<div><h1 id="agent-workspace-title" tabIndex={-1}>Agents</h1></div>
+				<div className="agent-work-actions"><AgentUniverseCreateAgentMenu onCreateAgent={onCreateAgent} />
+					<Button variant="solid" size="compact" onClick={onNewTask}><Icon name="plus" />Start task</Button></div>
+			</header>
+			<div className="agent-work-controls">
+				<label className="agent-work-search"><Icon name="search" /><span className="sr-only">Find agents or tasks</span>
+					<input type="search" value={query} placeholder="Find agents or tasks" onChange={event => setQuery(event.target.value)} /></label>
+				<button type="button" className="agent-work-map-link" onClick={() => setView("map")}><Icon name="globe" />Map view</button>
+			</div>
+			{pendingApprovals > 0 && <button type="button" className="agent-work-approval" onClick={onOpenApprovals}>{pendingApprovals} pending approval{pendingApprovals === 1 ? "" : "s"}<Icon name="arrow" /></button>}
+			{sessionLoadState === "loading" && !hasSystems ? <p role="status">Loading agents…</p>
+				: sessionLoadState === "error" && !hasSystems ? <AgentUniverseErrorState {...(onRetrySessions ? { onRetry: onRetrySessions } : {})} />
+				: !hasSystems ? <div className="agent-work-empty"><h2>Your work starts here</h2><p>Start a task, or create an agent you can return to.</p></div>
+				: <>
+					{sessionLoadState !== "ready" && <AgentUniverseSessionNotice state={sessionLoadState} {...(onRetrySessions ? { onRetry: onRetrySessions } : {})} />}
+					<AgentWorkOverview snapshot={universe} query={query} runsLoading={overviewRunsLoading} runsError={overviewRunsError}
+						onOpenSession={onOpenSession} onOpenSettings={setSettingsSessionId} onRetry={() => { setOverviewRunsLoading(true); setRunsRefreshRevision(value => value + 1); }} />
+				</>}
+		</main>
+	);
+
 	return (
 		<main
 			className="agent-workspace agent-universe-workspace"
@@ -793,6 +855,7 @@ export function AgentWorkspace({
 						) : null}
 					</div>
 					<div className="agent-universe-map-actions">
+						<Button variant="quiet" size="compact" onClick={() => setView("overview")}><Icon name="agent" />Overview</Button>
 						{focusedSystem ? (
 							<Button
 								variant="quiet"

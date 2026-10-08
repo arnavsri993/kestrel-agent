@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { _electron as electron } from "@playwright/test";
 import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
@@ -16,16 +17,19 @@ mkdirSync(dirname(wideCalendarScreenshot), { recursive: true });
 let application;
 try {
 	const executablePath = process.env.KESTREL_DESKTOP_EXECUTABLE;
+	const requireDesktop = createRequire(resolve("apps/desktop/package.json"));
 	application = await electron.launch({
 		...(executablePath
 			? {
 					executablePath: resolve(executablePath),
 					args: ["--use-mock-keychain"],
 				}
-			: { args: [resolve("apps/desktop/out/main/index.js")] }),
+			: { executablePath: requireDesktop("electron"), args: [resolve("apps/desktop"), "--use-mock-keychain"] }),
 		env: {
 			...process.env,
 			KESTREL_DISABLE_UPDATES: "1",
+			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
+			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 			KESTREL_TEST_USER_DATA: join(temporaryRoot, "user-data"),
 		},
 	});
@@ -136,29 +140,30 @@ try {
 	await page.setViewportSize({ width: 1320, height: 900 });
 	await openKestrelDestination(page, "Memory");
 	const life = page.locator(".life-product-surface");
-	await life.getByRole("heading", { name: "Memory", exact: true }).waitFor();
-	await life.getByRole("heading", { name: "What Kestrel understands" }).waitFor();
+	await life.getByRole("heading", { name: "Memory", exact: true, level: 1 }).waitFor();
+	await life.getByRole("button", { name: "Overview", exact: true }).click();
+	await life.getByRole("heading", { name: "Saved memory" }).waitFor();
 	await life.getByText("The Kestrel capstone review is the highest-priority project this month.", { exact: true }).first().waitFor();
 	await page.screenshot({ path: memoryScreenshot });
 
+	await life.getByText("View options", { exact: true }).click();
 	const viewer = life.getByLabel("Viewing as");
 	const domain = life.getByLabel("Domain");
 	assert.equal(await viewer.inputValue(), "user");
 	assert.equal(await domain.inputValue(), "");
 
-	await life.getByRole("button", { name: "Memory", exact: true }).click();
-	await life.getByText("Edit memory documents", { exact: true }).click();
+	await life.getByRole("button", { name: "Notes", exact: true }).click();
 	await life.getByRole("button", { name: "New", exact: true }).click();
 	await life.getByLabel("Title").fill("Working preference");
 	await life.getByLabel("What Kestrel should know").fill("Keep technical explanations concise and source the important claims.");
 	await life.getByRole("button", { name: "Save", exact: true }).click();
 	await life.getByRole("heading", { name: "Working preference", exact: true, level: 2 }).waitFor();
-	await life.getByRole("button", { name: "Edit memory", exact: true }).click();
-	await life.getByText("Sources and provenance", { exact: true }).click();
+	await life.getByRole("button", { name: "Edit", exact: true }).click();
+	await life.getByText("Sources", { exact: true }).click();
 	await life.getByText("manual", { exact: true }).waitFor();
 
-	await life.getByRole("button", { name: "Timeline", exact: true }).click();
-	await life.getByRole("heading", { name: "Your week in context" }).waitFor();
+	await life.getByRole("button", { name: "Activity", exact: true }).click();
+	await life.getByRole("heading", { name: "Recent activity" }).waitFor();
 	await life.locator(".memory-days details summary").first().click();
 	await life.getByText("Timeline fixture: reviewed the Kestrel memory architecture.", { exact: true }).first().waitFor();
 
@@ -169,7 +174,7 @@ try {
 
 	await page.setViewportSize({ width: 640, height: 760 });
 	await life.getByRole("button", { name: "Overview", exact: true }).click();
-	await life.getByRole("heading", { name: "What Kestrel understands" }).waitFor();
+	await life.getByRole("heading", { name: "Saved memory" }).waitFor();
 	assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
 	await page.screenshot({ path: compactCalendarScreenshot, fullPage: true });
 

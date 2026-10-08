@@ -250,6 +250,7 @@ export function KestrelSidebar({
 	onNewTask,
 	onOpenBrowser,
 	onOpenAgent,
+	onOpenProjects,
 	onOpenConnections,
 	onOpenMemory,
 	onOpenCapabilities,
@@ -271,6 +272,7 @@ export function KestrelSidebar({
 	onNewTask(): void;
 	onOpenBrowser(): void;
 	onOpenAgent(): void;
+	onOpenProjects(): void;
 	onOpenConnections(): void;
 	onOpenMemory(): void;
 	onOpenCapabilities(): void;
@@ -662,6 +664,7 @@ export function KestrelSidebar({
 				<kbd>⌘N</kbd>
 			</button>
 			<nav className="kestrel-sidebar-primary" aria-label="Primary">
+				<SidebarNavItem icon="browser" label="Browser" destination="browser" active={activeDestination === "browser"} onClick={onOpenBrowser} />
 				<SidebarNavItem
 					icon="agent"
 					label="Agent"
@@ -669,13 +672,14 @@ export function KestrelSidebar({
 					active={activeDestination === "agent"}
 					onClick={onOpenAgent}
 				/>
+				<SidebarNavItem icon="folder" label="Projects" destination="projects" active={activeDestination === "projects"} onClick={onOpenProjects} />
 				<SidebarNavItem icon="connections" label="Connections" destination="connections"
 					active={activeDestination === "connections"} onClick={onOpenConnections} />
 				<SidebarNavItem icon="memory" label="Memory" destination="memory"
 					active={activeDestination === "memory"} onClick={onOpenMemory} />
 			</nav>
 
-			<div className="kestrel-sidebar-scroll">
+			<div className="kestrel-sidebar-scroll" hidden={activeDestination !== "browser" && activeDestination !== "projects"}>
 				<section className="kestrel-sidebar-section" aria-labelledby="kestrel-sidebar-projects">
 					<div className="kestrel-sidebar-section-heading">
 						<h2 id="kestrel-sidebar-projects">Projects</h2>

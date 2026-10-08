@@ -57,7 +57,7 @@ try {
 
 	await openKestrelDestination(page, "Settings");
 	await selectSettingsSection(page, "models", "Models");
-	await page.getByText("How Kestrel chooses models", { exact: true }).waitFor();
+	await page.getByText("Model preference", { exact: true }).waitFor();
 
 	const modes = page.locator(".routing-mode-grid [role=radio]");
 	await modes.first().waitFor();
