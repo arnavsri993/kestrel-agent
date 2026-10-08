@@ -89,6 +89,7 @@ async function capture(label, pageName, selectors = {}) {
 			section: style(targets.section),
 			metadata: style(targets.metadata),
 			control: style(targets.control),
+			label: style(targets.label),
 			controlTransition: style(targets.control)?.transitionDuration ?? null,
 			reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
 		};
@@ -100,6 +101,7 @@ async function capture(label, pageName, selectors = {}) {
 	if (result.section) check(result.section.fontSize >= 20, `section heading too small: ${result.section.fontSize}px`);
 	if (result.metadata) check(result.metadata.fontSize >= 14, `metadata too small: ${result.metadata.fontSize}px`);
 	if (result.control) check(result.control.height >= 38, `control too short: ${result.control.height}px`);
+	if (result.label) check(result.label.fontSize >= 16.5, `control label too small: ${result.label.fontSize}px`);
 	if (result.controlTransition) {
 		const durations = result.controlTransition.split(",").map((duration) => Number.parseFloat(duration) * (duration.trim().endsWith("ms") ? 0.001 : 1));
 		check(durations.every((duration) => duration <= 0.15), `long control transition: ${result.controlTransition}`);
@@ -113,7 +115,7 @@ const surfaces = [
 	{ name: "projects", route: "projects", heading: "Projects", selectors: { heading: ".projects-workspace h1", section: ".projects-workspace-chats-heading h2", metadata: ".projects-workspace-chat time", control: ".projects-workspace button.primary" } },
 	{ name: "memory", route: "memory", heading: "Memory", selectors: { heading: ".memory-workspace-header h1", section: ".memory-overview h2", metadata: ".memory-tier small", control: ".memory-workspace-header summary" } },
 	{ name: "connections", route: "connections", heading: "Connections", selectors: { heading: ".page-frame h1", section: ".settings-panel-header h2", metadata: ".connection-status", control: ".memory-scope-selector select" } },
-	{ name: "settings", route: "settings", heading: "Settings", selectors: { heading: ".settings-page-frame h1", section: ".settings-panel-header h2", metadata: ".settings-panel-header p", control: ".settings-section-picker select" } },
+	{ name: "settings", route: "settings", heading: "Settings", selectors: { heading: ".settings-page-frame h1", section: ".settings-panel-header h2", metadata: ".settings-panel-header p", label: ".settings-content .setting-row strong", control: ".settings-section-picker select" } },
 ];
 
 try {
