@@ -86,6 +86,7 @@ import {
 	useUserBrowser,
 } from "./browser/useUserBrowser";
 import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
+import { startVisiblePolling } from "./visible-polling";
 import { BrandMark } from "./components/BrandMark";
 import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
@@ -3498,18 +3499,8 @@ function RuntimeConversation({
 					if (providerResponse.ok && "providerAccounts" in providerResponse) {
 						setProviderAccounts(available);
 					}
-					const availableGrants = availableWorkspaceGrants(projects);
-					setWorkspace(
-						(current) =>
-							(current &&
-							availableGrants.some((grant) => grant.path === current)
-								? current
-								: availableGrants[0]?.path) ?? "",
-					);
 					if (sessionResponse.ok && "sessions" in sessionResponse)
 						onSessions(sessionResponse.sessions ?? []);
-					const visibleSessionId = activeSessionIdRef.current;
-					if (visibleSessionId) await loadSession(visibleSessionId);
 					if (!catalogNeedsBackgroundRefresh(available)) return;
 					const refreshed = await window.kestrel.request({
 						type: "runtime-refresh-provider-models",
@@ -3529,7 +3520,7 @@ function RuntimeConversation({
 		return () => {
 			cancelled = true;
 		};
-	}, [onSessions, projects, visible]);
+	}, [onSessions, visible]);
 
 	useEffect(() => {
 		const availableGrants = availableWorkspaceGrants(projects);
@@ -3664,17 +3655,22 @@ function RuntimeConversation({
 		setHumanInputRequests([]);
 		setError("");
 		setSkillNotice(null);
-		if (!activeSessionId) {
-			return;
-		}
+	}, [activeSessionId]);
+
+	// Session selection and returning to chat have one transcript-load owner.
+	// Updating project metadata only validates the workspace above.
+	useEffect(() => {
+		if (!visible || !activeSessionId) return;
+		let active = true;
 		const sessionId = activeSessionId;
 		void loadSession(sessionId).catch((cause) => {
-			if (activeSessionIdRef.current !== sessionId) return;
+			if (!active || activeSessionIdRef.current !== sessionId) return;
 			setError(
 				cause instanceof Error ? cause.message : "Could not load this session.",
 			);
 		});
-	}, [activeSessionId]);
+		return () => { active = false; };
+	}, [activeSessionId, visible]);
 
 	useEffect(
 		() =>
@@ -6044,8 +6040,8 @@ function Work({
 					providerIds: [workModelChoice.providerId],
 				};
 
-	async function load() {
-		const [state, providerState, sessionState, traceState] = await Promise.all([
+	async function load(isCurrent = () => true) {
+		const [state, providerState, sessionState] = await Promise.all([
 				window.kestrel.request({
 					type: "orchestration-list",
 				}) as Promise<CoreResponse>,
@@ -6055,10 +6051,8 @@ function Work({
 				window.kestrel.request({
 					type: "runtime-list-sessions",
 				}) as Promise<CoreResponse>,
-				window.kestrel.request({
-					type: "orchestration-routing-traces",
-				}) as Promise<CoreResponse>,
 			]);
+		if (!isCurrent()) return;
 		if (!state.ok) throw new Error(state.error);
 		setGoals(state.goals ?? []);
 		setTeams(state.teams ?? []);
@@ -6067,29 +6061,32 @@ function Work({
 			setProviderAccounts(providerState.providerAccounts ?? []);
 			setProviderAccountsLoaded(true);
 		}
-		if (traceState.ok) setRoutingTraces(traceState.routingTraces ?? []);
 		if (sessionState.ok) onSessions(sessionState.sessions ?? []);
 	}
 	useEffect(() => {
-		void load().catch((cause) =>
-			setError(
+		let active = true;
+		void load(() => active).catch((cause) => {
+			if (active) setError(
 				cause instanceof Error
 					? cause.message
 					: "Could not load orchestration state.",
-			),
-		);
+			);
+		});
+		return () => { active = false; };
 	}, []);
 
 	useEffect(() => {
-		const timer = window.setInterval(() => {
-			void window.kestrel
-				.request({ type: "orchestration-routing-traces" })
-				.then((raw) => {
-					const response = raw as CoreResponse;
-					if (response.ok) setRoutingTraces(response.routingTraces ?? []);
-				});
-		}, 4_000);
-		return () => window.clearInterval(timer);
+		const polling = startVisiblePolling({
+			intervalMs: 4_000,
+			load: async (isCurrent) => {
+				const response = await window.kestrel.request({ type: "orchestration-routing-traces" }) as CoreResponse;
+				if (!isCurrent()) return;
+				if (!response.ok) throw new Error(response.error);
+				setRoutingTraces(response.routingTraces ?? []);
+			},
+			// Keep the last reading; the next visible poll retries a transient failure.
+		});
+		return polling.stop;
 	}, []);
 
 	useEffect(() => {

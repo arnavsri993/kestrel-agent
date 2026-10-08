@@ -1,3 +1,25 @@
+# Desktop efficiency — October 7, 2026
+
+Performance remediation in the existing React/macOS utility. Preserve system
+text, graphite surfaces, compact spacing, keyboard/focus, reduced motion and
+all saved preferences. The classifier's marketing-page direction does not fit
+this desktop workspace. No new dependencies, decorative material or animation.
+
+- Read-only Home usage and Work traces share one polling lifecycle: one request
+  at a time, no timer while the document is hidden, immediate refresh on return,
+  schedule the next read after settlement, and ignore disposed results/errors.
+- Preserve the last usage reading on transient refresh failure and label it.
+  Active agent execution and the presence beacon retain their existing owners.
+- Project metadata validates workspace selection without reloading provider
+  discovery or transcripts. Session selection and chat visibility own transcript
+  loading; selection retains the existing sequence and session guards.
+- Verify deferred/rejected requests, repeated visibility events, unmount cleanup,
+  project changes, session restoration, request counts, desktop build, packaged
+  smoke and the canonical installed app. Do not claim battery/CPU savings from
+  request-count evidence alone.
+- Why this is not generic: refresh ownership follows Kestrel's actual Codex
+  usage, routing traces, project grants and conversation lifecycle.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

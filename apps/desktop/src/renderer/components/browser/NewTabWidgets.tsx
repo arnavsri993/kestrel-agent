@@ -31,6 +31,7 @@ import {
 } from "react";
 import { agentSessionRecency } from "../../agent-workspace";
 import { sessionTitleForDisplay } from "../../chat-title";
+import { startVisiblePolling } from "../../visible-polling";
 import {
 	KESTREL_CRITICAL_SPRING,
 	KESTREL_STATE_TRANSITION,
@@ -721,46 +722,31 @@ function RouteUsageWidget({
 	const [rows, setRows] = useState<ProviderUsageSnapshot[]>([]);
 	const [error, setError] = useState<string | undefined>();
 	const [loading, setLoading] = useState(true);
-	const visible = useRef(true);
 
 	useEffect(() => {
-		visible.current = true;
-		let cancelled = false;
-		const load = async () => {
-			try {
-				const response = await window.kestrel.request({
-					type: "runtime-provider-usage",
-				});
-				if (cancelled || !visible.current) return;
-				if (!response.ok || !("providerUsage" in response)) {
+		const polling = startVisiblePolling({
+			intervalMs: 60_000,
+			load: async (isCurrent) => {
+				try {
+					const response = await window.kestrel.request({
+						type: "runtime-provider-usage",
+					});
+					if (!isCurrent()) return;
+					if (!response.ok || !("providerUsage" in response)) {
+						setError("Could not load route usage.");
+						return;
+					}
+					setRows(response.providerUsage ?? []);
+					setError(undefined);
+				} catch {
+					if (!isCurrent()) return;
 					setError("Could not load route usage.");
-					setRows([]);
-					return;
+				} finally {
+					if (isCurrent()) setLoading(false);
 				}
-				setRows(response.providerUsage ?? []);
-				setError(undefined);
-			} catch {
-				if (cancelled || !visible.current) return;
-				setError("Could not load route usage.");
-			} finally {
-				if (!cancelled && visible.current) setLoading(false);
-			}
-		};
-		void load();
-		const timer = window.setInterval(() => {
-			if (document.visibilityState === "hidden") return;
-			void load();
-		}, 60_000);
-		const onVisibility = () => {
-			if (document.visibilityState === "visible") void load();
-		};
-		document.addEventListener("visibilitychange", onVisibility);
-		return () => {
-			cancelled = true;
-			visible.current = false;
-			window.clearInterval(timer);
-			document.removeEventListener("visibilitychange", onVisibility);
-		};
+			},
+		});
+		return polling.stop;
 	}, []);
 
 	const rankedRows = prioritizeCodexUsageRows(rows);
@@ -869,6 +855,11 @@ function RouteUsageWidget({
 						);
 					})}
 				</ul>
+			)}
+			{error && rows.length > 0 && (
+				<p className="kestrel-widget-empty" role="status">
+					{error} Showing the last reading.
+				</p>
 			)}
 			{hiddenConfigured.length > 0 && (
 				<div className="kestrel-widget-route-usage-hidden">
