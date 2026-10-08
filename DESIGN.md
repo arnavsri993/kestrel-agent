@@ -889,3 +889,33 @@ the scrolling data region. Native OS menus retain their platform rendering.
 
 The source implementation uses existing CSS/React only. Catalog candidates were
 considered but no external code, assets, or new motion dependency was incorporated.
+
+## Agents work clarity — October 2026
+
+The Agents destination is a work overview with one representation of each agent.
+Its focal point is a grouped list: Needs attention, Working, Finished, and Ready.
+Each row shows the agent name, plain-language latest-run state, project, recency,
+and a compact delegated-work summary. Finished means the run ended; verification
+and delivered results stay in the conversation. An active reusable session alone
+never means work is running. Unknown or failed run loading must be visible.
+
+Opening a row presents one full-width conversation below the browser chrome with
+Back to agents. The conversation remains mounted when moving between overview
+and detail. Hide duplicate project/chat trees on this destination, preserving
+navigation, saved data, and access through Projects and Browser. Keep the map as
+an optional secondary view, with no animated scene in the default overview.
+
+Use existing native system typography, graphite semantic colors, restrained
+borders, 24–32px content gutters, a 28px page heading, 15px row titles and 13px
+metadata. No new fonts, dependencies, gradients, decorative cards or progress
+percentages. This is a dense native utility, overriding the classifier's generic
+marketing-page inference with the screenshot and repository evidence. Motion is
+limited to existing control feedback; reduced motion and keyboard focus retain
+clear states. Rows recompose and text wraps at narrow widths and 200% zoom.
+
+Validation covers public/private projection, latest-run truth, stale loading,
+search, child ownership, overview/detail/back continuity, and canonical installed
+screenshots at desktop and compact widths. Review screenshots, identify three
+concrete weaknesses, refine, then recapture. Existing runtime approval authority
+and user-owned profiles are unchanged. This design follows actual Kestrel agents,
+runs and delegated tasks rather than a generic dashboard template.

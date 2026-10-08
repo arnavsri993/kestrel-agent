@@ -662,6 +662,7 @@ export function KestrelSidebar({
 				<kbd>⌘N</kbd>
 			</button>
 			<nav className="kestrel-sidebar-primary" aria-label="Primary">
+				{activeDestination === "agent" ? <SidebarNavItem icon="browser" label="Browser" destination="browser" onClick={onOpenBrowser} /> : null}
 				<SidebarNavItem
 					icon="agent"
 					label="Agent"
@@ -675,7 +676,7 @@ export function KestrelSidebar({
 					active={activeDestination === "memory"} onClick={onOpenMemory} />
 			</nav>
 
-			<div className="kestrel-sidebar-scroll">
+			<div className="kestrel-sidebar-scroll" hidden={activeDestination === "agent"}>
 				<section className="kestrel-sidebar-section" aria-labelledby="kestrel-sidebar-projects">
 					<div className="kestrel-sidebar-section-heading">
 						<h2 id="kestrel-sidebar-projects">Projects</h2>

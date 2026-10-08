@@ -17,6 +17,8 @@ import {
 } from "../../motion-contract";
 import { Icon } from "../Icon";
 
+import "./agent-work-focus.css";
+
 const AGENT_PANEL_WIDTH_KEY = "kestrel:agent-panel-width";
 
 function defaultAgentPanelWidth(viewportWidth: number): number {
@@ -35,6 +37,8 @@ export function AgentSidebar({
 	onNewAgent,
 	onToggleAgent,
 	onExpandChat,
+	focused = false,
+	onBackToAgents,
 }: {
 	children: ReactNode;
 	communicationAssistant?: ReactNode;
@@ -45,6 +49,8 @@ export function AgentSidebar({
 	onNewAgent(prompt?: string): void;
 	onToggleAgent(): void;
 	onExpandChat(): void;
+	focused?: boolean;
+	onBackToAgents?(): void;
 }) {
 	const resizeRef = useRef<{
 		pointerId: number;
@@ -247,6 +253,12 @@ export function AgentSidebar({
 			root.style.removeProperty("--agent-panel-presented-width");
 			return;
 		}
+		if (focused) {
+			cancelSettle();
+			previousCollapsedRef.current = collapsed;
+			root.style.removeProperty("--agent-panel-presented-width");
+			return;
+		}
 		const wasCollapsed = previousCollapsedRef.current;
 		if (wasCollapsed === collapsed) return;
 		previousCollapsedRef.current = collapsed;
@@ -291,7 +303,7 @@ export function AgentSidebar({
 			settleFrameRef.current = window.requestAnimationFrame(frame);
 		};
 		settleFrameRef.current = window.requestAnimationFrame(frame);
-	}, [collapsed]);
+	}, [collapsed, focused]);
 
 	const activeSession = sessions.find((session) => session.id === activeSessionId);
 	const currentTaskTitle = activeSession
@@ -311,12 +323,12 @@ export function AgentSidebar({
 	return (
 		<>
 			<aside
-				className={`agent-sidebar ${collapsed ? "is-collapsed" : ""}`}
+				className={`agent-sidebar ${collapsed ? "is-collapsed" : ""}${focused ? " is-focused" : ""}`}
 				aria-label={`${agentName} chat`}
 				aria-hidden={collapsed}
 				inert={collapsed}
 			>
-				<div
+				{!focused && <div
 					ref={resizeHandleRef}
 					className="agent-sidebar-resize-handle"
 					role="separator"
@@ -332,13 +344,15 @@ export function AgentSidebar({
 					onPointerCancel={finishResize}
 					onLostPointerCapture={finishResize}
 					onKeyDown={resizeWithKeyboard}
-				/>
+				/>}
 				<div className="agent-sidebar-header">
 					<div className="agent-sidebar-drag" />
 					<div className="agent-chat-toolbar">
+						{focused ? <button type="button" className="agent-work-back" onClick={onBackToAgents}><Icon name="back" />Back to agents</button> : null}
 						<button
 							type="button"
 							className="agent-sidebar-expand"
+							hidden={focused}
 							aria-label="Open Agent tab"
 							title="Open Agent tab"
 							onClick={onExpandChat}
@@ -364,6 +378,7 @@ export function AgentSidebar({
 						<button
 							type="button"
 							className="agent-sidebar-collapse"
+							hidden={focused}
 							aria-label={`Hide ${agentName}`}
 							title={`Hide ${agentName}`}
 							onClick={onToggleAgent}

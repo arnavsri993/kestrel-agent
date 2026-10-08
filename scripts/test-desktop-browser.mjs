@@ -2075,6 +2075,8 @@ try {
 	assert(tabId);
 	let runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
 	await page.getByRole("button", { name: "Open Agent tab" }).click();
+	await page.getByRole("button", { name: "Back to agents", exact: true }).click();
+	await page.getByRole("button", { name: "Map view", exact: true }).click();
 	await page
 		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
@@ -2093,6 +2095,7 @@ try {
 		.getByRole("combobox", { name: "Planet for Visible browser test", exact: true })
 		.waitFor();
 	await openKestrelDestination(page, "Agent");
+	await page.getByRole("button", { name: "Map view", exact: true }).click();
 	await page
 		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();

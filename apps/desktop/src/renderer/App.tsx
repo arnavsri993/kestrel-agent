@@ -10245,7 +10245,7 @@ export function App() {
 		() => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
 	);
 	const [agentUniverseRailOpen, setAgentUniverseRailOpen] = useState(
-		() => localStorage.getItem("kestrel:agent-universe-rail") === "open",
+		false,
 	);
 	const [settingsSectionRequest, setSettingsSectionRequest] = useState<{
 		section: SettingsSection | null;
@@ -10860,6 +10860,7 @@ export function App() {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
 	const openAgent = useCallback(() => {
+		setAgentUniverseRailOpen(false);
 		void openAppPage("agent");
 	}, [openAppPage]);
 	const openWritingStudio = useCallback(() => {
@@ -11224,6 +11225,15 @@ export function App() {
 	);
 	const presentedAgentSidebarOpen =
 		appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen;
+	const agentWorkFocused = appPageId === "agent" && agentUniverseRailOpen;
+	const backToAgents = () => {
+		setAgentUniverseRailOpen(false);
+		window.requestAnimationFrame(() => {
+			const row = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-agent-session-id]"))
+				.find(item => item.dataset.agentSessionId === activeRuntimeSessionId);
+			(row ?? document.getElementById("agent-workspace-title"))?.focus();
+		});
+	};
 	const appPage = appPageId ? (
 		<motion.div
 			key={appPageId}
@@ -11247,6 +11257,8 @@ export function App() {
 					: ""
 			}${appPageId === "memory" ? " life-product-surface" : ""}`}
 			data-app-page={appPageId}
+			hidden={agentWorkFocused}
+			inert={agentWorkFocused}
 			initial={reduced ? false : { opacity: 0, y: 3 }}
 			animate={{ opacity: 1, y: 0, pointerEvents: "auto" }}
 			exit={
@@ -11420,7 +11432,7 @@ export function App() {
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${presentedAgentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${presentedAgentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""}${agentWorkFocused ? " agent-work-focused" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
@@ -11500,7 +11512,9 @@ export function App() {
 					collapsed={!presentedAgentSidebarOpen}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
-					onExpandChat={openAgent}
+					onExpandChat={() => { setAgentUniverseRailOpen(true); void openAppPage("agent"); }}
+					focused={agentWorkFocused}
+					onBackToAgents={backToAgents}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so
             streams, steering, cancellation, and approval boundaries remain intact. */}
