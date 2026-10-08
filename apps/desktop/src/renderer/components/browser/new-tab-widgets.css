@@ -944,3 +944,16 @@
  white-space: normal;
  overflow-wrap: anywhere;
 }
+
+/* Short Home panes keep the empty-state title and recovery action in view. */
+@media (max-height: 600px) {
+	.ai-browser-app .new-tab-page.kestrel-home
+		.kestrel-widget-canvas[data-density="compact"] .kestrel-widget-empty {
+		min-height: 0;
+		padding-block: 2px;
+	}
+	.ai-browser-app .new-tab-page.kestrel-home
+		.kestrel-widget-canvas[data-density="compact"] .kestrel-widget-empty > div > p {
+		display: none;
+	}
+}
