@@ -17,6 +17,8 @@ this desktop workspace. No new dependencies, decorative material or animation.
   project changes, session restoration, request counts, desktop build, packaged
   smoke and the canonical installed app. Do not claim battery/CPU savings from
   request-count evidence alone.
+- In short compact Home panes, omit only secondary empty-state explanation so
+  the title and recovery action remain reachable through 200 percent zoom.
 - Why this is not generic: refresh ownership follows Kestrel's actual Codex
   usage, routing traces, project grants and conversation lifecycle.
 
