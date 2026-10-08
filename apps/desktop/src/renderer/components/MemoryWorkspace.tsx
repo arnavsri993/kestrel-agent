@@ -189,7 +189,7 @@ function DocumentWorkspace({
 	return (
 		<div className="memory-library">
 			<aside aria-label={`${noun} documents`}>
-				<header><h2>{kind === "person" ? "People" : kind === "tool" ? "Tools" : "Memory"}</h2><button onClick={() => select(undefined)}>New</button></header>
+				<header><h2>{kind === "person" ? "People" : kind === "tool" ? "Tools" : kind === "knowledge" ? "Knowledge" : "Notes"}</h2><button onClick={() => select(undefined)}>New</button></header>
 				{visible.map((document) => <button className={document.id === selectedId ? "active" : ""} aria-pressed={document.id === selectedId} key={document.id} onClick={() => select(document)}><strong>{document.title}</strong><small>{documentSubtitle(document)}</small></button>)}
 				{!visible.length && <p>No {noun} documents yet.</p>}
 			</aside>

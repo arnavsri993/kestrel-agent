@@ -1984,7 +1984,7 @@ try {
 		return window.getSize();
 	});
 	// Utility pages now use the full workspace, without a default chat rail.
-	const narrowBookmarksWindowWidth = 960;
+	const narrowBookmarksWindowWidth = 760;
 	if (bookmarksWindowSize[0] !== narrowBookmarksWindowWidth) {
 		await application.evaluate(
 			({ BrowserWindow }, [width, height]) => {
@@ -1994,6 +1994,7 @@ try {
 						!candidate.webContents.getURL().includes("petOverlay=1"),
 				);
 				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setMinimumSize(640, 400);
 				window.setSize(width, height);
 			},
 			[narrowBookmarksWindowWidth, bookmarksWindowSize[1]],

@@ -48,6 +48,13 @@ async function openRoute(route, heading) {
 	await page.waitForFunction(() => document.querySelector("#browser-agent-toggle")?.getAttribute("aria-expanded") === "false");
 }
 
+async function openMemoryOverview() {
+	const button = page.locator(".memory-workspace-tabs").getByRole("button", { name: "Overview", exact: true });
+	if (await button.count()) await button.click();
+	else await page.getByLabel("More memory views").selectOption("overview");
+	await page.locator(".memory-overview").waitFor();
+}
+
 async function assertNoOverflow(label) {
 	const sizes = await page.evaluate(() => ({
 		viewport: innerWidth,
@@ -186,16 +193,18 @@ try {
 		if (["projects", "memory", "connections", "settings"].includes(surface.name))
 			assert.equal(await page.locator("#runtime-prompt").isVisible().catch(() => false), false, `${surface.name} should not show the runtime composer by default`);
 		if (surface.name === "memory") {
-			await page.getByLabel("Title", { exact: true }).fill("UI smoke note");
+			const title = page.getByLabel(/^Title(?: \(optional\))?$/);
+			if (!(await title.isVisible())) await page.getByRole("button", { name: "Add note", exact: true }).click();
+			await title.fill("UI smoke note");
 			await page.getByLabel("What Kestrel should know", { exact: true }).fill("A disposable note for checking this interface.");
 			await page.getByRole("button", { name: "Save", exact: true }).click();
 			await page.locator(".memory-reader").getByRole("heading", { name: "UI smoke note" }).waitFor();
 			await capture("notes-wide", "memory", surface.selectors);
-			await page.getByRole("button", { name: "Edit", exact: true }).click();
+			await page.getByRole("button", { name: /^Edit(?: note)?$/ }).click();
 			await page.getByLabel("What Kestrel should know", { exact: true }).fill("Updated disposable note.");
 			await page.getByRole("button", { name: "Save", exact: true }).click();
 			await page.locator(".memory-reader").getByText("Updated disposable note.", { exact: true }).waitFor();
-			await page.getByRole("button", { name: "Overview", exact: true }).click();
+			await openMemoryOverview();
 		}
 		if (surface.name === "settings") {
 			const scope = page.locator(".settings-scope-switcher").getByRole("tab", { name: "Browser", exact: true });
@@ -228,7 +237,7 @@ try {
 			await openRoute(surface.route, surface.heading);
 			if (["projects", "memory", "connections", "settings"].includes(surface.name))
 				assert.equal(await page.locator("#runtime-prompt").isVisible().catch(() => false), false, `${surface.name} should not show the runtime composer by default`);
-			if (surface.name === "memory") await page.getByRole("button", { name: "Overview", exact: true }).click();
+			if (surface.name === "memory") await openMemoryOverview();
 			if (surface.name === "settings") {
 				const browserTab = page.locator(".settings-scope-switcher").getByRole("tab", { name: "Browser", exact: true });
 				if (await browserTab.count()) await browserTab.click();
