@@ -87,8 +87,10 @@ try {
   assert.equal(await page.locator(".settings-nav").getByRole("button", { name: "Browser", exact: true }).count(), 0);
   assert.deepEqual(await page.locator(".settings-nav-group h3").allTextContents(),
     ["Everyday browsing", "Privacy & personal data", "Manage browser"]);
-  await page.locator(".settings-nav").getByRole("button", { name: "Downloads", exact: true }).focus();
-  await page.keyboard.press("Enter");
+  const desktopPicker = page.getByLabel("Browser settings section");
+  await desktopPicker.focus();
+  assert.equal(await desktopPicker.evaluate((node) => document.activeElement === node), true);
+  await desktopPicker.selectOption("browser-downloads");
   await page.locator('[data-settings-panel="browser-downloads"]').waitFor();
   assert.equal(await page.locator('.settings-nav [aria-current="page"]').textContent(), "Downloads");
   await selectSettingsSection(page, "browser-startup", "Startup");
@@ -137,7 +139,7 @@ try {
 
   await search.fill("");
   await selectSettingsSection(page, "browser-reset", "Data & reset");
-  await page.getByText("Clear browsing history", { exact: true }).waitFor();
+  await page.getByText("Browsing history", { exact: true }).waitFor();
   const clearHistory = page.locator("#setting-browser-clear-history");
   assert.equal(await clearHistory.getByRole("button", { name: "Clear history" }).count(), 1);
 

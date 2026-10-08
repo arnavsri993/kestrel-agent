@@ -77,21 +77,24 @@ async function launch() {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
-	await page.locator("#runtime-prompt").waitFor();
+	await page.locator("#runtime-prompt").waitFor({ state: "attached" });
 	return page;
 }
 
 async function openProviderAccounts(page) {
 	await openKestrelDestination(page, "Settings");
 	await selectSettingsSection(page, "agent-models", "Models & routing");
-	await page.getByText("Provider accounts", { exact: true }).waitFor();
+	await page.getByText("Accounts", { exact: true }).waitFor();
 }
 
 async function addLoopbackAccount(page, label, providerId, baseUrl) {
 	const form = page.locator(".provider-account-add");
 	await form.waitFor();
+	if ((await form.getAttribute("open")) === null) await form.locator(":scope > summary").click();
 	await form.locator("select").selectOption("compatible");
 	await form.getByLabel("Account label", { exact: true }).fill(label);
+	if (!(await form.getByLabel("Provider ID", { exact: true }).isVisible()))
+		await form.getByText("Advanced connection settings", { exact: true }).click();
 	await form.getByLabel("Provider ID", { exact: true }).fill(providerId);
 	await form.getByLabel(/Base URL/).fill(baseUrl);
 	assert.equal(await form.getByLabel("Protected API key", { exact: true }).count(), 0);
@@ -111,7 +114,7 @@ try {
 
 	let page = await launch();
 	await openProviderAccounts(page);
-	await page.getByText("Unsupported subscription connectors", { exact: true }).waitFor();
+	await page.getByText("Other sign-in options", { exact: true }).click();
 	await addLoopbackAccount(page, "Personal local", "lab", baseUrl);
 	await addLoopbackAccount(page, "Work local", "lab", baseUrl);
 

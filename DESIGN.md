@@ -919,3 +919,21 @@ screenshots at desktop and compact widths. Review screenshots, identify three
 concrete weaknesses, refine, then recapture. Existing runtime approval authority
 and user-owned profiles are unchanged. This design follows actual Kestrel agents,
 runs and delegated tasks rather than a generic dashboard template.
+
+## App-wide simplification — October 2026
+
+Thesis: Kestrel presents a clear page title, one readable work area, and short action labels; optional explanations and advanced controls appear only where they help a decision.
+
+Mode: existing-redesign / design-system, multi-page native macOS workspace. The guidance classifier returned a marketing page; verified repository and running desktop evidence override that classification. This is a frequent-use utility with low visual and motion intensity, not a landing page.
+
+Visual system: dense-app with relaxed reading. Preserve SF Pro Display and SF Pro Text, the user's native macOS preference, as the intentional type pair. Scale: page title 32px, section 21px, item 18px, body/control 17px, supporting metadata 15px, compact browser chrome 14px. Four-pixel spacing; 24px between sections and 12–16px within them. Graphite canvas and neutral surfaces, readable white text and gray metadata; one light primary action. Simple dividers group content; avoid nested cards, decorative badges, gradients, and extra introductions.
+
+Composition: persistent compact navigation, one main page, a useful heading and action group. Keep essential settings, errors, authorization details, setup/recovery instructions, and user content. Remove redundant page subtitles and prose that describes an already labelled control. Explain advanced behavior within disclosures; do not blanket-hide paragraphs or metadata with CSS. Keep honest loading/empty/error states and reachable recovery actions.
+
+Motion: feedback (100ms colors/borders) and state (140ms opacity/short panel transitions). No focal animation, hover scaling, decorative pulsing, or delayed navigation. Reduced motion settles immediately without moving content. Preserve focus, keyboard, draft, selection, session and approval ownership.
+
+Verification: representative Home, Agents/chat, Projects, Memory, Connections and Browser/Agent Settings plus menus/overlays. Test wide, compact, zoom, long labels, keyboard/focus, reduced motion, empty/error/recovery paths; compare rendered before/after and fix three highest-impact visual weaknesses. Install and reopen only the canonical app, retaining existing profile and installed features. Keep Ollama disabled and use hosted Codex workers.
+
+Why this is not generic: the shared system is built around Kestrel's browser chrome, persistent agents, project context, memory and provider setup rather than a dashboard template.
+
+Refinement evidence: the first rendered pass exposed small chat text, duplicate focus outlines, and competing navigation or chat surfaces. Corrected the type hierarchy, gave the composer one focus border, replaced the second settings navigation with a section picker, and kept utility pages clear by default. Compact chat actions now open the full conversation; the duplicate compact dock is removed. Retain generous blank space and readable line lengths. The final disposable-profile audit passed 24 captures at 1360, 760 and 520px, including note creation/editing, IPC-injected read failure and Retry, keyboard panel access, and reduced motion. Existing motion-contract widget transitions use the short 160ms selection family.

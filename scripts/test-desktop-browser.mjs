@@ -1983,7 +1983,8 @@ try {
 		if (!window) throw new Error("The Kestrel window is unavailable.");
 		return window.getSize();
 	});
-	const narrowBookmarksWindowWidth = 1200;
+	// Utility pages now use the full workspace, without a default chat rail.
+	const narrowBookmarksWindowWidth = 960;
 	if (bookmarksWindowSize[0] !== narrowBookmarksWindowWidth) {
 		await application.evaluate(
 			({ BrowserWindow }, [width, height]) => {
@@ -2979,7 +2980,7 @@ try {
 	await page.getByLabel("Tab sizing", { exact: true }).selectOption("shrinking");
 	await selectSettingsSection(page, "browser-privacy", "Privacy & permissions");
 	const useCurrentPage = page.getByRole("switch", {
-		name: "Use current page context with agent",
+		name: "Share the current page with agents",
 	});
 	if ((await useCurrentPage.getAttribute("aria-checked")) === "true")
 		await useCurrentPage.click();

@@ -95,13 +95,7 @@ export function ProjectsWorkspace({
 									appearances={projectAppearances}
 								/>
 								<div>
-									<span className="eyebrow">Project</span>
 									<h1 id="projects-workspace-title">{selectedProject.name}</h1>
-									<p>
-										{selectedProject.instructions?.trim()
-											? "Project instructions apply here."
-											: "Chats share this project's context."}
-									</p>
 								</div>
 							</div>
 							<div className="projects-workspace-actions">
@@ -131,15 +125,12 @@ export function ProjectsWorkspace({
 						</header>
 
 						{selectedProject.instructions?.trim() ? (
-							<section
+							<details
 								className="projects-workspace-instructions"
-								aria-labelledby="projects-workspace-instructions-title"
 							>
-								<h2 id="projects-workspace-instructions-title">
-									Project instructions
-								</h2>
+								<summary>Project instructions</summary>
 								<p>{selectedProject.instructions}</p>
-							</section>
+							</details>
 						) : null}
 
 						<section
@@ -232,9 +223,7 @@ export function ProjectsWorkspace({
 				) : (
 					<section className="projects-workspace-empty projects-workspace-no-projects">
 						<h1 id="projects-workspace-title">No projects yet</h1>
-						<p>
-							Add a folder for related chats and context.
-						</p>
+						<p>Keep related chats and files together.</p>
 						<button
 							type="button"
 							className="button primary"

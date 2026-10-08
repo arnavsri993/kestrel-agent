@@ -1,0 +1,219 @@
+/* One readable system for Kestrel's own UI. Web pages keep their own styles. */
+:root {
+	--type-page: 32px;
+	--type-section: 21px;
+	--type-item: 18px;
+	--type-body: 17px;
+	--type-detail: 15px;
+	--motion-control: 100ms;
+	--motion-selection: 140ms;
+	--motion-panel: 140ms;
+	--motion-navigation: 140ms;
+	--motion-state: 140ms;
+}
+
+body { font-size: var(--type-body); }
+.unified-ui :is(.page-frame, .settings-content, .memory-workspace, .agent-work-home, .projects-workspace) {
+	font-size: var(--type-body);
+	line-height: 1.5;
+	animation: none;
+}
+.unified-ui :is(.ui-page-frame h1, .projects-workspace h1, .memory-workspace-header h1, .agent-work-header h1) {
+	font: 650 var(--type-page) / 1.2 var(--display);
+	letter-spacing: -0.025em;
+}
+.unified-ui :is(.settings-panel-header h2, .projects-workspace-chats-heading h2, .agent-work-overview-group h2, .memory-reader h2, .memory-library > aside h2, .memory-overview h2, .memory-timeline h2, .ui-empty-state h2) {
+	font-size: var(--type-section);
+	line-height: 1.3;
+	letter-spacing: -0.015em;
+}
+.unified-ui :is(.settings-content h3, .memory-tier-heading h3, .memory-recent h3) {
+	font-size: var(--type-item);
+	line-height: 1.35;
+}
+.unified-ui :is(.button, .ui-button, .quiet-link, .segmented button, .settings-scope-switcher button, .settings-content select, .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), .settings-content textarea) {
+	font-size: var(--type-body);
+}
+.unified-ui :is(.button, .ui-button-normal, .quiet-link, .segmented button, .settings-scope-switcher button) {
+	min-height: 40px;
+	max-width: 100%;
+	line-height: 1.35;
+}
+.unified-ui :is(.setting-row strong, .connection-list article strong, .provider-account-card h4) {
+	font-size: var(--type-body);
+	line-height: 1.4;
+}
+.unified-ui :is(.setting-row p, .setting-row small, .connection-list article p, .connection-list article small, .settings-panel-header p, .provider-account-card p, .provider-account-status, .provider-account-kind-description, .routing-registry-summary, .ui-page-frame-description, .ui-row-copy small, .ui-status) {
+	font-size: var(--type-detail);
+	line-height: 1.5;
+}
+.unified-ui .settings-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), select) {
+	min-height: 42px;
+	min-width: 0;
+	max-width: 100%;
+}
+.unified-ui :is(.settings-content, .settings-panel, .setting-row, .setting-row > div, .connection-list article > div) {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.unified-ui .settings-page-frame { max-width: 980px; }
+.unified-ui .settings-layout { grid-template-columns: minmax(0, 1fr); }
+.unified-ui .settings-nav { display: none; }
+.unified-ui .settings-toolbar .settings-section-picker {
+	display: grid;
+	gap: 6px;
+	flex: 0 1 240px;
+	min-width: 0;
+	color: var(--muted);
+}
+.unified-ui .settings-section-picker select { min-height: 42px; width: 100%; }
+.unified-ui .settings-toolbar .settings-scope-switcher button { min-height: 40px; }
+.unified-ui .settings-content .settings-panel {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+	padding: 0;
+}
+.unified-ui .settings-panel-header { padding-bottom: 16px; margin-bottom: 8px; }
+.unified-ui .settings-panel-header h2 { margin: 0; }
+.unified-ui .settings-content .setting-row { padding-block: 20px; gap: 16px; }
+.unified-ui .settings-stack { gap: 0; }
+.unified-ui .settings-toolbar { gap: 16px; margin-bottom: 24px; }
+.unified-ui :is(.settings-search-field input, .settings-section-picker select) { font-size: var(--type-body); }
+.unified-ui .settings-section-picker > span { font-size: var(--type-detail); }
+.unified-ui .routing-mode-grid {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 8px;
+}
+.unified-ui .routing-mode-grid button { min-height: 44px; padding: 12px; }
+.unified-ui .routing-mode-grid button strong { font-size: var(--type-body); }
+.unified-ui .routing-mode-grid .routing-mode-icon { display: none; }
+.unified-ui .provider-account-card {
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+	padding: 16px 0;
+}
+.unified-ui .provider-account-actions { gap: 8px; flex-wrap: wrap; }
+.unified-ui :is(.provider-account-add, .provider-account-unsupported, .settings-provider-checks, .settings-routing-details, .routing-advanced) {
+	border: 0;
+	border-top: 1px solid var(--line);
+	border-radius: 0;
+	background: transparent;
+	padding: 12px 0;
+}
+.unified-ui :is(.provider-account-add, .provider-account-unsupported, .settings-provider-checks, .settings-routing-details, .routing-advanced) > summary {
+	min-height: 40px;
+	font-size: var(--type-body);
+	line-height: 1.4;
+	cursor: pointer;
+}
+.unified-ui .provider-account-add > form { margin-top: 16px; }
+.unified-ui :is(.provider-account-group h3, .connection-heading h2) { font-size: var(--type-section); }
+.unified-ui .connection-status { font-size: var(--type-detail); line-height: 1.4; }
+.unified-ui .memory-scope-selector { font-size: var(--type-detail); }
+.unified-ui .connection-list summary { font-size: var(--type-body); min-height: 40px; }
+
+/* The project list and agent overview share a clear title / detail hierarchy. */
+.unified-ui :is(.projects-workspace-chat strong, .agent-work-overview-name) {
+	font-size: var(--type-item);
+	line-height: 1.4;
+}
+.unified-ui :is(.projects-workspace-chat time, .agent-work-overview-metadata, .agent-work-overview-notice, .agent-work-overview-empty, .agent-work-overview-delegated summary) {
+	font-size: var(--type-detail);
+	line-height: 1.5;
+}
+.unified-ui .agent-work-overview-row { grid-template-columns: minmax(0, 1fr) 40px; }
+.unified-ui .agent-work-overview-settings { width: 40px; height: 40px; }
+.unified-ui .agent-work-overview-delegated summary { min-height: 36px; }
+.unified-ui .agent-work-overview { gap: 24px; }
+.unified-ui .agent-work-header { margin-bottom: 24px; }
+.unified-ui :is(.agent-work-search input, .agent-universe-create-agent-trigger) { font-size: var(--type-body); min-height: 40px; }
+.unified-ui .agent-work-map-link { font-size: var(--type-detail); min-height: 40px; }
+.unified-ui .projects-workspace-instructions > summary { min-height: 40px; font-size: var(--type-body); cursor: pointer; }
+.unified-ui .projects-workspace-instructions p { font-size: var(--type-body); }
+.unified-ui .projects-workspace-empty { border: 0; background: transparent; }
+.unified-ui .agent-sidebar.is-collapsed { visibility: hidden; }
+.unified-ui .ui-row-copy strong { font-size: var(--type-body); line-height: 1.4; }
+.unified-ui :is(.ui-input, .ui-textarea, .ui-empty-state p) { font-size: var(--type-body); line-height: 1.5; }
+
+/* Notes and their controls use the same system as settings and projects. */
+.unified-ui .memory-workspace {
+	--text-primary: var(--ink);
+	--text-secondary: var(--ink-secondary);
+	--border: var(--line);
+	--surface-raised: var(--surface);
+	--accent: var(--ink);
+}
+.unified-ui :is(.memory-workspace button, .memory-workspace input, .memory-workspace select, .memory-workspace textarea, .memory-workspace summary) {
+	font-size: var(--type-body);
+	line-height: 1.4;
+}
+.unified-ui :is(.memory-workspace button, .memory-workspace input, .memory-workspace select, .memory-workspace summary) { min-height: 40px; }
+.unified-ui :is(.memory-library strong, .memory-tier h4) { font-size: var(--type-item); }
+.unified-ui :is(.memory-workspace small, .memory-tier-heading span, .memory-workspace label, .memory-editor footer span) { font-size: var(--type-detail); line-height: 1.45; }
+.unified-ui .memory-scope-disclosure { min-width: 0; }
+.unified-ui .memory-scope-disclosure > summary { cursor: pointer; }
+.unified-ui .memory-scope-controls { flex-wrap: wrap; padding-top: 12px; }
+.unified-ui .memory-library { grid-template-columns: minmax(180px, .8fr) minmax(0, 2fr); gap: 24px; }
+.unified-ui .memory-library :is(aside, form, article, input, textarea) { min-width: 0; max-width: 100%; }
+.unified-ui .memory-workspace-tabs { gap: 20px; }
+.unified-ui .memory-editor button.primary { background: var(--solid); color: var(--on-solid); }
+.unified-ui .memory-editor textarea { font-weight: 400; }
+
+/* Reading is comfortable; browser chrome and utility icons remain compact. */
+.unified-ui :is(.agent-conversation-host .assistant-message p, .agent-conversation-host .user-message p, .agent-conversation-host .assistant-message li, .agent-conversation-host .user-message li, .thread-composer textarea, .composer textarea) {
+	font-size: var(--type-body);
+	line-height: 1.6;
+}
+.unified-ui .agent-sidebar .agent-chat-heading strong { font-size: var(--type-item); line-height: 1.4; }
+.unified-ui .agent-sidebar .agent-chat-heading small { font-size: var(--type-detail); line-height: 1.4; }
+.unified-ui .agent-sidebar .composer-footer :is(span, button) { font-size: var(--type-detail); line-height: 1.4; }
+.unified-ui .agent-work-back { min-height: 40px; font-size: var(--type-detail); }
+.unified-ui .agent-sidebar.is-focused .thread-composer:focus-within { outline: none; }
+.unified-ui .agent-sidebar.is-focused .composer:focus-within {
+	outline: none;
+	border-color: var(--focus);
+	box-shadow: 0 0 0 1px var(--focus);
+}
+.unified-ui .kestrel-widget-card-heading h3 { font-size: var(--type-item); line-height: 1.4; }
+.unified-ui :is(.kestrel-widget-empty p, .kestrel-widget-list strong, .kestrel-widget-action-list strong) { font-size: var(--type-body); line-height: 1.4; }
+.unified-ui :is(.kestrel-widget-list small, .kestrel-widget-action-list small, .kestrel-widget-empty small, .kestrel-widget-card-body > p) { font-size: var(--type-detail); line-height: 1.45; }
+.unified-ui .kestrel-home-hero h1 { font: 650 var(--type-page) / 1.2 var(--display); }
+.unified-ui #new-tab-chat-input { font-size: var(--type-body); }
+.unified-ui .kestrel-sidebar-row { font-size: 16px; min-height: 40px; }
+.unified-ui .kestrel-sidebar-section-heading h2 { font-size: var(--type-detail); text-transform: none; letter-spacing: 0; }
+.unified-ui :is(.browser-menu, .browser-menu-popover, .browser-history-popover, .sidebar-context-menu, .ui-dialog, .dialog, .task-settings-panel) { font-size: var(--type-detail); }
+.unified-ui :is(.browser-menu button, .browser-menu-popover button, .sidebar-context-menu button, .task-settings-panel label) { font-size: var(--type-detail); }
+
+/* Feedback changes color, never the target's position under the pointer. */
+.unified-ui :is(.ui-button, .button, .ui-card-interactive, .new-tab-shortcut, .home-widget, .browser-tab-close):hover {
+	transform: none;
+	translate: none;
+	scale: none;
+}
+.unified-ui :is(.agent-sidebar-collapse, .kestrel-sidebar-collapse):hover svg { translate: none; }
+.unified-ui :is(.kestrel-home-hero, .new-tab-shortcuts) { animation: none; }
+.unified-ui :is(button, input, select, summary) {
+	transition-property: background-color, border-color, color, opacity;
+	transition-duration: var(--motion-control);
+}
+
+@media (max-width: 760px) {
+	/* The sidebar and toolbar already lead to the full conversation. */
+	.unified-ui .agent-compact-dock { display: none; }
+	.unified-ui .browser-workspace:not(.browser-workspace-vertical) .browser-viewport { margin-bottom: 0; }
+	.unified-ui .browser-workspace-vertical :is(.browser-viewport, .browser-tab-row-vertical) { bottom: 0; }
+	.unified-ui .routing-mode-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.unified-ui .memory-library { grid-template-columns: minmax(0, 1fr); }
+.unified-ui .memory-workspace-header { align-items: flex-start; flex-wrap: wrap; }
+	.unified-ui .memory-workspace-tabs { gap: 16px; }
+	.unified-ui .settings-toolbar { align-items: stretch; }
+}
+@media (prefers-reduced-motion: reduce) {
+	:root { --motion-control: 0ms; --motion-menu: 0ms; --motion-selection: 0ms; --motion-panel: 0ms; --motion-navigation: 0ms; }
+	.unified-ui :is(button, input, select, summary, .home-widget, .new-tab-shortcut, .agent-sidebar) { transition-duration: 0s; animation: none; }
+}

@@ -53,7 +53,7 @@ export function AgentSettingsDialog({ session, sessions, onClose, onSaved }: {
 		<label>Name<input name="name" defaultValue={target.title} required maxLength={200} /></label>
 		{target.specialistDefinition && <>
 			<label>Purpose<textarea name="purpose" required maxLength={2000} defaultValue={target.specialistDefinition.purpose} /></label>
-			<label><input type="checkbox" name="enabled" defaultChecked={target.specialistDefinition.enabled} />Available for delegation</label>
+			<label><input type="checkbox" name="enabled" defaultChecked={target.specialistDefinition.enabled} />Available for tasks</label>
 		</>}
 		<label>Instructions<textarea name="instructions" maxLength={20000} defaultValue={target.specialistDefinition?.instructions ?? target.agentInstructions ?? ""} /></label>
 		<button type="submit" className="button secondary" disabled={busy}>Save</button>
@@ -64,11 +64,11 @@ export function AgentSettingsDialog({ session, sessions, onClose, onSaved }: {
 		{error && <p role="alert">{error}</p>}
 		{editor(session)}
 		{session.kind === "agent" && <>
-			<h3>Specialists</h3><p>Only relevant specialists run. Disabling one preserves its history.</p>
+			<h3>Specialists</h3><p>Disabled specialists keep their history.</p>
 			{sessions.filter(item => item.parentSessionId === session.id && item.specialistDefinition && !item.specialistDefinition.archived).map(item =>
 				<details key={item.id}><summary>{item.title}{item.specialistDefinition?.enabled ? "" : " · disabled"}</summary>{editor(item)}</details>)}
-			{sessions.some(item => item.parentSessionId === session.id && item.specialistDefinition?.archived) && <details><summary>Archived specialists</summary>
-				<p>History and memory are retained. Restore a specialist, then enable it when needed.</p>
+			{sessions.some(item => item.parentSessionId === session.id && item.specialistDefinition?.archived) && <details><summary>Archived</summary>
+				<p>Archived specialists keep their history and memory.</p>
 				{sessions.filter(item => item.parentSessionId === session.id && item.specialistDefinition?.archived).map(item => <p key={item.id}>{item.title} <button type="button" disabled={busy} onClick={() => void archive(item, false)}>Restore {item.title}</button></p>)}
 			</details>}
 			<details><summary>Add specialist</summary><form onSubmit={event => { event.preventDefault(); void add(event.currentTarget); }}>

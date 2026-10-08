@@ -729,7 +729,7 @@ export function AgentWorkspace({
 				session={sessions.find(item => item.id === settingsSessionId)!} sessions={sessions}
 				onClose={() => setSettingsSessionId(null)} onSaved={() => onRetrySessions?.()} />}
 			<header className="agent-work-header">
-				<div><h1 id="agent-workspace-title" tabIndex={-1}>Agents</h1><p>See what needs you, then pick up where you left off.</p></div>
+				<div><h1 id="agent-workspace-title" tabIndex={-1}>Agents</h1></div>
 				<div className="agent-work-actions"><AgentUniverseCreateAgentMenu onCreateAgent={onCreateAgent} />
 					<Button variant="solid" size="compact" onClick={onNewTask}><Icon name="plus" />Start task</Button></div>
 			</header>
