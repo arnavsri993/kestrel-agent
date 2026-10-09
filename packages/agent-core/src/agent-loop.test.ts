@@ -2873,6 +2873,68 @@ describe("provider-neutral agent loop", () => {
 		);
 	});
 
+	it("keeps the prior task brief through a recovery follow-up and rejected approval after compaction", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-loop-context-recovery-"));
+		directories.push(root);
+		writeFileSync(join(root, "keep.txt"), "keep me\n");
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database, [root]);
+		const session = runtime.createSession({ title: "Recover the original brief", workspaceRoot: root });
+		const brief = "Prepare a five-minute demo for AI builders, under 600 words, with two fallbacks and citations. Preserve this deliverable during browser recovery.";
+		const recovery = "The first URL redirected. Use the direct destination and continue the original brief; do not repeat the failed navigation.";
+		runtime.appendMessage({ sessionId: session.id, role: "user", content: brief });
+		for (let index = 0; index < 20; index += 1) {
+			const id = `research-${index}`;
+			runtime.appendMessage({
+				sessionId: session.id, role: "assistant", content: "Reading research evidence.",
+				modelToolCalls: [{ id, name: "browser.snapshot", arguments: { browserSessionId: "fixture" } }],
+			});
+			runtime.appendMessage({
+				sessionId: session.id, role: "tool", content: `Research page ${index}: ${"page evidence ".repeat(600)}`,
+				providerToolCallId: id, toolName: "browser.snapshot",
+			});
+		}
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "context-recovery",
+			capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: true },
+			complete: async (request) => {
+				calls += 1;
+				const userMessages = request.messages.filter((message) => message.role === "user").map((message) => contentText(message.content));
+				expect(userMessages).toContain(brief);
+				expect(userMessages.at(-1)).toBe(recovery);
+				expect(userMessages.indexOf(brief)).toBeLessThan(userMessages.indexOf(recovery));
+				return calls === 1 ? {
+					providerId: "context-recovery", model: request.model, text: "", finishReason: "tool_calls",
+					toolCalls: [{ id: "unrelated-delete", name: "workspace.delete", arguments: { path: "keep.txt" } }],
+					usage: { inputTokens: 20, outputTokens: 5 },
+				} : {
+					providerId: "context-recovery", model: request.model,
+					text: "The five-minute brief for AI builders keeps its word limit, two fallbacks, and citations.",
+					toolCalls: [], usage: { inputTokens: 25, outputTokens: 12 }, finishReason: "stop",
+				};
+			},
+		};
+		const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
+		try {
+			const waiting = await loop.run({
+				sessionId: session.id, model: "fixture", providerIds: ["context-recovery"],
+				userContent: textContent(recovery), maximumContextCharacters: 4_000,
+			});
+			expect(waiting.run.status).toBe("waiting_approval");
+			expect(waiting.compactedMessages).toBeGreaterThan(0);
+			const resumed = await loop.resume({ runId: waiting.run.id, approvalDecision: "rejected" });
+			expect(resumed.run.status).toBe("completed");
+			expect(calls).toBe(2);
+			expect(existsSync(join(root, "keep.txt"))).toBe(true);
+			expect(database.listToolExecutions(session.id)).toMatchObject([
+				{ status: "cancelled", error: "The user denied this tool call." },
+			]);
+		} finally {
+			database.close();
+		}
+	});
+
 	it("records automatic compaction alongside provider-reported token usage", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);
