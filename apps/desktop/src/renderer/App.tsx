@@ -91,6 +91,7 @@ import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
 import { RuntimeQuestionCard } from "./components/RuntimeQuestionCard";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
+import { BrowserAppPage } from "./components/browser/BrowserAppPage";
 import { ActionReceiptList } from "./components/ActionReceiptList";
 import {
 	sidebarActiveDestination,
@@ -11053,7 +11054,7 @@ export function App() {
 			window.cancelAnimationFrame(routeFocusFrameRef.current);
 		routeFocusFrameRef.current = window.requestAnimationFrame(() => {
 			routeFocusFrameRef.current = null;
-			if (pendingToolRouteFocusRef.current !== expected || !node.isConnected)
+			if (pendingToolRouteFocusRef.current !== expected || !node.isConnected || node.closest("[inert]"))
 				return;
 			const target =
 				expected === "commands"
@@ -11225,9 +11226,9 @@ export function App() {
 	const presentedAgentSidebarOpen =
 		appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen;
 	const appPage = appPageId ? (
-		<motion.div
+		<BrowserAppPage
 			key={appPageId}
-			ref={focusToolRoute}
+			onActivate={focusToolRoute}
 			className={`browser-app-page${
 				appPageId === "connections" ||
 				appPageId === "settings" ||
@@ -11246,15 +11247,8 @@ export function App() {
 					? " browser-secondary-surface"
 					: ""
 			}${appPageId === "memory" ? " life-product-surface" : ""}`}
-			data-app-page={appPageId}
-			initial={reduced ? false : { opacity: 0, y: 3 }}
-			animate={{ opacity: 1, y: 0, pointerEvents: "auto" }}
-			exit={
-				reduced
-					? { opacity: 1, y: 0, pointerEvents: "none" }
-					: { opacity: 0, y: -3, pointerEvents: "none" }
-			}
-			transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+			routeId={appPageId}
+			reducedMotion={!!reduced}
 		>
 			{appPageId === "history" && (
 				<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
@@ -11375,7 +11369,7 @@ export function App() {
 					onNavigate={navigate}
 				/>
 			)}
-		</motion.div>
+		</BrowserAppPage>
 	) : undefined;
 	const kestrelNavigation = showKestrelSidebar ? (
 		<KestrelSidebar

@@ -8,22 +8,26 @@ import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "workstrand-kanban-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
+const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 const screenshotPath = resolve(
-	"artifacts/screenshots/desktop/setup-revised/work-kanban.png",
+	process.env.KESTREL_KANBAN_SCREENSHOT ?? "artifacts/screenshots/desktop/setup-revised/work-kanban.png",
 );
 mkdirSync(dirname(screenshotPath), { recursive: true });
 let application;
+let page;
 
 try {
 	application = await electron.launch({
-		executablePath: requireFromDesktop("electron"),
-		args: [resolve("apps/desktop")],
+		executablePath: packagedExecutable ? resolve(packagedExecutable) : requireFromDesktop("electron"),
+		args: packagedExecutable ? ["--use-mock-keychain"] : [resolve("apps/desktop")],
 		env: {
 			...process.env,
 			KESTREL_TEST_USER_DATA: join(temporaryRoot, "user-data"),
+			KESTREL_TEST_MOCK_KEYCHAIN: "1",
+			KESTREL_DISABLE_UPDATES: "1",
 		},
 	});
-	const page = await application.firstWindow();
+	page = await application.firstWindow();
 	page.setDefaultTimeout(30_000);
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.evaluate(() => {
@@ -84,6 +88,46 @@ try {
 	await page.getByRole("heading", { name: "Goal board" }).waitFor();
 	await page.getByText("Market readiness", { exact: true }).first().waitFor();
 	process.stdout.write("Rendered all board columns.\n");
+	const routeTabs = await page.evaluate(async () => {
+		const response = await window.kestrel.request({ type: "browser-get-state" });
+		if (!response.ok || !response.browserState) throw new Error("Browser state unavailable.");
+		return Object.fromEntries(["work", "commands"].map(route => [route,
+			response.browserState.tabs.find(tab => tab.url === `kestrel://${route}`)?.id]));
+	});
+	assert(routeTabs.work && routeTabs.commands);
+	// Switch back before the previous page finishes exiting. The final task
+	// move still uses a real pointer click, without bypassing hit testing.
+	for (let attempt = 0; attempt < 6; attempt += 1) {
+		await page.locator('[data-app-page="commands"]').waitFor({ state: "detached" });
+		const selectRoute = async (tabId) => {
+			const response = await page.evaluate(tabId => window.kestrel.request({ type: "browser-select-tab", tabId }), tabId);
+			assert.equal(response.ok, true);
+		};
+		await selectRoute(routeTabs.commands);
+		await page.waitForFunction(() => document.querySelector('[data-app-page="commands"]'), undefined, { polling: "raf" });
+		const exitingWork = await page.locator('[data-app-page="work"]').evaluateAll(routes => routes.map(route => ({
+			inert: route.inert,
+			pointerEvents: getComputedStyle(route).pointerEvents,
+		})));
+		for (const route of exitingWork) {
+			assert.deepEqual(route, { inert: true, pointerEvents: "none" });
+		}
+		await page.locator(".command-groups button")
+			.filter({ has: page.getByText("Work", { exact: true }) }).first().press("Enter");
+		await page.getByRole("heading", { name: "Goal board" }).waitFor();
+		await page.waitForFunction(() => {
+			const routes = [...document.querySelectorAll('.browser-app-page[data-app-page="work"]')];
+			const route = routes[0];
+			const button = route && [...route.querySelectorAll('.kanban-card-actions button')].find(button => button.textContent === "In progress →");
+			const bounds = button?.getBoundingClientRect();
+			const hit = bounds && document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+			const exiting = [...document.querySelectorAll(".browser-app-page")].filter(other => other !== route);
+			return routes.length === 1 && !route.inert && getComputedStyle(route).pointerEvents === "auto" &&
+				button?.contains(hit) && route.contains(document.activeElement) &&
+				exiting.every(other => other.inert && getComputedStyle(other).pointerEvents === "none");
+		}, undefined, { timeout: 2_000 });
+	}
+	process.stdout.write("Verified rapid route re-entry and inert exiting pages.\n");
 
 	const column = (name) =>
 		page
@@ -151,6 +195,11 @@ try {
 	);
 	process.stdout.write("Verified durable reload.\n");
 
+	await page.locator('[data-app-page="commands"]').waitFor({ state: "detached" });
+	await page.waitForFunction(() => {
+		const route = document.querySelector('[data-app-page="work"]');
+		return route && getComputedStyle(route).opacity === "1";
+	});
 	await page.screenshot({ path: screenshotPath, fullPage: false });
 
 	await page.setViewportSize({ width: 640, height: 860 });
@@ -176,6 +225,21 @@ try {
 	process.stdout.write(
 		`Accessible durable Kanban interaction passed. Screenshot: ${screenshotPath}\n`,
 	);
+} catch (error) {
+	const routes = await page?.evaluate(() => [...document.querySelectorAll(".browser-app-page")].map(route => ({
+		page: route.getAttribute("data-app-page"),
+		style: route.getAttribute("style"),
+		pointerEvents: getComputedStyle(route).pointerEvents,
+		inert: route.hasAttribute("inert"),
+		focused: route.contains(document.activeElement),
+		activeElement: document.activeElement?.outerHTML.slice(0, 180),
+		buttons: [...route.querySelectorAll('.kanban-card-actions button')].slice(0, 2).map(button => {
+			const bounds = button.getBoundingClientRect();
+			return { text: button.textContent, hit: document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.outerHTML.slice(0, 180) };
+		}),
+	}))).catch(() => undefined);
+	process.stderr.write(`Route interaction diagnostics: ${JSON.stringify(routes)}\n`);
+	throw error;
 } finally {
 	await application?.close();
 	rmSync(temporaryRoot, { recursive: true, force: true });
