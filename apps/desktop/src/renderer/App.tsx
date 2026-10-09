@@ -4734,13 +4734,13 @@ function RuntimeConversation({
 					{latestOutcome && (
 						<section
 							className={`runtime-outcome runtime-outcome-${latestOutcome}`}
-							aria-label="Latest task outcome"
+							aria-label="Latest run outcome"
 						>
 							<div className="runtime-outcome-icon">
 								<Icon
 									name={
 										latestOutcome === "completed"
-											? "check"
+											? "chat"
 											: latestOutcome === "failed"
 												? "warning"
 												: "pause"

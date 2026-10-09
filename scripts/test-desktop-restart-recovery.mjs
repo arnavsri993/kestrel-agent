@@ -87,7 +87,7 @@ const server = createServer(async (request, response) => {
 	}
 	sendCompletion(
 		response,
-		"Completed only after explicit retry.",
+		"I cannot finish the requested brief yet. Please provide the missing audience and duration.",
 		`task-fixture-${taskCalls}`,
 	);
 });
@@ -257,7 +257,12 @@ try {
 		.locator(".runtime-outcome")
 		.getByRole("button", { name: "Retry last turn", exact: true })
 		.click();
-	await page.getByText("Task complete", { exact: true }).waitFor();
+	await page.getByText("Response finished", { exact: true }).waitFor();
+	await page.getByText(
+		"I cannot finish the requested brief yet. Please provide the missing audience and duration.",
+		{ exact: true },
+	).waitFor();
+	assert.equal(await page.getByText("Task complete", { exact: true }).count(), 0);
 	assert.equal(taskCalls, 2);
 	const retried = await recoveredRuns(page);
 	assert(retried);
@@ -266,7 +271,7 @@ try {
 		["failed", "completed"],
 	);
 	process.stdout.write(
-		"Restart recovery UI, no-replay boundary, and explicit retry passed.\n",
+		"Restart recovery UI, no-replay boundary, explicit retry, and truthful clarification-response status passed.\n",
 	);
 } finally {
 	for (const response of hangingResponses) response.destroy();
