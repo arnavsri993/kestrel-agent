@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { _electron as electron } from '@playwright/test';
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 const root = mkdtempSync(join(tmpdir(), 'kestrel-autofill-preload-'));
 const preload = resolve('apps/desktop/out/preload/userBrowser.cjs');
 const main = join(root, 'main.cjs');
@@ -20,7 +21,7 @@ app.whenReady().then(async()=>{
 });`);
 let app;
 try {
- app = await electron.launch({ executablePath:createRequire(resolve('apps/desktop/package.json'))('electron'), args:[main], env:{...process.env,ELECTRON_RUN_AS_NODE:''} });
+ app = await electron.launch({ executablePath:createRequire(resolve('apps/desktop/package.json'))('electron'), args:[main], env:withDesktopAgentCoreEnv({...process.env,ELECTRON_RUN_AS_NODE:''}) });
  const page = await app.firstWindow();
  await page.waitForURL('https://autofill.example.test/');
  const command = (input) => app.evaluate(async ({BrowserWindow,ipcMain}, input) => {

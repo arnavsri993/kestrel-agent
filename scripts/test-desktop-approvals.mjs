@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
 import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-approvals-test-"));
 let application;
@@ -11,11 +12,11 @@ let application;
 try {
 	application = await electron.launch({
 		args: [resolve("apps/desktop/out/main/index.js")],
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...process.env,
 			KESTREL_DISABLE_UPDATES: "1",
-			KESTREL_TEST_USER_DATA: join(root, "user-data"),
-		},
+			KESTREL_TEST_USER_DATA: join(root, "user-data")
+}),
 	});
 	const page = await application.firstWindow();
 	const runtimeErrors = [];

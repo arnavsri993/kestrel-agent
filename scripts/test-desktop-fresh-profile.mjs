@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-fresh-profile-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -20,12 +21,12 @@ async function launch() {
 	application = await electron.launch({
 		executablePath,
 		args: launchArgs,
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...process.env,
 			KESTREL_TEST_USER_DATA: join(root, "user-data"),
 			KESTREL_REAL_USER_PROFILE: "1",
-			KESTREL_DISABLE_UPDATES: "1",
-		},
+			KESTREL_DISABLE_UPDATES: "1"
+}),
 	});
 	return application.firstWindow();
 }

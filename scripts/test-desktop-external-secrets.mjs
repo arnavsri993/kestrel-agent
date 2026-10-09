@@ -13,6 +13,7 @@ import {
 	openKestrelDestination,
 	selectSettingsSection,
 } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-external-secret-ui-"));
 const helperPath = join(root, "credential-helper");
@@ -33,7 +34,7 @@ let application;
 try {
 	application = await electron.launch({
 		args: [resolve("apps/desktop/out/main/index.js")],
-		env: { ...process.env, KESTREL_TEST_USER_DATA: join(root, "user-data") },
+		env: withDesktopAgentCoreEnv({ ...process.env, KESTREL_TEST_USER_DATA: join(root, "user-data") }),
 	});
 	const page = await application.firstWindow();
 	const runtimeErrors = [];

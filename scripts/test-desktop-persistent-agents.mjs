@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron, expect } from "@playwright/test";
 import { createServer } from "node:http";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 const root = mkdtempSync(join(tmpdir(), "kestrel-operations-ui-"));
 const fixtureServer = createServer((_request, response) => response.end("<!doctype html><title>Detached restart fixture</title><p>Synthetic tab</p>"));
 await new Promise(resolve => fixtureServer.listen(0, "127.0.0.1", resolve));
@@ -11,7 +12,7 @@ const fixtureUrl = `http://127.0.0.1:${fixtureServer.address().port}/`;
 let application;
 try {
 	application = await electron.launch({ executablePath: resolve(process.env.KESTREL_DESKTOP_EXECUTABLE ?? "release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel"),
-		args: ["--use-mock-keychain"], env: { ...process.env, KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_DISABLE_UPDATES: "1" } });
+		args: ["--use-mock-keychain"], env: withDesktopAgentCoreEnv({ ...process.env, KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_DISABLE_UPDATES: "1" }) });
 	const page = await application.firstWindow();
 	await page.evaluate(() => {
 		localStorage.setItem("kestrel:onboarded", "yes");
@@ -132,7 +133,7 @@ try {
  const detachedDirectory = join(root, "profile", "browser", "detached");
  const savedWindows = readdirSync(detachedDirectory).filter(name => name.startsWith("window-"));
  assert(savedWindows.some(name => JSON.parse(readFileSync(join(detachedDirectory, name), "utf8")).tabs.some(tab => tab.url === fixtureUrl)), "Detached tab address survives quitting");
- application = await electron.launch({ executablePath: resolve(process.env.KESTREL_DESKTOP_EXECUTABLE ?? "release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel"), args: ["--use-mock-keychain"], env: { ...process.env, KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_DISABLE_UPDATES: "1" } });
+ application = await electron.launch({ executablePath: resolve(process.env.KESTREL_DESKTOP_EXECUTABLE ?? "release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel"), args: ["--use-mock-keychain"], env: withDesktopAgentCoreEnv({ ...process.env, KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_DISABLE_UPDATES: "1" }) });
  await expect.poll(() => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter(window => !window.isDestroyed()).length), { timeout: 30_000 }).toBeGreaterThanOrEqual(2);
  await expect.poll(() => application.evaluate(({ webContents }, url) => webContents.getAllWebContents().some(item => item.getURL() === url), fixtureUrl), { timeout: 30_000, message: "Restored detached tab loads its saved address" }).toBe(true);
  console.log("Packaged detached browser state survives quit and restores on restart.");

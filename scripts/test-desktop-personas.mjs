@@ -9,6 +9,7 @@ import {
 	openCommandCenter as openCommandCenterSurface,
 	selectSettingsSection,
 } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-personas-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -72,7 +73,7 @@ async function launchPersona(paths, { realProfile }) {
 	application = await electron.launch({
 		executablePath,
 		args: launchArgs,
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...inheritedEnvironment,
 			HOME: paths.home,
 			USER: "kestrel-persona-test",
@@ -83,7 +84,7 @@ async function launchPersona(paths, { realProfile }) {
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_TEST_USER_DATA: paths.userData,
 			...(realProfile ? { KESTREL_REAL_USER_PROFILE: "1" } : {}),
-		},
+		}),
 	});
 	const rendererNetworkRequests = [];
 	application.context().on("request", (request) => {

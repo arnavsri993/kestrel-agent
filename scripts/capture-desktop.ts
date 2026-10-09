@@ -2,6 +2,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron, type Page } from "@playwright/test";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const captureName =
@@ -55,7 +56,7 @@ const application = await electron.launch({
 		: {
 				args: [join(root, "apps", "desktop", "out", "main", "index.js")],
 			}),
-	env: {
+	env: withDesktopAgentCoreEnv({
 		...captureEnvironment,
 		// A packaged macOS app needs the signed-in user's Keychain home for
 		// safeStorage. All application data, CLI configuration, provider
@@ -70,7 +71,7 @@ const application = await electron.launch({
 		KESTREL_DISABLE_UPDATES: "1",
 		KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 		KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-	},
+	}),
 });
 
 async function settle(page: Page, duration = 260) {

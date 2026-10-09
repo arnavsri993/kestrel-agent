@@ -8,6 +8,7 @@ import {
   openKestrelDestination,
   selectSettingsSection,
 } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-settings-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -59,13 +60,13 @@ try {
   application = await electron.launch({
     executablePath,
     args: launchArgs,
-    env: {
+    env: withDesktopAgentCoreEnv({
       ...process.env,
       KESTREL_DISABLE_UPDATES: "1",
       KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
       KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-      KESTREL_TEST_USER_DATA: join(root, "user-data"),
-    },
+      KESTREL_TEST_USER_DATA: join(root, "user-data")
+}),
   });
   const page = await application.firstWindow();
   page.setDefaultTimeout(30_000);

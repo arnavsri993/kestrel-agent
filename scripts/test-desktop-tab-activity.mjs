@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { _electron as electron, expect } from '@playwright/test';
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 const root = mkdtempSync(join(tmpdir(), 'kestrel-tab-activity-'));
 const artifacts = resolve('artifacts/tab-activity'); mkdirSync(artifacts, { recursive: true });
 const executable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 let app;
 try {
- app = await electron.launch({ executablePath: executable || createRequire(resolve('apps/desktop/package.json'))('electron'), args: executable ? ['--use-mock-keychain'] : [resolve('apps/desktop'), '--use-mock-keychain'], env: { ...process.env, KESTREL_TEST_USER_DATA: root, KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: '1', KESTREL_DISABLE_UPDATES: '1', KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: '1', KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: '1' } });
+ app = await electron.launch({ executablePath: executable || createRequire(resolve('apps/desktop/package.json'))('electron'), args: executable ? ['--use-mock-keychain'] : [resolve('apps/desktop'), '--use-mock-keychain'], env: withDesktopAgentCoreEnv({ ...process.env, KESTREL_TEST_USER_DATA: root, KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: '1', KESTREL_DISABLE_UPDATES: '1', KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: '1', KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: '1' }) });
  const page = await app.firstWindow(); await page.waitForLoadState('domcontentloaded'); await page.waitForFunction(() => Boolean(window.kestrel));
  await page.evaluate(() => { localStorage.setItem('kestrel:onboarded','yes'); localStorage.setItem('kestrel:default-browser-prompted','yes'); }); await page.reload();
  const request = input => page.evaluate(input => window.kestrel.request(input), input);

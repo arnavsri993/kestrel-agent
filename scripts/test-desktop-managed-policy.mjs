@@ -8,6 +8,7 @@ import {
 	openKestrelDestination,
 	selectSettingsSection,
 } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 function canonical(value) {
 	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -55,13 +56,13 @@ let application;
 try {
 	application = await electron.launch({
 		args: [resolve("apps/desktop/out/main/index.js")],
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...process.env,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_MANAGED_POLICY: policyPath,
 			KESTREL_MANAGED_POLICY_KEY: publicKeyPath,
-			KESTREL_TEST_USER_DATA: userDataPath,
-		},
+			KESTREL_TEST_USER_DATA: userDataPath
+}),
 	});
 	const page = await application.firstWindow();
 	const runtimeErrors = [];

@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-single-instance-smoke-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -16,17 +17,12 @@ const launchArgs = packagedExecutable
 	? ["--use-mock-keychain"]
 	: [resolve("apps/desktop")];
 const userData = join(root, "user-data");
-const environment = {
+const environment = withDesktopAgentCoreEnv({
 	...process.env,
 	KESTREL_DISABLE_UPDATES: "1",
 	KESTREL_TEST_USER_DATA: userData,
 	KESTREL_REAL_USER_PROFILE: "1",
-	...(packagedExecutable
-		? {}
-		: {
-				KESTREL_NODE_EXEC_PATH: process.execPath,
-			}),
-};
+});
 
 let application;
 let secondProcess;

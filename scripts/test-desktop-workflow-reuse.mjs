@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
 import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-workflow-reuse-"));
 const userData = join(root, "user-data");
@@ -79,7 +80,7 @@ try {
 	application = await electron.launch({
 		executablePath,
 		args: launchArgs,
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...process.env,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
@@ -87,8 +88,8 @@ try {
 			KESTREL_TEST_USER_DATA: userData,
 			NOUS_API_KEY: "local-test-credential",
 			NOUS_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
-			NOUS_MODEL: "fixture-model",
-		},
+			NOUS_MODEL: "fixture-model"
+}),
 	});
 	const page = await application.firstWindow();
 	page.setDefaultTimeout(30_000);

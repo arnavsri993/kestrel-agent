@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
 import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "workstrand-kanban-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -18,10 +19,10 @@ try {
 	application = await electron.launch({
 		executablePath: requireFromDesktop("electron"),
 		args: [resolve("apps/desktop")],
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...process.env,
-			KESTREL_TEST_USER_DATA: join(temporaryRoot, "user-data"),
-		},
+			KESTREL_TEST_USER_DATA: join(temporaryRoot, "user-data")
+}),
 	});
 	const page = await application.firstWindow();
 	page.setDefaultTimeout(30_000);

@@ -11,6 +11,7 @@ import {
 	revealNewTabControl,
 	selectSettingsSection,
 } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 function readMacQuarantine(path) {
 	try {
@@ -195,15 +196,15 @@ async function launch() {
 	application = await electron.launch({
 		executablePath,
 		args: launchArgs,
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...process.env,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 		KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 		KESTREL_TEST_USER_DATA: userData,
 		KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
-		KESTREL_REAL_USER_PROFILE: "1",
-		},
+		KESTREL_REAL_USER_PROFILE: "1"
+}),
 	});
 	page = await application.firstWindow();
 	page.setDefaultTimeout(30_000);

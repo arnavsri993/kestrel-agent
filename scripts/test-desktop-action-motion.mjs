@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { _electron as electron } from "@playwright/test";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-action-motion-"));
 const packaged = process.env.KESTREL_DESKTOP_EXECUTABLE;
@@ -13,7 +14,7 @@ try {
 	application = await electron.launch({
 		executablePath: packaged || require("electron"),
 		args: packaged ? ["--use-mock-keychain"] : [resolve("apps/desktop")],
-		env: { ...process.env, KESTREL_TEST_USER_DATA: root, KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1" },
+		env: withDesktopAgentCoreEnv({ ...process.env, KESTREL_TEST_USER_DATA: root, KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1" }),
 	});
 	const page = await application.firstWindow();
 	await page.evaluate(() => {

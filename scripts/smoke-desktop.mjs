@@ -9,6 +9,7 @@ import {
 	openKestrelDestination,
 	selectSettingsSection,
 } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-smoke-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -41,13 +42,13 @@ try {
 	application = await electron.launch({
 		executablePath,
 		args: launchArgs,
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...process.env,
 			KESTREL_TEST_USER_DATA: join(root, "user-data"),
 			// This disposable profile must be able to exercise a packaged binary
 			// while a person's canonical Kestrel app remains open.
-			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
-		},
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1"
+}),
 	});
 	const page = await application.firstWindow();
 	await page.evaluate(() => {

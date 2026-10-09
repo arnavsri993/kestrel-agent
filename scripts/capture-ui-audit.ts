@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { _electron as electron, type Page } from "@playwright/test";
 import { seedLifeContextFixture } from "./ui-audit-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const outputOverride = process.env.KESTREL_UI_AUDIT_OUTPUT_ROOT;
@@ -60,7 +61,7 @@ const application = await electron.launch({
 		: {
 				args: [join(root, "apps", "desktop", "out", "main", "index.js")],
 			}),
-	env: {
+	env: withDesktopAgentCoreEnv({
 		...captureEnvironment,
 		HOME: packagedExecutable ? homedir() : captureHome,
 		USER: "kestrel-capture",
@@ -72,7 +73,7 @@ const application = await electron.launch({
 		KESTREL_DISABLE_UPDATES: "1",
 		KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 		KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-	},
+	}),
 });
 
 async function settle(page: Page, duration = 260) {

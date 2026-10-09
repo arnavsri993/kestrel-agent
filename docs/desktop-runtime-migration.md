@@ -21,9 +21,10 @@ The current desktop entry point supplies `desktopCoreProcess` from
 `Contents/Resources/agent-core/service/index.js`. Development always uses the
 real Node executable from `KESTREL_NODE_EXEC_PATH` (set by the development
 launcher). There is no Electron `utilityProcess` fallback: missing Node fails
-closed. Credential filtering stays at that desktop composition boundary.
-Credentials needed by Agent Core continue to arrive through protected bootstrap
-IPC.
+closed. Playwright desktop launches use `scripts/desktop-agent-core-env.mjs`
+to supply `KESTREL_NODE_EXEC_PATH`. Credential filtering stays at that desktop
+composition boundary. Credentials needed by Agent Core continue to arrive
+through protected bootstrap IPC.
 
 `node-core-process.ts` takes an executable, entry path and environment explicitly.
 It uses Node child-process IPC with the existing binary codec. It does not choose

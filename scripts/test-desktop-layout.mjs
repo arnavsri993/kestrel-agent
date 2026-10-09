@@ -14,6 +14,7 @@ import {
 	openKestrelDestination,
 	revealNewTabControl,
 } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const mainBundle = readFileSync(resolve("apps/desktop/out/main/index.js"), "utf8");
 assert.match(
@@ -1420,13 +1421,13 @@ try {
 	application = await electron.launch({
 		executablePath,
 		args: launchArgs,
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...process.env,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-			KESTREL_TEST_USER_DATA: userData,
-		},
+			KESTREL_TEST_USER_DATA: userData
+}),
 	});
 	noteOperation("application launched");
 	observeApplicationProcess();
