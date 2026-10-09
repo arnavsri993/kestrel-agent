@@ -4186,13 +4186,19 @@ export const NewTabWidgetSettingsSchema = z
 			})
 			.default({}),
 		/**
-		 * Provider ids shown in the route-usage widget. Empty / missing means
-		 * show every configured route; a non-empty list is an explicit allowlist.
+		 * Provider ids shown in the route-usage widget. A non-empty list is an
+		 * explicit allowlist; an unconfigured empty list shows every account.
 		 */
 		routeUsageVisible: z
 			.array(z.string().min(1).max(100))
 			.max(64)
 			.default([]),
+		/**
+		 * Distinguishes the automatic empty allowlist (show every configured
+		 * account) from an explicitly empty allowlist (show none). Optional for
+		 * compatibility with settings written before this distinction existed.
+		 */
+		routeUsageVisibilityConfigured: z.boolean().optional(),
 	})
 	.default(DEFAULT_NEW_TAB_WIDGET_SETTINGS)
 	.catch(DEFAULT_NEW_TAB_WIDGET_SETTINGS);

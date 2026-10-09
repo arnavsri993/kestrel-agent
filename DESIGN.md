@@ -1,3 +1,14 @@
+# Codex usage account visibility — October 8, 2026
+
+Component reliability refinement: choosing Hide must keep the account hidden,
+including the last visible account, while Accounts provides a clear way back.
+Default visibility still includes newly configured accounts; an explicit empty
+selection remains empty through normalization, profile writes and restart.
+Preserve the existing graphite surfaces, system typography, 4px spacing rhythm,
+native buttons, focus treatment and motion. No new visual system or decoration.
+Verify single and multiple accounts, legacy preferences, reload/restart, and
+keyboard restoration with synthetic usage and real settings persistence.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

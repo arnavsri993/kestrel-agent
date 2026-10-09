@@ -662,6 +662,7 @@ describe("browser tab persistence", () => {
 				},
 			},
 			routeUsageVisible: [],
+			routeUsageVisibilityConfigured: true,
 		};
 		store.save(state);
 		expect(store.load().settings.newTabWidgets).toEqual(
