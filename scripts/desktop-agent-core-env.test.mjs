@@ -1,15 +1,23 @@
-import assert from "node:assert/strict";
+import { describe, expect, it } from "vitest";
 import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
-const withExisting = withDesktopAgentCoreEnv({
-	FOO: "1",
-	KESTREL_NODE_EXEC_PATH: "/custom/node",
+describe("withDesktopAgentCoreEnv", () => {
+	it("preserves an explicit Node executable path", () => {
+		expect(
+			withDesktopAgentCoreEnv({
+				FOO: "1",
+				KESTREL_NODE_EXEC_PATH: "/custom/node",
+			}),
+		).toEqual({
+			FOO: "1",
+			KESTREL_NODE_EXEC_PATH: "/custom/node",
+		});
+	});
+
+	it("defaults to the current Node executable when unset", () => {
+		expect(withDesktopAgentCoreEnv({ FOO: "1" })).toEqual({
+			FOO: "1",
+			KESTREL_NODE_EXEC_PATH: process.execPath,
+		});
+	});
 });
-assert.equal(withExisting.FOO, "1");
-assert.equal(withExisting.KESTREL_NODE_EXEC_PATH, "/custom/node");
-
-const without = withDesktopAgentCoreEnv({ FOO: "1" });
-assert.equal(without.FOO, "1");
-assert.equal(without.KESTREL_NODE_EXEC_PATH, process.execPath);
-
-console.log("desktop-agent-core-env: ok");
