@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
 import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-setup-test-"));
 const testHome = join(root, "home");
@@ -23,7 +24,7 @@ try {
 			resolve("apps/desktop/out/main/index.js"),
 			...(process.platform === "darwin" ? ["--use-mock-keychain"] : []),
 		],
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...testEnvironment,
 			HOME: testHome,
 			USER: "kestrel-test",
@@ -31,7 +32,7 @@ try {
 			CODEX_HOME: testCodexHome,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_TEST_USER_DATA: join(root, "user-data"),
-		},
+		}),
 	});
 	const page = await application.firstWindow();
 	const runtimeErrors = [];

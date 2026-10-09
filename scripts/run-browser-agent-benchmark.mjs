@@ -34,6 +34,7 @@ import {
 	summarizeBenchmarkResults,
 	validateBenchmarkCorpus,
 } from "./browser-agent-benchmark-lib.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 function usage() {
 	return `Kestrel deterministic browser-agent benchmark
@@ -314,14 +315,14 @@ async function main() {
 			args: packagedExecutable
 				? ["--use-mock-keychain"]
 				: [resolve("apps/desktop")],
-			env: {
+			env: withDesktopAgentCoreEnv({
 				...process.env,
 				KESTREL_DISABLE_UPDATES: "1",
 				KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 				KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 				KESTREL_TEST_USER_DATA: userData,
-				KESTREL_REAL_USER_PROFILE: "1",
-			},
+				KESTREL_REAL_USER_PROFILE: "1"
+}),
 		});
 		page = await application.firstWindow();
 		page.setDefaultTimeout(30_000);

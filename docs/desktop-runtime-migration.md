@@ -2,10 +2,10 @@
 
 Kestrel's installed desktop still uses Electron for its window and browser host.
 Chromium is the target browser engine, but migration is now happening on the
-shipping process path as well as in the thin Chromium host: packaged Kestrel
-launches Agent Core as a standalone Node sidecar rather than an Electron utility
-process. That removes Electron from the long-running agent/core failure domain;
-it does not yet replace the desktop window or browser surface.
+shipping process path as well as in the thin Chromium host: Kestrel launches
+Agent Core as a standalone Node child rather than an Electron utility process.
+That removes Electron from the long-running agent/core failure domain; it does
+not yet replace the desktop window or browser surface.
 
 ## Agent Core supervision boundary
 
@@ -16,13 +16,15 @@ validated messages, request deadlines, browser cancellation, crash recovery and
 shutdown. A future host can use it without loading Electron.
 
 The current desktop entry point supplies `desktopCoreProcess` from
-`electron-core-process.ts`. Packaged apps launch the signed Node executable at
+`desktop-core-process.ts`. Packaged apps launch the signed Node executable at
 `Contents/Resources/agent-core/node/bin/node` with the built service at
-`Contents/Resources/agent-core/service/index.js`. Development retains the
-existing explicit Node opt-in or Electron utility adapter so normal source
-iteration stays fast. Credential filtering stays at that desktop composition
-boundary. Credentials needed by Agent Core continue to arrive through protected
-bootstrap IPC.
+`Contents/Resources/agent-core/service/index.js`. Development always uses the
+real Node executable from `KESTREL_NODE_EXEC_PATH` (set by the development
+launcher). There is no Electron `utilityProcess` fallback: missing Node fails
+closed. Playwright desktop launches use `scripts/desktop-agent-core-env.mjs`
+to supply `KESTREL_NODE_EXEC_PATH`. Credential filtering stays at that desktop
+composition boundary. Credentials needed by Agent Core continue to arrive
+through protected bootstrap IPC.
 
 `node-core-process.ts` takes an executable, entry path and environment explicitly.
 It uses Node child-process IPC with the existing binary codec. It does not choose
@@ -75,11 +77,12 @@ build is independent of electron-vite and emits `apps/core-service/out/index.js`
 The Node host uses that entry with the current workspace's Node-compatible native
 dependencies. This is a runnable service artifact, not a self-contained installer.
 
-The desktop utility entry only selects its Electron parent port or Node adapter
-and calls the same service bootstrap. No duplicate core implementation exists.
-CI runs the Node smoke after the workspace build, before desktop packaging can
-rebuild native dependencies for Electron. Packaging may change native module ABI;
-restore Node-compatible native dependencies before repeating a Node smoke if needed.
+The desktop utility entry is a Node-only bootstrap of the same service. No
+duplicate core implementation exists, and Electron's `utilityProcess` parentPort
+is not used. CI runs the Node smoke after the workspace build, before desktop
+packaging can rebuild native dependencies for Electron. Packaging may change
+native module ABI; restore Node-compatible native dependencies before repeating
+a Node smoke if needed.
 
 Passing the Node sidecar smoke proves core bootstrap, requests and recovery work
 without Electron in the same executable shape that the packaged app uses. It

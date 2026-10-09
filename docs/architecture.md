@@ -17,8 +17,8 @@ The renderer owns presentation state only. Main owns OS lifecycle, notifications
 
 ## Monorepo boundaries
 
-- `apps/desktop`: Electron main, preload, development utility adapter, and React renderer.
-- `apps/core-service`: host-independent service, supervisor, Node IPC transport, and standalone bootstrap. Packaged desktops run the pinned Node sidecar; Electron is not its runtime.
+- `apps/desktop`: Electron main, preload, Node Agent Core child entry, and React renderer.
+- `apps/core-service`: host-independent service, supervisor, Node IPC transport, and standalone bootstrap. Packaged and development desktops run Agent Core under real Node; Electron is not its runtime.
 - `apps/chromium-host`: experimental Chromium conversation and web-tab host. Its temporary profile and opt-in browser reading and individually approved form/navigation actions do not provide desktop feature parity.
 - `apps/website`: static Next.js marketing and download site. It imports no desktop or fal runtime.
 - `packages/shared-types`: Zod contracts and product identity.

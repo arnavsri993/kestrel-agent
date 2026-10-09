@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 if (process.platform !== "darwin") {
 	process.stdout.write("macOS file-icon guard smoke skipped outside macOS.\n");
@@ -26,13 +27,13 @@ try {
 	application = await electron.launch({
 		executablePath,
 		args: launchArgs,
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...process.env,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-			KESTREL_TEST_USER_DATA: userData,
-		},
+			KESTREL_TEST_USER_DATA: userData
+}),
 	});
 	await application.firstWindow();
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { _electron as electron } from "@playwright/test";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-browser-activity-"));
 const preload = resolve("apps/desktop/out/preload/userBrowser.cjs");
@@ -26,7 +27,7 @@ try {
 	app = await electron.launch({
 		executablePath: createRequire(resolve("apps/desktop/package.json"))("electron"),
 		args: [main, "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"],
-		env: { ...process.env, ELECTRON_RUN_AS_NODE: "" },
+		env: withDesktopAgentCoreEnv({ ...process.env, ELECTRON_RUN_AS_NODE: "" }),
 	});
 	const page = await app.firstWindow();
 	await page.waitForURL("https://activity.example.test/");

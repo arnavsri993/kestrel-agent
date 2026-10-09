@@ -8,6 +8,7 @@ import {
 	openKestrelDestination,
 	selectSettingsSection,
 } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-model-routing-test-"));
 const screenshotPath = process.env.KESTREL_ROUTING_SCREENSHOT;
@@ -36,11 +37,11 @@ try {
 		executablePath,
 		args: launchArgs,
 		timeout: 30_000,
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...testEnvironment,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_TEST_USER_DATA: join(root, "user-data"),
-		},
+		}),
 	});
 	const page = await application.firstWindow({ timeout: 30_000 });
 	const runtimeErrors = [];

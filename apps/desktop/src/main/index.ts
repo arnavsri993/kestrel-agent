@@ -57,7 +57,7 @@ import {
   type WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
-import { desktopCoreProcess } from "./electron-core-process";
+import { desktopCoreProcess } from "./desktop-core-process";
 import { CredentialBroker } from "./credential-broker";
 import {
   BrokerCredentialStore,
@@ -2574,7 +2574,7 @@ async function initializeCore(
     setAgentState(response.snapshot.agentState);
     publishMacWidgetSnapshot(response.snapshot);
   } catch (error) {
-    // A bootstrap can fail after the utility process has been created. Tear it
+    // A bootstrap can fail after the Agent Core child has been created. Tear it
     // down before the recovery dialog retries, or the next attempt sees a
     // stale supervisor and reports only “Agent Core is unavailable.”
     await supervisor.stop().catch(() => undefined);

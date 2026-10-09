@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-tab-interactions-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -32,15 +33,15 @@ try {
   application = await electron.launch({
     executablePath,
     args: launchArgs,
-    env: {
+    env: withDesktopAgentCoreEnv({
       ...process.env,
       KESTREL_DISABLE_UPDATES: "1",
       KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
       KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
       KESTREL_TEST_USER_DATA: join(root, "user-data"),
       KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
-      KESTREL_REAL_USER_PROFILE: "1",
-    },
+      KESTREL_REAL_USER_PROFILE: "1"
+}),
   });
   const page = await application.firstWindow();
   page.setDefaultTimeout(20_000);

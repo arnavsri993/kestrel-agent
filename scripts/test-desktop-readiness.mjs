@@ -16,6 +16,7 @@ import {
 	openKestrelDestination,
 	selectSettingsSection,
 } from "./desktop-browser-test-helpers.mjs";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-readiness-test-"));
 const userData = join(root, "user-data");
@@ -67,11 +68,11 @@ try {
 	chmodSync(codexFixture, 0o700);
 	application = await electron.launch({
 		args: [resolve("apps/desktop/out/main/index.js")],
-		env: {
+		env: withDesktopAgentCoreEnv({
 			...process.env,
 			KESTREL_TEST_USER_DATA: userData,
-			KESTREL_CODEX_PATH: codexFixture,
-		},
+			KESTREL_CODEX_PATH: codexFixture
+}),
 	});
 	const page = await application.firstWindow();
 	const runtimeErrors = [];

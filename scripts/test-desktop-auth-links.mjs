@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { _electron as electron } from '@playwright/test';
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 
 // Synthetic browser fixtures only: never enter or record account credentials.
 const requests = [];
@@ -43,9 +44,9 @@ try {
   app = await electron.launch({
     executablePath: packaged || requireDesktop('electron'),
     args: packaged ? ['--use-mock-keychain'] : [resolve('apps/desktop')],
-    env: {...process.env, KESTREL_TEST_USER_DATA: root, KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: '1',
+    env: withDesktopAgentCoreEnv({...process.env, KESTREL_TEST_USER_DATA: root, KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: '1',
       KESTREL_REAL_USER_PROFILE: '1', KESTREL_DISABLE_UPDATES: '1', KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: '1',
-      KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: '1'},
+      KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: '1'}),
   });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');

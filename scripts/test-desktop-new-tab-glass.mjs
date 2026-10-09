@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { _electron as electron } from "@playwright/test";
+import { withDesktopAgentCoreEnv } from "./desktop-agent-core-env.mjs";
 const root = mkdtempSync(join(tmpdir(), "kestrel-home-glass-"));
 const evidence = resolve(".tmp/new-tab-glass");
 mkdirSync(evidence, { recursive: true });
@@ -11,7 +12,7 @@ const executable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 const require = createRequire(resolve("apps/desktop/package.json"));
 let application;
 try {
- application = await electron.launch({ executablePath: executable || require("electron"), args: executable ? ["--use-mock-keychain"] : [resolve("apps/desktop")], env: { ...process.env, KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1", KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_REAL_USER_PROFILE: "1" } });
+ application = await electron.launch({ executablePath: executable || require("electron"), args: executable ? ["--use-mock-keychain"] : [resolve("apps/desktop")], env: withDesktopAgentCoreEnv({ ...process.env, KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1", KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_TEST_USER_DATA: join(root, "profile"), KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_REAL_USER_PROFILE: "1" }) });
  const page = await application.firstWindow();
  const errors = [];
  page.on("pageerror", (error) => errors.push(error.message));
