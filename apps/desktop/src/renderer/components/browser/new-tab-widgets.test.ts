@@ -2,6 +2,7 @@ import type { NewTabWidgetSettings } from "@kestrel/shared-types";
 import {
 	DEFAULT_NEW_TAB_WIDGET_IDS,
 	NEW_TAB_WIDGET_IDS,
+	NewTabWidgetSettingsSchema,
 } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import {
@@ -178,12 +179,73 @@ describe("New Tab widget layout model", () => {
 			["codex-subscription", "cursor-subscription"],
 		);
 		expect(restored.routeUsageVisible).toEqual([]);
+		expect(restored.routeUsageVisibilityConfigured).toBe(false);
 		expect(
 			visibleRouteUsageProviderIds(restored, [
 				"codex-subscription",
 				"cursor-subscription",
 			]),
 		).toEqual(["codex-subscription", "cursor-subscription"]);
+	});
+
+	it("preserves an explicit empty usage-account selection", () => {
+		const withRoute = addWidget(baseSettings, "standard", "route-usage");
+		const hiddenOnlyAccount = setRouteUsageProviderVisible(
+			withRoute,
+			"account-a",
+			false,
+			["account-a"],
+		);
+
+		expect(hiddenOnlyAccount.routeUsageVisible).toEqual([]);
+		expect(hiddenOnlyAccount.routeUsageVisibilityConfigured).toBe(true);
+		expect(
+			visibleRouteUsageProviderIds(hiddenOnlyAccount, ["account-a"]),
+		).toEqual([]);
+		expect(normalizedWidgetSettings(hiddenOnlyAccount)).toMatchObject({
+			routeUsageVisible: [],
+			routeUsageVisibilityConfigured: true,
+		});
+	});
+
+	it("accepts legacy automatic and explicit-empty usage visibility settings", () => {
+		const legacy = NewTabWidgetSettingsSchema.parse(baseSettings);
+		expect(legacy.routeUsageVisibilityConfigured).toBeUndefined();
+
+		const explicitNone = NewTabWidgetSettingsSchema.parse({
+			...baseSettings,
+			routeUsageVisibilityConfigured: true,
+		});
+		expect(explicitNone.routeUsageVisibilityConfigured).toBe(true);
+		expect(visibleRouteUsageProviderIds(explicitNone, ["account-a"])).toEqual([]);
+	});
+
+	it("can hide every usage account and restore one", () => {
+		const configured = ["account-a", "account-b"];
+		const hiddenFirst = setRouteUsageProviderVisible(
+			baseSettings,
+			"account-a",
+			false,
+			configured,
+		);
+		const hiddenAll = setRouteUsageProviderVisible(
+			hiddenFirst,
+			"account-b",
+			false,
+			configured,
+		);
+
+		expect(visibleRouteUsageProviderIds(hiddenAll, configured)).toEqual([]);
+		const restoredOne = setRouteUsageProviderVisible(
+			hiddenAll,
+			"account-a",
+			true,
+			configured,
+		);
+		expect(visibleRouteUsageProviderIds(restoredOne, configured)).toEqual([
+			"account-a",
+		]);
+		expect(restoredOne.routeUsageVisibilityConfigured).toBe(true);
 	});
 
 	it("upgrades the previous home default to include Codex usage", () => {

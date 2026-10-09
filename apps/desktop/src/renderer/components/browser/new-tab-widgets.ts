@@ -356,7 +356,15 @@ export function normalizedWidgetSettings(
 		}),
 	) as NewTabWidgetSettings["layouts"];
 	const routeUsageVisible = normalizeRouteUsageVisible(settings.routeUsageVisible);
-	return { version: 1, enabled, layouts, routeUsageVisible };
+	return {
+		version: 1,
+		enabled,
+		layouts,
+		routeUsageVisible,
+		...(settings.routeUsageVisibilityConfigured === true
+			? { routeUsageVisibilityConfigured: true }
+			: {}),
+	};
 }
 
 function normalizeRouteUsageVisible(
@@ -375,15 +383,20 @@ function normalizeRouteUsageVisible(
 }
 
 /**
- * Empty / missing means show every configured route. A non-empty allowlist is
- * an explicit show/hide preference for the route-usage widget.
+ * Empty / missing means show every configured route until the person explicitly
+ * configures visibility. A non-empty allowlist or configured empty list is an
+ * explicit show/hide preference for the route-usage widget.
  */
 export function visibleRouteUsageProviderIds(
 	settings: NewTabWidgetSettings,
 	providerIds: readonly string[],
 ): string[] {
 	const allowlist = normalizeRouteUsageVisible(settings.routeUsageVisible);
-	if (allowlist.length === 0) return [...providerIds];
+	if (
+		allowlist.length === 0 &&
+		settings.routeUsageVisibilityConfigured !== true
+	)
+		return [...providerIds];
 	const allowed = new Set(allowlist);
 	return providerIds.filter((id) => allowed.has(id));
 }
@@ -487,6 +500,7 @@ export function setRouteUsageProviderVisible(
 	return {
 		...next,
 		routeUsageVisible: showAll ? [] : nextVisible,
+		routeUsageVisibilityConfigured: !showAll,
 	};
 }
 
