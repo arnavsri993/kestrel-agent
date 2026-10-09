@@ -129,9 +129,9 @@ export function runtimeOutcomeCopy(
 ): { title: string; detail: string } {
 	if (run.status === "completed")
 		return {
-			title: "Task complete",
+			title: "Response finished",
 			detail:
-				"Kestrel finished this run. Continue with another message when you are ready.",
+				"Kestrel finished this response. Review the answer and any action receipts before continuing.",
 		};
 	if (run.status === "cancelled")
 		return {
