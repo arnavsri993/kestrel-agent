@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { exerciseSavedPages } from "./desktop-bookmark-test-helpers.mjs";
 import {
 	openKestrelDestination,
 	revealNewTabControl,
@@ -1915,160 +1916,10 @@ try {
 		},
 		"Fixture favicon did not reach the active browser tab",
 	);
-	const bookmarkTrigger = page.getByRole("button", {
-		name: "Bookmark this page",
-		exact: true,
+	state = await exerciseSavedPages({
+		page, application, origin, browserState, waitForBrowserState,
+		waitForNativeView, packagedExecutable,
 	});
-	await bookmarkTrigger.click();
-	const bookmarkDialog = page.getByRole("dialog", { name: "Save bookmark" });
-	await bookmarkDialog.waitFor();
-	assert.deepEqual(
-		await bookmarkDialog.locator(".bookmark-dialog-option-copy strong").allTextContents(),
-		["Full link", "Suggested title", "Icon only"],
-	);
-	assert.equal(await bookmarkDialog.locator(".bookmark-dialog-option-preview").count(), 3);
-	assert.equal(
-		await bookmarkDialog.locator('input[type="radio"][value="full"]').isChecked(),
-		true,
-	);
-	assert(
-		(await bookmarkDialog.locator(".bookmark-dialog-preview-label").first().textContent())?.includes(
-			`${origin}/one`,
-		),
-	);
-	await bookmarkDialog.locator('input[type="radio"][value="title"]').check();
-	assert.equal(
-		(await bookmarkDialog.locator(".bookmark-dialog-preview-label").first().textContent())?.trim(),
-		"Page one",
-	);
-	await bookmarkDialog.locator('input[type="radio"][value="icon"]').check();
-	assert.equal(await bookmarkDialog.locator(".bookmark-dialog-preview-entry.icon-only").count(), 1);
-	await bookmarkDialog.getByRole("button", { name: "New folder", exact: true }).click();
-	await bookmarkDialog.getByPlaceholder("Folder name").fill("Reading");
-	await bookmarkDialog.getByRole("button", { name: "Create", exact: true }).click();
-	const bookmarkFolderSelect = bookmarkDialog.locator("#bookmark-folder-select");
-	await page.waitForFunction(
-		() => document.querySelector("#bookmark-folder-select")?.value !== "",
-	);
-	const createdFolderId = await bookmarkFolderSelect.inputValue();
-	assert(createdFolderId);
-	await bookmarkDialog.getByRole("button", { name: "Save bookmark", exact: true }).click();
-	await bookmarkDialog.waitFor({ state: "detached" });
-	state = await waitForBrowserState(
-		(value) =>
-			value.bookmarks.some(
-				(bookmark) =>
-					bookmark.url === `${origin}/one` &&
-					bookmark.displayMode === "icon" &&
-					bookmark.folderId === createdFolderId &&
-					bookmark.faviconDataUrl?.startsWith("data:image/"),
-			),
-		"Bookmark presentation choice was not persisted",
-	);
-	await page.getByRole("button", { name: "New Tab", exact: true }).click();
-	await page.locator(".browser-bookmarks-bar").waitFor();
-	const folderTrigger = page.getByRole("button", { name: "Reading", exact: true });
-	await folderTrigger.click();
-	const folderMenu = page.getByRole("menu", { name: "Reading bookmarks" });
-	await folderMenu.waitFor();
-	assert.equal(await folderMenu.getByRole("menuitem", { name: "Open Page one" }).count(), 1);
-	assert.equal(await folderMenu.locator("img").count(), 1);
-	await page.keyboard.press("Escape");
-	const bookmarksWindowSize = await application.evaluate(({ BrowserWindow }) => {
-		const window = BrowserWindow.getAllWindows().find(
-			(candidate) =>
-				!candidate.isDestroyed() &&
-				!candidate.webContents.getURL().includes("petOverlay=1"),
-		);
-		if (!window) throw new Error("The Kestrel window is unavailable.");
-		return window.getSize();
-	});
-	const narrowBookmarksWindowWidth = 1200;
-	if (bookmarksWindowSize[0] !== narrowBookmarksWindowWidth) {
-		await application.evaluate(
-			({ BrowserWindow }, [width, height]) => {
-				const window = BrowserWindow.getAllWindows().find(
-					(candidate) =>
-						!candidate.isDestroyed() &&
-						!candidate.webContents.getURL().includes("petOverlay=1"),
-				);
-				if (!window) throw new Error("The Kestrel window is unavailable.");
-				window.setSize(width, height);
-			},
-			[narrowBookmarksWindowWidth, bookmarksWindowSize[1]],
-		);
-		await page.waitForFunction(
-			(width) => innerWidth === width,
-			narrowBookmarksWindowWidth,
-		);
-	}
-	await page.getByRole("button", { name: "Manage bookmarks", exact: true }).click();
-	await page.getByRole("heading", { name: "Saved pages", exact: true }).waitFor();
-	const bookmarkHeaderLayout = await page.evaluate(() => {
-		const viewport = document.querySelector(".browser-viewport");
-		const header = document.querySelector(".browser-library .ui-page-frame-header");
-		const heading = document.querySelector("#bookmarks-title");
-		return {
-			viewportWidth: viewport?.getBoundingClientRect().width ?? 0,
-			headerDisplay: header ? getComputedStyle(header).display : "",
-			headingWidth: heading?.getBoundingClientRect().width ?? 0,
-			overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-		};
-	});
-	assert(bookmarkHeaderLayout.viewportWidth <= 760);
-	assert.equal(bookmarkHeaderLayout.headerDisplay, "grid");
-	assert(
-		bookmarkHeaderLayout.headingWidth > 100,
-		`The Saved pages heading was squeezed by its actions: ${JSON.stringify(bookmarkHeaderLayout)}`,
-	);
-	assert(bookmarkHeaderLayout.overflow <= 1);
-	const savedBookmarkRow = page.locator(`.bookmark-library-list > li`).first();
-	await savedBookmarkRow.getByRole("button", { name: "Edit", exact: true }).click();
-	await savedBookmarkRow.locator(".bookmark-library-edit").waitFor();
-	assert.equal(
-		await savedBookmarkRow.locator('.bookmark-library-edit select').nth(0).inputValue(),
-		"icon",
-	);
-	await savedBookmarkRow.getByRole("button", { name: "Remove", exact: true }).click();
-	await page.waitForFunction(
-		() => document.querySelectorAll(".bookmark-library-list > li").length === 0,
-	);
-	const folderRow = page.locator(".bookmark-library-folders > ul > li").first();
-	await folderRow.getByRole("button", { name: "Delete", exact: true }).click();
-	await folderRow.getByText("Move pages to bar?", { exact: true }).waitFor();
-	await folderRow.getByRole("button", { name: "Delete", exact: true }).click();
-	await page.waitForFunction(
-		() => document.querySelectorAll(".bookmark-library-folders > ul > li").length === 0,
-	);
-	state = await browserState();
-	const pageOneTabId = state.tabs.find((tab) => tab.url === `${origin}/one`)?.id;
-	assert(pageOneTabId);
-	await page.evaluate(
-		async (tabId) => window.kestrel.request({ type: "browser-select-tab", tabId }),
-		pageOneTabId,
-	);
-	await waitForNativeView(
-		(value) => value.views[0]?.url === `${origin}/one`,
-		"Browser did not return to Page one after bookmark management",
-	);
-	if (bookmarksWindowSize[0] !== narrowBookmarksWindowWidth) {
-		await application.evaluate(
-			({ BrowserWindow }, [width, height]) => {
-				const window = BrowserWindow.getAllWindows().find(
-					(candidate) =>
-						!candidate.isDestroyed() &&
-						!candidate.webContents.getURL().includes("petOverlay=1"),
-				);
-				if (!window) throw new Error("The Kestrel window is unavailable.");
-				window.setSize(width, height);
-			},
-			bookmarksWindowSize,
-		);
-		await page.waitForFunction(
-			(width) => innerWidth === width,
-			bookmarksWindowSize[0],
-		);
-	}
 
 	state = await browserState();
 	const tabId = state.activeTabId;
@@ -3364,6 +3215,13 @@ try {
 	);
 } catch (error) {
 	console.error("Visible browser smoke failed:", error);
+	try {
+		const directory = resolve(".tmp/desktop-browser");
+		mkdirSync(directory, { recursive: true });
+		await page?.screenshot({ path: join(directory, `${packagedExecutable ? "packaged" : "source"}-failure.png`) });
+	} catch (captureError) {
+		console.error("Browser failure screenshot unavailable:", captureError);
+	}
 	throw error;
 } finally {
 	await application?.close();

@@ -82,6 +82,7 @@ jobs:
       - run: corepack pnpm test:desktop-workflow-reuse
       - run: corepack pnpm test:desktop-writing-studio
       - run: corepack pnpm test:desktop-browser
+      - run: corepack pnpm test:desktop-bookmarks
       - run: corepack pnpm test:desktop-autofill
       - run: corepack pnpm test:desktop-setup
       - run: corepack pnpm test:desktop-fresh-profile
@@ -103,6 +104,8 @@ jobs:
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-file-icon-guard
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-subscription-cli-safety
       - run: corepack pnpm test:packaged-desktop:arm64
+      - name: Verify packaged Saved pages
+        run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-bookmarks
       - run: corepack pnpm benchmark:browser-agent:packaged:arm64 --report .tmp/browser-agent-benchmark/ci-packaged.json
       - name: Upload browser-agent benchmark reports
         if: ${{ always() }}
@@ -136,6 +139,7 @@ jobs:
         with:
           name: desktop-failure-evidence-${{ github.run_attempt }}
           path: |
+            .tmp/desktop-browser/**
             .tmp/desktop-layout/**
             .tmp/browser-agent-benchmark/*.json
             .tmp/ci-diagnostics/**
