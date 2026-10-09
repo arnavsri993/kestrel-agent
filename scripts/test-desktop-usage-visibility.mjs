@@ -85,12 +85,32 @@ async function launch(firstRun = false) {
 	}
 	const response = await page.evaluate(() => window.kestrel.request({ type: "browser-create-tab", active: true }));
 	assert(response.ok, "Could not open Home.");
-	await page.locator('[data-kestrel-widget-id="route-usage"]').waitFor();
+	await page.locator("#new-tab-title").waitFor();
+	const closeChat = page.getByRole("button", { name: "Close chat", exact: true });
+	if (await closeChat.isVisible()) await closeChat.click();
+	await revealWidget();
 }
 
 function widget() { return page.locator('[data-kestrel-widget-id="route-usage"]'); }
 
+async function revealWidget() {
+	await page.locator(".kestrel-widget-card:visible").first().waitFor();
+	for (let attempt = 0; attempt < 12; attempt += 1) {
+		if (await widget().isVisible()) {
+			await widget().scrollIntoViewIfNeeded();
+			return;
+		}
+		const pager = page.locator(".kestrel-widget-pager:visible");
+		if (await pager.count() === 0) break;
+		const next = pager.getByRole("button", { name: /next/i }).first();
+		if (await next.isDisabled()) break;
+		await next.click();
+	}
+	throw new Error("Codex usage widget was unavailable through the Home pager.");
+}
+
 async function controls() {
+	await revealWidget();
 	await page.waitForFunction(() => {
 		const card = document.querySelector('[data-kestrel-widget-id="route-usage"]');
 		return card && [...card.querySelectorAll("button")].some((button) =>
