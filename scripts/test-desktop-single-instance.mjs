@@ -24,7 +24,6 @@ const environment = {
 	...(packagedExecutable
 		? {}
 		: {
-				KESTREL_USE_NODE_CORE: "1",
 				KESTREL_NODE_EXEC_PATH: process.execPath,
 			}),
 };

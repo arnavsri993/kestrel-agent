@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { app, utilityProcess } from "electron";
+import { app } from "electron";
 import type { CoreProcess } from "./core-process";
 import { coreEnvironment } from "./core-process-environment";
 import { isPackagedKestrelRuntime } from "./default-browser";
@@ -31,7 +31,11 @@ export function packagedAgentCoreSidecar(
 	return { executable, entryPath };
 }
 
-// The desktop owns process selection; the supervisor itself remains host-independent.
+/**
+ * Desktop owns process selection; the supervisor remains host-independent.
+ * Agent Core never runs inside Electron's utilityProcess — only a real Node
+ * child (packaged sidecar or the development Node executable).
+ */
 export function desktopCoreProcess(): CoreProcess {
 	const env = coreEnvironment();
 	// The macOS branded Electron wrapper reports app.isPackaged=true even for
@@ -46,17 +50,15 @@ export function desktopCoreProcess(): CoreProcess {
 		});
 	}
 
-	const entryPath = join(__dirname, "utility.js");
-	if (process.env.NODE_ENV_ELECTRON_VITE === "development" ||
-		process.env.KESTREL_USE_NODE_CORE === "1") {
-		return nodeCoreProcess({
-			executable: process.env.KESTREL_NODE_EXEC_PATH ?? "",
-			entryPath,
-			env,
-		});
+	const nodeExecutable = process.env.KESTREL_NODE_EXEC_PATH?.trim();
+	if (!nodeExecutable) {
+		throw new Error(
+			"Agent Core requires a real Node.js executable. Launch Kestrel through the development launcher or set KESTREL_NODE_EXEC_PATH.",
+		);
 	}
-	return utilityProcess.fork(entryPath, [], {
-		serviceName: "Kestrel Agent Core",
+	return nodeCoreProcess({
+		executable: nodeExecutable,
+		entryPath: join(__dirname, "utility.js"),
 		env,
 	});
 }

@@ -193,7 +193,6 @@ try {
 			...(packagedExecutable
 				? {}
 				: {
-						KESTREL_USE_NODE_CORE: "1",
 						KESTREL_NODE_EXEC_PATH: process.execPath,
 					}),
 			NOUS_API_KEY: "local-test-credential",

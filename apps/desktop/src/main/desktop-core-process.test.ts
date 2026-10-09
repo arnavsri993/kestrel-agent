@@ -1,19 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-const { fork, nodeProcess, state } = vi.hoisted(() => ({
-	fork: vi.fn(),
+const { nodeProcess, state } = vi.hoisted(() => ({
 	nodeProcess: vi.fn(),
 	state: { packaged: false },
 }));
 vi.mock("node:fs", () => ({ existsSync: vi.fn(() => true) }));
 vi.mock("electron", () => ({
 	app: { get isPackaged() { return state.packaged; } },
-	utilityProcess: { fork },
 }));
 vi.mock("./node-core-process", () => ({ nodeCoreProcess: nodeProcess }));
 import {
 	desktopCoreProcess,
 	packagedAgentCoreSidecar,
-} from "./electron-core-process";
+} from "./desktop-core-process";
 
 const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(
 	process,
@@ -39,21 +37,18 @@ describe("desktop core host selection", () => {
 		const child = {};
 		nodeProcess.mockReturnValue(child);
 		expect(desktopCoreProcess()).toBe(child);
-		expect(fork).not.toHaveBeenCalled();
 		const [options] = nodeProcess.mock.calls[0]!;
 		expect(options.executable).toMatch(/agent-core\/node\/bin\/node$/);
 		expect(options.entryPath).toMatch(/agent-core\/service\/index\.js$/);
 		expect(options.env.OPENAI_API_KEY).toBeUndefined();
 	});
-	it.each(["development", "explicit"])("uses the Node adapter for %s", (mode) => {
-		vi.stubEnv("NODE_ENV_ELECTRON_VITE", mode === "development" ? "development" : "production");
-		vi.stubEnv("KESTREL_USE_NODE_CORE", mode === "explicit" ? "1" : "0");
+	it("uses the Node adapter for development", () => {
+		vi.stubEnv("NODE_ENV_ELECTRON_VITE", "development");
 		vi.stubEnv("KESTREL_NODE_EXEC_PATH", "/fixture/node");
 		vi.stubEnv("ANTHROPIC_API_KEY", "fixture-only");
 		const child = {};
 		nodeProcess.mockReturnValue(child);
 		expect(desktopCoreProcess()).toBe(child);
-		expect(fork).not.toHaveBeenCalled();
 		const [options] = nodeProcess.mock.calls[0]!;
 		expect(options.executable).toBe("/fixture/node");
 		expect(options.entryPath).toMatch(/utility\.js$/);
@@ -73,6 +68,14 @@ describe("desktop core host selection", () => {
 		const [options] = nodeProcess.mock.calls[0]!;
 		expect(options.executable).toBe("/fixture/node");
 		expect(options.entryPath).toMatch(/utility\.js$/);
+	});
+	it("rejects development without a real Node executable instead of using Electron", () => {
+		vi.stubEnv("NODE_ENV_ELECTRON_VITE", "development");
+		vi.stubEnv("KESTREL_NODE_EXEC_PATH", "");
+		expect(() => desktopCoreProcess()).toThrow(
+			/Agent Core requires a real Node\.js executable/,
+		);
+		expect(nodeProcess).not.toHaveBeenCalled();
 	});
 	it("uses the documented resource layout for packaged Agent Core", () => {
 		expect(packagedAgentCoreSidecar("/fixture/resources")).toEqual({
