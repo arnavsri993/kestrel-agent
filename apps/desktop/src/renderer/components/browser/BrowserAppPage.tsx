@@ -9,24 +9,27 @@ export function BrowserAppPage({
 	routeId,
 	onActivate,
 	reducedMotion,
+	hidden = false,
 }: {
 	children: ReactNode;
 	className: string;
 	routeId: string;
 	onActivate(node: HTMLDivElement): void;
 	reducedMotion: boolean;
+	hidden?: boolean;
 }) {
 	const present = useIsPresent();
 	const routeRef = useRef<HTMLDivElement>(null);
 	useLayoutEffect(() => {
-		if (present && routeRef.current) onActivate(routeRef.current);
-	}, [present, onActivate]);
+		if (present && !hidden && routeRef.current) onActivate(routeRef.current);
+	}, [present, hidden, onActivate]);
 	return (
 		<motion.div
 			ref={routeRef}
 			className={className}
 			data-app-page={routeId}
-			inert={!present}
+			hidden={hidden}
+			inert={!present || hidden}
 			style={{ pointerEvents: present ? "auto" : "none" }}
 			initial={reducedMotion ? false : { opacity: 0, y: 3 }}
 			animate={{ opacity: 1, y: 0 }}
