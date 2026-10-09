@@ -83,6 +83,8 @@ jobs:
       - run: corepack pnpm test:desktop-writing-studio
       - run: corepack pnpm test:desktop-browser
       - run: corepack pnpm test:desktop-autofill
+      - name: Verify source Settings interaction and layout
+        run: KESTREL_SETTINGS_EVIDENCE=.tmp/desktop-settings/source corepack pnpm test:desktop-settings
       - run: corepack pnpm test:desktop-setup
       - run: corepack pnpm test:desktop-fresh-profile
       - run: corepack pnpm test:desktop-personas
@@ -103,6 +105,8 @@ jobs:
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-file-icon-guard
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-subscription-cli-safety
       - run: corepack pnpm test:packaged-desktop:arm64
+      - name: Verify packaged Settings interaction and layout
+        run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel KESTREL_SETTINGS_EVIDENCE=.tmp/desktop-settings/packaged corepack pnpm test:desktop-settings
       - run: corepack pnpm benchmark:browser-agent:packaged:arm64 --report .tmp/browser-agent-benchmark/ci-packaged.json
       - name: Upload browser-agent benchmark reports
         if: ${{ always() }}
@@ -137,6 +141,7 @@ jobs:
           name: desktop-failure-evidence-${{ github.run_attempt }}
           path: |
             .tmp/desktop-layout/**
+            .tmp/desktop-settings/**
             .tmp/browser-agent-benchmark/*.json
             .tmp/ci-diagnostics/**
             test-results/**
