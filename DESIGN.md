@@ -1,3 +1,14 @@
+# App page continuity — October 9, 2026
+
+An active page accepts pointer and keyboard input immediately. Pages retained
+only for their exit animation are inert, with pointer events disabled. Route
+presence owns that state independently of animated opacity and position, so
+quickly reopening Work, Settings or another page cannot preserve an exit's
+interaction state. Revived pages reapply the existing heading/search focus
+handoff. Keep the current motion timing and reduced-motion behavior; verify
+rapid route re-entry, real Kanban clicks and keyboard focus on source and the
+packaged app.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the
