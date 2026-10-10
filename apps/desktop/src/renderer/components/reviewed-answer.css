@@ -1,0 +1,24 @@
+.reviewed-answer-earlier {
+	min-width: 0;
+	width: 100%;
+}
+
+.reviewed-answer-earlier > summary {
+	width: fit-content;
+	max-width: 100%;
+	padding: 4px 0;
+	color: var(--text-secondary, #b6b6ba);
+	font-size: 13px;
+	line-height: 1.5;
+	cursor: pointer;
+}
+
+.reviewed-answer-earlier > summary:focus-visible {
+	outline: 2px solid currentColor;
+	outline-offset: 4px;
+	border-radius: 4px;
+}
+
+.reviewed-answer-content {
+	padding-top: 8px;
+}

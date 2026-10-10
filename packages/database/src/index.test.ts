@@ -499,6 +499,80 @@ describe("runtime message paging", () => {
 			database.close();
 		}
 	});
+
+	it("persists answer supersession through list, page, and search without replacing either draft", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const sessionId = "session-reviewed-answer";
+		database.saveRuntimeSession({
+			id: sessionId,
+			title: "Reviewed answer",
+			allowedTools: [],
+			status: "active",
+			checkpoints: [],
+			createdAt: "2026-10-10T10:00:00.000Z",
+			updatedAt: "2026-10-10T10:00:00.000Z",
+		});
+		database.saveRuntimeMessage({
+			id: "message-original-draft",
+			sessionId,
+			role: "assistant",
+			content: "Original draft remains auditable.",
+			createdAt: "2026-10-10T10:00:01.000Z",
+		});
+		database.saveRuntimeMessage({
+			id: "message-corrected-answer",
+			sessionId,
+			role: "assistant",
+			content: "Corrected answer is the reviewed result.",
+			memoryRecallReceipt: { memoryCount: 2, preferenceCount: 1 },
+			sourceToolExecutionIds: ["source-receipt-1"],
+			createdAt: "2026-10-10T10:00:02.000Z",
+		});
+
+		try {
+			const updated = database.setRuntimeMessageSupersession(
+				"message-corrected-answer",
+				"message-original-draft",
+			);
+			expect(updated).toMatchObject({
+				id: "message-corrected-answer",
+				content: "Corrected answer is the reviewed result.",
+				supersedesMessageId: "message-original-draft",
+				memoryRecallReceipt: { memoryCount: 2, preferenceCount: 1 },
+				sourceToolExecutionIds: ["source-receipt-1"],
+			});
+			expect(database.listRuntimeMessages(sessionId)).toMatchObject([
+				{
+					id: "message-original-draft",
+					content: "Original draft remains auditable.",
+				},
+				{
+					id: "message-corrected-answer",
+					supersedesMessageId: "message-original-draft",
+				},
+			]);
+			expect(
+				database.listRuntimeMessagesPage(sessionId, { limit: 1 }).messages[0],
+			).toMatchObject({
+				id: "message-corrected-answer",
+				supersedesMessageId: "message-original-draft",
+			});
+			expect(database.searchRuntimeMessages("reviewed result")[0]).toMatchObject(
+				{
+					id: "message-corrected-answer",
+					supersedesMessageId: "message-original-draft",
+				},
+			);
+			expect(
+				database.setRuntimeMessageSupersession(
+					"message-corrected-answer",
+					"message-original-draft",
+				),
+			).toMatchObject({ supersedesMessageId: "message-original-draft" });
+		} finally {
+			database.close();
+		}
+	});
 });
 
 describe("configuration history recovery", () => {

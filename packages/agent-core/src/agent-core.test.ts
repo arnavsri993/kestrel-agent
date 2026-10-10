@@ -878,6 +878,19 @@ describe("core agent request path", () => {
 		});
 		expect(calls).toEqual(["primary", "reviewer", "repair"]);
 		expect(repairSawVerifierFeedback).toBe(true);
+		const reviewedAnswers = core.runtime
+			.listMessages(session.id)
+			.filter(
+				(message) =>
+					message.role === "assistant" && !message.modelToolCalls?.length,
+			);
+		expect(reviewedAnswers).toMatchObject([
+			{ content: "Initial answer without validation evidence." },
+			{
+				content: "Corrected answer with the requested validation evidence.",
+				supersedesMessageId: reviewedAnswers[0]?.id,
+			},
+		]);
 		expect(database.listAgentRuns(session.id)).toHaveLength(1);
 		expect(core.routingOutcomes.list()).toContainEqual(
 			expect.objectContaining({

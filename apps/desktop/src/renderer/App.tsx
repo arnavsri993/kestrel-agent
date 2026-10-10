@@ -163,6 +163,7 @@ import {
 	type PageMeasure,
 } from "./components/ui";
 import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
+import { ReviewedAnswer, supersededAnswerIds } from "./components/ReviewedAnswer";
 import { desktopDeepLinkAction } from "./deep-link-route";
 import { userBrowserRouteForRendererLink } from "./renderer-link-routing";
 import {
@@ -3609,6 +3610,8 @@ function RuntimeConversation({
 				`[data-runtime-message-id="${CSS.escape(transcriptTarget.messageId)}"]`,
 			);
 			if (!target) return;
+			const earlierDraft = target.querySelector<HTMLDetailsElement>("details.reviewed-answer-earlier");
+			if (earlierDraft) earlierDraft.open = true;
 			target.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
 			target.focus({ preventScroll: true });
 			onTranscriptTargetHandled?.();
@@ -4285,6 +4288,7 @@ function RuntimeConversation({
 	const visibleMessages = messages.filter(
 		(message) => message.role !== "system",
 	);
+	const supersededAnswers = supersededAnswerIds(visibleMessages);
 	const taskControls = (
 		<div className="runtime-task-controls">
 			{executionMode === "automatic" && (
@@ -4517,12 +4521,14 @@ function RuntimeConversation({
 							>
 								<span className="assistant-avatar">K</span>
 								<div>
+									<ReviewedAnswer superseded={supersededAnswers.has(message.id)}>
 									<p>{message.content}</p>
 									{message.memoryRecallReceipt && (
 										<MemoryRecallReceiptLine
 											receipt={message.memoryRecallReceipt}
 										/>
 									)}
+									</ReviewedAnswer>
 								</div>
 							</div>
 						) : message.toolName?.startsWith("agent.config.") ? (

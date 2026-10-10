@@ -1684,6 +1684,9 @@ export class AgentCore {
 			);
 		const corrected = await this.agentLoop.reworkAfterVerification({
 			runId: result.run.id,
+			...(result.assistantMessage
+				? { supersedesMessageId: result.assistantMessage.id }
+				: {}),
 			maximumTurns: this.configuration.current().workflows.maximumTurns,
 			...(reviewerFeedback ? { verificationFeedback: reviewerFeedback } : {}),
 			adaptiveExecution: this.adaptiveExecutionOptions(automatic),
