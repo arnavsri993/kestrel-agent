@@ -4799,7 +4799,10 @@ function RuntimeConversation({
 							<div className="workflow-memory-action">
 								<div>
 									<strong>Keep this workflow</strong>
-									<small>Save the approved sequence as a reusable skill.</small>
+									<small>
+										Create a draft from this request and observed tool calls. Review
+										before installing.
+									</small>
 								</div>
 								<button
 									type="button"

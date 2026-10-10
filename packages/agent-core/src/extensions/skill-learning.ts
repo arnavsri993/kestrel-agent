@@ -11,6 +11,7 @@ import {
 import { resolve, sep } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
 import type {
+	RuntimeMessage,
 	SkillLearningFeedback,
 	SkillLearningProposal,
 } from "@kestrel/shared-types";
@@ -41,6 +42,51 @@ function within(root: string, path: string): boolean {
 }
 
 const MAX_FEEDBACK_RECORDS = 500;
+const MAX_OBSERVED_TOOL_STEPS = 24;
+const MAX_SOURCE_MESSAGES = 40;
+
+function observedToolSequence(messages: RuntimeMessage[]): {
+	names: string[];
+	truncated: boolean;
+	messageIds: Set<string>;
+} {
+	const names: string[] = [];
+	const messageIds = new Set<string>();
+	const pendingCalls = new Map<string, string[]>();
+	for (const message of messages) {
+		if (message.role === "assistant") {
+			// Provider call IDs identify a call within its assistant batch, and may
+			// be reused in a later batch. Never deduplicate by tool name alone.
+			pendingCalls.clear();
+			for (const call of message.modelToolCalls ?? []) {
+				if (names.length === MAX_OBSERVED_TOOL_STEPS)
+					return { names, truncated: true, messageIds };
+				names.push(call.name);
+				messageIds.add(message.id);
+				if (call.id.trim()) {
+					const pending = pendingCalls.get(call.id) ?? [];
+					pending.push(call.name);
+					pendingCalls.set(call.id, pending);
+				}
+			}
+		} else if (message.role === "tool" && message.toolName) {
+			const pending = message.providerToolCallId?.trim()
+				? pendingCalls.get(message.providerToolCallId)
+				: undefined;
+			const matchedIndex = pending?.indexOf(message.toolName) ?? -1;
+			if (pending && matchedIndex >= 0) {
+				// The tool result records the same call, rather than a second step.
+				pending.splice(matchedIndex, 1);
+				continue;
+			}
+			if (names.length === MAX_OBSERVED_TOOL_STEPS)
+				return { names, truncated: true, messageIds };
+			names.push(message.toolName);
+			messageIds.add(message.id);
+		}
+	}
+	return { names, truncated: false, messageIds };
+}
 
 export class SkillLearningManager {
 	private readonly proposalKey = "skills.learning.proposals";
@@ -175,31 +221,36 @@ export class SkillLearningManager {
 		const turnMessages = messages
 			.slice(userIndex)
 			.filter((message) => message.role !== "system");
-		const sourceMessageIds = turnMessages
-			.slice(0, 40)
-			.map((message) => message.id);
 		const prompt = singleLine(userMessage.content, 6_000);
 		if (!prompt)
 			throw new Error(
 				"The completed workflow has no usable user request to learn from.",
 			);
-		const toolNames = [
-			...new Set(
-				turnMessages.flatMap((message) => [
-					...(message.modelToolCalls ?? []).map((call) => call.name),
-					...(message.toolName ? [message.toolName] : []),
-				]),
-			),
-		].slice(0, 24);
-		const sequence = toolNames.length
-			? toolNames.join(" → ")
-			: "No tool sequence was captured; clarify the current inputs before acting.";
+		const observed = observedToolSequence(turnMessages);
+		// Cite every displayed step before filling the bounded provenance list.
+		// A long sequence of assistant/result pairs can exceed the first 40 messages.
+		const sourceIds = new Set([userMessage.id, ...observed.messageIds]);
+		for (const message of turnMessages) {
+			if (sourceIds.size >= MAX_SOURCE_MESSAGES) break;
+			sourceIds.add(message.id);
+		}
+		const sourceMessageIds = turnMessages
+			.filter(message => sourceIds.has(message.id))
+			.map(message => message.id);
+		const sequence = observed.names.length
+			? observed.names.join(" → ")
+			: "No tool calls were recorded.";
 		const instructions = [
 			"## Goal",
-			`Help with the same kind of outcome as this approved task: ${prompt}`,
+			`Help with the same kind of outcome as this source request: ${prompt}`,
 			"",
 			"## Workflow",
 			`Observed tool sequence (names only): ${sequence}`,
+			...(observed.truncated
+				? [
+						`Only the first ${MAX_OBSERVED_TOOL_STEPS} observed tool steps are shown; the sequence is truncated.`,
+					]
+				: []),
 			"Re-check the current workspace, recipients, paths, and values before using this sequence.",
 			"",
 			"## Guardrails",
@@ -210,7 +261,7 @@ export class SkillLearningManager {
 
 		return this.propose({
 			name: this.nextName(skillNameSeed(prompt)),
-			description: `Repeat the successful workflow for: ${prompt}`.slice(
+			description: `Draft a workflow from this source request: ${prompt}`.slice(
 				0,
 				1_024,
 			),

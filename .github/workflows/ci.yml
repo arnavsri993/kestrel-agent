@@ -79,7 +79,7 @@ jobs:
       - run: corepack pnpm test:desktop-smoke
       - run: corepack pnpm test:desktop-single-instance
       - run: corepack pnpm test:desktop-restart-recovery
-      - run: corepack pnpm test:desktop-workflow-reuse
+      - run: KESTREL_WORKFLOW_REUSE_EVIDENCE_DIR=.tmp/workflow-reuse/source corepack pnpm test:desktop-workflow-reuse
       - run: corepack pnpm test:desktop-writing-studio
       - run: corepack pnpm test:desktop-browser
       - run: corepack pnpm test:desktop-autofill
@@ -98,7 +98,7 @@ jobs:
       - run: corepack pnpm test:desktop-managed-policy
       - run: corepack pnpm package:mac:dev
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
-      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
+      - run: KESTREL_WORKFLOW_REUSE_EVIDENCE_DIR=.tmp/workflow-reuse/packaged KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-file-icon-guard
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-subscription-cli-safety
@@ -137,6 +137,7 @@ jobs:
           name: desktop-failure-evidence-${{ github.run_attempt }}
           path: |
             .tmp/desktop-layout/**
+            .tmp/workflow-reuse/**
             .tmp/browser-agent-benchmark/*.json
             .tmp/ci-diagnostics/**
             test-results/**
