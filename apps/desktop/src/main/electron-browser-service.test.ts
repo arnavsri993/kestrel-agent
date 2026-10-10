@@ -1,10 +1,56 @@
 import { describe, expect, it, vi } from "vitest";
 
+const electronMocks = vi.hoisted(() => {
+	const makeWindow = () => ({
+		isDestroyed: () => false,
+		loadURL: vi.fn<() => Promise<void>>(),
+		webContents: {
+			id: 42,
+			listeners: new Map<string, (...args: unknown[]) => void>(),
+			on: vi.fn(),
+			setWindowOpenHandler: vi.fn(),
+			stop: vi.fn(),
+		},
+	});
+	const makePartition = () => ({
+		setPermissionRequestHandler: vi.fn(),
+		setPermissionCheckHandler: vi.fn(),
+		on: vi.fn(),
+		webRequest: { onBeforeRequest: vi.fn(), onErrorOccurred: vi.fn() },
+	});
+	return {
+		makeWindow,
+		makePartition,
+		windows: [] as ReturnType<typeof makeWindow>[],
+		partitions: [] as ReturnType<typeof makePartition>[],
+	};
+});
+
+vi.mock("node:fs", async (importOriginal) => ({
+	...(await importOriginal<typeof import("node:fs")>()),
+	mkdirSync: vi.fn(),
+}));
+
 vi.mock("electron", () => ({
-	app: {},
-	BrowserWindow: class {},
+	app: { getPath: () => "/tmp/kestrel-electron-browser-test" },
+	BrowserWindow: class {
+		constructor() {
+			const window = electronMocks.makeWindow();
+			window.webContents.on.mockImplementation((name, listener) => {
+				window.webContents.listeners.set(name, listener);
+			});
+			electronMocks.windows.push(window);
+			return window;
+		}
+	},
 	desktopCapturer: {},
-	session: {},
+	session: {
+		fromPartition: () => {
+			const partition = electronMocks.makePartition();
+			electronMocks.partitions.push(partition);
+			return partition;
+		},
+	},
 	systemPreferences: {},
 }));
 
@@ -58,6 +104,210 @@ describe("isolated browser origin policy", () => {
 		expect(
 			isolatedBrowserShouldCancelRequest("https://evil.test/", allowed),
 		).toBe(true);
+	});
+});
+
+describe("Electron browser navigation scope errors", () => {
+	const initialUrl = "https://example.test/start";
+	const deniedUrl = "https://user:password@outside.test/private?token=secret#private";
+	const cancelled = () => Object.assign(new Error("ERR_FAILED (-2) loading URL"), {
+		code: "ERR_FAILED",
+		errno: -2,
+	});
+
+	async function browser() {
+		const service = new ElectronBrowserService();
+		const sessionId = (await service.handle(
+			{ operation: "create", allowedOrigins: ["https://example.test"] },
+			new AbortController().signal,
+		)) as string;
+		const window = electronMocks.windows.at(-1)!;
+		const partition = electronMocks.partitions.at(-1)!;
+		const emit = (name: string, url: string, isMainFrame = true) => {
+			const event = { url, isMainFrame, isSameDocument: false, preventDefault: vi.fn() };
+			window.webContents.listeners.get(name)!(event, url);
+			return event;
+		};
+		const request = (url: string, id = 1, resourceType = "mainFrame", webContentsId = 42) => {
+			const callback = vi.fn();
+			partition.webRequest.onBeforeRequest.mock.calls[0]![0](
+				{ url, id, resourceType, webContentsId },
+				callback,
+			);
+			return callback;
+		};
+		const navigate = (signal = new AbortController().signal) => service.handle(
+			{ operation: "navigate", sessionId, url: initialUrl },
+			signal,
+		);
+		return { window, partition, emit, request, navigate };
+	}
+
+	it("reports only the denied origin for a main-frame redirect and preserves its cancellation", async () => {
+		const fixture = await browser();
+		fixture.window.loadURL.mockImplementation(async () => {
+			fixture.emit("did-start-navigation", initialUrl);
+			expect(fixture.request(initialUrl)).toHaveBeenCalledWith({ cancel: false });
+			expect(fixture.emit("will-redirect", deniedUrl).preventDefault).toHaveBeenCalledOnce();
+			throw cancelled();
+		});
+		await expect(fixture.navigate()).rejects.toMatchObject({
+			message: "Electron browser navigation was blocked because origin https://outside.test is outside this session's origin allowlist.",
+		});
+		expect(fixture.partition.setPermissionCheckHandler.mock.calls[0]![0]()).toBe(false);
+		const permission = vi.fn();
+		fixture.partition.setPermissionRequestHandler.mock.calls[0]![0](undefined, "camera", permission);
+		expect(permission).toHaveBeenCalledWith(false);
+	});
+
+	it("reports bound main-frame request denials without exposing URL credentials or tokens", async () => {
+		const fixture = await browser();
+		fixture.window.loadURL.mockImplementation(async () => {
+			fixture.emit("did-start-navigation", initialUrl);
+			fixture.request(initialUrl, 7);
+			expect(fixture.request(deniedUrl, 7)).toHaveBeenCalledWith({ cancel: true });
+			throw Object.assign(new Error("request cancelled"), { code: "ERR_BLOCKED_BY_CLIENT" });
+		});
+		await expect(fixture.navigate()).rejects.toMatchObject({
+			message: "Electron browser navigation was blocked because origin https://outside.test is outside this session's origin allowlist.",
+		});
+	});
+
+	it("uses generic scope wording for denied opaque destinations", async () => {
+		const fixture = await browser();
+		fixture.window.loadURL.mockImplementation(async () => {
+			fixture.emit("did-start-navigation", initialUrl);
+			fixture.emit("will-redirect", "data:text/html,secret");
+			throw cancelled();
+		});
+		await expect(fixture.navigate()).rejects.toMatchObject({
+			message: "Electron browser navigation was blocked outside this session's origin allowlist.",
+		});
+	});
+
+	it.each(["subFrame", "script", "image", "xhr"])("does not attribute blocked %s requests to navigation", async (resourceType) => {
+		const fixture = await browser();
+		const failure = cancelled();
+		fixture.window.loadURL.mockImplementation(async () => {
+			fixture.emit("did-start-navigation", initialUrl);
+			fixture.request(initialUrl);
+			expect(fixture.request(deniedUrl, 1, resourceType)).toHaveBeenCalledWith({ cancel: true });
+			expect(fixture.emit("will-redirect", deniedUrl, false).preventDefault).toHaveBeenCalledOnce();
+			throw failure;
+		});
+		await expect(fixture.navigate()).rejects.toBe(failure);
+	});
+
+	it("does not attribute stale request IDs or requests from another WebContents", async () => {
+		const fixture = await browser();
+		const failure = cancelled();
+		fixture.window.loadURL.mockImplementation(async () => {
+			fixture.emit("did-start-navigation", initialUrl);
+			fixture.request(initialUrl, 2);
+			fixture.request(deniedUrl, 1);
+			fixture.request(deniedUrl, 2, "mainFrame", 99);
+			throw failure;
+		});
+		await expect(fixture.navigate()).rejects.toBe(failure);
+	});
+
+	it("clears a denial before retrying and ignores denial events outside an attempt", async () => {
+		const fixture = await browser();
+		fixture.window.loadURL.mockImplementationOnce(async () => {
+			fixture.emit("did-start-navigation", initialUrl);
+			fixture.emit("will-redirect", deniedUrl);
+			throw cancelled();
+		});
+		await expect(fixture.navigate()).rejects.toThrow("origin allowlist");
+		fixture.emit("will-redirect", deniedUrl);
+		const failure = cancelled();
+		fixture.window.loadURL.mockImplementationOnce(async () => {
+			fixture.emit("did-start-navigation", initialUrl);
+			throw failure;
+		});
+		await expect(fixture.navigate()).rejects.toBe(failure);
+	});
+
+	it("preserves unrelated network errors even after an observed scope denial", async () => {
+		const fixture = await browser();
+		const failure = Object.assign(new Error("DNS lookup failed"), { code: "ERR_NAME_NOT_RESOLVED" });
+		fixture.window.loadURL.mockImplementation(async () => {
+			fixture.emit("did-start-navigation", initialUrl);
+			fixture.emit("will-redirect", deniedUrl);
+			throw failure;
+		});
+		await expect(fixture.navigate()).rejects.toBe(failure);
+	});
+
+	it("preserves abort reasons after an observed denial and stops the browser", async () => {
+		const fixture = await browser();
+		const controller = new AbortController();
+		const reason = new Error("cancelled by caller");
+		fixture.window.loadURL.mockImplementation(async () => {
+			fixture.emit("did-start-navigation", initialUrl);
+			fixture.emit("will-redirect", deniedUrl);
+			controller.abort(reason);
+			throw cancelled();
+		});
+		await expect(fixture.navigate(controller.signal)).rejects.toBe(reason);
+		expect(fixture.window.webContents.stop).toHaveBeenCalledOnce();
+	});
+
+	it("does not start a navigation for an already aborted signal", async () => {
+		const fixture = await browser();
+		const controller = new AbortController();
+		const reason = new Error("already cancelled");
+		controller.abort(reason);
+		await expect(fixture.navigate(controller.signal)).rejects.toBe(reason);
+		expect(fixture.window.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("disables attribution when page navigation interrupts a loadURL attempt", async () => {
+		const fixture = await browser();
+		const failure = cancelled();
+		fixture.window.loadURL.mockImplementation(async () => {
+			fixture.emit("did-start-navigation", initialUrl);
+			expect(fixture.emit("will-navigate", deniedUrl).preventDefault).toHaveBeenCalledOnce();
+			fixture.emit("will-redirect", deniedUrl);
+			throw failure;
+		});
+		await expect(fixture.navigate()).rejects.toBe(failure);
+	});
+
+	it("does not attribute redirects before the matching main-frame navigation starts", async () => {
+		const fixture = await browser();
+		const failure = cancelled();
+		fixture.window.loadURL.mockImplementation(async () => {
+			fixture.emit("will-redirect", deniedUrl);
+			fixture.emit("did-start-navigation", "https://example.test/other");
+			fixture.emit("will-redirect", deniedUrl);
+			throw failure;
+		});
+		await expect(fixture.navigate()).rejects.toBe(failure);
+	});
+
+	it("does not attribute overlapping loadURL attempts, including after one settles", async () => {
+		const fixture = await browser();
+		const firstFailure = cancelled();
+		const secondFailure = cancelled();
+		let rejectFirst!: (error: unknown) => void;
+		let rejectSecond!: (error: unknown) => void;
+		fixture.window.loadURL.mockImplementationOnce(() => {
+			fixture.emit("did-start-navigation", initialUrl);
+			return new Promise((_resolve, reject) => { rejectFirst = reject; });
+		});
+		fixture.window.loadURL.mockImplementationOnce(() => {
+			fixture.emit("did-start-navigation", initialUrl);
+			return new Promise((_resolve, reject) => { rejectSecond = reject; });
+		});
+		const first = fixture.navigate();
+		const second = fixture.navigate();
+		fixture.emit("will-redirect", deniedUrl);
+		rejectFirst(firstFailure);
+		await expect(first).rejects.toBe(firstFailure);
+		fixture.emit("will-redirect", deniedUrl);
+		rejectSecond(secondFailure);
+		await expect(second).rejects.toBe(secondFailure);
 	});
 });
 
