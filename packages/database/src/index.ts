@@ -253,6 +253,27 @@ interface RuntimeMessageRow {
 	created_at: string;
 }
 
+function storedRuntimeMessagePayload(message: RuntimeMessage): string {
+	return JSON.stringify({
+		version: 2,
+		content: message.content,
+		...(message.sourceToolExecutionIds
+			? { sourceToolExecutionIds: message.sourceToolExecutionIds }
+			: {}),
+		...(message.modelToolCalls ? { modelToolCalls: message.modelToolCalls } : {}),
+		...(message.providerToolCallId
+			? { providerToolCallId: message.providerToolCallId }
+			: {}),
+		...(message.toolName ? { toolName: message.toolName } : {}),
+		...(message.memoryRecallReceipt
+			? { memoryRecallReceipt: message.memoryRecallReceipt }
+			: {}),
+		...(message.supersedesMessageId
+			? { supersedesMessageId: message.supersedesMessageId }
+			: {}),
+	});
+}
+
 interface WorkspaceMutationRow {
 	payload_ciphertext: string;
 	payload_iv: string;
@@ -791,21 +812,7 @@ export class KestrelDatabase {
 		const parsed = RuntimeMessageSchema.parse([...(message.sourceToolExecutionIds ?? []), ...(message.toolExecutionId ? [message.toolExecutionId] : [])].some(id => this.getPrivateState(this.sourceReceiptDeletionKey(id)))
             ? { ...message, content: "Source evidence was deleted or expired.", modelToolCalls: undefined, memoryRecallReceipt: undefined } : message);
 		const encrypted = encryptText(
-			JSON.stringify({
-				version: 2,
-				content: parsed.content,
-                ...(parsed.sourceToolExecutionIds ? { sourceToolExecutionIds: parsed.sourceToolExecutionIds } : {}),
-				...(parsed.modelToolCalls
-					? { modelToolCalls: parsed.modelToolCalls }
-					: {}),
-				...(parsed.providerToolCallId
-					? { providerToolCallId: parsed.providerToolCallId }
-					: {}),
-				...(parsed.toolName ? { toolName: parsed.toolName } : {}),
-				...(parsed.memoryRecallReceipt
-					? { memoryRecallReceipt: parsed.memoryRecallReceipt }
-					: {}),
-			}),
+			storedRuntimeMessagePayload(parsed),
 			this.encryptionKey,
 		);
 		const terms = this.searchTerms(parsed.content);
@@ -863,6 +870,68 @@ export class KestrelDatabase {
 			if (touched.changes !== 1)
 				throw new Error("Runtime message session could not be updated.");
 			return updatedOwner;
+		})();
+	}
+
+	setRuntimeMessageSupersession(
+		messageId: string,
+		supersedesMessageId: string,
+	): RuntimeMessage {
+		return this.db.transaction(() => {
+			const rows = this.db
+				.prepare(
+					`SELECT m.*, o.sequence FROM runtime_messages m
+					 JOIN runtime_message_order o ON o.message_id = m.id
+					 WHERE m.id IN (?, ?)`,
+				)
+				.all(messageId, supersedesMessageId) as Array<
+				RuntimeMessageRow & { sequence: number }
+			>;
+			const currentRow = rows.find((row) => row.id === messageId);
+			const earlierRow = rows.find((row) => row.id === supersedesMessageId);
+			if (!currentRow || !earlierRow)
+				throw new Error("Runtime message supersession target was not found.");
+			const current = this.parseRuntimeMessage(currentRow);
+			const earlier = this.parseRuntimeMessage(earlierRow);
+			if (
+				current.sessionId !== earlier.sessionId ||
+				current.role !== "assistant" ||
+				earlier.role !== "assistant" ||
+				current.modelToolCalls?.length ||
+				earlier.modelToolCalls?.length ||
+				earlierRow.sequence >= currentRow.sequence
+			)
+				throw new Error(
+					"Only a later terminal assistant answer can supersede an earlier answer in the same session.",
+				);
+			if (
+				current.supersedesMessageId &&
+				current.supersedesMessageId !== supersedesMessageId
+			)
+				throw new Error("Runtime message already supersedes another answer.");
+			if (current.supersedesMessageId === supersedesMessageId) return current;
+
+			const updated = RuntimeMessageSchema.parse({
+				...current,
+				supersedesMessageId,
+			});
+			const encrypted = encryptText(
+				storedRuntimeMessagePayload(updated),
+				this.encryptionKey,
+			);
+			const result = this.db
+				.prepare(
+					"UPDATE runtime_messages SET content_ciphertext = ?, content_iv = ?, content_auth_tag = ? WHERE id = ?",
+				)
+				.run(
+					encrypted.ciphertext,
+					encrypted.iv,
+					encrypted.authTag,
+					messageId,
+				);
+			if (result.changes !== 1)
+				throw new Error("Runtime message supersession could not be saved.");
+			return updated;
 		})();
 	}
 
@@ -995,11 +1064,12 @@ export class KestrelDatabase {
             const messages = (this.db.prepare("SELECT * FROM runtime_messages").all() as RuntimeMessageRow[]).map(row => this.parseRuntimeMessage(row)).filter(message =>
                 message.toolExecutionId === receipt.id || message.sourceToolExecutionIds?.includes(receipt.id) ||
                 (message.sessionId === receipt.sessionId && message.role === "assistant" && !message.sourceToolExecutionIds && message.createdAt >= receipt.startedAt));
-            for (const message of messages) {
-                const encrypted = encryptText(JSON.stringify({ version: 2, content: "Source evidence was deleted or expired.",
-                    ...(message.toolName ? { toolName: message.toolName } : {}),
-                    sourceToolExecutionIds: [...new Set([...(message.sourceToolExecutionIds ?? []), receipt.id])]
-                }), this.encryptionKey);
+			for (const message of messages) {
+				const encrypted = encryptText(JSON.stringify({ version: 2, content: "Source evidence was deleted or expired.",
+					...(message.toolName ? { toolName: message.toolName } : {}),
+					...(message.supersedesMessageId ? { supersedesMessageId: message.supersedesMessageId } : {}),
+					sourceToolExecutionIds: [...new Set([...(message.sourceToolExecutionIds ?? []), receipt.id])]
+				}), this.encryptionKey);
                 this.db.prepare("UPDATE runtime_messages SET content_ciphertext = ?, content_iv = ?, content_auth_tag = ? WHERE id = ?")
                     .run(encrypted.ciphertext, encrypted.iv, encrypted.authTag, message.id);
                 this.db.prepare("DELETE FROM runtime_message_terms WHERE message_id = ?").run(message.id);
@@ -4585,7 +4655,8 @@ export class KestrelDatabase {
 			providerToolCallId?: unknown;
 			toolName?: unknown;
 			memoryRecallReceipt?: unknown;
-            sourceToolExecutionIds?: unknown;
+			supersedesMessageId?: unknown;
+			sourceToolExecutionIds?: unknown;
 		} = { content: decrypted };
 		try {
 			const candidate = JSON.parse(decrypted) as Record<string, unknown>;
@@ -4611,6 +4682,9 @@ export class KestrelDatabase {
 				: {}),
 			...(stored.memoryRecallReceipt
 				? { memoryRecallReceipt: stored.memoryRecallReceipt }
+				: {}),
+			...(typeof stored.supersedesMessageId === "string"
+				? { supersedesMessageId: stored.supersedesMessageId }
 				: {}),
 			...(row.parent_message_id
 				? { parentMessageId: row.parent_message_id }

@@ -96,9 +96,11 @@ jobs:
       - run: corepack pnpm test:desktop-approvals
       - run: corepack pnpm test:desktop-chat-configuration
       - run: corepack pnpm test:desktop-managed-policy
+      - run: KESTREL_REVIEWED_ANSWER_EVIDENCE_DIR=.tmp/reviewed-answer/source corepack pnpm test:desktop-reviewed-answer
       - run: corepack pnpm package:mac:dev
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
+      - run: KESTREL_REVIEWED_ANSWER_EVIDENCE_DIR=.tmp/reviewed-answer/packaged KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-reviewed-answer
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-file-icon-guard
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-subscription-cli-safety
@@ -137,6 +139,7 @@ jobs:
           name: desktop-failure-evidence-${{ github.run_attempt }}
           path: |
             .tmp/desktop-layout/**
+            .tmp/reviewed-answer/**
             .tmp/browser-agent-benchmark/*.json
             .tmp/ci-diagnostics/**
             test-results/**

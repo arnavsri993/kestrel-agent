@@ -22,6 +22,7 @@ import {
 	agentSessionStatusLabel,
 } from "../../../agent-workspace";
 import { Icon } from "../../Icon";
+import { ReviewedAnswer, supersededAnswerIds } from "../../ReviewedAnswer";
 import { Status, type StatusTone } from "../../ui";
 import {
 	agentUniverseRunIsPending,
@@ -641,6 +642,7 @@ export function AgentUniverseContextSurface({
 	}, [input, loadHistory, messageState, openSessionId]);
 
 	const renderedHistory = conversationMessages(history);
+	const supersededAnswers = supersededAnswerIds(renderedHistory);
 	const hasOptimisticMessage = Boolean(
 		lastMessage &&
 		!renderedHistory.some(
@@ -1062,7 +1064,9 @@ export function AgentUniverseContextSurface({
 							key={message.id}
 						>
 							<span>{message.role === "user" ? "You" : title}</span>
+							<ReviewedAnswer superseded={supersededAnswers.has(message.id)}>
 							<p>{message.content}</p>
+							</ReviewedAnswer>
 						</div>
 					))}
 					{hasOptimisticMessage ? (

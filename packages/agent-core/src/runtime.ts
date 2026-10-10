@@ -1254,6 +1254,14 @@ export class AgentRuntime extends EventEmitter {
 				...(message.parentMessageId && messageIds.has(message.parentMessageId)
 					? { parentMessageId: messageIds.get(message.parentMessageId)! }
 					: {}),
+				...(message.supersedesMessageId &&
+					messageIds.has(message.supersedesMessageId)
+					? {
+							supersedesMessageId: messageIds.get(
+								message.supersedesMessageId,
+							)!,
+						}
+					: {}),
 				...(message.modelToolCalls
 					? { modelToolCalls: message.modelToolCalls }
 					: {}),
@@ -1354,6 +1362,23 @@ export class AgentRuntime extends EventEmitter {
 			{ messageId: message.id },
 		);
 		return this.database.listRuntimeMessages(input.sessionId).find(stored => stored.id === message.id)!;
+	}
+
+	markMessageSupersedes(
+		messageId: string,
+		supersedesMessageId: string,
+	): RuntimeMessage {
+		const updated = this.database.setRuntimeMessageSupersession(
+			messageId,
+			supersedesMessageId,
+		);
+		this.emitRuntimeEvent(
+			"session.updated",
+			updated.sessionId,
+			{ action: "message-metadata" },
+			{ messageId: updated.id },
+		);
+		return updated;
 	}
 
 	listMessages(sessionId: string): RuntimeMessage[] {

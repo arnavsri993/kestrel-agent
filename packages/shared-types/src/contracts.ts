@@ -1055,6 +1055,7 @@ export const RuntimeMessageSchema = z.object({
 	providerToolCallId: z.string().min(1).optional(),
 	toolName: z.string().min(1).optional(),
 	parentMessageId: z.string().min(1).optional(),
+	supersedesMessageId: z.string().min(1).optional(),
 	toolExecutionId: z.string().min(1).optional(),
 	createdAt: z.string().datetime(),
 });

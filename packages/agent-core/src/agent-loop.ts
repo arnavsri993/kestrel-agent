@@ -171,6 +171,8 @@ export interface AgentLoopResumeInput {
  */
 export interface AgentLoopVerificationReworkInput {
 	runId: string;
+	/** Earlier terminal answer replaced by a successfully completed correction. */
+	supersedesMessageId?: string;
 	/** Bounded reviewer evidence used only for this corrective pass. */
 	verificationFeedback?: string;
 	maximumTurns?: number;
@@ -275,6 +277,11 @@ const SUPERSEDED_BY_NEW_MESSAGE_REASON =
 interface StoredAdaptiveExecutionState {
 	budget: AdaptiveExecutionBudget;
 	attemptedRouteIds: string[];
+}
+
+interface StoredVerifierReworkState {
+	attempts: number;
+	supersedesMessageId?: string;
 }
 
 export class AgentLoop {
@@ -559,8 +566,8 @@ export class AgentLoop {
 		try {
 			const run = this.database.getAgentRun(input.runId);
 			if (!run) throw new Error("Agent run not found.");
-			return await this.withSessionRunClaim(run.sessionId, () =>
-				this.resumeClaimed(input),
+			return await this.withSessionRunClaim(run.sessionId, async () =>
+				this.finalizeVerifierCorrection(await this.resumeClaimed(input)),
 			);
 		} finally {
 			this.resumingRunIds.delete(input.runId);
@@ -759,8 +766,10 @@ export class AgentLoop {
 	): Promise<AgentLoopResult> {
 		const run = this.database.getAgentRun(input.runId);
 		if (!run) throw new Error("Agent run not found.");
-		return this.withSessionRunClaim(run.sessionId, () =>
-			this.reworkAfterVerificationClaimed(input),
+		return this.withSessionRunClaim(run.sessionId, async () =>
+			this.finalizeVerifierCorrection(
+				await this.reworkAfterVerificationClaimed(input),
+			),
 		);
 	}
 
@@ -771,7 +780,7 @@ export class AgentLoop {
 		if (!run) throw new Error("Agent run not found.");
 		if (run.status !== "completed")
 			throw new Error("Only a completed agent run can receive verifier rework.");
-		const reworkState = this.database.getPrivateState<{ attempts?: number }>(
+		const reworkState = this.database.getPrivateState<StoredVerifierReworkState>(
 			verifierReworkStateKey(run.id),
 		);
 		if ((reworkState?.attempts ?? 0) >= 1)
@@ -787,6 +796,19 @@ export class AgentLoop {
 					);
 		if (run.turn >= maximumTurns)
 			throw new Error("The independent verifier has no remaining turn budget.");
+		if (input.supersedesMessageId) {
+			const superseded = this.runtime
+				.listMessages(run.sessionId)
+				.find((message) => message.id === input.supersedesMessageId);
+			if (
+				!superseded ||
+				superseded.role !== "assistant" ||
+				superseded.modelToolCalls?.length
+			)
+				throw new Error(
+					"Verifier rework can only supersede a terminal assistant answer in the same session.",
+				);
+		}
 
 		try {
 			const session = this.requireRunnableSession(run.sessionId, run.providerIds);
@@ -823,6 +845,9 @@ export class AgentLoop {
 			this.database.saveAgentRun(run);
 			this.database.setPrivateState(verifierReworkStateKey(run.id), {
 				attempts: (reworkState?.attempts ?? 0) + 1,
+				...(input.supersedesMessageId
+					? { supersedesMessageId: input.supersedesMessageId }
+					: {}),
 			});
 
 			if (input.adaptiveExecution && input.onAdaptiveEscalation) {
@@ -931,6 +956,25 @@ export class AgentLoop {
 			}
 			throw error;
 		}
+	}
+
+	private finalizeVerifierCorrection(result: AgentLoopResult): AgentLoopResult {
+		if (
+			result.run.status !== "completed" ||
+			!result.assistantMessage ||
+			result.assistantMessage.modelToolCalls?.length
+		)
+			return result;
+		const reworkState =
+			this.database.getPrivateState<StoredVerifierReworkState>(
+				verifierReworkStateKey(result.run.id),
+			);
+		if (!reworkState?.supersedesMessageId) return result;
+		const assistantMessage = this.runtime.markMessageSupersedes(
+			result.assistantMessage.id,
+			reworkState.supersedesMessageId,
+		);
+		return { ...result, assistantMessage };
 	}
 
 	private requireRunnableSession(
