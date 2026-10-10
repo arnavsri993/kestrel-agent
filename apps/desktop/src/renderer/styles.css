@@ -542,6 +542,42 @@ input[type="radio"] {
 .composer textarea::placeholder {
 	color: var(--faint);
 }
+.composer .composer-project-scope {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	max-width: calc(100% - 24px);
+	min-width: 0;
+	margin: 10px 12px 0;
+	padding: 4px 7px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.5;
+	text-align: left;
+	cursor: pointer;
+}
+.composer-project-scope > span {
+	flex-shrink: 0;
+	color: var(--faint);
+}
+.composer-project-scope > strong {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 500;
+}
+.composer .composer-project-scope:hover {
+	background: var(--panel);
+	color: var(--ink);
+}
+.composer .composer-project-scope:focus-visible {
+	outline: 2px solid var(--muted);
+	outline-offset: 2px;
+}
 .composer-footer {
 	min-height: 43px;
 	display: flex;
