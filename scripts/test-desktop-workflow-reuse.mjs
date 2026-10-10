@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,6 +9,10 @@ import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-workflow-reuse-"));
 const userData = join(root, "user-data");
+const fixtureHome = join(root, "home");
+mkdirSync(fixtureHome, { recursive: true });
+const evidence = process.env.KESTREL_WORKFLOW_REUSE_EVIDENCE_DIR;
+if (evidence) mkdirSync(evidence, { recursive: true });
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 const executablePath = packagedExecutable
@@ -16,9 +20,15 @@ const executablePath = packagedExecutable
 	: requireFromDesktop("electron");
 const launchArgs = packagedExecutable
 	? ["--use-mock-keychain"]
-	: [resolve("apps/desktop")];
+	: [resolve("apps/desktop"), "--use-mock-keychain"];
 
 let providerCalls = 0;
+const task = "Create a concise checklist for reviewing pull requests.";
+const hostEnvironment = Object.fromEntries(
+	["PATH", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME", "SHELL", "DISPLAY"].flatMap(
+		key => process.env[key] ? [[key, process.env[key]]] : [],
+	),
+);
 const providerErrors = [];
 const server = createServer(async (request, response) => {
 	try {
@@ -34,22 +44,35 @@ const server = createServer(async (request, response) => {
 		const chunks = [];
 		for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-		providerCalls += 1;
 		const userMessage = [...(body.messages ?? [])]
 			.reverse()
 			.find((message) => message.role === "user");
 		assert.ok(userMessage, "fixture request did not include the task");
+		const isTask = String(userMessage.content).includes(task);
+		if (isTask) providerCalls += 1;
+		const toolCall = isTask && providerCalls <= 3;
+		if (isTask && providerCalls > 1) {
+			const result = [...body.messages].reverse().find(message => message.role === "tool");
+			assert.equal(result?.tool_call_id, "workflow-search", "The prior observed call must have a paired result");
+			assert.equal(JSON.parse(result.content).status, "verified", "The catalog lookup must execute successfully");
+		}
+		const delta = toolCall
+			? { tool_calls: [{
+				index: 0, id: "workflow-search", type: "function",
+				function: {
+					name: "tools.search",
+					arguments: JSON.stringify({ query: ["review", "git", "review"][providerCalls - 1] }),
+				},
+			}] }
+			: { content: isTask ? "Completed the requested review checklist with a concise, repeatable sequence." : "Ready." };
 		const event = {
 			id: `workflow-reuse-fixture-${providerCalls}`,
 			model: "fixture-model",
 			choices: [
 				{
 					index: 0,
-					delta: {
-						content:
-							"Completed the requested review checklist with a concise, repeatable sequence.",
-					},
-					finish_reason: "stop",
+					delta,
+					finish_reason: toolCall ? "tool_calls" : "stop",
 				},
 			],
 			usage: { prompt_tokens: 24, completion_tokens: 12 },
@@ -74,23 +97,27 @@ const address = server.address();
 assert(address && typeof address === "object");
 
 let application;
+let page;
 const runtimeErrors = [];
 try {
 	application = await electron.launch({
 		executablePath,
 		args: launchArgs,
 		env: {
-			...process.env,
+			...hostEnvironment,
+			HOME: fixtureHome,
+			CODEX_HOME: join(fixtureHome, ".codex"),
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 			KESTREL_TEST_USER_DATA: userData,
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
 			NOUS_API_KEY: "local-test-credential",
 			NOUS_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
 			NOUS_MODEL: "fixture-model",
 		},
 	});
-	const page = await application.firstWindow();
+	page = await application.firstWindow();
 	page.setDefaultTimeout(30_000);
 	page.on("console", (message) => {
 		if (message.type() === "error") runtimeErrors.push(message.text());
@@ -102,27 +129,23 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
+	const chatToggle = page.locator("#browser-agent-toggle");
+	await chatToggle.waitFor();
+	if (await chatToggle.getAttribute("aria-expanded") !== "true") await chatToggle.click();
 	await page.locator("#runtime-prompt").waitFor();
 
-	await page.getByRole("button", { name: /^Model:/ }).click();
-	const modelMenu = page.getByRole("dialog", {
-		name: "Choose a provider, account, model, and thinking level",
-	});
-	await modelMenu
-		.locator('.model-selector-column[aria-label="Provider"]')
-		.getByRole("button", { name: /^Nous/ })
-		.click();
-	await modelMenu.getByLabel("Explicit model ID").fill("fixture-model");
-	await modelMenu.getByLabel("Explicit model ID").press("Enter");
-	await modelMenu.waitFor({ state: "detached" });
-
-	const task = "Create a concise checklist for reviewing pull requests.";
+	// Auto has only the isolated loopback provider; host credentials are excluded.
 	await page.getByRole("textbox", { name: "Message Kestrel" }).fill(task);
 	await page
 		.locator(".agent-conversation-host")
 		.getByRole("button", { name: "Send message", exact: true })
 		.click();
 	await page.getByText("Completed the requested review checklist", { exact: false }).waitFor();
+	const workflow = page.locator(".agent-conversation-host .workflow-memory-action");
+	const summary = workflow.locator("summary");
+	if (await summary.count()) await summary.press("Enter");
+	await workflow.getByText("Create a draft from this request and observed tool calls. Review before installing.", { exact: true }).waitFor();
+	if (evidence) await page.screenshot({ path: join(evidence, "workflow-draft.png") });
 	await page.getByRole("button", { name: "Save as skill", exact: true }).click();
 
 	const notice = page.locator(".skill-notice");
@@ -152,10 +175,20 @@ try {
 		},
 		proposalId,
 	);
+	const instructions = await proposalDetails.locator("pre").textContent();
+	assert.match(instructions ?? "", /Observed tool sequence \(names only\): tools\.search → tools\.search → tools\.search/);
+	assert.doesNotMatch(instructions ?? "", /approved task|successful workflow/);
+	assert.match(await proposalDetails.locator("p").textContent() ?? "", /^Draft a workflow from this source request:/);
+	await proposalDetails.getByRole("button", { name: "Install learned skill", exact: true }).waitFor();
+	if (evidence) await page.screenshot({ path: join(evidence, "workflow-proposal.png") });
 	assert.equal(providerErrors.length, 0, providerErrors.join("\n"));
-	assert.ok(providerCalls >= 1, "fixture provider did not complete the task");
+	assert.equal(providerCalls, 4, "The fixture must finish three observed calls and one response");
 	assert.deepEqual(runtimeErrors, [], runtimeErrors.join("\n"));
-	process.stdout.write("Workflow reuse save, review navigation, proposal focus, and desktop error smoke passed.\n");
+	process.stdout.write("Workflow reuse preserves repeated paired tool calls, draft review, proposal focus, and desktop error smoke passed.\n");
+} catch (error) {
+	process.stderr.write(`${JSON.stringify({ providerCalls, providerErrors, runtimeErrors })}\n`);
+	if (page && evidence) await page.screenshot({ path: join(evidence, "workflow-failure.png") }).catch(() => {});
+	throw error;
 } finally {
 	await application?.close();
 	await new Promise((resolveClose) => server.close(resolveClose));

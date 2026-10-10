@@ -841,6 +841,253 @@ describe("Agent Skills extensions", () => {
 		database.close();
 	});
 
+	describe("observed workflow sequences", () => {
+		type Message = Omit<
+			Parameters<AgentRuntime["appendMessage"]>[0],
+			"sessionId"
+		>;
+		const call = (id: string, name: string) => ({ id, name, arguments: {} });
+		const request = (...calls: ReturnType<typeof call>[]): Message => ({
+			role: "assistant",
+			content: "Request tools.",
+			modelToolCalls: calls,
+		});
+		const result = (name: string, id?: string): Message => ({
+			role: "tool",
+			toolName: name,
+			...(id ? { providerToolCallId: id } : {}),
+			content: "PRIVATE_TOOL_OUTPUT sk-example0123456789012345",
+		});
+		function suggest(messages: Message[], capturedIds: string[] = []) {
+			const learnedRoot = mkdtempSync(
+				join(tmpdir(), "kestrel-observed-workflow-"),
+			);
+			directories.push(learnedRoot);
+			const database = new KestrelDatabase(":memory:", createEncryptionKey());
+			try {
+				const runtime = new AgentRuntime(database);
+				const source = runtime.createSession({ title: "Workflow source" });
+				capturedIds.push(runtime.appendMessage({
+					sessionId: source.id,
+					role: "user",
+					content: "Prepare a checklist.",
+				}).id);
+				for (const message of messages)
+					capturedIds.push(runtime.appendMessage({ sessionId: source.id, ...message }).id);
+				database.saveAgentRun({
+					id: "run-observed-workflow",
+					sessionId: source.id,
+					model: "test-model",
+					providerIds: ["test"],
+					status: "completed",
+					turn: 1,
+					createdAt: "2026-07-22T22:59:00.000Z",
+					updatedAt: "2026-07-22T23:00:00.000Z",
+				});
+				return new SkillLearningManager(
+					database,
+					learnedRoot,
+					new SkillRegistry([learnedRoot]),
+				).suggestForSession(source.id);
+			} finally {
+				database.close();
+			}
+		}
+		const sequenceLine = (instructions: string) =>
+			instructions
+				.split("\n")
+				.find((line) => line.startsWith("Observed tool sequence"));
+
+		it("preserves read, write, read and pairs each result without copying arguments or output", () => {
+			const proposal = suggest([
+				{
+					role: "assistant",
+					content: "PRIVATE_ASSISTANT_CONTENT",
+					modelToolCalls: [
+						{
+							...call("read-first", "workspace.read"),
+							arguments: {
+								token: "sk-example0123456789012345",
+								path: "PRIVATE_TOOL_ARGUMENT",
+							},
+						},
+						call("write", "workspace.write"),
+						call("read-final", "workspace.read"),
+					],
+				},
+				result("workspace.read", "read-first"),
+				result("workspace.write", "write"),
+				result("workspace.read", "read-final"),
+			]);
+			expect(sequenceLine(proposal.instructions)).toBe(
+				"Observed tool sequence (names only): workspace.read → workspace.write → workspace.read",
+			);
+			expect(proposal.status).toBe("proposed");
+			for (const secret of [
+				"PRIVATE_TOOL_OUTPUT",
+				"PRIVATE_TOOL_ARGUMENT",
+				"PRIVATE_ASSISTANT_CONTENT",
+				"sk-example0123456789012345",
+			])
+				expect(JSON.stringify(proposal)).not.toContain(secret);
+			expect(proposal.instructions).toContain(
+				"source request: Prepare a checklist.",
+			);
+			expect(proposal.instructions).not.toContain("approved task");
+			expect(proposal.description).not.toContain("successful");
+			expect(proposal.instructions).toContain(
+				"Ask for confirmation before writes",
+			);
+		});
+
+		it("preserves provider IDs reused by later assistant batches", () => {
+			const proposal = suggest(
+				["workspace.read", "workspace.write", "workspace.read"].flatMap(
+					(name): Message[] => [
+						request(call("reused-id", name)),
+						result(name, "reused-id"),
+					],
+				),
+			);
+			expect(sequenceLine(proposal.instructions)).toBe(
+				"Observed tool sequence (names only): workspace.read → workspace.write → workspace.read",
+			);
+		});
+
+		it.each([
+			{
+				case: "legacy tool-only steps",
+				messages: [
+					result("workspace.read"),
+					result("workspace.write"),
+					result("workspace.read"),
+				],
+				expected: "workspace.read → workspace.write → workspace.read",
+			},
+			{
+				case: "missing result IDs",
+				messages: [request(call("read", "workspace.read")), result("workspace.read")],
+				expected: "workspace.read → workspace.read",
+			},
+			{
+				case: "blank IDs",
+				messages: [request(call(" ", "workspace.read")), result("workspace.read", " ")],
+				expected: "workspace.read → workspace.read",
+			},
+			{
+				case: "mismatched IDs",
+				messages: [request(call("read", "workspace.read")), result("workspace.read", "other")],
+				expected: "workspace.read → workspace.read",
+			},
+			{
+				case: "mismatched names",
+				messages: [
+					request(call("read", "workspace.read")),
+					result("workspace.write", "read"),
+					result("workspace.read", "read"),
+				],
+				expected: "workspace.read → workspace.write",
+			},
+			{
+				case: "an extra result after a consumed match",
+				messages: [
+					request(call("read", "workspace.read")),
+					result("workspace.read", "read"),
+					result("workspace.read", "read"),
+				],
+				expected: "workspace.read → workspace.read",
+			},
+			{
+				case: "duplicate IDs in one batch",
+				messages: [
+					request(call("read", "workspace.read"), call("read", "workspace.read")),
+					result("workspace.read", "read"),
+					result("workspace.read", "read"),
+				],
+				expected: "workspace.read → workspace.read",
+			},
+		] satisfies { case: string; messages: Message[]; expected: string }[])(
+			"does not guess away $case",
+			({ messages, expected }) => {
+				expect(sequenceLine(suggest(messages).instructions)).toBe(
+					`Observed tool sequence (names only): ${expected}`,
+				);
+			},
+		);
+
+		it("keeps text-only completed workflows reviewable without inventing tool calls or success", () => {
+			const proposal = suggest([
+				{
+					role: "system",
+					content: "System context.",
+					modelToolCalls: [call("system", "workspace.write")],
+				},
+				{
+					role: "assistant",
+					content: "Here is your checklist.",
+					toolName: "workspace.write",
+				},
+			]);
+			expect(proposal).toMatchObject({
+				status: "proposed",
+				evaluation: { valid: true },
+			});
+			expect(sequenceLine(proposal.instructions)).toBe(
+				"Observed tool sequence (names only): No tool calls were recorded.",
+			);
+			expect(proposal.instructions).not.toContain("workspace.write");
+			expect(proposal.instructions).not.toContain("clarify");
+		});
+
+		it.each([24, 25])(
+			"bounds paired sequences with %i calls and marks only actual truncation",
+			(count) => {
+				const calls = Array.from({ length: count }, (_, index) =>
+					call(`call-${index}`, `workspace.step-${index}`),
+				);
+				const proposal = suggest([
+					request(...calls),
+					...calls.map((entry) => result(entry.name, entry.id)),
+				]);
+				const names = calls.slice(0, 24).map((entry) => entry.name).join(" → ");
+				expect(sequenceLine(proposal.instructions)).toBe(
+					`Observed tool sequence (names only): ${names}`,
+				);
+				expect(proposal.instructions.includes("the sequence is truncated")).toBe(
+					count > 24,
+				);
+				expect(proposal.instructions).not.toContain("workspace.step-24");
+			},
+		);
+
+		it("cites every displayed step in long sequential batches within the provenance bound", () => {
+			const capturedIds: string[] = [];
+			const proposal = suggest(Array.from({ length: 25 }, (_, index) => [
+				request(call(`call-${index}`, "workspace.read")),
+				result("workspace.read", `call-${index}`),
+			]).flat(), capturedIds);
+			expect(proposal.sourceMessageIds).toHaveLength(40);
+			expect(proposal.sourceMessageIds[0]).toBe(capturedIds[0]);
+			for (let index = 0; index < 24; index += 1)
+				expect(proposal.sourceMessageIds).toContain(capturedIds[1 + index * 2]);
+			expect(proposal.sourceMessageIds).not.toContain(capturedIds[49]);
+			expect(proposal.sourceMessageIds).toEqual(capturedIds.filter(id => proposal.sourceMessageIds.includes(id)));
+			expect(proposal.instructions).toContain("the sequence is truncated");
+		});
+
+		it("applies the step bound to repeated legacy calls", () => {
+			const proposal = suggest(
+				Array.from({ length: 25 }, () => result("workspace.read")),
+			);
+			expect(
+				sequenceLine(proposal.instructions)?.match(/workspace\.read/g),
+			).toHaveLength(24);
+			expect(proposal.instructions).toContain(
+				"Only the first 24 observed tool steps are shown; the sequence is truncated.",
+			);
+		});
+	});
+
 	it("bounds learned skill feedback history", () => {
 		const learnedRoot = mkdtempSync(
 			join(tmpdir(), "kestrel-learned-skill-feedback-"),
