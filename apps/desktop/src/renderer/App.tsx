@@ -3194,6 +3194,35 @@ function RuntimeConversation({
 	const activeSessionIdRef = useRef(activeSessionId);
 	const previousNewAgentRequestIdRef = useRef(newAgentRequestId);
 	const taskSettingsRef = useRef<HTMLDetailsElement>(null);
+	const draftScopeRef = useRef<HTMLButtonElement>(null);
+	const taskSettingsOpenedFromScopeRef = useRef(false);
+	useEffect(() => {
+		const closeOnEscape = (event: KeyboardEvent) => {
+			const details = taskSettingsRef.current;
+			if (event.key !== "Escape" || !details?.open) return;
+			event.preventDefault();
+			event.stopPropagation();
+			details.open = false;
+			if (taskSettingsOpenedFromScopeRef.current) draftScopeRef.current?.focus();
+			else details.querySelector<HTMLElement>("summary")?.focus();
+			taskSettingsOpenedFromScopeRef.current = false;
+		};
+		const closeOutside = (event: PointerEvent | FocusEvent) => {
+			const details = taskSettingsRef.current;
+			if (!details?.open || !(event.target instanceof Node)) return;
+			if (details.contains(event.target) || draftScopeRef.current?.contains(event.target)) return;
+			details.open = false;
+			taskSettingsOpenedFromScopeRef.current = false;
+		};
+		document.addEventListener("keydown", closeOnEscape, true);
+		document.addEventListener("pointerdown", closeOutside);
+		document.addEventListener("focusin", closeOutside);
+		return () => {
+			document.removeEventListener("keydown", closeOnEscape, true);
+			document.removeEventListener("pointerdown", closeOutside);
+			document.removeEventListener("focusin", closeOutside);
+		};
+	}, []);
 	const externalIntakeRequestIdRef = useRef(0);
 	const sessionLoadSequenceRef = useRef(0);
 	const transcriptLoadKeyRef = useRef<string | null>(null);
@@ -3219,6 +3248,9 @@ function RuntimeConversation({
 		draftWorkspaceRoot: workspace,
 	});
 	const selectedGrant = grants.find((grant) => grant.path === taskWorkspace);
+	const draftScopeLabel = taskWorkspace
+		? `${selectedGrant?.name ?? taskWorkspace.split("/").filter(Boolean).at(-1) ?? "Project"}${!selectedGrant || selectedGrant.available === false ? " · unavailable" : ""}`
+		: "Conversation only";
 	const activeMention = mentionQuery(input);
 	useEffect(() => {
 		if (activeMention === null || !taskWorkspace) {
@@ -4878,6 +4910,25 @@ function RuntimeConversation({
 						void submit();
 					}}
 				>
+					{!activeSessionId ? (
+						<button
+							type="button"
+							ref={draftScopeRef}
+							className="composer-project-scope"
+							aria-label={`Choose project: ${draftScopeLabel}`}
+							title={`Choose project: ${draftScopeLabel}`}
+							onClick={() => {
+								const details = taskSettingsRef.current;
+								if (!details) return;
+								taskSettingsOpenedFromScopeRef.current = true;
+								details.open = true;
+								details.querySelector<HTMLSelectElement>(".runtime-project-picker select")?.focus();
+							}}
+						>
+							<span>Project:</span>
+							<strong>{draftScopeLabel}</strong>
+						</button>
+					) : null}
 					<label className="sr-only" htmlFor="runtime-prompt">
 						Message Kestrel
 					</label>
@@ -4940,6 +4991,7 @@ function RuntimeConversation({
 							<details className="task-settings" ref={taskSettingsRef}>
 								<summary
 									className="task-settings-trigger"
+									onClick={() => { taskSettingsOpenedFromScopeRef.current = false; }}
 									aria-label="Task settings"
 									title="Task settings"
 								>
