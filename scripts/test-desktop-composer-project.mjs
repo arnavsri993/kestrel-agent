@@ -71,7 +71,16 @@ async function newTask() {
 	await closeSettings();
 }
 async function revealChat() {
+	// Let native resize/zoom events settle both CSS and React's compact state.
+	await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
 	if (await cue().isVisible()) return;
+	if (verifyRebinding && await page.evaluate(() => innerWidth <= 760)) {
+		// Compact windows open a fresh chat through the global New chat control.
+		await page.locator(".kestrel-sidebar").getByRole("button", { name: "New chat", exact: true }).click();
+		await expect(cue()).toBeVisible();
+		await chooseProject(projects[1].path);
+		return;
+	}
 	const compactEntry = page.locator(".agent-compact-entry");
 	if (await compactEntry.isVisible()) {
 		await compactEntry.click();
@@ -84,8 +93,9 @@ async function revealChat() {
 	await expect(cue()).toBeVisible();
 }
 async function checkCue(name, screenshot) {
-	if (evidence && screenshot) await capture(screenshot);
-	assert.equal(await cue().count(), 1, "The inherited draft project needs a visible, actionable composer cue");
+	const count = await cue().count();
+	if (count !== 1 && evidence && screenshot) await capture(screenshot);
+	assert.equal(count, 1, "The inherited draft project needs a visible, actionable composer cue");
 	await expect(cue()).toBeVisible();
 	await expect(cue()).toHaveAccessibleName(`Choose project: ${name}`);
 	await expect(cue().locator("strong")).toHaveText(name);
@@ -95,6 +105,8 @@ async function checkCue(name, screenshot) {
 		const bounds = node.getBoundingClientRect();
 		return bounds.width > 0 && bounds.left >= parent.left && bounds.right <= parent.right + 1 && node.scrollWidth <= node.clientWidth + 1;
 	}), "Project cue must fit the composer without horizontal overflow");
+	await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+	if (evidence && screenshot) await capture(screenshot);
 }
 async function chooseProject(value) {
 	await cue().focus();
