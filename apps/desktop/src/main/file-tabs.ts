@@ -252,15 +252,18 @@ export async function previewFile(
 				: "Kestrel can keep this file as a tab and pass it to a compatible agent route, but does not ship a bespoke renderer for this format.",
 		});
 	} catch (error) {
+		const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+		const detail = code === "ENOENT" || code === "ENOTDIR"
+			? `${file.name} is no longer at its original location. Restore it, then reload this tab.`
+			: code === "EACCES" || code === "EPERM"
+				? `Kestrel could not read ${file.name}. Check its permissions, then reload this tab.`
+				: `A preview of ${file.name} could not be prepared. Reload this tab to try again.`;
 		return FilePreviewSchema.parse({
 			tabId,
 			kind: "metadata",
 			mediaType: file.mediaType,
 			bytes: file.size,
-			detail:
-				error instanceof Error
-					? `${file.name} is no longer available. ${error.message}`
-					: `${file.name} is no longer available.`,
+			detail,
 		});
 	}
 }

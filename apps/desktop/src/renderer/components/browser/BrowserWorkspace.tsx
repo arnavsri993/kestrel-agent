@@ -1346,13 +1346,17 @@ function FileTabView({
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const defaultAppRequest = useRef(0);
   const { filePreview, openFileDefault } = browser;
   const askable = file.status === "available" && file.size <= 10 * 1024 * 1024;
 
   useEffect(() => {
     let active = true;
+    defaultAppRequest.current += 1;
     setPreview(null);
     setError("");
+    setNotice("");
+    if (file.status === "missing") return;
     void filePreview(tabId)
       .then((next) => {
         if (active) setPreview(next ?? null);
@@ -1363,16 +1367,20 @@ function FileTabView({
       });
     return () => {
       active = false;
+      defaultAppRequest.current += 1;
     };
-  }, [file.path, file.modifiedAt, filePreview, tabId]);
+  }, [file.path, file.modifiedAt, file.status, filePreview, tabId]);
 
   async function openDefaultApp() {
+    const request = ++defaultAppRequest.current;
     setNotice("");
     try {
       await openFileDefault(tabId);
-      setNotice("Opened in the default app.");
+      if (request === defaultAppRequest.current)
+        setNotice("Opened in the default app.");
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : "Could not open the default app.");
+      if (request === defaultAppRequest.current)
+        setNotice(cause instanceof Error ? cause.message : "Could not open the default app.");
     }
   }
 
@@ -1397,7 +1405,9 @@ function FileTabView({
             className="button primary"
             disabled={!askable}
             title={
-              askable
+              file.status === "missing"
+                ? "Restore this file, then reload the tab to attach it"
+                : askable
                 ? "Attach this file to the Kestrel composer"
                 : "Files over 10 MB cannot be attached through this composer yet"
             }
@@ -1436,7 +1446,7 @@ function FileTabView({
           Preparing a bounded preview…
         </p>
       )}
-      {preview && <FilePreviewBody preview={preview} fileName={file.name} />}
+      {file.status === "available" && preview && <FilePreviewBody preview={preview} fileName={file.name} />}
       <dl className="file-tab-metadata">
         <div>
           <dt>Location</dt>
