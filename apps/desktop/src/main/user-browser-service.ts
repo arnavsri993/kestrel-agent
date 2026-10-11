@@ -1160,6 +1160,7 @@ export class UserBrowserService {
 	private readonly extensionRuntime: ElectronExtensionRuntime;
 	private readonly extensionStartup: Promise<void> = Promise.resolve();
 	private readonly views = new Map<string, ViewRecord>();
+	private readonly fileReloadRequests = new Map<string, symbol>();
 	private readonly findRequests = new Map<string, ActiveFindRequest>();
 	private findRequestGeneration = 0;
 	private readonly elementRefs = new Map<string, Map<string, number>>();
@@ -2229,12 +2230,41 @@ export class UserBrowserService {
 		else webContents.navigationHistory.goForward();
 	}
 
-	reload(tabId: string, ignoreCache = false): UserBrowserState {
+	private async reloadFileTab(tab: UserBrowserTab): Promise<UserBrowserState> {
+		const file = tab.file!;
+		const url = tab.url;
+		const request = Symbol();
+		this.fileReloadRequests.set(tab.id, request);
+		const current = () => !this.disposed && this.fileReloadRequests.get(tab.id) === request &&
+			this.state.tabs.includes(tab) && tab.file === file && tab.url === url && !this.views.has(tab.id);
+		try {
+			let next;
+			try {
+				next = await inspectFilePath(file.path);
+			} catch (cause) {
+				if (!current()) return this.getState();
+				if (typeof cause !== "object" || cause === null || !("code" in cause) ||
+					(cause.code !== "ENOENT" && cause.code !== "ENOTDIR")) throw cause;
+				next = { ...file, status: "missing" as const };
+			}
+			if (current()) {
+				// Explicit reload also refreshes bytes when size and mtime are unchanged.
+				tab.file = { ...next, previewRevision: (file.previewRevision ?? 0) + 1 };
+				this.commit();
+			}
+			return this.getState();
+		} finally {
+			if (this.fileReloadRequests.get(tab.id) === request) this.fileReloadRequests.delete(tab.id);
+		}
+	}
+
+	async reload(tabId: string, ignoreCache = false): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
 		if (tab.blockedNavigation) {
 			void this.navigate(tabId, tab.blockedNavigation.url).catch(() => undefined);
 			return this.getState();
 		}
+		if (tab.file) return await this.reloadFileTab(tab);
 		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
 		this.elementRefs.delete(tabId);
 		this.sensitiveElementRefs.delete(tabId);
@@ -6331,7 +6361,7 @@ export class UserBrowserService {
 			// F5 / Shift+F5: Reload / Hard reload
 			if (input.key === "F5") {
 				event.preventDefault();
-				this.reload(tab.id, input.shift);
+				void this.reload(tab.id, input.shift).catch(() => undefined);
 				return;
 			}
 
@@ -6440,7 +6470,7 @@ export class UserBrowserService {
 				void this.closeTab(tab.id).catch(() => undefined);
 			} else if (key === "r") {
 				event.preventDefault();
-				this.reload(tab.id, input.shift);
+				void this.reload(tab.id, input.shift).catch(() => undefined);
 			} else if (key === "l" || (input.control && key === "e")) {
 				event.preventDefault();
 				this.onCommand?.("focus-address");
