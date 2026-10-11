@@ -19,6 +19,7 @@ import {
   hostnameFromBookmarkUrl,
 } from "./bookmarks-bar";
 import { BookmarkFavicon } from "./BookmarkFavicon";
+import { newestBrowserHistory } from "./browser-history-order";
 import "./surface-pages.css";
 import "./bookmark-library.css";
 
@@ -81,8 +82,7 @@ export function BrowserHistory({
   const history = browser.state?.history ?? [];
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return [...history]
-      .reverse()
+    return newestBrowserHistory(history)
       .filter(
         (entry) =>
           !normalized ||

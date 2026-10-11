@@ -43,6 +43,7 @@
     "test:node-core": "tsx scripts/smoke-node-core.ts",
     "test:agent-core-sidecar": "node scripts/prepare-agent-core-sidecar.mjs && tsx scripts/smoke-agent-core-sidecar.mjs",
     "test:desktop-smoke": "node scripts/smoke-desktop.mjs",
+    "test:desktop-history-chronology": "node scripts/test-desktop-history-chronology.mjs",
     "test:desktop-single-instance": "node scripts/test-desktop-single-instance.mjs",
     "test:desktop-browser": "node scripts/test-desktop-browser.mjs",
     "test:desktop-tab-interactions": "node scripts/test-desktop-tab-interactions.mjs",
