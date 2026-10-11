@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { UserBrowserHistoryEntry } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
+import { newestBrowserHistory } from "./browser-history-order";
 
 export function BrowserHistoryPopover({
 	history,
@@ -16,8 +17,7 @@ export function BrowserHistoryPopover({
 	const [query, setQuery] = useState("");
 	const filtered = useMemo(() => {
 		const normalized = query.trim().toLowerCase();
-		return [...history]
-			.reverse()
+		return newestBrowserHistory(history)
 			.filter(
 				(entry) =>
 					!normalized ||
