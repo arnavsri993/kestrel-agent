@@ -3,6 +3,8 @@ import {
 	existsSync,
 	mkdtempSync,
 	realpathSync,
+	statSync,
+	utimesSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -216,6 +218,7 @@ import { nativeImage } from "electron";
 import { dialog } from "electron";
 import { shell } from "electron";
 import { BrowserTabStore } from "./browser-tab-store";
+import * as fileTabs from "./file-tabs";
 import { FIND_IN_PAGE_WORLD_ID } from "./find-in-page-scripts";
 import {
   isAuthenticationFlowUrl,
@@ -917,6 +920,119 @@ describe("UserBrowserService", () => {
       true,
     );
 			expect(electron.state.views.length).toBe(before);
+	});
+
+	it.each([false, true])("retains native web reload (ignore cache: %s)", async (ignoreCache) => {
+		const { service } = createService(); const id = service.getState().tabs[0]!.id;
+		await service.navigate(id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		await service.reload(id, ignoreCache);
+		expect(ignoreCache ? contents.reloadIgnoringCache : contents.reload).toHaveBeenCalledOnce();
+		expect(electron.state.views).toHaveLength(1);
+	});
+
+	it.each([false, true])("reloads file previews after external edits (preserved metadata: %s)", async (preserveMetadata) => {
+		const { service } = createService();
+		const root = mkdtempSync(join(tmpdir(), "kestrel-file-reload-")); directories.push(root);
+		const path = join(root, "report.txt"); writeFileSync(path, "Before");
+		const opened = await service.openFileTabs([path]);
+		const tab = opened.browserState.tabs.find(tab => tab.id === opened.browserState.activeTabId)!;
+		const before = statSync(path);
+		writeFileSync(path, preserveMetadata ? "After!" : "Updated report from disk.");
+		if (preserveMetadata) utimesSync(path, before.atime, before.mtime);
+		const views = electron.state.views.length;
+		const state = await service.reload(tab.id);
+		const next = state.tabs.find(candidate => candidate.id === tab.id)!;
+		expect(next.file).toMatchObject({ size: preserveMetadata ? 6 : 25, status: "available", previewRevision: 1 });
+		expect(next.loading).toBe(false);
+		expect(await service.filePreview(tab.id)).toMatchObject({ kind: "text", text: preserveMetadata ? "After!" : "Updated report from disk." });
+		expect(electron.state.views.length).toBe(views);
+	});
+
+	it("reloads file availability after deletion and restoration", async () => {
+		const { service } = createService();
+		const root = mkdtempSync(join(tmpdir(), "kestrel-file-reload-")); directories.push(root);
+		const path = join(root, "report.txt"); writeFileSync(path, "Original report");
+		const opened = await service.openFileTabs([path]);
+		const id = opened.browserState.activeTabId!;
+		rmSync(path);
+		const missing = await service.reload(id);
+		expect(missing.tabs.find(tab => tab.id === id)).toMatchObject({ loading: false, file: { status: "missing", previewRevision: 1 } });
+		writeFileSync(path, "Restored report");
+		const restored = await service.reload(id);
+		expect(restored.tabs.find(tab => tab.id === id)).toMatchObject({ loading: false, file: { status: "available", previewRevision: 2 } });
+		expect(await service.filePreview(id)).toMatchObject({ text: "Restored report" });
+		expect(electron.state.views).toHaveLength(0);
+	});
+
+	it("keeps an existing file available when reload inspection fails", async () => {
+		const { service } = createService();
+		const root = mkdtempSync(join(tmpdir(), "kestrel-file-reload-")); directories.push(root);
+		const path = join(root, "report.txt"); writeFileSync(path, "Original report");
+		const opened = await service.openFileTabs([path]); const id = opened.browserState.activeTabId!;
+		const spy = vi.spyOn(fileTabs, "inspectFilePath").mockRejectedValueOnce(new Error("Cannot inspect this file."));
+		try {
+			await expect(service.reload(id)).rejects.toThrow("Cannot inspect this file.");
+			expect(service.getState().tabs.find(tab => tab.id === id)).toMatchObject({ loading: false, file: { status: "available" } });
+		} finally { spy.mockRestore(); }
+	});
+
+	it.each(["close", "app navigation", "dispose"].flatMap(action => [false, true].map(failed => ({ action, failed }))))(
+		"ignores a late file reload after $action (failed: $failed)", async ({ action, failed }) => {
+		const { service } = createService();
+		const root = mkdtempSync(join(tmpdir(), "kestrel-file-reload-")); directories.push(root);
+		const path = join(root, "report.txt"); writeFileSync(path, "Original report");
+		const opened = await service.openFileTabs([path]); const id = opened.browserState.activeTabId!;
+		const file = opened.browserState.tabs.find(tab => tab.id === id)!.file!;
+		let resolve!: (value: typeof file) => void; let reject!: (cause: Error) => void;
+		const spy = vi.spyOn(fileTabs, "inspectFilePath").mockReturnValueOnce(new Promise((done, fail) => { resolve = done; reject = fail; }));
+		try {
+			const pending = service.reload(id);
+			expect(spy).toHaveBeenCalledWith(file.path);
+			if (action === "close") await service.closeTab(id);
+			if (action === "app navigation") await service.navigate(id, "kestrel://settings");
+			if (action === "dispose") service.dispose();
+			const before = service.getState();
+			if (failed) reject(new Error("Late inspection failure.")); else resolve({ ...file, size: 987 });
+			await expect(pending).resolves.toEqual(before);
+			expect(service.getState()).toEqual(before);
+		} finally { resolve?.(file); spy.mockRestore(); }
+	});
+
+	it("ignores an obsolete file reload failure after a newer reload succeeds", async () => {
+		const { service } = createService();
+		const root = mkdtempSync(join(tmpdir(), "kestrel-file-reload-")); directories.push(root);
+		const path = join(root, "report.txt"); writeFileSync(path, "Original report");
+		const opened = await service.openFileTabs([path]); const id = opened.browserState.activeTabId!;
+		const file = opened.browserState.tabs.find(tab => tab.id === id)!.file!;
+		let reject!: (cause: Error) => void;
+		const spy = vi.spyOn(fileTabs, "inspectFilePath").mockReturnValueOnce(new Promise((_done, fail) => { reject = fail; }));
+		try {
+			const obsolete = service.reload(id);
+			await service.reload(id);
+			reject(new Error("Obsolete inspection failure."));
+			await expect(obsolete).resolves.toEqual(service.getState());
+			expect(service.getState().tabs.find(tab => tab.id === id)?.file?.previewRevision).toBe(1);
+		} finally { spy.mockRestore(); }
+	});
+
+	it("lets the latest file reload win when inspections finish out of order", async () => {
+		const { service } = createService();
+		const root = mkdtempSync(join(tmpdir(), "kestrel-file-reload-")); directories.push(root);
+		const path = join(root, "report.txt"); writeFileSync(path, "Original report");
+		const opened = await service.openFileTabs([path]); const id = opened.browserState.activeTabId!;
+		const file = opened.browserState.tabs.find(tab => tab.id === id)!.file!;
+		let first!: (value: typeof file) => void; let second!: (value: typeof file) => void;
+		const spy = vi.spyOn(fileTabs, "inspectFilePath")
+			.mockReturnValueOnce(new Promise(done => { first = done; }))
+			.mockReturnValueOnce(new Promise(done => { second = done; }));
+		try {
+			const a = service.reload(id); const b = service.reload(id);
+			expect(spy).toHaveBeenCalledTimes(2);
+			second({ ...file, size: 222 }); await b;
+			first({ ...file, size: 111 }); await a;
+			expect(service.getState().tabs.find(tab => tab.id === id)).toMatchObject({ loading: false, file: { size: 222, previewRevision: 1 } });
+		} finally { first?.(file); second?.(file); spy.mockRestore(); }
 	});
 
 	it("opens local files as first-class tabs and exposes bounded external attachments", async () => {

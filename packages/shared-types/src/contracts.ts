@@ -1756,6 +1756,8 @@ export const UserBrowserFileSchema = z.object({
 	mediaType: z.string().min(1).max(200),
 	size: z.number().int().nonnegative().max(2 * 1024 * 1024 * 1024),
 	modifiedAt: z.string().datetime().optional(),
+	// Explicit refresh invalidates the preview even if disk metadata is unchanged.
+	previewRevision: z.number().int().nonnegative().optional(),
 	status: z.enum(["available", "missing"]),
 });
 export type UserBrowserFile = z.infer<typeof UserBrowserFileSchema>;

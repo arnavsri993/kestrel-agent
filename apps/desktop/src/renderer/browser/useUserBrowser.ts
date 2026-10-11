@@ -299,7 +299,7 @@ export function useUserBrowser(): UserBrowserController {
 				type: "browser-reload",
 				tabId,
 				...(ignoreCache ? { ignoreCache: true } : {}),
-			}),
+			}).catch(() => undefined),
 		[requestState],
 	);
 	const zoomIn = useCallback(

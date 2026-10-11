@@ -1364,7 +1364,7 @@ function FileTabView({
     return () => {
       active = false;
     };
-  }, [file.path, file.modifiedAt, filePreview, tabId]);
+  }, [file.path, file.modifiedAt, file.status, file.previewRevision, filePreview, tabId]);
 
   async function openDefaultApp() {
     setNotice("");

@@ -3132,7 +3132,7 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       return {
         ok: true,
-        browserState: requestBrowserService.reload(
+        browserState: await requestBrowserService.reload(
           request.tabId,
           Boolean("ignoreCache" in request && request.ignoreCache),
         ),
