@@ -19,6 +19,7 @@ import {
   hostnameFromBookmarkUrl,
 } from "./bookmarks-bar";
 import { BookmarkFavicon } from "./BookmarkFavicon";
+import { downloadProgress } from "./browser-download-format";
 import "./surface-pages.css";
 import "./bookmark-library.css";
 
@@ -200,15 +201,7 @@ export function BrowserDownloads({
       ) : (
         <ul className="download-list">
           {downloads.map((download) => {
-            const progress =
-              download.totalBytes > 0
-                ? Math.min(
-                    100,
-                    Math.round(
-                      (download.receivedBytes / download.totalBytes) * 100,
-                    ),
-                  )
-                : 0;
+            const progress = downloadProgress(download);
             return (
               <li key={download.id}>
                 <span className={`download-state ${download.status}`}>
@@ -227,17 +220,20 @@ export function BrowserDownloads({
                   <strong>{download.filename}</strong>
                   <small>
                     {download.status === "progressing"
-                      ? `Downloading · ${progress}% · ${compactBytes(download.receivedBytes)}`
+                      ? progress === undefined
+                        ? `Downloading · ${compactBytes(download.receivedBytes)} downloaded`
+                        : `Downloading · ${progress}% · ${compactBytes(download.receivedBytes)}`
                       : `${downloadStatusLabel(download.status)} · ${compactBytes(download.receivedBytes)}`}
                   </small>
                   {download.status === "progressing" && (
                     <progress
-                      value={download.receivedBytes}
-                      max={Math.max(
-                        download.totalBytes,
-                        download.receivedBytes,
-                        1,
-                      )}
+                      {...(progress === undefined
+                        ? {}
+                        : { value: download.receivedBytes, max: Math.max(download.totalBytes, download.receivedBytes, 1) })}
+                      aria-label={`Download progress for ${download.filename}`}
+                      aria-valuetext={progress === undefined
+                        ? `${compactBytes(download.receivedBytes)} downloaded; total size unknown`
+                        : `${download.receivedBytes} of ${download.totalBytes} bytes downloaded`}
                     />
                   )}
                 </div>
