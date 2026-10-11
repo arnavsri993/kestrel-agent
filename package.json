@@ -42,6 +42,7 @@
     "test:packaged-cli": "node scripts/smoke-packaged-cli.mjs",
     "test:node-core": "tsx scripts/smoke-node-core.ts",
     "test:agent-core-sidecar": "node scripts/prepare-agent-core-sidecar.mjs && tsx scripts/smoke-agent-core-sidecar.mjs",
+    "test:desktop-app-page-navigation": "node scripts/test-desktop-app-page-navigation.mjs",
     "test:desktop-smoke": "node scripts/smoke-desktop.mjs",
     "test:desktop-single-instance": "node scripts/test-desktop-single-instance.mjs",
     "test:desktop-browser": "node scripts/test-desktop-browser.mjs",

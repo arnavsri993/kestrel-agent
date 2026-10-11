@@ -919,6 +919,90 @@ describe("UserBrowserService", () => {
 			expect(electron.state.views.length).toBe(before);
 	});
 
+	it.each(["history", "settings", "bookmarks", "downloads"])(
+		"navigates from the %s app page into a web tab and back",
+		async (page) => {
+			const { service, window } = createService();
+			const state = await service.createTab(`kestrel://${page}`, true);
+			const id = state.activeTabId!;
+			expect(electron.state.views).toHaveLength(0);
+			await service.navigate(id, "https://example.com/one");
+			const first = electron.state.views[0]!;
+			expect(first.webContents.loadURL).toHaveBeenCalledWith("https://example.com/one");
+			expect(window.contentView.children).toContain(first);
+			expect(first.visible).toBe(true);
+			expect(service.getState().activeTabId).toBe(id);
+			expect(service.getState().tabs.find(tab => tab.id === id)?.url).toBe("https://example.com/one");
+			await service.navigate(id, "https://example.com/two");
+			expect(electron.state.views).toEqual([first]);
+			await service.navigate(id, `kestrel://${page}`);
+			expect(first.webContents.close).toHaveBeenCalledOnce();
+			expect(service.getState().tabs.find(tab => tab.id === id)?.url).toBe(`kestrel://${page}`);
+			await service.navigate(id, "https://example.com/three");
+			expect(electron.state.views).toHaveLength(2);
+			expect(electron.state.views[1]!.webContents.loadURL).toHaveBeenCalledWith("https://example.com/three");
+		},
+	);
+
+	it("retains the app page when reputation blocks its outgoing navigation", async () => {
+		const provider = threatProvider(vi.fn(async () => ({
+			verdict: "malicious" as const, provider: "test-reputation", threatTypes: ["malware" as const],
+		})));
+		const { service, window } = createService({ threatProvider: provider });
+		const state = await service.createTab("kestrel://history", true);
+		await service.navigate(state.activeTabId!, "https://malware.example/payload");
+		const view = electron.state.views[0]!;
+		expect(provider.checkUrl).toHaveBeenCalledWith({ url: "https://malware.example/payload", context: "navigation" });
+		expect(view.webContents.loadURL).not.toHaveBeenCalled();
+		expect(window.contentView.children).not.toContain(view);
+		expect(service.getState().tabs.find(tab => tab.id === state.activeTabId)).toMatchObject({
+			url: "kestrel://history", blockedNavigation: { url: "https://malware.example/payload", source: "navigation" },
+		});
+	});
+
+	it("restores an app page after outgoing navigation becomes a direct download", async () => {
+		const { service, window } = createService();
+		const state = await service.createTab("kestrel://history", true);
+		await service.navigate(state.activeTabId!, "https://files.example/report.pdf");
+		const view = electron.state.views[0]!;
+		const item = downloadItem("https://files.example/report.pdf", "report.pdf");
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, view.webContents);
+		expect(service.getState().tabs.find(tab => tab.id === state.activeTabId)).toMatchObject({
+			url: "kestrel://history", title: "History", loading: false, discarded: false,
+		});
+		expect(window.contentView.children).not.toContain(view);
+		expect(view.webContents.loadURL.mock.calls).toEqual([["https://files.example/report.pdf"]]);
+		expect(item.setSavePath).toHaveBeenCalledOnce();
+	});
+
+	it.each(["safe", "blocked", "download"])("preserves file preview state during %s outgoing navigation", async (mode) => {
+		const provider = threatProvider(vi.fn(async () => mode === "blocked"
+			? { verdict: "malicious" as const, provider: "test-reputation", threatTypes: ["malware" as const] }
+			: { verdict: "safe" as const, provider: "test-reputation" }));
+		const { service } = createService({ threatProvider: provider });
+		const root = mkdtempSync(join(tmpdir(), "kestrel-file-navigation-"));
+		directories.push(root);
+		const path = join(root, "report.txt"); writeFileSync(path, "Preserve this local file.");
+		const opened = await service.openFileTabs([path], true);
+		const before = opened.browserState.tabs.find(tab => tab.id === opened.browserState.activeTabId)!;
+		const target = "https://files.example/report.pdf";
+		await service.navigate(before.id, target);
+		const view = electron.state.views[0]!;
+		if (mode === "download") {
+			electron.state.partitions[0]!.instance.emit("will-download", {}, downloadItem(target, "report.pdf"), view.webContents);
+		}
+		const after = service.getState().tabs.find(tab => tab.id === before.id)!;
+		if (mode === "safe") {
+			expect(after.url).toBe(target); expect(after.file).toBeUndefined();
+		} else {
+			expect(after.url).toBe(before.url); expect(after.file).toEqual(before.file);
+			expect(after.loading).toBe(false); expect(after.discarded).toBe(false);
+			if (mode === "blocked") expect(view.webContents.loadURL).not.toHaveBeenCalled();
+			else expect(view.webContents.close).toHaveBeenCalledOnce();
+		}
+		expect(existsSync(path)).toBe(true);
+	});
+
 	it("opens local files as first-class tabs and exposes bounded external attachments", async () => {
 		const { service } = createService();
 		const root = mkdtempSync(join(tmpdir(), "kestrel-file-tab-fixture-"));

@@ -1855,7 +1855,6 @@ export class UserBrowserService {
 			this.clearPasswordPrompt();
 			this.clearPaymentPrompt();
 		}
-		delete tab.file;
 		// Keep a healthy WebContentsView alive across normal web navigations so
 		// Electron can retain the tab's native back/forward history. App pages,
 		// file tabs, discarded views, and crashed renderers still cross an
@@ -5735,7 +5734,9 @@ export class UserBrowserService {
 		delete record.navigatingTo;
 		delete record.pendingDownloadNavigation;
 		this.closeView(tabId);
-		tab.discarded = Boolean(tab.url);
+		const internalTab = Boolean(tab.file) || isKestrelAppPageUrl(tab.url);
+		tab.discarded = Boolean(tab.url) && !internalTab;
+		if (internalTab) tab.loading = false;
 		this.commit();
 		if (tabId === this.state.activeTabId) void this.syncActiveView();
 		this.onCommand?.("open-downloads");
@@ -5816,7 +5817,10 @@ export class UserBrowserService {
 		loadStoredUrl = true,
 		popupOptions?: Electron.BrowserWindowConstructorOptions & { webContents?: WebContents },
 	): ViewRecord {
-		if (tab.file || isKestrelAppPageUrl(tab.url))
+		// A new navigation starts with a blank view; the current app-page URL
+		// stays intact until threat checks approve the destination. Restoring a
+		// stored app page still must not create or load a native web view.
+		if (loadStoredUrl && (tab.file || isKestrelAppPageUrl(tab.url)))
 			throw new Error("App pages do not use a web view.");
 		const existing = this.views.get(tab.id);
 		if (existing && liveWebContents(existing?.view?.webContents)) return existing;
