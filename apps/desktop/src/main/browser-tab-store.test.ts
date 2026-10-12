@@ -4,6 +4,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -806,5 +807,69 @@ describe("origin favicon cache", () => {
 		expect(current.at(-1)?.origin).toBe(
 			`https://site-${MAX_ORIGIN_FAVICONS + 2}.example`,
 		);
+	});
+});
+
+
+describe("private download destinations", () => {
+	function fixture() {
+		const path = storePath();
+		const state = freshBrowserState();
+		const id = "download-00000000-0000-4000-8000-000000000001";
+		state.downloads = [{ id, tabId: state.tabs[0]!.id, filename: "report.txt",
+			sourceUrl: "https://example.com/report.txt", receivedBytes: 12, totalBytes: 12,
+			status: "completed", startedAt: "2026-08-11T12:00:00.000Z", canReveal: true }];
+		return { path, state, id, destination: join(dirname(path), "chosen", "report.txt") };
+	}
+
+	it("privately preserves exact destinations without trusting public availability", () => {
+		const { path, state, id, destination } = fixture();
+		new BrowserTabStore(path).save(state, new Map([[id, destination]]));
+		const serialized = JSON.parse(readFileSync(path, "utf8"));
+		expect(serialized.downloadPaths).toEqual({ [id]: destination });
+		const store = new BrowserTabStore(path);
+		const restored = store.load();
+		expect(store.getDownloadPaths().get(id)).toBe(destination);
+		expect(restored.downloads[0]!.canReveal).toBe(false);
+		expect(JSON.stringify(restored)).not.toContain(destination);
+		expect(restored).not.toHaveProperty("downloadPaths");
+		expect(statSync(path).mode & 0o777).toBe(0o600);
+	});
+
+	it.each(["relative/report.txt", "/tmp/other.txt", "/tmp/\u0000report.txt", "/" + "a".repeat(4096) + "/report.txt"])("ignores malformed destination %s while retaining valid entries", invalid => {
+		const { path, state, id, destination } = fixture();
+		const badId = "download-00000000-0000-4000-8000-000000000002";
+		state.downloads.push({ ...state.downloads[0]!, id: badId });
+		writeFileSync(path, JSON.stringify({ ...state, downloadPaths: { [id]: destination, [badId]: invalid } }));
+		const store = new BrowserTabStore(path);
+		expect(store.load().downloads).toHaveLength(2);
+		expect([...store.getDownloadPaths()]).toEqual([[id, destination]]);
+	});
+
+	it("excludes pending and pruned rows and keeps cached destinations across ordinary saves", () => {
+		const { path, state, id, destination } = fixture();
+		const pendingId = "download-00000000-0000-4000-8000-000000000002";
+		state.downloads.push({ ...state.downloads[0]!, id: pendingId, status: "progressing" });
+		const store = new BrowserTabStore(path);
+		store.save(state, new Map([[id, destination], [pendingId, destination], ["download-00000000-0000-4000-8000-000000000003", destination]]));
+		store.load();
+		store.save(state);
+		expect(JSON.parse(readFileSync(path, "utf8")).downloadPaths).toEqual({ [id]: destination });
+		state.downloads = [];
+		store.save(state);
+		expect(Object.keys(JSON.parse(readFileSync(path, "utf8")).downloadPaths ?? {})).toEqual([]);
+	});
+
+	it.each(["missing", "corrupt", "legacy"])("resets private cache on a subsequent %s load", mode => {
+		const { path, state, id, destination } = fixture();
+		const store = new BrowserTabStore(path);
+		store.save(state, new Map([[id, destination]])); store.load();
+		const copied = store.getDownloadPaths() as Map<string, string>;
+		copied.clear();
+		expect(store.getDownloadPaths().get(id)).toBe(destination);
+		if (mode === "missing") rmSync(path);
+		else writeFileSync(path, mode === "corrupt" ? "{broken" : JSON.stringify(state));
+		store.load();
+		expect(store.getDownloadPaths().size).toBe(0);
 	});
 });

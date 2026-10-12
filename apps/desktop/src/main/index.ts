@@ -2039,6 +2039,7 @@ function createDetachedBrowserWindow(
   tab: UserBrowserTab,
   connectionMode?: "whatsapp",
   restoredStatePath?: string,
+  initialDownloadPaths?: ReadonlyMap<string, string>,
 ): BrowserWindow {
   const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
@@ -2082,7 +2083,7 @@ function createDetachedBrowserWindow(
     allowDevTools: !isPackagedKestrelApp,
     allowLocalExtensions: !isPackagedKestrelApp,
     statePath,
-    ...(connectionMode ? { connectionMode, partitionName: "persist:kestrel-connection-whatsapp" } : { initialState: detachedBrowserState(sourceState, tab) }),
+    ...(connectionMode ? { connectionMode, partitionName: "persist:kestrel-connection-whatsapp" } : { initialState: detachedBrowserState(sourceState, tab), ...(initialDownloadPaths ? { initialDownloadPaths } : {}) }),
     downloadDirectory: browserDownloadDirectory(),
     ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
     ...(!connectionMode ? { passwordVault: passwordVault(), paymentCardVault: paymentCardVault() } : {}),
@@ -3517,7 +3518,8 @@ function registerIpc(): void {
 			throw new Error("The visible user browser is unavailable.");
 		const sourceState = requestBrowserService.getState();
 		const tab = requestBrowserService.getTabForTransfer(request.tabId);
-		const detachedWindow = createDetachedBrowserWindow(sourceState, tab);
+		const detachedWindow = createDetachedBrowserWindow(sourceState, tab, undefined, undefined,
+			requestBrowserService.downloadPathsForHandoff());
       try {
         const browserState = await requestBrowserService.detachTab(request.tabId);
         return { ok: true, browserState };

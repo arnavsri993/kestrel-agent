@@ -10,12 +10,14 @@ import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
   rmSync,
   statSync,
 } from "node:fs";
+import { lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
@@ -385,6 +387,8 @@ export interface UserBrowserServiceOptions {
 	downloadDirectory: string;
 	legacyDownloadDirectory?: string;
 	initialState?: UserBrowserState;
+	/** Main-process destinations for a detached window's initial state. */
+	initialDownloadPaths?: ReadonlyMap<string, string>;
 	partitionName?: string;
  connectionMode?: "whatsapp";
 	now?: () => Date;
@@ -1257,7 +1261,11 @@ export class UserBrowserService {
 				: this.store.load(options.now);
 		// Persist the handoff before the source window removes its tab. A newly
 		// detached window can quit before navigation emits its first state update.
-		if (initialState) this.store.save(this.state);
+		if (initialState) {
+			this.state.downloads = this.state.downloads.map(download => ({ ...download, canReveal: false }));
+			this.store.save(this.state, options.initialDownloadPaths ?? new Map());
+		}
+		for (const [id, path] of this.store.getDownloadPaths()) this.downloadPaths.set(id, path);
 		this.now = options.now ?? (() => new Date());
 		this.defaultDownloadDirectory = options.downloadDirectory;
 		this.legacyDownloadDirectory = options.legacyDownloadDirectory;
@@ -1379,9 +1387,39 @@ export class UserBrowserService {
 				this.handleWillDownload(event, item, webContents),
 		};
 		this.partitionCoordinator.register(this.partitionParticipant);
-		if (migratedDownloadDirectory) this.store.save(this.state);
+		if (migratedDownloadDirectory) this.store.save(this.state, this.downloadPaths);
+		void this.refreshRestoredDownloadAvailability();
 		void this.backfillOriginFaviconsFromHistory();
 		void this.refreshFileStatuses();
+	}
+
+	/** Internal window handoff only; destinations never enter renderer state. */
+	downloadPathsForHandoff(): ReadonlyMap<string, string> {
+		return new Map(this.downloadPaths);
+	}
+
+	private async refreshRestoredDownloadAvailability(): Promise<void> {
+		const restored = this.state.downloads.flatMap(download => {
+			const path = this.downloadPaths.get(download.id);
+			return download.status === "completed" && path ? [{ download, path }] : [];
+		});
+		const available = await Promise.all(restored.map(async item => ({
+			...item,
+			isFile: await lstat(item.path).then(metadata => metadata.isFile(), () => false),
+		})));
+		if (this.disposed || this.window.isDestroyed()) return;
+		let changed = false;
+		for (const { download, path, isFile } of available) {
+			if (!isFile || download.status !== "completed" ||
+				!this.state.downloads.includes(download) || this.downloadPaths.get(download.id) !== path) continue;
+			download.canReveal = true;
+			changed = true;
+		}
+		if (changed) this.emit();
+	}
+
+	private isDownloadFile(path: string): boolean {
+		try { return lstatSync(path).isFile(); } catch { return false; }
 	}
 
 	private configuredDownloadDirectory(value: string): string {
@@ -5546,7 +5584,7 @@ export class UserBrowserService {
 						? "cancelled"
 						: "failed";
 			record.completedAt = this.now().toISOString();
-			record.canReveal = status === "completed" && existsSync(path);
+				record.canReveal = status === "completed" && this.isDownloadFile(path);
 			this.commit();
 			if (
 				status === "completed" &&
@@ -6758,15 +6796,9 @@ export class UserBrowserService {
 		const download = this.state.downloads.find(
 			(item) => item.id === downloadId,
 		);
-		if (!download || !download.canReveal) return undefined;
-		const storedPath = this.downloadPaths.get(downloadId);
-		const filename = basename(download.filename);
-		const path =
-			storedPath ??
-			(filename === download.filename
-				? join(this.downloadDirectory, filename)
-				: undefined);
-		if (!path || !existsSync(path)) return undefined;
+		if (!download || download.status !== "completed" || !download.canReveal) return undefined;
+		const path = this.downloadPaths.get(downloadId);
+		if (!path || !this.isDownloadFile(path)) return undefined;
 		return { download, path };
 	}
 
@@ -6901,7 +6933,7 @@ export class UserBrowserService {
 	}
 
 	private commit(): void {
-		this.store.save(this.state);
+		this.store.save(this.state, this.downloadPaths);
 		this.emit();
 	}
 
