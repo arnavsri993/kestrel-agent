@@ -2467,18 +2467,42 @@ export class UserBrowserService {
 	}
 
 	cancelDownload(downloadId: string): UserBrowserState {
-		const item = this.activeDownloads.get(downloadId);
-		if (!item) throw new Error("This download is not in progress.");
 		const record = this.state.downloads.find(
 			(download) => download.id === downloadId,
 		);
-		if (record?.status === "checking" || record?.status === "progressing") {
+		// A queued click may arrive after cancellation or native completion.
+		if (record && record.status !== "checking" && record.status !== "progressing")
+			return this.getState();
+		const item = this.activeDownloads.get(downloadId);
+		if (!item) throw new Error("This download is not in progress.");
+		const previous = record && {
+			status: record.status,
+			completedAt: record.completedAt,
+			canReveal: record.canReveal,
+		};
+		if (record) {
 			record.status = "cancelled";
 			record.completedAt = this.now().toISOString();
 			record.canReveal = false;
 			this.commit();
 		}
-		item.cancel();
+		try {
+			item.cancel();
+		} catch (error) {
+			// Keep an active native failure retryable; never undo a done event.
+			if (
+				record && previous &&
+				this.activeDownloads.get(downloadId) === item &&
+				record.status === "cancelled"
+			) {
+				record.status = previous.status;
+				if (previous.completedAt === undefined) delete record.completedAt;
+				else record.completedAt = previous.completedAt;
+				record.canReveal = previous.canReveal;
+				this.commit();
+			}
+			throw error;
+		}
 		return this.getState();
 	}
 
