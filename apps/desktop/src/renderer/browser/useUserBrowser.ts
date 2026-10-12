@@ -174,7 +174,13 @@ export function useUserBrowser(): UserBrowserController {
 				applyState(response.browserState);
 				setError("");
 			} catch (cause) {
-				setError(userFacingError(cause, "The browser request failed. Try again."));
+				const downloadBlocksMove =
+					(request.type === "browser-detach-tab" || request.type === "browser-reattach-tab") &&
+					cause instanceof Error &&
+					cause.message.includes("Finish or cancel this tab's download before moving it to another window.");
+				setError(downloadBlocksMove
+					? "Finish or cancel this tab's download before moving it to another window."
+					: userFacingError(cause, "The browser request failed. Try again."));
 				throw cause;
 			}
 		},

@@ -1170,6 +1170,7 @@ export class UserBrowserService {
 		PendingContextDownload[]
 	>();
 	private readonly activeDownloads = new Map<string, Electron.DownloadItem>();
+	private readonly downloadTabIds = new WeakMap<Electron.DownloadItem, string>();
 	private readonly webContentsToTab = new Map<number, string>();
 	private readonly confirmSitePermission: NonNullable<
 		UserBrowserServiceOptions["confirmSitePermission"]
@@ -2846,7 +2847,15 @@ export class UserBrowserService {
 		return this.createTab(tab.url || undefined, true);
 	}
 
+	private assertNoActiveTabDownload(tabId: string): void {
+		for (const item of this.activeDownloads.values()) {
+			if (this.downloadTabIds.get(item) === tabId)
+				throw new Error("Finish or cancel this tab's download before moving it to another window.");
+		}
+	}
+
 	getTabForTransfer(tabId: string): UserBrowserTab {
+		this.assertNoActiveTabDownload(tabId);
 		if (this.isAgentTabPinned(tabId)) {
 			throw new Error(
 				"Browser tab is in use by an agent operation and cannot be moved.",
@@ -2902,6 +2911,7 @@ export class UserBrowserService {
 	private async removeTabForTransferInternal(
 		tabId: string,
 	): Promise<UserBrowserState> {
+		this.assertNoActiveTabDownload(tabId);
 		if (this.isAgentTabPinned(tabId)) {
 			throw new Error(
 				"Browser tab is in use by an agent operation and cannot be moved.",
@@ -3103,6 +3113,7 @@ export class UserBrowserService {
 	}
 
 	private async detachTabInternal(tabId: string): Promise<UserBrowserState> {
+		this.assertNoActiveTabDownload(tabId);
 		if (this.isAgentTabPinned(tabId)) {
 			throw new Error(
 				"Browser tab is in use by an agent operation and cannot be detached.",
@@ -5499,6 +5510,7 @@ export class UserBrowserService {
 		// its macOS quarantine behavior; Kestrel never edits xattrs or launch policy.
 		if (requiresReputationCheck && typeof item.pause === "function") item.pause();
 		this.downloadPaths.set(id, path);
+		this.downloadTabIds.set(item, tabId);
 		this.activeDownloads.set(id, item);
 		this.state.downloads.push({
 			id,

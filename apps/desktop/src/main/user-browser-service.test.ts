@@ -2278,6 +2278,136 @@ describe("UserBrowserService", () => {
     target.service.dispose();
   });
 
+  it.each(["progressing", "checking"] as const)(
+    "keeps a tab and its %s download intact when movement is rejected",
+    async (status) => {
+      const onLastTabClosed = vi.fn();
+      const provider = status === "checking"
+        ? threatProvider(({ context }) => context === "download"
+          ? new Promise(() => {})
+          : Promise.resolve({ verdict: "safe", provider: "test-reputation", threatTypes: [] }))
+        : undefined;
+      const { service, window } = createService({ onLastTabClosed, ...(provider ? { threatProvider: provider } : {}) });
+      const tab = service.getState().tabs[0]!;
+      await service.navigate(tab.id, "https://download.example");
+      const contents = electron.state.views.at(-1)!.webContents;
+      const item = Object.assign(new EventEmitter(), {
+        ...downloadItem("https://download.example/report.txt"),
+        on: EventEmitter.prototype.on,
+        once: EventEmitter.prototype.once,
+        getReceivedBytes: vi.fn(() => 4),
+      });
+      electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
+      item.emit("updated");
+      expect(service.getState().downloads[0]?.status).toBe(status);
+      const before = service.getState();
+      const children = [...window.contentView.children];
+
+      expect(() => service.getTabForTransfer(tab.id)).toThrow(/Finish or cancel.*download/);
+      await expect(service.detachTab(tab.id)).rejects.toThrow(/Finish or cancel.*download/);
+      await expect(service.removeTabForTransfer(tab.id)).rejects.toThrow(/Finish or cancel.*download/);
+
+      expect(service.getState()).toEqual(before);
+      expect(window.contentView.children).toEqual(children);
+      expect(contents.close).not.toHaveBeenCalled();
+      expect(item.cancel).not.toHaveBeenCalled();
+      expect(item.resume).not.toHaveBeenCalled();
+      expect(onLastTabClosed).not.toHaveBeenCalled();
+      service.dispose();
+    },
+  );
+
+  it.each(["cancelled", "completed"] as const)(
+    "allows movement after the download is %s",
+    async (status) => {
+      const { service } = createService();
+      const tab = service.getState().tabs[0]!;
+      await service.navigate(tab.id, "https://download.example");
+      const contents = electron.state.views.at(-1)!.webContents;
+      const item = Object.assign(new EventEmitter(), {
+        ...downloadItem("https://download.example/report.txt"),
+        on: EventEmitter.prototype.on,
+        once: EventEmitter.prototype.once,
+      });
+      electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
+      if (status === "cancelled") service.cancelDownload(service.getState().downloads[0]!.id);
+      item.emit("done", {}, status);
+
+      expect(service.getTabForTransfer(tab.id).id).toBe(tab.id);
+      const state = status === "completed"
+        ? await service.detachTab(tab.id)
+        : await service.removeTabForTransfer(tab.id);
+      expect(state.tabs.some(candidate => candidate.id === tab.id)).toBe(false);
+      expect(item.cancel).toHaveBeenCalledTimes(status === "cancelled" ? 1 : 0);
+      service.dispose();
+    },
+  );
+
+  it("blocks movement when an active download has fallen out of bounded history", async () => {
+    const onLastTabClosed = vi.fn();
+    const { service, window } = createService({ onLastTabClosed });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://download.example");
+    const contents = electron.state.views.at(-1)!.webContents;
+    const startDownload = (filename: string) => {
+      const item = Object.assign(new EventEmitter(), {
+        ...downloadItem(`https://download.example/${filename}`, filename),
+        on: EventEmitter.prototype.on,
+        once: EventEmitter.prototype.once,
+      });
+      electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
+      return item;
+    };
+    const original = startDownload("original.txt");
+    const originalId = service.getState().downloads[0]!.id;
+    for (let index = 0; index < 500; index++) {
+      startDownload(`terminal-${index}.txt`).emit("done", {}, "completed");
+    }
+    const before = service.getState();
+    expect(before.downloads).toHaveLength(500);
+    expect(before.downloads.some(download => download.id === originalId)).toBe(false);
+    const children = [...window.contentView.children];
+
+    expect(() => service.getTabForTransfer(tab.id)).toThrow(/Finish or cancel.*download/);
+    await expect(service.detachTab(tab.id)).rejects.toThrow(/Finish or cancel.*download/);
+    await expect(service.removeTabForTransfer(tab.id)).rejects.toThrow(/Finish or cancel.*download/);
+    expect(service.getState()).toEqual(before);
+    expect(window.contentView.children).toEqual(children);
+    expect(contents.close).not.toHaveBeenCalled();
+    expect(original.cancel).not.toHaveBeenCalled();
+    expect(onLastTabClosed).not.toHaveBeenCalled();
+
+    original.emit("done", {}, "completed");
+    expect(service.getTabForTransfer(tab.id).id).toBe(tab.id);
+    await service.removeTabForTransfer(tab.id);
+    expect(onLastTabClosed).toHaveBeenCalledOnce();
+    service.dispose();
+  });
+
+  it("keeps another tab movable while a prepared transfer becomes unsafe", async () => {
+    const { service } = createService();
+    const downloadingTab = service.getState().tabs[0]!;
+    await service.navigate(downloadingTab.id, "https://download.example");
+    const contents = electron.state.views.at(-1)!.webContents;
+    const prepared = service.getTabForTransfer(downloadingTab.id);
+    const item = Object.assign(new EventEmitter(), {
+      ...downloadItem("https://download.example/report.txt"),
+      on: EventEmitter.prototype.on,
+      once: EventEmitter.prototype.once,
+    });
+    electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
+    const other = await navigateNewTab(service, "https://other.example");
+
+    expect(service.getTabForTransfer(other.id).id).toBe(other.id);
+    await service.removeTabForTransfer(other.id);
+    const before = service.getState();
+    await expect(service.removeTabForTransfer(prepared.id)).rejects.toThrow(/Finish or cancel.*download/);
+    expect(service.getState()).toEqual(before);
+    expect(contents.close).not.toHaveBeenCalled();
+    expect(item.cancel).not.toHaveBeenCalled();
+    service.dispose();
+  });
+
   it("opens user-initiated safe links as a managed tab and denies unsafe urls", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
