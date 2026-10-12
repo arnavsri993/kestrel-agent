@@ -2948,10 +2948,20 @@ body:has(.ai-browser-app),
 	width: 17px;
 	height: 17px;
 }
-.download-list li > div {
+.download-list .download-details {
 	min-width: 0;
 	display: grid;
 	gap: 2px;
+}
+.download-list .download-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.download-actions > .quiet-link {
+	white-space: nowrap;
 }
 .download-list strong {
 	overflow: hidden;

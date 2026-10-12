@@ -223,7 +223,7 @@ export function BrowserDownloads({
                     }
                   />
                 </span>
-                <div>
+                <div className="download-details">
                   <strong>{download.filename}</strong>
                   <small>
                     {download.status === "progressing"
@@ -241,34 +241,36 @@ export function BrowserDownloads({
                     />
                   )}
                 </div>
-                {download.canReveal && (
-                  <button
-                    type="button"
-                    className="quiet-link"
-                    onClick={() => void browser.openDownload(download.id)}
-                  >
-                    Open
-                  </button>
-                )}
-                {download.canReveal && (
-                  <button
-                    type="button"
-                    className="quiet-link"
-                    onClick={() => void browser.revealDownload(download.id)}
-                  >
-                    Show in Finder
-                  </button>
-                )}
-                {(download.status === "progressing" ||
-                  download.status === "checking") && (
-                  <button
-                    type="button"
-                    className="quiet-link"
-                    onClick={() => void browser.cancelDownload(download.id)}
-                  >
-                    Cancel
-                  </button>
-                )}
+                <div className="download-actions">
+                  {download.canReveal && (
+                    <button
+                      type="button"
+                      className="quiet-link"
+                      onClick={() => void browser.openDownload(download.id)}
+                    >
+                      Open
+                    </button>
+                  )}
+                  {download.canReveal && (
+                    <button
+                      type="button"
+                      className="quiet-link"
+                      onClick={() => void browser.revealDownload(download.id)}
+                    >
+                      Show in Finder
+                    </button>
+                  )}
+                  {(download.status === "progressing" ||
+                    download.status === "checking") && (
+                    <button
+                      type="button"
+                      className="quiet-link"
+                      onClick={() => void browser.cancelDownload(download.id)}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </li>
             );
           })}
