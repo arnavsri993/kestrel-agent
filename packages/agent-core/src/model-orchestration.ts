@@ -311,6 +311,21 @@ function isCompactModelName(model: string): boolean {
 	);
 }
 
+/**
+ * Mid-tier models (e.g. Luna) that can approach frontier ability at high
+ * reasoning effort while remaining cheaper and faster than frontier at low
+ * effort. Automatic routing should prefer these over a frontier model at a
+ * lower thinking level when both clear the quality bar.
+ */
+export function isEfficientReasoningModelName(model: string): boolean {
+	const name = normalizedModelId(model);
+	return (
+		/\bluna\b/.test(name) ||
+		/\bgpt-5(?:\.\d+)?-luna\b/.test(name) ||
+		/\bcodex-mini\b/.test(name)
+	);
+}
+
 function isPermissiveModelName(model: string, providerId: string): boolean {
 	return (
 		providerId.includes("nous") ||
@@ -323,9 +338,11 @@ function isPermissiveModelName(model: string, providerId: string): boolean {
 }
 
 function isFrontierModelName(model: string): boolean {
-	if (isCompactModelName(model)) return false;
+	if (isCompactModelName(model) || isEfficientReasoningModelName(model))
+		return false;
 	return (
-		/\bgpt-5(?:\.\d+)?(?:-|$)/.test(model) ||
+		/\b(?:sol|terra)\b/.test(model) ||
+		/\bgpt-5(?:\.\d+)?(?:-(?:sol|terra))?(?:-|$)/.test(model) ||
 		/\b(?:o1|o3|o4)(?:-|$)/.test(model) ||
 		model.includes("gpt-4.5") ||
 		model.includes("claude-opus") ||
@@ -342,6 +359,7 @@ function isFrontierModelName(model: string): boolean {
 
 function isAdvancedModelName(model: string): boolean {
 	if (isCompactModelName(model) || isFrontierModelName(model)) return false;
+	if (isEfficientReasoningModelName(model)) return true;
 	return (
 		model.includes("claude-sonnet") ||
 		model.includes("claude-3-5-sonnet") ||
@@ -366,6 +384,19 @@ function applyModelNamePriors(
 		scores.cost_efficiency = Math.max(scores.cost_efficiency, 0.93);
 		scores.complex_reasoning = Math.max(scores.complex_reasoning, 0.48);
 		scores.coding = Math.max(scores.coding, 0.58);
+		return;
+	}
+	if (isEfficientReasoningModelName(name)) {
+		// Strong with thinking controls, but keep speed/cost priors so auto mode
+		// can prefer Luna@max over Sol@low for mid-difficulty work.
+		scores.complex_reasoning = Math.max(scores.complex_reasoning, 0.86);
+		scores.coding = Math.max(scores.coding, 0.86);
+		scores.planning = Math.max(scores.planning, 0.82);
+		scores.code_review = Math.max(scores.code_review, 0.82);
+		scores.instruction_following = Math.max(scores.instruction_following, 0.88);
+		scores.reliability = Math.max(scores.reliability, 0.86);
+		scores.speed = Math.max(scores.speed, 0.9);
+		scores.cost_efficiency = Math.max(scores.cost_efficiency, 0.9);
 		return;
 	}
 	if (isFrontierModelName(name)) {
@@ -434,6 +465,141 @@ export function inferModelTier(
 function bounded(value: number): number {
 	if (!Number.isFinite(value)) return 0;
 	return Math.max(0, Math.min(1, value));
+}
+
+/** Ability lift from raising thinking effort on a reasoning-capable model. */
+export function reasoningAbilityBoost(level: ReasoningEffort): number {
+	switch (level) {
+		case "none":
+			return 0;
+		case "low":
+			return 0.02;
+		case "medium":
+			return 0.08;
+		case "high":
+			return 0.15;
+		case "xhigh":
+			return 0.22;
+		case "max":
+			return 0.28;
+	}
+}
+
+/** Relative token/runtime cost of a reasoning level versus a low-effort pass. */
+export function reasoningCostMultiplier(level: ReasoningEffort): number {
+	switch (level) {
+		case "none":
+			return 1;
+		case "low":
+			return 1.05;
+		case "medium":
+			return 1.3;
+		case "high":
+			return 1.85;
+		case "xhigh":
+			return 2.6;
+		case "max":
+			return 3.4;
+	}
+}
+
+/** Relative latency of a reasoning level versus a low-effort pass. */
+export function reasoningLatencyMultiplier(level: ReasoningEffort): number {
+	switch (level) {
+		case "none":
+			return 1;
+		case "low":
+			return 1.05;
+		case "medium":
+			return 1.25;
+		case "high":
+			return 1.65;
+		case "xhigh":
+			return 2.15;
+		case "max":
+			return 2.8;
+	}
+}
+
+/**
+ * Effective capability after applying the planned thinking level. High effort on
+ * a strong mid-tier model can approach a frontier model at low effort.
+ */
+export function effectiveCapabilityFit(
+	baseFit: number,
+	level: ReasoningEffort,
+	supportsReasoningLevels: boolean,
+): number {
+	if (!supportsReasoningLevels) return bounded(baseFit);
+	const boost = reasoningAbilityBoost(level);
+	return bounded(baseFit + boost * (1 - baseFit * 0.75));
+}
+
+/** Minimum capability×reliability bar for an adequate automatic route. */
+export function routingMinimumQuality(requirements: TaskRequirements): number {
+	return bounded(
+		0.45 +
+			requirements.complexity * 0.3 +
+			requirements.qualitySensitivity * 0.25 +
+			(requirements.riskLevel === "high_consequence" ? 0.12 : 0) +
+			(requirements.complexity >= 0.7 ? 0.06 : 0),
+	);
+}
+
+/**
+ * Task-driven thinking ladder. Model selection scores the (model × level) pair
+ * so a cheaper model at max can beat a frontier model at low when ability ties.
+ */
+export function selectTargetReasoningLevel(
+	requirements: TaskRequirements,
+	supportsReasoningLevels: boolean,
+	escalationReason?: RouteOptions["escalationReason"],
+): ReasoningEffort {
+	if (!supportsReasoningLevels) return "low";
+	let level: ReasoningEffort = "low";
+	if (
+		(requirements.riskLevel === "high_consequence" &&
+			requirements.complexity >= 0.85) ||
+		requirements.complexity >= 0.9 ||
+		(requirements.capabilities.mathematical_reasoning ?? 0) >= 0.95
+	) {
+		level = "max";
+	} else if (
+		requirements.complexity >= 0.8 ||
+		((requirements.capabilities.complex_reasoning ?? 0) >= 0.94 &&
+			requirements.qualitySensitivity >= 0.86)
+	) {
+		level = "xhigh";
+	} else if (
+		requirements.complexity >= 0.7 ||
+		requirements.isSecurityOrAdminAudit ||
+		requirements.qualitySensitivity >= 0.86 ||
+		(requirements.capabilities.complex_reasoning ?? 0) >= 0.92
+	) {
+		level = "high";
+	} else if (
+		requirements.complexity >= 0.35 ||
+		(requirements.capabilities.coding ?? 0) >= 0.7 ||
+		(requirements.capabilities.backend_architecture ?? 0) >= 0.75 ||
+		(requirements.capabilities.code_review ?? 0) >= 0.75
+	) {
+		level = "medium";
+	} else {
+		level = "low";
+	}
+
+	if (escalationReason) {
+		const escalationLadder: Record<ReasoningEffort, ReasoningEffort> = {
+			none: "low",
+			low: "medium",
+			medium: "high",
+			high: "xhigh",
+			xhigh: "max",
+			max: "max",
+		};
+		level = escalationLadder[level];
+	}
+	return level;
 }
 
 function emptyScores(value = 0): Record<ModelCapability, number> {
@@ -1254,6 +1420,7 @@ interface ScoredProfile {
 	reliability: number;
 	latencyPenalty: number;
 	scarcityPenalty: number;
+	plannedReasoningLevel: ReasoningEffort;
 }
 
 export class AdaptiveModelRouter {
@@ -1402,17 +1569,14 @@ export class AdaptiveModelRouter {
 		if (withinLatency.length === 0)
 			throw new Error("No configured model fits the task latency limits.");
 		const scoredCandidates = withinLatency;
-		const minimumQuality = bounded(
-			0.45 +
-				requirements.complexity * 0.3 +
-				requirements.qualitySensitivity * 0.25 +
-				(requirements.riskLevel === "high_consequence" ? 0.12 : 0),
-		);
+		const minimumQuality = routingMinimumQuality(requirements);
 		const adequate = scoredCandidates.filter(
 			(candidate) =>
 				candidate.capabilityFit * 0.72 + candidate.reliability * 0.28 >=
 				minimumQuality,
 		);
+		// Prefer adequate routes. Only fall through when nothing clears the bar
+		// (except best_quality, which intentionally ranks raw capability first).
 		const scored =
 			policy.mode === "best_quality" || adequate.length === 0
 				? scoredCandidates
@@ -1434,11 +1598,7 @@ export class AdaptiveModelRouter {
 				selected.reliability * 0.16 +
 				Math.max(0, selected.score - (second?.score ?? 0)) * 0.2,
 		);
-		const reasoningLevel = this.reasoningLevel(
-			selected.profile,
-			requirements,
-			options.escalationReason,
-		);
+		const reasoningLevel = selected.plannedReasoningLevel;
 		const reviewRequired =
 			policy.allowVerifier &&
 			(riskRank(requirements.riskLevel) >=
@@ -1495,6 +1655,9 @@ export class AdaptiveModelRouter {
 				? "Applied the current account scarcity signal to conserve limited usage."
 				: "",
 			`Sets thinking to ${reasoningLevel} from complexity ${requirements.complexity.toFixed(2)}, risk ${requirements.riskLevel}, and ${selected.profile.features.reasoningLevels ? "this model's reasoning controls" : "no reasoning controls on this model"}.`,
+			selected.profile.features.reasoningLevels
+				? "Scored the model and thinking level together so cheaper high-effort routes can beat expensive low-effort ones when ability is close."
+				: "",
 			`Selected the ${executionPattern.replaceAll("_", " ")} execution pattern.`,
 			policy.mode === "balanced"
 				? "Balanced quality, reliability, latency, and cost."
@@ -1745,7 +1908,7 @@ export class AdaptiveModelRouter {
 		);
 		const importance =
 			weighted.reduce((sum, [, weight]) => sum + weight, 0) || 1;
-		const capabilityFit =
+		const baseCapabilityFit =
 			weighted.reduce((sum, [capability, weight]) => {
 				const baseline = profile.capabilities[capability] ?? 0;
 				const learned = profile.learnedPerformance[capability] ?? baseline;
@@ -1755,10 +1918,24 @@ export class AdaptiveModelRouter {
 						: baseline;
 				return sum + observed * weight;
 			}, 0) / importance;
+		const plannedReasoningLevel = selectTargetReasoningLevel(
+			requirements,
+			profile.features.reasoningLevels === true,
+			options?.escalationReason,
+		);
+		const capabilityFit = effectiveCapabilityFit(
+			baseCapabilityFit,
+			plannedReasoningLevel,
+			profile.features.reasoningLevels === true,
+		);
 		const reliability =
 			(profile.reliability.successRate ?? profile.capabilities.reliability) *
 			(1 - (profile.reliability.refusalRate ?? 0) * 0.6);
-		const latencyMs = estimatedLatencyMs(profile);
+		const latencyMs =
+			estimatedLatencyMs(profile) *
+			(profile.features.reasoningLevels
+				? reasoningLatencyMultiplier(plannedReasoningLevel)
+				: 1);
 		const latencyScore = 1 / (1 + latencyMs / 4_000);
 		const fallbackInputCost = this.estimateCost(
 			profile.provider,
@@ -1782,23 +1959,35 @@ export class AdaptiveModelRouter {
 				: (requirements.expectedOutputTokens * profile.cost.outputPerMillion) /
 					1_000_000);
 		const priorityCostMultiplier = profile.cost.priorityMultiplier ?? 1.5;
-		const estimatedCost =
+		const baseEstimatedCost =
 			configuredTokenCost *
 				(priorityEligible(profile, requirements, policy)
 					? priorityCostMultiplier
 					: 1) +
 			(profile.cost.fixedRequestCost ?? 0);
+		const estimatedCost =
+			baseEstimatedCost *
+			(profile.features.reasoningLevels
+				? reasoningCostMultiplier(plannedReasoningLevel)
+				: 1);
 		const costScore = 1 / (1 + estimatedCost * 20);
 		const localScore = profile.local ? 1 : 0;
+		const minimumQuality = routingMinimumQuality(requirements);
+		const surplus = Math.max(0, capabilityFit - minimumQuality);
 
 		let tierBonus = 0;
 		if (options?.forceTier && profile.tier === options.forceTier) {
 			tierBonus += 0.4;
 		}
+		// Scale tier prestige with task difficulty so frontier does not win
+		// simple work on brand alone, but still wins clearly on hard tasks.
 		if (profile.tier === "frontier") {
-			tierBonus += 0.18;
+			tierBonus += 0.2 * bounded((requirements.complexity - 0.28) / 0.42);
+			if (requirements.complexity >= 0.65) tierBonus += 0.12;
+			if (requirements.complexity >= 0.8) tierBonus += 0.08;
 		} else if (profile.tier === "advanced") {
-			tierBonus += 0.1;
+			tierBonus += 0.1 * bounded((requirements.complexity - 0.18) / 0.42);
+			if (requirements.complexity >= 0.65) tierBonus -= 0.04;
 		} else if (profile.tier === "permissive_fallback") {
 			if (options?.escalationReason === "refusal") {
 				tierBonus += 0.3;
@@ -1808,6 +1997,15 @@ export class AdaptiveModelRouter {
 		} else if (profile.tier === "standard" && requirements.complexity < 0.35) {
 			tierBonus += 0.08;
 		}
+		if (
+			isEfficientReasoningModelName(profile.model) &&
+			requirements.complexity >= 0.3 &&
+			requirements.complexity < 0.7
+		) {
+			// Prefer efficient mid-tier models on work where high thinking closes
+			// most of the gap to frontier at lower cost and latency.
+			tierBonus += 0.1;
+		}
 		if (profile.features.reasoningLevels && requirements.complexity >= 0.55) {
 			tierBonus += 0.1;
 		} else if (
@@ -1816,8 +2014,10 @@ export class AdaptiveModelRouter {
 		) {
 			tierBonus -= 0.12;
 		}
-		if (profile.tier === "frontier" && requirements.complexity < 0.28) {
-			tierBonus -= 0.14;
+		if (profile.tier === "frontier" && requirements.complexity < 0.4) {
+			tierBonus -= 0.18;
+		} else if (profile.tier === "frontier" && requirements.complexity < 0.55) {
+			tierBonus -= 0.08;
 		}
 
 		const weightSets: Record<
@@ -1840,6 +2040,23 @@ export class AdaptiveModelRouter {
 		)
 			? 0.06
 			: 0;
+		// Penalize unused headroom on expensive/slow routes so near-equivalent
+		// cheaper models (Luna@max ≈ Sol@low) win in balanced mode.
+		const overkillPenalty =
+			policy.mode === "best_quality"
+				? 0
+				: surplus *
+					(1 - requirements.complexity) *
+					(1 - costScore) *
+					(profile.tier === "frontier"
+						? 0.55
+						: profile.tier === "advanced"
+							? 0.28
+							: 0.12);
+		const efficiencyBonus =
+			policy.mode === "best_quality" || policy.mode === "privacy_first"
+				? 0
+				: bounded(0.1 - surplus) * costScore * latencyScore * 0.12;
 		const score =
 			capabilityFit * weights[0] +
 			reliability * weights[1] +
@@ -1848,7 +2065,9 @@ export class AdaptiveModelRouter {
 			localScore * weights[4] +
 			localPreferenceBonus +
 			providerPreferenceBonus +
-			tierBonus;
+			tierBonus -
+			overkillPenalty +
+			efficiencyBonus;
 		return {
 			profile,
 			score,
@@ -1858,6 +2077,7 @@ export class AdaptiveModelRouter {
 			reliability,
 			latencyPenalty: bounded(1 - latencyScore),
 			scarcityPenalty: 0,
+			plannedReasoningLevel,
 		};
 	}
 
@@ -1866,52 +2086,11 @@ export class AdaptiveModelRouter {
 		requirements: TaskRequirements,
 		escalationReason?: "refusal" | "validation" | "timeout",
 	): RoutingDecision["reasoningLevel"] {
-		if (!profile.features.reasoningLevels) return "low";
-		let level: ReasoningEffort = "low";
-		if (
-			(requirements.riskLevel === "high_consequence" &&
-				requirements.complexity >= 0.85) ||
-			requirements.complexity >= 0.9 ||
-			(requirements.capabilities.mathematical_reasoning ?? 0) >= 0.95
-		) {
-			level = "max";
-		} else if (
-			requirements.complexity >= 0.8 ||
-			((requirements.capabilities.complex_reasoning ?? 0) >= 0.94 &&
-				requirements.qualitySensitivity >= 0.86)
-		) {
-			level = "xhigh";
-		} else if (
-			requirements.complexity >= 0.7 ||
-			requirements.isSecurityOrAdminAudit ||
-			requirements.qualitySensitivity >= 0.86 ||
-			(requirements.capabilities.complex_reasoning ?? 0) >= 0.92
-		) {
-			level = "high";
-		} else if (
-			requirements.complexity >= 0.35 ||
-			(requirements.capabilities.coding ?? 0) >= 0.7 ||
-			(requirements.capabilities.backend_architecture ?? 0) >= 0.75 ||
-			(requirements.capabilities.code_review ?? 0) >= 0.75
-		) {
-			level = "medium";
-		} else {
-			level = "low";
-		}
-
-		if (escalationReason) {
-			const escalationLadder: Record<ReasoningEffort, ReasoningEffort> = {
-				none: "low",
-				low: "medium",
-				medium: "high",
-				high: "xhigh",
-				xhigh: "max",
-				max: "max",
-			};
-			level = escalationLadder[level];
-		}
-
-		return level;
+		return selectTargetReasoningLevel(
+			requirements,
+			profile.features.reasoningLevels === true,
+			escalationReason,
+		);
 	}
 
 	private recordTrace(
