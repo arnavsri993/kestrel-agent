@@ -13,6 +13,9 @@ function nativeFixture() {
 		__kestrelNativeQuery: vi.fn((query) => { queries.push(query); return queries.length; }),
 		__kestrelNativeCancel: cancel,
 	} as unknown as { __kestrelHostTransport?: RendererTransport; kestrel?: RendererBridge };
+	for (const name of ["__kestrelNativeQuery", "__kestrelNativeCancel"]) {
+		Object.defineProperty(host, name, { configurable: false, writable: false });
+	}
 	runInNewContext(script, host);
 	installNativeRendererBridge(host);
 	return { host, bridge: host.kestrel!, queries, cancel };
@@ -37,7 +40,7 @@ describe("native renderer bridge", () => {
 	it("uses the actual CEF transport with shared request/event validation", async () => {
 		const { host, bridge, queries, cancel } = nativeFixture();
 		expect(host.__kestrelHostTransport).toBeUndefined();
-		expect((host as any).__kestrelNativeQuery).toBeUndefined();
+		expect(typeof (host as any).__kestrelNativeQuery).toBe("function");
 		expect(Object.getOwnPropertyDescriptor(host, "kestrel")).toMatchObject({ writable: false, configurable: false });
 		expect(() => bridge.request({ type: "native-host-status" } as never)).toThrow();
 		expect(queries).toHaveLength(0);

@@ -260,8 +260,9 @@ try {
 	});
 	assert.equal(bridgeState.publicBridge, true);
 	assert.equal(bridgeState.rawTransport, "undefined");
-	assert.equal(bridgeState.rawQuery, "undefined");
-	assert.equal(bridgeState.rawCancel, "undefined");
+	// CEF's immutable primitives remain confined to the privileged shell.
+	assert.equal(bridgeState.rawQuery, "function");
+	assert.equal(bridgeState.rawCancel, "function");
 	assert.equal(bridgeState.snapshot.ok, true);
 	const userPage = pages.find((page) => page.url() === directUserBrowserUrl);
 	assert(userPage, "The native smoke must inspect the separate user browser.");

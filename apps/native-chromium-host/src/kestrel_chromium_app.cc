@@ -96,8 +96,8 @@ constexpr char kKestrelBridgeSource[] = R"JS(
     value: Object.freeze({ request, subscribe }),
     writable: false,
   });
-  delete globalThis.__kestrelNativeQuery;
-  delete globalThis.__kestrelNativeCancel;
+  // CEF owns immutable query/cancel globals in this trusted document. The
+  // browser-side exact-frame/URL check remains the authority boundary.
 })();
 )JS";
 

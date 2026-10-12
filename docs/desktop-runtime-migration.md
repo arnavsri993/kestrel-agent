@@ -102,6 +102,8 @@ external-intake readiness notifications. Native CEF supplies JSON queries and
 subscription cancellation only; the renderer's first bootstrap dependency
 installs the shared bridge before app modules evaluate, then removes the raw
 transport global. Remote pages and extension contexts receive neither bridge.
+CEF retains its immutable query/cancel globals in the trusted shell; the
+browser-side exact-frame and URL checks remain the authority boundary.
 
 Malformed events are dropped, unsubscribe is idempotent and queued events stop
 after disposal. This extraction does not add runtime validation for the full
