@@ -36,6 +36,8 @@ const request = async (page, input) => { const response = await raw(page, input)
 const state = async page => (await request(page, { type: "browser-get-state" })).browserState;
 async function capture(page, name) {
   if (!evidence) return;
+  const error = page.locator(".browser-inline-error");
+  if (await error.count()) await expect(error).toHaveCSS("opacity", "1");
   await page.evaluate(async () => { await document.fonts.ready; await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))); });
   await page.screenshot();
   const window = await app.browserWindow(page);
@@ -59,6 +61,7 @@ try {
   app = await electron.launch({ executablePath: executable ? resolve(executable) : createRequire(resolve("apps/desktop/package.json"))("electron"),
     args: [...(executable ? [] : [resolve("apps/desktop")]), "--use-mock-keychain"], env });
   main = await app.firstWindow({ timeout: 60_000 }); main.setDefaultTimeout(15_000);
+  await main.emulateMedia({ reducedMotion: "reduce" });
   main.on("pageerror", error => errors.push(error.message));
   await main.evaluate(() => { localStorage.setItem("kestrel:onboarded", "yes"); localStorage.setItem("kestrel:default-browser-prompted", "yes"); });
   await main.reload();
@@ -79,6 +82,7 @@ try {
   const detachedReady = app.waitForEvent("window", { timeout: 20_000 });
   await move(main, tabId, "Move tab to new window");
   const detached = await detachedReady; detached.setDefaultTimeout(15_000);
+  await detached.emulateMedia({ reducedMotion: "reduce" });
   detached.on("pageerror", error => errors.push(error.message));
   await expect.poll(async () => (await state(detached)).tabs.some(t => t.id === tabId)).toBe(true);
   assert(!(await state(main)).tabs.some(t => t.id === tabId));
@@ -99,7 +103,7 @@ try {
   await main.locator(`.browser-tab[data-tab-id="${tabId}"]`).waitFor();
   await capture(main, "returned-after-cancel.png"); assert.deepEqual(errors, []);
   if (evidence) writeFileSync(join(evidence, "proof.json"), JSON.stringify({ executable: executable ?? "source Electron", actualHttpDownloads: 2,
-    bytesPerCompletedDownload: bytes.length, pointerContextMenu: true, detachBlockedWithoutInterruptingDownload: true,
+    bytesPerCompletedDownload: bytes.length, pointerContextMenu: true, reducedMotion: true, detachBlockedWithoutInterruptingDownload: true,
     completionPermitsDetach: true, reattachAndTransferPreparationBlocked: true, cancellationPermitsReturn: true,
     noUnhandledRendererErrors: true, realProfileVerified: false, completedHistoryTransferVerified: false }, null, 2));
   console.log("Download move smoke passed: held HTTP download survives rejected detach/reattach; finish and cancel allow movement.");
