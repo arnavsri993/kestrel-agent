@@ -65,9 +65,9 @@ function accountIdentity(
 }
 
 /**
- * Attach stable account identity without wrapping the adapter. Codex (and any
- * other class-backed route) must keep `instanceof` working so rate-limit polls,
- * browser MCP attach, and similar adapter methods remain reachable.
+ * Attach stable account identity without wrapping the adapter. Class-backed
+ * routes keep their protocol-specific methods while every endpoint retains its
+ * own profile environment and account identity.
  */
 function attachAccount(
 	provider: ModelProvider,

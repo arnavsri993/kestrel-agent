@@ -158,6 +158,13 @@ try {
 	}
 	await page.setViewportSize({ width: 600, height: 450 });
 	await menu.getByRole("button", { name: /Local simulation/ }).scrollIntoViewIfNeeded();
+	// Native resize, React positioning and the menu animation settle on
+	// separate frames. Keep the same bounds requirement after they settle.
+	await page.waitForFunction(() => {
+		const menu = document.querySelector('[role="dialog"][aria-label="Choose a provider, account, model, and thinking level"]');
+		const bounds = menu?.getBoundingClientRect();
+		return bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.right <= 600 && bounds.bottom <= 450;
+	}, undefined, { timeout: 3_000 });
 	const bounds = await menu.boundingBox();
 	assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 600 && bounds.y + bounds.height <= 450);
 	if (screenshotPath) await page.screenshot({ path: resolve(screenshotPath).replace(/\.png$/, "-narrow.png") });

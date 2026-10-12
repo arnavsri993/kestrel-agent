@@ -1,4 +1,5 @@
 import {
+	embeddedBuildIdentity,
 	AgentStreamEventSchema,
 	ExternalIntakeSchema,
 	KestrelDeepLinkSchema,
@@ -37,8 +38,8 @@ if (nativeMaterial === "sidebar") {
 }
 
 const bridge: RendererBridge = {
-	request: (request) =>
-		ipcRenderer.invoke("kestrel:request", RendererRequestSchema.parse(request)),
+	request: (request) => ipcRenderer.invoke("kestrel:request", RendererRequestSchema.parse(
+    request.type === "build-provenance" ? { ...request, preloadBuild: embeddedBuildIdentity() } : request)),
 	onBrowserEvent(callback) {
 		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
 			callback(UserBrowserEventSchema.parse(value));

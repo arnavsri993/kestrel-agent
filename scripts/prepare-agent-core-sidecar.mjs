@@ -236,6 +236,7 @@ async function prepare() {
 						source: sidecar.NODE_RUNTIME_URL,
 					},
 					service: { entry: "service/index.js" },
+					build: JSON.parse(await readFile(join(coreOutput, "build-provenance.json"), "utf8")),
 				},
 				null,
 				2,

@@ -43,6 +43,7 @@ function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath) {
   const environment = {
     ...process.env,
     KESTREL_MACOS_INSTALL_ROOT: installRoot,
+    KESTREL_MACOS_TEST_INSTALL: "1",
     KESTREL_MACOS_SEARCH_ROOTS: searchRoots.join(":"),
     KESTREL_MACOS_TRASH_ROOT: trashRoot,
     KESTREL_DOCUMENTS_ROOT: join(installRoot, "..", "Documents"),
@@ -60,6 +61,17 @@ function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath) {
 const testSuite = process.platform === "darwin" ? describe : describe.skip;
 
 testSuite("development macOS app installer", () => {
+  it("cannot use a fixture-root symlink to bypass production candidate validation", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "kestrel-installer-link-"));
+    const outside = mkdtempSync(join(tmpdir(), "kestrel-production-policy-"));
+    const alias = join(fixture, "Applications");
+    symlinkSync(outside, alias, "dir");
+    const source = createBundle(fixture, "Kestrel.app");
+    const previous = createBundle(outside, "Kestrel.app");
+    writeFileSync(join(previous, "Contents/payload.txt"), "previous");
+    expect(() => runInstaller(source, alias, [alias], join(fixture, "Trash"))).toThrow();
+    expect(readPayload(previous)).toBe("previous");
+  });
   it("keeps one canonical app and trashes duplicates", () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-installer-test-"));
     const installRoot = join(root, "Applications");
@@ -106,7 +118,7 @@ testSuite("development macOS app installer", () => {
     runInstaller(source, installRoot, [installRoot], trashRoot);
     runInstaller(source, installRoot, [installRoot], trashRoot);
 
-    expect(readdirSync(installRoot)).toEqual(["Kestrel.app"]);
+    expect(readdirSync(installRoot).filter((name) => name.endsWith(".app"))).toEqual(["Kestrel.app"]);
     expect(readdirSync(trashRoot)).toHaveLength(1);
   });
 

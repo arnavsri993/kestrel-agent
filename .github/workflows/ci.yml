@@ -88,15 +88,19 @@ jobs:
       - run: corepack pnpm test:desktop-personas
       - run: corepack pnpm test:desktop-kanban
       - run: corepack pnpm test:desktop-model-routing
+      - run: corepack pnpm test:desktop-provider-accounts
+      - run: corepack pnpm test:desktop-auth-links
       - run: corepack pnpm test:desktop-subscription-cli-safety
       - run: corepack pnpm test:desktop-readiness
       - run: corepack pnpm test:desktop-external-secrets
       - run: corepack pnpm test:desktop-observability
       - run: corepack pnpm test:desktop-life-context
       - run: corepack pnpm test:desktop-approvals
+      - run: corepack pnpm test:desktop-approval-failure
       - run: corepack pnpm test:desktop-chat-configuration
       - run: corepack pnpm test:desktop-managed-policy
       - run: corepack pnpm package:mac:dev
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-approval-failure
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout

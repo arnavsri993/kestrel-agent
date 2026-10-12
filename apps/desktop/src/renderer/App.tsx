@@ -1,4 +1,5 @@
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
+import { BuildProvenance } from "./components/BuildProvenance";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
 import type { AgentTemplate } from "@kestrel/shared-types";
@@ -4115,12 +4116,20 @@ function RuntimeConversation({
 			)
 				onSnapshot(snapshotResponse.snapshot);
 		} catch (cause) {
-			if (activeSessionIdRef.current === sessionId)
-				setError(
-					cause instanceof Error
-						? cause.message
-						: "Could not resolve the approval.",
-				);
+			if (activeSessionIdRef.current === sessionId) {
+				const failure = cause instanceof Error
+					? cause.message
+					: "Could not resolve the approval.";
+				// A failed approved tool may have retired the durable run and grant.
+				// Reload that state before presenting recovery instead of retaining
+				// an approval button that can no longer execute this action.
+				try {
+					await loadSession(sessionId);
+				} catch {
+					// Preserve the action's failure when the state refresh also fails.
+				}
+				if (activeSessionIdRef.current === sessionId) setError(failure);
+			}
 		} finally {
 			if (!streamId || streamIdRef.current === streamId) {
 				streamIdRef.current = null;
@@ -4747,7 +4756,7 @@ function RuntimeConversation({
 										}
 								/>
 							</div>
-							<div className="runtime-outcome-copy">
+							<div className="runtime-outcome-copy" role="status">
 								<strong>{outcomeCopy?.title}</strong>
 								<p>{outcomeCopy?.detail}</p>
 							</div>
@@ -5983,6 +5992,8 @@ function Work({
 				...(accountId ? { accountId } : {}),
 				model: localStorage.getItem("kestrel:model") ?? "auto",
 				reasoningEffort:
+					storedReasoningEffort === "minimal" ||
+					storedReasoningEffort === "ultra" ||
 					storedReasoningEffort === "low" ||
 					storedReasoningEffort === "medium" ||
 					storedReasoningEffort === "high" ||
@@ -9324,6 +9335,7 @@ function AgentDiagnosticsSettings() {
 		<article className="setting-row" id="setting-agent-diagnostics">
 			<div>
 				<strong>Health and diagnostic reports</strong>
+				<BuildProvenance />
 				<p>
 					Run a content-free readiness check or export a local report. Reports omit
 					prompts, credentials, and page content.

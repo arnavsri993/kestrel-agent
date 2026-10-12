@@ -4377,6 +4377,15 @@ export class KestrelDatabase {
 		return JSON.parse(value) as T;
 	}
 
+	/** Synchronous read/modify/write serialized across connections and processes. */
+	updatePrivateState<T>(key: string, update: (current: T | undefined) => T): T {
+		return this.db.transaction(() => {
+			const next = update(this.getPrivateState<T>(key));
+			this.setPrivateState(key, next);
+			return next;
+		}).immediate();
+	}
+
 	deletePrivateState(key: string): void {
 		this.db.prepare("DELETE FROM private_runtime_state WHERE key = ?").run(key);
 	}

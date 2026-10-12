@@ -31,7 +31,7 @@ export interface ModelTool {
 
 export interface ModelRequest {
   model: string;
-  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   serviceTier?: "standard" | "priority";
   messages: ModelMessage[];
   tools?: ModelTool[];
@@ -145,7 +145,7 @@ export interface DiscoveredModelCapabilities {
 	video?: boolean;
 	structuredOutput?: boolean;
 	reasoningEfforts?: Array<
-		"none" | "low" | "medium" | "high" | "xhigh" | "max"
+		"none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 	>;
 	contextWindow?: number;
 	maxOutputTokens?: number;

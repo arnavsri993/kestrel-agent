@@ -541,6 +541,19 @@ export class AgentRuntime extends EventEmitter {
 		this.pendingBrowserInputs.delete(executionId);
 	}
 
+	/** Retire one pending grant without cancelling its reusable agent session. */
+	cancelPendingApproval(executionId: string, reason: string): void {
+		const execution = this.database.getToolExecution(executionId);
+		if (execution?.status !== "blocked" || execution.output?.approvalRequired !== true) return;
+		this.journalToolExecution(RuntimeToolExecutionSchema.parse({
+			...execution,
+			status: "cancelled",
+			output: { ...execution.output, approvalRequired: false, persistentApprovalAllowed: false },
+			error: reason,
+			completedAt: this.now(),
+		}), { required: true, result: "denied" });
+	}
+
 	private readonly tools = new Map<string, RuntimeToolDefinition>();
 	private readonly deferredCatalogs = new Map<string, DeferredToolCatalog>();
 	private readonly deferredTools = new Map<
@@ -1868,6 +1881,15 @@ export class AgentRuntime extends EventEmitter {
 			.sort((a, b) => a.name.localeCompare(b.name));
 	}
 
+	/** Persistent execution must retain its authorized tools through routing and fallback. */
+	requiresToolProvider(sessionId: string, allowedTools?: string[]): boolean {
+		const session = this.getSession(sessionId);
+		if (session.kind !== "agent" && !session.specialistDefinition) return false;
+		return this.discoverTools(sessionId).some(
+			(tool) => allowedTools === undefined || allowedTools.includes(tool.name),
+		);
+	}
+
 	modelTools(sessionId: string): RuntimeModelTool[] {
 		const available = new Set(
 			this.discoverTools(sessionId).map((tool) => tool.name),
@@ -1977,6 +1999,7 @@ export class AgentRuntime extends EventEmitter {
   const session = this.requireSession(sessionId);
   const run = options.runId ? this.database.getAgentRun(options.runId) : undefined;
   if (options.runId && (!run || run.sessionId !== sessionId)) throw new Error("Tool run identity does not match its session.");
+  if (run && !["running", "waiting_approval", "waiting_input"].includes(run.status)) throw new Error("Tool run is no longer active.");
   if (run?.toolScope && !run.toolScope.includes(definition.descriptor.name)) throw new Error("Tool exceeds the delegated task scope.");
   const chain: RuntimeSession[] = [];
   let current: RuntimeSession | undefined = session;
@@ -2193,6 +2216,7 @@ export class AgentRuntime extends EventEmitter {
 				RuntimeToolExecutionSchema.parse({
 					...oneTimeApprovalGrant,
 					status: "cancelled",
+					output: { ...oneTimeApprovalGrant.output, approvalRequired: false, persistentApprovalAllowed: false },
 					error: "The approved one-time grant was consumed.",
 					completedAt: startedAt,
 				}),

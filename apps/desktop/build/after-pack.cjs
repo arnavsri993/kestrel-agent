@@ -1,4 +1,5 @@
 const { execFileSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
 const {
 	chmodSync,
 	cpSync,
@@ -7,6 +8,7 @@ const {
 	rmSync,
 	copyFileSync,
 	writeFileSync,
+	readFileSync,
 } = require("node:fs");
 const { join } = require("node:path");
 const { auditPackagedMacApp } = require("../../../scripts/macos-architecture-audit.cjs");
@@ -19,6 +21,16 @@ exports.default = async function architectureAudit(context) {
 		`${context.packager.appInfo.productFilename}.app`,
 	);
 	installAgentCoreSidecar(appPath);
+	const desktopBuild = JSON.parse(readFileSync(join(__dirname, "../out/main/build-provenance.json"), "utf8"));
+	const coreBuild = JSON.parse(readFileSync(join(appPath, "Contents/Resources/agent-core/runtime-manifest.json"), "utf8"));
+	if (desktopBuild.buildId !== coreBuild.build?.buildId)
+		throw new Error("Desktop and Agent Core were built from different source trees. Rebuild both.");
+	const digest = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
+	writeFileSync(join(appPath, "Contents/Resources/build-provenance.json"), JSON.stringify({ ...desktopBuild,
+		packagedAt: new Date().toISOString(), artifacts: {
+			appAsar: digest(join(appPath, "Contents/Resources/app.asar")),
+			coreEntry: digest(join(appPath, "Contents/Resources/agent-core/service/index.js")),
+		} }, null, 2));
 	installAskKestrelService(appPath);
 	const configuredIdentity = context.packager?.platformSpecificBuildOptions?.identity;
 	const identity =

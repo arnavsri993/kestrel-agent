@@ -1,0 +1,364 @@
+# Kestrel engineering mission
+
+Started 2026-09-30. Integration and canonical deployment owner: the mission
+branch in `/Users/arnavsrivastava/.codex/worktrees/kestrel-reliability-mission/Agent`. Specialists use isolated
+worktrees and never install an app or change the production profile.
+
+## Baseline and evidence rules
+
+- Remote: `arnavsri993/kestrel-agent`; default branch: `main`.
+- Initial main: `f9f7e45f15f2a36afa6e6d6ac9b878b3d791e93c`.
+- Primary checkout: clean `codex/acquisition-readiness`, `b8f1013cee68df16bc1d5541929e40e1015837ac`.
+- Canonical process: `/Applications/Kestrel.app/Contents/MacOS/Kestrel`,
+  PID 90212, started September 30 at 11:01:56 America/Chicago.
+- Initial installed `app.asar` SHA-256:
+  `5aebe4090fb4ac31ea8ede1ea52f4d37c20795c8aa7c1bb751c71a66bdb74a90`.
+- No desktop development watcher was observed. The installed app has no
+  source/component build provenance, so its commit is unverified.
+- Live WhatsApp tab reproduced “WhatsApp works with Google Chrome 100+”.
+- Live repository-review task selected GPT-6-Astra / High, but Send was
+  disabled: no configured route satisfied the task's required tools.
+- Eighteen PRs were open. Snapshot includes exact heads; most require review,
+  several fail CI, and four conflict. No protection bypass is authorized.
+- Jules key is not configured. The requested worker catalog file is absent;
+  the live `models_cache.json` advertises tool-capable Sol high workers.
+- Private browser traces, account details, screenshots and raw logs remain
+  local, outside the repository. Never put credentials in this record.
+
+Source, deterministic fixtures, live provider turns, live services, packaged
+artifacts, installed files, and running UI are separate evidence classes.
+Skipped or simulated tests never count as live success.
+
+## Requirements register
+
+Each row tracks the ten original requirements. Commit and deployment fields
+must be updated only after the corresponding operation is verified.
+
+| Requirement | Reproduced symptom / hypothesis | Owner | Dependency | Implementation | Evidence | Integrated commit | Deployment |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1. WhatsApp compatibility | Live unsupported-browser screen; Electron/app tokens exposed in UA | Browser specialist | Reviewed canonical deployment; real service | Embedded Chromium identity applied to persistent session and every view before navigation | UA/restore/session fixtures pass; real QR login across new tab/reload/restart in disposable candidate; authenticated pairing/read/connection and canonical delivery pending | Local `8e649457` plus broker hardening | Existing app preserved |
+| 2. Teams native handoff | PR #789 route/error slice useful but origin/intent needed hardening | Browser specialist | Validated main broker; reviewed canonical deployment | Bounded Teams/Cursor routes, exact-origin app grants, active-tab input and consent revalidation | Positive/hostile frame, popup, reload, revocation and failure fixtures pass; live OS handoff pending | Local `8e649457` plus broker hardening | Not deployed |
+| 3. Complex task completion | Text-only Codex route could not execute Kestrel tools | Integration owner / runtime specialist | Official dynamic-tool bridge; route readiness | Structured calls execute through existing approvals, scopes and receipts | Four live profile reads, two-file derived answer and bounded PR #809 review completed; broader multi-app reliability pending | Candidate `1a331645` plus current controls | Not deployed |
+| 4. Sustained progress / fewer interruptions | Routing/worktree cancellation gaps, ineffective background pause and stranded failed approval | Integration owner | Durable execution and safe shutdown | Pause/claims/cancellation/lease implemented; approval failure retirement under correction | Prior 46 focused fault tests and full 1,659-test verification; new approval regression needs current checks | Prior control `660d0429` and picker `0dfb9710`; new correction pending | Not deployed |
+| 5. Model / effort selection | Picker lacked minimal/ultra; model listing could overstate transport support | Runtime specialist | Account-specific discovery and wire validation | Exact advertised efforts, model/transport intersection, tools required through fallback | Four accounts sent exact `gpt-6-astra` / `high`; registrations and reads observed; other efforts/modalities not live-verified | Local `2f51c29b` plus shared/picker changes | Not deployed |
+| 6. Persistent engineering agent / four accounts | Existing core must supply safe persistent work without a parallel engine | Integration owner | Canonical reviewed build; scoped provider/tool/stop/restart acceptance | Existing scheduler control hardening; production agent ID none, enabled false | Four profiles execute real tools; independent quota pools unverified; scheduler fault fixtures pass | Current mission branch | Production agent not enabled |
+| 7. PR integration | 17 other PRs plus mission #810; required independent latest-push approval absent | Integration owner | Exact-head review, passing CI, compatibility and protection | Every snapshot PR has a disposition; maintenance slices #805/#806/#808 reconciled; #811 reviewed and held for reproduced failures and CI | #810 prior head `0dfb9710` has passing CI/CodeQL; new approval correction needs fresh checks | Source integrated; no GitHub merge | Not deployed |
+| 8. Changes appearing in actual app | Concurrent legacy installation confirmed; existing running process predates replacement | Integration/deployment owner | Fresh integrated main, owner and competing installer coordination | Kernel installation lock, ownership/main/hash/downgrade gates and visible component diagnostic | Clean `0dfb9710` package and packaged smokes pass; candidate component IDs match; canonical identity unverified | Prior source candidate `0dfb9710`; new correction pending | Canonical app preserved; updated install pending |
+| 9. Competitor overlap / switching reasons | Dots and Grok Bot share the persistent teammate promise | Integration owner | Matched journey evidence | Compare delegated responsibility, follow-through and verifiable outcomes | Current primary sources refreshed; zero standalone competitor trials or leadership claim | Mission benchmark documentation | Not applicable |
+| 10. Measurable reliability | Test counts do not establish live usefulness | Integration owner | Repeated real user journeys | Explicit evidence classes and 9/10 live journey target retained | Complete prior `0dfb9710` verify/package; bounded provider and scheduler tasks; new failure regression needs checks | Prior candidate `0dfb9710` passed full verify | Canonical visible journeys pending |
+
+## Acceptance thresholds fixed before tuning
+
+- Critical integrity: zero unauthorized tool execution, secret disclosure,
+  profile loss, duplicate consequential writes, or silent capability downgrade.
+  All applicable deterministic safety regressions must pass.
+- Deployment: two competing installers cannot replace simultaneously; stale
+  process ownership recovers safely; non-owner, dirty, unintegrated and
+  downgrade candidates fail before touching the canonical app. Installed
+  hashes and all observed component IDs must match the intended build.
+- Browser: real WhatsApp reaches login/session across reload and restart;
+  Teams native launch or working web fallback is observed. A fixture does not
+  satisfy either live-service threshold.
+- Routing: manual and auto selections reach the wire; unsupported values are
+  rejected and fallback preserves required tools/modalities/context. Four
+  accounts require four separately authenticated live receipts.
+- Recovery: cancellation halts new work and reaches workers; uncertain writes
+  reconcile before retry. Restart must preserve task and approval state.
+- Broader usefulness target: at least 9/10 verified completions per selected
+  journey over ten live trials, with intervention/time/failure counts reported.
+  This is a target until those trials are actually run.
+
+## Deployment and continuation contract
+
+Only a clean source commit at the fetched and freshly confirmed remote `origin/main` tip may replace
+the canonical app. Packaging a candidate is permitted for isolated review.
+Branch protections and required review remain in force. Recoverable prior
+bundles go to Trash; production databases, sessions and Keychain are untouched.
+
+A configured persistent-agent template is not an active supervisor. Enable
+Kestrel Engineering only after its real tool route, account isolation, stop
+control and bounded first task pass. Local work cannot continue while the
+machine is asleep or powered off. App-quit/window-close behavior must be
+measured before claiming background continuity.
+
+Current executable steps are in the latest checkpoint below. The branch must
+pass its review gate before any protected-main merge or canonical deployment.
+
+## October 1 verified milestones
+
+- Browser compatibility/handoff and runtime bridge commits are reconciled in one
+  local integration branch. This is source integration, not a protected-main merge.
+- Current four-account probes: 4/4 account reads, advertised Astra High choices
+  and rate-limit probes pass. Each account completed one bounded dynamic-tool
+  read of a synthetic isolated fixture through the real provider transport.
+- One further live run used three exact Astra/high turns and two verified
+  `workspace.read` results (`ALPHA=12`, `BETA=30`) to return
+  `TOTAL=42; inputs=alpha.txt,beta.txt`. Both observed and persisted run states
+  were `completed`. This is one simple task, not a complex-task reliability rate.
+- Read-only executions have persisted RuntimeToolExecution verification; the
+  separate side-effect ActionReceipt list is intentionally empty for reads.
+- No credentials copied, paid fallback, production agent, canonical install,
+  profile reset or GitHub merge occurred. Raw provider evidence remains private.
+- The production Engineering agent ID is **none**, enabled **false**. Its
+  sustained-run, stop, permission and canonical deployment prerequisites still
+  need the reviewed integrated app. No background continuation is claimed.
+- Full default-main baseline: 225 files / 1,565 tests passed on September 30.
+  Focused browser/deployment regressions and 736 agent-core tests passed before
+  final combined verification; later transport hardening requires rerun.
+
+See [PR dispositions](kestrel-pr-dispositions-20261001.md) and
+[competitor journeys](kestrel-competitor-benchmark.md). At this checkpoint,
+transport cleanup, combined verification and signed package inspection were
+still outstanding; later checkpoints supersede that task list.
+
+- October 1 canonical recheck: PID 6000, launched September 30 at 19:38:35
+  America/Chicago; installed app.asar SHA-256
+  `573dc322d10e50a719614a25612499b2e13e52c9419f8ad3eba8e0197210e304`.
+  The artifact and process changed outside this mission since its baseline.
+  Existing user activity was visible, so the mission did not restart the app.
+  Its source commit remains unverified because provenance is absent.
+- Final provider hardening rejects orphan turns: known turns interrupt before
+  archive; unknown startup or failed interruption closes the transport before
+  reuse. Both numeric and string server RPC IDs preserve exact response IDs.
+  Six fault regressions and 105 focused tests pass before combined verification.
+
+## Integrated candidate validation and checkpoint
+
+The mission branch selectively reconciles the reviewed maintenance slices of
+#805 (patched runtime dependencies), #806 (truthful oversized-result receipt)
+and #808 (dedicated full 50,000-record benchmark). Their original PRs remain
+unmerged and open under the protected review gate. These source integrations
+are commits `a32f7e13`, `55429bae`, and `2ed962e6`. Broad unreviewed UI, native
+computer-use and static model priors were not imported. #782 remains rejected
+as written; #795 remains held for authentication regression evidence.
+
+- The combined candidate passed 230 files / 1,629 tests and the full
+  50,000-record encrypted-storage benchmark; website E2E passed 50 tests.
+  Dependency audit reports no known vulnerabilities.
+- Layout, settings, new tab, browser navigation/auth popup fixtures, restart
+  restoration and protected autofill coverage passed. The aggregate run was
+  interrupted during autofill; its isolated rerun passed. Remaining aggregate
+  checks and the final exact candidate rerun are required before a full pass.
+- Package provenance rejected a desktop/core mismatch. Investigation confirmed
+  electron-vite's temporary generated config entered only the desktop source
+  digest. Only untracked exact generated-config modules are excluded; tracked
+  and other new source still affect the identity. A regression verifies this.
+- Exact-head merge-tree checks cover all 22 snapshot heads with no head drift.
+  Conflicts against initial main: #793 package.json; #789 auth-link smoke;
+  #785 DESIGN.md; #783 DESIGN, browser service/tests, App, BrowserWorkspace,
+  renderer entry and package.json. Clean merge trees do not establish approval.
+
+The candidate remains uninstalled. Only a normally reviewed, passing merge to
+current main permits canonical deployment. The previous app and all user data
+remain available. The existing source/profile are unchanged outside the
+mission's isolated worktrees. No persistent supervisor or durable wake-up is
+active. Final exact-head evidence is recorded in the mission pull request;
+private raw canaries, screenshots and logs stay outside Git.
+
+## Resumed verification checkpoint
+
+At `54ed70e8`, the exact-source run passed 231 files / 1,630 tests, full 50,000-record benchmark (9 tests), audits/builds, 50 website E2E tests, browser benchmark and desktop checks through model routing/provider accounts. The aggregate then correctly failed the old auth-link fixture's automatic HTTP/no-click launch expectation. Fixture repair preserves POST/redirect/opener checks and adds actual HTTPS native input and explicit fixture consent. Real Electron inspection also showed default-policy protocol popups omit the referrer; a secure scoped main-frame popup path is implemented rather than lending a top-origin grant to unknown frames. Final exact-source verification remains required after that change.
+
+The same candidate reached the **real WhatsApp QR login** in an isolated disposable profile across new tab, reload, and app restart/tab restore. Unsupported-screen false; Electron 43.7.7 / actual Chromium 150.0.7871.250, matching view/navigator engine identity, persistent browser partition, secure storage and activated service worker observed. QR pairing, authenticated reads, connection setup and canonical-profile delivery remain unverified. No existing session was reset. The visible diagnostic showed matching main, renderer, preload and core IDs and honestly marked the run as development, with installed identity unverified.
+
+A final-root live account-3 canary completed two scoped file reads and verified the derived answer in 19.758 seconds / three Astra High turns. Both observed and persisted run states were completed. The provider did not report complete token usage for interrupted tool-request turns; zero fields there do not establish zero resource use. This simple canary does not establish complex-task reliability.
+
+New #809 has an explicit hold; #786 now has complete changed-diff coverage and two confirmed findings. Review coverage for other large held PRs remains bounded as recorded. No protected merge, deployment-owner claim, canonical install or production Engineering agent occurred.
+
+The popup bridge keeps the native missing-referrer handler closed and uses isolated trusted main-frame input, matched native intent, exact sender/document/URL, a private nonce and acknowledged generation. It preserves the same main-process validators, consent, revocation and one-use limit. Foreign frames cannot borrow it. BFCache restoration rotates registration and requires new input/ack. Independent source review found no confirmed authority bypass; 160 focused tests and desktop typecheck passed. Built/packaged default-policy popup verification is still required. The existing experimental Electron `executeInMainWorld` API is used with a fail-closed fallback; same-document URL changes also fail closed until a new document loads.
+
+
+## Authoritative October 1 control checkpoint
+
+The clean candidate `1a331645d8cd9035cef742a43d2a8fa0aaebb02d` completed
+the full `corepack pnpm verify`: 232 unit-test files / 1,645 tests, the dedicated
+50,000-record encrypted-source benchmark (9 tests), audits, typechecking,
+builds, 50 website E2E tests, browser benchmark and all aggregate desktop,
+packaged CLI and security checks. The clean ad-hoc signed development package
+passed separate packaged smoke, auth-link, model-routing, account and restart
+checks. Its visible diagnostic matched main/preload/renderer/core identities,
+and honestly marked installation identity unverified. This evidence belongs
+to that prior commit, not the current control patch.
+
+Current controls fix persisted background pause, route/worktree/model/child
+cancellation, approval retirement, atomic cross-process claims and immediate
+terminal run authority. Job ownership has a 30-second lease renewed every
+5 seconds. Shutdown releases owned jobs as failed with uncertain outcome;
+late results cannot revive them. Interrupted work is never silently replayed.
+An independent source review found a shutdown drain gap when pause arrived
+during routing; completion now occurs on every finally path and the regression
+awaits drain. The current patch passed 46 focused tests, 233 unit-test files /
+1,659 tests and repository typechecking. Final exact-head aggregate, package
+and remote CI verification remain required before treating this patch as ready.
+
+A real bounded PR #809 review through the candidate used six Astra High turns
+and five verified tool reads/writes, completed in 77.635 seconds and persisted
+completed. This is a bounded repository canary, not a sustained production
+Engineering agent or a complex multi-app completion rate. Four authenticated
+profiles executed real dynamic tools, but profile comparison found only three
+distinct emails, including one email with separate Team/Plus profiles. The
+provider does not expose a billing/quotapool identity, so four independent
+capacity pools are unverified. No account preference or credential changed.
+
+PR #810 is open; its prior exact head passed CI and CodeQL, but protection
+requires one eligible independent approval after the latest push. Source
+integration, packaged inspection and an unmerged PR do not satisfy that gate.
+The canonical app remains the separately observed PID 6000 / installed asar
+`573dc322d10e50a719614a25612499b2e13e52c9419f8ad3eba8e0197210e304`,
+with source commit unverified. No canonical replacement, production profile
+reset, protected merge, deployment-owner claim or persistent supervisor was
+performed. Production Engineering agent ID: **none**; enabled: **false**.
+
+The real WhatsApp QR page and restart restoration were observed in a
+disposable candidate profile. Canonical connection setup, pairing and
+authenticated read remain pending; real Teams OS handoff also remains pending.
+Dots and Grok Bot are compared as the same persistent teammate promise.
+Private raw traces, provider/account evidence and screenshots remain outside
+Git. The mission is unfinished until the review, canonical delivery and
+production-agent acceptance boundaries are satisfied.
+
+
+## Exact control validation and remaining delivery gate
+
+Control commit `660d04295cb2e9a91af179e56b8d0644c67e99a6` completed
+the entire `corepack pnpm verify` with exit 0, including all 1,659 unit tests,
+full 50,000-record benchmark, website/browser and aggregate desktop/core/security
+checks. Generated fixture screenshots were preserved privately and restored
+before packaging. The clean package passed strict ad-hoc signing and packaged
+smoke. A separate packaged production-path check exercised the visible
+Background work control: pause survived application restart and a 30-second
+desktop scheduler cycle, resume completed the same job exactly once, and active
+cancellation closed the local fixture provider's HTTP request and terminalized
+the run while retaining the reusable agent. This is fixture-provider evidence.
+
+Three bounded real-provider scheduler trials have differing outcomes. Profile
+2 failed before any read; its contemporaneous quota probe reported the five-hour
+window 100% used. Profile 4's first trial verified both reads but failed before
+completion; its failure cause was not captured and is unresolved. A diagnostic
+trial on profile 4 completed and persisted the expected derived answer after
+restoring the paused job, with no dispatch while paused and no second dispatch.
+It used six actual Astra turns at provider-default effort, five verified reads
+(including repeated reads of alpha.txt), and 80.001 seconds. This is one
+successful simple scheduled task, not 9/10 reliability, automatic account
+failover, explicit High effort, production Engineering-agent activation or a
+complex multi-app result. User profiles and account preferences were unchanged.
+
+Remote Core/security and CodeQL passed at `660d0429`; desktop CI failed the
+model-picker 600-by-450 bounds assertion after native resize. Source inspection
+found positioning measured the opening animation's transformed dimensions and
+did not fully clamp the vertical position. The focused correction uses layout
+dimensions and viewport clamping; the check retains its exact bounds requirement
+and waits for resize/React/animation frames to settle. New exact-head validation
+and CI are required for that correction.
+
+The other eligible maintainer, `saiaathish`, was requested to review PR #810.
+GitHub still requires the independent latest-push approval. The mission owns
+that coordination; no protection was bypassed, app replaced, profile reset or
+production persistent agent enabled.
+
+## October 1 approval recovery correction
+
+The previous exact candidate `0dfb971023ef3593d471e504d0bfdc7850511cdf`
+passed the complete verify gate (1,659 unit tests), remote CI/CodeQL, clean
+ad-hoc development packaging, packaged smoke and visible pause/restart/resume/
+cancel and four-component provenance checks. It remains unmerged because the
+independent latest-push approval is pending. Those results belong to that head.
+
+Review of new #811 reproduced an existing failure in the generic approval
+resume path: a failed approved tool or expired private input throws before the
+run leaves `waiting_approval`, leaving a stale grant visible and encouraging
+repeated attempts. The correction terminalizes only the owning run, clears
+its pending identifiers, retires the grant, records the actual terminal tool
+result and prevents automatic replay. The owning session remains reusable;
+unrelated approvals and absorbing cancellation states are preserved. Pending
+grants must also match the run's provider-call idempotency key; a same-session,
+same-tool foreign grant fails closed. Consumed one-time grants no longer
+advertise approval as pending and retain their approved-once receipt.
+
+The existing desktop panel reloads authoritative run state after failed
+approval before showing recovery, and its outcome text has a polite status
+semantic. The existing interface and styling are preserved. A new production-
+path desktop test uses a missing configuration proposal, local HTTP provider
+and disposable profile. Keyboard approval produces visible failure, removes
+the stale approval, rejects another approval and completes a fresh task in the
+same session. The old built candidate failed the stale-button assertion; the
+rebuilt correction passes. It is included in aggregate verification and CI
+for source and packaged desktop. No real configuration or provider changes.
+
+The new state regressions failed before correction. Afterward 141 focused
+AgentLoop/runtime/orchestration/control tests and source desktop recovery pass.
+Independent focused source review found a grant ownership gap, which was
+corrected and re-reviewed. Final exact-head aggregate verification, clean
+package, packaged recovery and remote CI are required for this new correction.
+
+#811 remains held: two reproduced lifecycle defects, canceled desktop CI,
+failed CodeQL gate, absent approval and content conflicts with this mission.
+Its credential implementation was not ported; details are in the PR
+disposition record. The full refreshed set contains 24 other PRs plus #810.
+
+The canonical app changed outside this mission again. At the October 1
+20:55 America/Chicago check, its disk `app.asar` SHA was
+`be73cb1aeb4c84ec6c49a7d8ace4ba247f1b739b24ba0e21b13f5fb29d30f99a`,
+no provenance manifest was present, and PID 97770 was launched at 19:35:01.
+The previous PID 6000 had exited. This mission did not install or restart it,
+and source/component identity remains unverified. Competing installation
+ownership must still be resolved before canonical replacement; permission
+to message the other chat remains pending. Production Engineering agent ID
+is none, enabled false, with no current scope or task.
+
+
+## October 2 durable worktree recovery and fresh-main reconciliation
+
+Approval recovery was committed and pushed as `0cc9e2c3`. Its 1,665 unit tests,
+audits, typechecks, builds and early desktop checks passed, but aggregate verify
+stopped at blank New Tab tear-off. The failure did not recur after reconciling
+fresh main; causality is unconfirmed. Full browser smoke and the focused tab
+interaction smoke passed on combined source before the temporary files were
+lost. The loopback download quarantine assertion was skipped because macOS did
+not assign that metadata. Those private logs are no longer available.
+
+Main advanced outside this mission to `39c68f6f` through #805, #781 and #803.
+The reconciliation preserves scoped dynamic tools, manual effort, account
+identity and transport shutdown alongside provider usage snapshots and tab
+interactions. Independent provider review found wrong quota-window selection,
+legacy meter priority, reset hints on unrelated errors and silent manual
+cooldown failures. Corrections need fresh combined verification and packaging.
+
+Remote CodeQL passed for `0cc9e2c3`. No pull-request CI run was created while it
+conflicted with advanced main; GitHub does not run pull-request workflows with
+[merge conflicts](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows).
+The separate GitHub AI review failed because its monthly quota was exhausted.
+It did not produce a source verdict, and no paid service or retry was enabled.
+
+The temporary worktree, package and private evidence under `/private/tmp`
+disappeared outside this mission before the reconciliation was committed. The
+published source and surviving Git merge index were preserved. The same branch
+and staged merge were recovered into the durable worktree above without pruning
+other worktrees or changing the primary checkout. Lost unstaged corrections
+are being reconstructed from recorded diffs and will be verified again. New
+private evidence lives under `Documents/Codex/2026-10-02/kestrel-mission/evidence`.
+Historical validation does not prove the recovered candidate.
+
+There are 22 open PRs, including this mission. Required independent approval,
+canonical deployment ownership and all remaining live journey gates still apply.
+The mission has not merged or installed anything. Production Engineering agent
+ID remains none, enabled false, without a task or scope.
+
+
+## Later October 2 main advance and shortcut verification
+
+Main advanced again outside this mission to `3e932358` through #791, #806,
+#809 and #808. The source reconciliation retains all mission gates plus the
+new native-extension smoke. Confirmed people/provenance survive source sync;
+the already reconciled oversized tool-result guard remains equivalent to main.
+There are 18 open PRs including this mission; #811 remains open and held.
+
+All remote CI/CodeQL gates passed for `e552b939`, but local aggregate verification
+failed when the browser test sent keyUp to a native view already detached by
+Cmd+L. A bounded actual Electron test proved the intended transition: native
+page attached, address field focused with page detached after keyDown, then
+page restored after renderer keyUp and Escape. The smoke now asserts that
+transition and releases the key in the focused renderer. Product source did
+not require changing. A separate browser rerun stopped before that scenario
+at the existing sidebar-resize assertion, whose failure is recorded separately.
+Fresh exact combined verification remains required; no full local pass is claimed.

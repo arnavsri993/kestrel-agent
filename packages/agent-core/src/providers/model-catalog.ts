@@ -349,7 +349,9 @@ export class ModelCatalog {
 			// credential, or enablement changes. Reusing that account's old catalog
 			// would turn a previous endpoint's entitlement into a false fresh result.
 			const reusableEndpoint =
-				storedEndpoint?.configurationVersion === identity.configurationVersion
+				storedEndpoint?.configurationVersion === identity.configurationVersion &&
+				JSON.stringify(storedEndpoint?.capabilities) ===
+					JSON.stringify(identity.capabilities)
 					? storedEndpoint
 					: undefined;
 			// A fallback is only authoritative when the adapter has no supported

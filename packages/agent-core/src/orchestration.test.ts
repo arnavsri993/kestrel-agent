@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentLoop } from "./agent-loop";
+import { SandboxedCommandRunner } from "./command-runner";
 import { teacherOpportunity } from "./fixtures";
 import { AdaptiveModelRouter, ModelRegistry } from "./model-orchestration";
 import {
@@ -924,6 +925,260 @@ describe("task orchestration", () => {
 			await restarted.runDue(new Date(instant.getTime() + 60_000)),
 		).toEqual([]);
 		item.database.close();
+	});
+
+	it("defers a due job when pause arrives during its real routing probe", async () => {
+		let calls = 0;
+		const provider = { ...finalProvider(async () => { calls++; }), defaultModel: "local-model", probe: async () => undefined };
+		const item = fixture(provider);
+		provider.probe = async () => { item.database.setState("agent.pauseRequested", true); };
+		const job = item.orchestrator.schedule({ title: "Pause during routing", sessionId: item.parent.id, model: "auto", providerIds: ["auto"], prompt: "Summarize a note.", schedule: { kind: "once", nextRunAt: "2026-07-22T20:00:00.000Z" } });
+		try {
+			expect(await item.orchestrator.runDue()).toEqual([]);
+			expect(calls).toBe(0);
+			expect(item.runtime.listMessages(item.parent.id)).toEqual([]);
+			expect(item.orchestrator.listJobs()).toEqual([job]);
+			await item.orchestrator.drain();
+			item.database.setState("agent.pauseRequested", false);
+			provider.probe = async () => undefined;
+			expect(await item.orchestrator.runDue()).toMatchObject([{ id: job.id, status: "completed" }]);
+			expect(calls).toBe(1);
+		} finally { item.database.close(); }
+	});
+
+	it("cancels an automatic job while its provider health probe is still pending", async () => {
+		let started!: () => void;
+		const began = new Promise<void>(resolve => { started = resolve; });
+		let aborted = false;
+		let calls = 0;
+		const provider: ModelProvider = {
+			...finalProvider(async () => { calls++; }),
+			defaultModel: "local-model",
+			probe: async signal => {
+				started();
+				await new Promise<void>((_resolve, reject) => {
+					const abort = () => { aborted = true; reject(signal?.reason); };
+					if (signal?.aborted) abort();
+					else signal?.addEventListener("abort", abort, { once: true });
+				});
+			},
+		};
+		const item = fixture(provider);
+		const job = item.orchestrator.schedule({ title: "Pending routing probe", sessionId: item.parent.id, model: "auto", providerIds: ["auto"], prompt: "Summarize a note.", schedule: { kind: "once", nextRunAt: "2026-07-22T20:00:00.000Z" } });
+		try {
+			const running = item.orchestrator.runDue();
+			await began;
+			item.orchestrator.cancelJob(job.id);
+			expect(await running).toMatchObject([{ id: job.id, status: "cancelled" }]);
+			expect(aborted).toBe(true);
+			expect(calls).toBe(0);
+			expect(item.database.listAgentRuns(item.parent.id)).toEqual([]);
+		} finally { item.database.close(); }
+	});
+
+	it("propagates parent cancellation into isolated worktree setup before any child model run", async () => {
+		let started!: () => void;
+		const began = new Promise<void>(resolve => { started = resolve; });
+		let aborted = false;
+		let calls = 0;
+		const item = fixture(finalProvider(async () => { calls++; }));
+		execFileSync("git", ["init", "--quiet"], { cwd: item.root });
+		const original = SandboxedCommandRunner.prototype.run;
+		const command = vi.spyOn(SandboxedCommandRunner.prototype, "run").mockImplementation(async function (this: SandboxedCommandRunner, input, options) {
+			if (input.command !== "git" || input.args[0] !== "worktree") return original.call(this, input, options);
+				started();
+				await new Promise<void>((_resolve, reject) => {
+					const abort = () => { aborted = true; reject(options?.signal?.reason); };
+					if (options?.signal?.aborted) abort();
+					else options?.signal?.addEventListener("abort", abort, { once: true });
+				});
+				throw new Error("Worktree setup should be interrupted.");
+		});
+		item.runtime.allowTool(item.parent.id, "git.worktree-create");
+		const controller = new AbortController();
+		try {
+			const running = item.orchestrator.delegate({ parentSessionId: item.parent.id, title: "Isolated child", prompt: "Inspect a repository.", model: "fake", providerIds: ["fake"], isolateWorktree: true, signal: controller.signal });
+			const rejected = expect(running).rejects.toThrow();
+			await began;
+			controller.abort(new Error("Stop isolated child setup."));
+			await rejected;
+			expect(aborted).toBe(true);
+			expect(calls).toBe(0);
+			expect(item.runtime.listSessions().filter(session => session.parentSessionId === item.parent.id)).toEqual([]);
+		} finally { command.mockRestore(); item.database.close(); }
+	});
+
+	it("stops a running interval job without reviving it after an abort-ignoring provider finishes", async () => {
+		let started!: () => void;
+		let release!: () => void;
+		const began = new Promise<void>(resolve => { started = resolve; });
+		const gate = new Promise<void>(resolve => { release = resolve; });
+		let calls = 0;
+		const item = fixture(finalProvider(async () => { calls++; started(); await gate; }));
+		const job = item.orchestrator.schedule({ title: "Stop recurring work", sessionId: item.parent.id, model: "fake", providerIds: ["fake"], prompt: "Wait.", schedule: { kind: "interval", nextRunAt: "2026-07-22T20:00:00.000Z", intervalMs: 60_000 } });
+		try {
+			const running = item.orchestrator.runDue();
+			await began;
+			expect(await item.orchestrator.runDue()).toEqual([]);
+			expect(item.orchestrator.cancelJob(job.id).status).toBe("cancelled");
+			release();
+			expect(await running).toMatchObject([{ id: job.id, status: "cancelled" }]);
+			expect(item.orchestrator.listJobs()).toMatchObject([{ id: job.id, status: "cancelled" }]);
+			expect(await item.orchestrator.runDue(new Date("2026-07-22T20:02:00.000Z"))).toEqual([]);
+			expect(calls).toBe(1);
+			expect(item.database.listAgentRuns(item.parent.id)).toMatchObject([{ status: "cancelled" }]);
+			expect(item.orchestrator.listJobs()[0]?.lastRunId).toBe(item.database.listAgentRuns(item.parent.id)[0]?.id);
+			expect(item.runtime.listMessages(item.parent.id).filter(message => message.role === "assistant")).toEqual([]);
+			expect(item.runtime.getSession(item.parent.id).status).not.toBe("cancelled");
+		} finally { release(); item.database.close(); }
+	});
+
+	it("revalidates pending jobs after an earlier job awaits so a cancelled sibling never starts", async () => {
+		let started!: () => void;
+		let release!: () => void;
+		const began = new Promise<void>(resolve => { started = resolve; });
+		const gate = new Promise<void>(resolve => { release = resolve; });
+		let calls = 0;
+		const item = fixture(finalProvider(async () => { calls++; started(); await gate; }));
+		const schedule = (title: string) => item.orchestrator.schedule({ title, sessionId: item.parent.id, model: "fake", providerIds: ["fake"], prompt: title, schedule: { kind: "once", nextRunAt: "2026-07-22T20:00:00.000Z" } });
+		const first = schedule("First");
+		const second = schedule("Second");
+		try {
+			const running = item.orchestrator.runDue();
+			await began;
+			item.orchestrator.cancelJob(second.id);
+			release();
+			expect(await running).toMatchObject([{ id: first.id, status: "completed" }]);
+			expect(calls).toBe(1);
+			expect(item.orchestrator.listJobs().find(job => job.id === second.id)?.status).toBe("cancelled");
+		} finally { release(); item.database.close(); }
+	});
+
+	it("propagates a scheduled stop into a real delegated child provider while preserving the agent", async () => {
+		let childStarted!: () => void;
+		const began = new Promise<void>(resolve => { childStarted = resolve; });
+		let calls = 0;
+		let childAborted = false;
+		const provider: ModelProvider = {
+			...finalProvider(),
+			complete: async (request, options) => {
+				calls++;
+				if (calls === 1) return { providerId: "fake", model: request.model, text: "", toolCalls: [{ id: "child-call", name: "orchestration.delegate", arguments: { title: "Bounded child", prompt: "Wait for cancellation.", model: "fake", providerIds: ["fake"], allowedTools: [] } }], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "tool_calls" };
+				childStarted();
+				await new Promise<void>((_resolve, reject) => {
+					const signal = options?.signal;
+					const abort = () => { childAborted = true; reject(signal?.reason); };
+					if (signal?.aborted) abort();
+					else signal?.addEventListener("abort", abort, { once: true });
+				});
+				throw new Error("Child should be interrupted.");
+			},
+		};
+		const item = fixture(provider);
+		installOrchestrationTools(item.runtime, item.orchestrator, item.parent.id);
+		const job = item.orchestrator.schedule({ title: "Parent with child", sessionId: item.parent.id, model: "fake", providerIds: ["fake"], prompt: "Delegate one bounded child.", schedule: { kind: "once", nextRunAt: "2026-07-22T20:00:00.000Z" } });
+		try {
+			const running = item.orchestrator.runDue();
+			await began;
+			item.orchestrator.cancelJob(job.id);
+			expect(await running).toMatchObject([{ id: job.id, status: "cancelled" }]);
+			expect(childAborted).toBe(true);
+			expect(calls).toBe(2);
+			const child = item.runtime.listSessions().find(session => session.parentSessionId === item.parent.id)!;
+			expect(item.database.listAgentRuns(child.id)).toMatchObject([{ status: "cancelled" }]);
+			expect(item.runtime.getSession(item.parent.id).status).not.toBe("cancelled");
+		} finally { item.database.close(); }
+	});
+
+	it("makes cancellation discard a waiting scheduled approval and prevents later mutation", async () => {
+		const provider: ModelProvider = { ...finalProvider(), complete: async request => ({ providerId: "fake", model: request.model, text: "", toolCalls: [{ id: "delete-call", name: "workspace.delete", arguments: { path: "keep.txt" } }], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "tool_calls" }) };
+		const item = fixture(provider);
+		writeFileSync(join(item.root, "keep.txt"), "Must survive cancellation.");
+		const job = item.orchestrator.schedule({ title: "Waiting write", sessionId: item.parent.id, model: "fake", providerIds: ["fake"], prompt: "Delete keep.txt", schedule: { kind: "once", nextRunAt: "2026-07-22T20:00:00.000Z" } });
+		try {
+			const [waiting] = await item.orchestrator.runDue();
+			expect(waiting?.status).toBe("waiting_approval");
+			item.database.setState("agent.pauseRequested", true);
+			await expect(item.orchestrator.resumeJob(job.id)).rejects.toThrow("paused");
+			item.orchestrator.cancelJob(job.id);
+			item.database.setState("agent.pauseRequested", false);
+			await expect(item.orchestrator.resumeJob(job.id)).rejects.toThrow("not waiting for approval");
+			const run = item.database.getAgentRun(waiting!.lastRunId!)!;
+			expect(run.status).toBe("cancelled");
+			expect(item.database.getToolExecution(run.pendingToolExecutionId!)).toMatchObject({ status: "cancelled", output: { approvalRequired: false } });
+			expect(item.database.getActionReceiptForExecution(run.pendingToolExecutionId!)?.approval.result).toBe("denied");
+			expect(existsSync(join(item.root, "keep.txt"))).toBe(true);
+		} finally { item.database.close(); }
+	});
+
+	it("prevents provider startup when a peer cancels between run persistence and job binding", async () => {
+		let calls = 0;
+		const item = fixture(finalProvider(async () => { calls++; }));
+		const peer = new TaskOrchestrator(item.database, item.runtime, item.loop);
+		const job = item.orchestrator.schedule({ sessionId: item.parent.id, title: "Startup race", prompt: "Never start.", model: "fake", providerIds: ["fake"], schedule: { kind: "once", nextRunAt: "2026-01-01T00:00:00.000Z" } });
+		const save = item.database.saveAgentRun.bind(item.database);
+		const spy = vi.spyOn(item.database, "saveAgentRun").mockImplementation(run => { save(run); peer.cancelJob(job.id); });
+		try {
+			expect(await item.orchestrator.runDue()).toMatchObject([{ id: job.id, status: "cancelled", lastRunId: expect.any(String) }]);
+			expect(calls).toBe(0);
+			expect(item.database.listAgentRuns(item.parent.id)).toMatchObject([{ status: "cancelled" }]);
+			expect(item.runtime.listMessages(item.parent.id)).toEqual([]);
+		} finally { spy.mockRestore(); item.database.close(); }
+	});
+
+	it("honors durable peer cancellation before a fast provider result can execute tools", async () => {
+		let cancel!: () => void;
+		const provider: ModelProvider = { ...finalProvider(), complete: async request => {
+			cancel();
+			return { providerId: "fake", model: request.model, text: "", toolCalls: [{ id: "delete-after-stop", name: "workspace.delete", arguments: { path: "keep.txt" } }], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "tool_calls" };
+		} };
+		const item = fixture(provider);
+		const peer = new TaskOrchestrator(item.database, item.runtime, item.loop);
+		writeFileSync(join(item.root, "keep.txt"), "Preserve this file.");
+		const job = item.orchestrator.schedule({ sessionId: item.parent.id, title: "Fast cancellation", prompt: "Stop before a tool.", model: "fake", providerIds: ["fake"], schedule: { kind: "once", nextRunAt: "2026-01-01T00:00:00.000Z" } });
+		cancel = () => { peer.cancelJob(job.id); };
+		try {
+			expect(await item.orchestrator.runDue()).toMatchObject([{ id: job.id, status: "cancelled" }]);
+			const run = item.database.listAgentRuns(item.parent.id)[0]!;
+			expect(run.status).toBe("cancelled");
+			expect(item.runtime.listMessages(item.parent.id).filter(message => message.role === "assistant")).toEqual([]);
+			await expect(item.runtime.callTool(item.parent.id, "workspace.read", { path: "keep.txt" }, { runId: run.id })).rejects.toThrow("no longer active");
+			expect(existsSync(join(item.root, "keep.txt"))).toBe(true);
+		} finally { item.database.close(); }
+	});
+
+	it("retires an expired owner even if its PID is still live and never replays the job", async () => {
+		let calls = 0;
+		const item = fixture(finalProvider(async () => { calls++; }));
+		const job = item.orchestrator.schedule({ sessionId: item.parent.id, title: "Expired lease", prompt: "Do not replay.", model: "fake", providerIds: ["fake"], schedule: { kind: "once", nextRunAt: "2026-01-01T00:00:00.000Z" } });
+		item.database.setPrivateState("orchestrator.scheduled-jobs", [{ ...job, status: "running", owner: { pid: process.pid, instanceId: "orphan", heartbeatAt: Date.now() - 31_000 } }]);
+		try {
+			expect(await item.orchestrator.runDue()).toEqual([]);
+			expect(item.orchestrator.listJobs()).toMatchObject([{ id: job.id, status: "failed", error: expect.stringContaining("uncertain") }]);
+			expect(await item.orchestrator.runDue()).toEqual([]);
+			expect(calls).toBe(0);
+		} finally { item.database.close(); }
+	});
+
+	it("releases owned work on shutdown and rejects a late interval result", async () => {
+		let release!: () => void;
+		let started!: () => void;
+		const began = new Promise<void>(resolve => { started = resolve; });
+		const held = new Promise<void>(resolve => { release = resolve; });
+		const item = fixture(finalProvider(async () => { started(); await held; }));
+		const job = item.orchestrator.schedule({ sessionId: item.parent.id, title: "Shutdown", prompt: "Wait.", model: "fake", providerIds: ["fake"], schedule: { kind: "interval", intervalMs: 60_000, nextRunAt: "2026-01-01T00:00:00.000Z" } });
+		try {
+			const running = item.orchestrator.runDue();
+			await began;
+			item.orchestrator.shutdown();
+			const replacement = new TaskOrchestrator(item.database, item.runtime, item.loop);
+			expect(await replacement.runDue()).toEqual([]);
+			release();
+			expect(await running).toMatchObject([{ id: job.id, status: "failed", error: expect.stringContaining("uncertain") }]);
+			await item.orchestrator.drain();
+			expect(item.database.listAgentRuns(item.parent.id)).toMatchObject([{ status: "failed" }]);
+			expect(item.runtime.listMessages(item.parent.id).filter(message => message.role === "assistant")).toEqual([]);
+		} finally { release(); item.database.close(); }
 	});
 
 	it("propagates automation cancellation and leaves interrupted jobs failed instead of retryable", async () => {
