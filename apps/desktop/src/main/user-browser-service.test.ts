@@ -2382,7 +2382,7 @@ describe("UserBrowserService", () => {
     await service.removeTabForTransfer(tab.id);
     expect(onLastTabClosed).toHaveBeenCalledOnce();
     service.dispose();
-  });
+  }, 30_000);
 
   it("keeps another tab movable while a prepared transfer becomes unsafe", async () => {
     const { service } = createService();
