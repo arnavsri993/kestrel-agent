@@ -114,7 +114,12 @@ try {
     await run(`window.open(${JSON.stringify(url)}, '_blank')`);
     await until(() => app.evaluate(() => globalThis.authFixtureExternalLinks.length > 0), 'App popup handoff failed');
     assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [expectedUrl]);
-    await run(`(() => { const link = document.createElement('a'); link.href = ${JSON.stringify(url)}; document.body.append(link); link.click(); link.remove(); })()`);
+    const fixturePage = app.context().pages().find(candidate => candidate.url() === `${origin}/one`);
+    assert(fixturePage, 'Fixture page missing for app link click');
+    await fixturePage.evaluate(urlValue => {
+      const link = document.createElement('a'); link.href = urlValue;
+      document.body.append(link); link.click(); link.remove();
+    }, url);
     await until(() => app.evaluate(() => globalThis.authFixtureExternalLinks.length > 0), 'App link click handoff failed');
     assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [expectedUrl]);
     await run(`(() => { const frame = document.createElement('iframe'); frame.src = ${JSON.stringify(url)}; document.body.append(frame); })()`);
