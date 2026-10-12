@@ -3347,8 +3347,11 @@ try {
 			.getAttribute("aria-orientation"),
 		"vertical",
 	);
-	assert.equal(state.downloads.at(-1)?.status, "completed");
-	assert.equal(state.downloads.at(-1)?.canReveal, false);
+	state = await waitForBrowserState(
+		(value) => value.downloads.some(item => item.id === download.id && item.status === "completed" && item.canReveal),
+		"Saved download did not regain its file actions after restart",
+	);
+	assert.equal(existsSync(downloadPath), true);
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Restored tab did not reload",
