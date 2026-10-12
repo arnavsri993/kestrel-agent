@@ -23,25 +23,25 @@
     </main>
     <script>
       const status = document.getElementById("bridge-status");
-      window.kestrel
+      window.__kestrelHostTransport
         .request({ type: "native-host-status" })
         .then(async (result) => {
           if (!result.ok) throw new Error("The native bridge rejected its status check.");
-          const snapshot = await window.kestrel.request({ type: "snapshot" });
+          const snapshot = await window.__kestrelHostTransport.request({ type: "snapshot" });
           if (!snapshot.ok || !snapshot.snapshot)
             throw new Error("The native Core relay rejected its snapshot.");
           const nativeBrowserSmoke = new URLSearchParams(location.search).get(
             "native-browser-smoke",
           );
           if (nativeBrowserSmoke) {
-            const browser = await window.kestrel.request({
+            const browser = await window.__kestrelHostTransport.request({
               type: "browser-create-tab",
               input: nativeBrowserSmoke,
               active: true,
             });
             if (!browser.ok || !("browserState" in browser))
               throw new Error("The native browser bridge rejected its smoke tab.");
-            const visible = await window.kestrel.request({
+            const visible = await window.__kestrelHostTransport.request({
               type: "browser-set-content-bounds",
               bounds: { x: 0, y: 0, width: 1180, height: 780 },
               visible: true,
