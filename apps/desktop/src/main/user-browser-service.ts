@@ -6766,7 +6766,11 @@ export class UserBrowserService {
 			(filename === download.filename
 				? join(this.downloadDirectory, filename)
 				: undefined);
-		if (!path || !existsSync(path)) return undefined;
+		if (!path || !existsSync(path)) {
+			download.canReveal = false;
+			this.commit();
+			return undefined;
+		}
 		return { download, path };
 	}
 
