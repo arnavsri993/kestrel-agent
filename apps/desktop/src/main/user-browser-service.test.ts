@@ -195,7 +195,7 @@ const electron = vi.hoisted(() => {
 });
 
 vi.mock("electron", () => ({
-  app: { getAppMetrics: () => [], getName: () => "Kestrel" },
+  app: { getAppMetrics: () => [], getName: () => "Kestrel", getApplicationNameForProtocol: vi.fn(() => "Microsoft Teams") },
   webContents: { getAllWebContents: () => [] },
   BrowserWindow: class {},
   WebContentsView: electron.MockView,
@@ -223,7 +223,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { nativeImage } from "electron";
+import { app, nativeImage } from "electron";
 import { dialog } from "electron";
 import { shell } from "electron";
 import { BrowserTabStore } from "./browser-tab-store";
@@ -233,6 +233,7 @@ import {
   safeAppStoreUrl,
   safeZoomJoinUrl,
   safeTeamsUrl,
+  safeTeamsMeetingAppUrl,
   safeCursorAuthUrl,
   UserBrowserService,
 } from "./user-browser-service";
@@ -2481,6 +2482,11 @@ describe("UserBrowserService", () => {
       "msteams://teams.microsoft.com/l/meetup-join/19%3afixture/0?context=example",
       "msteams://teams.microsoft.com/l/team/19%3afixture/conversations?groupId=example",
       "msteams://teams.live.com/l/channel/fixture/general",
+      "msteams:/l/meetup-join/19%3afixture/0?context=example",
+      "msteams://teams.cloud.microsoft/l/chat/fixture/conversations",
+      "msteams://teams.microsoft.com/meet/12345678901234?p=synthetic&anon=true&launchAgent=join_launcher",
+      "msteams:/meet/12345678901234?p=synthetic%2Bvalue",
+      "msteams://teams.cloud.microsoft/meet/12345678901234/?p=synthetic",
     ]) {
       expect(safeTeamsUrl(url)).toBe(url);
       const event = {preventDefault: vi.fn()};
@@ -2492,9 +2498,99 @@ describe("UserBrowserService", () => {
     for (const url of [
       "msteams://evil.example/l/team/fixture", "msteams://teams.microsoft.com.evil.example/l/team/fixture",
       "msteams://user@teams.microsoft.com/l/team/fixture", "msteams://teams.microsoft.com:8000/l/team/fixture",
-      "msteams://teams.microsoft.com/l/call/fixture", "file:///tmp/test", "msteams://teams.microsoft.com/l/team/",
+      "msteams://teams.microsoft.com/l/call/fixture", "msteams:/l/team/fixture#fragment",
+      "msteams:https://teams.microsoft.com/l/team/fixture", "msteams:/l/team/fixture\\command", "file:///tmp/test", "msteams://teams.microsoft.com/l/team/",
+      "msteams://evil.example/meet/12345678901234?p=synthetic",
+      "msteams://teams.microsoft.com.evil.example/meet/12345678901234",
+      "msteams://user@teams.microsoft.com/meet/12345678901234",
+      "msteams://teams.microsoft.com:8000/meet/12345678901234",
+      "msteams:/meet/", "msteams:/meet/not-a-meeting", "msteams:/meet/123/command",
+      "msteams:/meet/123#fragment", "msteams:/meet/123\\command", "msteams:/meet/123?x=bad\nvalue",
     ]) expect(safeTeamsUrl(url)).toBeUndefined();
   });
+
+	it("converts only current numeric Teams HTTPS meeting invitations", () => {
+		for (const [value, expected] of [
+			["https://teams.microsoft.com/meet/12345678901234?p=synthetic%2Bvalue&anon=true", "msteams://teams.microsoft.com/meet/12345678901234?p=synthetic%2Bvalue&anon=true"],
+			["https://teams.cloud.microsoft/meet/12345678901234/?p=synthetic", "msteams://teams.cloud.microsoft/meet/12345678901234/?p=synthetic"],
+			["https://teams.live.com/meet/12345678901234?p=synthetic", "msteams://teams.live.com/meet/12345678901234?p=synthetic"],
+		] as const) expect(safeTeamsMeetingAppUrl(value)).toBe(expected);
+		for (const value of [
+			"http://teams.microsoft.com/meet/123", "https://evil.example/meet/123",
+			"https://teams.microsoft.com.evil.example/meet/123", "https://user@teams.microsoft.com/meet/123",
+			"https://teams.microsoft.com:8000/meet/123", "https://teams.microsoft.com/meet/not-a-meeting",
+			"https://teams.microsoft.com/meet/123/command", "https://teams.microsoft.com/meet/123#fragment",
+			"https://teams.microsoft.com/v2", "https://teams.microsoft.com/l/team/fixture",
+		]) expect(safeTeamsMeetingAppUrl(value)).toBeUndefined();
+	});
+
+	it("requires consent before opening a modern Teams HTTPS invitation and preserves its query", async () => {
+		vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
+		const { service } = createService();
+		await service.navigate(service.getState().tabs[0]!.id, "https://canvas.example/course");
+		const source = electron.state.views[0]!.webContents;
+		const value = "https://teams.microsoft.com/meet/12345678901234?p=private-synthetic%2Bvalue&anon=true";
+		const nativeValue = "msteams://teams.microsoft.com/meet/12345678901234?p=private-synthetic%2Bvalue&anon=true";
+		const automatic = { preventDefault: vi.fn() };
+		source.emit("did-start-navigation", {}, value, false, true);
+		source.emit("will-navigate", automatic, value);
+		expect(automatic.preventDefault).toHaveBeenCalledOnce();
+		expect(dialog.showMessageBox).not.toHaveBeenCalled();
+		expect(shell.openExternal).not.toHaveBeenCalled();
+		const documentId = "12345678-1234-1234-1234-123456789abc";
+		const base = { documentId, documentUrl: source.getURL() };
+		const ipc = (message: object) => source.emit("ipc-message", { senderFrame: source.mainFrame },
+			"kestrel:user-browser-external-app", { ...base, ...message });
+		ipc({ type: "ready" });
+		const acknowledgement = source.send.mock.calls.find(call =>
+			call[0] === "kestrel:user-browser-external-app-ready")![1] as { generation: number };
+		const requested = { preventDefault: vi.fn() };
+		source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+		source.emit("did-start-navigation", {}, value, false, true);
+		const frameEvent = { preventDefault: vi.fn(), url: value, initiator: source.mainFrame };
+		source.emit("will-frame-navigate", frameEvent);
+		source.emit("will-navigate", requested, value);
+		expect(frameEvent.preventDefault).toHaveBeenCalledOnce();
+		expect(requested.preventDefault).toHaveBeenCalledOnce();
+		await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith(nativeValue));
+		expect(dialog.showMessageBox).toHaveBeenCalledOnce();
+		expect(JSON.stringify(vi.mocked(dialog.showMessageBox).mock.calls)).not.toContain("private-synthetic");
+		source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+		ipc({ type: "capture", generation: acknowledgement.generation, kind: "mouse" });
+		ipc({ type: "request", generation: acknowledgement.generation, url: nativeValue });
+		await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(2));
+		expect(dialog.showMessageBox).toHaveBeenCalledTimes(2);
+		source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+		source.emit("did-start-navigation", {}, value, false, true);
+		source.emit("will-navigate", { preventDefault: vi.fn() }, value);
+		await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledTimes(3));
+		expect(dialog.showMessageBox).toHaveBeenCalledTimes(3);
+		source.emit("before-mouse-event", {}, { type: "mouseDown", button: "left" });
+		source.emit("did-start-navigation", {}, "https://other.example/page", false, true);
+		source.emit("will-navigate", { preventDefault: vi.fn() }, value);
+		await new Promise(resolve => setTimeout(resolve, 0));
+		expect(shell.openExternal).toHaveBeenCalledTimes(3);
+		expect(dialog.showMessageBox).toHaveBeenCalledTimes(3);
+	});
+
+	it("keeps modern Teams HTTPS invitations in the browser without a registered app", async () => {
+		vi.mocked(app.getApplicationNameForProtocol).mockReturnValue("");
+		try {
+			const { service } = createService();
+			await service.navigate(service.getState().tabs[0]!.id, "https://canvas.example/course");
+			const source = electron.state.views[0]!.webContents;
+			const value = "https://teams.microsoft.com/meet/12345678901234?p=synthetic";
+			const event = { preventDefault: vi.fn() };
+			source.emit("did-start-navigation", {}, value, false, true);
+			source.emit("will-navigate", event, value);
+			expect(event.preventDefault).not.toHaveBeenCalled();
+			expect(source.windowOpenHandler?.({ url: value, disposition: "new-window" }).action).toBe("allow");
+			expect(dialog.showMessageBox).not.toHaveBeenCalled();
+			expect(shell.openExternal).not.toHaveBeenCalled();
+		} finally {
+			vi.mocked(app.getApplicationNameForProtocol).mockReturnValue("Microsoft Teams");
+		}
+	});
 
   it("sets the embedded Chromium identity on the persistent session and each page before navigation", async () => {
     for (const connectionMode of [undefined, "whatsapp"] as const) {

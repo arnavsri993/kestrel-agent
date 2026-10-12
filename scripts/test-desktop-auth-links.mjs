@@ -119,9 +119,13 @@ try {
     assert.equal(requests.find(r => r.path === '/callback').body, 'fixture=synthetic');
   }
   await navigate();
-  await app.evaluate(({shell, dialog}, origin) => {
+  await app.evaluate(({app, shell, dialog}, origin) => {
     globalThis.authFixtureExternalLinks = [];
     globalThis.authFixtureConsent = [];
+    const originalProtocolApplication = app.getApplicationNameForProtocol.bind(app);
+    app.getApplicationNameForProtocol = protocol => protocol === 'msteams://'
+      ? 'Microsoft Teams'
+      : originalProtocolApplication(protocol);
     shell.openExternal = async url => { globalThis.authFixtureExternalLinks.push(url); };
     const original = dialog.showMessageBox.bind(dialog);
     dialog.showMessageBox = async (...args) => {
@@ -165,28 +169,47 @@ try {
     'zoomus://zoom.us/join?confno=1234567890&action=join',
     'msteams://teams.microsoft.com/l/meetup-join/19%3afixture/0',
     'itms-appss://apps.apple.com/app/id113517709?mt=12',
+    'msteams:/l/meetup-join/19%3afixture/0',
+    'msteams://teams.cloud.microsoft/l/chat/fixture/conversations',
+    'msteams://teams.microsoft.com/meet/12345678901234?p=synthetic%2Bvalue&anon=true',
+    'msteams:/meet/12345678901234?p=synthetic%2Bvalue',
+    'https://teams.microsoft.com/meet/12345678901234?p=synthetic%2Bvalue&anon=true',
+    'cursor://cursorAuth?code=synthetic%2Bvalue&state=fixture',
+    'cursor://anysphere.cursor-mcp/oauth/callback?code=fixture&state=fixture',
   ]) {
+    const externalUrl = url.startsWith('https://teams.microsoft.com/meet/')
+      ? url.replace('https:', 'msteams:')
+      : url;
     await navigate();
     await run(`window.fixtureAppUrl = ${JSON.stringify(url)}; window.fixtureMode = 'popup';
       const policy = document.createElement('meta'); policy.name = 'referrer';
       policy.content = 'strict-origin-when-cross-origin'; document.head.append(policy);`);
-    await assertDenied(() => run(`document.querySelector('#handoff').click()`), 'Default-policy popup without native input must be denied');
+    await assertDenied(() => run(`document.querySelector('#handoff').click()`), `Default-policy popup without native input must be denied for ${url}`);
     const defaultBefore = await counts();
     await nativeClick(`${origin}/one`);
-    await until(async () => (await counts()).links === defaultBefore.links + 1, 'Native default-policy main-frame popup handoff failed');
-    assert.equal(await run('window.fixtureTrustedClick'), true, 'Default-policy handoff must receive a trusted native click');
-    assert.equal((await counts()).prompts, defaultBefore.prompts + 1, 'Default-policy handoff requires explicit fixture consent');
-    assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [url]);
+    await until(async () => (await counts()).links === defaultBefore.links + 1, `Native default-policy main-frame popup handoff failed for ${url}`);
+    assert.equal(await run('window.fixtureTrustedClick'), true, `Default-policy handoff must receive a trusted native click for ${url}`);
+    assert.equal((await counts()).prompts, defaultBefore.prompts + 1, `Default-policy handoff requires explicit fixture consent for ${url}`);
+    assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [externalUrl]);
     for (const mode of ['popup', 'top']) {
       await navigate();
       await run(`window.fixtureAppUrl = ${JSON.stringify(url)}; window.fixtureMode = ${JSON.stringify(mode)};`);
       await assertDenied(() => run(`document.querySelector('#handoff').click()`), `${mode} app handoff without native input must be denied`);
       const before = await counts();
       await nativeClick(`${origin}/one`);
-      await until(async () => (await counts()).links === before.links + 1, `Native ${mode} app handoff failed`);
-      assert.equal(await run('window.fixtureTrustedClick'), true, 'Fixture must receive a trusted native click');
-      assert.equal((await counts()).prompts, before.prompts + 1, 'Every handoff requires explicit fixture consent');
-      assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [url]);
+      try {
+        await until(async () => (await counts()).links === before.links + 1, `Native ${mode} app handoff failed for ${url}`);
+      } catch (error) {
+        const current = await state();
+        console.error('Disposable app handoff diagnostic:', JSON.stringify({
+          url, externalUrl, mode, before, after: await counts(),
+          tabs: current.tabs.map(({id, url: tabUrl, title, loading}) => ({id, url: tabUrl, title, loading})),
+        }));
+        throw error;
+      }
+      assert.equal(await run('window.fixtureTrustedClick'), true, `Fixture must receive a trusted native click for ${url}`);
+      assert.equal((await counts()).prompts, before.prompts + 1, `Every handoff requires explicit fixture consent for ${url}`);
+      assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [externalUrl]);
     }
     for (const frameOrigin of [origin, foreignOrigin]) {
       await navigate();
@@ -204,8 +227,8 @@ try {
       await frameRun(`window.fixtureAppUrl = ${JSON.stringify(url)}; window.fixtureMode = 'popup';
         const policy = document.createElement('meta'); policy.name = 'referrer';
         policy.content = 'strict-origin-when-cross-origin'; document.head.append(policy);`);
-      await assertDenied(() => nativeClick(`${origin}/one`, frameUrl), 'Default-policy iframe popup must not borrow the main-frame bridge');
-      assert.equal(await frameRun('window.fixtureTrustedClick'), true, 'Default-policy iframe denial must exercise native input');
+      await assertDenied(() => nativeClick(`${origin}/one`, frameUrl), `Default-policy iframe popup must not borrow the main-frame bridge for ${url}`);
+      assert.equal(await frameRun('window.fixtureTrustedClick'), true, `Default-policy iframe denial must exercise native input for ${url}`);
       await frameRun(`document.querySelector('meta[name="referrer"]').content = 'unsafe-url';`);
       for (const mode of ['popup', 'top']) {
         await frameRun(`window.fixtureAppUrl = ${JSON.stringify(url)}; window.fixtureMode = ${JSON.stringify(mode)}; window.fixtureTrustedClick = false;`);
@@ -214,15 +237,15 @@ try {
         } else {
           const before = await counts();
           await nativeClick(`${origin}/one`, frameUrl);
-          await until(async () => (await counts()).links === before.links + 1, `Same-origin iframe ${mode} app handoff failed`);
-          assert.equal((await counts()).prompts, before.prompts + 1, 'Iframe handoff requires explicit fixture consent');
-          assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [url]);
+          await until(async () => (await counts()).links === before.links + 1, `Same-origin iframe ${mode} app handoff failed for ${url}`);
+          assert.equal((await counts()).prompts, before.prompts + 1, `Iframe handoff requires explicit fixture consent for ${url}`);
+          assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [externalUrl]);
         }
-        assert.equal(await frameRun('window.fixtureTrustedClick'), true, 'Iframe must receive a trusted native click');
+        assert.equal(await frameRun('window.fixtureTrustedClick'), true, `Iframe must receive a trusted native click for ${url}`);
       }
     }
   }
-  console.log('Auth links passed: same-tab POST, 307/308 POST redirects, blank popup navigation, opener callback, popup close, target/named popup POST, and consented native Zoom/Teams/App Store popup/top-frame/same-origin iframe handoffs including default-policy main-frame popups, with no-click, default-policy iframe, and foreign-frame denial.');
+  console.log('Auth links passed: same-tab POST, 307/308 POST redirects, blank popup navigation, opener callback, popup close, target/named popup POST, and consented native Zoom/Teams/App Store popup/top-frame/same-origin iframe handoffs, including current HTTPS Teams meeting links and default-policy main-frame popups, with no-click, default-policy iframe, and foreign-frame denial.');
 } finally {
   await app?.close(); server.closeAllConnections(); await new Promise(r => server.close(r));
   rmSync(root, {recursive:true,force:true});

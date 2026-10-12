@@ -443,6 +443,7 @@ interface ViewRecord {
 	externalGesture?: { url: string; at: number; kind?: string; generation?: number };
 	externalBridgeDocument?: { id: string; url: string; generation: number };
 	externalMainFrameCapture?: { gesture: NonNullable<ViewRecord["externalGesture"]>; documentId: string };
+	externalMeetingNavigation?: { sourceUrl: string; targetUrl: string; appUrl: string };
 	externalRedirectGesture?: { url: string; at: number; generation: number };
 	externalPromptPending?: boolean;
 	externalDocumentGeneration?: number;
@@ -686,17 +687,40 @@ export function safeZoomJoinUrl(value: string): string | undefined {
 	}
 }
 
-/** Teams launchers also use hostless msteams:/l/... links. */
+/** Teams launchers use both /l/... deep links and /meet/<meeting ID> links. */
 export function safeTeamsUrl(value: string): string | undefined {
 	if (!value || value.length > 8_192 || /[\\\u0000-\u0020\u007f]/.test(value)) return undefined;
 	try {
 		const url = new URL(value);
+		const supportedPath = /^\/l\/(?:meetup-join|team|channel|chat|message)\/[^/]+(?:\/[^/]+)*\/?$/.test(url.pathname) ||
+			/^\/meet\/\d+\/?$/.test(url.pathname);
 		if (url.protocol !== "msteams:" ||
 			!["", "teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"].includes(url.hostname.toLowerCase()) ||
 			url.username || url.password || url.port || url.hash ||
-			!/^\/l\/(?:meetup-join|team|channel|chat|message)\/[^/]+(?:\/[^/]+)*\/?$/.test(url.pathname)) return undefined;
+			!supportedPath) return undefined;
 		return url.toString();
 	} catch { return undefined; }
+}
+
+/** Convert only current numeric Teams meeting invitations to the app scheme. */
+export function safeTeamsMeetingAppUrl(value: string): string | undefined {
+	if (!value || value.length > 8_192 || /[\\\u0000-\u0020\u007f]/.test(value)) return undefined;
+	try {
+		const url = new URL(value);
+		if (url.protocol !== "https:" || !/^\/meet\/\d+\/?$/.test(url.pathname) ||
+			url.username || url.password || url.port || url.hash) return undefined;
+		return safeTeamsUrl(`msteams://${url.host}${url.pathname}${url.search}`);
+	} catch { return undefined; }
+}
+
+function installedTeamsMeetingAppUrl(value: string): string | undefined {
+	const url = safeTeamsMeetingAppUrl(value);
+	if (!url) return undefined;
+	try {
+		return app.getApplicationNameForProtocol("msteams://") ? url : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /** Only Cursor authentication callbacks, never file, command, or install links. */
@@ -5960,10 +5984,16 @@ export class UserBrowserService {
 	private requestExternalApp(
 		tab: UserBrowserTab, record: ViewRecord, value: string, initiatingUrl: string, mainFrameRedirect = false,
 	): boolean {
-		const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value) ?? safeCursorAuthUrl(value);
-		if (!url) return false;
 		const contents = liveWebContents(record.view.webContents);
 		const source = contents && safePageUrl(contents.getURL());
+		const pageUrl = safePageUrl(value)?.toString();
+		const pendingMeeting = record.externalMeetingNavigation;
+		const cachedMeetingUrl = pendingMeeting && pageUrl === pendingMeeting.targetUrl &&
+			source?.toString() === pendingMeeting.sourceUrl ? pendingMeeting.appUrl : undefined;
+		if (cachedMeetingUrl) delete record.externalMeetingNavigation;
+		const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value) ??
+			safeCursorAuthUrl(value) ?? cachedMeetingUrl ?? installedTeamsMeetingAppUrl(value);
+		if (!url) return false;
 		const redirected = mainFrameRedirect ? record.externalRedirectGesture : undefined;
 		const gesture = record.externalGesture ?? (redirected?.generation === (record.externalDocumentGeneration ?? 0) ? redirected : undefined);
 		delete record.externalGesture;
@@ -6068,13 +6098,21 @@ export class UserBrowserService {
 		webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
 			const target = safePageUrl(url);
 			if (isMainFrame && !isInPlace && target) {
+				delete record.externalMeetingNavigation;
+				const source = safePageUrl(webContents.getURL());
+				const meetingAppUrl = installedTeamsMeetingAppUrl(target.toString());
+				if (source?.protocol === "https:" && meetingAppUrl) {
+					record.externalMeetingNavigation = {
+						sourceUrl: source.toString(), targetUrl: target.toString(), appUrl: meetingAppUrl,
+					};
+					return;
+				}
 				delete record.externalBridgeDocument;
 				delete record.externalMainFrameCapture;
 				// Native reloads and document navigations must invalidate consent,
 				// even when their final URL is identical to the previous document.
 				record.externalDocumentGeneration = (record.externalDocumentGeneration ?? 0) + 1;
 				const gesture = record.externalGesture;
-				const source = safePageUrl(webContents.getURL());
 				// A clicked same-origin HTTPS launcher may redirect before commit.
 				// Carry its intent only to the real main-frame redirect event; a
 				// reload or a committed document cannot borrow the previous input.
@@ -6086,7 +6124,16 @@ export class UserBrowserService {
 				delete record.externalGesture;
 			}
 		});
-		webContents.on("did-navigate", () => { delete record.externalRedirectGesture; });
+		webContents.on("did-navigate", () => {
+			delete record.externalRedirectGesture;
+			if (record.externalMeetingNavigation) {
+				delete record.externalMeetingNavigation;
+				delete record.externalBridgeDocument;
+				delete record.externalMainFrameCapture;
+				delete record.externalGesture;
+				record.externalDocumentGeneration = (record.externalDocumentGeneration ?? 0) + 1;
+			}
+		});
 		webContents.on("media-started-playing", () => { record.mediaPlaying = true; this.emit(); });
 		webContents.on("media-paused", () => { record.mediaPlaying = false; this.emit(); });
 		webContents.on("ipc-message", (event, channel, ...args) => {
