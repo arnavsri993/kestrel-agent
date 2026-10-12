@@ -177,7 +177,8 @@ try {
     'cursor://cursorAuth?code=synthetic%2Bvalue&state=fixture',
     'cursor://anysphere.cursor-mcp/oauth/callback?code=fixture&state=fixture',
   ]) {
-    const externalUrl = url.startsWith('https://teams.microsoft.com/meet/')
+    const isHttpsMeeting = url.startsWith('https://teams.microsoft.com/meet/');
+    const externalUrl = isHttpsMeeting
       ? url.replace('https:', 'msteams:')
       : url;
     await navigate();
@@ -223,12 +224,21 @@ try {
         if (!frame) throw new Error('Fixture frame missing');
         return frame.executeJavaScript(script);
       }, {url:`${origin}/one`, frameUrl, script});
-      // The main-frame bridge must never authorize a popup from an iframe.
+      // A default HTTPS referrer proves a same-origin frame source. Custom
+      // schemes omit it, and a foreign frame must never borrow the top origin.
       await frameRun(`window.fixtureAppUrl = ${JSON.stringify(url)}; window.fixtureMode = 'popup';
         const policy = document.createElement('meta'); policy.name = 'referrer';
         policy.content = 'strict-origin-when-cross-origin'; document.head.append(policy);`);
-      await assertDenied(() => nativeClick(`${origin}/one`, frameUrl), `Default-policy iframe popup must not borrow the main-frame bridge for ${url}`);
-      assert.equal(await frameRun('window.fixtureTrustedClick'), true, `Default-policy iframe denial must exercise native input for ${url}`);
+      if (isHttpsMeeting && frameOrigin === origin) {
+        const before = await counts();
+        await nativeClick(`${origin}/one`, frameUrl);
+        await until(async () => (await counts()).links === before.links + 1, `Same-origin default-policy HTTPS iframe handoff failed for ${url}`);
+        assert.equal((await counts()).prompts, before.prompts + 1, `Same-origin default-policy HTTPS iframe handoff requires consent for ${url}`);
+        assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [externalUrl]);
+      } else {
+        await assertDenied(() => nativeClick(`${origin}/one`, frameUrl), `Default-policy iframe popup must not borrow the top-frame origin for ${url}`);
+      }
+      assert.equal(await frameRun('window.fixtureTrustedClick'), true, `Default-policy iframe path must exercise native input for ${url}`);
       await frameRun(`document.querySelector('meta[name="referrer"]').content = 'unsafe-url';`);
       for (const mode of ['popup', 'top']) {
         await frameRun(`window.fixtureAppUrl = ${JSON.stringify(url)}; window.fixtureMode = ${JSON.stringify(mode)}; window.fixtureTrustedClick = false;`);
