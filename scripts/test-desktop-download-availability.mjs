@@ -96,6 +96,10 @@ try {
   }
   const stored = JSON.parse(readFileSync(join(root, "profile", "browser", "state.json"), "utf8"));
   for (const name of handled) assert.equal(stored.downloads.find(d => d.filename === `${name}.txt`).canReveal, false);
+  if (stored.downloadPaths) for (const name of handled) {
+    const download = stored.downloads.find(d => d.filename === `${name}.txt`);
+    assert.equal(stored.downloadPaths[download.id], paths.get(name), "Unavailable state retains the original private destination");
+  }
   await app.evaluate(() => { globalThis.downloadAvailabilityOpenError = "Default application unavailable for this fixture."; });
   await row("retained").getByRole("button", { name: "Open", exact: true }).click();
   await expect(page.locator(".browser-inline-error")).toContainText(/Default application unavailable|The download action failed/);
@@ -108,12 +112,14 @@ try {
   await expect.poll(() => app.evaluate(() => globalThis.downloadAvailabilityCalls)).toEqual([["open", paths.get("retained")], ["open", paths.get("retained")], ["reveal", paths.get("retained")]]);
   assert.deepEqual(readFileSync(paths.get("retained")), bytes);
   await page.reload();
-  for (const name of handled) await expect(row(name).getByRole("button")).toHaveCount(0);
+  await page.getByRole("heading", { name: "Downloaded files", exact: true }).waitFor();
+  await expect(page.getByText("Starting on this Mac…", { exact: true })).toHaveCount(0);
+  for (const name of handled) { await expect(row(name)).toBeVisible(); await expect(row(name).getByRole("button")).toHaveCount(0); }
   await expect(row("retained").getByRole("button")).toHaveCount(2);
   await capture("after-reload.png"); assert.deepEqual(errors, []);
   if (evidence) writeFileSync(join(evidence, "proof.json"), JSON.stringify({ executable: executable ?? "source Electron", actualHttpDownloads: 4,
     bytesPerDownload: bytes.length, keyboardOpenReveal: true, syntheticDomDrag: true, unavailableStatePersisted: true,
-    recordsBytesAndOtherFilePreserved: true, nativeFailureDoesNotInvalidateExistingFile: true, visibleErrorsAndRecovery: true,
+    recordsBytesAndOtherFilePreserved: true, privatePathRetentionVerified: Boolean(stored.downloadPaths), nativeFailureDoesNotInvalidateExistingFile: true, visibleErrorsAndRecovery: true,
     noUnhandledRendererErrors: true, nativeHandoffMocked: true, realProfileVerified: false }, null, 2));
   console.log("Download availability smoke passed: actual HTTP files, removed-file Open/Finder/Drag feedback, persisted availability, visible errors/recovery, preserved history/other file and no unhandled renderer errors.");
 } catch (error) { await capture("failure.png").catch(() => {}); throw error; }
