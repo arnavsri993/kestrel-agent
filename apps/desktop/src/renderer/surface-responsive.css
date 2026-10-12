@@ -142,9 +142,10 @@
 		grid-row: 1 / span 2;
 	}
 
-	.download-list li > .quiet-link {
+	.download-list li > .download-actions {
 		grid-column: 2;
-		justify-self: start;
+		justify-content: flex-start;
+		width: 100%;
 	}
 
 	.command-center {
