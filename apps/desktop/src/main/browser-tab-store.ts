@@ -7,11 +7,12 @@ import {
 	renameSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname, isAbsolute } from "node:path";
 import {
 	DEFAULT_NEW_TAB_WIDGET_IDS,
 	emptyNewTabGreetingActivity,
 	type UserBrowserOriginFavicon,
+	type UserBrowserDownload,
 	type UserBrowserSettings,
 	type UserBrowserState,
 	UserBrowserStateSchema,
@@ -351,10 +352,24 @@ export function freshBrowserState(
 	};
 }
 
+function validDownloadPath(download: UserBrowserDownload, path: unknown): path is string {
+	return download.status === "completed" && typeof path === "string" &&
+		path.length <= 4096 && isAbsolute(path) && !/[\u0000-\u001f\u007f]/.test(path) &&
+		basename(path) === download.filename;
+}
+
 export class BrowserTabStore {
+	// Destinations stay in the main process and on disk, outside the public state.
+	private savedDownloadPaths = new Map<string, string>();
+
 	constructor(private readonly path: string) {}
 
+	getDownloadPaths(): ReadonlyMap<string, string> {
+		return new Map(this.savedDownloadPaths);
+	}
+
 	load(now: () => Date = () => new Date()): UserBrowserState {
+		this.savedDownloadPaths.clear();
 		if (!existsSync(this.path)) return freshBrowserState(now);
 		let serialized: string;
 		try {
@@ -370,6 +385,15 @@ export class BrowserTabStore {
 		try {
 			const parsed = JSON.parse(serialized) as unknown;
 			state = UserBrowserStateSchema.parse(parsed);
+			const paths = parsed && typeof parsed === "object" && "downloadPaths" in parsed
+				? parsed.downloadPaths : undefined;
+			if (paths && typeof paths === "object" && !Array.isArray(paths)) {
+				for (const download of state.downloads) {
+					const path = Object.hasOwn(paths, download.id)
+						? (paths as Record<string, unknown>)[download.id] : undefined;
+					if (validDownloadPath(download, path)) this.savedDownloadPaths.set(download.id, path);
+				}
+			}
 			if (
 				parsed &&
 				typeof parsed === "object" &&
@@ -505,7 +529,7 @@ export class BrowserTabStore {
 		return tab;
 	}
 
-	save(state: UserBrowserState): void {
+	save(state: UserBrowserState, downloadPaths: ReadonlyMap<string, string> = this.savedDownloadPaths): void {
 		const bookmarkFolders = state.bookmarkFolders.map((folder) => ({
 			...folder,
 			name: redactUntrustedBrowserText(folder.name, 80).trim(),
@@ -593,14 +617,24 @@ export class BrowserTabStore {
 				return sourceUrl ? [{ ...download, sourceUrl }] : [];
 			}),
 		});
+		const savedDownloadPaths = new Map<string, string>();
+		for (const download of safe.downloads) {
+			const path = downloadPaths.get(download.id);
+			if (validDownloadPath(download, path)) savedDownloadPaths.set(download.id, path);
+		}
+		const stored = {
+			...safe,
+			...(savedDownloadPaths.size ? { downloadPaths: Object.fromEntries(savedDownloadPaths) } : {}),
+		};
 		mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
 		const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
-		writeFileSync(temporary, `${JSON.stringify(safe, null, 2)}\n`, {
+		writeFileSync(temporary, `${JSON.stringify(stored, null, 2)}\n`, {
 			encoding: "utf8",
 			mode: 0o600,
 		});
 		chmodSync(temporary, 0o600);
 		renameSync(temporary, this.path);
 		chmodSync(this.path, 0o600);
+		this.savedDownloadPaths = savedDownloadPaths;
 	}
 }

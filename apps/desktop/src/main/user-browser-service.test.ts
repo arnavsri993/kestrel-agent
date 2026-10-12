@@ -1,15 +1,23 @@
 import { EventEmitter } from "node:events";
 import {
 	existsSync,
+	mkdirSync,
+	symlinkSync,
 	mkdtempSync,
 	realpathSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import * as fileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:fs/promises", async importOriginal => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return { ...actual, lstat: vi.fn(actual.lstat) };
+});
 
 const electron = vi.hoisted(() => {
   class Emitter {
@@ -227,6 +235,7 @@ import {
 import type { BrowserThreatProvider } from "./browser-threat-provider";
 import { UserBrowserSettingsSchema } from "@kestrel/shared-types";
 import type {
+  UserBrowserState,
   BrowserTabFolderName,
   BrowserTabFolderNamingGroup,
 } from "@kestrel/shared-types";
@@ -246,6 +255,10 @@ afterEach(() => {
 });
 
 function createService(options: {
+  statePath?: string;
+  downloadDirectory?: string;
+  initialState?: UserBrowserState;
+  initialDownloadPaths?: ReadonlyMap<string, string>;
   partitionName?: string;
  connectionMode?: "whatsapp";
   now?: () => Date;
@@ -282,11 +295,13 @@ function createService(options: {
   };
   const events: unknown[] = [];
   const commands: string[] = [];
-	const statePath = join(directory, "state.json");
+	const statePath = options.statePath ?? join(directory, "state.json");
 	const service = new UserBrowserService({
 		window: window as never,
 		statePath,
-		downloadDirectory: join(directory, "downloads"),
+		downloadDirectory: options.downloadDirectory ?? join(directory, "downloads"),
+		...(options.initialState ? { initialState: options.initialState } : {}),
+		...(options.initialDownloadPaths ? { initialDownloadPaths: options.initialDownloadPaths } : {}),
 		onEvent: (event) => events.push(event),
 		onCommand: (command) => commands.push(command),
 		...(options.partitionName ? { partitionName: options.partitionName } : {}),
@@ -4354,4 +4369,96 @@ it("keeps dedicated connection tabs out of general browser-agent capture", async
  await expect(service.snapshot()).rejects.toThrow("general snapshots");
  await expect(service.pageContext()).rejects.toThrow("scoped capture");
  await expect(service.handleAgentRequest({ operation: "visible-tabs" } as never, new AbortController().signal)).rejects.toThrow("general browser-agent");
+});
+
+
+describe("restored download destination authority", () => {
+	function persistedFixture(kind: "file" | "missing" | "directory" | "symlink" | "legacy" = "file") {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-download-destination-")); directories.push(root);
+		const statePath = join(root, "state.json");
+		const destination = join(root, "chosen", "report.txt");
+		const currentFolder = join(root, "current");
+		mkdirSync(join(root, "chosen")); mkdirSync(currentFolder);
+		writeFileSync(join(currentFolder, "report.txt"), "Wrong same-name file");
+		if (kind === "file") writeFileSync(destination, "Original download");
+		if (kind === "directory") mkdirSync(destination);
+		if (kind === "symlink") symlinkSync(join(currentFolder, "report.txt"), destination);
+		const state = new BrowserTabStore(join(root, "fresh.json")).load();
+		const id = "download-00000000-0000-4000-8000-000000000001";
+		state.downloads = [{ id, tabId: state.tabs[0]!.id, filename: "report.txt", sourceUrl: "https://example.com/report.txt",
+			receivedBytes: 17, totalBytes: 17, status: "completed", startedAt: "2026-08-11T12:00:00.000Z", canReveal: true }];
+		new BrowserTabStore(statePath).save(state, kind === "legacy" ? new Map() : new Map([[id, destination]]));
+		return { root, statePath, destination, currentFolder, state, id };
+	}
+
+	it("restores Open, Finder and Drag against the original destination despite a changed folder and decoy", async () => {
+		const f = persistedFixture();
+		const { service, window } = createService({ statePath: f.statePath, downloadDirectory: f.currentFolder });
+		try {
+			expect(service.getState().downloads[0]!.canReveal).toBe(false);
+			await vi.waitFor(() => expect(service.getState().downloads[0]!.canReveal).toBe(true));
+			expect(JSON.stringify(service.getState())).not.toContain(f.destination);
+			await service.openDownload(f.id); service.revealDownload(f.id); service.startDownloadDrag(f.id);
+			expect(shell.openPath).toHaveBeenCalledWith(f.destination);
+			expect(shell.showItemInFolder).toHaveBeenCalledWith(f.destination);
+			expect(window.webContents.startDrag).toHaveBeenCalledWith({ file: f.destination, icon: expect.anything() });
+			const handoff = service.downloadPathsForHandoff() as Map<string, string>; handoff.clear();
+			expect(service.downloadPathsForHandoff().get(f.id)).toBe(f.destination);
+			service.updateSettings({ ...service.getState().settings, homepageUrl: "https://example.com/" });
+			const store = new BrowserTabStore(f.statePath); store.load();
+			expect(store.getDownloadPaths().get(f.id)).toBe(f.destination);
+		} finally { service.dispose(); }
+	});
+
+	it.each(["missing", "directory", "symlink", "legacy"] as const)("does not authorize a %s destination or the same-name decoy", async kind => {
+		const f = persistedFixture(kind);
+		const probes = vi.spyOn(fileSystem, "lstat");
+		const { service } = createService({ statePath: f.statePath, downloadDirectory: f.currentFolder });
+		try {
+			await Promise.allSettled(probes.mock.results.map(result => result.value));
+			await Promise.resolve();
+			expect(service.getState().downloads[0]!.canReveal).toBe(false);
+			await expect(service.openDownload(f.id)).rejects.toThrow("no longer available");
+			expect(() => service.revealDownload(f.id)).toThrow("no longer available");
+			expect(() => service.startDownloadDrag(f.id)).toThrow("no longer available");
+			expect(shell.openPath).not.toHaveBeenCalled();
+			expect(shell.showItemInFolder).not.toHaveBeenCalled();
+		} finally { service.dispose(); probes.mockRestore(); }
+	});
+
+	it("rechecks a previously available destination before native handoff", async () => {
+		const f = persistedFixture(); const { service } = createService({ statePath: f.statePath });
+		try {
+			await vi.waitFor(() => expect(service.getState().downloads[0]!.canReveal).toBe(true));
+			rmSync(f.destination); symlinkSync(join(f.currentFolder, "report.txt"), f.destination);
+			await expect(service.openDownload(f.id)).rejects.toThrow("no longer available");
+			expect(() => service.revealDownload(f.id)).toThrow("no longer available");
+			expect(shell.openPath).not.toHaveBeenCalled();
+		} finally { service.dispose(); }
+	});
+
+	it("accepts an explicit private destination handoff while rejecting a public-only handoff", async () => {
+		const f = persistedFixture();
+		const withPaths = createService({ initialState: f.state, initialDownloadPaths: new Map([[f.id, f.destination]]) });
+		const withoutPaths = createService({ initialState: f.state, downloadDirectory: f.currentFolder });
+		try {
+			expect(withPaths.service.getState().downloads[0]!.canReveal).toBe(false);
+			expect(withoutPaths.service.getState().downloads[0]!.canReveal).toBe(false);
+			await vi.waitFor(() => expect(withPaths.service.getState().downloads[0]!.canReveal).toBe(true));
+			expect(withoutPaths.service.downloadPathsForHandoff().size).toBe(0);
+			await expect(withoutPaths.service.openDownload(f.id)).rejects.toThrow("no longer available");
+		} finally { withPaths.service.dispose(); withoutPaths.service.dispose(); }
+	});
+
+	it("does not emit or authorize restored destinations after immediate disposal", async () => {
+		const f = persistedFixture(); const probes = vi.spyOn(fileSystem, "lstat");
+		const { service, events } = createService({ statePath: f.statePath });
+		try {
+			service.dispose(); const before = events.length;
+			await Promise.allSettled(probes.mock.results.map(result => result.value));
+			await Promise.resolve();
+			expect(events).toHaveLength(before);
+			expect(service.getState().downloads[0]!.canReveal).toBe(false);
+		} finally { probes.mockRestore(); }
+	});
 });
