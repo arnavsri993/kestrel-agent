@@ -474,27 +474,34 @@ export function useUserBrowser(): UserBrowserController {
 			}),
 		[requestState],
 	);
-	const revealDownload = useCallback(async (downloadId: string) => {
-		const response = await window.kestrel.request({
-			type: "browser-reveal-download",
-			downloadId,
-		});
-		if (!response.ok) throw new Error(responseError(response));
+	const requestDownloadAction = useCallback(async (request: Extract<
+		Parameters<typeof window.kestrel.request>[0],
+		{ type: "browser-reveal-download" | "browser-open-download" | "browser-start-download-drag" }
+	>) => {
+		try {
+			const response = await window.kestrel.request(request);
+			if (!response.ok) throw new Error(responseError(response));
+			setError("");
+		} catch (cause) {
+			const unavailable = cause instanceof Error &&
+				/This download is no longer available to (?:open|reveal|drag)\./.test(cause.message);
+			setError(unavailable
+				? "This file is no longer available. Try downloading it again."
+				: userFacingError(cause, "The download action failed. Try again."));
+		}
 	}, []);
-	const openDownload = useCallback(async (downloadId: string) => {
-		const response = await window.kestrel.request({
-			type: "browser-open-download",
-			downloadId,
-		});
-		if (!response.ok) throw new Error(responseError(response));
-	}, []);
-	const startDownloadDrag = useCallback(async (downloadId: string) => {
-		const response = await window.kestrel.request({
-			type: "browser-start-download-drag",
-			downloadId,
-		});
-		if (!response.ok) throw new Error(responseError(response));
-	}, []);
+	const revealDownload = useCallback(
+		(downloadId: string) => requestDownloadAction({ type: "browser-reveal-download", downloadId }),
+		[requestDownloadAction],
+	);
+	const openDownload = useCallback(
+		(downloadId: string) => requestDownloadAction({ type: "browser-open-download", downloadId }),
+		[requestDownloadAction],
+	);
+	const startDownloadDrag = useCallback(
+		(downloadId: string) => requestDownloadAction({ type: "browser-start-download-drag", downloadId }),
+		[requestDownloadAction],
+	);
 	const cancelDownload = useCallback(
 		(downloadId: string) =>
 			requestState({ type: "browser-cancel-download", downloadId }),

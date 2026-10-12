@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import {
 	existsSync,
+	readFileSync,
 	mkdtempSync,
 	realpathSync,
 	rmSync,
@@ -4354,4 +4355,57 @@ it("keeps dedicated connection tabs out of general browser-agent capture", async
  await expect(service.snapshot()).rejects.toThrow("general snapshots");
  await expect(service.pageContext()).rejects.toThrow("scoped capture");
  await expect(service.handleAgentRequest({ operation: "visible-tabs" } as never, new AbortController().signal)).rejects.toThrow("general browser-agent");
+});
+
+
+describe("unavailable download action feedback", () => {
+	async function completedFiles() {
+		const fixture = createService();
+		const tab = fixture.service.getState().tabs[0]!;
+		await fixture.service.navigate(tab.id, "https://example.com/");
+		const contents = electron.state.views.at(-1)!.webContents;
+		const paths: string[] = [];
+		for (const filename of ["removed.txt", "retained.txt"]) {
+			let destination = "";
+			let done!: (event: object, status: string) => void;
+			const item = { ...downloadItem(`https://example.com/${filename}`, filename),
+				getReceivedBytes: vi.fn(() => 12), getTotalBytes: vi.fn(() => 12),
+				setSavePath: vi.fn((path: string) => { destination = path; }),
+				once: vi.fn((event: string, callback: typeof done) => { if (event === "done") done = callback; }),
+			};
+			electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
+			writeFileSync(destination, "owned bytes!"); done({}, "completed"); paths.push(destination);
+		}
+		return { ...fixture, paths };
+	}
+
+	it.each(["open", "reveal", "drag"] as const)("publishes and persists unavailable state after %s rejects a removed file", async action => {
+		const { service, window, events, statePath, paths } = await completedFiles();
+		try {
+			const before = service.getState(); const download = before.downloads[0]!;
+			expect(before.downloads.every(item => item.canReveal && item.status === "completed")).toBe(true);
+			rmSync(paths[0]!); const eventCount = events.length;
+			if (action === "open") await expect(service.openDownload(download.id)).rejects.toThrow("no longer available");
+			else expect(() => action === "reveal" ? service.revealDownload(download.id) : service.startDownloadDrag(download.id)).toThrow("no longer available");
+			const expected = before.downloads.map(item => item.id === download.id ? { ...item, canReveal: false } : item);
+			expect(service.getState().downloads).toEqual(expected);
+			expect(events).toHaveLength(eventCount + 1);
+			expect(events.at(-1)).toMatchObject({ type: "state", state: { downloads: expected } });
+			expect(JSON.parse(readFileSync(statePath, "utf8")).downloads).toEqual(expected);
+			expect(readFileSync(paths[1]!, "utf8")).toBe("owned bytes!");
+			expect(shell.openPath).not.toHaveBeenCalled();
+			expect(shell.showItemInFolder).not.toHaveBeenCalled();
+			expect(window.webContents.startDrag).not.toHaveBeenCalled();
+			const count = events.length;
+			await expect(service.openDownload(download.id)).rejects.toThrow("no longer available");
+			expect(() => service.revealDownload(download.id)).toThrow("no longer available");
+			expect(() => service.startDownloadDrag(download.id)).toThrow("no longer available");
+			const unknownId = "download-00000000-0000-0000-0000-000000000000";
+			await expect(service.openDownload(unknownId)).rejects.toThrow("no longer available");
+			expect(() => service.revealDownload(unknownId)).toThrow("no longer available");
+			expect(() => service.startDownloadDrag(unknownId)).toThrow("no longer available");
+			expect(events).toHaveLength(count);
+			expect(service.getState().downloads).toEqual(expected);
+		} finally { service.dispose(); }
+	});
 });
