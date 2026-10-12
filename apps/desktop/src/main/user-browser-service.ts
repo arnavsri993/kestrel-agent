@@ -722,7 +722,14 @@ const appLaunchErrorWindows = new WeakSet<BrowserWindow>();
 
 function openSystemAppUrl(value: string, owner: BrowserWindow): boolean {
 	const meetingUrl = safeTeamsMeetingAppUrl(value);
-	const installedMeetingUrl = meetingUrl && app.getApplicationNameForProtocol("msteams://") ? meetingUrl : undefined;
+	let installedMeetingUrl: string | undefined;
+	if (meetingUrl) {
+		try {
+			if (app.getApplicationNameForProtocol("msteams://")) installedMeetingUrl = meetingUrl;
+		} catch {
+			// Keep the HTTPS web path when the OS cannot resolve protocol handlers.
+		}
+	}
 	const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value) ?? safeCursorAuthUrl(value) ?? installedMeetingUrl;
 	if (!url) return false;
 	const appName = safeTeamsUrl(url) ? "Microsoft Teams" : safeCursorAuthUrl(url) ? "Cursor" : safeZoomJoinUrl(url) ? "Zoom" : "App Store";

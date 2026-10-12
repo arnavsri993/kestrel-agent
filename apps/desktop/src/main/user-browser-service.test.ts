@@ -2549,6 +2549,11 @@ describe("UserBrowserService", () => {
       expect(event.preventDefault).not.toHaveBeenCalled();
       expect(source.windowOpenHandler?.({ url, disposition: "new-window" }).action).toBe("allow");
       expect(shell.openExternal).not.toHaveBeenCalled();
+      vi.mocked(app.getApplicationNameForProtocol).mockImplementationOnce(() => { throw new Error("Protocol lookup unavailable"); });
+      const unavailable = { preventDefault: vi.fn() };
+      source.emit("will-navigate", unavailable, url);
+      expect(unavailable.preventDefault).not.toHaveBeenCalled();
+      expect(shell.openExternal).not.toHaveBeenCalled();
     } finally {
       vi.mocked(app.getApplicationNameForProtocol).mockReturnValue("Microsoft Teams");
     }
