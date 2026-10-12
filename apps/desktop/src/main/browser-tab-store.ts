@@ -14,12 +14,15 @@ import {
 	type UserBrowserOriginFavicon,
 	type UserBrowserSettings,
 	type UserBrowserState,
+	type UserBrowserTab,
 	UserBrowserStateSchema,
 } from "@kestrel/shared-types";
 import {
 	isKestrelAppPageUrl,
 	parseKestrelAppPage,
+	parseKestrelFilePage,
 } from "../utility/browser-app-pages";
+import { fileTabUrl } from "./file-tabs";
 
 export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	startupBehavior: "restore",
@@ -205,6 +208,14 @@ export function describeBrowserLoadFailure(
 				return "This site's security certificate could not be verified.";
 			return "This page could not be opened. Check the address or try again in a moment.";
 	}
+}
+
+// Only trusted tab metadata can restore a file reference. General URL
+// sanitization intentionally excludes file URLs from other browser surfaces.
+function fileTabStateUrl(tab: Pick<UserBrowserTab, "id" | "url" | "file">): string | undefined {
+	if (!tab.url && tab.file) return fileTabUrl(tab.id);
+	if (!parseKestrelFilePage(tab.url)) return undefined;
+	return tab.file ? fileTabUrl(tab.id) : "";
 }
 
 export function sanitizeBrowserUrl(value: string): string {
@@ -409,11 +420,13 @@ export class BrowserTabStore {
 							isKestrelAppPageUrl(tab.url),
 					)
 					.map(({ blockedNavigation, preview: _preview, activity: _activity, estimatedSavedMemoryBytes: _memory, ...tab }) => {
+						const url = fileTabStateUrl(tab) ?? tab.url;
 						const blockedUrl = blockedNavigation
 							? sanitizeBrowserUrl(blockedNavigation.url)
 							: "";
 						return {
 							...tab,
+							url,
 							...(blockedNavigation && blockedUrl
 								? {
 										blockedNavigation: {
@@ -426,7 +439,7 @@ export class BrowserTabStore {
 							loading: false,
 							canGoBack: false,
 							canGoForward: false,
-							discarded: Boolean(tab.url) && !isKestrelAppPageUrl(tab.url),
+							discarded: Boolean(url) && !isKestrelAppPageUrl(url),
 							crashed: false,
 							error: undefined,
 						};
@@ -527,7 +540,7 @@ export class BrowserTabStore {
 						: "";
 					return {
 						...tab,
-						url: tab.url ? sanitizeBrowserUrl(tab.url) : "",
+						url: fileTabStateUrl(tab) ?? sanitizeBrowserUrl(tab.url),
 						...(blockedNavigation && blockedUrl
 							? {
 									blockedNavigation: {
