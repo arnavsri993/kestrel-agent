@@ -589,6 +589,98 @@ describe("browser tab persistence", () => {
 		});
 	});
 
+	it("keeps a file tab's opaque URL and identity through save and restore", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState();
+		const tab = state.tabs[0]!;
+		tab.url = `kestrel://file/${tab.id}`;
+		tab.title = "report.txt";
+		tab.file = { path: join(dirname(path), "report.txt"), name: "report.txt", extension: "txt",
+			mediaType: "text/plain", size: 12, modifiedAt: "2026-08-11T12:00:00.000Z", status: "available" };
+		store.save(state);
+		const saved = JSON.parse(readFileSync(path, "utf8"));
+		expect(saved.tabs[0].url).toBe(tab.url);
+		expect(saved.tabs[0].url).not.toContain(tab.file.path);
+		expect(store.load()).toMatchObject({ activeTabId: tab.id, tabs: [{ id: tab.id,
+			url: tab.url, title: tab.title, file: tab.file, discarded: false, loading: false }] });
+	});
+
+	it.each(["available", "missing"] as const)("recovers a legacy blank file URL with %s metadata without rewriting the profile", (status) => {
+		const path = storePath();
+		const state = freshBrowserState();
+		const tab = state.tabs[0]!;
+		tab.file = { path: join(dirname(path), "report.txt"), name: "report.txt", extension: "txt",
+			mediaType: "text/plain", size: 12, status };
+		tab.title = "report.txt";
+		const original = JSON.stringify(state);
+		writeFileSync(path, original);
+		expect(new BrowserTabStore(path).load()).toMatchObject({ activeTabId: tab.id,
+			tabs: [{ id: tab.id, url: `kestrel://file/${tab.id}`, title: tab.title, file: tab.file, discarded: false }] });
+		expect(readFileSync(path, "utf8")).toBe(original);
+	});
+
+	it("binds file URLs to their owning tab metadata", () => {
+		const path = storePath();
+		const state = freshBrowserState();
+		const tab = state.tabs[0]!;
+		tab.file = { path: join(dirname(path), "report.txt"), name: "report.txt", extension: "txt",
+			mediaType: "text/plain", size: 12, status: "available" };
+		tab.url = "kestrel://file/tab-00000000-0000-0000-0000-000000000000";
+		const store = new BrowserTabStore(path); store.save(state);
+		expect(store.load().tabs[0]).toMatchObject({ id: tab.id, url: `kestrel://file/${tab.id}`, file: tab.file });
+	});
+
+	it.each(["save", "raw load"])("does not grant file-tab access from an opaque URL alone during %s", (mode) => {
+		const path = storePath();
+		const state = freshBrowserState();
+		state.tabs[0]!.url = `kestrel://file/${state.tabs[0]!.id}`;
+		const store = new BrowserTabStore(path);
+		if (mode === "save") store.save(state);
+		else writeFileSync(path, JSON.stringify(state));
+		expect(store.load().tabs[0]).toMatchObject({ url: "" });
+		expect(store.load().tabs[0]!.file).toBeUndefined();
+	});
+
+	it.each(["https://example.com/", "kestrel://settings"])("preserves an explicit %s destination with old file metadata", (url) => {
+		const path = storePath();
+		const state = freshBrowserState();
+		state.tabs[0]!.file = { path: join(dirname(path), "report.txt"), name: "report.txt", extension: "txt",
+			mediaType: "text/plain", size: 12, status: "available" };
+		state.tabs[0]!.url = url;
+		const store = new BrowserTabStore(path); store.save(state);
+		expect(store.load().tabs[0]!.url).toBe(url);
+	});
+
+	it("keeps opaque file URLs excluded from general URL sanitization", () => {
+		for (const url of ["kestrel://file/tab-00000000-0000-0000-0000-000000000000",
+			"file:///etc/passwd", "kestrel://file/Users/person/notes.txt",
+			"kestrel://user:password@file/tab-00000000-0000-0000-0000-000000000000",
+			"kestrel://file/tab-00000000-0000-0000-0000-000000000000?token=private"])
+			expect(sanitizeBrowserUrl(url)).toBe("");
+	});
+
+	it.each(["new_tab", "homepage", "specific_pages"] as const)("respects %s startup instead of repairing and restoring a legacy file tab", (startupBehavior) => {
+		const path = storePath();
+		const state = freshBrowserState();
+		state.tabs[0]!.file = { path: join(dirname(path), "report.txt"), name: "report.txt", extension: "txt",
+			mediaType: "text/plain", size: 12, status: "available" };
+		state.settings = { ...state.settings, startupBehavior, homepageUrl: "https://example.com/",
+			startupPages: ["https://example.com/"] };
+		writeFileSync(path, JSON.stringify(state));
+		expect(new BrowserTabStore(path).load().tabs.every(tab => !tab.file)).toBe(true);
+	});
+
+	it("respects the session restore opt-out for legacy file tabs", () => {
+		const path = storePath();
+		const state = freshBrowserState();
+		state.tabs[0]!.file = { path: join(dirname(path), "report.txt"), name: "report.txt", extension: "txt",
+			mediaType: "text/plain", size: 12, status: "available" };
+		state.settings.restoreSession = false;
+		writeFileSync(path, JSON.stringify(state));
+		expect(new BrowserTabStore(path).load().tabs.every(tab => !tab.file)).toBe(true);
+	});
+
 	it("persists tab folders with their tab assignments", () => {
 		const path = storePath();
 		const store = new BrowserTabStore(path);
