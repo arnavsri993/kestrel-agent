@@ -1150,6 +1150,7 @@ export function BrowserWorkspace({
           <FileTabView
             tabId={activeFilePage.tabId}
             file={activeTab.file}
+            muted={activeTab.muted}
             browser={browser}
             onAskFile={onAskFile}
           />
@@ -1335,11 +1336,13 @@ function fileSizeLabel(bytes: number): string {
 function FileTabView({
   tabId,
   file,
+  muted,
   browser,
   onAskFile,
 }: {
   tabId: string;
   file: UserBrowserFile;
+  muted: boolean;
   browser: UserBrowserController;
   onAskFile(file: UserBrowserFile): void;
 }) {
@@ -1436,7 +1439,7 @@ function FileTabView({
           Preparing a bounded preview…
         </p>
       )}
-      {preview && <FilePreviewBody preview={preview} fileName={file.name} />}
+      {preview && <FilePreviewBody preview={preview} fileName={file.name} muted={muted} />}
       <dl className="file-tab-metadata">
         <div>
           <dt>Location</dt>
@@ -1454,9 +1457,11 @@ function FileTabView({
 function FilePreviewBody({
   preview,
   fileName,
+  muted,
 }: {
   preview: FilePreview;
   fileName: string;
+  muted: boolean;
 }) {
   if (preview.kind === "text")
     return (
@@ -1479,13 +1484,13 @@ function FilePreviewBody({
   if (preview.kind === "audio" && preview.dataUrl)
     return (
       <div className="file-tab-preview file-tab-media-preview">
-        <audio controls preload="metadata" src={preview.dataUrl} />
+        <audio controls preload="metadata" src={preview.dataUrl} muted={muted} />
       </div>
     );
   if (preview.kind === "video" && preview.dataUrl)
     return (
       <div className="file-tab-preview file-tab-media-preview">
-        <video controls preload="metadata" src={preview.dataUrl} />
+        <video controls preload="metadata" src={preview.dataUrl} muted={muted} />
       </div>
     );
   return (
