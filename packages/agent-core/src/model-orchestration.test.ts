@@ -5,9 +5,15 @@ import { describe, expect, it } from "vitest";
 import {
 	AdaptiveModelRouter,
 	detectModelRefusal,
+	effectiveCapabilityFit,
 	inferModelTier,
+	isEfficientReasoningModelName,
 	ModelRegistry,
+	reasoningAbilityBoost,
+	reasoningCostMultiplier,
 	reframePromptForNeutrality,
+	routingMinimumQuality,
+	selectTargetReasoningLevel,
 	TaskRequirementAnalyzer,
 } from "./model-orchestration";
 import type { ModelProvider } from "./providers";
@@ -1268,6 +1274,182 @@ describe("adaptive model orchestration", () => {
 		expect(decision.selectedModelId).toBe("cheap:small");
 		expect(decision.reasoningLevel).toBe("low");
 		expect(decision.reasons.join(" ")).toMatch(/thinking to low/i);
+		item.database.close();
+	});
+
+	it("classifies Luna as efficient mid-tier and Sol/Terra as frontier", () => {
+		const empty = {
+			complex_reasoning: 0.5,
+			coding: 0.5,
+		} as Record<string, number>;
+		expect(isEfficientReasoningModelName("gpt-5.6-luna")).toBe(true);
+		expect(isEfficientReasoningModelName("gpt-5.6-sol")).toBe(false);
+		expect(inferModelTier("gpt-5.6-luna", "openai", false, empty)).toBe(
+			"advanced",
+		);
+		expect(inferModelTier("gpt-5.6-sol", "openai", false, empty)).toBe(
+			"frontier",
+		);
+		expect(inferModelTier("gpt-5.6-terra", "openai", false, empty)).toBe(
+			"frontier",
+		);
+		expect(effectiveCapabilityFit(0.86, "max", true)).toBeGreaterThan(
+			effectiveCapabilityFit(0.96, "low", true) - 0.05,
+		);
+		expect(reasoningCostMultiplier("max")).toBeGreaterThan(
+			reasoningCostMultiplier("low") * 2,
+		);
+		expect(reasoningAbilityBoost("max")).toBeGreaterThan(
+			reasoningAbilityBoost("low"),
+		);
+	});
+
+	it("prefers Luna at high thinking over Sol at low when ability is near-identical", () => {
+		const item = fixture([
+			provider({
+				id: "luna",
+				model: "gpt-5.6-luna",
+				capabilities: {
+					coding: 0.86,
+					complex_reasoning: 0.86,
+					planning: 0.82,
+					debugging: 0.84,
+					reliability: 0.86,
+					instruction_following: 0.88,
+					speed: 0.92,
+					cost_efficiency: 0.92,
+				},
+				reasoningLevels: true,
+				cost: { inputPerMillion: 1.2, outputPerMillion: 1.2 },
+				latency: { averageMs: 900, p95Ms: 1_400 },
+			}),
+			provider({
+				id: "sol",
+				model: "gpt-5.6-sol",
+				capabilities: {
+					coding: 0.97,
+					complex_reasoning: 0.97,
+					planning: 0.94,
+					debugging: 0.95,
+					reliability: 0.94,
+					instruction_following: 0.94,
+				},
+				reasoningLevels: true,
+				cost: { inputPerMillion: 8, outputPerMillion: 8 },
+				latency: { averageMs: 2_200, p95Ms: 3_400 },
+			}),
+		]);
+		const requirements = item.analyzer.analyze(
+			"mid-refactor",
+			"Plan a careful multi-file TypeScript refactor across several modules, add regression tests, and prepare a pull request outline.",
+			{ requiresTools: true },
+		);
+		expect(requirements.complexity).toBeGreaterThan(0.3);
+		expect(requirements.complexity).toBeLessThan(0.75);
+		const decision = item.router.route(requirements, { role: "worker" });
+		expect(decision.selectedModelId).toBe("luna:gpt-5.6-luna");
+		expect(["low", "medium", "high", "xhigh", "max"]).toContain(
+			decision.reasoningLevel,
+		);
+		expect(decision.reasons.join(" ")).toMatch(/model and thinking level together/i);
+		item.database.close();
+	});
+
+	it("still escalates to frontier Sol for high-consequence architecture", () => {
+		const item = fixture([
+			provider({
+				id: "luna",
+				model: "gpt-5.6-luna",
+				capabilities: {
+					coding: 0.86,
+					complex_reasoning: 0.86,
+					backend_architecture: 0.82,
+					planning: 0.82,
+					reliability: 0.86,
+				},
+				reasoningLevels: true,
+				cost: { inputPerMillion: 1.2, outputPerMillion: 1.2 },
+				latency: { averageMs: 900, p95Ms: 1_400 },
+			}),
+			provider({
+				id: "sol",
+				model: "gpt-5.6-sol",
+				capabilities: {
+					coding: 0.98,
+					complex_reasoning: 0.98,
+					backend_architecture: 0.98,
+					planning: 0.96,
+					reliability: 0.96,
+				},
+				reasoningLevels: true,
+				cost: { inputPerMillion: 8, outputPerMillion: 8 },
+				latency: { averageMs: 2_200, p95Ms: 3_400 },
+			}),
+		]);
+		const requirements = item.analyzer.analyze(
+			"hard-architecture",
+			"Design and implement a production security architecture, database migration, API boundary, validation plan, and coordinated rollout across multiple systems.",
+		);
+		const decision = item.router.route(requirements, { role: "orchestrator" });
+		expect(decision.selectedModelId).toBe("sol:gpt-5.6-sol");
+		expect(["high", "xhigh", "max"]).toContain(decision.reasoningLevel);
+		expect(routingMinimumQuality(requirements)).toBeGreaterThan(0.7);
+		item.database.close();
+	});
+
+	it("keeps simple questions on low reasoning and non-frontier models", () => {
+		const item = fixture([
+			provider({
+				id: "luna",
+				model: "gpt-5.6-luna",
+				capabilities: {
+					technical_writing: 0.84,
+					instruction_following: 0.88,
+					reliability: 0.86,
+					speed: 0.92,
+					cost_efficiency: 0.92,
+				},
+				reasoningLevels: true,
+				cost: { inputPerMillion: 1.2, outputPerMillion: 1.2 },
+				latency: { averageMs: 900, p95Ms: 1_400 },
+			}),
+			provider({
+				id: "sol",
+				model: "gpt-5.6-sol",
+				capabilities: {
+					technical_writing: 0.94,
+					instruction_following: 0.95,
+					reliability: 0.94,
+					complex_reasoning: 0.98,
+				},
+				reasoningLevels: true,
+				cost: { inputPerMillion: 8, outputPerMillion: 8 },
+				latency: { averageMs: 2_200, p95Ms: 3_400 },
+			}),
+			provider({
+				id: "cheap",
+				model: "small",
+				capabilities: {
+					technical_writing: 0.82,
+					instruction_following: 0.84,
+					reliability: 0.85,
+					speed: 0.95,
+					cost_efficiency: 0.98,
+				},
+				fastMode: true,
+				cost: { inputPerMillion: 0.2, outputPerMillion: 0.2 },
+				latency: { averageMs: 400, p95Ms: 700 },
+			}),
+		]);
+		const requirements = item.analyzer.analyze(
+			"simple-q",
+			"What is the capital of France?",
+		);
+		expect(requirements.complexity).toBeLessThan(0.3);
+		expect(selectTargetReasoningLevel(requirements, true)).toBe("low");
+		const decision = item.router.route(requirements, { role: "worker" });
+		expect(decision.selectedModelId).toBe("cheap:small");
+		expect(decision.reasoningLevel).toBe("low");
 		item.database.close();
 	});
 });

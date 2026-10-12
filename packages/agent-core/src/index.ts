@@ -4741,9 +4741,16 @@ export { AGENT_COORDINATION_TOOL_NAMES } from "./orchestration";
 export {
 	AdaptiveModelRouter,
 	DEFAULT_ROUTING_POLICY,
+	effectiveCapabilityFit,
+	isEfficientReasoningModelName,
 	ModelRegistry,
+	reasoningAbilityBoost,
+	reasoningCostMultiplier,
+	reasoningLatencyMultiplier,
 	type RouteOptions,
 	type RoutingOutcome,
+	routingMinimumQuality,
+	selectTargetReasoningLevel,
 	TaskRequirementAnalyzer,
 	type TaskRequirements,
 } from "./model-orchestration";
