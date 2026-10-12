@@ -19,7 +19,7 @@ Object.assign(env, {
   KESTREL_REAL_USER_PROFILE: "1", KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_DISABLE_UPDATES: "1",
   KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1", KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
 });
-let app; let page;
+let app; let page; let window;
 const errors = []; const pids = [];
 async function launch() {
   app = await electron.launch({
@@ -29,15 +29,14 @@ async function launch() {
   pids.push(app.process().pid);
   assert.equal(realpathSync(await app.evaluate(({ app }) => app.getPath("userData"))), join(root, "profile"));
   page = await app.firstWindow(); page.setDefaultTimeout(15_000);
+  window = await app.browserWindow(page);
   page.on("pageerror", error => errors.push(error.message));
   await page.evaluate(() => {
     localStorage.setItem("kestrel:onboarded", "yes");
     localStorage.setItem("kestrel:default-browser-prompted", "yes");
   });
   await page.reload();
-  await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows().find(w => !w.webContents.getURL().includes("petOverlay=1")).setSize(1100, 800);
-  });
+  await window.evaluate(window => window.setSize(1100, 800));
 }
 async function request(input) {
   const response = await page.evaluate(input => window.kestrel.request(input), input);
@@ -46,13 +45,16 @@ async function request(input) {
 async function quitFixture() {
   const closed = app.waitForEvent("close", { timeout: 15_000 });
   await app.evaluate(({ app }) => { setTimeout(() => app.quit(), 50); });
-  await closed; app = undefined; page = undefined;
+  await closed; app = undefined; page = undefined; window = undefined;
 }
 async function capture(name) {
   if (!page) return;
+  if (name !== "failure.png") {
+    await expect(page.getByText("Starting on this Mac…", { exact: true })).toHaveCount(0);
+    await expect(page.locator(".file-tab-view")).toBeVisible();
+  }
   await page.evaluate(async () => { await document.fonts.ready; await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))); });
-  const png = await app.evaluate(async ({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows().find(w => !w.webContents.getURL().includes("petOverlay=1"));
+  const png = await window.evaluate(async window => {
     return (await window.webContents.capturePage()).toPNG().toString("base64");
   });
   writeFileSync(join(evidence, name), Buffer.from(png, "base64"));
@@ -72,8 +74,7 @@ try {
     const tab = state.tabs.find(tab => tab.id === id);
     assert.equal(tab.url, url); assert.equal(tab.file.path, path); assert.equal(tab.file.status, status);
     assert.equal(tab.discarded, false);
-    assert.equal(await app.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows().find(w => !w.webContents.getURL().includes("petOverlay=1"));
+    assert.equal(await window.evaluate(window => {
       return window.contentView.children.filter(view => view.webContents).length;
     }), 0);
   };
