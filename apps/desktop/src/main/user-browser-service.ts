@@ -2842,8 +2842,35 @@ export class UserBrowserService {
 
 	async duplicateTab(tabId: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
-		if (tab.file) return (await this.openFileTabs([tab.file.path], true)).browserState;
-		return this.createTab(tab.url || undefined, true);
+		if (!tab.file || tab.url !== fileTabUrl(tab.id))
+			return this.createTab(tab.url || undefined, true);
+		this.assertAvailable();
+		const sourceFile = tab.file;
+		const sourceUrl = tab.url;
+		const ownsSource = () =>
+			!this.disposed && !this.window.isDestroyed() &&
+			!this.closingTabIds.has(tabId) && this.state.tabs.includes(tab) &&
+			tab.file === sourceFile && tab.url === sourceUrl;
+		const file = await inspectFilePath(sourceFile.path).catch((error) => {
+			if (ownsSource()) throw error;
+			return undefined;
+		});
+		if (!file) return this.getState();
+		return this.runExclusiveTabMutation(async () => {
+			if (!ownsSource()) return this.getState();
+			const copy = createEmptyBrowserTab(this.now);
+			copy.title = file.name;
+			copy.url = fileTabUrl(copy.id);
+			copy.file = file;
+			this.state.tabs.push(copy);
+			this.captureTabPreview(this.state.activeTabId!);
+			this.clearPasswordPrompt();
+			this.clearPaymentPrompt();
+			this.state.activeTabId = copy.id;
+			this.commit();
+			await this.syncActiveView();
+			return this.getState();
+		});
 	}
 
 	getTabForTransfer(tabId: string): UserBrowserTab {

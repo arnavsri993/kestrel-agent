@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import {
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	realpathSync,
 	rmSync,
@@ -235,6 +236,7 @@ import type {
 	SavePaymentCardInput,
 } from "./payment-card-vault";
 import type { PasswordVault, SavePasswordInput } from "./password-vault";
+import * as fileTabs from "./file-tabs";
 
 const directories: string[] = [];
 
@@ -918,6 +920,90 @@ describe("UserBrowserService", () => {
     );
 			expect(electron.state.views.length).toBe(before);
 	});
+
+	function duplicateFileFixture() {
+		const fixture = createService();
+		const root = mkdtempSync(join(tmpdir(), "kestrel-file-duplicate-"));
+		directories.push(root);
+		const path = join(root, "report.txt"); writeFileSync(path, "Original report");
+		return { ...fixture, path };
+	}
+
+	it("duplicates a local file into an independent active tab without changing the source", async () => {
+		const { service, path } = duplicateFileFixture();
+		const opened = await service.openFileTabs([path]);
+		const id = opened.browserState.activeTabId!;
+		const original = opened.browserState.tabs.find(tab => tab.id === id)!;
+		writeFileSync(path, "Updated and longer report");
+		const beforeViews = electron.state.views.length;
+		const duplicated = await service.duplicateTab(id);
+		const copy = duplicated.tabs.find(tab => tab.id === duplicated.activeTabId)!;
+		expect(duplicated.tabs).toHaveLength(opened.browserState.tabs.length + 1);
+		expect(copy.id).not.toBe(id);
+		expect(copy).toMatchObject({ url: `kestrel://file/${copy.id}`, title: "report.txt", file: { path: realpathSync(path), size: 25, status: "available" } });
+		expect(duplicated.tabs.find(tab => tab.id === id)).toEqual(original);
+		expect(electron.state.views.length).toBe(beforeViews);
+		expect(await service.filePreview(copy.id)).toMatchObject({ kind: "text", text: "Updated and longer report" });
+		await service.closeTab(copy.id);
+		expect(service.getState().tabs.find(tab => tab.id === id)).toEqual(original);
+	});
+
+	it("keeps normal file opening deduplicated after explicit duplication", async () => {
+		const { service, path } = duplicateFileFixture();
+		const first = await service.openFileTabs([path]);
+		const second = await service.openFileTabs([path]);
+		expect(second.browserState.tabs).toHaveLength(first.browserState.tabs.length);
+		expect(second.browserState.activeTabId).toBe(first.browserState.activeTabId);
+		const duplicated = await service.duplicateTab(first.browserState.activeTabId!);
+		const openedAgain = await service.openFileTabs([path]);
+		expect(openedAgain.browserState.tabs).toHaveLength(duplicated.tabs.length);
+		expect(openedAgain.browserState.activeTabId).toBe(duplicated.activeTabId);
+	});
+
+	for (const destination of ["kestrel://settings"] as const) it(`duplicates the current destination ${destination || "Home"} despite stale file metadata`, async () => {
+		const { service, path } = duplicateFileFixture();
+		const opened = await service.openFileTabs([path]); const id = opened.browserState.activeTabId!;
+		await service.navigate(id, destination);
+		const original = service.getState().tabs.find(tab => tab.id === id)!;
+		const duplicated = await service.duplicateTab(id);
+		const copy = duplicated.tabs.find(tab => tab.id === duplicated.activeTabId)!;
+		expect(copy.id).not.toBe(id);
+		expect(copy.url).toBe(original.url);
+		expect(copy.file).toBeUndefined();
+		expect(duplicated.tabs.find(tab => tab.id === id)).toEqual(original);
+	});
+
+	for (const failure of ["deleted", "directory"] as const) it(`keeps file duplication atomic when the source is ${failure}`, async () => {
+		const { service, path } = duplicateFileFixture();
+		const opened = await service.openFileTabs([path]);
+		rmSync(path); if (failure === "directory") mkdirSync(path);
+		const before = service.getState();
+		await expect(service.duplicateTab(opened.browserState.activeTabId!)).rejects.toThrow();
+		expect(service.getState()).toEqual(before);
+	});
+
+	for (const action of ["close", "navigation", "dispose", "window close", "file replacement"] as const) {
+		for (const failed of [false, true]) it(`ignores ${failed ? "failed" : "successful"} file duplication after ${action}`, async () => {
+			const { service, path, window } = duplicateFileFixture();
+			const opened = await service.openFileTabs([path]); const id = opened.browserState.activeTabId!;
+			const file = opened.browserState.tabs.find(tab => tab.id === id)!.file!;
+			let resolve!: (value: typeof file) => void; let reject!: (cause: Error) => void;
+			const spy = vi.spyOn(fileTabs, "inspectFilePath").mockReturnValueOnce(new Promise((done, fail) => { resolve = done; reject = fail; }));
+			try {
+				const pending = service.duplicateTab(id);
+				expect(spy).toHaveBeenCalledWith(file.path);
+				if (action === "close") await service.closeTab(id);
+				if (action === "navigation") await service.navigate(id, "kestrel://settings");
+				if (action === "dispose") service.dispose();
+				if (action === "window close") window.isDestroyed.mockReturnValue(true);
+				if (action === "file replacement") await service.openFileTabs([path]);
+				const before = service.getState();
+				if (failed) reject(new Error("Late file inspection failure.")); else resolve({ ...file, size: 987 });
+				await expect(pending).resolves.toEqual(before);
+				expect(service.getState()).toEqual(before);
+			} finally { resolve?.(file); spy.mockRestore(); }
+		});
+	}
 
 	it("opens local files as first-class tabs and exposes bounded external attachments", async () => {
 		const { service } = createService();
