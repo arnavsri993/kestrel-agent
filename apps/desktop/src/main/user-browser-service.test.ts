@@ -351,6 +351,63 @@ function downloadItem(url: string, filename = "report.txt") {
 }
 
 describe("UserBrowserService", () => {
+	async function cancellableDownload() {
+		const { service } = createService();
+		await service.navigate(service.getState().tabs[0]!.id, "https://safe.example");
+		let done: (event: object, status: string) => void = () => { throw new Error("Missing done listener"); };
+		const item = { ...downloadItem("https://safe.example/report.txt"),
+			once: vi.fn((event: string, listener: typeof done) => { if (event === "done") done = listener; }),
+		};
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
+		const id = service.getState().downloads[0]!.id;
+		return { service, item, id, finish: (status: string) => done({}, status) };
+	}
+
+	it("accepts repeated cancellation before the native done event without cancelling twice", async () => {
+		const { service, item, id } = await cancellableDownload();
+		const cancelled = service.cancelDownload(id);
+		expect(service.cancelDownload(id)).toEqual(cancelled);
+		expect(item.cancel).toHaveBeenCalledOnce();
+	});
+
+	it("accepts repeated cancellation after synchronous native completion", async () => {
+		const { service, item, id, finish } = await cancellableDownload();
+		item.cancel.mockImplementation(() => finish("cancelled"));
+		const cancelled = service.cancelDownload(id);
+		expect(service.cancelDownload(id)).toEqual(cancelled);
+		expect(item.cancel).toHaveBeenCalledOnce();
+	});
+
+	it.each(["completed", "cancelled", "interrupted"])("preserves a %s download when cancellation arrives late", async (status) => {
+		const { service, item, id, finish } = await cancellableDownload();
+		finish(status);
+		const terminal = service.getState();
+		expect(service.cancelDownload(id)).toEqual(terminal);
+		expect(item.cancel).not.toHaveBeenCalled();
+	});
+
+	it("keeps cancellation failures visible and permits retry while the native download remains active", async () => {
+		const { service, item, id } = await cancellableDownload();
+		const before = service.getState().downloads[0];
+		item.cancel.mockImplementationOnce(() => { throw new Error("Native cancellation failed"); });
+		expect(() => service.cancelDownload(id)).toThrow("Native cancellation failed");
+		expect(service.getState().downloads[0]).toEqual(before);
+		expect(service.cancelDownload(id).downloads[0]?.status).toBe("cancelled");
+		expect(item.cancel).toHaveBeenCalledTimes(2);
+	});
+
+	it("does not restore an active state after a native done event followed by an error", async () => {
+		const { service, item, id, finish } = await cancellableDownload();
+		item.cancel.mockImplementationOnce(() => { finish("cancelled"); throw new Error("Native cancellation failed"); });
+		expect(() => service.cancelDownload(id)).toThrow("Native cancellation failed");
+		expect(service.cancelDownload(id).downloads[0]?.status).toBe("cancelled");
+		expect(item.cancel).toHaveBeenCalledOnce();
+	});
+
+	it("rejects cancellation of an unknown download", () => {
+		const { service } = createService();
+		expect(() => service.cancelDownload("unknown-download")).toThrow("This download is not in progress.");
+	});
 	it("restores the committed page when a download event follows loadURL completion", async () => {
 		const { service } = createService();
 		const tab = service.getState().tabs[0]!;
@@ -646,6 +703,9 @@ describe("UserBrowserService", () => {
 		expect(item.setSavePath).not.toHaveBeenCalled();
 		await vi.waitFor(() => expect(item.cancel).toHaveBeenCalledOnce());
 
+		const blocked = service.getState();
+		expect(service.cancelDownload(blocked.downloads[0]!.id)).toEqual(blocked);
+		expect(item.cancel).toHaveBeenCalledOnce();
 		expect(service.getState().downloads[0]).toMatchObject({
 			status: "blocked",
 			reputation: { verdict: "malicious", provider: "test-reputation", threatTypes: ["potentially-harmful-application"] },
@@ -721,6 +781,7 @@ describe("UserBrowserService", () => {
 		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
 		const id = service.getState().downloads[0]!.id;
 		service.cancelDownload(id);
+		service.cancelDownload(id);
 		resolveCheck?.({
 			verdict: "malicious",
 			provider: "test-reputation",
@@ -764,6 +825,7 @@ describe("UserBrowserService", () => {
 		);
 		await vi.waitFor(() => expect(dialog.showSaveDialog).toHaveBeenCalledOnce());
 		const id = service.getState().downloads[0]!.id;
+		service.cancelDownload(id);
 		service.cancelDownload(id);
 		resolveDialog?.({ canceled: false, filePath: join(tmpdir(), "late-save.txt") });
 		await Promise.resolve();
