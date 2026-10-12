@@ -98,6 +98,7 @@ try {
   });
   for (const url of [
     'zoommtg://zoom.us/join?confno=1234567890&action=join',
+    'zoomus://zoom.us/join?confno=1234567890&action=join',
     'msteams://teams.microsoft.com/l/meetup-join/19%3afixture/0',
     'msteams:/l/meetup-join/19%3afixture/0',
     'msteams://teams.cloud.microsoft/l/chat/fixture/conversations',
@@ -106,6 +107,7 @@ try {
     'https://teams.microsoft.com/meet/12345678901234?p=synthetic%2Bvalue&anon=true',
     'cursor://cursorAuth?code=synthetic%2Bvalue&state=fixture',
     'cursor://anysphere.cursor-mcp/oauth/callback?code=fixture&state=fixture',
+    'itms-appss://apps.apple.com/app/id113517709?mt=12',
   ]) {
     const expectedUrl = url.startsWith('https://') ? url.replace('https:', 'msteams:') : url;
     const handoffTabCount = (await state()).tabs.length;
@@ -124,7 +126,7 @@ try {
     assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [expectedUrl]);
     await navigate();
   }
-  console.log('Auth links passed: same-tab POST, 307/308 POST redirects, blank popup navigation, opener callback, popup close, target/named popup POST, and Zoom/Teams/Cursor link click, popup, iframe, and HTTP redirect handoffs.');
+  console.log('Auth links passed: same-tab POST, 307/308 POST redirects, blank popup navigation, opener callback, popup close, target/named popup POST, and Zoom/Teams/Cursor/App Store link click, popup, iframe, and HTTP redirect handoffs.');
 } finally {
   await app?.close(); server.closeAllConnections(); await new Promise(r => server.close(r));
   rmSync(root, {recursive:true,force:true});

@@ -1,6 +1,10 @@
-import type { RuntimeToolExecution } from "@kestrel/shared-types";
+import {
+	RuntimeMessageSchema,
+	type RuntimeToolExecution,
+} from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import {
+	MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
 	modelVisibleToolResult,
 	redactSensitiveContent,
 } from "./tool-result-guardrails";
@@ -87,5 +91,44 @@ describe("model-facing tool result guardrails", () => {
 				content: "A normal local result.",
 			},
 		});
+	});
+
+	it("bounds an oversized result with a truthful model-facing receipt", () => {
+		const oversized = "x".repeat(1_000_001);
+		const visible = modelVisibleToolResult(execution({ content: oversized }));
+		const parsed = JSON.parse(visible) as {
+			status: string;
+			output: {
+				truncated: boolean;
+				originalCharacterCount: number;
+				limitCharacterCount: number;
+				message: string;
+			};
+		};
+
+		expect(visible.length).toBeLessThanOrEqual(
+			MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
+		);
+		expect(visible).not.toContain(oversized);
+		expect(parsed).toMatchObject({
+			status: "verified",
+			output: {
+				truncated: true,
+				limitCharacterCount: MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
+			},
+		});
+		expect(parsed.output.originalCharacterCount).toBeGreaterThan(
+			MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
+		);
+		expect(parsed.output.message).toContain("Do not assume omitted details");
+		expect(
+			RuntimeMessageSchema.safeParse({
+				id: "message-tool-result-limit",
+				sessionId: "session-redaction",
+				role: "tool",
+				content: visible,
+				createdAt: "2026-09-30T00:00:00.000Z",
+			}).success,
+		).toBe(true);
 	});
 });

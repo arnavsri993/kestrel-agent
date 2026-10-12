@@ -85,6 +85,22 @@ describe("database integrity", () => {
 });
 
 describe("schema migrations", () => {
+	it("migrates v17 to text memory storage without losing encrypted state", () => {
+		const { path, encryptionKey, first, second } = sharedDatabases();
+		first.setPrivateState("memory-migration-proof", { text: "Retain this private context" });
+		second.close(); first.close();
+		const old = new Database(path);
+		old.exec("DROP TABLE memory_workspace_day_summaries; DROP TABLE memory_workspace_documents; DELETE FROM schema_migrations WHERE version >= 18");
+		old.close();
+		const reopened = new KestrelDatabase(path, encryptionKey);
+		try {
+			expect(reopened.getPrivateState("memory-migration-proof")).toEqual({ text: "Retain this private context" });
+			expect(reopened.lastMigrationBackupPath).toBeDefined();
+			expect(reopened.listMemoryWorkspaceDocuments()).toEqual([]);
+			expect(reopened.db.prepare("SELECT version FROM schema_migrations WHERE version=18").get()).toEqual({ version: 18 });
+		} finally { reopened.close(); }
+	});
+
 	it("loads migration v009 from the canonical SQL file", () => {
 		const sql = loadMigrationSql(9);
 		expect(sql).toContain("agent_configuration_records");

@@ -7,6 +7,10 @@ import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 // This launcher deliberately owns a unique disposable profile. It must never
 // fall back to the Electron profile, a home-directory default, or a persistent
 // native profile while credential/profile migration is still deferred.
+const extensionWorkbench = process.argv.includes("--extensions");
+if (extensionWorkbench) {
+	console.log("Opening the native Chromium extension workbench. Its temporary profile is deleted on exit; Kestrel data and accounts are not connected.");
+}
 const profile = await mkdtemp(join(tmpdir(), "kestrel-native-chromium-dev-"));
 let child;
 
@@ -28,8 +32,9 @@ try {
 		[
 			"--kestrel-cache-path",
 			profile,
-			"--kestrel-ephemeral-core",
-			"--kestrel-renderer",
+			...(extensionWorkbench
+				? ["--kestrel-extension-workbench"]
+				: ["--kestrel-ephemeral-core", "--kestrel-renderer"]),
 		],
 		{ stdio: "inherit" },
 	);

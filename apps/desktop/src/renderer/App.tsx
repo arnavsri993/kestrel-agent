@@ -1,7 +1,6 @@
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
-import { ScopedAgentMemory } from "./components/ScopedAgentMemory";
 import type { AgentTemplate } from "@kestrel/shared-types";
 import type {
 	ActionReceipt,
@@ -7607,7 +7606,11 @@ function SubscriptionCliSettings({
 										? "Cancel sign-in"
 										: "Sign in with ChatGPT"}
 								</button>
-							) : item.id === "cursor" && item.detected && !item.authenticated ? (
+							) :
+								item.id === "cursor" &&
+								item.detected &&
+								item.enabled &&
+								!item.authenticated ? (
 								<button
 									className="button primary"
 									disabled={Boolean(busy) && busy !== "cursor-oauth"}
@@ -11343,23 +11346,13 @@ export function App() {
 				/>
 			)}
 			{appPageId === "memory" && (
-				<div className="life-page memory-destination">
-				<label className="memory-scope-selector">Memory scope
-					<select aria-label="Memory scope" value={currentAppPage?.scopeSessionId ?? ""} onChange={event => {
-						const tabId = browser.state?.activeTabId;
-						if (tabId) void browser.navigate(tabId, kestrelAppPageUrl("memory", event.target.value || undefined));
-					}}>
-						<option value="">Personal</option>
-						{runtimeSessions.filter(session => session.kind === "agent" || session.specialistDefinition).map(session =>
-							<option key={session.id} value={session.id}>{session.parentSessionId ? "↳ " : ""}{session.title}</option>)}
-					</select>
-				</label>
-				{currentAppPage?.scopeSessionId ? <ScopedAgentMemory key={currentAppPage.scopeSessionId} sessionId={currentAppPage.scopeSessionId} /> : <LifeContext
+				<LifeContext
+					key={currentAppPage?.scopeSessionId ?? "user"}
 					snapshot={snapshot}
 					update={setSnapshot}
 					onOpenTranscriptResult={openTranscriptResult}
-				/>}
-				</div>
+					{...(currentAppPage?.scopeSessionId ? { initialSessionId: currentAppPage.scopeSessionId } : {})}
+				/>
 			)}
 			{appPageId === "research" && <Research />}
 			{appPageId === "artifacts" && <Artifacts />}

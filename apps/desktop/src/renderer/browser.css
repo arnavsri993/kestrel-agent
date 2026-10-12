@@ -7914,6 +7914,25 @@ body:has(.calculator-overlay),
 	}
 }
 
+/* Browser-library headers respond to the available browser pane rather than
+ * the full Electron window: visible navigation and agent rails can otherwise
+ * leave too little room for a heading beside its actions. */
+@container kestrel-browser-viewport (max-width: 760px) {
+	.browser-library .ui-page-frame-header {
+		display: grid;
+		gap: 14px;
+	}
+
+	.browser-library .ui-page-frame-actions {
+		width: 100%;
+		justify-content: flex-start;
+	}
+
+	.browser-library .library-search {
+		width: min(320px, 100%);
+	}
+}
+
 @container kestrel-browser-viewport (max-width: 560px) {
 	.browser-library .library-search {
 		width: 100%;

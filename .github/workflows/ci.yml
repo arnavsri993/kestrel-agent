@@ -31,6 +31,15 @@ jobs:
       - run: corepack pnpm exec playwright install chromium
       - run: corepack pnpm typecheck
       - run: corepack pnpm test
+      - run: KESTREL_SOURCE_BENCHMARK_REPORT=.tmp/source-ingestion-benchmark/ci.json corepack pnpm benchmark:source-ingestion
+      - name: Upload source-ingestion benchmark report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: source-ingestion-benchmark-${{ github.run_attempt }}
+          path: .tmp/source-ingestion-benchmark/*.json
+          if-no-files-found: warn
+          retention-days: 14
       - run: corepack pnpm audit
       - run: corepack pnpm assets:verify
       - run: corepack pnpm audit:references
@@ -39,6 +48,7 @@ jobs:
       - run: corepack pnpm build
       - run: corepack pnpm test:node-core
       - run: corepack pnpm test:chromium-host
+      - run: corepack pnpm test:native-extensions
       - run: corepack pnpm test:e2e
       - run: corepack pnpm test:packaged-cli
       - run: corepack pnpm test:editors
@@ -78,6 +88,7 @@ jobs:
       - run: corepack pnpm test:desktop-personas
       - run: corepack pnpm test:desktop-kanban
       - run: corepack pnpm test:desktop-model-routing
+      - run: corepack pnpm test:desktop-subscription-cli-safety
       - run: corepack pnpm test:desktop-readiness
       - run: corepack pnpm test:desktop-external-secrets
       - run: corepack pnpm test:desktop-observability
@@ -90,6 +101,7 @@ jobs:
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-file-icon-guard
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-subscription-cli-safety
       - run: corepack pnpm test:packaged-desktop:arm64
       - run: corepack pnpm benchmark:browser-agent:packaged:arm64 --report .tmp/browser-agent-benchmark/ci-packaged.json
       - name: Upload browser-agent benchmark reports

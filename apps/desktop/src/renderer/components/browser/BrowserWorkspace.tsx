@@ -112,6 +112,17 @@ export function BrowserWorkspace({
   const reducedMotion = useReducedMotion() ?? false;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
+  const focusAddress = useCallback(() => {
+    const input = addressRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+    const valueAtFocus = input.value;
+    window.requestAnimationFrame(() => {
+      if (document.activeElement === input && input.value === valueAtFocus)
+        input.select();
+    });
+  }, []);
   const findRef = useRef<HTMLInputElement | null>(null);
   const findTabIdRef = useRef<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -420,10 +431,12 @@ export function BrowserWorkspace({
     setFindQuery("");
     const searchedTabId = findTabIdRef.current ?? activeTab?.id;
     findTabIdRef.current = null;
-    if (searchedTabId) void stopFindInPage(searchedTabId);
-    // The native page cannot reliably receive renderer focus, so return to the
-    // nearest stable browser control instead of leaving focus in an exiting row.
-    window.requestAnimationFrame(() => addressRef.current?.focus());
+    if (searchedTabId) {
+      void stopFindInPage(searchedTabId);
+    }
+    // Closing the Find row changes the viewport bounds, whose sync restores
+    // the attached native page. Do not focus the omnibox here:
+    // doing so opens suggestions and hides the page a person just returned to.
   }, [activeTab, stopFindInPage]);
 
   useEffect(() => {
@@ -560,12 +573,12 @@ export function BrowserWorkspace({
 
   useLayoutEffect(() => {
     syncBounds();
-  }, [openChromeMenus, organizeTabsPreview, syncBounds]);
+  }, [findOpen, openChromeMenus, organizeTabsPreview, syncBounds]);
 
   useEffect(
     () =>
       window.kestrel.onBrowserCommand((command) => {
-        if (command === "focus-address") addressRef.current?.focus();
+        if (command === "focus-address") focusAddress();
         else if (command === "new-agent") onNewAgent();
         else if (command === "open-commands") onOpenMenu();
         else if (command === "open-history") openHistoryPopover();
@@ -584,6 +597,7 @@ export function BrowserWorkspace({
       }),
     [
       activeTab,
+      focusAddress,
       onNewAgent,
       onOpenMenu,
       openHistoryPopover,
@@ -649,7 +663,7 @@ export function BrowserWorkspace({
         }
         if (event.key.toLowerCase() === "d") {
           event.preventDefault();
-          addressRef.current?.focus();
+          focusAddress();
           return;
         }
       }
@@ -722,7 +736,7 @@ export function BrowserWorkspace({
 
       if (key === "l" || (event.ctrlKey && key === "e")) {
         event.preventDefault();
-        addressRef.current?.focus();
+        focusAddress();
       } else if (key === "t") {
         event.preventDefault();
         if (event.shiftKey) {
@@ -814,6 +828,7 @@ export function BrowserWorkspace({
     stop,
     stopFindInPage,
     findOpen,
+    focusAddress,
     bookmarkDialogPresent,
     toggleBookmarkFromChrome,
     zoomIn,
@@ -858,7 +873,9 @@ export function BrowserWorkspace({
     <main
       className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
         showBookmarksBar ? " browser-workspace-bookmarks" : ""
-      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}`}
+      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}${
+        findOpen ? " browser-workspace-find-open" : ""
+      }`}
       aria-label="Browser"
     >
       {navigationSidebar}

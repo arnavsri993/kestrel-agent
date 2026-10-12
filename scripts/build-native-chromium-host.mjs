@@ -220,8 +220,8 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			paths.app,
 		]);
 		run("/usr/bin/codesign", ["--verify", "--deep", "--strict", paths.app]);
-		run("/usr/bin/lipo", ["-verify_arch", "arm64", paths.executable]);
-		run("/usr/bin/lipo", ["-verify_arch", "arm64", helperExecutable]);
+		run("/usr/bin/lipo", [paths.executable, "-verify_arch", "arm64"]);
+		run("/usr/bin/lipo", [helperExecutable, "-verify_arch", "arm64"]);
 		await rm(destination, { recursive: true, force: true });
 		await rename(staging, destination);
 		console.log(

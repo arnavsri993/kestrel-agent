@@ -36,6 +36,9 @@ export function updateTabPreview(owner: BrowserWindow, tab?: UserBrowserTab, anc
  const height = 278 + (Object.values(tab.activity ?? {}).some(Boolean) ? 40 : 0) + (tab.discarded && tab.estimatedSavedMemoryBytes ? 30 : 0);
  const bounds = { x: Math.max(area.x, Math.min(origin.x, area.x + area.width - width)), y: Math.max(area.y, Math.min(origin.y + anchor.height + 5, area.y + area.height - height)), width, height };
  const popup = new BrowserWindow({ ...bounds, parent: owner, show: false, frame: false, transparent: true, hasShadow: false, resizable: false, focusable: false, skipTaskbar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false } });
+ // The preview sits directly below the tab rail. Let a tear-off gesture pass
+ // through it to the owner window instead of losing pointerup to this popup.
+ popup.setIgnoreMouseEvents(true, { forward: true });
  popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
  popup.webContents.on("will-navigate", (event) => event.preventDefault());
  popup.once("ready-to-show", () => { if (!popup.isDestroyed() && !owner.isDestroyed() && owner.isFocused()) popup.showInactive(); });

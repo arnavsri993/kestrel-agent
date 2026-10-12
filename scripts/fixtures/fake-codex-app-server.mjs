@@ -18,6 +18,28 @@ for await (const line of lines) {
 		process.stdout.write(
 			`${JSON.stringify({ id: message.id, result: { account: { type: "chatgpt", email: "fixture@example.test" } } })}\n`,
 		);
+	} else if (message.method === "account/rateLimits/read") {
+		process.stdout.write(
+			`${JSON.stringify({
+				id: message.id,
+				result: {
+					ordinaryUsageAllowed: true,
+					rateLimits: {
+						primary: {
+							usedPercent: 42,
+							windowDurationMins: 300,
+							resetsAt: 1_900_000_000,
+						},
+						secondary: {
+							usedPercent: 17,
+							windowDurationMins: 10_080,
+							resetsAt: 1_900_500_000,
+						},
+						planType: "plus",
+					},
+				},
+			})}\n`,
+		);
 	} else {
 		process.stdout.write(`${JSON.stringify({ id: message.id, result: {} })}\n`);
 	}

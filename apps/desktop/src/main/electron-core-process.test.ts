@@ -59,6 +59,21 @@ describe("desktop core host selection", () => {
 		expect(options.entryPath).toMatch(/utility\.js$/);
 		expect(options.env.ANTHROPIC_API_KEY).toBeUndefined();
 	});
+	it("keeps branded macOS Electron development off the packaged sidecar", () => {
+		state.packaged = true;
+		Object.defineProperty(process, "resourcesPath", {
+			value: "/fixture/resources",
+			configurable: true,
+		});
+		vi.stubEnv("NODE_ENV_ELECTRON_VITE", "development");
+		vi.stubEnv("KESTREL_NODE_EXEC_PATH", "/fixture/node");
+		const child = {};
+		nodeProcess.mockReturnValue(child);
+		expect(desktopCoreProcess()).toBe(child);
+		const [options] = nodeProcess.mock.calls[0]!;
+		expect(options.executable).toBe("/fixture/node");
+		expect(options.entryPath).toMatch(/utility\.js$/);
+	});
 	it("uses the documented resource layout for packaged Agent Core", () => {
 		expect(packagedAgentCoreSidecar("/fixture/resources")).toEqual({
 			executable: "/fixture/resources/agent-core/node/bin/node",
