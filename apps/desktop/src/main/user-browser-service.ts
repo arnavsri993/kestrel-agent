@@ -625,16 +625,29 @@ export function safeZoomJoinUrl(value: string): string | undefined {
 	}
 }
 
-/** Teams launchers also use hostless msteams:/l/... links. */
+/** Teams launchers use both /l/... deep links and /meet/<meeting ID> links. */
 export function safeTeamsUrl(value: string): string | undefined {
 	if (!value || value.length > 8_192 || /[\\\u0000-\u0020\u007f]/.test(value)) return undefined;
 	try {
 		const url = new URL(value);
+		const supportedPath = /^\/l\/(?:meetup-join|team|channel|chat|message)\/[^/]+(?:\/[^/]+)*\/?$/.test(url.pathname) ||
+			/^\/meet\/\d+\/?$/.test(url.pathname);
 		if (url.protocol !== "msteams:" ||
 			!["", "teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"].includes(url.hostname.toLowerCase()) ||
 			url.username || url.password || url.port || url.hash ||
-			!/^\/l\/(?:meetup-join|team|channel|chat|message)\/[^/]+(?:\/[^/]+)*\/?$/.test(url.pathname)) return undefined;
+			!supportedPath) return undefined;
 		return url.toString();
+	} catch { return undefined; }
+}
+
+/** Bypass the retired Teams web launcher for current numeric meeting links. */
+export function safeTeamsMeetingAppUrl(value: string): string | undefined {
+	if (!value || value.length > 8_192 || /[\\\u0000-\u0020\u007f]/.test(value)) return undefined;
+	try {
+		const url = new URL(value);
+		if (url.protocol !== "https:" || !/^\/meet\/\d+\/?$/.test(url.pathname) ||
+			url.username || url.password || url.port || url.hash) return undefined;
+		return safeTeamsUrl(`msteams://${url.host}${url.pathname}${url.search}`);
 	} catch { return undefined; }
 }
 
@@ -654,7 +667,9 @@ export function safeCursorAuthUrl(value: string): string | undefined {
 const appLaunchErrorWindows = new WeakSet<BrowserWindow>();
 
 function openSystemAppUrl(value: string, owner: BrowserWindow): boolean {
-	const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value) ?? safeCursorAuthUrl(value);
+	const meetingUrl = safeTeamsMeetingAppUrl(value);
+	const installedMeetingUrl = meetingUrl && app.getApplicationNameForProtocol("msteams://") ? meetingUrl : undefined;
+	const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value) ?? safeCursorAuthUrl(value) ?? installedMeetingUrl;
 	if (!url) return false;
 	const appName = safeTeamsUrl(url) ? "Microsoft Teams" : safeCursorAuthUrl(url) ? "Cursor" : safeZoomJoinUrl(url) ? "Zoom" : "App Store";
 	void (async () => {

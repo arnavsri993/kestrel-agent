@@ -90,8 +90,10 @@ try {
     assert.equal(requests.find(r => r.path === '/callback').body, 'fixture=synthetic');
   }
   await navigate();
-  await app.evaluate(({shell}) => {
+  await app.evaluate(({app, shell}) => {
     globalThis.authFixtureExternalLinks = [];
+    const original = app.getApplicationNameForProtocol.bind(app);
+    app.getApplicationNameForProtocol = url => url === 'msteams://' ? 'Synthetic Teams handler' : original(url);
     shell.openExternal = async url => {globalThis.authFixtureExternalLinks.push(url);};
   });
   for (const url of [
@@ -99,23 +101,30 @@ try {
     'msteams://teams.microsoft.com/l/meetup-join/19%3afixture/0',
     'msteams:/l/meetup-join/19%3afixture/0',
     'msteams://teams.cloud.microsoft/l/chat/fixture/conversations',
+    'msteams://teams.microsoft.com/meet/12345678901234?p=synthetic&anon=true&launchAgent=join_launcher',
+    'msteams:/meet/12345678901234?p=synthetic%2Bvalue',
+    'https://teams.microsoft.com/meet/12345678901234?p=synthetic%2Bvalue&anon=true',
     'cursor://cursorAuth?code=synthetic%2Bvalue&state=fixture',
     'cursor://anysphere.cursor-mcp/oauth/callback?code=fixture&state=fixture',
   ]) {
+    const expectedUrl = url.startsWith('https://') ? url.replace('https:', 'msteams:') : url;
     const handoffTabCount = (await state()).tabs.length;
     await run(`window.open(${JSON.stringify(url)}, '_blank')`);
     await until(() => app.evaluate(() => globalThis.authFixtureExternalLinks.length > 0), 'App popup handoff failed');
-    assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [url]);
+    assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [expectedUrl]);
+    await run(`(() => { const link = document.createElement('a'); link.href = ${JSON.stringify(url)}; document.body.append(link); link.click(); link.remove(); })()`);
+    await until(() => app.evaluate(() => globalThis.authFixtureExternalLinks.length > 0), 'App link click handoff failed');
+    assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [expectedUrl]);
     await run(`(() => { const frame = document.createElement('iframe'); frame.src = ${JSON.stringify(url)}; document.body.append(frame); })()`);
     await until(() => app.evaluate(() => globalThis.authFixtureExternalLinks.length > 0), 'Iframe app handoff failed');
-    assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [url]);
+    assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [expectedUrl]);
     assert.equal((await state()).tabs.length, handoffTabCount, 'App handoff must not leave an empty tab');
     await run(`location.href = ${JSON.stringify('/app-redirect?target=' + encodeURIComponent(url))}`);
     await until(() => app.evaluate(() => globalThis.authFixtureExternalLinks.length > 0), 'HTTP app redirect handoff failed');
-    assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [url]);
+    assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [expectedUrl]);
     await navigate();
   }
-  console.log('Auth links passed: same-tab POST, 307/308 POST redirects, blank popup navigation, opener callback, popup close, target/named popup POST, and Zoom/Teams/Cursor popup, iframe, and HTTP redirect handoffs.');
+  console.log('Auth links passed: same-tab POST, 307/308 POST redirects, blank popup navigation, opener callback, popup close, target/named popup POST, and Zoom/Teams/Cursor link click, popup, iframe, and HTTP redirect handoffs.');
 } finally {
   await app?.close(); server.closeAllConnections(); await new Promise(r => server.close(r));
   rmSync(root, {recursive:true,force:true});

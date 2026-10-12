@@ -184,7 +184,7 @@ const electron = vi.hoisted(() => {
 });
 
 vi.mock("electron", () => ({
-  app: { getAppMetrics: () => [] },
+  app: { getAppMetrics: () => [], getApplicationNameForProtocol: vi.fn(() => "Microsoft Teams") },
   webContents: { getAllWebContents: () => [] },
   BrowserWindow: class {},
   WebContentsView: electron.MockView,
@@ -213,13 +213,14 @@ vi.mock("electron", () => ({
 }));
 
 import { nativeImage } from "electron";
-import { dialog, shell } from "electron";
+import { app, dialog, shell } from "electron";
 import { BrowserTabStore } from "./browser-tab-store";
 import {
   isAuthenticationFlowUrl,
   safeAppStoreUrl,
   safeZoomJoinUrl,
   safeTeamsUrl,
+  safeTeamsMeetingAppUrl,
   safeCursorAuthUrl,
   UserBrowserService,
 } from "./user-browser-service";
@@ -2417,6 +2418,9 @@ describe("UserBrowserService", () => {
       "msteams://teams.live.com/l/channel/fixture/general",
       "msteams:/l/meetup-join/19%3afixture/0?context=example",
       "msteams://teams.cloud.microsoft/l/chat/fixture/conversations",
+      "msteams://teams.microsoft.com/meet/12345678901234?p=synthetic&anon=true&launchAgent=join_launcher",
+      "msteams:/meet/12345678901234?p=synthetic%2Bvalue",
+      "msteams://teams.cloud.microsoft/meet/12345678901234/?p=synthetic",
     ]) {
       expect(safeTeamsUrl(url)).toBe(url);
       const event = {preventDefault: vi.fn()};
@@ -2429,7 +2433,86 @@ describe("UserBrowserService", () => {
       "msteams://user@teams.microsoft.com/l/team/fixture", "msteams://teams.microsoft.com:8000/l/team/fixture",
       "msteams://teams.microsoft.com/l/call/fixture", "msteams:/l/team/fixture#fragment",
       "msteams:https://teams.microsoft.com/l/team/fixture", "msteams:/l/team/fixture\\command", "file:///tmp/test", "msteams://teams.microsoft.com/l/team/",
+      "msteams://evil.example/meet/12345678901234?p=synthetic",
+      "msteams://teams.microsoft.com.evil.example/meet/12345678901234",
+      "msteams://user@teams.microsoft.com/meet/12345678901234",
+      "msteams://teams.microsoft.com:8000/meet/12345678901234",
+      "msteams:/meet/", "msteams:/meet/not-a-meeting", "msteams:/meet/123/command",
+      "msteams:/meet/123#fragment", "msteams:/meet/123\\command", "msteams:/meet/123?x=bad\nvalue",
     ]) expect(safeTeamsUrl(url)).toBeUndefined();
+  });
+
+  it("hands modern Teams meeting links to the app once at each navigation boundary", async () => {
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://teams.microsoft.com");
+    const source = electron.state.views[0]!.webContents;
+    const url = "msteams://teams.microsoft.com/meet/12345678901234?p=synthetic%2Bvalue&anon=true";
+    for (const name of ["will-navigate", "will-redirect"]) {
+      vi.mocked(shell.openExternal).mockClear();
+      const event = { preventDefault: vi.fn() };
+      source.emit(name, event, url);
+      expect(event.preventDefault).toHaveBeenCalledOnce();
+      expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith(url);
+    }
+    vi.mocked(shell.openExternal).mockClear();
+    const frame = { isMainFrame: false, url, preventDefault: vi.fn() };
+    source.emit("will-frame-navigate", frame);
+    expect(frame.preventDefault).toHaveBeenCalledOnce();
+    expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith(url);
+    vi.mocked(shell.openExternal).mockClear();
+    const mainFrame = { isMainFrame: true, url, preventDefault: vi.fn() };
+    source.emit("will-frame-navigate", mainFrame);
+    expect(mainFrame.preventDefault).not.toHaveBeenCalled();
+    expect(shell.openExternal).not.toHaveBeenCalled();
+    expect(source.windowOpenHandler?.({ url, disposition: "new-window" }).action).toBe("deny");
+    expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith(url);
+    expect(service.getState().tabs).toHaveLength(1);
+    expect(source.getURL()).toBe("https://teams.microsoft.com/");
+  });
+
+  it("opens current Teams HTTPS meeting invitations in the installed app", async () => {
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://canvas.example/course");
+    const source = electron.state.views[0]!.webContents;
+    const url = "https://teams.microsoft.com/meet/12345678901234?p=synthetic%2Bvalue&anon=true";
+    const nativeUrl = url.replace("https:", "msteams:");
+    expect(safeTeamsMeetingAppUrl(url)).toBe(nativeUrl);
+    for (const name of ["will-navigate", "will-redirect"]) {
+      vi.mocked(shell.openExternal).mockClear();
+      const event = { preventDefault: vi.fn() };
+      source.emit(name, event, url);
+      expect(event.preventDefault).toHaveBeenCalledOnce();
+      expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith(nativeUrl);
+    }
+    vi.mocked(shell.openExternal).mockClear();
+    expect(source.windowOpenHandler?.({ url, disposition: "new-window" }).action).toBe("deny");
+    expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith(nativeUrl);
+    expect(service.getState().tabs).toHaveLength(1);
+    expect(source.getURL()).toBe("https://canvas.example/course");
+    for (const invalid of [
+      "http://teams.microsoft.com/meet/123", "https://evil.example/meet/123",
+      "https://teams.microsoft.com.evil.example/meet/123", "https://user@teams.microsoft.com/meet/123",
+      "https://teams.microsoft.com:8000/meet/123", "https://teams.microsoft.com/meet/not-a-meeting",
+      "https://teams.microsoft.com/meet/123/command", "https://teams.microsoft.com/meet/123#fragment",
+      "https://teams.microsoft.com/v2", "https://teams.microsoft.com/l/team/fixture",
+    ]) expect(safeTeamsMeetingAppUrl(invalid)).toBeUndefined();
+  });
+
+  it("keeps Teams HTTPS meeting invitations in the browser when the app is absent", async () => {
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://canvas.example/course");
+    const source = electron.state.views[0]!.webContents;
+    const url = "https://teams.microsoft.com/meet/12345678901234?p=synthetic";
+    vi.mocked(app.getApplicationNameForProtocol).mockReturnValue("");
+    try {
+      const event = { preventDefault: vi.fn() };
+      source.emit("will-navigate", event, url);
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(source.windowOpenHandler?.({ url, disposition: "new-window" }).action).toBe("allow");
+      expect(shell.openExternal).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(app.getApplicationNameForProtocol).mockReturnValue("Microsoft Teams");
+    }
   });
 
   it("allows only Cursor authentication routes and preserves callback parameters", async () => {
