@@ -85,6 +85,31 @@ Passing the Node sidecar smoke proves core bootstrap, requests and recovery work
 without Electron in the same executable shape that the packaged app uses. It
 does not prove a replacement browser window, credential store or renderer bridge.
 
+## Portable renderer and host bridge
+
+The React renderer can be built with plain Vite, independently of
+`electron-vite`, using `corepack pnpm build:renderer`. Its shared configuration
+owns React compilation, relative asset paths and the renderer CSP nonce. Both
+the Electron renderer build and the native CEF renderer build consume it.
+Renderer builds reject Electron imports so host APIs cannot creep into the UI
+bundle. Electron still owns its main/preload build and the canonical window.
+
+`createRendererBridge` in `@kestrel/shared-types` supplies the same public API,
+request validation and event validation for both hosts. It receives a small
+`RendererTransport` with request, subscribe and optional readiness signals.
+The Electron preload supplies IPC transport and keeps focus, deep-link and
+external-intake readiness notifications. Native CEF supplies JSON queries and
+subscription cancellation only; the renderer's first bootstrap dependency
+installs the shared bridge before app modules evaluate, then removes the raw
+transport global. Remote pages and extension contexts receive neither bridge.
+
+Malformed events are dropped, unsubscribe is idempotent and queued events stop
+after disposal. This extraction does not add runtime validation for the full
+`RendererResponse` union; the existing Core supervisor still validates Core
+responses separately. Native host command support and profile ownership retain
+their existing limits. The static native smoke shell uses the raw transport for
+its private `native-host-status` probe, outside the product renderer API.
+
 ## Native Chromium desktop host
 
 `apps/native-chromium-host` is the native macOS desktop-host migration lane. It
