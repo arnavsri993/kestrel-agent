@@ -3,11 +3,12 @@ import {
 	existsSync,
 	mkdtempSync,
 	realpathSync,
+	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { execSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -229,6 +230,7 @@ import { UserBrowserSettingsSchema } from "@kestrel/shared-types";
 import type {
   BrowserTabFolderName,
   BrowserTabFolderNamingGroup,
+  UserBrowserState,
 } from "@kestrel/shared-types";
 import type {
 	PaymentCardVault,
@@ -348,6 +350,25 @@ function downloadItem(url: string, filename = "report.txt") {
 		once: vi.fn(),
 		cancel: vi.fn(),
 	};
+}
+
+async function completedTransferSource(options: Parameters<typeof createService>[0] = {}) {
+  const source = createService(options);
+  const tab = source.service.getState().tabs[0]!;
+  await source.service.navigate(tab.id, "https://download.example/page");
+  source.service.updateSettings({ ...source.service.getState().settings, downloadBehavior: "ask" });
+  const path = join(dirname(source.statePath), "custom-report.txt");
+  vi.mocked(dialog.showSaveDialog).mockResolvedValueOnce({ canceled: false, filePath: path });
+  const item = Object.assign(new EventEmitter(), {
+    ...downloadItem("https://download.example/report.txt"),
+    on: EventEmitter.prototype.on,
+    once: EventEmitter.prototype.once,
+  });
+  electron.state.partitions.at(-1)!.instance.emit("will-download", {}, item, electron.state.views.at(-1)!.webContents);
+  await vi.waitFor(() => expect(item.setSavePath).toHaveBeenCalledWith(path));
+  writeFileSync(path, "completed transfer bytes");
+  item.emit("done", {}, "completed");
+  return { ...source, tab, path, download: source.service.getState().downloads[0]!, item };
 }
 
 describe("UserBrowserService", () => {
@@ -2276,6 +2297,162 @@ describe("UserBrowserService", () => {
 
     source.service.dispose();
     target.service.dispose();
+  });
+
+  it("retains completed download actions and their exact custom destination after source disposal", async () => {
+    const source = await completedTransferSource();
+    const target = createService();
+    await source.service.transferTabTo(target.service, source.tab.id);
+    source.service.dispose();
+
+    expect(target.service.getState().downloads).toEqual([source.download]);
+    await target.service.openDownload(source.download.id);
+    target.service.revealDownload(source.download.id);
+    target.service.startDownloadDrag(source.download.id);
+    expect(shell.openPath).toHaveBeenCalledWith(source.path);
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(source.path);
+    expect(target.window.webContents.startDrag).toHaveBeenCalledWith({ file: source.path, icon: expect.anything() });
+    expect(readFileSync(source.path, "utf8")).toBe("completed transfer bytes");
+    expect(JSON.stringify(target.service.getState())).not.toContain(source.path);
+    expect(readFileSync(target.statePath, "utf8")).not.toContain(source.path);
+    target.service.dispose();
+  });
+
+  it("keeps existing target download records and destinations authoritative when IDs overlap", async () => {
+    const source = await completedTransferSource();
+    const target = await completedTransferSource();
+    const sourceState = (source.service as unknown as { state: UserBrowserState }).state;
+    sourceState.downloads[0]!.id = target.download.id;
+    sourceState.downloads[0]!.canReveal = false;
+    await source.service.transferTabTo(target.service, source.tab.id);
+    expect(target.service.getState().downloads).toEqual([target.download]);
+    await target.service.openDownload(target.download.id);
+    expect(shell.openPath).toHaveBeenCalledWith(target.path);
+    source.service.dispose(); target.service.dispose();
+  });
+
+  it("does not substitute a target-directory file for a missing source download", async () => {
+    const source = await completedTransferSource();
+    rmSync(source.path);
+    const target = createService();
+    const substitute = join(dirname(target.statePath), "downloads", source.download.filename);
+    writeFileSync(substitute, "different target bytes");
+    await source.service.transferTabTo(target.service, source.tab.id);
+    expect(target.service.getState().downloads[0]).toMatchObject({ id: source.download.id, canReveal: false });
+    await expect(target.service.openDownload(source.download.id)).rejects.toThrow(/no longer available/);
+    expect(shell.openPath).not.toHaveBeenCalled();
+    expect(readFileSync(substitute, "utf8")).toBe("different target bytes");
+    source.service.dispose(); target.service.dispose();
+  });
+
+  it("applies the chronological history cap only after a successful transfer", async () => {
+    const source = await completedTransferSource();
+    const target = createService();
+    const state = (target.service as unknown as { state: UserBrowserState }).state;
+    state.downloads = Array.from({ length: 500 }, (_, index) => ({
+      ...source.download, id: `download-00000000-0000-4000-8000-${String(index).padStart(12, "0")}`, tabId: state.tabs[0]!.id,
+      startedAt: new Date(Date.UTC(2020, 0, 1, 0, 0, index)).toISOString(), canReveal: false,
+    }));
+    await source.service.transferTabTo(target.service, source.tab.id);
+    const downloads = target.service.getState().downloads;
+    expect(downloads).toHaveLength(500);
+    expect(downloads[0]!.id).toBe("download-00000000-0000-4000-8000-000000000001");
+    expect(downloads.at(-1)).toEqual(source.download);
+    expect(existsSync(source.path)).toBe(true);
+    source.service.dispose(); target.service.dispose();
+  });
+
+  it.each([false, true])("preserves capped history and selection on rollback (new selection: %s)", async (newSelection) => {
+    const source = await completedTransferSource();
+    const sourceContents = electron.state.views.at(-1)!.webContents;
+    const sourcePartition = electron.state.partitions.at(-1)!.instance;
+    source.service.updateSettings({ ...source.service.getState().settings, downloadBehavior: "automatic" });
+    const target = createService();
+    const other = (await target.service.createTab("https://another.example", false)).tabs.at(-1)!;
+    await target.service.createTab("https://last.example", false);
+    const targetState = (target.service as unknown as { state: UserBrowserState }).state;
+    targetState.downloads = Array.from({ length: 500 }, (_, index) => ({ ...source.download, id: `download-00000000-0000-4000-8000-${String(index).padStart(12, "0")}`, canReveal: false }));
+    const before = target.service.getState();
+    const item = Object.assign(new EventEmitter(), { ...downloadItem("https://download.example/late.txt"), on: EventEmitter.prototype.on, once: EventEmitter.prototype.once });
+    const importTab = target.service.importTabForTransfer.bind(target.service);
+    vi.spyOn(target.service, "importTabForTransfer").mockImplementation(async (tab, onImported) => {
+      const result = await importTab(tab, onImported);
+      sourcePartition.emit("will-download", {}, item, sourceContents);
+      if (newSelection) await target.service.selectTab(other.id);
+      return result;
+    });
+    await expect(source.service.transferTabTo(target.service, source.tab.id)).rejects.toThrow(/Finish or cancel.*download/);
+    expect(target.service.getState().downloads).toEqual(before.downloads);
+    expect(target.service.getState().tabs.map(tab => tab.id)).toEqual(before.tabs.map(tab => tab.id));
+    expect(target.service.getState().activeTabId).toBe(newSelection ? other.id : before.activeTabId);
+    expect(source.service.getState().tabs.some(tab => tab.id === source.tab.id)).toBe(true);
+    expect(item.cancel).not.toHaveBeenCalled();
+    source.service.dispose(); target.service.dispose();
+  });
+
+  it("captures a source download that completes while target navigation is running", async () => {
+    const source = await completedTransferSource();
+    const contents = electron.state.views.at(-1)!.webContents;
+    const partition = electron.state.partitions.at(-1)!.instance;
+    source.service.updateSettings({ ...source.service.getState().settings, downloadBehavior: "automatic" });
+    const target = createService();
+    const importTab = target.service.importTabForTransfer.bind(target.service);
+    vi.spyOn(target.service, "importTabForTransfer").mockImplementation(async (tab, onImported) => {
+      const result = await importTab(tab, onImported);
+      const item = Object.assign(new EventEmitter(), { ...downloadItem("https://download.example/late.txt", "late.txt"), on: EventEmitter.prototype.on, once: EventEmitter.prototype.once });
+      partition.emit("will-download", {}, item, contents);
+      writeFileSync(item.setSavePath.mock.calls[0]![0], "late completed bytes");
+      item.emit("done", {}, "completed");
+      return result;
+    });
+    await source.service.transferTabTo(target.service, source.tab.id);
+    expect(target.service.getState().downloads).toEqual(source.service.getState().downloads);
+    expect(target.service.getState().downloads).toHaveLength(2);
+    source.service.dispose(); target.service.dispose();
+  });
+
+  it("keeps the source if the imported target tab disappears while source removal waits", async () => {
+    const source = await completedTransferSource();
+    const target = createService();
+    let release!: () => void;
+    const queue = source.service as unknown as { runExclusiveTabMutation(fn: () => Promise<void>): Promise<void> };
+    const pending = queue.runExclusiveTabMutation(() => new Promise<void>(resolve => { release = resolve; }));
+    const transfer = source.service.transferTabTo(target.service, source.tab.id);
+    const rejected = expect(transfer).rejects.toThrow(/Browser tab is unavailable/);
+    await vi.waitFor(() => expect(target.service.getState().tabs.some(tab => tab.id === source.tab.id)).toBe(true));
+    await target.service.removeTabForTransfer(source.tab.id);
+    release();
+    await pending; await rejected;
+    expect(source.service.getState().tabs.some(tab => tab.id === source.tab.id)).toBe(true);
+    expect(source.service.getState().downloads).toEqual([source.download]);
+    expect(existsSync(source.path)).toBe(true);
+    source.service.dispose(); target.service.dispose();
+  });
+
+  it("keeps the surviving target and history when source removal throws after ownership ends", async () => {
+    const source = await completedTransferSource({ onLastTabClosed: () => { throw new Error("source close failed"); } });
+    const target = createService();
+    await expect(source.service.transferTabTo(target.service, source.tab.id)).rejects.toThrow("source close failed");
+    expect(source.service.getState().tabs).toHaveLength(0);
+    expect(target.service.getState().tabs.some(tab => tab.id === source.tab.id)).toBe(true);
+    expect(target.service.getState().downloads).toEqual([source.download]);
+    await target.service.openDownload(source.download.id);
+    expect(shell.openPath).toHaveBeenCalledWith(source.path);
+    source.service.dispose(); target.service.dispose();
+  });
+
+  it("leaves source downloads intact when target navigation fails", async () => {
+    const source = await completedTransferSource();
+    const target = createService();
+    const before = target.service.getState();
+    vi.spyOn(target.service, "navigate").mockRejectedValueOnce(new Error("target navigation failed"));
+    await expect(source.service.transferTabTo(target.service, source.tab.id)).rejects.toThrow("target navigation failed");
+    expect(target.service.getState().downloads).toEqual(before.downloads);
+    expect(target.service.getState().tabs.map(tab => tab.id)).toEqual(before.tabs.map(tab => tab.id));
+    expect(source.service.getState().downloads).toEqual([source.download]);
+    expect(source.service.getState().tabs.some(tab => tab.id === source.tab.id)).toBe(true);
+    expect(existsSync(source.path)).toBe(true);
+    source.service.dispose(); target.service.dispose();
   });
 
   it.each(["progressing", "checking"] as const)(

@@ -22,7 +22,7 @@ const bytes = Buffer.alloc(256 * 1024, "download-move-proof");
 const held = new Map();
 const server = createServer((req, res) => {
   const name = req.url?.slice(1);
-  if (!['main', 'detached'].includes(name)) {
+  if (!['main', 'detached', 'completed'].includes(name)) {
     res.writeHead(200, { "content-type": "text/html" }); res.end("<title>Download move fixture</title><p>Download move fixture</p>"); return;
   }
   res.writeHead(200, { "content-type": "text/plain", "content-length": String(bytes.length),
@@ -106,15 +106,33 @@ try {
   await request(detached, { type: "browser-cancel-download", downloadId: second.id });
   await expect.poll(async () => (await state(detached)).downloads.find(d => d.id === second.id)?.status).toBe("cancelled");
   await expect(detached.locator(".browser-inline-error")).toHaveCount(0);
+  const completed = await activeDownload(detached, origin, tabId, "completed");
+  held.get("completed").end(bytes.subarray(16 * 1024));
+  await expect.poll(async () => (await state(detached)).downloads.find(d => d.id === completed.id)?.status).toBe("completed");
+  assert.deepEqual(readFileSync(join(root, "profile", "browser-downloads", "completed.txt")), bytes);
   await request(detached, { type: "browser-navigate", tabId, input: `${origin}/page` });
   await move(detached, tabId, "Move tab back to main window");
-  await expect.poll(async () => (await state(main)).tabs.some(t => t.id === tabId)).toBe(true);
+  await expect.poll(async () => (await state(main)).tabs.some(t => t.id === tabId), { timeout: 15_000 }).toBe(true);
+  await expect.poll(async () => (await state(main)).downloads.find(d => d.id === completed.id)?.status,
+    { message: "The completed detached download must remain in the main window's history.", timeout: 15_000 }).toBe("completed");
+  const returned = await state(main);
+  assert.equal(returned.downloads.find(d => d.id === completed.id)?.status, "completed", "The completed detached download must remain in the main window's history.");
+  assert.equal(returned.downloads.find(d => d.id === completed.id)?.canReveal, true);
+  assert.equal(returned.downloads.filter(d => d.id === first.id).length, 1, "Inherited download history must not duplicate on return.");
+  assert.equal(returned.downloads.find(d => d.id === second.id)?.status, "cancelled");
   await main.locator(`.browser-tab[data-tab-id="${tabId}"]`).waitFor();
-  await capture(main, "returned-after-cancel.png"); assert.deepEqual(errors, []);
-  if (evidence) writeFileSync(join(evidence, "proof.json"), JSON.stringify({ executable: executable ?? "source Electron", actualHttpDownloads: 2,
+  await capture(main, "returned-after-cancel.png");
+  await main.getByRole("button", { name: "Downloads", exact: true }).click();
+  const completedRow = main.locator(".browser-download-popover-row").filter({ hasText: "completed.txt" });
+  await expect(completedRow).toHaveCount(1);
+  await expect(completedRow.getByRole("menuitem", { name: "Open", exact: true })).toBeVisible();
+  await expect(completedRow.getByRole("menuitem", { name: "Show in Finder", exact: true })).toBeVisible();
+  await expect(main.getByRole("menu", { name: "Downloads", exact: true })).toHaveCSS("opacity", "1");
+  await capture(main, "returned-downloads.png"); assert.deepEqual(errors, []);
+  if (evidence) writeFileSync(join(evidence, "proof.json"), JSON.stringify({ executable: executable ?? "source Electron", actualHttpDownloads: 3,
     bytesPerCompletedDownload: bytes.length, pointerContextMenu: true, reducedMotion: true, progressUpdatesRetainMoveExplanation: true, detachBlockedWithoutInterruptingDownload: true,
     completionPermitsDetach: true, reattachAndTransferPreparationBlocked: true, cancellationPermitsReturn: true,
-    noUnhandledRendererErrors: true, realProfileVerified: false, completedHistoryTransferVerified: false }, null, 2));
+    noUnhandledRendererErrors: true, realProfileVerified: false, completedHistoryTransferVerified: true }, null, 2));
   console.log("Download move smoke passed: held HTTP download survives rejected detach/reattach; finish and cancel allow movement.");
 } catch (error) { if (main && !main.isClosed()) await capture(main, "failure.png").catch(() => {}); throw error; }
 finally { for (const res of held.values()) res.end(); await app?.close().catch(() => {}); server.closeAllConnections(); await new Promise(done => server.close(done)); rmSync(root, { recursive: true, force: true }); }

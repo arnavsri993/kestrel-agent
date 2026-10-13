@@ -2868,7 +2868,10 @@ export class UserBrowserService {
 		return structuredClone(tab);
 	}
 
-	async importTabForTransfer(tab: UserBrowserTab): Promise<UserBrowserState> {
+	async importTabForTransfer(
+		tab: UserBrowserTab,
+		onImported?: (previousActiveTabId: string | null) => void,
+	): Promise<UserBrowserState> {
 		return this.runExclusiveTabMutation(async () => {
 			this.assertAvailable();
 			if (this.state.tabs.some((candidate) => candidate.id === tab.id))
@@ -2898,6 +2901,7 @@ export class UserBrowserService {
 				this.commit();
 				throw cause;
 			}
+			onImported?.(previousActiveTabId);
 			return this.getState();
 		});
 	}
@@ -2908,8 +2912,80 @@ export class UserBrowserService {
 		);
 	}
 
+	async transferTabTo(target: UserBrowserService, tabId: string): Promise<void> {
+		if (target === this)
+			throw new Error("That browser tab is already in this window.");
+		const tab = this.getTabForTransfer(tabId);
+		let previousTargetActiveTabId: string | null = null;
+		await target.importTabForTransfer(tab, (previous) => {
+			previousTargetActiveTabId = previous;
+		});
+		let downloads: Array<{ record: UserBrowserDownload; path?: string }> = [];
+		try {
+			await this.runExclusiveTabMutation(async () => {
+				// Capture at the final guard, not before target navigation: another
+				// source download may have completed while the target was loading.
+				this.assertNoActiveTabDownload(tabId);
+				target.requireTab(tabId);
+				downloads = this.state.downloads
+					.filter((record) =>
+						record.tabId === tabId &&
+						record.status !== "progressing" &&
+						record.status !== "checking",
+					)
+					.map((record) => {
+						const path = this.availableDownload(record.id)?.path;
+						return {
+							record: { ...structuredClone(record), canReveal: Boolean(path) },
+							...(path ? { path } : {}),
+						};
+					});
+				await this.removeTabForTransferInternal(tabId);
+			});
+		} catch (cause) {
+			if (this.state.tabs.some((candidate) => candidate.id === tabId)) {
+				await target.runExclusiveTabMutation(() =>
+					target.removeTabForTransferInternal(tabId, previousTargetActiveTabId),
+				).catch(() => undefined);
+			} else {
+				// Removal can fail after closing the final source window. Never
+				// delete the target's surviving copy in that case.
+				target.mergeTransferredDownloads(downloads);
+			}
+			throw cause;
+		}
+		// History changes and bounded trimming happen only after source removal,
+		// so a rejected transfer cannot evict or rewrite the target's history.
+		target.mergeTransferredDownloads(downloads);
+	}
+
+	private mergeTransferredDownloads(
+		downloads: Array<{ record: UserBrowserDownload; path?: string }>,
+	): void {
+		const existing = new Set(this.state.downloads.map((record) => record.id));
+		let changed = false;
+		for (const { record, path } of downloads) {
+			// An inherited copy must not replace the target's current destination.
+			if (existing.has(record.id)) continue;
+			existing.add(record.id);
+			this.state.downloads.push(record);
+			if (path) this.downloadPaths.set(record.id, path);
+			changed = true;
+		}
+		if (!changed) return;
+		this.state.downloads.sort(
+			(a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt),
+		);
+		this.state.downloads.splice(
+			0,
+			Math.max(0, this.state.downloads.length - MAX_DOWNLOAD_ENTRIES),
+		);
+		this.commit();
+	}
+
 	private async removeTabForTransferInternal(
 		tabId: string,
+		rollbackActiveTabId?: string | null,
 	): Promise<UserBrowserState> {
 		this.assertNoActiveTabDownload(tabId);
 		if (this.isAgentTabPinned(tabId)) {
@@ -2930,7 +3006,10 @@ export class UserBrowserService {
 			this.state.activeTabId = null;
 		} else if (this.state.activeTabId === tabId) {
 			this.state.activeTabId =
-				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
+				rollbackActiveTabId &&
+				this.state.tabs.some((tab) => tab.id === rollbackActiveTabId)
+					? rollbackActiveTabId
+					: this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
 		}
 		this.pruneEmptyTabFolders();
 		this.commit();
