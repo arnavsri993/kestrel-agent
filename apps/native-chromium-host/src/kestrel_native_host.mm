@@ -184,6 +184,8 @@ std::string renderer_resource_root;
 int exit_after_ready_ms = 0;
 bool ephemeral_core_enabled = false;
 bool full_renderer_enabled = false;
+bool user_extensions_enabled = false;
+bool durable_profile_enabled = false;
 std::optional<std::string> smoke_user_browser_url;
 bool smoke_user_browser_via_bridge = false;
 CefRefPtr<CefWindow> kestrel_window;
@@ -470,6 +472,8 @@ class KestrelUserBrowserClient final : public CefClient,
       std::function<void(const std::string&, const std::string&)>;
   using NavigationBlocked = std::function<void(const std::string&)>;
   using BrowserClosed = std::function<void(const std::string&, int)>;
+  using PopupRequested =
+      std::function<void(const std::string& opener_tab_id, const std::string& url)>;
 
   KestrelUserBrowserClient(std::string tab_id, BrowserCreated on_created,
                            LoadingChanged on_loading,
@@ -477,7 +481,8 @@ class KestrelUserBrowserClient final : public CefClient,
                            StringChanged on_title,
                            StringChanged on_load_end,
                            NavigationBlocked on_navigation_blocked,
-                           BrowserClosed on_closed)
+                           BrowserClosed on_closed,
+                           PopupRequested on_popup)
       : tab_id_(std::move(tab_id)),
         on_created_(std::move(on_created)),
         on_loading_(std::move(on_loading)),
@@ -485,7 +490,8 @@ class KestrelUserBrowserClient final : public CefClient,
         on_title_(std::move(on_title)),
         on_load_end_(std::move(on_load_end)),
         on_navigation_blocked_(std::move(on_navigation_blocked)),
-        on_closed_(std::move(on_closed)) {}
+        on_closed_(std::move(on_closed)),
+        on_popup_(std::move(on_popup)) {}
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -509,9 +515,14 @@ class KestrelUserBrowserClient final : public CefClient,
                      CefBrowserSettings& settings,
                      CefRefPtr<CefDictionaryValue>& extra_info,
                      bool* no_javascript_access) override {
-    // Do not silently fall back to a CEF popup that would lose the intended
-    // opener/context semantics. The existing Electron popup behavior is not
-    // claimed as migrated until native adoption is implemented explicitly.
+    // Adopt HTTP(S) popups as sibling user tabs in the Alloy window. Cancel the
+    // default CEF popup window so opener/context stays inside Kestrel's host.
+    const auto safe_url = safe_user_browser_url(target_url.ToString());
+    if (safe_url && on_popup_) {
+      on_popup_(tab_id_, *safe_url);
+      std::cout << "KESTREL_NATIVE_CHROMIUM_USER_BROWSER_POPUP_ADOPTED url="
+                << *safe_url << std::endl;
+    }
     return true;
   }
 
@@ -568,6 +579,7 @@ class KestrelUserBrowserClient final : public CefClient,
   StringChanged on_load_end_;
   NavigationBlocked on_navigation_blocked_;
   BrowserClosed on_closed_;
+  PopupRequested on_popup_;
 
   IMPLEMENT_REFCOUNTING(KestrelUserBrowserClient);
 };
@@ -661,8 +673,13 @@ class KestrelBridgeQueryHandler final
     }
     if (bridge_request->GetString("type").ToString() ==
         "native-host-status") {
-      callback->Success(
-          R"JSON({"ok":true,"host":"chromium-cef","profile":"isolated","credentialStorage":"disabled","core":"ephemeral-or-unavailable","browser":"native-cef-in-memory-tabs"})JSON");
+      const std::string status = std::string("{\"ok\":true,\"host\":\"chromium-cef\",\"profile\":\"") +
+          (durable_profile_enabled ? "durable-isolated" : "isolated") +
+          "\",\"credentialStorage\":\"disabled\",\"core\":\"ephemeral-or-unavailable\",\"browser\":\"native-cef-in-memory-tabs\",\"userExtensions\":\"" +
+          (user_extensions_enabled ? "enabled-on-user-profile" : "disabled") +
+          "\",\"durableProfile\":" +
+          (durable_profile_enabled ? "true" : "false") + "}";
+      callback->Success(status);
       std::cout << "KESTREL_NATIVE_CHROMIUM_BRIDGE_REQUEST_OK"
                 << std::endl;
       return true;
@@ -730,8 +747,10 @@ class KestrelClient : public CefClient,
  public:
   KestrelClient(std::string allowed_shell_url,
                 NSString* isolated_profile_root,
-                bool enable_ephemeral_core)
-      : bridge_handler_(
+                bool enable_ephemeral_core,
+                bool enable_user_extensions)
+      : user_extensions_enabled_(enable_user_extensions),
+        bridge_handler_(
             std::make_unique<KestrelBridgeQueryHandler>(
                 std::move(allowed_shell_url),
                 [this](
@@ -750,7 +769,13 @@ class KestrelClient : public CefClient,
     if (isolated_profile_root) {
       isolated_profile_root_ =
           std::string([isolated_profile_root fileSystemRepresentation] ?: "");
-      user_browser_cache_path_ = isolated_profile_root_ + "/user-browser";
+      // When user extensions are enabled, Chromium's --load-extension path
+      // lands in the default profile (isolated root). Keep the privileged
+      // shell on a separate cache so extension storage never shares it.
+      user_browser_cache_path_ =
+          user_extensions_enabled_
+              ? isolated_profile_root_
+              : isolated_profile_root_ + "/user-browser";
     }
     CreateBlankUserBrowserTab(true);
     if (!bridge_router_ ||
@@ -836,7 +861,19 @@ class KestrelClient : public CefClient,
                           command_line->HasSwitch("disable-background-networking")
                       ? "disabled"
                       : "enabled")
+              << " user_extensions="
+              << (user_extensions_enabled ? "enabled" : "disabled")
+              << " durable_profile="
+              << (durable_profile_enabled ? "enabled" : "disabled")
               << std::endl;
+    if (user_extensions_enabled) {
+      std::cout << "KESTREL_NATIVE_CHROMIUM_USER_EXTENSIONS_ENABLED"
+                << std::endl;
+    }
+    if (durable_profile_enabled) {
+      std::cout << "KESTREL_NATIVE_CHROMIUM_DURABLE_PROFILE_ENABLED"
+                << std::endl;
+    }
     if (smoke_user_browser_url && !smoke_user_browser_via_bridge &&
         !smoke_user_browser_started_) {
       smoke_user_browser_started_ = true;
@@ -1306,12 +1343,26 @@ class KestrelClient : public CefClient,
       return false;
     }
 
+    // Extension-capable user browsing shares the default Chromium profile so
+    // --load-extension and chrome.storage survive with the same storage that
+    // Chromium owns. The privileged shell uses a separate cache path.
+    if (user_extensions_enabled_) {
+      user_browser_context_ = CefRequestContext::GetGlobalContext();
+      if (!user_browser_context_) {
+        if (error) {
+          *error = "The native Chromium user-browser profile is unavailable.";
+        }
+        return false;
+      }
+      OnUserBrowserContextInitialized(user_browser_context_);
+      return true;
+    }
+
     CefRequestContextSettings user_browser_settings;
     CefString(&user_browser_settings.cache_path) = user_browser_cache_path_;
-    // Do not start a second Chromium storage context until someone explicitly
-    // opens a native browser tab. Its session remains transient while profile
-    // migration and credential storage stay deferred by user choice.
-    user_browser_settings.persist_session_cookies = false;
+    // Durable profiles keep session cookies on disk. Ephemeral profiles stay
+    // transient until an explicit migration/credential path exists.
+    user_browser_settings.persist_session_cookies = durable_profile_enabled;
     const std::weak_ptr<bool> owner_token = native_owner_alive_;
     user_browser_context_initializing_ = true;
     user_browser_context_handler_ = new KestrelUserBrowserContextHandler(
@@ -1429,6 +1480,16 @@ class KestrelClient : public CefClient,
           // finish closing before CefShutdown().
           if (!owner_token.lock()) return;
           OnNativeUserBrowserClosed(tab_id, browser_id);
+        },
+        [this, owner_token](const std::string& /*opener_tab_id*/,
+                            const std::string& url) {
+          const std::shared_ptr<bool> alive = owner_token.lock();
+          if (!alive || !*alive) return;
+          std::string create_error;
+          if (!CreateUserBrowserTab(url, true, &create_error)) {
+            std::cerr << "Kestrel could not adopt a native browser popup: "
+                      << create_error << std::endl;
+          }
         });
     CefBrowserSettings browser_settings;
     tab.view = CefBrowserView::CreateBrowserView(
@@ -1897,6 +1958,7 @@ class KestrelClient : public CefClient,
   bool core_ready_ = false;
   bool smoke_user_browser_started_ = false;
   uint64_t next_core_request_id_ = 0;
+  bool user_extensions_enabled_ = false;
   std::string isolated_profile_root_;
   std::string user_browser_cache_path_;
   std::shared_ptr<bool> native_owner_alive_ = std::make_shared<bool>(true);
@@ -2205,6 +2267,16 @@ int main(int argc, char* argv[]) {
     [KestrelApplication sharedApplication];
     const bool extension_workbench =
         has_argument(argc, argv, "--kestrel-extension-workbench");
+    user_extensions_enabled =
+        has_argument(argc, argv, "--kestrel-user-extensions");
+    durable_profile_enabled =
+        has_argument(argc, argv, "--kestrel-durable-profile");
+    if (extension_workbench && user_extensions_enabled) {
+      std::cerr << "Extension workbench and user-browser extensions cannot run "
+                   "together."
+                << std::endl;
+      return 1;
+    }
     if (extension_workbench &&
         (has_argument(argc, argv, "--kestrel-renderer") ||
          has_argument(argc, argv, "--kestrel-ephemeral-core"))) {
@@ -2308,7 +2380,8 @@ int main(int argc, char* argv[]) {
     ephemeral_core_enabled =
         has_argument(argc, argv, "--kestrel-ephemeral-core");
 
-    CefRefPtr<KestrelChromiumApp> app(new KestrelChromiumApp([extension_workbench] {
+    CefRefPtr<KestrelChromiumApp> app(new KestrelChromiumApp(
+        [extension_workbench] {
       if (extension_workbench) {
         StartExtensionWorkbench();
         return;
@@ -2325,15 +2398,48 @@ int main(int argc, char* argv[]) {
       CefRefPtr<KestrelClient> client(new KestrelClient(
           shell_url,
           isolated_profile,
-          ephemeral_core_enabled));
+          ephemeral_core_enabled,
+          user_extensions_enabled));
       main_client_owner = client;
-      CefRefPtr<CefBrowserView> browser_view =
-          CefBrowserView::CreateBrowserView(
-              client, shell_url, browser_settings, nullptr, nullptr,
-              new KestrelAlloyBrowserViewDelegate());
-      CefWindow::CreateTopLevelWindow(
-          new KestrelWindowDelegate(browser_view));
-    }, extension_workbench));
+      const auto open_shell =
+          [client, browser_settings](
+              CefRefPtr<CefRequestContext> shell_context) {
+            CefRefPtr<CefBrowserView> browser_view =
+                CefBrowserView::CreateBrowserView(
+                    client, shell_url, browser_settings, nullptr, shell_context,
+                    new KestrelAlloyBrowserViewDelegate());
+            if (!browser_view) {
+              std::cerr << "Kestrel could not create its privileged shell view."
+                        << std::endl;
+              CefQuitMessageLoop();
+              return;
+            }
+            CefWindow::CreateTopLevelWindow(
+                new KestrelWindowDelegate(browser_view));
+          };
+      if (!user_extensions_enabled) {
+        open_shell(nullptr);
+        return;
+      }
+      // Privileged shell storage stays extension-free. User tabs and
+      // --load-extension share the default profile instead. CEF returns the
+      // context object before it can host a BrowserView, so wait for init.
+      CefRequestContextSettings shell_settings;
+      const std::string shell_cache =
+          isolated_profile_path + "/shell-privileged";
+      CefString(&shell_settings.cache_path) = shell_cache;
+      shell_settings.persist_session_cookies = false;
+      CefRefPtr<KestrelUserBrowserContextHandler> shell_handler =
+          new KestrelUserBrowserContextHandler(open_shell);
+      CefRefPtr<CefRequestContext> shell_context =
+          CefRequestContext::CreateContext(shell_settings, shell_handler);
+      if (!shell_context) {
+        std::cerr << "Kestrel could not create its privileged shell profile."
+                  << std::endl;
+        CefQuitMessageLoop();
+      }
+        },
+        extension_workbench, user_extensions_enabled));
     if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
       std::cerr << "Kestrel could not initialize Chromium." << std::endl;
       return CefGetExitCode();

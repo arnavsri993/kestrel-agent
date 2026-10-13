@@ -169,20 +169,41 @@ reaching a permission dialog alone is not evidence of complete store support.
 CEF's upstream [extension management issue](https://github.com/chromiumembedded/cef/issues/3450)
 documents Chrome-style management and the remaining programmatic API boundary.
 
-The next integration step is to connect extension-capable Chrome-style user
-browsing to Kestrel's shell while keeping the privileged renderer in a separate
-extension-free security boundary. Then add explicit durable native-profile
-ownership, install/update/removal and permission tests, and the remaining
-browser/agent parity gates before any canonical-app cutover. Do not enable
-extensions globally in the current Alloy shell to shortcut this separation.
+The product-shell user-extension lane is available with
+`--kestrel-user-extensions` plus Chromium's `--load-extension=` path. In that
+mode the privileged shell uses a separate `shell-privileged` request context
+while user tabs share the default Chromium profile that receives loaded
+extensions. `corepack pnpm test:native-user-extensions` proves MV3 content
+scripts and `chrome.storage.local` on user tabs, bridge presence on the shell,
+and no content-script injection into the privileged document. This still does
+not replace `/Applications/Kestrel.app`. Next: durable native-profile ownership,
+`ChromiumExtensionRuntime` wiring to `BrowserExtensionManager`, store
+install/update/removal tests, and the remaining browser/agent parity gates
+before any canonical-app cutover.
 
 ## Next boundaries
 
-The next native-host slices are durable profile ownership without Keychain
-prompt spam, popup/adoption semantics, user-approved permission flows,
-downloads/extensions, and the remaining desktop command surface. Each needs a
-real process test and an explicit user-data boundary before the canonical app
-can move.
+Current native-host progress toward cutover:
+
+- `--kestrel-user-extensions` keeps the privileged shell extension-free while
+  user tabs share Chromium's default profile for `--load-extension`
+- `ChromiumExtensionRuntime` + file host port persist verified unpack paths for
+  startup loading (CEF 152 has no programmatic LoadExtension API)
+- `--kestrel-durable-profile` opts into persistent session cookies on the
+  isolated user-browser context
+- HTTP(S) `window.open` popups are adopted as sibling Alloy user tabs
+- `corepack pnpm package:mac:native` / `install:mac:native` package the CEF host;
+  side-by-side install is the default (`Kestrel Native.app`); canonical Dock
+  replacement requires `KESTREL_INSTALL_NATIVE_CANONICAL=1`
+
+Still required before retiring Electron:
+
+- Keychain/credential bootstrap without prompt spam
+- Downloads, history, bookmarks, and site-permission persistence parity
+- Remaining desktop command surface and browser automation relay
+- Production Developer ID signing + notarization
+- Retargeted desktop smokes against the native binary on a durable profile
+- Explicit Electron→native profile transfer design (no silent merge)
 
 ## Chromium preview host
 

@@ -123,10 +123,13 @@ explicit approval for apply.
 - Use `kestrel opencode --setup` when the person specifically wants an
   OpenCode agent configuration; it prints configuration and does not silently
   write secrets.
-- For desktop work, run only one `corepack pnpm dev:desktop` watcher. Main and
-  preload changes restart Electron automatically; renderer changes use Vite
-  HMR. Leave the watcher running after source changes so the open app reflects
-  the current source.
+- For desktop work, run only one desktop watcher. Default
+  `corepack pnpm dev:desktop` is still Electron (`dev:desktop:electron`). The
+  Chromium cutover lane is `corepack pnpm dev:desktop:chromium` or
+  `KESTREL_DESKTOP_RUNTIME=chromium`. Native CEF never opens the Electron
+  profile. Electron packaging stays until
+  `corepack pnpm check:electron-retirement` is accepted with live parity
+  evidence; do not delete Electron because a Chromium host binary exists.
 - For onboarding or setup changes, run `corepack pnpm test:desktop-setup`.
 - For a broad repository change, run `corepack pnpm verify` and distinguish
   focused passes from unrelated baseline or remote-CI failures.
