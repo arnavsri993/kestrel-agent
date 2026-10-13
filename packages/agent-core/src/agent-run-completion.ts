@@ -8,6 +8,9 @@ export const PREMATURE_BROWSER_COMPLETION_ERROR =
 export const OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR =
 	"Kestrel stopped before taking the required fresh browser observation. Retry the last turn or ask for a follow-up.";
 
+export const OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR =
+	"Kestrel stopped before checking the visible result of its last computer action. Take a fresh desktop screenshot before claiming completion.";
+
 export function prematureBrowserCompletionError(input: {
 	runId: string;
 	sessionId: string;
@@ -15,15 +18,21 @@ export function prematureBrowserCompletionError(input: {
 	browserRecoveryState: BrowserRecoveryBudgetState;
 	listExecutions: (sessionId: string) => RuntimeToolExecution[];
 }): string | undefined {
+	const runPrefix = `${input.runId}:`;
+	const executions = input.listExecutions(input.sessionId).filter(
+		(execution) =>
+			execution.idempotencyKey?.startsWith(runPrefix) === true,
+	);
+	let desktopObservationRequired = false;
+	for (const execution of executions) {
+		if (execution.status !== "verified") continue;
+		if (execution.toolName === "computer.act") desktopObservationRequired = true;
+		if (execution.toolName === "computer.screenshot") desktopObservationRequired = false;
+	}
+	if (desktopObservationRequired) return OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR;
 	const modelText = input.modelText.trim();
 	if (modelText) return undefined;
-
-	const runPrefix = `${input.runId}:`;
-	const browserExecutions = input.listExecutions(input.sessionId).filter(
-		(execution) =>
-			execution.idempotencyKey?.startsWith(runPrefix) === true &&
-			execution.toolName.startsWith("browser."),
-	);
+	const browserExecutions = executions.filter((execution) => execution.toolName.startsWith("browser."));
 	if (browserExecutions.length === 0) return undefined;
 
 	if (

@@ -6,6 +6,16 @@ import {
 } from "./browser-backend-wire";
 
 describe("browser backend wire schema", () => {
+	it("requires screenshot provenance and validates desktop keyboard chords", () => {
+		expect(DesktopActionSchema.safeParse({ type: "key", key: "a", captureId: "capture-1", modifiers: ["Command", "Shift"] }).success).toBe(true);
+		expect(DesktopActionSchema.safeParse({ type: "key", key: "PageDown", captureId: "capture-1" }).success).toBe(true);
+		for (const action of [
+			{ type: "click", x: 1, y: 1 },
+			{ type: "key", key: "a", captureId: "capture-1", modifiers: ["Command", "Command"] },
+			{ type: "key", key: "a", captureId: "capture-1", modifiers: ["Meta"] },
+			{ type: "key", key: "a; quit", captureId: "capture-1" },
+		]) expect(DesktopActionSchema.safeParse(action).success).toBe(false);
+	});
 	it("accepts a valid visible-tabs request envelope", () => {
 		expect(
 			BrowserBackendRequestMessageSchema.parse({

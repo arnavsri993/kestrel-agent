@@ -34,7 +34,11 @@ import {
 } from "./browser-recovery";
 import { prematureBrowserCompletionErrorForRun } from "./agent-run-completion";
 import type { AgentRuntime } from "./runtime";
-import { modelVisibleToolResult } from "./tool-result-guardrails";
+import {
+	isModelScreenshotToolName,
+	modelScreenshotObservation,
+	modelVisibleToolResult,
+} from "./tool-result-guardrails";
 import { UsageGovernor } from "./usage-governor";
 import {
 	decideAdaptiveExecution,
@@ -350,6 +354,46 @@ export class AgentLoop {
 				adaptiveExecutionStateKey(run.id),
 			)?.attemptedRouteIds ?? []
 		).slice(-16);
+	}
+
+	private latestReplayableScreenshotObservation(
+		sessionId: string,
+		modelMessages: ModelMessage[],
+	): ModelContentPart[] | undefined {
+		const messages = this.runtime.listMessages(sessionId);
+		const descriptors = new Map(this.runtime.discoverTools(sessionId).map((tool) => [tool.name, tool]));
+		for (let index = messages.length - 1; index >= 0; index -= 1) {
+			const message = messages[index]!;
+			if (message.role === "user") return undefined;
+			if (message.role === "tool" && message.toolName &&
+				(message.toolName.startsWith("browser.") || message.toolName.startsWith("computer.")) &&
+				descriptors.get(message.toolName)?.readOnly === false)
+				return undefined;
+			if (
+				message.role !== "tool" ||
+				!message.toolName ||
+				!isModelScreenshotToolName(message.toolName)
+			)
+				continue;
+			if (!message.toolExecutionId || !message.providerToolCallId)
+				return undefined;
+			const receiptStillPresent = modelMessages.some(
+				(candidate) =>
+					candidate.role === "tool" &&
+					candidate.toolCallId === message.providerToolCallId &&
+					candidate.toolName === message.toolName,
+			);
+			if (!receiptStillPresent) return undefined;
+			const execution = this.database.getToolExecution(message.toolExecutionId);
+			if (
+				!execution ||
+				execution.sessionId !== sessionId ||
+				execution.toolName !== message.toolName
+			)
+				return undefined;
+			return modelScreenshotObservation(execution);
+		}
+		return undefined;
 	}
 
 	private withAdaptiveRoute(
@@ -707,6 +751,10 @@ export class AgentLoop {
 					: []),
 				...compacted.messages,
 			];
+			const replayedScreenshot =
+				this.latestReplayableScreenshotObservation(run.sessionId, modelMessages);
+			if (replayedScreenshot)
+				modelMessages.push({ role: "user", content: replayedScreenshot });
 			return await this.continueRun(
 				run,
 				modelMessages,
@@ -1265,6 +1313,7 @@ export class AgentLoop {
 					};
 				}
 
+				let latestScreenshotObservation: ModelContentPart[] | undefined;
 				for (const call of result.toolCalls) {
 					if (options.signal?.aborted) throw options.signal.reason;
 					const descriptor = descriptors.get(call.name);
@@ -1445,7 +1494,17 @@ export class AgentLoop {
 						toolCallId: call.id,
 						toolName: call.name,
 					});
+					if (descriptor.category === "browser" && !descriptor.readOnly)
+						latestScreenshotObservation = undefined;
+					const screenshotObservation = modelScreenshotObservation(execution);
+					if (screenshotObservation)
+						latestScreenshotObservation = screenshotObservation;
 				}
+				if (latestScreenshotObservation)
+					modelMessages.push({
+						role: "user",
+						content: latestScreenshotObservation,
+					});
 				consumeSteering();
 			}
 			throw new Error(
