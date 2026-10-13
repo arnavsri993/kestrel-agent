@@ -317,6 +317,22 @@ describe("Electron browser action cancellation", () => {
 		).rejects.toThrow("changed during capture");
 	});
 
+	it.each([
+		{ name: "Automation denial", error: Object.assign(new Error("command failed"), { code: 1 }), stderr: "Not authorized to send Apple events (-1743)", stdout: "", message: "Automation access to System Events is required" },
+		{ name: "permission prompt timeout", error: Object.assign(new Error("command failed"), { killed: true, signal: "SIGTERM" }), stderr: "", stdout: "", message: "desktop helper timed out" },
+		{ name: "malformed identity", error: null, stderr: "", stdout: "{}", message: "Could not verify the frontmost desktop process" },
+	])("stops before capture and explains $name", async ({ error, stderr, stdout, message }) => {
+		nativeMocks.getSources.mockClear();
+		nativeMocks.execFile.mockImplementationOnce((_path, _args, _options, callback) => {
+			queueMicrotask(() => callback(error, stdout, stderr));
+			return new EventEmitter();
+		});
+		const service = new ElectronBrowserService();
+		service.setComputerUseEnabled(true);
+		await expect(service.handle({ operation: "desktop-screenshot" }, new AbortController().signal)).rejects.toThrow(message);
+		expect(nativeMocks.getSources).not.toHaveBeenCalled();
+	});
+
 	it("does not type after cancellation while resolving the target", async () => {
 		let resolveTarget: (point: { x: number; y: number }) => void = () =>
 			undefined;

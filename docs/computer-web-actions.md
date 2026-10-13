@@ -26,8 +26,12 @@ image as a current observation.
 
 Enable **Whole-desktop computer use** under **Settings → Agent → Permissions &
 sandbox**. Kestrel also needs macOS Screen Recording and Accessibility access.
-Its System Events helper must be allowed by macOS to inspect the frontmost app
-and send approved input. Status reads do not grant permissions.
+Its System Events helper must also be allowed under macOS **Privacy & Security →
+Automation** to inspect the frontmost app and send approved input. The first
+capture can open an Automation prompt. Complete that prompt before retrying if
+the bounded helper wait expires. Status reads do not grant permissions; the
+Screen Recording and Accessibility labels report those individual grants.
+A real capture and approved action establish desktop operation.
 
 The supported desktop controls are clicking, typing, navigation keys, and
 single-letter/digit shortcuts with Command, Control, Alt, or Shift. PageUp and

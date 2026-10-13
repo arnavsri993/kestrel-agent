@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileException } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
@@ -147,6 +147,14 @@ function abortError(signal: AbortSignal): Error {
 		: new Error("Desktop action cancelled.");
 }
 
+function desktopAutomationError(error: ExecFileException, stderr: string): Error {
+	if (/-1743|not authorized to send apple events/i.test(stderr))
+		return new Error("macOS Automation access to System Events is required. Allow Kestrel in System Settings → Privacy & Security → Automation, then retry from a fresh screenshot.");
+	if (error.killed || error.code === "ETIMEDOUT")
+		return new Error("The macOS desktop helper timed out. Complete any System Events permission prompt for Kestrel, then take a fresh screenshot before deciding whether to retry; input may already have started.");
+	return new Error("The macOS System Events helper failed. Check Kestrel's Automation and Accessibility permissions, then take a fresh screenshot before deciding whether to retry.");
+}
+
 async function runOsaScript(
 	script: string,
 	signal: AbortSignal,
@@ -170,8 +178,8 @@ async function runOsaScript(
 		child = execFile(
 			"/usr/bin/osascript",
 			["-l", "JavaScript", "-e", script],
-			{ timeout: 5_000, env: { PATH: "/usr/bin:/bin" } },
-			(error, stdout) => finish(signal.aborted ? abortError(signal) : error ?? undefined, stdout),
+			{ timeout: 20_000, maxBuffer: 64 * 1024, env: { PATH: "/usr/bin:/bin" } },
+			(error, stdout, stderr) => finish(signal.aborted ? abortError(signal) : error ? desktopAutomationError(error, stderr) : undefined, stdout),
 		);
 		signal.addEventListener("abort", abort, { once: true });
 		if (signal.aborted) abort();
@@ -1022,7 +1030,7 @@ export class ElectronBrowserService {
 							: {}),
 					},
 				},
-				(error) => finish(signal.aborted ? abortError(signal) : error ?? undefined),
+				(error, _stdout, stderr) => finish(signal.aborted ? abortError(signal) : error ? desktopAutomationError(error, stderr) : undefined),
 			);
 			signal.addEventListener("abort", abort, { once: true });
 			child.once("exit", onExit);

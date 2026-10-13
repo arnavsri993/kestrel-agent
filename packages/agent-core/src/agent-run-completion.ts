@@ -10,6 +10,8 @@ export const OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR =
 
 export const OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR =
 	"Kestrel stopped before checking the visible result of its last computer action. Take a fresh desktop screenshot before claiming completion.";
+export const FAILED_COMPUTER_COMPLETION_ERROR =
+	"Kestrel stopped after a computer tool failed. Check the reported native permission or helper error, then take a fresh desktop screenshot before continuing.";
 
 export function prematureBrowserCompletionError(input: {
 	runId: string;
@@ -24,11 +26,18 @@ export function prematureBrowserCompletionError(input: {
 			execution.idempotencyKey?.startsWith(runPrefix) === true,
 	);
 	let desktopObservationRequired = false;
+	let desktopFailureUnresolved = false;
 	for (const execution of executions) {
+		if (execution.toolName.startsWith("computer.") && execution.status === "failed")
+			desktopFailureUnresolved = true;
 		if (execution.status !== "verified") continue;
 		if (execution.toolName === "computer.act") desktopObservationRequired = true;
-		if (execution.toolName === "computer.screenshot") desktopObservationRequired = false;
+		if (execution.toolName === "computer.screenshot") {
+			desktopObservationRequired = false;
+			desktopFailureUnresolved = false;
+		}
 	}
+	if (desktopFailureUnresolved) return FAILED_COMPUTER_COMPLETION_ERROR;
 	if (desktopObservationRequired) return OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR;
 	const modelText = input.modelText.trim();
 	if (modelText) return undefined;

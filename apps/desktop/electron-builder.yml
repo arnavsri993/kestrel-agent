@@ -44,6 +44,7 @@ mac:
   category: public.app-category.productivity
   icon: build/icon.icns
   extendInfo:
+    NSAppleEventsUsageDescription: "Kestrel uses System Events to identify the active app and perform desktop input that you approve."
     NSCameraUsageDescription: "Kestrel lets you approve camera access for trusted websites."
     NSMicrophoneUsageDescription: "Kestrel lets you approve microphone access for trusted websites."
   target:
