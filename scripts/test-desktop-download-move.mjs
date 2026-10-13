@@ -50,6 +50,11 @@ async function move(page, tabId, label) {
   await page.locator(`.browser-tab[data-tab-id="${tabId}"]`).click({ button: "right" });
   await page.getByRole("menuitem", { name: label, exact: true }).click();
 }
+async function advanceDownload(page, name, downloadId) {
+  held.get(name).write(bytes.subarray(16 * 1024, 32 * 1024));
+  await expect.poll(async () => (await state(page)).downloads.find(d => d.id === downloadId)?.receivedBytes).toBe(32 * 1024);
+  await expect(page.locator(".browser-inline-error")).toContainText(/Finish or cancel.*download/);
+}
 async function activeDownload(page, origin, tabId, name) {
   await request(page, { type: "browser-navigate", tabId, input: `${origin}/${name}` });
   await expect.poll(async () => (await state(page)).downloads.find(d => d.filename === `${name}.txt`)?.status).toBe("progressing");
@@ -73,10 +78,12 @@ try {
   await expect(main.locator(".browser-inline-error")).toContainText(/Finish or cancel.*download/);
   assert((await state(main)).tabs.some(t => t.id === tabId));
   assert.equal((await state(main)).downloads.find(d => d.id === first.id).status, "progressing");
+  await advanceDownload(main, "main", first.id);
   await capture(main, "detach-blocked.png");
-  held.get("main").end(bytes.subarray(16 * 1024));
+  held.get("main").end(bytes.subarray(32 * 1024));
   await expect.poll(async () => (await state(main)).downloads.find(d => d.id === first.id)?.status).toBe("completed");
   assert.deepEqual(readFileSync(join(root, "profile", "browser-downloads", "main.txt")), bytes);
+  await expect(main.locator(".browser-inline-error")).toHaveCount(0);
   // Move the page, not a download URL, so recreating its view cannot start another file.
   await request(main, { type: "browser-navigate", tabId, input: `${origin}/page` });
   const detachedReady = app.waitForEvent("window", { timeout: 20_000 });
@@ -94,16 +101,18 @@ try {
   assert((await state(detached)).tabs.some(t => t.id === tabId));
   assert(!(await state(main)).tabs.some(t => t.id === tabId));
   assert.equal((await state(detached)).downloads.find(d => d.id === second.id).status, "progressing");
+  await advanceDownload(detached, "detached", second.id);
   await capture(detached, "reattach-blocked.png");
   await request(detached, { type: "browser-cancel-download", downloadId: second.id });
   await expect.poll(async () => (await state(detached)).downloads.find(d => d.id === second.id)?.status).toBe("cancelled");
+  await expect(detached.locator(".browser-inline-error")).toHaveCount(0);
   await request(detached, { type: "browser-navigate", tabId, input: `${origin}/page` });
   await move(detached, tabId, "Move tab back to main window");
   await expect.poll(async () => (await state(main)).tabs.some(t => t.id === tabId)).toBe(true);
   await main.locator(`.browser-tab[data-tab-id="${tabId}"]`).waitFor();
   await capture(main, "returned-after-cancel.png"); assert.deepEqual(errors, []);
   if (evidence) writeFileSync(join(evidence, "proof.json"), JSON.stringify({ executable: executable ?? "source Electron", actualHttpDownloads: 2,
-    bytesPerCompletedDownload: bytes.length, pointerContextMenu: true, reducedMotion: true, detachBlockedWithoutInterruptingDownload: true,
+    bytesPerCompletedDownload: bytes.length, pointerContextMenu: true, reducedMotion: true, progressUpdatesRetainMoveExplanation: true, detachBlockedWithoutInterruptingDownload: true,
     completionPermitsDetach: true, reattachAndTransferPreparationBlocked: true, cancellationPermitsReturn: true,
     noUnhandledRendererErrors: true, realProfileVerified: false, completedHistoryTransferVerified: false }, null, 2));
   console.log("Download move smoke passed: held HTTP download survives rejected detach/reattach; finish and cancel allow movement.");

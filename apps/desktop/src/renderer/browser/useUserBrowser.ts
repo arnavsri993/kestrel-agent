@@ -122,6 +122,8 @@ export interface BrowserContentBounds {
 	height: number;
 }
 
+const DOWNLOAD_MOVE_BLOCKED_MESSAGE = "Finish or cancel this tab's download before moving it to another window.";
+
 export function useUserBrowser(): UserBrowserController {
 	const [state, setState] = useState<UserBrowserState | null>(null);
 	const [error, setError] = useState("");
@@ -130,6 +132,7 @@ export function useUserBrowser(): UserBrowserController {
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
 	const [zoomFeedback, setZoomFeedback] = useState<UserBrowserZoom | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
+	const downloadMoveBlockRef = useRef<{ tabId: string; downloadIds: string[] } | null>(null);
 	const zoomFeedbackTimeoutRef = useRef<number | undefined>(undefined);
 	const tabCloseRequestRef = useRef<Promise<void>>(Promise.resolve());
 	const settingsRequestRef = useRef<Promise<void>>(Promise.resolve());
@@ -151,6 +154,7 @@ export function useUserBrowser(): UserBrowserController {
 				setIsDetachedWindow(response.browserWindowRole === "detached");
 			setIsConnectionWindow("browserConnectionMode" in response && response.browserConnectionMode === "whatsapp");
 			applyState(response.browserState);
+			downloadMoveBlockRef.current = null;
 			setError("");
 		} catch (cause) {
 			setError(
@@ -172,14 +176,21 @@ export function useUserBrowser(): UserBrowserController {
 				if ("browserWindowRole" in response)
 					setIsDetachedWindow(response.browserWindowRole === "detached");
 				applyState(response.browserState);
+				downloadMoveBlockRef.current = null;
 				setError("");
 			} catch (cause) {
-				const downloadBlocksMove =
-					(request.type === "browser-detach-tab" || request.type === "browser-reattach-tab") &&
-					cause instanceof Error &&
-					cause.message.includes("Finish or cancel this tab's download before moving it to another window.");
+				const moveTabId = request.type === "browser-detach-tab" || request.type === "browser-reattach-tab"
+					? request.tabId : null;
+				const downloadBlocksMove = moveTabId !== null && cause instanceof Error &&
+					cause.message.includes(DOWNLOAD_MOVE_BLOCKED_MESSAGE);
+				downloadMoveBlockRef.current = downloadBlocksMove && moveTabId !== null
+					? { tabId: moveTabId, downloadIds: (stateRef.current?.downloads ?? [])
+						.filter(download => download.tabId === moveTabId &&
+							(download.status === "checking" || download.status === "progressing"))
+						.map(download => download.id) }
+					: null;
 				setError(downloadBlocksMove
-					? "Finish or cancel this tab's download before moving it to another window."
+					? DOWNLOAD_MOVE_BLOCKED_MESSAGE
 					: userFacingError(cause, "The browser request failed. Try again."));
 				throw cause;
 			}
@@ -238,7 +249,16 @@ export function useUserBrowser(): UserBrowserController {
 		const unsubscribe = window.kestrel.onBrowserEvent((event) => {
 			if (event.type === "state") {
 				applyState(event.state);
-				setError("");
+				const blocked = downloadMoveBlockRef.current;
+				const knownDownloads = blocked
+					? event.state.downloads.filter(download => blocked.downloadIds.includes(download.id)) : [];
+				const retainExplanation = blocked && event.state.tabs.some(tab => tab.id === blocked.tabId) &&
+					(event.state.downloads.some(download => download.tabId === blocked.tabId &&
+						(download.status === "checking" || download.status === "progressing")) ||
+						// An evicted history row cannot prove that its native download has finished.
+						blocked.downloadIds.length === 0 || knownDownloads.length !== blocked.downloadIds.length);
+				if (!retainExplanation) downloadMoveBlockRef.current = null;
+				setError(current => retainExplanation && current === DOWNLOAD_MOVE_BLOCKED_MESSAGE ? current : "");
 			} else if (event.type === "zoom") {
 				setZoomFeedback(event.zoom);
 				if (zoomFeedbackTimeoutRef.current !== undefined)
