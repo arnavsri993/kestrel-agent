@@ -18,6 +18,7 @@
     "test:native-durable-browser-library": "node scripts/smoke-native-durable-browser-library.mjs",
     "test:native-download-capture": "node scripts/smoke-native-download-capture.mjs",
     "test:native-browser-backend": "node scripts/smoke-native-browser-backend.mjs",
+    "test:native-isolated-automation": "node scripts/smoke-native-isolated-automation.mjs",
     "dev:native-chromium-host": "node scripts/dev-native-chromium-host.mjs",
     "dev:desktop": "node scripts/dev-desktop-runtime.mjs",
     "dev:desktop:electron": "pnpm --filter @kestrel/desktop dev",

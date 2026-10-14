@@ -14,11 +14,12 @@ const gates = [
 	"test:native-durable-browser-library",
 	"test:native-download-capture",
 	"test:native-browser-backend",
+	"test:native-isolated-automation",
 	"test:packaged-native:arm64",
 	"Keychain/credential bootstrap without prompt spam",
-	"Isolated automation sessions (create/navigate/snapshot) on CEF",
+	"Isolated automation sessions (create/navigate/snapshot/act) on CEF — create/navigate/snapshot/close proven; act still open",
 	"Developer ID signing + notarization",
-	"Explicit Electron→native profile transfer design",
+	"Explicit Electron→native profile transfer design (see docs/desktop-runtime-migration.md)",
 	"On-screen verification of canonical Dock app on Chromium",
 ];
 

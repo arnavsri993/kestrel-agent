@@ -201,9 +201,12 @@ bool durable_profile_enabled = false;
 bool smoke_durable_library_seed = false;
 bool smoke_durable_library_verify = false;
 bool smoke_browser_backend = false;
+bool smoke_isolated_automation = false;
+bool smoke_isolated_automation_done = false;
 std::optional<std::string> smoke_user_browser_url;
 std::optional<std::string> smoke_download_url;
 std::optional<std::string> smoke_browser_backend_url;
+std::optional<std::string> smoke_isolated_automation_url;
 bool smoke_user_browser_via_bridge = false;
 CefRefPtr<CefWindow> kestrel_window;
 
@@ -353,6 +356,19 @@ std::optional<std::string> safe_user_browser_url(
   const std::string canonical = CefString(&parts.spec).ToString();
   if (canonical.empty() || canonical.size() > 8 * 1024) return std::nullopt;
   return canonical;
+}
+
+std::string http_origin_from_url(const std::string& url) {
+  const auto scheme_end = url.find("://");
+  if (scheme_end == std::string::npos) return {};
+  const size_t host_start = scheme_end + 3;
+  const size_t host_end = url.find_first_of("/?#", host_start);
+  if (host_end == std::string::npos) return url;
+  return url.substr(0, host_end);
+}
+
+bool is_about_blank_url(const std::string& url) {
+  return url == "about:blank" || url.rfind("about:blank?", 0) == 0;
 }
 
 std::optional<std::string> normalize_user_browser_input(std::string input) {
@@ -543,7 +559,9 @@ class KestrelUserBrowserClient final : public CefClient,
                            BrowserClosed on_closed,
                            PopupRequested on_popup,
                            DownloadPathResolver resolve_download_path,
-                           DownloadUpdated on_download_updated)
+                           DownloadUpdated on_download_updated,
+                           bool automation_mode = false,
+                           std::set<std::string> allowed_origins = {})
       : tab_id_(std::move(tab_id)),
         on_created_(std::move(on_created)),
         on_loading_(std::move(on_loading)),
@@ -554,7 +572,9 @@ class KestrelUserBrowserClient final : public CefClient,
         on_closed_(std::move(on_closed)),
         on_popup_(std::move(on_popup)),
         resolve_download_path_(std::move(resolve_download_path)),
-        on_download_updated_(std::move(on_download_updated)) {}
+        on_download_updated_(std::move(on_download_updated)),
+        automation_mode_(automation_mode),
+        allowed_origins_(std::move(allowed_origins)) {}
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -567,7 +587,10 @@ class KestrelUserBrowserClient final : public CefClient,
                    const CefString& request_method) override {
     const std::string method = request_method.ToString();
     if (method != "GET" && method != "POST") return false;
-    return safe_user_browser_url(url.ToString()).has_value();
+    const auto safe = safe_user_browser_url(url.ToString());
+    if (!safe) return false;
+    if (!automation_mode_ || allowed_origins_.empty()) return true;
+    return allowed_origins_.count(http_origin_from_url(*safe)) > 0;
   }
 
   bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,
@@ -671,9 +694,24 @@ class KestrelUserBrowserClient final : public CefClient,
                       bool user_gesture,
                       bool is_redirect) override {
     if (!frame || !frame->IsMain() || !request) return false;
-    if (safe_user_browser_url(request->GetURL().ToString())) return false;
+    const std::string url = request->GetURL().ToString();
+    if (automation_mode_ && is_about_blank_url(url)) return false;
+    const auto safe = safe_user_browser_url(url);
+    if (safe) {
+      if (automation_mode_ && !allowed_origins_.empty() &&
+          allowed_origins_.count(http_origin_from_url(*safe)) == 0) {
+        if (on_navigation_blocked_) on_navigation_blocked_(tab_id_);
+        return true;
+      }
+      return false;
+    }
     if (on_navigation_blocked_) on_navigation_blocked_(tab_id_);
     return true;
+  }
+
+  bool DoClose(CefRefPtr<CefBrowser> browser) override {
+    (void)browser;
+    return false;
   }
 
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
@@ -692,8 +730,27 @@ class KestrelUserBrowserClient final : public CefClient,
   PopupRequested on_popup_;
   DownloadPathResolver resolve_download_path_;
   DownloadUpdated on_download_updated_;
+  bool automation_mode_ = false;
+  std::set<std::string> allowed_origins_;
 
   IMPLEMENT_REFCOUNTING(KestrelUserBrowserClient);
+};
+
+struct NativeAutomationSession {
+  std::string id;
+  std::set<std::string> allowed_origins;
+  std::string url = "about:blank";
+  std::string title = "New Tab";
+  bool loading = false;
+  bool closing = false;
+  bool browser_ready = false;
+  bool context_ready = false;
+  std::string pending_navigate_request_id;
+  std::string pending_navigate_target_url;
+  std::string pending_navigate_url;
+  CefRefPtr<KestrelUserBrowserClient> client;
+  CefRefPtr<CefBrowserView> view;
+  CefRefPtr<CefRequestContext> context;
 };
 
 struct NativeUserBrowserTab {
@@ -1141,6 +1198,16 @@ class KestrelClient : public CefClient,
       } else if (name == "browser-backend-failed") {
         std::cerr << "KESTREL_NATIVE_CHROMIUM_BROWSER_BACKEND_FAILED error="
                   << value->GetString("error").ToString() << std::endl;
+      } else if (name == "isolated-automation-ok") {
+        smoke_isolated_automation_done = true;
+        std::cout << "KESTREL_NATIVE_CHROMIUM_ISOLATED_AUTOMATION_OK"
+                  << std::endl;
+        CloseBrowser();
+      } else if (name == "isolated-automation-failed") {
+        smoke_isolated_automation_done = true;
+        std::cerr << "KESTREL_NATIVE_CHROMIUM_ISOLATED_AUTOMATION_FAILED error="
+                  << value->GetString("error").ToString() << std::endl;
+        CloseBrowser();
       }
       return;
     }
@@ -1574,6 +1641,33 @@ class KestrelClient : public CefClient,
         browser_creation_failed = true;
       }
     }
+    for (auto& [session_id, session] : automation_sessions_) {
+      (void)session_id;
+      if (session.closing || session.view) continue;
+      session.context = user_browser_context_;
+      session.context_ready = true;
+      std::string error;
+      if (!AttachAutomationBrowserView(session, &error)) {
+        if (!session.pending_navigate_request_id.empty()) {
+          SendBrowserBackendResponse(
+              session.pending_navigate_request_id, false, "",
+              error.empty()
+                  ? "Kestrel could not create the isolated browser view."
+                  : error);
+          session.pending_navigate_request_id.clear();
+          session.pending_navigate_target_url.clear();
+        }
+        session.closing = true;
+      }
+    }
+    for (auto it = automation_sessions_.begin();
+         it != automation_sessions_.end();) {
+      if (it->second.closing && !it->second.view) {
+        it = automation_sessions_.erase(it);
+      } else {
+        ++it;
+      }
+    }
     SyncUserBrowserViewVisibility();
     if (browser_creation_failed || !user_browser_tabs_.empty()) {
       PublishUserBrowserState();
@@ -1767,6 +1861,11 @@ class KestrelClient : public CefClient,
 
   void OnNativeUserBrowserAddressChanged(const std::string& tab_id,
                                          const std::string& url) {
+    auto automation = automation_sessions_.find(tab_id);
+    if (automation != automation_sessions_.end()) {
+      automation->second.url = url;
+      return;
+    }
     NativeUserBrowserTab* tab = FindUserBrowserTab(tab_id);
     if (!tab) return;
     tab->url = url;
@@ -1776,6 +1875,11 @@ class KestrelClient : public CefClient,
 
   void OnNativeUserBrowserTitleChanged(const std::string& tab_id,
                                        const std::string& title) {
+    auto automation = automation_sessions_.find(tab_id);
+    if (automation != automation_sessions_.end()) {
+      automation->second.title = title;
+      return;
+    }
     NativeUserBrowserTab* tab = FindUserBrowserTab(tab_id);
     if (!tab) return;
     tab->title = title;
@@ -1784,6 +1888,28 @@ class KestrelClient : public CefClient,
 
   void OnNativeUserBrowserLoadEnd(const std::string& tab_id,
                                   const std::string& url) {
+    auto automation = automation_sessions_.find(tab_id);
+    if (automation != automation_sessions_.end()) {
+      automation->second.url = url;
+      automation->second.loading = false;
+      // Ignore about:blank (and other non-target loads) while a navigate is
+      // outstanding so the create→navigate smoke does not complete early.
+      if (!automation->second.pending_navigate_request_id.empty() &&
+          !automation->second.pending_navigate_target_url.empty()) {
+        const auto loaded = safe_user_browser_url(url);
+        const std::string target =
+            automation->second.pending_navigate_target_url;
+        if (loaded &&
+            (url == target ||
+             http_origin_from_url(*loaded) == http_origin_from_url(target))) {
+          SendBrowserBackendResponse(
+              automation->second.pending_navigate_request_id, true, "null", "");
+          automation->second.pending_navigate_request_id.clear();
+          automation->second.pending_navigate_target_url.clear();
+        }
+      }
+      return;
+    }
     if (smoke_user_browser_url && url == *smoke_user_browser_url) {
       std::cout << "KESTREL_NATIVE_CHROMIUM_USER_BROWSER_LOAD_OK url=" << url
                 << std::endl;
@@ -2059,6 +2185,18 @@ class KestrelClient : public CefClient,
   }
 
   void OnNativeUserBrowserNavigationBlocked(const std::string& tab_id) {
+    auto automation = automation_sessions_.find(tab_id);
+    if (automation != automation_sessions_.end()) {
+      automation->second.loading = false;
+      if (!automation->second.pending_navigate_request_id.empty()) {
+        SendBrowserBackendResponse(
+            automation->second.pending_navigate_request_id, false, "",
+            "Native Chromium browser navigation is outside the origin allowlist.");
+        automation->second.pending_navigate_request_id.clear();
+        automation->second.pending_navigate_target_url.clear();
+      }
+      return;
+    }
     NativeUserBrowserTab* tab = FindUserBrowserTab(tab_id);
     if (!tab) return;
     tab->loading = false;
@@ -2653,10 +2791,340 @@ class KestrelClient : public CefClient,
           CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
       return;
     }
+    if (operation == "create") {
+      if (request->GetType("allowedOrigins") != VTYPE_LIST) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native isolated browser create requires allowedOrigins.");
+        return;
+      }
+      std::string error;
+      const std::string session_id =
+          CreateAutomationSession(request->GetList("allowedOrigins"), &error);
+      if (session_id.empty()) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty()
+                ? "Kestrel could not create an isolated native browser session."
+                : error);
+        return;
+      }
+      SendBrowserBackendResponse(
+          request_id, true, "\"" + json_escape(session_id) + "\"", "");
+      return;
+    }
+    if (operation == "navigate") {
+      if (request->GetType("sessionId") != VTYPE_STRING ||
+          request->GetType("url") != VTYPE_STRING) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native isolated navigate was invalid.");
+        return;
+      }
+      std::string error;
+      if (!NavigateAutomationSession(request->GetString("sessionId").ToString(),
+                                     request->GetString("url").ToString(),
+                                     request_id, &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
+      // Successful navigate answers asynchronously after load end.
+      return;
+    }
+    if (operation == "snapshot") {
+      if (request->GetType("sessionId") != VTYPE_STRING) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native isolated snapshot was invalid.");
+        return;
+      }
+      const auto found =
+          automation_sessions_.find(request->GetString("sessionId").ToString());
+      if (found == automation_sessions_.end() || found->second.closing) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser session is unavailable.");
+        return;
+      }
+      const std::string snapshot =
+          std::string("{\"url\":\"") + json_escape(found->second.url) +
+          "\",\"title\":\"" + json_escape(found->second.title) +
+          "\",\"accessibilityTree\":{\"role\":\"RootWebArea\",\"name\":\"" +
+          json_escape(found->second.title) +
+          "\",\"children\":[]},\"interactive\":[],\"truncated\":false}";
+      SendBrowserBackendResponse(request_id, true, snapshot, "");
+      return;
+    }
+    if (operation == "close") {
+      if (request->GetType("sessionId") != VTYPE_STRING) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native isolated close was invalid.");
+        return;
+      }
+      // Answer the relay before tearing down the BrowserView. CloseBrowser on a
+      // still-attached Alloy child can synchronously cascade into window close
+      // and stop the Core relay before this response is written.
+      SendBrowserBackendResponse(request_id, true, "null", "");
+      std::string error;
+      if (!CloseAutomationSession(request->GetString("sessionId").ToString(),
+                                  &error)) {
+        std::cerr << "KESTREL_NATIVE_CHROMIUM_AUTOMATION_CLOSE_FAILED error="
+                  << error << std::endl;
+      }
+      return;
+    }
+    if (operation == "diagnostics") {
+      if (request->GetType("sessionId") != VTYPE_STRING ||
+          !automation_sessions_.count(
+              request->GetString("sessionId").ToString())) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser session is unavailable.");
+        return;
+      }
+      SendBrowserBackendResponse(request_id, true, "[]", "");
+      return;
+    }
+    if (operation == "downloads") {
+      if (request->GetType("sessionId") != VTYPE_STRING ||
+          !automation_sessions_.count(
+              request->GetString("sessionId").ToString())) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser session is unavailable.");
+        return;
+      }
+      SendBrowserBackendResponse(request_id, true, "[]", "");
+      return;
+    }
     SendBrowserBackendResponse(
         request_id, false, "",
         "Native Chromium browser backend operation is not migrated yet: " +
             operation);
+  }
+
+  std::string CreateAutomationSession(CefRefPtr<CefListValue> allowed_origins,
+                                      std::string* error) {
+    if (!allowed_origins || allowed_origins->GetSize() == 0) {
+      if (error) *error = "Isolated browser sessions require allowed origins.";
+      return {};
+    }
+    if (automation_sessions_.size() >= 8) {
+      if (error) *error = "Kestrel supports up to 8 isolated browser sessions.";
+      return {};
+    }
+    if (!kestrel_window || kestrel_window->IsClosed()) {
+      if (error) *error = "The native Kestrel window is unavailable.";
+      return {};
+    }
+    if (isolated_profile_root_.empty()) {
+      if (error) *error = "The isolated native browser profile is unavailable.";
+      return {};
+    }
+    std::set<std::string> origins;
+    for (size_t index = 0; index < allowed_origins->GetSize(); ++index) {
+      if (allowed_origins->GetType(index) != VTYPE_STRING) continue;
+      const auto safe =
+          safe_user_browser_url(allowed_origins->GetString(index).ToString());
+      if (!safe) continue;
+      const std::string origin = http_origin_from_url(*safe);
+      if (!origin.empty()) origins.insert(origin);
+    }
+    if (origins.empty()) {
+      if (error)
+        *error = "Isolated browser sessions require valid HTTP(S) origins.";
+      return {};
+    }
+    // Separate CefRequestContext::CreateContext profiles currently trip CEF
+    // 152 observer / profile init failures and tear down the Alloy window.
+    // Isolated sessions share the user-browser request context, stay hidden,
+    // and enforce origin allowlists per BrowserView until a durable
+    // multi-profile path is proven.
+    if (!EnsureUserBrowserContext(error)) return {};
+    NativeAutomationSession session;
+    session.id = "native-browser-" + native_uuid();
+    session.allowed_origins = origins;
+    session.context = user_browser_context_;
+    session.context_ready = user_browser_context_ready_;
+    const std::weak_ptr<bool> owner_token = native_owner_alive_;
+    const std::string session_id = session.id;
+    session.client = new KestrelUserBrowserClient(
+        session.id,
+        [this, owner_token](const std::string& id, CefRefPtr<CefBrowser> browser) {
+          const std::shared_ptr<bool> alive = owner_token.lock();
+          if (!alive || !*alive) return;
+          auto found = automation_sessions_.find(id);
+          if (found == automation_sessions_.end()) return;
+          found->second.browser_ready = true;
+          found->second.loading = false;
+          if (!found->second.pending_navigate_url.empty() && browser &&
+              browser->IsValid()) {
+            const std::string pending_url = found->second.pending_navigate_url;
+            found->second.pending_navigate_url.clear();
+            found->second.loading = true;
+            found->second.url = pending_url;
+            browser->GetMainFrame()->LoadURL(pending_url);
+          }
+        },
+        [this, owner_token](const std::string& id, bool loading, bool, bool) {
+          const std::shared_ptr<bool> alive = owner_token.lock();
+          if (!alive || !*alive) return;
+          auto found = automation_sessions_.find(id);
+          if (found != automation_sessions_.end()) found->second.loading = loading;
+        },
+        [this, owner_token](const std::string& id, const std::string& url) {
+          const std::shared_ptr<bool> alive = owner_token.lock();
+          if (!alive || !*alive) return;
+          OnNativeUserBrowserAddressChanged(id, url);
+        },
+        [this, owner_token](const std::string& id, const std::string& title) {
+          const std::shared_ptr<bool> alive = owner_token.lock();
+          if (!alive || !*alive) return;
+          OnNativeUserBrowserTitleChanged(id, title);
+        },
+        [this, owner_token](const std::string& id, const std::string& url) {
+          const std::shared_ptr<bool> alive = owner_token.lock();
+          if (!alive || !*alive) return;
+          OnNativeUserBrowserLoadEnd(id, url);
+        },
+        [this, owner_token](const std::string& id) {
+          const std::shared_ptr<bool> alive = owner_token.lock();
+          if (!alive || !*alive) return;
+          OnNativeUserBrowserNavigationBlocked(id);
+        },
+        [this, owner_token](const std::string& id, int) {
+          if (!owner_token.lock()) return;
+          auto found = automation_sessions_.find(id);
+          if (found == automation_sessions_.end()) return;
+          found->second.closing = true;
+          found->second.view = nullptr;
+          found->second.client = nullptr;
+          found->second.context = nullptr;
+          if (!found->second.pending_navigate_request_id.empty()) {
+            SendBrowserBackendResponse(
+                found->second.pending_navigate_request_id, false, "",
+                "Native Chromium browser session closed.");
+            found->second.pending_navigate_request_id.clear();
+            found->second.pending_navigate_target_url.clear();
+          }
+          automation_sessions_.erase(found);
+        },
+        [](const std::string&, const std::string&) {},
+        [](const std::string&) { return std::string(); },
+        [](const std::string&, uint32_t, const std::string&, const std::string&,
+           const std::string&, int64_t, int64_t, const std::string&,
+           CefRefPtr<CefDownloadItemCallback>) {},
+        true, origins);
+    // Emplace before attaching so an in-flight request-context init callback
+    // can see this session. Re-read readiness after emplace to close the race
+    // where init runs between EnsureUserBrowserContext and insert.
+    automation_sessions_.emplace(session_id, std::move(session));
+    auto stored = automation_sessions_.find(session_id);
+    if (stored == automation_sessions_.end()) {
+      if (error) *error = "Kestrel could not register the isolated session.";
+      return {};
+    }
+    stored->second.context = user_browser_context_;
+    stored->second.context_ready = user_browser_context_ready_;
+    if (stored->second.context_ready) {
+      if (!AttachAutomationBrowserView(stored->second, error)) {
+        automation_sessions_.erase(stored);
+        return {};
+      }
+    }
+    std::cout << "KESTREL_NATIVE_CHROMIUM_AUTOMATION_SESSION_CREATED id="
+              << session_id << std::endl;
+    return session_id;
+  }
+
+  bool AttachAutomationBrowserView(NativeAutomationSession& session,
+                                   std::string* error) {
+    if (session.view) return true;
+    if (!session.context_ready || !session.context || !session.client) {
+      if (error) *error = "The isolated automation profile is unavailable.";
+      return false;
+    }
+    if (!kestrel_window || kestrel_window->IsClosed()) {
+      if (error) *error = "The native Kestrel window is unavailable.";
+      return false;
+    }
+    CefBrowserSettings browser_settings;
+    session.view = CefBrowserView::CreateBrowserView(
+        session.client, "about:blank", browser_settings, nullptr,
+        session.context, new KestrelAlloyBrowserViewDelegate());
+    if (!session.view) {
+      if (error) *error = "Kestrel could not create the isolated browser view.";
+      return false;
+    }
+    session.view->SetBounds(CefRect(0, 0, 1, 1));
+    session.view->SetVisible(false);
+    kestrel_window->AddChildView(session.view);
+    return true;
+  }
+
+  bool NavigateAutomationSession(const std::string& session_id,
+                                 const std::string& url,
+                                 const std::string& request_id,
+                                 std::string* error) {
+    auto found = automation_sessions_.find(session_id);
+    if (found == automation_sessions_.end() || found->second.closing) {
+      if (error) *error = "Native Chromium browser session is unavailable.";
+      return false;
+    }
+    const auto safe = safe_user_browser_url(url);
+    if (!safe) {
+      if (error)
+        *error = "Native Chromium browser navigation is outside the origin allowlist.";
+      return false;
+    }
+    if (found->second.allowed_origins.count(http_origin_from_url(*safe)) == 0) {
+      if (error)
+        *error = "Native Chromium browser navigation is outside the origin allowlist.";
+      return false;
+    }
+    if (!found->second.pending_navigate_request_id.empty()) {
+      if (error) *error = "Native Chromium browser session is already navigating.";
+      return false;
+    }
+    found->second.pending_navigate_request_id = request_id;
+    found->second.pending_navigate_target_url = *safe;
+    found->second.loading = true;
+    found->second.url = *safe;
+    CefRefPtr<CefBrowser> browser =
+        found->second.view ? found->second.view->GetBrowser() : nullptr;
+    if (!browser || !browser->IsValid() || !found->second.browser_ready) {
+      found->second.pending_navigate_url = *safe;
+      return true;
+    }
+    browser->GetMainFrame()->LoadURL(*safe);
+    return true;
+  }
+
+  bool CloseAutomationSession(const std::string& session_id, std::string* error) {
+    auto found = automation_sessions_.find(session_id);
+    if (found == automation_sessions_.end()) {
+      if (error) *error = "Native Chromium browser session is unavailable.";
+      return false;
+    }
+    std::cout << "KESTREL_NATIVE_CHROMIUM_AUTOMATION_CLOSE id=" << session_id
+              << std::endl;
+    found->second.closing = true;
+    if (found->second.view) {
+      found->second.view->SetVisible(false);
+      // Detach before CloseBrowser so Alloy does not treat the child teardown
+      // as a top-level window close (same ordering as CloseUserBrowserView).
+      if (kestrel_window && !kestrel_window->IsClosed()) {
+        kestrel_window->RemoveChildView(found->second.view);
+      }
+    }
+    CefRefPtr<CefBrowser> browser =
+        found->second.view ? found->second.view->GetBrowser() : nullptr;
+    if (browser && browser->IsValid()) {
+      browser->GetHost()->CloseBrowser(true);
+    } else {
+      found->second.view = nullptr;
+      found->second.client = nullptr;
+      found->second.context = nullptr;
+      automation_sessions_.erase(found);
+    }
+    return true;
   }
 
   void StartEphemeralCore(NSString* isolated_profile_root) {
@@ -2670,6 +3138,13 @@ class KestrelClient : public CefClient,
       if (smoke_browser_backend_url) {
         environment[@"KESTREL_SMOKE_BROWSER_BACKEND_URL"] =
             [NSString stringWithUTF8String:smoke_browser_backend_url->c_str()];
+      }
+    }
+    if (smoke_isolated_automation) {
+      environment[@"KESTREL_SMOKE_ISOLATED_AUTOMATION"] = @"1";
+      if (smoke_isolated_automation_url) {
+        environment[@"KESTREL_SMOKE_ISOLATED_AUTOMATION_URL"] = [NSString
+            stringWithUTF8String:smoke_isolated_automation_url->c_str()];
       }
     }
     core_relay_ = [[KestrelNativeCoreRelay alloc]
@@ -2787,6 +3262,7 @@ class KestrelClient : public CefClient,
   std::string isolated_profile_root_;
   std::string user_browser_cache_path_;
   DurableBrowserLibrary browser_library_;
+  std::map<std::string, NativeAutomationSession> automation_sessions_;
   std::map<uint32_t, std::string> cef_download_ids_;
   std::map<std::string, std::string> download_paths_;
   std::map<std::string, CefRefPtr<CefDownloadItemCallback>>
@@ -2963,13 +3439,32 @@ void post_core_relay_termination(CefRefPtr<KestrelClient> client) {
 
 class CloseWhenReadyTask : public CefTask {
  public:
+  explicit CloseWhenReadyTask(int remaining_grace_ms = 60'000)
+      : remaining_grace_ms_(remaining_grace_ms) {}
+
   void Execute() override {
-    if (client_instance) {
-      client_instance->CloseBrowser();
+    if (!client_instance || client_instance->IsClosing()) return;
+    // Isolated automation smoke can still be mid create→navigate→snapshot→close
+    // when the ready timer fires. Keep waiting until the relay reports done.
+    if (smoke_isolated_automation && !smoke_isolated_automation_done) {
+      if (remaining_grace_ms_ <= 0) {
+        std::cerr << "KESTREL_NATIVE_CHROMIUM_ISOLATED_AUTOMATION_FAILED error="
+                     "Timed out waiting for isolated automation smoke."
+                  << std::endl;
+        client_instance->CloseBrowser();
+        return;
+      }
+      const int slice = 1'000;
+      CefPostDelayedTask(TID_UI,
+                         new CloseWhenReadyTask(remaining_grace_ms_ - slice),
+                         slice);
+      return;
     }
+    client_instance->CloseBrowser();
   }
 
  private:
+  int remaining_grace_ms_ = 60'000;
   IMPLEMENT_REFCOUNTING(CloseWhenReadyTask);
 };
 
@@ -3213,6 +3708,20 @@ int main(int argc, char* argv[]) {
       smoke_browser_backend_url = *normalized;
       smoke_browser_backend = true;
     }
+    smoke_isolated_automation =
+        has_argument(argc, argv, "--kestrel-smoke-isolated-automation");
+    if (const auto isolated_url = argument_value(
+            argc, argv, "--kestrel-smoke-isolated-automation-url")) {
+      const std::optional<std::string> normalized =
+          safe_user_browser_url(*isolated_url);
+      if (!normalized) {
+        std::cerr << "Kestrel received an invalid isolated automation smoke URL."
+                  << std::endl;
+        return 1;
+      }
+      smoke_isolated_automation_url = *normalized;
+      smoke_isolated_automation = true;
+    }
 
     CefSettings settings;
     // The production path is sandboxed. This switch exists only to make a
@@ -3256,8 +3765,15 @@ int main(int argc, char* argv[]) {
     CefString(&settings.cache_path) = isolated_profile_path;
     ephemeral_core_enabled =
         has_argument(argc, argv, "--kestrel-ephemeral-core");
-    if (smoke_browser_backend && !ephemeral_core_enabled) {
+    if ((smoke_browser_backend || smoke_isolated_automation) &&
+        !ephemeral_core_enabled) {
       std::cerr << "Browser backend smoke requires --kestrel-ephemeral-core."
+                << std::endl;
+      return 1;
+    }
+    if (smoke_isolated_automation && !smoke_isolated_automation_url) {
+      std::cerr << "Isolated automation smoke requires "
+                   "--kestrel-smoke-isolated-automation-url."
                 << std::endl;
       return 1;
     }

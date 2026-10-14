@@ -16,10 +16,16 @@ if (!profileRoot) {
 }
 
 const smokeBrowserBackend = process.env.KESTREL_SMOKE_BROWSER_BACKEND === "1";
+const smokeIsolatedAutomation =
+	process.env.KESTREL_SMOKE_ISOLATED_AUTOMATION === "1";
 const smokeBrowserBackendUrl =
 	typeof process.env.KESTREL_SMOKE_BROWSER_BACKEND_URL === "string"
 		? process.env.KESTREL_SMOKE_BROWSER_BACKEND_URL
 		: "";
+const smokeIsolatedAutomationUrl =
+	typeof process.env.KESTREL_SMOKE_ISOLATED_AUTOMATION_URL === "string"
+		? process.env.KESTREL_SMOKE_ISOLATED_AUTOMATION_URL
+		: smokeBrowserBackendUrl;
 
 // This relay is intentionally an ephemeral no-credential bootstrap. It proves
 // that the native Chromium renderer is talking to Kestrel's real standalone
@@ -47,6 +53,8 @@ let nextRequest = 0;
 const pending = new Map();
 /** @type {Map<string, "core" | "smoke">} */
 const pendingBrowserBackend = new Map();
+/** @type {string | undefined} */
+let smokeIsolatedSessionId;
 
 function write(message) {
 	process.stdout.write(JSON.stringify(message) + "\n");
@@ -80,6 +88,22 @@ function forwardBrowserBackendRequest(requestId, request, destination) {
 }
 
 function beginSmokeBrowserBackend() {
+	if (smokeIsolatedAutomation) {
+		let origin = "https://example.com";
+		try {
+			if (smokeIsolatedAutomationUrl) {
+				origin = new URL(smokeIsolatedAutomationUrl).origin;
+			}
+		} catch {
+			origin = "https://example.com";
+		}
+		forwardBrowserBackendRequest(
+			"smoke-isolated-create",
+			{ operation: "create", allowedOrigins: [origin] },
+			"smoke",
+		);
+		return;
+	}
 	if (!smokeBrowserBackend) return;
 	const createId = "smoke-browser-backend-create";
 	forwardBrowserBackendRequest(
@@ -215,16 +239,28 @@ lines.on("line", (line) => {
 			});
 			return;
 		}
-		if (message.ok === true && message.requestId === "smoke-browser-backend-create") {
-			const tabsId = "smoke-browser-backend-tabs";
+		if (message.ok !== true) {
+			write({
+				type: "smoke-event",
+				name: smokeIsolatedAutomation
+					? "isolated-automation-failed"
+					: "browser-backend-failed",
+				error:
+					typeof message.error === "string"
+						? message.error
+						: "Native Chromium browser backend smoke failed.",
+			});
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-create") {
 			forwardBrowserBackendRequest(
-				tabsId,
+				"smoke-browser-backend-tabs",
 				{ operation: "visible-tabs" },
 				"smoke",
 			);
 			return;
 		}
-		if (message.ok === true && message.requestId === "smoke-browser-backend-tabs") {
+		if (message.requestId === "smoke-browser-backend-tabs") {
 			const tabs = Array.isArray(message.result) ? message.result : [];
 			write({
 				type: "smoke-event",
@@ -233,13 +269,72 @@ lines.on("line", (line) => {
 			});
 			return;
 		}
+		if (message.requestId === "smoke-isolated-create") {
+			smokeIsolatedSessionId =
+				typeof message.result === "string" ? message.result : undefined;
+			if (!smokeIsolatedSessionId || !smokeIsolatedAutomationUrl) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation create did not return a session id.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-navigate",
+				{
+					operation: "navigate",
+					sessionId: smokeIsolatedSessionId,
+					url: smokeIsolatedAutomationUrl,
+				},
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-navigate") {
+			if (!smokeIsolatedSessionId) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation session id was lost before snapshot.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-snapshot",
+				{ operation: "snapshot", sessionId: smokeIsolatedSessionId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-snapshot") {
+			const snapshot =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			if (typeof snapshot.url !== "string" || !snapshot.url) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation snapshot was missing a URL.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-close",
+				{ operation: "close", sessionId: smokeIsolatedSessionId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-close") {
+			write({ type: "smoke-event", name: "isolated-automation-ok" });
+			return;
+		}
 		write({
 			type: "smoke-event",
 			name: "browser-backend-failed",
-			error:
-				typeof message.error === "string"
-					? message.error
-					: "Native Chromium browser backend smoke failed.",
+			error: "Unexpected native browser backend smoke step.",
 		});
 		return;
 	}

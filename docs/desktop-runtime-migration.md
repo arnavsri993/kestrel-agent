@@ -207,6 +207,13 @@ Current native-host progress toward cutover:
   `visible-history` / `visible-downloads`
 - `corepack pnpm test:native-browser-backend` proves relay→CEF visible-tab
   automation
+- Isolated automation sessions use hidden Alloy BrowserViews on the shared
+  user-browser request context (separate CEF profiles currently fail on CEF
+  152), enforce a per-session origin allowlist, and answer `create` /
+  `navigate` / `snapshot` / `close` (async navigate completes on the target
+  load, not `about:blank`)
+- `corepack pnpm test:native-isolated-automation` proves
+  create→navigate→snapshot→close through the Core relay
 - HTTP(S) `window.open` popups are adopted as sibling Alloy user tabs
 - `corepack pnpm package:mac:native` / `install:mac:native` package the CEF host;
   side-by-side install is the default (`Kestrel Native.app`); canonical Dock
@@ -216,14 +223,44 @@ Current native-host progress toward cutover:
 (`sprintf-js` via `electron-builder`) until Electron packaging is removed: no
 `>=1.1.4` release exists on npm yet.
 
+## Electron → native profile transfer design
+
+Native Chromium must never silently open, merge, or overwrite the Electron
+Application Support profile. Transfer is an explicit, bounded product step:
+
+1. **Dry-run first.** A plan lists categories (settings JSON that is
+   non-secret, bookmarks/history/downloads from `browser-library.json` if
+   present, instruction files such as `AGENTS.md`, agent/skill trees) with
+   source and target paths, checksums, and conflict status. Nothing is written
+   until the person approves apply.
+2. **No credential copy by default.** Keychain items, OAuth tokens, cookies,
+   provider login caches, and the encrypted desktop database stay on the
+   source profile. Re-auth or a future dedicated Keychain migration path is
+   required; raw-copying encrypted DB + Keychain into another profile is
+   rejected.
+3. **No overwrite by default.** Conflicts skip unless the person opts into
+   overwrite for that category. Sources are preserved; apply is reversible via
+   a recoverable backup of the target before mutation.
+4. **Containment.** Reject symlinks, binaries, oversized files, and paths that
+   escape the declared source/target roots. Changed checksums abort apply.
+5. **Side-by-side until cutover.** Shipping default remains Electron. Native
+   installs as `Kestrel Native.app` (or an explicit isolated profile root).
+   Canonical Dock replacement (`KESTREL_INSTALL_NATIVE_CANONICAL=1`) is gated
+   on retirement acceptance with live evidence — not on transfer design alone.
+
+Until a tested Kestrel-to-Kestrel restore CLI exists for the Chromium durable
+profile, operators keep both profiles untouched and use the supported
+reference-product migration CLI only for OpenClaw/Hermes/Codex/Claude Code
+imports into an isolated target.
+
 Still required before retiring Electron:
 
 - Keychain/credential bootstrap without prompt spam
-- Remaining desktop command surface plus isolated automation sessions
-  (`create` / `navigate` / `snapshot` / `act`) on CEF
+- Isolated automation `act` (and remaining desktop command surface) on CEF
 - Production Developer ID signing + notarization
 - Retargeted desktop smokes against the native binary on a durable profile
-- Explicit Electron→native profile transfer design (no silent merge)
+- Live acceptance of the profile transfer design above on a real dual-profile
+  dry-run/apply (not silent merge)
 
 ## Chromium preview host
 
