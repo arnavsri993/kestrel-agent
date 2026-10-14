@@ -3557,17 +3557,7 @@ function registerIpc(): void {
           : requestBrowserService;
       if (!sourceService || sourceService === targetService)
         throw new Error("That detached browser tab is unavailable.");
-      const tab = sourceService.getTabForTransfer(request.tabId);
-      let imported = false;
-      try {
-        await targetService.importTabForTransfer(tab);
-        imported = true;
-        await sourceService.removeTabForTransfer(request.tabId);
-      } catch (cause) {
-        if (imported)
-          await targetService.removeTabForTransfer(tab.id).catch(() => undefined);
-        throw cause;
-      }
+      await sourceService.transferTabTo(targetService, request.tabId);
       mainWindow.show();
       mainWindow.focus();
       return {
