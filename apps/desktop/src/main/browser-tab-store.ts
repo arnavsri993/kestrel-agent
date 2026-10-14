@@ -98,6 +98,9 @@ export interface NormalizedBrowserAddress {
 }
 
 export const MAX_AX_SNAPSHOT_BYTES = 1_500_000;
+// Fit two page observations, instructions and the brief inside the default
+// conversation budget as well as the 250k tool-result envelope.
+export const MAX_MODEL_AX_SNAPSHOT_BYTES = 48_000;
 export const MAX_AX_SNAPSHOT_NODES = 5_000;
 export const MAX_INTERACTIVE_REFS = 200;
 export const MAX_ORIGIN_FAVICONS = 200;
@@ -113,7 +116,7 @@ export function boundedBrowserAccessibilityTree(nodes: unknown[]): {
 	let interactive = sanitizeUntrustedBrowserValue(annotated.interactive) as BrowserInteractiveRef[];
 	let truncated = nodes.length > MAX_AX_SNAPSHOT_NODES || annotated.truncated;
 	const bytes = () => Buffer.byteLength(JSON.stringify({ accessibilityTree: { nodes: emitted }, interactive }), "utf8");
-	if (bytes() > MAX_AX_SNAPSHOT_BYTES) {
+	if (bytes() > MAX_MODEL_AX_SNAPSHOT_BYTES) {
 		truncated = true;
 		// CDP name sources, related-node diagnostics and arbitrary extension data
 		// can outweigh the readable content. Keep semantic values and identities.
@@ -147,12 +150,14 @@ export function boundedBrowserAccessibilityTree(nodes: unknown[]): {
 		let used = Buffer.byteLength(JSON.stringify({ accessibilityTree: { nodes: [] }, interactive: [] }), "utf8");
 		for (const value of emitted) {
 			const node = value as Record<string, unknown>;
+			// Ignored layout scaffolding carries no readable or actionable content.
+			if (node.ignored === true) continue;
 			const prior = typeof node.ref === "string" ? refs.get(node.ref) : undefined;
 			const name = typeof node.name === "string" ? node.name : (node.name as { value?: unknown } | undefined)?.value;
 			const ref = prior ? { ...prior, ...(typeof name === "string" ? { name } : {}) } : undefined;
 			const size = Buffer.byteLength(JSON.stringify(value), "utf8") + (fitted.length ? 1 : 0)
 				+ (ref ? Buffer.byteLength(JSON.stringify(ref), "utf8") + (fittedRefs.length ? 1 : 0) : 0);
-			if (used + size > MAX_AX_SNAPSHOT_BYTES) break;
+			if (used + size > MAX_MODEL_AX_SNAPSHOT_BYTES) break;
 			used += size;
 			fitted.push(value);
 			if (ref) fittedRefs.push(ref);
@@ -160,7 +165,7 @@ export function boundedBrowserAccessibilityTree(nodes: unknown[]): {
 		emitted = fitted;
 		interactive = fittedRefs;
 	}
-	if (bytes() > MAX_AX_SNAPSHOT_BYTES) throw new Error("Browser accessibility snapshot exceeds 1.5 MB.");
+	if (bytes() > MAX_MODEL_AX_SNAPSHOT_BYTES) throw new Error("Browser accessibility snapshot exceeds its model context budget.");
 	return { accessibilityTree: { nodes: emitted }, interactive, truncated };
 }
 
