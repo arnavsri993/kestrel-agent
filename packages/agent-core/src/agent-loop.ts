@@ -305,7 +305,7 @@ export class AgentLoop {
 				`agent-session-run:${run.sessionId}`,
 			);
 			if (claim && processIsAlive(claim.ownerPid)) continue;
-			this.database.interruptAgentRunAfterRestart({
+			const retired = this.database.interruptAgentRunAfterRestart({
 				runId: run.id,
 				interruptedAt: this.now().toISOString(),
 				reason: CORE_RESTART_INTERRUPTION_REASON,
@@ -313,7 +313,46 @@ export class AgentLoop {
 					? { expectedSessionClaimOwnerToken: claim.ownerToken }
 					: {}),
 			});
+			for (const interrupted of retired.runs) {
+				this.terminalizeWorkingTaskForRun(
+					interrupted,
+					"failed",
+					CORE_RESTART_INTERRUPTION_REASON,
+				);
+			}
 		}
+	}
+
+	private terminalizeWorkingTaskForRun(
+		run: Pick<AgentRun, "id" | "sessionId" | "workingTaskId">,
+		status: "failed" | "cancelled",
+		reason: string,
+	): void {
+		if (!run.workingTaskId) return;
+		const task = this.database.getWorkingTask(run.workingTaskId);
+		if (!task) return;
+		if (task.sessionId && task.sessionId !== run.sessionId) return;
+		if (
+			task.status !== "running" &&
+			task.status !== "waiting" &&
+			task.status !== "planned"
+		) {
+			return;
+		}
+		const timestamp = this.now().toISOString();
+		this.database.upsertWorkingTask({
+			...task,
+			status,
+			completedAt: timestamp,
+			failures: [...new Set([...task.failures, reason])].slice(-100),
+			evidence: [
+				...task.evidence.filter(
+					(item) => !(item.type === "run" && item.id === run.id),
+				),
+				{ type: "run", id: run.id, label: "Agent execution" },
+			].slice(-500),
+			updatedAt: timestamp,
+		});
 	}
 
 	private recordAdaptiveFailure(
@@ -409,14 +448,21 @@ export class AgentLoop {
 	}
 
 	private supersedeWaitingApprovalRuns(sessionId: string): void {
-		const hasWaitingApproval = this.database
+		const waitingRuns = this.database
 			.listAgentRuns(sessionId)
-			.some((run) => run.status === "waiting_approval");
-		if (!hasWaitingApproval) return;
+			.filter((run) => run.status === "waiting_approval");
+		if (waitingRuns.length === 0) return;
 		this.runtime.supersedeActiveAgentHistory(
 			sessionId,
 			SUPERSEDED_BY_NEW_MESSAGE_REASON,
 		);
+		for (const run of waitingRuns) {
+			this.terminalizeWorkingTaskForRun(
+				run,
+				"cancelled",
+				SUPERSEDED_BY_NEW_MESSAGE_REASON,
+			);
+		}
 	}
 
 	private async startRun(
@@ -1106,6 +1152,7 @@ export class AgentLoop {
 					poolResult.result,
 				);
 				this.saveActiveRun(run);
+				if (options.signal?.aborted) throw options.signal.reason;
 				const result = poolResult.result;
 
 					const refusal = detectModelRefusal(result);

@@ -104,4 +104,39 @@ describe("prematureBrowserCompletionError", () => {
 			}),
 		).toBe(OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR);
 	});
+
+	it("rejects a finished-sounding reply while observe_required is still open", () => {
+		expect(
+			prematureBrowserCompletionError({
+				runId: "run-1",
+				sessionId: "session-1",
+				modelText: "The form looks submitted.",
+				browserRecoveryState: {
+					version: 1,
+					nextSequence: 2,
+					entries: [
+						{
+							signature: "visible:act:stale_target",
+							reasonCode: "stale_target",
+							operation: "act",
+							surface: "visible",
+							failureCount: 1,
+							maximumFailures: 2,
+							phase: "observe_required",
+							allowedToolNames: ["browser.visible-snapshot"],
+							sequence: 1,
+						},
+					],
+				},
+				listExecutions: () => [
+					execution({
+						id: "browser-step",
+						idempotencyKey: "run-1:call-1",
+						toolName: "browser.visible-act",
+						status: "failed",
+					}),
+				],
+			}),
+		).toBe(OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR);
+	});
 });

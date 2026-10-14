@@ -1,17 +1,32 @@
-import { createHash, createPublicKey, verify } from "node:crypto";
+import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
 import {
+	chmodSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	statSync,
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
 import type { AgentRuntime, RuntimeHook } from "./runtime";
+
+function writeFileAtomically(
+	destination: string,
+	data: string | Buffer,
+	mode = 0o600,
+): void {
+	mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+	const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+	writeFileSync(temporary, data, { mode });
+	chmodSync(temporary, mode);
+	renameSync(temporary, destination);
+	chmodSync(destination, mode);
+}
 
 export type MigrationProduct = "openclaw" | "hermes" | "codex" | "claude-code";
 export type MigrationCategory =
@@ -452,8 +467,7 @@ export class MigrationManager {
 				skipped.push(item.destinationPath);
 				continue;
 			}
-			mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-			writeFileSync(destination, data, { mode: 0o600 });
+			writeFileAtomically(destination, data, 0o600);
 			imported.push(item.destinationPath);
 		}
 		for (const translation of plan.translations ?? []) {
@@ -522,8 +536,7 @@ export class MigrationManager {
 				skipped.push(expected.destinationPath);
 				continue;
 			}
-			mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-			writeFileSync(destination, payload, { mode: 0o600 });
+			writeFileAtomically(destination, payload, 0o600);
 			imported.push(expected.destinationPath);
 		}
 		return { imported, skipped };

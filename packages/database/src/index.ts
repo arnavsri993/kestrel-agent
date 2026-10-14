@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { decryptText, encryptText } from "@kestrel/encryption";
@@ -1746,11 +1746,37 @@ export class KestrelDatabase {
 		key: string,
 		operation: () => T,
 	): { result: T; repeated: boolean } {
-		const existing = this.getIdempotentResult<T>(key);
-		if (existing !== undefined) return { result: existing, repeated: true };
-		const result = operation();
-		this.saveIdempotentResult(key, result);
-		return { result, repeated: false };
+		const ownerToken = `legacy-idempotent:${randomUUID()}`;
+		const claim = this.claimIdempotentResult(
+			key,
+			ownerToken,
+			process.pid,
+			{ status: "pending" } as T,
+		);
+		if (claim.state === "completed") {
+			return { result: claim.result, repeated: true };
+		}
+		if (claim.state === "active") {
+			const existing = this.getIdempotentResult<T>(key);
+			if (existing !== undefined) {
+				return { result: existing, repeated: true };
+			}
+			throw new Error(
+				"Another process is already executing this idempotent operation.",
+			);
+		}
+		try {
+			const result = operation();
+			const completion = this.completeIdempotentResult(
+				key,
+				ownerToken,
+				result,
+			);
+			return { result: completion.result, repeated: !completion.completed };
+		} catch (error) {
+			this.releaseIdempotentClaim(key, ownerToken);
+			throw error;
+		}
 	}
 
 	getIdempotentResult<T>(key: string): T | undefined {

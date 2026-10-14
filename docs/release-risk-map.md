@@ -68,7 +68,7 @@ Five parallel audits at baseline `59cf7830` identified **14 release blockers** a
 | **P1-02** | Lifecycle | OAuth/Codex child may outlive quit during sign-in | **fixed** | [#644](https://github.com/arnavsri993/kestrel-agent/pull/644) (same PR) |
 | **R3** | Persistence | `upsertMemory()` writes memories + metadata outside transaction | **fixed** | [#645](https://github.com/arnavsri993/kestrel-agent/pull/645) |
 | **R5** | Persistence | Receipt/activity cap deletes not transactional with insert | **fixed** | [#645](https://github.com/arnavsri993/kestrel-agent/pull/645) |
-| **R4** | Persistence | Legacy `idempotent()` non-atomic read-check-write (TOCTOU) | **open** | Route callers to claim-based API; not in current PRs |
+| **R4** | Persistence | Legacy `idempotent()` non-atomic read-check-write (TOCTOU) | **fixed** | `idempotent()` now claims through `claimIdempotentResult` before executing |
 | **P1-03** | Lifecycle | Production release channel not embedded in prod plist | **in PR** | [#672](https://github.com/arnavsri993/kestrel-agent/pull/672) embeds `KESTREL_RELEASE_CHANNEL=stable` and verifies the installable plist |
 | **P1-04** | Lifecycle | Updater failures silently ignored (`checkForUpdates().catch(() => undefined)`) | **in PR** | [#672](https://github.com/arnavsri993/kestrel-agent/pull/672) records only content-free failure diagnostics while keeping startup non-blocking |
 | **P1-1** | Security | Trusted renderer CSP allows `unsafe-inline` — XSS → full IPC bridge | **fixed** | [#660](https://github.com/arnavsri993/kestrel-agent/pull/660) uses a nonce for renderer scripts; style `unsafe-inline` remains for Vite/CSS injection |
@@ -78,7 +78,7 @@ Five parallel audits at baseline `59cf7830` identified **14 release blockers** a
 | **BR-3** | Browser | Detach destroys live WebContents; detached window reloads URL (session loss) | **open** | Transfer WebContents on detach instead of destroy + reload |
 | **BR-4** | Browser | Duplicate `tabId` during detach — ambiguous `browserServiceForTab()` routing | **open** | Atomic detach handoff or new tab id in detached window |
 | **BR-5** | Browser | Sleeping-tabs monitor evicts agent targets (no agent-awareness beyond pin) | **open** | Covered by #649 pins; verify with sleeping-tab tests |
-| **BR-6** | Browser | Close during in-flight CDP — no `isDestroyed` guard in backend | **open** | Harden `browser-backend-node-target.ts` |
+| **BR-6** | Browser | Close during in-flight CDP — no `isDestroyed` guard in backend | **fixed** | `browser-backend-node-target.ts` rejects destroyed WebContents before attach/send |
 | **T1** | Agent runtime | Quit cleanup race (same as P1-01) | **fixed** | [#644](https://github.com/arnavsri993/kestrel-agent/pull/644) |
 | **T2** | Agent runtime | `command-runner` / `subscription-cli` only SIGTERM on cancel — no SIGKILL escalation | **fixed** | [#653](https://github.com/arnavsri993/kestrel-agent/pull/653) |
 | **N1** | Agent runtime | No default connect/read timeout on `providerFetch` — hung TCP blocks until 10 min task timeout | **fixed** | [#656](https://github.com/arnavsri993/kestrel-agent/pull/656) — 20s connect timeout + offline fast-fail |
@@ -89,8 +89,8 @@ Five parallel audits at baseline `59cf7830` identified **14 release blockers** a
 
 | ID | Audit | Finding | Status |
 | --- | --- | --- | --- |
-| **R6** | Persistence | Reference migration `apply()` uses direct `writeFileSync` (non-atomic) | open |
-| **R7** | Persistence | Browser state load silently discards corrupt tabs | **in PR [#672](https://github.com/arnavsri993/kestrel-agent/pull/672)** — atomically preserves corrupt state as `.corrupt-*`; ordinary read errors remain errors |
+| **R6** | Persistence | Reference migration `apply()` uses direct `writeFileSync` (non-atomic) | **fixed** | Migration apply uses temp+rename atomic writes |
+| **R7** | Persistence | Browser state load silently discards corrupt tabs / ordinary read errors | **fixed** | Corrupt state archived as `.corrupt-*`; ordinary read errors now throw instead of failing open to a fresh session |
 | **R8** | Persistence | CLI vs desktop key store paths divergent | open |
 | **P2-01** | Lifecycle | `install:mac:dev` installs ad-hoc dev bundle to `/Applications/Kestrel.app` | open |
 | **P2-02** | Lifecycle | Dev + stable share `userDataDirectoryName: "Kestrel"` | accepted / document |
@@ -147,8 +147,8 @@ The original hardening PRs merged 2026-08-29 with green required checks. Rendere
 ### Code (next sprint)
 
 1. **Security P1-2 decision** — implement step-up authentication with a complete packaged interaction/recovery flow, or explicitly accept the residual risk in the threat model before public release.
-2. **Legacy idempotency retirement (R4)** — audit `idempotent()` callers; migrate to claim-based API.
-3. **Browser follow-ups (BR-3–BR-8)** — WebContents transfer on detach, CDP lifecycle hardening, render-process-gone while pinned.
+2. **Legacy idempotency retirement (R4)** — **done** for the remaining `idempotent()` wrapper; keep new call sites on `claimIdempotentResult`.
+3. **Browser follow-ups (BR-3–BR-5, BR-7–BR-8)** — WebContents transfer on detach, sleeping-tab agent awareness, render-process-gone while pinned.
 
 ### Operator (blocks public distribution)
 

@@ -684,6 +684,27 @@ describe("provider-neutral agent loop", () => {
 			role: "user",
 			content: "Finish this after restart",
 		});
+		const workingTaskId = "task-interrupted-after-restart";
+		firstDatabase.upsertWorkingTask({
+			id: workingTaskId,
+			sessionId: session.id,
+			goal: "Finish work that was interrupted by a core restart",
+			plan: ["Observe", "Act"],
+			status: "running",
+			dependencyTaskIds: [],
+			sourceIds: [],
+			projectIds: [],
+			personIds: [],
+			entityIds: [],
+			evidence: [],
+			artifacts: [],
+			failures: [],
+			unresolvedQuestions: [],
+			subtaskIds: [],
+			startedAt,
+			createdAt: startedAt,
+			updatedAt: startedAt,
+		});
 		firstDatabase.saveAgentRun({
 			id: runId,
 			sessionId: session.id,
@@ -691,6 +712,7 @@ describe("provider-neutral agent loop", () => {
 			providerIds: ["restart-provider"],
 			status: "running",
 			turn: 1,
+			workingTaskId,
 			createdAt: startedAt,
 			updatedAt: startedAt,
 		});
@@ -803,11 +825,20 @@ describe("provider-neutral agent loop", () => {
 		expect(providerCalls).toBe(0);
 		expect(restartedDatabase.getAgentRun(runId)).toMatchObject({
 			status: "failed",
+			workingTaskId,
 			recovery: {
 				reason: "core_restarted",
 				action: "retry_last_turn",
 			},
 			error: expect.stringMatching(/no model or tool call was resumed/i),
+		});
+		expect(restartedDatabase.getWorkingTask(workingTaskId)).toMatchObject({
+			status: "failed",
+			completedAt: restartedAt.toISOString(),
+			failures: [
+				expect.stringMatching(/no model or tool call was resumed/i),
+			],
+			evidence: [{ type: "run", id: runId, label: "Agent execution" }],
 		});
 		expect(restartedDatabase.getToolExecution(runningExecution.id)).toMatchObject({
 			status: "failed",
@@ -988,6 +1019,28 @@ describe("provider-neutral agent loop", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);
 		const session = runtime.createSession({ title: "Approval supersede" });
+		const startedAt = new Date().toISOString();
+		const workingTaskId = "task-approval-supersede";
+		database.upsertWorkingTask({
+			id: workingTaskId,
+			sessionId: session.id,
+			goal: "Wait for approval then continue",
+			plan: ["Request approval"],
+			status: "running",
+			dependencyTaskIds: [],
+			sourceIds: [],
+			projectIds: [],
+			personIds: [],
+			entityIds: [],
+			evidence: [],
+			artifacts: [],
+			failures: [],
+			unresolvedQuestions: [],
+			subtaskIds: [],
+			startedAt,
+			createdAt: startedAt,
+			updatedAt: startedAt,
+		});
 		let executions = 0;
 		runtime.registerExternalTool({
 			descriptor: {
@@ -1052,9 +1105,17 @@ describe("provider-neutral agent loop", () => {
 			sessionId: session.id,
 			model: "approval",
 			providerIds: ["approval"],
+			workingTaskId,
 			userContent: textContent("Needs approval"),
 		});
 		expect(waiting.run.status).toBe("waiting_approval");
+		// Mirror AgentCore's waiting-task mapping before the next message arrives.
+		database.upsertWorkingTask({
+			...database.getWorkingTask(workingTaskId)!,
+			status: "waiting",
+			updatedAt: new Date().toISOString(),
+		});
+		expect(database.getWorkingTask(workingTaskId)?.status).toBe("waiting");
 
 		const next = await loop.run({
 			sessionId: session.id,
@@ -1066,6 +1127,12 @@ describe("provider-neutral agent loop", () => {
 		expect(database.getAgentRun(waiting.run.id)).toMatchObject({
 			status: "cancelled",
 			error: "Superseded by a new message. The pending approval is no longer available.",
+		});
+		expect(database.getWorkingTask(workingTaskId)).toMatchObject({
+			status: "cancelled",
+			failures: [
+				"Superseded by a new message. The pending approval is no longer available.",
+			],
 		});
 		expect(database.getToolExecution(waiting.pendingExecution!.id)).toMatchObject({
 			status: "cancelled",

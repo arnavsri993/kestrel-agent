@@ -359,11 +359,11 @@ export class BrowserTabStore {
 		let serialized: string;
 		try {
 			serialized = readFileSync(this.path, "utf8");
-		} catch {
-			// A transient filesystem or permission failure is not evidence that the
-			// user's session is corrupt. Leave the original path untouched so a later
-			// launch can retry it.
-			return freshBrowserState(now);
+		} catch (error) {
+			// Ordinary read failures are not missing or corrupt state. Leave the
+			// original path untouched and surface the error so startup can retry
+			// instead of pretending the session was empty.
+			throw error;
 		}
 
 		let state: UserBrowserState;
