@@ -1254,6 +1254,14 @@ export class AgentRuntime extends EventEmitter {
 				...(message.parentMessageId && messageIds.has(message.parentMessageId)
 					? { parentMessageId: messageIds.get(message.parentMessageId)! }
 					: {}),
+				...(message.supersedesMessageId &&
+					messageIds.has(message.supersedesMessageId)
+					? {
+							supersedesMessageId: messageIds.get(
+								message.supersedesMessageId,
+							)!,
+						}
+					: {}),
 				...(message.modelToolCalls
 					? { modelToolCalls: message.modelToolCalls }
 					: {}),
@@ -1354,6 +1362,23 @@ export class AgentRuntime extends EventEmitter {
 			{ messageId: message.id },
 		);
 		return this.database.listRuntimeMessages(input.sessionId).find(stored => stored.id === message.id)!;
+	}
+
+	markMessageSupersedes(
+		messageId: string,
+		supersedesMessageId: string,
+	): RuntimeMessage {
+		const updated = this.database.setRuntimeMessageSupersession(
+			messageId,
+			supersedesMessageId,
+		);
+		this.emitRuntimeEvent(
+			"session.updated",
+			updated.sessionId,
+			{ action: "message-metadata" },
+			{ messageId: updated.id },
+		);
+		return updated;
 	}
 
 	listMessages(sessionId: string): RuntimeMessage[] {
@@ -2831,13 +2856,22 @@ export class AgentRuntime extends EventEmitter {
 			execute: ({ workspaceRoot }, input) => {
 				if (!workspaceRoot) throw new Error("Workspace root is unavailable.");
 				const parsed = readInputSchema.parse(input);
-				const path = resolveExistingPath(workspaceRoot, parsed.path);
-				if (!statSync(path).isFile())
-					throw new Error("workspace.read requires a file path.");
-				const text = textFile(path, parsed.maxBytes);
-				if (!text)
-					throw new Error("Binary files are not exposed as text context.");
-				return { path: relative(workspaceRoot, path), ...text };
+				try {
+					const path = resolveExistingPath(workspaceRoot, parsed.path);
+					if (!statSync(path).isFile())
+						throw new Error("workspace.read requires a file path.");
+					const text = textFile(path, parsed.maxBytes);
+					if (!text)
+						throw new Error("Binary files are not exposed as text context.");
+					return { path: relative(workspaceRoot, path), ...text };
+				} catch (error) {
+					if (error instanceof Error && "code" in error && error.code === "ENOENT")
+						throw new Error(
+							`File not found in this workspace: ${JSON.stringify(parsed.path)}. Check the file name and parent folder.`,
+							{ cause: error },
+						);
+					throw error;
+				}
 			},
 		});
 

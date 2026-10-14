@@ -1,3 +1,12 @@
+# Response completion clarity — October 9, 2026
+
+Tiny status-copy refinement in the existing desktop agent conversation.
+A completed model run confirms a response ended, including requests for missing
+requirements; it does not prove the user's task was achieved. Use Response
+finished and the existing chat icon. Keep Verified on individual action receipts,
+with their evidence intact. Preserve spacing, type, focus and all approval and
+recovery behavior. Exercise an incomplete clarification after an explicit retry.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

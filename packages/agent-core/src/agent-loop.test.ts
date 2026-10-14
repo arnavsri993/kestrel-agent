@@ -2873,6 +2873,68 @@ describe("provider-neutral agent loop", () => {
 		);
 	});
 
+	it("keeps the prior task brief through a recovery follow-up and rejected approval after compaction", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-loop-context-recovery-"));
+		directories.push(root);
+		writeFileSync(join(root, "keep.txt"), "keep me\n");
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database, [root]);
+		const session = runtime.createSession({ title: "Recover the original brief", workspaceRoot: root });
+		const brief = "Prepare a five-minute demo for AI builders, under 600 words, with two fallbacks and citations. Preserve this deliverable during browser recovery.";
+		const recovery = "The first URL redirected. Use the direct destination and continue the original brief; do not repeat the failed navigation.";
+		runtime.appendMessage({ sessionId: session.id, role: "user", content: brief });
+		for (let index = 0; index < 20; index += 1) {
+			const id = `research-${index}`;
+			runtime.appendMessage({
+				sessionId: session.id, role: "assistant", content: "Reading research evidence.",
+				modelToolCalls: [{ id, name: "browser.snapshot", arguments: { browserSessionId: "fixture" } }],
+			});
+			runtime.appendMessage({
+				sessionId: session.id, role: "tool", content: `Research page ${index}: ${"page evidence ".repeat(600)}`,
+				providerToolCallId: id, toolName: "browser.snapshot",
+			});
+		}
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "context-recovery",
+			capabilities: { streaming: false, tools: true, images: false, audio: false, documents: false, local: true },
+			complete: async (request) => {
+				calls += 1;
+				const userMessages = request.messages.filter((message) => message.role === "user").map((message) => contentText(message.content));
+				expect(userMessages).toContain(brief);
+				expect(userMessages.at(-1)).toBe(recovery);
+				expect(userMessages.indexOf(brief)).toBeLessThan(userMessages.indexOf(recovery));
+				return calls === 1 ? {
+					providerId: "context-recovery", model: request.model, text: "", finishReason: "tool_calls",
+					toolCalls: [{ id: "unrelated-delete", name: "workspace.delete", arguments: { path: "keep.txt" } }],
+					usage: { inputTokens: 20, outputTokens: 5 },
+				} : {
+					providerId: "context-recovery", model: request.model,
+					text: "The five-minute brief for AI builders keeps its word limit, two fallbacks, and citations.",
+					toolCalls: [], usage: { inputTokens: 25, outputTokens: 12 }, finishReason: "stop",
+				};
+			},
+		};
+		const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
+		try {
+			const waiting = await loop.run({
+				sessionId: session.id, model: "fixture", providerIds: ["context-recovery"],
+				userContent: textContent(recovery), maximumContextCharacters: 4_000,
+			});
+			expect(waiting.run.status).toBe("waiting_approval");
+			expect(waiting.compactedMessages).toBeGreaterThan(0);
+			const resumed = await loop.resume({ runId: waiting.run.id, approvalDecision: "rejected" });
+			expect(resumed.run.status).toBe("completed");
+			expect(calls).toBe(2);
+			expect(existsSync(join(root, "keep.txt"))).toBe(true);
+			expect(database.listToolExecutions(session.id)).toMatchObject([
+				{ status: "cancelled", error: "The user denied this tool call." },
+			]);
+		} finally {
+			database.close();
+		}
+	});
+
 	it("records automatic compaction alongside provider-reported token usage", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);
@@ -3196,6 +3258,9 @@ describe("provider-neutral agent loop", () => {
 		});
 		const corrected = await loop.reworkAfterVerification({
 			runId: initial.run.id,
+			...(initial.assistantMessage
+				? { supersedesMessageId: initial.assistantMessage.id }
+				: {}),
 			maximumTurns: 2,
 			verificationFeedback: "The required field is missing.",
 			adaptiveExecution: { maximumEscalations: 0 },
@@ -3207,16 +3272,240 @@ describe("provider-neutral agent loop", () => {
 			turn: 2,
 		});
 		expect(corrected.assistantMessage?.content).toMatch(/corrected answer/i);
+		expect(corrected.assistantMessage?.supersedesMessageId).toBe(
+			initial.assistantMessage?.id,
+		);
 		expect(preservedPriorAnswer).toBe(true);
 		expect(sawVerifierInstruction).toBe(true);
 		expect(sawVerifierFeedback).toBe(true);
 		expect(verifierFeedbackRole).toBe("user");
 		expect(rawFeedbackAppearedInSystemMessage).toBe(false);
 		expect(database.listAgentRuns(session.id)).toHaveLength(1);
+		const answers = runtime
+			.listMessages(session.id)
+			.filter(
+				(message) =>
+					message.role === "assistant" && !message.modelToolCalls?.length,
+			);
+		expect(answers).toMatchObject([
+			{ id: initial.assistantMessage?.id, content: "Initial answer with a defect." },
+			{
+				content: "Corrected answer using the preserved task state.",
+				supersedesMessageId: initial.assistantMessage?.id,
+			},
+		]);
+		const fork = runtime.forkSession(session.id, "Reviewed answer fork");
+		const forkAnswers = runtime
+			.listMessages(fork.id)
+			.filter(
+				(message) =>
+					message.role === "assistant" && !message.modelToolCalls?.length,
+			);
+		expect(forkAnswers[1]?.supersedesMessageId).toBe(forkAnswers[0]?.id);
 		await expect(
 			loop.reworkAfterVerification({ runId: initial.run.id }),
 		).rejects.toThrow("rework budget is exhausted");
 		database.close();
+	});
+
+	it("records supersession only after an approval-paused verifier repair completes", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Verifier approval repair" });
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "test.review-repair",
+				title: "Review repair fixture",
+				description: "Read one fixture during a review repair.",
+				category: "connector",
+				riskLevel: "sensitive",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "plugin",
+				tags: ["test", "review"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({ evidence: "verified" }),
+		});
+		runtime.allowTool(session.id, "test.review-repair");
+		let calls = 0;
+		let correctionSawSteering = false;
+		let metadataEvents = 0;
+		runtime.on("event", (event) => {
+			if (
+				event.type === "session.updated" &&
+				event.payload.action === "message-metadata"
+			)
+				metadataEvents += 1;
+		});
+		const provider: ModelProvider = {
+			id: "verifier-approval-repair",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				if (calls === 1)
+					return {
+						providerId: "verifier-approval-repair",
+						model: request.model,
+						text: "Initial reviewed draft.",
+						toolCalls: [],
+						usage: { inputTokens: 1, outputTokens: 1 },
+						finishReason: "stop",
+					};
+				if (calls === 2)
+					return {
+						providerId: "verifier-approval-repair",
+						model: request.model,
+						text: "",
+						toolCalls: [
+							{
+								id: "call-review-repair",
+								name: "test.review-repair",
+								arguments: {},
+							},
+						],
+						usage: { inputTokens: 1, outputTokens: 1 },
+						finishReason: "tool_calls",
+					};
+				if (calls === 3)
+					return {
+						providerId: "verifier-approval-repair",
+						model: request.model,
+						text: "Intermediate reviewed answer before steering.",
+						toolCalls: [],
+						usage: { inputTokens: 1, outputTokens: 1 },
+						finishReason: "stop",
+					};
+				correctionSawSteering = request.messages.some((message) =>
+					contentText(message.content).includes("Preserve the approval evidence"),
+				);
+				return {
+					providerId: "verifier-approval-repair",
+					model: request.model,
+					text: "Final reviewed answer after approval and steering.",
+					toolCalls: [],
+					usage: { inputTokens: 1, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const loop = new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		);
+
+		try {
+			const initial = await loop.run({
+				sessionId: session.id,
+				model: "fixture",
+				providerIds: [provider.id],
+				userContent: textContent("Complete the reviewed task."),
+				maximumTurns: 4,
+			});
+			const waiting = await loop.reworkAfterVerification({
+				runId: initial.run.id,
+				supersedesMessageId: initial.assistantMessage!.id,
+				maximumTurns: 4,
+				verificationFeedback: "Read the fixture before correcting the answer.",
+			});
+			expect(waiting.run.status).toBe("waiting_approval");
+			expect(
+				runtime
+					.listMessages(session.id)
+					.some((message) => message.supersedesMessageId),
+			).toBe(false);
+
+			let steeringPending = true;
+			const completed = await loop.resume({
+				runId: initial.run.id,
+				approvalDecision: "approved",
+				maximumTurns: 4,
+				takeSteering: () => {
+					if (!steeringPending) return [];
+					steeringPending = false;
+					return ["Preserve the approval evidence in the final answer."];
+				},
+			});
+			expect(completed).toMatchObject({
+				run: { status: "completed" },
+				assistantMessage: {
+					content: "Final reviewed answer after approval and steering.",
+					supersedesMessageId: initial.assistantMessage!.id,
+				},
+			});
+			expect(correctionSawSteering).toBe(true);
+			expect(metadataEvents).toBe(1);
+		} finally {
+			database.close();
+		}
+	});
+
+	it("does not supersede the original answer when verifier repair fails", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Failed verifier repair" });
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "failed-verifier-repair",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				if (calls > 1) throw new Error("repair provider failed");
+				return {
+					providerId: "failed-verifier-repair",
+					model: request.model,
+					text: "Original answer remains current.",
+					toolCalls: [],
+					usage: { inputTokens: 1, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const loop = new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		);
+
+		try {
+			const initial = await loop.run({
+				sessionId: session.id,
+				model: "fixture",
+				providerIds: [provider.id],
+				userContent: textContent("Complete the reviewed task."),
+				maximumTurns: 2,
+			});
+			await expect(
+				loop.reworkAfterVerification({
+					runId: initial.run.id,
+					supersedesMessageId: initial.assistantMessage!.id,
+					maximumTurns: 2,
+				}),
+			).rejects.toThrow("All eligible model providers failed");
+			expect(database.getAgentRun(initial.run.id)?.status).toBe("failed");
+			expect(
+				runtime
+					.listMessages(session.id)
+					.some((message) => message.supersedesMessageId),
+			).toBe(false);
+		} finally {
+			database.close();
+		}
 	});
 
 	it("does not extend a completed run's turn budget for verifier rework", async () => {
@@ -3262,6 +3551,9 @@ describe("provider-neutral agent loop", () => {
 		await expect(
 			loop.reworkAfterVerification({
 				runId: initial.run.id,
+				...(initial.assistantMessage
+					? { supersedesMessageId: initial.assistantMessage.id }
+					: {}),
 				maximumTurns: 2,
 			}),
 		).rejects.toThrow("The independent verifier has no remaining turn budget.");
@@ -3271,6 +3563,11 @@ describe("provider-neutral agent loop", () => {
 			turn: 1,
 			maximumTurns: 1,
 		});
+		expect(
+			runtime
+				.listMessages(session.id)
+				.some((message) => message.supersedesMessageId),
+		).toBe(false);
 		database.close();
 	});
 

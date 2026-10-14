@@ -41,6 +41,7 @@ function characters(messages: ModelMessage[]): number {
 
 function expectNoOrphanToolResults(messages: ModelMessage[]): void {
 	const availableCalls = new Set<string>();
+	const matchedCalls = new Set<string>();
 	for (const message of messages) {
 		if (message.role === "assistant") {
 			for (const call of message.toolCalls ?? []) availableCalls.add(call.id);
@@ -48,8 +49,10 @@ function expectNoOrphanToolResults(messages: ModelMessage[]): void {
 		if (message.role === "tool") {
 			expect(message.toolCallId).toBeTruthy();
 			expect(availableCalls.has(message.toolCallId!)).toBe(true);
+			matchedCalls.add(message.toolCallId!);
 		}
 	}
+	for (const callId of availableCalls) expect(matchedCalls.has(callId)).toBe(true);
 }
 
 describe("ContextCompactor", () => {
@@ -373,6 +376,197 @@ describe("ContextCompactor", () => {
 			"Raw removed content is intentionally omitted",
 		);
 		expect(systemContent).not.toContain(malicious);
+	});
+
+	it("retains the recent task brief independently from a long tool recovery tail", () => {
+		const secret = `sk-proj-${"d".repeat(32)}`;
+		const taskBrief = [
+			"ORIGINAL-TASK-BRIEF: audit the complete research flow and repair navigation failures.",
+			"Keep the existing profile, preserve unrelated work, verify the visible result, and stop before any external approval.",
+			`Use the protected credential field; api_key=${secret}`,
+			"Detailed acceptance notes: " + "bounded requirement; ".repeat(90),
+		].join("\n");
+		const messages: RuntimeMessage[] = [
+			runtimeMessage(0, {
+				role: "system",
+				content: "Follow the user's current request and preserve tool-call integrity.",
+			}),
+			runtimeMessage(1, { role: "user", content: taskBrief }),
+		];
+
+		for (let index = 0; index < 10; index += 1) {
+			const callId = `call-research-${index}`;
+			messages.push(
+				runtimeMessage(messages.length, {
+					role: "assistant",
+					content: `Researching page ${index}.`,
+					modelToolCalls: [
+						{
+							id: callId,
+							name: "browser.inspect",
+							arguments: { page: index },
+						},
+					],
+				}),
+				runtimeMessage(messages.length + 1, {
+					role: "tool",
+					content: `Research result ${index}: ${"r".repeat(13_000)}`,
+					providerToolCallId: callId,
+					toolName: "browser.inspect",
+				}),
+			);
+		}
+		messages.push(
+			runtimeMessage(messages.length, {
+				role: "user",
+				content: "The navigation failed. Recover and continue.",
+			}),
+		);
+
+		const compactor = new ContextCompactor();
+		const defaultScale = compactor.compact(messages, []);
+		const forcedSmall = compactor.compact(messages, [], {
+			maximumCharacters: 4_000,
+			preserveRecentMessages: 16,
+		});
+
+		for (const compacted of [defaultScale, forcedSmall]) {
+			const userContent = compacted.messages
+				.filter((message) => message.role === "user")
+				.map((message) => contentText(message.content));
+			expect(
+				userContent.some((content) => content.includes("ORIGINAL-TASK-BRIEF")),
+			).toBe(true);
+			expect(userContent.at(-1)).toBe(
+				"The navigation failed. Recover and continue.",
+			);
+			expect(userContent.join("\n")).not.toContain(secret);
+			expect(compacted.estimatedCharacters).toBeLessThanOrEqual(
+				compacted === defaultScale ? 120_000 : 4_000,
+			);
+			expect(compacted.removedMessages).toBeGreaterThan(0);
+			expectNoOrphanToolResults(compacted.messages);
+		}
+	});
+
+	it("upgrades a rescued user request to full redacted content inside the recent window", () => {
+		const secret = `sk-proj-${"e".repeat(32)}`;
+		const recentRequest = [
+			"RECENT-LARGE-REQUEST",
+			"x".repeat(6_500),
+			"TAIL-CONSTRAINT: keep the generated report local.",
+			`api_key=${secret}`,
+		].join("\n");
+		const messages: RuntimeMessage[] = [
+			runtimeMessage(0, {
+				role: "system",
+				content: "Keep the latest request authoritative.",
+			}),
+			runtimeMessage(1, {
+				role: "user",
+				content: `OLDER-REQUEST ${"o".repeat(2_000)} ANCIENT-TAIL`,
+			}),
+			runtimeMessage(2, {
+				role: "assistant",
+				content: `Removed historical response ${"h".repeat(20_000)}`,
+			}),
+			runtimeMessage(3, { role: "user", content: recentRequest }),
+			runtimeMessage(4, {
+				role: "assistant",
+				content: "I will keep the report local.",
+			}),
+			runtimeMessage(5, {
+				role: "user",
+				content: "Recover from the navigation error and continue.",
+			}),
+		];
+
+		const compacted = new ContextCompactor().compact(messages, [], {
+			maximumCharacters: 9_000,
+			preserveRecentMessages: 3,
+		});
+		const userContent = compacted.messages
+			.filter((message) => message.role === "user")
+			.map((message) => contentText(message.content));
+		const upgraded = userContent.find((content) =>
+			content.startsWith("RECENT-LARGE-REQUEST"),
+		);
+
+		expect(upgraded).toContain(
+			"TAIL-CONSTRAINT: keep the generated report local.",
+		);
+		expect(upgraded).not.toContain(secret);
+		expect(userContent.join("\n")).not.toContain("ANCIENT-TAIL");
+		expect(userContent.at(-1)).toBe(
+			"Recover from the navigation error and continue.",
+		);
+		expect(compacted.estimatedCharacters).toBeLessThanOrEqual(9_000);
+		expectNoOrphanToolResults(compacted.messages);
+	});
+
+	it("bounds prior user retention while keeping an explicit retarget last", () => {
+		const messages: RuntimeMessage[] = [
+			runtimeMessage(0, {
+				role: "system",
+				content: "Follow the latest user request.",
+			}),
+			runtimeMessage(1, {
+				role: "user",
+				content: `ANCIENT-FIRST-TASK ${"a".repeat(3_000)}`,
+			}),
+			runtimeMessage(2, {
+				role: "assistant",
+				content: `Ancient response ${"x".repeat(3_000)}`,
+			}),
+			runtimeMessage(3, {
+				role: "user",
+				content: `RECENT-PRIOR-ONE ${"b".repeat(3_000)}`,
+			}),
+			runtimeMessage(4, {
+				role: "assistant",
+				content: `First response ${"y".repeat(3_000)}`,
+			}),
+			runtimeMessage(5, {
+				role: "user",
+				content: `RECENT-PRIOR-TWO ${"c".repeat(3_000)}`,
+			}),
+			runtimeMessage(6, {
+				role: "assistant",
+				content: `Second response ${"z".repeat(3_000)}`,
+			}),
+			runtimeMessage(7, {
+				role: "user",
+				content: "RETARGET: only build the new report.",
+			}),
+		];
+
+		const compacted = new ContextCompactor().compact(messages, [], {
+			maximumCharacters: 800,
+			preserveRecentMessages: 0,
+		});
+		const userContent = compacted.messages
+			.filter((message) => message.role === "user")
+			.map((message) => contentText(message.content));
+
+		expect(userContent).toHaveLength(3);
+		expect(userContent[0]).toContain("RECENT-PRIOR-ONE");
+		expect(userContent[1]).toContain("RECENT-PRIOR-TWO");
+		expect(userContent[2]).toBe("RETARGET: only build the new report.");
+		expect(userContent.join("\n")).not.toContain("ANCIENT-FIRST-TASK");
+		expect(compacted.estimatedCharacters).toBeLessThanOrEqual(800);
+
+		const tiny = new ContextCompactor().compact(messages, [], {
+			maximumCharacters: 50,
+			preserveRecentMessages: 0,
+		});
+		expect(tiny.messages.at(-1)?.role).toBe("user");
+		expect(contentText(tiny.messages.at(-1)!.content)).toContain("RETARGET:");
+		expect(
+			tiny.messages.some((message) =>
+				contentText(message.content).includes("RECENT-PRIOR"),
+			),
+		).toBe(false);
+		expect(tiny.estimatedCharacters).toBeLessThanOrEqual(50);
 	});
 
 	it("retains a bounded user checkpoint only at user authority", () => {
