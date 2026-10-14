@@ -269,6 +269,7 @@ let reviewerSawBoundedContext = false;
 let correctionSawPreservedState = false;
 let terminalReviewSawCorrection = false;
 let closedBrowserBackendCalls = 0;
+let projectPageFallbacks = 0;
 
 async function launchDesktop() {
 	application = await electron.launch({
@@ -290,7 +291,7 @@ async function launchDesktop() {
 	await page.evaluate(() => {
 		localStorage.setItem("kestrel:onboarded", "yes");
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
-		localStorage.setItem("kestrel:navigation-sidebar", "expanded");
+		localStorage.setItem("kestrel:navigation-sidebar", "open");
 		localStorage.setItem("kestrel:agent-panel-width", "560");
 	});
 	return page;
@@ -689,10 +690,35 @@ try {
 	await toggle.waitFor();
 	if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
 	const openChat = async () => {
+		const navigation = page.locator(".kestrel-sidebar");
+		await navigation.waitFor();
+		const expand = navigation.getByRole("button", { name: "Expand sidebar", exact: true });
+		if (await expand.isVisible()) {
+			await expand.click();
+			await expect(navigation).toHaveAttribute("data-collapsed", "false");
+		}
 		const project = page.locator(".kestrel-sidebar-project-open").filter({ hasText: "Real work fixture" });
-		await project.waitFor();
-		if ((await project.getAttribute("aria-expanded")) !== "true") await project.click();
-		await page.locator(".kestrel-sidebar").getByRole("button", { name: title, exact: true }).click();
+		await project.waitFor({ state: "attached" });
+		if (await project.isVisible()) {
+			if ((await project.getAttribute("aria-expanded")) !== "true") await project.click();
+			await navigation.getByRole("button", { name: title, exact: true }).click();
+		} else {
+			// The <=1120px rail hides project groups even when it is expanded.
+			// Use the same visible Projects page a person can open at that size.
+			await navigation.getByRole("button", { name: "Open command center", exact: true }).click();
+			await page.getByRole("heading", { name: "Command Center", exact: true }).waitFor();
+			await page.getByPlaceholder("Search Kestrel", { exact: true }).fill("Projects");
+			await page.locator(".command-groups button").filter({ has: page.getByText("Projects", { exact: true }) }).click();
+			const projectsPage = page.locator(".projects-workspace");
+			await expect(projectsPage.getByRole("heading", { name: "Real work fixture", exact: true })).toBeVisible();
+			await projectsPage.getByRole("button", { name: title, exact: true }).click();
+			await expect(page.locator("#browser-address-input")).toHaveValue("kestrel://agent");
+			const chatToggle = page.locator("#browser-agent-toggle");
+			await chatToggle.waitFor();
+			if ((await chatToggle.getAttribute("aria-expanded")) !== "true") await chatToggle.click();
+			await expect(page.locator(".agent-conversation-host")).toBeInViewport();
+			projectPageFallbacks += 1;
+		}
 	};
 	await openChat();
 	const host = page.locator(".agent-conversation-host");
@@ -749,6 +775,24 @@ try {
 	await restartedHost.getByText("Response finished", { exact: true }).scrollIntoViewIfNeeded();
 	await expect(restartedHost.getByText("Response finished", { exact: true })).toBeInViewport();
 	await capture("real-work-restarted.png");
+	await page.setViewportSize({ width: 1000, height: 800 });
+	const narrowNavigation = page.locator(".kestrel-sidebar");
+	await narrowNavigation.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
+	await expect(narrowNavigation).toHaveAttribute("data-collapsed", "true");
+	await expect(page.locator(".kestrel-sidebar-project-open").filter({ hasText: "Real work fixture" })).not.toBeVisible();
+	const priorFallbacks = projectPageFallbacks;
+	await openChat();
+	assert.equal(projectPageFallbacks, priorFallbacks + 1, "Narrow navigation must exercise the visible Projects page");
+	await expect(restartedHost.getByText(correctedAnswer, { exact: true })).toBeVisible();
+	await expect(restartedHost.getByText(initialAnswer, { exact: true })).not.toBeVisible();
+	await expect(restartedHost.locator("details.reviewed-answer-earlier")).not.toHaveAttribute("open");
+	await restartedHost.getByText("Response finished", { exact: true }).scrollIntoViewIfNeeded();
+	await expect(restartedHost.getByText("Response finished", { exact: true })).toBeInViewport();
+	persistedRead = await request({ type: "runtime-call-tool", sessionId, toolName: "workspace.read", input: { path: artifactPath } });
+	assert.equal(persistedRead.execution.status, "verified");
+	assert.equal(persistedRead.execution.output?.content, expectedArtifact);
+	assert.deepEqual(pageErrors, []);
+	await capture("real-work-narrow.png");
 	proof = {
 		fixtureEvidence: "synthetic loopback sources and deterministic providers",
 		liveProviderTaskVerified: false,
@@ -773,6 +817,8 @@ try {
 		oneCurrentCorrectedAnswer: true,
 		responseFinishedVisible: true,
 		restartPersistence: true,
+		narrowViewportNavigation: 1000,
+		projectPageFallbacks,
 		executable: executable ?? "source Electron",
 	};
 	if (evidenceDirectory) {
