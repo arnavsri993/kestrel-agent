@@ -201,6 +201,12 @@ Current native-host progress toward cutover:
   `{isolated-profile}/downloads/` and durable library metadata;
   `browser-cancel-download` cancels in-flight items
 - `corepack pnpm test:native-download-capture` proves live capture + restart
+- Native Core relay forwards `browser-backend-request` to CEF instead of
+  fail-closing; host owns `visible-tabs` / `visible-create` /
+  `visible-navigate` / `visible-select` / `visible-close` /
+  `visible-history` / `visible-downloads`
+- `corepack pnpm test:native-browser-backend` proves relay→CEF visible-tab
+  automation
 - HTTP(S) `window.open` popups are adopted as sibling Alloy user tabs
 - `corepack pnpm package:mac:native` / `install:mac:native` package the CEF host;
   side-by-side install is the default (`Kestrel Native.app`); canonical Dock
@@ -213,7 +219,8 @@ Current native-host progress toward cutover:
 Still required before retiring Electron:
 
 - Keychain/credential bootstrap without prompt spam
-- Remaining desktop command surface and browser automation relay
+- Remaining desktop command surface plus isolated automation sessions
+  (`create` / `navigate` / `snapshot` / `act`) on CEF
 - Production Developer ID signing + notarization
 - Retargeted desktop smokes against the native binary on a durable profile
 - Explicit Electron→native profile transfer design (no silent merge)

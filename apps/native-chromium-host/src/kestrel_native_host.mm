@@ -46,6 +46,7 @@
 
 @interface KestrelNativeCoreRelay : NSObject
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
+                        environment:(NSDictionary<NSString*, NSString*>*)environment
                         lineHandler:(void (^)(NSString* line))lineHandler
                  terminationHandler:(void (^)(NSString* error))terminationHandler;
 - (BOOL)start:(NSError**)error;
@@ -55,6 +56,7 @@
 
 @interface KestrelNativeCoreRelay ()
 @property(nonatomic, copy) NSString* profileRoot;
+@property(nonatomic, copy) NSDictionary<NSString*, NSString*>* environment;
 @property(nonatomic, copy) void (^lineHandler)(NSString* line);
 @property(nonatomic, copy) void (^terminationHandler)(NSString* error);
 @property(nonatomic, strong) NSTask* task;
@@ -67,11 +69,13 @@
 @implementation KestrelNativeCoreRelay
 
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
+                        environment:(NSDictionary<NSString*, NSString*>*)environment
                         lineHandler:(void (^)(NSString* line))lineHandler
                  terminationHandler:(void (^)(NSString* error))terminationHandler {
   self = [super init];
   if (!self) return nil;
   _profileRoot = [profileRoot copy];
+  _environment = [environment copy];
   _lineHandler = [lineHandler copy];
   _terminationHandler = [terminationHandler copy];
   _outputBuffer = [[NSMutableData alloc] init];
@@ -101,6 +105,12 @@
   self.task = [[NSTask alloc] init];
   self.task.executableURL = [NSURL fileURLWithPath:node];
   self.task.arguments = @[ relay, @"--profile-root", self.profileRoot ];
+  if (self.environment.count > 0) {
+    NSMutableDictionary* environment =
+        [[[NSProcessInfo processInfo] environment] mutableCopy];
+    [environment addEntriesFromDictionary:self.environment];
+    self.task.environment = environment;
+  }
   NSPipe* inputPipe = [NSPipe pipe];
   NSPipe* outputPipe = [NSPipe pipe];
   self.input = [inputPipe fileHandleForWriting];
@@ -190,8 +200,10 @@ bool user_extensions_enabled = false;
 bool durable_profile_enabled = false;
 bool smoke_durable_library_seed = false;
 bool smoke_durable_library_verify = false;
+bool smoke_browser_backend = false;
 std::optional<std::string> smoke_user_browser_url;
 std::optional<std::string> smoke_download_url;
+std::optional<std::string> smoke_browser_backend_url;
 bool smoke_user_browser_via_bridge = false;
 CefRefPtr<CefWindow> kestrel_window;
 
@@ -261,6 +273,40 @@ std::string iso8601_now() {
 std::string native_uuid() {
   NSString* uuid = [[[NSUUID UUID] UUIDString] lowercaseString];
   return std::string([uuid UTF8String] ?: "");
+}
+
+std::string json_escape(const std::string& value) {
+  std::string escaped;
+  escaped.reserve(value.size() + 8);
+  for (const unsigned char character : value) {
+    switch (character) {
+      case '\\':
+        escaped += "\\\\";
+        break;
+      case '"':
+        escaped += "\\\"";
+        break;
+      case '\n':
+        escaped += "\\n";
+        break;
+      case '\r':
+        escaped += "\\r";
+        break;
+      case '\t':
+        escaped += "\\t";
+        break;
+      default:
+        if (character < 0x20) {
+          char buffer[8];
+          std::snprintf(buffer, sizeof(buffer), "\\u%04x", character);
+          escaped += buffer;
+        } else {
+          escaped.push_back(static_cast<char>(character));
+        }
+        break;
+    }
+  }
+  return escaped;
 }
 
 std::string native_local_model_status() {
@@ -1069,6 +1115,32 @@ class KestrelClient : public CefClient,
                 : CefString();
       if (!channel.empty() && !serialized.empty() && bridge_handler_) {
         bridge_handler_->Publish(channel, serialized.ToString());
+      }
+      return;
+    }
+    if (type == "browser-backend-request") {
+      const std::string request_id = value->GetString("requestId").ToString();
+      CefRefPtr<CefDictionaryValue> request = value->GetDictionary("request");
+      if (request_id.empty() || !request) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser backend request was invalid.");
+        return;
+      }
+      HandleBrowserBackendRequest(request_id, request);
+      return;
+    }
+    if (type == "smoke-event") {
+      const std::string name = value->GetString("name").ToString();
+      if (name == "browser-backend-ok") {
+        const int tab_count =
+            value->GetType("tabCount") == VTYPE_INT ? value->GetInt("tabCount")
+                                                     : 0;
+        std::cout << "KESTREL_NATIVE_CHROMIUM_BROWSER_BACKEND_OK tabs="
+                  << tab_count << std::endl;
+      } else if (name == "browser-backend-failed") {
+        std::cerr << "KESTREL_NATIVE_CHROMIUM_BROWSER_BACKEND_FAILED error="
+                  << value->GetString("error").ToString() << std::endl;
       }
       return;
     }
@@ -2408,12 +2480,201 @@ class KestrelClient : public CefClient,
     return false;
   }
 
+  void SendBrowserBackendResponse(const std::string& request_id, bool ok,
+                                  const std::string& result_json,
+                                  const std::string& error) {
+    if (!core_relay_ || request_id.empty()) return;
+    std::string line = "{\"type\":\"browser-backend-response\",\"requestId\":\"" +
+                       json_escape(request_id) + "\",\"ok\":" +
+                       (ok ? "true" : "false");
+    if (ok) {
+      line += ",\"result\":" + (result_json.empty() ? "null" : result_json);
+    } else {
+      line += ",\"error\":\"" + json_escape(error) + "\"";
+    }
+    line += "}";
+    if (![core_relay_ sendLine:[NSString stringWithUTF8String:line.c_str()]]) {
+      std::cerr << "Kestrel could not return a native browser backend response."
+                << std::endl;
+    }
+  }
+
+  void HandleBrowserBackendRequest(const std::string& request_id,
+                                   CefRefPtr<CefDictionaryValue> request) {
+    if (!request || request->GetType("operation") != VTYPE_STRING) {
+      SendBrowserBackendResponse(request_id, false, "",
+                                 "Native browser backend request was invalid.");
+      return;
+    }
+    const std::string operation = request->GetString("operation").ToString();
+    if (operation == "visible-tabs") {
+      CefRefPtr<CefListValue> tabs = CefListValue::Create();
+      size_t count = 0;
+      for (const NativeUserBrowserTab& tab : user_browser_tabs_) {
+        if (tab.closing) continue;
+        ++count;
+      }
+      tabs->SetSize(count);
+      size_t index = 0;
+      for (const NativeUserBrowserTab& tab : user_browser_tabs_) {
+        if (tab.closing) continue;
+        CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
+        item->SetString("id", tab.id);
+        item->SetString("title", tab.title);
+        item->SetString("url", tab.url);
+        item->SetBool("active", tab.id == user_browser_active_tab_id_);
+        item->SetBool("loading", tab.loading);
+        item->SetBool("discarded", tab.discarded);
+        item->SetString("trust", "untrusted_browser");
+        tabs->SetDictionary(index++, item);
+      }
+      CefRefPtr<CefValue> root = CefValue::Create();
+      root->SetList(tabs);
+      SendBrowserBackendResponse(
+          request_id, true,
+          CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
+      return;
+    }
+    if (operation == "visible-create") {
+      const std::string input =
+          request->HasKey("input") && request->GetType("input") == VTYPE_STRING
+              ? request->GetString("input").ToString()
+              : "";
+      std::string error;
+      if (!CreateUserBrowserTab(input, true, &error)) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty() ? "Kestrel could not create a native browser tab."
+                          : error);
+        return;
+      }
+      SyncUserBrowserViewVisibility();
+      PublishUserBrowserState();
+      SendBrowserBackendResponse(
+          request_id, true,
+          "{\"tabId\":\"" + json_escape(user_browser_active_tab_id_) + "\"}",
+          "");
+      return;
+    }
+    if (operation == "visible-navigate") {
+      if (request->GetType("tabId") != VTYPE_STRING ||
+          request->GetType("input") != VTYPE_STRING) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native visible-navigate was invalid.");
+        return;
+      }
+      NativeUserBrowserTab* tab =
+          FindUserBrowserTab(request->GetString("tabId").ToString());
+      if (!tab) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "The requested native browser tab no longer exists.");
+        return;
+      }
+      std::string error;
+      if (!NavigateUserBrowserTab(*tab, request->GetString("input").ToString(),
+                                  &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+        return;
+      }
+      SyncUserBrowserViewVisibility();
+      PublishUserBrowserState();
+      SendBrowserBackendResponse(request_id, true, "{\"navigated\":true}", "");
+      return;
+    }
+    if (operation == "visible-select") {
+      if (request->GetType("tabId") != VTYPE_STRING) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native visible-select was invalid.");
+        return;
+      }
+      NativeUserBrowserTab* tab =
+          FindUserBrowserTab(request->GetString("tabId").ToString());
+      if (!tab) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "The requested native browser tab no longer exists.");
+        return;
+      }
+      user_browser_active_tab_id_ = tab->id;
+      tab->last_active_at = iso8601_now();
+      SyncUserBrowserViewVisibility();
+      PublishUserBrowserState();
+      SendBrowserBackendResponse(request_id, true, "{\"selected\":true}", "");
+      return;
+    }
+    if (operation == "visible-close") {
+      if (request->GetType("tabId") != VTYPE_STRING) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native visible-close was invalid.");
+        return;
+      }
+      const std::string tab_id = request->GetString("tabId").ToString();
+      const auto found = std::find_if(
+          user_browser_tabs_.begin(), user_browser_tabs_.end(),
+          [&tab_id](const NativeUserBrowserTab& tab) {
+            return tab.id == tab_id;
+          });
+      if (found == user_browser_tabs_.end()) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "The requested native browser tab no longer exists.");
+        return;
+      }
+      CloseUserBrowserView(*found);
+      const auto next_active = std::find_if(
+          user_browser_tabs_.begin(), user_browser_tabs_.end(),
+          [&tab_id](const NativeUserBrowserTab& tab) {
+            return tab.id != tab_id && !tab.closing;
+          });
+      if (next_active != user_browser_tabs_.end()) {
+        user_browser_active_tab_id_ = next_active->id;
+      } else {
+        CreateBlankUserBrowserTab(true);
+      }
+      SyncUserBrowserViewVisibility();
+      PublishUserBrowserState();
+      SendBrowserBackendResponse(request_id, true, "{\"closed\":true}", "");
+      return;
+    }
+    if (operation == "visible-history") {
+      CefRefPtr<CefValue> root = CefValue::Create();
+      root->SetList(browser_library_.SerializeHistory());
+      SendBrowserBackendResponse(
+          request_id, true,
+          CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
+      return;
+    }
+    if (operation == "visible-downloads") {
+      CefRefPtr<CefValue> root = CefValue::Create();
+      root->SetList(browser_library_.SerializeDownloads());
+      SendBrowserBackendResponse(
+          request_id, true,
+          CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
+      return;
+    }
+    SendBrowserBackendResponse(
+        request_id, false, "",
+        "Native Chromium browser backend operation is not migrated yet: " +
+            operation);
+  }
+
   void StartEphemeralCore(NSString* isolated_profile_root) {
     if (!isolated_profile_root) return;
     KestrelClient* const relay_client = this;
     const std::weak_ptr<bool> owner_token = native_owner_alive_;
+    NSMutableDictionary<NSString*, NSString*>* environment =
+        [NSMutableDictionary dictionary];
+    if (smoke_browser_backend) {
+      environment[@"KESTREL_SMOKE_BROWSER_BACKEND"] = @"1";
+      if (smoke_browser_backend_url) {
+        environment[@"KESTREL_SMOKE_BROWSER_BACKEND_URL"] =
+            [NSString stringWithUTF8String:smoke_browser_backend_url->c_str()];
+      }
+    }
     core_relay_ = [[KestrelNativeCoreRelay alloc]
         initWithProfileRoot:isolated_profile_root
+                environment:environment
                 lineHandler:^(NSString* line) {
                   const std::shared_ptr<bool> alive = owner_token.lock();
                   KestrelClient* client = relay_client;
@@ -2937,6 +3198,21 @@ int main(int argc, char* argv[]) {
       }
       smoke_download_url = *normalized;
     }
+    smoke_browser_backend =
+        has_argument(argc, argv, "--kestrel-smoke-browser-backend");
+    if (const auto backend_url =
+            argument_value(argc, argv, "--kestrel-smoke-browser-backend-url")) {
+      const std::optional<std::string> normalized =
+          safe_user_browser_url(*backend_url);
+      if (!normalized) {
+        std::cerr
+            << "Kestrel received an invalid native browser-backend smoke URL."
+            << std::endl;
+        return 1;
+      }
+      smoke_browser_backend_url = *normalized;
+      smoke_browser_backend = true;
+    }
 
     CefSettings settings;
     // The production path is sandboxed. This switch exists only to make a
@@ -2980,6 +3256,11 @@ int main(int argc, char* argv[]) {
     CefString(&settings.cache_path) = isolated_profile_path;
     ephemeral_core_enabled =
         has_argument(argc, argv, "--kestrel-ephemeral-core");
+    if (smoke_browser_backend && !ephemeral_core_enabled) {
+      std::cerr << "Browser backend smoke requires --kestrel-ephemeral-core."
+                << std::endl;
+      return 1;
+    }
 
     CefRefPtr<KestrelChromiumApp> app(new KestrelChromiumApp(
         [extension_workbench] {

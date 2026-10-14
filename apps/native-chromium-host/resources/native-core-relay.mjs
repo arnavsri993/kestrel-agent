@@ -15,6 +15,12 @@ if (!profileRoot) {
 	process.exit(1);
 }
 
+const smokeBrowserBackend = process.env.KESTREL_SMOKE_BROWSER_BACKEND === "1";
+const smokeBrowserBackendUrl =
+	typeof process.env.KESTREL_SMOKE_BROWSER_BACKEND_URL === "string"
+		? process.env.KESTREL_SMOKE_BROWSER_BACKEND_URL
+		: "";
+
 // This relay is intentionally an ephemeral no-credential bootstrap. It proves
 // that the native Chromium renderer is talking to Kestrel's real standalone
 // Node Core without opening the Electron profile or consulting Keychain.
@@ -39,6 +45,8 @@ let coreReady = false;
 let stopping = false;
 let nextRequest = 0;
 const pending = new Map();
+/** @type {Map<string, "core" | "smoke">} */
+const pendingBrowserBackend = new Map();
 
 function write(message) {
 	process.stdout.write(JSON.stringify(message) + "\n");
@@ -49,6 +57,39 @@ function failPending(error) {
 		write({ type: "response", id, response: { ok: false, error } });
 	}
 	pending.clear();
+	for (const [requestId, destination] of pendingBrowserBackend) {
+		if (destination === "core" && core.connected) {
+			core.send({
+				type: "browser-backend-response",
+				requestId,
+				ok: false,
+				error,
+			});
+		}
+	}
+	pendingBrowserBackend.clear();
+}
+
+function forwardBrowserBackendRequest(requestId, request, destination) {
+	pendingBrowserBackend.set(requestId, destination);
+	write({
+		type: "browser-backend-request",
+		requestId,
+		request,
+	});
+}
+
+function beginSmokeBrowserBackend() {
+	if (!smokeBrowserBackend) return;
+	const createId = "smoke-browser-backend-create";
+	forwardBrowserBackendRequest(
+		createId,
+		{
+			operation: "visible-create",
+			...(smokeBrowserBackendUrl ? { input: smokeBrowserBackendUrl } : {}),
+		},
+		"smoke",
+	);
 }
 
 async function shutdown(exitCode = 0) {
@@ -75,6 +116,7 @@ core.on("message", (message) => {
 	if (message.type === "ready") {
 		coreReady = true;
 		write({ type: "ready" });
+		beginSmokeBrowserBackend();
 		return;
 	}
 	if (message.type === "start-error") {
@@ -89,15 +131,13 @@ core.on("message", (message) => {
 		return;
 	}
 	if (message.type === "browser-backend-request" && message.requestId) {
-		// Browser automation remains deliberately fail-closed until CEF's
-		// dedicated Chromium browser runtime owns this backend.
-		core.send({
-			type: "browser-backend-response",
-			requestId: message.requestId,
-			ok: false,
-			error:
-				"Native Chromium browser automation is not migrated yet.",
-		});
+		// Forward to the native CEF host. The host owns visible tabs and answers
+		// through stdin; unsupported operations fail at the host, not here.
+		forwardBrowserBackendRequest(
+			message.requestId,
+			message.request,
+			"core",
+		);
 		return;
 	}
 	if (message.type === "runtime-event" || message.type === "agent-stream") {
@@ -149,6 +189,58 @@ lines.on("line", (line) => {
 	}
 	if (message?.type === "shutdown") {
 		void shutdown(0);
+		return;
+	}
+	if (
+		message?.type === "browser-backend-response" &&
+		typeof message.requestId === "string"
+	) {
+		const destination = pendingBrowserBackend.get(message.requestId);
+		pendingBrowserBackend.delete(message.requestId);
+		if (!destination) return;
+		if (destination === "core") {
+			if (!core.connected) return;
+			core.send({
+				type: "browser-backend-response",
+				requestId: message.requestId,
+				ok: message.ok === true,
+				...(message.ok === true
+					? { result: message.result }
+					: {
+							error:
+								typeof message.error === "string"
+									? message.error
+									: "Native Chromium browser backend failed.",
+						}),
+			});
+			return;
+		}
+		if (message.ok === true && message.requestId === "smoke-browser-backend-create") {
+			const tabsId = "smoke-browser-backend-tabs";
+			forwardBrowserBackendRequest(
+				tabsId,
+				{ operation: "visible-tabs" },
+				"smoke",
+			);
+			return;
+		}
+		if (message.ok === true && message.requestId === "smoke-browser-backend-tabs") {
+			const tabs = Array.isArray(message.result) ? message.result : [];
+			write({
+				type: "smoke-event",
+				name: "browser-backend-ok",
+				tabCount: tabs.length,
+			});
+			return;
+		}
+		write({
+			type: "smoke-event",
+			name: "browser-backend-failed",
+			error:
+				typeof message.error === "string"
+					? message.error
+					: "Native Chromium browser backend smoke failed.",
+		});
 		return;
 	}
 	if (
