@@ -18,8 +18,8 @@ interface MessageGroup {
 }
 
 // Tool-heavy recovery can push the active brief outside the general recency
-// window. Keep only the two newest earlier user turns, capped per turn and at
-// 10% of the whole budget, so the latest request and system context stay first.
+// window. Keep the original brief and two newest earlier user turns, capped
+// per turn and at 10% of the budget. The latest request still takes priority.
 const MAX_RECENT_PRIOR_USER_REQUESTS = 2;
 const MAX_PRIOR_USER_REQUEST_CHARACTERS = 6_000;
 const MAX_PRIOR_USER_RETENTION_CHARACTERS = 12_000;
@@ -228,7 +228,7 @@ export class ContextCompactor {
 		const latestUserEntry = latestUserGroup?.entries.find(
 			(entry) => entry.message.role === "user",
 		);
-		const recentPriorUserEntries = groups
+		const priorUserEntries = groups
 			.filter((group) => group !== latestUserGroup)
 			.map((group) => ({
 				group,
@@ -239,8 +239,14 @@ export class ContextCompactor {
 					candidate,
 				): candidate is { group: MessageGroup; entry: IndexedMessage } =>
 					candidate.entry !== undefined,
-			)
-			.slice(-MAX_RECENT_PRIOR_USER_REQUESTS);
+			);
+		const recentStart = Math.max(
+			1,
+			priorUserEntries.length - MAX_RECENT_PRIOR_USER_REQUESTS,
+		);
+		const recentPriorUserEntries = priorUserEntries.length
+			? [priorUserEntries[0]!, ...priorUserEntries.slice(recentStart)]
+			: [];
 		const priorUserBudget = Math.min(
 			MAX_PRIOR_USER_RETENTION_CHARACTERS,
 			Math.floor(maximumCharacters * 0.1),

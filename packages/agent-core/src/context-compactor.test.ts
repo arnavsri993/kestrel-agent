@@ -504,6 +504,26 @@ describe("ContextCompactor", () => {
 		expectNoOrphanToolResults(compacted.messages);
 	});
 
+	it("keeps original brief constraints after three follow-ups under compaction", () => {
+		const requirements = [
+			"Use exactly two sources; under 250 words; include a 24-hour rollback.",
+			"Continue research.",
+			"Use the direct second URL.",
+			"Finish and save the brief.",
+		];
+		const messages = requirements.flatMap((content, index) => [
+			runtimeMessage(index * 2, { role: "user", content }),
+			runtimeMessage(index * 2 + 1, { role: "assistant", content: "Research data " + "x".repeat(10_000) }),
+		]);
+		const compacted = new ContextCompactor().compact(messages, [], {
+			maximumCharacters: 4_000, preserveRecentMessages: 2,
+		});
+		expect(compacted.messages.filter((entry) => entry.role === "user")
+			.map((entry) => contentText(entry.content))).toEqual(requirements);
+		expect(compacted.estimatedCharacters).toBeLessThanOrEqual(4_000);
+		expectNoOrphanToolResults(compacted.messages);
+	});
+
 	it("bounds prior user retention while keeping an explicit retarget last", () => {
 		const messages: RuntimeMessage[] = [
 			runtimeMessage(0, {
@@ -548,11 +568,11 @@ describe("ContextCompactor", () => {
 			.filter((message) => message.role === "user")
 			.map((message) => contentText(message.content));
 
-		expect(userContent).toHaveLength(3);
-		expect(userContent[0]).toContain("RECENT-PRIOR-ONE");
-		expect(userContent[1]).toContain("RECENT-PRIOR-TWO");
-		expect(userContent[2]).toBe("RETARGET: only build the new report.");
-		expect(userContent.join("\n")).not.toContain("ANCIENT-FIRST-TASK");
+		expect(userContent).toHaveLength(4);
+		expect(userContent[0]).toContain("ANCIENT-FIRST-TASK");
+		expect(userContent[1]).toContain("RECENT-PRIOR-ONE");
+		expect(userContent[2]).toContain("RECENT-PRIOR-TWO");
+		expect(userContent[3]).toBe("RETARGET: only build the new report.");
 		expect(compacted.estimatedCharacters).toBeLessThanOrEqual(800);
 
 		const tiny = new ContextCompactor().compact(messages, [], {

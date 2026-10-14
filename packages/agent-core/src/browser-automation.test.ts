@@ -17,6 +17,7 @@ import { AgentRuntime } from "./runtime";
 
 class FakeBrowser implements BrowserAutomationBackend {
 	actions: BrowserAction[] = [];
+	navigations: Array<{ id: string; url: string }> = [];
 	viewport?: { name: string; width: number; height: number };
 	uploaded: string[] = [];
 	desktopActions: Array<{ type: string }> = [];
@@ -31,7 +32,9 @@ class FakeBrowser implements BrowserAutomationBackend {
 		expect(input.isolated).toBe(true);
 		return "backend-1";
 	}
-	async navigate(_id: string, _url: string): Promise<void> {}
+	async navigate(id: string, url: string): Promise<void> {
+		this.navigations.push({ id, url });
+	}
 	async act(_id: string, action: BrowserAction): Promise<void> {
 		this.actions.push(action);
 	}
@@ -205,7 +208,65 @@ class FakeBrowser implements BrowserAutomationBackend {
 	async close(): Promise<void> {}
 }
 
+async function approveBrowserCreate(
+	runtime: AgentRuntime,
+	sessionId: string,
+	allowedOrigins: string[],
+	key: string,
+) {
+	const input = { allowedOrigins };
+	const pending = await runtime.callTool(sessionId, "browser.create", input, {
+		idempotencyKey: `${key}-pending`,
+	});
+	expect(pending).toMatchObject({
+		status: "blocked",
+		output: {
+			approvalRequired: true,
+			persistentApprovalAllowed: false,
+		},
+	});
+	return runtime.callTool(
+		sessionId,
+		"browser.create",
+		runtime.approvalInput(pending),
+		{
+			approvalStatus: "approved",
+			approvalGrantExecutionId: pending.id,
+			idempotencyKey: `${key}-approved`,
+		},
+	);
+}
+
 describe("isolated browser automation and visual validation", () => {
+	it("removes the research grant after authentication and requires a fresh private navigation approval", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const backend = new class extends FakeBrowser { async authHandoff() {} }();
+		const runtime = new AgentRuntime(database);
+		const owner = runtime.createSession({ title: "Authenticated research boundary" });
+		installBrowserTools(runtime, new BrowserController(backend), owner.id);
+		const created = await approveBrowserCreate(runtime, owner.id, ["https://example.test"], "auth-boundary");
+		const browserSessionId = String(created.output?.browserSessionId);
+		const input = { browserSessionId, url: "https://example.test/guide" };
+		expect((await runtime.callTool(owner.id, "browser.navigate", input)).status).toBe("verified");
+		expect((await runtime.callTool(owner.id, "browser.auth-handoff", { browserSessionId, visible: true }, {
+			approvalStatus: "approved", idempotencyKey: "auth-approved",
+		})).status).toBe("verified");
+		const publicNavigation = await runtime.callTool(owner.id, "browser.navigate", input);
+		expect(publicNavigation.status).toBe("failed");
+		expect(publicNavigation.error).toContain("browser.navigate-authenticated");
+		const pending = await runtime.callTool(owner.id, "browser.navigate-authenticated", input, { idempotencyKey: "private-navigation-pending" });
+		expect(pending).toMatchObject({ status: "blocked", output: { approvalRequired: true, persistentApprovalAllowed: false } });
+		const approved = await runtime.callTool(owner.id, "browser.navigate-authenticated", runtime.approvalInput(pending), {
+			approvalStatus: "approved", approvalGrantExecutionId: pending.id, idempotencyKey: "private-navigation-approved",
+		});
+		expect(approved.status).toBe("verified");
+		await runtime.callTool(owner.id, "browser.auth-handoff", { browserSessionId, visible: false }, { approvalStatus: "approved", idempotencyKey: "auth-hidden" });
+		expect((await runtime.callTool(owner.id, "browser.navigate", input)).status).toBe("failed");
+		expect(backend.navigations).toHaveLength(2);
+		expect((await runtime.callTool(owner.id, "browser.close", { browserSessionId }, { idempotencyKey: "owned-cleanup" })).status).toBe("verified");
+		database.close();
+	});
+
 	it("accepts only HTTPS or exact loopback HTTP browser origins", async () => {
 		const controller = new BrowserController(new FakeBrowser());
 		for (const allowed of [
@@ -227,9 +288,12 @@ describe("isolated browser automation and visual validation", () => {
 			"not-a-url",
 			"http://localhost.evil.example",
 			"https://user:secret@example.test",
+			"https://example.test/private",
+			"https://example.test/?token=private",
+			"https://example.test/#private",
 		])
 			await expect(controller.create("owner", [rejected])).rejects.toThrow(
-				"must use HTTPS",
+				"Browser origins must",
 			);
 		await expect(
 			controller.create(
@@ -256,11 +320,11 @@ describe("isolated browser automation and visual validation", () => {
 				.discoverTools(session.id)
 				.find((tool) => tool.name === "browser.act")?.description,
 		).toContain("snapshot ref like e12");
-		const created = await runtime.callTool(
+		const created = await approveBrowserCreate(
+			runtime,
 			session.id,
-			"browser.create",
-			{ allowedOrigins: ["https://example.test"] },
-			{ approvalStatus: "approved", idempotencyKey: "browser" },
+			["https://example.test", "https://second.example.test"],
+			"browser",
 		);
 		const browserSessionId = String(created.output?.browserSessionId);
 		await expect(
@@ -285,20 +349,22 @@ describe("isolated browser automation and visual validation", () => {
 					session.id,
 					"browser.navigate",
 					{ browserSessionId, url: "https://example.test/page" },
-					{ idempotencyKey: "nav" },
-				)
-			).status,
-		).toBe("blocked");
-		expect(
-			(
-				await runtime.callTool(
-					session.id,
-					"browser.navigate",
-					{ browserSessionId, url: "https://example.test/page" },
-					{ approvalStatus: "approved", idempotencyKey: "nav" },
+					{},
 				)
 			).status,
 		).toBe("verified");
+		expect(
+			(
+				await runtime.callTool(session.id, "browser.navigate", {
+					browserSessionId,
+					url: "https://second.example.test/source",
+				})
+			).status,
+		).toBe("verified");
+		expect(backend.navigations.map(({ url }) => url)).toEqual([
+			"https://example.test/page",
+			"https://second.example.test/source",
+		]);
 		const snapshot = await runtime.callTool(session.id, "browser.snapshot", {
 			browserSessionId,
 		});
@@ -365,6 +431,132 @@ describe("isolated browser automation and visual validation", () => {
 		database.close();
 	});
 
+	it("binds public research consent to one approved owner and exact origins", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const backend = new FakeBrowser();
+		const controller = new BrowserController(backend);
+		const runtime = new AgentRuntime(database);
+		const owner = runtime.createSession({ title: "Research owner" });
+		const other = runtime.createSession({ title: "Other conversation" });
+		const browserTools = installBrowserTools(runtime, controller, owner.id);
+		for (const tool of browserTools) runtime.allowTool(other.id, tool);
+
+		expect(() =>
+			runtime.setApprovalRule({
+				toolName: "browser.create",
+				decision: "allow",
+				scope: "global",
+			}),
+		).toThrow("fresh one-time approval");
+		expect(
+			await runtime.callTool(
+				owner.id,
+				"browser.create",
+				{ allowedOrigins: ["https://docs.example.test"] },
+				{
+					approvalStatus: "approved",
+					idempotencyKey: "unbound-approved-flag",
+				},
+			),
+		).toMatchObject({
+			status: "blocked",
+			output: { persistentApprovalAllowed: false },
+		});
+
+		const created = await approveBrowserCreate(
+			runtime,
+			owner.id,
+			["https://docs.example.test"],
+			"owner-scope",
+		);
+		const browserSessionId = String(created.output?.browserSessionId);
+
+		await expect(
+			runtime.callTool(owner.id, "browser.navigate", {
+				browserSessionId,
+				url: "https://docs.example.test/guide",
+			}),
+		).resolves.toMatchObject({ status: "verified" });
+		await expect(
+			runtime.callTool(other.id, "browser.navigate", {
+				browserSessionId,
+				url: "https://docs.example.test/guide",
+			}),
+		).resolves.toMatchObject({
+			status: "failed",
+			error: "Browser session is unavailable to this agent session.",
+		});
+
+		const outside = await runtime.callTool(owner.id, "browser.navigate", {
+			browserSessionId,
+			url: "https://unrelated.example.test/private",
+		});
+		expect(outside).toMatchObject({
+			status: "failed",
+			error:
+				"Browser navigation to https://unrelated.example.test is outside this session's origin allowlist.",
+			output: {
+				recovery: {
+					reasonCode: "origin_scope",
+					effectState: "not_started",
+					automaticReplayAllowed: false,
+				},
+			},
+		});
+		expect(
+			(outside.output?.recovery as { hints?: unknown[] }).hints,
+		).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					kind: "scope_request",
+					toolName: "browser.create",
+					readOnly: false,
+					requiresApproval: true,
+				}),
+			]),
+		);
+
+		for (const url of [
+			"https://docs.example.test/download?token=private-value",
+			"https://user:secret@docs.example.test/guide",
+			"https://docs.example.test/callback#access_token=private-value",
+		]) {
+			const refused = await runtime.callTool(
+				owner.id,
+				"browser.navigate",
+				{ browserSessionId, url },
+			);
+			expect(refused).toMatchObject({
+				status: "failed",
+				error:
+					"Browser navigation with credentials or capability-bearing parameters is outside the approved public research scope.",
+			});
+		}
+		expect(backend.navigations).toEqual([
+			{ id: "backend-1", url: "https://docs.example.test/guide" },
+		]);
+
+		const action = await runtime.callTool(
+			owner.id,
+			"browser.act",
+			{
+				browserSessionId,
+				action: { type: "click", target: "e1" },
+			},
+			{ idempotencyKey: "scoped-action-still-gated" },
+		);
+		expect(action.status).toBe("blocked");
+		const auth = await runtime.callTool(
+			owner.id,
+			"browser.auth-handoff",
+			{ browserSessionId, visible: true },
+			{ idempotencyKey: "scoped-auth-still-gated" },
+		);
+		expect(auth.status).toBe("blocked");
+		expect(backend.actions).toEqual([]);
+		database.close();
+	});
+
 	it("persists typed recovery guidance and never replays a failed browser action", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const backend = new FakeBrowser();
@@ -381,11 +573,11 @@ describe("isolated browser automation and visual validation", () => {
 				.discoverTools(session.id)
 				.find((tool) => tool.name === "browser.act")?.description,
 		).toContain("never automatically replay");
-		const created = await runtime.callTool(
+		const created = await approveBrowserCreate(
+			runtime,
 			session.id,
-			"browser.create",
-			{ allowedOrigins: ["https://example.test"] },
-			{ approvalStatus: "approved", idempotencyKey: "recovery-browser" },
+			["https://example.test"],
+			"recovery-browser",
 		);
 		const input = {
 			browserSessionId: String(created.output?.browserSessionId),
@@ -650,11 +842,11 @@ describe("isolated browser automation and visual validation", () => {
 		const runtime = new AgentRuntime(database);
 		const session = runtime.createSession({ title: "Secret boundary" });
 		installBrowserTools(runtime, controller, session.id);
-		const created = await runtime.callTool(
+		const created = await approveBrowserCreate(
+			runtime,
 			session.id,
-			"browser.create",
-			{ allowedOrigins: ["https://example.test"] },
-			{ approvalStatus: "approved", idempotencyKey: "secret-boundary-browser" },
+			["https://example.test"],
+			"secret-boundary-browser",
 		);
 		const browserSessionId = String(created.output?.browserSessionId);
 		await runtime.callTool(session.id, "browser.snapshot", { browserSessionId });
@@ -865,11 +1057,11 @@ describe("isolated browser automation and visual validation", () => {
 		const runtime = new AgentRuntime(database);
 		const session = runtime.createSession({ title: "Visual" });
 		installBrowserTools(runtime, controller, session.id, validator);
-		const created = await runtime.callTool(
+		const created = await approveBrowserCreate(
+			runtime,
 			session.id,
-			"browser.create",
-			{ allowedOrigins: ["https://example.test"] },
-			{ approvalStatus: "approved", idempotencyKey: "visual-browser" },
+			["https://example.test"],
+			"visual-browser",
 		);
 		const result = await runtime.callTool(
 			session.id,

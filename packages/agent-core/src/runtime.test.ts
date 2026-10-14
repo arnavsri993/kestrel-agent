@@ -1881,6 +1881,26 @@ describe("agent runtime", () => {
 		database.close();
 	});
 
+	it("loads ancestor rules for a planned file without creating it or following an escaping parent", async () => {
+		const { root, database, runtime, session } = fixture();
+		writeFileSync(join(root, "AGENTS.md"), "Root rules");
+		writeFileSync(join(root, "src", "CLAUDE.md"), "Source rules");
+		const loaded = await runtime.callTool(session.id, "workspace.instructions", { targetPath: "src/new-brief.md" });
+		expect(loaded.status).toBe("verified");
+		expect(loaded.output?.instructions).toEqual([
+			{ path: "AGENTS.md", content: "Root rules", precedence: 0 },
+			{ path: "src/CLAUDE.md", content: "Source rules", precedence: 1 },
+		]);
+		expect(existsSync(join(root, "src", "new-brief.md"))).toBe(false);
+		const outside = fixture();
+		symlinkSync(outside.root, join(root, "outside"), "dir");
+		const escaped = await runtime.callTool(session.id, "workspace.instructions", { targetPath: "outside/new-brief.md" });
+		expect(escaped.status).toBe("failed");
+		expect(escaped.error).toContain("escapes the granted root");
+		outside.database.close();
+		database.close();
+	});
+
 	it("writes idempotently, detects stale edits, and restores encrypted undo records", async () => {
 		const { root, database, runtime, session } = fixture();
 		await expect(

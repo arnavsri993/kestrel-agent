@@ -47,7 +47,10 @@ const provider = (id, capabilities) => ({
 		if (!review && id !== "primary") repairSawInitial = request.messages.some(message =>
 			message.role === "assistant" && message.content.some(part => part.type === "text" && part.text.includes("Initial answer without validation evidence.")));
 		return { providerId: id, model: request.model,
-			text: review ? "VERDICT: FAIL\nThe initial answer lacks validation evidence."
+			text: review ? request.messages.some(message => message.content.some(part =>
+				part.type === "text" && part.text.includes("Corrected answer: the requested validation evidence is included.")))
+				? "VERDICT: PASS\nThe corrected answer now includes the requested evidence."
+				: "VERDICT: FAIL\nThe initial answer lacks validation evidence."
 				: id === "primary" ? initialText : correctedText,
 			toolCalls: [], usage: { inputTokens: 3, outputTokens: 1 }, finishReason: "stop" };
 	},
@@ -79,7 +82,7 @@ try {
 	const response = await core.handle({ type: "runtime-run-agent", sessionId: session.id,
 		message: "Implement this production backend architecture change.", model: "auto", providerIds: ["auto"] });
 	assert(response.ok && response.run?.status === "completed");
-	assert.deepEqual(calls.map(call => call.phase), ["initial", "review", "correction"]);
+	assert.deepEqual(calls.map(call => call.phase), ["initial", "review", "correction", "review"]);
 	assert.notEqual(calls[0].id, calls[1].id, "Review must be independent of the initial executor");
 	assert(repairSawInitial, "Correction must preserve the first answer as internal context");
 	const messages = core.runtime.listMessages(session.id);

@@ -4572,10 +4572,16 @@ export class AgentRuntime extends EventEmitter {
 		workspaceRoot: string,
 		targetPath?: string,
 	): Array<{ path: string; content: string; precedence: number }> {
+		const requestedTarget = targetPath ? resolve(workspaceRoot, targetPath) : workspaceRoot;
+		if (!isWithin(workspaceRoot, requestedTarget))
+			throw new Error("Workspace path escapes the granted root.");
+		const targetExists = existsSync(requestedTarget);
 		const resolvedTarget = targetPath
-			? resolveExistingPath(workspaceRoot, targetPath)
+			? targetExists ? resolveExistingPath(workspaceRoot, targetPath) : resolveWritablePath(workspaceRoot, targetPath)
 			: workspaceRoot;
-		const targetDirectory = statSync(resolvedTarget).isDirectory()
+		// New files need their ancestor rules before creation. Resolve the same
+		// contained parent used by workspace.write without creating the target.
+		const targetDirectory = targetExists && statSync(resolvedTarget).isDirectory()
 			? resolvedTarget
 			: dirname(resolvedTarget);
 		const relativeDirectory = relative(workspaceRoot, targetDirectory);

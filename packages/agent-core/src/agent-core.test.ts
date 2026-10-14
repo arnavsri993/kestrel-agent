@@ -795,6 +795,12 @@ describe("core agent request path", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const calls: string[] = [];
 		let repairSawVerifierFeedback = false;
+		let repairSawOriginalRequirement = false;
+		let reviewerSawOriginalRequirement = false;
+		let terminalReviewerSawCorrection = false;
+		let terminalReviewerSawFreshEvidence = false;
+		let reviewerCalls = 0;
+		let executionCalls = 0;
 		const makeProvider = (
 			id: string,
 			capabilities: Record<string, number>,
@@ -812,26 +818,188 @@ describe("core agent request path", () => {
 			profileHints: { capabilities, features: { reasoningLevels: true } },
 			probe: async () => undefined,
 			complete: async (request) => {
-				calls.push(id);
-				if (id === "repair")
+				const context = request.messages
+					.flatMap((message) => message.content)
+					.map((part) => (part.type === "text" ? part.text : ""))
+					.join("\n");
+				const review = context.includes("Review the completed agent result");
+				if (review) calls.push("review");
+				else {
+					executionCalls += 1;
+					calls.push(executionCalls === 1 ? "execute" : "repair");
+				}
+				if (review) {
+					reviewerCalls += 1;
+					reviewerSawOriginalRequirement ||= context.includes(
+						"under 600 words with two cited sources",
+					);
+					terminalReviewerSawCorrection ||=
+						reviewerCalls === 2 &&
+						context.includes("Corrected answer under 600 words with two cited sources");
+					terminalReviewerSawFreshEvidence ||=
+						reviewerCalls === 2 && context.includes("correction-validation");
+				}
+				if (!review && executionCalls === 2) {
 					repairSawVerifierFeedback = request.messages
 						.flatMap((message) => message.content)
 						.some(
 							(part) =>
 								part.type === "text" &&
 								part.text.includes(
-									"The initial answer lacks the required validation evidence.",
+									"The initial answer lacks the required validation evidence",
 								),
 						);
+					repairSawOriginalRequirement = context.includes(
+						"under 600 words with two cited sources",
+					);
+					const run = database.listAgentRuns(session.id)[0];
+					if (!run) throw new Error("Expected the correction run to exist.");
+					database.saveToolExecution({
+						id: "tool-correction-validation",
+						sessionId: session.id,
+						toolName: "test.validate-correction",
+						status: "verified",
+						riskLevel: "read_only",
+						input: { privateDetail: "must-not-reach-reviewer" },
+						output: { rawDetail: "must-not-reach-reviewer" },
+						idempotencyKey: `${run.id}:correction-validation`,
+						verification: {
+							method: "correction-validation",
+							evidenceSha256: "ab".repeat(32),
+							verifiedAt: "2026-07-22T15:00:00.000Z",
+						},
+						startedAt: "2026-07-22T15:00:00.000Z",
+						completedAt: "2026-07-22T15:00:00.000Z",
+					});
+				}
 				return {
 					providerId: id,
 					model: request.model,
 					text:
-						id === "reviewer"
-							? "VERDICT: FAIL\nThe initial answer lacks the required validation evidence."
+						review
+							? reviewerCalls === 1
+								? "VERDICT: FAIL\nThe initial answer lacks the required validation evidence and should be 300 words."
+								: "VERDICT: PASS\nThe correction follows the actual under-600-word requirement and includes both cited sources."
 							: id === "repair"
-								? "Corrected answer with the requested validation evidence."
+								? "Corrected answer under 600 words with two cited sources and validation evidence."
 								: "Initial answer without validation evidence.",
+					toolCalls: [],
+					usage: { inputTokens: 3, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		});
+		const core = new AgentCore({
+			database,
+			modelProviders: [
+				makeProvider("primary", {
+					coding: 0.99,
+					backend_architecture: 0.99,
+					complex_reasoning: 0.99,
+					reliability: 0.99,
+				}),
+				makeProvider("reviewer", {
+					code_review: 0.99,
+					reliability: 0.99,
+				}),
+				makeProvider("repair", {
+					coding: 0.96,
+					backend_architecture: 0.96,
+					complex_reasoning: 0.96,
+					reliability: 0.96,
+				}),
+			],
+			now: () => "2026-07-22T15:00:00.000Z",
+		});
+		const session = core.runtime.ensureMainSession();
+		const response = await core.handle({
+			type: "runtime-run-agent",
+			sessionId: session.id,
+			message:
+				"Implement this production backend architecture change under 600 words with two cited sources.",
+			model: "auto",
+			providerIds: ["auto"],
+		});
+
+		expect(response).toMatchObject({
+			ok: true,
+			run: { status: "completed", model: "repair-model", refusalRecoveryCount: 1 },
+			messages: [
+				{
+					content:
+						"Corrected answer under 600 words with two cited sources and validation evidence.",
+				},
+			],
+		});
+		expect(calls).toEqual(["execute", "review", "repair", "review"]);
+		expect(repairSawVerifierFeedback).toBe(true);
+		expect(repairSawOriginalRequirement).toBe(true);
+		expect(reviewerSawOriginalRequirement).toBe(true);
+		expect(terminalReviewerSawCorrection).toBe(true);
+		expect(terminalReviewerSawFreshEvidence).toBe(true);
+		const reviewedAnswers = core.runtime
+			.listMessages(session.id)
+			.filter(
+				(message) =>
+					message.role === "assistant" && !message.modelToolCalls?.length,
+			);
+		expect(reviewedAnswers).toMatchObject([
+			{ content: "Initial answer without validation evidence." },
+			{
+				content:
+					"Corrected answer under 600 words with two cited sources and validation evidence.",
+				supersedesMessageId: reviewedAnswers[0]?.id,
+			},
+		]);
+		expect(database.listAgentRuns(session.id)).toHaveLength(1);
+		expect(core.routingOutcomes.list()).toContainEqual(
+			expect.objectContaining({
+				verifierStatus: "passed",
+				escalated: true,
+				success: true,
+			}),
+		);
+		await core.close();
+	});
+
+	it("stops after one correction when the terminal reviewer still finds a defect", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const calls: string[] = [];
+		let reviewerCalls = 0;
+		const makeProvider = (
+			id: string,
+			capabilities: Record<string, number>,
+		): ModelProvider => ({
+			id,
+			defaultModel: `${id}-model`,
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			profileHints: { capabilities, features: { reasoningLevels: true } },
+			probe: async () => undefined,
+			complete: async (request) => {
+				const context = request.messages
+					.flatMap((message) => message.content)
+					.map((part) => (part.type === "text" ? part.text : ""))
+					.join("\n");
+				const review = context.includes("Review the completed agent result");
+				calls.push(review ? "review" : id === "repair" ? "repair" : "execute");
+				if (review) reviewerCalls += 1;
+				return {
+					providerId: id,
+					model: request.model,
+					text: review
+						? reviewerCalls === 1
+							? "VERDICT: FAIL\nThe answer needs one correction."
+							: "VERDICT: FAIL\nA concrete defect remains after correction."
+						: id === "repair"
+							? "One bounded correction."
+							: "Initial answer.",
 					toolCalls: [],
 					usage: { inputTokens: 3, outputTokens: 1 },
 					finishReason: "stop",
@@ -871,31 +1039,24 @@ describe("core agent request path", () => {
 
 		expect(response).toMatchObject({
 			ok: true,
-			run: { status: "completed", model: "repair-model", refusalRecoveryCount: 1 },
-			messages: [
-				{ content: "Corrected answer with the requested validation evidence." },
-			],
+			run: { status: "completed" },
+			messages: [{ content: "One bounded correction." }],
 		});
-		expect(calls).toEqual(["primary", "reviewer", "repair"]);
-		expect(repairSawVerifierFeedback).toBe(true);
-		const reviewedAnswers = core.runtime
+		expect(calls).toEqual(["execute", "review", "repair", "review"]);
+		expect(reviewerCalls).toBe(2);
+		const answers = core.runtime
 			.listMessages(session.id)
 			.filter(
 				(message) =>
 					message.role === "assistant" && !message.modelToolCalls?.length,
 			);
-		expect(reviewedAnswers).toMatchObject([
-			{ content: "Initial answer without validation evidence." },
-			{
-				content: "Corrected answer with the requested validation evidence.",
-				supersedesMessageId: reviewedAnswers[0]?.id,
-			},
+		expect(answers).toMatchObject([
+			{ content: "Initial answer." },
+			{ content: "One bounded correction.", supersedesMessageId: answers[0]?.id },
 		]);
-		expect(database.listAgentRuns(session.id)).toHaveLength(1);
 		expect(core.routingOutcomes.list()).toContainEqual(
 			expect.objectContaining({
 				verifierStatus: "failed",
-				escalated: true,
 				success: true,
 			}),
 		);

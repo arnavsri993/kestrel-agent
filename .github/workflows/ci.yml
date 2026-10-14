@@ -83,6 +83,7 @@ jobs:
       - run: corepack pnpm test:desktop-single-instance
       - run: corepack pnpm test:desktop-restart-recovery
       - run: corepack pnpm test:desktop-context-continuity
+      - run: KESTREL_REAL_WORK_EVIDENCE_DIR=.tmp/real-work/source corepack pnpm test:desktop-real-work
       - run: corepack pnpm test:desktop-workflow-reuse
       - run: corepack pnpm test:desktop-writing-studio
       - run: corepack pnpm test:desktop-browser
@@ -104,6 +105,7 @@ jobs:
       - run: corepack pnpm package:mac:dev
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-context-continuity
+      - run: KESTREL_REAL_WORK_EVIDENCE_DIR=.tmp/real-work/packaged KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-real-work
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
       - run: KESTREL_REVIEWED_ANSWER_EVIDENCE_DIR=.tmp/reviewed-answer/packaged KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-reviewed-answer
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
@@ -149,6 +151,7 @@ jobs:
             .tmp/desktop-layout/**
             .tmp/composer-project/**
             .tmp/reviewed-answer/**
+            .tmp/real-work/**
             .tmp/workspace-read-errors/**
             .tmp/browser-agent-benchmark/*.json
             .tmp/browser-scope/**/*.json

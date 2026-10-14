@@ -3451,6 +3451,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		toolName: z.string().min(1),
 		input: z.record(z.string(), z.unknown()),
 		approvalStatus: z.enum(["pending", "approved"]).optional(),
+		approvalGrantExecutionId: z.string().min(1).max(200).optional(),
 		idempotencyKey: z.string().min(1).max(500).optional(),
 		externalContent: z.string().max(100_000).optional(),
 	}),

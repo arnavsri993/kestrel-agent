@@ -92,8 +92,12 @@ try {
 		if (!sessionId) throw new Error("Isolated browser tools were not installed.");
 		let callSequence = 0;
 		const run = async (toolName, input) => {
-			const result = await window.kestrel.request({ type: "runtime-call-tool", sessionId, toolName, input, approvalStatus: "approved", idempotencyKey: `scope-fixture-${++callSequence}` });
+			let result = await window.kestrel.request({ type: "runtime-call-tool", sessionId, toolName, input, approvalStatus: "approved", idempotencyKey: `scope-fixture-${++callSequence}` });
 			if (!result.ok) throw new Error(result.error);
+			if (toolName === "browser.create" && result.execution?.status === "blocked" && result.execution.output?.approvalRequired) {
+				result = await window.kestrel.request({ type: "runtime-call-tool", sessionId, toolName, input, approvalStatus: "approved", approvalGrantExecutionId: result.execution.id, idempotencyKey: `scope-approved-${++callSequence}` });
+				if (!result.ok) throw new Error(result.error);
+			}
 			return result.execution;
 		};
 		const verified = async (toolName, input) => {

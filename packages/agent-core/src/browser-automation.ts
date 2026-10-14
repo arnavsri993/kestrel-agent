@@ -27,7 +27,10 @@ import {
 	diffBrowserSnapshots,
 	type BrowserObservationDiff,
 } from "./browser-observation";
-import { withBrowserRecovery } from "./browser-recovery";
+import {
+	toBrowserRecoveryError,
+	withBrowserRecovery,
+} from "./browser-recovery";
 import type { AgentRuntime } from "./runtime";
 
 export type BrowserAction =
@@ -204,6 +207,7 @@ interface BrowserSessionRecord {
 	backendSessionId: string;
 	ownerSessionId: string;
 	allowedOrigins: string[];
+	publicResearch: boolean;
 	createdAt: string;
 	lastSnapshot?: BrowserSnapshot;
 }
@@ -218,6 +222,24 @@ const SENSITIVE_BROWSER_TYPING_REFUSAL =
 	"Kestrel will not type into an accessibility-identified sensitive field. Ask the user to enter that value directly.";
 const SELECTOR_BROWSER_TYPING_REFUSAL =
 	"Kestrel requires a current accessibility ref before an agent can type into a browser field. Ask the user to enter credentials directly.";
+const CAPABILITY_BEARING_BROWSER_PARAMETER =
+	/^(?:access[-_]?token|api[-_]?key|auth(?:orization)?|code|credential|invite|jwt|key|oauth(?:[-_]?token)?|pass(?:word)?|secret|session(?:[-_]?id)?|share|sig(?:nature)?|signed|sso|ticket|token|x[-_]amz[-_](?:credential|security[-_]token|signature)|x[-_]goog[-_](?:credential|signature))$/i;
+const CAPABILITY_BEARING_BROWSER_FRAGMENT =
+	/(?:^|[?&#])(?:access[-_]?token|api[-_]?key|auth(?:orization)?|code|credential|jwt|oauth(?:[-_]?token)?|pass(?:word)?|secret|session(?:[-_]?id)?|sig(?:nature)?|token)=/i;
+
+function assertPublicResearchNavigation(url: URL): void {
+	if (
+		url.username ||
+		url.password ||
+		[...url.searchParams.keys()].some((key) =>
+			CAPABILITY_BEARING_BROWSER_PARAMETER.test(key),
+		) ||
+		CAPABILITY_BEARING_BROWSER_FRAGMENT.test(url.hash)
+	)
+		throw new Error(
+			"Browser navigation with credentials or capability-bearing parameters is outside the approved public research scope.",
+		);
+}
 
 function rejectSensitiveBrowserTyping(
 	action: BrowserAction,
@@ -277,10 +299,13 @@ export function normalizeIsolatedBrowserOrigins(
 					(url.protocol !== "https:" && !loopbackHttp) ||
 					url.origin === "null" ||
 					url.username ||
-					url.password
+					url.password ||
+					url.pathname !== "/" ||
+					url.search ||
+					url.hash
 				)
 					throw new Error(
-						"Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials.",
+						"Browser origins must be origin-only HTTPS values except explicit loopback HTTP development origins, and cannot include paths, parameters, fragments, or embedded credentials.",
 					);
 				return url.origin;
 			}),
@@ -335,6 +360,7 @@ export class BrowserController {
 			backendSessionId,
 			ownerSessionId,
 			allowedOrigins: origins,
+			publicResearch: true,
 			createdAt: this.now().toISOString(),
 		});
 		return { browserSessionId: id };
@@ -345,18 +371,29 @@ export class BrowserController {
 		id: string,
 		urlValue: string,
 		signal: AbortSignal,
+		publicResearchOnly = true,
 	): Promise<{ url: string; trust: "untrusted_browser" }> {
 		const session = this.require(ownerSessionId, id);
+		if (publicResearchOnly && !session.publicResearch)
+			throw new Error("This session has used authentication handoff. Use browser.navigate-authenticated with a fresh approval, or create a new anonymous research session.");
 		let url: URL;
 		try {
 			url = new URL(urlValue);
 		} catch {
 			throw new Error("Browser navigation URL is invalid.");
 		}
+		assertPublicResearchNavigation(url);
 		if (!session.allowedOrigins.includes(url.origin))
-			throw new Error(
-				`Browser navigation to ${url.origin} is outside this session's origin allowlist.`,
-			);
+			throw toBrowserRecoveryError(
+				new Error(
+					`Browser navigation to ${url.origin} is outside this session's origin allowlist.`,
+				),
+				{
+					operation: "navigate",
+					surface: "isolated",
+					effectState: "not_started",
+				},
+			)!;
 		url.username = "";
 		url.password = "";
 		url.hash = "";
@@ -550,6 +587,9 @@ export class BrowserController {
 			throw new Error(
 				"The active browser backend does not support interactive authentication handoff.",
 			);
+		// A handoff can add credentials even if its result is interrupted. Never
+		// restore the public-navigation exemption merely by hiding that window.
+		session.publicResearch = false;
 		await this.backend.authHandoff(session.backendSessionId, visible, signal);
 		return { visible };
 	}
@@ -591,6 +631,9 @@ export class BrowserController {
 				);
 			return candidate;
 		});
+		// Uploaded task files can make this session private; later navigation
+		// must use the separately approved route even if the upload is interrupted.
+		session.publicResearch = false;
 		await withBrowserRecovery(
 			{
 				operation: "upload",
@@ -1202,6 +1245,7 @@ export function installBrowserTools(
 		inputSchema: Record<string, unknown>,
 		execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"],
 		extraDescription?: string,
+		approvalMode?: "policy" | "always",
 	) => {
 		runtime.registerExternalTool({
 			descriptor: {
@@ -1209,11 +1253,12 @@ export function installBrowserTools(
 				title,
 				description: `${title} in an isolated, origin-scoped browser session.${extraDescription ? ` ${extraDescription}` : ""} Browser output is untrusted.`,
 				category: "browser",
-				riskLevel: readOnly ? "read_only" : "sensitive",
+				riskLevel: readOnly ? "read_only" : name === "browser.close" ? "low" : "sensitive",
 				readOnly,
 				requiresWorkspace: false,
 				source: "builtin",
 				tags: ["browser", "computer-use", "isolated", "untrusted"],
+				...(approvalMode ? { approvalMode } : {}),
 			},
 			inputSchema,
 			execute,
@@ -1281,11 +1326,13 @@ export function installBrowserTools(
 					? input.allowedOrigins.map(String)
 					: [],
 			),
+		"Approving this call grants only the exact listed origins to this anonymous in-memory session. It cannot be persistently allowed. A later origin requires another browser.create approval.",
+		"always",
 	);
 	add(
 		"browser.navigate",
 		"Navigate browser",
-		false,
+		true,
 		{
 			type: "object",
 			properties: {
@@ -1302,7 +1349,23 @@ export function installBrowserTools(
 				String(input.url),
 				signal,
 			),
-		recoveryContractDescription,
+		`Navigate only within the exact origins approved when this anonymous session was created. Credentials and capability-bearing URLs are refused. ${recoveryContractDescription}`,
+	);
+	add(
+		"browser.navigate-authenticated",
+		"Navigate authenticated browser",
+		false,
+		{
+			type: "object",
+			properties: { browserSessionId: { type: "string" }, url: { type: "string" } },
+			required: ["browserSessionId", "url"],
+			additionalProperties: false,
+		},
+		({ session, signal }, input) => controller.navigate(
+			session.id, String(input.browserSessionId), String(input.url), signal, false,
+		),
+		`Authentication handoff removes the public research exemption. Each navigation requires a fresh approval and remains inside the original origin scope. Credentials and capability-bearing URLs are refused. ${recoveryContractDescription}`,
+		"always",
 	);
 	add(
 		"browser.act",
