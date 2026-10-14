@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { _electron as electron } from "@playwright/test";
+import { _electron as electron, expect } from "@playwright/test";
 import {
 	openKestrelDestination,
 	selectSettingsSection,
@@ -22,9 +22,16 @@ const userData = join(root, "user-data");
 const backupParent = join(root, "backups");
 const codexFixture = join(root, "fake-codex-app-server");
 const pluginRoot = join(userData, "plugins", "readiness-test", "1.0.0");
+const fixtureHome = join(root, "home");
+const childEnvironment = Object.fromEntries(
+	["PATH", "SHELL", "LANG", "LC_ALL", "TMPDIR", "CI"].flatMap((key) =>
+		process.env[key] === undefined ? [] : [[key, process.env[key]]],
+	),
+);
 let application;
 
 try {
+	mkdirSync(fixtureHome, { recursive: true });
 	mkdirSync(backupParent, { recursive: true });
 	mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
 	writeFileSync(
@@ -68,8 +75,13 @@ try {
 	application = await electron.launch({
 		args: [resolve("apps/desktop/out/main/index.js")],
 		env: {
-			...process.env,
+			...childEnvironment,
+			HOME: fixtureHome,
+			CODEX_HOME: join(fixtureHome, ".codex"),
 			KESTREL_TEST_USER_DATA: userData,
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
+			KESTREL_DISABLE_UPDATES: "1",
+			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 			KESTREL_CODEX_PATH: codexFixture,
 		},
 	});
@@ -107,13 +119,34 @@ try {
 			{ exact: false },
 		)
 		.waitFor();
-	await page.getByRole("button", { name: "Run checks" }).focus();
+	const runChecks = page.getByRole("button", { name: "Run checks", exact: true });
+	const focusState = () => runChecks.evaluate((element) => ({
+		focused: document.activeElement === element,
+		disabled: element.disabled,
+		focusVisible: element.matches(":focus-visible"),
+		outlineStyle: getComputedStyle(element).outlineStyle,
+		activeTag: document.activeElement?.tagName,
+		activeLabel: document.activeElement?.getAttribute("aria-label"),
+		activeId: document.activeElement?.id,
+	}));
+	await expect(runChecks).toBeEnabled();
+	// Programmatic focus after clicking navigation retains pointer modality and
+	// correctly has no :focus-visible ring. Establish keyboard modality first,
+	// then focus the exact target instead of relying on platform Tab ordering.
 	await page.keyboard.press("Tab");
-	await page.keyboard.press("Shift+Tab");
+	await runChecks.focus();
+	await expect.poll(focusState, {
+		timeout: 5_000,
+		message: "Readiness Run checks must retain enabled keyboard focus before its outline is checked",
+	}).toMatchObject({ focused: true, disabled: false, focusVisible: true });
+	await expect.poll(async () => (await focusState()).outlineStyle, {
+		timeout: 5_000,
+		message: "Readiness keyboard focus must render a real outline",
+	}).not.toBe("none");
+	const verifiedFocus = await focusState();
+	console.log("Readiness keyboard focus verified:", JSON.stringify(verifiedFocus));
 	assert.notEqual(
-		await page
-			.getByRole("button", { name: "Run checks" })
-			.evaluate((element) => getComputedStyle(element).outlineStyle),
+		verifiedFocus.outlineStyle,
 		"none",
 	);
 	await page.setViewportSize({ width: 760, height: 760 });
