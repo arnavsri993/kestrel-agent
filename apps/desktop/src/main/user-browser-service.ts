@@ -20,7 +20,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import {
-	annotateAccessibilityTree,
 	redactSensitiveContent,
 	type BrowserAction,
 	type BrowserSnapshot,
@@ -121,12 +120,10 @@ import {
 	createEmptyBrowserTab,
 	describeBrowserLoadFailure,
 	MAX_AX_SNAPSHOT_BYTES,
-	MAX_AX_SNAPSHOT_NODES,
-	MAX_INTERACTIVE_REFS,
+	boundedBrowserAccessibilityTree,
 	normalizeBrowserAddress,
 	redactUntrustedBrowserText,
 	sanitizeBrowserUrl,
-	sanitizeUntrustedBrowserValue,
 	upsertOriginFavicon,
 } from "./browser-tab-store";
 import { organizeBrowserTabs } from "./browser-tab-folders";
@@ -4884,7 +4881,11 @@ export class UserBrowserService {
 			const webContents = liveWebContents(record?.view?.webContents);
 			if (!webContents)
 				throw new Error("The selected page is still waking up. Try again.");
-		if (signal?.aborted) throw signal.reason;
+		if (signal?.aborted) {
+			this.elementRefs.delete(tab.id);
+			this.sensitiveElementRefs.delete(tab.id);
+			throw signal.reason;
+		}
 		const url =
 			sanitizeBrowserUrl(webContents.getURL()) ||
 			sanitizeBrowserUrl(tab.url);
@@ -4901,18 +4902,15 @@ export class UserBrowserService {
 				interactive: [],
 			};
 		}
+		this.elementRefs.delete(tab.id);
+		this.sensitiveElementRefs.delete(tab.id);
 		if (!webContents.debugger.isAttached()) webContents.debugger.attach("1.3");
 		const result = (await webContents.debugger.sendCommand(
 			"Accessibility.getFullAXTree",
 		)) as { nodes?: unknown[] };
-		const nodes = result.nodes ?? [];
-		const annotated = annotateAccessibilityTree({
-			nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES),
-		});
-		const interactive = annotated.interactive.slice(0, MAX_INTERACTIVE_REFS);
-		const accessibilityTree = sanitizeUntrustedBrowserValue(
-			annotated.accessibilityTree,
-		);
+		if (signal?.aborted) throw signal.reason;
+		if (!result || !Array.isArray(result.nodes)) throw new Error("Browser accessibility validation is unavailable.");
+		const { accessibilityTree, interactive, truncated } = boundedBrowserAccessibilityTree(result.nodes);
 		if (
 			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
 			MAX_AX_SNAPSHOT_BYTES
@@ -4941,9 +4939,7 @@ export class UserBrowserService {
 					? { name: redactUntrustedBrowserText(item.name, 500) }
 					: {}),
 			})),
-			truncated:
-				nodes.length > MAX_AX_SNAPSHOT_NODES ||
-				annotated.interactive.length > MAX_INTERACTIVE_REFS,
+			truncated,
 		};
 		});
 	}
@@ -5028,7 +5024,7 @@ export class UserBrowserService {
 					await new Promise<void>((resolve) => setTimeout(resolve, 50));
 						continue;
 					}
-					await this.assertScreenshotHasNoSensitiveForm(tab, webContents);
+					await this.assertScreenshotHasNoSensitiveForm(tab, webContents, signal);
 					try {
 					const image = await capturePageWithDeadline(webContents, signal);
 					const { width, height } = image.getSize();
@@ -5064,11 +5060,23 @@ export class UserBrowserService {
 	private async assertScreenshotHasNoSensitiveForm(
 		tab: UserBrowserTab,
 		webContents: WebContents,
+		signal?: AbortSignal,
 	): Promise<void> {
 		if (isKestrelAppPageUrl(tab.url)) return;
+		if (signal?.aborted) throw screenshotCancellationError(signal);
+		if (!webContents.debugger.isAttached()) webContents.debugger.attach("1.3");
+		const result = (await webContents.debugger.sendCommand("Accessibility.getFullAXTree")) as { nodes?: unknown[] };
+		if (signal?.aborted) throw screenshotCancellationError(signal);
+		if (!result || !Array.isArray(result.nodes)) throw new Error("Browser accessibility validation is unavailable.");
+		const snapshotAX = boundedBrowserAccessibilityTree(result.nodes);
+		if (snapshotAX.truncated)
+			throw new Error("Kestrel cannot validate every sensitive field in a truncated browser snapshot; screenshot capture is blocked.");
+		if (snapshotAX.interactive.some((item) => isSensitiveAgentFieldName(item.name)))
+			throw new Error("Kestrel does not share browser screenshots from pages with sensitive input fields.");
 		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
 		if (!url || url.protocol !== "https:") return;
 		const snapshot = await this.readPasswordFormSnapshot(webContents, url.origin);
+		if (signal?.aborted) throw screenshotCancellationError(signal);
 		if (
 			snapshot.fields.some(
 				(field) =>

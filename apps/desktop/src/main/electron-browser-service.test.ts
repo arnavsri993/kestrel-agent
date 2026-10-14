@@ -608,6 +608,89 @@ describe("Electron browser action cancellation", () => {
 });
 
 describe("Electron browser snapshot refs", () => {
+	function observationFixture(nodes: unknown[]) {
+		const service = new ElectronBrowserService();
+		const capturePage = vi.fn(async () => ({
+			getSize: () => ({ width: 1, height: 1 }), toBitmap: () => Buffer.from([0, 0, 0, 255]), toPNG: () => Buffer.from([1]),
+		}));
+		const sendCommand = vi.fn().mockResolvedValue({ nodes });
+		const internal = service as unknown as { sessions: Map<string, unknown>; elementRefs: Map<string, Map<string, number>> };
+		internal.sessions.set("observation", { window: { isDestroyed: () => false, webContents: {
+			getURL: () => "https://example.test/docs", getTitle: () => "Documentation", capturePage,
+			debugger: { isAttached: () => true, attach: vi.fn(), sendCommand },
+		} } });
+		return { service, capturePage, sendCommand, refs: internal.elementRefs };
+	}
+
+	it("returns useful bounded AX instead of failing on large documentation", async () => {
+		const fixture = observationFixture([{ nodeId: "1", backendDOMNodeId: 42, role: { value: "button" },
+			name: { value: "Release notes", sources: [{ text: "x".repeat(1_600_000) }] } }]);
+		const snapshot = await fixture.service.handle({ operation: "snapshot", sessionId: "observation" }, new AbortController().signal) as { accessibilityTree: unknown; truncated: boolean };
+		expect(snapshot.truncated).toBe(true);
+		expect(JSON.stringify(snapshot.accessibilityTree)).toContain("Release notes");
+		expect(Buffer.byteLength(JSON.stringify(snapshot.accessibilityTree), "utf8")).toBeLessThanOrEqual(1_500_000);
+		expect(fixture.refs.get("observation")?.get("e1")).toBe(42);
+		await expect(fixture.service.handle({ operation: "screenshot", sessionId: "observation" }, new AbortController().signal)).rejects.toThrow("truncated browser snapshot");
+		expect(fixture.capturePage).not.toHaveBeenCalled();
+	});
+
+	it.each(["refs", "nodes"])("blocks screenshots when sensitive fields fall beyond the %s cap", async (cap) => {
+		const nodes = Array.from({ length: cap === "refs" ? 200 : 5_000 }, (_, index) => ({
+			nodeId: String(index), backendDOMNodeId: index + 1,
+			role: { value: cap === "refs" ? "button" : "StaticText" }, name: { value: "ordinary notes" },
+		}));
+		nodes.push({ nodeId: "secret", backendDOMNodeId: 9_999, role: { value: "textbox" }, name: { value: "Password" } });
+		const fixture = observationFixture(nodes);
+		await expect(fixture.service.handle({ operation: "screenshot", sessionId: "observation" }, new AbortController().signal)).rejects.toThrow("truncated browser snapshot");
+		expect(fixture.capturePage).not.toHaveBeenCalled();
+	});
+
+	it("keeps the existing sensitive-field screenshot refusal", async () => {
+		const fixture = observationFixture([{ nodeId: "1", backendDOMNodeId: 42, role: { value: "textbox" }, name: { value: "Password" }, value: { value: "never-share" } }]);
+		await expect(fixture.service.handle({ operation: "screenshot", sessionId: "observation" }, new AbortController().signal)).rejects.toThrow("does not share browser screenshots");
+		expect(fixture.capturePage).not.toHaveBeenCalled();
+	});
+
+	it("blocks screenshots when accessibility validation is unavailable", async () => {
+		const fixture = observationFixture([]);
+		fixture.sendCommand.mockResolvedValueOnce({});
+		await expect(fixture.service.handle({ operation: "screenshot", sessionId: "observation" }, new AbortController().signal)).rejects.toThrow("validation is unavailable");
+		expect(fixture.capturePage).not.toHaveBeenCalled();
+	});
+
+	it("clears old refs and refuses capture after AX cancellation", async () => {
+		const fixture = observationFixture([]);
+		fixture.refs.set("observation", new Map([["e1", 42]]));
+		const controller = new AbortController();
+		fixture.sendCommand.mockImplementationOnce(async () => {
+			controller.abort(new Error("stop AX validation"));
+			return { nodes: [] };
+		});
+		await expect(fixture.service.handle({ operation: "screenshot", sessionId: "observation" }, controller.signal)).rejects.toThrow("stop AX validation");
+		expect(fixture.refs.has("observation")).toBe(false);
+		expect(fixture.capturePage).not.toHaveBeenCalled();
+	});
+
+	it("clears old refs and refuses capture when CDP rejects", async () => {
+		const fixture = observationFixture([]);
+		fixture.refs.set("observation", new Map([["e1", 42]]));
+		fixture.sendCommand.mockRejectedValueOnce(new Error("AX protocol failed"));
+		await expect(fixture.service.handle({ operation: "screenshot", sessionId: "observation" }, new AbortController().signal)).rejects.toThrow("AX protocol failed");
+		expect(fixture.refs.has("observation")).toBe(false);
+		expect(fixture.capturePage).not.toHaveBeenCalled();
+	});
+
+	it("never returns pixels when cancellation occurs during capture", async () => {
+		const fixture = observationFixture([]);
+		const controller = new AbortController();
+		fixture.capturePage.mockImplementationOnce(async () => {
+			controller.abort(new Error("stop capture"));
+			return { getSize: () => ({ width: 1, height: 1 }), toBitmap: () => Buffer.from([0, 0, 0, 255]), toPNG: () => Buffer.from([1]) };
+		});
+		await expect(fixture.service.handle({ operation: "screenshot", sessionId: "observation" }, controller.signal)).rejects.toThrow("stop capture");
+		expect(fixture.refs.has("observation")).toBe(false);
+	});
+
 	it("resolves and preflights click targets from snapshot refs", async () => {
 		const executeJavaScript = vi.fn(async () => undefined);
 		const sendCommand = vi.fn(async (method: string, params?: object) => {

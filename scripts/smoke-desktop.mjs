@@ -126,7 +126,7 @@ try {
 			if (!sessionId)
 				throw new Error("Packaged browser tools were not installed.");
 			const call = async (toolName, input, idempotencyKey) => {
-				const result = await window.kestrel.request({
+				let result = await window.kestrel.request({
 					type: "runtime-call-tool",
 					sessionId,
 					toolName,
@@ -135,6 +135,16 @@ try {
 					...(idempotencyKey ? { idempotencyKey } : {}),
 				});
 				if (!result.ok) throw new Error(result.error);
+				if (toolName === "browser.create") {
+					if (result.execution?.status !== "blocked" || !result.execution.output?.approvalRequired)
+						throw new Error("browser.create did not require a fresh origin grant.");
+					result = await window.kestrel.request({
+						type: "runtime-call-tool", sessionId, toolName, input,
+						approvalStatus: "approved", approvalGrantExecutionId: result.execution.id,
+						idempotencyKey: `${idempotencyKey}:approved`,
+					});
+					if (!result.ok) throw new Error(result.error);
+				}
 				if (result.execution?.status !== "verified")
 					throw new Error(
 						`${toolName} was not verified: ${result.execution?.status}${result.execution?.error ? ` — ${result.execution.error}` : ""}`,
@@ -256,10 +266,21 @@ try {
 		browserSmoke.browserReceipts.every(
 			(receipt) =>
 				receipt.trust === "local_encrypted_bounded" &&
-				receipt.outcome === "verified",
+				(receipt.outcome === "verified" ||
+					(receipt.toolName === "browser.create" && receipt.outcome === "waiting_approval")),
 		),
 		true,
 	);
+	assert.equal(
+		browserSmoke.browserReceipts.filter(
+			(receipt) => receipt.toolName === "browser.create" && receipt.outcome === "waiting_approval",
+		).length,
+		1,
+		"The fresh origin grant must retain its blocked approval request receipt.",
+	);
+	assert.ok(browserSmoke.browserReceipts.some(
+		(receipt) => receipt.toolName === "browser.create" && receipt.outcome === "verified",
+	));
 	assert.equal(
 		JSON.stringify(browserSmoke.browserReceipts).includes(typedReceiptSentinel),
 		false,

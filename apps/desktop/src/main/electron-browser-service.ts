@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import {
-	annotateAccessibilityTree,
 	type BrowserAction,
 	type BrowserDiagnostic,
 	type BrowserDownload,
@@ -27,11 +26,9 @@ import {
 } from "./browser-backend-wire";
 import {
 	MAX_AX_SNAPSHOT_BYTES,
-	MAX_AX_SNAPSHOT_NODES,
-	MAX_INTERACTIVE_REFS,
+	boundedBrowserAccessibilityTree,
 	redactUntrustedBrowserText,
 	sanitizeBrowserUrl,
-	sanitizeUntrustedBrowserValue,
 } from "./browser-tab-store";
 import {
 	dispatchBrowserKey,
@@ -671,20 +668,16 @@ export class ElectronBrowserService {
 		signal: AbortSignal,
 	): Promise<BrowserSnapshot> {
 		const { window } = this.require(id);
+		this.elementRefs.delete(id);
 		if (signal.aborted) throw signal.reason;
 		if (!window.webContents.debugger.isAttached())
 			window.webContents.debugger.attach("1.3");
 		const result = (await window.webContents.debugger.sendCommand(
 			"Accessibility.getFullAXTree",
 		)) as { nodes?: unknown[] };
-		const nodes = result.nodes ?? [];
-		const annotated = annotateAccessibilityTree({
-			nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES),
-		});
-		const interactive = annotated.interactive.slice(0, MAX_INTERACTIVE_REFS);
-		const accessibilityTree = sanitizeUntrustedBrowserValue(
-			annotated.accessibilityTree,
-		);
+		if (signal.aborted) throw signal.reason;
+		if (!result || !Array.isArray(result.nodes)) throw new Error("Browser accessibility validation is unavailable.");
+		const { accessibilityTree, interactive, truncated } = boundedBrowserAccessibilityTree(result.nodes);
 		if (
 			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
 			MAX_AX_SNAPSHOT_BYTES
@@ -700,9 +693,7 @@ export class ElectronBrowserService {
 			title: redactUntrustedBrowserText(window.webContents.getTitle(), 500),
 			accessibilityTree,
 			interactive: publicInteractiveRefs(interactive),
-			truncated:
-				nodes.length > MAX_AX_SNAPSHOT_NODES ||
-				annotated.interactive.length > MAX_INTERACTIVE_REFS,
+			truncated,
 		};
 	}
 
@@ -712,30 +703,39 @@ export class ElectronBrowserService {
 	): Promise<ScreenshotFrame> {
 		const { window } = this.require(id);
 		if (signal.aborted) throw signal.reason;
-		const snapshot = await this.snapshot(id, signal);
-		if (
-			snapshot.interactive?.some(
-				(item) =>
-					item.name === "Sensitive field" ||
-					/(?:\b(?:new|current|old|confirm(?:ation)?|repeat)?\s*password\b|\b(?:one\s*time|recovery|verification|security)\s*(?:code|passcode|pin)\b|\botp\b|\b(?:cvv|cvc)\b|\bapi\s*(?:key|token)\b|\baccess\s*token\b|\bprivate\s*key\b)/i.test(
-						item.name ?? "",
-					),
+		try {
+			const snapshot = await this.snapshot(id, signal);
+			if (signal.aborted) throw signal.reason;
+			if (snapshot.truncated)
+				throw new Error("Kestrel cannot validate every sensitive field in a truncated browser snapshot; screenshot capture is blocked.");
+			if (
+				snapshot.interactive?.some(
+					(item) =>
+						item.name === "Sensitive field" ||
+						/(?:\b(?:new|current|old|confirm(?:ation)?|repeat)?\s*password\b|\b(?:one\s*time|recovery|verification|security)\s*(?:code|passcode|pin)\b|\botp\b|\b(?:cvv|cvc)\b|\bapi\s*(?:key|token)\b|\baccess\s*token\b|\bprivate\s*key\b)/i.test(
+							item.name ?? "",
+						),
+				)
 			)
-		)
-			throw new Error(
-				"Kestrel does not share browser screenshots from pages with sensitive input fields.",
-			);
-		const image = await window.webContents.capturePage();
-		const { width, height } = image.getSize();
-		const bgra = image.toBitmap();
-		const rgba = new Uint8Array(bgra.byteLength);
-		for (let offset = 0; offset < bgra.length; offset += 4) {
-			rgba[offset] = bgra[offset + 2]!;
-			rgba[offset + 1] = bgra[offset + 1]!;
-			rgba[offset + 2] = bgra[offset]!;
-			rgba[offset + 3] = bgra[offset + 3]!;
+				throw new Error(
+					"Kestrel does not share browser screenshots from pages with sensitive input fields.",
+				);
+			const image = await window.webContents.capturePage();
+			if (signal.aborted) throw signal.reason;
+			const { width, height } = image.getSize();
+			const bgra = image.toBitmap();
+			const rgba = new Uint8Array(bgra.byteLength);
+			for (let offset = 0; offset < bgra.length; offset += 4) {
+				rgba[offset] = bgra[offset + 2]!;
+				rgba[offset + 1] = bgra[offset + 1]!;
+				rgba[offset + 2] = bgra[offset]!;
+				rgba[offset + 3] = bgra[offset + 3]!;
+			}
+			return { width, height, rgba, png: image.toPNG() };
+		} catch (error) {
+			this.elementRefs.delete(id);
+			throw error;
 		}
-		return { width, height, rgba, png: image.toPNG() };
 	}
 
 	private async setViewport(

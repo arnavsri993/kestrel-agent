@@ -8,6 +8,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
+import { annotateAccessibilityTree, type BrowserInteractiveRef } from "@kestrel/agent-core";
 import {
 	DEFAULT_NEW_TAB_WIDGET_IDS,
 	emptyNewTabGreetingActivity,
@@ -100,6 +101,68 @@ export const MAX_AX_SNAPSHOT_BYTES = 1_500_000;
 export const MAX_AX_SNAPSHOT_NODES = 5_000;
 export const MAX_INTERACTIVE_REFS = 200;
 export const MAX_ORIGIN_FAVICONS = 200;
+
+/** Bound model-visible AX data; never retain action refs for omitted nodes. */
+export function boundedBrowserAccessibilityTree(nodes: unknown[]): {
+	accessibilityTree: { nodes: unknown[] };
+	interactive: BrowserInteractiveRef[];
+	truncated: boolean;
+} {
+	const annotated = annotateAccessibilityTree({ nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES) }, MAX_INTERACTIVE_REFS);
+	let emitted = (sanitizeUntrustedBrowserValue(annotated.accessibilityTree) as { nodes: unknown[] }).nodes;
+	let interactive = sanitizeUntrustedBrowserValue(annotated.interactive) as BrowserInteractiveRef[];
+	let truncated = nodes.length > MAX_AX_SNAPSHOT_NODES || annotated.truncated;
+	const bytes = () => Buffer.byteLength(JSON.stringify({ accessibilityTree: { nodes: emitted }, interactive }), "utf8");
+	if (bytes() > MAX_AX_SNAPSHOT_BYTES) {
+		truncated = true;
+		// CDP name sources, related-node diagnostics and arbitrary extension data
+		// can outweigh the readable content. Keep semantic values and identities.
+		const scalar = (value: unknown, limit = 4_096): unknown => {
+			if (typeof value === "string") return value.slice(0, limit);
+			if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+			if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+			const record = value as Record<string, unknown>;
+			return { type: typeof record.type === "string" ? record.type.slice(0, 64) : undefined,
+				value: typeof record.value === "string" ? record.value.slice(0, limit)
+					: typeof record.value === "number" || typeof record.value === "boolean" ? record.value : undefined };
+		};
+		emitted = emitted.map((value) => {
+			const node = value && typeof value === "object" ? value as Record<string, unknown> : {};
+			return {
+				nodeId: scalar(node.nodeId, 128), parentId: scalar(node.parentId, 128),
+				childIds: Array.isArray(node.childIds) ? node.childIds.slice(0, MAX_AX_SNAPSHOT_NODES).map((id) => scalar(id, 128)) : undefined,
+				backendDOMNodeId: typeof node.backendDOMNodeId === "number" && Number.isInteger(node.backendDOMNodeId) ? node.backendDOMNodeId : undefined,
+				ignored: typeof node.ignored === "boolean" ? node.ignored : undefined,
+				ref: typeof node.ref === "string" ? node.ref.slice(0, 16) : undefined,
+				role: scalar(node.role, 128), name: scalar(node.name), value: scalar(node.value), description: scalar(node.description),
+				properties: Array.isArray(node.properties) ? node.properties.slice(0, 32).map((property) => {
+					const item = property && typeof property === "object" ? property as Record<string, unknown> : {};
+					return { name: scalar(item.name, 128), value: scalar(item.value) };
+				}) : undefined,
+			};
+		});
+		const refs = new Map(interactive.map((ref) => [ref.ref, ref]));
+		const fitted: unknown[] = [];
+		const fittedRefs: BrowserInteractiveRef[] = [];
+		let used = Buffer.byteLength(JSON.stringify({ accessibilityTree: { nodes: [] }, interactive: [] }), "utf8");
+		for (const value of emitted) {
+			const node = value as Record<string, unknown>;
+			const prior = typeof node.ref === "string" ? refs.get(node.ref) : undefined;
+			const name = typeof node.name === "string" ? node.name : (node.name as { value?: unknown } | undefined)?.value;
+			const ref = prior ? { ...prior, ...(typeof name === "string" ? { name } : {}) } : undefined;
+			const size = Buffer.byteLength(JSON.stringify(value), "utf8") + (fitted.length ? 1 : 0)
+				+ (ref ? Buffer.byteLength(JSON.stringify(ref), "utf8") + (fittedRefs.length ? 1 : 0) : 0);
+			if (used + size > MAX_AX_SNAPSHOT_BYTES) break;
+			used += size;
+			fitted.push(value);
+			if (ref) fittedRefs.push(ref);
+		}
+		emitted = fitted;
+		interactive = fittedRefs;
+	}
+	if (bytes() > MAX_AX_SNAPSHOT_BYTES) throw new Error("Browser accessibility snapshot exceeds 1.5 MB.");
+	return { accessibilityTree: { nodes: emitted }, interactive, truncated };
+}
 
 export function upsertOriginFavicon(
 	current: UserBrowserOriginFavicon[],

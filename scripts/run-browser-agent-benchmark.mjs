@@ -372,6 +372,7 @@ async function main() {
 		for (const name of [
 			"browser.create",
 			"browser.navigate",
+			"browser.navigate-authenticated",
 			"browser.snapshot",
 			"browser.act",
 			"browser.screenshot",
@@ -392,6 +393,7 @@ async function main() {
 			const toolCalls = [];
 			const capturedTargets = new Map();
 			let browserSessionId;
+			let privateBrowser = false;
 			let observedOutcome = "failed";
 			let failureClass = "none";
 			let failureDetail;
@@ -435,13 +437,24 @@ async function main() {
 				} else metrics.observations += 1;
 				const callStarted = performance.now();
 				const requestPromise = page.evaluate(
-					async ({ sessionId, toolName, input, options }) => {
+					async ({ sessionId, toolName, input, options, freshApproval }) => {
+						let grantExecutionId;
+						if (freshApproval) {
+							const pending = await window.kestrel.request({
+								type: "runtime-call-tool", sessionId, toolName, input,
+								idempotencyKey: `${options.idempotencyKey}:approval-request`,
+							});
+							if (!pending.ok || pending.execution?.status !== "blocked" || !pending.execution.output?.approvalRequired)
+								throw new Error(`${toolName} did not enforce its fresh approval boundary.`);
+							grantExecutionId = pending.execution.id;
+						}
 						const result = await window.kestrel.request({
 							type: "runtime-call-tool",
 							sessionId,
 							toolName,
 							input,
 							...options,
+							...(grantExecutionId ? { approvalGrantExecutionId: grantExecutionId } : {}),
 						});
 						if (!result.ok) throw new Error(result.error);
 						return result.execution;
@@ -450,6 +463,7 @@ async function main() {
 						sessionId: runtimeSessionId,
 						toolName,
 						input,
+						freshApproval: approvalGrantSupplied && descriptor.approvalMode === "always",
 						options: mutating
 							? {
 									...(approvalGrantSupplied
@@ -620,7 +634,7 @@ async function main() {
 
 				for (const step of workflow.steps) {
 					if (step.op === "navigate") {
-						await callTool("browser.navigate", {
+						await callTool(privateBrowser ? "browser.navigate-authenticated" : "browser.navigate", {
 							browserSessionId,
 							url: fixture.url(fixtureRunId, step.site ?? "primary", step.path),
 						});
@@ -652,6 +666,7 @@ async function main() {
 							value: step.value,
 						});
 					} else if (step.op === "upload") {
+						privateBrowser = true;
 						await callTool("browser.upload", {
 							browserSessionId,
 							selector: step.selector,
@@ -711,6 +726,7 @@ async function main() {
 							throw new Error("Intermediate independent fixture state was unexpected.");
 						if (step.expect === false) metrics.failedAttempts += 1;
 					} else if (step.op === "auth-handoff") {
+						privateBrowser = true;
 						await callTool("browser.auth-handoff", {
 							browserSessionId,
 							visible: step.visible,
