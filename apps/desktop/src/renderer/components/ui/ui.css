@@ -2335,3 +2335,47 @@ body { font-family: var(--sans); }
 	.ui-page-frame-header { display: grid; gap: 14px; }
 	.ui-page-frame-actions { justify-content: flex-start; }
 }
+
+.app-error-boundary {
+	display: grid;
+	place-items: center;
+	min-height: 100vh;
+	padding: 32px;
+	background: var(--canvas);
+	color: var(--ink);
+}
+
+.app-error-boundary-card {
+	display: grid;
+	gap: 12px;
+	max-width: 420px;
+	padding: 28px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-control);
+	background: var(--surface-strong);
+	box-shadow: var(--shadow-md);
+}
+
+.app-error-boundary-card h1 {
+	margin: 0;
+	font-size: 17px;
+	font-weight: 600;
+}
+
+.app-error-boundary-card p {
+	margin: 0;
+	font-size: 13.5px;
+	line-height: 1.5;
+	color: var(--ink-secondary);
+}
+
+.app-error-boundary-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 4px;
+}
+
+.app-error-boundary-card .app-error-boundary-status {
+	min-height: 18px;
+	font-size: 12.5px;
+}

@@ -23,3 +23,6 @@
 .runtime-activity-trail .activity-item-focused { outline: 2px solid var(--focus); outline-offset: -2px; }
 .event-applications-page .event-safety-note { display: contents; }
 .event-applications-page .event-status { border-radius: var(--radius-control); }
+.runtime-approval-queue .runtime-approval-loading { margin: 0; color: var(--muted, inherit); }
+.runtime-approval-queue .runtime-approval-error { display: grid; gap: 12px; }
+.runtime-approval-queue .runtime-approval-error .connection-error { margin: 0; }

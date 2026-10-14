@@ -20,6 +20,10 @@ import "./instrument-workbench.css";
 import "./action-motion.css";
 import "./glass-menus.css";
 import { ActionMotion } from "./components/ActionMotion";
+import {
+	AppErrorBoundary,
+	installGlobalErrorListeners,
+} from "./components/AppErrorBoundary";
 import { App } from "./App";
 import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";
 import { PasswordOverlay } from "./components/browser/PasswordOverlay";
@@ -45,6 +49,9 @@ function desktopPlatform(): "macos" | "windows" | "other" {
 
 document.documentElement.dataset.platform = desktopPlatform();
 
+if (!isPetOverlay && !isCalculatorOverlay && !isPasswordOverlay && !isPaymentOverlay)
+	installGlobalErrorListeners();
+
 if (isPasswordOverlay || isPaymentOverlay) {
 	document.documentElement.dataset.autofillOverlay = "true";
 }
@@ -67,7 +74,9 @@ ReactDOM.createRoot(root).render(
 			<>
 				<ActionMotion />
 				<WindowControls />
-				<App />
+				<AppErrorBoundary>
+					<App />
+				</AppErrorBoundary>
 			</>
 		)}
 	</React.StrictMode>,
