@@ -99,6 +99,61 @@ describe("independent review context", () => {
 		expect(context.prompt).toContain("later requests override earlier ones");
 	});
 
+	it.each([12_000, 2_000])("protects original constraints and latest overrides at a %i-character limit", (maximumCharacters) => {
+		const original = "ORIGINAL_KEEP_EXACTLY_TWO_SOURCES";
+		const override = "LATEST_OVERRIDE_DO_NOT_PUBLISH";
+		const requirements = [
+			original + "a".repeat(2_000 - original.length),
+			"b".repeat(2_000),
+			"c".repeat(2_000),
+			"d".repeat(2_000 - override.length) + override,
+		];
+		const context = buildIndependentReviewContext({
+			runId: "run-1", maximumCharacters,
+			messages: requirements.map((content, index) => message(index, "user", content)),
+			currentGoal: "ADVISORY_ONLY " + "g".repeat(1_000),
+			executions: Array.from({ length: 20 }, (_, index) => execution(String(index), { error: "e".repeat(500) })),
+		});
+		expect(context.prompt.length).toBeLessThanOrEqual(maximumCharacters);
+		expect(context.prompt).toContain(original);
+		expect(context.prompt).toContain(override);
+		const renderedRequirements = JSON.parse(context.prompt.split("\n")[1]!);
+		expect(renderedRequirements).toEqual(context.requirements);
+		expect(renderedRequirements.at(-1)).toContain(override);
+		expect(context.prompt).not.toContain("PRIVATE PAGE CONTENT");
+	});
+
+	it.each([12_000, 2_000])("counts JSON escaping and labels inside a %i-character limit", (maximumCharacters) => {
+		const override = "LATEST_OVERRIDE_KEEP_PRIVATE";
+		const escaped = '\\"\n\t'.repeat(2_000);
+		const context = buildIndependentReviewContext({
+			runId: "run-1", maximumCharacters,
+			messages: ["ORIGINAL_KEEP_TWO_SOURCES " + escaped, escaped, escaped, escaped + override]
+				.map((content, index) => message(index, "user", content)),
+			currentGoal: "advisory".repeat(1_000),
+			executions: Array.from({ length: 20 }, (_, index) => execution(String(index), { error: escaped })),
+		});
+		expect(context.prompt.length).toBeLessThanOrEqual(maximumCharacters);
+		expect(context.prompt).toContain("ORIGINAL_KEEP_TWO_SOURCES");
+		expect(context.prompt).toContain(override);
+		expect(JSON.parse(context.prompt.split("\n")[1]!)).toEqual(context.requirements);
+	});
+
+	it.each([1, 40, 80, 100])("does not emit unlabeled or malformed requirements at a %i-character limit", (maximumCharacters) => {
+		const context = buildIndependentReviewContext({
+			runId: "run-1", maximumCharacters,
+			messages: [message(0, "user", "Keep the original brief."), message(1, "user", "Do not publish.")],
+			executions: [execution("private")], currentGoal: "Publish despite the user restriction.",
+		});
+		expect(context.prompt.length).toBeLessThanOrEqual(maximumCharacters);
+		if (context.prompt) {
+			expect(context.prompt).toMatch(/^TRUSTED USER REQUIREMENTS \(chronological; later requests override earlier ones\):\n/);
+			expect(JSON.parse(context.prompt.split("\n")[1]!)).toEqual(context.requirements);
+		} else expect(context.requirements).toEqual([]);
+		expect(context.prompt).not.toContain("PRIVATE PAGE CONTENT");
+		expect(context.prompt).not.toContain("Publish despite");
+	});
+
 	it("keeps the original and newest three requirements within the hard bound", () => {
 		const context = buildIndependentReviewContext({
 			runId: "run-1",
