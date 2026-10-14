@@ -728,16 +728,21 @@ describe("browser tab persistence", () => {
 		);
 	});
 
-	it("does not classify an ordinary read failure as corrupt state", () => {
+	it("surfaces ordinary read failures instead of wiping the session", () => {
 		const path = storePath();
 		mkdirSync(path);
 
-		const state = new BrowserTabStore(path).load(
-			() => new Date("2026-08-11T12:00:00.000Z"),
-		);
-
-		expect(state.tabs).toHaveLength(1);
+		expect(() =>
+			new BrowserTabStore(path).load(
+				() => new Date("2026-08-11T12:00:00.000Z"),
+			),
+		).toThrow();
 		expect(readdirSync(dirname(path))).toEqual(["browser-state.json"]);
+		expect(
+			readdirSync(dirname(path)).some((entry) =>
+				entry.startsWith("browser-state.json.corrupt-"),
+			),
+		).toBe(false);
 	});
 
 	it("keeps history but starts blank when session restore is disabled", () => {

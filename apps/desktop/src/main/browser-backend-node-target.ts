@@ -16,6 +16,14 @@ type BrowserDebuggerNode = {
 	nodeId?: number;
 };
 
+function assertBrowserTargetAlive(webContents: WebContents): void {
+	if (webContents.isDestroyed()) {
+		throw new Error(
+			"Browser target was closed before the action could finish.",
+		);
+	}
+}
+
 async function sendBoundedDebuggerCommand<T>(
 	webContents: WebContents,
 	method: string,
@@ -24,6 +32,7 @@ async function sendBoundedDebuggerCommand<T>(
 	deadline: number,
 ): Promise<T> {
 	if (signal.aborted) throw signal.reason;
+	assertBrowserTargetAlive(webContents);
 	const remaining = deadline - Date.now();
 	if (remaining <= 0) throw new Error("Browser target operation timed out.");
 	let timeout: NodeJS.Timeout | undefined;
@@ -55,6 +64,7 @@ function browserInputDeadline(maximumWaitMs: number): number {
 }
 
 function attachDebugger(webContents: WebContents): void {
+	assertBrowserTargetAlive(webContents);
 	if (!webContents.debugger.isAttached()) webContents.debugger.attach("1.3");
 }
 

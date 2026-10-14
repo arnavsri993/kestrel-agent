@@ -16,23 +16,23 @@ export function prematureBrowserCompletionError(input: {
 	listExecutions: (sessionId: string) => RuntimeToolExecution[];
 }): string | undefined {
 	const modelText = input.modelText.trim();
-	if (modelText) return undefined;
-
 	const runPrefix = `${input.runId}:`;
 	const browserExecutions = input.listExecutions(input.sessionId).filter(
 		(execution) =>
 			execution.idempotencyKey?.startsWith(runPrefix) === true &&
 			execution.toolName.startsWith("browser."),
 	);
-	if (browserExecutions.length === 0) return undefined;
+	const observeRequired = input.browserRecoveryState.entries.some(
+		(entry) => entry.phase === "observe_required",
+	);
 
-	if (
-		input.browserRecoveryState.entries.some(
-			(entry) => entry.phase === "observe_required",
-		)
-	) {
+	// A prose reply must not skip a required fresh observation. Empty-text
+	// completion is still blocked whenever this run performed browser work.
+	if (observeRequired && browserExecutions.length > 0) {
 		return OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR;
 	}
+	if (modelText) return undefined;
+	if (browserExecutions.length === 0) return undefined;
 
 	return PREMATURE_BROWSER_COMPLETION_ERROR;
 }

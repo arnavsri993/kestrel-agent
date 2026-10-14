@@ -372,6 +372,50 @@ describe("idempotency claims", () => {
 			second.close();
 		}
 	});
+
+	it("makes legacy idempotent() claim-based across database connections", () => {
+		const { first, second } = sharedDatabases();
+		try {
+			let executions = 0;
+			const firstResult = first.idempotent("teacher-plan:approval-1", () => {
+				executions += 1;
+				return { messageId: "msg-1", eventId: "evt-1" };
+			});
+			expect(firstResult).toEqual({
+				result: { messageId: "msg-1", eventId: "evt-1" },
+				repeated: false,
+			});
+
+			const secondResult = second.idempotent("teacher-plan:approval-1", () => {
+				executions += 1;
+				return { messageId: "msg-2", eventId: "evt-2" };
+			});
+			expect(secondResult).toEqual({
+				result: { messageId: "msg-1", eventId: "evt-1" },
+				repeated: true,
+			});
+			expect(executions).toBe(1);
+
+			expect(
+				second.claimIdempotentResult(
+					"teacher-plan:in-flight",
+					"owner-two",
+					202,
+					{ status: "pending" },
+				).state,
+			).toBe("claimed");
+			expect(() =>
+				first.idempotent("teacher-plan:in-flight", () => {
+					executions += 1;
+					return { messageId: "msg-3", eventId: "evt-3" };
+				}),
+			).toThrow(/already executing this idempotent operation/i);
+			expect(executions).toBe(1);
+		} finally {
+			first.close();
+			second.close();
+		}
+	});
 });
 
 describe("context usage", () => {

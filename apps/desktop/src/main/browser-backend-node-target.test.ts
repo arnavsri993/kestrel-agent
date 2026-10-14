@@ -11,9 +11,11 @@ function webContentsWith(
 		method: string,
 		params: Record<string, unknown>,
 	) => Promise<unknown>,
+	options: { destroyed?: boolean } = {},
 ): WebContents {
 	let attached = false;
 	return {
+		isDestroyed: () => options.destroyed === true,
 		debugger: {
 			isAttached: () => attached,
 			attach: () => {
@@ -102,5 +104,18 @@ describe("bounded browser debugger input", () => {
 				arguments: [{ value: true }, { value: true }],
 			}),
 		);
+	});
+
+	it("fails closed when the browser target is already destroyed", async () => {
+		const sendCommand = vi.fn(async () => ({}));
+		await expect(
+			dispatchBrowserMouseClick(
+				webContentsWith(sendCommand, { destroyed: true }),
+				{ x: 12, y: 18 },
+				new AbortController().signal,
+				50,
+			),
+		).rejects.toThrow(/closed before the action could finish/i);
+		expect(sendCommand).not.toHaveBeenCalled();
 	});
 });
