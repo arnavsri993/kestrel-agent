@@ -10,6 +10,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -2934,7 +2935,7 @@ export class UserBrowserService {
 						record.status !== "checking",
 					)
 					.map((record) => {
-						const path = this.availableDownload(record.id)?.path;
+						const path = this.transferDownloadDestination(record);
 						return {
 							record: { ...structuredClone(record), canReveal: Boolean(path) },
 							...(path ? { path } : {}),
@@ -6841,6 +6842,22 @@ export class UserBrowserService {
 	private requireActiveTab(): UserBrowserTab {
 		if (!this.state.activeTabId) throw new Error("No browser tab is active.");
 		return this.requireTab(this.state.activeTabId);
+	}
+
+	private transferDownloadDestination(
+		download: UserBrowserDownload,
+	): string | undefined {
+		if (download.status !== "completed") return undefined;
+		// Presentation readiness can lag private-path restoration. Transfer only
+		// the exact native-owned destination, never a filename-based substitute.
+		const path = this.downloadPaths.get(download.id);
+		if (!path) return undefined;
+		try {
+			const metadata = lstatSync(path);
+			return metadata.isFile() && !metadata.isSymbolicLink() ? path : undefined;
+		} catch {
+			return undefined;
+		}
 	}
 
 	private availableDownload(

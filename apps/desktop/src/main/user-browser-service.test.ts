@@ -1,10 +1,12 @@
 import { EventEmitter } from "node:events";
 import {
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	realpathSync,
 	readFileSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -352,8 +354,9 @@ function downloadItem(url: string, filename = "report.txt") {
 	};
 }
 
-async function completedTransferSource(options: Parameters<typeof createService>[0] = {}) {
-  const source = createService(options);
+async function completedTransferSource(options: Parameters<typeof createService>[0] & { materializeBeforeCompletion?: boolean } = {}) {
+  const { materializeBeforeCompletion = true, ...serviceOptions } = options;
+  const source = createService(serviceOptions);
   const tab = source.service.getState().tabs[0]!;
   await source.service.navigate(tab.id, "https://download.example/page");
   source.service.updateSettings({ ...source.service.getState().settings, downloadBehavior: "ask" });
@@ -366,7 +369,7 @@ async function completedTransferSource(options: Parameters<typeof createService>
   });
   electron.state.partitions.at(-1)!.instance.emit("will-download", {}, item, electron.state.views.at(-1)!.webContents);
   await vi.waitFor(() => expect(item.setSavePath).toHaveBeenCalledWith(path));
-  writeFileSync(path, "completed transfer bytes");
+  if (materializeBeforeCompletion) writeFileSync(path, "completed transfer bytes");
   item.emit("done", {}, "completed");
   return { ...source, tab, path, download: source.service.getState().downloads[0]!, item };
 }
@@ -2316,6 +2319,77 @@ describe("UserBrowserService", () => {
     expect(JSON.stringify(target.service.getState())).not.toContain(source.path);
     expect(readFileSync(target.statePath, "utf8")).not.toContain(source.path);
     target.service.dispose();
+  });
+
+  it("retains a completed native destination while its reveal flag is still false", async () => {
+    const source = await completedTransferSource({ materializeBeforeCompletion: false });
+    expect(source.download).toMatchObject({ status: "completed", canReveal: false });
+    writeFileSync(source.path, "completed transfer bytes");
+    await expect(source.service.openDownload(source.download.id)).rejects.toThrow(/no longer available/);
+    expect(() => source.service.revealDownload(source.download.id)).toThrow(/no longer available/);
+    expect(() => source.service.startDownloadDrag(source.download.id)).toThrow(/no longer available/);
+    expect(shell.openPath).not.toHaveBeenCalled();
+    expect(shell.showItemInFolder).not.toHaveBeenCalled();
+    expect(source.window.webContents.startDrag).not.toHaveBeenCalled();
+
+    const target = createService();
+    await source.service.transferTabTo(target.service, source.tab.id);
+    source.service.dispose();
+    expect(target.service.getState().downloads).toEqual([{ ...source.download, canReveal: true }]);
+    await target.service.openDownload(source.download.id);
+    target.service.revealDownload(source.download.id);
+    target.service.startDownloadDrag(source.download.id);
+    expect(shell.openPath).toHaveBeenCalledWith(source.path);
+    expect(shell.showItemInFolder).toHaveBeenCalledWith(source.path);
+    expect(target.window.webContents.startDrag).toHaveBeenCalledWith({ file: source.path, icon: expect.anything() });
+    expect(JSON.stringify(target.service.getState())).not.toContain(source.path);
+    expect(readFileSync(target.statePath, "utf8")).not.toContain(source.path);
+    target.service.dispose();
+  });
+
+  it.each(["missing", "directory", "symlink"] as const)("rejects a %s private transfer destination", async (kind) => {
+    const source = await completedTransferSource();
+    rmSync(source.path);
+    if (kind === "directory") mkdirSync(source.path);
+    if (kind === "symlink") {
+      const actual = join(dirname(source.statePath), "other-report.txt");
+      writeFileSync(actual, "different file bytes");
+      symlinkSync(actual, source.path);
+    }
+    const target = createService();
+    await source.service.transferTabTo(target.service, source.tab.id);
+    expect(target.service.getState().downloads[0]).toMatchObject({ id: source.download.id, canReveal: false });
+    await expect(target.service.openDownload(source.download.id)).rejects.toThrow(/no longer available/);
+    expect(() => target.service.revealDownload(source.download.id)).toThrow(/no longer available/);
+    expect(() => target.service.startDownloadDrag(source.download.id)).toThrow(/no longer available/);
+    expect(shell.openPath).not.toHaveBeenCalled();
+    expect(shell.showItemInFolder).not.toHaveBeenCalled();
+    expect(target.window.webContents.startDrag).not.toHaveBeenCalled();
+    source.service.dispose(); target.service.dispose();
+  });
+
+  it("does not infer transfer destinations for history without a native-owned path", async () => {
+    const source = await completedTransferSource();
+    (source.service as unknown as { downloadPaths: Map<string, string> }).downloadPaths.delete(source.download.id);
+    writeFileSync(join(dirname(source.statePath), "downloads", source.download.filename), "different source bytes");
+    const target = createService();
+    writeFileSync(join(dirname(target.statePath), "downloads", source.download.filename), "different target bytes");
+    await source.service.transferTabTo(target.service, source.tab.id);
+    expect(target.service.getState().downloads[0]).toMatchObject({ id: source.download.id, canReveal: false });
+    await expect(target.service.openDownload(source.download.id)).rejects.toThrow(/no longer available/);
+    expect(shell.openPath).not.toHaveBeenCalled();
+    source.service.dispose(); target.service.dispose();
+  });
+
+  it.each(["cancelled", "failed", "blocked"] as const)("does not transfer file authority for a %s terminal record", async (status) => {
+    const source = await completedTransferSource();
+    (source.service as unknown as { state: UserBrowserState }).state.downloads[0]!.status = status;
+    const target = createService();
+    await source.service.transferTabTo(target.service, source.tab.id);
+    expect(target.service.getState().downloads[0]).toMatchObject({ id: source.download.id, status, canReveal: false });
+    await expect(target.service.openDownload(source.download.id)).rejects.toThrow(/no longer available/);
+    expect(shell.openPath).not.toHaveBeenCalled();
+    source.service.dispose(); target.service.dispose();
   });
 
   it("keeps existing target download records and destinations authoritative when IDs overlap", async () => {
