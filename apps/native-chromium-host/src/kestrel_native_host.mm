@@ -25,6 +25,7 @@
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
 #include "include/cef_display_handler.h"
+#include "include/cef_download_handler.h"
 #include "include/cef_life_span_handler.h"
 #include "include/cef_load_handler.h"
 #include "include/cef_parser.h"
@@ -190,6 +191,7 @@ bool durable_profile_enabled = false;
 bool smoke_durable_library_seed = false;
 bool smoke_durable_library_verify = false;
 std::optional<std::string> smoke_user_browser_url;
+std::optional<std::string> smoke_download_url;
 bool smoke_user_browser_via_bridge = false;
 CefRefPtr<CefWindow> kestrel_window;
 
@@ -460,12 +462,13 @@ class KestrelUserBrowserContextHandler final : public CefRequestContextHandler {
 
 // User pages deliberately use a different client from the privileged Kestrel
 // UI. It owns no renderer bridge, rejects non-HTTP(S) top-level navigation,
-// and blocks popup routing until the native popup/adoption path is migrated.
+// and captures downloads into the host's durable browser library.
 class KestrelUserBrowserClient final : public CefClient,
                                        public CefLifeSpanHandler,
                                        public CefLoadHandler,
                                        public CefDisplayHandler,
-                                       public CefRequestHandler {
+                                       public CefRequestHandler,
+                                       public CefDownloadHandler {
  public:
   using BrowserCreated = std::function<void(const std::string&,
                                             CefRefPtr<CefBrowser>)>;
@@ -477,6 +480,13 @@ class KestrelUserBrowserClient final : public CefClient,
   using BrowserClosed = std::function<void(const std::string&, int)>;
   using PopupRequested =
       std::function<void(const std::string& opener_tab_id, const std::string& url)>;
+  using DownloadPathResolver =
+      std::function<std::string(const std::string& suggested_name)>;
+  using DownloadUpdated = std::function<void(
+      const std::string& tab_id, uint32_t cef_download_id,
+      const std::string& source_url, const std::string& filename,
+      const std::string& full_path, int64_t received_bytes, int64_t total_bytes,
+      const std::string& status, CefRefPtr<CefDownloadItemCallback> callback)>;
 
   KestrelUserBrowserClient(std::string tab_id, BrowserCreated on_created,
                            LoadingChanged on_loading,
@@ -485,7 +495,9 @@ class KestrelUserBrowserClient final : public CefClient,
                            StringChanged on_load_end,
                            NavigationBlocked on_navigation_blocked,
                            BrowserClosed on_closed,
-                           PopupRequested on_popup)
+                           PopupRequested on_popup,
+                           DownloadPathResolver resolve_download_path,
+                           DownloadUpdated on_download_updated)
       : tab_id_(std::move(tab_id)),
         on_created_(std::move(on_created)),
         on_loading_(std::move(on_loading)),
@@ -494,12 +506,61 @@ class KestrelUserBrowserClient final : public CefClient,
         on_load_end_(std::move(on_load_end)),
         on_navigation_blocked_(std::move(on_navigation_blocked)),
         on_closed_(std::move(on_closed)),
-        on_popup_(std::move(on_popup)) {}
+        on_popup_(std::move(on_popup)),
+        resolve_download_path_(std::move(resolve_download_path)),
+        on_download_updated_(std::move(on_download_updated)) {}
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+
+  bool CanDownload(CefRefPtr<CefBrowser> browser,
+                   const CefString& url,
+                   const CefString& request_method) override {
+    const std::string method = request_method.ToString();
+    if (method != "GET" && method != "POST") return false;
+    return safe_user_browser_url(url.ToString()).has_value();
+  }
+
+  bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,
+                        CefRefPtr<CefDownloadItem> download_item,
+                        const CefString& suggested_name,
+                        CefRefPtr<CefBeforeDownloadCallback> callback) override {
+    if (!download_item || !download_item->IsValid() || !callback) return false;
+    const auto source = safe_user_browser_url(download_item->GetURL().ToString());
+    if (!source || !resolve_download_path_) return false;
+    const std::string path = resolve_download_path_(suggested_name.ToString());
+    if (path.empty()) return false;
+    callback->Continue(path, false);
+    return true;
+  }
+
+  void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
+                         CefRefPtr<CefDownloadItem> download_item,
+                         CefRefPtr<CefDownloadItemCallback> callback) override {
+    if (!download_item || !download_item->IsValid() || !on_download_updated_) {
+      return;
+    }
+    std::string status = "progressing";
+    if (download_item->IsComplete()) status = "completed";
+    else if (download_item->IsCanceled()) status = "cancelled";
+    else if (download_item->IsInterrupted()) status = "failed";
+    else if (download_item->IsInProgress()) status = "progressing";
+    std::string filename = download_item->GetSuggestedFileName().ToString();
+    if (filename.empty()) {
+      const std::string full_path = download_item->GetFullPath().ToString();
+      const auto slash = full_path.find_last_of('/');
+      filename = slash == std::string::npos ? full_path
+                                            : full_path.substr(slash + 1);
+    }
+    on_download_updated_(
+        tab_id_, download_item->GetId(), download_item->GetURL().ToString(),
+        filename, download_item->GetFullPath().ToString(),
+        download_item->GetReceivedBytes(), download_item->GetTotalBytes(),
+        status, callback);
+  }
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     if (on_created_) on_created_(tab_id_, browser);
@@ -583,6 +644,8 @@ class KestrelUserBrowserClient final : public CefClient,
   NavigationBlocked on_navigation_blocked_;
   BrowserClosed on_closed_;
   PopupRequested on_popup_;
+  DownloadPathResolver resolve_download_path_;
+  DownloadUpdated on_download_updated_;
 
   IMPLEMENT_REFCOUNTING(KestrelUserBrowserClient);
 };
@@ -904,6 +967,14 @@ class KestrelClient : public CefClient,
       if (!CreateUserBrowserTab(*smoke_user_browser_url, true, &error)) {
         std::cerr << "Kestrel native user-browser smoke setup failed: "
                   << error << std::endl;
+      }
+    }
+    if (smoke_download_url && !smoke_download_started_) {
+      smoke_download_started_ = true;
+      std::string error;
+      if (!CreateUserBrowserTab(*smoke_download_url, true, &error)) {
+        std::cerr << "Kestrel native download smoke setup failed: " << error
+                  << std::endl;
       }
     }
     schedule_close_after_ready();
@@ -1515,6 +1586,24 @@ class KestrelClient : public CefClient,
             std::cerr << "Kestrel could not adopt a native browser popup: "
                       << create_error << std::endl;
           }
+        },
+        [this, owner_token](const std::string& suggested_name) {
+          const std::shared_ptr<bool> alive = owner_token.lock();
+          if (!alive || !*alive) return std::string();
+          return ResolveDownloadPath(suggested_name);
+        },
+        [this, owner_token](const std::string& tab_id, uint32_t cef_download_id,
+                            const std::string& source_url,
+                            const std::string& filename,
+                            const std::string& full_path,
+                            int64_t received_bytes, int64_t total_bytes,
+                            const std::string& status,
+                            CefRefPtr<CefDownloadItemCallback> callback) {
+          const std::shared_ptr<bool> alive = owner_token.lock();
+          if (!alive || !*alive) return;
+          OnNativeUserBrowserDownload(tab_id, cef_download_id, source_url,
+                                      filename, full_path, received_bytes,
+                                      total_bytes, status, callback);
         });
     CefBrowserSettings browser_settings;
     tab.view = CefBrowserView::CreateBrowserView(
@@ -1628,6 +1717,121 @@ class KestrelClient : public CefClient,
                 << std::endl;
     }
     RecordHistoryVisit(tab_id, url);
+    PublishUserBrowserState();
+  }
+
+  std::string SanitizeDownloadFilename(std::string requested) const {
+    for (char& character : requested) {
+      const unsigned char value = static_cast<unsigned char>(character);
+      if (!(std::isalnum(value) || character == '.' || character == '_' ||
+            character == '-')) {
+        character = '-';
+      }
+    }
+    if (requested.size() > 120) requested.resize(120);
+    while (!requested.empty() &&
+           (requested.front() == '.' || requested.front() == '-')) {
+      requested.erase(requested.begin());
+    }
+    return requested.empty() ? "download.bin" : requested;
+  }
+
+  std::string ResolveDownloadPath(const std::string& suggested_name) {
+    if (isolated_profile_root_.empty()) return {};
+    const std::string directory = isolated_profile_root_ + "/downloads";
+    NSFileManager* files = [NSFileManager defaultManager];
+    NSString* directory_ns =
+        [NSString stringWithUTF8String:directory.c_str()];
+    if (![files fileExistsAtPath:directory_ns]) {
+      NSError* error = nil;
+      if (![files createDirectoryAtPath:directory_ns
+            withIntermediateDirectories:YES
+                             attributes:@{NSFilePosixPermissions : @0700}
+                                  error:&error]) {
+        return {};
+      }
+    }
+    std::string filename = SanitizeDownloadFilename(suggested_name);
+    std::string path = directory + "/" + filename;
+    NSString* path_ns = [NSString stringWithUTF8String:path.c_str()];
+    if (![files fileExistsAtPath:path_ns]) return path;
+    const auto dot = filename.find_last_of('.');
+    const std::string stem =
+        dot == std::string::npos ? filename : filename.substr(0, dot);
+    const std::string extension =
+        dot == std::string::npos ? "" : filename.substr(dot);
+    for (int index = 2; index < 10'000; ++index) {
+      path = directory + "/" + stem + "-" + std::to_string(index) + extension;
+      path_ns = [NSString stringWithUTF8String:path.c_str()];
+      if (![files fileExistsAtPath:path_ns]) return path;
+    }
+    return directory + "/download-" + native_uuid() + ".bin";
+  }
+
+  void OnNativeUserBrowserDownload(
+      const std::string& tab_id, uint32_t cef_download_id,
+      const std::string& source_url, const std::string& filename,
+      const std::string& full_path, int64_t received_bytes, int64_t total_bytes,
+      const std::string& status,
+      CefRefPtr<CefDownloadItemCallback> callback) {
+    if (!is_http_url(source_url)) return;
+    std::string download_id;
+    const auto existing_id = cef_download_ids_.find(cef_download_id);
+    if (existing_id != cef_download_ids_.end()) {
+      download_id = existing_id->second;
+    } else {
+      download_id = "download-" + native_uuid();
+      cef_download_ids_[cef_download_id] = download_id;
+      DurableDownload download;
+      download.id = download_id;
+      download.tab_id = tab_id;
+      download.filename = SanitizeDownloadFilename(filename);
+      download.source_url = source_url;
+      download.received_bytes = std::max<int64_t>(0, received_bytes);
+      download.total_bytes = std::max<int64_t>(0, total_bytes);
+      download.status = status;
+      download.started_at = iso8601_now();
+      download.can_reveal = false;
+      browser_library_.downloads.insert(browser_library_.downloads.begin(),
+                                        std::move(download));
+      if (browser_library_.downloads.size() >
+          DurableBrowserLibrary::kMaxDownloads) {
+        browser_library_.downloads.resize(
+            DurableBrowserLibrary::kMaxDownloads);
+      }
+    }
+    if (callback) download_cancel_callbacks_[download_id] = callback;
+    if (!full_path.empty()) download_paths_[download_id] = full_path;
+
+    DurableDownload* record = nullptr;
+    for (DurableDownload& item : browser_library_.downloads) {
+      if (item.id == download_id) {
+        record = &item;
+        break;
+      }
+    }
+    if (!record) return;
+    record->filename = SanitizeDownloadFilename(
+        filename.empty() ? record->filename : filename);
+    record->source_url = source_url;
+    record->received_bytes = std::max<int64_t>(0, received_bytes);
+    record->total_bytes = std::max<int64_t>(0, total_bytes);
+    record->status = status;
+    if (status == "completed") {
+      record->completed_at = iso8601_now();
+      record->can_reveal = !full_path.empty();
+      download_cancel_callbacks_.erase(download_id);
+      if (smoke_download_url && source_url == *smoke_download_url) {
+        std::cout << "KESTREL_NATIVE_CHROMIUM_DOWNLOAD_CAPTURE_OK"
+                  << " filename=" << record->filename
+                  << " bytes=" << record->received_bytes << std::endl;
+      }
+    } else if (status == "cancelled" || status == "failed") {
+      record->completed_at = iso8601_now();
+      record->can_reveal = false;
+      download_cancel_callbacks_.erase(download_id);
+    }
+    PersistBrowserLibrary();
     PublishUserBrowserState();
   }
 
@@ -2076,6 +2280,31 @@ class KestrelClient : public CefClient,
       PublishUserBrowserState();
       return true;
     }
+    if (type == "browser-cancel-download") {
+      if (request->GetType("downloadId") != VTYPE_STRING) {
+        RespondNativeError(callback, "The download was invalid.");
+        return true;
+      }
+      const std::string download_id =
+          request->GetString("downloadId").ToString();
+      const auto cancel = download_cancel_callbacks_.find(download_id);
+      if (cancel != download_cancel_callbacks_.end() && cancel->second) {
+        cancel->second->Cancel();
+        download_cancel_callbacks_.erase(cancel);
+      }
+      for (DurableDownload& item : browser_library_.downloads) {
+        if (item.id == download_id && item.status == "progressing") {
+          item.status = "cancelled";
+          item.completed_at = iso8601_now();
+          item.can_reveal = false;
+          break;
+        }
+      }
+      PersistBrowserLibrary();
+      RespondWithBrowserState(callback);
+      PublishUserBrowserState();
+      return true;
+    }
     if (type == "browser-set-site-permission") {
       if (request->GetType("origin") != VTYPE_STRING ||
           request->GetType("permission") != VTYPE_STRING ||
@@ -2297,6 +2526,10 @@ class KestrelClient : public CefClient,
   std::string isolated_profile_root_;
   std::string user_browser_cache_path_;
   DurableBrowserLibrary browser_library_;
+  std::map<uint32_t, std::string> cef_download_ids_;
+  std::map<std::string, std::string> download_paths_;
+  std::map<std::string, CefRefPtr<CefDownloadItemCallback>>
+      download_cancel_callbacks_;
   std::shared_ptr<bool> native_owner_alive_ = std::make_shared<bool>(true);
   std::deque<NativeUserBrowserTab> user_browser_tabs_;
   std::set<std::string> pending_user_browser_closures_;
@@ -2305,6 +2538,7 @@ class KestrelClient : public CefClient,
   bool user_browser_view_visible_ = false;
   bool user_browser_context_initializing_ = false;
   bool user_browser_context_ready_ = false;
+  bool smoke_download_started_ = false;
   CefRefPtr<KestrelUserBrowserContextHandler> user_browser_context_handler_;
   CefRefPtr<CefRequestContext> user_browser_context_;
   __strong KestrelNativeCoreRelay* core_relay_ = nil;
@@ -2686,6 +2920,22 @@ int main(int argc, char* argv[]) {
       smoke_user_browser_via_bridge = true;
       shell_url += "?native-browser-smoke=" +
                    CefURIEncode(*smoke_user_browser_url, false).ToString();
+    }
+    if (const auto download_url =
+            argument_value(argc, argv, "--kestrel-smoke-download-url")) {
+      const std::optional<std::string> normalized =
+          safe_user_browser_url(*download_url);
+      if (!normalized) {
+        std::cerr << "Kestrel received an invalid native download smoke URL."
+                  << std::endl;
+        return 1;
+      }
+      if (!durable_profile_enabled) {
+        std::cerr << "Download smoke requires --kestrel-durable-profile."
+                  << std::endl;
+        return 1;
+      }
+      smoke_download_url = *normalized;
     }
 
     CefSettings settings;
