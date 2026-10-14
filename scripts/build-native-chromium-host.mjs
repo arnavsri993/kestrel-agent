@@ -185,6 +185,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-F",
 			paths.frameworks,
 			join(nativeHostRoot, "src", "kestrel_native_host.mm"),
+			join(nativeHostRoot, "src", "kestrel_durable_browser_library.cc"),
 			join(nativeHostRoot, "src", "kestrel_chromium_app.cc"),
 			"-o",
 			paths.executable,

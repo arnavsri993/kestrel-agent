@@ -40,6 +40,7 @@
 #include "include/wrapper/cef_message_router.h"
 #include "include/wrapper/cef_stream_resource_handler.h"
 #include "kestrel_chromium_app.h"
+#include "kestrel_durable_browser_library.h"
 #include "kestrel_extension_workbench.h"
 
 @interface KestrelNativeCoreRelay : NSObject
@@ -186,6 +187,8 @@ bool ephemeral_core_enabled = false;
 bool full_renderer_enabled = false;
 bool user_extensions_enabled = false;
 bool durable_profile_enabled = false;
+bool smoke_durable_library_seed = false;
+bool smoke_durable_library_verify = false;
 std::optional<std::string> smoke_user_browser_url;
 bool smoke_user_browser_via_bridge = false;
 CefRefPtr<CefWindow> kestrel_window;
@@ -675,9 +678,15 @@ class KestrelBridgeQueryHandler final
         "native-host-status") {
       const std::string status = std::string("{\"ok\":true,\"host\":\"chromium-cef\",\"profile\":\"") +
           (durable_profile_enabled ? "durable-isolated" : "isolated") +
-          "\",\"credentialStorage\":\"disabled\",\"core\":\"ephemeral-or-unavailable\",\"browser\":\"native-cef-in-memory-tabs\",\"userExtensions\":\"" +
+          "\",\"credentialStorage\":\"disabled\",\"core\":\"ephemeral-or-unavailable\",\"browser\":\"" +
+          (durable_profile_enabled
+               ? "native-cef-durable-library"
+               : "native-cef-in-memory-tabs") +
+          "\",\"userExtensions\":\"" +
           (user_extensions_enabled ? "enabled-on-user-profile" : "disabled") +
           "\",\"durableProfile\":" +
+          (durable_profile_enabled ? "true" : "false") +
+          ",\"durableBrowserLibrary\":" +
           (durable_profile_enabled ? "true" : "false") + "}";
       callback->Success(status);
       std::cout << "KESTREL_NATIVE_CHROMIUM_BRIDGE_REQUEST_OK"
@@ -776,6 +785,15 @@ class KestrelClient : public CefClient,
           user_extensions_enabled_
               ? isolated_profile_root_
               : isolated_profile_root_ + "/user-browser";
+      if (durable_profile_enabled) {
+        browser_library_.Load(isolated_profile_root_);
+        std::cout << "KESTREL_NATIVE_CHROMIUM_DURABLE_LIBRARY_LOADED"
+                  << " bookmarks=" << browser_library_.bookmarks.size()
+                  << " history=" << browser_library_.history.size()
+                  << " downloads=" << browser_library_.downloads.size()
+                  << " permissions="
+                  << browser_library_.site_permissions.size() << std::endl;
+      }
     }
     CreateBlankUserBrowserTab(true);
     if (!bridge_router_ ||
@@ -873,6 +891,11 @@ class KestrelClient : public CefClient,
     if (durable_profile_enabled) {
       std::cout << "KESTREL_NATIVE_CHROMIUM_DURABLE_PROFILE_ENABLED"
                 << std::endl;
+    }
+    if (smoke_durable_library_verify) {
+      VerifyDurableLibrarySmoke();
+    } else if (smoke_durable_library_seed) {
+      SeedDurableLibrarySmoke();
     }
     if (smoke_user_browser_url && !smoke_user_browser_via_bridge &&
         !smoke_user_browser_started_) {
@@ -1169,17 +1192,19 @@ class KestrelClient : public CefClient,
     } else {
       state->SetString("activeTabId", user_browser_active_tab_id_);
     }
-    state->SetList("history", CefListValue::Create());
+    state->SetList("history", browser_library_.SerializeHistory());
     state->SetList("originFavicons", CefListValue::Create());
-    state->SetList("downloads", CefListValue::Create());
-    state->SetList("bookmarks", CefListValue::Create());
-    state->SetList("bookmarkFolders", CefListValue::Create());
+    state->SetList("downloads", browser_library_.SerializeDownloads());
+    state->SetList("bookmarks", browser_library_.SerializeBookmarks());
+    state->SetList("bookmarkFolders",
+                   browser_library_.SerializeBookmarkFolders());
     state->SetList("recentlyClosedTabs", CefListValue::Create());
-    state->SetList("sitePermissions", CefListValue::Create());
+    state->SetList("sitePermissions",
+                   browser_library_.SerializeSitePermissions());
 
-    // Keep the first native browser pass honest: these are the same visible
-    // defaults as a new Kestrel browser profile, held only in memory until a
-    // separately reviewed profile migration exists.
+    // Settings stay at honest new-profile defaults. Bookmarks/history/
+    // downloads/permissions persist only under --kestrel-durable-profile into
+    // the isolated native profile, never the Electron Application Support path.
     CefRefPtr<CefDictionaryValue> settings = CefDictionaryValue::Create();
     settings->SetString("startupBehavior", "new_tab");
     settings->SetString("homepageUrl", "");
@@ -1602,7 +1627,142 @@ class KestrelClient : public CefClient,
       std::cout << "KESTREL_NATIVE_CHROMIUM_USER_BROWSER_LOAD_OK url=" << url
                 << std::endl;
     }
+    RecordHistoryVisit(tab_id, url);
     PublishUserBrowserState();
+  }
+
+  bool PersistBrowserLibrary() {
+    if (!durable_profile_enabled || isolated_profile_root_.empty()) {
+      return true;
+    }
+    if (!browser_library_.Save(isolated_profile_root_)) {
+      std::cerr << "Kestrel could not persist the durable browser library."
+                << std::endl;
+      return false;
+    }
+    return true;
+  }
+
+  void RecordHistoryVisit(const std::string& tab_id, const std::string& url) {
+    if (!is_http_url(url) || tab_id.empty()) return;
+    NativeUserBrowserTab* tab = FindUserBrowserTab(tab_id);
+    DurableHistoryEntry entry;
+    entry.id = "visit-" + native_uuid();
+    entry.tab_id = tab_id;
+    entry.url = url;
+    entry.title =
+        renderer_safe_text(tab ? tab->title : "", 500, "Untitled");
+    entry.visited_at = iso8601_now();
+    browser_library_.history.insert(browser_library_.history.begin(),
+                                    std::move(entry));
+    if (browser_library_.history.size() >
+        DurableBrowserLibrary::kMaxHistory) {
+      browser_library_.history.resize(DurableBrowserLibrary::kMaxHistory);
+    }
+    PersistBrowserLibrary();
+  }
+
+  bool is_http_url(const std::string& url) const {
+    return url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0;
+  }
+
+  std::string OriginFromUrl(const std::string& url) const {
+    const auto scheme_end = url.find("://");
+    if (scheme_end == std::string::npos) return {};
+    const size_t host_start = scheme_end + 3;
+    const size_t host_end = url.find_first_of("/?#", host_start);
+    if (host_end == std::string::npos) return url;
+    return url.substr(0, host_end);
+  }
+
+  void SeedDurableLibrarySmoke() {
+    DurableBookmark bookmark;
+    bookmark.id = "bookmark-" + native_uuid();
+    bookmark.url = "https://example.com/kestrel-durable-bookmark";
+    bookmark.title = "Kestrel durable bookmark";
+    bookmark.display_mode = "full";
+    bookmark.created_at = iso8601_now();
+    browser_library_.bookmarks.insert(browser_library_.bookmarks.begin(),
+                                      std::move(bookmark));
+
+    DurableHistoryEntry visit;
+    visit.id = "visit-" + native_uuid();
+    visit.tab_id = user_browser_active_tab_id_.empty()
+                       ? "tab-" + native_uuid()
+                       : user_browser_active_tab_id_;
+    visit.url = "https://example.com/kestrel-durable-history";
+    visit.title = "Kestrel durable history";
+    visit.visited_at = iso8601_now();
+    browser_library_.history.insert(browser_library_.history.begin(),
+                                    std::move(visit));
+
+    DurableDownload download;
+    download.id = "download-" + native_uuid();
+    download.filename = "kestrel-durable.txt";
+    download.source_url = "https://example.com/kestrel-durable.txt";
+    download.received_bytes = 12;
+    download.total_bytes = 12;
+    download.status = "completed";
+    download.started_at = iso8601_now();
+    download.completed_at = download.started_at;
+    download.can_reveal = false;
+    browser_library_.downloads.insert(browser_library_.downloads.begin(),
+                                      std::move(download));
+
+    DurableSitePermission permission;
+    permission.origin = "https://example.com";
+    permission.permission = "notifications";
+    permission.decision = "deny";
+    permission.updated_at = iso8601_now();
+    browser_library_.site_permissions = {std::move(permission)};
+
+    if (!PersistBrowserLibrary()) {
+      std::cerr << "KESTREL_NATIVE_CHROMIUM_DURABLE_LIBRARY_WRITE_FAILED"
+                << std::endl;
+      return;
+    }
+    std::cout << "KESTREL_NATIVE_CHROMIUM_DURABLE_LIBRARY_WRITE_OK"
+              << " bookmarks=" << browser_library_.bookmarks.size()
+              << " history=" << browser_library_.history.size()
+              << " downloads=" << browser_library_.downloads.size()
+              << " permissions="
+              << browser_library_.site_permissions.size() << std::endl;
+  }
+
+  void VerifyDurableLibrarySmoke() {
+    const bool bookmarks_ok = std::any_of(
+        browser_library_.bookmarks.begin(), browser_library_.bookmarks.end(),
+        [](const DurableBookmark& bookmark) {
+          return bookmark.url ==
+                 "https://example.com/kestrel-durable-bookmark";
+        });
+    const bool history_ok = std::any_of(
+        browser_library_.history.begin(), browser_library_.history.end(),
+        [](const DurableHistoryEntry& entry) {
+          return entry.url == "https://example.com/kestrel-durable-history";
+        });
+    const bool downloads_ok = std::any_of(
+        browser_library_.downloads.begin(), browser_library_.downloads.end(),
+        [](const DurableDownload& download) {
+          return download.filename == "kestrel-durable.txt";
+        });
+    const bool permissions_ok = std::any_of(
+        browser_library_.site_permissions.begin(),
+        browser_library_.site_permissions.end(),
+        [](const DurableSitePermission& permission) {
+          return permission.origin == "https://example.com" &&
+                 permission.permission == "notifications" &&
+                 permission.decision == "deny";
+        });
+    if (bookmarks_ok && history_ok && downloads_ok && permissions_ok) {
+      std::cout << "KESTREL_NATIVE_CHROMIUM_DURABLE_LIBRARY_RESTORE_OK"
+                << std::endl;
+    } else {
+      std::cerr << "KESTREL_NATIVE_CHROMIUM_DURABLE_LIBRARY_RESTORE_FAILED"
+                << " bookmarks=" << bookmarks_ok << " history=" << history_ok
+                << " downloads=" << downloads_ok
+                << " permissions=" << permissions_ok << std::endl;
+    }
   }
 
   void OnNativeUserBrowserClosed(const std::string& tab_id, int browser_id) {
@@ -1835,6 +1995,181 @@ class KestrelClient : public CefClient,
       callback->Success(R"JSON({"ok":true})JSON");
       return true;
     }
+    if (type == "browser-toggle-bookmark") {
+      std::string url =
+          request->HasKey("url") && request->GetType("url") == VTYPE_STRING
+              ? request->GetString("url").ToString()
+              : "";
+      std::string title =
+          request->HasKey("title") && request->GetType("title") == VTYPE_STRING
+              ? request->GetString("title").ToString()
+              : "";
+      if (url.empty()) {
+        NativeUserBrowserTab* active =
+            FindUserBrowserTab(user_browser_active_tab_id_);
+        if (active) {
+          url = active->url;
+          if (title.empty()) title = active->title;
+        }
+      }
+      if (!is_http_url(url)) {
+        RespondNativeError(callback,
+                           "Only HTTP and HTTPS pages can be bookmarked.");
+        return true;
+      }
+      const auto existing = std::find_if(
+          browser_library_.bookmarks.begin(), browser_library_.bookmarks.end(),
+          [&url](const DurableBookmark& bookmark) {
+            return bookmark.url == url;
+          });
+      if (existing != browser_library_.bookmarks.end()) {
+        browser_library_.bookmarks.erase(existing);
+      } else {
+        if (browser_library_.bookmarks.size() >=
+            DurableBrowserLibrary::kMaxBookmarks) {
+          RespondNativeError(callback,
+                             "Kestrel supports up to 2,000 bookmarks.");
+          return true;
+        }
+        DurableBookmark bookmark;
+        bookmark.id = "bookmark-" + native_uuid();
+        bookmark.url = url;
+        bookmark.title = renderer_safe_text(title, 500, "Untitled");
+        bookmark.display_mode = "full";
+        bookmark.created_at = iso8601_now();
+        browser_library_.bookmarks.insert(browser_library_.bookmarks.begin(),
+                                          std::move(bookmark));
+      }
+      PersistBrowserLibrary();
+      RespondWithBrowserState(callback);
+      PublishUserBrowserState();
+      return true;
+    }
+    if (type == "browser-remove-bookmark") {
+      if (request->GetType("bookmarkId") != VTYPE_STRING) {
+        RespondNativeError(callback, "The bookmark was invalid.");
+        return true;
+      }
+      const std::string bookmark_id =
+          request->GetString("bookmarkId").ToString();
+      const auto before = browser_library_.bookmarks.size();
+      browser_library_.bookmarks.erase(
+          std::remove_if(browser_library_.bookmarks.begin(),
+                         browser_library_.bookmarks.end(),
+                         [&bookmark_id](const DurableBookmark& bookmark) {
+                           return bookmark.id == bookmark_id;
+                         }),
+          browser_library_.bookmarks.end());
+      if (browser_library_.bookmarks.size() == before) {
+        RespondNativeError(callback, "This bookmark no longer exists.");
+        return true;
+      }
+      PersistBrowserLibrary();
+      RespondWithBrowserState(callback);
+      PublishUserBrowserState();
+      return true;
+    }
+    if (type == "browser-clear-history") {
+      browser_library_.history.clear();
+      PersistBrowserLibrary();
+      RespondWithBrowserState(callback);
+      PublishUserBrowserState();
+      return true;
+    }
+    if (type == "browser-set-site-permission") {
+      if (request->GetType("origin") != VTYPE_STRING ||
+          request->GetType("permission") != VTYPE_STRING ||
+          request->GetType("decision") != VTYPE_STRING) {
+        RespondNativeError(callback, "The site permission was invalid.");
+        return true;
+      }
+      const std::string origin = request->GetString("origin").ToString();
+      const std::string permission =
+          request->GetString("permission").ToString();
+      const std::string decision = request->GetString("decision").ToString();
+      if (origin.empty() || permission.empty() ||
+          (decision != "allow" && decision != "deny")) {
+        RespondNativeError(callback, "The site permission was invalid.");
+        return true;
+      }
+      const std::string normalized_origin = OriginFromUrl(origin).empty()
+                                                ? origin
+                                                : OriginFromUrl(origin);
+      auto existing = std::find_if(
+          browser_library_.site_permissions.begin(),
+          browser_library_.site_permissions.end(),
+          [&](const DurableSitePermission& item) {
+            return item.origin == normalized_origin &&
+                   item.permission == permission;
+          });
+      if (existing != browser_library_.site_permissions.end()) {
+        existing->decision = decision;
+        existing->updated_at = iso8601_now();
+      } else {
+        if (browser_library_.site_permissions.size() >=
+            DurableBrowserLibrary::kMaxSitePermissions) {
+          RespondNativeError(
+              callback, "Kestrel supports up to 500 site permissions.");
+          return true;
+        }
+        DurableSitePermission item;
+        item.origin = normalized_origin;
+        item.permission = permission;
+        item.decision = decision;
+        item.updated_at = iso8601_now();
+        browser_library_.site_permissions.push_back(std::move(item));
+      }
+      PersistBrowserLibrary();
+      RespondWithBrowserState(callback);
+      PublishUserBrowserState();
+      return true;
+    }
+    if (type == "browser-clear-site-permission") {
+      if (request->GetType("origin") != VTYPE_STRING ||
+          request->GetType("permission") != VTYPE_STRING) {
+        RespondNativeError(callback, "The site permission was invalid.");
+        return true;
+      }
+      const std::string origin = request->GetString("origin").ToString();
+      const std::string permission =
+          request->GetString("permission").ToString();
+      const std::string normalized_origin = OriginFromUrl(origin).empty()
+                                                ? origin
+                                                : OriginFromUrl(origin);
+      browser_library_.site_permissions.erase(
+          std::remove_if(
+              browser_library_.site_permissions.begin(),
+              browser_library_.site_permissions.end(),
+              [&](const DurableSitePermission& item) {
+                return item.origin == normalized_origin &&
+                       item.permission == permission;
+              }),
+          browser_library_.site_permissions.end());
+      PersistBrowserLibrary();
+      RespondWithBrowserState(callback);
+      PublishUserBrowserState();
+      return true;
+    }
+    if (type == "browser-clear-data") {
+      const bool clear_history =
+          request->HasKey("history") && request->GetType("history") == VTYPE_BOOL
+              ? request->GetBool("history")
+              : false;
+      const bool clear_cookies =
+          request->HasKey("cookies") && request->GetType("cookies") == VTYPE_BOOL
+              ? request->GetBool("cookies")
+              : false;
+      if (clear_history) {
+        browser_library_.history.clear();
+      }
+      if (clear_cookies) {
+        browser_library_.site_permissions.clear();
+      }
+      PersistBrowserLibrary();
+      RespondWithBrowserState(callback);
+      PublishUserBrowserState();
+      return true;
+    }
     if (type.starts_with("browser-") || type.starts_with("window-")) {
       RespondNativeError(
           callback,
@@ -1961,6 +2296,7 @@ class KestrelClient : public CefClient,
   bool user_extensions_enabled_ = false;
   std::string isolated_profile_root_;
   std::string user_browser_cache_path_;
+  DurableBrowserLibrary browser_library_;
   std::shared_ptr<bool> native_owner_alive_ = std::make_shared<bool>(true);
   std::deque<NativeUserBrowserTab> user_browser_tabs_;
   std::set<std::string> pending_user_browser_closures_;
@@ -2271,6 +2607,21 @@ int main(int argc, char* argv[]) {
         has_argument(argc, argv, "--kestrel-user-extensions");
     durable_profile_enabled =
         has_argument(argc, argv, "--kestrel-durable-profile");
+    smoke_durable_library_seed =
+        has_argument(argc, argv, "--kestrel-smoke-durable-library");
+    smoke_durable_library_verify =
+        has_argument(argc, argv, "--kestrel-smoke-durable-library-verify");
+    if ((smoke_durable_library_seed || smoke_durable_library_verify) &&
+        !durable_profile_enabled) {
+      std::cerr << "Durable library smoke requires --kestrel-durable-profile."
+                << std::endl;
+      return 1;
+    }
+    if (smoke_durable_library_seed && smoke_durable_library_verify) {
+      std::cerr << "Durable library smoke seed and verify cannot run together."
+                << std::endl;
+      return 1;
+    }
     if (extension_workbench && user_extensions_enabled) {
       std::cerr << "Extension workbench and user-browser extensions cannot run "
                    "together."

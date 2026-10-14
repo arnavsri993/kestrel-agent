@@ -15,6 +15,7 @@
     "dev:native-extensions": "node scripts/dev-native-chromium-host.mjs --extensions",
     "test:native-extensions": "node scripts/smoke-native-extensions.mjs",
     "test:native-user-extensions": "node scripts/smoke-native-user-extensions.mjs",
+    "test:native-durable-browser-library": "node scripts/smoke-native-durable-browser-library.mjs",
     "dev:native-chromium-host": "node scripts/dev-native-chromium-host.mjs",
     "dev:desktop": "node scripts/dev-desktop-runtime.mjs",
     "dev:desktop:electron": "pnpm --filter @kestrel/desktop dev",

@@ -190,16 +190,28 @@ Current native-host progress toward cutover:
 - `ChromiumExtensionRuntime` + file host port persist verified unpack paths for
   startup loading (CEF 152 has no programmatic LoadExtension API)
 - `--kestrel-durable-profile` opts into persistent session cookies on the
-  isolated user-browser context
+  isolated user-browser context and writes
+  `{isolated-profile}/browser-library.json` for bookmarks, history, downloads,
+  and site permissions (never the Electron Application Support profile)
+- Bridge commands `browser-toggle-bookmark`, `browser-remove-bookmark`,
+  `browser-clear-history`, `browser-set-site-permission`,
+  `browser-clear-site-permission`, and `browser-clear-data` mutate that library
+- `corepack pnpm test:native-durable-browser-library` proves seed → restart restore
 - HTTP(S) `window.open` popups are adopted as sibling Alloy user tabs
 - `corepack pnpm package:mac:native` / `install:mac:native` package the CEF host;
   side-by-side install is the default (`Kestrel Native.app`); canonical Dock
   replacement requires `KESTREL_INSTALL_NATIVE_CANONICAL=1`
 
+`pnpm-workspace.yaml` `auditConfig.ignoreGhsas` ignores `GHSA-hp3w-g68c-fv3c`
+(`sprintf-js` via `electron-builder`) until Electron packaging is removed: no
+`>=1.1.4` release exists on npm yet.
+
 Still required before retiring Electron:
 
 - Keychain/credential bootstrap without prompt spam
-- Downloads, history, bookmarks, and site-permission persistence parity
+- Live CEF download capture into the durable library (metadata persistence and
+  clear/list paths exist; capture during real downloads still needs a download
+  handler wired to Chromium)
 - Remaining desktop command surface and browser automation relay
 - Production Developer ID signing + notarization
 - Retargeted desktop smokes against the native binary on a durable profile
