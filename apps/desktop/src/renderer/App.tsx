@@ -3152,6 +3152,7 @@ function RuntimeConversation({
 	const grants = projects;
 	const [workspace, setWorkspace] = useState("");
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
+	const persistentDecisionRef = useRef(false);
 	const [mentionFiles, setMentionFiles] = useState<SelectedAttachment[]>([]);
 	const shouldAutoSubmitFirstTaskRef = useRef(false);
 	const [guidedFirstTaskActive, setGuidedFirstTaskActive] = useState(false);
@@ -3978,6 +3979,8 @@ function RuntimeConversation({
 		setPending(null);
 		setOptimisticUser(prompt);
 		setInput("");
+		const attachmentsBeforeSubmit = attachments;
+		let runAccepted = false;
 		let sessionId = activeSessionIdRef.current;
 		let streamId: string | null = null;
 		try {
@@ -4036,6 +4039,7 @@ function RuntimeConversation({
 					: {}),
 			})) as CoreResponse;
 			if (!response.ok) throw new Error(response.error);
+			runAccepted = true;
 			if (activeSessionIdRef.current === sessionId) {
 				setPending(
 					response.run?.status === "waiting_approval" && response.execution
@@ -4046,10 +4050,21 @@ function RuntimeConversation({
 				setAttachments([]);
 			}
 		} catch (cause) {
+			if (
+				!runAccepted &&
+				!draft &&
+				activeSessionIdRef.current === sessionId
+			) {
+				// Keep the person's work if the run never started: restore the prompt
+				// and attachments unless they have already typed or attached something new.
+				setInput((current) => (current.trim() ? current : prompt));
+				if (attachmentsBeforeSubmit.length > 0)
+					setAttachments((current) =>
+						current.length > 0 ? current : attachmentsBeforeSubmit,
+					);
+			}
 			if (activeSessionIdRef.current === sessionId)
-				setError(
-					cause instanceof Error ? cause.message : "The agent run failed.",
-				);
+				setError(userFacingError(cause, "The agent run failed."));
 		} finally {
 			if (!streamId || streamIdRef.current === streamId) {
 				streamIdRef.current = null;
@@ -4079,8 +4094,11 @@ function RuntimeConversation({
 			setGuidedFirstTaskActive(false);
 	}, [guidedFirstTaskActive, busy, pending, latestRun?.status]);
 
-	async function decide(approvalDecision: "approved" | "rejected") {
-		if (!pending || busy) return;
+	async function decide(
+		approvalDecision: "approved" | "rejected",
+		options?: { alreadyBusy?: boolean },
+	): Promise<boolean> {
+		if (!pending || (busy && !options?.alreadyBusy)) return false;
 		const sessionId = pending.run.sessionId;
 		let streamId: string | null = null;
 		setBusy(true);
@@ -4114,13 +4132,11 @@ function RuntimeConversation({
 				snapshotResponse.snapshot
 			)
 				onSnapshot(snapshotResponse.snapshot);
+			return true;
 		} catch (cause) {
 			if (activeSessionIdRef.current === sessionId)
-				setError(
-					cause instanceof Error
-						? cause.message
-						: "Could not resolve the approval.",
-				);
+				setError(userFacingError(cause, "Could not resolve the approval."));
+			return false;
 		} finally {
 			if (!streamId || streamIdRef.current === streamId) {
 				streamIdRef.current = null;
@@ -4132,20 +4148,39 @@ function RuntimeConversation({
 	}
 
 	async function decidePersistently(decision: "allow" | "deny") {
-		if (!pending || busy) return;
+		if (!pending || busy || persistentDecisionRef.current) return;
+		persistentDecisionRef.current = true;
+		const sessionId = pending.run.sessionId;
+		let ruleSaved = false;
+		setBusy(true);
 		setError("");
-		const response = (await window.kestrel.request({
-			type: "runtime-set-approval-rule",
-			toolName: pending.execution.toolName,
-			decision,
-			scope: "session",
-			sessionId: pending.run.sessionId,
-		})) as CoreResponse;
-		if (!response.ok) {
-			setError(response.error);
-			return;
+		try {
+			const response = (await window.kestrel.request({
+				type: "runtime-set-approval-rule",
+				toolName: pending.execution.toolName,
+				decision,
+				scope: "session",
+				sessionId,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			ruleSaved = true;
+			const resolved = await decide(
+				decision === "allow" ? "approved" : "rejected",
+				{ alreadyBusy: true },
+			);
+			if (!resolved && activeSessionIdRef.current === sessionId)
+				setError("Rule saved; the action is still waiting. Try approving or rejecting it again.");
+		} catch (cause) {
+			if (activeSessionIdRef.current === sessionId)
+				setError(
+					ruleSaved
+						? "Rule saved; the action is still waiting. Try approving or rejecting it again."
+						: userFacingError(cause, "Could not save the approval rule."),
+				);
+		} finally {
+			persistentDecisionRef.current = false;
+			setBusy(false);
 		}
-		await decide(decision === "allow" ? "approved" : "rejected");
 	}
 
 	async function cancel() {

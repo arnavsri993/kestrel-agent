@@ -1853,6 +1853,50 @@ function finishMacWidgetRun(
   refreshMacWidgetSnapshot();
 }
 
+const MAIN_RENDERER_RELOAD_LIMIT = 2;
+const MAIN_RENDERER_RELOAD_WINDOW_MS = 60_000;
+const MAIN_RENDERER_UNRESPONSIVE_GRACE_MS = 5_000;
+
+function installMainRendererRecovery(window: BrowserWindow): void {
+  let reloadTimestamps: number[] = [];
+  let unresponsiveTimer: NodeJS.Timeout | null = null;
+  const clearUnresponsiveTimer = () => {
+    if (unresponsiveTimer) clearTimeout(unresponsiveTimer);
+    unresponsiveTimer = null;
+  };
+  const attemptReload = (reason: string) => {
+    if (quitting || window.isDestroyed() || window.webContents.isDestroyed())
+      return;
+    const now = Date.now();
+    reloadTimestamps = reloadTimestamps.filter(
+      (at) => now - at < MAIN_RENDERER_RELOAD_WINDOW_MS,
+    );
+    if (reloadTimestamps.length >= MAIN_RENDERER_RELOAD_LIMIT) {
+      console.warn(
+        `[kestrel] main renderer ${reason}; reload limit reached, leaving window as-is.`,
+      );
+      return;
+    }
+    reloadTimestamps.push(now);
+    console.warn(`[kestrel] main renderer ${reason}; reloading.`);
+    window.webContents.reload();
+  };
+  window.webContents.on("render-process-gone", (_event, details) => {
+    clearUnresponsiveTimer();
+    if (details.reason === "clean-exit") return;
+    attemptReload(`process gone (${details.reason})`);
+  });
+  window.on("unresponsive", () => {
+    if (unresponsiveTimer) return;
+    unresponsiveTimer = setTimeout(() => {
+      unresponsiveTimer = null;
+      attemptReload("unresponsive");
+    }, MAIN_RENDERER_UNRESPONSIVE_GRACE_MS);
+  });
+  window.on("responsive", clearUnresponsiveTimer);
+  window.on("closed", clearUnresponsiveTimer);
+}
+
 function createMainWindow(): BrowserWindow {
   const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
@@ -1950,6 +1994,7 @@ function createMainWindow(): BrowserWindow {
     },
   );
   protectRendererNavigation(window.webContents, trustedRendererUrl);
+  installMainRendererRecovery(window);
   window.webContents.on(
     "did-start-navigation",
     (_event, _url, _isInPlace, isMainFrame) => {
