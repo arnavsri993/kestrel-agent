@@ -17,6 +17,13 @@ interface MessageGroup {
 	entries: IndexedMessage[];
 }
 
+// Tool-heavy recovery can push the active brief outside the general recency
+// window. Keep the original brief and two newest earlier user turns, capped
+// per turn and at 10% of the budget. The latest request still takes priority.
+const MAX_RECENT_PRIOR_USER_REQUESTS = 2;
+const MAX_PRIOR_USER_REQUEST_CHARACTERS = 6_000;
+const MAX_PRIOR_USER_RETENTION_CHARACTERS = 12_000;
+
 function toModelMessage(message: RuntimeMessage): ModelMessage {
 	return {
 		role: message.role,
@@ -221,6 +228,56 @@ export class ContextCompactor {
 		const latestUserEntry = latestUserGroup?.entries.find(
 			(entry) => entry.message.role === "user",
 		);
+		const priorUserEntries = groups
+			.filter((group) => group !== latestUserGroup)
+			.map((group) => ({
+				group,
+				entry: group.entries.find((entry) => entry.message.role === "user"),
+			}))
+			.filter(
+				(
+					candidate,
+				): candidate is { group: MessageGroup; entry: IndexedMessage } =>
+					candidate.entry !== undefined,
+			);
+		const recentStart = Math.max(
+			1,
+			priorUserEntries.length - MAX_RECENT_PRIOR_USER_REQUESTS,
+		);
+		const recentPriorUserEntries = priorUserEntries.length
+			? [priorUserEntries[0]!, ...priorUserEntries.slice(recentStart)]
+			: [];
+		const priorUserBudget = Math.min(
+			MAX_PRIOR_USER_RETENTION_CHARACTERS,
+			Math.floor(maximumCharacters * 0.1),
+		);
+		const perPriorUserBudget = Math.min(
+			MAX_PRIOR_USER_REQUEST_CHARACTERS,
+			Math.floor(
+				priorUserBudget / Math.max(1, recentPriorUserEntries.length),
+			),
+		);
+		const retainedPriorUsers = recentPriorUserEntries.flatMap(
+			({ group, entry }) => {
+				const redacted = {
+					...entry.message,
+					content: textContent(
+						redactSensitiveContent(contentText(entry.message.content)),
+					),
+				};
+				const fitted = fitMessage(redacted, perPriorUserBudget);
+				return fitted
+					? [{ group, entry, message: fitted, fullMessage: redacted }]
+					: [];
+			},
+		);
+		const retainedPriorUsersByGroup = new Map(
+			retainedPriorUsers.map((retained) => [retained.group, retained]),
+		);
+		const priorUserReserve = retainedPriorUsers.reduce(
+			(sum, retained) => sum + messageCharacters(retained.message),
+			0,
+		);
 		const possibleDigestGroups = groups.filter(
 			(group) => group !== latestUserGroup,
 		);
@@ -259,7 +316,11 @@ export class ContextCompactor {
 
 		const systemBudget = Math.max(
 			0,
-			maximumCharacters - latestUserReserve - digestReserve - checkpointReserve,
+			maximumCharacters -
+				latestUserReserve -
+				priorUserReserve -
+				digestReserve -
+				checkpointReserve,
 		);
 		let remainingSystemBudget = systemBudget;
 		const selectedSystems: IndexedMessage[] = [];
@@ -280,7 +341,10 @@ export class ContextCompactor {
 		if (latestUserGroup && latestUserEntry) {
 			const userBudget = Math.max(
 				0,
-				remainingCharacters - digestReserve - checkpointReserve,
+				remainingCharacters -
+					priorUserReserve -
+					digestReserve -
+					checkpointReserve,
 			);
 			const compactedUser = fitMessage(latestUserEntry.message, userBudget);
 			if (compactedUser) {
@@ -289,6 +353,13 @@ export class ContextCompactor {
 				retainedSources.add(latestUserEntry.sourceIndex);
 				remainingCharacters -= messageCharacters(compactedUser);
 			}
+		}
+
+		for (const retained of retainedPriorUsers) {
+			selectedGroups.add(retained.group);
+			groupOverrides.set(retained.group, [retained.message]);
+			retainedSources.add(retained.entry.sourceIndex);
+			remainingCharacters -= messageCharacters(retained.message);
 		}
 
 		const recentGroups: MessageGroup[] = [];
@@ -307,7 +378,20 @@ export class ContextCompactor {
 			remainingCharacters - digestReserve - checkpointReserve,
 		);
 		for (const group of [...recentGroups].reverse()) {
-			if (selectedGroups.has(group)) continue;
+			if (selectedGroups.has(group)) {
+				const retainedPriorUser = retainedPriorUsersByGroup.get(group);
+				if (retainedPriorUser) {
+					const incrementalCharacters =
+						messageCharacters(retainedPriorUser.fullMessage) -
+						messageCharacters(retainedPriorUser.message);
+					if (incrementalCharacters <= recentBudget) {
+						groupOverrides.set(group, [retainedPriorUser.fullMessage]);
+						recentBudget -= incrementalCharacters;
+						remainingCharacters -= incrementalCharacters;
+					}
+				}
+				continue;
+			}
 			const characters = groupCharacters(group);
 			if (characters > recentBudget) continue;
 			selectedGroups.add(group);

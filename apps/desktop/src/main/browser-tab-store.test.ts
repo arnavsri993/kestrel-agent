@@ -17,10 +17,13 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	BrowserTabStore,
+	boundedBrowserAccessibilityTree,
 	createEmptyBrowserTab,
 	describeBrowserLoadFailure,
 	freshBrowserState,
 	MAX_ORIGIN_FAVICONS,
+	MAX_AX_SNAPSHOT_BYTES,
+	MAX_MODEL_AX_SNAPSHOT_BYTES,
 	normalizeBrowserAddress,
 	redactUntrustedBrowserText,
 	sanitizeBrowserUrl,
@@ -29,6 +32,64 @@ import {
 } from "./browser-tab-store";
 
 const temporaryDirectories: string[] = [];
+
+describe("bounded browser accessibility content", () => {
+	it("keeps useful semantic content while discarding oversized CDP diagnostics", () => {
+		const tree = boundedBrowserAccessibilityTree([{
+			nodeId: "1", backendDOMNodeId: 42, role: { value: "button" },
+			name: { value: "Read release notes", sources: [{ diagnostic: "x".repeat(1_600_000) }] },
+			childIds: ["2"], properties: [{ name: "disabled", value: { value: false } }],
+		}, { nodeId: "2", parentId: "1", role: { value: "StaticText" }, name: { value: "Released October 10; retain a 24-hour rollback." } }]);
+		expect(tree.truncated).toBe(true);
+		expect(JSON.stringify(tree.accessibilityTree)).toContain("24-hour rollback");
+		expect(tree.accessibilityTree.nodes[0]).toMatchObject({ nodeId: "1", childIds: ["2"], ref: "e1" });
+		expect(tree.interactive).toEqual([{ ref: "e1", role: "button", name: "Read release notes", backendDOMNodeId: 42 }]);
+		expect(JSON.stringify(tree)).not.toContain("diagnostic");
+		expect(Buffer.byteLength(JSON.stringify(tree), "utf8")).toBeLessThanOrEqual(MAX_AX_SNAPSHOT_BYTES);
+	});
+
+	it("keeps a successful long-page snapshot inside the model tool-result envelope", () => {
+		const tree = boundedBrowserAccessibilityTree(Array.from({ length: 2_000 }, (_, index) => ({
+			nodeId: String(index), role: { value: "StaticText" },
+			name: { value: index === 0 ? "Codex App Server supports streamed agent events and approval decisions." : "Documentation content ".repeat(10) },
+		})));
+		const serialized = JSON.stringify({ status: "verified", output: { ...tree, url: "https://example.test/docs", title: "Documentation", trust: "untrusted_browser" } });
+		expect(tree.truncated).toBe(true);
+		expect(Buffer.byteLength(JSON.stringify({ accessibilityTree: tree.accessibilityTree, interactive: tree.interactive }), "utf8")).toBeLessThanOrEqual(MAX_MODEL_AX_SNAPSHOT_BYTES);
+		expect(serialized.length).toBeLessThan(64_000);
+		expect(serialized).toContain("streamed agent events and approval decisions");
+	});
+
+	it("keeps readable document facts beyond ignored layout scaffolding", () => {
+		const tree = boundedBrowserAccessibilityTree([
+			...Array.from({ length: 1_800 }, (_, index) => ({ nodeId: String(index), ignored: true, name: { value: "layout ".repeat(40) } })),
+			{ nodeId: "article", role: { value: "StaticText" }, name: { value: "Actual document fact: use newline-delimited JSON over stdio." } },
+		]);
+		expect(tree.truncated).toBe(true);
+		expect(JSON.stringify(tree)).toContain("Actual document fact");
+		expect(JSON.stringify(tree)).not.toContain("layout layout");
+	});
+
+	it("bounds multibyte text and never retains refs for omitted nodes", () => {
+		const tree = boundedBrowserAccessibilityTree(Array.from({ length: 250 }, (_, index) => ({
+			nodeId: String(index), backendDOMNodeId: index + 1, role: { value: "button" }, name: { value: "界".repeat(10_000) },
+		})));
+		expect(tree.truncated).toBe(true);
+		expect(Buffer.byteLength(JSON.stringify({ accessibilityTree: tree.accessibilityTree, interactive: tree.interactive }), "utf8")).toBeLessThanOrEqual(MAX_AX_SNAPSHOT_BYTES);
+		const emitted = new Set(tree.accessibilityTree.nodes.map((node) => (node as { ref?: string }).ref));
+		for (const ref of tree.interactive) expect(emitted.has(ref.ref)).toBe(true);
+		expect(tree.interactive.length).toBeLessThan(200);
+	});
+
+	it("redacts secret fields before size fitting and marks node or ref truncation", () => {
+		const sensitive = { nodeId: "secret", backendDOMNodeId: 1, role: { value: "textbox" }, name: { value: "Password" }, value: { value: "never-share-this-secret" } };
+		const tree = boundedBrowserAccessibilityTree([sensitive, { name: { value: "x".repeat(1_600_000) } }]);
+		expect(JSON.stringify(tree)).not.toContain("never-share-this-secret");
+		expect(tree.interactive[0]?.name).toBe("Sensitive field");
+		expect(tree.truncated).toBe(true);
+		expect(boundedBrowserAccessibilityTree(Array.from({ length: 5_001 }, () => ({ role: { value: "StaticText" }, name: { value: "notes" } }))).truncated).toBe(true);
+	});
+});
 
 afterEach(() => {
 	for (const directory of temporaryDirectories.splice(0))

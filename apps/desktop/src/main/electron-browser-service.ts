@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import {
-	annotateAccessibilityTree,
 	type BrowserAction,
 	type BrowserDiagnostic,
 	type BrowserDownload,
@@ -27,11 +26,9 @@ import {
 } from "./browser-backend-wire";
 import {
 	MAX_AX_SNAPSHOT_BYTES,
-	MAX_AX_SNAPSHOT_NODES,
-	MAX_INTERACTIVE_REFS,
+	boundedBrowserAccessibilityTree,
 	redactUntrustedBrowserText,
 	sanitizeBrowserUrl,
-	sanitizeUntrustedBrowserValue,
 } from "./browser-tab-store";
 import {
 	dispatchBrowserKey,
@@ -70,6 +67,54 @@ interface BrowserRecord {
 	diagnostics: BrowserDiagnostic[];
 	downloads: BrowserDownload[];
 	downloadDirectory: string;
+	navigation: BrowserNavigationState;
+}
+
+interface BrowserNavigationAttempt {
+	url: string;
+	started: boolean;
+	ambiguous: boolean;
+	requestId?: number;
+	denied?: { origin?: string };
+}
+
+interface BrowserNavigationState {
+	pending: Set<BrowserNavigationAttempt>;
+	current?: BrowserNavigationAttempt;
+}
+
+function navigationUrl(value: string): string | undefined {
+	try {
+		const url = new URL(value);
+		url.hash = "";
+		return url.href;
+	} catch {
+		return undefined;
+	}
+}
+
+function recordNavigationScopeDenial(
+	attempt: BrowserNavigationAttempt,
+	value: string,
+): void {
+	if (attempt.ambiguous || attempt.denied) return;
+	try {
+		const origin = new URL(value).origin;
+		attempt.denied = origin !== "null" ? { origin } : {};
+	} catch {
+		attempt.denied = {};
+	}
+}
+
+function isNavigationCancellation(error: unknown): boolean {
+	if (!error || typeof error !== "object") return false;
+	const { code, errno } = error as { code?: unknown; errno?: unknown };
+	return (
+		code === "ERR_FAILED" ||
+		code === "ERR_ABORTED" ||
+		code === "ERR_BLOCKED_BY_CLIENT" ||
+		(code === undefined && (errno === -2 || errno === -3 || errno === -20))
+	);
 }
 
 export const MAX_BROWSER_DOWNLOAD_RECORDS = 200;
@@ -231,6 +276,7 @@ export class ElectronBrowserService {
 		const allowed = new Set(origins);
 		const diagnostics: BrowserDiagnostic[] = [];
 		const downloads: BrowserDownload[] = [];
+		const navigation: BrowserNavigationState = { pending: new Set() };
 		const downloadDirectory = join(
 			app.getPath("userData"),
 			"browser-downloads",
@@ -247,9 +293,25 @@ export class ElectronBrowserService {
 		);
 		partition.setPermissionCheckHandler(() => false);
 		partition.webRequest.onBeforeRequest((details, callback) => {
-			callback({
-				cancel: isolatedBrowserShouldCancelRequest(details.url, allowed),
-			});
+			const cancel = isolatedBrowserShouldCancelRequest(details.url, allowed);
+			const attempt = navigation.current;
+			if (
+				attempt &&
+				!attempt.ambiguous &&
+				attempt.started &&
+				details.resourceType === "mainFrame" &&
+				details.webContentsId === window.webContents.id
+			) {
+				if (
+					attempt.requestId === undefined &&
+					!cancel &&
+					navigationUrl(details.url) === attempt.url
+				)
+					attempt.requestId = details.id;
+				if (cancel && details.id === attempt.requestId)
+					recordNavigationScopeDenial(attempt, details.url);
+			}
+			callback({ cancel });
 		});
 		partition.webRequest.onErrorOccurred((details) =>
 			recordDiagnostic({
@@ -325,14 +387,27 @@ export class ElectronBrowserService {
 			},
 		});
 		window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-		const preventDisallowedNavigation = (
-			event: { preventDefault: () => void },
-			url: string,
-		) => {
+		window.webContents.on("did-start-navigation", (event) => {
+			const attempt = navigation.current;
+			if (!attempt || !event.isMainFrame || event.isSameDocument) return;
+			if (!attempt.started && navigationUrl(event.url) === attempt.url)
+				attempt.started = true;
+			else attempt.ambiguous = true;
+		});
+		window.webContents.on("will-navigate", (event, url) => {
+			// loadURL never emits will-navigate. A page/user navigation cannot be
+			// attributed to the pending programmatic navigation.
+			if (navigation.current && event.isMainFrame)
+				navigation.current.ambiguous = true;
 			if (isolatedBrowserShouldCancelRequest(url, allowed)) event.preventDefault();
-		};
-		window.webContents.on("will-navigate", preventDisallowedNavigation);
-		window.webContents.on("will-redirect", preventDisallowedNavigation);
+		});
+		window.webContents.on("will-redirect", (event, url) => {
+			if (!isolatedBrowserShouldCancelRequest(url, allowed)) return;
+			const attempt = navigation.current;
+			if (attempt?.started && event.isMainFrame && !event.isSameDocument)
+				recordNavigationScopeDenial(attempt, url);
+			event.preventDefault();
+		});
 		window.webContents.on("did-navigate", () => {
 			this.elementRefs.delete(id);
 		});
@@ -359,6 +434,7 @@ export class ElectronBrowserService {
 			diagnostics,
 			downloads,
 			downloadDirectory,
+			navigation,
 		});
 		return id;
 	}
@@ -375,7 +451,8 @@ export class ElectronBrowserService {
 		url: string,
 		signal: AbortSignal,
 	): Promise<void> {
-		const { window, allowedOrigins } = this.require(id);
+		const { window, allowedOrigins, navigation } = this.require(id);
+		if (signal.aborted) throw signal.reason;
 		let requested: URL;
 		try {
 			requested = new URL(url);
@@ -389,13 +466,40 @@ export class ElectronBrowserService {
 				"Electron browser navigation is outside the origin allowlist.",
 			);
 		this.elementRefs.delete(id);
+		const attempt: BrowserNavigationAttempt = {
+			url: navigationUrl(url)!,
+			started: false,
+			ambiguous: navigation.pending.size > 0,
+		};
+		// Overlapping loadURL promises share one WebContents event stream. Never
+		// guess which promise a redirect belongs to, even after one settles.
+		for (const pending of navigation.pending) pending.ambiguous = true;
+		navigation.pending.add(attempt);
+		navigation.current = attempt;
 		const abort = () => window.webContents.stop();
 		signal.addEventListener("abort", abort, { once: true });
 		try {
 			await window.loadURL(url);
 			if (signal.aborted) throw signal.reason;
+		} catch (error) {
+			if (signal.aborted) throw signal.reason;
+			if (
+				navigation.current === attempt &&
+				!attempt.ambiguous &&
+				attempt.denied &&
+				isNavigationCancellation(error)
+			) {
+				throw new Error(
+					attempt.denied.origin
+						? `Electron browser navigation was blocked because origin ${attempt.denied.origin} is outside this session's origin allowlist.`
+						: "Electron browser navigation was blocked outside this session's origin allowlist.",
+				);
+			}
+			throw error;
 		} finally {
 			signal.removeEventListener("abort", abort);
+			navigation.pending.delete(attempt);
+			if (navigation.current === attempt) delete navigation.current;
 		}
 	}
 
@@ -564,20 +668,16 @@ export class ElectronBrowserService {
 		signal: AbortSignal,
 	): Promise<BrowserSnapshot> {
 		const { window } = this.require(id);
+		this.elementRefs.delete(id);
 		if (signal.aborted) throw signal.reason;
 		if (!window.webContents.debugger.isAttached())
 			window.webContents.debugger.attach("1.3");
 		const result = (await window.webContents.debugger.sendCommand(
 			"Accessibility.getFullAXTree",
 		)) as { nodes?: unknown[] };
-		const nodes = result.nodes ?? [];
-		const annotated = annotateAccessibilityTree({
-			nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES),
-		});
-		const interactive = annotated.interactive.slice(0, MAX_INTERACTIVE_REFS);
-		const accessibilityTree = sanitizeUntrustedBrowserValue(
-			annotated.accessibilityTree,
-		);
+		if (signal.aborted) throw signal.reason;
+		if (!result || !Array.isArray(result.nodes)) throw new Error("Browser accessibility validation is unavailable.");
+		const { accessibilityTree, interactive, truncated } = boundedBrowserAccessibilityTree(result.nodes);
 		if (
 			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
 			MAX_AX_SNAPSHOT_BYTES
@@ -593,9 +693,7 @@ export class ElectronBrowserService {
 			title: redactUntrustedBrowserText(window.webContents.getTitle(), 500),
 			accessibilityTree,
 			interactive: publicInteractiveRefs(interactive),
-			truncated:
-				nodes.length > MAX_AX_SNAPSHOT_NODES ||
-				annotated.interactive.length > MAX_INTERACTIVE_REFS,
+			truncated,
 		};
 	}
 
@@ -605,30 +703,39 @@ export class ElectronBrowserService {
 	): Promise<ScreenshotFrame> {
 		const { window } = this.require(id);
 		if (signal.aborted) throw signal.reason;
-		const snapshot = await this.snapshot(id, signal);
-		if (
-			snapshot.interactive?.some(
-				(item) =>
-					item.name === "Sensitive field" ||
-					/(?:\b(?:new|current|old|confirm(?:ation)?|repeat)?\s*password\b|\b(?:one\s*time|recovery|verification|security)\s*(?:code|passcode|pin)\b|\botp\b|\b(?:cvv|cvc)\b|\bapi\s*(?:key|token)\b|\baccess\s*token\b|\bprivate\s*key\b)/i.test(
-						item.name ?? "",
-					),
+		try {
+			const snapshot = await this.snapshot(id, signal);
+			if (signal.aborted) throw signal.reason;
+			if (snapshot.truncated)
+				throw new Error("Kestrel cannot validate every sensitive field in a truncated browser snapshot; screenshot capture is blocked.");
+			if (
+				snapshot.interactive?.some(
+					(item) =>
+						item.name === "Sensitive field" ||
+						/(?:\b(?:new|current|old|confirm(?:ation)?|repeat)?\s*password\b|\b(?:one\s*time|recovery|verification|security)\s*(?:code|passcode|pin)\b|\botp\b|\b(?:cvv|cvc)\b|\bapi\s*(?:key|token)\b|\baccess\s*token\b|\bprivate\s*key\b)/i.test(
+							item.name ?? "",
+						),
+				)
 			)
-		)
-			throw new Error(
-				"Kestrel does not share browser screenshots from pages with sensitive input fields.",
-			);
-		const image = await window.webContents.capturePage();
-		const { width, height } = image.getSize();
-		const bgra = image.toBitmap();
-		const rgba = new Uint8Array(bgra.byteLength);
-		for (let offset = 0; offset < bgra.length; offset += 4) {
-			rgba[offset] = bgra[offset + 2]!;
-			rgba[offset + 1] = bgra[offset + 1]!;
-			rgba[offset + 2] = bgra[offset]!;
-			rgba[offset + 3] = bgra[offset + 3]!;
+				throw new Error(
+					"Kestrel does not share browser screenshots from pages with sensitive input fields.",
+				);
+			const image = await window.webContents.capturePage();
+			if (signal.aborted) throw signal.reason;
+			const { width, height } = image.getSize();
+			const bgra = image.toBitmap();
+			const rgba = new Uint8Array(bgra.byteLength);
+			for (let offset = 0; offset < bgra.length; offset += 4) {
+				rgba[offset] = bgra[offset + 2]!;
+				rgba[offset + 1] = bgra[offset + 1]!;
+				rgba[offset + 2] = bgra[offset]!;
+				rgba[offset + 3] = bgra[offset + 3]!;
+			}
+			return { width, height, rgba, png: image.toPNG() };
+		} catch (error) {
+			this.elementRefs.delete(id);
+			throw error;
 		}
-		return { width, height, rgba, png: image.toPNG() };
 	}
 
 	private async setViewport(

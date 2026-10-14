@@ -132,7 +132,7 @@ const electron = vi.hoisted(() => {
       clear: vi.fn(),
     };
     isCurrentlyAudible = vi.fn(() => false);
-    debugger = { isAttached: vi.fn(() => false), attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn() };
+    debugger = { isAttached: vi.fn(() => false), attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn().mockResolvedValue({ nodes: [] }) };
   }
   class MockView {
     webContents = new MockWebContents();
@@ -3515,18 +3515,76 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 		expect(contents.capturePage).not.toHaveBeenCalled();
 	});
 
-  it("rejects oversized accessibility snapshots before returning them", async () => {
+  it("returns bounded useful accessibility content for oversized pages", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
     await service.navigate(tab.id, "https://example.com");
     const contents = electron.state.views[0]!.webContents;
     contents.url = "https://example.com/";
     contents.debugger.sendCommand.mockResolvedValue({
-      nodes: [{ name: { value: "x".repeat(1_500_000) } }],
+      nodes: [{ name: { value: "Release notes " + "x".repeat(1_500_000) } }],
     });
 
-    await expect(service.snapshot(tab.id)).rejects.toThrow("exceeds 1.5 MB");
+    const snapshot = await service.snapshot(tab.id);
+    expect(snapshot.truncated).toBe(true);
+    expect(JSON.stringify(snapshot.accessibilityTree)).toContain("Release notes");
+    expect(Buffer.byteLength(JSON.stringify(snapshot.accessibilityTree), "utf8")).toBeLessThanOrEqual(1_500_000);
   });
+
+	it.each(["refs", "nodes"])("blocks screenshots when a sensitive field falls past the %s cap", async (cap) => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com/large");
+		const contents = electron.state.views[0]!.webContents;
+		const nodes = Array.from({ length: cap === "refs" ? 200 : 5_000 }, (_, index) => ({
+			nodeId: String(index), backendDOMNodeId: index + 1,
+			role: { value: cap === "refs" ? "button" : "StaticText" }, name: { value: "ordinary notes" },
+		}));
+		nodes.push({ nodeId: "secret", backendDOMNodeId: 9_999, role: { value: "textbox" }, name: { value: "Password" } });
+		contents.debugger.sendCommand.mockResolvedValue({ nodes });
+		await expect(service.screenshot(tab.id)).rejects.toThrow("truncated browser snapshot");
+		expect(contents.capturePage).not.toHaveBeenCalled();
+	});
+
+	it("does not capture after cancellation during AX validation", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		const controller = new AbortController();
+		contents.debugger.sendCommand.mockImplementationOnce(async () => {
+			controller.abort(new Error("stop AX validation"));
+			return { nodes: [] };
+		});
+		await expect(service.screenshot(tab.id, controller.signal)).rejects.toThrow("stop AX validation");
+		expect(contents.capturePage).not.toHaveBeenCalled();
+	});
+
+	it("clears stale refs when a fresh visible AX snapshot is cancelled", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		const refs = (service as unknown as { elementRefs: Map<string, Map<string, number>> }).elementRefs;
+		refs.set(tab.id, new Map([["e1", 42]]));
+		const controller = new AbortController();
+		contents.debugger.sendCommand.mockImplementationOnce(async () => {
+			controller.abort(new Error("stop snapshot"));
+			return { nodes: [] };
+		});
+		await expect(service.snapshot(tab.id, controller.signal)).rejects.toThrow("stop snapshot");
+		expect(refs.has(tab.id)).toBe(false);
+	});
+
+	it("blocks screenshots if accessibility validation is unavailable", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		contents.debugger.sendCommand.mockResolvedValueOnce({});
+		await expect(service.screenshot(tab.id)).rejects.toThrow("validation is unavailable");
+		expect(contents.capturePage).not.toHaveBeenCalled();
+	});
 
   it("bounds a stalled Electron capture and retries after requesting a repaint", async () => {
     vi.useFakeTimers();

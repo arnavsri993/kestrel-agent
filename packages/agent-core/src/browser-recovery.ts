@@ -6,6 +6,7 @@ export const BROWSER_RECOVERY_REASON_CODES = [
 	"obscured",
 	"navigation_changed",
 	"auth_required",
+	"origin_scope",
 	"popup_denied",
 	"network_error",
 ] as const;
@@ -18,6 +19,7 @@ export const BROWSER_RECOVERY_HINT_KINDS = [
 	"reobserve",
 	"diagnostics",
 	"auth_handoff",
+	"scope_request",
 	"safe_stop",
 ] as const;
 
@@ -41,7 +43,8 @@ export interface BrowserRecoveryHint {
 		| "browser.snapshot"
 		| "browser.visible-snapshot"
 		| "browser.diagnostics"
-		| "browser.auth-handoff";
+		| "browser.auth-handoff"
+		| "browser.create";
 	readOnly: boolean;
 	requiresApproval: boolean;
 }
@@ -126,6 +129,7 @@ const HINTS_BY_REASON: Record<
 	obscured: ["snapshot", "reobserve", "safe_stop"],
 	navigation_changed: ["snapshot", "reobserve", "diagnostics", "safe_stop"],
 	auth_required: ["snapshot", "auth_handoff", "safe_stop"],
+	origin_scope: ["scope_request", "safe_stop"],
 	popup_denied: ["diagnostics", "safe_stop"],
 	network_error: ["diagnostics", "snapshot", "safe_stop"],
 };
@@ -177,6 +181,19 @@ function recoveryHint(
 					: "Ask the user to authenticate directly in the visible tab without exposing credentials to the model.",
 			...(surface === "isolated"
 				? { toolName: "browser.auth-handoff" as const }
+				: {}),
+			readOnly: false,
+			requiresApproval: true,
+		};
+	if (kind === "scope_request")
+		return {
+			kind,
+			description:
+				surface === "isolated"
+					? "Request one fresh browser.create approval containing only the previously approved origins plus the sanitized blocked origin. Never broaden the scope or replay the failed navigation automatically."
+					: "Stop safely because visible-browser origin scope cannot be expanded through isolated browser recovery.",
+			...(surface === "isolated"
+				? { toolName: "browser.create" as const }
 				: {}),
 			readOnly: false,
 			requiresApproval: true,
@@ -273,6 +290,12 @@ export function browserRecoveryReason(
 		)
 	)
 		return "auth_required";
+	if (
+		/(?:browser|electron browser) navigation.*outside (?:this session's )?origin allowlist|navigation was blocked because origin https?:\/\/[^\s/]+(?::\d+)? is outside this session's origin allowlist|navigation was blocked outside this session's origin allowlist/.test(
+			message,
+		)
+	)
+		return "origin_scope";
 	if (/popup.*(?:denied|blocked)|(?:denied|blocked).*popup/.test(message))
 		return "popup_denied";
 	if (
@@ -329,6 +352,9 @@ function recoverySignature(guidance: BrowserRecoveryGuidance): string {
 }
 
 function maximumRecoveryFailures(guidance: BrowserRecoveryGuidance): number {
+	// One approved replacement scope is not a replay of the failed request.
+	// Preserve the request's effect uncertainty while bounding that recovery.
+	if (guidance.reasonCode === "origin_scope") return 2;
 	return guidance.effectState === "not_started" ? 2 : 1;
 }
 
@@ -339,7 +365,9 @@ function allowedRecoveryTools(guidance: BrowserRecoveryGuidance): string[] {
 				.map((kind) => recoveryHint(kind, guidance.surface))
 				.flatMap((hint) =>
 				hint.toolName &&
-				(hint.readOnly || hint.kind === "auth_handoff")
+				(hint.readOnly ||
+					hint.kind === "auth_handoff" ||
+					hint.kind === "scope_request")
 					? [hint.toolName]
 					: [],
 				),
@@ -359,7 +387,9 @@ function planForEntry(entry: BrowserRecoveryBudgetEntry): BrowserRecoveryBudgetP
 		automaticReplayAllowed: false,
 		allowedToolNames: [...entry.allowedToolNames],
 		message:
-			phase === "stop_required"
+			entry.reasonCode === "origin_scope" && phase !== "stop_required"
+				? "The destination origin is outside the approved anonymous session. Request one fresh browser.create approval for the exact replacement scope; do not broaden or replay automatically."
+				: phase === "stop_required"
 				? "The bounded recovery budget is exhausted. Preserve the evidence, stop browser mutations on this surface, and request only the missing intervention."
 				: phase === "observe_required"
 					? "Take one fresh allowed read-only observation before deciding whether a single retry is safe. Do not replay the failed action yet."
@@ -391,7 +421,11 @@ export function applyBrowserRecoveryBudget(
 		maximumFailures,
 		phase:
 			failureCount >= maximumFailures ? "stop_required" : "observe_required",
-		allowedToolNames: allowedRecoveryTools(guidance),
+		allowedToolNames:
+			guidance.reasonCode === "origin_scope" &&
+			failureCount >= maximumFailures
+				? []
+				: allowedRecoveryTools(guidance),
 		sequence: state.nextSequence,
 	};
 	const entries = [
@@ -493,6 +527,8 @@ export function recordBrowserRecoveryToolSuccess(
 			!readOnly &&
 			(entry.phase === "retry_ready" ||
 				(entry.reasonCode === "auth_required" &&
+					entry.allowedToolNames.includes(toolName)) ||
+				(entry.reasonCode === "origin_scope" &&
 					entry.allowedToolNames.includes(toolName)))
 		) {
 			changed = true;
@@ -508,7 +544,9 @@ export function browserRecoveryBlockForTool(
 	toolName: string,
 	readOnly: boolean,
 ): BrowserRecoveryBudgetBlock | undefined {
-	if (readOnly) return undefined;
+	// Closing an owned ephemeral session is bounded cleanup, not a replay.
+	if (toolName === "browser.close") return undefined;
+	if (readOnly && toolName !== "browser.navigate") return undefined;
 	const surface = browserRecoveryToolSurface(toolName);
 	if (!surface) return undefined;
 	const explicitAuthHandoff = state.entries.some(
@@ -519,6 +557,14 @@ export function browserRecoveryBlockForTool(
 			entry.allowedToolNames.includes(toolName),
 	);
 	if (explicitAuthHandoff) return undefined;
+	const explicitScopeRequest = state.entries.some(
+		(entry) =>
+			entry.surface === surface &&
+			entry.reasonCode === "origin_scope" &&
+			entry.phase === "observe_required" &&
+			entry.allowedToolNames.includes(toolName),
+	);
+	if (explicitScopeRequest) return undefined;
 	const active = state.entries
 		.filter(
 			(entry) =>

@@ -227,6 +227,15 @@ describe("LocalBrowserMcpServer", () => {
 		await client.close();
 	});
 
+	it("keeps anonymous navigation out of observation-only MCP calls", async () => {
+		const started = await startFixture();
+		const client = new McpClient(new StreamableHttpMcpTransport(started.url, { authorization: `Bearer ${started.token}` }));
+		await client.initialize();
+		await expect(client.callTool("browser_navigate", { browserSessionId: "not-a-grant", url: "https://example.test" })).rejects.toThrow(/require task authorization/i);
+		expect(started.database.listToolExecutions(started.session.id)).toEqual([]);
+		await client.close();
+	});
+
 	it("rejects workspace and execution tools on tools/call", async () => {
 		const started = await startFixture();
 		const transport = new StreamableHttpMcpTransport(started.url, {

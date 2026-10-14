@@ -689,6 +689,43 @@ describe("agent runtime", () => {
 		database.close();
 	});
 
+	it.each(["new-brief.md", "missing-parent/new-brief.md"])("explains the absent workspace file %s without claiming a read", async (path) => {
+		const { root, database, runtime, session } = fixture();
+		try {
+			const read = await runtime.callTool(session.id, "workspace.read", { path });
+			expect(read).toMatchObject({ status: "failed", error: `File not found in this workspace: ${JSON.stringify(path)}. Check the file name and parent folder.` });
+			expect(read.output).toBeUndefined();
+			expect(existsSync(join(root, path))).toBe(false);
+			expect(database.listToolExecutions(session.id)).toEqual([read]);
+		} finally { runtime.close(); database.close(); }
+	});
+
+	it("can read a new file after an absent-file check while retaining the failed execution", async () => {
+		const { database, runtime, session } = fixture();
+		try {
+			const missing = await runtime.callTool(session.id, "workspace.read", { path: "brief.md" });
+			const written = await runtime.callTool(session.id, "workspace.write", { path: "brief.md", content: "Verified brief.\n" }, { idempotencyKey: "new-brief" });
+			const read = await runtime.callTool(session.id, "workspace.read", { path: "brief.md" });
+			expect(written.status).toBe("verified");
+			expect(read).toMatchObject({ status: "verified", output: { content: "Verified brief.\n" } });
+			expect(database.listToolExecutions(session.id).find(item => item.id === missing.id)?.status).toBe("failed");
+		} finally { runtime.close(); database.close(); }
+	});
+
+	it("retains containment, file-type and binary-read failures", async () => {
+		const { root, database, runtime, session } = fixture();
+		const outside = mkdtempSync(join(tmpdir(), "kestrel-outside-read-"));
+		temporaryDirectories.push(outside);
+		writeFileSync(join(outside, "private.txt"), "Outside workspace.");
+		symlinkSync(join(outside, "private.txt"), join(root, "outside.txt"));
+		writeFileSync(join(root, "binary.bin"), Buffer.from([0, 1, 2, 3]));
+		try {
+			for (const [path, error] of [["outside.txt", "Workspace path escapes the granted root."], ["src", "workspace.read requires a file path."], ["binary.bin", "Binary files are not exposed as text context."]]) {
+				expect(await runtime.callTool(session.id, "workspace.read", { path })).toMatchObject({ status: "failed", error });
+			}
+		} finally { runtime.close(); database.close(); }
+	});
+
 	it("reads bounded binary chunks and performs conflict-safe directory mutations with undo", async () => {
 		const { root, database, runtime, session } = fixture();
 		writeFileSync(join(root, "image.bin"), Buffer.from([0, 1, 2, 3, 4]));
@@ -1841,6 +1878,26 @@ describe("agent runtime", () => {
 				{ path: "src/CLAUDE.md", content: "Source rules", precedence: 1 },
 			],
 		});
+		database.close();
+	});
+
+	it("loads ancestor rules for a planned file without creating it or following an escaping parent", async () => {
+		const { root, database, runtime, session } = fixture();
+		writeFileSync(join(root, "AGENTS.md"), "Root rules");
+		writeFileSync(join(root, "src", "CLAUDE.md"), "Source rules");
+		const loaded = await runtime.callTool(session.id, "workspace.instructions", { targetPath: "src/new-brief.md" });
+		expect(loaded.status).toBe("verified");
+		expect(loaded.output?.instructions).toEqual([
+			{ path: "AGENTS.md", content: "Root rules", precedence: 0 },
+			{ path: "src/CLAUDE.md", content: "Source rules", precedence: 1 },
+		]);
+		expect(existsSync(join(root, "src", "new-brief.md"))).toBe(false);
+		const outside = fixture();
+		symlinkSync(outside.root, join(root, "outside"), "dir");
+		const escaped = await runtime.callTool(session.id, "workspace.instructions", { targetPath: "outside/new-brief.md" });
+		expect(escaped.status).toBe("failed");
+		expect(escaped.error).toContain("escapes the granted root");
+		outside.database.close();
 		database.close();
 	});
 

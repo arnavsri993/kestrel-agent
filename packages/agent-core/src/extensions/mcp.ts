@@ -652,6 +652,11 @@ export interface McpRuntimeAccess {
 }
 
 export class McpRuntimeServer {
+	private observationOnly(name: string, readOnly: boolean): boolean {
+		// Anonymous HTTP reads may use a scoped grant inside Kestrel, but they
+		// still move browser state. Observation-only MCP callers cannot drive it.
+		return readOnly && name !== "browser.navigate";
+	}
 	private initialized = false;
 	private readonly toolFilter: ((name: string) => boolean) | undefined;
 	private readonly serverName: string;
@@ -707,7 +712,7 @@ export class McpRuntimeServer {
 						tools: this.runtime
 							.modelTools(sessionId)
 							.filter(
-								(tool) => access.allowMutatingTools || tool.descriptor.readOnly,
+								(tool) => access.allowMutatingTools || this.observationOnly(tool.descriptor.name, tool.descriptor.readOnly),
 							)
 							.filter(
 								(tool) =>
@@ -718,7 +723,7 @@ export class McpRuntimeServer {
 								title: tool.descriptor.title,
 								description: tool.descriptor.description,
 								inputSchema: tool.inputSchema,
-								annotations: { readOnlyHint: tool.descriptor.readOnly },
+								annotations: { readOnlyHint: this.observationOnly(tool.descriptor.name, tool.descriptor.readOnly) },
 							})),
 					},
 				};
@@ -729,7 +734,7 @@ export class McpRuntimeServer {
 				const tool = this.runtime
 					.modelTools(sessionId)
 					.find((candidate) => candidate.descriptor.name === name);
-				if (!access.allowMutatingTools && !tool?.descriptor.readOnly)
+				if (!access.allowMutatingTools && (!tool || !this.observationOnly(tool.descriptor.name, tool.descriptor.readOnly)))
 					throw new Error("Mutating MCP tools require task authorization.");
 				const args = message.params?.arguments;
 				const execution = await this.runtime.callTool(

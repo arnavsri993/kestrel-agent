@@ -142,11 +142,16 @@ describe("browser activity summarizer", () => {
 		const runtime = new AgentRuntime(database);
 		const session = runtime.createSession({ title: "Ledger" });
 		installBrowserTools(runtime, controller, session.id);
-		const created = await runtime.callTool(
+		const pending = await runtime.callTool(
 			session.id,
 			"browser.create",
 			{ allowedOrigins: ["https://example.test"] },
-			{ approvalStatus: "approved", idempotencyKey: "create" },
+			{ idempotencyKey: "create-pending" },
+		);
+		expect(pending.status).toBe("blocked");
+		const created = await runtime.callTool(
+			session.id, "browser.create", runtime.approvalInput(pending),
+			{ approvalStatus: "approved", approvalGrantExecutionId: pending.id, idempotencyKey: "create" },
 		);
 		const browserSessionId = String(created.output?.browserSessionId);
 		await runtime.callTool(
