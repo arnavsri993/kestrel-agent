@@ -27,7 +27,13 @@ const ELECTRON_OPT_IN_SCRIPTS = [
   "dev:desktop:electron",
   "package:mac:dev:electron",
   "install:mac:dev:electron",
+  "test:desktop-smoke:electron",
 ];
+
+const PRODUCT_PATH_SMOKE = {
+  "test:desktop-smoke": "node scripts/smoke-native-desktop-shell.mjs",
+  "test:native-desktop-shell": "node scripts/smoke-native-desktop-shell.mjs",
+};
 
 export function assertRuntimeDefaultsToChromium(source, path) {
   const failures = [];
@@ -46,7 +52,10 @@ export function assertPackageProductPath(packageJson) {
   const failures = [];
   const scripts = packageJson.scripts ?? {};
 
-  for (const [name, expected] of Object.entries(DEFAULT_SCRIPTS)) {
+  for (const [name, expected] of Object.entries({
+    ...DEFAULT_SCRIPTS,
+    ...PRODUCT_PATH_SMOKE,
+  })) {
     const actual = scripts[name];
     if (actual !== expected) {
       failures.push(
@@ -58,6 +67,17 @@ export function assertPackageProductPath(packageJson) {
         `package.json scripts.${name} must not invoke Electron on the default product path`,
       );
     }
+  }
+
+  if (scripts.verify?.includes("test:desktop-smoke:electron")) {
+    failures.push(
+      "package.json scripts.verify must use the Chromium desktop shell smoke, not test:desktop-smoke:electron",
+    );
+  }
+  if (scripts.verify?.includes("test:desktop-single-instance")) {
+    failures.push(
+      "package.json scripts.verify must not gate on Electron Playwright desktop suites; keep those under verify:electron-legacy",
+    );
   }
 
   for (const name of ELECTRON_OPT_IN_SCRIPTS) {
@@ -73,7 +93,9 @@ export function assertPackageProductPath(packageJson) {
       /KESTREL_DESKTOP_RUNTIME=electron/.test(actual) ||
       /@kestrel\/desktop/.test(actual) ||
       /package:mac:dev:electron/.test(actual) ||
-      /install-development-macos-app/.test(actual);
+      /install-development-macos-app/.test(actual) ||
+      /smoke-desktop\.mjs/.test(actual) ||
+      /test-desktop-/.test(actual);
     if (!referencesElectronLane) {
       failures.push(
         `package.json scripts.${name} must reference the Electron packaging lane (@kestrel/desktop, KESTREL_DESKTOP_RUNTIME=electron, or install-development-macos-app)`,
@@ -93,7 +115,7 @@ export function assertPackageProductPath(packageJson) {
 export function assertCiPackagesChromiumFirst(ciWorkflow) {
   const failures = [];
   const nativeMarker = "Package native Chromium product path";
-  const electronLegacyMarker = "Legacy Electron packaged smokes";
+  const electronLegacyMarker = "Legacy Electron";
   const nativeIndex = ciWorkflow.indexOf(nativeMarker);
   const electronIndex = ciWorkflow.indexOf(electronLegacyMarker);
   if (nativeIndex === -1) {
@@ -103,7 +125,7 @@ export function assertCiPackagesChromiumFirst(ciWorkflow) {
   }
   if (electronIndex === -1) {
     failures.push(
-      ".github/workflows/ci.yml must label Electron packaged smokes as legacy until retire:electron",
+      ".github/workflows/ci.yml must label Electron Playwright/packaged smokes as legacy until retire:electron",
     );
   }
   if (nativeIndex !== -1 && electronIndex !== -1 && nativeIndex > electronIndex) {
@@ -111,9 +133,14 @@ export function assertCiPackagesChromiumFirst(ciWorkflow) {
       ".github/workflows/ci.yml must run Chromium packaged smoke before Electron legacy packaging",
     );
   }
-  if (!ciWorkflow.includes("package:mac:dev") || !ciWorkflow.includes("test:packaged-native:arm64")) {
+  if (
+    !ciWorkflow.includes("package:mac:dev") ||
+    !ciWorkflow.includes("test:packaged-native:arm64") ||
+    !ciWorkflow.includes("test:packaged-native-desktop-shell:arm64") ||
+    !ciWorkflow.includes("test:native-desktop-shell")
+  ) {
     failures.push(
-      ".github/workflows/ci.yml must run package:mac:dev and test:packaged-native:arm64 on the product path",
+      ".github/workflows/ci.yml must run package:mac:dev, test:packaged-native:arm64, test:native-desktop-shell, and test:packaged-native-desktop-shell:arm64 on the product path",
     );
   }
   return failures;

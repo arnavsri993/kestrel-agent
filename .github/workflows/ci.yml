@@ -62,6 +62,7 @@ jobs:
           corepack pnpm test:native-user-extensions
           corepack pnpm test:native-chromium-host
           corepack pnpm test:native-chromium-core-relay
+          corepack pnpm test:native-desktop-shell
           corepack pnpm test:native-browser-backend
           corepack pnpm test:native-isolated-automation
           corepack pnpm test:native-durable-browser-library
@@ -94,31 +95,35 @@ jobs:
       - run: corepack pnpm benchmark:browser-agent --report .tmp/browser-agent-benchmark/ci-development.json
       - run: corepack pnpm test:desktop-file-icon-guard
       - run: corepack pnpm test
-      - run: corepack pnpm test:desktop-smoke
-      - run: corepack pnpm test:desktop-single-instance
-      - run: corepack pnpm test:desktop-restart-recovery
-      - run: corepack pnpm test:desktop-workflow-reuse
-      - run: corepack pnpm test:desktop-writing-studio
-      - run: corepack pnpm test:desktop-browser
-      - run: corepack pnpm test:desktop-autofill
-      - run: corepack pnpm test:desktop-setup
-      - run: corepack pnpm test:desktop-fresh-profile
-      - run: corepack pnpm test:desktop-personas
-      - run: corepack pnpm test:desktop-kanban
-      - run: corepack pnpm test:desktop-model-routing
-      - run: corepack pnpm test:desktop-subscription-cli-safety
-      - run: corepack pnpm test:desktop-readiness
-      - run: corepack pnpm test:desktop-external-secrets
-      - run: corepack pnpm test:desktop-observability
-      - run: corepack pnpm test:desktop-life-context
-      - run: corepack pnpm test:desktop-approvals
-      - run: corepack pnpm test:desktop-chat-configuration
-      - run: corepack pnpm test:desktop-managed-policy
-      - name: Package native Chromium product path and run packaged native smoke
+      - name: Package native Chromium product path and run packaged native smokes
         run: |
           set -euo pipefail
           corepack pnpm package:mac:dev
           corepack pnpm test:packaged-native:arm64
+          corepack pnpm test:packaged-native-desktop-shell:arm64
+      - name: Legacy Electron Playwright suite (opt-in path until retire:electron)
+        run: |
+          set -euo pipefail
+          corepack pnpm test:desktop-smoke:electron
+          corepack pnpm test:desktop-single-instance
+          corepack pnpm test:desktop-restart-recovery
+          corepack pnpm test:desktop-workflow-reuse
+          corepack pnpm test:desktop-writing-studio
+          corepack pnpm test:desktop-browser
+          corepack pnpm test:desktop-autofill
+          corepack pnpm test:desktop-setup
+          corepack pnpm test:desktop-fresh-profile
+          corepack pnpm test:desktop-personas
+          corepack pnpm test:desktop-kanban
+          corepack pnpm test:desktop-model-routing
+          corepack pnpm test:desktop-subscription-cli-safety
+          corepack pnpm test:desktop-readiness
+          corepack pnpm test:desktop-external-secrets
+          corepack pnpm test:desktop-observability
+          corepack pnpm test:desktop-life-context
+          corepack pnpm test:desktop-approvals
+          corepack pnpm test:desktop-chat-configuration
+          corepack pnpm test:desktop-managed-policy
       - name: Legacy Electron packaged smokes (opt-in path until retire:electron)
         run: |
           set -euo pipefail

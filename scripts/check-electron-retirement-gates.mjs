@@ -17,6 +17,7 @@ const accepted = process.env.KESTREL_ACCEPT_ELECTRON_RETIREMENT === "1";
 const gates = [
 	"test:native-chromium-host",
 	"test:native-chromium-core-relay",
+	"test:native-desktop-shell",
 	"test:native-extensions",
 	"test:native-user-extensions",
 	"test:native-durable-browser-library",
@@ -25,6 +26,7 @@ const gates = [
 	"test:native-isolated-automation",
 	"test:native-credential-bootstrap",
 	"test:packaged-native:arm64",
+	"test:packaged-native-desktop-shell:arm64",
 	"Keychain/credential bootstrap without prompt spam — profile-sealed proven; real Keychain gated on Developer ID + --kestrel-real-keychain",
 	"Isolated automation sessions (create/navigate/snapshot/act) on CEF",
 	"Developer ID signing + notarization — check:native-signing (package:mac:native:release + notarize:mac:native)",

@@ -303,7 +303,10 @@ corepack pnpm cli -- migration apply \
    in-tree via `KESTREL_DESKTOP_RUNTIME=electron` / `dev:desktop:electron` and
    still owns the historical Dock app until retirement. Native installs as
    `Kestrel Native.app` unless `KESTREL_INSTALL_NATIVE_CANONICAL=1` replaces
-   `/Applications/Kestrel.app` after retirement acceptance.
+   `/Applications/Kestrel.app` after retirement acceptance. Product-path
+   `test:desktop-smoke` / `verify` use the CDP native shell smoke
+   (`test:native-desktop-shell`); Electron Playwright suites live under
+   `verify:electron-legacy` / `test:desktop-smoke:electron`.
 
 Unit coverage lives in
 `packages/agent-core/src/electron-native-profile-transfer.test.ts`. Live

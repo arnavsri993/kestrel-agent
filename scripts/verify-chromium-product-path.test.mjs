@@ -64,12 +64,14 @@ describe("verify:chromium-product-path", () => {
   it("requires Chromium packaged CI before Electron legacy", () => {
     expect(
       assertCiPackagesChromiumFirst(`
-      - name: Package native Chromium product path and run packaged native smoke
+      - run: corepack pnpm test:native-desktop-shell
+      - name: Package native Chromium product path and run packaged native smokes
         run: |
           corepack pnpm package:mac:dev
           corepack pnpm test:packaged-native:arm64
-      - name: Legacy Electron packaged smokes (opt-in path until retire:electron)
-        run: corepack pnpm package:mac:dev:electron
+          corepack pnpm test:packaged-native-desktop-shell:arm64
+      - name: Legacy Electron Playwright suite (opt-in path until retire:electron)
+        run: corepack pnpm test:desktop-smoke:electron
       `),
     ).toEqual([]);
   });
