@@ -107,14 +107,29 @@ const REJECTED_FILE_NAMES = new Set([
 	"Secure Preferences",
 ]);
 
-const REJECTED_PATH_PATTERNS = [
-	/(^|\/)database(\/|$)/i,
-	/(^|\/)secure(\/|$)/i,
-	/(^|\/)provider-profiles(\/|$)/i,
-	/(^|\/)cookies?/i,
-	/(^|\/)keychain/i,
-	/(^|\/).*\.sqlite(-journal|-wal|-shm)?$/i,
-	/(api.?key|token|secret|password|credential|oauth)/i,
+const REJECTED_PATH_SEGMENTS = new Set([
+	"database",
+	"secure",
+	"provider-profiles",
+	"cookie",
+	"cookies",
+	"keychain",
+]);
+const REJECTED_NAME_SUBSTRINGS = [
+	"api-key",
+	"apikey",
+	"api_key",
+	"token",
+	"secret",
+	"password",
+	"credential",
+	"oauth",
+];
+const SQLITE_SUFFIXES = [
+	".sqlite",
+	".sqlite-journal",
+	".sqlite-wal",
+	".sqlite-shm",
 ];
 
 function contained(root: string, candidate: string): boolean {
@@ -167,9 +182,21 @@ function shouldRejectSourcePath(sourcePath: string): string | undefined {
 	const base = basename(sourcePath);
 	if (REJECTED_FILE_NAMES.has(base))
 		return "Rejected protected browser or credential store file.";
-	for (const pattern of REJECTED_PATH_PATTERNS)
-		if (pattern.test(sourcePath))
+	const normalized = sourcePath.split(sep).join("/").toLowerCase();
+	const segments = normalized.split("/").filter(Boolean);
+	for (const segment of segments) {
+		if (REJECTED_PATH_SEGMENTS.has(segment))
 			return "Rejected credential, cookie, database, or secret-bearing path.";
+	}
+	const lowerBase = base.toLowerCase();
+	for (const suffix of SQLITE_SUFFIXES) {
+		if (lowerBase.endsWith(suffix))
+			return "Rejected credential, cookie, database, or secret-bearing path.";
+	}
+	for (const needle of REJECTED_NAME_SUBSTRINGS) {
+		if (lowerBase.includes(needle) || segments.some((segment) => segment.includes(needle)))
+			return "Rejected credential, cookie, database, or secret-bearing path.";
+	}
 	return undefined;
 }
 
