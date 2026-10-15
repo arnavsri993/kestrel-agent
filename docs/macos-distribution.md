@@ -13,7 +13,7 @@ lost. Development and stable packages share the single Kestrel product name;
 only the development bundle identifier differs to avoid collisions while
 building locally.
 
-Closing the main window hides it while the opted-in background agent continues. The menu bar exposes exact states, pending approvals, pause/resume, open, and quit. Quit checkpoints work and terminates the utility process.
+Closing the main window hides it while the opted-in background agent continues. The menu bar exposes exact states, pending approvals, pause/resume, open, and quit. Quit checkpoints work and terminates the Agent Core child process (packaged Node sidecar, or the Electron utility adapter in ordinary development).
 
 Electron Builder produces Apple Silicon DMG and ZIP artifacts for direct distribution and an Apple Silicon PKG for managed deployment. Native modules and approved sidecars are unpacked, resolved from `process.resourcesPath`, architecture-audited, signed, and verified before notarization. Production internet release requires Developer ID Application signing, Developer ID Installer signing for the PKG, Apple notarization-service credentials, a signed update host, an arm64 packaged smoke test, Gatekeeper validation, and checksums. Kestrel does not produce an Intel, universal, or Mac App Store build.
 

@@ -9,7 +9,7 @@ reversible.
 
 ## Runtime contract
 
-The utility process writes an `in_progress` receipt before invoking a mutating
+Agent Core writes an `in_progress` receipt before invoking a mutating
 handler and upserts that same record as the tool journal advances. Terminal
 outcomes are `verified`, `blocked`, `failed`, `cancelled`, `waiting_approval`,
 or `uncertain`. An idempotent replay reuses the original tool execution and
