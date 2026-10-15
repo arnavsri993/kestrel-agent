@@ -20,12 +20,16 @@ renderer changes use Vite HMR, so the running app always reflects the latest
 source without starting another copy. The app also enforces a single-instance
 lock and focuses the existing window when a second launch is attempted.
 
-Kestrel has one user-facing macOS app. Use the development watcher for live
-changes, or use `corepack pnpm install:mac:dev` to replace the existing
-`/Applications/Kestrel.app` with the current packaged build. Do not open or
-copy a `release/**/Kestrel.app` artifact, create a `Kestrel-release.app`, or
-keep versioned Kestrel bundles beside the canonical app; the installer moves
-stale bundles to Trash instead of deleting user data.
+Kestrel has one user-facing macOS app. The development product path is the
+native Chromium/CEF host (`corepack pnpm dev:desktop`). Packaged refresh uses
+`corepack pnpm install:mac:dev`, which installs Chromium side-by-side as
+`/Applications/Kestrel Native.app` unless
+`KESTREL_INSTALL_NATIVE_CANONICAL=1` replaces `/Applications/Kestrel.app`
+after Electron retirement gates. Legacy Electron packaging remains
+`install:mac:dev:electron`. Do not open or copy a `release/**/Kestrel.app`
+artifact, create a `Kestrel-release.app`, or keep versioned Kestrel bundles
+beside the canonical app; installers move stale bundles to Trash instead of
+deleting user data.
 
 ## Install a packaged build
 
@@ -180,17 +184,23 @@ safeStorage Keychain identity until a tested migration can move existing
 encrypted history and credentials:
 
 ```bash
+# Chromium/CEF product path (default): side-by-side Native.app
 corepack pnpm install:mac:dev
+open -a "Kestrel Native"
+
+# Legacy Electron canonical Dock app (until retire:electron):
+corepack pnpm install:mac:dev:electron
 open -a Kestrel
 
-# Smoke-test the packaged Apple Silicon app:
+# Smoke-test packaged Apple Silicon apps:
+corepack pnpm test:packaged-native:arm64
 corepack pnpm test:packaged-desktop:arm64
 ```
 
-`install:mac:dev` keeps the canonical app at `/Applications/Kestrel.app`, moves other
-Kestrel bundles found in common install locations or by Finder/Spotlight to Trash,
-and leaves `release/mac-arm64/Kestrel.app` as a non-indexed build artifact only.
-It is an in-place refresh of the canonical app, not a second installed version.
+`install:mac:dev` packages the Chromium host by default. Canonical Dock
+replacement still requires `KESTREL_INSTALL_NATIVE_CANONICAL=1` after retirement
+gates. `install:mac:dev:electron` keeps the historical `/Applications/Kestrel.app`
+refresh path and moves other Electron Kestrel bundles to Trash.
 
 ## Repository map
 
