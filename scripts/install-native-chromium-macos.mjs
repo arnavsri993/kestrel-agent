@@ -6,10 +6,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Installs the packaged native CEF host side-by-side as
- * `/Applications/Kestrel Native.app` by default. Canonical replacement of
- * `/Applications/Kestrel.app` requires KESTREL_INSTALL_NATIVE_CANONICAL=1 after
- * parity gates are explicitly accepted.
+ * Installs the packaged native CEF host. The Chromium-primary product path
+ * (`pnpm install:mac:dev`) sets KESTREL_INSTALL_NATIVE_CANONICAL=1 so the
+ * canonical Dock app is `/Applications/Kestrel.app`. Without that flag, this
+ * script installs side-by-side as `/Applications/Kestrel Native.app`.
  */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = resolve(
@@ -29,8 +29,8 @@ if (!existsSync(source)) {
 }
 
 if (canonical) {
-	console.warn(
-		"Installing native Chromium as the canonical Kestrel.app. Electron remains in-tree until retirement.",
+	console.log(
+		"Installing native Chromium as the canonical /Applications/Kestrel.app.",
 	);
 	const result = spawnSync(
 		process.execPath,

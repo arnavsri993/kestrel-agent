@@ -14,18 +14,18 @@ corepack pnpm install
 corepack pnpm dev:desktop
 ```
 
-The desktop development command owns one Electron instance and watches the
-main/preload sources. Main-process changes restart Electron automatically;
-renderer changes use Vite HMR, so the running app always reflects the latest
-source without starting another copy. The app also enforces a single-instance
-lock and focuses the existing window when a second launch is attempted.
+The desktop development command defaults to the native Chromium/CEF host
+(`corepack pnpm dev:desktop`). Renderer changes use Vite HMR where available;
+native host rebuilds refresh the shipping process path. Legacy Electron remains
+available as `corepack pnpm dev:desktop:electron` until retirement gates pass.
 
 Kestrel has one user-facing macOS app. Use the development watcher for live
-changes, or use `corepack pnpm install:mac:dev` to replace the existing
-`/Applications/Kestrel.app` with the current packaged build. Do not open or
-copy a `release/**/Kestrel.app` artifact, create a `Kestrel-release.app`, or
-keep versioned Kestrel bundles beside the canonical app; the installer moves
-stale bundles to Trash instead of deleting user data.
+changes, or use `corepack pnpm install:mac:dev` to replace
+`/Applications/Kestrel.app` with the current packaged Chromium build. Legacy
+Electron install is `install:mac:dev:electron`. Do not open or copy a
+`release/**/Kestrel.app` artifact, create a `Kestrel-release.app`, or keep
+versioned Kestrel bundles beside the canonical app; the installer moves stale
+bundles to Trash instead of deleting user data.
 
 ## Install a packaged build
 
@@ -37,15 +37,18 @@ published from matching `v<version>` tags by the signed macOS release workflow;
 the repository currently has an ad-hoc development preview rather than a
 notarized stable release.
 
-To build an installable local DMG/ZIP for an Apple Silicon Mac, run:
+To build an installable local native Chromium package for an Apple Silicon Mac,
+run:
 
 ```bash
 corepack pnpm package:mac:installable
 ```
 
-That local target is ad-hoc signed for testing. Public downloads must come
-from the Developer ID-signed and notarized GitHub release workflow so macOS can
-verify the publisher without a manual Gatekeeper override.
+That local target is the CEF release package (ad-hoc unless Developer ID inputs
+are configured). Legacy Electron DMG/ZIP packaging remains
+`package:mac:installable:electron`. Public downloads must come from the
+Developer ID-signed and notarized GitHub release workflow so macOS can verify
+the publisher without a manual Gatekeeper override.
 
 On first launch, Kestrel checks the local runtime, lets you connect a model only when needed, and opens a clean conversation. Choose **Add project** for folder-scoped work, or describe a question directly. Read-only work can proceed automatically; sending, publishing, deleting, purchasing, and permission changes pause with a plain-language review.
 
@@ -53,7 +56,7 @@ The packaged development build is Apple Silicon and ad-hoc signed. It is useful 
 
 ## What works now
 
-- Sandboxed Electron/React desktop app with persisted real-agent conversations, provider/model selection, per-task workspace scope, bounded attachments, token streaming and cancellation, restart-safe tool approvals, Memory, Activity, Connections, Settings, tray controls, pause/resume, run-at-login, destructive-reset confirmation, and a daily Readiness/doctor surface.
+- Chromium-primary desktop app (native CEF host; legacy Electron opt-in) with persisted real-agent conversations, provider/model selection, per-task workspace scope, bounded attachments, token streaming and cancellation, restart-safe tool approvals, Memory, Activity, Connections, Settings, tray controls, pause/resume, run-at-login, destructive-reset confirmation, and a daily Readiness/doctor surface.
 - Inference-first onboarding with a one-click macOS local-AI path and a separate manual path. The automatic path downloads a pinned official Ollama archive, enforces its expected size and SHA-256, installs it only inside owner-only Kestrel data, starts it on loopback, streams cancellable model progress, and requires a real local response before declaring readiness.
 - A setup-assistant handoff can guide API providers, provider-owned OAuth/CLI sign-in, tools, MCP, skills, plugins, channels, automations, and project access. A core instruction forbids asking users to paste secrets into chat; protected native fields and provider-owned login surfaces remain the only supported secret-entry paths.
 - The conversation can configure behavior, personality, additive prompts, tools, stricter permissions, workflows, UI, memory, integration boundaries, and general settings through a typed transaction: inspect, stage, diff, isolate-test, approve, atomically apply, verify, and undo. Encrypted immutable versions, an append-only audit, known-good restoration, protected-core separation, and review-only local self-improvement proposals are documented in [conversational agent configuration](docs/chat-configuration.md).
@@ -180,31 +183,38 @@ safeStorage Keychain identity until a tested migration can move existing
 encrypted history and credentials:
 
 ```bash
+# Chromium/CEF product path (default): canonical /Applications/Kestrel.app
 corepack pnpm install:mac:dev
 open -a Kestrel
 
-# Smoke-test the packaged Apple Silicon app:
+# Smoke-test the packaged native Chromium app:
 corepack pnpm test:packaged-desktop:arm64
+
+# Legacy Electron canonical Dock app (deprecated):
+corepack pnpm install:mac:dev:electron
 ```
 
-`install:mac:dev` keeps the canonical app at `/Applications/Kestrel.app`, moves other
-Kestrel bundles found in common install locations or by Finder/Spotlight to Trash,
-and leaves `release/mac-arm64/Kestrel.app` as a non-indexed build artifact only.
-It is an in-place refresh of the canonical app, not a second installed version.
+`install:mac:dev` packages the Chromium host and refreshes
+`/Applications/Kestrel.app`. It moves other Kestrel bundles found in common
+install locations or by Finder/Spotlight to Trash and leaves
+`release/native-mac-arm64/Kestrel.app` as a non-indexed build artifact only.
+`install:mac:dev:electron` keeps the historical Electron packaging path until
+retirement.
 
 ## Repository map
 
 ```text
-apps/desktop          Electron shell, renderer, preload, utility process, packaging
-apps/website          Static Next.js marketing site
-packages/agent-core   Opportunity engine, context resolver, deterministic vertical slice
-packages/database     SQLite schema, encrypted records, audit/idempotency storage
-packages/encryption   AES-256-GCM field encryption
-packages/policy-engine deterministic risk and prompt-injection boundaries
-packages/shared-types identity, domain contracts, IPC schemas
-website-media         Approved briefs, request manifests, rejected/approved provenance
-scripts               capture, fal generation, processing, verification, secret scan
-docs                  architecture, data, memory, permissions, threat model, release notes
+apps/native-chromium-host  Native CEF Chromium desktop host (default product path)
+apps/desktop               Legacy Electron shell (shared renderer), packaging
+apps/website               Static Next.js marketing site
+packages/agent-core        Opportunity engine, context resolver, deterministic vertical slice
+packages/database          SQLite schema, encrypted records, audit/idempotency storage
+packages/encryption        AES-256-GCM field encryption
+packages/policy-engine     deterministic risk and prompt-injection boundaries
+packages/shared-types      identity, domain contracts, IPC schemas
+website-media              Approved briefs, request manifests, rejected/approved provenance
+scripts                    capture, fal generation, processing, verification, secret scan
+docs                       architecture, data, memory, permissions, threat model, release notes
 ```
 
 ## fal website assets

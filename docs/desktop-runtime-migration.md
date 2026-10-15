@@ -1,11 +1,11 @@
 # Incremental desktop runtime migration
 
-Kestrel's installed desktop still uses Electron for its window and browser host.
-Chromium is the target browser engine, but migration is now happening on the
-shipping process path as well as in the thin Chromium host: packaged Kestrel
-launches Agent Core as a standalone Node sidecar rather than an Electron utility
-process. That removes Electron from the long-running agent/core failure domain;
-it does not yet replace the desktop window or browser surface.
+Kestrel's **user-facing desktop scripts default to the native Chromium/CEF host**.
+Electron remains in-tree as an explicit opt-in (`*:electron` scripts /
+`KESTREL_DESKTOP_RUNTIME=electron`) until retirement gates pass. Packaged
+Kestrel also launches Agent Core as a standalone Node sidecar rather than an
+Electron utility process, which removes Electron from the long-running
+agent/core failure domain on both hosts.
 
 ## Agent Core supervision boundary
 
@@ -222,9 +222,14 @@ Current native-host progress toward cutover:
   `credential-set` / `credential-remove` without Keychain prompts;
   `corepack pnpm test:native-credential-bootstrap` proves set→has→remove
 - HTTP(S) `window.open` popups are adopted as sibling Alloy user tabs
-- `corepack pnpm package:mac:native` / `install:mac:native` package the CEF host;
-  side-by-side install is the default (`Kestrel Native.app`); canonical Dock
-  replacement requires `KESTREL_INSTALL_NATIVE_CANONICAL=1`
+- `corepack pnpm package:mac:dev` / `install:mac:dev` default to the CEF host and
+  refresh the canonical Dock app (`/Applications/Kestrel.app`)
+- `corepack pnpm package:mac:native` / `install:mac:native` package/install CEF
+  directly; without `KESTREL_INSTALL_NATIVE_CANONICAL=1`, `install:mac:native`
+  remains side-by-side (`Kestrel Native.app`)
+- Deprecated Electron packaging: `package:mac:dev:electron`,
+  `install:mac:dev:electron`, `package:mac:installable:electron`,
+  `dev:desktop:electron`
 
 `pnpm-workspace.yaml` `auditConfig.ignoreGhsas` ignores `GHSA-hp3w-g68c-fv3c`
 (`sprintf-js` via `electron-builder`) until Electron packaging is removed: no
@@ -250,10 +255,11 @@ Application Support profile. Transfer is an explicit, bounded product step:
    a recoverable backup of the target before mutation.
 4. **Containment.** Reject symlinks, binaries, oversized files, and paths that
    escape the declared source/target roots. Changed checksums abort apply.
-5. **Side-by-side until cutover.** Shipping default remains Electron. Native
-   installs as `Kestrel Native.app` (or an explicit isolated profile root).
-   Canonical Dock replacement (`KESTREL_INSTALL_NATIVE_CANONICAL=1`) is gated
-   on retirement acceptance with live evidence — not on transfer design alone.
+5. **No silent profile merge.** Product scripts default to Chromium and the
+   canonical Dock app, but native Chromium still uses its own durable profile
+   and never opens Electron Application Support. Explicit transfer remains
+   required before any Electron→native data move; Electron opt-in scripts stay
+   until `check:electron-retirement` passes with live evidence.
 
 Until a tested Kestrel-to-Kestrel restore CLI exists for the Chromium durable
 profile, operators keep both profiles untouched and use the supported

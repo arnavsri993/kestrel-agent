@@ -25,13 +25,15 @@ create or install `Kestrel-*.app`, `Kestrel-release.app`, beta copies, or a
 separate app for each worktree. A release version is build metadata; it is not
 permission to leave another installed Kestrel behind.
 
-- For live source changes, run only `corepack pnpm dev:desktop`. Its watcher,
-  HMR, restart path, and single-instance lock must keep the current app in sync;
-  do not open a `release/**/Kestrel.app` artifact directly.
+- For live source changes, run only `corepack pnpm dev:desktop`. That is the
+  native Chromium/CEF host. Its watcher, HMR, restart path, and single-instance
+  lock must keep the current app in sync; do not open a `release/**/Kestrel.app`
+  artifact directly. Legacy Electron is `corepack pnpm dev:desktop:electron`.
 - For a packaged local refresh, run `corepack pnpm install:mac:dev`. It builds
-  the current source, replaces the same `/Applications/Kestrel.app` path, and
-  moves stale Kestrel bundles to the macOS Trash for recovery. Reopen that
-  canonical app; do not copy the artifact to Desktop or rename it.
+  the native Chromium host, replaces `/Applications/Kestrel.app`, and moves
+  stale Kestrel bundles to the macOS Trash for recovery. Reopen that canonical
+  app; do not copy the artifact to Desktop or rename it. Legacy Electron
+  packaging is `corepack pnpm install:mac:dev:electron`.
 - Preserve the existing Kestrel profile, encrypted database, credentials,
   Keychain identity, and `Application Support` data. Consolidation may move
   duplicate app bundles to Trash, but must never delete or merge user data
@@ -124,18 +126,19 @@ explicit approval for apply.
   OpenCode agent configuration; it prints configuration and does not silently
   write secrets.
 - For desktop work, run only one desktop watcher. Default
-  `corepack pnpm dev:desktop` is still Electron (`dev:desktop:electron`). The
-  Chromium cutover lane is `corepack pnpm dev:desktop:chromium` or
-  `KESTREL_DESKTOP_RUNTIME=chromium`. Native CEF never opens the Electron
-  profile. Electron packaging stays until
-  `corepack pnpm check:electron-retirement` is accepted with live parity
+  `corepack pnpm dev:desktop` is the native Chromium/CEF host (Apple Silicon
+  macOS). Use `corepack pnpm dev:desktop:electron` or
+  `KESTREL_DESKTOP_RUNTIME=electron` for the deprecated Electron watcher.
+  Native CEF never opens the Electron profile. Electron packages stay in-tree
+  until `corepack pnpm check:electron-retirement` is accepted with live parity
   evidence; do not delete Electron because a Chromium host binary exists.
 - For onboarding or setup changes, run `corepack pnpm test:desktop-setup`.
 - For a broad repository change, run `corepack pnpm verify` and distinguish
   focused passes from unrelated baseline or remote-CI failures.
-- For desktop renderer changes, build and inspect the packaged app with
+- For desktop renderer changes, build and inspect the packaged Chromium app with
   `corepack pnpm package:mac:dev` and, when applicable, run
-  `corepack pnpm test:packaged-desktop:arm64`.
+  `corepack pnpm test:packaged-desktop:arm64` (native CEF smoke). Electron
+  packaged smoke remains `test:packaged-desktop:arm64:electron`.
 
 Do not merge a pull request or claim a provider, migration, or packaged app is
 ready without the corresponding live evidence.
