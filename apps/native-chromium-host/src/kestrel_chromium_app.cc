@@ -108,11 +108,13 @@ constexpr char kKestrelBridgeSource[] = R"JS(
         persistent: true,
         onSuccess: (response) => {
           if (closed) return;
+          let value;
           try {
-            callback(JSON.parse(response));
+            value = JSON.parse(response);
           } catch {
-            // An invalid event is ignored at this narrow transport boundary.
+            return;
           }
+          callback(value);
         },
         onFailure: () => {
           closed = true;
@@ -128,32 +130,16 @@ constexpr char kKestrelBridgeSource[] = R"JS(
     };
   };
 
-  const bridge = Object.freeze({
-    request,
-    onBrowserEvent: (callback) => subscribe("browser-event", callback),
-    onWindowFocus: (callback) => subscribe("window-focus", callback),
-    onPasswordPrompt: (callback) => subscribe("password-prompt", callback),
-    onPaymentPrompt: (callback) => subscribe("payment-prompt", callback),
-    onBrowserCommand: (callback) => subscribe("browser-command", callback),
-    onDeepLink: (callback) => subscribe("deep-link", callback),
-    onExternalIntake: (callback) => subscribe("external-intake", callback),
-    onSnapshot: (callback) => subscribe("snapshot", callback),
-    onPetStatus: (callback) => subscribe("pet-status", callback),
-    onPetActivity: (callback) => subscribe("pet-activity", callback),
-    onRuntimeEvent: (callback) => subscribe("runtime-event", callback),
-    onAgentStream: (callback) => subscribe("agent-stream", callback),
-    onLocalRuntimeProgress: (callback) =>
-      subscribe("local-runtime-progress", callback),
-  });
-
-  Object.defineProperty(globalThis, "kestrel", {
-    configurable: false,
+  // The bundled TypeScript renderer owns validation and its public API.
+  // Native CEF supplies only its request/subscription transport.
+  Object.defineProperty(globalThis, "__kestrelHostTransport", {
+    configurable: true,
     enumerable: false,
-    value: bridge,
+    value: Object.freeze({ request, subscribe }),
     writable: false,
   });
-  delete globalThis.__kestrelNativeQuery;
-  delete globalThis.__kestrelNativeCancel;
+  // CEF owns immutable query/cancel globals in this trusted document. The
+  // browser-side exact-frame/URL check remains the authority boundary.
 })();
 )JS";
 

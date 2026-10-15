@@ -3,6 +3,7 @@ export * from "./communication";
 export * from "./chrome-web-store";
 export * from "./extension-compatibility";
 export * from "./contracts";
+export * from "./renderer-bridge";
 export * from "./browser-tab-organization";
 export * from "./identity";
 export * from "./memory-capture";

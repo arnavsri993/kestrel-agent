@@ -1,12 +1,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import react from "@vitejs/plugin-react";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import type { Plugin } from "vite";
-import {
-	createRendererCspNonce,
-	rendererCspNoncePlugin,
-} from "./vite-plugins/renderer-csp-nonce";
+// The native Chromium build imports this same plain JavaScript config directly.
+import { createRendererViteConfig } from "./renderer.vite.config.mjs";
 
 const workspacePackages = [
 	"@kestrel/core-service",
@@ -54,8 +51,6 @@ const __dirname = import.meta.dirname;
 const require = __cjs_mod__.createRequire(import.meta.url);
 `;
 
-const rendererCspNonce = createRendererCspNonce();
-
 export default defineConfig({
 	main: {
 		plugins: [
@@ -88,13 +83,6 @@ export default defineConfig({
 			},
 		},
 	},
-	renderer: {
-		root: resolve(__dirname, "src/renderer"),
-		plugins: [react(), rendererCspNoncePlugin(rendererCspNonce)],
-		html: {
-			// Per dev-server start / production build. Static in packaged file:// output;
-			// still blocks naive inline script injection without the matching nonce attribute.
-			cspNonce: rendererCspNonce,
-		},
-	},
+	// electron-vite still owns main/preload; the renderer uses plain Vite.
+	renderer: createRendererViteConfig(),
 });
