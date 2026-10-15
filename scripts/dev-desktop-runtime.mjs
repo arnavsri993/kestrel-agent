@@ -5,13 +5,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Routes desktop development to Electron (default) or the native Chromium host.
- * Set KESTREL_DESKTOP_RUNTIME=chromium to exercise the CEF cutover lane without
- * deleting Electron packaging. The Electron Application Support profile is never
- * opened by the Chromium lane.
+ * Routes desktop development to the native Chromium host (default) or Electron
+ * (opt-in). Set KESTREL_DESKTOP_RUNTIME=electron for the legacy Electron lane.
+ * The Electron Application Support profile is never opened by the Chromium lane.
  */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const runtime = (process.env.KESTREL_DESKTOP_RUNTIME ?? "electron").toLowerCase();
+const runtime = (process.env.KESTREL_DESKTOP_RUNTIME ?? "chromium").toLowerCase();
 
 if (runtime === "chromium" || runtime === "native") {
 	const child = spawn(
@@ -28,6 +27,9 @@ if (runtime === "chromium" || runtime === "native") {
 		process.exit(code ?? 1);
 	});
 } else if (runtime === "electron") {
+	console.warn(
+		"[kestrel] Electron desktop is opt-in. Prefer Chromium (default) unless you need the legacy lane.",
+	);
 	const child = spawn(
 		"corepack",
 		["pnpm", "--filter", "@kestrel/desktop", "dev"],
@@ -39,7 +41,7 @@ if (runtime === "chromium" || runtime === "native") {
 	});
 } else {
 	console.error(
-		`Unknown KESTREL_DESKTOP_RUNTIME=${runtime}. Use electron or chromium.`,
+		`Unknown KESTREL_DESKTOP_RUNTIME=${runtime}. Use chromium (default) or electron.`,
 	);
 	process.exit(1);
 }
