@@ -376,14 +376,19 @@ bool decode_png_to_rgba(const std::vector<uint8_t>& png, int* width,
 
 std::string encode_screenshot_frame_json(int width, int height,
                                          const std::vector<uint8_t>& rgba,
-                                         const std::vector<uint8_t>& png) {
+                                         const std::vector<uint8_t>& png,
+                                         bool visible_tab = false) {
   const std::string rgba_b64 =
       base64_encode_bytes(rgba.data(), rgba.size());
   const std::string png_b64 = base64_encode_bytes(png.data(), png.size());
-  return "{\"width\":" + std::to_string(width) + ",\"height\":" +
-         std::to_string(height) +
-         ",\"rgba\":{\"__kestrel_binary_base64__\":\"" + rgba_b64 +
-         "\"},\"png\":{\"__kestrel_binary_base64__\":\"" + png_b64 + "\"}}";
+  std::string json = "{\"width\":" + std::to_string(width) + ",\"height\":" +
+                     std::to_string(height) +
+                     ",\"rgba\":{\"__kestrel_binary_base64__\":\"" + rgba_b64 +
+                     "\"},\"png\":{\"__kestrel_binary_base64__\":\"" + png_b64 +
+                     "\"}";
+  if (visible_tab) json += ",\"trust\":\"untrusted_browser\"";
+  json += "}";
+  return json;
 }
 
 std::string json_string_literal(const std::string& value) {
@@ -969,9 +974,15 @@ struct NativeUserBrowserTab {
   bool crashed = false;
   bool closing = false;
   bool browser_closed = false;
+  bool devtools_attached = false;
   int browser_id = 0;
+  int viewport_width = 1280;
+  int viewport_height = 720;
+  std::string pending_screenshot_request_id;
+  std::map<int, std::string> pending_devtools_kinds;
   CefRefPtr<KestrelUserBrowserClient> client;
   CefRefPtr<CefBrowserView> view;
+  CefRefPtr<CefRegistration> devtools_registration;
 };
 
 class KestrelBridgeQueryHandler final
@@ -1580,6 +1591,262 @@ class KestrelClient : public CefClient,
     return found == user_browser_tabs_.end() ? nullptr : &*found;
   }
 
+  NativeUserBrowserTab* ResolveVisibleTab(const std::string& tab_id,
+                                          std::string* error) {
+    NativeUserBrowserTab* tab = nullptr;
+    if (!tab_id.empty()) {
+      tab = FindUserBrowserTab(tab_id);
+    } else if (!user_browser_active_tab_id_.empty()) {
+      tab = FindUserBrowserTab(user_browser_active_tab_id_);
+    }
+    if (!tab || tab->closing) {
+      if (error)
+        *error = "The requested native browser tab no longer exists.";
+      return nullptr;
+    }
+    return tab;
+  }
+
+  void EnsureUserBrowserDevTools(NativeUserBrowserTab& tab,
+                                 CefRefPtr<CefBrowser> browser) {
+    if (!browser || !browser->IsValid() || tab.devtools_registration) return;
+    const std::weak_ptr<bool> owner_token = native_owner_alive_;
+    const std::string tab_id = tab.id;
+    CefRefPtr<KestrelAutomationDevToolsObserver> observer =
+        new KestrelAutomationDevToolsObserver(
+            [this, owner_token, tab_id](int message_id, bool success,
+                                       std::string result_json) {
+              const std::shared_ptr<bool> alive = owner_token.lock();
+              if (!alive || !*alive) return;
+              OnUserBrowserDevToolsResult(tab_id, message_id, success,
+                                          std::move(result_json));
+            },
+            [this, owner_token, tab_id]() {
+              const std::shared_ptr<bool> alive = owner_token.lock();
+              if (!alive || !*alive) return;
+              NativeUserBrowserTab* found = FindUserBrowserTab(tab_id);
+              if (found) found->devtools_attached = true;
+            });
+    tab.devtools_registration =
+        browser->GetHost()->AddDevToolsMessageObserver(observer);
+  }
+
+  bool CallUserBrowserDevToolsMethod(NativeUserBrowserTab& tab,
+                                     const std::string& method,
+                                     CefRefPtr<CefDictionaryValue> params,
+                                     const std::string& kind,
+                                     std::string* error) {
+    CefRefPtr<CefBrowser> browser = tab.view ? tab.view->GetBrowser() : nullptr;
+    if (!browser || !browser->IsValid()) {
+      if (error) *error = "Native Chromium browser tab is unavailable.";
+      return false;
+    }
+    EnsureUserBrowserDevTools(tab, browser);
+    const int message_id = browser->GetHost()->ExecuteDevToolsMethod(
+        0, method, params ? params : CefDictionaryValue::Create());
+    if (message_id <= 0) {
+      if (error)
+        *error = "Kestrel could not call DevTools in the visible browser tab.";
+      return false;
+    }
+    tab.pending_devtools_kinds[message_id] = kind;
+    return true;
+  }
+
+  bool VisibleScreenshotDevToolsInFlight(const NativeUserBrowserTab& tab) const {
+    for (const auto& entry : tab.pending_devtools_kinds) {
+      if (entry.second.rfind("visible-screenshot", 0) == 0) return true;
+    }
+    return false;
+  }
+
+  bool StartPendingVisibleScreenshot(NativeUserBrowserTab& tab,
+                                     std::string* error) {
+    if (tab.pending_screenshot_request_id.empty() ||
+        VisibleScreenshotDevToolsInFlight(tab)) {
+      return true;
+    }
+    CefRefPtr<CefBrowser> browser = tab.view ? tab.view->GetBrowser() : nullptr;
+    if (!browser || !browser->IsValid() || tab.loading) {
+      // Wait for a finished load so Runtime.evaluate sees a real document.
+      return true;
+    }
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", kAutomationScreenshotGuardScript);
+    params->SetBool("returnByValue", true);
+    params->SetBool("awaitPromise", false);
+    if (!CallUserBrowserDevToolsMethod(tab, "Runtime.evaluate", params,
+                                       "visible-screenshot-guard", error)) {
+      return false;
+    }
+    return true;
+  }
+
+  bool BeginVisibleScreenshot(const std::string& tab_id,
+                              const std::string& request_id,
+                              std::string* error) {
+    NativeUserBrowserTab* tab = ResolveVisibleTab(tab_id, error);
+    if (!tab) return false;
+    if (!tab->pending_screenshot_request_id.empty()) {
+      if (error) *error = "Native Chromium browser tab is busy.";
+      return false;
+    }
+    tab->pending_screenshot_request_id = request_id;
+    if (!StartPendingVisibleScreenshot(*tab, error)) {
+      tab->pending_screenshot_request_id.clear();
+      return false;
+    }
+    return true;
+  }
+
+  bool CaptureVisibleScreenshot(NativeUserBrowserTab& tab, std::string* error) {
+    if (tab.view) {
+      tab.view->SetBounds(
+          CefRect(0, 0, tab.viewport_width, tab.viewport_height));
+      tab.view->SetVisible(true);
+    }
+    CefRefPtr<CefDictionaryValue> enable_params = CefDictionaryValue::Create();
+    if (!CallUserBrowserDevToolsMethod(tab, "Page.enable", enable_params,
+                                       "visible-screenshot-enable", error)) {
+      return false;
+    }
+    return true;
+  }
+
+  bool CaptureVisibleScreenshotFrame(NativeUserBrowserTab& tab,
+                                     std::string* error) {
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("format", "png");
+    params->SetBool("fromSurface", true);
+    params->SetBool("captureBeyondViewport", false);
+    return CallUserBrowserDevToolsMethod(tab, "Page.captureScreenshot", params,
+                                         "visible-screenshot", error);
+  }
+
+  void OnUserBrowserDevToolsResult(const std::string& tab_id, int message_id,
+                                   bool success, std::string result_json) {
+    NativeUserBrowserTab* tab = FindUserBrowserTab(tab_id);
+    if (!tab) return;
+    const auto kind_it = tab->pending_devtools_kinds.find(message_id);
+    if (kind_it == tab->pending_devtools_kinds.end()) return;
+    const std::string kind = kind_it->second;
+    tab->pending_devtools_kinds.erase(kind_it);
+
+    if (kind == "visible-screenshot-guard") {
+      const std::string request_id = tab->pending_screenshot_request_id;
+      if (request_id.empty()) return;
+      std::string value_json;
+      bool evaluate_ok = success;
+      if (success) {
+        CefRefPtr<CefValue> parsed = CefParseJSON(result_json, JSON_PARSER_RFC);
+        if (parsed && parsed->GetType() == VTYPE_DICTIONARY) {
+          CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
+          if (root->HasKey("exceptionDetails")) {
+            evaluate_ok = false;
+          } else if (root->GetType("result") == VTYPE_DICTIONARY) {
+            CefRefPtr<CefDictionaryValue> result =
+                root->GetDictionary("result");
+            if (result->GetType("value") == VTYPE_STRING) {
+              value_json = result->GetString("value").ToString();
+            }
+          }
+        } else {
+          evaluate_ok = false;
+        }
+      }
+      if (!evaluate_ok || value_json.empty()) {
+        tab->pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible screenshot guard failed.");
+        return;
+      }
+      CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+      if (payload && payload->GetType() == VTYPE_DICTIONARY &&
+          payload->GetDictionary()->GetBool("sensitive")) {
+        tab->pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Kestrel does not share browser screenshots from pages with "
+            "sensitive input fields.");
+        return;
+      }
+      std::string error;
+      if (!CaptureVisibleScreenshot(*tab, &error)) {
+        tab->pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty() ? "Native Chromium visible screenshot failed."
+                          : error);
+      }
+      return;
+    }
+
+    if (kind == "visible-screenshot-enable") {
+      const std::string request_id = tab->pending_screenshot_request_id;
+      if (request_id.empty()) return;
+      if (!success) {
+        tab->pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible screenshot could not enable Page domain.");
+        return;
+      }
+      std::string error;
+      if (!CaptureVisibleScreenshotFrame(*tab, &error)) {
+        tab->pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty() ? "Native Chromium visible screenshot failed."
+                          : error);
+      }
+      return;
+    }
+
+    if (kind == "visible-screenshot") {
+      const std::string request_id = tab->pending_screenshot_request_id;
+      tab->pending_screenshot_request_id.clear();
+      if (request_id.empty()) return;
+      if (!success) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible screenshot failed.");
+        return;
+      }
+      CefRefPtr<CefValue> parsed = CefParseJSON(result_json, JSON_PARSER_RFC);
+      if (!parsed || parsed->GetType() != VTYPE_DICTIONARY ||
+          parsed->GetDictionary()->GetType("data") != VTYPE_STRING) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible screenshot was invalid.");
+        return;
+      }
+      const std::string png_b64 =
+          parsed->GetDictionary()->GetString("data").ToString();
+      std::vector<uint8_t> png = base64_decode_bytes(png_b64);
+      int width = 0;
+      int height = 0;
+      std::vector<uint8_t> rgba;
+      if (png.size() < 8 || png[0] != 0x89 || png[1] != 'P' || png[2] != 'N' ||
+          png[3] != 'G' || !decode_png_to_rgba(png, &width, &height, &rgba) ||
+          width <= 0 || height <= 0 ||
+          static_cast<size_t>(width) * static_cast<size_t>(height) * 4 !=
+              rgba.size() ||
+          png.size() > 10'000'000) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible screenshot frame was invalid.");
+        return;
+      }
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_SCREENSHOT_OK id=" << tab_id
+                << " width=" << width << " height=" << height << std::endl;
+      SendBrowserBackendResponse(
+          request_id, true,
+          encode_screenshot_frame_json(width, height, rgba, png, true), "");
+      return;
+    }
+  }
+
   NativeUserBrowserTab& CreateBlankUserBrowserTab(bool active) {
     const std::string timestamp = iso8601_now();
     NativeUserBrowserTab tab;
@@ -1814,6 +2081,13 @@ class KestrelClient : public CefClient,
     if (tab.closing) return;
     tab.closing = true;
     tab.loading = false;
+    if (!tab.pending_screenshot_request_id.empty()) {
+      SendBrowserBackendResponse(tab.pending_screenshot_request_id, false, "",
+                                 "Native Chromium browser tab closed.");
+      tab.pending_screenshot_request_id.clear();
+    }
+    tab.pending_devtools_kinds.clear();
+    tab.devtools_registration = nullptr;
     if (!tab.view) return;
     tab.view->SetVisible(false);
     CefRefPtr<CefBrowser> browser = tab.view->GetBrowser();
@@ -2189,7 +2463,25 @@ class KestrelClient : public CefClient,
                 << std::endl;
     }
     RecordHistoryVisit(tab_id, url);
+    NativeUserBrowserTab* tab = FindUserBrowserTab(tab_id);
+    if (tab) {
+      // LoadEnd can race ahead of LoadingStateChange(false). Treat the document
+      // as ready here so a queued visible-screenshot can start.
+      tab->loading = false;
+      tab->url = url;
+    }
     PublishUserBrowserState();
+    if (tab && !tab->pending_screenshot_request_id.empty()) {
+      std::string error;
+      if (!StartPendingVisibleScreenshot(*tab, &error)) {
+        const std::string request_id = tab->pending_screenshot_request_id;
+        tab->pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty() ? "Native Chromium visible screenshot failed."
+                          : error);
+      }
+    }
   }
 
   std::string SanitizeDownloadFilename(std::string requested) const {
@@ -3106,6 +3398,17 @@ class KestrelClient : public CefClient,
       SendBrowserBackendResponse(
           request_id, true,
           CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
+      return;
+    }
+    if (operation == "visible-screenshot") {
+      std::string tab_id;
+      if (request->HasKey("tabId") && request->GetType("tabId") == VTYPE_STRING) {
+        tab_id = request->GetString("tabId").ToString();
+      }
+      std::string error;
+      if (!BeginVisibleScreenshot(tab_id, request_id, &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
       return;
     }
     if (operation == "create") {

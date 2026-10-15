@@ -48,7 +48,7 @@ const child = spawn(
 		"--kestrel-smoke-browser-backend-url",
 		pageUrl,
 		"--kestrel-exit-after-ready-ms",
-		"20000",
+		"45000",
 	],
 	{ stdio: ["ignore", "pipe", "pipe"] },
 );
@@ -111,9 +111,14 @@ try {
 		output,
 		/KESTREL_NATIVE_CHROMIUM_BROWSER_BACKEND_OK tabs=[1-9]\d*/,
 	);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_SCREENSHOT_OK/);
 	assert.doesNotMatch(
 		output,
 		/Native Chromium browser automation is not migrated yet/,
+	);
+	assert.doesNotMatch(
+		output,
+		/Native Chromium browser backend operation is not migrated yet/,
 	);
 	assert.equal(
 		pageHits > 0,
@@ -121,7 +126,7 @@ try {
 		"visible-create through the Core relay must load the smoke page in CEF.",
 	);
 	console.log(
-		"Native Chromium browser backend: Core relay forwards automation to CEF visible tabs (no longer fail-closed).",
+		"Native Chromium browser backend: Core relay visible-create→screenshot→tabs on CEF.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");

@@ -257,6 +257,54 @@ lines.on("line", (line) => {
 			return;
 		}
 		if (message.requestId === "smoke-browser-backend-create") {
+			const tabId =
+				message.result &&
+				typeof message.result === "object" &&
+				typeof message.result.tabId === "string"
+					? message.result.tabId
+					: undefined;
+			if (!tabId) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible create did not return a tab id.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-browser-backend-screenshot",
+				{ operation: "visible-screenshot", tabId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-screenshot") {
+			const frame =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			const width = Number(frame.width);
+			const height = Number(frame.height);
+			const pngTag =
+				frame.png && typeof frame.png === "object"
+					? frame.png.__kestrel_binary_base64__
+					: undefined;
+			if (
+				!Number.isInteger(width) ||
+				!Number.isInteger(height) ||
+				width < 1 ||
+				height < 1 ||
+				frame.trust !== "untrusted_browser" ||
+				typeof pngTag !== "string" ||
+				!pngTag.startsWith("iVBOR")
+			) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible screenshot frame was invalid.",
+				});
+				return;
+			}
 			forwardBrowserBackendRequest(
 				"smoke-browser-backend-tabs",
 				{ operation: "visible-tabs" },
