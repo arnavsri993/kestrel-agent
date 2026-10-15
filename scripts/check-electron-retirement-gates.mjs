@@ -74,5 +74,5 @@ if (!accepted) {
 }
 
 console.log(
-	"Retirement acceptance recorded for this shell. Remove Electron packages only in a dedicated follow-up PR with that evidence attached.",
+	"Retirement acceptance recorded for this shell. Next: corepack pnpm retire:electron:dry-run, then corepack pnpm retire:electron, then verify the Chromium Dock app before merging the Electron-removal follow-up.",
 );

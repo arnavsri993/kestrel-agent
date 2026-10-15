@@ -3937,9 +3937,16 @@ class KestrelClient : public CefClient,
       return;
     }
     if (operation == "visible-autofill") {
+      // Website password-vault autofill is not migrated yet. Return the same
+      // structured unavailable envelope Electron uses so agent flows keep
+      // working instead of treating the operation as a hard backend failure.
       SendBrowserBackendResponse(
-          request_id, false, "",
-          "Native Chromium visible-autofill is not migrated yet.");
+          request_id, true,
+          "{\"credentialAvailable\":false,\"autofillResult\":\"unavailable\","
+          "\"trust\":\"untrusted_browser\"}",
+          "");
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_UNAVAILABLE"
+                << std::endl;
       return;
     }
     if (operation == "visible-act") {

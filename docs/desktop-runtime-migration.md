@@ -340,10 +340,13 @@ Still required before retiring Electron:
 
 - Real Keychain path on a Developer ID–signed durable build (no ad-hoc prompt
   spam); profile-sealed bootstrap is proven for development/cutover
-- Remaining desktop command surface beyond isolated
-  act/screenshot/viewport/upload and visible
-  snapshot/act(click|type|select|key|scroll)/screenshot/context
-  (visible-autofill parity still pending) on CEF
+- Website password-vault `visible-autofill` still returns structured
+  `unavailable` on CEF (provider credential bootstrap is separate and
+  already profile-sealed). Full password-vault migration remains pending
+  before claiming autofill parity.
+- After every gate has live evidence, `KESTREL_ACCEPT_ELECTRON_RETIREMENT=1`
+  unlocks `corepack pnpm retire:electron` to delete Electron packages and
+  default desktop runtime selectors to chromium.
 - Production Developer ID signing + notarization (`check:native-signing`)
 - Retargeted desktop smokes against the native binary on a durable profile
 - Live acceptance of `kestrel-electron` transfer on a real dual-profile
