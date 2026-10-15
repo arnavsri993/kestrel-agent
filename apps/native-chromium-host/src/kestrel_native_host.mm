@@ -4094,6 +4094,33 @@ class KestrelClient : public CefClient,
       SendBrowserBackendResponse(request_id, true, "[]", "");
       return;
     }
+    // Named fail-closes for known Electron-only backend ops. Keep these
+    // explicit so Core/agent callers get stable migration errors instead of a
+    // generic unknown-operation string (see docs/electron-chromium-parity-matrix.json).
+    if (operation == "visible-autofill") {
+      SendBrowserBackendResponse(
+          request_id, false, "",
+          "Native Chromium visible-autofill is not migrated yet.");
+      return;
+    }
+    if (operation == "auth-handoff") {
+      SendBrowserBackendResponse(
+          request_id, false, "",
+          "Native Chromium auth-handoff is not migrated yet.");
+      return;
+    }
+    if (operation == "desktop-screenshot") {
+      SendBrowserBackendResponse(
+          request_id, false, "",
+          "Native Chromium desktop-screenshot is not migrated yet.");
+      return;
+    }
+    if (operation == "desktop-act") {
+      SendBrowserBackendResponse(
+          request_id, false, "",
+          "Native Chromium desktop-act is not migrated yet.");
+      return;
+    }
     SendBrowserBackendResponse(
         request_id, false, "",
         "Native Chromium browser backend operation is not migrated yet: " +

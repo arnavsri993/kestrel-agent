@@ -287,13 +287,25 @@ Until `check:native-signing` exits 0 against
 `release/native-mac-arm64/Kestrel.app`, Electron packaging remains required and
 `KESTREL_INSTALL_NATIVE_CANONICAL=1` must not be used for Dock replacement.
 
+The living Electron↔CEF feature matrix is
+`docs/electron-chromium-parity-matrix.json`. Refresh it when adding backend
+operations or host capabilities, then run:
+
+```sh
+corepack pnpm check:electron-chromium-parity
+corepack pnpm check:electron-retirement
+```
+
 Still required before retiring Electron:
 
 - Real Keychain path on a Developer ID–signed durable build (no ad-hoc prompt
   spam); profile-sealed bootstrap is proven for development/cutover
--   Remaining desktop command surface beyond isolated
-  act/screenshot/viewport/upload and visible context/snapshot/act/screenshot
-  (autofill parity, etc.) on CEF
+- Remaining CEF backend gaps called out in the matrix:
+  `visible-autofill`, `auth-handoff`, `desktop-screenshot`, `desktop-act`
+  (visible context/snapshot/act/screenshot are proven via
+  `test:native-browser-backend`)
+- Native single-instance / durable-profile lock and `kestrel://` deep-link
+  handlers (Electron still owns these in `apps/desktop/src/main`)
 - Production Developer ID signing + notarization (`check:native-signing`)
 - Retargeted desktop smokes against the native binary on a durable profile
 - Live acceptance of the profile transfer design above on a real dual-profile
