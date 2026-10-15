@@ -44,7 +44,7 @@ function between(start, end) {
 }
 
 describe("macOS release workflow security contract", () => {
-	it("uses GitHub Releases as the stable installation and update source", () => {
+	it("keeps the public GitHub Releases feed owner/repo contract for legacy metadata", () => {
 		expect(builder).toContain("provider: github");
 		expect(builder).toContain("owner: arnavsri993");
 		expect(builder).toContain("repo: kestrel-agent");
@@ -53,6 +53,20 @@ describe("macOS release workflow security contract", () => {
 		expect(builder).not.toContain("provider: generic");
 		expect(builder).not.toContain("KESTREL_UPDATE_URL");
 		expect(workflow).not.toContain("KESTREL_UPDATE_URL");
+	});
+
+	it("publishes native Chromium packages without electron-builder", () => {
+		expect(workflow).toContain("package:mac:native:release");
+		expect(workflow).toContain("notarize:mac:native");
+		expect(workflow).toContain("package:mac:native:dmg");
+		expect(workflow).toContain("package:mac:native:pkg");
+		expect(workflow).toContain("import-macos-signing-certs.mjs");
+		expect(workflow).toContain("test:packaged-native:arm64");
+		expect(workflow).toContain("test:packaged-native-desktop-shell:arm64");
+		expect(workflow).not.toContain("electron-builder");
+		expect(workflow).not.toContain("build:desktop:electron");
+		expect(workflow).not.toContain("release/*.blockmap");
+		expect(workflow).not.toContain("test:packaged-desktop:arm64");
 	});
 
 	it("keeps verification read-only and release credentials step-local", () => {
@@ -76,6 +90,10 @@ describe("macOS release workflow security contract", () => {
 		expect(signingJob).toContain("Require a stable release identity");
 		const credentialStep = between(
 			"      - name: Require release credentials",
+			"      - name: Import Developer ID signing certificates",
+		);
+		const importStep = between(
+			"      - name: Import Developer ID signing certificates",
 			"      - name: Build signed Apple Silicon DMG, ZIP, and MDM PKG",
 		);
 		const buildStep = between(
@@ -93,9 +111,16 @@ describe("macOS release workflow security contract", () => {
 		];
 		for (const secret of signingSecrets) {
 			const reference = `\${{ secrets.${secret} }}`;
-			expect(workflow.split(reference)).toHaveLength(3);
 			expect(credentialStep).toContain(reference);
 			expect(buildStep).toContain(reference);
+		}
+		for (const secret of [
+			"CSC_LINK",
+			"CSC_KEY_PASSWORD",
+			"CSC_INSTALLER_LINK",
+			"CSC_INSTALLER_KEY_PASSWORD",
+		]) {
+			expect(importStep).toContain(`\${{ secrets.${secret} }}`);
 		}
 
 		expect(workflow.split("GH_TOKEN: ${{ github.token }}")).toHaveLength(3);
@@ -115,11 +140,12 @@ describe("macOS release workflow security contract", () => {
 		expect(buildStep).toContain("KESTREL_RELEASE_CHANNEL: stable");
 		expect(buildStep).toContain("KESTREL_GOOGLE_OAUTH_CLIENT_ID: ${{ vars.KESTREL_GOOGLE_OAUTH_CLIENT_ID }}");
 		expect(buildStep).toContain("node scripts/prepare-agent-core-sidecar.mjs");
-		expect(buildStep).toContain("corepack pnpm build:desktop:electron");
+		expect(buildStep).toContain("corepack pnpm build:desktop");
 		expect(buildStep.indexOf("prepare-agent-core-sidecar.mjs")).toBeLessThan(
-			buildStep.indexOf("corepack pnpm build:desktop:electron"),
+			buildStep.indexOf("corepack pnpm build:desktop"),
 		);
 		expect(buildStep).not.toContain("secrets.");
+		expect(buildStep).not.toContain("build:desktop:electron");
 	});
 
 	it("serializes each ref and never publishes a manual dispatch", () => {
@@ -171,13 +197,13 @@ describe("macOS release workflow security contract", () => {
 			"release/*.dmg",
 			"release/*.zip",
 			"release/*.pkg",
-			"release/*.blockmap",
 			"release/latest-mac.yml",
 			"release/SHA256SUMS",
 			"release/release-manifest.json",
 		]) {
 			expect(publishStep).toContain(asset);
 		}
+		expect(publishStep).not.toContain("release/*.blockmap");
 
 		const createIndex = publishStep.indexOf("gh release create");
 		const uploadIndex = publishStep.indexOf("gh release upload");

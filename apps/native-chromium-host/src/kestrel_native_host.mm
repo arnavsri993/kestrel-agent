@@ -782,39 +782,6 @@ constexpr char kVisibleAutofillFillScriptSuffix[] = R"JS(;
 })()
 )JS";
 
-std::string json_string_literal(const std::string& value) {
-  std::string out = "\"";
-  for (unsigned char ch : value) {
-    switch (ch) {
-      case '\\':
-        out += "\\\\";
-        break;
-      case '"':
-        out += "\\\"";
-        break;
-      case '\n':
-        out += "\\n";
-        break;
-      case '\r':
-        out += "\\r";
-        break;
-      case '\t':
-        out += "\\t";
-        break;
-      default:
-        if (ch < 0x20) {
-          char buf[8];
-          std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
-          out += buf;
-        } else {
-          out.push_back(static_cast<char>(ch));
-        }
-    }
-  }
-  out.push_back('"');
-  return out;
-}
-
 class KestrelAutomationDevToolsObserver final
     : public CefDevToolsMessageObserver {
  public:
@@ -1357,9 +1324,11 @@ class KestrelClient : public CefClient,
         password_vault_opened_ = true;
         std::cout << "KESTREL_NATIVE_CHROMIUM_PASSWORD_VAULT_READY" << std::endl;
         if (smoke_browser_backend_url) {
-          if (const auto origin = OriginFromUrl(*smoke_browser_backend_url)) {
+          const std::string origin =
+              OriginFromUrl(*smoke_browser_backend_url);
+          if (!origin.empty()) {
             std::string seed_error;
-            if (password_vault_.Save(*origin, "smoke-user", "smoke-pass",
+            if (password_vault_.Save(origin, "smoke-user", "smoke-pass",
                                     &seed_error)) {
               std::cout << "KESTREL_NATIVE_CHROMIUM_PASSWORD_VAULT_SMOKE_SEEDED"
                         << std::endl;
@@ -2400,8 +2369,8 @@ class KestrelClient : public CefClient,
                   << std::endl;
         return;
       }
-      const auto origin = OriginFromUrl(tab->url);
-      if (!origin || !password_vault_opened_) {
+      const std::string origin = OriginFromUrl(tab->url);
+      if (origin.empty() || !password_vault_opened_) {
         SendBrowserBackendResponse(
             request_id, true,
             "{\"credentialAvailable\":false,\"autofillResult\":\"unavailable\","
@@ -2411,7 +2380,7 @@ class KestrelClient : public CefClient,
                   << std::endl;
         return;
       }
-      auto entries = password_vault_.ListForOrigin(*origin);
+      auto entries = password_vault_.ListForOrigin(origin);
       if (entries.empty()) {
         SendBrowserBackendResponse(
             request_id, true,

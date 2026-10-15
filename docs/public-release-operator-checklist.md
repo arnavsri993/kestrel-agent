@@ -26,10 +26,10 @@ reviewer before signing jobs run.
 
 ## 2. GitHub Releases update feed
 
-The desktop updater is pinned to the public `arnavsri993/kestrel-agent` GitHub
-repository and the stable `latest` release channel in the packaged app. The
-tag workflow publishes `latest-mac.yml`, the updater ZIP, and its blockmap
-alongside the public DMG. Make the matching GitHub release public only after
+The desktop updater feed is published from the native Chromium release path to
+the public `arnavsri993/kestrel-agent` GitHub repository. The tag workflow
+publishes `latest-mac.yml`, the updater ZIP, the DMG, and the MDM PKG (no
+electron-builder blockmap). Make the matching GitHub release public only after
 the signed artifact and clean-machine checks pass.
 
 For the website distribution gate, set the repository variable:
