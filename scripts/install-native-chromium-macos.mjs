@@ -30,7 +30,7 @@ if (!existsSync(source)) {
 
 if (canonical) {
 	console.warn(
-		"Installing native Chromium as the canonical Kestrel.app. Electron remains in-tree until retirement.",
+		"Installing native Chromium as the canonical Kestrel.app. Confirm Electron retirement gates before treating this as the only supported desktop runtime.",
 	);
 	const result = spawnSync(
 		process.execPath,

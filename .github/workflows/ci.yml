@@ -68,6 +68,8 @@ jobs:
           corepack pnpm test:native-durable-browser-library
           corepack pnpm test:native-download-capture
           corepack pnpm test:native-credential-bootstrap
+          corepack pnpm test:native-zero-electron-bundle
+          corepack pnpm test:native-dock-canonical
       - run: corepack pnpm test:e2e
       - run: corepack pnpm test:packaged-cli
       - run: corepack pnpm test:editors
@@ -99,51 +101,9 @@ jobs:
           corepack pnpm package:mac:dev
           corepack pnpm test:packaged-native:arm64
           corepack pnpm test:packaged-native-desktop-shell:arm64
-      - name: Legacy Electron Playwright suite (opt-in path until retire:electron)
-        run: |
-          set -euo pipefail
-          corepack pnpm build:desktop:electron
-          corepack pnpm benchmark:browser-agent --report .tmp/browser-agent-benchmark/ci-development.json
-          corepack pnpm test:desktop-file-icon-guard
-          corepack pnpm test:desktop-smoke:electron
-          corepack pnpm test:desktop-single-instance
-          corepack pnpm test:desktop-restart-recovery
-          corepack pnpm test:desktop-workflow-reuse
-          corepack pnpm test:desktop-writing-studio
-          corepack pnpm test:desktop-browser
-          corepack pnpm test:desktop-autofill
-          corepack pnpm test:desktop-setup
-          corepack pnpm test:desktop-fresh-profile
-          corepack pnpm test:desktop-personas
-          corepack pnpm test:desktop-kanban
-          corepack pnpm test:desktop-model-routing
-          corepack pnpm test:desktop-subscription-cli-safety
-          corepack pnpm test:desktop-readiness
-          corepack pnpm test:desktop-external-secrets
-          corepack pnpm test:desktop-observability
-          corepack pnpm test:desktop-life-context
-          corepack pnpm test:desktop-approvals
-          corepack pnpm test:desktop-chat-configuration
-          corepack pnpm test:desktop-managed-policy
-      - name: Legacy Electron packaged smokes (opt-in path until retire:electron)
-        run: |
-          set -euo pipefail
-          corepack pnpm package:mac:dev:electron
-          KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
-          KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
-          KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
-          KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-file-icon-guard
-          KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-subscription-cli-safety
-          corepack pnpm test:packaged-desktop:arm64
-          corepack pnpm benchmark:browser-agent:packaged:arm64 --report .tmp/browser-agent-benchmark/ci-packaged.json
-      - name: Upload browser-agent benchmark reports
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: browser-agent-benchmark-${{ github.run_attempt }}
-          path: .tmp/browser-agent-benchmark/*.json
-          if-no-files-found: warn
-          retention-days: 14
+          corepack pnpm test:packaged-native-zero-electron-bundle:arm64
+          corepack pnpm test:packaged-native-dock-canonical:arm64
+          KESTREL_NATIVE_TEST_APP=release/native-mac-arm64/Kestrel.app corepack pnpm test:native-chromium-core-relay
       - name: Capture desktop failure diagnostics
         if: ${{ always() }}
         shell: bash
@@ -161,15 +121,13 @@ jobs:
           } > .tmp/ci-diagnostics/run.txt
           uname -a > .tmp/ci-diagnostics/uname.txt 2>&1
           ps -axo pid=,ppid=,stat=,command= > .tmp/ci-diagnostics/processes.txt 2>&1
-          grep -E 'Electron|Kestrel|electron-vite|playwright|browser fixture' .tmp/ci-diagnostics/processes.txt > .tmp/ci-diagnostics/relevant-processes.txt || true
+          grep -E 'Electron|Kestrel|Chromium|playwright|browser fixture' .tmp/ci-diagnostics/processes.txt > .tmp/ci-diagnostics/relevant-processes.txt || true
       - name: Upload desktop failure evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: desktop-failure-evidence-${{ github.run_attempt }}
           path: |
-            .tmp/desktop-layout/**
-            .tmp/browser-agent-benchmark/*.json
             .tmp/ci-diagnostics/**
             test-results/**
             playwright-report/**

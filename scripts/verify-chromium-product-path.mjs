@@ -118,35 +118,46 @@ export function assertPackageProductPath(packageJson) {
   return failures;
 }
 
-export function assertCiPackagesChromiumFirst(ciWorkflow) {
+export function assertCiPackagesChromiumFirst(ciWorkflow, electronLegacyWorkflow = "") {
   const failures = [];
   const nativeMarker = "Package native Chromium product path";
-  const electronLegacyMarker = "Legacy Electron";
-  const nativeIndex = ciWorkflow.indexOf(nativeMarker);
-  const electronIndex = ciWorkflow.indexOf(electronLegacyMarker);
-  if (nativeIndex === -1) {
+  if (!ciWorkflow.includes(nativeMarker)) {
     failures.push(
-      ".github/workflows/ci.yml must package the Chromium product path before Electron legacy smokes",
+      ".github/workflows/ci.yml must package the Chromium product path",
     );
   }
-  if (electronIndex === -1) {
-    failures.push(
-      ".github/workflows/ci.yml must label Electron Playwright/packaged smokes as legacy until retire:electron",
-    );
-  }
-  if (nativeIndex !== -1 && electronIndex !== -1 && nativeIndex > electronIndex) {
-    failures.push(
-      ".github/workflows/ci.yml must run Chromium packaged smoke before Electron legacy packaging",
-    );
+  for (const forbidden of [
+    "Legacy Electron Playwright suite",
+    "Legacy Electron packaged smokes",
+    "build:desktop:electron",
+    "package:mac:dev:electron",
+    "test:packaged-desktop:arm64",
+  ]) {
+    if (ciWorkflow.includes(forbidden)) {
+      failures.push(
+        `.github/workflows/ci.yml must not run ${forbidden}; keep Electron under ci-electron-legacy.yml until retire:electron`,
+      );
+    }
   }
   if (
     !ciWorkflow.includes("package:mac:dev") ||
     !ciWorkflow.includes("test:packaged-native:arm64") ||
     !ciWorkflow.includes("test:packaged-native-desktop-shell:arm64") ||
+    !ciWorkflow.includes("test:packaged-native-zero-electron-bundle:arm64") ||
+    !ciWorkflow.includes("test:packaged-native-dock-canonical:arm64") ||
     !ciWorkflow.includes("test:native-desktop-shell")
   ) {
     failures.push(
-      ".github/workflows/ci.yml must run package:mac:dev, test:packaged-native:arm64, test:native-desktop-shell, and test:packaged-native-desktop-shell:arm64 on the product path",
+      ".github/workflows/ci.yml must run package:mac:dev, packaged native host/shell/zero-electron-bundle/dock-canonical smokes, and test:native-desktop-shell on the product path",
+    );
+  }
+  if (
+    !electronLegacyWorkflow.includes("Legacy Electron") ||
+    !electronLegacyWorkflow.includes("build:desktop:electron") ||
+    !electronLegacyWorkflow.includes("package:mac:dev:electron")
+  ) {
+    failures.push(
+      ".github/workflows/ci-electron-legacy.yml must keep the opt-in Electron Playwright/packaged suite until retire:electron",
     );
   }
   return failures;
@@ -198,6 +209,7 @@ export function verifyChromiumProductPath({
   failures.push(
     ...assertCiPackagesChromiumFirst(
       readText(join(rootDirectory, ".github/workflows/ci.yml")),
+      readText(join(rootDirectory, ".github/workflows/ci-electron-legacy.yml")),
     ),
   );
 

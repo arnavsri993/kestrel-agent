@@ -1,0 +1,80 @@
+name: Legacy Electron (opt-in)
+
+# Electron is off the default product / PR CI path. Keep this workflow for
+# explicit regression until `retire:electron` removes the packages.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 11 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: electron-legacy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  electron-legacy:
+    name: Legacy Electron Playwright + packaged smokes
+    runs-on: macos-15
+    timeout-minutes: 55
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      npm_config_arch: arm64
+      npm_config_target_arch: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm build:desktop:electron
+      - name: Legacy Electron Playwright suite
+        run: |
+          set -euo pipefail
+          corepack pnpm benchmark:browser-agent --report .tmp/browser-agent-benchmark/ci-development.json
+          corepack pnpm test:desktop-file-icon-guard
+          corepack pnpm test:desktop-smoke:electron
+          corepack pnpm test:desktop-single-instance
+          corepack pnpm test:desktop-restart-recovery
+          corepack pnpm test:desktop-workflow-reuse
+          corepack pnpm test:desktop-writing-studio
+          corepack pnpm test:desktop-browser
+          corepack pnpm test:desktop-autofill
+          corepack pnpm test:desktop-setup
+          corepack pnpm test:desktop-fresh-profile
+          corepack pnpm test:desktop-personas
+          corepack pnpm test:desktop-kanban
+          corepack pnpm test:desktop-model-routing
+          corepack pnpm test:desktop-subscription-cli-safety
+          corepack pnpm test:desktop-readiness
+          corepack pnpm test:desktop-external-secrets
+          corepack pnpm test:desktop-observability
+          corepack pnpm test:desktop-life-context
+          corepack pnpm test:desktop-approvals
+          corepack pnpm test:desktop-chat-configuration
+          corepack pnpm test:desktop-managed-policy
+      - name: Legacy Electron packaged smokes
+        run: |
+          set -euo pipefail
+          corepack pnpm package:mac:dev:electron
+          KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
+          KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
+          KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
+          KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-file-icon-guard
+          KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-subscription-cli-safety
+          corepack pnpm test:packaged-desktop:arm64
+          corepack pnpm benchmark:browser-agent:packaged:arm64 --report .tmp/browser-agent-benchmark/ci-packaged.json
+      - name: Upload browser-agent benchmark reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: electron-legacy-browser-agent-benchmark-${{ github.run_attempt }}
+          path: .tmp/browser-agent-benchmark/*.json
+          if-no-files-found: warn
+          retention-days: 14

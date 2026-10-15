@@ -78,19 +78,36 @@ describe("verify:chromium-product-path", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("requires Chromium packaged CI before Electron legacy", () => {
+  it("requires Chromium-only product CI with Electron moved to the legacy workflow", () => {
     expect(
-      assertCiPackagesChromiumFirst(`
+      assertCiPackagesChromiumFirst(
+        `
       - run: corepack pnpm test:native-desktop-shell
       - name: Package native Chromium product path and run packaged native smokes
         run: |
           corepack pnpm package:mac:dev
           corepack pnpm test:packaged-native:arm64
           corepack pnpm test:packaged-native-desktop-shell:arm64
-      - name: Legacy Electron Playwright suite (opt-in path until retire:electron)
-        run: corepack pnpm test:desktop-smoke:electron
-      `),
+          corepack pnpm test:packaged-native-zero-electron-bundle:arm64
+          corepack pnpm test:packaged-native-dock-canonical:arm64
+      `,
+        `
+      name: Legacy Electron (opt-in)
+      - run: corepack pnpm build:desktop:electron
+      - run: corepack pnpm package:mac:dev:electron
+      `,
+      ),
     ).toEqual([]);
+    expect(
+      assertCiPackagesChromiumFirst(
+        `
+      - name: Package native Chromium product path
+      - name: Legacy Electron Playwright suite
+        run: corepack pnpm build:desktop:electron
+      `,
+        `Legacy Electron\nbuild:desktop:electron\npackage:mac:dev:electron`,
+      ).some((line) => line.includes("must not run")),
+    ).toBe(true);
   });
 
   it("passes against the live repository product path", () => {
