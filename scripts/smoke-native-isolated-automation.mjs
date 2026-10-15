@@ -131,6 +131,7 @@ try {
 		/KESTREL_NATIVE_CHROMIUM_AUTOMATION_SESSION_CREATED id=native-browser-/,
 	);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_AUTOMATION_ACT_OK/);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_AUTOMATION_SCREENSHOT_OK/);
 	assert.doesNotMatch(
 		output,
 		/Native Chromium browser backend operation is not migrated yet/,
@@ -146,10 +147,30 @@ try {
 		"isolated act(click) through the Core relay must dispatch on the inspected button.",
 	);
 	console.log(
-		"Native Chromium isolated automation: Core relay create→navigate→snapshot→act→close on CEF sessions.",
+		"Native Chromium isolated automation: Core relay create→navigate→snapshot→act→screenshot→close on CEF sessions.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");
+	try {
+		await new Promise((resolvePromise) => {
+			if (child.exitCode !== null) {
+				resolvePromise();
+				return;
+			}
+			child.once("exit", () => resolvePromise());
+			setTimeout(() => {
+				try {
+					child.kill("SIGKILL");
+				} catch {
+					/* already gone */
+				}
+			}, 2_000);
+		});
+	} catch {
+		/* ignore shutdown races */
+	}
 	await new Promise((resolvePromise) => server.close(resolvePromise));
-	await rm(profile, { recursive: true, force: true });
+	await rm(profile, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }).catch(
+		() => undefined,
+	);
 }

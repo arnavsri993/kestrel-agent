@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <ImageIO/ImageIO.h>
 
 #include <algorithm>
 #include <chrono>
@@ -316,6 +317,74 @@ std::string json_escape(const std::string& value) {
   return escaped;
 }
 
+std::string base64_encode_bytes(const uint8_t* data, size_t length) {
+  if (!data || length == 0) return {};
+  NSData* payload = [NSData dataWithBytes:data length:length];
+  NSString* encoded =
+      [payload base64EncodedStringWithOptions:0];
+  return encoded ? std::string([encoded UTF8String] ?: "") : std::string();
+}
+
+std::vector<uint8_t> base64_decode_bytes(const std::string& encoded) {
+  if (encoded.empty()) return {};
+  NSData* payload = [[NSData alloc]
+      initWithBase64EncodedString:@(encoded.c_str())
+                          options:NSDataBase64DecodingIgnoreUnknownCharacters];
+  if (!payload || payload.length == 0) return {};
+  const auto* bytes = static_cast<const uint8_t*>(payload.bytes);
+  return std::vector<uint8_t>(bytes, bytes + payload.length);
+}
+
+bool decode_png_to_rgba(const std::vector<uint8_t>& png, int* width,
+                        int* height, std::vector<uint8_t>* rgba) {
+  if (!width || !height || !rgba || png.empty()) return false;
+  NSData* data = [NSData dataWithBytes:png.data() length:png.size()];
+  CGImageSourceRef source =
+      CGImageSourceCreateWithData((__bridge CFDataRef)data, nullptr);
+  if (!source) return false;
+  CGImageRef image = CGImageSourceCreateImageAtIndex(source, 0, nullptr);
+  CFRelease(source);
+  if (!image) return false;
+  const size_t image_width = CGImageGetWidth(image);
+  const size_t image_height = CGImageGetHeight(image);
+  if (image_width == 0 || image_height == 0 ||
+      image_width > 7680 || image_height > 4320) {
+    CGImageRelease(image);
+    return false;
+  }
+  std::vector<uint8_t> pixels(image_width * image_height * 4, 0);
+  CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+  CGContextRef context = CGBitmapContextCreate(
+      pixels.data(), image_width, image_height, 8, image_width * 4, space,
+      static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast) |
+          static_cast<CGBitmapInfo>(kCGBitmapByteOrder32Big));
+  CGColorSpaceRelease(space);
+  if (!context) {
+    CGImageRelease(image);
+    return false;
+  }
+  CGContextDrawImage(context, CGRectMake(0, 0, image_width, image_height),
+                     image);
+  CGContextRelease(context);
+  CGImageRelease(image);
+  *width = static_cast<int>(image_width);
+  *height = static_cast<int>(image_height);
+  *rgba = std::move(pixels);
+  return true;
+}
+
+std::string encode_screenshot_frame_json(int width, int height,
+                                         const std::vector<uint8_t>& rgba,
+                                         const std::vector<uint8_t>& png) {
+  const std::string rgba_b64 =
+      base64_encode_bytes(rgba.data(), rgba.size());
+  const std::string png_b64 = base64_encode_bytes(png.data(), png.size());
+  return "{\"width\":" + std::to_string(width) + ",\"height\":" +
+         std::to_string(height) +
+         ",\"rgba\":{\"__kestrel_binary_base64__\":\"" + rgba_b64 +
+         "\"},\"png\":{\"__kestrel_binary_base64__\":\"" + png_b64 + "\"}}";
+}
+
 std::string json_string_literal(const std::string& value) {
   CefRefPtr<CefValue> root = CefValue::Create();
   root->SetString(value);
@@ -549,6 +618,28 @@ constexpr char kAutomationSnapshotScript[] = R"JS(
     },
     truncated
   });
+})()
+)JS";
+
+constexpr char kAutomationScreenshotGuardScript[] = R"JS(
+(() => {
+  const sensitiveName =
+    /(?:\b(?:new|current|old|confirm(?:ation)?|repeat)?\s*password\b|\b(?:one\s*time|recovery|verification|security)\s*(?:code|passcode|pin)\b|\botp\b|\b(?:cvv|cvc)\b|\bapi\s*(?:key|token)\b|\baccess\s*token\b|\bprivate\s*key\b)/i;
+  const nodes = Array.from(document.querySelectorAll(
+    'input:not([type="hidden"]), textarea'));
+  for (const el of nodes) {
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' ||
+        style.visibility === 'collapse' || Number(style.opacity) <= 0 ||
+        el.getClientRects().length === 0) continue;
+    const inputType = (el.getAttribute('type') || '').toLowerCase();
+    if (inputType === 'password') return JSON.stringify({ sensitive: true });
+    const name = String(
+      el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
+      el.getAttribute('name') || el.id || '').slice(0, 200);
+    if (sensitiveName.test(name)) return JSON.stringify({ sensitive: true });
+  }
+  return JSON.stringify({ sensitive: false });
 })()
 )JS";
 
@@ -847,6 +938,7 @@ struct NativeAutomationSession {
   std::string pending_navigate_url;
   std::string pending_snapshot_request_id;
   std::string pending_act_request_id;
+  std::string pending_screenshot_request_id;
   std::map<std::string, NativeAutomationElementRef> element_refs;
   std::map<int, std::string> pending_devtools_kinds;
   CefRefPtr<KestrelUserBrowserClient> client;
@@ -3074,6 +3166,19 @@ class KestrelClient : public CefClient,
       }
       return;
     }
+    if (operation == "screenshot") {
+      if (request->GetType("sessionId") != VTYPE_STRING) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native isolated screenshot was invalid.");
+        return;
+      }
+      std::string error;
+      if (!BeginAutomationScreenshot(
+              request->GetString("sessionId").ToString(), request_id, &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
+      return;
+    }
     if (operation == "close") {
       if (request->GetType("sessionId") != VTYPE_STRING) {
         SendBrowserBackendResponse(request_id, false, "",
@@ -3240,6 +3345,12 @@ class KestrelClient : public CefClient,
                 "Native Chromium browser session closed.");
             found->second.pending_act_request_id.clear();
           }
+          if (!found->second.pending_screenshot_request_id.empty()) {
+            SendBrowserBackendResponse(
+                found->second.pending_screenshot_request_id, false, "",
+                "Native Chromium browser session closed.");
+            found->second.pending_screenshot_request_id.clear();
+          }
           automation_sessions_.erase(found);
         },
         [](const std::string&, const std::string&) {},
@@ -3289,7 +3400,9 @@ class KestrelClient : public CefClient,
       if (error) *error = "Kestrel could not create the isolated browser view.";
       return false;
     }
-    session.view->SetBounds(CefRect(0, 0, 1, 1));
+    // Keep the isolated view hidden, but give the compositor a real viewport so
+    // Page.captureScreenshot and layout-based automation stay usable.
+    session.view->SetBounds(CefRect(0, 0, 1280, 720));
     session.view->SetVisible(false);
     kestrel_window->AddChildView(session.view);
     return true;
@@ -3360,10 +3473,11 @@ class KestrelClient : public CefClient,
         browser->GetHost()->AddDevToolsMessageObserver(observer);
   }
 
-  bool EvaluateAutomationScript(NativeAutomationSession& session,
-                                const std::string& expression,
-                                const std::string& kind,
-                                std::string* error) {
+  bool CallAutomationDevToolsMethod(NativeAutomationSession& session,
+                                    const std::string& method,
+                                    CefRefPtr<CefDictionaryValue> params,
+                                    const std::string& kind,
+                                    std::string* error) {
     CefRefPtr<CefBrowser> browser =
         session.view ? session.view->GetBrowser() : nullptr;
     if (!browser || !browser->IsValid()) {
@@ -3371,19 +3485,64 @@ class KestrelClient : public CefClient,
       return false;
     }
     EnsureAutomationDevTools(session, browser);
-    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
-    params->SetString("expression", expression);
-    params->SetBool("returnByValue", true);
-    params->SetBool("awaitPromise", false);
-    const int message_id =
-        browser->GetHost()->ExecuteDevToolsMethod(0, "Runtime.evaluate", params);
+    const int message_id = browser->GetHost()->ExecuteDevToolsMethod(
+        0, method, params ? params : CefDictionaryValue::Create());
     if (message_id <= 0) {
       if (error)
-        *error = "Kestrel could not evaluate script in the isolated browser.";
+        *error = "Kestrel could not call DevTools in the isolated browser.";
       return false;
     }
     session.pending_devtools_kinds[message_id] = kind;
     return true;
+  }
+
+  bool EvaluateAutomationScript(NativeAutomationSession& session,
+                                const std::string& expression,
+                                const std::string& kind,
+                                std::string* error) {
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", expression);
+    params->SetBool("returnByValue", true);
+    params->SetBool("awaitPromise", false);
+    return CallAutomationDevToolsMethod(session, "Runtime.evaluate", params,
+                                        kind, error);
+  }
+
+  bool CaptureAutomationScreenshot(NativeAutomationSession& session,
+                                   std::string* error) {
+    // Hidden Alloy views often never produce a compositor surface. Briefly show
+    // the session (still behind the shell) so Page.captureScreenshot can paint.
+    if (session.view) {
+      session.view->SetBounds(CefRect(0, 0, 1280, 720));
+      session.view->SetVisible(true);
+    }
+    CefRefPtr<CefDictionaryValue> enable_params = CefDictionaryValue::Create();
+    if (!CallAutomationDevToolsMethod(session, "Page.enable", enable_params,
+                                      "screenshot-enable", error)) {
+      if (session.view) session.view->SetVisible(false);
+      return false;
+    }
+    return true;
+  }
+
+  bool CaptureAutomationScreenshotFrame(NativeAutomationSession& session,
+                                        std::string* error) {
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("format", "png");
+    params->SetBool("fromSurface", true);
+    params->SetBool("captureBeyondViewport", false);
+    if (!CallAutomationDevToolsMethod(session, "Page.captureScreenshot", params,
+                                      "screenshot", error)) {
+      if (session.view) session.view->SetVisible(false);
+      return false;
+    }
+    return true;
+  }
+
+  bool AutomationSessionBusy(const NativeAutomationSession& session) const {
+    return !session.pending_snapshot_request_id.empty() ||
+           !session.pending_act_request_id.empty() ||
+           !session.pending_screenshot_request_id.empty();
   }
 
   void OnAutomationDevToolsResult(const std::string& session_id,
@@ -3396,6 +3555,74 @@ class KestrelClient : public CefClient,
     if (kind_it == found->second.pending_devtools_kinds.end()) return;
     const std::string kind = kind_it->second;
     found->second.pending_devtools_kinds.erase(kind_it);
+
+    if (kind == "screenshot-enable") {
+      const std::string request_id = found->second.pending_screenshot_request_id;
+      if (request_id.empty()) return;
+      if (!success) {
+        if (found->second.view) found->second.view->SetVisible(false);
+        found->second.pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser screenshot could not enable Page domain.");
+        return;
+      }
+      std::string error;
+      if (!CaptureAutomationScreenshotFrame(found->second, &error)) {
+        if (found->second.view) found->second.view->SetVisible(false);
+        found->second.pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty() ? "Native Chromium browser screenshot failed."
+                          : error);
+      }
+      return;
+    }
+
+    if (kind == "screenshot") {
+      const std::string request_id = found->second.pending_screenshot_request_id;
+      found->second.pending_screenshot_request_id.clear();
+      if (found->second.view) found->second.view->SetVisible(false);
+      if (request_id.empty()) return;
+      if (!success) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser screenshot failed.");
+        return;
+      }
+      CefRefPtr<CefValue> parsed = CefParseJSON(result_json, JSON_PARSER_RFC);
+      if (!parsed || parsed->GetType() != VTYPE_DICTIONARY ||
+          parsed->GetDictionary()->GetType("data") != VTYPE_STRING) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser screenshot was invalid.");
+        return;
+      }
+      const std::string png_b64 =
+          parsed->GetDictionary()->GetString("data").ToString();
+      std::vector<uint8_t> png = base64_decode_bytes(png_b64);
+      int width = 0;
+      int height = 0;
+      std::vector<uint8_t> rgba;
+      if (png.size() < 8 || png[0] != 0x89 || png[1] != 'P' || png[2] != 'N' ||
+          png[3] != 'G' || !decode_png_to_rgba(png, &width, &height, &rgba) ||
+          width <= 0 || height <= 0 ||
+          static_cast<size_t>(width) * static_cast<size_t>(height) * 4 !=
+              rgba.size() ||
+          png.size() > 10'000'000) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser screenshot frame was invalid.");
+        return;
+      }
+      std::cout << "KESTREL_NATIVE_CHROMIUM_AUTOMATION_SCREENSHOT_OK id="
+                << session_id << " width=" << width << " height=" << height
+                << std::endl;
+      SendBrowserBackendResponse(
+          request_id, true,
+          encode_screenshot_frame_json(width, height, rgba, png), "");
+      return;
+    }
 
     std::string value_json;
     bool evaluate_ok = success;
@@ -3424,6 +3651,37 @@ class KestrelClient : public CefClient,
       }
     }
     success = evaluate_ok;
+
+    if (kind == "screenshot-guard") {
+      const std::string request_id = found->second.pending_screenshot_request_id;
+      if (request_id.empty()) return;
+      if (!success || value_json.empty()) {
+        found->second.pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser screenshot guard failed.");
+        return;
+      }
+      CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+      if (payload && payload->GetType() == VTYPE_DICTIONARY &&
+          payload->GetDictionary()->GetBool("sensitive")) {
+        found->second.pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Kestrel does not share browser screenshots from pages with "
+            "sensitive input fields.");
+        return;
+      }
+      std::string error;
+      if (!CaptureAutomationScreenshot(found->second, &error)) {
+        found->second.pending_screenshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty() ? "Native Chromium browser screenshot failed."
+                          : error);
+      }
+      return;
+    }
 
     if (kind == "snapshot") {
       const std::string request_id = found->second.pending_snapshot_request_id;
@@ -3522,8 +3780,7 @@ class KestrelClient : public CefClient,
       if (error) *error = "Native Chromium browser session is unavailable.";
       return false;
     }
-    if (!found->second.pending_snapshot_request_id.empty() ||
-        !found->second.pending_act_request_id.empty()) {
+    if (AutomationSessionBusy(found->second)) {
       if (error) *error = "Native Chromium browser session is busy.";
       return false;
     }
@@ -3531,6 +3788,28 @@ class KestrelClient : public CefClient,
     if (!EvaluateAutomationScript(found->second, kAutomationSnapshotScript,
                                   "snapshot", error)) {
       found->second.pending_snapshot_request_id.clear();
+      return false;
+    }
+    return true;
+  }
+
+  bool BeginAutomationScreenshot(const std::string& session_id,
+                                 const std::string& request_id,
+                                 std::string* error) {
+    auto found = automation_sessions_.find(session_id);
+    if (found == automation_sessions_.end() || found->second.closing) {
+      if (error) *error = "Native Chromium browser session is unavailable.";
+      return false;
+    }
+    if (AutomationSessionBusy(found->second)) {
+      if (error) *error = "Native Chromium browser session is busy.";
+      return false;
+    }
+    found->second.pending_screenshot_request_id = request_id;
+    if (!EvaluateAutomationScript(found->second,
+                                  kAutomationScreenshotGuardScript,
+                                  "screenshot-guard", error)) {
+      found->second.pending_screenshot_request_id.clear();
       return false;
     }
     return true;
@@ -3549,8 +3828,7 @@ class KestrelClient : public CefClient,
       if (error) *error = "Native isolated act was invalid.";
       return false;
     }
-    if (!found->second.pending_snapshot_request_id.empty() ||
-        !found->second.pending_act_request_id.empty()) {
+    if (AutomationSessionBusy(found->second)) {
       if (error) *error = "Native Chromium browser session is busy.";
       return false;
     }

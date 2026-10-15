@@ -354,6 +354,53 @@ lines.on("line", (line) => {
 				write({
 					type: "smoke-event",
 					name: "isolated-automation-failed",
+					error: "Isolated automation session id was lost before screenshot.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-screenshot",
+				{ operation: "screenshot", sessionId: smokeIsolatedSessionId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-screenshot") {
+			const frame =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			const width = Number(frame.width);
+			const height = Number(frame.height);
+			const pngTag =
+				frame.png && typeof frame.png === "object"
+					? frame.png.__kestrel_binary_base64__
+					: undefined;
+			const rgbaTag =
+				frame.rgba && typeof frame.rgba === "object"
+					? frame.rgba.__kestrel_binary_base64__
+					: undefined;
+			if (
+				!Number.isInteger(width) ||
+				!Number.isInteger(height) ||
+				width < 1 ||
+				height < 1 ||
+				typeof pngTag !== "string" ||
+				!pngTag.startsWith("iVBOR") ||
+				typeof rgbaTag !== "string" ||
+				rgbaTag.length < 8
+			) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation screenshot frame was invalid.",
+				});
+				return;
+			}
+			if (!smokeIsolatedSessionId) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
 					error: "Isolated automation session id was lost before close.",
 				});
 				return;
