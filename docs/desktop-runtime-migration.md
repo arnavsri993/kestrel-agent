@@ -260,13 +260,40 @@ profile, operators keep both profiles untouched and use the supported
 reference-product migration CLI only for OpenClaw/Hermes/Codex/Claude Code
 imports into an isolated target.
 
+### Developer ID signing + notarization (native Chromium)
+
+Ad-hoc `package:mac:native` is enough for local smokes and side-by-side
+`Kestrel Native.app`. Canonical Dock cutover requires a release-signed,
+notarized package:
+
+```sh
+# Requires a Developer ID Application identity in the keychain.
+export KESTREL_NATIVE_CODESIGN_IDENTITY="Developer ID Application: Example Inc (TEAMID)"
+
+# Optional readiness check (identity + notary credentials only):
+corepack pnpm check:native-signing -- --readiness
+
+corepack pnpm package:mac:native:release
+
+# Notary credentials: NOTARYTOOL_PROFILE / KESTREL_NOTARY_PROFILE, or
+# APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID
+corepack pnpm notarize:mac:native
+
+# Full evidence gate (codesign + stapler + spctl):
+corepack pnpm check:native-signing
+```
+
+Until `check:native-signing` exits 0 against
+`release/native-mac-arm64/Kestrel.app`, Electron packaging remains required and
+`KESTREL_INSTALL_NATIVE_CANONICAL=1` must not be used for Dock replacement.
+
 Still required before retiring Electron:
 
 - Real Keychain path on a Developer ID–signed durable build (no ad-hoc prompt
   spam); profile-sealed bootstrap is proven for development/cutover
 - Remaining desktop command surface beyond isolated act (`screenshot`,
   `viewport`, `upload`, visible-act parity, etc.) on CEF
-- Production Developer ID signing + notarization
+- Production Developer ID signing + notarization (`check:native-signing`)
 - Retargeted desktop smokes against the native binary on a durable profile
 - Live acceptance of the profile transfer design above on a real dual-profile
   dry-run/apply (not silent merge)

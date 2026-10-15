@@ -19,7 +19,7 @@ const gates = [
 	"test:packaged-native:arm64",
 	"Keychain/credential bootstrap without prompt spam — profile-sealed proven; real Keychain gated on Developer ID + --kestrel-real-keychain",
 	"Isolated automation sessions (create/navigate/snapshot/act) on CEF",
-	"Developer ID signing + notarization",
+	"Developer ID signing + notarization — check:native-signing (package:mac:native:release + notarize:mac:native)",
 	"Explicit Electron→native profile transfer design (see docs/desktop-runtime-migration.md)",
 	"On-screen verification of canonical Dock app on Chromium",
 ];
