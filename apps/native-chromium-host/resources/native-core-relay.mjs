@@ -296,6 +296,31 @@ lines.on("line", (line) => {
 				write({
 					type: "smoke-event",
 					name: "isolated-automation-failed",
+					error: "Isolated automation session id was lost before viewport.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-viewport",
+				{
+					operation: "viewport",
+					sessionId: smokeIsolatedSessionId,
+					viewport: {
+						name: "smoke",
+						width: 800,
+						height: 600,
+						deviceScaleFactor: 1,
+					},
+				},
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-viewport") {
+			if (!smokeIsolatedSessionId) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
 					error: "Isolated automation session id was lost before snapshot.",
 				});
 				return;
@@ -383,8 +408,8 @@ lines.on("line", (line) => {
 			if (
 				!Number.isInteger(width) ||
 				!Number.isInteger(height) ||
-				width < 1 ||
-				height < 1 ||
+				width !== 800 ||
+				height !== 600 ||
 				typeof pngTag !== "string" ||
 				!pngTag.startsWith("iVBOR") ||
 				typeof rgbaTag !== "string" ||
@@ -393,7 +418,8 @@ lines.on("line", (line) => {
 				write({
 					type: "smoke-event",
 					name: "isolated-automation-failed",
-					error: "Isolated automation screenshot frame was invalid.",
+					error:
+						"Isolated automation screenshot frame was invalid or did not match the 800x600 viewport.",
 				});
 				return;
 			}

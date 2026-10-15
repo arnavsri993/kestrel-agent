@@ -130,8 +130,12 @@ try {
 		output,
 		/KESTREL_NATIVE_CHROMIUM_AUTOMATION_SESSION_CREATED id=native-browser-/,
 	);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_AUTOMATION_VIEWPORT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_AUTOMATION_ACT_OK/);
-	assert.match(output, /KESTREL_NATIVE_CHROMIUM_AUTOMATION_SCREENSHOT_OK/);
+	assert.match(
+		output,
+		/KESTREL_NATIVE_CHROMIUM_AUTOMATION_SCREENSHOT_OK id=native-browser-\S+ width=800 height=600/,
+	);
 	assert.doesNotMatch(
 		output,
 		/Native Chromium browser backend operation is not migrated yet/,
@@ -147,7 +151,7 @@ try {
 		"isolated act(click) through the Core relay must dispatch on the inspected button.",
 	);
 	console.log(
-		"Native Chromium isolated automation: Core relay create→navigate→snapshot→act→screenshot→close on CEF sessions.",
+		"Native Chromium isolated automation: Core relay create→navigate→viewport→snapshot→act→screenshot→close on CEF sessions.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");

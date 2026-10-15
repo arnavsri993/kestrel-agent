@@ -939,6 +939,10 @@ struct NativeAutomationSession {
   std::string pending_snapshot_request_id;
   std::string pending_act_request_id;
   std::string pending_screenshot_request_id;
+  std::string pending_viewport_request_id;
+  int viewport_width = 1280;
+  int viewport_height = 720;
+  double viewport_device_scale_factor = 1.0;
   std::map<std::string, NativeAutomationElementRef> element_refs;
   std::map<int, std::string> pending_devtools_kinds;
   CefRefPtr<KestrelUserBrowserClient> client;
@@ -3179,6 +3183,21 @@ class KestrelClient : public CefClient,
       }
       return;
     }
+    if (operation == "viewport") {
+      if (request->GetType("sessionId") != VTYPE_STRING ||
+          request->GetType("viewport") != VTYPE_DICTIONARY) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native isolated viewport was invalid.");
+        return;
+      }
+      std::string error;
+      if (!BeginAutomationViewport(request->GetString("sessionId").ToString(),
+                                   request->GetDictionary("viewport"),
+                                   request_id, &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
+      return;
+    }
     if (operation == "close") {
       if (request->GetType("sessionId") != VTYPE_STRING) {
         SendBrowserBackendResponse(request_id, false, "",
@@ -3351,6 +3370,12 @@ class KestrelClient : public CefClient,
                 "Native Chromium browser session closed.");
             found->second.pending_screenshot_request_id.clear();
           }
+          if (!found->second.pending_viewport_request_id.empty()) {
+            SendBrowserBackendResponse(
+                found->second.pending_viewport_request_id, false, "",
+                "Native Chromium browser session closed.");
+            found->second.pending_viewport_request_id.clear();
+          }
           automation_sessions_.erase(found);
         },
         [](const std::string&, const std::string&) {},
@@ -3513,7 +3538,8 @@ class KestrelClient : public CefClient,
     // Hidden Alloy views often never produce a compositor surface. Briefly show
     // the session (still behind the shell) so Page.captureScreenshot can paint.
     if (session.view) {
-      session.view->SetBounds(CefRect(0, 0, 1280, 720));
+      session.view->SetBounds(CefRect(0, 0, session.viewport_width,
+                                      session.viewport_height));
       session.view->SetVisible(true);
     }
     CefRefPtr<CefDictionaryValue> enable_params = CefDictionaryValue::Create();
@@ -3542,7 +3568,8 @@ class KestrelClient : public CefClient,
   bool AutomationSessionBusy(const NativeAutomationSession& session) const {
     return !session.pending_snapshot_request_id.empty() ||
            !session.pending_act_request_id.empty() ||
-           !session.pending_screenshot_request_id.empty();
+           !session.pending_screenshot_request_id.empty() ||
+           !session.pending_viewport_request_id.empty();
   }
 
   void OnAutomationDevToolsResult(const std::string& session_id,
@@ -3555,6 +3582,23 @@ class KestrelClient : public CefClient,
     if (kind_it == found->second.pending_devtools_kinds.end()) return;
     const std::string kind = kind_it->second;
     found->second.pending_devtools_kinds.erase(kind_it);
+
+    if (kind == "viewport") {
+      const std::string request_id = found->second.pending_viewport_request_id;
+      found->second.pending_viewport_request_id.clear();
+      if (request_id.empty()) return;
+      if (!success) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser viewport update failed.");
+        return;
+      }
+      std::cout << "KESTREL_NATIVE_CHROMIUM_AUTOMATION_VIEWPORT_OK id="
+                << session_id << " width=" << found->second.viewport_width
+                << " height=" << found->second.viewport_height << std::endl;
+      SendBrowserBackendResponse(request_id, true, "null", "");
+      return;
+    }
 
     if (kind == "screenshot-enable") {
       const std::string request_id = found->second.pending_screenshot_request_id;
@@ -3810,6 +3854,80 @@ class KestrelClient : public CefClient,
                                   kAutomationScreenshotGuardScript,
                                   "screenshot-guard", error)) {
       found->second.pending_screenshot_request_id.clear();
+      return false;
+    }
+    return true;
+  }
+
+  bool BeginAutomationViewport(const std::string& session_id,
+                               CefRefPtr<CefDictionaryValue> viewport,
+                               const std::string& request_id,
+                               std::string* error) {
+    auto found = automation_sessions_.find(session_id);
+    if (found == automation_sessions_.end() || found->second.closing) {
+      if (error) *error = "Native Chromium browser session is unavailable.";
+      return false;
+    }
+    if (!viewport || viewport->GetType("name") != VTYPE_STRING) {
+      if (error) *error = "Native isolated viewport was invalid.";
+      return false;
+    }
+    const auto read_dimension = [&](const char* key, int* out) -> bool {
+      if (viewport->GetType(key) == VTYPE_INT) {
+        *out = viewport->GetInt(key);
+        return true;
+      }
+      if (viewport->GetType(key) == VTYPE_DOUBLE) {
+        *out = static_cast<int>(viewport->GetDouble(key));
+        return true;
+      }
+      return false;
+    };
+    int width = 0;
+    int height = 0;
+    if (!read_dimension("width", &width) || !read_dimension("height", &height)) {
+      if (error) *error = "Native isolated viewport was invalid.";
+      return false;
+    }
+    if (width < 240 || width > 3840 || height < 240 || height > 2160) {
+      if (error) *error = "Native isolated viewport size is out of range.";
+      return false;
+    }
+    double device_scale = 1.0;
+    if (viewport->HasKey("deviceScaleFactor")) {
+      if (viewport->GetType("deviceScaleFactor") != VTYPE_DOUBLE &&
+          viewport->GetType("deviceScaleFactor") != VTYPE_INT) {
+        if (error) *error = "Native isolated viewport was invalid.";
+        return false;
+      }
+      device_scale = viewport->GetType("deviceScaleFactor") == VTYPE_DOUBLE
+                         ? viewport->GetDouble("deviceScaleFactor")
+                         : static_cast<double>(viewport->GetInt("deviceScaleFactor"));
+      if (device_scale < 0.5 || device_scale > 4.0) {
+        if (error) *error = "Native isolated viewport scale is out of range.";
+        return false;
+      }
+    }
+    if (AutomationSessionBusy(found->second)) {
+      if (error) *error = "Native Chromium browser session is busy.";
+      return false;
+    }
+    found->second.viewport_width = width;
+    found->second.viewport_height = height;
+    found->second.viewport_device_scale_factor = device_scale;
+    if (found->second.view) {
+      found->second.view->SetBounds(CefRect(0, 0, width, height));
+    }
+    found->second.pending_viewport_request_id = request_id;
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetInt("width", width);
+    params->SetInt("height", height);
+    params->SetDouble("deviceScaleFactor", device_scale);
+    params->SetBool("mobile", width < 768);
+    if (!CallAutomationDevToolsMethod(found->second,
+                                      "Emulation.setDeviceMetricsOverride",
+                                      params, "viewport", error)) {
+      found->second.pending_viewport_request_id.clear();
       return false;
     }
     return true;
