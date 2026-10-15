@@ -6,6 +6,8 @@ import {
 	BonjourAdvertiser,
 	environmentLanguageServerClient,
 	installCodeIntelligenceTools,
+	ElectronNativeProfileTransfer,
+	isElectronNativeTransferPlan,
 	MigrationManager,
 	type MigrationPlan,
 	parseScheduleExpression,
@@ -43,7 +45,7 @@ const help = `Kestrel CLI
   kestrel automation cancel --job <id>
   kestrel automation run-due
   kestrel automation serve [--poll-ms 5000]
-  kestrel migration plan --product <openclaw|hermes|codex|claude-code>
+  kestrel migration plan --product <openclaw|hermes|codex|claude-code|kestrel-electron>
                          --source <path> --target <path>
   kestrel migration apply --plan <path> --approve yes [--overwrite yes|no]
   kestrel skin list
@@ -370,11 +372,17 @@ export async function runCli(args: string[]): Promise<void> {
 			await new AutomationDaemon(core.orchestrator, command.pollMs).run(
 				controller.signal,
 			);
-		} else if (command.name === "migration-plan")
-			process.stdout.write(
-				`${JSON.stringify(new MigrationManager().plan([{ product: command.product, root: command.source }], command.target), null, 2)}\n`,
-			);
-		else if (command.name === "migration-apply") {
+		} else if (command.name === "migration-plan") {
+			if (command.product === "kestrel-electron") {
+				process.stdout.write(
+					`${JSON.stringify(new ElectronNativeProfileTransfer().plan(command.source, command.target), null, 2)}\n`,
+				);
+			} else {
+				process.stdout.write(
+					`${JSON.stringify(new MigrationManager().plan([{ product: command.product, root: command.source }], command.target), null, 2)}\n`,
+				);
+			}
+		} else if (command.name === "migration-apply") {
 			const path = realpathSync(command.planPath);
 			const metadata = lstatSync(path);
 			if (
@@ -383,10 +391,17 @@ export async function runCli(args: string[]): Promise<void> {
 				metadata.size > 10_000_000
 			)
 				throw new Error("Migration plan must be a bounded regular file.");
-			const plan = JSON.parse(readFileSync(path, "utf8")) as MigrationPlan;
-			process.stdout.write(
-				`${JSON.stringify(new MigrationManager().apply(plan, { approved: true, overwrite: command.overwrite }), null, 2)}\n`,
-			);
+			const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+			if (isElectronNativeTransferPlan(parsed)) {
+				process.stdout.write(
+					`${JSON.stringify(new ElectronNativeProfileTransfer().apply(parsed, { approved: true, overwrite: command.overwrite }), null, 2)}\n`,
+				);
+			} else {
+				const plan = parsed as MigrationPlan;
+				process.stdout.write(
+					`${JSON.stringify(new MigrationManager().apply(plan, { approved: true, overwrite: command.overwrite }), null, 2)}\n`,
+				);
+			}
 		} else if (command.name === "skin-list")
 			process.stdout.write(`${JSON.stringify(core.skins.status(), null, 2)}\n`);
 		else if (command.name === "skin-select")

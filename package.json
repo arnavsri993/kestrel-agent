@@ -25,6 +25,7 @@
     "dev:desktop:electron": "pnpm --filter @kestrel/desktop dev",
     "dev:desktop:chromium": "KESTREL_DESKTOP_RUNTIME=chromium node scripts/dev-desktop-runtime.mjs",
     "check:electron-retirement": "node scripts/check-electron-retirement-gates.mjs",
+    "test:electron-native-transfer": "vitest run packages/agent-core/src/electron-native-profile-transfer.test.ts",
     "check:native-signing": "node scripts/check-native-signing.mjs",
     "package:desktop-runtime": "node scripts/package-desktop-runtime.mjs",
     "install:desktop-runtime": "node scripts/install-desktop-runtime.mjs",

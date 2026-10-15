@@ -230,35 +230,57 @@ Current native-host progress toward cutover:
 (`sprintf-js` via `electron-builder`) until Electron packaging is removed: no
 `>=1.1.4` release exists on npm yet.
 
-## Electron → native profile transfer design
+## Electron → native profile transfer
 
 Native Chromium must never silently open, merge, or overwrite the Electron
-Application Support profile. Transfer is an explicit, bounded product step:
+Application Support profile. Transfer is an explicit, bounded product step
+implemented as `kestrel migration` with `--product kestrel-electron`:
 
-1. **Dry-run first.** A plan lists categories (settings JSON that is
-   non-secret, bookmarks/history/downloads from `browser-library.json` if
-   present, instruction files such as `AGENTS.md`, agent/skill trees) with
-   source and target paths, checksums, and conflict status. Nothing is written
-   until the person approves apply.
+```bash
+# Isolate CLI state while inspecting an existing Electron profile.
+export KESTREL_DATA_DIR=/absolute/path/to/temporary-kestrel-cli-state
+
+corepack pnpm cli -- migration plan \
+  --product kestrel-electron \
+  --source /absolute/path/to/Electron/Application/Support/Kestrel \
+  --target /absolute/path/to/isolated-native-profile \
+  > /absolute/path/to/kestrel-electron-native-plan.json
+
+corepack pnpm cli -- migration apply \
+  --plan /absolute/path/to/kestrel-electron-native-plan.json \
+  --approve yes \
+  --overwrite no
+```
+
+1. **Dry-run first.** The plan lists transferable categories (instruction
+   files such as `AGENTS.md`, learned skills, non-secret
+   `runtime-preferences.json` signals, and a synthesized
+   `browser-library.json` converted from Electron `browser/state.json`) with
+   source and target paths, checksums, conflict status, and an inventory of
+   rejected credential/database paths. Nothing is written until apply is
+   approved.
 2. **No credential copy by default.** Keychain items, OAuth tokens, cookies,
-   provider login caches, and the encrypted desktop database stay on the
-   source profile. Re-auth or a future dedicated Keychain migration path is
-   required; raw-copying encrypted DB + Keychain into another profile is
-   rejected.
+   provider login caches, `provider-accounts.json`, and the encrypted desktop
+   database stay on the source profile. Re-auth or a future dedicated
+   Keychain migration path is required; raw-copying encrypted DB + Keychain
+   into another profile is rejected.
 3. **No overwrite by default.** Conflicts skip unless the person opts into
-   overwrite for that category. Sources are preserved; apply is reversible via
-   a recoverable backup of the target before mutation.
+   overwrite. Sources are preserved; apply writes a recoverable
+   `.transfer-backup-*` tree under the target before mutating conflicting
+   files.
 4. **Containment.** Reject symlinks, binaries, oversized files, and paths that
    escape the declared source/target roots. Changed checksums abort apply.
+   Download metadata never claims `canReveal` for Electron filesystem paths.
 5. **Side-by-side until cutover.** Shipping default remains Electron. Native
    installs as `Kestrel Native.app` (or an explicit isolated profile root).
    Canonical Dock replacement (`KESTREL_INSTALL_NATIVE_CANONICAL=1`) is gated
-   on retirement acceptance with live evidence — not on transfer design alone.
+   on retirement acceptance with live evidence — not on transfer alone.
 
-Until a tested Kestrel-to-Kestrel restore CLI exists for the Chromium durable
-profile, operators keep both profiles untouched and use the supported
-reference-product migration CLI only for OpenClaw/Hermes/Codex/Claude Code
-imports into an isolated target.
+Unit coverage lives in
+`packages/agent-core/src/electron-native-profile-transfer.test.ts`. Live
+acceptance still requires a dual-profile dry-run/apply against a real Electron
+profile into an isolated native durable profile before
+`KESTREL_ACCEPT_ELECTRON_RETIREMENT=1`.
 
 ### Developer ID signing + notarization (native Chromium)
 
@@ -296,8 +318,8 @@ Still required before retiring Electron:
   (visible-context / autofill parity, etc.) on CEF
 - Production Developer ID signing + notarization (`check:native-signing`)
 - Retargeted desktop smokes against the native binary on a durable profile
-- Live acceptance of the profile transfer design above on a real dual-profile
-  dry-run/apply (not silent merge)
+- Live acceptance of `kestrel-electron` transfer on a real dual-profile
+  dry-run/apply (CLI + unit coverage exist; silent merge remains forbidden)
 
 ## Chromium preview host
 

@@ -4504,6 +4504,17 @@ export {
 	type OrganizationMember,
 } from "./administration";
 export {
+	ELECTRON_NATIVE_TRANSFER_KIND,
+	ELECTRON_NATIVE_TRANSFER_SCHEMA_VERSION,
+	ElectronNativeProfileTransfer,
+	type ElectronNativeRejectedPath,
+	type ElectronNativeTransferCategory,
+	type ElectronNativeTransferItem,
+	type ElectronNativeTransferPlan,
+	type ElectronNativeTransferResult,
+	isElectronNativeTransferPlan,
+} from "./electron-native-profile-transfer";
+export {
 	AgentLoop,
 	type AgentLoopInput,
 	type AgentLoopResult,

@@ -87,12 +87,16 @@ encrypted desktop database or Keychain-protected material into a different
 profile and call that a migration.
 
 The current migration CLI supports bounded dry-run/apply imports from OpenClaw,
-Hermes, Codex, and Claude Code. It recognizes instruction files (`AGENTS.md`,
-`CLAUDE.md`, and `HERMES.md`), non-secret settings, memories, agents, and
-skills; it preserves the source and rejects links, binary files, oversized
-files, containment escapes, and changed checksums. A direct Kestrel-to-Kestrel
-restore is not exposed by this CLI yet. If that choice is requested but no
-tested product flow exists, say so plainly and leave both profiles untouched.
+Hermes, Codex, and Claude Code, plus an explicit Electron→native Chromium
+profile transfer via `--product kestrel-electron`. Reference-product imports
+recognize instruction files (`AGENTS.md`, `CLAUDE.md`, and `HERMES.md`),
+non-secret settings, memories, agents, and skills. The `kestrel-electron`
+path additionally converts Electron `browser/state.json` into a native
+`browser-library.json` and inventories rejected credential/database paths.
+Both flows preserve the source, reject links, binary files, oversized files,
+containment escapes, and changed checksums, and never raw-copy Keychain,
+cookies, or the encrypted desktop database. If a person asks for a silent
+merge or credential copy, refuse and leave both profiles untouched.
 
 For a supported reference-product import, always plan first and review the
 result with the person:
@@ -102,15 +106,22 @@ result with the person:
 export KESTREL_DATA_DIR=/absolute/path/to/temporary-kestrel-cli-state
 
 corepack pnpm cli -- migration plan \
-  --product codex \
-  --source /absolute/path/to/source-root \
-  --target /absolute/path/to/kestrel-import-root \
-  > /absolute/path/to/kestrel-migration-plan.json
+ --product codex \
+ --source /absolute/path/to/source-root \
+ --target /absolute/path/to/kestrel-import-root \
+ > /absolute/path/to/kestrel-migration-plan.json
 
 corepack pnpm cli -- migration apply \
-  --plan /absolute/path/to/kestrel-migration-plan.json \
-  --approve yes \
-  --overwrite no
+ --plan /absolute/path/to/kestrel-migration-plan.json \
+ --approve yes \
+ --overwrite no
+
+# Electron Application Support → isolated native Chromium durable profile
+corepack pnpm cli -- migration plan \
+ --product kestrel-electron \
+ --source /absolute/path/to/Electron/Application/Support/Kestrel \
+ --target /absolute/path/to/isolated-native-profile \
+ > /absolute/path/to/kestrel-electron-native-plan.json
 ```
 
 Never infer a source path or import credentials. Ask the person to choose the

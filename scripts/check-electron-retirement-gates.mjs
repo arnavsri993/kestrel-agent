@@ -2,9 +2,17 @@
 
 /**
  * Electron retirement is blocked until these native parity gates are accepted.
- * This script documents the hard checklist; it exits non-zero until
- * KESTREL_ACCEPT_ELECTRON_RETIREMENT=1 is set by an explicit human decision.
+ * This script documents the hard checklist, verifies the Electron→native
+ * transfer module is present, and runs its unit suite (Linux-safe). It exits
+ * non-zero until KESTREL_ACCEPT_ELECTRON_RETIREMENT=1 is set by an explicit
+ * human decision after every gate has live evidence.
  */
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const accepted = process.env.KESTREL_ACCEPT_ELECTRON_RETIREMENT === "1";
 const gates = [
 	"test:native-chromium-host",
@@ -20,12 +28,43 @@ const gates = [
 	"Keychain/credential bootstrap without prompt spam — profile-sealed proven; real Keychain gated on Developer ID + --kestrel-real-keychain",
 	"Isolated automation sessions (create/navigate/snapshot/act) on CEF",
 	"Developer ID signing + notarization — check:native-signing (package:mac:native:release + notarize:mac:native)",
-	"Explicit Electron→native profile transfer design (see docs/desktop-runtime-migration.md)",
+	"test:electron-native-transfer — Electron→native dry-run/apply CLI",
+	"Live dual-profile dry-run/apply of kestrel-electron transfer on a real Electron profile into an isolated native durable profile (no silent merge)",
 	"On-screen verification of canonical Dock app on Chromium",
 ];
 
 console.log("Electron retirement gates:");
 for (const gate of gates) console.log(`- [ ] ${gate}`);
+
+const transferModule = join(
+	root,
+	"packages/agent-core/src/electron-native-profile-transfer.ts",
+);
+const transferTest = join(
+	root,
+	"packages/agent-core/src/electron-native-profile-transfer.test.ts",
+);
+if (!existsSync(transferModule) || !existsSync(transferTest)) {
+	console.error(
+		"Electron→native transfer module or test is missing; retirement remains blocked.",
+	);
+	process.exit(1);
+}
+
+const transfer = spawnSync(
+	"corepack",
+	["pnpm", "test:electron-native-transfer"],
+	{ cwd: root, encoding: "utf8", env: process.env },
+);
+if (transfer.status !== 0) {
+	if (transfer.stdout) process.stdout.write(transfer.stdout);
+	if (transfer.stderr) process.stderr.write(transfer.stderr);
+	console.error(
+		"test:electron-native-transfer failed; Electron retirement remains blocked.",
+	);
+	process.exit(transfer.status ?? 1);
+}
+console.log("Source gate: test:electron-native-transfer passed.");
 
 if (!accepted) {
 	console.error(
