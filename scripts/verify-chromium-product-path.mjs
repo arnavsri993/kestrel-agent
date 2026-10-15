@@ -4,11 +4,15 @@
  * Asserts the default product path is Chromium/CEF — Electron only via
  * explicit :electron / KESTREL_DESKTOP_RUNTIME=electron opt-in.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+function electronRetired(rootDirectory = root) {
+  return existsSync(join(rootDirectory, ".kestrel-electron-retired"));
+}
 
 const RUNTIME_SELECTORS = [
   "scripts/dev-desktop-runtime.mjs",
@@ -86,8 +90,17 @@ export function assertPackageProductPath(packageJson) {
     );
   }
 
+  const retired = electronRetired();
   for (const name of ELECTRON_OPT_IN_SCRIPTS) {
     const actual = scripts[name];
+    if (retired) {
+      if (typeof actual === "string") {
+        failures.push(
+          `package.json scripts.${name} must be removed after retire:electron`,
+        );
+      }
+      continue;
+    }
     if (typeof actual !== "string" || actual.length === 0) {
       failures.push(
         `package.json scripts.${name} must remain as an explicit Electron opt-in until retire:electron`,
@@ -118,7 +131,11 @@ export function assertPackageProductPath(packageJson) {
   return failures;
 }
 
-export function assertCiPackagesChromiumFirst(ciWorkflow, electronLegacyWorkflow = "") {
+export function assertCiPackagesChromiumFirst(
+  ciWorkflow,
+  electronLegacyWorkflow = "",
+  { retired = false } = {},
+) {
   const failures = [];
   const nativeMarker = "Package native Chromium product path";
   if (!ciWorkflow.includes(nativeMarker)) {
@@ -151,7 +168,13 @@ export function assertCiPackagesChromiumFirst(ciWorkflow, electronLegacyWorkflow
       ".github/workflows/ci.yml must run package:mac:dev, packaged native host/shell/zero-electron-bundle/dock-canonical smokes, and test:native-desktop-shell on the product path",
     );
   }
-  if (
+  if (retired) {
+    if (electronLegacyWorkflow.trim().length > 0) {
+      failures.push(
+        ".github/workflows/ci-electron-legacy.yml must be removed after retire:electron",
+      );
+    }
+  } else if (
     !electronLegacyWorkflow.includes("Legacy Electron") ||
     !electronLegacyWorkflow.includes("build:desktop:electron") ||
     !electronLegacyWorkflow.includes("package:mac:dev:electron")
@@ -163,15 +186,24 @@ export function assertCiPackagesChromiumFirst(ciWorkflow, electronLegacyWorkflow
   return failures;
 }
 
-export function assertDesktopPackageProductBuild(desktopPackage) {
+export function assertDesktopPackageProductBuild(desktopPackage, { retired = false } = {}) {
   const failures = [];
   const scripts = desktopPackage.scripts ?? {};
   if (scripts.build !== "pnpm build:renderer") {
     failures.push(
-      'apps/desktop/package.json scripts.build must be "pnpm build:renderer" (Electron main/preload stays under build:electron)',
+      'apps/desktop/package.json scripts.build must be "pnpm build:renderer" (Electron main/preload stays under build:electron until retirement)',
     );
   }
-  if (typeof scripts["build:electron"] !== "string" || !scripts["build:electron"].includes("electron-vite")) {
+  if (retired) {
+    if (scripts["build:electron"]) {
+      failures.push(
+        "apps/desktop/package.json scripts.build:electron must be removed after retire:electron",
+      );
+    }
+  } else if (
+    typeof scripts["build:electron"] !== "string" ||
+    !scripts["build:electron"].includes("electron-vite")
+  ) {
     failures.push(
       "apps/desktop/package.json scripts.build:electron must keep the Electron main/preload build until retire:electron",
     );
@@ -189,6 +221,7 @@ export function verifyChromiumProductPath({
   readText = (path) => readFileSync(path, "utf8"),
 } = {}) {
   const failures = [];
+  const retired = electronRetired(rootDirectory);
   const packageJson = JSON.parse(
     readText(join(rootDirectory, "package.json")),
   );
@@ -196,6 +229,7 @@ export function verifyChromiumProductPath({
   failures.push(
     ...assertDesktopPackageProductBuild(
       JSON.parse(readText(join(rootDirectory, "apps/desktop/package.json"))),
+      { retired },
     ),
   );
 
@@ -206,10 +240,19 @@ export function verifyChromiumProductPath({
     );
   }
 
+  let legacyWorkflow = "";
+  try {
+    legacyWorkflow = readText(
+      join(rootDirectory, ".github/workflows/ci-electron-legacy.yml"),
+    );
+  } catch {
+    legacyWorkflow = "";
+  }
   failures.push(
     ...assertCiPackagesChromiumFirst(
       readText(join(rootDirectory, ".github/workflows/ci.yml")),
-      readText(join(rootDirectory, ".github/workflows/ci-electron-legacy.yml")),
+      legacyWorkflow,
+      { retired },
     ),
   );
 

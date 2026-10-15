@@ -7,7 +7,7 @@
  * rewrites package manifests and runtime selectors — it does not notarize,
  * migrate profiles, or replace /Applications/Kestrel.app.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -79,6 +79,9 @@ for (const name of rootScriptsToRemove) {
 	removed.push(`package.json scripts.${name}`);
 }
 
+removed.push(".github/workflows/ci-electron-legacy.yml");
+removed.push(".kestrel-electron-retired (marker)");
+
 console.log("Electron packages and opt-in scripts to remove:");
 for (const item of removed) console.log(`- ${item}`);
 if (removed.length === 0) console.log("- (already absent)");
@@ -125,6 +128,13 @@ writeFileSync(
 	"utf8",
 );
 
+rmSync(join(root, ".github/workflows/ci-electron-legacy.yml"), { force: true });
+writeFileSync(
+	join(root, ".kestrel-electron-retired"),
+	"Electron packages removed from the Chromium product path.\n",
+	"utf8",
+);
+
 console.log(
-	"Electron packages removed from apps/desktop/package.json, Electron opt-in root scripts deleted, and Electron desktop build/package scripts cleared. Runtime selectors already default to chromium. Run corepack pnpm install, rebuild native packaging, and verify the Dock app before claiming 0% Electron.",
+	"Electron packages removed from apps/desktop/package.json, Electron opt-in root scripts deleted, Electron desktop build/package scripts cleared, and ci-electron-legacy.yml removed. Runtime selectors already default to chromium. Run corepack pnpm install, corepack pnpm verify:zero-electron, rebuild native packaging, and verify the Dock app before claiming 0% Electron.",
 );
