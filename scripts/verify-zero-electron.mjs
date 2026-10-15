@@ -36,7 +36,22 @@ export function assertZeroElectron({
   const rootPackage = JSON.parse(readText(join(rootDirectory, "package.json")));
   const rootScripts = rootPackage.scripts ?? {};
   for (const [name, value] of Object.entries(rootScripts)) {
-    if (name.endsWith(":electron") || /KESTREL_DESKTOP_RUNTIME=electron/.test(value)) {
+    if (
+      name === "retire:electron" ||
+      name === "retire:electron:dry-run" ||
+      name === "check:electron-retirement" ||
+      name.startsWith("test:electron-native-transfer") ||
+      name === "verify:zero-electron"
+    ) {
+      continue;
+    }
+    if (
+      name.endsWith(":electron") ||
+      name === "verify:electron-legacy" ||
+      /KESTREL_DESKTOP_RUNTIME=electron/.test(value) ||
+      /smoke-desktop\.mjs/.test(value) ||
+      /run-browser-agent-benchmark\.mjs/.test(value)
+    ) {
       failures.push(`package.json scripts.${name} still exposes an Electron opt-in`);
     }
   }

@@ -58,11 +58,23 @@ const runtimeSelectors = [
 const rootPackagePath = join(root, "package.json");
 const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8"));
 const rootScripts = rootPackage.scripts ?? {};
-const rootScriptsToRemove = Object.keys(rootScripts).filter(
-	(name) =>
+const rootScriptsToRemove = Object.keys(rootScripts).filter((name) => {
+	if (
+		name === "retire:electron" ||
+		name === "retire:electron:dry-run" ||
+		name === "check:electron-retirement" ||
+		name.startsWith("test:electron-native-transfer")
+	) {
+		return false;
+	}
+	return (
 		name.endsWith(":electron") ||
-		/KESTREL_DESKTOP_RUNTIME=electron/.test(rootScripts[name]),
-);
+		name === "verify:electron-legacy" ||
+		/KESTREL_DESKTOP_RUNTIME=electron/.test(rootScripts[name]) ||
+		/smoke-desktop\.mjs/.test(rootScripts[name]) ||
+		/run-browser-agent-benchmark\.mjs/.test(rootScripts[name])
+	);
+});
 for (const name of rootScriptsToRemove) {
 	removed.push(`package.json scripts.${name}`);
 }
