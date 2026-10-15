@@ -219,6 +219,7 @@ export interface ModelProvider {
 export type ProviderAvailabilityReason =
   | "capacity"
   | "rate_limit"
+  | "authentication"
   | "transient"
   | "unknown";
 

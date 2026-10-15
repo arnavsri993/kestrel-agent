@@ -1027,7 +1027,76 @@ describe("model provider adapters", () => {
 				consecutiveFailures: 0,
 			},
 		]);
+		expect(pool.health()[0]?.unhealthyUntil).toBeUndefined();
 	});
+
+	it.each([401, 403] as const)(
+		"does not quarantine a provider after HTTP %s auth failure",
+		async (status) => {
+			let nowMs = Date.parse("2026-07-29T12:00:00.000Z");
+			let calls = 0;
+			let allowSuccess = false;
+			const provider: ModelProvider = {
+				id: "auth-account",
+				capabilities: {
+					streaming: true,
+					tools: true,
+					images: false,
+					audio: false,
+					documents: false,
+					local: false,
+				},
+				complete: async (request) => {
+					calls += 1;
+					if (!allowSuccess) {
+						throw new ModelProviderError(
+							status === 401 ? "unauthorized" : "forbidden",
+							"auth-account",
+							false,
+							status,
+						);
+					}
+					return {
+						providerId: "auth-account",
+						model: request.model,
+						text: "recovered",
+						toolCalls: [],
+						usage: { inputTokens: 1, outputTokens: 1 },
+						finishReason: "stop",
+					};
+				},
+			};
+			const pool = new ProviderPool([provider], () => new Date(nowMs));
+			const request = {
+				model: "test",
+				messages: [{ role: "user" as const, content: textContent("hello") }],
+			};
+
+			await expect(pool.complete(request)).rejects.toMatchObject({
+				attempts: [{ providerId: "auth-account", status: "failed" }],
+			});
+			expect(pool.health()[0]).toMatchObject({
+				providerId: "auth-account",
+				failures: 1,
+				consecutiveFailures: 1,
+			});
+			expect(pool.health()[0]?.unhealthyUntil).toBeUndefined();
+			expect(pool.health()[0]?.unhealthyReason).toBeUndefined();
+
+			// Immediate retry must still reach the provider so a repaired
+			// credential can succeed without waiting out health backoff.
+			allowSuccess = true;
+			const recovered = await pool.complete(request);
+			expect(recovered.result.text).toBe("recovered");
+			expect(calls).toBe(2);
+			expect(pool.health()[0]).toMatchObject({
+				successes: 1,
+				consecutiveFailures: 0,
+			});
+			expect(pool.health()[0]?.unhealthyUntil).toBeUndefined();
+			nowMs += 1;
+		},
+	);
 
 	it("does not expand a manually selected provider label across multiple accounts", async () => {
 		const calls: string[] = [];

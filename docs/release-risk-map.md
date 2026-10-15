@@ -104,7 +104,7 @@ Five parallel audits at baseline `59cf7830` identified **14 release blockers** a
 | **P2-5** | Security | Browser extension CRX install lacks signature verification | **in PR [#672](https://github.com/arnavsri993/kestrel-agent/pull/672)** — verifies CRX3 signature and derived extension ID before bounded extraction |
 | **L2** | Agent runtime | Failed/cancelled runs leave partial transcript unless user retries | open |
 | **N2** | Agent runtime | Supervisor IPC timeout (30 min) > agent execution timeout (10 min) | open |
-| **N4** | Agent runtime | 401/403 trigger health backoff delaying recovery after auth fix | open |
+| **N4** | Agent runtime | 401/403 trigger health backoff delaying recovery after auth fix | **mitigated** — auth HTTP failures no longer quarantine the route; next send retries immediately after credential repair |
 | **N5** | Agent runtime | Offline = sequential provider exhaustion, no fast short-circuit | open |
 | **T3** | Agent runtime | Background processes stopped with SIGTERM only on `runtime.close()` | open |
 | **A1** | Agent runtime | `ProviderAuthMonitor` polls every 6h; no tie-in to in-flight errors | open |

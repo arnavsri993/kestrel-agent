@@ -100,12 +100,21 @@ function availabilityReason(error: unknown): ProviderAvailabilityReason {
 	if (CAPACITY_ERROR_PATTERN.test(message)) return "capacity";
 	if (status === 429 || RATE_LIMIT_ERROR_PATTERN.test(message))
 		return "rate_limit";
+	// Auth failures are not fixed by waiting. Quarantining the route after a
+	// 401/403 delays recovery once the user signs in or replaces a key.
+	if (status === 401 || status === 403) return "authentication";
 	if (
 		(error instanceof ModelProviderError && error.retryable) ||
 		(status !== undefined && status >= 500 && status < 600)
 	)
 		return "transient";
 	return "unknown";
+}
+
+function shouldQuarantineForAvailability(
+	reason: ProviderAvailabilityReason,
+): boolean {
+	return reason !== "authentication";
 }
 
 function availabilityDelay(
@@ -594,18 +603,26 @@ export class ProviderPool {
 					error: safeProviderFailureMessage(error),
 				});
 				this.measured(provider, startedAt, false);
-				const consecutiveFailures =
-					this.measurements.get(providerId)?.consecutiveFailures ?? 1;
-				this.unhealthyUntil.set(
-					providerId,
-					this.now().getTime() +
-						availabilityDelay(
-							error,
-							options.healthBackoffMs,
-							consecutiveFailures,
-						),
-				);
-				this.unhealthyReason.set(providerId, availabilityReason(error));
+				const reason = availabilityReason(error);
+				if (shouldQuarantineForAvailability(reason)) {
+					const consecutiveFailures =
+						this.measurements.get(providerId)?.consecutiveFailures ?? 1;
+					this.unhealthyUntil.set(
+						providerId,
+						this.now().getTime() +
+							availabilityDelay(
+								error,
+								options.healthBackoffMs,
+								consecutiveFailures,
+							),
+					);
+					this.unhealthyReason.set(providerId, reason);
+				} else {
+					// Keep the route eligible so a corrected credential can be
+					// used on the next send without waiting out a health backoff.
+					this.unhealthyUntil.delete(providerId);
+					this.unhealthyReason.delete(providerId);
+				}
 				const next = candidates[index + 1];
 				if (!next) break;
 			}
