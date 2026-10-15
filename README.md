@@ -14,17 +14,16 @@ corepack pnpm install
 corepack pnpm dev:desktop
 ```
 
-The desktop development command owns one Electron instance and watches the
-main/preload sources. Main-process changes restart Electron automatically;
-renderer changes use Vite HMR, so the running app always reflects the latest
-source without starting another copy. The app also enforces a single-instance
-lock and focuses the existing window when a second launch is attempted.
+`dev:desktop` launches the native Chromium (CEF) host by default. Electron is
+opt-in via `corepack pnpm dev:desktop:electron` or
+`KESTREL_DESKTOP_RUNTIME=electron`. The Chromium lane never opens the Electron
+Application Support profile.
 
 Kestrel has one user-facing macOS app. Use the development watcher for live
 changes, or use `corepack pnpm install:mac:dev` to replace the existing
-`/Applications/Kestrel.app` with the current packaged build. Do not open or
-copy a `release/**/Kestrel.app` artifact, create a `Kestrel-release.app`, or
-keep versioned Kestrel bundles beside the canonical app; the installer moves
+`/Applications/Kestrel.app` with the current Chromium packaged build. Do not
+open or copy a `release/**/Kestrel.app` artifact, create a `Kestrel-release.app`,
+or keep versioned Kestrel bundles beside the canonical app; the installer moves
 stale bundles to Trash instead of deleting user data.
 
 ## Install a packaged build
