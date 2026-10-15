@@ -1069,6 +1069,19 @@ export function BrowserWorkspace({
             ref={findRef}
             value={findQuery}
             placeholder="Find in page"
+            onKeyDown={(event) => {
+              if (
+                event.key !== "Enter" || !event.shiftKey ||
+                event.altKey || event.ctrlKey || event.metaKey ||
+                event.nativeEvent.isComposing
+              ) return;
+              event.preventDefault();
+              if (activeTab?.url)
+                void findInPage(activeTab.id, findQuery, {
+                  findNext: true,
+                  forward: false,
+                });
+            }}
             onChange={(event) => {
               const value = event.target.value;
               setFindQuery(value);
@@ -1083,6 +1096,8 @@ export function BrowserWorkspace({
           <button
             type="button"
             aria-label="Previous match"
+            aria-keyshortcuts="Shift+Enter"
+            title="Previous match (Shift+Enter)"
             onClick={() =>
               activeTab?.url &&
               void findInPage(activeTab.id, findQuery, {
@@ -1093,7 +1108,7 @@ export function BrowserWorkspace({
           >
             <Icon name="back" />
           </button>
-          <button type="submit" aria-label="Next match">
+          <button type="submit" aria-label="Next match" aria-keyshortcuts="Enter" title="Next match (Enter)">
             <Icon name="forward" />
           </button>
           <button
