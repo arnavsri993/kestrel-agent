@@ -1503,6 +1503,14 @@ try {
 		),
 		"Kestrel find verification token",
 	);
+	await findInput.press("Shift+Enter");
+	await page.getByText("3 of 3", { exact: true }).waitFor();
+	await findInput.press("Enter");
+	await page.getByText("1 of 3", { exact: true }).waitFor();
+	await findInput.press("Enter");
+	await page.getByText("2 of 3", { exact: true }).waitFor();
+	await findInput.press("Shift+Enter");
+	await page.getByText("1 of 3", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Next match", exact: true }).click();
 	await page.getByText("2 of 3", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Previous match", exact: true }).click();
