@@ -92,8 +92,6 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm build:desktop
-      - run: corepack pnpm benchmark:browser-agent --report .tmp/browser-agent-benchmark/ci-development.json
-      - run: corepack pnpm test:desktop-file-icon-guard
       - run: corepack pnpm test
       - name: Package native Chromium product path and run packaged native smokes
         run: |
@@ -104,6 +102,9 @@ jobs:
       - name: Legacy Electron Playwright suite (opt-in path until retire:electron)
         run: |
           set -euo pipefail
+          corepack pnpm build:desktop:electron
+          corepack pnpm benchmark:browser-agent --report .tmp/browser-agent-benchmark/ci-development.json
+          corepack pnpm test:desktop-file-icon-guard
           corepack pnpm test:desktop-smoke:electron
           corepack pnpm test:desktop-single-instance
           corepack pnpm test:desktop-restart-recovery

@@ -99,6 +99,20 @@ for (const name of rootScriptsToRemove) {
 }
 writeFileSync(rootPackagePath, `${JSON.stringify(rootPackage, null, 2)}\n`, "utf8");
 
+const desktopScripts = desktopPackage.scripts ?? {};
+delete desktopScripts["build:electron"];
+delete desktopScripts.dev;
+delete desktopScripts.preview;
+for (const name of Object.keys(desktopScripts)) {
+	if (name.startsWith("package:mac:")) delete desktopScripts[name];
+}
+desktopPackage.scripts = desktopScripts;
+writeFileSync(
+	desktopPackagePath,
+	`${JSON.stringify(desktopPackage, null, 2)}\n`,
+	"utf8",
+);
+
 console.log(
-	"Electron packages removed from apps/desktop/package.json and Electron opt-in root scripts deleted. Runtime selectors already default to chromium. Run corepack pnpm install, rebuild native packaging, and verify the Dock app before claiming 0% Electron.",
+	"Electron packages removed from apps/desktop/package.json, Electron opt-in root scripts deleted, and Electron desktop build/package scripts cleared. Runtime selectors already default to chromium. Run corepack pnpm install, rebuild native packaging, and verify the Dock app before claiming 0% Electron.",
 );

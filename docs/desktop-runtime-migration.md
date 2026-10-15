@@ -305,8 +305,10 @@ corepack pnpm cli -- migration apply \
    `Kestrel Native.app` unless `KESTREL_INSTALL_NATIVE_CANONICAL=1` replaces
    `/Applications/Kestrel.app` after retirement acceptance. Product-path
    `test:desktop-smoke` / `verify` use the CDP native shell smoke
-   (`test:native-desktop-shell`); Electron Playwright suites live under
-   `verify:electron-legacy` / `test:desktop-smoke:electron`.
+   (`test:native-desktop-shell`); Electron Playwright suites and the
+   Electron browser-agent benchmark live under `verify:electron-legacy`.
+   `@kestrel/desktop` `build` is renderer-only; Electron main/preload stays
+   under `build:electron` / `build:desktop:electron`.
 
 Unit coverage lives in
 `packages/agent-core/src/electron-native-profile-transfer.test.ts`. Live

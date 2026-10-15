@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertCiPackagesChromiumFirst,
+  assertDesktopPackageProductBuild,
   assertPackageProductPath,
   assertRuntimeDefaultsToChromium,
   verifyChromiumProductPath,
@@ -59,6 +60,22 @@ describe("verify:chromium-product-path", () => {
     expect(
       failures.some((line) => line.includes("verify:meetup must package")),
     ).toBe(true);
+  });
+
+  it("requires desktop product build to be renderer-only", () => {
+    expect(
+      assertDesktopPackageProductBuild({
+        scripts: {
+          build: "pnpm build:renderer",
+          "build:electron": "electron-vite build && node verify.mjs",
+        },
+      }),
+    ).toEqual([]);
+    expect(
+      assertDesktopPackageProductBuild({
+        scripts: { build: "electron-vite build" },
+      }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("requires Chromium packaged CI before Electron legacy", () => {

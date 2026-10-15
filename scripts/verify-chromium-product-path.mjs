@@ -28,6 +28,7 @@ const ELECTRON_OPT_IN_SCRIPTS = [
   "package:mac:dev:electron",
   "install:mac:dev:electron",
   "test:desktop-smoke:electron",
+  "build:desktop:electron",
 ];
 
 const PRODUCT_PATH_SMOKE = {
@@ -77,6 +78,11 @@ export function assertPackageProductPath(packageJson) {
   if (scripts.verify?.includes("test:desktop-single-instance")) {
     failures.push(
       "package.json scripts.verify must not gate on Electron Playwright desktop suites; keep those under verify:electron-legacy",
+    );
+  }
+  if (scripts.verify?.includes("benchmark:browser-agent")) {
+    failures.push(
+      "package.json scripts.verify must not gate on the Electron browser-agent benchmark; keep it under verify:electron-legacy",
     );
   }
 
@@ -146,6 +152,27 @@ export function assertCiPackagesChromiumFirst(ciWorkflow) {
   return failures;
 }
 
+export function assertDesktopPackageProductBuild(desktopPackage) {
+  const failures = [];
+  const scripts = desktopPackage.scripts ?? {};
+  if (scripts.build !== "pnpm build:renderer") {
+    failures.push(
+      'apps/desktop/package.json scripts.build must be "pnpm build:renderer" (Electron main/preload stays under build:electron)',
+    );
+  }
+  if (typeof scripts["build:electron"] !== "string" || !scripts["build:electron"].includes("electron-vite")) {
+    failures.push(
+      "apps/desktop/package.json scripts.build:electron must keep the Electron main/preload build until retire:electron",
+    );
+  }
+  if (typeof scripts.build === "string" && /electron-vite/.test(scripts.build)) {
+    failures.push(
+      "apps/desktop/package.json scripts.build must not invoke electron-vite on the product path",
+    );
+  }
+  return failures;
+}
+
 export function verifyChromiumProductPath({
   rootDirectory = root,
   readText = (path) => readFileSync(path, "utf8"),
@@ -155,6 +182,11 @@ export function verifyChromiumProductPath({
     readText(join(rootDirectory, "package.json")),
   );
   failures.push(...assertPackageProductPath(packageJson));
+  failures.push(
+    ...assertDesktopPackageProductBuild(
+      JSON.parse(readText(join(rootDirectory, "apps/desktop/package.json"))),
+    ),
+  );
 
   for (const relative of RUNTIME_SELECTORS) {
     const path = join(rootDirectory, relative);

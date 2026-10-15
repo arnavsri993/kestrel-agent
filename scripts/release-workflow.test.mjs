@@ -115,8 +115,10 @@ describe("macOS release workflow security contract", () => {
 		expect(buildStep).toContain("KESTREL_RELEASE_CHANNEL: stable");
 		expect(buildStep).toContain("KESTREL_GOOGLE_OAUTH_CLIENT_ID: ${{ vars.KESTREL_GOOGLE_OAUTH_CLIENT_ID }}");
 		expect(buildStep).toContain("node scripts/prepare-agent-core-sidecar.mjs");
-		expect(buildStep).toContain("corepack pnpm build:desktop");
-		expect(buildStep.indexOf("prepare-agent-core-sidecar.mjs")).toBeLessThan(buildStep.indexOf("corepack pnpm build:desktop"));
+		expect(buildStep).toContain("corepack pnpm build:desktop:electron");
+		expect(buildStep.indexOf("prepare-agent-core-sidecar.mjs")).toBeLessThan(
+			buildStep.indexOf("corepack pnpm build:desktop:electron"),
+		);
 		expect(buildStep).not.toContain("secrets.");
 	});
 

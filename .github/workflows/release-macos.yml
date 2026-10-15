@@ -69,7 +69,7 @@ jobs:
           KESTREL_GOOGLE_OAUTH_CLIENT_ID: ${{ vars.KESTREL_GOOGLE_OAUTH_CLIENT_ID }}
         run: |
           node scripts/prepare-agent-core-sidecar.mjs
-          corepack pnpm build:desktop
+          corepack pnpm build:desktop:electron
       - name: Require release credentials
         shell: bash
         env:
