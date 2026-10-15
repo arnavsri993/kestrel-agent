@@ -90,6 +90,35 @@ export function assertPackageProductPath(packageJson) {
   return failures;
 }
 
+export function assertCiPackagesChromiumFirst(ciWorkflow) {
+  const failures = [];
+  const nativeMarker = "Package native Chromium product path";
+  const electronLegacyMarker = "Legacy Electron packaged smokes";
+  const nativeIndex = ciWorkflow.indexOf(nativeMarker);
+  const electronIndex = ciWorkflow.indexOf(electronLegacyMarker);
+  if (nativeIndex === -1) {
+    failures.push(
+      ".github/workflows/ci.yml must package the Chromium product path before Electron legacy smokes",
+    );
+  }
+  if (electronIndex === -1) {
+    failures.push(
+      ".github/workflows/ci.yml must label Electron packaged smokes as legacy until retire:electron",
+    );
+  }
+  if (nativeIndex !== -1 && electronIndex !== -1 && nativeIndex > electronIndex) {
+    failures.push(
+      ".github/workflows/ci.yml must run Chromium packaged smoke before Electron legacy packaging",
+    );
+  }
+  if (!ciWorkflow.includes("package:mac:dev") || !ciWorkflow.includes("test:packaged-native:arm64")) {
+    failures.push(
+      ".github/workflows/ci.yml must run package:mac:dev and test:packaged-native:arm64 on the product path",
+    );
+  }
+  return failures;
+}
+
 export function verifyChromiumProductPath({
   rootDirectory = root,
   readText = (path) => readFileSync(path, "utf8"),
@@ -106,6 +135,12 @@ export function verifyChromiumProductPath({
       ...assertRuntimeDefaultsToChromium(readText(path), relative),
     );
   }
+
+  failures.push(
+    ...assertCiPackagesChromiumFirst(
+      readText(join(rootDirectory, ".github/workflows/ci.yml")),
+    ),
+  );
 
   return failures;
 }

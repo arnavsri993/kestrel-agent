@@ -55,9 +55,21 @@ const runtimeSelectors = [
 	join(root, "scripts/install-desktop-runtime.mjs"),
 ];
 
-console.log("Electron packages to remove:");
+const rootPackagePath = join(root, "package.json");
+const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8"));
+const rootScripts = rootPackage.scripts ?? {};
+const rootScriptsToRemove = Object.keys(rootScripts).filter(
+	(name) =>
+		name.endsWith(":electron") ||
+		/KESTREL_DESKTOP_RUNTIME=electron/.test(rootScripts[name]),
+);
+for (const name of rootScriptsToRemove) {
+	removed.push(`package.json scripts.${name}`);
+}
+
+console.log("Electron packages and opt-in scripts to remove:");
 for (const item of removed) console.log(`- ${item}`);
-if (removed.length === 0) console.log("- (already absent from apps/desktop/package.json)");
+if (removed.length === 0) console.log("- (already absent)");
 
 console.log("Runtime selectors that must default to chromium:");
 for (const path of runtimeSelectors) console.log(`- ${path}`);
@@ -82,6 +94,11 @@ for (const path of runtimeSelectors) {
 	}
 }
 
+for (const name of rootScriptsToRemove) {
+	delete rootScripts[name];
+}
+writeFileSync(rootPackagePath, `${JSON.stringify(rootPackage, null, 2)}\n`, "utf8");
+
 console.log(
-	"Electron packages removed from apps/desktop/package.json. Runtime selectors already default to chromium. Run corepack pnpm install, rebuild native packaging, and verify the Dock app before claiming 0% Electron.",
+	"Electron packages removed from apps/desktop/package.json and Electron opt-in root scripts deleted. Runtime selectors already default to chromium. Run corepack pnpm install, rebuild native packaging, and verify the Dock app before claiming 0% Electron.",
 );

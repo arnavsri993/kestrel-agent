@@ -28,7 +28,8 @@ const gates = [
 	"Keychain/credential bootstrap without prompt spam — profile-sealed proven; real Keychain gated on Developer ID + --kestrel-real-keychain",
 	"Isolated automation sessions (create/navigate/snapshot/act) on CEF",
 	"Developer ID signing + notarization — check:native-signing (package:mac:native:release + notarize:mac:native)",
-	"test:electron-native-transfer — Electron→native dry-run/apply CLI",
+	"test:electron-native-transfer — Electron→native dry-run/apply unit suite",
+	"test:electron-native-transfer-cli — CLI dry-run/apply against a synthetic Electron profile (secrets rejected)",
 	"Live dual-profile dry-run/apply of kestrel-electron transfer on a real Electron profile into an isolated native durable profile (no silent merge)",
 	"On-screen verification of canonical Dock app on Chromium",
 ];
@@ -65,6 +66,21 @@ if (transfer.status !== 0) {
 	process.exit(transfer.status ?? 1);
 }
 console.log("Source gate: test:electron-native-transfer passed.");
+
+const transferCli = spawnSync(
+	"corepack",
+	["pnpm", "test:electron-native-transfer-cli"],
+	{ cwd: root, encoding: "utf8", env: process.env },
+);
+if (transferCli.status !== 0) {
+	if (transferCli.stdout) process.stdout.write(transferCli.stdout);
+	if (transferCli.stderr) process.stderr.write(transferCli.stderr);
+	console.error(
+		"test:electron-native-transfer-cli failed; Electron retirement remains blocked.",
+	);
+	process.exit(transferCli.status ?? 1);
+}
+console.log("Source gate: test:electron-native-transfer-cli passed.");
 
 const productPath = spawnSync(
 	"corepack",

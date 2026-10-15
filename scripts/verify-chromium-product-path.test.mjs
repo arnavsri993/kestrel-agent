@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertCiPackagesChromiumFirst,
   assertPackageProductPath,
   assertRuntimeDefaultsToChromium,
   verifyChromiumProductPath,
@@ -58,6 +59,19 @@ describe("verify:chromium-product-path", () => {
     expect(
       failures.some((line) => line.includes("verify:meetup must package")),
     ).toBe(true);
+  });
+
+  it("requires Chromium packaged CI before Electron legacy", () => {
+    expect(
+      assertCiPackagesChromiumFirst(`
+      - name: Package native Chromium product path and run packaged native smoke
+        run: |
+          corepack pnpm package:mac:dev
+          corepack pnpm test:packaged-native:arm64
+      - name: Legacy Electron packaged smokes (opt-in path until retire:electron)
+        run: corepack pnpm package:mac:dev:electron
+      `),
+    ).toEqual([]);
   });
 
   it("passes against the live repository product path", () => {
