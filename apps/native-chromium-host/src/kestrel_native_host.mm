@@ -44,6 +44,7 @@
 #include "kestrel_chromium_app.h"
 #include "kestrel_durable_browser_library.h"
 #include "kestrel_extension_workbench.h"
+#include "kestrel_native_credentials.h"
 
 @interface KestrelNativeCoreRelay : NSObject
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
@@ -199,11 +200,13 @@ bool ephemeral_core_enabled = false;
 bool full_renderer_enabled = false;
 bool user_extensions_enabled = false;
 bool durable_profile_enabled = false;
+bool real_keychain_enabled = false;
 bool smoke_durable_library_seed = false;
 bool smoke_durable_library_verify = false;
 bool smoke_browser_backend = false;
 bool smoke_isolated_automation = false;
 bool smoke_isolated_automation_done = false;
+bool smoke_credentials = false;
 std::optional<std::string> smoke_user_browser_url;
 std::optional<std::string> smoke_download_url;
 std::optional<std::string> smoke_browser_backend_url;
@@ -1059,6 +1062,20 @@ class KestrelClient : public CefClient,
                   << " permissions="
                   << browser_library_.site_permissions.size() << std::endl;
       }
+      std::string credential_error;
+      const NativeCredentialStorageMode credential_mode =
+          real_keychain_enabled ? NativeCredentialStorageMode::Keychain
+                                : NativeCredentialStorageMode::ProfileSealed;
+      if (!credential_store_.Open(isolated_profile_root_, credential_mode,
+                                  &credential_error)) {
+        credential_store_opened_ = false;
+        std::cerr << "Kestrel credential bootstrap unavailable: "
+                  << credential_error << std::endl;
+      } else {
+        credential_store_opened_ = true;
+        std::cout << "KESTREL_NATIVE_CHROMIUM_CREDENTIAL_STORAGE mode="
+                  << credential_store_.mode_name() << std::endl;
+      }
     }
     CreateBlankUserBrowserTab(true);
     if (!bridge_router_ ||
@@ -1136,9 +1153,16 @@ class KestrelClient : public CefClient,
         CefCommandLine::GetGlobalCommandLine();
     std::cout << "KESTREL_NATIVE_CHROMIUM_HOST_READY pid=" << getpid()
               << " credential_storage="
+              << (credential_store_ready()
+                      ? credential_store_.mode_name()
+                      : (command_line &&
+                                 command_line->HasSwitch("use-mock-keychain")
+                             ? "disabled"
+                             : "unsafe"))
+              << " chromium_keychain="
               << (command_line && command_line->HasSwitch("use-mock-keychain")
-                      ? "disabled"
-                      : "unsafe")
+                      ? "mock"
+                      : "real")
               << " background_networking="
               << (command_line &&
                           command_line->HasSwitch("disable-background-networking")
@@ -1156,6 +1180,9 @@ class KestrelClient : public CefClient,
     if (durable_profile_enabled) {
       std::cout << "KESTREL_NATIVE_CHROMIUM_DURABLE_PROFILE_ENABLED"
                 << std::endl;
+    }
+    if (smoke_credentials) {
+      RunCredentialBootstrapSmoke();
     }
     if (smoke_durable_library_verify) {
       VerifyDurableLibrarySmoke();
@@ -1623,6 +1650,54 @@ class KestrelClient : public CefClient,
     if (closed_tab_cleanup_scheduled_) return;
     closed_tab_cleanup_scheduled_ = true;
     post_user_browser_close_cleanup(CefRefPtr<KestrelClient>(this));
+  }
+
+  bool credential_store_ready() const { return credential_store_opened_; }
+
+  std::string SerializeCredentialListJson() const {
+    std::string json = "{\"ok\":true,\"credentials\":[";
+    bool first = true;
+    if (credential_store_opened_) {
+      for (const NativeCredentialSummary& item : credential_store_.List()) {
+        if (!first) json += ",";
+        first = false;
+        json += "{\"id\":\"" + json_escape(item.id) + "\",\"label\":\"" +
+                json_escape(item.label) + "\",\"configured\":" +
+                (item.configured ? "true" : "false") + "}";
+      }
+    }
+    json += "]}";
+    return json;
+  }
+
+  void RunCredentialBootstrapSmoke() {
+    if (!credential_store_opened_) {
+      std::cerr << "KESTREL_NATIVE_CHROMIUM_CREDENTIAL_BOOTSTRAP_FAILED error="
+                   "Credential storage did not open."
+                << std::endl;
+      return;
+    }
+    if (credential_store_.mode() != NativeCredentialStorageMode::ProfileSealed) {
+      std::cerr << "KESTREL_NATIVE_CHROMIUM_CREDENTIAL_BOOTSTRAP_FAILED error="
+                   "Credential smoke requires profile-sealed storage."
+                << std::endl;
+      return;
+    }
+    std::string error;
+    constexpr char kSmokeId[] = "openai";
+    constexpr char kSmokeValue[] = "sk-kestrel-native-credential-smoke";
+    if (!credential_store_.Set(kSmokeId, kSmokeValue, &error) ||
+        !credential_store_.Has(kSmokeId) ||
+        !credential_store_.Remove(kSmokeId, &error) ||
+        credential_store_.Has(kSmokeId)) {
+      std::cerr << "KESTREL_NATIVE_CHROMIUM_CREDENTIAL_BOOTSTRAP_FAILED error="
+                << (error.empty() ? "Credential smoke round-trip failed."
+                                  : error)
+                << std::endl;
+      return;
+    }
+    std::cout << "KESTREL_NATIVE_CHROMIUM_CREDENTIAL_BOOTSTRAP_OK mode="
+              << credential_store_.mode_name() << std::endl;
   }
 
   void SyncUserBrowserViewVisibility() {
@@ -2330,17 +2405,60 @@ class KestrelClient : public CefClient,
       return true;
     }
 
-    // These setup-status probes are read-only. Answer them directly with the
-    // native host's empty capability state instead of forwarding them to Core
-    // (where they are Electron-only requests). This keeps onboarding honest
-    // and prompt-free while Keychain, subscription CLI, and local-runtime
-    // ownership remain intentionally deferred.
     if (type == "credential-list") {
-      callback->Success(R"JSON({"ok":true,"credentials":[]})JSON");
-      std::cout << "KESTREL_NATIVE_CHROMIUM_CREDENTIAL_STATUS_EMPTY"
+      callback->Success(SerializeCredentialListJson());
+      std::cout << "KESTREL_NATIVE_CHROMIUM_CREDENTIAL_LIST_OK mode="
+                << (credential_store_ready() ? credential_store_.mode_name()
+                                             : "unavailable")
                 << std::endl;
       return true;
     }
+    if (type == "credential-set") {
+      if (request->GetType("credentialId") != VTYPE_STRING ||
+          request->GetType("value") != VTYPE_STRING) {
+        RespondNativeError(callback, "Native credential-set was invalid.");
+        return true;
+      }
+      if (!credential_store_ready()) {
+        RespondNativeError(callback,
+                           "Native credential storage is unavailable.");
+        return true;
+      }
+      std::string error;
+      if (!credential_store_.Set(request->GetString("credentialId").ToString(),
+                                 request->GetString("value").ToString(),
+                                 &error)) {
+        RespondNativeError(callback, error);
+        return true;
+      }
+      callback->Success(SerializeCredentialListJson());
+      std::cout << "KESTREL_NATIVE_CHROMIUM_CREDENTIAL_SET_OK id="
+                << request->GetString("credentialId").ToString() << std::endl;
+      return true;
+    }
+    if (type == "credential-remove") {
+      if (request->GetType("credentialId") != VTYPE_STRING) {
+        RespondNativeError(callback, "Native credential-remove was invalid.");
+        return true;
+      }
+      if (!credential_store_ready()) {
+        RespondNativeError(callback,
+                           "Native credential storage is unavailable.");
+        return true;
+      }
+      std::string error;
+      if (!credential_store_.Remove(
+              request->GetString("credentialId").ToString(), &error)) {
+        RespondNativeError(callback, error);
+        return true;
+      }
+      callback->Success(SerializeCredentialListJson());
+      std::cout << "KESTREL_NATIVE_CHROMIUM_CREDENTIAL_REMOVE_OK id="
+                << request->GetString("credentialId").ToString() << std::endl;
+      return true;
+    }
+    // Subscription CLI and local-model probes stay deferred/empty until those
+    // ownership paths are migrated. Keep them prompt-free.
     if (type == "subscription-cli-status") {
       callback->Success(R"JSON({"ok":true,"subscriptionClis":[]})JSON");
       std::cout << "KESTREL_NATIVE_CHROMIUM_SUBSCRIPTION_CLI_STATUS_EMPTY"
@@ -3731,6 +3849,8 @@ class KestrelClient : public CefClient,
   std::string isolated_profile_root_;
   std::string user_browser_cache_path_;
   DurableBrowserLibrary browser_library_;
+  NativeCredentialStore credential_store_;
+  bool credential_store_opened_ = false;
   std::map<std::string, NativeAutomationSession> automation_sessions_;
   std::map<uint32_t, std::string> cef_download_ids_;
   std::map<std::string, std::string> download_paths_;
@@ -4066,6 +4186,22 @@ int main(int argc, char* argv[]) {
         has_argument(argc, argv, "--kestrel-user-extensions");
     durable_profile_enabled =
         has_argument(argc, argv, "--kestrel-durable-profile");
+    real_keychain_enabled =
+        has_argument(argc, argv, "--kestrel-real-keychain") ||
+        (std::getenv("KESTREL_USE_REAL_KEYCHAIN") != nullptr &&
+         std::string(std::getenv("KESTREL_USE_REAL_KEYCHAIN")) == "1");
+    if (std::getenv("KESTREL_USE_MOCK_KEYCHAIN") != nullptr &&
+        std::string(std::getenv("KESTREL_USE_MOCK_KEYCHAIN")) == "1") {
+      real_keychain_enabled = false;
+    }
+    smoke_credentials =
+        has_argument(argc, argv, "--kestrel-smoke-credentials");
+    if (smoke_credentials && real_keychain_enabled) {
+      std::cerr << "Credential smoke requires profile-sealed storage "
+                   "(omit --kestrel-real-keychain)."
+                << std::endl;
+      return 1;
+    }
     smoke_durable_library_seed =
         has_argument(argc, argv, "--kestrel-smoke-durable-library");
     smoke_durable_library_verify =

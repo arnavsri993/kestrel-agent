@@ -177,12 +177,16 @@ KestrelChromiumApp::KestrelChromiumApp(
 void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
     CefRefPtr<CefCommandLine> command_line) {
-  // Do not initialize or query the macOS Keychain while this host has no
-  // explicit credential-migration path. Chromium propagates browser-process
-  // switches to its helpers, while limiting this change to the browser
-  // process follows CEF's safety guidance for child process command lines.
+  // Default to Chromium's mock Keychain so ad-hoc development builds never
+  // spam unlock prompts. Opt into the real Chromium Keychain only when the
+  // host is launched with --kestrel-real-keychain (Developer ID / durable
+  // cutover). Chromium propagates browser-process switches to its helpers;
+  // limiting this change to the browser process follows CEF's safety guidance
+  // for child process command lines.
   if (process_type.empty()) {
-    command_line->AppendSwitch("use-mock-keychain");
+    if (!command_line->HasSwitch("kestrel-real-keychain")) {
+      command_line->AppendSwitch("use-mock-keychain");
+    }
     // Kestrel starts local-first. The Chromium embed must not create a
     // background account, telemetry, component-updater, or reliability
     // network channel before a person explicitly chooses a provider route.

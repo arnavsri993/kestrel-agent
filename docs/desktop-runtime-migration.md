@@ -106,12 +106,15 @@ corepack pnpm test:native-chromium-core-relay
 The foreground launcher builds the app into `.tmp`, gives it one newly-created
 temporary profile, starts an ephemeral Core, and removes only that temporary
 profile after the app exits. It never reads, copies, migrates, or writes the
-installed Electron profile. Chromium runs with mock Keychain storage and its
-background account/update paths disabled, so native startup does not request
-Keychain access or launch an authentication flow. Remote pages receive no
-Kestrel bridge. Native popup adoption, durable profile/credential storage,
-permissions, downloads, extensions, and automation remain deliberately
-unmigrated or fail closed.
+installed Electron profile. Chromium defaults to mock Keychain storage and
+disables background account/update paths, so native startup does not request
+Keychain access or launch an authentication flow. Provider credentials use a
+profile-sealed store under `{isolated-profile}/secure/` (never Electron's
+Application Support path or `Kestrel Safe Storage` Keychain service). Real
+macOS Keychain / Chromium Keychain is opt-in via `--kestrel-real-keychain` /
+`KESTREL_USE_REAL_KEYCHAIN=1` and uses the separate service name
+`Kestrel Native Safe Storage` so Electron items are never silently opened.
+Remote pages receive no Kestrel bridge.
 
 `build:native-chromium-host` produces an ad-hoc-signed development bundle with
 a separate development identity. It does not call `install:mac:dev`, replace
@@ -215,6 +218,9 @@ Current native-host progress toward cutover:
   host scripts and `data-kestrel-ref` targets)
 - `corepack pnpm test:native-isolated-automation` proves
   create→navigate→snapshot→act(click)→close through the Core relay
+- Profile-sealed credential bootstrap answers `credential-list` /
+  `credential-set` / `credential-remove` without Keychain prompts;
+  `corepack pnpm test:native-credential-bootstrap` proves set→has→remove
 - HTTP(S) `window.open` popups are adopted as sibling Alloy user tabs
 - `corepack pnpm package:mac:native` / `install:mac:native` package the CEF host;
   side-by-side install is the default (`Kestrel Native.app`); canonical Dock
@@ -256,7 +262,8 @@ imports into an isolated target.
 
 Still required before retiring Electron:
 
-- Keychain/credential bootstrap without prompt spam
+- Real Keychain path on a Developer ID–signed durable build (no ad-hoc prompt
+  spam); profile-sealed bootstrap is proven for development/cutover
 - Remaining desktop command surface beyond isolated act (`screenshot`,
   `viewport`, `upload`, visible-act parity, etc.) on CEF
 - Production Developer ID signing + notarization
