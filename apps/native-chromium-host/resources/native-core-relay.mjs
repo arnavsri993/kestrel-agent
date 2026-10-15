@@ -401,6 +401,32 @@ lines.on("line", (line) => {
 				return;
 			}
 			forwardBrowserBackendRequest(
+				"smoke-browser-backend-autofill",
+				{ operation: "visible-autofill", tabId: smokeVisibleTabId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-autofill") {
+			const autofill =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			// Local smoke page includes login controls but no native password
+			// vault yet, so the CEF probe must report structured unavailable.
+			if (
+				autofill.trust !== "untrusted_browser" ||
+				autofill.credentialAvailable !== false ||
+				autofill.autofillResult !== "unavailable"
+			) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible autofill probe result was invalid.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
 				"smoke-browser-backend-tabs",
 				{ operation: "visible-tabs" },
 				"smoke",

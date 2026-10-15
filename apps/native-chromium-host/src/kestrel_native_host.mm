@@ -1908,7 +1908,11 @@ class KestrelClient : public CefClient,
                 << std::endl;
       return true;
     }
-    if (tab->url.rfind("https://", 0) != 0) {
+    const bool allow_local_http_probe =
+        smoke_browser_backend &&
+        (tab->url.rfind("http://127.0.0.1:", 0) == 0 ||
+         tab->url.rfind("http://localhost:", 0) == 0);
+    if (tab->url.rfind("https://", 0) != 0 && !allow_local_http_probe) {
       SendBrowserBackendResponse(
           request_id, true,
           "{\"credentialAvailable\":false,\"autofillResult\":\"not_a_login_form\","

@@ -24,6 +24,10 @@ const server = createServer((request, response) => {
 		response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
 		response.end(`<!doctype html>
 <title>Kestrel native browser backend</title>
+<form>
+<label>Username <input id="smoke-user" name="username" type="text" autocomplete="username"></label>
+<label>Password <input id="smoke-pass" name="password" type="password" autocomplete="current-password"></label>
+</form>
 <button id="smoke-act" type="button">Act</button>
 <script>
 document.getElementById("smoke-act").addEventListener("click", () => {
@@ -127,6 +131,10 @@ try {
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_ACT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_SCREENSHOT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_CONTEXT_OK/);
+	assert.match(
+		output,
+		/KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_UNAVAILABLE/,
+	);
 	assert.doesNotMatch(
 		output,
 		/Native Chromium browser automation is not migrated yet/,
@@ -146,7 +154,7 @@ try {
 		"visible-act through the Core relay must click the inspected button.",
 	);
 	console.log(
-		"Native Chromium browser backend: Core relay visible-create→snapshot→act→screenshot→context→tabs on CEF.",
+		"Native Chromium browser backend: Core relay visible-create→snapshot→act→screenshot→context→autofill→tabs on CEF.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");
