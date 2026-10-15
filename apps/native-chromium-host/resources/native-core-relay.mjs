@@ -320,6 +320,44 @@ lines.on("line", (line) => {
 				});
 				return;
 			}
+			const interactive = Array.isArray(snapshot.interactive)
+				? snapshot.interactive
+				: [];
+			const button = interactive.find(
+				(item) =>
+					item &&
+					typeof item === "object" &&
+					item.role === "button" &&
+					typeof item.ref === "string",
+			);
+			if (!button) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation snapshot had no button ref to act on.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-act",
+				{
+					operation: "act",
+					sessionId: smokeIsolatedSessionId,
+					action: { type: "click", target: button.ref },
+				},
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-act") {
+			if (!smokeIsolatedSessionId) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation session id was lost before close.",
+				});
+				return;
+			}
 			forwardBrowserBackendRequest(
 				"smoke-isolated-close",
 				{ operation: "close", sessionId: smokeIsolatedSessionId },

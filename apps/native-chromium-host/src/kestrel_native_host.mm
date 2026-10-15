@@ -24,6 +24,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
+#include "include/cef_devtools_message_observer.h"
 #include "include/cef_display_handler.h"
 #include "include/cef_download_handler.h"
 #include "include/cef_life_span_handler.h"
@@ -312,6 +313,12 @@ std::string json_escape(const std::string& value) {
   return escaped;
 }
 
+std::string json_string_literal(const std::string& value) {
+  CefRefPtr<CefValue> root = CefValue::Create();
+  root->SetString(value);
+  return CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString();
+}
+
 std::string native_local_model_status() {
   // Reading this process-local hardware summary does not consult Keychain,
   // start a local runtime, or ask macOS for protected data. The native host
@@ -498,6 +505,86 @@ void post_user_browser_creation(
     std::string input,
     bool active,
     CefRefPtr<CefMessageRouterBrowserSide::Callback> callback);
+
+// Fixed host scripts for isolated automation. Never concatenate model text into
+// these expressions; action payloads are JSON-escaped and passed as literals.
+constexpr char kAutomationSnapshotScript[] = R"JS(
+(() => {
+  const nodes = Array.from(document.querySelectorAll(
+    'button, a[href], input:not([type="hidden"]), textarea, select'));
+  const interactive = [];
+  const children = [];
+  let truncated = false;
+  let index = 0;
+  for (const el of nodes) {
+    if (interactive.length >= 200) { truncated = true; break; }
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' ||
+        style.visibility === 'collapse' || Number(style.opacity) <= 0 ||
+        el.getClientRects().length === 0) continue;
+    const inputType = (el.getAttribute('type') || '').toLowerCase();
+    if (inputType === 'password') continue;
+    const ref = 'e' + (++index);
+    el.setAttribute('data-kestrel-ref', ref);
+    let role = 'button';
+    const tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') role = 'textbox';
+    else if (tag === 'SELECT') role = 'combobox';
+    else if (tag === 'A') role = 'link';
+    const name = String(
+      el.getAttribute('aria-label') || el.innerText || el.value ||
+      el.getAttribute('name') || el.id || tag).slice(0, 200);
+    interactive.push({ ref, role, name, tag, inputType });
+    children.push({ role, name, ref });
+  }
+  return JSON.stringify({
+    interactive,
+    accessibilityTree: {
+      role: 'RootWebArea',
+      name: String(document.title || '').slice(0, 500),
+      children
+    },
+    truncated
+  });
+})()
+)JS";
+
+class KestrelAutomationDevToolsObserver final
+    : public CefDevToolsMessageObserver {
+ public:
+  using ResultHandler =
+      std::function<void(int message_id, bool success, std::string result_json)>;
+  using AttachHandler = std::function<void()>;
+
+  KestrelAutomationDevToolsObserver(ResultHandler on_result,
+                                    AttachHandler on_attached)
+      : on_result_(std::move(on_result)),
+        on_attached_(std::move(on_attached)) {}
+
+  void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
+                              int message_id,
+                              bool success,
+                              const void* result,
+                              size_t result_size) override {
+    (void)browser;
+    if (!on_result_) return;
+    std::string json;
+    if (result && result_size > 0) {
+      json.assign(static_cast<const char*>(result), result_size);
+    }
+    on_result_(message_id, success, std::move(json));
+  }
+
+  void OnDevToolsAgentAttached(CefRefPtr<CefBrowser> browser) override {
+    (void)browser;
+    if (on_attached_) on_attached_();
+  }
+
+ private:
+  ResultHandler on_result_;
+  AttachHandler on_attached_;
+  IMPLEMENT_REFCOUNTING(KestrelAutomationDevToolsObserver);
+};
 
 // A request context is created asynchronously. In particular, CEF 152 will
 // return a context object before it is ready to create a BrowserView. Keep the
@@ -736,6 +823,12 @@ class KestrelUserBrowserClient final : public CefClient,
   IMPLEMENT_REFCOUNTING(KestrelUserBrowserClient);
 };
 
+struct NativeAutomationElementRef {
+  std::string role;
+  std::string tag;
+  std::string input_type;
+};
+
 struct NativeAutomationSession {
   std::string id;
   std::set<std::string> allowed_origins;
@@ -745,12 +838,18 @@ struct NativeAutomationSession {
   bool closing = false;
   bool browser_ready = false;
   bool context_ready = false;
+  bool devtools_attached = false;
   std::string pending_navigate_request_id;
   std::string pending_navigate_target_url;
   std::string pending_navigate_url;
+  std::string pending_snapshot_request_id;
+  std::string pending_act_request_id;
+  std::map<std::string, NativeAutomationElementRef> element_refs;
+  std::map<int, std::string> pending_devtools_kinds;
   CefRefPtr<KestrelUserBrowserClient> client;
   CefRefPtr<CefBrowserView> view;
   CefRefPtr<CefRequestContext> context;
+  CefRefPtr<CefRegistration> devtools_registration;
 };
 
 struct NativeUserBrowserTab {
@@ -2835,21 +2934,26 @@ class KestrelClient : public CefClient,
                                    "Native isolated snapshot was invalid.");
         return;
       }
-      const auto found =
-          automation_sessions_.find(request->GetString("sessionId").ToString());
-      if (found == automation_sessions_.end() || found->second.closing) {
-        SendBrowserBackendResponse(
-            request_id, false, "",
-            "Native Chromium browser session is unavailable.");
+      std::string error;
+      if (!BeginAutomationSnapshot(request->GetString("sessionId").ToString(),
+                                   request_id, &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
+      return;
+    }
+    if (operation == "act") {
+      if (request->GetType("sessionId") != VTYPE_STRING ||
+          request->GetType("action") != VTYPE_DICTIONARY) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native isolated act was invalid.");
         return;
       }
-      const std::string snapshot =
-          std::string("{\"url\":\"") + json_escape(found->second.url) +
-          "\",\"title\":\"" + json_escape(found->second.title) +
-          "\",\"accessibilityTree\":{\"role\":\"RootWebArea\",\"name\":\"" +
-          json_escape(found->second.title) +
-          "\",\"children\":[]},\"interactive\":[],\"truncated\":false}";
-      SendBrowserBackendResponse(request_id, true, snapshot, "");
+      std::string error;
+      if (!BeginAutomationAct(request->GetString("sessionId").ToString(),
+                              request->GetDictionary("action"), request_id,
+                              &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
       return;
     }
     if (operation == "close") {
@@ -2954,6 +3058,7 @@ class KestrelClient : public CefClient,
           if (found == automation_sessions_.end()) return;
           found->second.browser_ready = true;
           found->second.loading = false;
+          EnsureAutomationDevTools(found->second, browser);
           if (!found->second.pending_navigate_url.empty() && browser &&
               browser->IsValid()) {
             const std::string pending_url = found->second.pending_navigate_url;
@@ -2994,6 +3099,7 @@ class KestrelClient : public CefClient,
           auto found = automation_sessions_.find(id);
           if (found == automation_sessions_.end()) return;
           found->second.closing = true;
+          found->second.devtools_registration = nullptr;
           found->second.view = nullptr;
           found->second.client = nullptr;
           found->second.context = nullptr;
@@ -3003,6 +3109,18 @@ class KestrelClient : public CefClient,
                 "Native Chromium browser session closed.");
             found->second.pending_navigate_request_id.clear();
             found->second.pending_navigate_target_url.clear();
+          }
+          if (!found->second.pending_snapshot_request_id.empty()) {
+            SendBrowserBackendResponse(
+                found->second.pending_snapshot_request_id, false, "",
+                "Native Chromium browser session closed.");
+            found->second.pending_snapshot_request_id.clear();
+          }
+          if (!found->second.pending_act_request_id.empty()) {
+            SendBrowserBackendResponse(
+                found->second.pending_act_request_id, false, "",
+                "Native Chromium browser session closed.");
+            found->second.pending_act_request_id.clear();
           }
           automation_sessions_.erase(found);
         },
@@ -3085,6 +3203,7 @@ class KestrelClient : public CefClient,
     }
     found->second.pending_navigate_request_id = request_id;
     found->second.pending_navigate_target_url = *safe;
+    found->second.element_refs.clear();
     found->second.loading = true;
     found->second.url = *safe;
     CefRefPtr<CefBrowser> browser =
@@ -3094,6 +3213,356 @@ class KestrelClient : public CefClient,
       return true;
     }
     browser->GetMainFrame()->LoadURL(*safe);
+    return true;
+  }
+
+  void EnsureAutomationDevTools(NativeAutomationSession& session,
+                                CefRefPtr<CefBrowser> browser) {
+    if (!browser || !browser->IsValid() || session.devtools_registration) return;
+    const std::weak_ptr<bool> owner_token = native_owner_alive_;
+    const std::string session_id = session.id;
+    CefRefPtr<KestrelAutomationDevToolsObserver> observer =
+        new KestrelAutomationDevToolsObserver(
+            [this, owner_token, session_id](int message_id, bool success,
+                                           std::string result_json) {
+              const std::shared_ptr<bool> alive = owner_token.lock();
+              if (!alive || !*alive) return;
+              OnAutomationDevToolsResult(session_id, message_id, success,
+                                         std::move(result_json));
+            },
+            [this, owner_token, session_id]() {
+              const std::shared_ptr<bool> alive = owner_token.lock();
+              if (!alive || !*alive) return;
+              auto found = automation_sessions_.find(session_id);
+              if (found != automation_sessions_.end()) {
+                found->second.devtools_attached = true;
+              }
+            });
+    session.devtools_registration =
+        browser->GetHost()->AddDevToolsMessageObserver(observer);
+  }
+
+  bool EvaluateAutomationScript(NativeAutomationSession& session,
+                                const std::string& expression,
+                                const std::string& kind,
+                                std::string* error) {
+    CefRefPtr<CefBrowser> browser =
+        session.view ? session.view->GetBrowser() : nullptr;
+    if (!browser || !browser->IsValid()) {
+      if (error) *error = "Native Chromium browser session is unavailable.";
+      return false;
+    }
+    EnsureAutomationDevTools(session, browser);
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", expression);
+    params->SetBool("returnByValue", true);
+    params->SetBool("awaitPromise", false);
+    const int message_id =
+        browser->GetHost()->ExecuteDevToolsMethod(0, "Runtime.evaluate", params);
+    if (message_id <= 0) {
+      if (error)
+        *error = "Kestrel could not evaluate script in the isolated browser.";
+      return false;
+    }
+    session.pending_devtools_kinds[message_id] = kind;
+    return true;
+  }
+
+  void OnAutomationDevToolsResult(const std::string& session_id,
+                                  int message_id,
+                                  bool success,
+                                  std::string result_json) {
+    auto found = automation_sessions_.find(session_id);
+    if (found == automation_sessions_.end()) return;
+    const auto kind_it = found->second.pending_devtools_kinds.find(message_id);
+    if (kind_it == found->second.pending_devtools_kinds.end()) return;
+    const std::string kind = kind_it->second;
+    found->second.pending_devtools_kinds.erase(kind_it);
+
+    std::string value_json;
+    bool evaluate_ok = success;
+    if (success) {
+      CefRefPtr<CefValue> parsed =
+          CefParseJSON(result_json, JSON_PARSER_RFC);
+      if (parsed && parsed->GetType() == VTYPE_DICTIONARY) {
+        CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
+        if (root->HasKey("exceptionDetails")) {
+          evaluate_ok = false;
+        } else {
+          CefRefPtr<CefValue> result_value = root->GetValue("result");
+          if (result_value && result_value->GetType() == VTYPE_DICTIONARY) {
+            CefRefPtr<CefDictionaryValue> result = result_value->GetDictionary();
+            if (result->GetType("value") == VTYPE_STRING) {
+              value_json = result->GetString("value").ToString();
+            } else if (result->HasKey("value")) {
+              value_json =
+                  CefWriteJSON(result->GetValue("value"), JSON_WRITER_DEFAULT)
+                      .ToString();
+            }
+          }
+        }
+      } else {
+        evaluate_ok = false;
+      }
+    }
+    success = evaluate_ok;
+
+    if (kind == "snapshot") {
+      const std::string request_id = found->second.pending_snapshot_request_id;
+      found->second.pending_snapshot_request_id.clear();
+      if (request_id.empty()) return;
+      if (!success || value_json.empty()) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser snapshot failed.");
+        return;
+      }
+      CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+      if (!payload || payload->GetType() != VTYPE_DICTIONARY) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser snapshot was invalid.");
+        return;
+      }
+      CefRefPtr<CefDictionaryValue> body = payload->GetDictionary();
+      found->second.element_refs.clear();
+      if (body->GetType("interactive") == VTYPE_LIST) {
+        CefRefPtr<CefListValue> interactive = body->GetList("interactive");
+        for (size_t index = 0; index < interactive->GetSize(); ++index) {
+          if (interactive->GetType(index) != VTYPE_DICTIONARY) continue;
+          CefRefPtr<CefDictionaryValue> item = interactive->GetDictionary(index);
+          if (item->GetType("ref") != VTYPE_STRING) continue;
+          NativeAutomationElementRef entry;
+          entry.role = item->GetType("role") == VTYPE_STRING
+                           ? item->GetString("role").ToString()
+                           : "";
+          entry.tag = item->GetType("tag") == VTYPE_STRING
+                          ? item->GetString("tag").ToString()
+                          : "";
+          entry.input_type = item->GetType("inputType") == VTYPE_STRING
+                                 ? item->GetString("inputType").ToString()
+                                 : "";
+          found->second.element_refs[item->GetString("ref").ToString()] = entry;
+          // Wire-facing interactive entries omit host-only tag metadata.
+          item->Remove("tag");
+          item->Remove("inputType");
+        }
+      }
+      CefRefPtr<CefDictionaryValue> response = CefDictionaryValue::Create();
+      response->SetString("url", found->second.url);
+      response->SetString("title", found->second.title);
+      if (body->HasKey("accessibilityTree")) {
+        response->SetValue("accessibilityTree",
+                           body->GetValue("accessibilityTree"));
+      }
+      if (body->HasKey("interactive")) {
+        response->SetValue("interactive", body->GetValue("interactive"));
+      }
+      response->SetBool("truncated", body->GetBool("truncated"));
+      CefRefPtr<CefValue> root = CefValue::Create();
+      root->SetDictionary(response);
+      SendBrowserBackendResponse(
+          request_id, true,
+          CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
+      return;
+    }
+
+    if (kind == "act") {
+      const std::string request_id = found->second.pending_act_request_id;
+      found->second.pending_act_request_id.clear();
+      if (request_id.empty()) return;
+      if (!success) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser action failed.");
+        return;
+      }
+      bool ok = false;
+      if (!value_json.empty()) {
+        CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+        if (payload && payload->GetType() == VTYPE_DICTIONARY) {
+          ok = payload->GetDictionary()->GetBool("ok");
+        }
+      }
+      if (!ok) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser action was refused or the target changed.");
+        return;
+      }
+      std::cout << "KESTREL_NATIVE_CHROMIUM_AUTOMATION_ACT_OK id=" << session_id
+                << std::endl;
+      SendBrowserBackendResponse(request_id, true, "null", "");
+    }
+  }
+
+  bool BeginAutomationSnapshot(const std::string& session_id,
+                               const std::string& request_id,
+                               std::string* error) {
+    auto found = automation_sessions_.find(session_id);
+    if (found == automation_sessions_.end() || found->second.closing) {
+      if (error) *error = "Native Chromium browser session is unavailable.";
+      return false;
+    }
+    if (!found->second.pending_snapshot_request_id.empty() ||
+        !found->second.pending_act_request_id.empty()) {
+      if (error) *error = "Native Chromium browser session is busy.";
+      return false;
+    }
+    found->second.pending_snapshot_request_id = request_id;
+    if (!EvaluateAutomationScript(found->second, kAutomationSnapshotScript,
+                                  "snapshot", error)) {
+      found->second.pending_snapshot_request_id.clear();
+      return false;
+    }
+    return true;
+  }
+
+  bool BeginAutomationAct(const std::string& session_id,
+                          CefRefPtr<CefDictionaryValue> action,
+                          const std::string& request_id,
+                          std::string* error) {
+    auto found = automation_sessions_.find(session_id);
+    if (found == automation_sessions_.end() || found->second.closing) {
+      if (error) *error = "Native Chromium browser session is unavailable.";
+      return false;
+    }
+    if (!action || action->GetType("type") != VTYPE_STRING) {
+      if (error) *error = "Native isolated act was invalid.";
+      return false;
+    }
+    if (!found->second.pending_snapshot_request_id.empty() ||
+        !found->second.pending_act_request_id.empty()) {
+      if (error) *error = "Native Chromium browser session is busy.";
+      return false;
+    }
+    const std::string type = action->GetString("type").ToString();
+    std::string expression;
+    if (type == "click" || type == "type" || type == "select") {
+      if (action->GetType("target") != VTYPE_STRING) {
+        if (error) *error = "Native isolated act target was invalid.";
+        return false;
+      }
+      const std::string target = action->GetString("target").ToString();
+      if (target.size() > 2000 || target.find('"') != std::string::npos ||
+          target.find('\\') != std::string::npos) {
+        if (error) *error = "Native isolated act target was invalid.";
+        return false;
+      }
+      const auto ref = found->second.element_refs.find(target);
+      if (ref == found->second.element_refs.end()) {
+        if (error)
+          *error = "Browser target ref is stale. Take a new snapshot.";
+        return false;
+      }
+      if (type == "click") {
+        if (ref->second.tag != "BUTTON" && ref->second.tag != "A") {
+          if (error) *error = "Only inspected buttons and links can be clicked.";
+          return false;
+        }
+        expression =
+            std::string("(() => { const el = document.querySelector('[data-"
+                        "kestrel-ref=\"") +
+            target +
+            "\"]'); if (!el || !el.isConnected) throw new Error('stale'); "
+            "if (el.tagName !== 'BUTTON' && el.tagName !== 'A') throw new "
+            "Error('role'); el.click(); return JSON.stringify({ok:true}); })()";
+      } else if (type == "type") {
+        if (action->GetType("text") != VTYPE_STRING) {
+          if (error) *error = "Native isolated type text was invalid.";
+          return false;
+        }
+        if (ref->second.input_type == "password" ||
+            ref->second.role != "textbox") {
+          if (error)
+            *error = "This target does not support typing.";
+          return false;
+        }
+        const std::string text = action->GetString("text").ToString();
+        if (text.size() > 20000) {
+          if (error) *error = "Native isolated type text was too long.";
+          return false;
+        }
+        const std::string text_json = json_string_literal(text);
+        expression =
+            std::string("(() => { const el = document.querySelector('[data-"
+                        "kestrel-ref=\"") +
+            target +
+            "\"]'); if (!el || !el.isConnected) throw new Error('stale'); "
+            "if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') throw new "
+            "Error('role'); if ((el.getAttribute('type')||'').toLowerCase()==="
+            "'password') throw new Error('sensitive'); "
+            "const proto = el.tagName === 'TEXTAREA' ? "
+            "HTMLTextAreaElement.prototype : HTMLInputElement.prototype; "
+            "const setter = Object.getOwnPropertyDescriptor(proto,'value').set; "
+            "setter.call(el, " +
+            text_json +
+            "); el.dispatchEvent(new Event('input',{bubbles:true})); "
+            "el.dispatchEvent(new Event('change',{bubbles:true})); "
+            "return JSON.stringify({ok: el.value === " +
+            text_json + "}); })()";
+      } else {
+        if (action->GetType("value") != VTYPE_STRING ||
+            ref->second.tag != "SELECT") {
+          if (error) *error = "Native isolated select was invalid.";
+          return false;
+        }
+        const std::string value = action->GetString("value").ToString();
+        if (value.size() > 2000) {
+          if (error) *error = "Native isolated select value was too long.";
+          return false;
+        }
+        const std::string value_json = json_string_literal(value);
+        expression =
+            std::string("(() => { const el = document.querySelector('[data-"
+                        "kestrel-ref=\"") +
+            target +
+            "\"]'); if (!(el instanceof HTMLSelectElement)) throw new "
+            "Error('stale'); el.value = " +
+            value_json +
+            "; el.dispatchEvent(new Event('input',{bubbles:true})); "
+            "el.dispatchEvent(new Event('change',{bubbles:true})); "
+            "return JSON.stringify({ok: el.value === " +
+            value_json + "}); })()";
+      }
+    } else if (type == "key") {
+      if (action->GetType("key") != VTYPE_STRING) {
+        if (error) *error = "Native isolated key was invalid.";
+        return false;
+      }
+      const std::string key = action->GetString("key").ToString();
+      if (key.size() > 20 || key.find('"') != std::string::npos) {
+        if (error) *error = "Native isolated key was invalid.";
+        return false;
+      }
+      expression =
+          std::string("(() => { const key = \"") + key +
+          "\"; const el = document.activeElement || document.body; "
+          "el.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true})); "
+          "el.dispatchEvent(new KeyboardEvent('keyup',{key,bubbles:true})); "
+          "return JSON.stringify({ok:true}); })()";
+    } else if (type == "scroll") {
+      const int x = action->GetType("x") == VTYPE_INT ? action->GetInt("x")
+                    : action->GetType("x") == VTYPE_DOUBLE
+                        ? static_cast<int>(action->GetDouble("x"))
+                        : 0;
+      const int y = action->GetType("y") == VTYPE_INT ? action->GetInt("y")
+                    : action->GetType("y") == VTYPE_DOUBLE
+                        ? static_cast<int>(action->GetDouble("y"))
+                        : 0;
+      expression = "(() => { window.scrollBy(" + std::to_string(x) + ", " +
+                   std::to_string(y) +
+                   "); return JSON.stringify({ok:true}); })()";
+    } else {
+      if (error) *error = "Native isolated act type is unsupported.";
+      return false;
+    }
+
+    found->second.pending_act_request_id = request_id;
+    if (!EvaluateAutomationScript(found->second, expression, "act", error)) {
+      found->second.pending_act_request_id.clear();
+      return false;
+    }
     return true;
   }
 

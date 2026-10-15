@@ -210,10 +210,11 @@ Current native-host progress toward cutover:
 - Isolated automation sessions use hidden Alloy BrowserViews on the shared
   user-browser request context (separate CEF profiles currently fail on CEF
   152), enforce a per-session origin allowlist, and answer `create` /
-  `navigate` / `snapshot` / `close` (async navigate completes on the target
-  load, not `about:blank`)
+  `navigate` / `snapshot` / `act` / `close` (async navigate completes on the
+  target load; snapshot/act use CEF DevTools `Runtime.evaluate` with fixed
+  host scripts and `data-kestrel-ref` targets)
 - `corepack pnpm test:native-isolated-automation` proves
-  create→navigate→snapshot→close through the Core relay
+  create→navigate→snapshot→act(click)→close through the Core relay
 - HTTP(S) `window.open` popups are adopted as sibling Alloy user tabs
 - `corepack pnpm package:mac:native` / `install:mac:native` package the CEF host;
   side-by-side install is the default (`Kestrel Native.app`); canonical Dock
@@ -256,7 +257,8 @@ imports into an isolated target.
 Still required before retiring Electron:
 
 - Keychain/credential bootstrap without prompt spam
-- Isolated automation `act` (and remaining desktop command surface) on CEF
+- Remaining desktop command surface beyond isolated act (`screenshot`,
+  `viewport`, `upload`, visible-act parity, etc.) on CEF
 - Production Developer ID signing + notarization
 - Retargeted desktop smokes against the native binary on a durable profile
 - Live acceptance of the profile transfer design above on a real dual-profile

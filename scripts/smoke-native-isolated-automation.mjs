@@ -7,7 +7,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const app = process.env.KESTREL_NATIVE_TEST_APP
 	? resolve(process.env.KESTREL_NATIVE_TEST_APP)
 	: await buildNativeChromiumHost();
@@ -17,13 +16,25 @@ const profile = await mkdtemp(
 );
 
 let pageHits = 0;
+let actHits = 0;
 const server = createServer((request, response) => {
 	if (request.url === "/native-isolated-automation-smoke") {
 		pageHits += 1;
 		response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-		response.end(
-			"<!doctype html><title>Kestrel isolated automation</title><p>ok</p>",
-		);
+		response.end(`<!doctype html>
+<title>Kestrel isolated automation</title>
+<button id="smoke-act" type="button">Act</button>
+<script>
+document.getElementById("smoke-act").addEventListener("click", () => {
+  fetch("/native-isolated-act-ok").catch(() => {});
+});
+</script>`);
+		return;
+	}
+	if (request.url === "/native-isolated-act-ok") {
+		actHits += 1;
+		response.writeHead(204);
+		response.end();
 		return;
 	}
 	response.writeHead(404);
@@ -70,7 +81,7 @@ try {
 						`Timed out waiting for isolated automation smoke: ${output}`,
 					),
 				),
-			60_000,
+			90_000,
 		);
 		const check = () => {
 			if (
@@ -119,6 +130,7 @@ try {
 		output,
 		/KESTREL_NATIVE_CHROMIUM_AUTOMATION_SESSION_CREATED id=native-browser-/,
 	);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_AUTOMATION_ACT_OK/);
 	assert.doesNotMatch(
 		output,
 		/Native Chromium browser backend operation is not migrated yet/,
@@ -128,8 +140,13 @@ try {
 		true,
 		"isolated create→navigate through the Core relay must load the smoke page in a hidden CEF session.",
 	);
+	assert.equal(
+		actHits > 0,
+		true,
+		"isolated act(click) through the Core relay must dispatch on the inspected button.",
+	);
 	console.log(
-		"Native Chromium isolated automation: Core relay create→navigate→snapshot→close on CEF sessions.",
+		"Native Chromium isolated automation: Core relay create→navigate→snapshot→act→close on CEF sessions.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");
