@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -649,6 +650,72 @@ constexpr char kAutomationScreenshotGuardScript[] = R"JS(
 })()
 )JS";
 
+constexpr char kVisibleContextScript[] = R"JS(
+(() => {
+  const limit = (value, maximum) =>
+    String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maximum);
+  const visible = (node) => {
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 &&
+      rect.right >= 0 && rect.top <= innerHeight && rect.left <= innerWidth &&
+      style.visibility !== "hidden" && style.display !== "none" &&
+      Number(style.opacity) > 0;
+  };
+  const sensitiveField = (node) => {
+    const hint = [
+      node.type, node.autocomplete, node.name, node.id,
+      node.getAttribute("aria-label"), node.placeholder
+    ].filter(Boolean).join(" ").toLowerCase();
+    return node instanceof HTMLInputElement && (
+      node.type === "password" ||
+      /(?:current|new)[-_ ]password|one[-_ ]time[-_ ]code|\botp\b|recovery[-_ ]code|verification[-_ ]code|security[-_ ]code|\b(?:cvv|cvc)\b|api[-_ ]key|access[-_ ]token|private[-_ ]key/.test(hint)
+    );
+  };
+  const nodes = Array.from(document.querySelectorAll(
+    "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table,article,main")).filter(visible);
+  const visibleText = nodes
+    .map((node) => limit(node.innerText || node.textContent, 4000))
+    .filter(Boolean).join("\n").slice(0, 40000);
+  const links = Array.from(document.querySelectorAll("a[href]"))
+    .filter(visible).slice(0, 100).map((node) => ({
+      text: limit(node.innerText || node.textContent, 500),
+      url: String(node.href || "").slice(0, 8192)
+    }));
+  const forms = Array.from(document.querySelectorAll(
+    "input,textarea,select,button")).filter(visible).slice(0, 60).map((node) =>
+    sensitiveField(node)
+      ? { label: "Sensitive field", type: "sensitive", name: "" }
+      : {
+          label: limit(
+            node.labels?.[0]?.innerText || node.getAttribute("aria-label") ||
+            node.placeholder || node.innerText, 500),
+          type: limit(node.type || node.tagName.toLowerCase(), 100),
+          name: limit(node.name || node.id, 500)
+        });
+  const active = document.activeElement;
+  return JSON.stringify({
+    description: limit(
+      document.querySelector('meta[name="description"]')?.content, 2000),
+    selectedText: active instanceof Element && sensitiveField(active)
+      ? ""
+      : limit(getSelection()?.toString(), 20000),
+    visibleText: visibleText || limit(document.body?.innerText, 40000),
+    headings: Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6"))
+      .filter(visible).slice(0, 60)
+      .map((node) => limit(node.innerText || node.textContent, 500))
+      .filter(Boolean),
+    links,
+    forms,
+    viewport: {
+      width: Math.max(1, Math.round(innerWidth)),
+      height: Math.max(1, Math.round(innerHeight)),
+      scrollX, scrollY
+    }
+  });
+})()
+)JS";
+
 class KestrelAutomationDevToolsObserver final
     : public CefDevToolsMessageObserver {
  public:
@@ -981,6 +1048,7 @@ struct NativeUserBrowserTab {
   std::string pending_screenshot_request_id;
   std::string pending_snapshot_request_id;
   std::string pending_act_request_id;
+  std::string pending_context_request_id;
   std::map<std::string, NativeAutomationElementRef> element_refs;
   std::map<int, std::string> pending_devtools_kinds;
   CefRefPtr<KestrelUserBrowserClient> client;
@@ -1688,7 +1756,47 @@ class KestrelClient : public CefClient,
   bool VisibleTabBusy(const NativeUserBrowserTab& tab) const {
     return !tab.pending_screenshot_request_id.empty() ||
            !tab.pending_snapshot_request_id.empty() ||
-           !tab.pending_act_request_id.empty();
+           !tab.pending_act_request_id.empty() ||
+           !tab.pending_context_request_id.empty();
+  }
+
+  bool StartPendingVisibleContext(NativeUserBrowserTab& tab,
+                                  std::string* error) {
+    if (tab.pending_context_request_id.empty()) return true;
+    for (const auto& entry : tab.pending_devtools_kinds) {
+      if (entry.second == "visible-context") return true;
+    }
+    CefRefPtr<CefBrowser> browser = tab.view ? tab.view->GetBrowser() : nullptr;
+    if (!browser || !browser->IsValid() || tab.loading) return true;
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", kVisibleContextScript);
+    params->SetBool("returnByValue", true);
+    params->SetBool("awaitPromise", false);
+    return CallUserBrowserDevToolsMethod(tab, "Runtime.evaluate", params,
+                                         "visible-context", error);
+  }
+
+  bool BeginVisibleContext(const std::string& tab_id,
+                           const std::string& request_id, std::string* error) {
+    NativeUserBrowserTab* tab = ResolveVisibleTab(tab_id, error);
+    if (!tab) return false;
+    if (VisibleTabBusy(*tab)) {
+      if (error) *error = "Native Chromium browser tab is busy.";
+      return false;
+    }
+    if (tab->url.empty() || tab->url.rfind("about:", 0) == 0 ||
+        tab->url.rfind("chrome:", 0) == 0 ||
+        tab->url.rfind("kestrel:", 0) == 0) {
+      if (error)
+        *error = "The selected tab does not have a readable web page.";
+      return false;
+    }
+    tab->pending_context_request_id = request_id;
+    if (!StartPendingVisibleContext(*tab, error)) {
+      tab->pending_context_request_id.clear();
+      return false;
+    }
+    return true;
   }
 
   bool BeginVisibleScreenshot(const std::string& tab_id,
@@ -1905,6 +2013,167 @@ class KestrelClient : public CefClient,
       CefRefPtr<CefValue> root = CefValue::Create();
       root->SetDictionary(response);
       std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_SNAPSHOT_OK id=" << tab_id
+                << std::endl;
+      SendBrowserBackendResponse(
+          request_id, true,
+          CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
+      return;
+    }
+
+    if (kind == "visible-context") {
+      const std::string request_id = tab->pending_context_request_id;
+      tab->pending_context_request_id.clear();
+      if (request_id.empty()) return;
+      std::string value_json;
+      if (!extract_evaluate_value(&value_json)) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible context failed.");
+        return;
+      }
+      CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+      if (!payload || payload->GetType() != VTYPE_DICTIONARY) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible context was invalid.");
+        return;
+      }
+      CefRefPtr<CefDictionaryValue> body = payload->GetDictionary();
+      const std::optional<std::string> safe_url = safe_user_browser_url(tab->url);
+      if (!safe_url) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "The selected tab does not have a safe readable URL.");
+        return;
+      }
+      auto clip = [](std::string value, size_t maximum) {
+        if (value.size() > maximum) value.resize(maximum);
+        return value;
+      };
+      CefRefPtr<CefDictionaryValue> response = CefDictionaryValue::Create();
+      response->SetString("tabId", tab->id);
+      response->SetString("url", *safe_url);
+      const std::string title =
+          tab->title.empty() ? "Untitled" : clip(tab->title, 500);
+      response->SetString("title", title);
+      if (body->GetType("description") == VTYPE_STRING) {
+        response->SetString(
+            "description",
+            clip(body->GetString("description").ToString(), 2000));
+      }
+      response->SetString(
+          "selectedText",
+          body->GetType("selectedText") == VTYPE_STRING
+              ? clip(body->GetString("selectedText").ToString(), 20'000)
+              : "");
+      response->SetString(
+          "visibleText",
+          body->GetType("visibleText") == VTYPE_STRING
+              ? clip(body->GetString("visibleText").ToString(), 40'000)
+              : "");
+      CefRefPtr<CefListValue> headings = CefListValue::Create();
+      if (body->GetType("headings") == VTYPE_LIST) {
+        CefRefPtr<CefListValue> source = body->GetList("headings");
+        for (size_t index = 0;
+             index < source->GetSize() && headings->GetSize() < 60; ++index) {
+          if (source->GetType(index) != VTYPE_STRING) continue;
+          const std::string heading =
+              clip(source->GetString(index).ToString(), 500);
+          if (heading.empty()) continue;
+          headings->SetString(headings->GetSize(), heading);
+        }
+      }
+      response->SetList("headings", headings);
+      CefRefPtr<CefListValue> links = CefListValue::Create();
+      if (body->GetType("links") == VTYPE_LIST) {
+        CefRefPtr<CefListValue> source = body->GetList("links");
+        for (size_t index = 0;
+             index < source->GetSize() && links->GetSize() < 100; ++index) {
+          if (source->GetType(index) != VTYPE_DICTIONARY) continue;
+          CefRefPtr<CefDictionaryValue> item = source->GetDictionary(index);
+          if (item->GetType("url") != VTYPE_STRING) continue;
+          const std::optional<std::string> link_url =
+              safe_user_browser_url(item->GetString("url").ToString());
+          if (!link_url) continue;
+          CefRefPtr<CefDictionaryValue> link = CefDictionaryValue::Create();
+          link->SetString(
+              "text",
+              item->GetType("text") == VTYPE_STRING
+                  ? clip(item->GetString("text").ToString(), 500)
+                  : "");
+          link->SetString("url", *link_url);
+          links->SetDictionary(links->GetSize(), link);
+        }
+      }
+      response->SetList("links", links);
+      CefRefPtr<CefListValue> forms = CefListValue::Create();
+      if (body->GetType("forms") == VTYPE_LIST) {
+        CefRefPtr<CefListValue> source = body->GetList("forms");
+        for (size_t index = 0;
+             index < source->GetSize() && forms->GetSize() < 60; ++index) {
+          if (source->GetType(index) != VTYPE_DICTIONARY) continue;
+          CefRefPtr<CefDictionaryValue> item = source->GetDictionary(index);
+          CefRefPtr<CefDictionaryValue> form = CefDictionaryValue::Create();
+          form->SetString(
+              "label",
+              item->GetType("label") == VTYPE_STRING
+                  ? clip(item->GetString("label").ToString(), 500)
+                  : "");
+          form->SetString(
+              "type",
+              item->GetType("type") == VTYPE_STRING
+                  ? clip(item->GetString("type").ToString(), 100)
+                  : "");
+          form->SetString(
+              "name",
+              item->GetType("name") == VTYPE_STRING
+                  ? clip(item->GetString("name").ToString(), 500)
+                  : "");
+          forms->SetDictionary(forms->GetSize(), form);
+        }
+      }
+      response->SetList("forms", forms);
+      CefRefPtr<CefDictionaryValue> viewport = CefDictionaryValue::Create();
+      int width = 1;
+      int height = 1;
+      double scroll_x = 0;
+      double scroll_y = 0;
+      if (body->GetType("viewport") == VTYPE_DICTIONARY) {
+        CefRefPtr<CefDictionaryValue> source = body->GetDictionary("viewport");
+        if (source->GetType("width") == VTYPE_INT) {
+          width = std::clamp(source->GetInt("width"), 1, 10'000);
+        } else if (source->GetType("width") == VTYPE_DOUBLE) {
+          width = std::clamp(static_cast<int>(std::lround(source->GetDouble("width"))),
+                             1, 10'000);
+        }
+        if (source->GetType("height") == VTYPE_INT) {
+          height = std::clamp(source->GetInt("height"), 1, 10'000);
+        } else if (source->GetType("height") == VTYPE_DOUBLE) {
+          height = std::clamp(
+              static_cast<int>(std::lround(source->GetDouble("height"))), 1,
+              10'000);
+        }
+        if (source->GetType("scrollX") == VTYPE_DOUBLE) {
+          scroll_x = source->GetDouble("scrollX");
+        } else if (source->GetType("scrollX") == VTYPE_INT) {
+          scroll_x = source->GetInt("scrollX");
+        }
+        if (source->GetType("scrollY") == VTYPE_DOUBLE) {
+          scroll_y = source->GetDouble("scrollY");
+        } else if (source->GetType("scrollY") == VTYPE_INT) {
+          scroll_y = source->GetInt("scrollY");
+        }
+      }
+      viewport->SetInt("width", width);
+      viewport->SetInt("height", height);
+      viewport->SetDouble("scrollX", scroll_x);
+      viewport->SetDouble("scrollY", scroll_y);
+      response->SetDictionary("viewport", viewport);
+      response->SetString("capturedAt", iso8601_now());
+      response->SetString("trust", "untrusted_browser");
+      CefRefPtr<CefValue> root = CefValue::Create();
+      root->SetDictionary(response);
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_CONTEXT_OK id=" << tab_id
                 << std::endl;
       SendBrowserBackendResponse(
           request_id, true,
@@ -2281,6 +2550,11 @@ class KestrelClient : public CefClient,
       SendBrowserBackendResponse(tab.pending_act_request_id, false, "",
                                  "Native Chromium browser tab closed.");
       tab.pending_act_request_id.clear();
+    }
+    if (!tab.pending_context_request_id.empty()) {
+      SendBrowserBackendResponse(tab.pending_context_request_id, false, "",
+                                 "Native Chromium browser tab closed.");
+      tab.pending_context_request_id.clear();
     }
     tab.pending_devtools_kinds.clear();
     tab.element_refs.clear();
@@ -2676,6 +2950,16 @@ class KestrelClient : public CefClient,
         SendBrowserBackendResponse(
             request_id, false, "",
             error.empty() ? "Native Chromium visible snapshot failed." : error);
+      }
+    }
+    if (tab && !tab->pending_context_request_id.empty()) {
+      std::string error;
+      if (!StartPendingVisibleContext(*tab, &error)) {
+        const std::string request_id = tab->pending_context_request_id;
+        tab->pending_context_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty() ? "Native Chromium visible context failed." : error);
       }
     }
     if (tab && !tab->pending_screenshot_request_id.empty()) {
@@ -3614,6 +3898,17 @@ class KestrelClient : public CefClient,
       }
       std::string error;
       if (!BeginVisibleScreenshot(tab_id, request_id, &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
+      return;
+    }
+    if (operation == "visible-context") {
+      std::string tab_id;
+      if (request->HasKey("tabId") && request->GetType("tabId") == VTYPE_STRING) {
+        tab_id = request->GetString("tabId").ToString();
+      }
+      std::string error;
+      if (!BeginVisibleContext(tab_id, request_id, &error)) {
         SendBrowserBackendResponse(request_id, false, "", error);
       }
       return;

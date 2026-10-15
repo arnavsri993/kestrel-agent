@@ -123,6 +123,7 @@ try {
 		output,
 		/KESTREL_NATIVE_CHROMIUM_BROWSER_BACKEND_OK tabs=[1-9]\d*/,
 	);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_CONTEXT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_SNAPSHOT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_ACT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_SCREENSHOT_OK/);
@@ -145,7 +146,7 @@ try {
 		"visible-act through the Core relay must click the inspected button.",
 	);
 	console.log(
-		"Native Chromium browser backend: Core relay visible-create→snapshot→act→screenshot→tabs on CEF.",
+		"Native Chromium browser backend: Core relay visible-create→context→snapshot→act→screenshot→tabs on CEF.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");
