@@ -979,6 +979,9 @@ struct NativeUserBrowserTab {
   int viewport_width = 1280;
   int viewport_height = 720;
   std::string pending_screenshot_request_id;
+  std::string pending_snapshot_request_id;
+  std::string pending_act_request_id;
+  std::map<std::string, NativeAutomationElementRef> element_refs;
   std::map<int, std::string> pending_devtools_kinds;
   CefRefPtr<KestrelUserBrowserClient> client;
   CefRefPtr<CefBrowserView> view;
@@ -1682,18 +1685,119 @@ class KestrelClient : public CefClient,
     return true;
   }
 
+  bool VisibleTabBusy(const NativeUserBrowserTab& tab) const {
+    return !tab.pending_screenshot_request_id.empty() ||
+           !tab.pending_snapshot_request_id.empty() ||
+           !tab.pending_act_request_id.empty();
+  }
+
   bool BeginVisibleScreenshot(const std::string& tab_id,
                               const std::string& request_id,
                               std::string* error) {
     NativeUserBrowserTab* tab = ResolveVisibleTab(tab_id, error);
     if (!tab) return false;
-    if (!tab->pending_screenshot_request_id.empty()) {
+    if (VisibleTabBusy(*tab)) {
       if (error) *error = "Native Chromium browser tab is busy.";
       return false;
     }
     tab->pending_screenshot_request_id = request_id;
     if (!StartPendingVisibleScreenshot(*tab, error)) {
       tab->pending_screenshot_request_id.clear();
+      return false;
+    }
+    return true;
+  }
+
+  bool StartPendingVisibleSnapshot(NativeUserBrowserTab& tab,
+                                   std::string* error) {
+    if (tab.pending_snapshot_request_id.empty()) return true;
+    for (const auto& entry : tab.pending_devtools_kinds) {
+      if (entry.second == "visible-snapshot") return true;
+    }
+    CefRefPtr<CefBrowser> browser = tab.view ? tab.view->GetBrowser() : nullptr;
+    if (!browser || !browser->IsValid() || tab.loading) return true;
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", kAutomationSnapshotScript);
+    params->SetBool("returnByValue", true);
+    params->SetBool("awaitPromise", false);
+    return CallUserBrowserDevToolsMethod(tab, "Runtime.evaluate", params,
+                                         "visible-snapshot", error);
+  }
+
+  bool BeginVisibleSnapshot(const std::string& tab_id,
+                            const std::string& request_id,
+                            std::string* error) {
+    NativeUserBrowserTab* tab = ResolveVisibleTab(tab_id, error);
+    if (!tab) return false;
+    if (VisibleTabBusy(*tab)) {
+      if (error) *error = "Native Chromium browser tab is busy.";
+      return false;
+    }
+    tab->pending_snapshot_request_id = request_id;
+    if (!StartPendingVisibleSnapshot(*tab, error)) {
+      tab->pending_snapshot_request_id.clear();
+      return false;
+    }
+    return true;
+  }
+
+  bool BeginVisibleAct(const std::string& tab_id,
+                       CefRefPtr<CefDictionaryValue> action,
+                       const std::string& request_id, std::string* error) {
+    NativeUserBrowserTab* tab = ResolveVisibleTab(tab_id, error);
+    if (!tab) return false;
+    if (!action || action->GetType("type") != VTYPE_STRING) {
+      if (error) *error = "Native visible-act was invalid.";
+      return false;
+    }
+    if (VisibleTabBusy(*tab)) {
+      if (error) *error = "Native Chromium browser tab is busy.";
+      return false;
+    }
+    CefRefPtr<CefBrowser> browser = tab->view ? tab->view->GetBrowser() : nullptr;
+    if (!browser || !browser->IsValid() || tab->loading) {
+      if (error) *error = "Native Chromium browser tab is unavailable.";
+      return false;
+    }
+    const std::string type = action->GetString("type").ToString();
+    if (type != "click") {
+      if (error) *error = "Native visible-act type is unsupported.";
+      return false;
+    }
+    if (action->GetType("target") != VTYPE_STRING) {
+      if (error) *error = "Native visible-act target was invalid.";
+      return false;
+    }
+    const std::string target = action->GetString("target").ToString();
+    if (target.size() > 2000 || target.find('"') != std::string::npos ||
+        target.find('\\') != std::string::npos) {
+      if (error) *error = "Native visible-act target was invalid.";
+      return false;
+    }
+    const auto ref = tab->element_refs.find(target);
+    if (ref == tab->element_refs.end()) {
+      if (error) *error = "Browser target ref is stale. Take a new snapshot.";
+      return false;
+    }
+    if (ref->second.tag != "BUTTON" && ref->second.tag != "A") {
+      if (error) *error = "Only inspected buttons and links can be clicked.";
+      return false;
+    }
+    const std::string expression =
+        std::string("(() => { const el = document.querySelector('[data-"
+                    "kestrel-ref=\"") +
+        target +
+        "\"]'); if (!el || !el.isConnected) throw new Error('stale'); "
+        "if (el.tagName !== 'BUTTON' && el.tagName !== 'A') throw new "
+        "Error('role'); el.click(); return JSON.stringify({ok:true}); })()";
+    tab->pending_act_request_id = request_id;
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", expression);
+    params->SetBool("returnByValue", true);
+    params->SetBool("awaitPromise", false);
+    if (!CallUserBrowserDevToolsMethod(*tab, "Runtime.evaluate", params,
+                                       "visible-act", error)) {
+      tab->pending_act_request_id.clear();
       return false;
     }
     return true;
@@ -1732,29 +1836,111 @@ class KestrelClient : public CefClient,
     const std::string kind = kind_it->second;
     tab->pending_devtools_kinds.erase(kind_it);
 
+    auto extract_evaluate_value = [&](std::string* value_json) -> bool {
+      if (!success) return false;
+      CefRefPtr<CefValue> parsed = CefParseJSON(result_json, JSON_PARSER_RFC);
+      if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) return false;
+      CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
+      if (root->HasKey("exceptionDetails")) return false;
+      if (root->GetType("result") != VTYPE_DICTIONARY) return false;
+      CefRefPtr<CefDictionaryValue> result = root->GetDictionary("result");
+      if (result->GetType("value") != VTYPE_STRING) return false;
+      *value_json = result->GetString("value").ToString();
+      return !value_json->empty();
+    };
+
+    if (kind == "visible-snapshot") {
+      const std::string request_id = tab->pending_snapshot_request_id;
+      tab->pending_snapshot_request_id.clear();
+      if (request_id.empty()) return;
+      std::string value_json;
+      if (!extract_evaluate_value(&value_json)) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible snapshot failed.");
+        return;
+      }
+      CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+      if (!payload || payload->GetType() != VTYPE_DICTIONARY) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible snapshot was invalid.");
+        return;
+      }
+      CefRefPtr<CefDictionaryValue> body = payload->GetDictionary();
+      tab->element_refs.clear();
+      if (body->GetType("interactive") == VTYPE_LIST) {
+        CefRefPtr<CefListValue> interactive = body->GetList("interactive");
+        for (size_t index = 0; index < interactive->GetSize(); ++index) {
+          if (interactive->GetType(index) != VTYPE_DICTIONARY) continue;
+          CefRefPtr<CefDictionaryValue> item = interactive->GetDictionary(index);
+          if (item->GetType("ref") != VTYPE_STRING) continue;
+          NativeAutomationElementRef entry;
+          entry.role = item->GetType("role") == VTYPE_STRING
+                           ? item->GetString("role").ToString()
+                           : "";
+          entry.tag = item->GetType("tag") == VTYPE_STRING
+                          ? item->GetString("tag").ToString()
+                          : "";
+          entry.input_type = item->GetType("inputType") == VTYPE_STRING
+                                 ? item->GetString("inputType").ToString()
+                                 : "";
+          tab->element_refs[item->GetString("ref").ToString()] = entry;
+          item->Remove("tag");
+          item->Remove("inputType");
+        }
+      }
+      CefRefPtr<CefDictionaryValue> response = CefDictionaryValue::Create();
+      response->SetString("url", tab->url);
+      response->SetString("title", tab->title);
+      if (body->HasKey("accessibilityTree")) {
+        response->SetValue("accessibilityTree",
+                           body->GetValue("accessibilityTree"));
+      }
+      if (body->HasKey("interactive")) {
+        response->SetValue("interactive", body->GetValue("interactive"));
+      }
+      response->SetBool("truncated", body->GetBool("truncated"));
+      response->SetString("trust", "untrusted_browser");
+      CefRefPtr<CefValue> root = CefValue::Create();
+      root->SetDictionary(response);
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_SNAPSHOT_OK id=" << tab_id
+                << std::endl;
+      SendBrowserBackendResponse(
+          request_id, true,
+          CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
+      return;
+    }
+
+    if (kind == "visible-act") {
+      const std::string request_id = tab->pending_act_request_id;
+      tab->pending_act_request_id.clear();
+      if (request_id.empty()) return;
+      std::string value_json;
+      bool ok = false;
+      if (extract_evaluate_value(&value_json)) {
+        CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+        if (payload && payload->GetType() == VTYPE_DICTIONARY) {
+          ok = payload->GetDictionary()->GetBool("ok");
+        }
+      }
+      if (!ok) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible action was refused or the target changed.");
+        return;
+      }
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_ACT_OK id=" << tab_id
+                << std::endl;
+      SendBrowserBackendResponse(request_id, true, "{\"performed\":true}", "");
+      return;
+    }
+
     if (kind == "visible-screenshot-guard") {
       const std::string request_id = tab->pending_screenshot_request_id;
       if (request_id.empty()) return;
       std::string value_json;
-      bool evaluate_ok = success;
-      if (success) {
-        CefRefPtr<CefValue> parsed = CefParseJSON(result_json, JSON_PARSER_RFC);
-        if (parsed && parsed->GetType() == VTYPE_DICTIONARY) {
-          CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
-          if (root->HasKey("exceptionDetails")) {
-            evaluate_ok = false;
-          } else if (root->GetType("result") == VTYPE_DICTIONARY) {
-            CefRefPtr<CefDictionaryValue> result =
-                root->GetDictionary("result");
-            if (result->GetType("value") == VTYPE_STRING) {
-              value_json = result->GetString("value").ToString();
-            }
-          }
-        } else {
-          evaluate_ok = false;
-        }
-      }
-      if (!evaluate_ok || value_json.empty()) {
+      if (!extract_evaluate_value(&value_json)) {
         tab->pending_screenshot_request_id.clear();
         SendBrowserBackendResponse(
             request_id, false, "",
@@ -2086,7 +2272,18 @@ class KestrelClient : public CefClient,
                                  "Native Chromium browser tab closed.");
       tab.pending_screenshot_request_id.clear();
     }
+    if (!tab.pending_snapshot_request_id.empty()) {
+      SendBrowserBackendResponse(tab.pending_snapshot_request_id, false, "",
+                                 "Native Chromium browser tab closed.");
+      tab.pending_snapshot_request_id.clear();
+    }
+    if (!tab.pending_act_request_id.empty()) {
+      SendBrowserBackendResponse(tab.pending_act_request_id, false, "",
+                                 "Native Chromium browser tab closed.");
+      tab.pending_act_request_id.clear();
+    }
     tab.pending_devtools_kinds.clear();
+    tab.element_refs.clear();
     tab.devtools_registration = nullptr;
     if (!tab.view) return;
     tab.view->SetVisible(false);
@@ -2471,6 +2668,16 @@ class KestrelClient : public CefClient,
       tab->url = url;
     }
     PublishUserBrowserState();
+    if (tab && !tab->pending_snapshot_request_id.empty()) {
+      std::string error;
+      if (!StartPendingVisibleSnapshot(*tab, &error)) {
+        const std::string request_id = tab->pending_snapshot_request_id;
+        tab->pending_snapshot_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty() ? "Native Chromium visible snapshot failed." : error);
+      }
+    }
     if (tab && !tab->pending_screenshot_request_id.empty()) {
       std::string error;
       if (!StartPendingVisibleScreenshot(*tab, &error)) {
@@ -3407,6 +3614,34 @@ class KestrelClient : public CefClient,
       }
       std::string error;
       if (!BeginVisibleScreenshot(tab_id, request_id, &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
+      return;
+    }
+    if (operation == "visible-snapshot") {
+      std::string tab_id;
+      if (request->HasKey("tabId") && request->GetType("tabId") == VTYPE_STRING) {
+        tab_id = request->GetString("tabId").ToString();
+      }
+      std::string error;
+      if (!BeginVisibleSnapshot(tab_id, request_id, &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
+      return;
+    }
+    if (operation == "visible-act") {
+      if (request->GetType("action") != VTYPE_DICTIONARY) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native visible-act was invalid.");
+        return;
+      }
+      std::string tab_id;
+      if (request->HasKey("tabId") && request->GetType("tabId") == VTYPE_STRING) {
+        tab_id = request->GetString("tabId").ToString();
+      }
+      std::string error;
+      if (!BeginVisibleAct(tab_id, request->GetDictionary("action"), request_id,
+                           &error)) {
         SendBrowserBackendResponse(request_id, false, "", error);
       }
       return;

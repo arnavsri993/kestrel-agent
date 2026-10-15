@@ -59,6 +59,8 @@ const pending = new Map();
 const pendingBrowserBackend = new Map();
 /** @type {string | undefined} */
 let smokeIsolatedSessionId;
+/** @type {string | undefined} */
+let smokeVisibleTabId;
 
 function write(message) {
 	process.stdout.write(JSON.stringify(message) + "\n");
@@ -257,13 +259,13 @@ lines.on("line", (line) => {
 			return;
 		}
 		if (message.requestId === "smoke-browser-backend-create") {
-			const tabId =
+			smokeVisibleTabId =
 				message.result &&
 				typeof message.result === "object" &&
 				typeof message.result.tabId === "string"
 					? message.result.tabId
 					: undefined;
-			if (!tabId) {
+			if (!smokeVisibleTabId) {
 				write({
 					type: "smoke-event",
 					name: "browser-backend-failed",
@@ -272,8 +274,71 @@ lines.on("line", (line) => {
 				return;
 			}
 			forwardBrowserBackendRequest(
+				"smoke-browser-backend-snapshot",
+				{ operation: "visible-snapshot", tabId: smokeVisibleTabId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-snapshot") {
+			const snapshot =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			if (snapshot.trust !== "untrusted_browser") {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible snapshot trust was invalid.",
+				});
+				return;
+			}
+			const interactive = Array.isArray(snapshot.interactive)
+				? snapshot.interactive
+				: [];
+			const button = interactive.find(
+				(item) =>
+					item &&
+					typeof item === "object" &&
+					item.role === "button" &&
+					typeof item.ref === "string",
+			);
+			if (!button || !smokeVisibleTabId) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible snapshot had no button ref to act on.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-browser-backend-act",
+				{
+					operation: "visible-act",
+					tabId: smokeVisibleTabId,
+					action: { type: "click", target: button.ref },
+				},
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-act") {
+			if (
+				!message.result ||
+				typeof message.result !== "object" ||
+				message.result.performed !== true ||
+				!smokeVisibleTabId
+			) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible act did not report performed=true.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
 				"smoke-browser-backend-screenshot",
-				{ operation: "visible-screenshot", tabId },
+				{ operation: "visible-screenshot", tabId: smokeVisibleTabId },
 				"smoke",
 			);
 			return;

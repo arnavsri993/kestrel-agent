@@ -17,13 +17,25 @@ const profile = await mkdtemp(
 );
 
 let pageHits = 0;
+let actHits = 0;
 const server = createServer((request, response) => {
 	if (request.url === "/native-browser-backend-smoke") {
 		pageHits += 1;
 		response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-		response.end(
-			"<!doctype html><title>Kestrel native browser backend</title><p>ok</p>",
-		);
+		response.end(`<!doctype html>
+<title>Kestrel native browser backend</title>
+<button id="smoke-act" type="button">Act</button>
+<script>
+document.getElementById("smoke-act").addEventListener("click", () => {
+  fetch("/native-browser-backend-act-ok").catch(() => {});
+});
+</script>`);
+		return;
+	}
+	if (request.url === "/native-browser-backend-act-ok") {
+		actHits += 1;
+		response.writeHead(204);
+		response.end();
 		return;
 	}
 	response.writeHead(404);
@@ -111,6 +123,8 @@ try {
 		output,
 		/KESTREL_NATIVE_CHROMIUM_BROWSER_BACKEND_OK tabs=[1-9]\d*/,
 	);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_SNAPSHOT_OK/);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_ACT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_SCREENSHOT_OK/);
 	assert.doesNotMatch(
 		output,
@@ -125,8 +139,13 @@ try {
 		true,
 		"visible-create through the Core relay must load the smoke page in CEF.",
 	);
+	assert.equal(
+		actHits > 0,
+		true,
+		"visible-act through the Core relay must click the inspected button.",
+	);
 	console.log(
-		"Native Chromium browser backend: Core relay visible-create→screenshot→tabs on CEF.",
+		"Native Chromium browser backend: Core relay visible-create→snapshot→act→screenshot→tabs on CEF.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");
