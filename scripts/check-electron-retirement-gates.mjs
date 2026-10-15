@@ -29,6 +29,7 @@ const gates = [
 	"test:packaged-native-desktop-shell:arm64",
 	"Keychain/credential bootstrap without prompt spam — profile-sealed proven; real Keychain gated on Developer ID + --kestrel-real-keychain",
 	"Isolated automation sessions (create/navigate/snapshot/act) on CEF",
+	"Website password-vault visible-autofill fill on CEF (test:native-browser-backend seeds + fills)",
 	"Developer ID signing + notarization — check:native-signing (package:mac:native:release + notarize:mac:native)",
 	"test:electron-native-transfer — Electron→native dry-run/apply unit suite",
 	"test:electron-native-transfer-cli — CLI dry-run/apply against a synthetic Electron profile (secrets rejected)",

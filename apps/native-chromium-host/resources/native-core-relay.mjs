@@ -412,17 +412,17 @@ lines.on("line", (line) => {
 				message.result && typeof message.result === "object"
 					? message.result
 					: {};
-			// Local smoke page includes login controls but no native password
-			// vault yet, so the CEF probe must report structured unavailable.
+			// Local smoke seeds one vault entry for the page origin, so CEF
+			// autofill must probe the login form and fill it.
 			if (
 				autofill.trust !== "untrusted_browser" ||
-				autofill.credentialAvailable !== false ||
-				autofill.autofillResult !== "unavailable"
+				autofill.credentialAvailable !== true ||
+				autofill.autofillResult !== "filled"
 			) {
 				write({
 					type: "smoke-event",
 					name: "browser-backend-failed",
-					error: "Visible autofill probe result was invalid.",
+					error: "Visible autofill fill result was invalid.",
 				});
 				return;
 			}

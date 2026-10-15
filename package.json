@@ -28,6 +28,7 @@
     "retire:electron": "node scripts/retire-electron.mjs",
     "retire:electron:dry-run": "node scripts/retire-electron.mjs --dry-run",
     "verify:chromium-product-path": "node scripts/verify-chromium-product-path.mjs",
+    "verify:zero-electron": "node scripts/verify-zero-electron.mjs",
     "test:electron-native-transfer": "vitest run packages/agent-core/src/electron-native-profile-transfer.test.ts",
     "test:electron-native-transfer-cli": "node scripts/smoke-electron-native-transfer-cli.mjs",
     "check:native-signing": "node scripts/check-native-signing.mjs",

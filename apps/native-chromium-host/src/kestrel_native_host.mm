@@ -46,6 +46,7 @@
 #include "kestrel_durable_browser_library.h"
 #include "kestrel_extension_workbench.h"
 #include "kestrel_native_credentials.h"
+#include "kestrel_native_password_vault.h"
 
 @interface KestrelNativeCoreRelay : NSObject
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
@@ -742,6 +743,78 @@ constexpr char kVisibleAutofillProbeScript[] = R"JS(
 })()
 )JS";
 
+constexpr char kVisibleAutofillFillScriptPrefix[] = R"JS(
+(() => {
+  const username = )JS";
+constexpr char kVisibleAutofillFillScriptMiddle[] = R"JS(;
+  const password = )JS";
+constexpr char kVisibleAutofillFillScriptSuffix[] = R"JS(;
+  const visible = (node) => {
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== 'hidden' && style.display !== 'none' &&
+      Number(style.opacity) > 0 && !node.disabled && !node.readOnly;
+  };
+  const hint = (node) => [node.type, node.autocomplete, node.name, node.id,
+    node.getAttribute('aria-label'), node.placeholder]
+    .filter(Boolean).join(' ').toLowerCase();
+  const fields = Array.from(document.querySelectorAll('input')).filter(visible);
+  let filled = 0;
+  const setValue = (node, value) => {
+    const proto = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype, 'value');
+    if (proto && proto.set) proto.set.call(node, value);
+    else node.value = value;
+    node.dispatchEvent(new Event('input', { bubbles: true }));
+    node.dispatchEvent(new Event('change', { bubbles: true }));
+    filled += 1;
+  };
+  for (const node of fields) {
+    if (node.type === 'password' || /(?:current|new)[-_ ]password/.test(hint(node))) {
+      if (password) setValue(node, password);
+    } else if (node.type === 'email' || node.type === 'text' || node.type === 'tel' ||
+        /user(?:name)?|e-?mail|login|account/.test(hint(node))) {
+      if (username) setValue(node, username);
+    }
+  }
+  return JSON.stringify({ ok: filled > 0, filled });
+})()
+)JS";
+
+std::string json_string_literal(const std::string& value) {
+  std::string out = "\"";
+  for (unsigned char ch : value) {
+    switch (ch) {
+      case '\\':
+        out += "\\\\";
+        break;
+      case '"':
+        out += "\\\"";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        if (ch < 0x20) {
+          char buf[8];
+          std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
+          out += buf;
+        } else {
+          out.push_back(static_cast<char>(ch));
+        }
+    }
+  }
+  out.push_back('"');
+  return out;
+}
+
 class KestrelAutomationDevToolsObserver final
     : public CefDevToolsMessageObserver {
  public:
@@ -1275,6 +1348,29 @@ class KestrelClient : public CefClient,
       const NativeCredentialStorageMode credential_mode =
           real_keychain_enabled ? NativeCredentialStorageMode::Keychain
                                 : NativeCredentialStorageMode::ProfileSealed;
+      std::string password_vault_error;
+      if (!password_vault_.Open(isolated_profile_root_, &password_vault_error)) {
+        password_vault_opened_ = false;
+        std::cerr << "KESTREL_NATIVE_CHROMIUM_PASSWORD_VAULT_UNAVAILABLE error="
+                  << password_vault_error << std::endl;
+      } else {
+        password_vault_opened_ = true;
+        std::cout << "KESTREL_NATIVE_CHROMIUM_PASSWORD_VAULT_READY" << std::endl;
+        if (smoke_browser_backend_url) {
+          if (const auto origin = OriginFromUrl(*smoke_browser_backend_url)) {
+            std::string seed_error;
+            if (password_vault_.Save(*origin, "smoke-user", "smoke-pass",
+                                    &seed_error)) {
+              std::cout << "KESTREL_NATIVE_CHROMIUM_PASSWORD_VAULT_SMOKE_SEEDED"
+                        << std::endl;
+            } else {
+              std::cerr
+                  << "KESTREL_NATIVE_CHROMIUM_PASSWORD_VAULT_SMOKE_SEED_FAILED error="
+                  << seed_error << std::endl;
+            }
+          }
+        }
+      }
       if (!credential_store_.Open(isolated_profile_root_, credential_mode,
                                   &credential_error)) {
         credential_store_opened_ = false;
@@ -2304,14 +2400,88 @@ class KestrelClient : public CefClient,
                   << std::endl;
         return;
       }
-      // Login controls exist, but the website password vault is not on the
-      // native profile yet — keep Electron's structured unavailable envelope.
+      const auto origin = OriginFromUrl(tab->url);
+      if (!origin || !password_vault_opened_) {
+        SendBrowserBackendResponse(
+            request_id, true,
+            "{\"credentialAvailable\":false,\"autofillResult\":\"unavailable\","
+            "\"trust\":\"untrusted_browser\"}",
+            "");
+        std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_UNAVAILABLE"
+                  << std::endl;
+        return;
+      }
+      auto entries = password_vault_.ListForOrigin(*origin);
+      if (entries.empty()) {
+        SendBrowserBackendResponse(
+            request_id, true,
+            "{\"credentialAvailable\":false,\"autofillResult\":\"unavailable\","
+            "\"trust\":\"untrusted_browser\"}",
+            "");
+        std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_UNAVAILABLE"
+                  << std::endl;
+        return;
+      }
+      if (entries.size() > 1) {
+        SendBrowserBackendResponse(
+            request_id, true,
+            "{\"credentialAvailable\":true,\"autofillResult\":\"selection_required\","
+            "\"trust\":\"untrusted_browser\"}",
+            "");
+        std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_SELECTION_REQUIRED"
+                  << std::endl;
+        return;
+      }
+      const std::string expression =
+          std::string(kVisibleAutofillFillScriptPrefix) +
+          json_string_literal(entries[0].username) +
+          kVisibleAutofillFillScriptMiddle +
+          json_string_literal(entries[0].password) +
+          kVisibleAutofillFillScriptSuffix;
+      entries[0].password.clear();
+      tab->pending_autofill_request_id = request_id;
+      CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+      params->SetString("expression", expression);
+      params->SetBool("returnByValue", true);
+      params->SetBool("awaitPromise", false);
+      std::string fill_error;
+      if (!CallUserBrowserDevToolsMethod(*tab, "Runtime.evaluate", params,
+                                         "visible-autofill-fill",
+                                         &fill_error)) {
+        tab->pending_autofill_request_id.clear();
+        SendBrowserBackendResponse(request_id, false, "", fill_error);
+      }
+      return;
+    }
+
+    if (kind == "visible-autofill-fill") {
+      const std::string request_id = tab->pending_autofill_request_id;
+      tab->pending_autofill_request_id.clear();
+      if (request_id.empty()) return;
+      std::string value_json;
+      bool filled = false;
+      if (extract_evaluate_value(&value_json)) {
+        CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+        if (payload && payload->GetType() == VTYPE_DICTIONARY) {
+          filled = payload->GetDictionary()->GetBool("ok");
+        }
+      }
+      if (!filled) {
+        SendBrowserBackendResponse(
+            request_id, true,
+            "{\"credentialAvailable\":true,\"autofillResult\":\"unavailable\","
+            "\"trust\":\"untrusted_browser\"}",
+            "");
+        std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_UNAVAILABLE"
+                  << std::endl;
+        return;
+      }
       SendBrowserBackendResponse(
           request_id, true,
-          "{\"credentialAvailable\":false,\"autofillResult\":\"unavailable\","
+          "{\"credentialAvailable\":true,\"autofillResult\":\"filled\","
           "\"trust\":\"untrusted_browser\"}",
           "");
-      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_UNAVAILABLE"
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_FILLED"
                 << std::endl;
       return;
     }
@@ -5452,6 +5622,8 @@ class KestrelClient : public CefClient,
   DurableBrowserLibrary browser_library_;
   NativeCredentialStore credential_store_;
   bool credential_store_opened_ = false;
+  NativePasswordVault password_vault_;
+  bool password_vault_opened_ = false;
   std::map<std::string, NativeAutomationSession> automation_sessions_;
   std::map<uint32_t, std::string> cef_download_ids_;
   std::map<std::string, std::string> download_paths_;

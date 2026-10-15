@@ -133,7 +133,11 @@ try {
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_CONTEXT_OK/);
 	assert.match(
 		output,
-		/KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_UNAVAILABLE/,
+		/KESTREL_NATIVE_CHROMIUM_PASSWORD_VAULT_SMOKE_SEEDED/,
+	);
+	assert.match(
+		output,
+		/KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_FILLED/,
 	);
 	assert.doesNotMatch(
 		output,
