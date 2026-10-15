@@ -123,10 +123,21 @@ explicit approval for apply.
 - Use `kestrel opencode --setup` when the person specifically wants an
   OpenCode agent configuration; it prints configuration and does not silently
   write secrets.
-- For desktop work, run only one `corepack pnpm dev:desktop` watcher. Main and
-  preload changes restart Electron automatically; renderer changes use Vite
-  HMR. Leave the watcher running after source changes so the open app reflects
-  the current source.
+- For desktop work, run only one `corepack pnpm dev:desktop` watcher. On
+  `main` that script is still Electron (`pnpm --filter @kestrel/desktop dev`).
+  Main and preload changes restart Electron automatically; renderer changes
+  use Vite HMR. Leave the watcher running after source changes so the open
+  app reflects the current source.
+- Packaged `/Applications/Kestrel.app` builds run Agent Core as a pinned Node
+  sidecar; ordinary Electron `dev:desktop` still uses the utility-process
+  adapter unless `KESTREL_USE_NODE_CORE=1`. See
+  [desktop runtime migration](docs/desktop-runtime-migration.md).
+- The native CEF migration lane is `corepack pnpm dev:native-chromium-host`
+  (and related `test:native-*` / `build:native-chromium-host` scripts). It is
+  not the Dock-pinned app and must not open or overwrite the Electron
+  profile. Do not treat a CEF binary as Electron retirement.
+- The Playwright Chromium preview is `corepack pnpm dev:chromium`; it is a
+  temporary-profile development shell, not a second installed Kestrel.
 - For onboarding or setup changes, run `corepack pnpm test:desktop-setup`.
 - For a broad repository change, run `corepack pnpm verify` and distinguish
   focused passes from unrelated baseline or remote-CI failures.

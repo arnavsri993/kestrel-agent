@@ -67,7 +67,7 @@ The packaged development build is Apple Silicon and ad-hoc signed. It is useful 
 - Connections supports a user-owned Google Desktop OAuth client through external-browser PKCE and a random loopback callback. Kestrel stores only the encrypted refresh record, rotates access tokens in memory, can revoke the grant, sends through Gmail, performs read-only recent-message lookup for code recovery, and lists or read-back verifies approval-gated Calendar events.
 - First-run and daily checks now probe configured model accounts or local services, report local-core/project/macOS-permission/package status, and create a no-overwrite verified backup of encrypted Kestrel state without copying project folders.
 - Finder-launched builds detect the official Codex binary bundled with ChatGPT, common Claude Code installs, and OpenCode CLI, then offer a persistent, reversible subscription or local runtime opt-in. Connections can start the official ChatGPT browser OAuth flow through Codex; Codex owns the callback, credential storage, and refresh while Kestrel receives only non-secret account status. Codex uses one long-lived stable app-server connection with durable per-session threads, streamed deltas, interruption, usage accounting, and restart-safe resume; it stays read-only so Kestrel remains the sole tool/approval authority. Claude Code and OpenCode remain isolated text-only CLI invocations. Kestrel stores only the chosen executable path and never copies OAuth tokens.
-- Separate utility-process agent core, narrow Zod-validated IPC, encrypted SQLite memory fields, policy gates, idempotency keys, and verification events.
+- Isolated Agent Core with narrow Zod-validated IPC, encrypted SQLite memory fields, policy gates, idempotency keys, and verification events. Packaged macOS builds run Agent Core as a pinned Node sidecar; branded Electron development still uses the Electron utility-process adapter by default (`KESTREL_USE_NODE_CORE=1` opts into Node). See [desktop runtime migration](docs/desktop-runtime-migration.md).
 - One encrypted life-context model connects layered/versioned memory, people and relationship tone, unified provider/explicit/inferred/suggested time, bounded explainable retrieval, contradiction handling, lifecycle archival, and Google Calendar synchronization.
 - A provider-neutral model/tool runtime with encrypted structured transcripts, deterministic context compaction, forks/checkpoints/cancellation, lifecycle hooks, approval pauses, provider-attempt/token audits, and allowlisted workspace/edit/shell/Git/worktree tools.
 - Every mutating runtime tool now writes one encrypted, privacy-bounded action receipt before execution and updates that same receipt at the terminal state. Completed task outcomes expose the latest run's receipts on demand with destination, approval provenance, expected and observed state, verification hash, and a truthful rollback boundary; read-only tools stay quiet, raw input/error bodies are excluded, and uncertain effects are never presented as verified or automatically replayed. See [action receipts](docs/action-receipts.md).
@@ -195,16 +195,22 @@ It is an in-place refresh of the canonical app, not a second installed version.
 ## Repository map
 
 ```text
-apps/desktop          Electron shell, renderer, preload, utility process, packaging
-apps/website          Static Next.js marketing site
-packages/agent-core   Opportunity engine, context resolver, deterministic vertical slice
-packages/database     SQLite schema, encrypted records, audit/idempotency storage
-packages/encryption   AES-256-GCM field encryption
-packages/policy-engine deterministic risk and prompt-injection boundaries
-packages/shared-types identity, domain contracts, IPC schemas
-website-media         Approved briefs, request manifests, rejected/approved provenance
-scripts               capture, fal generation, processing, verification, secret scan
-docs                  architecture, data, memory, permissions, threat model, release notes
+apps/desktop               Electron shell, renderer, preload, packaging (dev utility adapter)
+apps/core-service          Host-independent Agent Core service and Node sidecar bootstrap
+apps/cli                   Terminal/TUI/ACP entry points (`kestrel`, `kestrel-acp`)
+apps/native-chromium-host  Native CEF desktop-host migration lane (not the Dock app yet)
+apps/chromium-host         Experimental Playwright Chromium conversation preview
+apps/website               Static Next.js marketing site
+packages/agent-core        Opportunity engine, context resolver, deterministic vertical slice
+packages/database          SQLite schema, encrypted records, audit/idempotency storage
+packages/encryption        AES-256-GCM field encryption
+packages/error-handling    Shared error contracts
+packages/logger            Shared logging helpers
+packages/policy-engine     Deterministic risk and prompt-injection boundaries
+packages/shared-types      Identity, domain contracts, IPC schemas
+website-media              Approved briefs, request manifests, rejected/approved provenance
+scripts                    Capture, fal generation, processing, verification, secret scan
+docs                       Architecture, data, memory, permissions, threat model, release notes
 ```
 
 ## fal website assets

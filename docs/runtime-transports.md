@@ -10,7 +10,7 @@ public HTTPS host after DNS/private-address checks, explicitly set
 Set `BRAVE_SEARCH_API_KEY` and explicitly opt in with
 `KESTREL_ALLOW_EXTERNAL_SEARCH=true` to enable the Brave Search adapter. A
 credential alone does not activate hosted search. The key remains
-inside the CLI process or isolated desktop utility process and is never sent to
+inside the CLI process or isolated Agent Core process and is never sent to
 the renderer. Search and fetch output is bounded and labeled untrusted.
 
 ## Channels

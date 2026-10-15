@@ -6,7 +6,13 @@ Kestrel 0.1.0 is a local development preview. Do not use it for high-consequence
 
 ## Reporting
 
-Until a public repository and private reporting address exist, do not publish suspected vulnerabilities. Record the finding privately with the affected version, reproduction, impact, and whether local data or credentials may have been exposed. Add the final security contact before publishing the repository.
+This repository is public. Do not open a public GitHub issue for suspected
+vulnerabilities. Report privately to [@arnavsri993](https://github.com/arnavsri993)
+(or the private channel that provided repository access) with the affected
+version, reproduction steps, impact, and whether local data or credentials may
+have been exposed. Do not include passwords, tokens, cookies, or other secrets
+in the report. A dedicated security mailbox is not published yet; until one
+exists, use that private owner contact path.
 
 ## Invariants
 

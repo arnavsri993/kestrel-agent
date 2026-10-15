@@ -13,7 +13,7 @@
 
 Kestrel is a local-first macOS desktop agent whose browser is a first-class
 product surface. It uses Electron, React, TypeScript, a separate
-utility-process agent core, encrypted SQLite, validated IPC, explicit policy
+isolated Agent Core (packaged Node sidecar; Electron utility adapter in ordinary development), encrypted SQLite, validated IPC, explicit policy
 gates, and verified delivery.
 
 Browser and Agent are equal top-level destinations:
@@ -276,11 +276,11 @@ The critical flow is:
         → validated preload bridge
         → Electron main process
         → CoreSupervisor / typed request broker
-        → Agent Core utility process
+        → Agent Core (Node sidecar when packaged; Electron utility adapter in ordinary development)
         → encrypted SQLite, provider adapters, connector adapters, tools
 
 The user browser WebContentsView lives in the main process. It can send
-bounded, explicitly untrusted page context toward the utility process; it does
+bounded, explicitly untrusted page context toward Agent Core; it does
 not merge with autonomous browser sessions.
 
 ### 5.1 Renderer
@@ -310,7 +310,7 @@ The main process owns:
   native folder/file pickers.
 - macOS safeStorage credential-broker interactions.
 - External-browser OAuth coordination.
-- Starting, stopping, and supervising the utility process.
+- Starting, stopping, and supervising the Agent Core child process.
 
 Important files:
 
@@ -328,7 +328,7 @@ Important files:
 File:
  /Users/arnavsrivastava/Documents/Agent/apps/desktop/src/utility/index.ts
 
-The utility process starts AgentCore and bridges bounded browser-backend
+Agent Core starts and bridges bounded browser-backend
 requests. It owns the sensitive runtime:
 
 - Encrypted sessions and messages.
