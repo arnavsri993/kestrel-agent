@@ -342,10 +342,11 @@ Still required before retiring Electron:
 
 - Real Keychain path on a Developer ID–signed durable build (no ad-hoc prompt
   spam); profile-sealed bootstrap is proven for development/cutover
-- Website password-vault `visible-autofill` still returns structured
-  `unavailable` on CEF (provider credential bootstrap is separate and
-  already profile-sealed). Full password-vault migration remains pending
-  before claiming autofill parity.
+- Website password-vault `visible-autofill` on CEF now probes the page for
+  login controls (`not_active` / `not_a_login_form` / `unavailable`) but still
+  cannot fill from a migrated vault (provider credential bootstrap is
+  separate and already profile-sealed). Full password-vault migration remains
+  pending before claiming autofill parity.
 - After every gate has live evidence, `KESTREL_ACCEPT_ELECTRON_RETIREMENT=1`
   unlocks `corepack pnpm retire:electron` to delete Electron packages and
   default desktop runtime selectors to chromium.

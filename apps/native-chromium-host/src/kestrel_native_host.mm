@@ -713,6 +713,35 @@ constexpr char kVisiblePageContextScript[] = R"JS(
 })()
 )JS";
 
+// Detect username/password login controls for visible-autofill. Does not read
+// or fill credentials; password-vault fill still returns unavailable until the
+// vault migrates onto the native profile.
+constexpr char kVisibleAutofillProbeScript[] = R"JS(
+(() => {
+  const visible = (node) => {
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 &&
+      rect.right >= 0 && rect.top <= innerHeight && rect.left <= innerWidth &&
+      style.visibility !== 'hidden' && style.display !== 'none' &&
+      Number(style.opacity) > 0 && !node.disabled && !node.readOnly;
+  };
+  const hint = (node) => [node.type, node.autocomplete, node.name, node.id,
+    node.getAttribute('aria-label'), node.placeholder]
+    .filter(Boolean).join(' ').toLowerCase();
+  const fields = Array.from(document.querySelectorAll('input')).filter(visible);
+  const hasPassword = fields.some((node) =>
+    node.type === 'password' ||
+    /(?:current|new)[-_ ]password/.test(hint(node)));
+  const hasUsername = fields.some((node) =>
+    node.type === 'email' || node.type === 'text' || node.type === 'tel' ||
+    /user(?:name)?|e-?mail|login|account/.test(hint(node)));
+  return JSON.stringify({
+    hasLoginFields: hasPassword || hasUsername
+  });
+})()
+)JS";
+
 class KestrelAutomationDevToolsObserver final
     : public CefDevToolsMessageObserver {
  public:
@@ -1045,6 +1074,7 @@ struct NativeUserBrowserTab {
   std::string pending_screenshot_request_id;
   std::string pending_snapshot_request_id;
   std::string pending_context_request_id;
+  std::string pending_autofill_request_id;
   std::string pending_act_request_id;
   std::map<std::string, NativeAutomationElementRef> element_refs;
   std::map<int, std::string> pending_devtools_kinds;
@@ -1754,6 +1784,7 @@ class KestrelClient : public CefClient,
     return !tab.pending_screenshot_request_id.empty() ||
            !tab.pending_snapshot_request_id.empty() ||
            !tab.pending_context_request_id.empty() ||
+           !tab.pending_autofill_request_id.empty() ||
            !tab.pending_act_request_id.empty();
   }
 
@@ -1841,6 +1872,59 @@ class KestrelClient : public CefClient,
     tab->pending_context_request_id = request_id;
     if (!StartPendingVisibleContext(*tab, error)) {
       tab->pending_context_request_id.clear();
+      return false;
+    }
+    return true;
+  }
+
+  bool StartPendingVisibleAutofill(NativeUserBrowserTab& tab,
+                                   std::string* error) {
+    if (tab.pending_autofill_request_id.empty()) return true;
+    for (const auto& entry : tab.pending_devtools_kinds) {
+      if (entry.second == "visible-autofill") return true;
+    }
+    CefRefPtr<CefBrowser> browser = tab.view ? tab.view->GetBrowser() : nullptr;
+    if (!browser || !browser->IsValid() || tab.loading) return true;
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", kVisibleAutofillProbeScript);
+    params->SetBool("returnByValue", true);
+    params->SetBool("awaitPromise", false);
+    return CallUserBrowserDevToolsMethod(tab, "Runtime.evaluate", params,
+                                         "visible-autofill", error);
+  }
+
+  bool BeginVisibleAutofill(const std::string& tab_id,
+                            const std::string& request_id,
+                            std::string* error) {
+    NativeUserBrowserTab* tab = ResolveVisibleTab(tab_id, error);
+    if (!tab) return false;
+    if (tab->id != user_browser_active_tab_id_) {
+      SendBrowserBackendResponse(
+          request_id, true,
+          "{\"credentialAvailable\":false,\"autofillResult\":\"not_active\","
+          "\"trust\":\"untrusted_browser\"}",
+          "");
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_NOT_ACTIVE"
+                << std::endl;
+      return true;
+    }
+    if (tab->url.rfind("https://", 0) != 0) {
+      SendBrowserBackendResponse(
+          request_id, true,
+          "{\"credentialAvailable\":false,\"autofillResult\":\"not_a_login_form\","
+          "\"trust\":\"untrusted_browser\"}",
+          "");
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_NOT_LOGIN"
+                << std::endl;
+      return true;
+    }
+    if (VisibleTabBusy(*tab)) {
+      if (error) *error = "Native Chromium browser tab is busy.";
+      return false;
+    }
+    tab->pending_autofill_request_id = request_id;
+    if (!StartPendingVisibleAutofill(*tab, error)) {
+      tab->pending_autofill_request_id.clear();
       return false;
     }
     return true;
@@ -2190,6 +2274,41 @@ class KestrelClient : public CefClient,
       SendBrowserBackendResponse(
           request_id, true,
           CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
+      return;
+    }
+
+    if (kind == "visible-autofill") {
+      const std::string request_id = tab->pending_autofill_request_id;
+      tab->pending_autofill_request_id.clear();
+      if (request_id.empty()) return;
+      std::string value_json;
+      bool has_login_fields = false;
+      if (extract_evaluate_value(&value_json)) {
+        CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+        if (payload && payload->GetType() == VTYPE_DICTIONARY) {
+          has_login_fields =
+              payload->GetDictionary()->GetBool("hasLoginFields");
+        }
+      }
+      if (!has_login_fields) {
+        SendBrowserBackendResponse(
+            request_id, true,
+            "{\"credentialAvailable\":false,\"autofillResult\":\"not_a_login_form\","
+            "\"trust\":\"untrusted_browser\"}",
+            "");
+        std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_NOT_LOGIN"
+                  << std::endl;
+        return;
+      }
+      // Login controls exist, but the website password vault is not on the
+      // native profile yet — keep Electron's structured unavailable envelope.
+      SendBrowserBackendResponse(
+          request_id, true,
+          "{\"credentialAvailable\":false,\"autofillResult\":\"unavailable\","
+          "\"trust\":\"untrusted_browser\"}",
+          "");
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_UNAVAILABLE"
+                << std::endl;
       return;
     }
 
@@ -2562,6 +2681,11 @@ class KestrelClient : public CefClient,
       SendBrowserBackendResponse(tab.pending_context_request_id, false, "",
                                  "Native Chromium browser tab closed.");
       tab.pending_context_request_id.clear();
+    }
+    if (!tab.pending_autofill_request_id.empty()) {
+      SendBrowserBackendResponse(tab.pending_autofill_request_id, false, "",
+                                 "Native Chromium browser tab closed.");
+      tab.pending_autofill_request_id.clear();
     }
     if (!tab.pending_act_request_id.empty()) {
       SendBrowserBackendResponse(tab.pending_act_request_id, false, "",
@@ -2972,6 +3096,17 @@ class KestrelClient : public CefClient,
         SendBrowserBackendResponse(
             request_id, false, "",
             error.empty() ? "Native Chromium visible context failed." : error);
+      }
+    }
+    if (tab && !tab->pending_autofill_request_id.empty()) {
+      std::string error;
+      if (!StartPendingVisibleAutofill(*tab, &error)) {
+        const std::string request_id = tab->pending_autofill_request_id;
+        tab->pending_autofill_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty() ? "Native Chromium visible autofill failed."
+                          : error);
       }
     }
     if (tab && !tab->pending_screenshot_request_id.empty()) {
@@ -3937,16 +4072,14 @@ class KestrelClient : public CefClient,
       return;
     }
     if (operation == "visible-autofill") {
-      // Website password-vault autofill is not migrated yet. Return the same
-      // structured unavailable envelope Electron uses so agent flows keep
-      // working instead of treating the operation as a hard backend failure.
-      SendBrowserBackendResponse(
-          request_id, true,
-          "{\"credentialAvailable\":false,\"autofillResult\":\"unavailable\","
-          "\"trust\":\"untrusted_browser\"}",
-          "");
-      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_AUTOFILL_UNAVAILABLE"
-                << std::endl;
+      std::string tab_id;
+      if (request->HasKey("tabId") && request->GetType("tabId") == VTYPE_STRING) {
+        tab_id = request->GetString("tabId").ToString();
+      }
+      std::string error;
+      if (!BeginVisibleAutofill(tab_id, request_id, &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
       return;
     }
     if (operation == "visible-act") {
