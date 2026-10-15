@@ -146,7 +146,8 @@ summary:focus-visible {
 	outline-offset: 2px;
 }
 .page-content h1[tabindex="-1"]:focus-visible,
-.page-content h2[tabindex="-1"]:focus-visible {
+.page-content h2[tabindex="-1"]:focus-visible,
+.setup-stage h1[tabindex="-1"]:focus-visible {
 	outline: 2px solid var(--solid);
 	outline-offset: 5px;
 }

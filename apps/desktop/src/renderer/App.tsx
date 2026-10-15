@@ -1448,6 +1448,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 								className={`${index === step ? "current" : ""} ${index < step ? "complete" : ""}`}
 							>
 								<button
+									type="button"
 									onClick={() => index < step && go(index)}
 									disabled={index >= step}
 									aria-current={index === step ? "step" : undefined}
@@ -1567,8 +1568,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										</p>
 									</details>
 								</div>
-								<label className="warning-check">
+								<label className="warning-check" htmlFor="setup-warning-accepted">
 									<input
+										id="setup-warning-accepted"
 										type="checkbox"
 										checked={warningAccepted}
 										onChange={(event) => {
@@ -1684,7 +1686,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 								{step === 3 && modelView === "accounts" && (
 									<div
 										className="account-setup"
-										role="tabpanel"
+										role="region"
 										aria-label="External providers"
 									>
 										<div className="provider-parity">
@@ -1729,6 +1731,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 														);
 														return (
 															<button
+																type="button"
 																key={provider.id}
 																aria-pressed={
 																	provider.id === selectedPaidProvider.id
@@ -1795,6 +1798,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																	) : cli.detected ? (
 																		cli.id === "codex" && !cli.authenticated ? (
 																			<button
+																				type="button"
 																				className="button primary"
 																				disabled={
 																					Boolean(subscriptionBusy) &&
@@ -1808,6 +1812,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																			</button>
 																		) : (
 																			<button
+																				type="button"
 																				className={
 																					cli.enabled
 																						? "button secondary"
@@ -1818,9 +1823,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																					void toggleSubscription(
 																						cli.id,
 																						!cli.enabled,
-							)
-						}
-				>
+																					)
+																				}
+																			>
 																				{subscriptionBusy === cli.id
 																					? "Updating…"
 																					: cli.enabled
@@ -1867,7 +1872,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																				key={credentialId}
 																			>
 																				<label
-																					htmlFor={`setup-${credentialId}`}
+																					{...(credential?.configured
+																						? {}
+																						: {
+																								htmlFor: `setup-${credentialId}`,
+																							})}
 																				>
 																					<span>
 																						{method.credentials.length > 1
@@ -1883,8 +1892,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																					</small>
 																				</label>
 																				{credential?.configured ? (
-																					<span className="configured-account">
-																						<span className="agent-dot idle" />
+																					<span
+																						className="configured-account"
+																						role="status"
+																					>
+																						<span
+																							className="agent-dot idle"
+																							aria-hidden="true"
+																						/>
 																						Connected
 																					</span>
 																				) : (
@@ -1911,6 +1926,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																							}
 																						/>
 																						<button
+																							type="button"
 																							className="button secondary"
 																							disabled={Boolean(credentialBusy)}
 																							onClick={() =>
@@ -1944,7 +1960,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 								)}
 
 								{step === 3 && modelView === "local" && (
-									<div className="local-model-setup" role="tabpanel">
+									<div
+										className="local-model-setup"
+										role="region"
+										aria-label="Local model setup"
+									>
 										<div className="device-fit">
 											<div>
 												<span className="provider-monogram">M</span>
@@ -1987,6 +2007,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													</p>
 												</div>
 												<button
+													type="button"
 													className="button primary"
 													disabled={
 														automaticBusy ||
@@ -2066,6 +2087,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																	</span>
 																) : (
 																	<button
+																		type="button"
 																		className={`button ${isRecommended ? "primary" : "secondary"}`}
 																		disabled={
 																			automaticBusy ||
@@ -2105,6 +2127,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												<progress
 													max="100"
 													value={localProgress.percent ?? undefined}
+													aria-label={localProgress.message}
 												/>
 												{localProgress.downloadedBytes !== undefined && (
 													<small>
@@ -2115,6 +2138,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													</small>
 												)}
 												<button
+													type="button"
 													className="button secondary"
 													onClick={() => void cancelLocalSetup()}
 												>
@@ -2176,8 +2200,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										)}
 										<section className="manual-model-options">
 											<button
+												type="button"
 												className="manual-model-toggle"
 												aria-expanded={manualSetupOpen}
+												aria-controls="manual-local-setup"
 												onClick={() =>
 													setManualSetupOpen((current) => !current)
 												}
@@ -2190,7 +2216,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												</span>
 											</button>
 											{manualSetupOpen && (
-												<div className="manual-local-setup">
+												<div
+													id="manual-local-setup"
+													className="manual-local-setup"
+												>
 													<ol>
 														<li>
 															<a
@@ -2209,6 +2238,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 														</li>
 													</ol>
 													<button
+														type="button"
 														className="button secondary"
 														onClick={() => void loadLocalModels()}
 													>
@@ -2266,7 +2296,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 								{step === 3 && modelView === "open" && (
 									<div
 										className="more-provider-setup"
-										role="tabpanel"
+										role="region"
 										aria-label="Open access"
 									>
 										<div className="more-provider-lead">
@@ -2299,7 +2329,13 @@ function Onboarding({ onDone }: { onDone(): void }) {
 															</div>
 														</div>
 														<div className="account-slot">
-															<label htmlFor={`setup-${credentialId}`}>
+															<label
+																{...(credential?.configured
+																	? {}
+																	: {
+																			htmlFor: `setup-${credentialId}`,
+																		})}
+															>
 																<span>API key</span>
 																<small>
 																	{credential?.configured
@@ -2308,8 +2344,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																</small>
 															</label>
 															{credential?.configured ? (
-																<span className="configured-account">
-																	<span className="agent-dot idle" />
+																<span
+																	className="configured-account"
+																	role="status"
+																>
+																	<span
+																		className="agent-dot idle"
+																		aria-hidden="true"
+																	/>
 																	Connected
 																</span>
 															) : (
@@ -2329,6 +2371,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																		}
 																	/>
 																	<button
+																		type="button"
 																		className="button secondary"
 																		disabled={Boolean(credentialBusy)}
 																		onClick={() =>
@@ -2388,19 +2431,26 @@ function Onboarding({ onDone }: { onDone(): void }) {
 								</div>
 								<h1 tabIndex={-1}>{finishHeading}</h1>
 								<p>{finishDescription}</p>
-								<div className="finish-checks">
-								<div className={verifiedModelReady ? "done" : "attention"}>
-									<span>
-										<Icon
-											name={
-												verifiedModelReady
-													? "check-circle-filled"
-													: providerCheckBusy
-														? "loader"
-														: "info-filled"
-											}
-										/>
-									</span>
+								<div
+									className="finish-checks"
+									role="list"
+									aria-label="Setup readiness"
+								>
+									<div
+										className={verifiedModelReady ? "done" : "attention"}
+										role="listitem"
+									>
+										<span aria-hidden="true">
+											<Icon
+												name={
+													verifiedModelReady
+														? "check-circle-filled"
+														: providerCheckBusy
+															? "loader"
+															: "info-filled"
+												}
+											/>
+										</span>
 										<span>
 											<strong>
 												{verifiedModelReady
@@ -2424,6 +2474,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											!providerCheckBusy &&
 											!verifiedModelReady && (
 												<button
+													type="button"
 													className="quiet-link"
 													onClick={() => void checkModelRoutes()}
 												>
@@ -2431,15 +2482,19 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												</button>
 											)}
 									</div>
-								<div className="done">
-									<span><Icon name="check-circle-filled" /></span>
+									<div className="done" role="listitem">
+										<span aria-hidden="true">
+											<Icon name="check-circle-filled" />
+										</span>
 										<span>
 											<strong>Approval boundary</strong>
 											<small>Sensitive actions pause for review</small>
 										</span>
 									</div>
-								<div className="done">
-									<span><Icon name="check-circle-filled" /></span>
+									<div className="done" role="listitem">
+										<span aria-hidden="true">
+											<Icon name="check-circle-filled" />
+										</span>
 										<span>
 											<strong>Private storage</strong>
 											<small>
@@ -2447,8 +2502,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											</small>
 										</span>
 									</div>
-								<div>
-									<span><Icon name="info-filled" /></span>
+									<div role="listitem">
+										<span aria-hidden="true">
+											<Icon name="info-filled" />
+										</span>
 										<span>
 											<strong>Project access</strong>
 											<small>
@@ -2485,6 +2542,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				<div className="button-row">
 					{step > 0 && (
 						<button
+							type="button"
 							className="button quiet setup-back-button"
 							onClick={() => go(step - 1)}
 						>
@@ -2492,12 +2550,17 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						</button>
 					)}
 					{step === 3 && !modelReady && !automaticBusy && !downloading && (
-						<button className="button quiet" onClick={() => go(finalSetupStep)}>
+						<button
+							type="button"
+							className="button quiet"
+							onClick={() => go(finalSetupStep)}
+						>
 							Do this later
 						</button>
 					)}
 					{step === finalSetupStep && (
 						<button
+							type="button"
 							className="button secondary"
 							disabled={!onboardingCompleteAllowed}
 							onClick={() => {
@@ -2520,6 +2583,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						</button>
 					)}
 					<button
+						type="button"
 						className="button primary"
 						disabled={
 							(step === 1 && !warningAccepted) ||

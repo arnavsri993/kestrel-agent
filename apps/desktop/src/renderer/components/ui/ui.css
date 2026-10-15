@@ -507,6 +507,16 @@
 
 .setup-rail li.current button { box-shadow: none; }
 
+.setup-rail li button:focus-visible {
+	outline: 2px solid var(--solid);
+	outline-offset: 4px;
+}
+
+.warning-check:focus-within {
+	outline: 2px solid var(--solid);
+	outline-offset: 2px;
+}
+
 .setup-product-anchor {
 	top: 50%;
 	left: max(16px, calc((100% - 880px) / 2));
