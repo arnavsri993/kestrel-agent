@@ -15,7 +15,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtime = (process.env.KESTREL_DESKTOP_RUNTIME ?? "chromium").toLowerCase();
 
 if (runtime === "electron") {
-	const result = spawnSync("corepack", ["pnpm", "install:mac:dev"], {
+	const result = spawnSync("corepack", ["pnpm", "install:mac:dev:electron"], {
 		stdio: "inherit",
 		cwd: root,
 		env: process.env,

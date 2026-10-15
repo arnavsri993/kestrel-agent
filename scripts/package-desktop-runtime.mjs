@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtime = (process.env.KESTREL_DESKTOP_RUNTIME ?? "chromium").toLowerCase();
 const script =
-	runtime === "electron" ? "package:mac:dev" : "package:mac:native";
+	runtime === "electron" ? "package:mac:dev:electron" : "package:mac:native";
 
 if (runtime !== "chromium" && runtime !== "native" && runtime !== "electron") {
 	console.error(

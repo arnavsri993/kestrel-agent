@@ -28,10 +28,13 @@ permission to leave another installed Kestrel behind.
 - For live source changes, run only `corepack pnpm dev:desktop`. Its watcher,
   HMR, restart path, and single-instance lock must keep the current app in sync;
   do not open a `release/**/Kestrel.app` artifact directly.
-- For a packaged local refresh, run `corepack pnpm install:mac:dev`. It builds
-  the current source, replaces the same `/Applications/Kestrel.app` path, and
-  moves stale Kestrel bundles to the macOS Trash for recovery. Reopen that
-  canonical app; do not copy the artifact to Desktop or rename it.
+- For a packaged local refresh on the Chromium product path, run
+  `corepack pnpm install:mac:dev` (defaults to native CEF). It installs
+  side-by-side as `/Applications/Kestrel Native.app` unless
+  `KESTREL_INSTALL_NATIVE_CANONICAL=1` replaces `/Applications/Kestrel.app`
+  after retirement gates. Legacy Electron packaging remains
+  `corepack pnpm install:mac:dev:electron`. Do not copy artifacts to Desktop
+  or rename them.
 - Preserve the existing Kestrel profile, encrypted database, credentials,
   Keychain identity, and `Application Support` data. Consolidation may move
   duplicate app bundles to Trash, but must never delete or merge user data
