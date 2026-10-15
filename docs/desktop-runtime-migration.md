@@ -342,8 +342,8 @@ Still required before retiring Electron:
   spam); profile-sealed bootstrap is proven for development/cutover
 - Remaining desktop command surface beyond isolated
   act/screenshot/viewport/upload and visible
-  snapshot/act/screenshot/context (visible-autofill parity and broader
-  act types still pending) on CEF
+  snapshot/act(click|type|select|key|scroll)/screenshot/context
+  (visible-autofill parity still pending) on CEF
 - Production Developer ID signing + notarization (`check:native-signing`)
 - Retargeted desktop smokes against the native binary on a durable profile
 - Live acceptance of `kestrel-electron` transfer on a real dual-profile
