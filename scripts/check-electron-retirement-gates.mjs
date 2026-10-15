@@ -66,6 +66,21 @@ if (transfer.status !== 0) {
 }
 console.log("Source gate: test:electron-native-transfer passed.");
 
+const productPath = spawnSync(
+	"corepack",
+	["pnpm", "verify:chromium-product-path"],
+	{ cwd: root, encoding: "utf8", env: process.env },
+);
+if (productPath.status !== 0) {
+	if (productPath.stdout) process.stdout.write(productPath.stdout);
+	if (productPath.stderr) process.stderr.write(productPath.stderr);
+	console.error(
+		"verify:chromium-product-path failed; Electron retirement remains blocked.",
+	);
+	process.exit(productPath.status ?? 1);
+}
+console.log("Source gate: verify:chromium-product-path passed.");
+
 if (!accepted) {
 	console.error(
 		"Electron packaging remains required. Set KESTREL_ACCEPT_ELECTRON_RETIREMENT=1 only after every gate above has live evidence.",

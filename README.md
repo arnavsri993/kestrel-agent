@@ -205,7 +205,8 @@ refresh path and moves other Electron Kestrel bundles to Trash.
 ## Repository map
 
 ```text
-apps/desktop          Electron shell, renderer, preload, utility process, packaging
+apps/desktop          Legacy Electron shell (renderer shared with CEF), packaging
+apps/native-chromium-host  Native CEF Chromium desktop host (default product path)
 apps/website          Static Next.js marketing site
 packages/agent-core   Opportunity engine, context resolver, deterministic vertical slice
 packages/database     SQLite schema, encrypted records, audit/idempotency storage

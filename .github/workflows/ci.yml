@@ -49,6 +49,7 @@ jobs:
       - run: corepack pnpm test:node-core
       - run: corepack pnpm test:chromium-host
       - run: corepack pnpm test:electron-native-transfer
+      - run: corepack pnpm verify:chromium-product-path
       - name: Build native Chromium host once for retirement-gate smokes
         run: corepack pnpm build:native-chromium-host -- --output .tmp/ci-native-chromium-host
       - name: Native Chromium retirement-gate smokes
