@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 import {
   activeDevelopmentLock,
   collectMeetupPreflightBlockers,
+  findDesktopDevWatcherProcesses,
   findElectronViteDevProcesses,
   formatMeetupPreflightError,
+  isNativeChromiumDevProcess,
   parseProcessListing,
   processIsAlive,
 } from "./verify-meetup-preflight.mjs";
@@ -53,6 +55,7 @@ describe("verify:meetup preflight", () => {
     );
 
     expect(findElectronViteDevProcesses(() => processes)).toEqual([]);
+    expect(findDesktopDevWatcherProcesses(() => processes)).toEqual([]);
   });
 
   it("parses pgrep output and filters electron-vite dev processes", () => {
@@ -71,7 +74,33 @@ describe("verify:meetup preflight", () => {
     ]);
   });
 
-  it("collects both lock and watcher blockers", () => {
+  it("detects native Chromium host watchers", () => {
+    const processes = parseProcessListing(
+      [
+        "11111 node /repo/scripts/dev-native-chromium-host.mjs --durable",
+        "22222 node /repo/scripts/dev-desktop-runtime.mjs",
+        "33333 node /repo/scripts/smoke-native-chromium-host.mjs",
+      ].join("\n"),
+    );
+
+    expect(findDesktopDevWatcherProcesses(() => processes)).toEqual([
+      {
+        pid: 11111,
+        command: "node /repo/scripts/dev-native-chromium-host.mjs --durable",
+      },
+      {
+        pid: 22222,
+        command: "node /repo/scripts/dev-desktop-runtime.mjs",
+      },
+    ]);
+    expect(
+      isNativeChromiumDevProcess({
+        command: "node /repo/scripts/dev-native-chromium-host.mjs --durable",
+      }),
+    ).toBe(true);
+  });
+
+  it("collects lock, Electron, and Chromium watcher blockers", () => {
     const lockDirectory = mkdtempSync(
       join(tmpdir(), "kestrel-meetup-preflight-both-"),
     );
@@ -88,6 +117,10 @@ describe("verify:meetup preflight", () => {
           pid: 4242,
           command: "node electron-vite dev --watch",
         },
+        {
+          pid: 5252,
+          command: "node /repo/scripts/dev-native-chromium-host.mjs --durable",
+        },
       ],
     });
 
@@ -101,6 +134,11 @@ describe("verify:meetup preflight", () => {
         kind: "electron-vite-dev",
         pid: 4242,
         command: "node electron-vite dev --watch",
+      },
+      {
+        kind: "native-chromium-dev",
+        pid: 5252,
+        command: "node /repo/scripts/dev-native-chromium-host.mjs --durable",
       },
     ]);
   });
@@ -119,14 +157,21 @@ describe("verify:meetup preflight", () => {
           pid: 222,
           command: "node electron-vite dev --watch",
         },
+        {
+          kind: "native-chromium-dev",
+          pid: 333,
+          command: "node scripts/dev-native-chromium-host.mjs --durable",
+        },
       ],
       lockDirectory,
     );
 
     expect(message).toContain("verify:meetup preflight failed");
+    expect(message).toContain('pkill -f "dev-native-chromium-host"');
     expect(message).toContain('pkill -f "electron-vite dev"');
     expect(message).toContain('rm -rf "/tmp/kestrel-electron-dev.lock"');
     expect(message).toContain("alive pid(s): 111");
     expect(message).toContain("electron-vite dev pid 222");
+    expect(message).toContain("native Chromium host watcher pid 333");
   });
 });

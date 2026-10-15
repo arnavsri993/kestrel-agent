@@ -24,7 +24,8 @@ class KestrelChromiumApp final : public CefApp,
 
   explicit KestrelChromiumApp(
       BrowserContextInitialized on_context_initialized = {},
-      bool extension_workbench = false);
+      bool extension_workbench = false,
+      bool user_extensions_enabled = false);
 
   void OnBeforeCommandLineProcessing(
       const CefString& process_type,
@@ -53,6 +54,7 @@ class KestrelChromiumApp final : public CefApp,
  private:
   BrowserContextInitialized on_context_initialized_;
   bool extension_workbench_;
+  bool user_extensions_enabled_;
   CefRefPtr<CefMessageRouterRendererSide> renderer_router_;
 
   IMPLEMENT_REFCOUNTING(KestrelChromiumApp);

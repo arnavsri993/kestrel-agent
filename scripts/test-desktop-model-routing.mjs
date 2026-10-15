@@ -30,7 +30,7 @@ let application;
 try {
 	if (!packagedExecutable && !existsSync(builtMain))
 		throw new Error(
-			"Desktop build is missing. Run `pnpm build:desktop` before `pnpm test:desktop-model-routing`.",
+			"Desktop Electron build is missing. Run `pnpm build:desktop:electron` before `pnpm test:desktop-model-routing`.",
 		);
 	application = await electron.launch({
 		executablePath,

@@ -1,12 +1,54 @@
 #include "kestrel_chromium_app.h"
 
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "include/cef_command_line.h"
 #include "include/cef_scheme.h"
 #include "include/cef_v8.h"
+
+namespace {
+
+bool readable_manifest(const std::string& extension_path) {
+  std::ifstream manifest(extension_path + "/manifest.json");
+  return manifest.good();
+}
+
+// Controlled store written by ChromiumExtensionRuntime's file port. Keep this
+// parser intentionally narrow so the C++ CEF app stays free of Objective-C.
+std::vector<std::string> persisted_user_extension_paths(
+    const std::string& profile_root) {
+  if (profile_root.empty()) return {};
+  const std::string store_path =
+      profile_root + "/browser-extensions/chromium-load-paths.json";
+  std::ifstream input(store_path);
+  if (!input) return {};
+  std::string contents((std::istreambuf_iterator<char>(input)),
+                       std::istreambuf_iterator<char>());
+  std::vector<std::string> paths;
+  constexpr char key[] = "\"path\"";
+  size_t cursor = 0;
+  while ((cursor = contents.find(key, cursor)) != std::string::npos) {
+    cursor += sizeof(key) - 1;
+    const size_t colon = contents.find(':', cursor);
+    if (colon == std::string::npos) break;
+    const size_t open = contents.find('"', colon + 1);
+    if (open == std::string::npos) break;
+    const size_t close = contents.find('"', open + 1);
+    if (close == std::string::npos) break;
+    const std::string path = contents.substr(open + 1, close - open - 1);
+    cursor = close + 1;
+    if (path.empty() || path.find("..") != std::string::npos) continue;
+    if (!readable_manifest(path)) continue;
+    paths.push_back(path);
+  }
+  return paths;
+}
+
+}  // namespace
 
 namespace {
 
@@ -66,11 +108,13 @@ constexpr char kKestrelBridgeSource[] = R"JS(
         persistent: true,
         onSuccess: (response) => {
           if (closed) return;
+          let value;
           try {
-            callback(JSON.parse(response));
+            value = JSON.parse(response);
           } catch {
-            // An invalid event is ignored at this narrow transport boundary.
+            return;
           }
+          callback(value);
         },
         onFailure: () => {
           closed = true;
@@ -86,32 +130,16 @@ constexpr char kKestrelBridgeSource[] = R"JS(
     };
   };
 
-  const bridge = Object.freeze({
-    request,
-    onBrowserEvent: (callback) => subscribe("browser-event", callback),
-    onWindowFocus: (callback) => subscribe("window-focus", callback),
-    onPasswordPrompt: (callback) => subscribe("password-prompt", callback),
-    onPaymentPrompt: (callback) => subscribe("payment-prompt", callback),
-    onBrowserCommand: (callback) => subscribe("browser-command", callback),
-    onDeepLink: (callback) => subscribe("deep-link", callback),
-    onExternalIntake: (callback) => subscribe("external-intake", callback),
-    onSnapshot: (callback) => subscribe("snapshot", callback),
-    onPetStatus: (callback) => subscribe("pet-status", callback),
-    onPetActivity: (callback) => subscribe("pet-activity", callback),
-    onRuntimeEvent: (callback) => subscribe("runtime-event", callback),
-    onAgentStream: (callback) => subscribe("agent-stream", callback),
-    onLocalRuntimeProgress: (callback) =>
-      subscribe("local-runtime-progress", callback),
-  });
-
-  Object.defineProperty(globalThis, "kestrel", {
-    configurable: false,
+  // The bundled TypeScript renderer owns validation and its public API.
+  // Native CEF supplies only its request/subscription transport.
+  Object.defineProperty(globalThis, "__kestrelHostTransport", {
+    configurable: true,
     enumerable: false,
-    value: bridge,
+    value: Object.freeze({ request, subscribe }),
     writable: false,
   });
-  delete globalThis.__kestrelNativeQuery;
-  delete globalThis.__kestrelNativeCancel;
+  // CEF owns immutable query/cancel globals in this trusted document. The
+  // browser-side exact-frame/URL check remains the authority boundary.
 })();
 )JS";
 
@@ -125,29 +153,58 @@ CefMessageRouterConfig KestrelBridgeRouterConfig() {
 }
 
 KestrelChromiumApp::KestrelChromiumApp(
-    BrowserContextInitialized on_context_initialized, bool extension_workbench)
+    BrowserContextInitialized on_context_initialized,
+    bool extension_workbench,
+    bool user_extensions_enabled)
     : on_context_initialized_(std::move(on_context_initialized)),
-      extension_workbench_(extension_workbench) {}
+      extension_workbench_(extension_workbench),
+      user_extensions_enabled_(user_extensions_enabled) {}
 
 void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
     CefRefPtr<CefCommandLine> command_line) {
-  // Do not initialize or query the macOS Keychain while this host has no
-  // explicit credential-migration path. Chromium propagates browser-process
-  // switches to its helpers, while limiting this change to the browser
-  // process follows CEF's safety guidance for child process command lines.
+  // Default to Chromium's mock Keychain so ad-hoc development builds never
+  // spam unlock prompts. Opt into the real Chromium Keychain only when the
+  // host is launched with --kestrel-real-keychain (Developer ID / durable
+  // cutover). Chromium propagates browser-process switches to its helpers;
+  // limiting this change to the browser process follows CEF's safety guidance
+  // for child process command lines.
   if (process_type.empty()) {
-    command_line->AppendSwitch("use-mock-keychain");
+    if (!command_line->HasSwitch("kestrel-real-keychain")) {
+      command_line->AppendSwitch("use-mock-keychain");
+    }
     // Kestrel starts local-first. The Chromium embed must not create a
     // background account, telemetry, component-updater, or reliability
     // network channel before a person explicitly chooses a provider route.
     command_line->AppendSwitch("disable-background-networking");
     command_line->AppendSwitch("disable-component-update");
     command_line->AppendSwitch("disable-component-extensions-with-background-pages");
-    // Keep extensions disabled in the privileged Alloy shell. Only the
-    // separate Chrome-style workbench owns an extension lifecycle; it has
-    // no Kestrel bridge, custom scheme, Core relay, or user credentials.
-    if (!extension_workbench_) command_line->AppendSwitch("disable-extensions");
+    // Extensions stay disabled unless the isolated Chrome-style workbench or
+    // the opt-in user-browser extension lane is active. The privileged shell
+    // still runs on a separate request context when user extensions are on.
+    if (!extension_workbench_ && !user_extensions_enabled_)
+      command_line->AppendSwitch("disable-extensions");
+    if (user_extensions_enabled_) {
+      // BrowserExtensionManager persists verified unpack paths through the
+      // ChromiumExtensionRuntime file port. Apply them with Chromium's startup
+      // --load-extension switch because CEF 152 has no LoadExtension API.
+      const std::string profile_root =
+          command_line->GetSwitchValue("kestrel-cache-path").ToString();
+      const std::vector<std::string> persisted =
+          persisted_user_extension_paths(profile_root);
+      if (!persisted.empty()) {
+        std::string joined;
+        for (const auto& path : persisted) {
+          if (!joined.empty()) joined.append(",");
+          joined.append(path);
+        }
+        // Chromium accepts repeated --load-extension switches, so this remains
+        // compatible with an explicit CLI fixture path used by smokes.
+        command_line->AppendSwitchWithValue("load-extension", joined);
+        std::cout << "KESTREL_NATIVE_CHROMIUM_USER_EXTENSION_PATHS count="
+                  << persisted.size() << std::endl;
+      }
+    }
     command_line->AppendSwitch("disable-default-apps");
     command_line->AppendSwitch("disable-domain-reliability");
     command_line->AppendSwitch("disable-sync");
@@ -187,6 +244,8 @@ void KestrelChromiumApp::OnBeforeChildProcessLaunch(
     CefRefPtr<CefCommandLine> command_line) {
   if (extension_workbench_)
     command_line->AppendSwitch("kestrel-extension-workbench");
+  if (user_extensions_enabled_)
+    command_line->AppendSwitch("kestrel-user-extensions");
 }
 
 void KestrelChromiumApp::OnWebKitInitialized() {

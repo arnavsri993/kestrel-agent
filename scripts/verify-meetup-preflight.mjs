@@ -50,12 +50,29 @@ export function activeDevelopmentLock(
 }
 
 const ELECTRON_VITE_DEV_PATTERN = /\belectron-vite(?:\.js)?\s+dev(?:\s|--|$)/;
+const NATIVE_CHROMIUM_DEV_PATTERN =
+  /\bdev-native-chromium-host(?:\.mjs)?\b|\bdev-desktop-runtime(?:\.mjs)?\b/;
 
 export function isElectronViteDevProcess({ command }) {
   if (/\bpkill\b/.test(command)) return false;
   return (
     ELECTRON_VITE_DEV_PATTERN.test(command) &&
     (/\bnode\b/.test(command) || /\/electron-vite(?:\.js)?\s+dev\b/.test(command))
+  );
+}
+
+export function isNativeChromiumDevProcess({ command }) {
+  if (/\bpkill\b/.test(command)) return false;
+  return (
+    NATIVE_CHROMIUM_DEV_PATTERN.test(command) &&
+    (/\bnode\b/.test(command) || /\.mjs\b/.test(command))
+  );
+}
+
+export function isDesktopDevWatcherProcess(processInfo) {
+  return (
+    isElectronViteDevProcess(processInfo) ||
+    isNativeChromiumDevProcess(processInfo)
   );
 }
 
@@ -75,25 +92,44 @@ export function parseProcessListing(output) {
     .filter(Boolean);
 }
 
+export function findDesktopDevWatcherProcesses(
+  listProcesses = defaultListProcesses,
+) {
+  return listProcesses().filter(isDesktopDevWatcherProcess);
+}
+
+/** @deprecated Prefer findDesktopDevWatcherProcesses */
 export function findElectronViteDevProcesses(
   listProcesses = defaultListProcesses,
 ) {
   return listProcesses().filter(isElectronViteDevProcess);
 }
 
-function defaultListProcesses() {
-  if (process.platform === "win32") return [];
-
+function listPgrep(pattern) {
   try {
-    const output = execFileSync("pgrep", ["-fl", "electron-vite"], {
+    const output = execFileSync("pgrep", ["-fl", pattern], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return parseProcessListing(output).filter(isElectronViteDevProcess);
+    return parseProcessListing(output);
   } catch (error) {
     if (error?.status === 1) return [];
     throw error;
   }
+}
+
+function defaultListProcesses() {
+  if (process.platform === "win32") return [];
+
+  const byPid = new Map();
+  for (const processInfo of [
+    ...listPgrep("electron-vite"),
+    ...listPgrep("dev-native-chromium"),
+    ...listPgrep("dev-desktop-runtime"),
+  ]) {
+    byPid.set(processInfo.pid, processInfo);
+  }
+  return [...byPid.values()].filter(isDesktopDevWatcherProcess);
 }
 
 export function collectMeetupPreflightBlockers({
@@ -111,7 +147,15 @@ export function collectMeetupPreflightBlockers({
     });
   }
 
-  for (const processInfo of findElectronViteDevProcesses(listProcesses)) {
+  for (const processInfo of findDesktopDevWatcherProcesses(listProcesses)) {
+    if (isNativeChromiumDevProcess(processInfo)) {
+      blockers.push({
+        kind: "native-chromium-dev",
+        pid: processInfo.pid,
+        command: processInfo.command,
+      });
+      continue;
+    }
     blockers.push({
       kind: "electron-vite-dev",
       pid: processInfo.pid,
@@ -129,11 +173,12 @@ export function formatMeetupPreflightError(
   const lines = [
     "verify:meetup preflight failed: desktop development session is still active.",
     "",
-    "Stop the dev watcher before running verify:meetup:",
+    "Stop the Chromium (default) or Electron dev watcher before running verify:meetup:",
+    '  pkill -f "dev-native-chromium-host"',
     '  pkill -f "electron-vite dev"',
     "  # or stop the terminal running: corepack pnpm dev:desktop",
     "",
-    "Clear the product-scoped Electron dev lock if it remains:",
+    "Clear the product-scoped desktop dev lock if it remains:",
     `  rm -rf ${JSON.stringify(lockDirectory)}`,
     `  # default lock name: ${DEFAULT_DEVELOPMENT_LOCK_NAME}`,
     "",
@@ -143,7 +188,13 @@ export function formatMeetupPreflightError(
   for (const blocker of blockers) {
     if (blocker.kind === "dev-lock") {
       lines.push(
-        `  - Electron dev lock at ${blocker.lockDirectory} (alive pid(s): ${blocker.alivePids.join(", ")})`,
+        `  - desktop dev lock at ${blocker.lockDirectory} (alive pid(s): ${blocker.alivePids.join(", ")})`,
+      );
+      continue;
+    }
+    if (blocker.kind === "native-chromium-dev") {
+      lines.push(
+        `  - native Chromium host watcher pid ${blocker.pid}: ${blocker.command}`,
       );
       continue;
     }
@@ -162,7 +213,7 @@ function main() {
     process.exit(1);
   }
   console.log(
-    "verify:meetup preflight ok — no dev watcher or Electron dev lock detected.",
+    "verify:meetup preflight ok — no Chromium/Electron dev watcher or desktop dev lock detected.",
   );
 }
 

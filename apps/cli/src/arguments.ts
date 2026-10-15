@@ -33,7 +33,12 @@ export type CliCommand =
 	| { name: "automation-serve"; pollMs: number }
 	| {
 			name: "migration-plan";
-			product: "openclaw" | "hermes" | "codex" | "claude-code";
+			product:
+				| "openclaw"
+				| "hermes"
+				| "codex"
+				| "claude-code"
+				| "kestrel-electron";
 			source: string;
 			target: string;
 	  }
@@ -269,11 +274,24 @@ function parseMigrationCommand(args: string[]): CliCommand {
 	if (action === "plan") {
 		const values = options(args.slice(2), ["product", "source", "target"]);
 		const product = required(values, "product");
-		if (!["openclaw", "hermes", "codex", "claude-code"].includes(product))
+		if (
+			![
+				"openclaw",
+				"hermes",
+				"codex",
+				"claude-code",
+				"kestrel-electron",
+			].includes(product)
+		)
 			throw new Error("--product is invalid.");
 		return {
 			name: "migration-plan",
-			product: product as "openclaw" | "hermes" | "codex" | "claude-code",
+			product: product as
+				| "openclaw"
+				| "hermes"
+				| "codex"
+				| "claude-code"
+				| "kestrel-electron",
 			source: required(values, "source"),
 			target: required(values, "target"),
 		};

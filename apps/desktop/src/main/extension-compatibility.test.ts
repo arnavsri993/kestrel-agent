@@ -242,4 +242,50 @@ describe("extension compatibility analysis", () => {
 		expect(unchecked.runtime.status).toBe("not_run");
 		expect(unchecked.state).toBe("expected_compatible");
 	});
+
+	it("records chromium_documented evidence without rewriting Electron defaults", () => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-chromium-"));
+		directories.push(directory);
+		writeFileSync(
+			join(directory, "manifest.json"),
+			JSON.stringify({
+				name: "Chromium fixture",
+				version: "1.0.0",
+				manifest_version: 3,
+				background: { service_worker: "worker.js" },
+				content_scripts: [{ matches: ["http://127.0.0.1/*"], js: ["content.js"] }],
+				permissions: ["storage"],
+			}),
+		);
+		writeFileSync(
+			join(directory, "worker.js"),
+			"chrome.runtime.onMessage.addListener(() => {}); chrome.storage.local.get({});",
+		);
+		writeFileSync(join(directory, "content.js"), "chrome.runtime.sendMessage('x');");
+
+		const electronReport = analyzeExtensionCompatibility(directory);
+		const chromiumReport = analyzeExtensionCompatibility(directory, {
+			runtimeBackend: "chromium",
+		});
+
+		expect(
+			electronReport.findings.some(
+				(finding) => finding.evidence === "chromium_documented",
+			),
+		).toBe(false);
+		expect(
+			chromiumReport.findings.some(
+				(finding) =>
+					finding.capability === "chrome.storage.local" &&
+					finding.evidence === "chromium_documented",
+			),
+		).toBe(true);
+		expect(
+			chromiumReport.findings.some(
+				(finding) =>
+					finding.capability === "manifest.content_scripts" &&
+					finding.evidence === "chromium_documented",
+			),
+		).toBe(true);
+	});
 });

@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { access, mkdir, rename, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -6,12 +5,13 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = join(root, ".tmp");
-const rendererSource = join(root, "apps", "desktop", "src", "renderer");
 const desktopRequire = createRequire(
 	join(root, "apps", "desktop", "package.json"),
 );
-const react = desktopRequire("@vitejs/plugin-react").default;
 const { build } = desktopRequire("vite");
+const { createRendererViteConfig } = await import(
+	"../apps/desktop/renderer.vite.config.mjs"
+);
 
 function argumentValue(name) {
 	const index = process.argv.indexOf(name);
@@ -53,28 +53,14 @@ export async function buildNativeChromiumRenderer({ output } = {}) {
 		"native-chromium-renderer-stage-" + process.pid + "-" + Date.now(),
 	);
 	assertTemporaryPath(staging);
-	const cspNonce = randomBytes(16).toString("base64");
 	try {
+		const rendererConfig = createRendererViteConfig({ outDir: staging });
 		await build({
-			root: rendererSource,
-			base: "./",
-			plugins: [
-				react(),
-				{
-					name: "kestrel-native-chromium-csp-nonce",
-					transformIndexHtml(html) {
-						return html.replaceAll(
-							"__KESTREL_RENDERER_CSP_NONCE__",
-							cspNonce,
-						);
-					},
-				},
-			],
-			html: { cspNonce },
+			configFile: false,
+			...rendererConfig,
 			build: {
+				...rendererConfig.build,
 				emptyOutDir: true,
-				outDir: staging,
-				target: "es2022",
 			},
 		});
 		await assertFile(join(staging, "index.html"), "the existing Kestrel renderer");

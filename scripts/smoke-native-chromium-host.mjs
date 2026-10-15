@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createServer as createPortServer } from "node:net";
+import { chromium } from "@playwright/test";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const app = await buildNativeChromiumHost();
+const app = process.env.KESTREL_NATIVE_TEST_APP
+	? resolve(process.env.KESTREL_NATIVE_TEST_APP)
+	: await buildNativeChromiumHost();
 const executable = join(app, "Contents", "MacOS", "Kestrel");
 // Older CEF builds started GCM registration shortly after startup, after the
 // host-ready marker. Keep each clean-profile instance alive long enough to
@@ -86,6 +90,19 @@ function processTree(rootPid) {
 	return rows.filter((row) => descendants.has(row.pid));
 }
 const activeChildren = new Set();
+let rendererInspector;
+
+async function availableDebugPort() {
+	const server = createPortServer();
+	await new Promise((resolvePromise, rejectPromise) => {
+		server.once("error", rejectPromise);
+		server.listen(0, "127.0.0.1", resolvePromise);
+	});
+	const address = server.address();
+	assert(address && typeof address !== "string");
+	await new Promise((resolvePromise) => server.close(resolvePromise));
+	return address.port;
+}
 
 async function startNativeHost(args, requiredMarkers, label) {
 	let output = "";
@@ -194,12 +211,15 @@ function assertFullRendererSetupStatus(output) {
 }
 
 try {
+	const debugPort = await availableDebugPort();
 	const direct = await startNativeHost(
 		[
 			"--kestrel-cache-path",
 			directProfile,
 			"--kestrel-ephemeral-core",
 			"--kestrel-renderer",
+			`--remote-debugging-port=${debugPort}`,
+			"--remote-debugging-address=127.0.0.1",
 			"--kestrel-smoke-user-browser-url",
 			directUserBrowserUrl,
 			"--kestrel-exit-after-ready-ms",
@@ -226,7 +246,37 @@ try {
 		"The native CEF user browser must make a real request to the local smoke server.",
 	);
 	assertSandboxedWorkers(direct.child, "The full Kestrel renderer smoke");
+	rendererInspector = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, { timeout: 10_000 });
+	const pages = rendererInspector.contexts().flatMap((context) => context.pages());
+	const shell = pages.find((page) => page.url() === "kestrel://app/index.html");
+	assert(shell, "The native smoke must inspect the real bundled React renderer.");
+	const bridgeState = await shell.evaluate(async () => {
+		const state = {
+			publicBridge: typeof window.kestrel?.request === "function",
+			rawTransport: typeof window.__kestrelHostTransport,
+			rawQuery: typeof window.__kestrelNativeQuery,
+			rawCancel: typeof window.__kestrelNativeCancel,
+			snapshot: await window.kestrel.request({ type: "snapshot" }),
+		};
+		return state;
+	});
+	assert.equal(bridgeState.publicBridge, true);
+	assert.equal(bridgeState.rawTransport, "undefined");
+	// CEF's immutable primitives remain confined to the privileged shell.
+	assert.equal(bridgeState.rawQuery, "function");
+	assert.equal(bridgeState.rawCancel, "function");
+	assert.equal(bridgeState.snapshot.ok, true);
+	const userPage = pages.find((page) => page.url() === directUserBrowserUrl);
+	assert(userPage, "The native smoke must inspect the separate user browser.");
+	assert.deepEqual(await userPage.evaluate(() => [
+		typeof window.kestrel,
+		typeof window.__kestrelHostTransport,
+		typeof window.__kestrelNativeQuery,
+		typeof window.__kestrelNativeCancel,
+	]), ["undefined", "undefined", "undefined", "undefined"]);
 	assert.equal(await direct.waitForExit(), 0, direct.output());
+	await rendererInspector.close();
+	rendererInspector = undefined;
 	directOutput = direct.output();
 	assertHostSecurity(directOutput, "The full Kestrel renderer smoke");
 	assertFullRendererSetupStatus(directOutput);
@@ -274,14 +324,24 @@ try {
 	bridgeOutput = bridge.output();
 	assertHostSecurity(bridgeOutput, label);
 	}
-	console.log("Native Chromium host: bundled CEF, isolated profiles, standalone Node Core relay, full Kestrel renderer, bridge-created user tab, sandbox-default process tree, and orderly shutdown passed.");
+	console.log("Native Chromium host: bundled CEF, isolated profiles, standalone Node Core relay, shared renderer bridge, remote-page isolation, bridge-created user tab, sandbox-default process tree, and orderly shutdown passed.");
+} catch (error) {
+	console.error(error);
+	throw error;
 } finally {
-	for (const child of activeChildren) {
+	await rendererInspector?.close().catch(() => {});
+	const remainingChildren = [...activeChildren];
+	for (const child of remainingChildren) {
 		if (child.exitCode === null) child.kill("SIGTERM");
 	}
+	await Promise.all(remainingChildren.map((child) => new Promise((resolvePromise) => {
+		if (child.exitCode !== null || child.signalCode !== null) return resolvePromise();
+		const timeout = setTimeout(() => { child.kill("SIGKILL"); resolvePromise(); }, 3_000);
+		child.once("exit", () => { clearTimeout(timeout); resolvePromise(); });
+	})));
 	await new Promise((resolvePromise) => userBrowserServer.close(resolvePromise));
-	await rm(directProfile, { recursive: true, force: true });
+	await rm(directProfile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 	await Promise.all(
-		bridgeProfiles.map((profile) => rm(profile, { recursive: true, force: true })),
+		bridgeProfiles.map((profile) => rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })),
 	);
 }

@@ -34,16 +34,18 @@ The extension subsystem has three layers:
 Kestrel browser UI and typed IPC
   -> BrowserExtensionManager and compatibility report
   -> ExtensionRuntime adapter
-  -> ElectronExtensionRuntime today
+  -> ElectronExtensionRuntime (shipping desktop) or ChromiumExtensionRuntime (native CEF lane)
 ```
 
 `BrowserExtensionManager` owns signed-package validation, safe extraction,
 review-token lifecycle, persistence, enable/disable/reload, compatibility
 analysis, and public record redaction. It has no Electron `Session` dependency.
-`ElectronExtensionRuntime` is the only adapter that calls Electron's extension
-and service-worker APIs. A future `ChromiumExtensionRuntime` can implement the
-same small runtime boundary without changing the installer, stored report, or
-management UI.
+`ElectronExtensionRuntime` remains the shipping desktop adapter. The native CEF
+lane injects `ChromiumExtensionRuntime` with a file-backed host port that
+persists verified unpack paths for Chromium's `--load-extension` startup switch
+(CEF 152 has no programmatic `LoadExtension` API). Chromium-backed compatibility
+analysis may emit `chromium_documented` evidence; existing Electron-era reports
+are never rewritten in place.
 
 The current runtime is Electron's persistent user-browser partition. Electron
 only supports unpacked extensions and requires extensions to be loaded again at

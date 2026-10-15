@@ -28,10 +28,13 @@ permission to leave another installed Kestrel behind.
 - For live source changes, run only `corepack pnpm dev:desktop`. Its watcher,
   HMR, restart path, and single-instance lock must keep the current app in sync;
   do not open a `release/**/Kestrel.app` artifact directly.
-- For a packaged local refresh, run `corepack pnpm install:mac:dev`. It builds
-  the current source, replaces the same `/Applications/Kestrel.app` path, and
-  moves stale Kestrel bundles to the macOS Trash for recovery. Reopen that
-  canonical app; do not copy the artifact to Desktop or rename it.
+- For a packaged local refresh on the Chromium product path, run
+  `corepack pnpm install:mac:dev` (defaults to native CEF). It installs
+  side-by-side as `/Applications/Kestrel Native.app` unless
+  `KESTREL_INSTALL_NATIVE_CANONICAL=1` replaces `/Applications/Kestrel.app`
+  after retirement gates. Legacy Electron packaging remains
+  `corepack pnpm install:mac:dev:electron`. Do not copy artifacts to Desktop
+  or rename them.
 - Preserve the existing Kestrel profile, encrypted database, credentials,
   Keychain identity, and `Application Support` data. Consolidation may move
   duplicate app bundles to Trash, but must never delete or merge user data
@@ -87,12 +90,16 @@ encrypted desktop database or Keychain-protected material into a different
 profile and call that a migration.
 
 The current migration CLI supports bounded dry-run/apply imports from OpenClaw,
-Hermes, Codex, and Claude Code. It recognizes instruction files (`AGENTS.md`,
-`CLAUDE.md`, and `HERMES.md`), non-secret settings, memories, agents, and
-skills; it preserves the source and rejects links, binary files, oversized
-files, containment escapes, and changed checksums. A direct Kestrel-to-Kestrel
-restore is not exposed by this CLI yet. If that choice is requested but no
-tested product flow exists, say so plainly and leave both profiles untouched.
+Hermes, Codex, and Claude Code, plus an explicit Electron→native Chromium
+profile transfer via `--product kestrel-electron`. Reference-product imports
+recognize instruction files (`AGENTS.md`, `CLAUDE.md`, and `HERMES.md`),
+non-secret settings, memories, agents, and skills. The `kestrel-electron`
+path additionally converts Electron `browser/state.json` into a native
+`browser-library.json` and inventories rejected credential/database paths.
+Both flows preserve the source, reject links, binary files, oversized files,
+containment escapes, and changed checksums, and never raw-copy Keychain,
+cookies, or the encrypted desktop database. If a person asks for a silent
+merge or credential copy, refuse and leave both profiles untouched.
 
 For a supported reference-product import, always plan first and review the
 result with the person:
@@ -102,15 +109,22 @@ result with the person:
 export KESTREL_DATA_DIR=/absolute/path/to/temporary-kestrel-cli-state
 
 corepack pnpm cli -- migration plan \
-  --product codex \
-  --source /absolute/path/to/source-root \
-  --target /absolute/path/to/kestrel-import-root \
-  > /absolute/path/to/kestrel-migration-plan.json
+ --product codex \
+ --source /absolute/path/to/source-root \
+ --target /absolute/path/to/kestrel-import-root \
+ > /absolute/path/to/kestrel-migration-plan.json
 
 corepack pnpm cli -- migration apply \
-  --plan /absolute/path/to/kestrel-migration-plan.json \
-  --approve yes \
-  --overwrite no
+ --plan /absolute/path/to/kestrel-migration-plan.json \
+ --approve yes \
+ --overwrite no
+
+# Electron Application Support → isolated native Chromium durable profile
+corepack pnpm cli -- migration plan \
+ --product kestrel-electron \
+ --source /absolute/path/to/Electron/Application/Support/Kestrel \
+ --target /absolute/path/to/isolated-native-profile \
+ > /absolute/path/to/kestrel-electron-native-plan.json
 ```
 
 Never infer a source path or import credentials. Ask the person to choose the
@@ -123,10 +137,14 @@ explicit approval for apply.
 - Use `kestrel opencode --setup` when the person specifically wants an
   OpenCode agent configuration; it prints configuration and does not silently
   write secrets.
-- For desktop work, run only one `corepack pnpm dev:desktop` watcher. Main and
-  preload changes restart Electron automatically; renderer changes use Vite
-  HMR. Leave the watcher running after source changes so the open app reflects
-  the current source.
+- For desktop work, run only one desktop watcher. Default
+  `corepack pnpm dev:desktop` is the native Chromium/CEF host (Apple Silicon
+  macOS). Use `corepack pnpm dev:desktop:electron` or
+  `KESTREL_DESKTOP_RUNTIME=electron` for the legacy Electron watcher. Native
+  CEF never opens the Electron profile. Electron packages stay in-tree until
+  `corepack pnpm check:electron-retirement` is accepted and
+  `corepack pnpm retire:electron` removes them; do not claim 0% Electron from
+  a side-by-side Native.app alone.
 - For onboarding or setup changes, run `corepack pnpm test:desktop-setup`.
 - For a broad repository change, run `corepack pnpm verify` and distinguish
   focused passes from unrelated baseline or remote-CI failures.

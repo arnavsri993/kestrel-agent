@@ -147,7 +147,8 @@ for (const forbidden of ["universal", "x64", "mas", "app-store"]) {
 		fail(`desktop packaging still contains unsupported target ${forbidden}.`);
 }
 for (const marker of [
-	"--arm64",
+	"npm_config_arch: arm64",
+	"npm_config_target_arch: arm64",
 	"uname -m",
 	"test:local-ai:real",
 	"codesign --verify",
@@ -156,10 +157,15 @@ for (const marker of [
 	"pkgutil --check-signature",
 	"lipo -archs",
 	'= "arm64"',
+	"package:mac:native:release",
+	"notarize:mac:native",
+	"package:mac:native:dmg",
+	"package:mac:native:pkg",
+	"import-macos-signing-certs.mjs",
+	"release/native-mac-arm64/Kestrel.app",
 	"release/*.dmg",
 	"release/*.zip",
 	"release/*.pkg",
-	"release/*.blockmap",
 	"latest-mac.yml",
 	"SHA256SUMS",
 	"release-manifest.json",
@@ -167,6 +173,15 @@ for (const marker of [
 ]) {
 	if (!workflow.includes(marker))
 		fail(`macOS release workflow is missing ${marker}.`);
+}
+for (const forbidden of [
+	"electron-builder",
+	"build:desktop:electron",
+	"release/*.blockmap",
+	"test:packaged-desktop:arm64",
+]) {
+	if (workflow.includes(forbidden))
+		fail(`macOS release workflow still references ${forbidden}.`);
 }
 for (const secret of [
 	"CSC_LINK",
@@ -180,9 +195,13 @@ for (const secret of [
 	if (!workflow.includes(secret))
 		fail(`macOS release workflow is missing ${secret}.`);
 }
-if (!workflow.includes("test:packaged-desktop:arm64"))
+if (!workflow.includes("test:packaged-native:arm64"))
 	fail(
-		"macOS release workflow does not smoke-test the signed packaged application.",
+		"macOS release workflow does not smoke-test the signed packaged native Chromium application.",
+	);
+if (!workflow.includes("test:packaged-native-desktop-shell:arm64"))
+	fail(
+		"macOS release workflow does not smoke-test the signed native desktop shell.",
 	);
 for (const marker of [
 	"actions/configure-pages@",
