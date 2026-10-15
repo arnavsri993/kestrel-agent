@@ -2331,11 +2331,7 @@ export class UserBrowserService {
 			// WebContentsView sibling can otherwise swallow renderer pointerup
 			// events while capturePage is in flight. The capture was started above
 			// while the active view was still attached, so the preview remains valid.
-			for (const { view } of this.views.values()) {
-				view.setVisible(false);
-				if (this.window.contentView.children.includes(view))
-					this.window.contentView.removeChildView(view);
-			}
+			if (this.hideNativeViews()) this.window.webContents.focus();
 		}
 		// Renderer menus live in the main window's renderer, while web pages are
 		// native WebContentsViews painted above that renderer. Capture the page
@@ -6586,13 +6582,21 @@ export class UserBrowserService {
 		this.contentVisible = true;
 	}
 
-	private attachActiveWebView(): void {
-		if (this.disposed || this.window.isDestroyed()) return;
+	private hideNativeViews(): boolean {
+		let ownedKeyboardFocus = false;
 		for (const { view } of this.views.values()) {
-			if (this.window.contentView.children.includes(view))
+			if (this.window.contentView.children.includes(view)) {
+				ownedKeyboardFocus ||= Boolean(liveWebContents(view.webContents)?.isFocused());
 				this.window.contentView.removeChildView(view);
+			}
 			view.setVisible(false);
 		}
+		return ownedKeyboardFocus;
+	}
+
+	private attachActiveWebView(): void {
+		if (this.disposed || this.window.isDestroyed()) return;
+		const ownedKeyboardFocus = this.hideNativeViews();
 		const tab = this.state.tabs.find(
 			(candidate) => candidate.id === this.state.activeTabId,
 		);
@@ -6601,10 +6605,14 @@ export class UserBrowserService {
 			!tab ||
 			!tab.url ||
 			tab.error ||
-			tab.blockedNavigation
-		)
+			tab.blockedNavigation ||
+			isKestrelAppPageUrl(tab.url)
+		) {
+			// Removing a focused native view does not give the trusted renderer
+			// keyboard focus. Home and its menus must receive native key events too.
+			if (ownedKeyboardFocus) this.window.webContents.focus();
 			return;
-		if (isKestrelAppPageUrl(tab.url)) return;
+		}
 		const { view } = this.ensureView(tab);
 		const webContents = liveWebContents(view?.webContents);
 		if (!webContents) return;

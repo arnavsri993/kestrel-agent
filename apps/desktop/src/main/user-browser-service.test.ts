@@ -84,6 +84,7 @@ const electron = vi.hoisted(() => {
     });
     stop = vi.fn();
     focus = vi.fn();
+    isFocused = vi.fn(() => false);
     insertText = vi.fn();
 		sendInputEvent = vi.fn();
     executeJavaScript = vi.fn();
@@ -270,7 +271,7 @@ function createService(options: {
   const window = {
     getContentSize: vi.fn(() => [300, 200]),
     isDestroyed: vi.fn(() => false),
-    webContents: { startDrag: vi.fn() },
+    webContents: { startDrag: vi.fn(), focus: vi.fn() },
     contentView: {
       children,
       addChildView: vi.fn((view: unknown) => children.push(view)),
@@ -2101,6 +2102,53 @@ describe("UserBrowserService", () => {
     expect(preview).toMatch(/^data:image\/png;base64,/);
     expect(view.webContents.capturePage).toHaveBeenCalledOnce();
     expect(view.visible).toBe(false);
+  });
+
+  it("returns keyboard focus from a hidden website to Home", async () => {
+    const { service, window } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    await service.setContentBounds({ x: 0, y: 0, width: 300, height: 200 }, true);
+    const view = electron.state.views[0]!;
+    view.webContents.isFocused.mockReturnValue(true);
+
+    await service.createTab(undefined, true);
+
+    expect(view.visible).toBe(false);
+    expect(window.webContents.focus).toHaveBeenCalledOnce();
+  });
+
+  it("does not take keyboard focus when the hidden website did not own it", async () => {
+    const { service, window } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    await service.setContentBounds({ x: 0, y: 0, width: 300, height: 200 }, true);
+
+    await service.createTab(undefined, true);
+
+    expect(window.webContents.focus).not.toHaveBeenCalled();
+  });
+
+  it("returns keyboard focus before a menu's page capture finishes", async () => {
+    const { service, window } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    await service.setContentBounds({ x: 0, y: 0, width: 300, height: 200 }, true);
+    const view = electron.state.views[0]!;
+    view.webContents.isFocused.mockReturnValue(true);
+    let finishCapture!: () => void;
+    const capture = view.webContents.capturePage.getMockImplementation()!;
+    view.webContents.capturePage.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { finishCapture = resolve; });
+      return capture();
+    });
+
+    const pending = service.setContentBounds({ x: 0, y: 0, width: 300, height: 200 }, false);
+
+    expect(view.visible).toBe(false);
+    expect(window.webContents.focus).toHaveBeenCalledOnce();
+    finishCapture();
+    await pending;
   });
 
   it("builds an Edge-like image context menu with safe native actions", async () => {

@@ -76,6 +76,26 @@ try {
     return input instanceof HTMLInputElement && document.activeElement === input &&
       input.selectionStart === 0 && input.selectionEnd === input.value.length;
   });
+  const assertRendererKeyboardFocus = async () => {
+    const deadline = Date.now() + 5_000;
+    do {
+      if (await application.evaluate(({ BrowserWindow, webContents }) => {
+        const renderer = BrowserWindow.getAllWindows().find((window) =>
+          window.webContents.getURL().endsWith("/renderer/index.html"))?.webContents;
+        return renderer && webContents.getFocusedWebContents()?.id === renderer.id;
+      })) return;
+      await page.waitForTimeout(50);
+    } while (Date.now() < deadline);
+    assert.fail("Native keyboard focus did not return to the trusted renderer");
+  };
+  // Send to the actual Electron focus owner. page.keyboard can address the
+  // renderer directly and would conceal a stranded native-view focus owner.
+  const nativeKey = (keyCode) => application.evaluate(({ webContents }, key) => {
+    const focused = webContents.getFocusedWebContents();
+    if (!focused) throw new Error("No native keyboard focus owner");
+    focused.sendInputEvent({ type: "keyDown", keyCode: key });
+    focused.sendInputEvent({ type: "keyUp", keyCode: key });
+  }, keyCode);
 
   const first = await request({ type: "browser-create-tab", input: `${origin}/one`, active: true });
   assert(first.ok && "browserState" in first);
@@ -115,6 +135,63 @@ try {
   await assertAllSelected();
   await page.keyboard.type(`${origin}/other-replacement`);
   assert.equal(await input.inputValue(), `${origin}/other-replacement`);
+  await page.keyboard.press("Escape");
+  await input.evaluate((node) => node.blur());
+
+  await application.evaluate(({ app, BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find((candidate) =>
+      candidate.webContents.getURL().endsWith("/renderer/index.html"));
+    app.focus({ steal: true });
+    window?.focus();
+  });
+  await request({ type: "browser-select-tab", tabId: firstId });
+  await page.waitForFunction(() => !document.querySelector(".browser-address-suggestions"));
+  const nativePageDeadline = Date.now() + 5_000;
+  while (!await application.evaluate(({ BrowserWindow }, url) => {
+    const window = BrowserWindow.getAllWindows().find((candidate) =>
+      candidate.webContents.getURL().endsWith("/renderer/index.html"));
+    const view = window?.contentView.children.find((child) =>
+      "webContents" in child && child.webContents.getURL() === url);
+    if (!view) return false;
+    view.webContents.focus();
+    return true;
+  }, `${origin}/one`)) {
+    assert(Date.now() < nativePageDeadline, "Fixture website was not attached");
+    await page.waitForTimeout(50);
+  }
+  assert.equal(await application.evaluate(({ webContents }) =>
+    webContents.getFocusedWebContents()?.getURL()), `${origin}/one`,
+  "The website must own native keyboard focus before switching to Home");
+  // Do not click renderer chrome here: that can focus it before the switch
+  // and hide the regression this handoff is intended to exercise.
+  await request({ type: "browser-create-tab", active: true });
+  const home = await waitForState((state) => state.tabs.some((item) =>
+    item.id === state.activeTabId && !item.url), "Home tab did not open");
+  const homeId = home.activeTabId;
+  await assertRendererKeyboardFocus();
+  for (const activeId of [homeId, firstId]) {
+    await request({ type: "browser-select-tab", tabId: activeId });
+    await page.locator(`.browser-tab[data-tab-id="${secondId}"] [role="tab"]`)
+      .click({ button: "right" });
+    const menu = page.locator(".browser-tab-menu");
+    await menu.waitFor();
+    await page.waitForFunction(() =>
+      document.querySelector(".browser-tab-menu button") === document.activeElement);
+    await assertRendererKeyboardFocus();
+    await nativeKey("Down");
+    await page.waitForFunction(() =>
+      document.querySelectorAll(".browser-tab-menu button")[1] === document.activeElement);
+    await nativeKey("Escape");
+    await menu.waitFor({ state: "detached" });
+    assert.equal((await browserState()).activeTabId, activeId,
+      "Dismissing a background tab's menu changed the active tab");
+    if (activeId === homeId) {
+      await page.waitForFunction((id) => document.querySelector(
+        `.browser-tab[data-tab-id="${id}"] [role="tab"]`) === document.activeElement, secondId);
+      await assertRendererKeyboardFocus();
+    }
+  }
+  await request({ type: "browser-close-tab", tabId: homeId });
 
   await request({ type: "browser-select-tab", tabId: firstId });
   const tab = page.locator(`.browser-tab[data-tab-id="${secondId}"]`);
@@ -155,7 +232,7 @@ try {
     if (!detached) await page.waitForTimeout(75);
   }
   assert(detached, "Detached window did not load the tab");
-  console.log("Focused tab interaction smoke passed: address replacement and tab tear-off after preview.");
+  console.log("Focused tab interaction smoke passed: address replacement, native menu keyboard focus on Home/web, and tab tear-off after preview.");
 } finally {
   await application?.close().catch(() => undefined);
   await new Promise((resolveClose) => server.close(resolveClose));
