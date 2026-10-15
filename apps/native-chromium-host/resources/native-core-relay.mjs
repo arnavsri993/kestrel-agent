@@ -26,6 +26,10 @@ const smokeIsolatedAutomationUrl =
 	typeof process.env.KESTREL_SMOKE_ISOLATED_AUTOMATION_URL === "string"
 		? process.env.KESTREL_SMOKE_ISOLATED_AUTOMATION_URL
 		: smokeBrowserBackendUrl;
+const smokeUploadPath =
+	typeof process.env.KESTREL_SMOKE_UPLOAD_PATH === "string"
+		? process.env.KESTREL_SMOKE_UPLOAD_PATH
+		: "";
 
 // This relay is intentionally an ephemeral no-credential bootstrap. It proves
 // that the native Chromium renderer is talking to Kestrel's real standalone
@@ -317,6 +321,35 @@ lines.on("line", (line) => {
 			return;
 		}
 		if (message.requestId === "smoke-isolated-viewport") {
+			if (!smokeIsolatedSessionId) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation session id was lost before upload.",
+				});
+				return;
+			}
+			if (!smokeUploadPath) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation upload path was not configured.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-upload",
+				{
+					operation: "upload",
+					sessionId: smokeIsolatedSessionId,
+					selector: "#smoke-upload",
+					paths: [smokeUploadPath],
+				},
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-upload") {
 			if (!smokeIsolatedSessionId) {
 				write({
 					type: "smoke-event",

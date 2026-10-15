@@ -212,6 +212,7 @@ std::optional<std::string> smoke_user_browser_url;
 std::optional<std::string> smoke_download_url;
 std::optional<std::string> smoke_browser_backend_url;
 std::optional<std::string> smoke_isolated_automation_url;
+std::optional<std::string> smoke_isolated_upload_path;
 bool smoke_user_browser_via_bridge = false;
 CefRefPtr<CefWindow> kestrel_window;
 
@@ -940,6 +941,9 @@ struct NativeAutomationSession {
   std::string pending_act_request_id;
   std::string pending_screenshot_request_id;
   std::string pending_viewport_request_id;
+  std::string pending_upload_request_id;
+  std::string pending_upload_selector;
+  std::vector<std::string> pending_upload_paths;
   int viewport_width = 1280;
   int viewport_height = 720;
   double viewport_device_scale_factor = 1.0;
@@ -3198,6 +3202,23 @@ class KestrelClient : public CefClient,
       }
       return;
     }
+    if (operation == "upload") {
+      if (request->GetType("sessionId") != VTYPE_STRING ||
+          request->GetType("selector") != VTYPE_STRING ||
+          request->GetType("paths") != VTYPE_LIST) {
+        SendBrowserBackendResponse(request_id, false, "",
+                                   "Native isolated upload was invalid.");
+        return;
+      }
+      std::string error;
+      if (!BeginAutomationUpload(request->GetString("sessionId").ToString(),
+                                 request->GetString("selector").ToString(),
+                                 request->GetList("paths"), request_id,
+                                 &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
+      return;
+    }
     if (operation == "close") {
       if (request->GetType("sessionId") != VTYPE_STRING) {
         SendBrowserBackendResponse(request_id, false, "",
@@ -3375,6 +3396,14 @@ class KestrelClient : public CefClient,
                 found->second.pending_viewport_request_id, false, "",
                 "Native Chromium browser session closed.");
             found->second.pending_viewport_request_id.clear();
+          }
+          if (!found->second.pending_upload_request_id.empty()) {
+            SendBrowserBackendResponse(
+                found->second.pending_upload_request_id, false, "",
+                "Native Chromium browser session closed.");
+            found->second.pending_upload_request_id.clear();
+            found->second.pending_upload_selector.clear();
+            found->second.pending_upload_paths.clear();
           }
           automation_sessions_.erase(found);
         },
@@ -3569,7 +3598,50 @@ class KestrelClient : public CefClient,
     return !session.pending_snapshot_request_id.empty() ||
            !session.pending_act_request_id.empty() ||
            !session.pending_screenshot_request_id.empty() ||
-           !session.pending_viewport_request_id.empty();
+           !session.pending_viewport_request_id.empty() ||
+           !session.pending_upload_request_id.empty();
+  }
+
+  void FailAutomationUpload(NativeAutomationSession& session,
+                            const std::string& error) {
+    const std::string request_id = session.pending_upload_request_id;
+    session.pending_upload_request_id.clear();
+    session.pending_upload_selector.clear();
+    session.pending_upload_paths.clear();
+    if (!request_id.empty()) {
+      SendBrowserBackendResponse(request_id, false, "", error);
+    }
+  }
+
+  bool ContinueAutomationUploadQuery(NativeAutomationSession& session,
+                                     int root_node_id, std::string* error) {
+    if (root_node_id <= 0) {
+      if (error) *error = "Browser upload document root was invalid.";
+      return false;
+    }
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetInt("nodeId", root_node_id);
+    params->SetString("selector", session.pending_upload_selector);
+    return CallAutomationDevToolsMethod(session, "DOM.querySelector", params,
+                                        "upload-query", error);
+  }
+
+  bool ContinueAutomationUploadSet(NativeAutomationSession& session,
+                                   int node_id, std::string* error) {
+    if (node_id <= 0) {
+      if (error) *error = "Browser upload target was not found.";
+      return false;
+    }
+    CefRefPtr<CefListValue> files = CefListValue::Create();
+    for (size_t index = 0; index < session.pending_upload_paths.size();
+         ++index) {
+      files->SetString(index, session.pending_upload_paths[index]);
+    }
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetInt("nodeId", node_id);
+    params->SetList("files", files);
+    return CallAutomationDevToolsMethod(session, "DOM.setFileInputFiles",
+                                        params, "upload-set", error);
   }
 
   void OnAutomationDevToolsResult(const std::string& session_id,
@@ -3596,6 +3668,80 @@ class KestrelClient : public CefClient,
       std::cout << "KESTREL_NATIVE_CHROMIUM_AUTOMATION_VIEWPORT_OK id="
                 << session_id << " width=" << found->second.viewport_width
                 << " height=" << found->second.viewport_height << std::endl;
+      SendBrowserBackendResponse(request_id, true, "null", "");
+      return;
+    }
+
+    if (kind == "upload-document") {
+      if (found->second.pending_upload_request_id.empty()) return;
+      if (!success) {
+        FailAutomationUpload(found->second,
+                             "Native Chromium browser upload could not read the "
+                             "document.");
+        return;
+      }
+      int root_node_id = 0;
+      CefRefPtr<CefValue> parsed = CefParseJSON(result_json, JSON_PARSER_RFC);
+      if (parsed && parsed->GetType() == VTYPE_DICTIONARY) {
+        CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
+        if (root->GetType("root") == VTYPE_DICTIONARY) {
+          CefRefPtr<CefDictionaryValue> document = root->GetDictionary("root");
+          if (document->GetType("nodeId") == VTYPE_INT) {
+            root_node_id = document->GetInt("nodeId");
+          } else if (document->GetType("nodeId") == VTYPE_DOUBLE) {
+            root_node_id = static_cast<int>(document->GetDouble("nodeId"));
+          }
+        }
+      }
+      std::string error;
+      if (!ContinueAutomationUploadQuery(found->second, root_node_id, &error)) {
+        FailAutomationUpload(
+            found->second,
+            error.empty() ? "Browser upload target was not found." : error);
+      }
+      return;
+    }
+
+    if (kind == "upload-query") {
+      if (found->second.pending_upload_request_id.empty()) return;
+      if (!success) {
+        FailAutomationUpload(found->second,
+                             "Browser upload target was not found.");
+        return;
+      }
+      int node_id = 0;
+      CefRefPtr<CefValue> parsed = CefParseJSON(result_json, JSON_PARSER_RFC);
+      if (parsed && parsed->GetType() == VTYPE_DICTIONARY) {
+        CefRefPtr<CefDictionaryValue> root = parsed->GetDictionary();
+        if (root->GetType("nodeId") == VTYPE_INT) {
+          node_id = root->GetInt("nodeId");
+        } else if (root->GetType("nodeId") == VTYPE_DOUBLE) {
+          node_id = static_cast<int>(root->GetDouble("nodeId"));
+        }
+      }
+      std::string error;
+      if (!ContinueAutomationUploadSet(found->second, node_id, &error)) {
+        FailAutomationUpload(
+            found->second,
+            error.empty() ? "Browser upload target was not found." : error);
+      }
+      return;
+    }
+
+    if (kind == "upload-set") {
+      const std::string request_id = found->second.pending_upload_request_id;
+      found->second.pending_upload_request_id.clear();
+      found->second.pending_upload_selector.clear();
+      found->second.pending_upload_paths.clear();
+      if (request_id.empty()) return;
+      if (!success) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium browser upload failed.");
+        return;
+      }
+      std::cout << "KESTREL_NATIVE_CHROMIUM_AUTOMATION_UPLOAD_OK id="
+                << session_id << std::endl;
       SendBrowserBackendResponse(request_id, true, "null", "");
       return;
     }
@@ -3933,6 +4079,66 @@ class KestrelClient : public CefClient,
     return true;
   }
 
+  bool BeginAutomationUpload(const std::string& session_id,
+                             const std::string& selector,
+                             CefRefPtr<CefListValue> paths,
+                             const std::string& request_id,
+                             std::string* error) {
+    auto found = automation_sessions_.find(session_id);
+    if (found == automation_sessions_.end() || found->second.closing) {
+      if (error) *error = "Native Chromium browser session is unavailable.";
+      return false;
+    }
+    if (selector.empty() || selector.size() > 2000 ||
+        selector.find('\0') != std::string::npos) {
+      if (error) *error = "Native isolated upload selector was invalid.";
+      return false;
+    }
+    if (!paths || paths->GetSize() == 0 || paths->GetSize() > 20) {
+      if (error) *error = "Native isolated upload paths were invalid.";
+      return false;
+    }
+    std::vector<std::string> resolved_paths;
+    resolved_paths.reserve(paths->GetSize());
+    for (size_t index = 0; index < paths->GetSize(); ++index) {
+      if (paths->GetType(index) != VTYPE_STRING) {
+        if (error) *error = "Native isolated upload paths were invalid.";
+        return false;
+      }
+      const std::string path = paths->GetString(index).ToString();
+      if (path.empty() || path.size() > 4096 || path.front() != '/' ||
+          path.find('\0') != std::string::npos) {
+        if (error) *error = "Native isolated upload paths were invalid.";
+        return false;
+      }
+      BOOL is_directory = NO;
+      if (![[NSFileManager defaultManager] fileExistsAtPath:@(path.c_str())
+                                               isDirectory:&is_directory] ||
+          is_directory) {
+        if (error) *error = "Native isolated upload file was not found.";
+        return false;
+      }
+      resolved_paths.push_back(path);
+    }
+    if (AutomationSessionBusy(found->second)) {
+      if (error) *error = "Native Chromium browser session is busy.";
+      return false;
+    }
+    found->second.pending_upload_request_id = request_id;
+    found->second.pending_upload_selector = selector;
+    found->second.pending_upload_paths = std::move(resolved_paths);
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetInt("depth", 0);
+    if (!CallAutomationDevToolsMethod(found->second, "DOM.getDocument", params,
+                                      "upload-document", error)) {
+      found->second.pending_upload_request_id.clear();
+      found->second.pending_upload_selector.clear();
+      found->second.pending_upload_paths.clear();
+      return false;
+    }
+    return true;
+  }
+
   bool BeginAutomationAct(const std::string& session_id,
                           CefRefPtr<CefDictionaryValue> action,
                           const std::string& request_id,
@@ -4128,6 +4334,10 @@ class KestrelClient : public CefClient,
       if (smoke_isolated_automation_url) {
         environment[@"KESTREL_SMOKE_ISOLATED_AUTOMATION_URL"] = [NSString
             stringWithUTF8String:smoke_isolated_automation_url->c_str()];
+      }
+      if (smoke_isolated_upload_path) {
+        environment[@"KESTREL_SMOKE_UPLOAD_PATH"] = [NSString
+            stringWithUTF8String:smoke_isolated_upload_path->c_str()];
       }
     }
     core_relay_ = [[KestrelNativeCoreRelay alloc]
@@ -4722,6 +4932,21 @@ int main(int argc, char* argv[]) {
       }
       smoke_isolated_automation_url = *normalized;
       smoke_isolated_automation = true;
+    }
+    if (const auto upload_path =
+            argument_value(argc, argv, "--kestrel-smoke-upload-path")) {
+      NSString* path = [NSString stringWithUTF8String:upload_path->c_str()];
+      BOOL is_directory = NO;
+      if (!path || ![path isAbsolutePath] ||
+          ![[NSFileManager defaultManager] fileExistsAtPath:path
+                                               isDirectory:&is_directory] ||
+          is_directory) {
+        std::cerr
+            << "Kestrel received an invalid isolated automation upload path."
+            << std::endl;
+        return 1;
+      }
+      smoke_isolated_upload_path = *upload_path;
     }
 
     CefSettings settings;

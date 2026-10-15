@@ -291,8 +291,8 @@ Still required before retiring Electron:
 
 - Real Keychain path on a Developer ID–signed durable build (no ad-hoc prompt
   spam); profile-sealed bootstrap is proven for development/cutover
-- Remaining desktop command surface beyond isolated act/screenshot/viewport
-  (`upload`, visible-act/screenshot parity, etc.) on CEF
+- Remaining desktop command surface beyond isolated
+  act/screenshot/viewport/upload (visible-act/screenshot parity, etc.) on CEF
 - Production Developer ID signing + notarization (`check:native-signing`)
 - Retargeted desktop smokes against the native binary on a durable profile
 - Live acceptance of the profile transfer design above on a real dual-profile

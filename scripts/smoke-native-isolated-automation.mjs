@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -14,21 +14,37 @@ const executable = join(app, "Contents", "MacOS", "Kestrel");
 const profile = await mkdtemp(
 	join(tmpdir(), "kestrel-native-isolated-automation-"),
 );
+const uploadFixture = join(profile, "smoke-upload.txt");
+await writeFile(uploadFixture, "kestrel-native-upload-smoke\n", "utf8");
 
 let pageHits = 0;
 let actHits = 0;
+let uploadHits = 0;
 const server = createServer((request, response) => {
 	if (request.url === "/native-isolated-automation-smoke") {
 		pageHits += 1;
 		response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
 		response.end(`<!doctype html>
 <title>Kestrel isolated automation</title>
+<input id="smoke-upload" type="file" />
 <button id="smoke-act" type="button">Act</button>
 <script>
+document.getElementById("smoke-upload").addEventListener("change", () => {
+  const input = document.getElementById("smoke-upload");
+  if (input.files && input.files.length === 1) {
+    fetch("/native-isolated-upload-ok").catch(() => {});
+  }
+});
 document.getElementById("smoke-act").addEventListener("click", () => {
   fetch("/native-isolated-act-ok").catch(() => {});
 });
 </script>`);
+		return;
+	}
+	if (request.url === "/native-isolated-upload-ok") {
+		uploadHits += 1;
+		response.writeHead(204);
+		response.end();
 		return;
 	}
 	if (request.url === "/native-isolated-act-ok") {
@@ -58,6 +74,8 @@ const child = spawn(
 		"--kestrel-smoke-isolated-automation",
 		"--kestrel-smoke-isolated-automation-url",
 		pageUrl,
+		"--kestrel-smoke-upload-path",
+		uploadFixture,
 		"--kestrel-exit-after-ready-ms",
 		"45000",
 	],
@@ -131,6 +149,7 @@ try {
 		/KESTREL_NATIVE_CHROMIUM_AUTOMATION_SESSION_CREATED id=native-browser-/,
 	);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_AUTOMATION_VIEWPORT_OK/);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_AUTOMATION_UPLOAD_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_AUTOMATION_ACT_OK/);
 	assert.match(
 		output,
@@ -146,12 +165,17 @@ try {
 		"isolated create→navigate through the Core relay must load the smoke page in a hidden CEF session.",
 	);
 	assert.equal(
+		uploadHits > 0,
+		true,
+		"isolated upload through the Core relay must populate the file input.",
+	);
+	assert.equal(
 		actHits > 0,
 		true,
 		"isolated act(click) through the Core relay must dispatch on the inspected button.",
 	);
 	console.log(
-		"Native Chromium isolated automation: Core relay create→navigate→viewport→snapshot→act→screenshot→close on CEF sessions.",
+		"Native Chromium isolated automation: Core relay create→navigate→viewport→upload→snapshot→act→screenshot→close on CEF sessions.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");
