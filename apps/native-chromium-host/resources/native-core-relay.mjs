@@ -15,6 +15,22 @@ if (!profileRoot) {
 	process.exit(1);
 }
 
+const smokeBrowserBackend = process.env.KESTREL_SMOKE_BROWSER_BACKEND === "1";
+const smokeIsolatedAutomation =
+	process.env.KESTREL_SMOKE_ISOLATED_AUTOMATION === "1";
+const smokeBrowserBackendUrl =
+	typeof process.env.KESTREL_SMOKE_BROWSER_BACKEND_URL === "string"
+		? process.env.KESTREL_SMOKE_BROWSER_BACKEND_URL
+		: "";
+const smokeIsolatedAutomationUrl =
+	typeof process.env.KESTREL_SMOKE_ISOLATED_AUTOMATION_URL === "string"
+		? process.env.KESTREL_SMOKE_ISOLATED_AUTOMATION_URL
+		: smokeBrowserBackendUrl;
+const smokeUploadPath =
+	typeof process.env.KESTREL_SMOKE_UPLOAD_PATH === "string"
+		? process.env.KESTREL_SMOKE_UPLOAD_PATH
+		: "";
+
 // This relay is intentionally an ephemeral no-credential bootstrap. It proves
 // that the native Chromium renderer is talking to Kestrel's real standalone
 // Node Core without opening the Electron profile or consulting Keychain.
@@ -39,6 +55,12 @@ let coreReady = false;
 let stopping = false;
 let nextRequest = 0;
 const pending = new Map();
+/** @type {Map<string, "core" | "smoke">} */
+const pendingBrowserBackend = new Map();
+/** @type {string | undefined} */
+let smokeIsolatedSessionId;
+/** @type {string | undefined} */
+let smokeVisibleTabId;
 
 function write(message) {
 	process.stdout.write(JSON.stringify(message) + "\n");
@@ -49,6 +71,55 @@ function failPending(error) {
 		write({ type: "response", id, response: { ok: false, error } });
 	}
 	pending.clear();
+	for (const [requestId, destination] of pendingBrowserBackend) {
+		if (destination === "core" && core.connected) {
+			core.send({
+				type: "browser-backend-response",
+				requestId,
+				ok: false,
+				error,
+			});
+		}
+	}
+	pendingBrowserBackend.clear();
+}
+
+function forwardBrowserBackendRequest(requestId, request, destination) {
+	pendingBrowserBackend.set(requestId, destination);
+	write({
+		type: "browser-backend-request",
+		requestId,
+		request,
+	});
+}
+
+function beginSmokeBrowserBackend() {
+	if (smokeIsolatedAutomation) {
+		let origin = "https://example.com";
+		try {
+			if (smokeIsolatedAutomationUrl) {
+				origin = new URL(smokeIsolatedAutomationUrl).origin;
+			}
+		} catch {
+			origin = "https://example.com";
+		}
+		forwardBrowserBackendRequest(
+			"smoke-isolated-create",
+			{ operation: "create", allowedOrigins: [origin] },
+			"smoke",
+		);
+		return;
+	}
+	if (!smokeBrowserBackend) return;
+	const createId = "smoke-browser-backend-create";
+	forwardBrowserBackendRequest(
+		createId,
+		{
+			operation: "visible-create",
+			...(smokeBrowserBackendUrl ? { input: smokeBrowserBackendUrl } : {}),
+		},
+		"smoke",
+	);
 }
 
 async function shutdown(exitCode = 0) {
@@ -75,6 +146,7 @@ core.on("message", (message) => {
 	if (message.type === "ready") {
 		coreReady = true;
 		write({ type: "ready" });
+		beginSmokeBrowserBackend();
 		return;
 	}
 	if (message.type === "start-error") {
@@ -89,15 +161,13 @@ core.on("message", (message) => {
 		return;
 	}
 	if (message.type === "browser-backend-request" && message.requestId) {
-		// Browser automation remains deliberately fail-closed until CEF's
-		// dedicated Chromium browser runtime owns this backend.
-		core.send({
-			type: "browser-backend-response",
-			requestId: message.requestId,
-			ok: false,
-			error:
-				"Native Chromium browser automation is not migrated yet.",
-		});
+		// Forward to the native CEF host. The host owns visible tabs and answers
+		// through stdin; unsupported operations fail at the host, not here.
+		forwardBrowserBackendRequest(
+			message.requestId,
+			message.request,
+			"core",
+		);
 		return;
 	}
 	if (message.type === "runtime-event" || message.type === "agent-stream") {
@@ -149,6 +219,417 @@ lines.on("line", (line) => {
 	}
 	if (message?.type === "shutdown") {
 		void shutdown(0);
+		return;
+	}
+	if (
+		message?.type === "browser-backend-response" &&
+		typeof message.requestId === "string"
+	) {
+		const destination = pendingBrowserBackend.get(message.requestId);
+		pendingBrowserBackend.delete(message.requestId);
+		if (!destination) return;
+		if (destination === "core") {
+			if (!core.connected) return;
+			core.send({
+				type: "browser-backend-response",
+				requestId: message.requestId,
+				ok: message.ok === true,
+				...(message.ok === true
+					? { result: message.result }
+					: {
+							error:
+								typeof message.error === "string"
+									? message.error
+									: "Native Chromium browser backend failed.",
+						}),
+			});
+			return;
+		}
+		if (message.ok !== true) {
+			write({
+				type: "smoke-event",
+				name: smokeIsolatedAutomation
+					? "isolated-automation-failed"
+					: "browser-backend-failed",
+				error:
+					typeof message.error === "string"
+						? message.error
+						: "Native Chromium browser backend smoke failed.",
+			});
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-create") {
+			smokeVisibleTabId =
+				message.result &&
+				typeof message.result === "object" &&
+				typeof message.result.tabId === "string"
+					? message.result.tabId
+					: undefined;
+			if (!smokeVisibleTabId) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible create did not return a tab id.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-browser-backend-context",
+				{ operation: "visible-context", tabId: smokeVisibleTabId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-context") {
+			const context =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			if (
+				context.trust !== "untrusted_browser" ||
+				typeof context.tabId !== "string" ||
+				typeof context.url !== "string" ||
+				!context.url.startsWith("http") ||
+				typeof context.title !== "string" ||
+				context.title.length < 1 ||
+				typeof context.visibleText !== "string" ||
+				typeof context.selectedText !== "string" ||
+				!Array.isArray(context.headings) ||
+				!Array.isArray(context.links) ||
+				!Array.isArray(context.forms) ||
+				!context.viewport ||
+				typeof context.viewport !== "object" ||
+				!Number.isInteger(Number(context.viewport.width)) ||
+				!Number.isInteger(Number(context.viewport.height)) ||
+				typeof context.capturedAt !== "string"
+			) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible context payload was invalid.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-browser-backend-snapshot",
+				{ operation: "visible-snapshot", tabId: smokeVisibleTabId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-snapshot") {
+			const snapshot =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			if (snapshot.trust !== "untrusted_browser") {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible snapshot trust was invalid.",
+				});
+				return;
+			}
+			const interactive = Array.isArray(snapshot.interactive)
+				? snapshot.interactive
+				: [];
+			const button = interactive.find(
+				(item) =>
+					item &&
+					typeof item === "object" &&
+					item.role === "button" &&
+					typeof item.ref === "string",
+			);
+			if (!button || !smokeVisibleTabId) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible snapshot had no button ref to act on.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-browser-backend-act",
+				{
+					operation: "visible-act",
+					tabId: smokeVisibleTabId,
+					action: { type: "click", target: button.ref },
+				},
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-act") {
+			if (
+				!message.result ||
+				typeof message.result !== "object" ||
+				message.result.performed !== true ||
+				!smokeVisibleTabId
+			) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible act did not report performed=true.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-browser-backend-screenshot",
+				{ operation: "visible-screenshot", tabId: smokeVisibleTabId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-screenshot") {
+			const frame =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			const width = Number(frame.width);
+			const height = Number(frame.height);
+			const pngTag =
+				frame.png && typeof frame.png === "object"
+					? frame.png.__kestrel_binary_base64__
+					: undefined;
+			if (
+				!Number.isInteger(width) ||
+				!Number.isInteger(height) ||
+				width < 1 ||
+				height < 1 ||
+				frame.trust !== "untrusted_browser" ||
+				typeof pngTag !== "string" ||
+				!pngTag.startsWith("iVBOR")
+			) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible screenshot frame was invalid.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-browser-backend-tabs",
+				{ operation: "visible-tabs" },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-tabs") {
+			const tabs = Array.isArray(message.result) ? message.result : [];
+			write({
+				type: "smoke-event",
+				name: "browser-backend-ok",
+				tabCount: tabs.length,
+			});
+			return;
+		}
+		if (message.requestId === "smoke-isolated-create") {
+			smokeIsolatedSessionId =
+				typeof message.result === "string" ? message.result : undefined;
+			if (!smokeIsolatedSessionId || !smokeIsolatedAutomationUrl) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation create did not return a session id.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-navigate",
+				{
+					operation: "navigate",
+					sessionId: smokeIsolatedSessionId,
+					url: smokeIsolatedAutomationUrl,
+				},
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-navigate") {
+			if (!smokeIsolatedSessionId) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation session id was lost before viewport.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-viewport",
+				{
+					operation: "viewport",
+					sessionId: smokeIsolatedSessionId,
+					viewport: {
+						name: "smoke",
+						width: 800,
+						height: 600,
+						deviceScaleFactor: 1,
+					},
+				},
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-viewport") {
+			if (!smokeIsolatedSessionId) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation session id was lost before upload.",
+				});
+				return;
+			}
+			if (!smokeUploadPath) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation upload path was not configured.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-upload",
+				{
+					operation: "upload",
+					sessionId: smokeIsolatedSessionId,
+					selector: "#smoke-upload",
+					paths: [smokeUploadPath],
+				},
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-upload") {
+			if (!smokeIsolatedSessionId) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation session id was lost before snapshot.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-snapshot",
+				{ operation: "snapshot", sessionId: smokeIsolatedSessionId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-snapshot") {
+			const snapshot =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			if (typeof snapshot.url !== "string" || !snapshot.url) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation snapshot was missing a URL.",
+				});
+				return;
+			}
+			const interactive = Array.isArray(snapshot.interactive)
+				? snapshot.interactive
+				: [];
+			const button = interactive.find(
+				(item) =>
+					item &&
+					typeof item === "object" &&
+					item.role === "button" &&
+					typeof item.ref === "string",
+			);
+			if (!button) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation snapshot had no button ref to act on.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-act",
+				{
+					operation: "act",
+					sessionId: smokeIsolatedSessionId,
+					action: { type: "click", target: button.ref },
+				},
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-act") {
+			if (!smokeIsolatedSessionId) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation session id was lost before screenshot.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-screenshot",
+				{ operation: "screenshot", sessionId: smokeIsolatedSessionId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-screenshot") {
+			const frame =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			const width = Number(frame.width);
+			const height = Number(frame.height);
+			const pngTag =
+				frame.png && typeof frame.png === "object"
+					? frame.png.__kestrel_binary_base64__
+					: undefined;
+			const rgbaTag =
+				frame.rgba && typeof frame.rgba === "object"
+					? frame.rgba.__kestrel_binary_base64__
+					: undefined;
+			if (
+				!Number.isInteger(width) ||
+				!Number.isInteger(height) ||
+				width !== 800 ||
+				height !== 600 ||
+				typeof pngTag !== "string" ||
+				!pngTag.startsWith("iVBOR") ||
+				typeof rgbaTag !== "string" ||
+				rgbaTag.length < 8
+			) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error:
+						"Isolated automation screenshot frame was invalid or did not match the 800x600 viewport.",
+				});
+				return;
+			}
+			if (!smokeIsolatedSessionId) {
+				write({
+					type: "smoke-event",
+					name: "isolated-automation-failed",
+					error: "Isolated automation session id was lost before close.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
+				"smoke-isolated-close",
+				{ operation: "close", sessionId: smokeIsolatedSessionId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-close") {
+			write({ type: "smoke-event", name: "isolated-automation-ok" });
+			return;
+		}
+		write({
+			type: "smoke-event",
+			name: "browser-backend-failed",
+			error: "Unexpected native browser backend smoke step.",
+		});
 		return;
 	}
 	if (

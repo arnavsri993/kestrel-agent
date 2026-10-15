@@ -106,12 +106,15 @@ corepack pnpm test:native-chromium-core-relay
 The foreground launcher builds the app into `.tmp`, gives it one newly-created
 temporary profile, starts an ephemeral Core, and removes only that temporary
 profile after the app exits. It never reads, copies, migrates, or writes the
-installed Electron profile. Chromium runs with mock Keychain storage and its
-background account/update paths disabled, so native startup does not request
-Keychain access or launch an authentication flow. Remote pages receive no
-Kestrel bridge. Native popup adoption, durable profile/credential storage,
-permissions, downloads, extensions, and automation remain deliberately
-unmigrated or fail closed.
+installed Electron profile. Chromium defaults to mock Keychain storage and
+disables background account/update paths, so native startup does not request
+Keychain access or launch an authentication flow. Provider credentials use a
+profile-sealed store under `{isolated-profile}/secure/` (never Electron's
+Application Support path or `Kestrel Safe Storage` Keychain service). Real
+macOS Keychain / Chromium Keychain is opt-in via `--kestrel-real-keychain` /
+`KESTREL_USE_REAL_KEYCHAIN=1` and uses the separate service name
+`Kestrel Native Safe Storage` so Electron items are never silently opened.
+Remote pages receive no Kestrel bridge.
 
 `build:native-chromium-host` produces an ad-hoc-signed development bundle with
 a separate development identity. It does not call `install:mac:dev`, replace
@@ -169,20 +172,144 @@ reaching a permission dialog alone is not evidence of complete store support.
 CEF's upstream [extension management issue](https://github.com/chromiumembedded/cef/issues/3450)
 documents Chrome-style management and the remaining programmatic API boundary.
 
-The next integration step is to connect extension-capable Chrome-style user
-browsing to Kestrel's shell while keeping the privileged renderer in a separate
-extension-free security boundary. Then add explicit durable native-profile
-ownership, install/update/removal and permission tests, and the remaining
-browser/agent parity gates before any canonical-app cutover. Do not enable
-extensions globally in the current Alloy shell to shortcut this separation.
+The product-shell user-extension lane is available with
+`--kestrel-user-extensions` plus Chromium's `--load-extension=` path. In that
+mode the privileged shell uses a separate `shell-privileged` request context
+while user tabs share the default Chromium profile that receives loaded
+extensions. `corepack pnpm test:native-user-extensions` proves MV3 content
+scripts and `chrome.storage.local` on user tabs, bridge presence on the shell,
+and no content-script injection into the privileged document. This still does
+not replace `/Applications/Kestrel.app`. Next: durable native-profile ownership,
+`ChromiumExtensionRuntime` wiring to `BrowserExtensionManager`, store
+install/update/removal tests, and the remaining browser/agent parity gates
+before any canonical-app cutover.
 
 ## Next boundaries
 
-The next native-host slices are durable profile ownership without Keychain
-prompt spam, popup/adoption semantics, user-approved permission flows,
-downloads/extensions, and the remaining desktop command surface. Each needs a
-real process test and an explicit user-data boundary before the canonical app
-can move.
+Current native-host progress toward cutover:
+
+- `--kestrel-user-extensions` keeps the privileged shell extension-free while
+  user tabs share Chromium's default profile for `--load-extension`
+- `ChromiumExtensionRuntime` + file host port persist verified unpack paths for
+  startup loading (CEF 152 has no programmatic LoadExtension API)
+- `--kestrel-durable-profile` opts into persistent session cookies on the
+  isolated user-browser context and writes
+  `{isolated-profile}/browser-library.json` for bookmarks, history, downloads,
+  and site permissions (never the Electron Application Support profile)
+- Bridge commands `browser-toggle-bookmark`, `browser-remove-bookmark`,
+  `browser-clear-history`, `browser-set-site-permission`,
+  `browser-clear-site-permission`, and `browser-clear-data` mutate that library
+- `corepack pnpm test:native-durable-browser-library` proves seed → restart restore
+- CEF `DownloadHandler` captures live HTTP(S) attachments into
+  `{isolated-profile}/downloads/` and durable library metadata;
+  `browser-cancel-download` cancels in-flight items
+- `corepack pnpm test:native-download-capture` proves live capture + restart
+- Native Core relay forwards `browser-backend-request` to CEF instead of
+  fail-closing; host owns `visible-tabs` / `visible-create` /
+  `visible-navigate` / `visible-select` / `visible-close` /
+  `visible-history` / `visible-downloads`
+- `corepack pnpm test:native-browser-backend` proves relay→CEF visible-tab
+  automation
+- Isolated automation sessions use hidden Alloy BrowserViews on the shared
+  user-browser request context (separate CEF profiles currently fail on CEF
+  152), enforce a per-session origin allowlist, and answer `create` /
+  `navigate` / `snapshot` / `act` / `close` (async navigate completes on the
+  target load; snapshot/act use CEF DevTools `Runtime.evaluate` with fixed
+  host scripts and `data-kestrel-ref` targets)
+- `corepack pnpm test:native-isolated-automation` proves
+  create→navigate→snapshot→act(click)→close through the Core relay
+- Profile-sealed credential bootstrap answers `credential-list` /
+  `credential-set` / `credential-remove` without Keychain prompts;
+  `corepack pnpm test:native-credential-bootstrap` proves set→has→remove
+- HTTP(S) `window.open` popups are adopted as sibling Alloy user tabs
+- `corepack pnpm package:mac:native` / `install:mac:native` package the CEF host;
+  side-by-side install is the default (`Kestrel Native.app`); canonical Dock
+  replacement requires `KESTREL_INSTALL_NATIVE_CANONICAL=1`
+
+`pnpm-workspace.yaml` `auditConfig.ignoreGhsas` ignores `GHSA-hp3w-g68c-fv3c`
+(`sprintf-js` via `electron-builder`) until Electron packaging is removed: no
+`>=1.1.4` release exists on npm yet.
+
+## Electron → native profile transfer design
+
+Native Chromium must never silently open, merge, or overwrite the Electron
+Application Support profile. Transfer is an explicit, bounded product step:
+
+1. **Dry-run first.** A plan lists categories (settings JSON that is
+   non-secret, bookmarks/history/downloads from `browser-library.json` if
+   present, instruction files such as `AGENTS.md`, agent/skill trees) with
+   source and target paths, checksums, and conflict status. Nothing is written
+   until the person approves apply.
+2. **No credential copy by default.** Keychain items, OAuth tokens, cookies,
+   provider login caches, and the encrypted desktop database stay on the
+   source profile. Re-auth or a future dedicated Keychain migration path is
+   required; raw-copying encrypted DB + Keychain into another profile is
+   rejected.
+3. **No overwrite by default.** Conflicts skip unless the person opts into
+   overwrite for that category. Sources are preserved; apply is reversible via
+   a recoverable backup of the target before mutation.
+4. **Containment.** Reject symlinks, binaries, oversized files, and paths that
+   escape the declared source/target roots. Changed checksums abort apply.
+5. **Side-by-side until cutover.** Shipping default remains Electron. Native
+   installs as `Kestrel Native.app` (or an explicit isolated profile root).
+   Canonical Dock replacement (`KESTREL_INSTALL_NATIVE_CANONICAL=1`) is gated
+   on retirement acceptance with live evidence — not on transfer design alone.
+
+Until a tested Kestrel-to-Kestrel restore CLI exists for the Chromium durable
+profile, operators keep both profiles untouched and use the supported
+reference-product migration CLI only for OpenClaw/Hermes/Codex/Claude Code
+imports into an isolated target.
+
+### Developer ID signing + notarization (native Chromium)
+
+Ad-hoc `package:mac:native` is enough for local smokes and side-by-side
+`Kestrel Native.app`. Canonical Dock cutover requires a release-signed,
+notarized package:
+
+```sh
+# Requires a Developer ID Application identity in the keychain.
+export KESTREL_NATIVE_CODESIGN_IDENTITY="Developer ID Application: Example Inc (TEAMID)"
+
+# Optional readiness check (identity + notary credentials only):
+corepack pnpm check:native-signing -- --readiness
+
+corepack pnpm package:mac:native:release
+
+# Notary credentials: NOTARYTOOL_PROFILE / KESTREL_NOTARY_PROFILE, or
+# APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID
+corepack pnpm notarize:mac:native
+
+# Full evidence gate (codesign + stapler + spctl):
+corepack pnpm check:native-signing
+```
+
+Until `check:native-signing` exits 0 against
+`release/native-mac-arm64/Kestrel.app`, Electron packaging remains required and
+`KESTREL_INSTALL_NATIVE_CANONICAL=1` must not be used for Dock replacement.
+
+The living Electron↔CEF feature matrix is
+`docs/electron-chromium-parity-matrix.json`. Refresh it when adding backend
+operations or host capabilities, then run:
+
+```sh
+corepack pnpm check:electron-chromium-parity
+corepack pnpm check:electron-retirement
+```
+
+Still required before retiring Electron:
+
+- Real Keychain path on a Developer ID–signed durable build (no ad-hoc prompt
+  spam); profile-sealed bootstrap is proven for development/cutover
+- Remaining CEF backend gaps called out in the matrix:
+  `visible-autofill`, `auth-handoff`, `desktop-screenshot`, `desktop-act`
+  (visible context/snapshot/act/screenshot are proven via
+  `test:native-browser-backend`)
+- Native single-instance / durable-profile lock and `kestrel://` deep-link
+  handlers (Electron still owns these in `apps/desktop/src/main`)
+- Production Developer ID signing + notarization (`check:native-signing`)
+- Retargeted desktop smokes against the native binary on a durable profile
+- Live acceptance of the profile transfer design above on a real dual-profile
+  dry-run/apply (not silent merge)
 
 ## Chromium preview host
 

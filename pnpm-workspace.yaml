@@ -16,12 +16,15 @@ allowBuilds:
 overrides:
   "@xmldom/xmldom": 0.8.15
   brace-expansion: 5.0.12
+  compression: 1.8.2
   esbuild: 0.28.1
+  http-cache-semantics: 4.3.0
   js-yaml: 4.3.2
   fast-uri: 3.1.8
   nanoid: 3.3.18
   postcss: 8.5.23
-  sharp: 0.35.4
+  sharp: 0.35.5
+  source-map-js: 1.2.2
   undici@6.27.0: 6.28.1
   undici@7.28.0: 7.29.1
   "fast-uri@>=3.0.0 <3.1.6": "3.1.8"
@@ -41,3 +44,8 @@ minimumReleaseAgeExclude:
   - next@16.3.8
   - react-dom@19.2.8
   - react@19.2.8
+
+# electron-builder → sprintf-js: no npm release >=1.1.4 yet. Drop when Electron packaging retires.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-hp3w-g68c-fv3c

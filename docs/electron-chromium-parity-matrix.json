@@ -1,0 +1,334 @@
+{
+  "$schemaNote": "Machine-readable Electron vs native Chromium desktop parity. Status values: electron_only | proven | partial | missing | n_a. Evidence cites repo paths; live evidence still required for retirement.",
+  "generatedForBranchBase": "codex/chromium-desktop-cutover@12fa84ec",
+  "canonicalShippingRuntime": "electron",
+  "cutoverLane": "apps/native-chromium-host (CEF) via KESTREL_DESKTOP_RUNTIME=chromium",
+  "previewLane": "apps/chromium-host (Playwright) — not a shipping cutover candidate",
+  "entrypoints": {
+    "devDefault": {
+      "script": "dev:desktop",
+      "file": "scripts/dev-desktop-runtime.mjs",
+      "electron": "dev:desktop:electron → @kestrel/desktop",
+      "chromium": "dev:desktop:chromium / KESTREL_DESKTOP_RUNTIME=chromium → scripts/dev-native-chromium-host.mjs --user-extensions --durable"
+    },
+    "canonicalInstall": {
+      "electron": "install:mac:dev → /Applications/Kestrel.app",
+      "chromiumSideBySide": "install:mac:native → /Applications/Kestrel Native.app",
+      "chromiumCanonical": "KESTREL_INSTALL_NATIVE_CANONICAL=1 (gated; must not replace Dock until retirement acceptance)"
+    },
+    "retirementGate": "check:electron-retirement → scripts/check-electron-retirement-gates.mjs"
+  },
+  "areas": [
+    {
+      "id": "window-shell",
+      "name": "Desktop window / privileged shell",
+      "electron": "proven",
+      "chromium": "proven",
+      "evidence": [
+        "apps/desktop/src/main/index.ts (BrowserWindow + preload)",
+        "apps/native-chromium-host/src/kestrel_native_host.mm (CEF shell + message router)",
+        "test:native-chromium-host"
+      ],
+      "notes": "Native uses CefMessageRouter; Electron uses contextBridge preload."
+    },
+    {
+      "id": "preload-bridge",
+      "name": "Renderer bridge (request + event channels)",
+      "electron": "proven",
+      "chromium": "partial",
+      "evidence": [
+        "apps/desktop/src/preload/index.ts:39-130",
+        "apps/native-chromium-host/src/kestrel_native_host.mm:1185-1193"
+      ],
+      "notes": "Channel allowlist matches Electron. Many renderer request types fall through to Core or fail-close when host-owned (password/payment/autofill UI, tab preview, computer use)."
+    },
+    {
+      "id": "single-instance",
+      "name": "Single-instance lock",
+      "electron": "proven",
+      "chromium": "missing",
+      "evidence": [
+        "apps/desktop/src/main/single-instance.ts:13-18",
+        "apps/desktop/src/main/index.ts:1544-1552"
+      ],
+      "blocker": true,
+      "notes": "Native CEF host has no requestSingleInstanceLock equivalent; multiple durable instances can race the same profile."
+    },
+    {
+      "id": "deep-links-protocol",
+      "name": "kestrel:// deep links + http(s) default handlers",
+      "electron": "proven",
+      "chromium": "missing",
+      "evidence": [
+        "apps/desktop/src/main/index.ts:1635-1636",
+        "apps/desktop/src/main/index.ts:5013",
+        "apps/native-chromium-host/src/kestrel_native_host.mm:5579-5594"
+      ],
+      "blocker": true,
+      "notes": "Native AppDelegate only handles terminate; no open-url / CFBundleURLTypes product path for cutover."
+    },
+    {
+      "id": "credentials",
+      "name": "Provider credential bootstrap",
+      "electron": "proven",
+      "chromium": "partial",
+      "evidence": [
+        "apps/desktop/src/main/credential-broker.ts",
+        "apps/native-chromium-host/src/kestrel_native_credentials.mm",
+        "test:native-credential-bootstrap"
+      ],
+      "blocker": true,
+      "notes": "Profile-sealed store proven. Real Keychain (Kestrel Native Safe Storage) is opt-in and not Developer-ID proven without prompt spam."
+    },
+    {
+      "id": "password-autofill",
+      "name": "Password manager / autofill / payment vault UI",
+      "electron": "proven",
+      "chromium": "missing",
+      "evidence": [
+        "apps/desktop/src/main/user-browser-service.ts (password preload channels)",
+        "apps/desktop/src/preload/user-browser.ts"
+      ],
+      "blocker": true,
+      "notes": "Native publishes password-prompt/payment-prompt channels but does not own vault/autofill host requests. visible-autofill backend op is unmigrated."
+    },
+    {
+      "id": "agent-core-sidecar",
+      "name": "Standalone Node Agent Core",
+      "electron": "proven",
+      "chromium": "proven",
+      "evidence": [
+        "docs/desktop-runtime-migration.md (Agent Core supervision)",
+        "test:agent-core-sidecar",
+        "test:native-chromium-core-relay"
+      ]
+    },
+    {
+      "id": "user-browser-tabs",
+      "name": "Visible user browser tabs (create/nav/select/close/history)",
+      "electron": "proven",
+      "chromium": "proven",
+      "evidence": [
+        "apps/native-chromium-host/src/kestrel_native_host.mm (browser-* bridge + visible-*)",
+        "test:native-browser-backend"
+      ]
+    },
+    {
+      "id": "visible-context",
+      "name": "visible-context page extraction",
+      "electron": "proven",
+      "chromium": "proven",
+      "evidence": [
+        "apps/desktop/src/main/user-browser-service.ts:5225-5226",
+        "apps/native-chromium-host/src/kestrel_native_host.mm:3905-3914",
+        "test:native-browser-backend (KESTREL_NATIVE_CHROMIUM_VISIBLE_CONTEXT_OK)"
+      ]
+    },
+    {
+      "id": "visible-snapshot-act-screenshot",
+      "name": "visible-snapshot / visible-act / visible-screenshot",
+      "electron": "proven",
+      "chromium": "proven",
+      "evidence": [
+        "apps/native-chromium-host/src/kestrel_native_host.mm:3894-3940",
+        "test:native-browser-backend"
+      ]
+    },
+    {
+      "id": "visible-autofill",
+      "name": "visible-autofill agent credential handoff",
+      "electron": "proven",
+      "chromium": "missing",
+      "evidence": [
+        "apps/core-service/src/browser-backend-wire.ts:195-199",
+        "apps/desktop/src/main/user-browser-service.ts:5241-5242"
+      ],
+      "blocker": true,
+      "notes": "Credential-sensitive; intentional fail-close on CEF until a sealed native path exists."
+    },
+    {
+      "id": "isolated-automation",
+      "name": "Isolated automation sessions (create/navigate/snapshot/act/viewport/upload/close)",
+      "electron": "proven",
+      "chromium": "partial",
+      "evidence": [
+        "apps/native-chromium-host/src/kestrel_native_host.mm:3944-4070",
+        "test:native-isolated-automation"
+      ],
+      "notes": "create/navigate/snapshot/act/screenshot/viewport/upload/close proven. auth-handoff missing. Separate CEF profiles currently fail on CEF 152 (shared request context)."
+    },
+    {
+      "id": "auth-handoff",
+      "name": "Isolated auth-handoff",
+      "electron": "proven",
+      "chromium": "missing",
+      "evidence": [
+        "apps/core-service/src/browser-backend-wire.ts:135-140",
+        "apps/desktop/src/main/electron-browser-service.ts:200"
+      ],
+      "blocker": true
+    },
+    {
+      "id": "computer-use",
+      "name": "Whole-desktop computer use (desktop-screenshot / desktop-act)",
+      "electron": "proven",
+      "chromium": "missing",
+      "evidence": [
+        "apps/desktop/src/main/electron-browser-service.ts:211-213",
+        "apps/core-service/src/browser-backend-wire.ts:155-161"
+      ],
+      "blocker": true,
+      "notes": "macOS Accessibility / CGEvent path is Electron-hosted today."
+    },
+    {
+      "id": "downloads",
+      "name": "Download capture + durable library",
+      "electron": "proven",
+      "chromium": "proven",
+      "evidence": [
+        "test:native-download-capture",
+        "test:native-durable-browser-library"
+      ]
+    },
+    {
+      "id": "extensions",
+      "name": "MV3 user extensions",
+      "electron": "partial",
+      "chromium": "partial",
+      "evidence": [
+        "test:native-extensions",
+        "test:native-user-extensions",
+        "apps/desktop/src/main/chromium-extension-runtime.ts"
+      ],
+      "blocker": true,
+      "notes": "Workbench + --load-extension lane proven. Store install/update/removal and full BrowserExtensionManager wiring remain open. CEF 152 has no programmatic LoadExtension API."
+    },
+    {
+      "id": "tray-notifications-updater",
+      "name": "Tray, notifications, auto-updater",
+      "electron": "proven",
+      "chromium": "missing",
+      "evidence": ["apps/desktop/src/main/index.ts (Tray, Notification, electron-updater)"],
+      "blocker": true
+    },
+    {
+      "id": "packaging-signing",
+      "name": "Packaging / Developer ID / notarization",
+      "electron": "proven",
+      "chromium": "partial",
+      "evidence": [
+        "package:mac:dev / install:mac:dev",
+        "package:mac:native / package:mac:native:release",
+        "check:native-signing"
+      ],
+      "blocker": true,
+      "notes": "Ad-hoc native package exists. Release signing + notarization gate is not accepted with live evidence."
+    },
+    {
+      "id": "profile-transfer",
+      "name": "Electron → native profile transfer",
+      "electron": "n_a",
+      "chromium": "partial",
+      "evidence": ["docs/desktop-runtime-migration.md (Electron → native profile transfer design)"],
+      "blocker": true,
+      "notes": "Design documented; no tested Kestrel-to-Kestrel restore CLI for Chromium durable profiles."
+    },
+    {
+      "id": "canonical-dock-verification",
+      "name": "On-screen verification of canonical Dock app on Chromium",
+      "electron": "proven",
+      "chromium": "missing",
+      "evidence": ["scripts/check-electron-retirement-gates.mjs:24"],
+      "blocker": true
+    }
+  ],
+  "browserBackendOperations": {
+    "create": { "electron": "proven", "chromium": "proven", "smoke": "test:native-isolated-automation" },
+    "navigate": { "electron": "proven", "chromium": "proven", "smoke": "test:native-isolated-automation" },
+    "act": { "electron": "proven", "chromium": "proven", "smoke": "test:native-isolated-automation" },
+    "snapshot": { "electron": "proven", "chromium": "proven", "smoke": "test:native-isolated-automation" },
+    "screenshot": { "electron": "proven", "chromium": "proven", "smoke": "test:native-isolated-automation" },
+    "viewport": { "electron": "proven", "chromium": "proven", "smoke": "test:native-isolated-automation" },
+    "diagnostics": { "electron": "proven", "chromium": "partial", "notes": "CEF returns empty diagnostics array" },
+    "auth-handoff": { "electron": "proven", "chromium": "missing" },
+    "upload": { "electron": "proven", "chromium": "proven", "smoke": "test:native-isolated-automation" },
+    "downloads": { "electron": "proven", "chromium": "partial", "notes": "CEF returns empty session downloads list" },
+    "desktop-screenshot": { "electron": "proven", "chromium": "missing" },
+    "desktop-act": { "electron": "proven", "chromium": "missing" },
+    "close": { "electron": "proven", "chromium": "proven", "smoke": "test:native-isolated-automation" },
+    "visible-tabs": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" },
+    "visible-context": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" },
+    "visible-snapshot": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" },
+    "visible-screenshot": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" },
+    "visible-history": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" },
+    "visible-downloads": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" },
+    "visible-autofill": { "electron": "proven", "chromium": "missing" },
+    "visible-act": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" },
+    "visible-navigate": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" },
+    "visible-create": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" },
+    "visible-close": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" },
+    "visible-select": { "electron": "proven", "chromium": "proven", "smoke": "test:native-browser-backend" }
+  },
+  "prioritizedRemediation": [
+    {
+      "priority": 1,
+      "id": "single-instance",
+      "action": "Add native single-instance / durable-profile lock with smoke opt-out (mirror KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES).",
+      "risk": "medium"
+    },
+    {
+      "priority": 2,
+      "id": "computer-use",
+      "action": "Port desktop-screenshot/desktop-act off Electron BrowserWindow into a host-neutral macOS accessibility module shared by Electron and CEF.",
+      "risk": "high"
+    },
+    {
+      "priority": 3,
+      "id": "password-autofill",
+      "action": "Implement sealed native password/payment vault + visible-autofill without opening Electron Keychain items.",
+      "risk": "high"
+    },
+    {
+      "priority": 4,
+      "id": "deep-links-protocol",
+      "action": "Register kestrel:// (and optional http/https) URL handlers on the native bundle; deliver through existing deep-link bridge channel.",
+      "risk": "medium"
+    },
+    {
+      "priority": 5,
+      "id": "auth-handoff",
+      "action": "Migrate isolated auth-handoff visibility control onto CEF automation sessions.",
+      "risk": "medium"
+    },
+    {
+      "priority": 6,
+      "id": "packaging-signing",
+      "action": "Produce Developer ID–signed notarized native package and pass check:native-signing with evidence.",
+      "risk": "high"
+    },
+    {
+      "priority": 7,
+      "id": "profile-transfer",
+      "action": "Ship dry-run/apply Electron→native transfer CLI with no credential copy by default; live dual-profile acceptance.",
+      "risk": "high"
+    },
+    {
+      "priority": 8,
+      "id": "extensions",
+      "action": "Wire ChromiumExtensionRuntime into shipping BrowserExtensionManager; store install/update/removal smokes.",
+      "risk": "high"
+    },
+    {
+      "priority": 9,
+      "id": "tray-notifications-updater",
+      "action": "Native tray/notification/updater story or explicit product decision to drop/defer those surfaces on CEF.",
+      "risk": "medium"
+    },
+    {
+      "priority": 10,
+      "id": "canonical-dock-verification",
+      "action": "Side-by-side then gated canonical Dock install with on-screen Chromium proof; keep Electron until then.",
+      "risk": "high"
+    }
+  ]
+}
