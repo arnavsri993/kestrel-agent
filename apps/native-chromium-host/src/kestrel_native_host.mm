@@ -1865,36 +1865,124 @@ class KestrelClient : public CefClient,
       return false;
     }
     const std::string type = action->GetString("type").ToString();
-    if (type != "click") {
+    std::string expression;
+    if (type == "click" || type == "type" || type == "select") {
+      if (action->GetType("target") != VTYPE_STRING) {
+        if (error) *error = "Native visible-act target was invalid.";
+        return false;
+      }
+      const std::string target = action->GetString("target").ToString();
+      if (target.size() > 2000 || target.find('"') != std::string::npos ||
+          target.find('\\') != std::string::npos) {
+        if (error) *error = "Native visible-act target was invalid.";
+        return false;
+      }
+      const auto ref = tab->element_refs.find(target);
+      if (ref == tab->element_refs.end()) {
+        if (error) *error = "Browser target ref is stale. Take a new snapshot.";
+        return false;
+      }
+      if (type == "click") {
+        if (ref->second.tag != "BUTTON" && ref->second.tag != "A") {
+          if (error) *error = "Only inspected buttons and links can be clicked.";
+          return false;
+        }
+        expression =
+            std::string("(() => { const el = document.querySelector('[data-"
+                        "kestrel-ref=\"") +
+            target +
+            "\"]'); if (!el || !el.isConnected) throw new Error('stale'); "
+            "if (el.tagName !== 'BUTTON' && el.tagName !== 'A') throw new "
+            "Error('role'); el.click(); return JSON.stringify({ok:true}); })()";
+      } else if (type == "type") {
+        if (action->GetType("text") != VTYPE_STRING) {
+          if (error) *error = "Native visible type text was invalid.";
+          return false;
+        }
+        if (ref->second.input_type == "password" ||
+            ref->second.role != "textbox") {
+          if (error) *error = "This target does not support typing.";
+          return false;
+        }
+        const std::string text = action->GetString("text").ToString();
+        if (text.size() > 20000) {
+          if (error) *error = "Native visible type text was too long.";
+          return false;
+        }
+        const std::string text_json = json_string_literal(text);
+        expression =
+            std::string("(() => { const el = document.querySelector('[data-"
+                        "kestrel-ref=\"") +
+            target +
+            "\"]'); if (!el || !el.isConnected) throw new Error('stale'); "
+            "if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') throw new "
+            "Error('role'); if ((el.getAttribute('type')||'').toLowerCase()==="
+            "'password') throw new Error('sensitive'); "
+            "const proto = el.tagName === 'TEXTAREA' ? "
+            "HTMLTextAreaElement.prototype : HTMLInputElement.prototype; "
+            "const setter = Object.getOwnPropertyDescriptor(proto,'value').set; "
+            "setter.call(el, " +
+            text_json +
+            "); el.dispatchEvent(new Event('input',{bubbles:true})); "
+            "el.dispatchEvent(new Event('change',{bubbles:true})); "
+            "return JSON.stringify({ok: el.value === " +
+            text_json + "}); })()";
+      } else {
+        if (action->GetType("value") != VTYPE_STRING ||
+            ref->second.tag != "SELECT") {
+          if (error) *error = "Native visible select was invalid.";
+          return false;
+        }
+        const std::string value = action->GetString("value").ToString();
+        if (value.size() > 2000) {
+          if (error) *error = "Native visible select value was too long.";
+          return false;
+        }
+        const std::string value_json = json_string_literal(value);
+        expression =
+            std::string("(() => { const el = document.querySelector('[data-"
+                        "kestrel-ref=\"") +
+            target +
+            "\"]'); if (!(el instanceof HTMLSelectElement)) throw new "
+            "Error('stale'); el.value = " +
+            value_json +
+            "; el.dispatchEvent(new Event('input',{bubbles:true})); "
+            "el.dispatchEvent(new Event('change',{bubbles:true})); "
+            "return JSON.stringify({ok: el.value === " +
+            value_json + "}); })()";
+      }
+    } else if (type == "key") {
+      if (action->GetType("key") != VTYPE_STRING) {
+        if (error) *error = "Native visible key was invalid.";
+        return false;
+      }
+      const std::string key = action->GetString("key").ToString();
+      if (key.size() > 20 || key.find('"') != std::string::npos) {
+        if (error) *error = "Native visible key was invalid.";
+        return false;
+      }
+      expression =
+          std::string("(() => { const key = \"") + key +
+          "\"; const el = document.activeElement || document.body; "
+          "el.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true})); "
+          "el.dispatchEvent(new KeyboardEvent('keyup',{key,bubbles:true})); "
+          "return JSON.stringify({ok:true}); })()";
+    } else if (type == "scroll") {
+      const int x = action->GetType("x") == VTYPE_INT ? action->GetInt("x")
+                    : action->GetType("x") == VTYPE_DOUBLE
+                        ? static_cast<int>(action->GetDouble("x"))
+                        : 0;
+      const int y = action->GetType("y") == VTYPE_INT ? action->GetInt("y")
+                    : action->GetType("y") == VTYPE_DOUBLE
+                        ? static_cast<int>(action->GetDouble("y"))
+                        : 0;
+      expression = "(() => { window.scrollBy(" + std::to_string(x) + ", " +
+                   std::to_string(y) +
+                   "); return JSON.stringify({ok:true}); })()";
+    } else {
       if (error) *error = "Native visible-act type is unsupported.";
       return false;
     }
-    if (action->GetType("target") != VTYPE_STRING) {
-      if (error) *error = "Native visible-act target was invalid.";
-      return false;
-    }
-    const std::string target = action->GetString("target").ToString();
-    if (target.size() > 2000 || target.find('"') != std::string::npos ||
-        target.find('\\') != std::string::npos) {
-      if (error) *error = "Native visible-act target was invalid.";
-      return false;
-    }
-    const auto ref = tab->element_refs.find(target);
-    if (ref == tab->element_refs.end()) {
-      if (error) *error = "Browser target ref is stale. Take a new snapshot.";
-      return false;
-    }
-    if (ref->second.tag != "BUTTON" && ref->second.tag != "A") {
-      if (error) *error = "Only inspected buttons and links can be clicked.";
-      return false;
-    }
-    const std::string expression =
-        std::string("(() => { const el = document.querySelector('[data-"
-                    "kestrel-ref=\"") +
-        target +
-        "\"]'); if (!el || !el.isConnected) throw new Error('stale'); "
-        "if (el.tagName !== 'BUTTON' && el.tagName !== 'A') throw new "
-        "Error('role'); el.click(); return JSON.stringify({ok:true}); })()";
     tab->pending_act_request_id = request_id;
     CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
     params->SetString("expression", expression);
