@@ -22,7 +22,7 @@
     "test:native-credential-bootstrap": "node scripts/smoke-native-credential-bootstrap.mjs",
     "dev:native-chromium-host": "node scripts/dev-native-chromium-host.mjs",
     "dev:desktop": "node scripts/dev-desktop-runtime.mjs",
-    "dev:desktop:electron": "pnpm --filter @kestrel/desktop dev",
+    "dev:desktop:electron": "KESTREL_DESKTOP_RUNTIME=electron node scripts/dev-desktop-runtime.mjs",
     "dev:desktop:chromium": "KESTREL_DESKTOP_RUNTIME=chromium node scripts/dev-desktop-runtime.mjs",
     "check:electron-retirement": "node scripts/check-electron-retirement-gates.mjs",
     "retire:electron": "node scripts/retire-electron.mjs",

@@ -22,7 +22,7 @@ When you finish a coding task — or even a small fix — complete **all** of th
 4. **Sync local Kestrel** with GitHub:
    - `git pull --ff-only` on the branch you pushed
    - Stop any existing desktop watcher (`pkill -f "electron-vite dev"` and/or native Chromium host as needed)
-   - Start one fresh desktop watcher (`corepack pnpm dev:desktop` for Electron default, or `dev:desktop:chromium` for the CEF lane)
+   - Start one fresh desktop watcher (`corepack pnpm dev:desktop` for Chromium/CEF default on Apple Silicon; `dev:desktop:electron` only for the legacy Electron lane)
 5. **Verify** the running app matches the branch you pushed. Renderer HMR alone is not enough after main-process, preload, credential, native host, or Electron startup changes.
 
 If any step fails, say so and fix it — do not mark the task complete.

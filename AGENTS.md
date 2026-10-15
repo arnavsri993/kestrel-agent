@@ -135,12 +135,13 @@ explicit approval for apply.
   OpenCode agent configuration; it prints configuration and does not silently
   write secrets.
 - For desktop work, run only one desktop watcher. Default
-  `corepack pnpm dev:desktop` is still Electron (`dev:desktop:electron`). The
-  Chromium cutover lane is `corepack pnpm dev:desktop:chromium` or
-  `KESTREL_DESKTOP_RUNTIME=chromium`. Native CEF never opens the Electron
-  profile. Electron packaging stays until
-  `corepack pnpm check:electron-retirement` is accepted with live parity
-  evidence; do not delete Electron because a Chromium host binary exists.
+  `corepack pnpm dev:desktop` is the native Chromium/CEF host (Apple Silicon
+  macOS). Use `corepack pnpm dev:desktop:electron` or
+  `KESTREL_DESKTOP_RUNTIME=electron` for the legacy Electron watcher. Native
+  CEF never opens the Electron profile. Electron packages stay in-tree until
+  `corepack pnpm check:electron-retirement` is accepted and
+  `corepack pnpm retire:electron` removes them; do not claim 0% Electron from
+  a side-by-side Native.app alone.
 - For onboarding or setup changes, run `corepack pnpm test:desktop-setup`.
 - For a broad repository change, run `corepack pnpm verify` and distinguish
   focused passes from unrelated baseline or remote-CI failures.

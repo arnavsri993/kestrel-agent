@@ -74,14 +74,14 @@ writeFileSync(
 );
 
 for (const path of runtimeSelectors) {
-	let source = readFileSync(path, "utf8");
-	source = source.replace(
-		/process\.env\.KESTREL_DESKTOP_RUNTIME \?\? "electron"/g,
-		'process.env.KESTREL_DESKTOP_RUNTIME ?? "chromium"',
-	);
-	writeFileSync(path, source, "utf8");
+	const source = readFileSync(path, "utf8");
+	if (!source.includes('KESTREL_DESKTOP_RUNTIME ?? "chromium"')) {
+		throw new Error(
+			`${path} must already default to chromium before Electron packages are removed.`,
+		);
+	}
 }
 
 console.log(
-	"Electron packages removed from apps/desktop/package.json and desktop runtime selectors now default to chromium. Run corepack pnpm install, rebuild native packaging, and verify the Dock app before claiming 0% Electron.",
+	"Electron packages removed from apps/desktop/package.json. Runtime selectors already default to chromium. Run corepack pnpm install, rebuild native packaging, and verify the Dock app before claiming 0% Electron.",
 );

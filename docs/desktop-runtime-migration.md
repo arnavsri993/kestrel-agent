@@ -298,10 +298,12 @@ corepack pnpm cli -- migration apply \
 4. **Containment.** Reject symlinks, binaries, oversized files, and paths that
    escape the declared source/target roots. Changed checksums abort apply.
    Download metadata never claims `canReveal` for Electron filesystem paths.
-5. **Side-by-side until cutover.** Shipping default remains Electron. Native
-   installs as `Kestrel Native.app` (or an explicit isolated profile root).
-   Canonical Dock replacement (`KESTREL_INSTALL_NATIVE_CANONICAL=1`) is gated
-   on retirement acceptance with live evidence — not on transfer alone.
+5. **Side-by-side until cutover.** Development defaults to the Chromium/CEF
+   host (`KESTREL_DESKTOP_RUNTIME` defaults to `chromium`). Electron remains
+   in-tree via `KESTREL_DESKTOP_RUNTIME=electron` / `dev:desktop:electron` and
+   still owns the historical Dock app until retirement. Native installs as
+   `Kestrel Native.app` unless `KESTREL_INSTALL_NATIVE_CANONICAL=1` replaces
+   `/Applications/Kestrel.app` after retirement acceptance.
 
 Unit coverage lives in
 `packages/agent-core/src/electron-native-profile-transfer.test.ts`. Live
