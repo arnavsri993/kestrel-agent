@@ -126,6 +126,7 @@ try {
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_SNAPSHOT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_ACT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_SCREENSHOT_OK/);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_CONTEXT_OK/);
 	assert.doesNotMatch(
 		output,
 		/Native Chromium browser automation is not migrated yet/,
@@ -145,7 +146,7 @@ try {
 		"visible-act through the Core relay must click the inspected button.",
 	);
 	console.log(
-		"Native Chromium browser backend: Core relay visible-create→snapshot→act→screenshot→tabs on CEF.",
+		"Native Chromium browser backend: Core relay visible-create→snapshot→act→screenshot→context→tabs on CEF.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");

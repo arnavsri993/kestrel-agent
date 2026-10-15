@@ -649,6 +649,70 @@ constexpr char kAutomationScreenshotGuardScript[] = R"JS(
 })()
 )JS";
 
+// Mirrors Electron pageContextWhilePinned: readable untrusted page summary with
+// sensitive-field redaction. Returns JSON.stringify(...) for Runtime.evaluate.
+constexpr char kVisiblePageContextScript[] = R"JS(
+(() => {
+  const limit = (value, maximum) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, maximum);
+  const visible = (node) => {
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 &&
+      rect.right >= 0 && rect.top <= innerHeight && rect.left <= innerWidth &&
+      style.visibility !== 'hidden' && style.display !== 'none' &&
+      Number(style.opacity) > 0;
+  };
+  const sensitiveField = (node) => {
+    if (!(node instanceof HTMLInputElement)) return false;
+    const hint = [node.type, node.autocomplete, node.name, node.id,
+      node.getAttribute('aria-label'), node.placeholder]
+      .filter(Boolean).join(' ').toLowerCase();
+    return node.type === 'password' ||
+      /(?:current|new)[-_ ]password|one[-_ ]time[-_ ]code|\botp\b|recovery[-_ ]code|verification[-_ ]code|security[-_ ]code|\b(?:cvv|cvc)\b|api[-_ ]key|access[-_ ]token|private[-_ ]key/.test(hint);
+  };
+  const nodes = Array.from(document.querySelectorAll(
+    'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table,article,main')).filter(visible);
+  const visibleText = nodes.map((node) => limit(node.innerText || node.textContent, 4000))
+    .filter(Boolean).join('\n').slice(0, 40000);
+  const links = Array.from(document.querySelectorAll('a[href]')).filter(visible)
+    .slice(0, 100).map((node) => ({
+      text: limit(node.innerText || node.textContent, 500),
+      url: String(node.href || '').slice(0, 8192)
+    })).filter((link) => /^https?:\/\//i.test(link.url));
+  const forms = Array.from(document.querySelectorAll(
+    'input,textarea,select,button')).filter(visible).slice(0, 60).map((node) =>
+    sensitiveField(node)
+      ? { label: 'Sensitive field', type: 'sensitive', name: '' }
+      : {
+          label: limit(node.labels?.[0]?.innerText ||
+            node.getAttribute('aria-label') || node.placeholder ||
+            node.innerText, 500),
+          type: limit(node.type || node.tagName.toLowerCase(), 100),
+          name: limit(node.name || node.id, 500)
+        });
+  const active = document.activeElement;
+  return JSON.stringify({
+    description: limit(document.querySelector('meta[name="description"]')?.content, 2000),
+    selectedText: active instanceof Element && sensitiveField(active)
+      ? ''
+      : limit(getSelection()?.toString(), 20000),
+    visibleText: visibleText || limit(document.body?.innerText, 40000),
+    headings: Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'))
+      .filter(visible).slice(0, 60)
+      .map((node) => limit(node.innerText || node.textContent, 500))
+      .filter(Boolean),
+    links,
+    forms,
+    viewport: {
+      width: Math.max(1, Math.round(innerWidth)),
+      height: Math.max(1, Math.round(innerHeight)),
+      scrollX,
+      scrollY
+    }
+  });
+})()
+)JS";
+
 class KestrelAutomationDevToolsObserver final
     : public CefDevToolsMessageObserver {
  public:
@@ -980,6 +1044,7 @@ struct NativeUserBrowserTab {
   int viewport_height = 720;
   std::string pending_screenshot_request_id;
   std::string pending_snapshot_request_id;
+  std::string pending_context_request_id;
   std::string pending_act_request_id;
   std::map<std::string, NativeAutomationElementRef> element_refs;
   std::map<int, std::string> pending_devtools_kinds;
@@ -1688,6 +1753,7 @@ class KestrelClient : public CefClient,
   bool VisibleTabBusy(const NativeUserBrowserTab& tab) const {
     return !tab.pending_screenshot_request_id.empty() ||
            !tab.pending_snapshot_request_id.empty() ||
+           !tab.pending_context_request_id.empty() ||
            !tab.pending_act_request_id.empty();
   }
 
@@ -1736,6 +1802,45 @@ class KestrelClient : public CefClient,
     tab->pending_snapshot_request_id = request_id;
     if (!StartPendingVisibleSnapshot(*tab, error)) {
       tab->pending_snapshot_request_id.clear();
+      return false;
+    }
+    return true;
+  }
+
+  bool StartPendingVisibleContext(NativeUserBrowserTab& tab,
+                                  std::string* error) {
+    if (tab.pending_context_request_id.empty()) return true;
+    for (const auto& entry : tab.pending_devtools_kinds) {
+      if (entry.second == "visible-context") return true;
+    }
+    CefRefPtr<CefBrowser> browser = tab.view ? tab.view->GetBrowser() : nullptr;
+    if (!browser || !browser->IsValid() || tab.loading) return true;
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetString("expression", kVisiblePageContextScript);
+    params->SetBool("returnByValue", true);
+    params->SetBool("awaitPromise", false);
+    return CallUserBrowserDevToolsMethod(tab, "Runtime.evaluate", params,
+                                         "visible-context", error);
+  }
+
+  bool BeginVisibleContext(const std::string& tab_id,
+                           const std::string& request_id,
+                           std::string* error) {
+    NativeUserBrowserTab* tab = ResolveVisibleTab(tab_id, error);
+    if (!tab) return false;
+    if (tab->url.empty() || tab->url.rfind("kestrel:", 0) == 0 ||
+        tab->url == "about:blank") {
+      if (error)
+        *error = "The selected tab does not have a readable web page.";
+      return false;
+    }
+    if (VisibleTabBusy(*tab)) {
+      if (error) *error = "Native Chromium browser tab is busy.";
+      return false;
+    }
+    tab->pending_context_request_id = request_id;
+    if (!StartPendingVisibleContext(*tab, error)) {
+      tab->pending_context_request_id.clear();
       return false;
     }
     return true;
@@ -1905,6 +2010,94 @@ class KestrelClient : public CefClient,
       CefRefPtr<CefValue> root = CefValue::Create();
       root->SetDictionary(response);
       std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_SNAPSHOT_OK id=" << tab_id
+                << std::endl;
+      SendBrowserBackendResponse(
+          request_id, true,
+          CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
+      return;
+    }
+
+    if (kind == "visible-context") {
+      const std::string request_id = tab->pending_context_request_id;
+      tab->pending_context_request_id.clear();
+      if (request_id.empty()) return;
+      std::string value_json;
+      if (!extract_evaluate_value(&value_json)) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible context failed.");
+        return;
+      }
+      CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+      if (!payload || payload->GetType() != VTYPE_DICTIONARY) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible context was invalid.");
+        return;
+      }
+      CefRefPtr<CefDictionaryValue> body = payload->GetDictionary();
+      if (tab->url.empty() ||
+          (tab->url.rfind("http://", 0) != 0 &&
+           tab->url.rfind("https://", 0) != 0)) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "The selected tab does not have a safe readable URL.");
+        return;
+      }
+      CefRefPtr<CefDictionaryValue> response = CefDictionaryValue::Create();
+      response->SetString("tabId", tab->id);
+      response->SetString("url", tab->url);
+      response->SetString(
+          "title",
+          renderer_safe_text(tab->title.empty() ? "Untitled" : tab->title, 500));
+      if (body->GetType("description") == VTYPE_STRING) {
+        response->SetString(
+            "description",
+            renderer_safe_text(body->GetString("description").ToString(), 2000,
+                               ""));
+      }
+      response->SetString(
+          "selectedText",
+          body->GetType("selectedText") == VTYPE_STRING
+              ? renderer_safe_text(body->GetString("selectedText").ToString(),
+                                   20000, "")
+              : "");
+      response->SetString(
+          "visibleText",
+          body->GetType("visibleText") == VTYPE_STRING
+              ? renderer_safe_text(body->GetString("visibleText").ToString(),
+                                   40000, "")
+              : "");
+      if (body->HasKey("headings")) {
+        response->SetValue("headings", body->GetValue("headings"));
+      } else {
+        response->SetList("headings", CefListValue::Create());
+      }
+      if (body->HasKey("links")) {
+        response->SetValue("links", body->GetValue("links"));
+      } else {
+        response->SetList("links", CefListValue::Create());
+      }
+      if (body->HasKey("forms")) {
+        response->SetValue("forms", body->GetValue("forms"));
+      } else {
+        response->SetList("forms", CefListValue::Create());
+      }
+      if (body->GetType("viewport") == VTYPE_DICTIONARY) {
+        response->SetDictionary("viewport", body->GetDictionary("viewport"));
+      } else {
+        CefRefPtr<CefDictionaryValue> viewport = CefDictionaryValue::Create();
+        viewport->SetInt("width", tab->viewport_width);
+        viewport->SetInt("height", tab->viewport_height);
+        viewport->SetDouble("scrollX", 0);
+        viewport->SetDouble("scrollY", 0);
+        response->SetDictionary("viewport", viewport);
+      }
+      response->SetString("capturedAt", iso8601_now());
+      response->SetString("trust", "untrusted_browser");
+      CefRefPtr<CefValue> root = CefValue::Create();
+      root->SetDictionary(response);
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_CONTEXT_OK id=" << tab_id
                 << std::endl;
       SendBrowserBackendResponse(
           request_id, true,
@@ -2276,6 +2469,11 @@ class KestrelClient : public CefClient,
       SendBrowserBackendResponse(tab.pending_snapshot_request_id, false, "",
                                  "Native Chromium browser tab closed.");
       tab.pending_snapshot_request_id.clear();
+    }
+    if (!tab.pending_context_request_id.empty()) {
+      SendBrowserBackendResponse(tab.pending_context_request_id, false, "",
+                                 "Native Chromium browser tab closed.");
+      tab.pending_context_request_id.clear();
     }
     if (!tab.pending_act_request_id.empty()) {
       SendBrowserBackendResponse(tab.pending_act_request_id, false, "",
@@ -2676,6 +2874,16 @@ class KestrelClient : public CefClient,
         SendBrowserBackendResponse(
             request_id, false, "",
             error.empty() ? "Native Chromium visible snapshot failed." : error);
+      }
+    }
+    if (tab && !tab->pending_context_request_id.empty()) {
+      std::string error;
+      if (!StartPendingVisibleContext(*tab, &error)) {
+        const std::string request_id = tab->pending_context_request_id;
+        tab->pending_context_request_id.clear();
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            error.empty() ? "Native Chromium visible context failed." : error);
       }
     }
     if (tab && !tab->pending_screenshot_request_id.empty()) {
@@ -3627,6 +3835,23 @@ class KestrelClient : public CefClient,
       if (!BeginVisibleSnapshot(tab_id, request_id, &error)) {
         SendBrowserBackendResponse(request_id, false, "", error);
       }
+      return;
+    }
+    if (operation == "visible-context") {
+      std::string tab_id;
+      if (request->HasKey("tabId") && request->GetType("tabId") == VTYPE_STRING) {
+        tab_id = request->GetString("tabId").ToString();
+      }
+      std::string error;
+      if (!BeginVisibleContext(tab_id, request_id, &error)) {
+        SendBrowserBackendResponse(request_id, false, "", error);
+      }
+      return;
+    }
+    if (operation == "visible-autofill") {
+      SendBrowserBackendResponse(
+          request_id, false, "",
+          "Native Chromium visible-autofill is not migrated yet.");
       return;
     }
     if (operation == "visible-act") {

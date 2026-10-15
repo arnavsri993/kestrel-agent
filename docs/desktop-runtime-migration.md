@@ -234,9 +234,9 @@ Current native-host progress toward cutover:
 - Native Core relay forwards `browser-backend-request` to CEF instead of
   fail-closing; host owns `visible-tabs` / `visible-create` /
   `visible-navigate` / `visible-select` / `visible-close` /
-  `visible-history` / `visible-downloads`
+  `visible-history` / `visible-downloads` / `visible-context`
 - `corepack pnpm test:native-browser-backend` proves relay→CEF visible-tab
-  automation
+  automation including `visible-context`
 - Isolated automation sessions use hidden Alloy BrowserViews on the shared
   user-browser request context (separate CEF profiles currently fail on CEF
   152), enforce a per-session origin allowlist, and answer `create` /
@@ -341,8 +341,9 @@ Still required before retiring Electron:
 - Real Keychain path on a Developer ID–signed durable build (no ad-hoc prompt
   spam); profile-sealed bootstrap is proven for development/cutover
 - Remaining desktop command surface beyond isolated
-  act/screenshot/viewport/upload and visible snapshot/act/screenshot
-  (visible-context / autofill parity, etc.) on CEF
+  act/screenshot/viewport/upload and visible
+  snapshot/act/screenshot/context (visible-autofill parity and broader
+  act types still pending) on CEF
 - Production Developer ID signing + notarization (`check:native-signing`)
 - Retargeted desktop smokes against the native binary on a durable profile
 - Live acceptance of `kestrel-electron` transfer on a real dual-profile

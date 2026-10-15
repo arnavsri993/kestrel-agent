@@ -371,6 +371,36 @@ lines.on("line", (line) => {
 				return;
 			}
 			forwardBrowserBackendRequest(
+				"smoke-browser-backend-context",
+				{ operation: "visible-context", tabId: smokeVisibleTabId },
+				"smoke",
+			);
+			return;
+		}
+		if (message.requestId === "smoke-browser-backend-context") {
+			const context =
+				message.result && typeof message.result === "object"
+					? message.result
+					: {};
+			if (
+				context.trust !== "untrusted_browser" ||
+				typeof context.tabId !== "string" ||
+				typeof context.url !== "string" ||
+				typeof context.visibleText !== "string" ||
+				!Array.isArray(context.headings) ||
+				!Array.isArray(context.links) ||
+				!Array.isArray(context.forms) ||
+				!context.viewport ||
+				typeof context.viewport !== "object"
+			) {
+				write({
+					type: "smoke-event",
+					name: "browser-backend-failed",
+					error: "Visible context payload was invalid.",
+				});
+				return;
+			}
+			forwardBrowserBackendRequest(
 				"smoke-browser-backend-tabs",
 				{ operation: "visible-tabs" },
 				"smoke",
