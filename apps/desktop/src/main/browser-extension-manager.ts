@@ -23,6 +23,7 @@ import {
 	analyzeExtensionCompatibility,
 	compatibilityWithRuntime,
 	emptyRuntimeVerification,
+	type ExtensionCompatibilityRuntimeBackend,
 } from "./extension-compatibility";
 import type { ExtensionRuntime } from "./extension-runtime";
 
@@ -364,7 +365,7 @@ async function confirmServiceWorkerStartup(
 					() =>
 						reject(
 							new Error(
-								"Electron could not start this extension's background service worker. The extension may rely on Chrome APIs that Kestrel does not support.",
+								"Kestrel could not start this extension's background service worker. The extension may rely on Chrome APIs that Kestrel does not support.",
 							),
 						),
 					EXTENSION_STARTUP_TIMEOUT_MS,
@@ -373,7 +374,7 @@ async function confirmServiceWorkerStartup(
 		]);
 	} catch (cause) {
 		throw new Error(
-			"Electron could not start this extension's background service worker. The extension may rely on Chrome APIs that Kestrel does not support.",
+			"Kestrel could not start this extension's background service worker. The extension may rely on Chrome APIs that Kestrel does not support.",
 			{ cause },
 		);
 	} finally {
@@ -737,6 +738,7 @@ export class BrowserExtensionManager {
 	private readonly extensionsDir: string;
 	private readonly metadataPath: string;
 	private readonly allowLocalExtensions: boolean;
+	private readonly runtimeBackend: ExtensionCompatibilityRuntimeBackend;
 	private readonly loadedFromRegistry = new Set<string>();
 	private readonly pendingInspections = new Map<string, PendingInspection>();
 	private extensions: Map<string, StoredExtension> = new Map();
@@ -745,14 +747,24 @@ export class BrowserExtensionManager {
 
 	constructor(
 		baseStorageDir: string,
-		options: { allowLocalExtensions?: boolean } = {},
+		options: {
+			allowLocalExtensions?: boolean;
+			runtimeBackend?: ExtensionCompatibilityRuntimeBackend;
+		} = {},
 	) {
 		this.extensionsDir = join(baseStorageDir, "browser-extensions");
 		this.metadataPath = join(this.extensionsDir, "extensions.json");
 		this.allowLocalExtensions = options.allowLocalExtensions === true;
+		this.runtimeBackend = options.runtimeBackend ?? "electron";
 		mkdirSync(this.extensionsDir, { recursive: true, mode: 0o700 });
 		this.removeExpiredInspectionDirectories();
 		this.loadRegistry();
+	}
+
+	private analyzePackage(directory: string): ExtensionCompatibilityReport {
+		return analyzeExtensionCompatibility(directory, {
+			runtimeBackend: this.runtimeBackend,
+		});
 	}
 
 	private serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -873,7 +885,7 @@ export class BrowserExtensionManager {
 			extractCrxOrZip(verifiedCrx.archive, stagingDir);
 			injectVerifiedManifestKey(stagingDir, verifiedCrx.publicKey);
 			const manifest = readExtensionManifest(stagingDir, id);
-			const compatibility = analyzeExtensionCompatibility(stagingDir);
+			const compatibility = this.analyzePackage(stagingDir);
 			return {
 				id,
 				inspection: {
@@ -1052,7 +1064,7 @@ export class BrowserExtensionManager {
 				if (pending.stagingDir && existsSync(pending.stagingDir))
 					rmSync(pending.stagingDir, { recursive: true, force: true });
 				throw new Error(
-					"Kestrel will not install this extension because its reviewed package requires a Chrome API Electron documents as unsupported.",
+					"Kestrel will not install this extension because its reviewed package requires a Chrome API that Kestrel documents as unsupported.",
 				);
 			}
 			const existing = this.extensions.get(pending.id);
@@ -1157,7 +1169,7 @@ export class BrowserExtensionManager {
 				source: "unpacked",
 				path: resolvedPath,
 				installedAt: new Date().toISOString(),
-				compatibility: analyzeExtensionCompatibility(resolvedPath),
+				compatibility: this.analyzePackage(resolvedPath),
 			};
 			if (runtime) await this.loadLocalExtension(runtime, resolvedPath);
 			this.extensions.set(id, record);
@@ -1192,7 +1204,7 @@ export class BrowserExtensionManager {
 					source: "file",
 					path: targetDir,
 					installedAt: new Date().toISOString(),
-					compatibility: analyzeExtensionCompatibility(targetDir),
+					compatibility: this.analyzePackage(targetDir),
 				};
 				if (runtime) await this.loadLocalExtension(runtime, targetDir);
 				this.extensions.set(id, record);
@@ -1252,7 +1264,7 @@ export class BrowserExtensionManager {
 			try {
 				await runtime.removeExtension(id);
 			} catch {
-				// A reload should also recover if Electron had already unloaded it.
+				// A reload should also recover if the runtime had already unloaded it.
 			}
 			try {
 				const manifest = readExtensionManifest(extension.path, extension.id);

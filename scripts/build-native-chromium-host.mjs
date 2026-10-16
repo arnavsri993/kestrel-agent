@@ -122,6 +122,10 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			join(nativeHostRoot, "resources", "native-core-relay.mjs"),
 			join(paths.resources, "native-core-relay.mjs"),
 		);
+		await copyFile(
+			join(nativeHostRoot, "resources", "native-core-profile.mjs"),
+			join(paths.resources, "native-core-profile.mjs"),
+		);
 		run("/usr/bin/ditto", [
 			"--rsrc",
 			"--extattr",
@@ -173,7 +177,11 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-framework",
 			"Cocoa",
 			"-framework",
+			"ImageIO",
+			"-framework",
 			"IOSurface",
+			"-framework",
+			"Security",
 			"-Wl,-search_paths_first",
 			"-Wl,-ObjC",
 			"-Wl,-pie",
@@ -185,6 +193,8 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-F",
 			paths.frameworks,
 			join(nativeHostRoot, "src", "kestrel_native_host.mm"),
+			join(nativeHostRoot, "src", "kestrel_native_credentials.mm"),
+			join(nativeHostRoot, "src", "kestrel_durable_browser_library.cc"),
 			join(nativeHostRoot, "src", "kestrel_chromium_app.cc"),
 			"-o",
 			paths.executable,

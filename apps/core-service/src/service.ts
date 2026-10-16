@@ -38,6 +38,7 @@ import {
 } from "@kestrel/database";
 import { CoreRequestSchema } from "@kestrel/shared-types";
 import type { CoreParentPort } from "./transport";
+import { normalizeBrowserPageContext } from "./browser-page-context";
 
 export function startCoreService(port: CoreParentPort): void {
 	let core: AgentCore | undefined;
@@ -168,11 +169,11 @@ export function startCoreService(port: CoreParentPort): void {
 		},
 		visibleTabs: (signal) =>
 			browserRequest({ operation: "visible-tabs" }, signal),
-		visibleContext: (tabId, signal) =>
-			browserRequest(
+		visibleContext: async (tabId, signal) =>
+			normalizeBrowserPageContext(await browserRequest(
 				{ operation: "visible-context", ...(tabId ? { tabId } : {}) },
 				signal,
-			),
+			)),
 		visibleSnapshot: (tabId, signal) =>
 			browserRequest(
 				{ operation: "visible-snapshot", ...(tabId ? { tabId } : {}) },
