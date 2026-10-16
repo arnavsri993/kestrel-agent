@@ -144,6 +144,10 @@ try {
 
 	assert.equal(await shellPage.evaluate(() => typeof window.kestrel), "object");
 	await shellPage.waitForFunction(() => (document.getElementById("root")?.childElementCount ?? 0) > 0);
+	for (let attempt = 0; attempt < 150 && !output.includes("KESTREL_NATIVE_CHROMIUM_CORE_SNAPSHOT_OK"); attempt++) {
+		assert.equal(child.exitCode, null, output);
+		await delay(100);
+	}
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_CORE_SNAPSHOT_OK/, "The real renderer must receive a Core snapshot.");
 	assert.equal(
 		await shellPage.evaluate(() => document.documentElement.dataset.kestrelExtensionProbe || ""),
