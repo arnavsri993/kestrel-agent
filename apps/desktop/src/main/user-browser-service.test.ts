@@ -270,7 +270,7 @@ function createService(options: {
   const window = {
     getContentSize: vi.fn(() => [300, 200]),
     isDestroyed: vi.fn(() => false),
-    webContents: { startDrag: vi.fn() },
+    webContents: { startDrag: vi.fn(), focus: vi.fn() },
     contentView: {
       children,
       addChildView: vi.fn((view: unknown) => children.push(view)),
@@ -2085,6 +2085,45 @@ describe("UserBrowserService", () => {
     await service.setContentBounds({ x: 500, y: 500, width: 100, height: 100 }, true);
     expect(view.bounds).toEqual({ x: 10, y: 0, width: 290, height: 200 });
     expect(view.visible).toBe(false);
+  });
+
+  it("resizes an attached page without taking keyboard focus or reattaching it", async () => {
+    const { service, window } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    await service.setContentBounds({ x: 0, y: 0, width: 300, height: 200 }, true);
+    const view = electron.state.views[0]!;
+    const pageFocuses = view.webContents.focus.mock.calls.length;
+    const attachments = window.contentView.addChildView.mock.calls.length;
+    const detachments = window.contentView.removeChildView.mock.calls.length;
+
+    for (const y of [10, 20, 20, 0]) {
+      await service.setContentBounds({ x: 0, y, width: 300, height: 180 }, true);
+      expect(view.bounds).toEqual({ x: 0, y, width: 300, height: 180 });
+      expect(view.visible).toBe(true);
+      expect(window.contentView.children).toEqual([view]);
+    }
+
+    expect(view.webContents.focus).toHaveBeenCalledTimes(pageFocuses);
+    expect(window.webContents.focus).not.toHaveBeenCalled();
+    expect(window.contentView.addChildView).toHaveBeenCalledTimes(attachments);
+    expect(window.contentView.removeChildView).toHaveBeenCalledTimes(detachments);
+  });
+
+  it("still focuses the page when restoring it or explicitly selecting its tab", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const view = electron.state.views[0]!;
+    await service.setContentBounds({ x: 0, y: 0, width: 300, height: 200 }, true);
+    await service.setContentBounds({ x: 0, y: 0, width: 300, height: 200 }, false);
+    view.webContents.focus.mockClear();
+
+    await service.setContentBounds({ x: 0, y: 0, width: 300, height: 200 }, true);
+    expect(view.webContents.focus).toHaveBeenCalledOnce();
+    view.webContents.focus.mockClear();
+    await service.selectTab(tab.id);
+    expect(view.webContents.focus).toHaveBeenCalledOnce();
   });
 
   it("captures the active page before releasing its native view for a menu", async () => {

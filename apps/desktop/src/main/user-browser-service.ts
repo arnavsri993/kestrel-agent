@@ -2360,8 +2360,9 @@ export class UserBrowserService {
 		);
 		this.contentBounds = { x, y, width, height };
 		this.contentVisible = visible && width >= 160 && height >= 120;
-		await this.syncActiveView();
-		if (seq !== this.contentBoundsSeq) await this.syncActiveView();
+		await this.syncActiveView({ preserveFocus: true });
+		if (seq !== this.contentBoundsSeq)
+			await this.syncActiveView({ preserveFocus: true });
 		return pagePreview;
 	}
 
@@ -6569,8 +6570,8 @@ export class UserBrowserService {
 		if (commit) this.commit();
 	}
 
-	private async syncActiveView(): Promise<void> {
-		this.attachActiveWebView();
+	private async syncActiveView(options: { preserveFocus?: boolean } = {}): Promise<void> {
+		this.attachActiveWebView(options);
 	}
 
 	private revealActiveWebContent(): void {
@@ -6586,16 +6587,29 @@ export class UserBrowserService {
 		this.contentVisible = true;
 	}
 
-	private attachActiveWebView(): void {
+	private attachActiveWebView({ preserveFocus = false }: { preserveFocus?: boolean } = {}): void {
 		if (this.disposed || this.window.isDestroyed()) return;
+		const tab = this.state.tabs.find(
+			(candidate) => candidate.id === this.state.activeTabId,
+		);
+		const activeView = tab && this.views.get(tab.id)?.view;
+		if (
+			preserveFocus && this.contentVisible && tab?.url &&
+			!tab.error && !tab.blockedNavigation &&
+			!isKestrelAppPageUrl(tab.url) && activeView &&
+			liveWebContents(activeView.webContents) &&
+			this.window.contentView.children.includes(activeView)
+		) {
+			// Geometry updates must not reclaim keyboard input from browser chrome.
+			// Keep the same native view attached, including during Find's reflow.
+			activeView.setBounds(this.contentBounds);
+			return;
+		}
 		for (const { view } of this.views.values()) {
 			if (this.window.contentView.children.includes(view))
 				this.window.contentView.removeChildView(view);
 			view.setVisible(false);
 		}
-		const tab = this.state.tabs.find(
-			(candidate) => candidate.id === this.state.activeTabId,
-		);
 		if (
 			!this.contentVisible ||
 			!tab ||
