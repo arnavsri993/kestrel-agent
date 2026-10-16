@@ -199,6 +199,8 @@ profile. The privileged request context registers its own bundled-resource
 handler: global scheme registration alone cannot serve the app in that separate
 context. The smoke checks a mounted React root and a real Core snapshot while
 retaining the extension-injection and bridge-isolation checks.
+The app renderer and user web tabs explicitly enable CEF's platform
+accessibility tree; hidden automation views keep their separate behavior.
 
 ## Next boundaries
 

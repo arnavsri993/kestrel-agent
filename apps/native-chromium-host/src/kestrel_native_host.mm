@@ -913,6 +913,7 @@ class KestrelUserBrowserClient final : public CefClient,
   }
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+    if (!automation_mode_) browser->GetHost()->SetAccessibilityState(STATE_ENABLED);
     if (on_created_) on_created_(tab_id_, browser);
   }
 
@@ -1319,6 +1320,9 @@ class KestrelClient : public CefClient,
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     browser_ = browser;
+    // CEF disables platform accessibility by default. Expose the app's real
+    // semantics to macOS assistive technologies, as the Electron host does.
+    browser->GetHost()->SetAccessibilityState(STATE_ENABLED);
   }
 
   bool DoClose(CefRefPtr<CefBrowser> browser) override {
