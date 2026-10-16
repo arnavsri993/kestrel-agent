@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "include/cef_command_line.h"
+#include "include/cef_parser.h"
 #include "include/cef_scheme.h"
 #include "include/cef_v8.h"
 
@@ -18,30 +19,36 @@ bool readable_manifest(const std::string& extension_path) {
 }
 
 // Controlled store written by ChromiumExtensionRuntime's file port. Keep this
-// parser intentionally narrow so the C++ CEF app stays free of Objective-C.
+// format versioned and bounded; extension paths can contain JSON escapes.
 std::vector<std::string> persisted_user_extension_paths(
     const std::string& profile_root) {
   if (profile_root.empty()) return {};
   const std::string store_path =
       profile_root + "/browser-extensions/chromium-load-paths.json";
-  std::ifstream input(store_path);
+  std::ifstream input(store_path, std::ios::binary | std::ios::ate);
   if (!input) return {};
+  if (input.tellg() < 0 || input.tellg() > 1024 * 1024) return {};
+  input.seekg(0);
   std::string contents((std::istreambuf_iterator<char>(input)),
                        std::istreambuf_iterator<char>());
+  const auto value = CefParseJSON(contents, JSON_PARSER_RFC);
+  if (!value || value->GetType() != VTYPE_DICTIONARY) return {};
+  const auto store = value->GetDictionary();
+  if (store->GetType("version") != VTYPE_INT || store->GetInt("version") != 1 ||
+      store->GetType("extensions") != VTYPE_LIST) return {};
+  const auto extensions = store->GetList("extensions");
+  if (extensions->GetSize() > 128) return {};
   std::vector<std::string> paths;
-  constexpr char key[] = "\"path\"";
-  size_t cursor = 0;
-  while ((cursor = contents.find(key, cursor)) != std::string::npos) {
-    cursor += sizeof(key) - 1;
-    const size_t colon = contents.find(':', cursor);
-    if (colon == std::string::npos) break;
-    const size_t open = contents.find('"', colon + 1);
-    if (open == std::string::npos) break;
-    const size_t close = contents.find('"', open + 1);
-    if (close == std::string::npos) break;
-    const std::string path = contents.substr(open + 1, close - open - 1);
-    cursor = close + 1;
-    if (path.empty() || path.find("..") != std::string::npos) continue;
+  for (size_t index = 0; index < extensions->GetSize(); ++index) {
+    if (extensions->GetType(index) != VTYPE_DICTIONARY) continue;
+    const auto extension = extensions->GetDictionary(index);
+    if (extension->GetType("path") != VTYPE_STRING) continue;
+    const std::string path = extension->GetString("path").ToString();
+    // Chromium's startup switch is comma-separated. Never interpret a stored
+    // path as an additional extension argument.
+    if (path.empty() || path.front() != '/' ||
+        path.find('\0') != std::string::npos ||
+        path.find(',') != std::string::npos) continue;
     if (!readable_manifest(path)) continue;
     paths.push_back(path);
   }
@@ -169,10 +176,12 @@ CefMessageRouterConfig KestrelBridgeRouterConfig() {
 KestrelChromiumApp::KestrelChromiumApp(
     BrowserContextInitialized on_context_initialized,
     bool extension_workbench,
-    bool user_extensions_enabled)
+    bool user_extensions_enabled,
+    std::string isolated_profile_root)
     : on_context_initialized_(std::move(on_context_initialized)),
       extension_workbench_(extension_workbench),
-      user_extensions_enabled_(user_extensions_enabled) {}
+      user_extensions_enabled_(user_extensions_enabled),
+      isolated_profile_root_(std::move(isolated_profile_root)) {}
 
 void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
@@ -202,18 +211,19 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
       // BrowserExtensionManager persists verified unpack paths through the
       // ChromiumExtensionRuntime file port. Apply them with Chromium's startup
       // --load-extension switch because CEF 152 has no LoadExtension API.
-      const std::string profile_root =
-          command_line->GetSwitchValue("kestrel-cache-path").ToString();
+      // The host accepts --kestrel-cache-path <path>. Chromium only reads
+      // --switch=value through GetSwitchValue, so use the already validated
+      // profile root instead of reparsing that separate argument here.
       const std::vector<std::string> persisted =
-          persisted_user_extension_paths(profile_root);
+          persisted_user_extension_paths(isolated_profile_root_);
       if (!persisted.empty()) {
-        std::string joined;
+        std::string joined = command_line->GetSwitchValue("load-extension").ToString();
         for (const auto& path : persisted) {
           if (!joined.empty()) joined.append(",");
           joined.append(path);
         }
-        // Chromium accepts repeated --load-extension switches, so this remains
-        // compatible with an explicit CLI fixture path used by smokes.
+        // AppendSwitchWithValue replaces the previous switch value; combine
+        // explicit test paths with persisted registrations before setting it.
         command_line->AppendSwitchWithValue("load-extension", joined);
         std::cout << "KESTREL_NATIVE_CHROMIUM_USER_EXTENSION_PATHS count="
                   << persisted.size() << std::endl;

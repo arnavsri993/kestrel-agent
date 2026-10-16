@@ -3,6 +3,7 @@
 #pragma once
 
 #include <functional>
+#include <string>
 
 #include "include/cef_app.h"
 #include "include/cef_browser_process_handler.h"
@@ -25,7 +26,8 @@ class KestrelChromiumApp final : public CefApp,
   explicit KestrelChromiumApp(
       BrowserContextInitialized on_context_initialized = {},
       bool extension_workbench = false,
-      bool user_extensions_enabled = false);
+      bool user_extensions_enabled = false,
+      std::string isolated_profile_root = {});
 
   void OnBeforeCommandLineProcessing(
       const CefString& process_type,
@@ -55,6 +57,7 @@ class KestrelChromiumApp final : public CefApp,
   BrowserContextInitialized on_context_initialized_;
   bool extension_workbench_;
   bool user_extensions_enabled_;
+  const std::string isolated_profile_root_;
   CefRefPtr<CefMessageRouterRendererSide> renderer_router_;
 
   IMPLEMENT_REFCOUNTING(KestrelChromiumApp);

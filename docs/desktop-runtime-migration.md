@@ -175,8 +175,8 @@ require the Web Store to be online.
 
 A manual check on 2026-09-21 opened the real Chrome Web Store and reached the
 native permission dialog for uBlock Origin Lite. The dialog was canceled.
-End-to-end store installation, update delivery, persisted extensions across
-app restarts, toolbar action popups, and broad extension API compatibility are
+End-to-end store installation, update delivery, toolbar action popups, and broad
+extension API compatibility are
 **not yet verified**. Store pages also displayed a “Switch to Chrome” banner;
 reaching a permission dialog alone is not evidence of complete store support.
 CEF's upstream [extension management issue](https://github.com/chromiumembedded/cef/issues/3450)
@@ -186,13 +186,21 @@ The product-shell user-extension lane is available with
 `--kestrel-user-extensions` plus Chromium's `--load-extension=` path. In that
 mode the privileged shell uses a separate `shell-privileged` request context
 while user tabs share the default Chromium profile that receives loaded
-extensions. `corepack pnpm test:native-user-extensions` proves MV3 content
-scripts and `chrome.storage.local` on user tabs, bridge presence on the shell,
-and no content-script injection into the privileged document. This still does
+extensions. `corepack pnpm test:native-user-extensions` exercises the persisted
+host-port registration, MV3 content scripts and worker messaging, storage and
+extension identity across two complete app launches, `tabs.get`, scripting,
+and actual declarative network request blocking. It checks bridge presence on
+the shell and no content-script injection into the privileged document. It
+uses a copied fixture in a path with spaces and quotes and a generated manifest
+public key. The registry ID must match Chromium's real key-derived ID, and
+neither launch passes `--load-extension`. This still does
 not replace `/Applications/Kestrel.app`. Next: durable native-profile ownership,
 `ChromiumExtensionRuntime` wiring to `BrowserExtensionManager`, store
 install/update/removal tests, and the remaining browser/agent parity gates
 before any canonical-app cutover.
+The file registration port reports readiness as `not_checked` and rejects a
+worker-start verification request: an existing startup entry alone cannot
+prove live activation. The browser smoke verifies actual worker execution.
 
 The user-extension smoke loads the real React renderer with a durable test
 profile. The privileged request context registers its own bundled-resource
@@ -201,6 +209,38 @@ context. The smoke checks a mounted React root and a real Core snapshot while
 retaining the extension-injection and bridge-isolation checks.
 The app renderer and user web tabs explicitly enable CEF's platform
 accessibility tree; hidden automation views keep their separate behavior.
+
+### Same-product and extension acceptance
+
+The existing React interface remains the visual and workflow target. Retiring
+Electron must preserve onboarding, provider sign-in, local model setup, agents,
+tools and approvals, projects/files, settings, browsing, autofill, credentials,
+and restart recovery. A mounted renderer and a responding Core do not establish
+those complete workflows.
+
+The expanded extension probe exposed an important product-lane limitation:
+`chrome.tabs.get` returns the actual Alloy user tab, but `chrome.tabs.query`
+does not enumerate it. The same query succeeds in the Chrome-style workbench.
+The current product lane therefore cannot claim full Chrome extension support.
+Do not patch extension JavaScript to fake that API. Resolve the browser runtime
+integration and retain real extension behavior while preserving Kestrel's UI.
+CEF's [runtime-style contract](https://github.com/chromiumembedded/cef/blob/708dc14/include/internal/cef_types_runtime.h)
+allows only one Chrome-style BrowserView per Chrome-style window, so switching
+each existing sibling Alloy view to Chrome style is not a valid repair.
+
+`test:native-user-extensions` writes the observed subset and remaining gaps to
+`.tmp/native-user-extension-evidence/compatibility.json`, bound to the tested
+executable's SHA-256. `corepack pnpm test:native-extension-parity` runs the same
+checks and exits nonzero until every required extension acceptance item has
+evidence. Kestrel's install/live-toggle flow, toolbar actions, Chrome Web Store
+installation and updates remain unverified. Loading an unpacked fixture or
+viewing its popup document is not proof of those flows.
+
+The retirement gate requires an explicit app candidate and runs strict extension
+acceptance against that candidate. Setting `KESTREL_ACCEPT_ELECTRON_RETIREMENT=1`
+cannot override a missing or failing extension check. Canonical installation
+still requires signing/notarization and the remaining same-product workflow
+evidence; the installed app stays in place while any required parity is missing.
 
 ## Next boundaries
 

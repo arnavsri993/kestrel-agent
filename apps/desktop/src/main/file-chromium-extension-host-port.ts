@@ -3,6 +3,7 @@ import {
 	existsSync,
 	mkdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -25,12 +26,27 @@ type StoreFile = {
 };
 
 /**
- * Chromium derives unpacked extension IDs from a path hash when no public key
- * is present. Map the first 128 SHA-256 bits onto the a-p alphabet Chrome uses.
+ * Chromium uses the manifest public key when present, or the canonical unpack
+ * path otherwise. Map the first 128 SHA-256 bits onto Chrome's a-p alphabet.
  */
-export function chromiumUnpackedExtensionId(extensionPath: string): string {
-	const normalized = resolve(extensionPath);
-	const digest = createHash("sha256").update(normalized, "utf8").digest();
+export function chromiumUnpackedExtensionId(
+	extensionPath: string,
+	manifestKey?: string,
+): string {
+	// Chromium canonicalizes the unpack directory before deriving the ID. On
+	// macOS /var and /private/var otherwise produce different registry IDs.
+	const normalized = realpathSync(resolve(extensionPath));
+	let identity = Buffer.from(normalized, "utf8");
+	if (manifestKey !== undefined) {
+		const encoded = manifestKey.replace(/\s/g, "");
+		identity = Buffer.from(encoded, "base64");
+		if (
+			!identity.length ||
+			identity.toString("base64").replace(/=+$/, "") !== encoded.replace(/=+$/, "")
+		)
+			throw new Error("Extension manifest key is not valid base64.");
+	}
+	const digest = createHash("sha256").update(identity).digest();
 	let id = "";
 	for (let index = 0; index < 16; index += 1) {
 		const value = digest[index] ?? 0;
@@ -81,7 +97,7 @@ function saveStore(storePath: string, store: StoreFile): void {
 
 /**
  * File-backed host port used by the native Chromium desktop lane. The CEF host
- * reads `load-paths.json` during command-line setup and appends Chromium's
+ * reads `chromium-load-paths.json` during command-line setup and appends Chromium's
  * `--load-extension` switch for the user-browser profile.
  */
 export function createFileChromiumExtensionHostPort(options: {
@@ -92,19 +108,14 @@ export function createFileChromiumExtensionHostPort(options: {
 		"browser-extensions",
 		"chromium-load-paths.json",
 	);
-	const loadedAtStartup = new Set<string>();
-
-	const syncStartupIds = () => {
-		for (const entry of loadStore(storePath).extensions)
-			loadedAtStartup.add(entry.id);
-	};
-	syncStartupIds();
-
 	return {
 		async loadExtension(path, loadOptions) {
-			const extensionPath = resolve(path);
+			const extensionPath = realpathSync(resolve(path));
 			const { name, version, manifest } = readManifest(extensionPath);
-			const id = chromiumUnpackedExtensionId(extensionPath);
+			const manifestKey = manifest.key;
+			if (manifestKey !== undefined && typeof manifestKey !== "string")
+				throw new Error("Extension manifest key must be a base64 public key.");
+			const id = chromiumUnpackedExtensionId(extensionPath, manifestKey);
 			const store = loadStore(storePath);
 			const next: StoredExtension = {
 				id,
@@ -126,15 +137,14 @@ export function createFileChromiumExtensionHostPort(options: {
 				path: extensionPath,
 				manifest,
 			};
-			const ready = loadedAtStartup.has(id) ? "passed" : "not_checked";
-			loadedAtStartup.add(id);
-			return { id, ready, extension };
+			// A saved startup path says nothing about live activation or worker
+			// readiness. Only a future acknowledgement from CEF can prove those.
+			return { id, ready: "not_checked", extension };
 		},
 		async removeExtension(id) {
 			const store = loadStore(storePath);
 			store.extensions = store.extensions.filter((entry) => entry.id !== id);
 			saveStore(storePath, store);
-			loadedAtStartup.delete(id);
 			if (store.extensions.length === 0 && existsSync(storePath))
 				rmSync(storePath, { force: true });
 		},
@@ -152,6 +162,7 @@ export function createFileChromiumExtensionHostPort(options: {
 		async startServiceWorker(_extensionId) {
 			// CEF 152 has no programmatic service-worker wake API. Persistence and
 			// content-script evidence come from the native smokes instead.
+			throw new Error("Native Chromium cannot verify service-worker startup through the file registration port.");
 		},
 	};
 }

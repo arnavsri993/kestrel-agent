@@ -25,8 +25,8 @@ if (!existsSync(source)) {
 }
 
 for (const [script, args] of [
-	["check-electron-retirement-gates.mjs", []],
 	["check-native-signing.mjs", [source]],
+	["check-electron-retirement-gates.mjs", [source]],
 ]) {
 	const checked = spawnSync(process.execPath, [join(root, "scripts", script), ...args], { stdio: "inherit" });
 	if (checked.status !== 0) process.exit(checked.status ?? 1);

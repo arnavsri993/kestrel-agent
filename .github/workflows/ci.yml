@@ -58,6 +58,14 @@ jobs:
           corepack pnpm test:native-core-durability
           corepack pnpm test:native-browser-backend
           corepack pnpm test:native-isolated-automation
+      - name: Upload native extension compatibility evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-extension-compatibility-${{ github.run_attempt }}
+          path: .tmp/native-user-extension-evidence/
+          if-no-files-found: warn
+          retention-days: 14
       - run: corepack pnpm test:e2e
       - run: corepack pnpm test:packaged-cli
       - run: corepack pnpm test:editors

@@ -5958,7 +5958,7 @@ int main(int argc, char* argv[]) {
         CefQuitMessageLoop();
       }
         },
-        extension_workbench, user_extensions_enabled));
+        extension_workbench, user_extensions_enabled, isolated_profile_path));
     if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
       std::cerr << "Kestrel could not initialize Chromium." << std::endl;
       return CefGetExitCode();
