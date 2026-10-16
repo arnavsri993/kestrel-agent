@@ -50,6 +50,7 @@
 
 @interface KestrelNativeCoreRelay : NSObject
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
+                     durableProfile:(BOOL)durableProfile
                         environment:(NSDictionary<NSString*, NSString*>*)environment
                         lineHandler:(void (^)(NSString* line))lineHandler
                  terminationHandler:(void (^)(NSString* error))terminationHandler;
@@ -60,6 +61,7 @@
 
 @interface KestrelNativeCoreRelay ()
 @property(nonatomic, copy) NSString* profileRoot;
+@property(nonatomic) BOOL durableProfile;
 @property(nonatomic, copy) NSDictionary<NSString*, NSString*>* environment;
 @property(nonatomic, copy) void (^lineHandler)(NSString* line);
 @property(nonatomic, copy) void (^terminationHandler)(NSString* error);
@@ -73,12 +75,14 @@
 @implementation KestrelNativeCoreRelay
 
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
+                     durableProfile:(BOOL)durableProfile
                         environment:(NSDictionary<NSString*, NSString*>*)environment
                         lineHandler:(void (^)(NSString* line))lineHandler
                  terminationHandler:(void (^)(NSString* error))terminationHandler {
   self = [super init];
   if (!self) return nil;
   _profileRoot = [profileRoot copy];
+  _durableProfile = durableProfile;
   _environment = [environment copy];
   _lineHandler = [lineHandler copy];
   _terminationHandler = [terminationHandler copy];
@@ -108,7 +112,9 @@
 
   self.task = [[NSTask alloc] init];
   self.task.executableURL = [NSURL fileURLWithPath:node];
-  self.task.arguments = @[ relay, @"--profile-root", self.profileRoot ];
+  self.task.arguments = self.durableProfile
+      ? @[ relay, @"--profile-root", self.profileRoot, @"--durable-profile" ]
+      : @[ relay, @"--profile-root", self.profileRoot ];
   if (self.environment.count > 0) {
     NSMutableDictionary* environment =
         [[[NSProcessInfo processInfo] environment] mutableCopy];
@@ -602,7 +608,10 @@ constexpr char kAutomationSnapshotScript[] = R"JS(
         style.visibility === 'collapse' || Number(style.opacity) <= 0 ||
         el.getClientRects().length === 0) continue;
     const inputType = (el.getAttribute('type') || '').toLowerCase();
-    if (inputType === 'password') continue;
+    const hint = [inputType, el.autocomplete, el.name, el.id,
+      el.getAttribute('aria-label'), el.getAttribute('placeholder')].filter(Boolean).join(' ');
+    if (inputType === 'password' ||
+        /(?:current|new)[-_ ]password|one[-_ ]time[-_ ]code|\botp\b|recovery[-_ ]code|verification[-_ ]code|security[-_ ]code|\b(?:cvv|cvc)\b|api[-_ ]key|access[-_ ]token|private[-_ ]key/i.test(hint)) continue;
     const ref = 'e' + (++index);
     el.setAttribute('data-kestrel-ref', ref);
     let role = 'button';
@@ -611,7 +620,7 @@ constexpr char kAutomationSnapshotScript[] = R"JS(
     else if (tag === 'SELECT') role = 'combobox';
     else if (tag === 'A') role = 'link';
     const name = String(
-      el.getAttribute('aria-label') || el.innerText || el.value ||
+      el.getAttribute('aria-label') || el.labels?.[0]?.innerText || el.innerText ||
       el.getAttribute('name') || el.id || tag).slice(0, 200);
     interactive.push({ ref, role, name, tag, inputType });
     children.push({ role, name, ref });
@@ -667,18 +676,36 @@ constexpr char kVisibleContextScript[] = R"JS(
       node.type, node.autocomplete, node.name, node.id,
       node.getAttribute("aria-label"), node.placeholder
     ].filter(Boolean).join(" ").toLowerCase();
-    return node instanceof HTMLInputElement && (
+    return (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) && (
       node.type === "password" ||
       /(?:current|new)[-_ ]password|one[-_ ]time[-_ ]code|\botp\b|recovery[-_ ]code|verification[-_ ]code|security[-_ ]code|\b(?:cvv|cvc)\b|api[-_ ]key|access[-_ ]token|private[-_ ]key/.test(hint)
     );
   };
-  const nodes = Array.from(document.querySelectorAll(
-    "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table,article,main")).filter(visible);
-  const visibleText = nodes
-    .map((node) => limit(node.innerText || node.textContent, 4000))
-    .filter(Boolean).join("\n").slice(0, 40000);
+  const readableText = (node) => {
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    const parts = [];
+    let length = 0;
+    let current;
+    while ((current = walker.nextNode())) {
+      const parent = current.parentElement;
+      if (!parent || parent.closest("input,textarea,select,script,style,[contenteditable]")) continue;
+      if (visible(parent)) {
+        parts.push(current.textContent);
+        length += current.textContent.length + 1;
+      }
+      if (length >= 40000) break;
+    }
+    return parts.join(" ");
+  };
+  const visibleText = limit(document.body ? readableText(document.body) : "", 40000);
   const links = Array.from(document.querySelectorAll("a[href]"))
-    .filter(visible).slice(0, 100).map((node) => ({
+    .filter((node) => {
+      try {
+        const url = new URL(node.href);
+        return visible(node) && /^https?:$/.test(url.protocol) && !url.username && !url.password;
+      } catch { return false; }
+    })
+    .slice(0, 100).map((node) => ({
       text: limit(node.innerText || node.textContent, 500),
       url: String(node.href || "").slice(0, 8192)
     }));
@@ -700,7 +727,7 @@ constexpr char kVisibleContextScript[] = R"JS(
     selectedText: active instanceof Element && sensitiveField(active)
       ? ""
       : limit(getSelection()?.toString(), 20000),
-    visibleText: visibleText || limit(document.body?.innerText, 40000),
+    visibleText,
     headings: Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6"))
       .filter(visible).slice(0, 60)
       .map((node) => limit(node.innerText || node.textContent, 500))
@@ -1024,6 +1051,7 @@ struct NativeAutomationSession {
   CefRefPtr<KestrelUserBrowserClient> client;
   CefRefPtr<CefBrowserView> view;
   CefRefPtr<CefRequestContext> context;
+  CefRefPtr<KestrelUserBrowserContextHandler> context_handler;
   CefRefPtr<CefRegistration> devtools_registration;
 };
 
@@ -1049,6 +1077,7 @@ struct NativeUserBrowserTab {
   std::string pending_snapshot_request_id;
   std::string pending_act_request_id;
   std::string pending_context_request_id;
+  std::string pending_context_url;
   std::map<std::string, NativeAutomationElementRef> element_refs;
   std::map<int, std::string> pending_devtools_kinds;
   CefRefPtr<KestrelUserBrowserClient> client;
@@ -1223,6 +1252,10 @@ class KestrelClient : public CefClient,
                   DispatchCoreRequest(request, callback);
         })) {
     client_instance = this;
+    // The raw-shell backend fixture has no React layout reporter. Give its
+    // actual user tab a visible viewport, as browser-set-content-bounds does
+    // in the product, so the smoke exercises rendered text and form metadata.
+    if (smoke_browser_backend) user_browser_view_visible_ = true;
     bridge_router_ =
         CefMessageRouterBrowserSide::Create(KestrelBridgeRouterConfig());
     if (isolated_profile_root) {
@@ -1503,9 +1536,11 @@ class KestrelClient : public CefClient,
                                                      : 0;
         std::cout << "KESTREL_NATIVE_CHROMIUM_BROWSER_BACKEND_OK tabs="
                   << tab_count << std::endl;
+        CloseBrowser();
       } else if (name == "browser-backend-failed") {
         std::cerr << "KESTREL_NATIVE_CHROMIUM_BROWSER_BACKEND_FAILED error="
                   << value->GetString("error").ToString() << std::endl;
+        CloseBrowser();
       } else if (name == "isolated-automation-ok") {
         smoke_isolated_automation_done = true;
         std::cout << "KESTREL_NATIVE_CHROMIUM_ISOLATED_AUTOMATION_OK"
@@ -1792,8 +1827,10 @@ class KestrelClient : public CefClient,
       return false;
     }
     tab->pending_context_request_id = request_id;
+    tab->pending_context_url = tab->url;
     if (!StartPendingVisibleContext(*tab, error)) {
       tab->pending_context_request_id.clear();
+      tab->pending_context_url.clear();
       return false;
     }
     return true;
@@ -1957,75 +1994,17 @@ class KestrelClient : public CefClient,
       return !value_json->empty();
     };
 
-    if (kind == "visible-snapshot") {
-      const std::string request_id = tab->pending_snapshot_request_id;
-      tab->pending_snapshot_request_id.clear();
-      if (request_id.empty()) return;
-      std::string value_json;
-      if (!extract_evaluate_value(&value_json)) {
-        SendBrowserBackendResponse(
-            request_id, false, "",
-            "Native Chromium visible snapshot failed.");
-        return;
-      }
-      CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
-      if (!payload || payload->GetType() != VTYPE_DICTIONARY) {
-        SendBrowserBackendResponse(
-            request_id, false, "",
-            "Native Chromium visible snapshot was invalid.");
-        return;
-      }
-      CefRefPtr<CefDictionaryValue> body = payload->GetDictionary();
-      tab->element_refs.clear();
-      if (body->GetType("interactive") == VTYPE_LIST) {
-        CefRefPtr<CefListValue> interactive = body->GetList("interactive");
-        for (size_t index = 0; index < interactive->GetSize(); ++index) {
-          if (interactive->GetType(index) != VTYPE_DICTIONARY) continue;
-          CefRefPtr<CefDictionaryValue> item = interactive->GetDictionary(index);
-          if (item->GetType("ref") != VTYPE_STRING) continue;
-          NativeAutomationElementRef entry;
-          entry.role = item->GetType("role") == VTYPE_STRING
-                           ? item->GetString("role").ToString()
-                           : "";
-          entry.tag = item->GetType("tag") == VTYPE_STRING
-                          ? item->GetString("tag").ToString()
-                          : "";
-          entry.input_type = item->GetType("inputType") == VTYPE_STRING
-                                 ? item->GetString("inputType").ToString()
-                                 : "";
-          tab->element_refs[item->GetString("ref").ToString()] = entry;
-          item->Remove("tag");
-          item->Remove("inputType");
-        }
-      }
-      CefRefPtr<CefDictionaryValue> response = CefDictionaryValue::Create();
-      response->SetString("url", tab->url);
-      response->SetString("title", tab->title);
-      if (body->HasKey("accessibilityTree")) {
-        response->SetValue("accessibilityTree",
-                           body->GetValue("accessibilityTree"));
-      }
-      if (body->HasKey("interactive")) {
-        response->SetValue("interactive", body->GetValue("interactive"));
-      }
-      response->SetBool("truncated", body->GetBool("truncated"));
-      response->SetString("trust", "untrusted_browser");
-      CefRefPtr<CefValue> root = CefValue::Create();
-      root->SetDictionary(response);
-      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_SNAPSHOT_OK id=" << tab_id
-                << std::endl;
-      SendBrowserBackendResponse(
-          request_id, true,
-          CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
-      return;
-    }
-
     if (kind == "visible-context") {
       const std::string request_id = tab->pending_context_request_id;
+      const std::string captured_url = tab->pending_context_url;
       tab->pending_context_request_id.clear();
+      tab->pending_context_url.clear();
       if (request_id.empty()) return;
       std::string value_json;
-      if (!extract_evaluate_value(&value_json)) {
+      CefRefPtr<CefBrowser> browser = tab->view ? tab->view->GetBrowser() : nullptr;
+      if (!browser || !browser->IsValid() || tab->loading ||
+          browser->GetMainFrame()->GetURL().ToString() != captured_url ||
+          !extract_evaluate_value(&value_json)) {
         SendBrowserBackendResponse(
             request_id, false, "",
             "Native Chromium visible context failed.");
@@ -2039,7 +2018,7 @@ class KestrelClient : public CefClient,
         return;
       }
       CefRefPtr<CefDictionaryValue> body = payload->GetDictionary();
-      const std::optional<std::string> safe_url = safe_user_browser_url(tab->url);
+      const std::optional<std::string> safe_url = safe_user_browser_url(captured_url);
       if (!safe_url) {
         SendBrowserBackendResponse(
             request_id, false, "",
@@ -2174,6 +2153,69 @@ class KestrelClient : public CefClient,
       CefRefPtr<CefValue> root = CefValue::Create();
       root->SetDictionary(response);
       std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_CONTEXT_OK id=" << tab_id
+                << std::endl;
+      SendBrowserBackendResponse(
+          request_id, true,
+          CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString(), "");
+      return;
+    }
+
+    if (kind == "visible-snapshot") {
+      const std::string request_id = tab->pending_snapshot_request_id;
+      tab->pending_snapshot_request_id.clear();
+      if (request_id.empty()) return;
+      std::string value_json;
+      if (!extract_evaluate_value(&value_json)) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible snapshot failed.");
+        return;
+      }
+      CefRefPtr<CefValue> payload = CefParseJSON(value_json, JSON_PARSER_RFC);
+      if (!payload || payload->GetType() != VTYPE_DICTIONARY) {
+        SendBrowserBackendResponse(
+            request_id, false, "",
+            "Native Chromium visible snapshot was invalid.");
+        return;
+      }
+      CefRefPtr<CefDictionaryValue> body = payload->GetDictionary();
+      tab->element_refs.clear();
+      if (body->GetType("interactive") == VTYPE_LIST) {
+        CefRefPtr<CefListValue> interactive = body->GetList("interactive");
+        for (size_t index = 0; index < interactive->GetSize(); ++index) {
+          if (interactive->GetType(index) != VTYPE_DICTIONARY) continue;
+          CefRefPtr<CefDictionaryValue> item = interactive->GetDictionary(index);
+          if (item->GetType("ref") != VTYPE_STRING) continue;
+          NativeAutomationElementRef entry;
+          entry.role = item->GetType("role") == VTYPE_STRING
+                           ? item->GetString("role").ToString()
+                           : "";
+          entry.tag = item->GetType("tag") == VTYPE_STRING
+                          ? item->GetString("tag").ToString()
+                          : "";
+          entry.input_type = item->GetType("inputType") == VTYPE_STRING
+                                 ? item->GetString("inputType").ToString()
+                                 : "";
+          tab->element_refs[item->GetString("ref").ToString()] = entry;
+          item->Remove("tag");
+          item->Remove("inputType");
+        }
+      }
+      CefRefPtr<CefDictionaryValue> response = CefDictionaryValue::Create();
+      response->SetString("url", tab->url);
+      response->SetString("title", tab->title);
+      if (body->HasKey("accessibilityTree")) {
+        response->SetValue("accessibilityTree",
+                           body->GetValue("accessibilityTree"));
+      }
+      if (body->HasKey("interactive")) {
+        response->SetValue("interactive", body->GetValue("interactive"));
+      }
+      response->SetBool("truncated", body->GetBool("truncated"));
+      response->SetString("trust", "untrusted_browser");
+      CefRefPtr<CefValue> root = CefValue::Create();
+      root->SetDictionary(response);
+      std::cout << "KESTREL_NATIVE_CHROMIUM_VISIBLE_SNAPSHOT_OK id=" << tab_id
                 << std::endl;
       SendBrowserBackendResponse(
           request_id, true,
@@ -2536,6 +2578,12 @@ class KestrelClient : public CefClient,
     if (tab.closing) return;
     tab.closing = true;
     tab.loading = false;
+    if (!tab.pending_context_request_id.empty()) {
+      SendBrowserBackendResponse(tab.pending_context_request_id, false, "",
+                                 "Native Chromium browser tab closed.");
+      tab.pending_context_request_id.clear();
+      tab.pending_context_url.clear();
+    }
     if (!tab.pending_screenshot_request_id.empty()) {
       SendBrowserBackendResponse(tab.pending_screenshot_request_id, false, "",
                                  "Native Chromium browser tab closed.");
@@ -2550,11 +2598,6 @@ class KestrelClient : public CefClient,
       SendBrowserBackendResponse(tab.pending_act_request_id, false, "",
                                  "Native Chromium browser tab closed.");
       tab.pending_act_request_id.clear();
-    }
-    if (!tab.pending_context_request_id.empty()) {
-      SendBrowserBackendResponse(tab.pending_context_request_id, false, "",
-                                 "Native Chromium browser tab closed.");
-      tab.pending_context_request_id.clear();
     }
     tab.pending_devtools_kinds.clear();
     tab.element_refs.clear();
@@ -2658,33 +2701,6 @@ class KestrelClient : public CefClient,
                         ? "Kestrel could not create the native Chromium tab."
                         : error;
         browser_creation_failed = true;
-      }
-    }
-    for (auto& [session_id, session] : automation_sessions_) {
-      (void)session_id;
-      if (session.closing || session.view) continue;
-      session.context = user_browser_context_;
-      session.context_ready = true;
-      std::string error;
-      if (!AttachAutomationBrowserView(session, &error)) {
-        if (!session.pending_navigate_request_id.empty()) {
-          SendBrowserBackendResponse(
-              session.pending_navigate_request_id, false, "",
-              error.empty()
-                  ? "Kestrel could not create the isolated browser view."
-                  : error);
-          session.pending_navigate_request_id.clear();
-          session.pending_navigate_target_url.clear();
-        }
-        session.closing = true;
-      }
-    }
-    for (auto it = automation_sessions_.begin();
-         it != automation_sessions_.end();) {
-      if (it->second.closing && !it->second.view) {
-        it = automation_sessions_.erase(it);
-      } else {
-        ++it;
       }
     }
     SyncUserBrowserViewVisibility();
@@ -2942,6 +2958,16 @@ class KestrelClient : public CefClient,
       tab->url = url;
     }
     PublishUserBrowserState();
+    if (tab && !tab->pending_context_request_id.empty()) {
+      std::string error;
+      if (!StartPendingVisibleContext(*tab, &error)) {
+        const std::string request_id = tab->pending_context_request_id;
+        tab->pending_context_request_id.clear();
+        tab->pending_context_url.clear();
+        SendBrowserBackendResponse(request_id, false, "",
+                                   error.empty() ? "Native Chromium visible context failed." : error);
+      }
+    }
     if (tab && !tab->pending_snapshot_request_id.empty()) {
       std::string error;
       if (!StartPendingVisibleSnapshot(*tab, &error)) {
@@ -2950,16 +2976,6 @@ class KestrelClient : public CefClient,
         SendBrowserBackendResponse(
             request_id, false, "",
             error.empty() ? "Native Chromium visible snapshot failed." : error);
-      }
-    }
-    if (tab && !tab->pending_context_request_id.empty()) {
-      std::string error;
-      if (!StartPendingVisibleContext(*tab, &error)) {
-        const std::string request_id = tab->pending_context_request_id;
-        tab->pending_context_request_id.clear();
-        SendBrowserBackendResponse(
-            request_id, false, "",
-            error.empty() ? "Native Chromium visible context failed." : error);
       }
     }
     if (tab && !tab->pending_screenshot_request_id.empty()) {
@@ -4132,17 +4148,12 @@ class KestrelClient : public CefClient,
         *error = "Isolated browser sessions require valid HTTP(S) origins.";
       return {};
     }
-    // Separate CefRequestContext::CreateContext profiles currently trip CEF
-    // 152 observer / profile init failures and tear down the Alloy window.
-    // Isolated sessions share the user-browser request context, stay hidden,
-    // and enforce origin allowlists per BrowserView until a durable
-    // multi-profile path is proven.
-    if (!EnsureUserBrowserContext(error)) return {};
+    // Every automation session gets a fresh in-memory Chromium context. A
+    // hidden view alone is not isolation: sharing the user context also shares
+    // account cookies, local storage, service workers and extensions.
     NativeAutomationSession session;
     session.id = "native-browser-" + native_uuid();
     session.allowed_origins = origins;
-    session.context = user_browser_context_;
-    session.context_ready = user_browser_context_ready_;
     const std::weak_ptr<bool> owner_token = native_owner_alive_;
     const std::string session_id = session.id;
     session.client = new KestrelUserBrowserClient(
@@ -4246,26 +4257,59 @@ class KestrelClient : public CefClient,
            const std::string&, int64_t, int64_t, const std::string&,
            CefRefPtr<CefDownloadItemCallback>) {},
         true, origins);
-    // Emplace before attaching so an in-flight request-context init callback
-    // can see this session. Re-read readiness after emplace to close the race
-    // where init runs between EnsureUserBrowserContext and insert.
+    // Register the owner before requesting asynchronous context initialization.
     automation_sessions_.emplace(session_id, std::move(session));
     auto stored = automation_sessions_.find(session_id);
     if (stored == automation_sessions_.end()) {
       if (error) *error = "Kestrel could not register the isolated session.";
       return {};
     }
-    stored->second.context = user_browser_context_;
-    stored->second.context_ready = user_browser_context_ready_;
-    if (stored->second.context_ready) {
-      if (!AttachAutomationBrowserView(stored->second, error)) {
-        automation_sessions_.erase(stored);
-        return {};
-      }
+    CefRequestContextSettings settings;
+    stored->second.context_handler = new KestrelUserBrowserContextHandler(
+        [this, owner_token, session_id](CefRefPtr<CefRequestContext> context) {
+          const std::shared_ptr<bool> alive = owner_token.lock();
+          if (!alive || !*alive || closing_) return;
+          auto found = automation_sessions_.find(session_id);
+          if (found == automation_sessions_.end() || found->second.closing) return;
+          if (!context || !context->GetCachePath().empty() ||
+              context->IsSharingWith(CefRequestContext::GetGlobalContext()) ||
+              (user_browser_context_ && context->IsSharingWith(user_browser_context_))) {
+            FailAutomationContext(session_id, "Isolated Chromium storage is unavailable.");
+            return;
+          }
+          for (const auto& [other_id, other] : automation_sessions_) {
+            if (other_id != session_id && other.context &&
+                context->IsSharingWith(other.context)) {
+              FailAutomationContext(session_id, "Isolated Chromium storage is unavailable.");
+              return;
+            }
+          }
+          found->second.context = context;
+          found->second.context_ready = true;
+          std::string error;
+          if (!AttachAutomationBrowserView(found->second, &error)) {
+            FailAutomationContext(session_id, error);
+          }
+        });
+    stored->second.context = CefRequestContext::CreateContext(
+        settings, stored->second.context_handler);
+    if (!stored->second.context) {
+      automation_sessions_.erase(stored);
+      if (error) *error = "Kestrel could not create isolated Chromium storage.";
+      return {};
     }
     std::cout << "KESTREL_NATIVE_CHROMIUM_AUTOMATION_SESSION_CREATED id="
               << session_id << std::endl;
     return session_id;
+  }
+
+  void FailAutomationContext(const std::string& session_id, const std::string& error) {
+    auto found = automation_sessions_.find(session_id);
+    if (found == automation_sessions_.end()) return;
+    if (!found->second.pending_navigate_request_id.empty()) {
+      SendBrowserBackendResponse(found->second.pending_navigate_request_id, false, "", error);
+    }
+    automation_sessions_.erase(found);
   }
 
   bool AttachAutomationBrowserView(NativeAutomationSession& session,
@@ -5175,6 +5219,7 @@ class KestrelClient : public CefClient,
     }
     core_relay_ = [[KestrelNativeCoreRelay alloc]
         initWithProfileRoot:isolated_profile_root
+             durableProfile:durable_profile_enabled
                 environment:environment
                 lineHandler:^(NSString* line) {
                   const std::shared_ptr<bool> alive = owner_token.lock();
@@ -5299,7 +5344,9 @@ class KestrelClient : public CefClient,
   std::deque<NativeUserBrowserTab> user_browser_tabs_;
   std::set<std::string> pending_user_browser_closures_;
   std::string user_browser_active_tab_id_;
-  CefRect user_browser_bounds_;
+  // Background tabs still need a real viewport before the renderer reports
+  // browser layout, including context reads issued immediately after create.
+  CefRect user_browser_bounds_ = CefRect(0, 0, 1280, 720);
   bool user_browser_view_visible_ = false;
   bool user_browser_context_initializing_ = false;
   bool user_browser_context_ready_ = false;

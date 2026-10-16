@@ -103,9 +103,19 @@ corepack pnpm test:native-chromium-host
 corepack pnpm test:native-chromium-core-relay
 ```
 
-The foreground launcher builds the app into `.tmp`, gives it one newly-created
-temporary profile, starts an ephemeral Core, and removes only that temporary
-profile after the app exits. It never reads, copies, migrates, or writes the
+The foreground launcher builds the app into `.tmp`. By default it gives it one
+newly-created temporary profile, starts an ephemeral Core, and removes only
+that temporary profile after the app exits. `dev:desktop:chromium` selects
+`--durable`: the native browser library and Core database persist separately at
+`~/Library/Application Support/Kestrel Native/Development`. The Core keeps its
+database under `native-core/database/` and a 32-byte database key in a private
+`native-core/database.key` file (0600, inside a 0700 directory). This is a
+development storage boundary, not hardware-backed or Keychain protection.
+Missing/corrupt keys fail without rotating a key or resetting existing data;
+linked or non-private key files and linked database paths are rejected.
+`test:native-core-durability` proves conversation restoration after normal
+restart and relay crash. Core shuts down when the relay's IPC disconnects.
+The native launcher never reads, copies, migrates, or writes the
 installed Electron profile. Chromium defaults to mock Keychain storage and
 disables background account/update paths, so native startup does not request
 Keychain access or launch an authentication flow. Provider credentials use a
@@ -207,24 +217,37 @@ Current native-host progress toward cutover:
 - Native Core relay forwards `browser-backend-request` to CEF instead of
   fail-closing; host owns `visible-tabs` / `visible-create` /
   `visible-navigate` / `visible-select` / `visible-close` /
-  `visible-history` / `visible-downloads`
+  `visible-history` / `visible-downloads` / `visible-context`
 - `corepack pnpm test:native-browser-backend` proves relay→CEF visible-tab
   automation
-- Isolated automation sessions use hidden Alloy BrowserViews on the shared
-  user-browser request context (separate CEF profiles currently fail on CEF
-  152), enforce a per-session origin allowlist, and answer `create` /
+- Isolated automation sessions use hidden Alloy BrowserViews with a fresh
+  in-memory request context for each session. User-tab cookies/localStorage
+  and other sessions' storage remain separate. Context initialization waits
+  for CEF's callback and rejects shared storage; a hidden view alone is not
+  treated as isolation. Sessions enforce an origin allowlist and answer `create` /
   `navigate` / `snapshot` / `act` / `close` (async navigate completes on the
   target load; snapshot/act use CEF DevTools `Runtime.evaluate` with fixed
   host scripts and `data-kestrel-ref` targets)
 - `corepack pnpm test:native-isolated-automation` proves
-  create→navigate→snapshot→act(click)→close through the Core relay
+  create→navigate→viewport→upload→snapshot→act(click)→screenshot→close through
+  the Core relay, plus cookie/localStorage separation from a user tab and
+  another automation session on the same HTTP origin
+- `visible-context` captures bounded visible text, headings, safe links,
+  selected text, form descriptions and viewport metadata through CEF. It
+  excludes field contents, labels sensitive controls generically and rejects
+  a changed page. Core independently validates the shared page-context schema
+  and redacts sensitive text and URL query/fragment values before model use
 - Profile-sealed credential bootstrap answers `credential-list` /
   `credential-set` / `credential-remove` without Keychain prompts;
   `corepack pnpm test:native-credential-bootstrap` proves set→has→remove
 - HTTP(S) `window.open` popups are adopted as sibling Alloy user tabs
-- `corepack pnpm package:mac:native` / `install:mac:native` package the CEF host;
-  side-by-side install is the default (`Kestrel Native.app`); canonical Dock
-  replacement requires `KESTREL_INSTALL_NATIVE_CANONICAL=1`
+- `corepack pnpm package:mac:native` packages the CEF host;
+  `install:mac:native` replaces the same canonical `/Applications/Kestrel.app`
+  only with explicit retirement acceptance and passing live signing checks.
+  It refuses an unsigned/unaccepted cutover without creating a second app
+- `test:packaged-native:arm64` uses the selected package directly; the host
+  smoke and relay smoke honor `KESTREL_NATIVE_TEST_APP` instead of rebuilding
+  an unrelated source artifact
 
 `pnpm-workspace.yaml` `auditConfig.ignoreGhsas` ignores `GHSA-hp3w-g68c-fv3c`
 (`sprintf-js` via `electron-builder`) until Electron packaging is removed: no
@@ -250,8 +273,8 @@ Application Support profile. Transfer is an explicit, bounded product step:
    a recoverable backup of the target before mutation.
 4. **Containment.** Reject symlinks, binaries, oversized files, and paths that
    escape the declared source/target roots. Changed checksums abort apply.
-5. **Side-by-side until cutover.** Shipping default remains Electron. Native
-   installs as `Kestrel Native.app` (or an explicit isolated profile root).
+5. **Separate development profile until cutover.** Shipping default remains
+   Electron. Native development uses its explicit isolated profile root.
    Canonical Dock replacement (`KESTREL_INSTALL_NATIVE_CANONICAL=1`) is gated
    on retirement acceptance with live evidence — not on transfer design alone.
 
@@ -262,8 +285,7 @@ imports into an isolated target.
 
 ### Developer ID signing + notarization (native Chromium)
 
-Ad-hoc `package:mac:native` is enough for local smokes and side-by-side
-`Kestrel Native.app`. Canonical Dock cutover requires a release-signed,
+Ad-hoc `package:mac:native` is enough for local smokes. Canonical Dock cutover requires a release-signed,
 notarized package:
 
 ```sh
@@ -291,9 +313,9 @@ Still required before retiring Electron:
 
 - Real Keychain path on a Developer ID–signed durable build (no ad-hoc prompt
   spam); profile-sealed bootstrap is proven for development/cutover
--   Remaining desktop command surface beyond isolated
-  act/screenshot/viewport/upload and visible context/snapshot/act/screenshot
-  (autofill parity, etc.) on CEF
+- Remaining desktop command surface beyond isolated
+  act/screenshot/viewport/upload and visible snapshot/act/screenshot
+  (autofill parity, desktop computer use, etc.) on CEF
 - Production Developer ID signing + notarization (`check:native-signing`)
 - Retargeted desktop smokes against the native binary on a durable profile
 - Live acceptance of the profile transfer design above on a real dual-profile

@@ -9,6 +9,7 @@ const accepted = process.env.KESTREL_ACCEPT_ELECTRON_RETIREMENT === "1";
 const gates = [
 	"test:native-chromium-host",
 	"test:native-chromium-core-relay",
+	"test:native-core-durability",
 	"test:native-extensions",
 	"test:native-user-extensions",
 	"test:native-durable-browser-library",

@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 
 /**
  * Installs the selected desktop runtime. Electron remains the default Dock app.
- * Chromium installs side-by-side unless KESTREL_INSTALL_NATIVE_CANONICAL=1 is set
- * after parity gates are accepted.
+ * Native Chromium replaces the same app only after parity acceptance and live
+ * Developer ID signing / notarization checks.
  */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtime = (process.env.KESTREL_DESKTOP_RUNTIME ?? "electron").toLowerCase();

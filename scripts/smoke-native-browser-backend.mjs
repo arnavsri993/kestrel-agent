@@ -24,9 +24,16 @@ const server = createServer((request, response) => {
 		response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
 		response.end(`<!doctype html>
 <title>Kestrel native browser backend</title>
+<meta name="description" content="Native context integration fixture" />
+<h1>Native page context</h1>
+<p>Readable fixture content</p>
+<label>Password <input type="password" value="fixture-sensitive-value" /></label>
+<textarea autocomplete="one-time-code" aria-label="Verification code">fixture-sensitive-value</textarea>
+<a href="javascript:alert(1)">Unsafe link</a>
 <button id="smoke-act" type="button">Act</button>
 <script>
 document.getElementById("smoke-act").addEventListener("click", () => {
+  document.querySelectorAll("input,textarea").forEach((node) => node.remove());
   fetch("/native-browser-backend-act-ok").catch(() => {});
 });
 </script>`);
@@ -123,8 +130,8 @@ try {
 		output,
 		/KESTREL_NATIVE_CHROMIUM_BROWSER_BACKEND_OK tabs=[1-9]\d*/,
 	);
-	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_CONTEXT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_SNAPSHOT_OK/);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_CONTEXT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_ACT_OK/);
 	assert.match(output, /KESTREL_NATIVE_CHROMIUM_VISIBLE_SCREENSHOT_OK/);
 	assert.doesNotMatch(
@@ -146,7 +153,7 @@ try {
 		"visible-act through the Core relay must click the inspected button.",
 	);
 	console.log(
-		"Native Chromium browser backend: Core relay visible-create→context→snapshot→act→screenshot→tabs on CEF.",
+		"Native Chromium browser backend: Core relay visible-create→context (sensitive fields excluded)→snapshot→act→screenshot→tabs on CEF.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");

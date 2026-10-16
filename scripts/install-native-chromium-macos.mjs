@@ -6,21 +6,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Installs the packaged native CEF host side-by-side as
- * `/Applications/Kestrel Native.app` by default. Canonical replacement of
- * `/Applications/Kestrel.app` requires KESTREL_INSTALL_NATIVE_CANONICAL=1 after
- * parity gates are explicitly accepted.
+ * Updates the one canonical Kestrel app only after cutover acceptance and live
+ * signing checks. Never leave a second installed Kestrel Native.app behind.
  */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = resolve(
 	process.argv[2] ?? join(root, "release", "native-mac-arm64", "Kestrel.app"),
 );
 const installRoot = resolve(process.env.KESTREL_MACOS_INSTALL_ROOT ?? "/Applications");
-const canonical = process.env.KESTREL_INSTALL_NATIVE_CANONICAL === "1";
-const destination = join(
-	installRoot,
-	canonical ? "Kestrel.app" : "Kestrel Native.app",
-);
+if (process.env.KESTREL_INSTALL_NATIVE_CANONICAL !== "1") {
+	throw new Error("Native cutover is not accepted. No app was installed. Verify the retirement gates before replacing /Applications/Kestrel.app; use dev:desktop:chromium for isolated development.");
+}
 
 if (!existsSync(source)) {
 	throw new Error(
@@ -28,29 +24,17 @@ if (!existsSync(source)) {
 	);
 }
 
-if (canonical) {
-	console.warn(
-		"Installing native Chromium as the canonical Kestrel.app. Electron remains in-tree until retirement.",
-	);
-	const result = spawnSync(
-		process.execPath,
-		[join(root, "scripts", "install-development-macos-app.mjs"), source],
-		{
-			stdio: "inherit",
-			env: {
-				...process.env,
-				KESTREL_MACOS_INSTALL_ROOT: installRoot,
-			},
-		},
-	);
-	process.exit(result.status ?? 1);
+for (const [script, args] of [
+	["check-electron-retirement-gates.mjs", []],
+	["check-native-signing.mjs", [source]],
+]) {
+	const checked = spawnSync(process.execPath, [join(root, "scripts", script), ...args], { stdio: "inherit" });
+	if (checked.status !== 0) process.exit(checked.status ?? 1);
 }
 
-const ditto = spawnSync(
-	"/usr/bin/ditto",
-	["--rsrc", "--extattr", "--acl", source, destination],
-	{ stdio: "inherit" },
+const result = spawnSync(
+	process.execPath,
+	[join(root, "scripts", "install-development-macos-app.mjs"), source],
+	{ stdio: "inherit", env: { ...process.env, KESTREL_MACOS_INSTALL_ROOT: installRoot } },
 );
-if (ditto.status !== 0)
-	throw new Error("Could not install the side-by-side native Chromium app.");
-console.log(`Installed native Chromium side-by-side at ${destination}.`);
+process.exit(result.status ?? 1);

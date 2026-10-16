@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 
@@ -14,7 +14,7 @@ if (extensionWorkbench) {
 	console.log("Opening the native Chromium extension workbench. Its temporary profile is deleted on exit; Kestrel data and accounts are not connected.");
 }
 const profile = durableProfile
-	? join(tmpdir(), "kestrel-native-chromium-durable-dev")
+	? join(homedir(), "Library", "Application Support", "Kestrel Native", "Development")
 	: await mkdtemp(join(tmpdir(), "kestrel-native-chromium-dev-"));
 if (durableProfile) {
 	const { mkdir } = await import("node:fs/promises");

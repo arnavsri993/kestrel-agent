@@ -1,10 +1,9 @@
 import { fork } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
-import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { openNativeCoreProfile } from "./native-core-profile.mjs";
 
 const resourceRoot = dirname(fileURLToPath(import.meta.url));
 const profileArgument = process.argv.indexOf("--profile-root");
@@ -31,21 +30,22 @@ const smokeUploadPath =
 		? process.env.KESTREL_SMOKE_UPLOAD_PATH
 		: "";
 
-// This relay is intentionally an ephemeral no-credential bootstrap. It proves
-// that the native Chromium renderer is talking to Kestrel's real standalone
-// Node Core without opening the Electron profile or consulting Keychain.
-const ephemeralRoot = await mkdtemp(join(resolve(profileRoot), "native-core-"));
+// Durable mode retains only the explicitly selected native profile. No
+// Electron database, Keychain item or provider-owned login is imported.
+const durableProfile = process.argv.includes("--durable-profile");
+const coreProfile = await openNativeCoreProfile(resolve(profileRoot), { durable: durableProfile });
+const stateRoot = coreProfile.root;
 const coreEntry = join(resourceRoot, "agent-core", "service", "index.js");
 const core = fork(coreEntry, [], {
 	execPath: process.execPath,
 	execArgv: [],
 	env: {
-		HOME: ephemeralRoot,
+		HOME: stateRoot,
 		LANG: process.env.LANG ?? "en_US.UTF-8",
 		PATH: process.env.PATH ?? "",
 		TMPDIR: process.env.TMPDIR ?? tmpdir(),
-		KESTREL_DATA_DIR: ephemeralRoot,
-		KESTREL_NATIVE_EPHEMERAL_PROFILE: "1",
+		KESTREL_DATA_DIR: stateRoot,
+		...(!durableProfile ? { KESTREL_NATIVE_EPHEMERAL_PROFILE: "1" } : {}),
 	},
 	serialization: "json",
 	stdio: ["ignore", "ignore", "inherit", "ipc"],
@@ -59,6 +59,7 @@ const pending = new Map();
 const pendingBrowserBackend = new Map();
 /** @type {string | undefined} */
 let smokeIsolatedSessionId;
+let smokeSecondIsolatedSessionId;
 /** @type {string | undefined} */
 let smokeVisibleTabId;
 
@@ -95,17 +96,9 @@ function forwardBrowserBackendRequest(requestId, request, destination) {
 
 function beginSmokeBrowserBackend() {
 	if (smokeIsolatedAutomation) {
-		let origin = "https://example.com";
-		try {
-			if (smokeIsolatedAutomationUrl) {
-				origin = new URL(smokeIsolatedAutomationUrl).origin;
-			}
-		} catch {
-			origin = "https://example.com";
-		}
 		forwardBrowserBackendRequest(
-			"smoke-isolated-create",
-			{ operation: "create", allowedOrigins: [origin] },
+			"smoke-isolated-user-seed",
+			{ operation: "visible-create", input: smokeIsolatedAutomationUrl + "?storage-role=user" },
 			"smoke",
 		);
 		return;
@@ -137,7 +130,7 @@ async function shutdown(exitCode = 0) {
 	});
 	await exited;
 	if (core.exitCode === null) core.kill();
-	await rm(ephemeralRoot, { recursive: true, force: true });
+	await coreProfile.close();
 	process.exit(exitCode);
 }
 
@@ -195,20 +188,21 @@ core.once("exit", (code) => {
 core.send({
 	type: "bootstrap",
 	config: {
-		databasePath: join(ephemeralRoot, "database", "kestrel.sqlite"),
-		encryptionKeyBase64: randomBytes(32).toString("base64"),
+		databasePath: coreProfile.databasePath,
+		encryptionKeyBase64: coreProfile.encryptionKeyBase64,
 		workspaceRoots: [],
 		configuredWorkspaceRoots: [],
 		projects: [],
 		pluginRoots: [],
 		managedPluginRoots: [],
-		learnedSkillRoot: join(ephemeralRoot, "learned-skills"),
+		learnedSkillRoot: join(stateRoot, "learned-skills"),
 		secureEnvironment: {},
 		providerAccounts: [],
 	},
 });
 
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+lines.once("close", () => void shutdown(0));
 lines.on("line", (line) => {
 	let message;
 	try {
@@ -281,40 +275,22 @@ lines.on("line", (line) => {
 			return;
 		}
 		if (message.requestId === "smoke-browser-backend-context") {
-			const context =
-				message.result && typeof message.result === "object"
-					? message.result
-					: {};
-			if (
-				context.trust !== "untrusted_browser" ||
-				typeof context.tabId !== "string" ||
-				typeof context.url !== "string" ||
-				!context.url.startsWith("http") ||
-				typeof context.title !== "string" ||
-				context.title.length < 1 ||
-				typeof context.visibleText !== "string" ||
-				typeof context.selectedText !== "string" ||
-				!Array.isArray(context.headings) ||
-				!Array.isArray(context.links) ||
-				!Array.isArray(context.forms) ||
-				!context.viewport ||
-				typeof context.viewport !== "object" ||
-				!Number.isInteger(Number(context.viewport.width)) ||
-				!Number.isInteger(Number(context.viewport.height)) ||
-				typeof context.capturedAt !== "string"
-			) {
-				write({
-					type: "smoke-event",
-					name: "browser-backend-failed",
-					error: "Visible context payload was invalid.",
-				});
+			const context = message.result;
+			const checks = {
+				trust: context?.trust === "untrusted_browser",
+				tab: context?.tabId === smokeVisibleTabId,
+				headings: Array.isArray(context?.headings) && context.headings.includes("Native page context"),
+				text: context?.visibleText?.includes("Readable fixture content"),
+				forms: Array.isArray(context?.forms) && context.forms.some((field) => field.type === "sensitive"),
+				redaction: !JSON.stringify(context ?? null).includes("fixture-sensitive-value"),
+			};
+			const failed = Object.keys(checks).filter((key) => !checks[key]);
+			if (failed.length) {
+				write({ type: "smoke-event", name: "browser-backend-failed", error: "Visible context failed checks: " + failed.join(", ") });
 				return;
 			}
-			forwardBrowserBackendRequest(
-				"smoke-browser-backend-snapshot",
-				{ operation: "visible-snapshot", tabId: smokeVisibleTabId },
-				"smoke",
-			);
+			forwardBrowserBackendRequest("smoke-browser-backend-snapshot",
+				{ operation: "visible-snapshot", tabId: smokeVisibleTabId }, "smoke");
 			return;
 		}
 		if (message.requestId === "smoke-browser-backend-snapshot") {
@@ -322,7 +298,7 @@ lines.on("line", (line) => {
 				message.result && typeof message.result === "object"
 					? message.result
 					: {};
-			if (snapshot.trust !== "untrusted_browser") {
+			if (snapshot.trust !== "untrusted_browser" || JSON.stringify(snapshot).includes("fixture-sensitive-value")) {
 				write({
 					type: "smoke-event",
 					name: "browser-backend-failed",
@@ -443,6 +419,16 @@ lines.on("line", (line) => {
 				},
 				"smoke",
 			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-user-seed") {
+			forwardBrowserBackendRequest("smoke-isolated-user-ready",
+				{ operation: "visible-context", tabId: message.result?.tabId }, "smoke");
+			return;
+		}
+		if (message.requestId === "smoke-isolated-user-ready") {
+			forwardBrowserBackendRequest("smoke-isolated-create",
+				{ operation: "create", allowedOrigins: [new URL(smokeIsolatedAutomationUrl).origin] }, "smoke");
 			return;
 		}
 		if (message.requestId === "smoke-isolated-navigate") {
@@ -615,10 +601,28 @@ lines.on("line", (line) => {
 				return;
 			}
 			forwardBrowserBackendRequest(
-				"smoke-isolated-close",
-				{ operation: "close", sessionId: smokeIsolatedSessionId },
+				"smoke-isolated-second-create",
+				{ operation: "create", allowedOrigins: [new URL(smokeIsolatedAutomationUrl).origin] },
 				"smoke",
 			);
+			return;
+		}
+		if (message.requestId === "smoke-isolated-second-create") {
+			smokeSecondIsolatedSessionId = message.result;
+			forwardBrowserBackendRequest("smoke-isolated-second-navigate", {
+				operation: "navigate", sessionId: smokeSecondIsolatedSessionId,
+				url: smokeIsolatedAutomationUrl + "?storage-role=second",
+			}, "smoke");
+			return;
+		}
+		if (message.requestId === "smoke-isolated-second-navigate") {
+			forwardBrowserBackendRequest("smoke-isolated-second-close",
+				{ operation: "close", sessionId: smokeSecondIsolatedSessionId }, "smoke");
+			return;
+		}
+		if (message.requestId === "smoke-isolated-second-close") {
+			forwardBrowserBackendRequest("smoke-isolated-close",
+				{ operation: "close", sessionId: smokeIsolatedSessionId }, "smoke");
 			return;
 		}
 		if (message.requestId === "smoke-isolated-close") {

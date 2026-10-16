@@ -122,6 +122,10 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			join(nativeHostRoot, "resources", "native-core-relay.mjs"),
 			join(paths.resources, "native-core-relay.mjs"),
 		);
+		await copyFile(
+			join(nativeHostRoot, "resources", "native-core-profile.mjs"),
+			join(paths.resources, "native-core-profile.mjs"),
+		);
 		run("/usr/bin/ditto", [
 			"--rsrc",
 			"--extattr",

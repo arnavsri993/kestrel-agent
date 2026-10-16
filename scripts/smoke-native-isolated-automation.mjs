@@ -20,15 +20,28 @@ await writeFile(uploadFixture, "kestrel-native-upload-smoke\n", "utf8");
 let pageHits = 0;
 let actHits = 0;
 let uploadHits = 0;
+const storageRequests = [];
+const storageProbes = [];
 const server = createServer((request, response) => {
-	if (request.url === "/native-isolated-automation-smoke") {
+	const url = new URL(request.url, "http://127.0.0.1");
+	if (url.pathname === "/native-isolated-automation-smoke") {
 		pageHits += 1;
-		response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+		const role = url.searchParams.get("storage-role") || "first";
+		storageRequests.push({ role, cookie: request.headers.cookie || "" });
+		response.writeHead(200, {
+			"content-type": "text/html; charset=utf-8",
+			"set-cookie": `native-isolation=${role}; Path=/; SameSite=Lax`,
+		});
 		response.end(`<!doctype html>
 <title>Kestrel isolated automation</title>
 <input id="smoke-upload" type="file" />
 <button id="smoke-act" type="button">Act</button>
 <script>
+const storageRole = new URL(location.href).searchParams.get("storage-role") || "first";
+const storageProbe = new Image();
+storageProbe.src = "/native-storage-probe?role=" + storageRole + "&previous=" + encodeURIComponent(localStorage.getItem("native-isolation") || "");
+document.body.append(storageProbe);
+localStorage.setItem("native-isolation", storageRole);
 document.getElementById("smoke-upload").addEventListener("change", () => {
   const input = document.getElementById("smoke-upload");
   if (input.files && input.files.length === 1) {
@@ -39,6 +52,12 @@ document.getElementById("smoke-act").addEventListener("click", () => {
   fetch("/native-isolated-act-ok").catch(() => {});
 });
 </script>`);
+		return;
+	}
+	if (url.pathname === "/native-storage-probe") {
+		storageProbes.push({ role: url.searchParams.get("role"), previous: url.searchParams.get("previous") });
+		response.writeHead(204);
+		response.end();
 		return;
 	}
 	if (request.url === "/native-isolated-upload-ok") {
@@ -174,8 +193,12 @@ try {
 		true,
 		"isolated act(click) through the Core relay must dispatch on the inspected button.",
 	);
+	assert.deepEqual(storageRequests.map((entry) => entry.role).sort(), ["first", "second", "user"]);
+	assert.ok(storageRequests.every((entry) => entry.cookie === ""), "User tabs and each isolated session must have separate cookie stores.");
+	assert.deepEqual(storageProbes.map((entry) => entry.role).sort(), ["first", "second", "user"]);
+	assert.ok(storageProbes.every((entry) => entry.previous === ""), "User tabs and each isolated session must have separate localStorage.");
 	console.log(
-		"Native Chromium isolated automation: Core relay create→navigate→viewport→upload→snapshot→act→screenshot→close on CEF sessions.",
+		"Native Chromium isolated automation: create→navigate→viewport→upload→snapshot→act→screenshot→close; cookies and localStorage isolated from user tabs and other sessions.",
 	);
 } finally {
 	if (child.exitCode === null) child.kill("SIGTERM");
