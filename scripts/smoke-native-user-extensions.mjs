@@ -61,9 +61,11 @@ try {
 			profile,
 			"--kestrel-user-extensions",
 			"--kestrel-ephemeral-core",
+			"--kestrel-renderer",
+			"--kestrel-durable-profile",
 			`--load-extension=${fixture}`,
 			"--remote-debugging-port=0",
-			"--kestrel-smoke-bridge-user-browser-url",
+			"--kestrel-smoke-user-browser-url",
 			probeUrl,
 		],
 		{ stdio: ["ignore", "pipe", "pipe"] },
@@ -141,6 +143,8 @@ try {
 	assert(userPage, `User browser probe page missing: ${output}`);
 
 	assert.equal(await shellPage.evaluate(() => typeof window.kestrel), "object");
+	await shellPage.waitForFunction(() => (document.getElementById("root")?.childElementCount ?? 0) > 0);
+	assert.match(output, /KESTREL_NATIVE_CHROMIUM_CORE_SNAPSHOT_OK/, "The real renderer must receive a Core snapshot.");
 	assert.equal(
 		await shellPage.evaluate(() => document.documentElement.dataset.kestrelExtensionProbe || ""),
 		"",

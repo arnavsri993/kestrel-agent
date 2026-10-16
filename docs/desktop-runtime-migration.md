@@ -194,6 +194,12 @@ not replace `/Applications/Kestrel.app`. Next: durable native-profile ownership,
 install/update/removal tests, and the remaining browser/agent parity gates
 before any canonical-app cutover.
 
+The user-extension smoke loads the real React renderer with a durable test
+profile. The privileged request context registers its own bundled-resource
+handler: global scheme registration alone cannot serve the app in that separate
+context. The smoke checks a mounted React root and a real Core snapshot while
+retaining the extension-injection and bridge-isolation checks.
+
 ## Next boundaries
 
 Current native-host progress toward cutover:

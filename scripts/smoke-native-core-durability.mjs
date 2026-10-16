@@ -65,6 +65,12 @@ function start() {
 			child.stdin.end(JSON.stringify({ type: "shutdown" }) + "\n");
 			assert.equal(await exited, 0, output);
 		},
+		async closeOutput() {
+			child.stdout.destroy();
+			child.stdin.write(JSON.stringify({ type: "request", id: "closed-host-pipe", request: { type: "snapshot" } }) + "\n");
+			const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+			try { assert.equal(await exited, 0, output); } finally { clearTimeout(timer); }
+		},
 		crash: async () => {
 			const processes = spawnSync("/bin/ps", ["-axo", "pid=,ppid="], { encoding: "utf8" });
 			assert.equal(processes.status, 0);
@@ -112,8 +118,13 @@ try {
 	const afterCrash = await recovered.request({ type: "runtime-list-sessions" });
 	assert.ok(afterCrash.sessions?.some((session) => session.id === created.session.id));
 	assert.deepEqual(await readFile(keyPath), key);
-	await recovered.stop();
-	console.log("Native Core durability: conversation + database key survive normal restart and relay crash; no Electron profile or Keychain access.");
+	await recovered.closeOutput();
+	const final = start();
+	await final.ready();
+	const afterHostClose = await final.request({ type: "runtime-list-sessions" });
+	assert.ok(afterHostClose.sessions?.some((session) => session.id === created.session.id));
+	await final.stop();
+	console.log("Native Core durability: conversation + database key survive normal restart, relay crash and closed host pipe; no Electron profile or Keychain access.");
 } finally {
 	for (const child of children) child.kill("SIGTERM");
 	for (const pid of ownedCorePids) { try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ } }

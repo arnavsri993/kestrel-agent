@@ -5908,6 +5908,17 @@ int main(int argc, char* argv[]) {
       const auto open_shell =
           [client, browser_settings](
               CefRefPtr<CefRequestContext> shell_context) {
+            // Global scheme registration applies only to the global context.
+            // The extension-free privileged context must serve the same real
+            // renderer without registering app resources on user web contexts.
+            if (full_renderer_enabled && shell_context &&
+                !shell_context->RegisterSchemeHandlerFactory(
+                    "kestrel", "app", renderer_scheme_factory)) {
+              std::cerr << "Kestrel could not register its privileged renderer resources."
+                        << std::endl;
+              CefQuitMessageLoop();
+              return;
+            }
             CefRefPtr<CefBrowserView> browser_view =
                 CefBrowserView::CreateBrowserView(
                     client, shell_url, browser_settings, nullptr, shell_context,

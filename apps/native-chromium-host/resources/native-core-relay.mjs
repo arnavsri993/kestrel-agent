@@ -53,6 +53,7 @@ const core = fork(coreEntry, [], {
 
 let coreReady = false;
 let stopping = false;
+let outputClosed = false;
 let nextRequest = 0;
 const pending = new Map();
 /** @type {Map<string, "core" | "smoke">} */
@@ -64,8 +65,16 @@ let smokeSecondIsolatedSessionId;
 let smokeVisibleTabId;
 
 function write(message) {
+	if (outputClosed) return;
 	process.stdout.write(JSON.stringify(message) + "\n");
 }
+
+process.stdout.on("error", (error) => {
+	// The native window can close its pipe while a Core response is queued.
+	// Stop the owned Core instead of crashing the relay with an unhandled EPIPE.
+	outputClosed = true;
+	void shutdown(error.code === "EPIPE" ? 0 : 1);
+});
 
 function failPending(error) {
 	for (const id of pending.values()) {

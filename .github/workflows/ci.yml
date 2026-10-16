@@ -49,10 +49,11 @@ jobs:
       - run: corepack pnpm test:node-core
       - run: corepack pnpm test:chromium-host
       - run: corepack pnpm test:native-extensions
-      - name: Verify native Core durability, context and isolated storage
+      - name: Verify native renderer, durable Core and isolated browsing
         env:
           KESTREL_NATIVE_TEST_APP: ${{ github.workspace }}/.tmp/native-chromium-host/Kestrel.app
         run: |
+          corepack pnpm test:native-user-extensions
           corepack pnpm test:native-chromium-core-relay
           corepack pnpm test:native-core-durability
           corepack pnpm test:native-browser-backend
