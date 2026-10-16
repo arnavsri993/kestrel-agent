@@ -176,6 +176,15 @@ try {
 	const evidence = join(root, ".tmp/native-user-extension-evidence");
 	await mkdir(evidence, { recursive: true });
 	await shellPage.screenshot({ path: join(evidence, "privileged-shell.png") });
+	// First-run React setup intentionally hides the web plane. In this fixture
+	// exercise the same bounded host command used by the browser layout before
+	// capturing the real native user view; a zero-sized hidden page is not proof.
+	const bounds = await shellPage.evaluate(() => window.kestrel.request({
+		type: "browser-set-content-bounds",
+		bounds: { x: 16, y: 160, width: 800, height: 500 }, visible: true,
+	}));
+	assert.equal(bounds.ok, true);
+	await userPage.waitForFunction(() => innerWidth > 0 && innerHeight > 0);
 	await userPage.screenshot({ path: join(evidence, "user-browser-extension.png") });
 
 	const session = await browser.newBrowserCDPSession();
