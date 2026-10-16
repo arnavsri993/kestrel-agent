@@ -17,7 +17,7 @@ const launchArgs = process.env.KESTREL_DESKTOP_EXECUTABLE
 
 const server = createServer((_request, response) => {
   response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-  response.end("<!doctype html><title>Tab interaction fixture</title><h1>Tab interaction fixture</h1>");
+  response.end('<!doctype html><title>Tab interaction fixture</title><h1>Tab interaction fixture</h1><input id="page-input" aria-label="Page input">');
 });
 await new Promise((resolveListen, rejectListen) => {
   server.once("error", rejectListen);
@@ -101,6 +101,87 @@ try {
   assert.equal(await input.inputValue(), `${origin}/shortcut-replacement`);
   await input.fill(`${origin}/one`);
 
+  // DOM focus alone does not prove the renderer owns native keyboard input.
+  // Reflowing an attached page must preserve either owner, including chrome.
+  const settings = (await browserState()).settings;
+  assert((await request({
+    type: "browser-update-settings",
+    settings: { ...settings, addressBarSuggestionsEnabled: false },
+  })).ok);
+  const typeNativeKey = (key) => application.evaluate(({ webContents }, keyCode) => {
+    const owner = webContents.getFocusedWebContents();
+    if (!owner) throw new Error("No native keyboard owner");
+    owner.sendInputEvent({ type: "keyDown", keyCode });
+    owner.sendInputEvent({ type: "char", keyCode });
+    owner.sendInputEvent({ type: "keyUp", keyCode });
+  }, key);
+  const nativeFocus = () => application.evaluate(({ BrowserWindow }, expectedUrl) => {
+    const window = BrowserWindow.getAllWindows().find((candidate) =>
+      candidate.webContents.getURL().endsWith("/renderer/index.html"));
+    const view = window?.contentView.children.find((candidate) =>
+      "webContents" in candidate && candidate.webContents.getURL() === expectedUrl);
+    return view && {
+      bounds: view.getBounds(),
+      chrome: window.webContents.isFocused(),
+      page: view.webContents.isFocused(),
+    };
+  }, `${origin}/one`);
+  const attachedDeadline = Date.now() + 20_000;
+  let attached;
+  while (Date.now() < attachedDeadline && !attached) {
+    attached = await nativeFocus();
+    if (!attached) await page.waitForTimeout(75);
+  }
+  assert(attached, "The fixture's native page did not attach");
+  // Establish the native owner as Cmd+L does; a Playwright DOM click alone
+  // can leave the sibling WebContentsView owning keyboard input on macOS.
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows().find((window) =>
+      window.webContents.getURL().endsWith("/renderer/index.html"))?.webContents.focus();
+  });
+  await input.click();
+  assert((await nativeFocus()).chrome, "Address input did not own native keyboard focus");
+  await input.evaluate((node) => node.setSelectionRange(node.value.length, node.value.length));
+  const originalBounds = attached.bounds;
+  let expectedAddress = `${origin}/one`;
+  for (const offset of [1, 2, 2, 0]) {
+    const response = await request({
+      type: "browser-set-content-bounds",
+      bounds: {
+        ...originalBounds,
+        y: originalBounds.y + offset,
+        height: originalBounds.height - offset,
+      },
+      visible: true,
+    });
+    assert(response.ok);
+    const focus = await nativeFocus();
+    assert(focus?.chrome && !focus.page, "Page reflow stole native focus from the address input");
+    assert(await input.evaluate((node) => document.activeElement === node));
+    await typeNativeKey("x");
+    expectedAddress += "x";
+    await page.waitForFunction((expected) =>
+      document.querySelector("#browser-address-input")?.value === expected, expectedAddress);
+  }
+  await request({ type: "browser-select-tab", tabId: firstId });
+  assert((await nativeFocus()).page, "Explicit tab selection did not restore native page focus");
+  await request({ type: "browser-set-content-bounds", bounds: originalBounds, visible: true });
+  assert((await nativeFocus()).page, "Page reflow did not preserve native page focus");
+  await application.evaluate(async ({ webContents }, expectedUrl) => {
+    const page = webContents.getAllWebContents().find((candidate) => candidate.getURL() === expectedUrl);
+    await page.executeJavaScript('document.querySelector("#page-input").focus()');
+  }, `${origin}/one`);
+  await typeNativeKey("y");
+  assert.equal(await application.evaluate(async ({ webContents }, expectedUrl) => {
+    const page = webContents.getAllWebContents().find((candidate) => candidate.getURL() === expectedUrl);
+    return page.executeJavaScript('document.querySelector("#page-input").value');
+  }, `${origin}/one`), "y");
+  await request({ type: "browser-set-content-bounds", bounds: originalBounds, visible: false });
+  await request({ type: "browser-set-content-bounds", bounds: originalBounds, visible: true });
+  assert((await nativeFocus()).page, "Returning from an overlay did not restore native page focus");
+  await input.fill(`${origin}/one`);
+  assert((await request({ type: "browser-update-settings", settings })).ok);
+
   const second = await request({ type: "browser-create-tab", input: `${origin}/two`, active: false });
   assert(second.ok && "browserState" in second);
   const secondId = second.browserState.tabs.at(-1)?.id;
@@ -155,7 +236,7 @@ try {
     if (!detached) await page.waitForTimeout(75);
   }
   assert(detached, "Detached window did not load the tab");
-  console.log("Focused tab interaction smoke passed: address replacement and tab tear-off after preview.");
+  console.log("Focused tab interaction smoke passed: address replacement, native focus through reflow, and tab tear-off after preview.");
 } finally {
   await application?.close().catch(() => undefined);
   await new Promise((resolveClose) => server.close(resolveClose));
