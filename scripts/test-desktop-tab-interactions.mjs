@@ -133,6 +133,12 @@ try {
     if (!attached) await page.waitForTimeout(75);
   }
   assert(attached, "The fixture's native page did not attach");
+  // Establish the native owner as Cmd+L does; a Playwright DOM click alone
+  // can leave the sibling WebContentsView owning keyboard input on macOS.
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows().find((window) =>
+      window.webContents.getURL().endsWith("/renderer/index.html"))?.webContents.focus();
+  });
   await input.click();
   assert((await nativeFocus()).chrome, "Address input did not own native keyboard focus");
   await input.evaluate((node) => node.setSelectionRange(node.value.length, node.value.length));
