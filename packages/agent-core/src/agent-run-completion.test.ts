@@ -3,6 +3,8 @@ import type { RuntimeToolExecution } from "@kestrel/shared-types";
 import { emptyBrowserRecoveryBudgetState } from "./browser-recovery";
 import {
 	OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR,
+	OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR,
+	FAILED_COMPUTER_COMPLETION_ERROR,
 	PREMATURE_BROWSER_COMPLETION_ERROR,
 	prematureBrowserCompletionError,
 } from "./agent-run-completion";
@@ -23,6 +25,27 @@ function execution(
 }
 
 describe("prematureBrowserCompletionError", () => {
+	it("does not mark a failed computer capture complete just because the model explains the failure", () => {
+		const failed = execution({ id: "capture", toolName: "computer.screenshot", status: "failed", idempotencyKey: "run-1:capture" });
+		const check = (steps: RuntimeToolExecution[]) => prematureBrowserCompletionError({
+			runId: "run-1", sessionId: "session-1", modelText: "The screenshot failed; no input was sent.",
+			browserRecoveryState: emptyBrowserRecoveryBudgetState(), listExecutions: () => steps,
+		});
+		expect(check([failed])).toBe(FAILED_COMPUTER_COMPLETION_ERROR);
+		expect(check([failed, { ...failed, id: "retry", status: "verified" }])).toBeUndefined();
+	});
+	it("requires a verified observation after a computer action even if the model says done", () => {
+		const action = execution({ id: "act", toolName: "computer.act", idempotencyKey: "run-1:act" });
+		const observation = execution({ id: "observe", toolName: "computer.screenshot", idempotencyKey: "run-1:observe" });
+		const check = (steps: RuntimeToolExecution[]) => prematureBrowserCompletionError({
+			runId: "run-1", sessionId: "session-1", modelText: "Done.",
+			browserRecoveryState: emptyBrowserRecoveryBudgetState(), listExecutions: () => steps,
+		});
+		expect(check([observation, action])).toBe(OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR);
+		expect(check([action, { ...observation, status: "failed" }])).toBe(FAILED_COMPUTER_COMPLETION_ERROR);
+		expect(check([action, observation])).toBeUndefined();
+		expect(check([{ ...action, idempotencyKey: "other:act" }])).toBeUndefined();
+	});
 	it("allows normal Q&A completion with assistant text", () => {
 		expect(
 			prematureBrowserCompletionError({

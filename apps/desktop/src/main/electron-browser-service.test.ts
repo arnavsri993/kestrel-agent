@@ -1,16 +1,37 @@
 import { describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { runInNewContext } from "node:vm";
+
+const nativeMocks = vi.hoisted(() => ({
+	getSources: vi.fn(),
+	execFile: vi.fn(),
+}));
+
+vi.mock("node:child_process", () => ({ execFile: nativeMocks.execFile }));
 
 vi.mock("electron", () => ({
 	app: {},
 	BrowserWindow: class {},
-	desktopCapturer: {},
+	desktopCapturer: { getSources: nativeMocks.getSources },
 	session: {},
-	systemPreferences: {},
+	systemPreferences: {
+		getMediaAccessStatus: () => "granted",
+		isTrustedAccessibilityClient: () => true,
+	},
+	screen: {
+		getPrimaryDisplay: () => ({
+			id: 1,
+			bounds: { x: 0, y: 0, width: 1280, height: 800 },
+		}),
+	},
 }));
 
 import {
 	ElectronBrowserService,
+	buildDesktopKeyScript,
+	isDesktopCaptureFresh,
 	isolatedBrowserShouldCancelRequest,
+	mapDesktopScreenshotPoint,
 	MAX_BROWSER_DOWNLOAD_RECORDS,
 	retainRecentBrowserDownloads,
 	uniqueIsolatedDownloadFilename,
@@ -25,6 +46,21 @@ function download(id: string, status: "completed" | "progressing") {
 		status,
 		createdAt: new Date().toISOString(),
 	};
+}
+
+function capturedDesktopService(bundleId = "com.example.Target") {
+	const service = new ElectronBrowserService();
+	service.setComputerUseEnabled(true);
+	(service as unknown as { lastDesktopCapture: unknown }).lastDesktopCapture = {
+		metadata: {
+			captureId: "identity-test",
+			displayId: "1",
+			bounds: { x: 0, y: 0, width: 1280, height: 800 },
+			capturedAt: new Date().toISOString(),
+		},
+		foreground: { pid: 42, bundleId },
+	};
+	return service;
 }
 
 describe("isolated browser origin policy", () => {
@@ -58,6 +94,37 @@ describe("isolated browser origin policy", () => {
 		expect(
 			isolatedBrowserShouldCancelRequest("https://evil.test/", allowed),
 		).toBe(true);
+	});
+});
+
+describe("desktop capture coordinate and key helpers", () => {
+	const bounds = { x: -1440, y: 40, width: 2560, height: 1400 };
+
+	it("maps screenshot-local coordinates into global display coordinates", () => {
+		expect(mapDesktopScreenshotPoint(0, 0, bounds)).toEqual({ x: -1440, y: 40 });
+		expect(mapDesktopScreenshotPoint(2559, 1399, bounds)).toEqual({ x: 1119, y: 1439 });
+		expect(() => mapDesktopScreenshotPoint(2560, 0, bounds)).toThrow(
+			"outside the captured display",
+		);
+	});
+
+	it("builds bounded native modifier chords", () => {
+		expect(buildDesktopKeyScript(36, ["Command", "Shift"])).toBe(
+			'tell application "System Events" to key code 36 using {command down, shift down}',
+		);
+		expect(() => buildDesktopKeyScript(36, ["Meta"])).toThrow(
+			"modifiers are invalid",
+		);
+		expect(buildDesktopKeyScript("a", ["Control"])).toBe(
+			'tell application "System Events" to keystroke "a" using {control down}',
+		);
+	});
+
+	it("expires captures at two minutes and rejects malformed timestamps", () => {
+		const now = Date.parse("2026-10-13T12:00:30.000Z");
+		expect(isDesktopCaptureFresh("2026-10-13T12:00:00.000Z", now)).toBe(true);
+		expect(isDesktopCaptureFresh("2026-10-13T11:58:29.999Z", now)).toBe(false);
+		expect(isDesktopCaptureFresh("invalid", now)).toBe(false);
 	});
 });
 
@@ -109,7 +176,7 @@ describe("Electron browser action cancellation", () => {
 			service.handle(
 				{
 					operation: "desktop-act",
-					action: { type: "click", x: 10, y: 20 },
+					action: { type: "click", x: 10, y: 20, captureId: "disabled-test" },
 				},
 				signal,
 			),
@@ -140,6 +207,224 @@ describe("Electron browser action cancellation", () => {
 		controller.abort(new Error("cancelled post-click wait"));
 
 		await expect(waiting).rejects.toThrow("cancelled post-click wait");
+	});
+
+	it("requires a matching fresh capture and consumes it before input", async () => {
+		nativeMocks.execFile.mockImplementation((_path, _args, _options, callback) => {
+			const child = new EventEmitter();
+			setTimeout(
+				() => callback(null, JSON.stringify({ pid: 42, bundleId: "com.example.Target" })),
+				0,
+			);
+			return child;
+		});
+		const service = new ElectronBrowserService();
+		service.setComputerUseEnabled(true);
+		const internal = service as unknown as {
+			lastDesktopCapture: { metadata: {
+				captureId: string;
+				displayId: string;
+				bounds: { x: number; y: number; width: number; height: number };
+				capturedAt: string;
+			}; foreground: { pid: number; bundleId: string } } | undefined;
+		};
+		internal.lastDesktopCapture = {
+			metadata: {
+				captureId: "capture-1",
+				displayId: "1",
+				bounds: { x: 0, y: 0, width: 1280, height: 800 },
+				capturedAt: new Date().toISOString(),
+			},
+			foreground: { pid: 42, bundleId: "com.example.Target" },
+		};
+		await expect(
+			service.handle(
+				{ operation: "desktop-act", action: { type: "click", x: 1280, y: 0, captureId: "wrong" } },
+				new AbortController().signal,
+			),
+		).rejects.toThrow("does not match");
+		await expect(
+			service.handle(
+				{ operation: "desktop-act", action: { type: "click", x: 1280, y: 1, captureId: "capture-1" } },
+				new AbortController().signal,
+			),
+		).rejects.toThrow("outside the captured display");
+		await expect(
+			service.handle(
+				{ operation: "desktop-act", action: { type: "click", x: 1, y: 1, captureId: "capture-1" } },
+				new AbortController().signal,
+			),
+		).rejects.toThrow("fresh desktop screenshot");
+	});
+
+	it("captures the normalized primary display and cancels native input", async () => {
+		const image = {
+			getSize: vi.fn()
+				.mockReturnValueOnce({ width: 8, height: 8 })
+				.mockReturnValue({ width: 4, height: 4 }),
+			resize: vi.fn(() => image),
+			toBitmap: vi.fn(() => new Uint8Array(4 * 4 * 4)),
+			toPNG: vi.fn(() => new Uint8Array([1])),
+		};
+		nativeMocks.getSources.mockResolvedValueOnce([
+			{ display_id: "1", thumbnail: image },
+		]);
+		nativeMocks.execFile.mockImplementation((_path, _args, _options, callback) => {
+			const child = new EventEmitter();
+			setTimeout(
+				() => callback(null, JSON.stringify({ pid: 42, bundleId: "com.example.Target" })),
+				0,
+			);
+			return child;
+		});
+		const service = new ElectronBrowserService();
+		service.setComputerUseEnabled(true);
+		const frame = (await service.handle(
+			{ operation: "desktop-screenshot" },
+			new AbortController().signal,
+		)) as { width: number; height: number; desktop: { captureId: string } };
+		expect(frame.width).toBe(4);
+		expect(frame.height).toBe(4);
+		expect(frame.desktop.captureId).toEqual(expect.any(String));
+		for (const [, args] of nativeMocks.execFile.mock.calls) {
+			if (args.includes("JavaScript")) expect(() => new Function(args[args.indexOf("-e") + 1])).not.toThrow();
+		}
+
+		const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> };
+		child.kill = vi.fn();
+		nativeMocks.execFile.mockImplementationOnce((_path, _args, _options, callback) => {
+			setTimeout(() => callback(new Error("terminated")), 0);
+			return child;
+		});
+		const controller = new AbortController();
+		const running = service.handle(
+			{
+				operation: "desktop-act",
+				action: { type: "click", x: 1, y: 1, captureId: frame.desktop.captureId },
+			},
+			controller.signal,
+		);
+		controller.abort();
+		await expect(running).rejects.toThrow("aborted");
+		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+	});
+
+	it.each([
+		"com.example.Target",
+		'com.example.\"; throw new Error("injected"); //',
+		"com.example.\\quote\"\n\u2028\u2029",
+		"</script><script>throw new Error('injected')</script>",
+		"-e Application('System Events').processes()[0].frontmost = true",
+	])("passes app identity only as data: %j", async (bundleId) => {
+		nativeMocks.execFile.mockReset();
+		nativeMocks.execFile.mockImplementation((_path, _args, _options, callback) => {
+			queueMicrotask(() => callback(null, "", ""));
+			return new EventEmitter();
+		});
+		await capturedDesktopService(bundleId).handle(
+			{ operation: "desktop-act", action: { type: "type", text: "retained input", captureId: "identity-test" } },
+			new AbortController().signal,
+		);
+
+		expect(nativeMocks.execFile).toHaveBeenCalledTimes(2);
+		const [restorePath, restoreArgs, restoreOptions] = nativeMocks.execFile.mock.calls[0]!;
+		const [inputPath, inputArgs, inputOptions] = nativeMocks.execFile.mock.calls[1]!;
+		expect(restorePath).toBe("/usr/bin/osascript");
+		expect(restoreArgs.slice(0, 3)).toEqual(["-l", "JavaScript", "-e"]);
+		expect(restoreArgs.slice(4)).toEqual(["42", bundleId]);
+		expect(restoreArgs[3]).not.toContain(bundleId);
+		expect(restoreOptions.timeout).toBe(20_000);
+		expect(inputPath).toBe("/usr/bin/osascript");
+		expect(inputArgs[1]).not.toContain(bundleId);
+		expect(inputOptions.env).toEqual({
+			PATH: "/usr/bin:/bin",
+			KESTREL_COMPUTER_BUNDLE_ID: bundleId,
+			KESTREL_COMPUTER_TEXT: "retained input",
+		});
+	});
+
+	it.each([
+		{ name: "matching PID and bundle", candidates: [[42, "target"]], front: [42, "target"], activated: true, succeeds: true },
+		{ name: "different PID", candidates: [[43, "target"]], front: undefined, activated: false, succeeds: false },
+		{ name: "reused PID", candidates: [[42, "other"]], front: undefined, activated: false, succeeds: false },
+		{ name: "duplicate identity", candidates: [[42, "target"], [42, "target"]], front: undefined, activated: false, succeeds: false },
+		{ name: "PID changes after activation", candidates: [[42, "target"]], front: [43, "target"], activated: true, succeeds: false },
+		{ name: "bundle changes after activation", candidates: [[42, "target"]], front: [42, "other"], activated: true, succeeds: false },
+		{ name: "no frontmost app after activation", candidates: [[42, "target"]], front: undefined, activated: true, succeeds: false },
+	])("restores only the exact captured app: $name", async ({ candidates, front, activated, succeeds }) => {
+		nativeMocks.execFile.mockReset();
+		// Execute the emitted JXA with a fake System Events API; never invoke macOS.
+		const activation = vi.fn();
+		const processFor = ([pid, bundleId]: (string | number)[]) => ({
+			unixId: () => pid,
+			bundleIdentifier: () => bundleId,
+			set frontmost(value: boolean) { activation(value); },
+		});
+		const processes = Object.assign(() => candidates.map(processFor), {
+			whose: () => () => front ? [processFor(front)] : [],
+		});
+		const application = vi.fn(() => ({ processes }));
+		nativeMocks.execFile.mockImplementation((_path, args, _options, callback) => {
+			let error: unknown = null;
+			if (args.includes("JavaScript")) {
+				try {
+					runInNewContext(`${args[3]}\nrun(argv);`, {
+						argv: args.slice(4), Application: application, delay: vi.fn(),
+					}, { timeout: 1_000 });
+				} catch (caught) { error = caught; }
+			}
+			queueMicrotask(() => callback(error, "", ""));
+			return new EventEmitter();
+		});
+		const action = capturedDesktopService("target").handle(
+			{ operation: "desktop-act", action: { type: "key", key: "Enter", captureId: "identity-test" } },
+			new AbortController().signal,
+		);
+		if (succeeds) await expect(action).resolves.toBeUndefined();
+		else await expect(action).rejects.toThrow("System Events helper failed");
+		expect(application).toHaveBeenCalledWith("System Events");
+		expect(activation).toHaveBeenCalledTimes(activated ? 1 : 0);
+		expect(nativeMocks.execFile).toHaveBeenCalledTimes(succeeds ? 2 : 1);
+	});
+
+	it("fails closed when the frontmost app changes during capture", async () => {
+		const image = {
+			getSize: () => ({ width: 4, height: 4 }),
+			toBitmap: () => new Uint8Array(4 * 4 * 4),
+			toPNG: () => new Uint8Array([1]),
+		};
+		nativeMocks.getSources.mockResolvedValueOnce([
+			{ display_id: "1", thumbnail: image },
+		]);
+		let query = 0;
+		nativeMocks.execFile.mockImplementation((_path, _args, _options, callback) => {
+			const child = new EventEmitter();
+			query += 1;
+			const pid = query === 1 ? 42 : 43;
+			setTimeout(() => callback(null, JSON.stringify({ pid, bundleId: "com.example.Target" })), 0);
+			return child;
+		});
+		const service = new ElectronBrowserService();
+		service.setComputerUseEnabled(true);
+		await expect(
+			service.handle({ operation: "desktop-screenshot" }, new AbortController().signal),
+		).rejects.toThrow("changed during capture");
+	});
+
+	it.each([
+		{ name: "Automation denial", error: Object.assign(new Error("command failed"), { code: 1 }), stderr: "Not authorized to send Apple events (-1743)", stdout: "", message: "Automation access to System Events is required" },
+		{ name: "permission prompt timeout", error: Object.assign(new Error("command failed"), { killed: true, signal: "SIGTERM" }), stderr: "", stdout: "", message: "desktop helper timed out" },
+		{ name: "malformed identity", error: null, stderr: "", stdout: "{}", message: "Could not verify the frontmost desktop process" },
+	])("stops before capture and explains $name", async ({ error, stderr, stdout, message }) => {
+		nativeMocks.getSources.mockClear();
+		nativeMocks.execFile.mockImplementationOnce((_path, _args, _options, callback) => {
+			queueMicrotask(() => callback(error, stdout, stderr));
+			return new EventEmitter();
+		});
+		const service = new ElectronBrowserService();
+		service.setComputerUseEnabled(true);
+		await expect(service.handle({ operation: "desktop-screenshot" }, new AbortController().signal)).rejects.toThrow(message);
+		expect(nativeMocks.getSources).not.toHaveBeenCalled();
 	});
 
 	it("does not type after cancellation while resolving the target", async () => {

@@ -210,7 +210,9 @@ try {
  // previously ambiguous PAN/company and card-number/security-code hints.
  const runPayment = code => app.evaluate(({BrowserWindow},{code,worldId})=>BrowserWindow.getAllWindows()[0].webContents.executeJavaScriptInIsolatedWorld(worldId,[{code}]),{code,worldId:PAYMENT_AUTOFILL_WORLD_ID});
  const card = {cardNumber:'4111111111111111',expirationMonth:'02',expirationYear:'30',cardholderName:'Fixture Card',postalCode:'60601'};
- await page.evaluate(()=>{document.body.innerHTML=`<form><input id="company" name="company"><input id="number" autocomplete="section-pay billing cc-number"><input id="cvv" name="card-number-security-code" autocomplete="section-pay billing cc-csc" value="987"><input id="masked" type="password" name="card-number"><select id="month" autocomplete="section-pay billing cc-exp-month"><option value="">Month</option><option value="2">February</option></select><select id="year" autocomplete="section-pay billing cc-exp-year"><option value="">Year</option><option value="2030">2030</option></select><input id="holder" autocomplete="section-pay billing cc-name" value="Typed name"><input id="shipping" autocomplete="shipping cc-number"><input id="readOnlyCard" autocomplete="cc-number" readonly><fieldset disabled><input autocomplete="cc-number"></fieldset><div style="opacity:0"><input autocomplete="cc-number"></div></form><form><input id="otherCard" autocomplete="cc-number"></form>`;});
+ // Randomized decimal field IDs can contain a three-digit CVV by coincidence.
+ const securityCodeFixture = "kestrel-security-code-sentinel-987";
+ await page.evaluate(securityCode=>{document.body.innerHTML=`<form><input id="company" name="company"><input id="number" autocomplete="section-pay billing cc-number"><input id="cvv" name="card-number-security-code" autocomplete="section-pay billing cc-csc"><input id="masked" type="password" name="card-number"><select id="month" autocomplete="section-pay billing cc-exp-month"><option value="">Month</option><option value="2">February</option></select><select id="year" autocomplete="section-pay billing cc-exp-year"><option value="">Year</option><option value="2030">2030</option></select><input id="holder" autocomplete="section-pay billing cc-name" value="Typed name"><input id="shipping" autocomplete="shipping cc-number"><input id="readOnlyCard" autocomplete="cc-number" readonly><fieldset disabled><input autocomplete="cc-number"></fieldset><div style="opacity:0"><input autocomplete="cc-number"></div></form><form><input id="otherCard" autocomplete="cc-number"></form>`;document.querySelector("#cvv").value=securityCode;},securityCodeFixture);
  await page.locator('#number').focus();
  const paymentScan=await runPayment(PAYMENT_FORM_SCAN_SCRIPT);
  assert.deepEqual(paymentScan.fields.map(field=>field.kind),['card-number','security-code','expiration-month','expiration-year','cardholder-name']);
@@ -220,10 +222,10 @@ try {
  assert.equal(await page.locator('#year').inputValue(),'2030');
  assert.equal(await page.locator('#holder').inputValue(),'Typed name');
  for(const id of ['company','masked','shipping','readOnlyCard','otherCard']) assert.equal(await page.locator('#'+id).inputValue(),'');
- assert.equal(await page.locator('#cvv').inputValue(),'987');
+ assert.equal(await page.locator('#cvv').inputValue(),securityCodeFixture);
  const paymentValues=await runPayment(PAYMENT_FORM_VALUES_SCRIPT);
  assert.equal(paymentValues.fields.find(field=>field.kind==='security-code').value,'');
- assert.equal(JSON.stringify(paymentValues).includes('987'),false);
+ assert.equal(JSON.stringify(paymentValues).includes(securityCodeFixture),false);
  assert.equal(await runPayment(paymentFillScript(card,paymentScan.fields.find(field=>field.kind==='security-code').id,'https://autofill.example.test')),false);
  assert.equal(await runPayment(paymentFillScript(card,undefined,'https://different.example.test')),false);
  // Field references survive insertions but expire on semantic changes. The

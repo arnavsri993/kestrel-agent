@@ -44,6 +44,25 @@ for (const [key, expected] of [
 }
 
 const version = readPlistValue("CFBundleShortVersionString");
+if (!readPlistValue("NSAppleEventsUsageDescription"))
+	throw new Error("Installable app Apple Events usage description is empty.");
+// Automation belongs to the main app; inspect its actual signed entitlement.
+const signedEntitlements = spawnSync(
+	"/usr/bin/codesign",
+	["-d", "--entitlements", "-", "--xml", appPath],
+	{ encoding: "utf8" },
+);
+if (signedEntitlements.status !== 0)
+	throw new Error("Could not inspect installable app signed entitlements.");
+const parsedEntitlements = spawnSync(
+	"/usr/bin/plutil",
+	["-convert", "json", "-o", "-", "-"],
+	{ encoding: "utf8", input: signedEntitlements.stdout },
+);
+if (parsedEntitlements.status !== 0)
+	throw new Error("Could not read installable app signed entitlements.");
+if (JSON.parse(parsedEntitlements.stdout)["com.apple.security.automation.apple-events"] !== true)
+	throw new Error("Installable app is missing the signed Apple Events entitlement.");
 if (!/^\d+\.\d+\.\d+$/.test(version))
 	throw new Error(`Installable app version is not stable semver: ${version}.`);
 

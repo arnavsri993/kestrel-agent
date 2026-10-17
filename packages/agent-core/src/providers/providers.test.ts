@@ -77,7 +77,7 @@ describe("model provider adapters", () => {
 				tools: provider.capabilities.tools,
 			})),
 		).toEqual([
-			{ id: "codex-subscription", model: "gpt-subscription", tools: false },
+			{ id: "codex-subscription", model: "gpt-subscription", tools: true },
 			{ id: "claude-subscription", model: "opus", tools: false },
 			{ id: "opencode-subscription", model: "opencode-claude", tools: false },
 			{ id: "cursor-subscription", model: "cursor-auto", tools: false },

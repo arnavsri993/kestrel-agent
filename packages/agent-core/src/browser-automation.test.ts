@@ -98,10 +98,11 @@ class FakeBrowser implements BrowserAutomationBackend {
 	}
 	async desktopScreenshot(): Promise<ScreenshotFrame> {
 		return {
-			width: 1,
-			height: 1,
-			rgba: Uint8Array.from([0, 0, 0, 255]),
+			width: 32,
+			height: 32,
+			rgba: new Uint8Array(32 * 32 * 4),
 			png: Uint8Array.from([137, 80, 78, 71]),
+			desktop: { captureId: "capture-test", displayId: "1", bounds: { x: 0, y: 0, width: 32, height: 32 }, capturedAt: new Date().toISOString() },
 		};
 	}
 	async desktopAct(action: { type: string }): Promise<void> {
@@ -206,6 +207,37 @@ class FakeBrowser implements BrowserAutomationBackend {
 }
 
 describe("isolated browser automation and visual validation", () => {
+	it("binds computer actions to this task's one-use screenshot and approval", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const backend = new FakeBrowser();
+		const controller = new BrowserController(backend);
+		const runtime = new AgentRuntime(database, []);
+		const owner = runtime.createSession({ title: "Computer owner" });
+		const other = runtime.createSession({ title: "Other task" });
+		installBrowserTools(runtime, controller, owner.id);
+		for (const tool of runtime.discoverTools(owner.id)) runtime.allowTool(other.id, tool.name);
+		const input = { captureId: "capture-test", action: { type: "key", key: "a", modifiers: ["Command"] } };
+		try {
+			await runtime.callTool(owner.id, "computer.screenshot", {});
+			expect((await runtime.callTool(other.id, "computer.act", input, { approvalStatus: "approved", idempotencyKey: "other-chord" })).status).toBe("failed");
+			expect((await runtime.callTool(owner.id, "computer.act", input, { idempotencyKey: "chord" })).status).toBe("blocked");
+			expect(backend.desktopActions).toHaveLength(0);
+			expect((await runtime.callTool(owner.id, "computer.act", input, { approvalStatus: "approved", idempotencyKey: "chord" })).output).toMatchObject({ performed: true, observationRequired: true });
+			expect((await runtime.callTool(owner.id, "computer.act", input, { approvalStatus: "approved", idempotencyKey: "different-chord" })).status).toBe("failed");
+			expect(backend.desktopActions).toHaveLength(1);
+		} finally { database.close(); }
+	});
+
+	it("invalidates a computer observation when the next capture fails", async () => {
+		const backend = new FakeBrowser();
+		const controller = new BrowserController(backend);
+		const signal = new AbortController().signal;
+		await controller.desktopScreenshot("owner", signal);
+		backend.desktopScreenshot = async () => { throw new Error("capture unavailable"); };
+		await expect(controller.desktopScreenshot("owner", signal)).rejects.toThrow("capture unavailable");
+		await expect(controller.desktopAct("owner", { type: "click", x: 1, y: 1, captureId: "capture-test" }, signal)).rejects.toThrow("fresh computer.screenshot");
+		expect(backend.desktopActions).toHaveLength(0);
+	});
 	it("accepts only HTTPS or exact loopback HTTP browser origins", async () => {
 		const controller = new BrowserController(new FakeBrowser());
 		for (const allowed of [
@@ -351,17 +383,18 @@ describe("isolated browser automation and visual validation", () => {
 				trust: "untrusted_browser",
 			},
 		});
+		await runtime.callTool(session.id, "computer.screenshot", {});
 		expect(
 			(
 				await runtime.callTool(
 					session.id,
 					"computer.act",
-					{ action: { type: "click", x: 10, y: 20 } },
+					{ captureId: "capture-test", action: { type: "click", x: 10, y: 20 } },
 					{ approvalStatus: "approved", idempotencyKey: "desktop-click" },
 				)
 			).status,
 		).toBe("verified");
-		expect(backend.desktopActions).toEqual([{ type: "click", x: 10, y: 20 }]);
+		expect(backend.desktopActions).toEqual([{ type: "click", x: 10, y: 20, captureId: "capture-test" }]);
 		database.close();
 	});
 

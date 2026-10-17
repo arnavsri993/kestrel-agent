@@ -56,6 +56,7 @@ export const DesktopActionSchema = z.discriminatedUnion("type", [
 	z
 		.object({
 			type: z.literal("click"),
+			captureId: SESSION_ID,
 			x: z.number().int().gte(0).lte(20_000),
 			y: z.number().int().gte(0).lte(20_000),
 		})
@@ -63,13 +64,17 @@ export const DesktopActionSchema = z.discriminatedUnion("type", [
 	z
 		.object({
 			type: z.literal("type"),
+			captureId: SESSION_ID,
 			text: z.string().min(1).max(20_000),
 		})
 		.strict(),
 	z
 		.object({
 			type: z.literal("key"),
-			key: z.enum(NAMED_KEYS),
+			captureId: SESSION_ID,
+			key: z.union([z.enum([...NAMED_KEYS, "Space", "Delete", "Home", "End", "PageUp", "PageDown"]), z.string().regex(/^[A-Za-z0-9]$/)]),
+			modifiers: z.array(z.enum(["Command", "Control", "Alt", "Shift"]))
+				.max(4).refine((values) => new Set(values).size === values.length).optional(),
 		})
 		.strict(),
 ]);

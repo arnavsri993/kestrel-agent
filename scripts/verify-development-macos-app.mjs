@@ -49,6 +49,20 @@ const readPlistValue = (path, key) => {
 };
 
 const appInfo = join(appPath, "Contents", "Info.plist");
+if (!readPlistValue(appInfo, "NSAppleEventsUsageDescription"))
+	throw new Error("Development app Apple Events usage description is empty.");
+// Verify the signed main executable, not just the source entitlement file.
+// Electron helpers must not receive Automation privileges through this check.
+const signedEntitlements = runCodesign(["-d", "--entitlements", "-", "--xml", appPath]);
+const parsedEntitlements = spawnSync(
+	"/usr/bin/plutil",
+	["-convert", "json", "-o", "-", "-"],
+	{ encoding: "utf8", input: signedEntitlements.stdout },
+);
+if (parsedEntitlements.status !== 0)
+	throw new Error("Could not read development app signed entitlements.");
+if (JSON.parse(parsedEntitlements.stdout)["com.apple.security.automation.apple-events"] !== true)
+	throw new Error("Development app is missing the signed Apple Events entitlement.");
 const helperApps = [
 	"Kestrel Helper.app",
 	"Kestrel Helper (Renderer).app",
