@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { runInNewContext } from "node:vm";
 
 const nativeMocks = vi.hoisted(() => ({
 	getSources: vi.fn(),
@@ -45,6 +46,21 @@ function download(id: string, status: "completed" | "progressing") {
 		status,
 		createdAt: new Date().toISOString(),
 	};
+}
+
+function capturedDesktopService(bundleId = "com.example.Target") {
+	const service = new ElectronBrowserService();
+	service.setComputerUseEnabled(true);
+	(service as unknown as { lastDesktopCapture: unknown }).lastDesktopCapture = {
+		metadata: {
+			captureId: "identity-test",
+			displayId: "1",
+			bounds: { x: 0, y: 0, width: 1280, height: 800 },
+			capturedAt: new Date().toISOString(),
+		},
+		foreground: { pid: 42, bundleId },
+	};
+	return service;
 }
 
 describe("isolated browser origin policy", () => {
@@ -271,7 +287,7 @@ describe("Electron browser action cancellation", () => {
 		expect(frame.height).toBe(4);
 		expect(frame.desktop.captureId).toEqual(expect.any(String));
 		for (const [, args] of nativeMocks.execFile.mock.calls) {
-			if (args.includes("JavaScript")) expect(() => new Function(args.at(-1))).not.toThrow();
+			if (args.includes("JavaScript")) expect(() => new Function(args[args.indexOf("-e") + 1])).not.toThrow();
 		}
 
 		const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> };
@@ -291,6 +307,84 @@ describe("Electron browser action cancellation", () => {
 		controller.abort();
 		await expect(running).rejects.toThrow("aborted");
 		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+	});
+
+	it.each([
+		"com.example.Target",
+		'com.example.\"; throw new Error("injected"); //',
+		"com.example.\\quote\"\n\u2028\u2029",
+		"</script><script>throw new Error('injected')</script>",
+		"-e Application('System Events').processes()[0].frontmost = true",
+	])("passes app identity only as data: %j", async (bundleId) => {
+		nativeMocks.execFile.mockReset();
+		nativeMocks.execFile.mockImplementation((_path, _args, _options, callback) => {
+			queueMicrotask(() => callback(null, "", ""));
+			return new EventEmitter();
+		});
+		await capturedDesktopService(bundleId).handle(
+			{ operation: "desktop-act", action: { type: "type", text: "retained input", captureId: "identity-test" } },
+			new AbortController().signal,
+		);
+
+		expect(nativeMocks.execFile).toHaveBeenCalledTimes(2);
+		const [restorePath, restoreArgs, restoreOptions] = nativeMocks.execFile.mock.calls[0]!;
+		const [inputPath, inputArgs, inputOptions] = nativeMocks.execFile.mock.calls[1]!;
+		expect(restorePath).toBe("/usr/bin/osascript");
+		expect(restoreArgs.slice(0, 3)).toEqual(["-l", "JavaScript", "-e"]);
+		expect(restoreArgs.slice(4)).toEqual(["42", bundleId]);
+		expect(restoreArgs[3]).not.toContain(bundleId);
+		expect(restoreOptions.timeout).toBe(20_000);
+		expect(inputPath).toBe("/usr/bin/osascript");
+		expect(inputArgs[1]).not.toContain(bundleId);
+		expect(inputOptions.env).toEqual({
+			PATH: "/usr/bin:/bin",
+			KESTREL_COMPUTER_BUNDLE_ID: bundleId,
+			KESTREL_COMPUTER_TEXT: "retained input",
+		});
+	});
+
+	it.each([
+		{ name: "matching PID and bundle", candidates: [[42, "target"]], front: [42, "target"], activated: true, succeeds: true },
+		{ name: "different PID", candidates: [[43, "target"]], front: undefined, activated: false, succeeds: false },
+		{ name: "reused PID", candidates: [[42, "other"]], front: undefined, activated: false, succeeds: false },
+		{ name: "duplicate identity", candidates: [[42, "target"], [42, "target"]], front: undefined, activated: false, succeeds: false },
+		{ name: "PID changes after activation", candidates: [[42, "target"]], front: [43, "target"], activated: true, succeeds: false },
+		{ name: "bundle changes after activation", candidates: [[42, "target"]], front: [42, "other"], activated: true, succeeds: false },
+		{ name: "no frontmost app after activation", candidates: [[42, "target"]], front: undefined, activated: true, succeeds: false },
+	])("restores only the exact captured app: $name", async ({ candidates, front, activated, succeeds }) => {
+		nativeMocks.execFile.mockReset();
+		// Execute the emitted JXA with a fake System Events API; never invoke macOS.
+		const activation = vi.fn();
+		const processFor = ([pid, bundleId]: (string | number)[]) => ({
+			unixId: () => pid,
+			bundleIdentifier: () => bundleId,
+			set frontmost(value: boolean) { activation(value); },
+		});
+		const processes = Object.assign(() => candidates.map(processFor), {
+			whose: () => () => front ? [processFor(front)] : [],
+		});
+		const application = vi.fn(() => ({ processes }));
+		nativeMocks.execFile.mockImplementation((_path, args, _options, callback) => {
+			let error: unknown = null;
+			if (args.includes("JavaScript")) {
+				try {
+					runInNewContext(`${args[3]}\nrun(argv);`, {
+						argv: args.slice(4), Application: application, delay: vi.fn(),
+					}, { timeout: 1_000 });
+				} catch (caught) { error = caught; }
+			}
+			queueMicrotask(() => callback(error, "", ""));
+			return new EventEmitter();
+		});
+		const action = capturedDesktopService("target").handle(
+			{ operation: "desktop-act", action: { type: "key", key: "Enter", captureId: "identity-test" } },
+			new AbortController().signal,
+		);
+		if (succeeds) await expect(action).resolves.toBeUndefined();
+		else await expect(action).rejects.toThrow("System Events helper failed");
+		expect(application).toHaveBeenCalledWith("System Events");
+		expect(activation).toHaveBeenCalledTimes(activated ? 1 : 0);
+		expect(nativeMocks.execFile).toHaveBeenCalledTimes(succeeds ? 2 : 1);
 	});
 
 	it("fails closed when the frontmost app changes during capture", async () => {

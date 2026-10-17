@@ -158,6 +158,7 @@ function desktopAutomationError(error: ExecFileException, stderr: string): Error
 async function runOsaScript(
 	script: string,
 	signal: AbortSignal,
+	scriptArguments: readonly string[] = [],
 ): Promise<string> {
 	if (signal.aborted) throw abortError(signal);
 	return await new Promise<string>((resolvePromise, reject) => {
@@ -177,7 +178,7 @@ async function runOsaScript(
 		};
 		child = execFile(
 			"/usr/bin/osascript",
-			["-l", "JavaScript", "-e", script],
+			["-l", "JavaScript", "-e", script, ...scriptArguments],
 			{ timeout: 20_000, maxBuffer: 64 * 1024, env: { PATH: "/usr/bin:/bin" } },
 			(error, stdout, stderr) => finish(signal.aborted ? abortError(signal) : error ? desktopAutomationError(error, stderr) : undefined, stdout),
 		);
@@ -216,9 +217,22 @@ async function restoreFrontmostProcess(
 ): Promise<void> {
 	if (!Number.isInteger(process.pid) || process.pid < 1 || process.bundleId.length > 200)
 		throw new Error("Captured frontmost process identity is invalid.");
+	// App identifiers are data, never executable JXA source.
 	await runOsaScript(
-		`const se = Application("System Events"); const matches = se.processes().filter((p) => p.unixId() === ${process.pid} && p.bundleIdentifier() === ${JSON.stringify(process.bundleId)}); if (matches.length !== 1) throw new Error("Captured frontmost process is unavailable"); matches[0].frontmost = true; delay(0.1); const front = se.processes.whose({frontmost: true})()[0]; if (!front || front.unixId() !== ${process.pid} || front.bundleIdentifier() !== ${JSON.stringify(process.bundleId)}) throw new Error("Captured frontmost process could not be restored");`,
+		`function run(argv) {
+			const pid = Number(argv[0]);
+			const bundleId = argv[1];
+			const se = Application("System Events");
+			const matches = se.processes().filter((p) => p.unixId() === pid && p.bundleIdentifier() === bundleId);
+			if (matches.length !== 1) throw new Error("Captured frontmost process is unavailable");
+			matches[0].frontmost = true;
+			delay(0.1);
+			const front = se.processes.whose({frontmost: true})()[0];
+			if (!front || front.unixId() !== pid || front.bundleIdentifier() !== bundleId)
+				throw new Error("Captured frontmost process could not be restored");
+		}`,
 		signal,
+		[String(process.pid), process.bundleId],
 	);
 }
 
@@ -999,7 +1013,7 @@ export class ElectronBrowserService {
 		if (!systemPreferences.isTrustedAccessibilityClient(false) ||
 			systemPreferences.getMediaAccessStatus("screen") !== "granted")
 			throw new Error("Desktop permissions changed before input. Check Screen Recording and Accessibility.");
-		const script = `tell application "System Events"\nset activeProcess to first application process whose frontmost is true\nif unix id of activeProcess is not ${capture.foreground.pid} then error "The desktop app changed before input."\nif bundle identifier of activeProcess is not ${JSON.stringify(capture.foreground.bundleId)} then error "The desktop app changed before input."\nend tell\n${inputScript}`;
+		const script = `tell application "System Events"\nset activeProcess to first application process whose frontmost is true\nif unix id of activeProcess is not ${capture.foreground.pid} then error "The desktop app changed before input."\nif bundle identifier of activeProcess is not (system attribute "KESTREL_COMPUTER_BUNDLE_ID") then error "The desktop app changed before input."\nend tell\n${inputScript}`;
 		await new Promise<void>((resolvePromise, reject) => {
 			let settled = false;
 			const cleanup = () => {
@@ -1025,6 +1039,7 @@ export class ElectronBrowserService {
 					timeout: 30_000,
 					env: {
 						PATH: "/usr/bin:/bin",
+						KESTREL_COMPUTER_BUNDLE_ID: capture.foreground.bundleId,
 						...(action.type === "type"
 							? { KESTREL_COMPUTER_TEXT: action.text }
 							: {}),
