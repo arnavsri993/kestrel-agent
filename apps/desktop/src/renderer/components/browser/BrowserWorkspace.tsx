@@ -1015,9 +1015,6 @@ export function BrowserWorkspace({
         onMenuOpenChange={handleToolbarMenuOpenChange}
         onToggleBookmark={toggleBookmarkFromChrome}
         onOpenSettings={onOpenSettings}
-        onOpenExtensionStore={() =>
-          void browser.createTab("https://chromewebstore.google.com")
-        }
         onToggleCalculator={() => {
           const node = viewportRef.current;
           if (!node) return;

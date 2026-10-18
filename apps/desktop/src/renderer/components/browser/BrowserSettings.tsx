@@ -1664,20 +1664,6 @@ export function BrowserSettings({
               {extensionLoading ? "Reviewing…" : "Review from Web Store"}
             </button>
           </div>
-          <div className="extension-actions-row">
-            <a
-              href="https://chromewebstore.google.com"
-              target="_blank"
-              rel="noreferrer"
-              className="button quiet-action-link"
-              onClick={(event) => {
-                event.preventDefault();
-                void browser.createTab("https://chromewebstore.google.com");
-              }}
-            >
-              <Icon name="globe" /> Browse Chrome Web Store ↗
-            </a>
-          </div>
           <p className="honest-status">
             Review extension access before installing. Some Chrome APIs are unsupported.
           </p>

@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { NativeBrowserStatus } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
+import { openNativeChromeWebStore } from "./chrome-web-store-install";
 import "./native-browser-controls.css";
 
-type NativeBrowserAction = "browser-native-status" | "browser-open-native" | "browser-open-native-extensions";
+type NativeBrowserAction = "browser-native-status" | "browser-open-native" | "browser-open-native-extensions" | "open-web-store";
 
 export function NativeBrowserControls({
   currentUrl,
@@ -53,7 +54,9 @@ export function NativeBrowserControls({
     setError("");
     setNotice("");
     try {
-      const response = await window.kestrel.request(
+      const response = type === "open-web-store"
+        ? { ok: true as const, nativeBrowser: await openNativeChromeWebStore(window.kestrel.request) }
+        : await window.kestrel.request(
         type === "browser-open-native" ? { type, ...(input ? { input } : {}) } : { type },
       );
       if (!mounted.current) return;
@@ -72,7 +75,8 @@ export function NativeBrowserControls({
         return;
       }
       if (type !== "browser-native-status") {
-        setNotice(type === "browser-open-native-extensions" ? "Opened Chrome extensions in the native browser." : "Opened the native browser.");
+        setNotice(type === "open-web-store" ? "Opened Chrome Web Store in the native browser."
+          : type === "browser-open-native-extensions" ? "Opened Chrome extensions in the native browser." : "Opened the native browser.");
         onOpened?.();
       }
     } catch {
@@ -102,6 +106,10 @@ export function NativeBrowserControls({
           : status.running ? "Native browser is running." : "Native browser is available."}
       </p>
       <div className="native-browser-actions" aria-busy={busy !== null}>
+        <button type="button" role={buttonRole} className={buttonClass} disabled={disabled}
+          aria-describedby={`${descriptionId} ${statusId}`} onClick={() => void run("open-web-store")}>
+          <Icon name="extensions" /><span>{busy === "open-web-store" ? "Opening Chrome Web Store…" : "Open Chrome Web Store"}</span>
+        </button>
         <button type="button" role={buttonRole} className={buttonClass} disabled={disabled}
           aria-describedby={`${descriptionId} ${statusId}`} onClick={() => void run("browser-open-native")}>
           <Icon name="globe" /><span>{busy === "browser-open-native" ? "Opening native browser…" : "Open native browser"}</span>
