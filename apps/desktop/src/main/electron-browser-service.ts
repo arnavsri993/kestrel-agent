@@ -88,10 +88,12 @@ export function retainRecentBrowserDownloads(
 		0,
 		MAX_BROWSER_DOWNLOAD_RECORDS - retained.size,
 	);
-	for (const download of downloads
-		.filter((candidate) => candidate.status !== "progressing")
-		.slice(-terminalSlots))
-		retained.add(download);
+	if (terminalSlots > 0) {
+		for (const download of downloads
+			.filter((candidate) => candidate.status !== "progressing")
+			.slice(-terminalSlots))
+			retained.add(download);
+	}
 	for (let index = downloads.length - 1; index >= 0; index -= 1) {
 		if (!retained.has(downloads[index]!)) downloads.splice(index, 1);
 	}

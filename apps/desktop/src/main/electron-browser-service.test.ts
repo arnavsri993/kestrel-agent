@@ -79,6 +79,34 @@ describe("Electron browser download history", () => {
 		expect(downloads.some((candidate) => candidate.id === "old-0")).toBe(false);
 	});
 
+	it.each([
+		MAX_BROWSER_DOWNLOAD_RECORDS - 1,
+		MAX_BROWSER_DOWNLOAD_RECORDS,
+		MAX_BROWSER_DOWNLOAD_RECORDS + 1,
+	])("caps history with %i active downloads", (activeCount) => {
+		const active = Array.from({ length: activeCount }, (_, index) =>
+			download(`active-${index}`, "progressing"),
+		);
+		const older = download("older", "completed");
+		const newest = download("newest", "completed");
+		const downloads = [older, ...active, newest];
+
+		retainRecentBrowserDownloads(downloads);
+
+		expect(downloads).toHaveLength(MAX_BROWSER_DOWNLOAD_RECORDS);
+		expect(downloads).toContain(active.at(-1));
+		expect(downloads.includes(active[0]!)).toBe(
+			activeCount <= MAX_BROWSER_DOWNLOAD_RECORDS,
+		);
+		expect(downloads).not.toContain(older);
+		expect(downloads.includes(newest)).toBe(
+			activeCount < MAX_BROWSER_DOWNLOAD_RECORDS,
+		);
+		expect(
+			downloads.filter((record) => record.status === "progressing"),
+		).toHaveLength(Math.min(activeCount, MAX_BROWSER_DOWNLOAD_RECORDS));
+	});
+
 	it("assigns unique filenames when a download name is already occupied", () => {
 		expect(
 			uniqueIsolatedDownloadFilename(
