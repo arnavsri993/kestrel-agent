@@ -2097,7 +2097,10 @@ export class UserBrowserService {
 			);
 			this.commit();
 		} finally {
-			if (record.approvedNavigationUrl === url)
+			if (
+				this.navigationCheckIsCurrent(tab, record, generation) &&
+				record.approvedNavigationUrl === url
+			)
 				delete record.approvedNavigationUrl;
 			if (
 				this.navigationCheckIsCurrent(tab, record, generation) &&
@@ -5731,13 +5734,29 @@ export class UserBrowserService {
 			return false;
 		}
 
+		const contents = liveWebContents(record.view.webContents);
+		const keepsPreviousDocument = Boolean(
+			pending.previousTab.url && contents &&
+			sanitizeBrowserUrl(contents.getURL()) === pending.previousTab.url,
+		);
 		Object.assign(tab, pending.previousTab);
 		delete record.navigatingTo;
 		delete record.pendingDownloadNavigation;
-		this.closeView(tabId);
-		tab.discarded = Boolean(tab.url);
+		if (keepsPreviousDocument) {
+			// An attachment leaves the prior document alive. Recreating its view
+			// would discard unsaved form values and the native navigation history.
+			// Retire its loadURL promise so a late rejection cannot undo restoration.
+			this.beginNavigationCheck(record);
+			delete record.approvedNavigationUrl;
+			tab.loading = false;
+			tab.discarded = false;
+		} else {
+			this.closeView(tabId);
+			tab.discarded = Boolean(tab.url);
+		}
 		this.commit();
-		if (tabId === this.state.activeTabId) void this.syncActiveView();
+		if (!keepsPreviousDocument && tabId === this.state.activeTabId)
+			void this.syncActiveView();
 		this.onCommand?.("open-downloads");
 		return true;
 	}

@@ -2797,6 +2797,43 @@ try {
 		"Original tab was not restored after popup close",
 	);
 
+	const downloadSourcePage = await application.evaluate(async ({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows().find(
+			(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+		);
+		const contents = window?.contentView.children.find(
+			(child) => "webContents" in child,
+		)?.webContents;
+		if (!contents) throw new Error("Download source page is not attached");
+		await contents.executeJavaScript(`
+			document.querySelector("#name").value = "Unsaved download draft";
+			history.pushState({ downloadDraft: true }, "", location.href);
+		`);
+		return {
+			id: contents.id,
+			url: contents.getURL(),
+			draft: await contents.executeJavaScript('document.querySelector("#name").value'),
+			historyLength: contents.navigationHistory.length(),
+			historyIndex: contents.navigationHistory.getActiveIndex(),
+			canGoBack: contents.navigationHistory.canGoBack(),
+		};
+	});
+	assert.equal(downloadSourcePage.canGoBack, true);
+	const assertDownloadSourcePreserved = async (label) => {
+		const current = await application.evaluate(async ({ webContents }, id) => {
+			const contents = webContents.fromId(id);
+			if (!contents || contents.isDestroyed()) return { destroyed: true };
+			return {
+				id: contents.id,
+				url: contents.getURL(),
+				draft: await contents.executeJavaScript('document.querySelector("#name").value'),
+				historyLength: contents.navigationHistory.length(),
+				historyIndex: contents.navigationHistory.getActiveIndex(),
+				canGoBack: contents.navigationHistory.canGoBack(),
+			};
+		}, downloadSourcePage.id);
+		assert.deepEqual(current, downloadSourcePage, label);
+	};
 	await readActiveViewScript(
 		"document.querySelector('#download').click()",
 		"Native page was not attached for download click",
@@ -2817,6 +2854,19 @@ try {
 	assert.equal(download.status, "completed");
 	assert.equal(download.filename, "kestrel-browser.txt");
 	assert.equal(download.canReveal, true);
+	const sourceTabAfterDownload = state.tabs.find((tab) => tab.id === tabId);
+	assert.equal(sourceTabAfterDownload?.url, `${origin}/one`);
+	assert.equal(sourceTabAfterDownload?.loading, false);
+	assert.equal(sourceTabAfterDownload?.error, undefined);
+	const linkedDownloadMenu = page.getByRole("menu", { name: "Downloads" });
+	await linkedDownloadMenu.waitFor();
+	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(linkedDownloadMenu, "Linked attachment Downloads popover");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Source page did not return after the attachment link download",
+	);
+	await assertDownloadSourcePreserved("A download link discarded the source draft or Back history");
 	const downloadPath = join(userData, "browser-downloads", download.filename);
 	assert.equal(existsSync(downloadPath), true);
 	if (process.platform === "darwin") {
@@ -2872,6 +2922,7 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Visible page did not return after direct attachment download",
 	);
+	await assertDownloadSourcePreserved("Address-bar attachment navigation discarded the source draft or Back history");
 	process.stdout.write("Browser smoke: history tool\n");
 	const historyTool = await callTool(
 		runtimeSessionId,

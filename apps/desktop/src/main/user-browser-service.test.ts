@@ -774,13 +774,17 @@ describe("UserBrowserService", () => {
 		expect(service.getState().downloads[0]?.status).toBe("cancelled");
 	});
 
-	it("keeps the prior page when an address-bar navigation becomes a download", async () => {
+	it.each([
+		{ failure: "ERR_ABORTED (-3)", hasLoadError: false },
+		{ failure: "ERR_FAILED (-2)", hasLoadError: true },
+	])("preserves a live page and its history when $failure navigation becomes a download", async ({ failure, hasLoadError }) => {
 		const { service, commands } = createService();
 		const tab = service.getState().tabs[0]!;
 		await service.navigate(tab.id, "https://example.com");
 		const contents = electron.state.views[0]!.webContents;
 		contents.url = "https://example.com/";
 		contents.title = "Example";
+		contents.navigationHistory.canGoBack.mockReturnValue(true);
 		contents.emit("did-navigate", {}, contents.url, 200, "OK");
 		contents.emit("did-stop-loading");
 		const partition = electron.state.partitions[0]!.instance;
@@ -796,22 +800,31 @@ describe("UserBrowserService", () => {
 			cancel: vi.fn(),
 		};
 		contents.loadURL.mockImplementationOnce(async () => {
-			throw new Error(`ERR_FAILED (-2) loading '${downloadUrl}'`);
+			throw new Error(`${failure} loading '${downloadUrl}'`);
 		});
 
 		const beforeDownloadEvent = await service.navigate(tab.id, downloadUrl);
 		expect(beforeDownloadEvent.tabs[0]).toMatchObject({
 			url: downloadUrl,
 		});
-		expect(beforeDownloadEvent.tabs[0]?.error).toMatch(/could not be opened/i);
+		if (hasLoadError)
+			expect(beforeDownloadEvent.tabs[0]?.error).toMatch(/could not be opened/i);
+		else
+			expect(beforeDownloadEvent.tabs[0]?.error).toBeUndefined();
 		partition.emit("will-download", {}, item, contents);
 		const state = service.getState();
+
+		expect(electron.state.views).toHaveLength(1);
+		expect(electron.state.views[0]!.webContents).toBe(contents);
+		expect(contents.close).not.toHaveBeenCalled();
+		expect(contents.loadURL).toHaveBeenCalledTimes(2);
 
 		expect(state.tabs[0]).toMatchObject({
 			url: "https://example.com/",
 			title: "Example",
-			loading: true,
+			loading: false,
 			error: undefined,
+			canGoBack: true,
 		});
 		expect(state.downloads[0]).toMatchObject({
 			filename: "report.pdf",
@@ -819,7 +832,93 @@ describe("UserBrowserService", () => {
 			status: "progressing",
 		});
 		expect(commands).toContain("open-downloads");
+		service.back(tab.id);
+		expect(contents.navigationHistory.goBack).toHaveBeenCalledOnce();
+	});
+
+	it("does not surface a late attachment-navigation rejection after restoring the live page", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		contents.url = "https://example.com/";
+		contents.title = "Example";
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		contents.emit("did-stop-loading");
+		const downloadUrl = "https://files.example/report.pdf";
+		const item = {
+			getFilename: vi.fn(() => "report.pdf"),
+			getURL: vi.fn(() => downloadUrl),
+			getTotalBytes: vi.fn(() => 10),
+			getReceivedBytes: vi.fn(() => 0),
+			setSavePath: vi.fn(),
+			on: vi.fn(),
+			once: vi.fn(),
+			cancel: vi.fn(),
+		};
+		let rejectNavigation: (error: Error) => void = () => {
+			throw new Error("The delayed navigation was not started.");
+		};
+		contents.loadURL.mockImplementationOnce(
+			() => new Promise<void>((_resolve, reject) => {
+				rejectNavigation = reject;
+			}),
+		);
+		const navigation = service.navigate(tab.id, downloadUrl);
+		await vi.waitFor(() => expect(contents.loadURL).toHaveBeenCalledTimes(2));
+
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
+		expect(service.getState().tabs[0]).toMatchObject({
+			url: "https://example.com/",
+			loading: false,
+			error: undefined,
+		});
+		rejectNavigation(new Error(`ERR_FAILED (-2) loading '${downloadUrl}'`));
+		await navigation;
+
+		expect(service.getState().tabs[0]).toMatchObject({
+			url: "https://example.com/",
+			loading: false,
+			error: undefined,
+		});
+	});
+
+	it("recreates the prior page if a download navigation replaced its live document", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		contents.url = "https://example.com/";
+		contents.title = "Example";
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		contents.emit("did-stop-loading");
+		const downloadUrl = "https://files.example/report.pdf";
+		const item = {
+			getFilename: vi.fn(() => "report.pdf"),
+			getURL: vi.fn(() => downloadUrl),
+			getTotalBytes: vi.fn(() => 10),
+			getReceivedBytes: vi.fn(() => 0),
+			setSavePath: vi.fn(),
+			on: vi.fn(),
+			once: vi.fn(),
+			cancel: vi.fn(),
+		};
+		contents.loadURL.mockImplementationOnce(async () => {
+			throw new Error(`ERR_FAILED (-2) loading '${downloadUrl}'`);
+		});
+
+		await service.navigate(tab.id, downloadUrl);
+		contents.url = downloadUrl;
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
+
+		expect(service.getState().tabs[0]).toMatchObject({
+			url: "https://example.com/",
+			title: "Example",
+			loading: true,
+			error: undefined,
+		});
 		expect(contents.close).toHaveBeenCalledOnce();
+		expect(electron.state.views).toHaveLength(2);
 		expect(electron.state.views.at(-1)!.webContents.loadURL).toHaveBeenCalledWith(
 			"https://example.com/",
 		);
