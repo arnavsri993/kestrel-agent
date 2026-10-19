@@ -766,6 +766,9 @@ function BookmarkEditForm({
   );
   const [folderId, setFolderId] = useState<string | null>(bookmark.folderId ?? null);
   const [error, setError] = useState("");
+  const selectedFolderId = folders.some((folder) => folder.id === folderId)
+    ? folderId
+    : null;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -776,7 +779,7 @@ function BookmarkEditForm({
     }
     setError("");
     try {
-      await onSave({ title: normalizedTitle, displayMode, folderId });
+      await onSave({ title: normalizedTitle, displayMode, folderId: selectedFolderId });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save changes.");
     }
@@ -804,7 +807,7 @@ function BookmarkEditForm({
         </label>
         <label>
           <span>Folder</span>
-          <select value={folderId ?? ""} onChange={(event) => setFolderId(event.target.value || null)}>
+          <select value={selectedFolderId ?? ""} onChange={(event) => setFolderId(event.target.value || null)}>
             <option value="">Bookmarks bar</option>
             {folders.map((folder) => (
               <option key={folder.id} value={folder.id}>
