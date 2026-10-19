@@ -93,12 +93,12 @@ export function NativeBrowserControls({
   const buttonRole = menu ? "menuitem" : undefined;
   return (
     <div className={`native-browser-controls${menu ? " is-menu" : ""}`}>
-      {menu ? <strong className="native-browser-heading">Native browser</strong>
-        : <h3 className="native-browser-heading">Native browser</h3>}
+      {menu ? <strong className="native-browser-heading">Separate compatibility browser</strong>
+        : <h3 className="native-browser-heading">Separate compatibility browser</h3>}
       <p id={descriptionId} className="native-browser-description">
         {menu
-          ? "Chrome extensions use a separate, persistent browser profile."
-          : "Use Chrome extensions in a separate, persistent browser profile. Existing embedded browser data and extensions are not transferred. macOS may ask for Keychain access; credential storage has not been verified."}
+          ? "Opens a separate Chromium window and profile."
+          : "This compatibility tool opens a separate Chromium window and profile. Its extensions do not run in Kestrel tabs. Kestrel data and logins are not transferred. macOS may ask for Keychain access."}
       </p>
       <p id={statusId} className="native-browser-status" role="status">
         {busy === "browser-native-status" ? "Checking availability…" : unavailable

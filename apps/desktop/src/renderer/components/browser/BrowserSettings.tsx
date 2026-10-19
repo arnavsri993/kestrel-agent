@@ -1617,14 +1617,24 @@ export function BrowserSettings({
               <Icon name="extensions" /> Web extensions and add-ons
             </h2>
             <p>
-              Choose the native browser for Chrome extensions, or review
-              packages for the embedded browser below.
+              Browse the Chrome Web Store and review extension access before
+              installing. Some extensions require Chrome features Kestrel does
+              not support yet.
             </p>
           </header>
-          <NativeBrowserControls
-            currentUrl={browser.state?.tabs.find((tab) => tab.id === browser.state?.activeTabId)?.url}
-          />
-          <h3>Embedded browser extensions</h3>
+          <button
+            type="button"
+            className="button quiet-action-link"
+            onClick={() => void browser.createTab("https://chromewebstore.google.com")}
+          >
+            <Icon name="globe" /> Open Chrome Web Store
+          </button>
+          <details>
+            <summary>Compatibility browser — separate window</summary>
+            <NativeBrowserControls
+              currentUrl={browser.state?.tabs.find((tab) => tab.id === browser.state?.activeTabId)?.url}
+            />
+          </details>
           {extensionMessage && (
             <div
               className={`extension-alert ${extensionMessage.type}`}

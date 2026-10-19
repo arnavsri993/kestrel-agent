@@ -30,7 +30,6 @@ import {
   type AddressBarSuggestionFilter,
 } from "./address-bar-suggestions";
 import { BrowserHistoryPopover } from "./BrowserHistoryPopover";
-import { NativeBrowserControls } from "./NativeBrowserControls";
 import {
   downloadProgress,
   downloadSizeLabel,
@@ -310,6 +309,7 @@ export function BrowserToolbar({
   onSaveScreenshot,
   onToggleBookmark,
   onOpenSettings,
+  onOpenExtensionStore,
   onToggleCalculator,
   onOpenMenu,
   onMenuOpenChange,
@@ -361,6 +361,7 @@ export function BrowserToolbar({
   onSaveScreenshot(): Promise<string | undefined>;
   onToggleBookmark(): void;
   onOpenSettings(section?: "browser-autofill"): void;
+  onOpenExtensionStore(): void;
   onToggleCalculator(): void;
   onOpenMenu(): void;
   onMenuOpenChange?(open: boolean): void;
@@ -1573,10 +1574,9 @@ export function BrowserToolbar({
 					<small>Pin extensions to the toolbar.</small>
                   </span>
                 </header>
-                <NativeBrowserControls currentUrl={tab.url} menu onOpened={() => closeMenu()} />
                 {extensions.length === 0 ? (
                   <p className="browser-toolbar-popover-empty">
-                    No embedded browser extensions installed yet.
+                    No browser extensions installed yet.
                   </p>
                 ) : (
                   <div className="browser-extension-list">
@@ -1613,10 +1613,19 @@ export function BrowserToolbar({
                   type="button"
                   role="menuitem"
                   className="browser-toolbar-menu-link"
+                  onClick={() => runAndClose(onOpenExtensionStore)}
+                >
+                  <Icon name="globe" />
+                  <span>Open Chrome Web Store</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="browser-toolbar-menu-link"
                   onClick={() => runAndClose(onOpenSettings)}
                 >
                   <Icon name="settings" />
-                  <span>Manage embedded extensions</span>
+                  <span>Manage extensions</span>
                   <Icon name="chevron" />
                 </button>
               </>

@@ -1673,14 +1673,9 @@ try {
 	});
 	assert.equal(await storeLink.count(), 1);
 	assert.equal(await storeLink.getAttribute("type"), "button");
-	await extensionsMenu.getByText("Chrome extensions use a separate, persistent browser profile.", { exact: true }).waitFor();
-	await page.keyboard.press("Escape");
-	// Explicit embedded navigation remains supported for reviewing limited-API
-	// packages. The Store menu now uses the separate native Chromium route,
-	// whose live install is verified by test:native-web-store.
-	await page.evaluate(() => window.kestrel.request({
-		type: "browser-create-tab", input: "https://chromewebstore.google.com", active: true,
-	}));
+	assert.equal(await extensionsMenu.getByText("Native browser", { exact: true }).count(), 0);
+	const windowsBeforeStore = application.windows().length;
+	await storeLink.click();
 	state = await waitForBrowserState(
 		(value) =>
 			value.activeTabId !== extensionsSourceTabId &&
@@ -1689,8 +1684,9 @@ try {
 					tab.id === value.activeTabId &&
 					tab.url.startsWith("https://chromewebstore.google.com"),
 			),
-		"Explicit embedded Chrome Web Store navigation did not create a tab",
+		"Chrome Web Store did not open in the existing Kestrel window",
 	);
+	assert.equal(application.windows().length, windowsBeforeStore, "The Store action must preserve Kestrel's existing window.");
 	const storeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
 	assert(storeTab);
 	const storeExtensionId = "bcjindcccaagfpapjjmafapmmgkkhgoa";
@@ -1718,9 +1714,9 @@ try {
 		name: "Chrome Web Store installation",
 	});
 	await storeInstallBar.waitFor();
-	await storeInstallBar.getByRole("button", { name: "Open in native browser", exact: true }).waitFor();
+	assert.equal(await storeInstallBar.getByRole("button", { name: "Open in native browser", exact: true }).count(), 0);
 	const reviewAndAdd = storeInstallBar.getByRole("button", {
-		name: "Review for embedded browser",
+		name: "Review & add",
 		exact: true,
 	});
 	await reviewAndAdd.waitFor();
@@ -1743,7 +1739,7 @@ try {
 			.click();
 		await compatibilityDialog.waitFor({ state: "detached", timeout: 60_000 });
 		await storeInstallBar
-			.getByText("Added to embedded browser", { exact: true })
+			.getByText("Added to Kestrel", { exact: true })
 			.waitFor({ timeout: 60_000 });
 		const installedExtensions = await page.evaluate(async () => {
 			const response = await window.kestrel.request({
@@ -3364,7 +3360,7 @@ try {
 		`Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, extension-store navigation and ${
 			verifyRealChromeWebStoreInstall
 				? "reviewed extension installation"
-				: "Native Store handoff and embedded review affordances"
+				: "same-window Store navigation and review affordance"
 		}, hidden-view routing, and restart restore.\n`,
 	);
 } catch (error) {

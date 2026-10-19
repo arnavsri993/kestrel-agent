@@ -1,17 +1,18 @@
 # Browser extension compatibility
 
-**Extensions → Open Chrome Web Store** opens Kestrel's bundled native Chromium
-browser. Use the Store's **Add to Chrome** button and Chromium's own permission
-prompt there. Chromium owns installation, extension management and its normal
-update mechanism. **Manage Chrome extensions** opens that same browser profile's
-extension manager. Store listings opened in an embedded tab offer **Open in
-native browser** to continue with the same extension identity.
+**Extensions → Open Chrome Web Store** opens a tab in the existing Kestrel
+window, preserving its sidebar, tab rail and agent controls. Store listings offer
+Kestrel's **Review & add** flow below. Full native Chromium extension support
+inside that window is not complete; opening a separate stock Chromium window
+does not satisfy that integration.
 
-The native browser uses a separate persistent profile. Its extensions operate
-on pages opened in that browser; they do not modify embedded Electron tabs.
-Existing browser data, extension records and credentials are preserved and are
-not transferred. Web pages and extension pages receive no Kestrel bridge,
-agent tools or provider credentials.
+An experimental native compatibility browser remains available under browser
+Settings → Web extensions and add-ons → **Compatibility browser — separate
+window**. It has a separate persistent profile. Its extensions operate only on
+pages in that separate window. It is a compatibility tool, not Kestrel's normal
+Store flow. Existing browser data, extension records and credentials are
+preserved and are not transferred. Its pages receive no Kestrel bridge, agent
+tools or provider credentials.
 
 The embedded browser can also install selected Store packages, with a narrower
 compatibility surface. The Chrome Web Store sees Kestrel's Electron
@@ -20,7 +21,7 @@ does not authorize an install. Kestrel deliberately does not spoof Chrome,
 modify the store page, or inject a brittle replacement into Google's DOM.
 
 Instead, when a person opens a real Chrome Web Store listing, Kestrel provides
-one browser-level **Review for embedded browser** action. This secondary action is deliberately separate
+one browser-level **Review & add** action. This action is deliberately separate
 from the store page and follows this path:
 
 ```text
@@ -155,9 +156,10 @@ does not claim permanent third-party compatibility.
 
 ## Native browsing and live Store verification
 
-The packaged Apple Silicon app includes the native browser. Availability and
-startup errors remain visible in the Extensions menu and browser Settings;
-an unavailable native bundle does not silently fall back to embedded installation.
+The packaged Apple Silicon app includes the separate compatibility browser.
+Availability and startup errors are visible inside its explicit browser
+Settings disclosure. Normal Store navigation stays inside Kestrel and does not
+launch that browser.
 
 Run the live Store canary after preparing the native sidecar:
 
@@ -166,7 +168,7 @@ node scripts/prepare-native-browser-sidecar.mjs
 KESTREL_TEST_REAL_CHROME_WEB_STORE=1 corepack pnpm test:native-web-store
 ```
 
-The test opens JSON Formatter's official Store listing in a disposable native
+This separate-runtime test opens JSON Formatter's official Store listing in a disposable native
 profile with mock credential storage and no personal accounts. Complete the
 normal **Add to Chrome** flow in that test window within three minutes. The
 test checks Chromium's signed Store installation record, its actual enabled
@@ -174,7 +176,8 @@ extension registry, bridge isolation, and enablement after a full process
 restart without a sideload flag. It saves executable-bound evidence under
 `.tmp/native-web-store-evidence/` and removes only its owned test profile after
 shutdown. It does not verify system Keychain behavior, update delivery or
-compatibility of every Store extension.
+compatibility of every Store extension. It does not prove native extension
+integration in the existing Kestrel window.
 
 `corepack pnpm dev:native-browser` connects the native CEF Kestrel shell to a
 separate Chrome-style CEF browser process. Chrome's own extension manager is
