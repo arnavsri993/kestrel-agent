@@ -624,7 +624,7 @@ export function BrowserToolbar({
     const frame = window.requestAnimationFrame(() => {
       menuRef.current
         ?.querySelector<HTMLElement>(
-          "button[role='menuitem'], button[role='menuitemcheckbox']",
+          "button[role='menuitem']:not(:disabled), button[role='menuitemcheckbox']:not(:disabled)",
         )
         ?.focus();
     });
@@ -657,7 +657,7 @@ export function BrowserToolbar({
         return;
       const items = Array.from(
         menuRef.current.querySelectorAll<HTMLElement>(
-          "button[role='menuitem'], button[role='menuitemcheckbox'], input",
+          "button[role='menuitem']:not(:disabled), button[role='menuitemcheckbox']:not(:disabled), input:not(:disabled)",
         ),
       );
       if (items.length === 0) return;
@@ -1609,21 +1609,15 @@ export function BrowserToolbar({
                     })}
                   </div>
                 )}
-                <a
-                  href="https://chromewebstore.google.com"
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
                   role="menuitem"
                   className="browser-toolbar-menu-link"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    runAndClose(onOpenExtensionStore);
-                  }}
+                  onClick={() => runAndClose(onOpenExtensionStore)}
                 >
                   <Icon name="globe" />
-                  <span>Go to store</span>
-                  <Icon name="expand" />
-                </a>
+                  <span>Open Chrome Web Store</span>
+                </button>
                 <button
                   type="button"
                   role="menuitem"

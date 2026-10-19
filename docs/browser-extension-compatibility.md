@@ -1,13 +1,27 @@
 # Browser extension compatibility
 
-Kestrel can install selected Chrome Web Store extensions, but it is not
-Google Chrome or Microsoft Edge. The Chrome Web Store sees Kestrel's Electron
+**Extensions → Open Chrome Web Store** opens a tab in the existing Kestrel
+window, preserving its sidebar, tab rail and agent controls. Store listings offer
+Kestrel's **Review & add** flow below. Full native Chromium extension support
+inside that window is not complete; opening a separate stock Chromium window
+does not satisfy that integration.
+
+An experimental native compatibility browser remains available under browser
+Settings → Web extensions and add-ons → **Compatibility browser — separate
+window**. It has a separate persistent profile. Its extensions operate only on
+pages in that separate window. It is a compatibility tool, not Kestrel's normal
+Store flow. Existing browser data, extension records and credentials are
+preserved and are not transferred. Its pages receive no Kestrel bridge, agent
+tools or provider credentials.
+
+The embedded browser can also install selected Store packages, with a narrower
+compatibility surface. The Chrome Web Store sees Kestrel's Electron
 runtime as a non-Chrome browser, so Google's ordinary **Add to Chrome** control
 does not authorize an install. Kestrel deliberately does not spoof Chrome,
 modify the store page, or inject a brittle replacement into Google's DOM.
 
 Instead, when a person opens a real Chrome Web Store listing, Kestrel provides
-one browser-level **Review & add** action. The action is deliberately separate
+one browser-level **Review & add** action. This action is deliberately separate
 from the store page and follows this path:
 
 ```text
@@ -26,7 +40,7 @@ An install is not a compatibility claim. A package may have a valid Chrome Web
 Store signature and still depend on a Chrome API that Electron does not expose
 or that Kestrel has not yet verified.
 
-## Current boundary
+## Embedded extension boundary
 
 The extension subsystem has three layers:
 
@@ -45,7 +59,7 @@ and service-worker APIs. A future `ChromiumExtensionRuntime` can implement the
 same small runtime boundary without changing the installer, stored report, or
 management UI.
 
-The current runtime is Electron's persistent user-browser partition. Electron
+The embedded runtime is Electron's persistent user-browser partition. Electron
 only supports unpacked extensions and requires extensions to be loaded again at
 startup, so Kestrel persists its verified package record and reloads it when
 that profile starts. No Kestrel agent, memory, file, native IPC, or privileged
@@ -139,3 +153,37 @@ optionally exercise a live Chrome Web Store package when
 a replacement for deterministic local tests. Live package availability and
 Google's delivery service are external dependencies, so a passing local test
 does not claim permanent third-party compatibility.
+
+## Native browsing and live Store verification
+
+The packaged Apple Silicon app includes the separate compatibility browser.
+Availability and startup errors are visible inside its explicit browser
+Settings disclosure. Normal Store navigation stays inside Kestrel and does not
+launch that browser.
+
+Run the live Store canary after preparing the native sidecar:
+
+```bash
+node scripts/prepare-native-browser-sidecar.mjs
+KESTREL_TEST_REAL_CHROME_WEB_STORE=1 corepack pnpm test:native-web-store
+```
+
+This separate-runtime test opens JSON Formatter's official Store listing in a disposable native
+profile with mock credential storage and no personal accounts. Complete the
+normal **Add to Chrome** flow in that test window within three minutes. The
+test checks Chromium's signed Store installation record, its actual enabled
+extension registry, bridge isolation, and enablement after a full process
+restart without a sideload flag. It saves executable-bound evidence under
+`.tmp/native-web-store-evidence/` and removes only its owned test profile after
+shutdown. It does not verify system Keychain behavior, update delivery or
+compatibility of every Store extension. It does not prove native extension
+integration in the existing Kestrel window.
+
+`corepack pnpm dev:native-browser` connects the native CEF Kestrel shell to a
+separate Chrome-style CEF browser process. Chrome's own extension manager is
+available through **Manage Chrome extensions**. This lane uses isolated temporary
+profiles and does not import the Electron extension inventory or change the
+installed app. The privileged shell remains extension-free; extension pages and
+websites never receive Kestrel's bridge or Core credentials. See
+[the runtime migration guide](./desktop-runtime-migration.md#native-shell-with-chrome-extension-browsing)
+for commands, current verification scope and remaining cutover boundaries.

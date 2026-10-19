@@ -128,6 +128,21 @@ export function BrowserWorkspace({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const [nativeExtensionBusy, setNativeExtensionBusy] = useState(false);
+  const [nativeExtensionError, setNativeExtensionError] = useState("");
+  const openNativeExtensions = async () => {
+    setNativeExtensionBusy(true);
+    setNativeExtensionError("");
+    try {
+      const response = await window.kestrel.request({ type: "browser-open-native-extensions" });
+      if (!response.ok) throw new Error("The native extension manager could not open. Try again.");
+      await browser.refresh();
+    } catch {
+      setNativeExtensionError("The native extension manager could not open. Try again.");
+    } finally {
+      setNativeExtensionBusy(false);
+    }
+  };
   const [openChromeMenus, setOpenChromeMenus] = useState({
     tab: false,
     toolbar: false,
@@ -330,7 +345,9 @@ export function BrowserWorkspace({
     if (tabStillExists === false || bookmarkStillExists === false)
       setBookmarkDialog(null);
   }, [bookmarkDialog, state?.bookmarks, state?.tabs]);
+  const nativeBrowserWindow = state?.presentation === "native_window";
   const nativePageEligible = Boolean(
+    !nativeBrowserWindow &&
     activeTab?.url &&
       !activeTab.error &&
       !activeTab.blockedNavigation &&
@@ -1132,6 +1149,23 @@ export function BrowserWorkspace({
         role="tabpanel"
         aria-label={activeTab.title}
       >
+        {nativeBrowserWindow && (
+          <section className="browser-native-window-handoff" aria-label="Native browser">
+            <h1>Native browser</h1>
+            <p>Websites and Chrome extensions open in a separate Chromium window.</p>
+            <button type="button" className="button secondary"
+              onClick={() => void browser.selectTab(activeTab.id)}>
+              Show browser window
+            </button>
+            <button type="button" className="button secondary"
+              disabled={nativeExtensionBusy} aria-busy={nativeExtensionBusy}
+              onClick={() => void openNativeExtensions()}>
+              {nativeExtensionBusy ? "Opening extensions…" : "Manage Chrome extensions"}
+            </button>
+            {nativeExtensionError && <p role="alert">{nativeExtensionError}</p>}
+            <p>This development profile is temporary. Its browsing data is removed when you quit.</p>
+          </section>
+        )}
 		{!nativePageVisible &&
 			nativePageEligible &&
 			nativePagePreview?.tabId === activeTab.id && (
@@ -1196,7 +1230,7 @@ export function BrowserWorkspace({
             </div>
           </section>
         )}
-        {!activeTab.url && !activeTab.blockedNavigation && (
+        {!nativeBrowserWindow && !activeTab.url && !activeTab.blockedNavigation && (
           <NewTabPage
             tabId={activeTab.id}
             history={state.history}

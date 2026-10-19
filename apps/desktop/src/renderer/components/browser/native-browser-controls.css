@@ -1,0 +1,58 @@
+.native-browser-controls {
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.native-browser-heading {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+.native-browser-description,
+.native-browser-status,
+.native-browser-feedback {
+  margin: 6px 0;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.native-browser-feedback { color: var(--ink); }
+.native-browser-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.native-browser-actions > button {
+  max-width: 100%;
+  height: auto;
+  min-height: 34px;
+  white-space: normal;
+  text-align: left;
+}
+.native-browser-actions > button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.native-browser-actions > button:focus-visible {
+  outline: 2px solid var(--solid);
+  outline-offset: 2px;
+}
+.native-browser-controls.is-menu { padding: 10px 0; }
+.native-browser-controls.is-menu > strong,
+.native-browser-controls.is-menu > p { margin-left: 7px; margin-right: 7px; }
+.native-browser-controls.is-menu .native-browser-description,
+.native-browser-controls.is-menu .native-browser-status,
+.native-browser-controls.is-menu .native-browser-feedback { font-size: 11px; }
+.native-browser-controls.is-menu .native-browser-actions {
+  display: grid;
+  gap: 2px;
+  margin-top: 6px;
+}
+.native-browser-controls.is-menu .native-browser-actions > button {
+  width: 100%;
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+.native-browser-controls.is-menu .native-browser-actions > button > span {
+  white-space: normal;
+}

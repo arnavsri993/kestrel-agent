@@ -20,6 +20,24 @@ bool no_sandbox_requested(int argc, char* argv[]) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+  const bool extension_workbench = KestrelHasCommandLineSwitch(
+      argc, argv, "--kestrel-extension-workbench");
+  const bool persistent_browser = KestrelHasCommandLineSwitch(
+      argc, argv, "--kestrel-persistent-browser");
+  if (persistent_browser) {
+    bool invalid = !extension_workbench;
+    for (const char* flag : {"--use-mock-keychain", "--no-sandbox",
+         "--kestrel-allow-no-sandbox", "--remote-debugging-port",
+         "--remote-debugging-pipe", "--load-extension", "--kestrel-renderer",
+         "--kestrel-ephemeral-core", "--kestrel-native-browser"}) {
+      invalid = invalid || KestrelHasCommandLineSwitch(argc, argv, flag);
+    }
+    if (invalid) {
+      std::cerr << "Persistent browser helpers require the isolated sandboxed Chrome mode."
+                << std::endl;
+      return 1;
+    }
+  }
   // A shipping Kestrel process does not use this escape hatch. It exists only
   // to diagnose local signing failures without misrepresenting them as a
   // production-ready browser process.
@@ -39,12 +57,7 @@ int main(int argc, char* argv[]) {
   }
 
   CefMainArgs main_args(argc, argv);
-  bool extension_workbench = false;
-  for (int index = 1; index < argc; ++index) {
-    if (std::strcmp(argv[index], "--kestrel-extension-workbench") == 0)
-      extension_workbench = true;
-  }
   CefRefPtr<KestrelChromiumApp> app(
-      new KestrelChromiumApp({}, extension_workbench));
+      new KestrelChromiumApp({}, extension_workbench, persistent_browser));
   return CefExecuteProcess(main_args, app.get(), nullptr);
 }

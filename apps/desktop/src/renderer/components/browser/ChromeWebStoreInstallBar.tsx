@@ -27,6 +27,7 @@ export function ChromeWebStoreInstallBar({
 		attemptRef.current += 1;
 		setPhase("idle");
 		setMessage("");
+		return () => { attemptRef.current += 1; };
 	}, [extensionId]);
 
 	if (!extensionId) return null;
@@ -62,7 +63,7 @@ export function ChromeWebStoreInstallBar({
 			? installedExtension?.compatibility?.summary ??
 				"Installed from the reviewed Chrome Web Store package."
 			: message ||
-				"Google's Add to Chrome button only works in Chrome. Kestrel verifies the package, shows its declared access, then asks before installing.";
+				"Kestrel verifies the package and shows its access before you install. Some Chrome features are not supported yet.";
 
 	return (
 		<section

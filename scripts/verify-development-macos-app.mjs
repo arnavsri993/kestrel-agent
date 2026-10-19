@@ -7,6 +7,7 @@ import { auditPackagedMacApp } from "./macos-architecture-audit.cjs";
 
 const require = createRequire(import.meta.url);
 const { verifyAgentCoreSidecar } = require("../apps/desktop/build/agent-core-sidecar.cjs");
+const { verifyNativeBrowserSidecar } = require("../apps/desktop/build/native-browser-sidecar.cjs");
 
 const appArgument = process.argv[2];
 if (process.platform !== "darwin")
@@ -149,4 +150,5 @@ for (const target of [appPath, ...helperApps]) {
 		throw new Error(`${target} is not ad-hoc signed with hardened runtime.`);
 }
 
+verifyNativeBrowserSidecar(appPath);
 console.log(`Verified ad-hoc development signature: ${appPath}`);

@@ -7953,3 +7953,15 @@ body:has(.calculator-overlay),
  min-width: 28px; width: 28px; height: 28px; border-radius: 50%;
 }
 .browser-download-trigger-icon { margin: 0; padding: 0; flex: 0 0 24px; }
+
+.browser-native-window-handoff {
+  max-width: 36rem;
+  margin: auto;
+  padding: 3rem 2rem;
+  color: var(--ink);
+}
+.browser-native-window-handoff p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.browser-native-window-handoff button { margin: 1rem .75rem 1rem 0; }

@@ -41,6 +41,7 @@
 #include "include/wrapper/cef_stream_resource_handler.h"
 #include "kestrel_chromium_app.h"
 #include "kestrel_extension_workbench.h"
+#include "kestrel_browser_connection.h"
 
 @interface KestrelNativeCoreRelay : NSObject
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
@@ -184,6 +185,7 @@ std::string renderer_resource_root;
 int exit_after_ready_ms = 0;
 bool ephemeral_core_enabled = false;
 bool full_renderer_enabled = false;
+bool native_browser_enabled = false;
 std::optional<std::string> smoke_user_browser_url;
 bool smoke_user_browser_via_bridge = false;
 CefRefPtr<CefWindow> kestrel_window;
@@ -599,14 +601,16 @@ class KestrelBridgeQueryHandler final
       CefRefPtr<CefMessageRouterBrowserSide::Callback> callback)>;
   using HostRequestDispatcher = std::function<bool(
       CefRefPtr<CefDictionaryValue> request,
-      CefRefPtr<CefMessageRouterBrowserSide::Callback> callback)>;
+      CefRefPtr<CefMessageRouterBrowserSide::Callback> callback, int64_t query_id)>;
 
   KestrelBridgeQueryHandler(std::string allowed_shell_url,
                             HostRequestDispatcher host_request_dispatcher,
-                            CoreRequestDispatcher core_request_dispatcher)
+                            CoreRequestDispatcher core_request_dispatcher,
+                            std::function<void(int64_t)> query_canceled)
       : allowed_shell_url_(std::move(allowed_shell_url)),
         host_request_dispatcher_(std::move(host_request_dispatcher)),
-        core_request_dispatcher_(std::move(core_request_dispatcher)) {}
+        core_request_dispatcher_(std::move(core_request_dispatcher)),
+        query_canceled_(std::move(query_canceled)) {}
 
   bool OnQuery(
       CefRefPtr<CefBrowser> browser,
@@ -661,14 +665,20 @@ class KestrelBridgeQueryHandler final
     }
     if (bridge_request->GetString("type").ToString() ==
         "native-host-status") {
-      callback->Success(
-          R"JSON({"ok":true,"host":"chromium-cef","profile":"isolated","credentialStorage":"disabled","core":"ephemeral-or-unavailable","browser":"native-cef-in-memory-tabs"})JSON");
+      auto status = CefDictionaryValue::Create();
+      status->SetBool("ok", true);
+      status->SetString("host", "chromium-cef");
+      status->SetString("profile", "isolated");
+      status->SetString("credentialStorage", "disabled");
+      status->SetString("core", "ephemeral-or-unavailable");
+      status->SetString("browser", native_browser_enabled ? "native-chrome-separate-process" : "native-cef-in-memory-tabs");
+      callback->Success(browser_json(status));
       std::cout << "KESTREL_NATIVE_CHROMIUM_BRIDGE_REQUEST_OK"
                 << std::endl;
       return true;
     }
     if (host_request_dispatcher_ &&
-        host_request_dispatcher_(bridge_request->Copy(false), callback)) {
+        host_request_dispatcher_(bridge_request->Copy(false), callback, query_id)) {
       return true;
     }
     CefRefPtr<CefValue> core_request = CefValue::Create();
@@ -690,6 +700,7 @@ class KestrelBridgeQueryHandler final
                        CefRefPtr<CefFrame> frame,
                        int64_t query_id) override {
     subscriptions_.erase(query_id);
+    if (query_canceled_) query_canceled_(query_id);
   }
 
   void Publish(const std::string& channel, const std::string& event) {
@@ -719,6 +730,7 @@ class KestrelBridgeQueryHandler final
   std::string allowed_shell_url_;
   HostRequestDispatcher host_request_dispatcher_;
   CoreRequestDispatcher core_request_dispatcher_;
+  std::function<void(int64_t)> query_canceled_;
   std::map<int64_t, Subscription> subscriptions_;
   bool bridge_ready_logged_ = false;
 };
@@ -736,14 +748,14 @@ class KestrelClient : public CefClient,
                 std::move(allowed_shell_url),
                 [this](
                     CefRefPtr<CefDictionaryValue> request,
-                    CefRefPtr<CefMessageRouterBrowserSide::Callback> callback) {
-                  return DispatchNativeHostRequest(request, callback);
+                    CefRefPtr<CefMessageRouterBrowserSide::Callback> callback, int64_t query_id) {
+                  return DispatchNativeHostRequest(request, callback, query_id);
                 },
                 [this](
                     const std::string& request,
                     CefRefPtr<CefMessageRouterBrowserSide::Callback> callback) {
                   DispatchCoreRequest(request, callback);
-        })) {
+                }, [this](int64_t query_id) { CancelBrowserRequest(query_id); })) {
     client_instance = this;
     bridge_router_ =
         CefMessageRouterBrowserSide::Create(KestrelBridgeRouterConfig());
@@ -753,6 +765,7 @@ class KestrelClient : public CefClient,
       user_browser_cache_path_ = isolated_profile_root_ + "/user-browser";
     }
     CreateBlankUserBrowserTab(true);
+    if (native_browser_enabled) StartBrowserConnection();
     if (!bridge_router_ ||
         !bridge_router_->AddHandler(bridge_handler_.get(), true)) {
       std::cerr << "Kestrel could not initialize its native Chromium bridge."
@@ -769,6 +782,7 @@ class KestrelClient : public CefClient,
     // correctly rejects retaining or releasing an object while its destructor
     // is active. BrowserView teardown happens in DoClose(), while the top-level
     // window is still valid.
+    StopBrowserConnection();
     StopCoreRelay();
     client_instance = nullptr;
   }
@@ -803,6 +817,7 @@ class KestrelClient : public CefClient,
 
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
     if (native_owner_alive_) *native_owner_alive_ = false;
+    StopBrowserConnection();
     StopCoreRelay();
     ShutdownBridge(browser);
     // The router has canceled all bridge queries for this closing document.
@@ -1131,6 +1146,14 @@ class KestrelClient : public CefClient,
       state->SetNull("activeTabId");
     } else {
       state->SetString("activeTabId", user_browser_active_tab_id_);
+    }
+    if (native_browser_enabled) {
+      state->SetString("presentation", "native_window");
+      if (external_browser_state_) {
+        state->SetList("tabs", external_browser_state_->GetList("tabs")->Copy());
+        auto active = external_browser_state_->GetValue("activeTabId");
+        if (active) state->SetValue("activeTabId", active->Copy());
+      }
     }
     state->SetList("history", CefListValue::Create());
     state->SetList("originFavicons", CefListValue::Create());
@@ -1570,7 +1593,7 @@ class KestrelClient : public CefClient,
   }
 
   bool DispatchNativeHostRequest(CefRefPtr<CefDictionaryValue> request,
-                                 BridgeCallback callback) {
+                                 BridgeCallback callback, int64_t query_id) {
     if (!request || request->GetType("type") != VTYPE_STRING) return false;
     const std::string type = request->GetString("type").ToString();
     if (type == "window-minimize" || type == "window-toggle-zoom" ||
@@ -1624,6 +1647,21 @@ class KestrelClient : public CefClient,
       callback->Success(status);
       std::cout << "KESTREL_NATIVE_CHROMIUM_LOCAL_MODEL_STATUS_DEFERRED"
                 << std::endl;
+      return true;
+    }
+
+    if (native_browser_enabled && type.starts_with("browser-")) {
+      if (type == "browser-set-content-bounds") {
+        callback->Success(R"JSON({"ok":true})JSON");
+      } else if (type == "browser-get-state" || type == "browser-create-tab" ||
+                 type == "browser-select-tab" || type == "browser-navigate" ||
+                 type == "browser-close-tab" || type == "browser-back" ||
+                 type == "browser-forward" || type == "browser-reload" ||
+                 type == "browser-stop" || type == "browser-open-native-extensions") {
+        SendBrowserRequest(request, callback, query_id);
+      } else {
+        RespondNativeError(callback, "This native browser command is not migrated yet.");
+      }
       return true;
     }
 
@@ -1783,6 +1821,133 @@ class KestrelClient : public CefClient,
     return false;
   }
 
+  void StartBrowserConnection() {
+    if (browser_connection_ || closing_) return;
+    const std::string profile = isolated_profile_root_ + "/extension-browser";
+    NSString* path = [NSString stringWithUTF8String:profile.c_str()];
+    [[NSFileManager defaultManager] createDirectoryAtPath:path
+        withIntermediateDirectories:YES attributes:nil error:nil];
+    const std::weak_ptr<bool> token = native_owner_alive_;
+    const uint64_t generation = ++browser_generation_;
+    KestrelClient* owner = this;
+    browser_connection_ = [[KestrelBrowserConnection alloc] init];
+    browser_connection_.lineHandler = ^(NSString* text) {
+      const std::string line(text.UTF8String ?: "");
+      CefPostTask(TID_UI, new BrowserCommandTask([token, owner, line, generation] {
+        auto alive = token.lock();
+        if (alive && *alive && !owner->closing_ && owner->browser_generation_ == generation) owner->OnBrowserLine(line);
+      }));
+    };
+    browser_connection_.exitHandler = ^{
+      CefPostTask(TID_UI, new BrowserCommandTask([token, owner, generation] {
+        auto alive = token.lock();
+        if (alive && *alive && !owner->closing_ && owner->browser_generation_ == generation) owner->BrowserConnectionFailed();
+      }));
+    };
+    if (![browser_connection_ start:path]) BrowserConnectionFailed();
+  }
+
+  void StopBrowserConnection() {
+    ++browser_generation_;
+    [browser_connection_ stop];
+    browser_connection_ = nil;
+    external_browser_requests_.clear();
+  }
+
+  void BrowserConnectionFailed() {
+    ++browser_generation_;
+    [browser_connection_ stop];
+    browser_connection_ = nil;
+    external_browser_state_ = nullptr;
+    auto pending = std::move(external_browser_requests_);
+    external_browser_requests_.clear();
+    for (const auto& [id, request] : pending)
+      RespondNativeError(request.callback, "The native browser closed. Open a new tab to restart it.");
+    PublishUserBrowserState();
+  }
+
+  void CancelBrowserRequest(int64_t query_id) {
+    for (auto it = external_browser_requests_.begin(); it != external_browser_requests_.end();) {
+      if (it->second.query_id == query_id) it = external_browser_requests_.erase(it);
+      else ++it;
+    }
+  }
+
+  void SendBrowserRequest(CefRefPtr<CefDictionaryValue> request,
+                          BridgeCallback callback, int64_t query_id) {
+    if (!browser_connection_) StartBrowserConnection();
+    if (!browser_connection_ || external_browser_requests_.size() >= 64) {
+      RespondNativeError(callback, "The native browser is unavailable or busy.");
+      return;
+    }
+    auto envelope = CefDictionaryValue::Create();
+    const std::string id = "browser-" + std::to_string(++next_browser_request_);
+    envelope->SetInt("version", 1);
+    envelope->SetString("type", "request");
+    envelope->SetString("id", id);
+    auto copy = request->Copy(false);
+    const std::string type = copy->GetString("type").ToString();
+    if ((type == "browser-create-tab" || type == "browser-navigate") &&
+        copy->HasKey("input") && !copy->GetString("input").empty()) {
+      const auto normalized = normalize_user_browser_input(copy->GetString("input").ToString());
+      if (!normalized) {
+        RespondNativeError(callback, "Enter an HTTP or HTTPS address.");
+        return;
+      }
+      copy->SetString("input", *normalized);
+    }
+    envelope->SetDictionary("request", copy);
+    const auto line = browser_json(envelope);
+    if (line.size() > 16384) {
+      RespondNativeError(callback, "The native browser request was too large.");
+      return;
+    }
+    external_browser_requests_.emplace(id, ExternalBrowserRequest{callback, query_id});
+    [browser_connection_ send:[NSString stringWithUTF8String:line.c_str()]];
+    const std::weak_ptr<bool> token = native_owner_alive_;
+    KestrelClient* owner = this;
+    CefPostDelayedTask(TID_UI, new BrowserCommandTask([token, owner, id] {
+      auto alive = token.lock();
+      if (!alive || !*alive || owner->closing_) return;
+      auto found = owner->external_browser_requests_.find(id);
+      if (found == owner->external_browser_requests_.end()) return;
+      auto callback = found->second.callback;
+      owner->external_browser_requests_.erase(found);
+      owner->RespondNativeError(callback, "The native browser did not respond in time.");
+    }), 10000);
+  }
+
+  void OnBrowserLine(const std::string& line) {
+    auto value = CefParseJSON(line, JSON_PARSER_RFC);
+    if (!value || value->GetType() != VTYPE_DICTIONARY) return;
+    auto message = value->GetDictionary();
+    if (message->GetInt("version") != 1 ||
+        (message->GetString("type") != "state" &&
+         message->GetString("type") != "response")) return;
+    auto state = message->GetDictionary("state");
+    if (!state || state->GetType("tabs") != VTYPE_LIST ||
+        state->GetList("tabs")->GetSize() > 32 ||
+        (state->GetType("activeTabId") != VTYPE_STRING &&
+         state->GetType("activeTabId") != VTYPE_NULL)) return;
+    external_browser_state_ = state->Copy(false);
+    if (message->GetString("type") == "response") {
+      const auto id = message->GetString("id").ToString();
+      auto found = external_browser_requests_.find(id);
+      if (found != external_browser_requests_.end()) {
+        auto callback = found->second.callback;
+        external_browser_requests_.erase(found);
+        if (message->GetBool("ok")) RespondWithBrowserState(callback);
+        else {
+          auto error = CefDictionaryValue::Create();
+          error->SetBool("ok", false);
+          error->SetString("error", renderer_safe_text(message->GetString("error").ToString(), 500));
+          callback->Success(browser_json(error));
+        }
+      }
+    }
+    PublishUserBrowserState();
+  }
+
   void StartEphemeralCore(NSString* isolated_profile_root) {
     if (!isolated_profile_root) return;
     KestrelClient* const relay_client = this;
@@ -1910,6 +2075,12 @@ class KestrelClient : public CefClient,
   CefRefPtr<KestrelUserBrowserContextHandler> user_browser_context_handler_;
   CefRefPtr<CefRequestContext> user_browser_context_;
   __strong KestrelNativeCoreRelay* core_relay_ = nil;
+  __strong KestrelBrowserConnection* browser_connection_ = nil;
+  CefRefPtr<CefDictionaryValue> external_browser_state_;
+  struct ExternalBrowserRequest { BridgeCallback callback; int64_t query_id; };
+  std::map<std::string, ExternalBrowserRequest> external_browser_requests_;
+  uint64_t next_browser_request_ = 0;
+  uint64_t browser_generation_ = 0;
   std::map<std::string, PendingCoreRequest> core_requests_;
   std::vector<QueuedCoreRequest> queued_core_requests_;
   std::unique_ptr<KestrelBridgeQueryHandler> bridge_handler_;
@@ -2193,7 +2364,33 @@ std::string bundled_shell_url() {
   return std::string([[url absoluteString] UTF8String]);
 }
 
+// Production browser children accept only manager-owned mode and profile
+// arguments. Chromium runtime overrides and development probes cannot cross
+// this boundary, including --flag=value spellings or duplicate profile flags.
+bool persistent_browser_arguments_valid(int argc, char* argv[]) {
+  std::set<std::string> flags;
+  for (int index = 1; index < argc; ++index) {
+    const std::string argument(argv[index]);
+    if (argument != "--kestrel-persistent-browser" &&
+        argument != "--kestrel-browser-child" &&
+        argument != "--kestrel-extension-workbench" &&
+        argument != "--kestrel-cache-path") return false;
+    if (!flags.insert(argument).second) return false;
+    if (argument == "--kestrel-cache-path") {
+      if (++index >= argc || argv[index][0] != '/') return false;
+    }
+  }
+  return flags.size() == 4;
+}
+
 int main(int argc, char* argv[]) {
+  const bool persistent_browser = KestrelHasCommandLineSwitch(
+      argc, argv, "--kestrel-persistent-browser");
+  if (persistent_browser && !persistent_browser_arguments_valid(argc, argv)) {
+    std::cerr << "Persistent browsing requires only the isolated Chrome child modes and an explicit profile path."
+              << std::endl;
+    return 1;
+  }
   CefScopedLibraryLoader library_loader;
   if (!library_loader.LoadInMain()) {
     std::cerr << "Kestrel could not load the bundled Chromium framework." << std::endl;
@@ -2203,8 +2400,15 @@ int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);
   @autoreleasepool {
     [KestrelApplication sharedApplication];
+    browser_child_mode = has_argument(argc, argv, "--kestrel-browser-child");
+    native_browser_enabled = has_argument(argc, argv, "--kestrel-native-browser");
     const bool extension_workbench =
         has_argument(argc, argv, "--kestrel-extension-workbench");
+    if ((browser_child_mode && (!extension_workbench || native_browser_enabled)) ||
+        (native_browser_enabled && extension_workbench)) {
+      std::cerr << "Native browser child requires the isolated extension workbench." << std::endl;
+      return 1;
+    }
     if (extension_workbench &&
         (has_argument(argc, argv, "--kestrel-renderer") ||
          has_argument(argc, argv, "--kestrel-ephemeral-core"))) {
@@ -2266,6 +2470,16 @@ int main(int argc, char* argv[]) {
     }
 
     CefSettings settings;
+    // Chromium defaults to the outermost .app. This executable may be a
+    // sidecar inside Kestrel's Electron bundle; own every CEF path explicitly
+    // so framework/resources/helpers remain inside the signed native bundle.
+    NSString* native_bundle = NSBundle.mainBundle.bundlePath;
+    NSString* native_frameworks = [native_bundle stringByAppendingPathComponent:@"Contents/Frameworks"];
+    CefString(&settings.main_bundle_path) = std::string(native_bundle.fileSystemRepresentation);
+    CefString(&settings.framework_dir_path) = std::string(
+        [native_frameworks stringByAppendingPathComponent:@"Chromium Embedded Framework.framework"].fileSystemRepresentation);
+    CefString(&settings.browser_subprocess_path) = std::string(
+        [native_frameworks stringByAppendingPathComponent:@"Kestrel Helper.app/Contents/MacOS/Kestrel Helper"].fileSystemRepresentation);
     // The production path is sandboxed. This switch exists only to make a
     // failed local signing diagnosis explicit; it is never a shipping fallback.
     settings.no_sandbox = has_argument(argc, argv, "--kestrel-allow-no-sandbox");
@@ -2333,7 +2547,7 @@ int main(int argc, char* argv[]) {
               new KestrelAlloyBrowserViewDelegate());
       CefWindow::CreateTopLevelWindow(
           new KestrelWindowDelegate(browser_view));
-    }, extension_workbench));
+    }, extension_workbench, persistent_browser));
     if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
       std::cerr << "Kestrel could not initialize Chromium." << std::endl;
       return CefGetExitCode();
@@ -2355,6 +2569,8 @@ int main(int argc, char* argv[]) {
       NSApp.mainMenu = menu;
     }
     CefRunMessageLoop();
+    FinishBrowserChildren();
+    if (browser_child_mode) [NSFileHandle fileHandleWithStandardInput].readabilityHandler = nil;
     if (main_client_owner) {
       main_client_owner->FinalizeUserBrowserShutdown();
     }

@@ -124,20 +124,31 @@ CefMessageRouterConfig KestrelBridgeRouterConfig() {
   return config;
 }
 
+bool KestrelHasCommandLineSwitch(int argc, char* argv[], const std::string& name) {
+  for (int index = 1; index < argc; ++index) {
+    const std::string argument(argv[index]);
+    if (argument == name || argument.starts_with(name + "=")) return true;
+  }
+  return false;
+}
+
 KestrelChromiumApp::KestrelChromiumApp(
-    BrowserContextInitialized on_context_initialized, bool extension_workbench)
+    BrowserContextInitialized on_context_initialized, bool extension_workbench,
+    bool persistent_browser)
     : on_context_initialized_(std::move(on_context_initialized)),
-      extension_workbench_(extension_workbench) {}
+      extension_workbench_(extension_workbench),
+      persistent_browser_(extension_workbench && persistent_browser) {}
 
 void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
     CefRefPtr<CefCommandLine> command_line) {
-  // Do not initialize or query the macOS Keychain while this host has no
-  // explicit credential-migration path. Chromium propagates browser-process
-  // switches to its helpers, while limiting this change to the browser
-  // process follows CEF's safety guidance for child process command lines.
+  // Disposable development lanes never query the macOS Keychain. Only the
+  // separately profiled Chrome browser uses Chromium's native OS store. The
+  // pinned CEF build uses the upstream shared/default Keychain identity; this
+  // selects its native path, not proof that access or encryption is available.
   if (process_type.empty()) {
-    command_line->AppendSwitch("use-mock-keychain");
+    if (persistent_browser_) command_line->RemoveSwitch("use-mock-keychain");
+    else command_line->AppendSwitch("use-mock-keychain");
     // Kestrel starts local-first. The Chromium embed must not create a
     // background account, telemetry, component-updater, or reliability
     // network channel before a person explicitly chooses a provider route.
@@ -146,7 +157,7 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     command_line->AppendSwitch("disable-component-extensions-with-background-pages");
     // Keep extensions disabled in the privileged Alloy shell. Only the
     // separate Chrome-style workbench owns an extension lifecycle; it has
-    // no Kestrel bridge, custom scheme, Core relay, or user credentials.
+    // no Kestrel bridge, custom scheme, Core relay, or shell credentials.
     if (!extension_workbench_) command_line->AppendSwitch("disable-extensions");
     command_line->AppendSwitch("disable-default-apps");
     command_line->AppendSwitch("disable-domain-reliability");
@@ -187,6 +198,8 @@ void KestrelChromiumApp::OnBeforeChildProcessLaunch(
     CefRefPtr<CefCommandLine> command_line) {
   if (extension_workbench_)
     command_line->AppendSwitch("kestrel-extension-workbench");
+  if (persistent_browser_)
+    command_line->AppendSwitch("kestrel-persistent-browser");
 }
 
 void KestrelChromiumApp::OnWebKitInitialized() {
