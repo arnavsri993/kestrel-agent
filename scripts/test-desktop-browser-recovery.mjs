@@ -103,6 +103,9 @@ async function launch() {
 		executablePath, args: launchArgs, timeout: 45_000,
 		env: {
 			...process.env,
+			// Inherited recovery overrides must never opt this disposable profile
+			// into the person's Keychain or provider-owned protected storage.
+			KESTREL_USE_MOCK_KEYCHAIN: "1", KESTREL_ALLOW_PLAINTEXT_SECRET_STORAGE: "1",
 			KESTREL_DISABLE_UPDATES: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_TEST_USER_DATA: userData,
 			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1", KESTREL_REAL_USER_PROFILE: "1",
