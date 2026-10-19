@@ -497,9 +497,11 @@ export class BrowserTabStore {
 
 	private startupTab(url: string, now: () => Date): UserBrowserState["tabs"][number] {
 		const tab = createEmptyBrowserTab(now);
-		if (url) {
-			tab.url = url;
-			tab.title = new URL(url).hostname || "Startup page";
+		const destination = url.trim();
+		if (destination) {
+			const parsed = new URL(destination);
+			tab.url = parsed.href;
+			tab.title = parsed.hostname || "Startup page";
 			tab.discarded = true;
 		}
 		return tab;
