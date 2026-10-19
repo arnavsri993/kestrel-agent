@@ -67,9 +67,23 @@ export async function archiveProtectedProfile(
 			movedPaths.push(destination);
 		}
 	} catch (error) {
+		const rollbackErrors: unknown[] = [];
 		for (const destination of movedPaths.slice().reverse()) {
 			const source = join(userDataPath, basename(destination));
-			await rename(destination, source).catch(() => undefined);
+			try {
+				await rename(destination, source);
+			} catch (rollbackError) {
+				rollbackErrors.push(rollbackError);
+			}
+		}
+		if (rollbackErrors.length > 0) {
+			// A failed rollback can leave the only copy of protected data here.
+			// Preserve the entire recovery folder so a later attempt or the person
+			// can recover it without losing the original database/key pairing.
+			throw new AggregateError(
+				[error, ...rollbackErrors],
+				`The protected profile could not be archived or fully restored. Remaining protected files are preserved at ${archivePath}. Keep this recovery folder and restore its files before trying again.`,
+			);
 		}
 		await rm(archivePath, { recursive: true, force: true }).catch(
 			() => undefined,
