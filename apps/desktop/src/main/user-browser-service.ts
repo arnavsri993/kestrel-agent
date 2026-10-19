@@ -2270,32 +2270,22 @@ export class UserBrowserService {
 		tab.error = undefined;
 		tab.crashed = false;
 		this.commit();
-		if (!this.threatProvider.available) {
-			const webContents = liveWebContents(record.view.webContents);
-			if (!webContents) return;
-			const loadedUrl = webContents.getURL?.() ?? "";
-			if (!loadedUrl) {
-				await this.loadApprovedNavigation(tab, record, url, generation);
+		if (this.threatProvider.available) {
+			const verdict = await this.reputationForUrl(url, "navigation");
+			if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
+			if (verdict?.verdict === "malicious") {
+				this.blockNavigation(tab, record, url, "navigation", verdict);
 				return;
 			}
-			if (
-				ignoreCache &&
-				typeof webContents.reloadIgnoringCache === "function"
-			)
-				webContents.reloadIgnoringCache();
-			else webContents.reload();
-			return;
-		}
-		const verdict = await this.reputationForUrl(url, "navigation");
-		if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
-		if (verdict?.verdict === "malicious") {
-			this.blockNavigation(tab, record, url, "navigation", verdict);
-			return;
 		}
 		const webContents = liveWebContents(record.view.webContents);
 		if (!webContents) return;
 		const loadedUrl = webContents.getURL?.() ?? "";
-		if (!loadedUrl) {
+		// A failed load can leave the previous document (or about:blank) alive.
+		// Retry the intended destination rather than silently reloading that page.
+		// Compare the same redacted form used in tab state so provider callback
+		// secrets do not cause an otherwise healthy page to be navigated again.
+		if (sanitizeBrowserUrl(loadedUrl) !== sanitizeBrowserUrl(url)) {
 			await this.loadApprovedNavigation(tab, record, url, generation);
 			return;
 		}
@@ -2312,7 +2302,19 @@ export class UserBrowserService {
 	stop(tabId: string): UserBrowserState {
 		const tab = this.requireTab(tabId);
 		if (isKestrelAppPageUrl(tab.url)) return this.getState();
-		liveWebContents(this.requireView(tabId)?.view?.webContents)?.stop();
+		const record = this.views.get(tabId);
+		if (record) {
+			// Stop also cancels work waiting for a reputation result. Otherwise a
+			// delayed verdict can restart navigation after the person cancelled it.
+			this.beginNavigationCheck(record);
+			delete record.navigatingTo;
+			delete record.approvedNavigationUrl;
+			delete record.pendingDownloadNavigation;
+			delete record.nextNavigationSource;
+			liveWebContents(record.view.webContents)?.stop();
+		}
+		tab.loading = false;
+		this.commit();
 		return this.getState();
 	}
 
@@ -5877,7 +5879,30 @@ export class UserBrowserService {
 	private configureView(tab: UserBrowserTab, record: ViewRecord): void {
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents) return;
+		// Events already queued by Chromium can arrive after this view is closed
+		// or replaced. They must never mutate the replacement's state or lifetime.
+		const isCurrentView = () => !this.disposed && this.views.get(tab.id) === record;
+		const recoverClosedView = () => {
+			if (!isCurrentView()) return;
+			if (tab.id === this.state.activeTabId) {
+				this.clearPasswordPrompt();
+				this.clearPaymentPrompt();
+			}
+			tab.loading = false;
+			if (!tab.blockedNavigation) {
+				tab.crashed = true;
+				tab.error = "This tab stopped responding. Reload it to continue.";
+			}
+			this.discardTabView(tab);
+			this.commit();
+		};
+		webContents.on("destroyed", () => {
+			// Provider popup windows close their managed tab through their own
+			// destroyed handler. Ordinary tabs remain available for recovery.
+			if (!record.openerTabId) recoverClosedView();
+		});
 		webContents.setWindowOpenHandler(({ url, disposition }) => {
+			if (!isCurrentView()) return { action: "deny" };
 			if (openSystemAppUrl(url)) return { action: "deny" };
 			if (url !== "about:blank" && !safePageUrl(url)) return { action: "deny" };
 			return {
@@ -5912,9 +5937,10 @@ export class UserBrowserService {
 				},
 			};
 		});
-		webContents.on("media-started-playing", () => { record.mediaPlaying = true; this.emit(); });
-		webContents.on("media-paused", () => { record.mediaPlaying = false; this.emit(); });
+		webContents.on("media-started-playing", () => { if (!isCurrentView()) return; record.mediaPlaying = true; this.emit(); });
+		webContents.on("media-paused", () => { if (!isCurrentView()) return; record.mediaPlaying = false; this.emit(); });
 		webContents.on("ipc-message", (event, channel, ...args) => {
+			if (!isCurrentView()) return;
 			if (channel === "kestrel:user-browser-activity") {
 				if (event.senderFrame !== webContents.mainFrame || !args[0] || typeof args[0] !== "object") return;
 				const data = args[0] as Record<string, unknown>;
@@ -5961,11 +5987,13 @@ export class UserBrowserService {
 				);
 		});
 		webContents.on("will-frame-navigate", (event) => {
+			if (!isCurrentView()) { event.preventDefault(); return; }
 			// Meeting launchers may navigate a hidden iframe to their app scheme.
 			// Main-frame handoffs are handled below so each link opens only once.
 			if (!event.isMainFrame && openSystemAppUrl(event.url)) event.preventDefault();
 		});
 		webContents.on("will-navigate", (event, url) => {
+			if (!isCurrentView()) { event.preventDefault(); return; }
 			if (this.passwordSaveCommitTabId === tab.id) {
 				event.preventDefault();
 				return;
@@ -5986,6 +6014,7 @@ export class UserBrowserService {
 			record.nextNavigationSource = "navigation";
 		});
 		webContents.on("will-redirect", (event, url) => {
+			if (!isCurrentView()) { event.preventDefault(); return; }
 			if (this.passwordSaveCommitTabId === tab.id) {
 				event.preventDefault();
 				return;
@@ -6001,11 +6030,13 @@ export class UserBrowserService {
 			record.nextNavigationSource = "redirect";
 		});
 		webContents.on("did-start-loading", () => {
+			if (!isCurrentView()) return;
 			tab.loading = true;
 			tab.error = undefined;
 			this.updateNavigationState(tab, webContents);
 		});
 		webContents.on("did-stop-loading", () => {
+			if (!isCurrentView()) return;
 			tab.loading = false;
 			if (tab.blockedNavigation) {
 				this.commit();
@@ -6025,6 +6056,7 @@ export class UserBrowserService {
 			void this.refreshPaymentPrompt(tab.id);
 		});
 		webContents.on("page-title-updated", (_event, title) => {
+			if (!isCurrentView()) return;
 			tab.title = title.trim().slice(0, 500) || hostnameTitle(tab.url);
 			const recent = [...this.state.history]
 				.reverse()
@@ -6033,6 +6065,7 @@ export class UserBrowserService {
 			this.commit();
 		});
 		webContents.on("page-favicon-updated", (_event, favicons) => {
+			if (!isCurrentView()) return;
 			const favicon = favicons.find(
 				(value) => isFaviconDataUrl(value) || safePageUrl(value),
 			);
@@ -6041,6 +6074,7 @@ export class UserBrowserService {
 		webContents.on(
 			"did-navigate",
 			(_event, url, _httpResponseCode, _httpStatusText) => {
+				if (!isCurrentView()) return;
 				if (tab.blockedNavigation) return;
 				if (tab.id === this.state.activeTabId) {
 					this.clearPasswordPrompt({
@@ -6060,6 +6094,7 @@ export class UserBrowserService {
 			},
 		);
 		webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
+			if (!isCurrentView()) return;
 			if (isMainFrame) {
 				if (tab.blockedNavigation) return;
 				if (tab.id === this.state.activeTabId) {
@@ -6079,6 +6114,7 @@ export class UserBrowserService {
 		webContents.on(
 			"did-fail-load",
 			(_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+				if (!isCurrentView()) return;
 				if (!isMainFrame || errorCode === -3) return;
 				if (tab.blockedNavigation) return;
 				if (
@@ -6092,19 +6128,9 @@ export class UserBrowserService {
 				this.updateNavigationState(tab, webContents);
 			},
 		);
-		webContents.on("render-process-gone", () => {
-			if (tab.blockedNavigation) return;
-			if (tab.id === this.state.activeTabId) {
-				this.clearPasswordPrompt();
-				this.clearPaymentPrompt();
-			}
-			tab.loading = false;
-			tab.crashed = true;
-			tab.error = "This tab stopped responding. Reload it to continue.";
-			this.discardTabView(tab);
-			this.commit();
-		});
+		webContents.on("render-process-gone", recoverClosedView);
 		webContents.on("found-in-page", (_event, result) => {
+			if (!isCurrentView()) return;
 			this.onEvent({
 				type: "find-in-page",
 				match: {
@@ -6116,6 +6142,7 @@ export class UserBrowserService {
 			});
 		});
 		webContents.on("context-menu", (_event, params) => {
+			if (!isCurrentView()) return;
 			const template: Electron.MenuItemConstructorOptions[] = [];
 			const imageURL = params.hasImageContents
 				? safePageUrl(params.srcURL)?.toString()
@@ -6317,6 +6344,7 @@ export class UserBrowserService {
 			Menu.buildFromTemplate(template).popup({ window: this.window });
 		});
 		webContents.on("before-input-event", (event, input) => {
+			if (!isCurrentView()) return;
 			if (input.type !== "keyDown") return;
 
 			// Escape: Stop loading if currently loading

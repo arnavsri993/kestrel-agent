@@ -2498,6 +2498,60 @@ describe("UserBrowserService", () => {
     await vi.waitFor(() => expect(callback).toHaveBeenCalledExactlyOnceWith({cancel:true}));
   });
 
+  it.each(["navigate", "reload", "back", "forward"] as const)(
+    "Stop cancels a pending %s without allowing it to resume later",
+    async (operation) => {
+      let resolveVerdict!: (value: { verdict: "safe"; provider: string }) => void;
+      const checkUrl = vi.fn(async () => ({ verdict: "safe" as const, provider: "test" }));
+      const { service } = createService({ threatProvider: threatProvider(checkUrl) });
+      const tab = service.getState().tabs[0]!;
+      await service.navigate(tab.id, "https://safe.example/");
+      const contents = electron.state.views[0]!.webContents;
+      contents.loadURL.mockClear();
+      contents.navigationHistory.canGoBack.mockReturnValue(true);
+      contents.navigationHistory.canGoForward.mockReturnValue(true);
+      contents.navigationHistory.getEntryAtIndex.mockReturnValue({ url: "https://safe.example/other", title: "Other" });
+      checkUrl.mockImplementationOnce(() => new Promise(resolve => { resolveVerdict = resolve; }));
+
+      const navigation = operation === "navigate"
+        ? service.navigate(tab.id, "https://safe.example/next")
+        : Promise.resolve(service[operation](tab.id));
+      expect(service.getState().tabs[0]?.loading).toBe(true);
+      service.stop(tab.id);
+      const stoppedLoading = service.getState().tabs[0]?.loading;
+      resolveVerdict({ verdict: "safe", provider: "test" });
+      await navigation;
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(stoppedLoading).toBe(false);
+      expect(contents.stop).toHaveBeenCalledOnce();
+      expect(contents.loadURL).not.toHaveBeenCalled();
+      expect(contents.reload).not.toHaveBeenCalled();
+      expect(contents.navigationHistory.goBack).not.toHaveBeenCalled();
+      expect(contents.navigationHistory.goForward).not.toHaveBeenCalled();
+      await service.navigate(tab.id, "https://safe.example/retry");
+      expect(contents.loadURL).toHaveBeenCalledWith("https://safe.example/retry");
+    },
+  );
+
+  it("Stop cancels an in-flight native navigation reputation request", async () => {
+    let resolveVerdict!: (value: { verdict: "safe"; provider: string }) => void;
+    const checkUrl = vi.fn(async () => ({ verdict: "safe" as const, provider: "test" }));
+    const { service } = createService({ threatProvider: threatProvider(checkUrl) });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://safe.example/");
+    const contents = electron.state.views[0]!.webContents;
+    checkUrl.mockImplementationOnce(() => new Promise(resolve => { resolveVerdict = resolve; }));
+    const callback = vi.fn();
+    electron.state.partitions[0]!.instance.requestHandler?.({ webContentsId: contents.id, resourceType: "mainFrame", url: "https://safe.example/next" }, callback);
+
+    service.stop(tab.id);
+    resolveVerdict({ verdict: "safe", provider: "test" });
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledExactlyOnceWith({ cancel: true }));
+    expect(service.getState().tabs[0]).toMatchObject({ url: "https://safe.example/", loading: false });
+  });
+
   it("preserves target=_blank form POST bodies when opening managed tabs", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
@@ -3146,6 +3200,82 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     replacement.webContents.destroyed = true;
     await service.navigate(tab.id, "https://third.example");
     expect(electron.state.views.at(-1)).not.toBe(replacement);
+  });
+
+  it("ignores late events from a crashed view after its replacement is running", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/");
+    const original = electron.state.views[0]!.webContents;
+    original.emit("render-process-gone");
+    await service.navigate(tab.id, "https://again.example/");
+    const replacement = electron.state.views.at(-1)!.webContents;
+    replacement.emit("did-navigate", {}, "https://again.example/");
+    replacement.emit("did-stop-loading");
+    const healthy = service.getState();
+
+    original.emit("did-start-loading");
+    original.emit("page-title-updated", {}, "Obsolete title");
+    original.emit("did-fail-load", {}, -106, "ERR_INTERNET_DISCONNECTED", "https://example.com/", true);
+    original.emit("did-navigate", {}, "https://example.com/late");
+    original.emit("render-process-gone");
+    original.emit("destroyed");
+
+    expect(replacement.close).not.toHaveBeenCalled();
+    expect(service.getState()).toEqual(healthy);
+    expect(original.windowOpenHandler?.({ url: "https://example.com/popup", disposition: "foreground-tab" })).toMatchObject({ action: "deny" });
+  });
+
+  it("preserves an unexpectedly destroyed ordinary tab and recreates it on Reload", async () => {
+    const { service, window } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/");
+    const original = electron.state.views[0]!;
+    original.webContents.destroyed = true;
+    original.webContents.emit("destroyed");
+
+    expect(service.getState().tabs[0]).toMatchObject({ id: tab.id, url: "https://example.com/", crashed: true, discarded: true, loading: false });
+    expect(window.contentView.children).not.toContain(original);
+    service.reload(tab.id);
+    const replacement = electron.state.views.at(-1)!;
+    expect(replacement).not.toBe(original);
+    await vi.waitFor(() => expect(replacement.webContents.loadURL).toHaveBeenCalledWith("https://example.com/"));
+  });
+
+  it.each([false, true])("retries the failed destination rather than the previous page (reputation checks: %s)", async (withProvider) => {
+    const { service } = createService(withProvider
+      ? { threatProvider: threatProvider(vi.fn(async () => ({ verdict: "safe" as const, provider: "test" }))) }
+      : {});
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://original.example/");
+    const contents = electron.state.views[0]!.webContents;
+    contents.loadURL.mockRejectedValueOnce(new Error("ERR_INTERNET_DISCONNECTED"));
+    await service.navigate(tab.id, "https://destination.example/");
+    expect(contents.getURL()).toBe("https://original.example/");
+    expect(service.getState().tabs[0]).toMatchObject({ url: "https://destination.example/", error: expect.any(String) });
+    contents.loadURL.mockClear();
+
+    service.reload(tab.id);
+
+    await vi.waitFor(() => expect(contents.loadURL).toHaveBeenCalledWith("https://destination.example/"));
+    expect(contents.reload).not.toHaveBeenCalled();
+  });
+
+  it("cleans up a crashed view behind a threat warning while preserving the warning", async () => {
+    const checkUrl = vi.fn(async (): Promise<Awaited<ReturnType<BrowserThreatProvider["checkUrl"]>>> => ({ verdict: "safe", provider: "test" }));
+    const { service } = createService({ threatProvider: threatProvider(checkUrl) });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://safe.example/");
+    checkUrl.mockResolvedValueOnce({ verdict: "malicious", provider: "test", threatTypes: ["malware"] });
+    await service.navigate(tab.id, "https://malware.example/");
+    const original = electron.state.views[0]!.webContents;
+    const warning = service.getState().tabs[0]?.blockedNavigation;
+
+    original.emit("render-process-gone");
+
+    expect(original.close).toHaveBeenCalledOnce();
+    expect(service.getState().tabs[0]).toMatchObject({ blockedNavigation: warning, discarded: true, loading: false });
+    expect(service.getState().tabs[0]?.error).toBeUndefined();
   });
 
 	it("recreates a view when its web contents disappear before navigation", async () => {

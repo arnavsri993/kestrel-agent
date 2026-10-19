@@ -97,6 +97,19 @@ jobs:
       - run: corepack pnpm test:desktop-chat-configuration
       - run: corepack pnpm test:desktop-managed-policy
       - run: corepack pnpm package:mac:dev
+      - name: Verify packaged browser crash and navigation recovery
+        env:
+          KESTREL_DESKTOP_EXECUTABLE: release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel
+          KESTREL_BROWSER_RECOVERY_ARTIFACT_DIR: .tmp/browser-recovery
+        run: corepack pnpm test:desktop-browser-recovery
+      - name: Upload browser recovery evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: browser-recovery-${{ github.run_attempt }}
+          path: .tmp/browser-recovery/
+          if-no-files-found: warn
+          retention-days: 14
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
