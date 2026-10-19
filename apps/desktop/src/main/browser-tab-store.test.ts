@@ -88,6 +88,70 @@ it("preserves the legacy restore-session opt-out during settings migration", () 
 	expect(loaded.tabs[0]!.url).toBe("");
 });
 
+it.each([
+	[
+		"uppercase scheme",
+		"HTTPS://Example.COM/Docs?view=1#intro",
+		"https://example.com/Docs?view=1#intro",
+	],
+	[
+		"surrounding whitespace",
+		" \thttps://Example.COM/Docs?view=1#intro\n",
+		"https://example.com/Docs?view=1#intro",
+	],
+	["blank after trimming", " \t\r\n", ""],
+])("opens the accepted homepage with %s", (_label, homepageUrl, expectedUrl) => {
+	const path = storePath();
+	const store = new BrowserTabStore(path);
+	const state = freshBrowserState();
+	state.settings.startupBehavior = "homepage";
+	state.settings.restoreSession = false;
+	state.settings.homepageUrl = homepageUrl;
+	store.save(state);
+	const serialized = readFileSync(path, "utf8");
+
+	const loaded = store.load();
+
+	expect(loaded.tabs).toHaveLength(1);
+	expect(loaded.tabs[0]).toMatchObject({
+		url: expectedUrl,
+		title: expectedUrl ? "example.com" : "New Tab",
+		discarded: Boolean(expectedUrl),
+	});
+	expect(loaded.settings.homepageUrl).toBe(homepageUrl);
+	expect(readFileSync(path, "utf8")).toBe(serialized);
+});
+
+it("opens accepted specific startup pages in their configured order", () => {
+	const path = storePath();
+	const store = new BrowserTabStore(path);
+	const state = freshBrowserState();
+	const startupPages = [
+		"HTTPS://One.Example/First?view=1#intro",
+		" \thttps://Two.Example/Second\n",
+	];
+	state.settings.startupBehavior = "specific_pages";
+	state.settings.restoreSession = false;
+	state.settings.startupPages = startupPages;
+	store.save(state);
+	const serialized = readFileSync(path, "utf8");
+
+	const loaded = store.load();
+
+	expect(loaded.tabs.map((tab) => tab.url)).toEqual([
+		"https://one.example/First?view=1#intro",
+		"https://two.example/Second",
+	]);
+	expect(loaded.tabs.map((tab) => tab.title)).toEqual([
+		"one.example",
+		"two.example",
+	]);
+	expect(loaded.tabs.every((tab) => tab.discarded)).toBe(true);
+	expect(loaded.activeTabId).toBe(loaded.tabs[0]?.id);
+	expect(loaded.settings.startupPages).toEqual(startupPages);
+	expect(readFileSync(path, "utf8")).toBe(serialized);
+});
+
 it("accepts bundled backgrounds and bounded local image data", () => {
 	const custom = UserBrowserSettingsSchema.safeParse({
 		newTabBackground: "custom",
