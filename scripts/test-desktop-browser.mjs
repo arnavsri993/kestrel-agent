@@ -2029,16 +2029,33 @@ try {
 		await savedBookmarkRow.locator('.bookmark-library-edit select').nth(0).inputValue(),
 		"icon",
 	);
-	await savedBookmarkRow.getByRole("button", { name: "Remove", exact: true }).click();
-	await page.waitForFunction(
-		() => document.querySelectorAll(".bookmark-library-list > li").length === 0,
-	);
+	const bookmarkEditForm = savedBookmarkRow.locator(".bookmark-library-edit");
+	await bookmarkEditForm.locator("input").fill("Folder removal draft");
+	await bookmarkEditForm.locator("select").nth(0).selectOption("title");
 	const folderRow = page.locator(".bookmark-library-folders > ul > li").first();
 	await folderRow.getByRole("button", { name: "Delete", exact: true }).click();
 	await folderRow.getByText("Move pages to bar?", { exact: true }).waitFor();
 	await folderRow.getByRole("button", { name: "Delete", exact: true }).click();
 	await page.waitForFunction(
 		() => document.querySelectorAll(".bookmark-library-folders > ul > li").length === 0,
+	);
+	assert.equal(await bookmarkEditForm.locator("select").nth(1).inputValue(), "");
+	assert.equal(await bookmarkEditForm.locator("input").inputValue(), "Folder removal draft");
+	assert.equal(await bookmarkEditForm.locator("select").nth(0).inputValue(), "title");
+	await bookmarkEditForm.getByRole("button", { name: "Save changes", exact: true }).click();
+	await bookmarkEditForm.waitFor({ state: "detached" });
+	await waitForBrowserState(
+		(value) => value.bookmarks.some((bookmark) =>
+			bookmark.url === `${origin}/one` &&
+			bookmark.title === "Folder removal draft" &&
+			bookmark.displayMode === "title" &&
+			!bookmark.folderId,
+		),
+		"The bookmark draft did not save to the bar after its folder was deleted",
+	);
+	await savedBookmarkRow.getByRole("button", { name: "Remove", exact: true }).click();
+	await page.waitForFunction(
+		() => document.querySelectorAll(".bookmark-library-list > li").length === 0,
 	);
 	state = await browserState();
 	const pageOneTabId = state.tabs.find((tab) => tab.url === `${origin}/one`)?.id;

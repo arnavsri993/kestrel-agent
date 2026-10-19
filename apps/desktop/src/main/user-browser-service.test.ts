@@ -3877,6 +3877,12 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 
 		const renamed = service.renameBookmarkFolder(created.folder.id, "Reference");
 		expect(renamed.bookmarkFolders[0]?.name).toBe("Reference");
+		const retainedFolder = service.updateBookmark({
+			bookmarkId: bookmark.id,
+			title: "Renamed guide",
+			displayMode: "title",
+		});
+		expect(retainedFolder.bookmarks[0]?.folderId).toBe(created.folder.id);
 		const updated = service.updateBookmark({
 			bookmarkId: bookmark.id,
 			title: "Guide icon",
@@ -3892,6 +3898,33 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 		const removedFolder = service.removeBookmarkFolder(created.folder.id);
 		expect(removedFolder.bookmarkFolders).toEqual([]);
 		expect(removedFolder.bookmarks[0]?.folderId).toBeUndefined();
+	});
+
+	it("leaves a rejected bookmark edit unchanged in memory and later saves", async () => {
+		const { service, statePath } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://docs.example/guide");
+		const { folder } = service.createBookmarkFolder("Read later");
+		const saved = service.saveBookmark({
+			title: "Original guide",
+			displayMode: "title",
+			folderId: folder.id,
+		});
+		const bookmarkId = saved.bookmarks[0]!.id;
+		service.removeBookmarkFolder(folder.id);
+		const before = service.getState().bookmarks;
+
+		expect(() => service.updateBookmark({
+			bookmarkId,
+			title: "Rejected title",
+			displayMode: "icon",
+			folderId: folder.id,
+		})).toThrow("This bookmark folder no longer exists.");
+		expect.soft(service.getState().bookmarks).toEqual(before);
+
+		// A later successful operation must not persist any part of the rejected edit.
+		service.createBookmarkFolder("Reference");
+		expect(new BrowserTabStore(statePath).load().bookmarks).toEqual(before);
 	});
 
 	it("routes Cmd+D through the presentation command for an unsaved page", async () => {

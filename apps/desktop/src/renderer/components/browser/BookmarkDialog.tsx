@@ -169,6 +169,9 @@ export function BookmarkDialog({
 	const [folderId, setFolderId] = useState<string | null>(
 		bookmark?.folderId ?? null,
 	);
+	const selectedFolderId = bookmarkFolders.some((folder) => folder.id === folderId)
+		? folderId
+		: null;
 	const [folderName, setFolderName] = useState("");
 	const [creatingFolder, setCreatingFolder] = useState(false);
 	const [busy, setBusy] = useState(false);
@@ -265,7 +268,7 @@ export function BookmarkDialog({
 			await onSave({
 				title: normalizedTitle,
 				displayMode,
-				folderId,
+				folderId: selectedFolderId,
 			});
 		} catch (cause) {
 			setError(
@@ -427,7 +430,7 @@ export function BookmarkDialog({
 							<div className="bookmark-dialog-folder-row">
 								<select
 									id="bookmark-folder-select"
-									value={folderId ?? ""}
+									value={selectedFolderId ?? ""}
 									onChange={(event) => setFolderId(event.target.value || null)}
 								>
 									<option value="">Bookmarks bar</option>

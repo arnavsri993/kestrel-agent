@@ -2731,10 +2731,10 @@ export class UserBrowserService {
 			(item) => item.id === input.bookmarkId,
 		);
 		if (!bookmark) throw new Error("This bookmark no longer exists.");
+		const folderId = this.validBookmarkFolderId(input.folderId);
 		bookmark.title = this.normalizedBookmarkTitle(input.title, bookmark.url);
 		bookmark.displayMode = input.displayMode;
 		if (input.folderId !== undefined) {
-			const folderId = this.validBookmarkFolderId(input.folderId);
 			if (folderId) bookmark.folderId = folderId;
 			else delete bookmark.folderId;
 		}
