@@ -266,7 +266,7 @@ sidebar. A shared 16-tab limit also applies to popups, and excess pages close.
 Closing a tab releases capacity. Remote pages and their popups never receive the
 shell binding. Browser history and document navigation remain Chromium-owned.
 
-## Installed native extension browser
+## Bundled compatibility browser
 
 The packaged Kestrel app bundles the native browser under
 `Contents/Resources/native-browser/Kestrel.app`. It is a signed CEF sidecar,
@@ -274,9 +274,14 @@ with no additional installed app or Dock tile. The existing agent/window shell
 continues to use Electron; website and extension execution in the native
 browser uses Chromium's Chrome runtime directly.
 
-Open **Extensions → Manage Chrome extensions** in the toolbar's Native browser
-section, or use the same controls in browser Settings. **Open current page in
-native browser** opens an HTTP(S) page there. Chrome owns the native toolbar,
+Open browser Settings → Web extensions and add-ons → **Compatibility browser
+— separate window** to access this experimental tool. Normal **Extensions →
+Open Chrome Web Store** navigation stays inside Kestrel's own tab rail and
+uses its existing package-review flow. The separate browser is not native
+extension integration in that Kestrel window.
+
+Inside the compatibility disclosure, **Open current page in native browser**
+opens an HTTP(S) page in the separate Chromium window. Chrome owns its toolbar,
 extension permission review, install/remove controls and extension windows.
 Existing embedded-browser extensions and browsing data are preserved and are
 not imported. Native data lives in a separately marked owner-only persistent
