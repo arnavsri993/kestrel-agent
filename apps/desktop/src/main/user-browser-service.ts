@@ -3135,7 +3135,7 @@ export class UserBrowserService {
 		options: { findNext?: boolean; forward?: boolean } = {},
 	): UserBrowserState {
 		const record = this.requireView(tabId);
-		const text = query.trim();
+		const text = query;
 		if (!text) {
 			this.stopFindInPage(tabId);
 			return this.getState();

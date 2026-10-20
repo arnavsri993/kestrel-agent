@@ -3815,6 +3815,47 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 		expect(contents.print).toHaveBeenCalled();
 	});
 
+	it.each(["needle ", " needle", " needle ", "  "])(
+		"preserves the literal Find query %j",
+		async (query) => {
+			const { service } = createService();
+			const tab = service.getState().tabs[0]!;
+			await service.navigate(tab.id, "https://docs.example/path");
+			const contents = electron.state.views[0]!.webContents;
+			contents.executeJavaScriptInIsolatedWorld.mockClear();
+
+			service.findInPage(tab.id, query);
+
+			expect(contents.stopFindInPage).not.toHaveBeenCalled();
+			expect(contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledWith(
+				FIND_IN_PAGE_WORLD_ID,
+				[
+					expect.objectContaining({
+						code: expect.stringContaining(`"query":${JSON.stringify(query)}`),
+					}),
+				],
+			);
+		},
+	);
+
+	it("clears an empty Find query without publishing its pending search", async () => {
+		const { service, events } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://docs.example/path");
+		const contents = electron.state.views[0]!.webContents;
+		let resolveSearch: ((value: unknown) => void) | undefined;
+		contents.executeJavaScriptInIsolatedWorld.mockImplementationOnce(
+			() => new Promise((resolve) => { resolveSearch = resolve; }),
+		);
+		service.findInPage(tab.id, "needle ");
+		service.findInPage(tab.id, "");
+		expect(contents.stopFindInPage).toHaveBeenCalledWith("clearSelection");
+		expect(resolveSearch).toBeDefined();
+		resolveSearch?.({ found: true, matches: 1 });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(events).not.toContainEqual(expect.objectContaining({ type: "find-in-page" }));
+	});
+
 	it("does not publish a stale isolated find result after the query changes", async () => {
 		const { service, events } = createService();
 		const tab = service.getState().tabs[0]!;
