@@ -135,6 +135,7 @@ const server = createServer((request, response) => {
           <h1>${pageName}</h1>
           <p id="copy">A robotics reference visible in the current viewport.</p>
           <p id="find-fixture">Kestrel find verification token. Kestrel find verification token. Kestrel find verification token.</p>
+          <p id="find-spaces-fixture">needle needlework needleX!</p>
           <label>Name <input id="name" name="name" autocomplete="off"></label>
           <button id="submit" type="button">Submit</button>
           <output id="result">Waiting</output>
@@ -1507,6 +1508,23 @@ try {
 	await page.getByText("2 of 3", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Previous match", exact: true }).click();
 	await page.getByText("1 of 3", { exact: true }).waitFor();
+	for (const [query, count] of [["needle ", "1 of 1"], [" needle", "1 of 2"]]) {
+		await findInput.fill(query);
+		await page.getByText(count, { exact: true }).waitFor();
+		assert.equal(
+			await readActiveViewScript(
+				"String(window.getSelection())",
+				"Find in page did not preserve spaces in the selected match",
+			),
+			query,
+		);
+	}
+	await findInput.fill("");
+	await page.getByText("Find", { exact: true }).waitFor();
+	assert.equal(
+		await readActiveViewScript("String(window.getSelection())", "Find selection did not clear"),
+		"",
+	);
 	await findInput.fill("Kestrel absent verification token");
 	await page.getByText("0 of 0", { exact: true }).waitFor();
 	await page.keyboard.press("Escape");
