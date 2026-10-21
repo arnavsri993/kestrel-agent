@@ -111,6 +111,17 @@ import {
 	browserExtensionOperationErrorMessage,
 	chromeWebStoreInstallErrorMessage,
 } from "../browser-extension-error";
+import {
+	externalAppTarget,
+	isTeamsMeetingLauncher,
+} from "./external-app-protocol";
+export {
+	safeAppStoreUrl,
+	safeCursorAuthUrl,
+	safeTeamsMeetingAppUrl,
+	safeTeamsUrl,
+	safeZoomJoinUrl,
+} from "./external-app-protocol";
 import { ElectronExtensionRuntime } from "./electron-extension-runtime";
 import {
 	isUserBrowserBackendWireRequest,
@@ -266,22 +277,6 @@ const AUTHENTICATION_HOSTS = new Set([
 ]);
 const AUTHENTICATION_PATH_PATTERN =
 	/(?:^|\/)(?:auth|authenticate|authentication|authorize|authorization|challenge|consent|log[-_]?in|oauth\d*|sign[-_]?in|sign[-_]?up|signin|signup|sso|verify|verification)(?:\/|$)/i;
-// apps.apple.com CSP launches `itms-appss:` (HTTPS App Store) and `macappstore:`.
-const APP_STORE_PROTOCOLS = new Set([
-	"itms-apps:",
-	"itms-appss:",
-	"macappstore:",
-]);
-const APP_STORE_HOSTS = new Set([
-	"apps.apple.com",
-	"itunes.apple.com",
-	"geo.itunes.apple.com",
-]);
-// Zoom web launchers use both desktop (`zoommtg:`) and mobile (`zoomus:`) schemes.
-const ZOOM_JOIN_PROTOCOLS = new Set(["zoommtg:", "zoomus:"]);
-const ZOOM_JOIN_HOST = "zoom.us";
-const ZOOM_JOIN_PATH = "/join";
-const ZOOM_MEETING_NUMBER = /^\d{9,11}$/;
 const ALWAYS_ALLOW_PERMISSIONS = new Set([
 	"fullscreen",
 	"clipboard-sanitized-write",
@@ -439,6 +434,8 @@ type TabActivity = Partial<Record<"playing" | "microphone" | "camera" | "screen"
 
 interface ViewRecord {
 	activity?: TabActivity;
+	externalAppGesture?: { sourceUrl: string; at: number };
+	externalAppPromptPending?: boolean;
 	mediaPlaying?: boolean;
 	view: WebContentsView;
 	navigatingTo?: string;
@@ -629,74 +626,6 @@ function safePageUrl(value: string): URL | undefined {
 	} catch {
 		return undefined;
 	}
-}
-
-/** Allow only Apple App Store deep links to cross from a page into macOS. */
-export function safeAppStoreUrl(value: string): string | undefined {
-	if (!value || value.length > 8_192) return undefined;
-	try {
-		const url = new URL(value);
-		if (
-			!APP_STORE_PROTOCOLS.has(url.protocol) ||
-			!APP_STORE_HOSTS.has(url.hostname.toLowerCase()) ||
-			url.port ||
-			url.username ||
-			url.password
-		)
-			return undefined;
-		return url.toString();
-	} catch {
-		return undefined;
-	}
-}
-
-/** Allow only a standard Zoom meeting-join link to leave the browser. */
-export function safeZoomJoinUrl(value: string): string | undefined {
-	if (!value || value.length > 8_192) return undefined;
-	try {
-		const url = new URL(value);
-		const meetingNumbers = url.searchParams.getAll("confno");
-		const actions = url.searchParams.getAll("action");
-		const passwords = url.searchParams.getAll("pwd");
-		if (
-			!ZOOM_JOIN_PROTOCOLS.has(url.protocol) ||
-			url.hostname.toLowerCase() !== ZOOM_JOIN_HOST ||
-			url.pathname !== ZOOM_JOIN_PATH ||
-			url.port ||
-			url.username ||
-			url.password ||
-			url.hash ||
-			meetingNumbers.length !== 1 ||
-			!ZOOM_MEETING_NUMBER.test(meetingNumbers[0] ?? "") ||
-			actions.length > 1 ||
-			(actions.length === 1 && actions[0] !== "join") ||
-			passwords.length > 1
-		)
-			return undefined;
-		return url.toString();
-	} catch {
-		return undefined;
-	}
-}
-
-/** Microsoft Teams navigation/join links; never arbitrary application commands. */
-export function safeTeamsUrl(value: string): string | undefined {
-	if (!value || value.length > 8_192) return undefined;
-	try {
-		const url = new URL(value);
-		if (url.protocol !== "msteams:" ||
-			!["teams.microsoft.com", "teams.live.com"].includes(url.hostname.toLowerCase()) ||
-			url.username || url.password || url.port || url.hash ||
-			!/^\/l\/(?:meetup-join|team|channel)\/[^/]+/.test(url.pathname)) return undefined;
-		return url.toString();
-	} catch { return undefined; }
-}
-
-function openSystemAppUrl(value: string): boolean {
-	const url = safeAppStoreUrl(value) ?? safeZoomJoinUrl(value) ?? safeTeamsUrl(value);
-	if (!url) return false;
-	void Promise.resolve(shell.openExternal(url)).catch(() => undefined);
-	return true;
 }
 
 function discardPasswordEntry(entry: { password: string }): void {
@@ -5874,11 +5803,137 @@ export class UserBrowserService {
 		return record;
 	}
 
+	private recordExternalAppGesture(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+	): void {
+		delete record.externalAppGesture;
+		const contents = liveWebContents(record.view.webContents);
+		const source = contents && safePageUrl(contents.getURL());
+		if (
+			this.state.activeTabId === tab.id &&
+			source?.protocol === "https:"
+		)
+			record.externalAppGesture = {
+				sourceUrl: source.toString(),
+				at: this.now().getTime(),
+			};
+	}
+
+	/** Return true for a recognized app route that browser navigation must stop. */
+	private requestExternalApp(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+		value: string,
+		initiatingUrl = "",
+		mainFrame = false,
+	): boolean {
+		const target = externalAppTarget(value);
+		if (!target) return false;
+
+		let installed = false;
+		try {
+			installed = Boolean(
+				app.getApplicationNameForProtocol(target.handlerUrl).trim(),
+			);
+		} catch {
+			installed = false;
+		}
+		// HTTPS Teams invitations remain usable in the browser if the native app
+		// is unavailable. Custom schemes have no safe in-browser fallback.
+		if (target.webFallback && !installed) return false;
+
+		const contents = liveWebContents(record.view.webContents);
+		const source = contents && safePageUrl(contents.getURL());
+		const gesture = record.externalAppGesture;
+		delete record.externalAppGesture;
+		const initiator = safePageUrl(initiatingUrl);
+		const now = this.now().getTime();
+		const allowedSource =
+			contents &&
+			source?.protocol === "https:" &&
+			this.state.activeTabId === tab.id &&
+			this.views.get(tab.id) === record &&
+			// Top-level OAuth and meeting callbacks can follow a committed HTTPS
+			// launcher after its transient user activation expires. The native
+			// consent dialog remains the authority to open an application.
+			(mainFrame ||
+				(gesture?.sourceUrl === source.toString() &&
+					now >= gesture.at &&
+					now - gesture.at <= 5_000 &&
+					initiator?.origin === source.origin));
+		if (!allowedSource || record.externalAppPromptPending) return true;
+
+		const sourceOrigin = source.origin;
+		const navigationGeneration = record.navigationGeneration;
+		const stillCurrent = () =>
+			!this.disposed &&
+			!this.window.isDestroyed() &&
+			liveWebContents(record.view.webContents) === contents &&
+			this.views.get(tab.id) === record &&
+			this.state.activeTabId === tab.id &&
+			contents.getURL() === source.toString() &&
+			record.navigationGeneration === navigationGeneration;
+		record.externalAppPromptPending = true;
+		void (async () => {
+			try {
+				if (!installed) {
+					await dialog.showMessageBox(this.window, {
+						type: "info",
+						title: `${target.appName} isn’t available`,
+						message: `${target.appName} isn’t available`,
+						detail: `Install ${target.appName}, then try the link again. You can continue on this page.`,
+						buttons: ["OK"],
+					});
+					return;
+				}
+				const decision = await dialog.showMessageBox(this.window, {
+					type: "question",
+					title: `Open ${target.appName}?`,
+					message: `${sourceOrigin} wants to open ${target.appName}.`,
+					detail:
+						"Continue only if you requested this. You can keep using the current page.",
+					buttons: ["Open app", "Stay here"],
+					defaultId: 1,
+					cancelId: 1,
+				});
+				if (!stillCurrent() || decision.response !== 0) return;
+				try {
+					await shell.openExternal(target.appUrl);
+				} catch {
+					if (!stillCurrent()) return;
+					await dialog.showMessageBox(this.window, {
+						type: "info",
+						title: `Couldn’t open ${target.appName}`,
+						message: `Couldn’t open ${target.appName}`,
+						detail: `Make sure ${target.appName} is installed, then try the link again. You can continue on this page.`,
+						buttons: ["OK"],
+					});
+				}
+			} finally {
+				record.externalAppPromptPending = false;
+			}
+		})().catch(() => {
+			record.externalAppPromptPending = false;
+		});
+		return true;
+	}
+
 	private configureView(tab: UserBrowserTab, record: ViewRecord): void {
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents) return;
-		webContents.setWindowOpenHandler(({ url, disposition }) => {
-			if (openSystemAppUrl(url)) return { action: "deny" };
+		webContents.setWindowOpenHandler(({ url, disposition, referrer }) => {
+			if (
+				this.requestExternalApp(
+					tab,
+					record,
+					url,
+					// Chromium omits HTTP referrers for custom-scheme popups.
+					// Use the browser-owned focused frame, never a page-supplied URL.
+					referrer?.url || webContents.focusedFrame?.url || "",
+				)
+			)
+				return { action: "deny" };
 			if (url !== "about:blank" && !safePageUrl(url)) return { action: "deny" };
 			return {
 				action: "allow",
@@ -5911,6 +5966,11 @@ export class UserBrowserService {
 					return child.view.webContents;
 				},
 			};
+		});
+		webContents.on("before-mouse-event", (_event, input) => {
+			if (input.type === "mouseDown") delete record.externalAppGesture;
+			if (input.type === "mouseDown" && input.button === "left")
+				this.recordExternalAppGesture(tab, record);
 		});
 		webContents.on("media-started-playing", () => { record.mediaPlaying = true; this.emit(); });
 		webContents.on("media-paused", () => { record.mediaPlaying = false; this.emit(); });
@@ -5963,14 +6023,31 @@ export class UserBrowserService {
 		webContents.on("will-frame-navigate", (event) => {
 			// Meeting launchers may navigate a hidden iframe to their app scheme.
 			// Main-frame handoffs are handled below so each link opens only once.
-			if (!event.isMainFrame && openSystemAppUrl(event.url)) event.preventDefault();
+			if (
+				!event.isMainFrame &&
+				this.requestExternalApp(
+					tab,
+					record,
+					event.url,
+					event.initiator?.url ?? event.frame?.url ?? "",
+				)
+			)
+				event.preventDefault();
 		});
 		webContents.on("will-navigate", (event, url) => {
 			if (this.passwordSaveCommitTabId === tab.id) {
 				event.preventDefault();
 				return;
 			}
-			if (openSystemAppUrl(url)) {
+			if (
+				this.requestExternalApp(
+					tab,
+					record,
+					url,
+					event.initiator?.url ?? event.frame?.url ?? "",
+					event.isMainFrame !== false,
+				)
+			) {
 				event.preventDefault();
 				return;
 			}
@@ -5990,7 +6067,15 @@ export class UserBrowserService {
 				event.preventDefault();
 				return;
 			}
-			if (openSystemAppUrl(url)) {
+			if (
+				this.requestExternalApp(
+					tab,
+					record,
+					url,
+					event.initiator?.url ?? event.frame?.url ?? "",
+					event.isMainFrame !== false,
+				)
+			) {
 				event.preventDefault();
 				return;
 			}
@@ -6042,6 +6127,15 @@ export class UserBrowserService {
 			"did-navigate",
 			(_event, url, _httpResponseCode, _httpStatusText) => {
 				if (tab.blockedNavigation) return;
+				// Preserve a click only onto the specific Teams launcher that
+				// subsequently opens its app scheme from a same-origin iframe.
+				const gesture = record.externalAppGesture;
+				if (gesture && isTeamsMeetingLauncher(url) &&
+					this.state.activeTabId === tab.id &&
+					this.now().getTime() - gesture.at <= 5_000 &&
+					this.now().getTime() >= gesture.at) {
+					gesture.sourceUrl = new URL(url).toString();
+				} else delete record.externalAppGesture;
 				if (tab.id === this.state.activeTabId) {
 					this.clearPasswordPrompt({
 						preservePending: this.pendingPasswordSave?.tabId === tab.id,
@@ -6061,6 +6155,7 @@ export class UserBrowserService {
 		);
 		webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
 			if (isMainFrame) {
+				delete record.externalAppGesture;
 				if (tab.blockedNavigation) return;
 				if (tab.id === this.state.activeTabId) {
 					this.clearPasswordPrompt({
@@ -6318,6 +6413,14 @@ export class UserBrowserService {
 		});
 		webContents.on("before-input-event", (event, input) => {
 			if (input.type !== "keyDown") return;
+			delete record.externalAppGesture;
+			if (
+				["Enter", " "].includes(input.key) &&
+				!input.meta &&
+				!input.control &&
+				!input.alt
+			)
+				this.recordExternalAppGesture(tab, record);
 
 			// Escape: Stop loading if currently loading
 			if (input.key === "Escape") {
