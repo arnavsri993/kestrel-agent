@@ -225,6 +225,7 @@ import {
   isAuthenticationFlowUrl,
   safeAppStoreUrl,
   safeCursorAuthUrl,
+  safeChatGPTLaunchUrl,
   safeTeamsMeetingAppUrl,
   safeZoomJoinUrl,
   safeTeamsUrl,
@@ -2570,6 +2571,27 @@ describe("UserBrowserService", () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(shell.openExternal).not.toHaveBeenCalled();
     expect(dialog.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it("opens only bounded ChatGPT app landing routes with consent", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id,
+      "https://chatgpt.com/codex/open-app?source=login&app_brand=chatgpt");
+    const source = electron.state.views[0]!.webContents;
+    for (const value of ["codex://", "codex://launch", "codex://dots", "codex://launch/"]) {
+      expect(safeChatGPTLaunchUrl(value)).toBe(value);
+      source.emit("will-navigate", { preventDefault: vi.fn() }, value);
+      await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledWith(value));
+    }
+    expect(app.getApplicationNameForProtocol).toHaveBeenCalledWith("codex://");
+    expect(dialog.showMessageBox).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      message: "https://chatgpt.com wants to open ChatGPT.", defaultId: 1,
+    }));
+    for (const value of ["codex://command", "codex://thread/new", "codex://launch?prompt=fixture",
+      "codex://launch#fragment", "codex://launch/extra", "codex://file/tmp/test",
+      "codex://user@launch", "codex://launch:123", "codex:///launch", "codex://launch\n"])
+      expect(safeChatGPTLaunchUrl(value)).toBeUndefined();
   });
 
   it("allows only Cursor authentication callbacks", async () => {

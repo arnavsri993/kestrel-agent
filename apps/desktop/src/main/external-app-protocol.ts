@@ -18,7 +18,7 @@ const TEAMS_HOSTS = new Set([
 const INVALID_EXTERNAL_URL_CHARACTERS = /[\\\u0000-\u0020\u007f]/;
 
 export type ExternalAppTarget = {
-	appName: "App Store" | "Cursor" | "Microsoft Teams" | "Zoom";
+	appName: "App Store" | "ChatGPT" | "Cursor" | "Microsoft Teams" | "Zoom";
 	appUrl: string;
 	handlerUrl: string;
 	webFallback: boolean;
@@ -169,7 +169,24 @@ export function safeCursorAuthUrl(value: string): string | undefined {
 	}
 }
 
+/** Only the ChatGPT app landing routes, never commands, threads, or files. */
+export function safeChatGPTLaunchUrl(value: string): string | undefined {
+	if (!value || INVALID_EXTERNAL_URL_CHARACTERS.test(value) ||
+		!/^codex:\/\/(?:launch|dots)?\/?$/i.test(value)) return undefined;
+	try {
+		return new URL(value).toString();
+	} catch { return undefined; }
+}
+
 export function externalAppTarget(value: string): ExternalAppTarget | undefined {
+	const chatGPTUrl = safeChatGPTLaunchUrl(value);
+	if (chatGPTUrl)
+		return {
+			appName: "ChatGPT",
+			appUrl: chatGPTUrl,
+			handlerUrl: "codex://",
+			webFallback: false,
+		};
 	const appStoreUrl = safeAppStoreUrl(value);
 	if (appStoreUrl) {
 		const protocol = new URL(appStoreUrl).protocol;

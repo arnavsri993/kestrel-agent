@@ -117,6 +117,7 @@ import {
 } from "./external-app-protocol";
 export {
 	safeAppStoreUrl,
+	safeChatGPTLaunchUrl,
 	safeCursorAuthUrl,
 	safeTeamsMeetingAppUrl,
 	safeTeamsUrl,
