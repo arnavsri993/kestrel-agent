@@ -9,6 +9,20 @@ import {
 // This preload runs in Electron's isolated world. It intentionally exposes no
 // API to the page: password values arrive from the main process, are applied to
 // DOM controls here, and only a non-secret completion result returns over IPC.
+// Corroborate native input with its real frame when Chromium loses focusedFrame
+// after a focused iframe is removed. The page receives no Electron bridge.
+if (process.isMainFrame) {
+	window.addEventListener("pointerdown", event => {
+		if (event.isTrusted && event.button === 0)
+			ipcRenderer.send("kestrel:user-browser-external-app-input");
+	}, true);
+	window.addEventListener("keydown", event => {
+		if (event.isTrusted && ["Enter", " "].includes(event.key) &&
+			!event.metaKey && !event.ctrlKey && !event.altKey && !event.repeat)
+			ipcRenderer.send("kestrel:user-browser-external-app-input");
+	}, true);
+}
+
 const PASSWORD_SUBMISSION_CHANNEL = "kestrel:user-browser-password-submission";
 const PASSWORD_COMMAND_CHANNEL = "kestrel:user-browser-credential-command";
 const PASSWORD_RESPONSE_CHANNEL = "kestrel:user-browser-credential-response";
