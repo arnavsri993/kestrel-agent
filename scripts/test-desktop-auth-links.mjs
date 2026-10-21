@@ -93,6 +93,7 @@ try {
   assert(result.ok);
   const tabId = result.browserState.activeTabId;
   const navigate = async () => {
+    await page.evaluate(tabId => window.kestrel.request({type:'browser-select-tab',tabId}), tabId);
     await page.evaluate(({tabId,input}) => window.kestrel.request({type:'browser-navigate',tabId,input}), {tabId,input:`${origin}/one`});
     await until(() => app.evaluate(({webContents}, url) => webContents.getAllWebContents().some(w => w.getURL() === url && !w.isLoading()), `${origin}/one`), 'Fixture did not load');
   };
@@ -104,7 +105,7 @@ try {
   const nativeClick = async (url) => {
     const fixturePage = app.context().pages().find(candidate => candidate.url() === url);
     if (!fixturePage) throw new Error('Fixture Playwright page missing');
-    await fixturePage.locator('#handoff').click();
+    await fixturePage.locator('#handoff').click({ noWaitAfter: true });
   };
   for (const endpoint of ['/callback','/redirect307','/redirect308']) {
     await navigate(); requests.length = 0;
@@ -197,7 +198,7 @@ try {
       return frame.executeJavaScript(`window.fixtureAppUrl = ${JSON.stringify(appUrl)}; window.fixtureMode = 'top';`);
     }, {mainUrl: `${origin}/one`, frameUrl: `${origin}/frame`, appUrl: url});
     const iframeBefore = await counts();
-    await fixturePage.frameLocator('iframe').locator('#handoff').click();
+    await fixturePage.frameLocator('iframe').locator('#handoff').click({ noWaitAfter: true });
     await until(async () => (await counts()).links === iframeBefore.links + 1,
       `Same-origin iframe app handoff failed for ${url}`);
     assert.equal((await counts()).prompts, iframeBefore.prompts + 1);
