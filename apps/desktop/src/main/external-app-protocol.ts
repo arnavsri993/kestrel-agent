@@ -178,6 +178,23 @@ export function safeChatGPTLaunchUrl(value: string): string | undefined {
 	} catch { return undefined; }
 }
 
+/** The official login landing uses a new-thread link for its Open app button.
+ * Treat only that exact link on that exact page as launch-only intent. */
+export function safeChatGPTLandingLaunchUrl(
+	value: string,
+	sourceValue: string,
+): string | undefined {
+	if (value !== "codex://threads/new" || !sourceValue ||
+		INVALID_EXTERNAL_URL_CHARACTERS.test(sourceValue)) return undefined;
+	try {
+		const source = new URL(sourceValue);
+		return source.protocol === "https:" && source.hostname === "chatgpt.com" &&
+			source.pathname === "/codex/open-app" && !source.username &&
+			!source.password && !source.port && !source.hash
+			? "codex://launch" : undefined;
+	} catch { return undefined; }
+}
+
 export function externalAppTarget(value: string): ExternalAppTarget | undefined {
 	const chatGPTUrl = safeChatGPTLaunchUrl(value);
 	if (chatGPTUrl)

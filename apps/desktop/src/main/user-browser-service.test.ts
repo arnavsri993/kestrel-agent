@@ -226,6 +226,7 @@ import {
   safeAppStoreUrl,
   safeCursorAuthUrl,
   safeChatGPTLaunchUrl,
+  safeChatGPTLandingLaunchUrl,
   safeTeamsMeetingAppUrl,
   safeZoomJoinUrl,
   safeTeamsUrl,
@@ -2592,6 +2593,50 @@ describe("UserBrowserService", () => {
       "codex://launch#fragment", "codex://launch/extra", "codex://file/tmp/test",
       "codex://user@launch", "codex://launch:123", "codex:///launch", "codex://launch\n"])
       expect(safeChatGPTLaunchUrl(value)).toBeUndefined();
+  });
+
+  it("treats the exact official login landing button as app launch only", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
+    const { service } = createService();
+    const landing = "https://chatgpt.com/codex/open-app?source=login&app_brand=chatgpt";
+    await service.navigate(service.getState().tabs[0]!.id, landing);
+    const source = electron.state.views[0]!.webContents;
+    expect(safeChatGPTLandingLaunchUrl("codex://threads/new", landing)).toBe("codex://launch");
+    source.emit("will-navigate", {preventDefault: vi.fn()}, "codex://threads/new");
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith("codex://launch"));
+    expect(source.getURL()).toBe(landing);
+  });
+
+  it("rejects new-thread launch aliases outside the exact official landing and with any target arguments", () => {
+    const target = "codex://threads/new";
+    const landing = "https://chatgpt.com/codex/open-app?source=login&app_brand=chatgpt";
+    for (const source of ["https://chatgpt.com.evil.example/codex/open-app",
+      "https://evil.example/codex/open-app", "http://chatgpt.com/codex/open-app",
+      "https://user@chatgpt.com/codex/open-app", "https://chatgpt.com:8443/codex/open-app",
+      "https://chatgpt.com/codex/open-app/", "https://chatgpt.com/codex/open-app/extra",
+      "https://chatgpt.com/codex/open-app#fragment", "https://chatgpt.com/other?next=/codex/open-app"])
+      expect(safeChatGPTLandingLaunchUrl(target, source)).toBeUndefined();
+    for (const value of ["codex://threads/new?prompt=fixture", "codex://threads/new?q=fixture",
+      "codex://threads/new?mode=work", "codex://threads/new?browserUrl=https://example.com",
+      "codex://threads/new#fragment", "codex://threads/new/", "codex://threads/existing",
+      "codex://command/new", "codex://file/tmp/example", "codex://threads/new\n"])
+      expect(safeChatGPTLandingLaunchUrl(value, landing)).toBeUndefined();
+    expect(safeChatGPTLaunchUrl(target)).toBeUndefined();
+  });
+
+  it("revalidates the official landing before accepting app launch consent", async () => {
+    let decide!: (result: {response: number; checkboxChecked: boolean}) => void;
+    vi.mocked(dialog.showMessageBox).mockImplementationOnce(() => new Promise(resolve => { decide = resolve; }));
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id,
+      "https://chatgpt.com/codex/open-app?source=login&app_brand=chatgpt");
+    const source = electron.state.views[0]!.webContents;
+    source.emit("will-navigate", {preventDefault: vi.fn()}, "codex://threads/new");
+    expect(dialog.showMessageBox).toHaveBeenCalledOnce();
+    source.url = source.mainFrame.url = "https://chatgpt.com/other";
+    decide({response: 0, checkboxChecked: false});
+    await new Promise(resolve => setImmediate(resolve));
+    expect(shell.openExternal).not.toHaveBeenCalled();
   });
 
   it("allows only Cursor authentication callbacks", async () => {

@@ -114,10 +114,12 @@ import {
 import {
 	externalAppTarget,
 	isTeamsMeetingLauncher,
+	safeChatGPTLandingLaunchUrl,
 } from "./external-app-protocol";
 export {
 	safeAppStoreUrl,
 	safeChatGPTLaunchUrl,
+	safeChatGPTLandingLaunchUrl,
 	safeCursorAuthUrl,
 	safeTeamsMeetingAppUrl,
 	safeTeamsUrl,
@@ -5829,7 +5831,10 @@ export class UserBrowserService {
 		initiatingUrl = "",
 		mainFrame = false,
 	): boolean {
-		const target = externalAppTarget(value);
+		const contents = liveWebContents(record.view.webContents);
+		const source = contents && safePageUrl(contents.getURL());
+		const landingLaunch = safeChatGPTLandingLaunchUrl(value, source?.toString() ?? "");
+		const target = externalAppTarget(landingLaunch ?? value);
 		if (!target) return false;
 
 		let installed = false;
@@ -5844,8 +5849,6 @@ export class UserBrowserService {
 		// is unavailable. Custom schemes have no safe in-browser fallback.
 		if (target.webFallback && !installed) return false;
 
-		const contents = liveWebContents(record.view.webContents);
-		const source = contents && safePageUrl(contents.getURL());
 		const gesture = record.externalAppGesture;
 		delete record.externalAppGesture;
 		const initiator = safePageUrl(initiatingUrl);
@@ -5888,6 +5891,7 @@ export class UserBrowserService {
 					});
 					return;
 				}
+				if (!stillCurrent()) return;
 				const decision = await dialog.showMessageBox(this.window, {
 					type: "question",
 					title: `Open ${target.appName}?`,
