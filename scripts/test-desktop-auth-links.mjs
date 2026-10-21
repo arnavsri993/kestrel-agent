@@ -103,6 +103,8 @@ try {
     return wc.executeJavaScript(script, true);
   }, {url:`${origin}/one`,script});
   const nativeClick = async (url, target) => {
+    await until(() => app.context().pages().some(candidate => candidate.url() === url),
+      'Playwright did not observe the committed fixture page');
     const fixturePage = app.context().pages().find(candidate => candidate.url() === url);
     if (!fixturePage) throw new Error('Fixture Playwright page missing');
     const locator = target || fixturePage.locator('#handoff');
@@ -154,7 +156,8 @@ try {
       const options = args.at(-1);
       if (options.type === 'question' &&
           (options.message?.startsWith(`${fixtureOrigin} wants to open `) ||
-           options.message?.startsWith('https://teams.microsoft.com wants to open ')) &&
+           options.message?.startsWith('https://teams.microsoft.com wants to open ') ||
+           options.message?.startsWith('https://chatgpt.com wants to open ')) &&
           options.buttons?.[0] === 'Open app' && options.buttons?.[1] === 'Stay here') {
         globalThis.authFixtureConsent.push(options.title);
         return {response: 0, checkboxChecked: false};
@@ -242,10 +245,14 @@ try {
   await navigate();
   const teamsLauncher = 'https://teams.microsoft.com/l/meetup-join/fixture/0';
   const teamsApp = 'msteams:/l/meetup-join/fixture/0';
-  await app.evaluate(({ webContents, net }, { fixtureUrl, launcher, appUrl }) => {
+  const officialLanding = 'https://chatgpt.com/codex/open-app?source=login&app_brand=chatgpt';
+  await app.evaluate(({ webContents, net }, { fixtureUrl, launcher, appUrl, officialLanding }) => {
     const wc = webContents.getAllWebContents().find(w => w.getURL() === fixtureUrl);
     if (!wc) throw new Error('Fixture page missing for Teams launcher');
     wc.session.protocol.handle('https', request => {
+      if (request.url === officialLanding)
+        return new Response(`<title>Signed in</title><h1>Signed in</h1><button id="handoff" onclick="location.href='codex://threads/new'">Open ChatGPT</button>`,
+          { headers: { 'content-type': 'text/html' } });
       if (request.url === launcher)
         return new Response('<title>Synthetic Teams launcher</title><h1>Teams launcher</h1><iframe src="https://teams.microsoft.com/kestrel-synthetic-frame"></iframe>',
           { headers: { 'content-type': 'text/html' } });
@@ -254,7 +261,7 @@ try {
           { headers: { 'content-type': 'text/html' } });
       return net.fetch(request, { bypassCustomProtocolHandlers: true });
     });
-  }, { fixtureUrl: `${origin}/one`, launcher: teamsLauncher, appUrl: teamsApp });
+  }, { fixtureUrl: `${origin}/one`, launcher: teamsLauncher, appUrl: teamsApp, officialLanding });
   await run(`window.fixtureAppUrl = ${JSON.stringify(teamsLauncher)}; window.fixtureMode = 'top';`);
   const beforeLauncher = await counts();
   await nativeClick(`${origin}/one`);
@@ -264,7 +271,18 @@ try {
   assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), [teamsApp]);
   assert(app.context().pages().some(candidate => candidate.url() === teamsLauncher),
     'App handoff must retain the committed Teams launcher');
-  console.log('Auth links passed: native POST and 307/308 auth requests, opener-preserving popups, consented popup/top/iframe app handoffs, and HTTPS 302/307 redirects including delayed postcommit Cursor/Teams callbacks and a committed Teams launcher iframe.');
+  await navigate();
+  await run(`window.fixtureAppUrl = ${JSON.stringify(officialLanding)}; window.fixtureMode = 'top';`);
+  await nativeClick(`${origin}/one`);
+  await until(() => app.evaluate(({webContents}, url) => webContents.getAllWebContents().some(w => w.getURL() === url && !w.isLoading()), officialLanding),
+    'Official ChatGPT landing fixture did not commit');
+  const beforeOfficialLanding = await counts();
+  await nativeClick(officialLanding);
+  await until(async () => (await counts()).links === beforeOfficialLanding.links + 1,
+    'Official ChatGPT landing button did not request launch-only handoff');
+  assert.equal((await counts()).prompts, beforeOfficialLanding.prompts + 1);
+  assert.deepEqual(await app.evaluate(() => globalThis.authFixtureExternalLinks.splice(0)), ['codex://launch']);
+  console.log('Auth links passed: native POST and 307/308 auth requests, opener-preserving popups, consented popup/top/iframe app handoffs, and HTTPS 302/307 redirects including delayed postcommit Cursor/Teams callbacks, a committed Teams launcher iframe, and launch-only official ChatGPT landing handoff.');
 } finally {
   await app?.close(); server.closeAllConnections(); await new Promise(r => server.close(r));
   rmSync(root, {recursive:true,force:true});
