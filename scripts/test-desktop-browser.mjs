@@ -134,7 +134,7 @@ const server = createServer((request, response) => {
         <main>
           <h1>${pageName}</h1>
           <p id="copy">A robotics reference visible in the current viewport.</p>
-          <p id="find-fixture">Kestrel find verification token. Kestrel find verification token. Kestrel find verification token.</p>
+          <p id="find-fixture">${url.searchParams.has("emptyFind") ? "No matching text on this page." : "Kestrel find verification token. Kestrel find verification token. Kestrel find verification token."}</p>
           <label>Name <input id="name" name="name" autocomplete="off"></label>
           <button id="submit" type="button">Submit</button>
           <output id="result">Waiting</output>
@@ -1507,6 +1507,29 @@ try {
 	await page.getByText("2 of 3", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Previous match", exact: true }).click();
 	await page.getByText("1 of 3", { exact: true }).waitFor();
+	await readActiveViewScript(
+		"document.querySelector('#next').href = '/two?emptyFind=1'; document.querySelector('#next').click()",
+		"Find navigation fixture could not open the next document",
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/two?emptyFind=1`,
+		"Find navigation fixture did not load",
+	);
+	await page.getByText("0 of 0", { exact: true }).waitFor();
+	assert.equal(await findInput.inputValue(), "Kestrel find verification token");
+	await page.evaluate(async (input) => {
+		const state = await window.kestrel.request({ type: "browser-get-state" });
+		await window.kestrel.request({ type: "browser-navigate", tabId: state.browserState.activeTabId, input });
+	}, `${origin}/one`);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"The original Find document did not load again",
+	);
+	await page.getByText("1 of 3", { exact: true }).waitFor();
+	assert.equal(
+		await readActiveViewScript("String(window.getSelection())", "Find did not refresh after returning to the original document"),
+		"Kestrel find verification token",
+	);
 	await findInput.fill("Kestrel absent verification token");
 	await page.getByText("0 of 0", { exact: true }).waitFor();
 	await page.keyboard.press("Escape");
