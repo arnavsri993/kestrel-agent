@@ -94,12 +94,101 @@ describe("prematureBrowserCompletionError", () => {
 		).toBe(PREMATURE_BROWSER_COMPLETION_ERROR);
 	});
 
-	it("requires a fresh observation when recovery budget is observe_required", () => {
+	it("requires fresh page evidence after navigation even when the model says done", () => {
+		const check = (steps: RuntimeToolExecution[]) =>
+			prematureBrowserCompletionError({
+				runId: "run-1",
+				sessionId: "session-1",
+				modelText: "Done.",
+				browserRecoveryState: emptyBrowserRecoveryBudgetState(),
+				listExecutions: () => steps,
+			});
+		const navigate = execution({
+			id: "navigate",
+			toolName: "browser.navigate-tab",
+			idempotencyKey: "run-1:navigate",
+		});
+		const snapshot = execution({
+			id: "snapshot",
+			toolName: "browser.visible-snapshot",
+			idempotencyKey: "run-1:snapshot",
+		});
+
+		expect(check([navigate])).toBe(OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR);
+		expect(check([snapshot, navigate])).toBe(
+			OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR,
+		);
+		expect(check([navigate, snapshot])).toBeUndefined();
+	});
+
+	it.each([
+		["browser.navigate", "browser.snapshot", "browserSessionId"],
+		["browser.navigate-tab", "browser.visible-snapshot", "tabId"],
+	])("requires fresh evidence from the changed target for %s", (mutation, observation, targetKey) => {
+		const check = (steps: RuntimeToolExecution[]) => prematureBrowserCompletionError({
+			runId: "run-1", sessionId: "session-1", modelText: "Done.",
+			browserRecoveryState: emptyBrowserRecoveryBudgetState(), listExecutions: () => steps,
+		});
+		const change = execution({ id: "change", toolName: mutation, idempotencyKey: "run-1:change", input: { [targetKey]: "changed" } });
+		const observe = execution({ id: "observe", toolName: observation, idempotencyKey: "run-1:observe", input: { [targetKey]: "other" } });
+		expect(check([change, observe])).toBe(OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR);
+		expect(check([change, { ...observe, input: { [targetKey]: "changed" } }])).toBeUndefined();
+		expect(check([change, { ...observe, status: "failed", input: { [targetKey]: "changed" } }])).toBe(OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR);
+	});
+
+	it.each([
+		["browser.navigate", "browser.act"],
+		["browser.navigate-tab", "browser.visible-act"],
+	])("accepts a later action with its built-in post-action observation after %s", (navigation, action) => {
 		expect(
 			prematureBrowserCompletionError({
 				runId: "run-1",
 				sessionId: "session-1",
-				modelText: "",
+				modelText: "The requested control is now enabled.",
+				browserRecoveryState: emptyBrowserRecoveryBudgetState(),
+				listExecutions: () => [
+					execution({ id: "navigate", toolName: navigation, idempotencyKey: "run-1:navigate" }),
+					execution({
+						id: "act",
+						toolName: action,
+						idempotencyKey: "run-1:act",
+						output: { performed: true, observation: { changed: true } },
+					}),
+				],
+			}),
+		).toBeUndefined();
+	});
+
+	it("requires tab-list evidence after changing visible tab ownership", () => {
+		const open = execution({
+			id: "open",
+			toolName: "browser.open-tab",
+			idempotencyKey: "run-1:open",
+		});
+		const tabs = execution({
+			id: "tabs",
+			toolName: "browser.tabs",
+			idempotencyKey: "run-1:tabs",
+		});
+		const check = (steps: RuntimeToolExecution[]) =>
+			prematureBrowserCompletionError({
+				runId: "run-1",
+				sessionId: "session-1",
+				modelText: "The tab is open.",
+				browserRecoveryState: emptyBrowserRecoveryBudgetState(),
+				listExecutions: () => steps,
+			});
+
+		expect(check([open])).toBe(OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR);
+		expect(check([open, tabs])).toBeUndefined();
+	});
+
+	it.each(["", "Done."])("requires a fresh observation with recovery observe_required even for prose %j", (modelText) => {
+		expect(
+			prematureBrowserCompletionError({
+				runId: "run-1",
+				sessionId: "session-1",
+				modelText,
 				browserRecoveryState: {
 					version: 1,
 					nextSequence: 2,

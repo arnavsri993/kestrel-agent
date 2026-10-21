@@ -14,6 +14,20 @@ stay in the provider's or website's own login surface. Existing recovery guidanc
 requires fresh observations and forbids automatic replay after an uncertain
 effect.
 
+For routine multi-step work, the agent continues through safe in-scope
+read-only checks without asking the user to repeat the original request. A
+navigation, tab change, autofill, viewport change, or upload is not completion
+evidence by itself: Kestrel requires a later fresh page or tab observation
+before accepting a completion claim. Browser actions that already return a
+post-action accessibility diff satisfy that check. If the model stops early,
+Kestrel gives it one bounded chance to collect missing evidence using only
+read-only browser or desktop observation tools; it blocks mutation requests
+during that follow-through. Observations must match the changed tab or isolated
+session. Protected actions still use
+Kestrel's normal one-time or configured approval path. This continuity rule
+never authorizes sends, publishing, purchases, deletion, credential disclosure,
+or wider scope.
+
 Verified `browser.screenshot`, `browser.visible-screenshot`, and
 `computer.screenshot` results reach vision-capable models as image observations.
 Conversation history stores a compact receipt; the encrypted execution record

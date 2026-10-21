@@ -7,9 +7,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	AgentLoop,
 	LOCAL_FIRST_TOOL_INSTRUCTIONS,
+	ROUTINE_TASK_CONTINUITY_INSTRUCTIONS,
 	SessionRunBusyError,
 } from "./agent-loop";
-import { PREMATURE_BROWSER_COMPLETION_ERROR } from "./agent-run-completion";
+import {
+	OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR,
+	PREMATURE_BROWSER_COMPLETION_ERROR,
+} from "./agent-run-completion";
 import {
 	toBrowserRecoveryError,
 	type BrowserRecoveryBudgetState,
@@ -1667,6 +1671,9 @@ describe("provider-neutral agent loop", () => {
 							),
 						}),
 					]),
+				);
+				expect(contentText(request.messages[0]?.content ?? [])).toContain(
+					ROUTINE_TASK_CONTINUITY_INSTRUCTIONS,
 				);
 				if (calls === 1)
 					return {
@@ -3575,6 +3582,156 @@ describe("provider-neutral agent loop", () => {
 			turn: 1,
 			maximumTurns: 2,
 		});
+		database.close();
+	});
+
+	it.each(["observe", "repeat_completion", "replay", "approval"] as const)("bounds browser completion follow-through without bypassing approval (%s)", async (mode) => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Browser completion evidence" });
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.navigate-tab",
+				title: "Navigate visible tab",
+				description: "Navigate one visible tab.",
+				category: "browser",
+				riskLevel: "sensitive",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["browser", "test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({ navigated: true }),
+		});
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.visible-snapshot",
+				title: "Observe visible tab",
+				description: "Read fresh visible page state.",
+				category: "browser",
+				riskLevel: "read_only",
+				readOnly: true,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["browser", "test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({
+				url: "https://example.test/complete",
+				accessibilityTree: { text: "Saved" },
+				trust: "untrusted_browser",
+			}),
+		});
+		runtime.allowTools(session.id, [
+			"browser.navigate-tab",
+			"browser.visible-snapshot",
+		]);
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "browser-completion-evidence",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				const response = (
+					text: string,
+					toolCalls: Array<{
+						id: string;
+						name: string;
+						arguments: Record<string, never>;
+					}>,
+				) => ({
+					providerId: "browser-completion-evidence",
+					model: request.model,
+					text,
+					toolCalls,
+					usage: { inputTokens: 4, outputTokens: 2 },
+					finishReason: toolCalls.length ? ("tool_calls" as const) : ("stop" as const),
+				});
+				if (calls === 1)
+					return response("", [
+						{ id: "navigate", name: "browser.navigate-tab", arguments: {} },
+					]);
+				if (calls === 2) return response("Done.", []);
+				if (calls === 3) {
+					expect(request.tools?.map((tool) => tool.name)).toEqual([
+						"browser.visible-snapshot",
+					]);
+					if (mode === "repeat_completion") return response("Done again.", []);
+					expect(
+						request.messages.some(
+							(message) =>
+								message.role === "system" &&
+								contentText(message.content).includes(
+									OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR,
+								),
+						),
+					).toBe(true);
+					return response("", [
+						...(mode === "replay" ? [{ id: "replay", name: "browser.navigate-tab", arguments: {} }] : []),
+						{
+							id: "observe",
+							name: "browser.visible-snapshot",
+							arguments: {},
+						},
+					]);
+				}
+				return response("The saved state is visible.", []);
+			},
+		};
+		const events: string[] = [];
+		const result = await new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		).run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Open the saved view and confirm it loaded."),
+			...(mode === "approval" ? {} : { approvalStatus: "approved" as const }),
+			onEvent: (event) => events.push(event.type),
+		});
+
+		if (mode === "approval") {
+			expect(result.run.status).toBe("waiting_approval");
+			expect(calls).toBe(1);
+			expect(events).not.toContain("completion_observation_retry");
+			expect(database.listToolExecutions(session.id).map((execution) => execution.status)).toEqual(["blocked"]);
+			database.close();
+			return;
+		}
+		if (mode === "repeat_completion") {
+			expect(result.run.status).toBe("failed");
+			expect(result.run.error).toBe(OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR);
+			expect(calls).toBe(3);
+			expect(events.filter((event) => event === "completion_observation_retry")).toHaveLength(1);
+			database.close();
+			return;
+		}
+		expect(result.run.status).toBe("completed");
+		expect(result.assistantMessage?.content).toBe(
+			"The saved state is visible.",
+		);
+		expect(calls).toBe(4);
+		expect(events).toContain("completion_observation_retry");
+		expect(
+			database
+				.listToolExecutions(session.id)
+				.map((execution) => execution.toolName),
+		).toEqual(mode === "replay"
+			? ["browser.navigate-tab", "browser.navigate-tab", "browser.visible-snapshot"]
+			: ["browser.navigate-tab", "browser.visible-snapshot"]);
+		if (mode === "replay") {
+			expect(database.listToolExecutions(session.id).map((execution) => execution.status)).toEqual(["verified", "blocked", "verified"]);
+		}
 		database.close();
 	});
 

@@ -13,6 +13,56 @@ export const OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR =
 export const FAILED_COMPUTER_COMPLETION_ERROR =
 	"Kestrel stopped after a computer tool failed. Check the reported native permission or helper error, then take a fresh desktop screenshot before continuing.";
 
+const ISOLATED_PAGE_MUTATIONS = new Set([
+	"browser.navigate",
+	"browser.upload",
+	"browser.viewport",
+]);
+const ISOLATED_PAGE_OBSERVATIONS = new Set([
+	"browser.snapshot",
+	"browser.act",
+	"browser.screenshot",
+]);
+const VISIBLE_PAGE_MUTATIONS = new Set([
+	"browser.autofill-credential",
+	"browser.navigate-tab",
+]);
+const VISIBLE_TAB_MUTATIONS = new Set([
+	"browser.open-tab",
+	"browser.close-tab",
+	"browser.select-tab",
+]);
+const VISIBLE_PAGE_OBSERVATIONS = new Set([
+	"browser.current-context",
+	"browser.visible-act",
+	"browser.visible-snapshot",
+	"browser.visible-screenshot",
+]);
+
+function browserObservationRequired(
+	executions: RuntimeToolExecution[],
+): boolean {
+	const isolatedPages = new Set<unknown>();
+	const visiblePages = new Set<unknown>();
+	let visibleTabs = false;
+	for (const execution of executions) {
+		if (execution.status !== "verified") continue;
+		const toolName = execution.toolName;
+		const isolatedTarget = execution.input.browserSessionId;
+		const visibleTarget = execution.input.tabId ?? execution.output?.tabId;
+		if (ISOLATED_PAGE_MUTATIONS.has(toolName)) isolatedPages.add(isolatedTarget);
+		if (ISOLATED_PAGE_OBSERVATIONS.has(toolName)) isolatedPages.delete(isolatedTarget);
+		if (VISIBLE_PAGE_MUTATIONS.has(toolName)) visiblePages.add(visibleTarget);
+		if (VISIBLE_TAB_MUTATIONS.has(toolName)) visibleTabs = true;
+		if (VISIBLE_PAGE_OBSERVATIONS.has(toolName)) {
+			visiblePages.delete(visibleTarget);
+			visibleTabs = false;
+		}
+		if (toolName === "browser.tabs") visibleTabs = false;
+	}
+	return isolatedPages.size > 0 || visiblePages.size > 0 || visibleTabs;
+}
+
 export function prematureBrowserCompletionError(input: {
 	runId: string;
 	sessionId: string;
@@ -39,18 +89,20 @@ export function prematureBrowserCompletionError(input: {
 	}
 	if (desktopFailureUnresolved) return FAILED_COMPUTER_COMPLETION_ERROR;
 	if (desktopObservationRequired) return OBSERVE_REQUIRED_COMPUTER_COMPLETION_ERROR;
-	const modelText = input.modelText.trim();
-	if (modelText) return undefined;
 	const browserExecutions = executions.filter((execution) => execution.toolName.startsWith("browser."));
 	if (browserExecutions.length === 0) return undefined;
 
 	if (
+		browserObservationRequired(browserExecutions) ||
 		input.browserRecoveryState.entries.some(
 			(entry) => entry.phase === "observe_required",
 		)
 	) {
 		return OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR;
 	}
+
+	const modelText = input.modelText.trim();
+	if (modelText) return undefined;
 
 	return PREMATURE_BROWSER_COMPLETION_ERROR;
 }
