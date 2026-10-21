@@ -2702,6 +2702,27 @@ describe("UserBrowserService", () => {
     else expect(dialog.showMessageBox).not.toHaveBeenCalled();
   });
 
+  it("corroborates a referrerless popup with trusted main-frame input after focused frame loss", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
+    const { service } = createService();
+    await service.navigate(service.getState().tabs[0]!.id, "https://chatgpt.com/codex/open-app");
+    const source = electron.state.views[0]!.webContents;
+    source.focusedFrame = null;
+    const value = "codex://launch";
+    const popup = () => source.windowOpenHandler?.({url: value, disposition: "foreground-tab"});
+    source.emit("ipc-message", {senderFrame: source.mainFrame}, "kestrel:user-browser-external-app-input");
+    expect(popup()).toEqual({ action: "deny" });
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
+    source.emit("before-mouse-event", {}, {type: "mouseDown", button: "left"});
+    source.emit("ipc-message", {senderFrame: {url: "https://foreign.example/frame"}}, "kestrel:user-browser-external-app-input");
+    expect(popup()).toEqual({ action: "deny" });
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
+    source.emit("before-mouse-event", {}, {type: "mouseDown", button: "left"});
+    source.emit("ipc-message", {senderFrame: source.mainFrame}, "kestrel:user-browser-external-app-input");
+    expect(popup()).toEqual({ action: "deny" });
+    await vi.waitFor(() => expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith(value));
+  });
+
   it("expires native input for iframe handoffs and rejects absent popup initiators", async () => {
     vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
     let now = new Date("2026-10-21T12:00:00Z");

@@ -435,7 +435,7 @@ type TabActivity = Partial<Record<"playing" | "microphone" | "camera" | "screen"
 
 interface ViewRecord {
 	activity?: TabActivity;
-	externalAppGesture?: { sourceUrl: string; at: number };
+	externalAppGesture?: { sourceUrl: string; at: number; mainFrameInput?: boolean };
 	externalAppPromptPending?: boolean;
 	mediaPlaying?: boolean;
 	view: WebContentsView;
@@ -5931,7 +5931,9 @@ export class UserBrowserService {
 					url,
 					// Chromium omits HTTP referrers for custom-scheme popups.
 					// Use the browser-owned focused frame, never a page-supplied URL.
-					referrer?.url || webContents.focusedFrame?.url || "",
+					referrer?.url || webContents.focusedFrame?.url ||
+						(record.externalAppGesture?.mainFrameInput
+							? record.externalAppGesture.sourceUrl : ""),
 				)
 			)
 				return { action: "deny" };
@@ -5976,6 +5978,15 @@ export class UserBrowserService {
 		webContents.on("media-started-playing", () => { record.mediaPlaying = true; this.emit(); });
 		webContents.on("media-paused", () => { record.mediaPlaying = false; this.emit(); });
 		webContents.on("ipc-message", (event, channel, ...args) => {
+			if (channel === "kestrel:user-browser-external-app-input") {
+				const gesture = record.externalAppGesture;
+				const age = gesture && this.now().getTime() - gesture.at;
+				if (gesture && typeof age === "number" && age >= 0 && age <= 1_000 &&
+					event.senderFrame === webContents.mainFrame &&
+					webContents.getURL() === gesture.sourceUrl)
+					gesture.mainFrameInput = true;
+				return;
+			}
 			if (channel === "kestrel:user-browser-activity") {
 				if (event.senderFrame !== webContents.mainFrame || !args[0] || typeof args[0] !== "object") return;
 				const data = args[0] as Record<string, unknown>;
