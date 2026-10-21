@@ -4,10 +4,15 @@ import {
 } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import {
+	MAX_MODEL_SCREENSHOT_DATA_URL_BYTES,
 	MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
+	modelScreenshotObservation,
 	modelVisibleToolResult,
 	redactSensitiveContent,
 } from "./tool-result-guardrails";
+
+const ONE_PIXEL_PNG_BASE64 =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 function execution(output: Record<string, unknown>): RuntimeToolExecution {
 	return {
@@ -23,7 +28,126 @@ function execution(output: Record<string, unknown>): RuntimeToolExecution {
 	};
 }
 
+function screenshotExecution(
+	overrides: Partial<RuntimeToolExecution> = {},
+): RuntimeToolExecution {
+	return {
+		...execution({
+			width: 1,
+			height: 1,
+			pngBase64: ONE_PIXEL_PNG_BASE64,
+			trust: "untrusted_browser",
+		}),
+		toolName: "browser.screenshot",
+		...overrides,
+	};
+}
+
 describe("model-facing tool result guardrails", () => {
+	it("preserves bounded desktop capture provenance without replaying arbitrary metadata", () => {
+		const source = screenshotExecution({ toolName: "computer.screenshot" });
+		source.output!.trust = "untrusted_desktop";
+		source.output!.desktop = {
+			captureId: "capture-1", displayId: "1",
+			bounds: { x: -1280, y: 0, width: 1, height: 1 },
+			capturedAt: "2026-10-13T12:00:00.000Z", foregroundTitle: "PRIVATE_WINDOW_TITLE",
+		};
+		const receipt = modelVisibleToolResult(source);
+		expect(JSON.parse(receipt).output.desktop).toEqual({
+			captureId: "capture-1", displayId: "1", bounds: { x: -1280, y: 0, width: 1, height: 1 }, capturedAt: "2026-10-13T12:00:00.000Z",
+		});
+		expect(receipt).not.toContain("PRIVATE_WINDOW_TITLE");
+		expect(receipt).not.toContain(ONE_PIXEL_PNG_BASE64);
+	});
+	it("delivers a verified screenshot as an image while persisting only a compact receipt", () => {
+		const source = screenshotExecution();
+		source.output!.pageText = "SCREENSHOT_ONLY_SECRET_TEXT";
+		const observation = modelScreenshotObservation(source);
+		const visible = modelVisibleToolResult(source);
+		const parsed = JSON.parse(visible) as {
+			output: {
+				trust: string;
+				screenshot: {
+					byteLength: number;
+					deliveredSeparately: boolean;
+				};
+			};
+		};
+
+		expect(observation).toEqual([
+			expect.objectContaining({
+				type: "text",
+				text: expect.stringContaining("Untrusted screenshot observation"),
+			}),
+			{
+				type: "image",
+				data: ONE_PIXEL_PNG_BASE64,
+				mediaType: "image/png",
+				source: "base64",
+			},
+		]);
+		expect(visible).not.toContain(ONE_PIXEL_PNG_BASE64);
+		expect(visible).not.toContain("SCREENSHOT_ONLY_SECRET_TEXT");
+		expect(JSON.stringify(observation)).not.toContain(
+			"SCREENSHOT_ONLY_SECRET_TEXT",
+		);
+		expect(parsed.output).toMatchObject({
+			trust: "untrusted_browser",
+			screenshot: {
+				byteLength: Buffer.from(ONE_PIXEL_PNG_BASE64, "base64").byteLength,
+				deliveredSeparately: true,
+			},
+		});
+		expect(source.output?.pngBase64).toBe(ONE_PIXEL_PNG_BASE64);
+	});
+
+	it("withholds failed, untrusted, malformed, oversized, and non-whitelisted screenshot payloads", () => {
+		const oversizedLength =
+			Math.ceil(MAX_MODEL_SCREENSHOT_DATA_URL_BYTES / 4) * 4;
+		const cases: RuntimeToolExecution[] = [
+			screenshotExecution({
+				status: "failed",
+				error:
+					"Kestrel does not share browser screenshots from pages with sensitive input fields.",
+			}),
+			screenshotExecution({
+				status: "blocked",
+			}),
+			screenshotExecution({
+				output: {
+					width: 1,
+					height: 1,
+					pngBase64: ONE_PIXEL_PNG_BASE64,
+					trust: "trusted_browser",
+				},
+			}),
+			screenshotExecution({
+				output: {
+					width: 1,
+					height: 1,
+					pngBase64: "not-base64!",
+					trust: "untrusted_browser",
+				},
+			}),
+			screenshotExecution({
+				output: {
+					width: 1,
+					height: 1,
+					pngBase64: "A".repeat(oversizedLength),
+					trust: "untrusted_browser",
+				},
+			}),
+			screenshotExecution({ toolName: "plugin.screenshot" }),
+		];
+
+		for (const value of cases)
+			expect(modelScreenshotObservation(value)).toBeUndefined();
+		for (const value of cases.slice(0, -1))
+			expect(modelVisibleToolResult(value)).not.toContain(
+				String(value.output?.pngBase64 ?? "never"),
+			);
+	});
+
 	it("redacts structured secrets with stable indexed placeholders", () => {
 		const openAiKey = `sk-proj-${"a".repeat(32)}`;
 		const bearerToken = "b".repeat(32);

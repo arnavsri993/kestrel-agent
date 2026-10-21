@@ -7,9 +7,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	AgentLoop,
 	LOCAL_FIRST_TOOL_INSTRUCTIONS,
+	ROUTINE_TASK_CONTINUITY_INSTRUCTIONS,
 	SessionRunBusyError,
 } from "./agent-loop";
-import { PREMATURE_BROWSER_COMPLETION_ERROR } from "./agent-run-completion";
+import {
+	OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR,
+	PREMATURE_BROWSER_COMPLETION_ERROR,
+} from "./agent-run-completion";
 import {
 	toBrowserRecoveryError,
 	type BrowserRecoveryBudgetState,
@@ -17,6 +21,7 @@ import {
 import { ContextCompactor } from "./context-compactor";
 import {
 	contentText,
+	type ModelContentPart,
 	type ModelProvider,
 	ProviderPool,
 	textContent,
@@ -24,6 +29,8 @@ import {
 import { AgentRuntime } from "./runtime";
 
 const directories: string[] = [];
+const ONE_PIXEL_PNG_BASE64 =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 afterEach(() => {
 	for (const directory of directories.splice(0))
@@ -77,6 +84,252 @@ describe("provider-neutral agent loop", () => {
 			runtime
 				.listMessages(session.id)
 				.some((message) => message.content.includes("BROWSER-ONLY-CONTEXT")),
+		).toBe(false);
+		database.close();
+	});
+
+	it("shows a verified screenshot to the model without persisting base64 or replaying it over a newer user prompt", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Screenshot vision" });
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.screenshot",
+				title: "Screenshot fixture",
+				description: "Return a verified browser screenshot.",
+				category: "browser",
+				riskLevel: "read_only",
+				readOnly: true,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["browser", "test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({
+				width: 1,
+				height: 1,
+				pngBase64: ONE_PIXEL_PNG_BASE64,
+				trust: "untrusted_browser",
+			}),
+		});
+		runtime.allowTool(session.id, "browser.screenshot");
+		let calls = 0;
+		let liveObservation: ModelContentPart[] = [];
+		let newerPromptContent: ModelContentPart[] = [];
+		const provider: ModelProvider = {
+			id: "screenshot-vision",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: true,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				if (calls === 2)
+					liveObservation = request.messages.at(-1)?.content ?? [];
+				if (calls === 3)
+					newerPromptContent = request.messages.at(-1)?.content ?? [];
+				return calls === 1
+					? {
+							providerId: "screenshot-vision",
+							model: request.model,
+							text: "",
+							toolCalls: [
+								{
+									id: "call-browser-screenshot",
+									name: "browser.screenshot",
+									arguments: {},
+								},
+							],
+							usage: { inputTokens: 2, outputTokens: 1 },
+							finishReason: "tool_calls",
+						}
+					: {
+							providerId: "screenshot-vision",
+							model: request.model,
+							text: calls === 2 ? "I inspected the image." : "I used the new prompt.",
+							toolCalls: [],
+							usage: { inputTokens: 3, outputTokens: 2 },
+							finishReason: "stop",
+						};
+			},
+		};
+		const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
+
+		await loop.run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Inspect the screenshot."),
+		});
+		await loop.run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Answer this newer question without the old image."),
+		});
+
+		expect(liveObservation).toEqual([
+			expect.objectContaining({
+				type: "text",
+				text: expect.stringContaining("Untrusted screenshot observation"),
+			}),
+			{
+				type: "image",
+				data: ONE_PIXEL_PNG_BASE64,
+				mediaType: "image/png",
+				source: "base64",
+			},
+		]);
+		expect(newerPromptContent).toEqual(
+			textContent("Answer this newer question without the old image."),
+		);
+		const storedToolMessage = runtime
+			.listMessages(session.id)
+			.find((message) => message.role === "tool");
+		expect(storedToolMessage?.content).not.toContain(ONE_PIXEL_PNG_BASE64);
+		expect(storedToolMessage?.content).toContain('"deliveredSeparately":true');
+		expect(database.listToolExecutions(session.id)[0]?.output?.pngBase64).toBe(
+			ONE_PIXEL_PNG_BASE64,
+		);
+		database.close();
+	});
+
+	it.each([
+		{ followup: "test.screenshot-followup", category: "connector" as const, replay: true },
+		{ followup: "browser.visible-act", category: "browser" as const, replay: false },
+	])("rehydrates current images on resume and invalidates them after $followup", async ({ followup, category, replay }) => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Screenshot resume" });
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.visible-screenshot",
+				title: "Visible screenshot fixture",
+				description: "Return a verified visible-browser screenshot.",
+				category: "browser",
+				riskLevel: "read_only",
+				readOnly: true,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["browser", "test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({
+				width: 1,
+				height: 1,
+				pngBase64: ONE_PIXEL_PNG_BASE64,
+				trust: "untrusted_browser",
+			}),
+		});
+		runtime.registerExternalTool({
+			descriptor: {
+				name: followup,
+				title: "Screenshot follow-up fixture",
+				description: "Require approval after inspecting the screenshot.",
+				category,
+				riskLevel: "sensitive",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "plugin",
+				tags: ["test", "approval"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({ receipt: "approved" }),
+		});
+		runtime.allowTool(session.id, "browser.visible-screenshot");
+		runtime.allowTool(session.id, followup);
+		let calls = 0;
+		let resumedObservation: ModelContentPart[] = [];
+		const provider: ModelProvider = {
+			id: "screenshot-resume",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: true,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				if (calls === 3)
+					resumedObservation = request.messages.at(-1)?.content ?? [];
+				if (calls === 1)
+					return {
+						providerId: "screenshot-resume",
+						model: request.model,
+						text: "",
+						toolCalls: [
+							{
+								id: "call-visible-screenshot",
+								name: "browser.visible-screenshot",
+								arguments: {},
+							},
+						],
+						usage: { inputTokens: 2, outputTokens: 1 },
+						finishReason: "tool_calls",
+					};
+				if (calls === 2)
+					return {
+						providerId: "screenshot-resume",
+						model: request.model,
+						text: "",
+						toolCalls: [
+							{
+								id: "call-screenshot-followup",
+								name: followup,
+								arguments: {},
+							},
+						],
+						usage: { inputTokens: 3, outputTokens: 1 },
+						finishReason: "tool_calls",
+					};
+				return {
+					providerId: "screenshot-resume",
+					model: request.model,
+					text: "Resumed with the screenshot evidence.",
+					toolCalls: [],
+					usage: { inputTokens: 4, outputTokens: 3 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
+		const waiting = await loop.run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Inspect, then perform the follow-up."),
+		});
+
+		expect(waiting.run.status).toBe("waiting_approval");
+		const resumed = await loop.resume({
+			runId: waiting.run.id,
+			approvalDecision: "approved",
+		});
+
+		expect(resumed.run.status).toBe("completed");
+		expect(resumedObservation.some((part) => part.type === "image")).toBe(replay);
+		if (replay) expect(resumedObservation).toEqual([
+			expect.objectContaining({
+				type: "text",
+				text: expect.stringContaining("browser.visible-screenshot"),
+			}),
+			{
+				type: "image",
+				data: ONE_PIXEL_PNG_BASE64,
+				mediaType: "image/png",
+				source: "base64",
+			},
+		]);
+		expect(
+			runtime
+				.listMessages(session.id)
+				.some((message) => message.content.includes(ONE_PIXEL_PNG_BASE64)),
 		).toBe(false);
 		database.close();
 	});
@@ -1418,6 +1671,9 @@ describe("provider-neutral agent loop", () => {
 							),
 						}),
 					]),
+				);
+				expect(contentText(request.messages[0]?.content ?? [])).toContain(
+					ROUTINE_TASK_CONTINUITY_INSTRUCTIONS,
 				);
 				if (calls === 1)
 					return {
@@ -3326,6 +3582,156 @@ describe("provider-neutral agent loop", () => {
 			turn: 1,
 			maximumTurns: 2,
 		});
+		database.close();
+	});
+
+	it.each(["observe", "repeat_completion", "replay", "approval"] as const)("bounds browser completion follow-through without bypassing approval (%s)", async (mode) => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Browser completion evidence" });
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.navigate-tab",
+				title: "Navigate visible tab",
+				description: "Navigate one visible tab.",
+				category: "browser",
+				riskLevel: "sensitive",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["browser", "test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({ navigated: true }),
+		});
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.visible-snapshot",
+				title: "Observe visible tab",
+				description: "Read fresh visible page state.",
+				category: "browser",
+				riskLevel: "read_only",
+				readOnly: true,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["browser", "test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({
+				url: "https://example.test/complete",
+				accessibilityTree: { text: "Saved" },
+				trust: "untrusted_browser",
+			}),
+		});
+		runtime.allowTools(session.id, [
+			"browser.navigate-tab",
+			"browser.visible-snapshot",
+		]);
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "browser-completion-evidence",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				const response = (
+					text: string,
+					toolCalls: Array<{
+						id: string;
+						name: string;
+						arguments: Record<string, never>;
+					}>,
+				) => ({
+					providerId: "browser-completion-evidence",
+					model: request.model,
+					text,
+					toolCalls,
+					usage: { inputTokens: 4, outputTokens: 2 },
+					finishReason: toolCalls.length ? ("tool_calls" as const) : ("stop" as const),
+				});
+				if (calls === 1)
+					return response("", [
+						{ id: "navigate", name: "browser.navigate-tab", arguments: {} },
+					]);
+				if (calls === 2) return response("Done.", []);
+				if (calls === 3) {
+					expect(request.tools?.map((tool) => tool.name)).toEqual([
+						"browser.visible-snapshot",
+					]);
+					if (mode === "repeat_completion") return response("Done again.", []);
+					expect(
+						request.messages.some(
+							(message) =>
+								message.role === "system" &&
+								contentText(message.content).includes(
+									OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR,
+								),
+						),
+					).toBe(true);
+					return response("", [
+						...(mode === "replay" ? [{ id: "replay", name: "browser.navigate-tab", arguments: {} }] : []),
+						{
+							id: "observe",
+							name: "browser.visible-snapshot",
+							arguments: {},
+						},
+					]);
+				}
+				return response("The saved state is visible.", []);
+			},
+		};
+		const events: string[] = [];
+		const result = await new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		).run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Open the saved view and confirm it loaded."),
+			...(mode === "approval" ? {} : { approvalStatus: "approved" as const }),
+			onEvent: (event) => events.push(event.type),
+		});
+
+		if (mode === "approval") {
+			expect(result.run.status).toBe("waiting_approval");
+			expect(calls).toBe(1);
+			expect(events).not.toContain("completion_observation_retry");
+			expect(database.listToolExecutions(session.id).map((execution) => execution.status)).toEqual(["blocked"]);
+			database.close();
+			return;
+		}
+		if (mode === "repeat_completion") {
+			expect(result.run.status).toBe("failed");
+			expect(result.run.error).toBe(OBSERVE_REQUIRED_BROWSER_COMPLETION_ERROR);
+			expect(calls).toBe(3);
+			expect(events.filter((event) => event === "completion_observation_retry")).toHaveLength(1);
+			database.close();
+			return;
+		}
+		expect(result.run.status).toBe("completed");
+		expect(result.assistantMessage?.content).toBe(
+			"The saved state is visible.",
+		);
+		expect(calls).toBe(4);
+		expect(events).toContain("completion_observation_retry");
+		expect(
+			database
+				.listToolExecutions(session.id)
+				.map((execution) => execution.toolName),
+		).toEqual(mode === "replay"
+			? ["browser.navigate-tab", "browser.navigate-tab", "browser.visible-snapshot"]
+			: ["browser.navigate-tab", "browser.visible-snapshot"]);
+		if (mode === "replay") {
+			expect(database.listToolExecutions(session.id).map((execution) => execution.status)).toEqual(["verified", "blocked", "verified"]);
+		}
 		database.close();
 	});
 

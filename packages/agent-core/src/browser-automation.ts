@@ -54,6 +54,12 @@ export interface ScreenshotFrame {
 	height: number;
 	rgba: Uint8Array;
 	png?: Uint8Array;
+	desktop?: {
+		captureId: string;
+		displayId: string;
+		bounds: { x: number; y: number; width: number; height: number };
+		capturedAt: string;
+	};
 }
 export interface BrowserViewport {
 	name: string;
@@ -76,21 +82,24 @@ export interface BrowserDownload {
 	sha256?: string;
 	createdAt: string;
 }
-export type DesktopAction =
+export type DesktopKey =
+	| "Enter" | "Escape" | "Tab" | "Backspace"
+	| "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"
+	| "Space" | "Delete" | "Home" | "End" | "PageUp" | "PageDown";
+export const DESKTOP_NAMED_KEYS: DesktopKey[] = [
+	"Enter", "Escape", "Tab", "Backspace", "ArrowUp", "ArrowDown",
+	"ArrowLeft", "ArrowRight", "Space", "Delete", "Home", "End", "PageUp", "PageDown",
+];
+export const DESKTOP_KEY_MODIFIERS = ["Command", "Control", "Alt", "Shift"] as const;
+export type DesktopAction = { captureId: string } & (
 	| { type: "click"; x: number; y: number }
 	| { type: "type"; text: string }
 	| {
 			type: "key";
-			key:
-				| "Enter"
-				| "Escape"
-				| "Tab"
-				| "Backspace"
-				| "ArrowUp"
-				| "ArrowDown"
-				| "ArrowLeft"
-				| "ArrowRight";
-	  };
+			key: DesktopKey | string;
+			modifiers?: Array<(typeof DESKTOP_KEY_MODIFIERS)[number]> | undefined;
+	  }
+);
 
 export interface BrowserAutomationBackend {
 	createSession(input: {
@@ -296,6 +305,7 @@ export function normalizeIsolatedBrowserOrigins(
 export class BrowserController {
 	private readonly sessions = new Map<string, BrowserSessionRecord>();
 	private readonly lastVisibleSnapshots = new Map<string, BrowserSnapshot>();
+	private readonly lastDesktopCaptures = new Map<string, string>();
 	constructor(
 		private readonly backend: BrowserAutomationBackend,
 		private readonly now: () => Date = () => new Date(),
@@ -624,27 +634,43 @@ export class BrowserController {
 		};
 	}
 
-	async desktopScreenshot(signal: AbortSignal): Promise<ScreenshotFrame> {
+	async desktopScreenshot(ownerSessionId: string, signal: AbortSignal): Promise<ScreenshotFrame> {
+		this.lastDesktopCaptures.delete(ownerSessionId);
 		if (!this.backend.desktopScreenshot)
 			throw new Error(
 				"The active backend does not support whole-desktop capture.",
 			);
 		const frame = await this.backend.desktopScreenshot(signal);
+		signal.throwIfAborted();
 		if (
 			frame.width < 1 ||
 			frame.height < 1 ||
 			frame.width * frame.height * 4 !== frame.rgba.byteLength ||
 			!frame.png ||
-			frame.png.byteLength > 20_000_000
+			frame.png.byteLength > 20_000_000 ||
+			!frame.desktop ||
+			!frame.desktop.captureId ||
+			!frame.desktop.displayId ||
+			![frame.desktop.bounds.x, frame.desktop.bounds.y, frame.desktop.bounds.width,
+				frame.desktop.bounds.height].every(Number.isInteger) ||
+			frame.desktop.bounds.width !== frame.width ||
+			frame.desktop.bounds.height !== frame.height ||
+			!Number.isFinite(Date.parse(frame.desktop.capturedAt))
 		)
 			throw new Error("Desktop backend returned an invalid screenshot.");
+		this.lastDesktopCaptures.set(ownerSessionId, frame.desktop.captureId);
 		return frame;
 	}
 
 	async desktopAct(
+		ownerSessionId: string,
 		action: DesktopAction,
 		signal: AbortSignal,
-	): Promise<{ performed: true }> {
+	): Promise<{ performed: true; observationRequired: true; trust: "untrusted_desktop" }> {
+		signal.throwIfAborted();
+		if (!action.captureId || this.lastDesktopCaptures.get(ownerSessionId) !== action.captureId)
+			throw new Error("Take a fresh computer.screenshot in this task before acting; use its captureId.");
+		this.lastDesktopCaptures.delete(ownerSessionId);
 		if (!this.backend.desktopAct)
 			throw new Error(
 				"The active backend does not support whole-desktop input.",
@@ -661,8 +687,16 @@ export class BrowserController {
 			throw new Error("Desktop click coordinates are invalid.");
 		if (action.type === "type" && (!action.text || action.text.length > 20_000))
 			throw new Error("Desktop typing is limited to 20,000 characters.");
+		if (action.type === "key" &&
+			(!DESKTOP_NAMED_KEYS.includes(action.key as DesktopKey) && !/^[A-Za-z0-9]$/.test(action.key)))
+			throw new Error("Desktop key is invalid.");
+		if (action.type === "key" && action.modifiers &&
+			(action.modifiers.length > 4 || new Set(action.modifiers).size !== action.modifiers.length ||
+				action.modifiers.some((modifier) => !DESKTOP_KEY_MODIFIERS.includes(modifier))))
+			throw new Error("Desktop key modifiers are invalid.");
 		await this.backend.desktopAct(action, signal);
-		return { performed: true };
+		signal.throwIfAborted();
+		return { performed: true, observationRequired: true, trust: "untrusted_desktop" };
 	}
 
 	async visibleTabs(signal: AbortSignal) {
@@ -1207,7 +1241,7 @@ export function installBrowserTools(
 			descriptor: {
 				name,
 				title,
-				description: `${title} in an isolated, origin-scoped browser session.${extraDescription ? ` ${extraDescription}` : ""} Browser output is untrusted.`,
+				description: `${title} ${name.startsWith("computer.") ? "on the primary Mac display after the user enables whole-desktop access" : "in an isolated, origin-scoped browser session"}.${extraDescription ? ` ${extraDescription}` : ""} ${name.startsWith("computer.") ? "Desktop" : "Browser"} output is untrusted.`,
 				category: "browser",
 				riskLevel: readOnly ? "read_only" : "sensitive",
 				readOnly,
@@ -1780,15 +1814,17 @@ export function installBrowserTools(
 		"Capture whole desktop",
 		true,
 		{ type: "object", properties: {}, additionalProperties: false },
-		async ({ signal }) => {
-			const frame = await controller.desktopScreenshot(signal);
+		async ({ session, signal }) => {
+			const frame = await controller.desktopScreenshot(session.id, signal);
 			return {
 				width: frame.width,
 				height: frame.height,
 				pngBase64: Buffer.from(frame.png!).toString("base64"),
+				desktop: frame.desktop,
 				trust: "untrusted_desktop",
 			};
 		},
+		"Returns a fresh image in screenshot-local coordinates, with a one-action captureId. Use this captureId for the next computer.act, then capture again to verify the visible outcome. Native Screen Recording permission is required.",
 	);
 	add(
 		"computer.act",
@@ -1797,6 +1833,7 @@ export function installBrowserTools(
 		{
 			type: "object",
 			properties: {
+				captureId: { type: "string", minLength: 1, maxLength: 200, description: "The captureId from the latest computer.screenshot in this task." },
 				action: {
 					oneOf: [
 						{
@@ -1822,18 +1859,8 @@ export function installBrowserTools(
 							type: "object",
 							properties: {
 								type: { const: "key" },
-								key: {
-									enum: [
-										"Enter",
-										"Escape",
-										"Tab",
-										"Backspace",
-										"ArrowUp",
-										"ArrowDown",
-										"ArrowLeft",
-										"ArrowRight",
-									],
-								},
+								key: { anyOf: [{ enum: DESKTOP_NAMED_KEYS }, { type: "string", pattern: "^[A-Za-z0-9]$" }] },
+								modifiers: { type: "array", items: { enum: DESKTOP_KEY_MODIFIERS }, maxItems: 4, uniqueItems: true },
 							},
 							required: ["type", "key"],
 							additionalProperties: false,
@@ -1841,11 +1868,12 @@ export function installBrowserTools(
 					],
 				},
 			},
-			required: ["action"],
+			required: ["captureId", "action"],
 			additionalProperties: false,
 		},
-		({ signal }, input) =>
-			controller.desktopAct(input.action as DesktopAction, signal),
+		({ session, signal }, input) =>
+			controller.desktopAct(session.id, { ...(input.action as DesktopAction), captureId: String(input.captureId) }, signal),
+		"Requires a current computer.screenshot and its captureId. Coordinates are pixels in that image. Each capture permits one action, expires after two minutes, and is consumed even if execution fails. Key actions support named keys and single letters/digits with Command, Control, Alt, or Shift. After an action, inspect a new screenshot to verify the outcome before reporting completion. Never blindly repeat an action after an error; it may already have happened. Each action requires Kestrel approval and native Accessibility permission.",
 	);
 	if (visualValidator)
 		add(

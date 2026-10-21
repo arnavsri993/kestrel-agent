@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileException } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
@@ -19,6 +19,7 @@ import {
 	BrowserWindow,
 	desktopCapturer,
 	session as electronSession,
+	screen,
 	type Session,
 	systemPreferences,
 } from "electron";
@@ -70,6 +71,169 @@ interface BrowserRecord {
 	diagnostics: BrowserDiagnostic[];
 	downloads: BrowserDownload[];
 	downloadDirectory: string;
+}
+
+export interface DesktopDisplayBounds {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+export interface DesktopCaptureMetadata {
+	captureId: string;
+	displayId: string;
+	bounds: DesktopDisplayBounds;
+	capturedAt: string;
+}
+
+interface DesktopForegroundProcess {
+	pid: number;
+	bundleId: string;
+}
+
+interface DesktopCaptureRecord {
+	metadata: DesktopCaptureMetadata;
+	foreground: DesktopForegroundProcess;
+}
+
+const DESKTOP_CAPTURE_MAX_AGE_MS = 120_000;
+
+export function mapDesktopScreenshotPoint(
+	x: number,
+	y: number,
+	bounds: DesktopDisplayBounds,
+): { x: number; y: number } {
+	if (!Number.isInteger(x) || !Number.isInteger(y))
+		throw new Error("Desktop click coordinates must be integers.");
+	if (x < 0 || y < 0 || x >= bounds.width || y >= bounds.height)
+		throw new Error("Desktop click is outside the captured display.");
+	return { x: bounds.x + x, y: bounds.y + y };
+}
+
+export function buildDesktopKeyScript(
+	keyCodeOrKey: number | string,
+	modifiers: readonly string[] = [],
+): string {
+	const allowed = new Set(["Command", "Control", "Alt", "Shift"]);
+	if (modifiers.some((modifier) => !allowed.has(modifier)))
+		throw new Error("Desktop key modifiers are invalid.");
+	const modifierNames = modifiers.map((modifier) => {
+		if (modifier === "Command") return "command down";
+		if (modifier === "Control") return "control down";
+		if (modifier === "Alt") return "option down";
+		return "shift down";
+	});
+	const using = modifierNames.length ? ` using {${modifierNames.join(", ")}}` : "";
+	if (typeof keyCodeOrKey === "string") {
+		if (!/^[A-Za-z0-9]$/.test(keyCodeOrKey))
+			throw new Error("Desktop key is invalid.");
+		return `tell application "System Events" to keystroke ${JSON.stringify(keyCodeOrKey)}${using}`;
+	}
+	return `tell application "System Events" to key code ${keyCodeOrKey}${using}`;
+}
+
+export function isDesktopCaptureFresh(
+	capturedAt: string,
+	now = Date.now(),
+): boolean {
+	const age = now - Date.parse(capturedAt);
+	return Number.isFinite(age) && age >= 0 && age <= DESKTOP_CAPTURE_MAX_AGE_MS;
+}
+
+function abortError(signal: AbortSignal): Error {
+	return signal.reason instanceof Error
+		? signal.reason
+		: new Error("Desktop action cancelled.");
+}
+
+function desktopAutomationError(error: ExecFileException, stderr: string): Error {
+	if (/-1743|not authorized to send apple events/i.test(stderr))
+		return new Error("macOS Automation access to System Events is required. Allow Kestrel in System Settings → Privacy & Security → Automation, then retry from a fresh screenshot.");
+	if (error.killed || error.code === "ETIMEDOUT")
+		return new Error("The macOS desktop helper timed out. Complete any System Events permission prompt for Kestrel, then take a fresh screenshot before deciding whether to retry; input may already have started.");
+	return new Error("The macOS System Events helper failed. Check Kestrel's Automation and Accessibility permissions, then take a fresh screenshot before deciding whether to retry.");
+}
+
+async function runOsaScript(
+	script: string,
+	signal: AbortSignal,
+	scriptArguments: readonly string[] = [],
+): Promise<string> {
+	if (signal.aborted) throw abortError(signal);
+	return await new Promise<string>((resolvePromise, reject) => {
+		let settled = false;
+		let child: ReturnType<typeof execFile>;
+		const cleanup = () => signal.removeEventListener("abort", abort);
+		const finish = (error?: Error, stdout = "") => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			if (error) reject(error);
+			else resolvePromise(stdout);
+		};
+		const abort = () => {
+			child?.kill("SIGTERM");
+			finish(abortError(signal));
+		};
+		child = execFile(
+			"/usr/bin/osascript",
+			["-l", "JavaScript", "-e", script, ...scriptArguments],
+			{ timeout: 20_000, maxBuffer: 64 * 1024, env: { PATH: "/usr/bin:/bin" } },
+			(error, stdout, stderr) => finish(signal.aborted ? abortError(signal) : error ? desktopAutomationError(error, stderr) : undefined, stdout),
+		);
+		signal.addEventListener("abort", abort, { once: true });
+		if (signal.aborted) abort();
+	});
+}
+
+async function readFrontmostProcess(
+	signal: AbortSignal,
+): Promise<DesktopForegroundProcess> {
+	const output = await runOsaScript(
+		'const se = Application("System Events"); const p = se.processes.whose({frontmost: true})()[0]; if (!p) throw new Error("No frontmost process"); JSON.stringify({ pid: p.unixId(), bundleId: p.bundleIdentifier() });',
+		signal,
+	);
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(output.trim());
+	} catch {
+		throw new Error("Could not verify the frontmost desktop process.");
+	}
+	if (
+		!parsed ||
+		typeof parsed !== "object" ||
+		!Number.isInteger((parsed as { pid?: unknown }).pid) ||
+		typeof (parsed as { bundleId?: unknown }).bundleId !== "string" ||
+		!(parsed as { bundleId: string }).bundleId
+	)
+		throw new Error("Could not verify the frontmost desktop process.");
+	return parsed as DesktopForegroundProcess;
+}
+
+async function restoreFrontmostProcess(
+	process: DesktopForegroundProcess,
+	signal: AbortSignal,
+): Promise<void> {
+	if (!Number.isInteger(process.pid) || process.pid < 1 || process.bundleId.length > 200)
+		throw new Error("Captured frontmost process identity is invalid.");
+	// App identifiers are data, never executable JXA source.
+	await runOsaScript(
+		`function run(argv) {
+			const pid = Number(argv[0]);
+			const bundleId = argv[1];
+			const se = Application("System Events");
+			const matches = se.processes().filter((p) => p.unixId() === pid && p.bundleIdentifier() === bundleId);
+			if (matches.length !== 1) throw new Error("Captured frontmost process is unavailable");
+			matches[0].frontmost = true;
+			delay(0.1);
+			const front = se.processes.whose({frontmost: true})()[0];
+			if (!front || front.unixId() !== pid || front.bundleIdentifier() !== bundleId)
+				throw new Error("Captured frontmost process could not be restored");
+		}`,
+		signal,
+		[String(process.pid), process.bundleId],
+	);
 }
 
 export const MAX_BROWSER_DOWNLOAD_RECORDS = 200;
@@ -159,9 +323,11 @@ export class ElectronBrowserService {
 	private readonly sessions = new Map<string, BrowserRecord>();
 	private readonly elementRefs = new Map<string, Map<string, number>>();
 	private computerUseEnabled = false;
+	private lastDesktopCapture: DesktopCaptureRecord | undefined;
 
 	setComputerUseEnabled(enabled: boolean): void {
 		this.computerUseEnabled = enabled;
+		if (!enabled) this.lastDesktopCapture = undefined;
 	}
 
 	isComputerUseEnabled(): boolean {
@@ -702,6 +868,7 @@ export class ElectronBrowserService {
 	private async desktopScreenshot(
 		signal: AbortSignal,
 	): Promise<ScreenshotFrame> {
+		this.lastDesktopCapture = undefined;
 		this.assertComputerUseEnabled();
 		if (signal.aborted) throw signal.reason;
 		if (process.platform !== "darwin")
@@ -712,17 +879,48 @@ export class ElectronBrowserService {
 			throw new Error(
 				"macOS Screen Recording permission is required for whole-desktop capture.",
 			);
+		let foreground: DesktopForegroundProcess;
+		try {
+			foreground = await readFrontmostProcess(signal);
+		} catch (error) {
+			throw new Error(
+				`Could not record the frontmost desktop app before capture: ${error instanceof Error ? error.message : "unknown error"}`,
+			);
+		}
+		const primary = screen.getPrimaryDisplay();
+		const bounds = {
+			x: primary.bounds.x,
+			y: primary.bounds.y,
+			width: primary.bounds.width,
+			height: primary.bounds.height,
+		};
+		// A failed or cancelled recapture must never leave an older image
+		// authorized for a later desktop action.
 		const displays = await desktopCapturer.getSources({
 			types: ["screen"],
-			thumbnailSize: { width: 1920, height: 1080 },
+			thumbnailSize: { width: bounds.width, height: bounds.height },
 			fetchWindowIcons: false,
 		});
-		const source = displays[0];
+		if (signal.aborted) throw signal.reason;
+		const foregroundAfter = await readFrontmostProcess(signal);
+		if (
+			foregroundAfter.pid !== foreground.pid ||
+			foregroundAfter.bundleId !== foreground.bundleId
+		)
+			throw new Error("The frontmost desktop app changed during capture. Try again.");
+		const source = displays.find(
+			(candidate) => candidate.display_id === String(primary.id),
+		);
 		if (!source)
-			throw new Error("No desktop display is available for capture.");
+			throw new Error("The primary desktop display is unavailable for capture.");
 		const image = source.thumbnail;
-		const { width, height } = image.getSize();
-		const bgra = image.toBitmap();
+		const normalizedImage =
+			image.getSize().width === bounds.width &&
+			image.getSize().height === bounds.height
+				? image
+				: image.resize({ width: bounds.width, height: bounds.height });
+		const { width, height } = normalizedImage.getSize();
+		const bgra = normalizedImage.toBitmap();
 		const rgba = new Uint8Array(bgra.byteLength);
 		for (let offset = 0; offset < bgra.length; offset += 4) {
 			rgba[offset] = bgra[offset + 2]!;
@@ -730,7 +928,14 @@ export class ElectronBrowserService {
 			rgba[offset + 2] = bgra[offset]!;
 			rgba[offset + 3] = bgra[offset + 3]!;
 		}
-		return { width, height, rgba, png: image.toPNG() };
+		const desktop = {
+			captureId: randomUUID(),
+			displayId: String(primary.id),
+			bounds,
+			capturedAt: new Date().toISOString(),
+		};
+		this.lastDesktopCapture = { metadata: desktop, foreground };
+		return { width, height, rgba, png: normalizedImage.toPNG(), desktop };
 	}
 
 	private async desktopAct(
@@ -747,10 +952,30 @@ export class ElectronBrowserService {
 			throw new Error(
 				"macOS Accessibility permission is required for whole-desktop control.",
 			);
-		const keyCodes: Record<
-			Extract<DesktopAction, { type: "key" }>["key"],
-			number
-		> = {
+		if (systemPreferences.getMediaAccessStatus("screen") !== "granted")
+			throw new Error(
+				"macOS Screen Recording permission is required for whole-desktop capture.",
+			);
+		const capture = this.lastDesktopCapture;
+		if (!capture)
+			throw new Error("Take a fresh desktop screenshot before acting.");
+		if (action.captureId !== capture.metadata.captureId)
+			throw new Error("Desktop action does not match the latest screenshot.");
+		// Consume only after provenance matches. A stale or unrelated task must
+		// not burn the current task's one-action authorization.
+		this.lastDesktopCapture = undefined;
+		if (!isDesktopCaptureFresh(capture.metadata.capturedAt))
+			throw new Error("The desktop screenshot is stale. Take a fresh screenshot.");
+		const primary = screen.getPrimaryDisplay();
+		if (
+			String(primary.id) !== capture.metadata.displayId ||
+			primary.bounds.x !== capture.metadata.bounds.x ||
+			primary.bounds.y !== capture.metadata.bounds.y ||
+			primary.bounds.width !== capture.metadata.bounds.width ||
+			primary.bounds.height !== capture.metadata.bounds.height
+		)
+			throw new Error("The primary desktop display changed. Take a fresh screenshot.");
+		const keyCodes: Record<string, number> = {
 			Enter: 36,
 			Escape: 53,
 			Tab: 48,
@@ -759,14 +984,54 @@ export class ElectronBrowserService {
 			ArrowDown: 125,
 			ArrowLeft: 123,
 			ArrowRight: 124,
+			Space: 49,
+			Delete: 117,
+			Home: 115,
+			End: 119,
+			PageUp: 116,
+			PageDown: 121,
 		};
-		const script =
+		const inputScript =
 			action.type === "click"
-				? `tell application "System Events" to click at {${action.x}, ${action.y}}`
+				? (() => {
+					const point = mapDesktopScreenshotPoint(
+						action.x,
+						action.y,
+						capture.metadata.bounds,
+					);
+					return `tell application "System Events" to click at {${point.x}, ${point.y}}`;
+				})()
 				: action.type === "type"
 					? 'tell application "System Events" to keystroke (system attribute "KESTREL_COMPUTER_TEXT")'
-					: `tell application "System Events" to key code ${keyCodes[action.key]}`;
+					: buildDesktopKeyScript(
+						keyCodes[action.key as string] ?? (action.key as string),
+						action.modifiers,
+					);
+		await restoreFrontmostProcess(capture.foreground, signal);
+		signal.throwIfAborted();
+		this.assertComputerUseEnabled();
+		if (!systemPreferences.isTrustedAccessibilityClient(false) ||
+			systemPreferences.getMediaAccessStatus("screen") !== "granted")
+			throw new Error("Desktop permissions changed before input. Check Screen Recording and Accessibility.");
+		const script = `tell application "System Events"\nset activeProcess to first application process whose frontmost is true\nif unix id of activeProcess is not ${capture.foreground.pid} then error "The desktop app changed before input."\nif bundle identifier of activeProcess is not (system attribute "KESTREL_COMPUTER_BUNDLE_ID") then error "The desktop app changed before input."\nend tell\n${inputScript}`;
 		await new Promise<void>((resolvePromise, reject) => {
+			let settled = false;
+			const cleanup = () => {
+				signal.removeEventListener("abort", abort);
+				child.removeListener("exit", onExit);
+			};
+			const finish = (error?: Error) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				if (error) reject(error);
+				else resolvePromise();
+			};
+			const abort = () => {
+				child.kill("SIGTERM");
+				finish(signal.reason instanceof Error ? signal.reason : new Error("Desktop action cancelled."));
+			};
+			const onExit = () => cleanup();
 			const child = execFile(
 				"/usr/bin/osascript",
 				["-e", script],
@@ -774,16 +1039,17 @@ export class ElectronBrowserService {
 					timeout: 30_000,
 					env: {
 						PATH: "/usr/bin:/bin",
+						KESTREL_COMPUTER_BUNDLE_ID: capture.foreground.bundleId,
 						...(action.type === "type"
 							? { KESTREL_COMPUTER_TEXT: action.text }
 							: {}),
 					},
 				},
-				(error) => (error ? reject(error) : resolvePromise()),
+				(error, _stdout, stderr) => finish(signal.aborted ? abortError(signal) : error ? desktopAutomationError(error, stderr) : undefined),
 			);
-			const abort = () => child.kill("SIGTERM");
 			signal.addEventListener("abort", abort, { once: true });
-			child.once("exit", () => signal.removeEventListener("abort", abort));
+			child.once("exit", onExit);
+			if (signal.aborted) abort();
 		});
 	}
 

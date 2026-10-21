@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 import { CodexAppServerProvider } from "./codex-app-server";
+import { ProviderPool } from "./provider-pool";
 import { textContent } from "./types";
 
 const roots: string[] = [];
@@ -26,6 +27,7 @@ const fs = require("node:fs");
 const readline = require("node:readline");
 const capture = process.argv[1] + ".capture.jsonl";
 let turn = 0;
+const turnOutput = new Map();
 function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
 function record(value) {
   const row = { pid: process.pid, value };
@@ -69,6 +71,19 @@ input.on("line", line => {
   if (message.method === "turn/start") {
     turn += 1;
     const turnId = "turn-" + turn;
+    const inputText = (message.params.input || []).map(part => part.text || "").join("\\n");
+    if (message.params.outputSchema) {
+      let output = {
+        text: "",
+        toolCalls: [{ name: "workspace.write", argumentsJson: JSON.stringify({ path: "notes.txt", content: "ok" }) }],
+      };
+      if (inputText.includes("Tool result (workspace.write)")) output = { text: "Mutation completed", toolCalls: [] };
+      if (inputText.includes("malformed-decision")) output = "{not-json";
+      if (inputText.includes("unknown-tool-decision")) output = { text: "", toolCalls: [{ name: "workspace.unknown", argumentsJson: "{}" }] };
+      if (inputText.includes("malformed-arguments")) output = { text: "", toolCalls: [{ name: "workspace.write", argumentsJson: "[1,2,3]" }] };
+      if (inputText.includes("empty-decision")) output = { text: "", toolCalls: [] };
+      turnOutput.set(turn, typeof output === "string" ? output : JSON.stringify(output));
+    }
     send({ id: message.id, result: { turn: { id: turnId, status: "inProgress" } } });
     send({ id: 800 + turn, method: "item/permissions/requestApproval", params: { threadId: "thread-1", turnId, itemId: "perm-" + turn, permissions: { network: { enabled: true } } } });
     send({ id: 700 + turn, method: "mcpServer/elicitation/request", params: { threadId: "thread-1", turnId, serverName: "kestrel_browser", mode: "form", message: "confirm" } });
@@ -78,7 +93,7 @@ input.on("line", line => {
   if (typeof message.id === "number" && message.id >= 901) {
     const current = message.id - 900;
     const turnId = "turn-" + current;
-    send({ method: "item/agentMessage/delta", params: { threadId: "thread-1", turnId, itemId: "answer-" + current, delta: "Persistent answer " + current } });
+    send({ method: "item/agentMessage/delta", params: { threadId: "thread-1", turnId, itemId: "answer-" + current, delta: turnOutput.get(current) || ("Persistent answer " + current) } });
     send({ method: "thread/tokenUsage/updated", params: { threadId: "thread-1", turnId, tokenUsage: { last: { inputTokens: 12, outputTokens: 3, cachedInputTokens: current > 1 ? 5 : 0, reasoningOutputTokens: 1 } } } });
     send({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: turnId, status: "completed", error: null } } });
   }
@@ -174,12 +189,12 @@ describe("persistent Codex app-server provider", () => {
 				capabilities: {
 					capabilityProvenance: "confirmed",
 					streaming: true,
-					tools: false,
+					tools: true,
 					images: true,
 					audio: false,
 					documents: false,
 					video: false,
-					structuredOutput: false,
+					structuredOutput: true,
 					reasoningEfforts: ["low", "high"],
 				},
 			},
@@ -199,6 +214,159 @@ describe("persistent Codex app-server provider", () => {
 			cursor: "page-2",
 		});
 	});
+
+	it("proposes bounded Kestrel tool calls through the provider pool and receives the verified result on the next turn", async () => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({
+			executable: fake.executable,
+			requestTimeoutMs: 10_000,
+			turnTimeoutMs: 2_000,
+		});
+		const pool = new ProviderPool([provider]);
+		const tools = [
+			{
+				name: "workspace.write",
+				description: "Write a bounded workspace file after Kestrel approval.",
+				inputSchema: {
+					type: "object",
+					additionalProperties: false,
+					required: ["path", "content"],
+					properties: {
+						path: { type: "string" },
+						content: { type: "string" },
+					},
+				},
+			},
+		];
+		const first = await pool.complete(
+			{
+				model: "gpt-test",
+				metadata: { session_id: "session-tools" },
+				messages: [{ role: "user", content: textContent("Write my note") }],
+				tools,
+			},
+			{ providerIds: [provider.id] },
+		);
+		expect(first.result).toMatchObject({
+			text: "",
+			finishReason: "tool_calls",
+			toolCalls: [
+				{
+					id: "codex-turn-1-1",
+					name: "workspace.write",
+					arguments: { path: "notes.txt", content: "ok" },
+				},
+			],
+		});
+		const call = first.result.toolCalls[0]!;
+		const second = await pool.complete(
+			{
+				model: "gpt-test",
+				metadata: { session_id: "session-tools" },
+				messages: [
+					{ role: "user", content: textContent("Write my note") },
+					{ role: "assistant", content: textContent(""), toolCalls: [call] },
+					{
+						role: "tool",
+						content: textContent(
+							'{"status":"verified","output":{"written":true}}',
+						),
+						toolCallId: call.id,
+						toolName: call.name,
+					},
+					{
+						role: "user",
+						content: [
+							...textContent("Current visual observation"),
+							{
+								type: "image",
+								data: "aW1hZ2U=",
+								mediaType: "image/png",
+								source: "base64",
+							},
+						],
+					},
+				],
+				tools,
+			},
+			{ providerIds: [provider.id] },
+		);
+		expect(second.result).toMatchObject({
+			text: "Mutation completed",
+			finishReason: "stop",
+			toolCalls: [],
+		});
+		await provider.close();
+
+		const records = await readCapture(fake.capture);
+		const thread = records.find(
+			(record) => record.value.method === "thread/start",
+		)?.value.params as { baseInstructions?: string };
+		expect(thread.baseInstructions).toContain("approval-controlled agent loop");
+		expect(thread.baseInstructions).toContain("Do not execute commands");
+		const turns = records.filter(
+			(record) => record.value.method === "turn/start",
+		);
+		const firstParams = turns[0]!.value.params!;
+		expect(firstParams.outputSchema).toMatchObject({
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				toolCalls: {
+					items: {
+						properties: { name: { enum: ["workspace.write"] } },
+					},
+				},
+			},
+		});
+		const followUpText = (
+			turns[1]!.value.params!.input as Array<{ text?: string }>
+		)[0]!.text!;
+		expect(followUpText).toContain("Tool result (workspace.write)");
+		expect(followUpText).toContain('"status":"verified"');
+		expect(followUpText).toContain("Current visual observation");
+		expect(followUpText).not.toContain("Write my note");
+		expect(turns[1]!.value.params!.input).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					type: "image",
+					url: "data:image/png;base64,aW1hZ2U=",
+				}),
+			]),
+		);
+	});
+
+	it.each([
+			["malformed-decision", /malformed structured tool output/i],
+			["unknown-tool-decision", /unavailable or invalid Kestrel tool call/i],
+			["malformed-arguments", /tool arguments must be a JSON object/i],
+			["empty-decision", /empty structured tool decision/i],
+		])(
+			"fails closed for invalid structured tool output: %s",
+			async (prompt, error) => {
+				const fake = await fakeAppServer();
+				const provider = new CodexAppServerProvider({
+					executable: fake.executable,
+					requestTimeoutMs: 10_000,
+					turnTimeoutMs: 2_000,
+				});
+				await expect(
+					provider.complete({
+						model: "gpt-test",
+						metadata: { session_id: `session-${prompt}` },
+						messages: [{ role: "user", content: textContent(prompt) }],
+						tools: [
+							{
+								name: "workspace.write",
+								description: "Write",
+								inputSchema: { type: "object" },
+							},
+						],
+					}),
+				).rejects.toThrow(error);
+				await provider.close();
+			},
+		);
 
 	it("restarts after initialization failure instead of reusing an uninitialized process", async () => {
 		const fake = await retryableFakeAppServer();
@@ -316,6 +484,8 @@ describe("persistent Codex app-server provider", () => {
 			(record) => record.value.method === "turn/start",
 		);
 		expect(turns).toHaveLength(2);
+		expect(turns[0]!.value.params!.outputSchema).toBeUndefined();
+		expect(turns[1]!.value.params!.outputSchema).toBeUndefined();
 		expect(
 			(turns[0]!.value.params!.input as Array<{ text: string }>)[0]!.text,
 		).toContain("Private system context");
