@@ -3815,6 +3815,62 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 		expect(contents.print).toHaveBeenCalled();
 	});
 
+	it.each(["https://docs.example/other", "https://docs.example/path"])(
+		"refreshes the current Find query when a document finishes loading at %s",
+		async (url) => {
+			const { service, events } = createService();
+			const tab = service.getState().tabs[0]!;
+			await service.navigate(tab.id, "https://docs.example/path");
+			const contents = electron.state.views[0]!.webContents;
+			contents.executeJavaScriptInIsolatedWorld.mockResolvedValue({ found: true, matches: 3 });
+			service.findInPage(tab.id, "needle");
+			await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "find-in-page" })));
+			events.length = 0;
+			contents.url = url;
+			contents.executeJavaScriptInIsolatedWorld.mockResolvedValue({ found: false, matches: 0 });
+			contents.emit("did-finish-load");
+			await vi.waitFor(() => expect(events).toContainEqual({
+				type: "find-in-page",
+				match: { tabId: tab.id, matches: 0, activeMatchOrdinal: 0, finalUpdate: true },
+			}));
+		},
+	);
+
+	it("rejects a pending result from the document before a same-URL reload", async () => {
+		const { service, events } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://docs.example/path");
+		const contents = electron.state.views[0]!.webContents;
+		let resolveOld: ((value: unknown) => void) | undefined;
+		contents.executeJavaScriptInIsolatedWorld
+			.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+			.mockResolvedValueOnce({ found: true, matches: 2 });
+		service.findInPage(tab.id, "needle");
+		contents.emit("did-finish-load");
+		await vi.waitFor(() => expect(events).toContainEqual({
+			type: "find-in-page",
+			match: { tabId: tab.id, matches: 2, activeMatchOrdinal: 1, finalUpdate: true },
+		}));
+		resolveOld?.({ found: true, matches: 3 });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(events.filter((event) =>
+			typeof event === "object" && event !== null && "type" in event &&
+			event.type === "find-in-page",
+		)).toHaveLength(1);
+	});
+
+	it("does not restart a cleared Find query when a document finishes loading", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://docs.example/path");
+		const contents = electron.state.views[0]!.webContents;
+		service.findInPage(tab.id, "needle");
+		service.stopFindInPage(tab.id);
+		contents.executeJavaScriptInIsolatedWorld.mockClear();
+		contents.emit("did-finish-load");
+		expect(contents.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled();
+	});
+
 	it("does not publish a stale isolated find result after the query changes", async () => {
 		const { service, events } = createService();
 		const tab = service.getState().tabs[0]!;

@@ -6000,6 +6000,17 @@ export class UserBrowserService {
 			}
 			record.nextNavigationSource = "redirect";
 		});
+		webContents.on("did-finish-load", () => {
+			if (
+				this.disposed ||
+				this.views.get(tab.id) !== record ||
+				tab.blockedNavigation
+			)
+				return;
+			// A completed navigation or reload replaces the document being searched.
+			const request = this.findRequests.get(tab.id);
+			if (request) this.findInPage(tab.id, request.query);
+		});
 		webContents.on("did-start-loading", () => {
 			tab.loading = true;
 			tab.error = undefined;
