@@ -103,13 +103,26 @@ try {
     return wc.executeJavaScript(script, true);
   }, {url:`${origin}/one`,script});
   const nativeClick = async (url, target) => {
-    await until(() => app.context().pages().some(candidate => candidate.url() === url),
-      'Playwright did not observe the committed fixture page');
-    const fixturePage = app.context().pages().find(candidate => candidate.url() === url);
-    if (!fixturePage) throw new Error('Fixture Playwright page missing');
-    const locator = target || fixturePage.locator('#handoff');
-    await locator.scrollIntoViewIfNeeded();
-    const bounds = await locator.boundingBox();
+    // Cross-site navigations can commit before Playwright adopts their target.
+    // Read fixture geometry from the actual committed WebContents and still
+    // dispatch native input; never synthesize the trusted gesture in page JS.
+    let bounds;
+    if (target) {
+      await target.scrollIntoViewIfNeeded();
+      bounds = await target.boundingBox();
+    } else {
+      bounds = await app.evaluate(async ({webContents}, url) => {
+        const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
+        if (!wc) throw new Error('Committed fixture content missing');
+        return wc.executeJavaScript(`(() => {
+          const button = document.querySelector('#handoff');
+          if (!button) return null;
+          button.scrollIntoView({block:'center'});
+          const {x,y,width,height} = button.getBoundingClientRect();
+          return {x,y,width,height};
+        })()`);
+      }, url);
+    }
     assert(bounds, 'Fixture button has no native bounds');
     await app.evaluate(({webContents, BrowserWindow}, {url, x, y}) => {
       const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
