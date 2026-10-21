@@ -20,8 +20,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const configuredApp = process.env.KESTREL_NATIVE_TEST_APP?.trim();
 const app = configuredApp || (await buildNativeChromiumHost());
 const executable = join(app, "Contents/MacOS/Kestrel");
+const executableSha256 = createHash("sha256").update(await readFile(executable)).digest("hex");
 const fixture = join(root, "tests/fixtures/native-extension");
 const requireParity = process.argv.includes("--require-extension-parity");
+const normalTabModel = requireParity || process.argv.includes("--chrome-tab-model");
+const evidenceRoot = join(root, normalTabModel ? ".tmp/native-chrome-tab-model-evidence" : ".tmp/native-user-extension-evidence");
 const { createFileChromiumExtensionHostPort } = await tsImport(
 	"../apps/desktop/src/main/file-chromium-extension-host-port.ts", import.meta.url,
 );
@@ -98,6 +101,161 @@ let child;
 let output = "";
 let extensionId;
 let tabsQuerySupported = true;
+let tabOwnership;
+let toolbarActionPopup = false;
+
+// Chrome action bubbles have real page targets but are not consistently
+// surfaced as Playwright pages by CEF. Attach to the actual opened target;
+// never navigate an ordinary tab to popup.html as substitute evidence.
+async function inspectActionPopup(endpoint, url, screenshotPath) {
+	const socket = new WebSocket(endpoint);
+	const pending = new Map();
+	let nextId = 0;
+	socket.addEventListener("message", (event) => {
+		const message = JSON.parse(event.data);
+		const waiter = pending.get(message.id);
+		if (!waiter) return;
+		pending.delete(message.id);
+		clearTimeout(waiter.timeout);
+		if (message.error) waiter.reject(new Error(message.error.message));
+		else waiter.resolve(message.result);
+	});
+	const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
+		const id = ++nextId;
+		const timeout = setTimeout(() => { pending.delete(id); reject(new Error(`CDP ${method} timed out`)); }, 5_000);
+		pending.set(id, { resolve, reject, timeout });
+		socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+	});
+	try {
+		await new Promise((resolve, reject) => {
+			socket.addEventListener("open", resolve, { once: true });
+			socket.addEventListener("error", reject, { once: true });
+		});
+		let target;
+		for (let attempt = 0; attempt < 30; attempt++) {
+			target = (await send("Target.getTargets")).targetInfos.find((target) => target.url === url && target.type === "page");
+			if (target) break;
+			await delay(100);
+		}
+		if (!target) return { observedPopupDocument: false };
+		const { sessionId } = await send("Target.attachToTarget", { targetId: target.targetId, flatten: true });
+		const { result } = await send("Runtime.evaluate", {
+			expression: "({text:document.body.innerText,bridge:typeof window.kestrel,nativeQuery:typeof window.__kestrelNativeQuery})",
+			returnByValue: true,
+		}, sessionId);
+		assert.match(result.value.text, /Manifest V3 running in native Chromium\./);
+		assert.equal(result.value.bridge, "undefined");
+		assert.equal(result.value.nativeQuery, "undefined");
+		const screenshot = await send("Page.captureScreenshot", { format: "png" }, sessionId);
+		await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
+		await send("Target.detachFromTarget", { sessionId });
+		await send("Target.closeTarget", { targetId: target.targetId });
+		return { observedPopupDocument: true, isolated: true, targetId: target.targetId };
+	} finally {
+		for (const waiter of pending.values()) { clearTimeout(waiter.timeout); waiter.reject(new Error("Popup inspector closed")); }
+		socket.close();
+	}
+}
+
+// Exercise both directions of the real native tab model. A content script on
+// the initial page is insufficient: extension-created tabs must stay in the
+// same Chrome window and appear in Kestrel's tab rail, and Kestrel-created tabs
+// must be discoverable by the extension. Do not substitute JavaScript shims.
+async function probeTabOwnership(context, shellPage, sourcePage, worker) {
+	const request = (payload) => shellPage.evaluate(
+		(payload) => window.kestrel.request(payload), payload,
+	);
+	const query = () => worker.evaluate(() => chrome.tabs.query({}));
+	const sourceTabs = await query();
+	const source = sourceTabs.find((tab) => tab.url === sourcePage.url());
+	assert(source, "The initial user page must belong to a real Chrome tab");
+	const result = { sourceWindowId: source.windowId, kestrelCreated: {}, extensionCreated: [] };
+	let kestrelTabId;
+	const createdIds = [];
+	try {
+		const url = probeUrl.replace("/probe", "/kestrel-created");
+		const created = await request({ type: "browser-create-tab", input: url, active: true });
+		assert.equal(created.ok, true, JSON.stringify(created));
+		kestrelTabId = created.browserState?.tabs.find((tab) => tab.url === url)?.id;
+		assert(kestrelTabId, "Kestrel must report its newly created tab");
+		let nativeTab;
+		for (let attempt = 0; attempt < 30; attempt++) {
+			nativeTab = (await query()).find((tab) => tab.url === url || tab.pendingUrl === url);
+			if (nativeTab) break;
+			await delay(100);
+		}
+		result.kestrelCreated = {
+			visibleToExtension: Boolean(nativeTab),
+			sameChromeWindow: nativeTab?.windowId === source.windowId,
+		};
+		await request({ type: "browser-close-tab", tabId: kestrelTabId });
+		kestrelTabId = undefined;
+		for (const { explicitWindow, active } of [
+			{ explicitWindow: false, active: true },
+			{ explicitWindow: true, active: true },
+			{ explicitWindow: true, active: false },
+		]) {
+			const previousActive = (await query()).find((tab) => tab.active && tab.windowId === source.windowId)?.id;
+			const previousState = await request({ type: "browser-get-state" });
+			const url = probeUrl.replace("/probe", `/extension-created-${explicitWindow ? "explicit" : "default"}-${active ? "active" : "background"}`);
+			const created = await worker.evaluate(async ({ url, windowId, active }) => {
+				try {
+					return { ok: true, tab: await chrome.tabs.create({ url, active, ...(windowId === undefined ? {} : { windowId }) }) };
+				} catch (error) { return { ok: false, error: String(error) }; }
+			}, { url, active, ...(explicitWindow ? { windowId: source.windowId } : {}) });
+			if (created.tab?.id) createdIds.push(created.tab.id);
+			let adopted = false;
+			let activeSelectionMatches = !active;
+			for (let attempt = 0; attempt < 30; attempt++) {
+				const state = await request({ type: "browser-get-state" });
+				const adoptedTab = state.browserState?.tabs.find((tab) => tab.url === url);
+				adopted = Boolean(adoptedTab);
+				activeSelectionMatches = !active || (adoptedTab && state.browserState.activeTabId === adoptedTab.id);
+				if (adopted && activeSelectionMatches) break;
+				await delay(100);
+			}
+			result.extensionCreated.push({
+				explicitWindow,
+				active,
+				ok: created.ok,
+				...(created.error ? { error: created.error } : {}),
+				windowId: created.tab?.windowId,
+				sameChromeWindow: created.tab?.windowId === source.windowId,
+				adoptedInKestrel: adopted,
+				activeSelectionMatches,
+				url,
+				backgroundSelectionPreserved: active || (
+					(await query()).find((tab) => tab.active && tab.windowId === source.windowId)?.id === previousActive &&
+					(await request({ type: "browser-get-state" })).browserState?.activeTabId === previousState.browserState?.activeTabId),
+			});
+			const updatedUrl = `${url}?updated=1`;
+			if (created.tab?.id) {
+				await worker.evaluate(({ id, url }) => chrome.tabs.update(id, { url }), { id: created.tab.id, url: updatedUrl });
+				let updated = false;
+				for (let attempt = 0; attempt < 30; attempt++) {
+					updated = (await request({ type: "browser-get-state" })).browserState?.tabs.some((tab) => tab.url === updatedUrl) ?? false;
+					if (updated) break;
+					await delay(100);
+				}
+				result.extensionCreated.at(-1).updatedInKestrel = updated;
+			}
+		}
+	} finally {
+		if (kestrelTabId) await request({ type: "browser-close-tab", tabId: kestrelTabId });
+		for (const id of createdIds) await worker.evaluate((id) => chrome.tabs.remove(id), id);
+	}
+	for (let attempt = 0; attempt < 30; attempt++) {
+		const state = await request({ type: "browser-get-state" });
+		for (const tab of result.extensionCreated) {
+			tab.removedFromKestrel = !state.browserState.tabs.some((item) => item.url === tab.url || item.url === `${tab.url}?updated=1`);
+		}
+		if (result.extensionCreated.every((tab) => tab.removedFromKestrel)) break;
+		await delay(100);
+	}
+	result.passed = result.kestrelCreated.visibleToExtension && result.kestrelCreated.sameChromeWindow &&
+		result.extensionCreated.every((tab) => tab.ok && tab.sameChromeWindow && tab.adoptedInKestrel && tab.activeSelectionMatches && tab.backgroundSelectionPreserved && tab.updatedInKestrel && tab.removedFromKestrel);
+	return result;
+}
 try {
 	for (let launch = 0; launch < 2; launch++) {
 		// Both processes load only the registration written by the actual host port.
@@ -109,7 +267,7 @@ try {
 				"--kestrel-cache-path",
 				profile,
 				"--kestrel-user-extensions",
-				"--kestrel-chrome-extension-view",
+				...(normalTabModel ? ["--kestrel-chrome-tab-model"] : ["--kestrel-chrome-extension-view"]),
 				"--kestrel-ephemeral-core",
 				"--kestrel-renderer",
 				"--kestrel-durable-profile",
@@ -169,8 +327,12 @@ try {
 		}
 		assert.match(output, /KESTREL_NATIVE_CHROMIUM_USER_EXTENSIONS_ENABLED/, output);
 		assert.match(output, /KESTREL_NATIVE_CHROMIUM_USER_EXTENSION_PATHS count=1/, output);
-		assert.match(output, /KESTREL_NATIVE_CHROMIUM_EXTENSION_WINDOW_STYLE chrome/, output);
-		assert.match(output, /KESTREL_NATIVE_CHROMIUM_EXTENSION_VIEW_STYLE chrome/, output);
+		if (normalTabModel) {
+			assert.match(output, /KESTREL_NATIVE_CHROMIUM_NORMAL_TAB_MODEL_READY/, output);
+		} else {
+			assert.match(output, /KESTREL_NATIVE_CHROMIUM_EXTENSION_WINDOW_STYLE chrome/, output);
+			assert.match(output, /KESTREL_NATIVE_CHROMIUM_EXTENSION_VIEW_STYLE chrome/, output);
+		}
 		assert.match(output, /KESTREL_NATIVE_CHROMIUM_EXTENSION_SAME_WINDOW_OK/, output);
 		assert.match(output, /KESTREL_NATIVE_CHROMIUM_RENDERER_BRIDGE_READY/, output);
 		assert.match(output, /KESTREL_NATIVE_CHROMIUM_USER_BROWSER_LOAD_OK/, output);
@@ -254,15 +416,17 @@ try {
 			);
 		}
 
-		const evidence = join(root, ".tmp/native-user-extension-evidence");
+		const evidence = evidenceRoot;
 		await mkdir(evidence, { recursive: true });
 		await shellPage.screenshot({ path: join(evidence, `privileged-shell-${launch}.png`) });
 		// React's actual browser layout owns the visible native content bounds.
 		const viewport = await shellPage.locator("#browser-viewport").boundingBox();
 		assert(viewport && viewport.width > 0 && viewport.height > 0);
-		await userPage.waitForFunction(({ width, height }) =>
-			Math.abs(innerWidth - width) <= 2 && Math.abs(innerHeight - height) <= 2,
-			{ width: Math.round(viewport.width), height: Math.round(viewport.height) });
+		await userPage.waitForFunction(({ width, height, nativeToolbar }) =>
+			Math.abs(innerWidth - width) <= 2 && (nativeToolbar ?
+				innerHeight > 0 && innerHeight < height && height - innerHeight < 150 :
+				Math.abs(innerHeight - height) <= 2),
+			{ width: Math.round(viewport.width), height: Math.round(viewport.height), nativeToolbar: normalTabModel });
 		await userPage.screenshot({ path: join(evidence, `user-browser-extension-${launch}.png`) });
 		const osWindow = output.match(/KESTREL_NATIVE_CHROMIUM_EXTENSION_OS_WINDOW (\d+)/);
 		assert(osWindow, `Missing native Kestrel window number: ${output}`);
@@ -270,6 +434,67 @@ try {
 			"-x", "-l", osWindow[1], join(evidence, `kestrel-window-${launch}.png`),
 		], { encoding: "utf8", timeout: 10_000 });
 		assert.equal(capture.status, 0, `Native window capture failed: ${capture.stderr}`);
+		if (normalTabModel && launch === 0) {
+			const pageSession = await context.newCDPSession(userPage);
+			const windowSession = await browser.newBrowserCDPSession();
+			try {
+				const { targetInfo } = await pageSession.send("Target.getTargetInfo");
+				const { windowId, bounds } = await windowSession.send("Browser.getWindowForTarget", { targetId: targetInfo.targetId });
+				for (const size of [{ width: 1000, height: 760 }, { width: bounds.width, height: bounds.height }]) {
+					await windowSession.send("Browser.setWindowBounds", { windowId, bounds: size });
+					await shellPage.waitForFunction((width) => Math.abs(innerWidth - width) <= 2, size.width);
+					let fitted = false;
+					for (let attempt = 0; attempt < 60; attempt++) {
+						const region = await shellPage.locator("#browser-viewport").boundingBox();
+						const actual = await userPage.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+						fitted = region && Math.abs(region.width - actual.width) <= 2 && actual.height > 0 && actual.height < region.height;
+						if (fitted) break;
+						await delay(100);
+					}
+					assert(fitted, "Native Chrome controls and content must follow React bounds after window resize");
+					const resized = spawnSync("/usr/sbin/screencapture", ["-x", "-l", osWindow[1], join(evidence, `kestrel-resized-${size.width}.png`)], { timeout: 10_000 });
+					assert.equal(resized.status, 0);
+				}
+			} finally {
+				await pageSession.detach();
+				await windowSession.detach();
+			}
+		}
+		if (launch === 1 && normalTabModel) {
+			const worker = context.serviceWorkers().find((entry) =>
+				entry.url().startsWith(`chrome-extension://${extensionId}/`));
+			assert(worker, "Expected the fixture's real MV3 service worker");
+			tabOwnership = await probeTabOwnership(context, shellPage, userPage, worker);
+			if (normalTabModel) {
+				assert.equal(tabOwnership.passed, true, JSON.stringify(tabOwnership));
+				const action = await worker.evaluate(async () => {
+					try {
+						const [tab] = await chrome.tabs.query({ url: "http://127.0.0.1/*" });
+						await chrome.action.openPopup({ windowId: tab.windowId });
+						return { ok: true };
+					}
+					catch (error) { return { ok: false, error: String(error) }; }
+				});
+				const popup = action.ok ? await inspectActionPopup(endpoint,
+                    `chrome-extension://${extensionId}/popup.html`,
+                    join(evidence, "native-action-popup.png")) : { observedPopupDocument: false };
+                toolbarActionPopup = popup.observedPopupDocument;
+                await writeFile(join(evidence, "action-popup.json"), JSON.stringify({ ...action, ...popup }, null, 2) + "\n");
+				// Closing the last web tab through Kestrel must leave its Home and
+				// privileged shell alive, rather than closing Chrome's native window.
+				const beforeClose = await shellPage.evaluate(() => window.kestrel.request({ type: "browser-get-state" }));
+				for (const tab of beforeClose.browserState.tabs) {
+					const closed = await shellPage.evaluate((tabId) => window.kestrel.request({ type: "browser-close-tab", tabId }), tab.id);
+					assert.equal(closed.ok, true, JSON.stringify(closed));
+				}
+				await shellPage.waitForFunction(async () => {
+					const state = await window.kestrel.request({ type: "browser-get-state" });
+					return state.ok && state.browserState.tabs.length === 1 && state.browserState.tabs[0].url === "";
+				});
+				assert.equal(child.exitCode, null, "Last-tab close must preserve Kestrel Home");
+			}
+			await writeFile(join(evidence, "tab-ownership.json"), JSON.stringify(tabOwnership, null, 2) + "\n");
+		}
 
 		const session = await browser.newBrowserCDPSession();
 		await session.send("Browser.close");
@@ -302,25 +527,31 @@ try {
 		sameKestrelWindow: true,
 		userViewFitsReactBrowserViewport: true,
 		tabsQuery: tabsQuerySupported,
-		allKestrelTabsHaveChromeOwnership: false,
+		allKestrelTabsHaveChromeOwnership: tabOwnership?.passed === true,
 		kestrelExtensionManagerInstallAndLiveToggle: false,
-		toolbarActionPopups: false,
+		toolbarActionPopups: toolbarActionPopup,
 		chromeWebStoreInstall: false,
 		chromeWebStoreUpdates: false,
 	};
 	const missing = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name);
-	const evidence = join(root, ".tmp/native-user-extension-evidence");
+	const evidence = evidenceRoot;
+	assert.equal(createHash("sha256").update(await readFile(executable)).digest("hex"), executableSha256,
+		"The native app candidate changed while its extension checks were running");
 	await writeFile(join(evidence, "compatibility.json"), JSON.stringify({
 		version: 1,
 		app: resolve(app),
-		executableSha256: createHash("sha256").update(await readFile(executable)).digest("hex"),
+		executableSha256,
 		checkedAt: new Date().toISOString(),
+		normalTabModel,
 		checks,
 		missing,
 		fullExtensionParity: missing.length === 0,
 	}, null, 2) + "\n");
 	console.log(`Native extension parity ${missing.length === 0 ? "passed" : "BLOCKED"}: ${missing.join(", ") || "all checks passed"}.`);
 	if (requireParity) assert.deepEqual(missing, [], "Electron retirement requires complete Chrome extension acceptance; fixture success alone is insufficient.");
+} catch (error) {
+	console.error(output);
+	throw error;
 } finally {
 	await browser?.close().catch(() => {});
 	if (child && child.exitCode === null && child.signalCode === null) {

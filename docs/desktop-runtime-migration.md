@@ -239,10 +239,10 @@ The flag is rejected unless
 `--kestrel-user-extensions` is also present. It is not enabled by the normal
 product launcher and does not touch the installed app or an existing profile.
 
-The product lane still cannot claim full Chrome extension support. Do not patch
-extension JavaScript to fake missing APIs. CEF allows only one Chrome-style
-BrowserView in a Chrome-style window, so any additional Kestrel BrowserViews
-stay Alloy and are logged as outside extension-tab parity. A product cutover
+The older `--kestrel-chrome-extension-view` probe still cannot claim full Chrome
+extension support. Do not patch extension JavaScript to fake missing APIs. CEF
+allows only one Chrome-style BrowserView in a Chrome-style window, so additional
+BrowserViews in that probe stay Alloy. A product cutover
 needs a deliberate mapping between Kestrel's React tab rail and Chromium's
 single Chrome-style browser surface, plus extension action/popup integration,
 before this probe can become the default.
@@ -250,16 +250,42 @@ CEF's [runtime-style contract](https://github.com/chromiumembedded/cef/blob/708d
 allows only one Chrome-style BrowserView per Chrome-style window, so switching
 each existing sibling Alloy view to Chrome style is not a valid repair.
 
+The opt-in `--kestrel-chrome-tab-model` lane now uses a non-Views, normal Chrome
+window and its real TabStripModel. The existing Kestrel React renderer runs as
+an Alloy native child in a separate request context in that same NSWindow.
+Native browser IDs map to Kestrel's tab rail; real Chrome commands create user
+tabs, and extension-created tabs are observed through normal CEF callbacks.
+There are no extension JavaScript API shims. A clipped native viewport and
+deferred AppKit resize notifications keep Chrome's content and controls inside
+React's reported browser bounds, clear of the agent pane.
+
+Run `corepack pnpm test:native-chrome-tab-model` against an explicit candidate
+with `KESTREL_NATIVE_TEST_APP=/absolute/path/to/Kestrel.app`. It proves both
+Kestrel-created and extension-created tabs share the same Chrome window,
+background creation preserves selection, extension updates/removal reach the
+React tab model, last-tab close retains Kestrel Home, and an actual
+`chrome.action.openPopup` target renders without the privileged bridge. The
+native Chrome toolbar remains visible inside the browser region in this
+experimental lane. It is not enabled by the canonical launcher. Isolated
+automation still uses the older Views path and is not migrated in this mode.
+
 `test:native-user-extensions` writes the observed subset and remaining gaps to
 `.tmp/native-user-extension-evidence/compatibility.json`, bound to the tested
 executable's SHA-256. `corepack pnpm test:native-extension-parity` runs the same
-checks and exits nonzero until every required extension acceptance item has
-evidence. Kestrel's install/live-toggle flow, toolbar actions, Chrome Web Store
-installation and updates remain unverified. The evidence also keeps
-`allKestrelTabsHaveChromeOwnership` false: opening additional tabs or closing
-the initial Chrome tab has no complete Chrome tab-model mapping yet.
-Loading an unpacked fixture or
-viewing its popup document is not proof of those flows.
+checks with the normal Chrome tab model and exits nonzero until every required
+extension acceptance item has evidence. Kestrel's install/live-toggle flow,
+Chrome Web Store installation and updates remain unverified. The older Views
+probe continues to report failed tab ownership; the normal model derives that
+check from actual create/update/remove behavior. Loading an unpacked fixture
+does not establish arbitrary Store compatibility or install/update support.
+
+A disposable-profile test of the official JSON Formatter Store listing reached
+Google's "Switch to Chrome" dialog, then stalled on Add to Chrome after choosing
+No thanks. It did not reach a native permission prompt or install an extension.
+The pinned runtime also disables background extension updates through
+`--disable-background-networking`; see Chromium's
+[background-update check](https://chromium.googlesource.com/chromium/src/+/refs/tags/152.0.7977.83/chrome/browser/extensions/chrome_extensions_browser_client.cc#599).
+These are release blockers, not evidence of a functioning Store installer.
 
 The retirement gate requires an explicit app candidate and runs strict extension
 acceptance against that candidate. Setting `KESTREL_ACCEPT_ELECTRON_RETIREMENT=1`

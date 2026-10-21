@@ -177,8 +177,10 @@ KestrelChromiumApp::KestrelChromiumApp(
     BrowserContextInitialized on_context_initialized,
     bool extension_workbench,
     bool user_extensions_enabled,
-    std::string isolated_profile_root)
+    std::string isolated_profile_root,
+    DefaultClient default_client)
     : on_context_initialized_(std::move(on_context_initialized)),
+      default_client_(std::move(default_client)),
       extension_workbench_(extension_workbench),
       user_extensions_enabled_(user_extensions_enabled),
       isolated_profile_root_(std::move(isolated_profile_root)) {}
@@ -262,6 +264,10 @@ void KestrelChromiumApp::OnContextInitialized() {
   if (on_context_initialized_) {
     on_context_initialized_();
   }
+}
+
+CefRefPtr<CefClient> KestrelChromiumApp::GetDefaultClient() {
+  return default_client_ ? default_client_() : nullptr;
 }
 
 void KestrelChromiumApp::OnBeforeChildProcessLaunch(

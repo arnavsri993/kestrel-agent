@@ -29,6 +29,8 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_display_handler.h"
 #include "include/cef_download_handler.h"
+#include "include/cef_focus_handler.h"
+#include "include/cef_id_mappers.h"
 #include "include/cef_life_span_handler.h"
 #include "include/cef_load_handler.h"
 #include "include/cef_parser.h"
@@ -47,6 +49,7 @@
 #include "kestrel_durable_browser_library.h"
 #include "kestrel_extension_workbench.h"
 #include "kestrel_native_credentials.h"
+#include "kestrel_chrome_window_mac.h"
 
 @interface KestrelNativeCoreRelay : NSObject
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
@@ -208,6 +211,7 @@ bool ephemeral_core_enabled = false;
 bool full_renderer_enabled = false;
 bool user_extensions_enabled = false;
 bool chrome_extension_view_enabled = false;
+bool chrome_tab_model_enabled = false;
 bool durable_profile_enabled = false;
 bool real_keychain_enabled = false;
 bool smoke_durable_library_seed = false;
@@ -831,7 +835,8 @@ class KestrelUserBrowserClient final : public CefClient,
                                        public CefLoadHandler,
                                        public CefDisplayHandler,
                                        public CefRequestHandler,
-                                       public CefDownloadHandler {
+                                       public CefDownloadHandler,
+                                       public CefFocusHandler {
  public:
   using BrowserCreated = std::function<void(const std::string&,
                                             CefRefPtr<CefBrowser>)>;
@@ -883,6 +888,18 @@ class KestrelUserBrowserClient final : public CefClient,
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+  CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+
+  void UseChromeTabModel(
+      std::function<std::string(CefRefPtr<CefBrowser>)> resolve_tab,
+      std::function<void(const std::string&)> on_focus) {
+    resolve_tab_ = std::move(resolve_tab);
+    on_focus_ = std::move(on_focus);
+  }
+
+  void OnGotFocus(CefRefPtr<CefBrowser> browser) override {
+    if (on_focus_) on_focus_(TabId(browser));
+  }
 
   bool CanDownload(CefRefPtr<CefBrowser> browser,
                    const CefString& url,
@@ -927,7 +944,7 @@ class KestrelUserBrowserClient final : public CefClient,
                                             : full_path.substr(slash + 1);
     }
     on_download_updated_(
-        tab_id_, download_item->GetId(), download_item->GetURL().ToString(),
+        TabId(browser), download_item->GetId(), download_item->GetURL().ToString(),
         filename, download_item->GetFullPath().ToString(),
         download_item->GetReceivedBytes(), download_item->GetTotalBytes(),
         status, callback);
@@ -935,7 +952,7 @@ class KestrelUserBrowserClient final : public CefClient,
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     if (!automation_mode_) browser->GetHost()->SetAccessibilityState(STATE_ENABLED);
-    if (on_created_) on_created_(tab_id_, browser);
+    if (on_created_) on_created_(TabId(browser), browser);
   }
 
   bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
@@ -951,11 +968,18 @@ class KestrelUserBrowserClient final : public CefClient,
                      CefBrowserSettings& settings,
                      CefRefPtr<CefDictionaryValue>& extra_info,
                      bool* no_javascript_access) override {
+    // The normal Chrome host owns the real TabStripModel. Let Chromium create
+    // its HTTP(S) popup/tab without replaying the URL into another browser.
+    if (resolve_tab_) {
+      const std::string url = target_url.ToString();
+      if (safe_user_browser_url(url) || is_about_blank_url(url) ||
+          url.starts_with("chrome-extension://")) return false;
+    }
     // Adopt HTTP(S) popups as sibling user tabs in the Alloy window. Cancel the
     // default CEF popup window so opener/context stays inside Kestrel's host.
     const auto safe_url = safe_user_browser_url(target_url.ToString());
     if (safe_url && on_popup_) {
-      on_popup_(tab_id_, *safe_url);
+      on_popup_(TabId(browser), *safe_url);
       std::cout << "KESTREL_NATIVE_CHROMIUM_USER_BROWSER_POPUP_ADOPTED url="
                 << *safe_url << std::endl;
     }
@@ -967,14 +991,14 @@ class KestrelUserBrowserClient final : public CefClient,
                             bool can_go_back,
                             bool can_go_forward) override {
     if (on_loading_)
-      on_loading_(tab_id_, is_loading, can_go_back, can_go_forward);
+      on_loading_(TabId(browser), is_loading, can_go_back, can_go_forward);
   }
 
   void OnLoadEnd(CefRefPtr<CefBrowser> browser,
                  CefRefPtr<CefFrame> frame,
                  int http_status_code) override {
     if (!frame || !frame->IsMain() || !on_load_end_) return;
-    on_load_end_(tab_id_, frame->GetURL().ToString());
+    on_load_end_(TabId(browser), frame->GetURL().ToString());
   }
 
   void OnAddressChange(CefRefPtr<CefBrowser> browser,
@@ -982,13 +1006,13 @@ class KestrelUserBrowserClient final : public CefClient,
                        const CefString& url) override {
     if (!frame || !frame->IsMain() || !on_address_) return;
     const auto safe_url = safe_user_browser_url(url.ToString());
-    if (safe_url) on_address_(tab_id_, *safe_url);
+    if (safe_url) on_address_(TabId(browser), *safe_url);
   }
 
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
                      const CefString& title) override {
     if (on_title_)
-      on_title_(tab_id_, renderer_safe_text(title.ToString(), 500));
+      on_title_(TabId(browser), renderer_safe_text(title.ToString(), 500));
   }
 
   bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
@@ -998,17 +1022,21 @@ class KestrelUserBrowserClient final : public CefClient,
                       bool is_redirect) override {
     if (!frame || !frame->IsMain() || !request) return false;
     const std::string url = request->GetURL().ToString();
+    if (resolve_tab_ && (is_about_blank_url(url) ||
+                        url == "chrome://newtab/" ||
+                        url == "chrome://extensions/" ||
+                        url.starts_with("chrome-extension://"))) return false;
     if (automation_mode_ && is_about_blank_url(url)) return false;
     const auto safe = safe_user_browser_url(url);
     if (safe) {
       if (automation_mode_ && !allowed_origins_.empty() &&
           allowed_origins_.count(http_origin_from_url(*safe)) == 0) {
-        if (on_navigation_blocked_) on_navigation_blocked_(tab_id_);
+        if (on_navigation_blocked_) on_navigation_blocked_(TabId(browser));
         return true;
       }
       return false;
     }
-    if (on_navigation_blocked_) on_navigation_blocked_(tab_id_);
+    if (on_navigation_blocked_) on_navigation_blocked_(TabId(browser));
     return true;
   }
 
@@ -1018,10 +1046,15 @@ class KestrelUserBrowserClient final : public CefClient,
   }
 
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
-    if (on_closed_) on_closed_(tab_id_, browser ? browser->GetIdentifier() : 0);
+    if (on_closed_) on_closed_(TabId(browser), browser ? browser->GetIdentifier() : 0);
   }
 
  private:
+  std::string TabId(CefRefPtr<CefBrowser> browser) {
+    return resolve_tab_ ? resolve_tab_(browser) : tab_id_;
+  }
+  std::function<std::string(CefRefPtr<CefBrowser>)> resolve_tab_;
+  std::function<void(const std::string&)> on_focus_;
   std::string tab_id_;
   BrowserCreated on_created_;
   LoadingChanged on_loading_;
@@ -1093,6 +1126,7 @@ struct NativeUserBrowserTab {
   bool browser_closed = false;
   bool devtools_attached = false;
   bool chrome_style = false;
+  bool native_home = false;
   int browser_id = 0;
   int viewport_width = 1280;
   int viewport_height = 720;
@@ -1105,6 +1139,10 @@ struct NativeUserBrowserTab {
   std::map<int, std::string> pending_devtools_kinds;
   CefRefPtr<KestrelUserBrowserClient> client;
   CefRefPtr<CefBrowserView> view;
+  CefRefPtr<CefBrowser> native_browser;
+  CefRefPtr<CefBrowser> Browser() const {
+    return native_browser ? native_browser : (view ? view->GetBrowser() : nullptr);
+  }
   CefRefPtr<CefRegistration> devtools_registration;
 };
 
@@ -1318,11 +1356,12 @@ class KestrelClient : public CefClient,
       }
     }
     NativeUserBrowserTab& initial_tab = CreateBlankUserBrowserTab(true);
-    if (chrome_extension_view_enabled_) {
+    if (chrome_extension_view_enabled_ || chrome_tab_model_enabled) {
       // A Chrome BrowserView must be the first BrowserView attached to a
       // Chrome Window. Create it before the privileged Alloy shell is added;
       // the React tab rail can navigate this initial about:blank surface.
       initial_tab.url = "about:blank";
+      initial_tab.native_home = chrome_tab_model_enabled;
       std::string error;
       if (!EnsureUserBrowserContext(&error)) {
         std::cerr << "Kestrel could not initialize its Chrome extension view: "
@@ -1355,6 +1394,12 @@ class KestrelClient : public CefClient,
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     browser_ = browser;
+    if (chrome_window_) {
+      chrome_window_->SetShellBrowser(browser);
+      std::cout << "KESTREL_NATIVE_CHROMIUM_EXTENSION_SAME_WINDOW_OK" << std::endl;
+      std::cout << "KESTREL_NATIVE_CHROMIUM_EXTENSION_OS_WINDOW "
+                << chrome_window_->WindowNumber() << std::endl;
+    }
     // CEF disables platform accessibility by default. Expose the app's real
     // semantics to macOS assistive technologies, as the Electron host does.
     browser->GetHost()->SetAccessibilityState(STATE_ENABLED);
@@ -1362,6 +1407,34 @@ class KestrelClient : public CefClient,
 
   CefRefPtr<CefBrowserView> chrome_extension_view() const {
     return chrome_extension_view_;
+  }
+
+  CefRefPtr<CefBrowser> ChromeTabModelOwner() const {
+    for (const auto& tab : user_browser_tabs_) {
+      if (tab.native_browser) return tab.native_browser;
+    }
+    return nullptr;
+  }
+
+  CefRefPtr<CefClient> ChromeDefaultClient() const {
+    const auto owner = ChromeTabModelOwner();
+    return owner ? owner->GetHost()->GetClient() : nullptr;
+  }
+
+  void SetChromeWindow(std::unique_ptr<KestrelChromeWindowContainer> window) {
+    chrome_window_ = std::move(window);
+  }
+
+  void ChromeWindowClosing() {
+    if (closing_) return;
+    closing_ = true;
+    for (auto& tab : user_browser_tabs_) {
+      if (tab.native_browser && !tab.browser_closed) {
+        tab.closing = true;
+        pending_user_browser_closures_.insert(tab.id);
+      }
+    }
+    if (chrome_window_) chrome_window_->DetachShell();
   }
 
   void RestoreChromeExtensionViewBounds() {
@@ -1380,7 +1453,7 @@ class KestrelClient : public CefClient,
       // CefShutdown until each user browser reports OnBeforeClose.
       for (NativeUserBrowserTab& tab : user_browser_tabs_) {
         CefRefPtr<CefBrowser> user_browser =
-            tab.view ? tab.view->GetBrowser() : nullptr;
+            tab.Browser();
         if (user_browser && user_browser->IsValid()) {
           tab.closing = true;
           pending_user_browser_closures_.insert(tab.id);
@@ -1458,7 +1531,7 @@ class KestrelClient : public CefClient,
       smoke_user_browser_started_ = true;
       std::string error;
       bool started = false;
-      if (chrome_extension_view_enabled_) {
+      if (chrome_extension_view_enabled_ || chrome_tab_model_enabled) {
         NativeUserBrowserTab* active =
             FindUserBrowserTab(user_browser_active_tab_id_);
         if (active && active->chrome_style) {
@@ -1522,6 +1595,16 @@ class KestrelClient : public CefClient,
   bool IsClosing() const { return closing_; }
 
   void CloseBrowser() {
+    if (chrome_tab_model_enabled) {
+      ChromeWindowClosing();
+      std::vector<CefRefPtr<CefBrowser>> browsers;
+      for (const auto& tab : user_browser_tabs_) {
+        if (tab.native_browser && tab.native_browser->IsValid())
+          browsers.push_back(tab.native_browser);
+      }
+      for (const auto& browser : browsers) browser->GetHost()->CloseBrowser(true);
+      return;
+    }
     if (browser_ && !closing_) {
       browser_->GetHost()->CloseBrowser(false);
     }
@@ -1660,7 +1743,9 @@ class KestrelClient : public CefClient,
   // the CEF message loop has returned. main() invokes this immediately before
   // releasing the final KestrelClient owner and calling CefShutdown().
   void FinalizeUserBrowserShutdown() {
+    chrome_window_.reset();
     for (NativeUserBrowserTab& tab : user_browser_tabs_) {
+      tab.native_browser = nullptr;
       tab.view = nullptr;
       tab.client = nullptr;
       tab.browser_id = 0;
@@ -1802,7 +1887,7 @@ class KestrelClient : public CefClient,
                                      CefRefPtr<CefDictionaryValue> params,
                                      const std::string& kind,
                                      std::string* error) {
-    CefRefPtr<CefBrowser> browser = tab.view ? tab.view->GetBrowser() : nullptr;
+    CefRefPtr<CefBrowser> browser = tab.Browser();
     if (!browser || !browser->IsValid()) {
       if (error) *error = "Native Chromium browser tab is unavailable.";
       return false;
@@ -1832,7 +1917,7 @@ class KestrelClient : public CefClient,
         VisibleScreenshotDevToolsInFlight(tab)) {
       return true;
     }
-    CefRefPtr<CefBrowser> browser = tab.view ? tab.view->GetBrowser() : nullptr;
+    CefRefPtr<CefBrowser> browser = tab.Browser();
     if (!browser || !browser->IsValid() || tab.loading) {
       // Wait for a finished load so Runtime.evaluate sees a real document.
       return true;
@@ -1861,7 +1946,7 @@ class KestrelClient : public CefClient,
     for (const auto& entry : tab.pending_devtools_kinds) {
       if (entry.second == "visible-context") return true;
     }
-    CefRefPtr<CefBrowser> browser = tab.view ? tab.view->GetBrowser() : nullptr;
+    CefRefPtr<CefBrowser> browser = tab.Browser();
     if (!browser || !browser->IsValid() || tab.loading) return true;
     CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
     params->SetString("expression", kVisibleContextScript);
@@ -1919,7 +2004,7 @@ class KestrelClient : public CefClient,
     for (const auto& entry : tab.pending_devtools_kinds) {
       if (entry.second == "visible-snapshot") return true;
     }
-    CefRefPtr<CefBrowser> browser = tab.view ? tab.view->GetBrowser() : nullptr;
+    CefRefPtr<CefBrowser> browser = tab.Browser();
     if (!browser || !browser->IsValid() || tab.loading) return true;
     CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
     params->SetString("expression", kAutomationSnapshotScript);
@@ -1959,7 +2044,7 @@ class KestrelClient : public CefClient,
       if (error) *error = "Native Chromium browser tab is busy.";
       return false;
     }
-    CefRefPtr<CefBrowser> browser = tab->view ? tab->view->GetBrowser() : nullptr;
+    CefRefPtr<CefBrowser> browser = tab->Browser();
     if (!browser || !browser->IsValid() || tab->loading) {
       if (error) *error = "Native Chromium browser tab is unavailable.";
       return false;
@@ -2061,7 +2146,7 @@ class KestrelClient : public CefClient,
       tab->pending_context_url.clear();
       if (request_id.empty()) return;
       std::string value_json;
-      CefRefPtr<CefBrowser> browser = tab->view ? tab->view->GetBrowser() : nullptr;
+      CefRefPtr<CefBrowser> browser = tab->Browser();
       if (!browser || !browser->IsValid() || tab->loading ||
           browser->GetMainFrame()->GetURL().ToString() != captured_url ||
           !extract_evaluate_value(&value_json)) {
@@ -2625,6 +2710,16 @@ class KestrelClient : public CefClient,
   }
 
   void SyncUserBrowserViewVisibility() {
+    if (chrome_tab_model_enabled && chrome_window_) {
+      NativeUserBrowserTab* active = FindUserBrowserTab(user_browser_active_tab_id_);
+      chrome_window_->SetBrowserBounds(user_browser_bounds_,
+          user_browser_view_visible_ && active && !active->url.empty());
+      if (active && active->native_browser && !active->closing &&
+          chrome_selected_tab_id_ != active->id) {
+        chrome_selected_tab_id_ = active->id;
+        active->native_browser->GetHost()->SetFocus(true);
+      }
+    }
     for (NativeUserBrowserTab& tab : user_browser_tabs_) {
       if (!tab.view) continue;
       tab.view->SetBounds(user_browser_bounds_);
@@ -2662,18 +2757,31 @@ class KestrelClient : public CefClient,
     tab.pending_devtools_kinds.clear();
     tab.element_refs.clear();
     tab.devtools_registration = nullptr;
+    if (tab.native_browser) {
+      pending_user_browser_closures_.insert(tab.id);
+      tab.native_browser->GetHost()->CloseBrowser(true);
+      return;
+    }
     if (!tab.view) return;
     tab.view->SetVisible(false);
     CefRefPtr<CefBrowser> browser = tab.view->GetBrowser();
     const bool browser_is_live = browser && browser->IsValid();
+    // Alloy's default close notification targets its containing CefWindow.
+    // Detach this tab first so closing a sibling cannot close Kestrel's shell
+    // or the extension-capable Chrome surface in that same window.
+    if (kestrel_window && !kestrel_window->IsClosed()) {
+      kestrel_window->RemoveChildView(tab.view);
+    }
     if (browser_is_live) {
       pending_user_browser_closures_.insert(tab.id);
       std::cout << "KESTREL_NATIVE_CHROMIUM_USER_BROWSER_CLOSE_BEGIN tab="
                 << tab.id << std::endl;
       browser->GetHost()->CloseBrowser(true);
-    }
-    if (kestrel_window && !kestrel_window->IsClosed()) {
-      kestrel_window->RemoveChildView(tab.view);
+      // A detached BrowserView owns its underlying Views graph again. Release
+      // it to finish WindowDestroyed/OnBeforeClose; retaining it until that
+      // callback would leave a detached tab permanently half closed. Retain
+      // the client until the trailing cleanup task to avoid reentrant release.
+      tab.view = nullptr;
     }
     // Keep the CEF references until the user browser's OnBeforeClose callback.
     // The top-level host must not quit while that callback is still pending.
@@ -2753,7 +2861,7 @@ class KestrelClient : public CefClient,
 
     bool browser_creation_failed = false;
     for (NativeUserBrowserTab& tab : user_browser_tabs_) {
-      if (tab.closing || tab.url.empty() || tab.view) continue;
+      if (tab.closing || tab.url.empty() || tab.Browser()) continue;
       std::string error;
       if (!EnsureLiveUserBrowser(tab, &error)) {
         tab.loading = false;
@@ -2778,8 +2886,8 @@ class KestrelClient : public CefClient,
     // attached by OnUserBrowserContextInitialized(), preserving lazy profile
     // startup without attempting an invalid BrowserView creation.
     if (!user_browser_context_ready_) return true;
-    if (tab.view) {
-      CefRefPtr<CefBrowser> browser = tab.view->GetBrowser();
+    if (tab.Browser()) {
+      CefRefPtr<CefBrowser> browser = tab.Browser();
       if (browser && browser->IsValid()) {
         browser->GetMainFrame()->LoadURL(tab.url);
       }
@@ -2787,11 +2895,30 @@ class KestrelClient : public CefClient,
       return true;
     }
     const bool can_create_before_window =
-        chrome_extension_view_enabled_ && !chrome_extension_view_created_;
+        chrome_tab_model_enabled ||
+        (chrome_extension_view_enabled_ && !chrome_extension_view_created_);
     if ((!kestrel_window || kestrel_window->IsClosed()) &&
         !can_create_before_window) {
       if (error) *error = "The native Kestrel window is unavailable.";
       return false;
+    }
+
+    if (chrome_tab_model_enabled && ChromeTabModelOwner()) {
+      CefRefPtr<CefBrowser> owner = ChromeTabModelOwner();
+      const int new_tab = cef_id_for_command_id_name("IDC_NEW_TAB");
+      if (new_tab < 0 || !owner->GetHost()->CanExecuteChromeCommand(new_tab)) {
+        if (error) *error = "The native Chrome tab command is unavailable.";
+        return false;
+      }
+      chrome_pending_tab_id_ = tab.id;
+      owner->GetHost()->ExecuteChromeCommand(new_tab, CEF_WOD_CURRENT_TAB);
+      chrome_pending_tab_id_.clear();
+      if (!tab.native_browser) {
+        if (error) *error = "Chromium did not register the new native tab.";
+        return false;
+      }
+      tab.native_browser->GetMainFrame()->LoadURL(tab.url);
+      return true;
     }
 
     const std::weak_ptr<bool> owner_token = native_owner_alive_;
@@ -2870,6 +2997,34 @@ class KestrelClient : public CefClient,
                                       total_bytes, status, callback);
         });
     CefBrowserSettings browser_settings;
+    if (chrome_tab_model_enabled) {
+      tab.client->UseChromeTabModel(
+          [this, owner_token](CefRefPtr<CefBrowser> browser) {
+            if (!owner_token.lock()) return std::string();
+            return ResolveChromeTab(browser);
+          },
+          [this, owner_token](const std::string& id) {
+            if (!owner_token.lock() || closing_ || id.empty()) return;
+            user_browser_active_tab_id_ = id;
+            chrome_selected_tab_id_ = id;
+            PublishUserBrowserState();
+          });
+      chrome_pending_tab_id_ = tab.id;
+      CefWindowInfo window_info;
+      window_info.runtime_style = CEF_RUNTIME_STYLE_CHROME;
+      CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
+          window_info, tab.client, tab.url, browser_settings, nullptr,
+          user_browser_context_);
+      chrome_pending_tab_id_.clear();
+      if (!browser) {
+        if (error) *error = "Kestrel could not create its normal Chrome tab host.";
+        return false;
+      }
+      tab.native_browser = browser;
+      tab.chrome_style = true;
+      std::cout << "KESTREL_NATIVE_CHROMIUM_NORMAL_TAB_MODEL_READY" << std::endl;
+      return true;
+    }
     const bool use_chrome_style =
         chrome_extension_view_enabled_ && !chrome_extension_view_created_;
     CefRefPtr<CefBrowserViewDelegate> browser_view_delegate;
@@ -2929,6 +3084,7 @@ class KestrelClient : public CefClient,
       return false;
     }
     tab.url = *url;
+    tab.native_home = false;
     tab.title = "Loading…";
     tab.loading = true;
     tab.discarded = false;
@@ -2941,7 +3097,13 @@ class KestrelClient : public CefClient,
   bool CreateUserBrowserTab(const std::string& input, bool active,
                             std::string* error) {
     if (input.empty()) {
-      CreateBlankUserBrowserTab(active);
+      NativeUserBrowserTab& tab = CreateBlankUserBrowserTab(active);
+      if (chrome_tab_model_enabled) {
+        tab.native_home = true;
+        tab.url = "about:blank";
+        if (!EnsureLiveUserBrowser(tab, error)) return false;
+        tab.url.clear();
+      }
       SyncUserBrowserViewVisibility();
       return true;
     }
@@ -2971,6 +3133,19 @@ class KestrelClient : public CefClient,
     return true;
   }
 
+  bool PrepareNativeTabClose(const std::string& tab_id, std::string* error) {
+    if (!chrome_tab_model_enabled || closing_) return true;
+    NativeUserBrowserTab* target = FindUserBrowserTab(tab_id);
+    if (!target || !target->native_browser) return true;
+    size_t live = 0;
+    for (const auto& tab : user_browser_tabs_) {
+      if (tab.native_browser && !tab.closing && !tab.browser_closed) ++live;
+    }
+    // Chrome closes its native window when its last real tab closes. Create
+    // the replacement Home tab first, before callers retain vector iterators.
+    return live > 1 || CreateUserBrowserTab("", true, error);
+  }
+
   void OnNativeUserBrowserCreated(const std::string& tab_id,
                                   CefRefPtr<CefBrowser> browser) {
     NativeUserBrowserTab* tab = FindUserBrowserTab(tab_id);
@@ -2978,6 +3153,21 @@ class KestrelClient : public CefClient,
     tab->browser_id = browser->GetIdentifier();
     SyncUserBrowserViewVisibility();
     PublishUserBrowserState();
+  }
+
+  std::string ResolveChromeTab(CefRefPtr<CefBrowser> browser) {
+    if (!browser) return {};
+    const int id = browser->GetIdentifier();
+    for (auto& tab : user_browser_tabs_) {
+      if (tab.browser_id == id) return tab.id;
+    }
+    if (closing_) return {};
+    NativeUserBrowserTab* tab = FindUserBrowserTab(chrome_pending_tab_id_);
+    if (!tab) tab = &CreateBlankUserBrowserTab(false);
+    tab->native_browser = browser;
+    tab->browser_id = id;
+    tab->chrome_style = true;
+    return tab->id;
   }
 
   void OnNativeUserBrowserLoadingChanged(const std::string& tab_id,
@@ -3001,6 +3191,7 @@ class KestrelClient : public CefClient,
     }
     NativeUserBrowserTab* tab = FindUserBrowserTab(tab_id);
     if (!tab) return;
+    if (tab->native_home && is_about_blank_url(url)) return;
     tab->url = url;
     tab->error.clear();
     PublishUserBrowserState();
@@ -3015,6 +3206,7 @@ class KestrelClient : public CefClient,
     }
     NativeUserBrowserTab* tab = FindUserBrowserTab(tab_id);
     if (!tab) return;
+    if (tab->native_home) return;
     tab->title = title;
     PublishUserBrowserState();
   }
@@ -3053,7 +3245,7 @@ class KestrelClient : public CefClient,
       // LoadEnd can race ahead of LoadingStateChange(false). Treat the document
       // as ready here so a queued visible-screenshot can start.
       tab->loading = false;
-      tab->url = url;
+      if (!(tab->native_home && is_about_blank_url(url))) tab->url = url;
     }
     PublishUserBrowserState();
     if (tab && !tab->pending_context_request_id.empty()) {
@@ -3381,6 +3573,13 @@ class KestrelClient : public CefClient,
     const std::string type = request->GetString("type").ToString();
     if (type == "window-minimize" || type == "window-toggle-zoom" ||
         type == "window-close") {
+      if (chrome_window_) {
+        callback->Success(R"JSON({"ok":true})JSON");
+        if (type == "window-minimize") chrome_window_->Minimize();
+        else if (type == "window-toggle-zoom") chrome_window_->ToggleZoom();
+        else CloseBrowser();
+        return true;
+      }
       if (!kestrel_window || kestrel_window->IsClosed()) {
         RespondNativeError(callback, "The native Kestrel window is unavailable.");
         return true;
@@ -3544,6 +3743,11 @@ class KestrelClient : public CefClient,
         return true;
       }
       const std::string tab_id = request->GetString("tabId").ToString();
+      std::string close_error;
+      if (!PrepareNativeTabClose(tab_id, &close_error)) {
+        RespondNativeError(callback, close_error);
+        return true;
+      }
       const auto found = std::find_if(
           user_browser_tabs_.begin(), user_browser_tabs_.end(),
           [&tab_id](const NativeUserBrowserTab& tab) { return tab.id == tab_id; });
@@ -3576,8 +3780,7 @@ class KestrelClient : public CefClient,
       }
       NativeUserBrowserTab* tab =
           FindUserBrowserTab(request->GetString("tabId").ToString());
-      CefRefPtr<CefBrowser> browser = tab && tab->view ? tab->view->GetBrowser()
-                                                        : nullptr;
+      CefRefPtr<CefBrowser> browser = tab ? tab->Browser() : nullptr;
       if (!browser || !browser->IsValid()) {
         RespondNativeError(callback, "The native browser page is not loaded yet.");
         return true;
@@ -3962,6 +4165,11 @@ class KestrelClient : public CefClient,
         return;
       }
       const std::string tab_id = request->GetString("tabId").ToString();
+      std::string close_error;
+      if (!PrepareNativeTabClose(tab_id, &close_error)) {
+        SendBrowserBackendResponse(request_id, false, "", close_error);
+        return;
+      }
       const auto found = std::find_if(
           user_browser_tabs_.begin(), user_browser_tabs_.end(),
           [&tab_id](const NativeUserBrowserTab& tab) {
@@ -5454,6 +5662,9 @@ class KestrelClient : public CefClient,
   CefRefPtr<KestrelUserBrowserContextHandler> user_browser_context_handler_;
   CefRefPtr<CefRequestContext> user_browser_context_;
   CefRefPtr<CefBrowserView> chrome_extension_view_;
+  std::unique_ptr<KestrelChromeWindowContainer> chrome_window_;
+  std::string chrome_pending_tab_id_;
+  std::string chrome_selected_tab_id_;
   __strong KestrelNativeCoreRelay* core_relay_ = nil;
   std::map<std::string, PendingCoreRequest> core_requests_;
   std::vector<QueuedCoreRequest> queued_core_requests_;
@@ -5829,6 +6040,8 @@ int main(int argc, char* argv[]) {
         has_argument(argc, argv, "--kestrel-user-extensions");
     chrome_extension_view_enabled =
         has_argument(argc, argv, "--kestrel-chrome-extension-view");
+    chrome_tab_model_enabled =
+        has_argument(argc, argv, "--kestrel-chrome-tab-model");
     durable_profile_enabled =
         has_argument(argc, argv, "--kestrel-durable-profile");
     real_keychain_enabled =
@@ -5866,6 +6079,12 @@ int main(int argc, char* argv[]) {
       std::cerr << "Extension workbench and user-browser extensions cannot run "
                    "together."
                 << std::endl;
+      return 1;
+    }
+    if (chrome_tab_model_enabled &&
+        (!user_extensions_enabled || chrome_extension_view_enabled)) {
+      std::cerr << "The normal Chrome tab model requires --kestrel-user-extensions "
+                   "and cannot run with --kestrel-chrome-extension-view." << std::endl;
       return 1;
     }
     if (chrome_extension_view_enabled && !user_extensions_enabled) {
@@ -6085,6 +6304,30 @@ int main(int argc, char* argv[]) {
               CefQuitMessageLoop();
               return;
             }
+            if (chrome_tab_model_enabled) {
+              std::string error;
+              auto window = KestrelChromeWindowContainer::Create(
+                  client->ChromeTabModelOwner(),
+                  [owner = client.get()] { owner->ChromeWindowClosing(); },
+                  &error);
+              if (!window) {
+                std::cerr << "Kestrel could not attach its native Chrome window: "
+                          << error << std::endl;
+                client->CloseBrowser();
+                return;
+              }
+              CefWindowInfo window_info;
+              window_info.SetAsChild(window->ShellParentHandle(), window->ShellBounds());
+              window_info.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+              client->SetChromeWindow(std::move(window));
+              if (!CefBrowserHost::CreateBrowserSync(
+                      window_info, client, shell_url, browser_settings,
+                      nullptr, shell_context)) {
+                std::cerr << "Kestrel could not create its isolated native shell." << std::endl;
+                client->CloseBrowser();
+              }
+              return;
+            }
             CefRefPtr<CefBrowserView> browser_view =
                 CefBrowserView::CreateBrowserView(
                     client, shell_url, browser_settings, nullptr, shell_context,
@@ -6122,7 +6365,11 @@ int main(int argc, char* argv[]) {
         CefQuitMessageLoop();
       }
         },
-        extension_workbench, user_extensions_enabled, isolated_profile_path));
+        extension_workbench, user_extensions_enabled, isolated_profile_path,
+        []() -> CefRefPtr<CefClient> {
+          return chrome_tab_model_enabled && main_client_owner
+              ? main_client_owner->ChromeDefaultClient() : nullptr;
+        }));
     if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
       std::cerr << "Kestrel could not initialize Chromium." << std::endl;
       return CefGetExitCode();
