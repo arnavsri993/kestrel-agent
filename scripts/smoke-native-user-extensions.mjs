@@ -44,6 +44,29 @@ assert.match(
 	/cannot run together/i,
 );
 
+const rejectChromeViewProfile = await mkdtemp(
+	join(tmpdir(), "kestrel-native-chrome-view-reject-"),
+);
+const rejectedChromeView = spawnSync(
+	executable,
+	[
+		"--kestrel-chrome-extension-view",
+		"--kestrel-cache-path",
+		rejectChromeViewProfile,
+	],
+	{ encoding: "utf8", timeout: 10_000 },
+);
+await rm(rejectChromeViewProfile, { recursive: true, force: true });
+assert.equal(
+	rejectedChromeView.status,
+	1,
+	`${rejectedChromeView.stdout}${rejectedChromeView.stderr}`,
+);
+assert.match(
+	`${rejectedChromeView.stdout}${rejectedChromeView.stderr}`,
+	/requires --kestrel-user-extensions/i,
+);
+
 const profile = await mkdtemp(join(tmpdir(), "kestrel-native-user-extensions-"));
 const registeredFixture = join(profile, 'extension with "quotes" and spaces');
 await cp(fixture, registeredFixture, { recursive: true });
@@ -86,6 +109,7 @@ try {
 				"--kestrel-cache-path",
 				profile,
 				"--kestrel-user-extensions",
+				"--kestrel-chrome-extension-view",
 				"--kestrel-ephemeral-core",
 				"--kestrel-renderer",
 				"--kestrel-durable-profile",
@@ -145,6 +169,9 @@ try {
 		}
 		assert.match(output, /KESTREL_NATIVE_CHROMIUM_USER_EXTENSIONS_ENABLED/, output);
 		assert.match(output, /KESTREL_NATIVE_CHROMIUM_USER_EXTENSION_PATHS count=1/, output);
+		assert.match(output, /KESTREL_NATIVE_CHROMIUM_EXTENSION_WINDOW_STYLE chrome/, output);
+		assert.match(output, /KESTREL_NATIVE_CHROMIUM_EXTENSION_VIEW_STYLE chrome/, output);
+		assert.match(output, /KESTREL_NATIVE_CHROMIUM_EXTENSION_SAME_WINDOW_OK/, output);
 		assert.match(output, /KESTREL_NATIVE_CHROMIUM_RENDERER_BRIDGE_READY/, output);
 		assert.match(output, /KESTREL_NATIVE_CHROMIUM_USER_BROWSER_LOAD_OK/, output);
 
@@ -170,6 +197,14 @@ try {
 
 		assert.equal(await shellPage.evaluate(() => typeof window.kestrel), "object");
 		await shellPage.waitForFunction(() => (document.getElementById("root")?.childElementCount ?? 0) > 0);
+		// This disposable fixture exercises normal browser layout, not onboarding.
+		// No real profile, model credential, or provider sign-in is involved.
+		await shellPage.evaluate(() => {
+			localStorage.setItem("kestrel:onboarded", "yes");
+			localStorage.setItem("kestrel:default-browser-prompted", "yes");
+		});
+		await shellPage.reload();
+		await shellPage.locator(".ai-browser-app").waitFor();
 		for (let attempt = 0; attempt < 150 && !output.includes("KESTREL_NATIVE_CHROMIUM_CORE_SNAPSHOT_OK"); attempt++) {
 			assert.equal(child.exitCode, null, output);
 			await delay(100);
@@ -192,6 +227,11 @@ try {
 		if (launch === 0) extensionId = first.id;
 		else assert.equal(first.id, extensionId, "Extension identity must survive restart");
 		assert.equal(first.tab.url, first.tab.senderUrl, "chrome.tabs.get must return the actual user page");
+		assert.equal(
+			first.tabFound,
+			true,
+			"The Chrome-style user view must be visible to chrome.tabs.query in the Kestrel window",
+		);
 		tabsQuerySupported &&= first.tabFound;
 		assert.deepEqual(first.scripting, { bridge: "undefined", nativeQuery: "undefined" });
 		assert.equal(await userPage.evaluate(() => document.documentElement.dataset.kestrelExtensionScriptInjected), "true");
@@ -217,16 +257,19 @@ try {
 		const evidence = join(root, ".tmp/native-user-extension-evidence");
 		await mkdir(evidence, { recursive: true });
 		await shellPage.screenshot({ path: join(evidence, `privileged-shell-${launch}.png`) });
-		// First-run React setup intentionally hides the web plane. In this fixture
-		// exercise the same bounded host command used by the browser layout before
-		// capturing the real native user view; a zero-sized hidden page is not proof.
-		const bounds = await shellPage.evaluate(() => window.kestrel.request({
-			type: "browser-set-content-bounds",
-			bounds: { x: 16, y: 160, width: 800, height: 500 }, visible: true,
-		}));
-		assert.equal(bounds.ok, true);
-		await userPage.waitForFunction(() => innerWidth > 0 && innerHeight > 0);
+		// React's actual browser layout owns the visible native content bounds.
+		const viewport = await shellPage.locator("#browser-viewport").boundingBox();
+		assert(viewport && viewport.width > 0 && viewport.height > 0);
+		await userPage.waitForFunction(({ width, height }) =>
+			Math.abs(innerWidth - width) <= 2 && Math.abs(innerHeight - height) <= 2,
+			{ width: Math.round(viewport.width), height: Math.round(viewport.height) });
 		await userPage.screenshot({ path: join(evidence, `user-browser-extension-${launch}.png`) });
+		const osWindow = output.match(/KESTREL_NATIVE_CHROMIUM_EXTENSION_OS_WINDOW (\d+)/);
+		assert(osWindow, `Missing native Kestrel window number: ${output}`);
+		const capture = spawnSync("/usr/sbin/screencapture", [
+			"-x", "-l", osWindow[1], join(evidence, `kestrel-window-${launch}.png`),
+		], { encoding: "utf8", timeout: 10_000 });
+		assert.equal(capture.status, 0, `Native window capture failed: ${capture.stderr}`);
 
 		const session = await browser.newBrowserCDPSession();
 		await session.send("Browser.close");
@@ -245,7 +288,7 @@ try {
 		child = undefined;
 	}
 	console.log(
-		"Native user extension checks passed: real renderer/Core, MV3 messaging, tabs.get, scripting, actual DNR blocking, bridge isolation, extension identity/storage after a full app restart without reloading the extension, and clean shutdown.",
+		"Native user extension checks passed: same-window Chrome-style user view with Alloy Kestrel shell, real renderer/Core, MV3 messaging, tabs.get/tabs.query, scripting, actual DNR blocking, bridge isolation, extension identity/storage after a full app restart without reloading the extension, and clean shutdown.",
 	);
 	const checks = {
 		realKestrelRendererAndCore: true,
@@ -256,7 +299,10 @@ try {
 		scripting: true,
 		declarativeNetRequestActuallyBlocks: true,
 		privilegedShellIsolation: true,
+		sameKestrelWindow: true,
+		userViewFitsReactBrowserViewport: true,
 		tabsQuery: tabsQuerySupported,
+		allKestrelTabsHaveChromeOwnership: false,
 		kestrelExtensionManagerInstallAndLiveToggle: false,
 		toolbarActionPopups: false,
 		chromeWebStoreInstall: false,

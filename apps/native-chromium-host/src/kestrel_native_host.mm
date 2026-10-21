@@ -207,6 +207,7 @@ int exit_after_ready_ms = 0;
 bool ephemeral_core_enabled = false;
 bool full_renderer_enabled = false;
 bool user_extensions_enabled = false;
+bool chrome_extension_view_enabled = false;
 bool durable_profile_enabled = false;
 bool real_keychain_enabled = false;
 bool smoke_durable_library_seed = false;
@@ -577,6 +578,25 @@ class KestrelAlloyBrowserViewDelegate final : public CefBrowserViewDelegate {
   IMPLEMENT_REFCOUNTING(KestrelAlloyBrowserViewDelegate);
 };
 
+// CEF's Chrome runtime supplies Chrome tab ownership for extension APIs. Keep this
+// delegate limited to the one extension-capable user surface in the opt-in
+// same-window probe; the privileged React shell remains an Alloy sibling and
+// continues to own Kestrel's visible chrome.
+class KestrelChromeBrowserViewDelegate final : public CefBrowserViewDelegate {
+ public:
+  cef_runtime_style_t GetBrowserRuntimeStyle() override {
+    return CEF_RUNTIME_STYLE_CHROME;
+  }
+
+  ChromeToolbarType GetChromeToolbarType(
+      CefRefPtr<CefBrowserView> browser_view) override {
+    return CEF_CTT_NONE;
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(KestrelChromeBrowserViewDelegate);
+};
+
 class KestrelClient;
 KestrelClient* client_instance = nullptr;
 void schedule_close_after_ready();
@@ -861,6 +881,7 @@ class KestrelUserBrowserClient final : public CefClient,
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
 
   bool CanDownload(CefRefPtr<CefBrowser> browser,
@@ -1071,6 +1092,7 @@ struct NativeUserBrowserTab {
   bool closing = false;
   bool browser_closed = false;
   bool devtools_attached = false;
+  bool chrome_style = false;
   int browser_id = 0;
   int viewport_width = 1280;
   int viewport_height = 720;
@@ -1237,8 +1259,10 @@ class KestrelClient : public CefClient,
   KestrelClient(std::string allowed_shell_url,
                 NSString* isolated_profile_root,
                 bool enable_ephemeral_core,
-                bool enable_user_extensions)
+                bool enable_user_extensions,
+                bool enable_chrome_extension_view)
       : user_extensions_enabled_(enable_user_extensions),
+        chrome_extension_view_enabled_(enable_chrome_extension_view),
         bridge_handler_(
             std::make_unique<KestrelBridgeQueryHandler>(
                 std::move(allowed_shell_url),
@@ -1293,7 +1317,18 @@ class KestrelClient : public CefClient,
                   << credential_store_.mode_name() << std::endl;
       }
     }
-    CreateBlankUserBrowserTab(true);
+    NativeUserBrowserTab& initial_tab = CreateBlankUserBrowserTab(true);
+    if (chrome_extension_view_enabled_) {
+      // A Chrome BrowserView must be the first BrowserView attached to a
+      // Chrome Window. Create it before the privileged Alloy shell is added;
+      // the React tab rail can navigate this initial about:blank surface.
+      initial_tab.url = "about:blank";
+      std::string error;
+      if (!EnsureUserBrowserContext(&error)) {
+        std::cerr << "Kestrel could not initialize its Chrome extension view: "
+                  << error << std::endl;
+      }
+    }
     if (!bridge_router_ ||
         !bridge_router_->AddHandler(bridge_handler_.get(), true)) {
       std::cerr << "Kestrel could not initialize its native Chromium bridge."
@@ -1323,6 +1358,16 @@ class KestrelClient : public CefClient,
     // CEF disables platform accessibility by default. Expose the app's real
     // semantics to macOS assistive technologies, as the Electron host does.
     browser->GetHost()->SetAccessibilityState(STATE_ENABLED);
+  }
+
+  CefRefPtr<CefBrowserView> chrome_extension_view() const {
+    return chrome_extension_view_;
+  }
+
+  void RestoreChromeExtensionViewBounds() {
+    if (chrome_extension_view_enabled_ && !closing_) {
+      SyncUserBrowserViewVisibility();
+    }
   }
 
   bool DoClose(CefRefPtr<CefBrowser> browser) override {
@@ -1412,7 +1457,18 @@ class KestrelClient : public CefClient,
         !smoke_user_browser_started_) {
       smoke_user_browser_started_ = true;
       std::string error;
-      if (!CreateUserBrowserTab(*smoke_user_browser_url, true, &error)) {
+      bool started = false;
+      if (chrome_extension_view_enabled_) {
+        NativeUserBrowserTab* active =
+            FindUserBrowserTab(user_browser_active_tab_id_);
+        if (active && active->chrome_style) {
+          started = NavigateUserBrowserTab(
+              *active, *smoke_user_browser_url, &error);
+        }
+      } else {
+        started = CreateUserBrowserTab(*smoke_user_browser_url, true, &error);
+      }
+      if (!started) {
         std::cerr << "Kestrel native user-browser smoke setup failed: "
                   << error << std::endl;
       }
@@ -2722,10 +2778,6 @@ class KestrelClient : public CefClient,
     // attached by OnUserBrowserContextInitialized(), preserving lazy profile
     // startup without attempting an invalid BrowserView creation.
     if (!user_browser_context_ready_) return true;
-    if (!kestrel_window || kestrel_window->IsClosed()) {
-      if (error) *error = "The native Kestrel window is unavailable.";
-      return false;
-    }
     if (tab.view) {
       CefRefPtr<CefBrowser> browser = tab.view->GetBrowser();
       if (browser && browser->IsValid()) {
@@ -2733,6 +2785,13 @@ class KestrelClient : public CefClient,
       }
       SyncUserBrowserViewVisibility();
       return true;
+    }
+    const bool can_create_before_window =
+        chrome_extension_view_enabled_ && !chrome_extension_view_created_;
+    if ((!kestrel_window || kestrel_window->IsClosed()) &&
+        !can_create_before_window) {
+      if (error) *error = "The native Kestrel window is unavailable.";
+      return false;
     }
 
     const std::weak_ptr<bool> owner_token = native_owner_alive_;
@@ -2811,17 +2870,52 @@ class KestrelClient : public CefClient,
                                       total_bytes, status, callback);
         });
     CefBrowserSettings browser_settings;
+    const bool use_chrome_style =
+        chrome_extension_view_enabled_ && !chrome_extension_view_created_;
+    CefRefPtr<CefBrowserViewDelegate> browser_view_delegate;
+    if (use_chrome_style) {
+      browser_view_delegate = new KestrelChromeBrowserViewDelegate();
+    } else {
+      browser_view_delegate = new KestrelAlloyBrowserViewDelegate();
+    }
     tab.view = CefBrowserView::CreateBrowserView(
         tab.client, tab.url, browser_settings, nullptr, user_browser_context_,
-        new KestrelAlloyBrowserViewDelegate());
+        browser_view_delegate);
     if (!tab.view) {
       tab.client = nullptr;
       if (error) *error = "Kestrel could not create the native Chromium tab.";
       return false;
     }
+    const cef_runtime_style_t expected_style =
+        use_chrome_style ? CEF_RUNTIME_STYLE_CHROME : CEF_RUNTIME_STYLE_ALLOY;
+    if (tab.view->GetRuntimeStyle() != expected_style) {
+      tab.view = nullptr;
+      tab.client = nullptr;
+      if (error) {
+        *error = "Kestrel created the native Chromium tab with an unexpected "
+                 "runtime style.";
+      }
+      return false;
+    }
+    if (use_chrome_style) {
+      chrome_extension_view_created_ = true;
+      tab.chrome_style = true;
+      chrome_extension_view_ = tab.view;
+      std::cout << "KESTREL_NATIVE_CHROMIUM_EXTENSION_VIEW_STYLE chrome"
+                << std::endl;
+    } else if (chrome_extension_view_enabled_) {
+      // A Chrome-style CEF window permits at most one Chrome-style BrowserView.
+      // Never attempt a second one; additional Kestrel tabs remain Alloy and
+      // are explicitly outside complete extension-tab parity.
+      std::cout << "KESTREL_NATIVE_CHROMIUM_EXTENSION_VIEW_STYLE alloy "
+                   "reason=single-chrome-view-limit"
+                << std::endl;
+    }
     tab.view->SetBounds(user_browser_bounds_);
     tab.view->SetVisible(false);
-    kestrel_window->AddChildView(tab.view);
+    if (kestrel_window && !kestrel_window->IsClosed()) {
+      kestrel_window->AddChildView(tab.view);
+    }
     SyncUserBrowserViewVisibility();
     return true;
   }
@@ -5334,6 +5428,8 @@ class KestrelClient : public CefClient,
   bool smoke_user_browser_started_ = false;
   uint64_t next_core_request_id_ = 0;
   bool user_extensions_enabled_ = false;
+  bool chrome_extension_view_enabled_ = false;
+  bool chrome_extension_view_created_ = false;
   std::string isolated_profile_root_;
   std::string user_browser_cache_path_;
   DurableBrowserLibrary browser_library_;
@@ -5357,6 +5453,7 @@ class KestrelClient : public CefClient,
   bool smoke_download_started_ = false;
   CefRefPtr<KestrelUserBrowserContextHandler> user_browser_context_handler_;
   CefRefPtr<CefRequestContext> user_browser_context_;
+  CefRefPtr<CefBrowserView> chrome_extension_view_;
   __strong KestrelNativeCoreRelay* core_relay_ = nil;
   std::map<std::string, PendingCoreRequest> core_requests_;
   std::vector<QueuedCoreRequest> queued_core_requests_;
@@ -5555,28 +5652,82 @@ void schedule_close_after_ready() {
 
 class KestrelWindowDelegate : public CefWindowDelegate {
  public:
-  explicit KestrelWindowDelegate(CefRefPtr<CefBrowserView> browser_view)
-      : browser_view_(browser_view) {}
+  KestrelWindowDelegate(CefRefPtr<CefBrowserView> browser_view,
+                        CefRefPtr<CefBrowserView> chrome_extension_view,
+                        bool chrome_extension_window)
+      : browser_view_(browser_view),
+        chrome_extension_view_(chrome_extension_view),
+        chrome_extension_window_(chrome_extension_window) {}
 
-  // Kestrel supplies its own window chrome and all of its child BrowserViews
-  // are Alloy. Leaving the top-level window at CEF's default Chrome style
-  // initializes Chrome profile services (including GCM) even though there is
-  // no Kestrel feature that can use them. Keep the entire native surface in
-  // the content-runtime style so a fresh no-credential launch cannot start
-  // background registration or prompt through Chrome's account stack.
+  // The default Kestrel window stays Alloy to avoid unnecessary Chrome profile
+  // services. The bounded extension probe opts into Chrome window ownership
+  // while its privileged React shell remains a separate Alloy BrowserView.
   cef_runtime_style_t GetWindowRuntimeStyle() override {
-    return CEF_RUNTIME_STYLE_ALLOY;
+    return chrome_extension_window_ ? CEF_RUNTIME_STYLE_CHROME
+                                    : CEF_RUNTIME_STYLE_ALLOY;
   }
 
   void OnWindowCreated(CefRefPtr<CefWindow> window) override {
     kestrel_window = window;
+    const cef_runtime_style_t expected_style =
+        chrome_extension_window_ ? CEF_RUNTIME_STYLE_CHROME
+                                 : CEF_RUNTIME_STYLE_ALLOY;
+    if (window->GetRuntimeStyle() != expected_style) {
+      std::cerr << "KESTREL_NATIVE_CHROMIUM_EXTENSION_WINDOW_STYLE_FAILED"
+                << std::endl;
+      window->Close();
+      return;
+    }
+    if (chrome_extension_view_) {
+      window->AddChildView(chrome_extension_view_);
+    }
     window->AddChildView(browser_view_);
+    if (chrome_extension_view_) {
+      // Chrome ownership requires attachment first; painting requires the user
+      // surface above the full-window shell, within React's content bounds.
+      window->ReorderChildView(chrome_extension_view_, -1);
+    }
     window->SetTitle("Kestrel");
+    if (chrome_extension_window_) {
+      if (browser_view_->GetRuntimeStyle() != CEF_RUNTIME_STYLE_ALLOY ||
+          !chrome_extension_view_ ||
+          !chrome_extension_view_->GetWindow() ||
+          !browser_view_->GetWindow() ||
+          !chrome_extension_view_->GetWindow()->IsSame(
+              browser_view_->GetWindow())) {
+        std::cerr << "KESTREL_NATIVE_CHROMIUM_EXTENSION_SAME_WINDOW_FAILED"
+                  << std::endl;
+        window->Close();
+        return;
+      }
+      std::cout << "KESTREL_NATIVE_CHROMIUM_EXTENSION_WINDOW_STYLE chrome"
+                << std::endl;
+      std::cout << "KESTREL_NATIVE_CHROMIUM_EXTENSION_SAME_WINDOW_OK"
+                << std::endl;
+    }
     window->Show();
+    if (chrome_extension_window_) {
+      for (NSWindow* native_window in NSApp.windows) {
+        if (native_window.visible && [native_window.title isEqualToString:@"Kestrel"]) {
+          std::cout << "KESTREL_NATIVE_CHROMIUM_EXTENSION_OS_WINDOW "
+                    << native_window.windowNumber << std::endl;
+          break;
+        }
+      }
+    }
   }
 
   void OnWindowDestroyed(CefRefPtr<CefWindow> window) override {
     kestrel_window = nullptr;
+  }
+
+  void OnLayoutChanged(CefRefPtr<CefView> view,
+                       const CefRect& new_bounds) override {
+    // CefWindow's FillLayout expands every direct child. Restore React's
+    // bounded user surface after each layout so it cannot cover Kestrel chrome.
+    if (chrome_extension_window_ && client_instance) {
+      client_instance->RestoreChromeExtensionViewBounds();
+    }
   }
 
   bool CanClose(CefRefPtr<CefWindow> window) override {
@@ -5590,6 +5741,8 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 
  private:
   CefRefPtr<CefBrowserView> browser_view_;
+  CefRefPtr<CefBrowserView> chrome_extension_view_;
+  const bool chrome_extension_window_;
 
   IMPLEMENT_REFCOUNTING(KestrelWindowDelegate);
 };
@@ -5674,6 +5827,8 @@ int main(int argc, char* argv[]) {
         has_argument(argc, argv, "--kestrel-extension-workbench");
     user_extensions_enabled =
         has_argument(argc, argv, "--kestrel-user-extensions");
+    chrome_extension_view_enabled =
+        has_argument(argc, argv, "--kestrel-chrome-extension-view");
     durable_profile_enabled =
         has_argument(argc, argv, "--kestrel-durable-profile");
     real_keychain_enabled =
@@ -5710,6 +5865,12 @@ int main(int argc, char* argv[]) {
     if (extension_workbench && user_extensions_enabled) {
       std::cerr << "Extension workbench and user-browser extensions cannot run "
                    "together."
+                << std::endl;
+      return 1;
+    }
+    if (chrome_extension_view_enabled && !user_extensions_enabled) {
+      std::cerr << "The same-window Chrome extension view requires "
+                   "--kestrel-user-extensions."
                 << std::endl;
       return 1;
     }
@@ -5907,7 +6068,8 @@ int main(int argc, char* argv[]) {
           shell_url,
           isolated_profile,
           ephemeral_core_enabled,
-          user_extensions_enabled));
+          user_extensions_enabled,
+          chrome_extension_view_enabled));
       main_client_owner = client;
       const auto open_shell =
           [client, browser_settings](
@@ -5934,7 +6096,9 @@ int main(int argc, char* argv[]) {
               return;
             }
             CefWindow::CreateTopLevelWindow(
-                new KestrelWindowDelegate(browser_view));
+                new KestrelWindowDelegate(browser_view,
+                                          client->chrome_extension_view(),
+                                          chrome_extension_view_enabled));
           };
       if (!user_extensions_enabled) {
         open_shell(nullptr);

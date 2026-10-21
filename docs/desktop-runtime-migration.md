@@ -221,9 +221,31 @@ those complete workflows.
 The expanded extension probe exposed an important product-lane limitation:
 `chrome.tabs.get` returns the actual Alloy user tab, but `chrome.tabs.query`
 does not enumerate it. The same query succeeds in the Chrome-style workbench.
-The current product lane therefore cannot claim full Chrome extension support.
-Do not patch extension JavaScript to fake that API. Resolve the browser runtime
-integration and retain real extension behavior while preserving Kestrel's UI.
+The native host now has a bounded `--kestrel-chrome-extension-view` probe that
+keeps the real React Kestrel shell as an Alloy sibling, changes the same
+top-level Kestrel window to Chrome style, and gives one user BrowserView Chrome
+style with Chromium's toolbar hidden. The user-extension smoke requires
+`chrome.tabs.query` to find that real user page while preserving the shell's
+separate request context and bridge isolation. The Chrome view must attach
+before the Alloy shell, then move above the shell in native painting order;
+attaching Alloy first makes CEF reject the later Chrome view. The host checks
+that both views report the same actual `CefWindow`, and the smoke captures that
+native window with the normal React browser layout. Its disposable profile
+skips first-run UI only; it does not establish onboarding or account readiness.
+After CEF's default FillLayout runs, the host restores React's reported content
+bounds so the Chrome surface cannot cover the tab rail or agent sidebar. The
+smoke checks the actual page viewport against those DOM bounds before capture.
+The flag is rejected unless
+`--kestrel-user-extensions` is also present. It is not enabled by the normal
+product launcher and does not touch the installed app or an existing profile.
+
+The product lane still cannot claim full Chrome extension support. Do not patch
+extension JavaScript to fake missing APIs. CEF allows only one Chrome-style
+BrowserView in a Chrome-style window, so any additional Kestrel BrowserViews
+stay Alloy and are logged as outside extension-tab parity. A product cutover
+needs a deliberate mapping between Kestrel's React tab rail and Chromium's
+single Chrome-style browser surface, plus extension action/popup integration,
+before this probe can become the default.
 CEF's [runtime-style contract](https://github.com/chromiumembedded/cef/blob/708dc14/include/internal/cef_types_runtime.h)
 allows only one Chrome-style BrowserView per Chrome-style window, so switching
 each existing sibling Alloy view to Chrome style is not a valid repair.
@@ -233,7 +255,10 @@ each existing sibling Alloy view to Chrome style is not a valid repair.
 executable's SHA-256. `corepack pnpm test:native-extension-parity` runs the same
 checks and exits nonzero until every required extension acceptance item has
 evidence. Kestrel's install/live-toggle flow, toolbar actions, Chrome Web Store
-installation and updates remain unverified. Loading an unpacked fixture or
+installation and updates remain unverified. The evidence also keeps
+`allKestrelTabsHaveChromeOwnership` false: opening additional tabs or closing
+the initial Chrome tab has no complete Chrome tab-model mapping yet.
+Loading an unpacked fixture or
 viewing its popup document is not proof of those flows.
 
 The retirement gate requires an explicit app candidate and runs strict extension
