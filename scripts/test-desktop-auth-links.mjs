@@ -102,10 +102,22 @@ try {
     if (!wc) throw new Error('Fixture page missing');
     return wc.executeJavaScript(script, true);
   }, {url:`${origin}/one`,script});
-  const nativeClick = async (url) => {
+  const nativeClick = async (url, target) => {
     const fixturePage = app.context().pages().find(candidate => candidate.url() === url);
     if (!fixturePage) throw new Error('Fixture Playwright page missing');
-    await fixturePage.locator('#handoff').click({ noWaitAfter: true });
+    const locator = target || fixturePage.locator('#handoff');
+    await locator.scrollIntoViewIfNeeded();
+    const bounds = await locator.boundingBox();
+    assert(bounds, 'Fixture button has no native bounds');
+    await app.evaluate(({webContents, BrowserWindow}, {url, x, y}) => {
+      const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
+      if (!wc) throw new Error('Fixture content missing for native input');
+      BrowserWindow.getAllWindows()[0]?.focus();
+      wc.focus();
+      wc.sendInputEvent({type:'mouseMove', x, y});
+      wc.sendInputEvent({type:'mouseDown', button:'left', clickCount:1, x, y});
+      wc.sendInputEvent({type:'mouseUp', button:'left', clickCount:1, x, y});
+    }, {url, x:Math.round(bounds.x + bounds.width/2), y:Math.round(bounds.y + bounds.height/2)});
   };
   for (const endpoint of ['/callback','/redirect307','/redirect308']) {
     await navigate(); requests.length = 0;
@@ -133,7 +145,7 @@ try {
     globalThis.authFixtureExternalLinks = [];
     globalThis.authFixtureConsent = [];
     app.getApplicationNameForProtocol = protocol => [
-      'cursor://', 'itms-apps://', 'itms-appss://', 'macappstore://',
+      'codex://', 'cursor://', 'itms-apps://', 'itms-appss://', 'macappstore://',
       'msteams://', 'zoommtg://', 'zoomus://',
     ].includes(protocol) ? 'Synthetic installed handler' : '';
     shell.openExternal = async url => {globalThis.authFixtureExternalLinks.push(url);};
@@ -155,6 +167,8 @@ try {
     prompts: globalThis.authFixtureConsent.length,
   }));
   for (const url of [
+    'codex://launch',
+    'codex://dots',
     'zoommtg://zoom.us/join?confno=1234567890&action=join',
     'zoomus://zoom.us/join?confno=1234567890&action=join',
     'msteams://teams.microsoft.com/l/meetup-join/19%3afixture/0',
@@ -198,7 +212,7 @@ try {
       return frame.executeJavaScript(`window.fixtureAppUrl = ${JSON.stringify(appUrl)}; window.fixtureMode = 'top';`);
     }, {mainUrl: `${origin}/one`, frameUrl: `${origin}/frame`, appUrl: url});
     const iframeBefore = await counts();
-    await fixturePage.frameLocator('iframe').locator('#handoff').click({ noWaitAfter: true });
+    await nativeClick(`${origin}/one`, fixturePage.frameLocator('iframe').locator('#handoff'));
     await until(async () => (await counts()).links === iframeBefore.links + 1,
       `Same-origin iframe app handoff failed for ${url}`);
     assert.equal((await counts()).prompts, iframeBefore.prompts + 1);
