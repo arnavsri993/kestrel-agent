@@ -17,7 +17,10 @@ const native = vi.hoisted(() => ({
 vi.mock("node:child_process", () => ({ spawnSync: native.spawnSync }));
 vi.mock("node:process", () => ({ default: native.process }));
 vi.mock("node:module", () => ({
-	createRequire: () => () => ({ verifyAgentCoreSidecar: () => undefined }),
+	createRequire: () => () => ({
+		verifyAgentCoreSidecar: () => undefined,
+		verifyNativeBrowserSidecar: () => undefined,
+	}),
 }));
 vi.mock("./macos-architecture-audit.cjs", () => ({
 	auditPackagedMacApp: () => undefined,
