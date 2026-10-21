@@ -103,31 +103,13 @@ try {
     return wc.executeJavaScript(script, true);
   }, {url:`${origin}/one`,script});
   const nativeClick = async (url, target) => {
-    // Cross-site navigations can commit before Playwright adopts their target.
-    // Read fixture geometry from the actual committed WebContents and still
-    // dispatch native input; never synthesize the trusted gesture in page JS.
-    let bounds;
-    if (target) {
-      await target.scrollIntoViewIfNeeded();
-      bounds = await target.boundingBox();
-    } else {
-      await until(async () => {
-        bounds = await app.evaluate(async ({webContents}, url) => {
-          const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
-          if (!wc) return null;
-          try {
-            return await wc.executeJavaScript(`(() => {
-              const button = document.querySelector('#handoff');
-              if (!button) return null;
-              button.scrollIntoView({block:'center'});
-              const {x,y,width,height} = button.getBoundingClientRect();
-              return {x,y,width,height};
-            })()`);
-          } catch { return null; }
-        }, url);
-        return bounds && bounds.width > 0 && bounds.height > 0;
-      }, 'Committed fixture button did not become ready for native input');
-    }
+    await until(() => app.context().pages().some(candidate => candidate.url() === url),
+      'Playwright did not observe the committed fixture page');
+    const fixturePage = app.context().pages().find(candidate => candidate.url() === url);
+    if (!fixturePage) throw new Error('Fixture Playwright page missing');
+    const locator = target || fixturePage.locator('#handoff');
+    await locator.scrollIntoViewIfNeeded();
+    const bounds = await locator.boundingBox();
     assert(bounds, 'Fixture button has no native bounds');
     await app.evaluate(({webContents, BrowserWindow}, {url, x, y}) => {
       const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
@@ -264,12 +246,15 @@ try {
   const teamsLauncher = 'https://teams.microsoft.com/l/meetup-join/fixture/0';
   const teamsApp = 'msteams:/l/meetup-join/fixture/0';
   const officialLanding = 'https://chatgpt.com/codex/open-app?source=login&app_brand=chatgpt';
-  await app.evaluate(({ webContents, net }, { fixtureUrl, launcher, appUrl, officialLanding }) => {
+  await app.evaluate(({ webContents }, { fixtureUrl, launcher, appUrl, officialLanding, certPem }) => {
     const wc = webContents.getAllWebContents().find(w => w.getURL() === fixtureUrl);
     if (!wc) throw new Error('Fixture page missing for Teams launcher');
+    // Session.fetch has no page certificate-error event. Pin only this
+    // disposable local fixture certificate, preserving default verification elsewhere.
+    wc.session.setCertificateVerifyProc((request, callback) => callback(
+      request.hostname === 'localhost' && request.certificate.data.trim() === certPem.trim() ? 0 : -3));
     wc.session.protocol.handle('https', request => {
-      const requestedUrl = new URL(request.url);
-      if (requestedUrl.origin === 'https://chatgpt.com' && requestedUrl.pathname === '/codex/open-app')
+      if (request.url === officialLanding)
         return new Response(`<title>Signed in</title><h1>Signed in</h1><button id="handoff" onclick="location.href='codex://threads/new'">Open ChatGPT</button>`,
           { headers: { 'content-type': 'text/html' } });
       if (request.url === launcher)
@@ -278,9 +263,9 @@ try {
       if (request.url === 'https://teams.microsoft.com/kestrel-synthetic-frame')
         return new Response(`<script>location.href = ${JSON.stringify(appUrl)};</script>`,
           { headers: { 'content-type': 'text/html' } });
-      return net.fetch(request, { bypassCustomProtocolHandlers: true });
+      return wc.session.fetch(request, { bypassCustomProtocolHandlers: true });
     });
-  }, { fixtureUrl: `${origin}/one`, launcher: teamsLauncher, appUrl: teamsApp, officialLanding });
+  }, { fixtureUrl: `${origin}/one`, launcher: teamsLauncher, appUrl: teamsApp, officialLanding, certPem: cert.toString() });
   await run(`window.fixtureAppUrl = ${JSON.stringify(teamsLauncher)}; window.fixtureMode = 'top';`);
   const beforeLauncher = await counts();
   await nativeClick(`${origin}/one`);
