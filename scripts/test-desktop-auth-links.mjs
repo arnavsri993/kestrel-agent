@@ -111,17 +111,22 @@ try {
       await target.scrollIntoViewIfNeeded();
       bounds = await target.boundingBox();
     } else {
-      bounds = await app.evaluate(async ({webContents}, url) => {
-        const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
-        if (!wc) throw new Error('Committed fixture content missing');
-        return wc.executeJavaScript(`(() => {
-          const button = document.querySelector('#handoff');
-          if (!button) return null;
-          button.scrollIntoView({block:'center'});
-          const {x,y,width,height} = button.getBoundingClientRect();
-          return {x,y,width,height};
-        })()`);
-      }, url);
+      await until(async () => {
+        bounds = await app.evaluate(async ({webContents}, url) => {
+          const wc = webContents.getAllWebContents().find(w => w.getURL() === url);
+          if (!wc) return null;
+          try {
+            return await wc.executeJavaScript(`(() => {
+              const button = document.querySelector('#handoff');
+              if (!button) return null;
+              button.scrollIntoView({block:'center'});
+              const {x,y,width,height} = button.getBoundingClientRect();
+              return {x,y,width,height};
+            })()`);
+          } catch { return null; }
+        }, url);
+        return bounds && bounds.width > 0 && bounds.height > 0;
+      }, 'Committed fixture button did not become ready for native input');
     }
     assert(bounds, 'Fixture button has no native bounds');
     await app.evaluate(({webContents, BrowserWindow}, {url, x, y}) => {
@@ -263,7 +268,8 @@ try {
     const wc = webContents.getAllWebContents().find(w => w.getURL() === fixtureUrl);
     if (!wc) throw new Error('Fixture page missing for Teams launcher');
     wc.session.protocol.handle('https', request => {
-      if (request.url === officialLanding)
+      const requestedUrl = new URL(request.url);
+      if (requestedUrl.origin === 'https://chatgpt.com' && requestedUrl.pathname === '/codex/open-app')
         return new Response(`<title>Signed in</title><h1>Signed in</h1><button id="handoff" onclick="location.href='codex://threads/new'">Open ChatGPT</button>`,
           { headers: { 'content-type': 'text/html' } });
       if (request.url === launcher)
