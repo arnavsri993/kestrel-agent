@@ -26,6 +26,7 @@ export const supportedBundleIdentifiers = new Set([
 	"com.kestrel.desktop",
 	"com.kestrel.desktop.dev",
 	"com.kestrel.desktop.dev.launcher",
+	"com.kestrel.native-chromium-host.dev",
 ]);
 
 export function uniquePaths(paths) {

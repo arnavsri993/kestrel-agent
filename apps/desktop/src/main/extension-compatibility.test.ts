@@ -19,6 +19,7 @@ afterEach(() => {
 function inspectPackage(
 	manifest: Record<string, unknown>,
 	files: Record<string, string> = {},
+	options?: { runtimeBackend: "electron" | "chromium" },
 ) {
 	const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-analysis-"));
 	directories.push(directory);
@@ -28,7 +29,7 @@ function inspectPackage(
 		mkdirSync(join(target, ".."), { recursive: true });
 		writeFileSync(target, source);
 	}
-	return analyzeExtensionCompatibility(directory);
+	return analyzeExtensionCompatibility(directory, options);
 }
 
 describe("extension compatibility analysis", () => {
@@ -95,6 +96,20 @@ describe("extension compatibility analysis", () => {
 				status: "unsupported",
 			}),
 		);
+	});
+
+	it("allows native sync-namespace caching without claiming account synchronization", () => {
+		const report = inspectPackage(
+			{ name: "Native sync cache", version: "1", manifest_version: 3, permissions: ["storage"] },
+			{ "worker.js": "chrome.storage.sync.set({ setting: true });" },
+			{ runtimeBackend: "chromium" },
+		);
+		expect(report.state).toBe("partial");
+		expect(report.findings).toContainEqual(expect.objectContaining({
+			capability: "chrome.storage.sync", status: "partial",
+			reason: expect.stringContaining("local cache"),
+		}));
+		expect(report.findings.some((finding) => finding.status === "unsupported")).toBe(false);
 	});
 
 	it("marks documented limitations as partial rather than full compatibility", () => {
@@ -241,5 +256,51 @@ describe("extension compatibility analysis", () => {
 		});
 		expect(unchecked.runtime.status).toBe("not_run");
 		expect(unchecked.state).toBe("expected_compatible");
+	});
+
+	it("records chromium_documented evidence without rewriting Electron defaults", () => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-chromium-"));
+		directories.push(directory);
+		writeFileSync(
+			join(directory, "manifest.json"),
+			JSON.stringify({
+				name: "Chromium fixture",
+				version: "1.0.0",
+				manifest_version: 3,
+				background: { service_worker: "worker.js" },
+				content_scripts: [{ matches: ["http://127.0.0.1/*"], js: ["content.js"] }],
+				permissions: ["storage"],
+			}),
+		);
+		writeFileSync(
+			join(directory, "worker.js"),
+			"chrome.runtime.onMessage.addListener(() => {}); chrome.storage.local.get({});",
+		);
+		writeFileSync(join(directory, "content.js"), "chrome.runtime.sendMessage('x');");
+
+		const electronReport = analyzeExtensionCompatibility(directory);
+		const chromiumReport = analyzeExtensionCompatibility(directory, {
+			runtimeBackend: "chromium",
+		});
+
+		expect(
+			electronReport.findings.some(
+				(finding) => finding.evidence === "chromium_documented",
+			),
+		).toBe(false);
+		expect(
+			chromiumReport.findings.some(
+				(finding) =>
+					finding.capability === "chrome.storage.local" &&
+					finding.evidence === "chromium_documented",
+			),
+		).toBe(true);
+		expect(
+			chromiumReport.findings.some(
+				(finding) =>
+					finding.capability === "manifest.content_scripts" &&
+					finding.evidence === "chromium_documented",
+			),
+		).toBe(true);
 	});
 });

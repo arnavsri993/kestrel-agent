@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { prepareNativeChromiumRuntime } from "./prepare-native-chromium-runtime.mjs";
 import { buildNativeChromiumWrapper } from "./build-native-chromium-wrapper.mjs";
 import { buildNativeChromiumRenderer } from "./build-native-chromium-renderer.mjs";
+import { buildNativeExtensionService } from "./build-native-extension-service.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = join(root, ".tmp");
@@ -91,6 +92,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 	const runtime = await prepareNativeChromiumRuntime();
 	const wrapper = await buildNativeChromiumWrapper({ runtime });
 	const renderer = await buildNativeChromiumRenderer();
+	const extensions = await buildNativeExtensionService();
 	// This is the same Electron-free Node Core runtime packaged in the current
 	// desktop app. The native host never executes Electron's utility process.
 	run(process.execPath, [join(root, "scripts", "prepare-agent-core-sidecar.mjs")]);
@@ -122,6 +124,12 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			join(nativeHostRoot, "resources", "native-core-relay.mjs"),
 			join(paths.resources, "native-core-relay.mjs"),
 		);
+		await copyFile(
+			join(nativeHostRoot, "resources", "native-core-profile.mjs"),
+			join(paths.resources, "native-core-profile.mjs"),
+		);
+		await copyFile(join(extensions, "native-extension-service.mjs"),
+			join(paths.resources, "native-extension-service.mjs"));
 		run("/usr/bin/ditto", [
 			"--rsrc",
 			"--extattr",
@@ -173,7 +181,11 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-framework",
 			"Cocoa",
 			"-framework",
+			"ImageIO",
+			"-framework",
 			"IOSurface",
+			"-framework",
+			"Security",
 			"-Wl,-search_paths_first",
 			"-Wl,-ObjC",
 			"-Wl,-pie",
@@ -185,6 +197,11 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-F",
 			paths.frameworks,
 			join(nativeHostRoot, "src", "kestrel_native_host.mm"),
+			join(nativeHostRoot, "src", "kestrel_chrome_window_mac.mm"),
+			join(nativeHostRoot, "src", "kestrel_private_chrome_pipe.mm"),
+			join(nativeHostRoot, "src", "kestrel_live_extension_control.mm"),
+			join(nativeHostRoot, "src", "kestrel_native_credentials.mm"),
+			join(nativeHostRoot, "src", "kestrel_durable_browser_library.cc"),
 			join(nativeHostRoot, "src", "kestrel_chromium_app.cc"),
 			"-o",
 			paths.executable,
