@@ -10,6 +10,8 @@ import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 const extensionWorkbench = process.argv.includes("--extensions");
 const durableProfile = process.argv.includes("--durable");
 const userExtensions = process.argv.includes("--user-extensions");
+if (extensionWorkbench && userExtensions)
+	throw new Error("Choose the Kestrel user-browser extension lane or the isolated workbench.");
 if (extensionWorkbench) {
 	console.log("Opening the native Chromium extension workbench. Its temporary profile is deleted on exit; Kestrel data and accounts are not connected.");
 }
@@ -46,7 +48,7 @@ try {
 				: [
 						"--kestrel-ephemeral-core",
 						"--kestrel-renderer",
-						...(userExtensions ? ["--kestrel-user-extensions"] : []),
+						...(userExtensions ? ["--kestrel-user-extensions", "--kestrel-chrome-tab-model", "--kestrel-live-extensions"] : []),
 						...(durableProfile ? ["--kestrel-durable-profile"] : []),
 					]),
 		],

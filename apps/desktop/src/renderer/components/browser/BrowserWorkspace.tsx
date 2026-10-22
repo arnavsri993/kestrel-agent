@@ -376,7 +376,6 @@ export function BrowserWorkspace({
 	}, [activeChromeWebStoreExtensionId]);
   const inspectChromeWebStoreExtension = useCallback(
     async (urlOrId: string) => {
-			setInstalledChromeWebStoreExtension(null);
       const response = await window.kestrel.request({
         type: "browser-inspect-extension-url",
         urlOrId,
@@ -1297,6 +1296,7 @@ export function BrowserWorkspace({
           <ExtensionCompatibilityDialog
             key={`extension-compatibility-${extensionInspection.inspectionId}`}
             inspection={extensionInspection}
+            installedVersion={installedChromeWebStoreExtension?.id === extensionInspection.id ? installedChromeWebStoreExtension.version : undefined}
             onCancel={closeExtensionCompatibilityDialog}
             onInstall={installReviewedChromeWebStoreExtension}
           />

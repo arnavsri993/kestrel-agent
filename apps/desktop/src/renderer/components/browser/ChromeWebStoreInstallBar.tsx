@@ -48,21 +48,18 @@ export function ChromeWebStoreInstallBar({
 		}
 	}
 
-	const icon = installed ? "check" : phase === "error" ? "warning" : "extensions";
+	const icon = phase === "error" ? "warning" : installed ? "check" : "extensions";
 	const title =
-		installed
-			? "Added to Kestrel"
-			: phase === "reviewing"
+		phase === "reviewing"
 			? "Reviewing signed package…"
 			: phase === "error"
 				? "Extension was not reviewed"
-				: "Install this extension in Kestrel";
+				: installed ? "Added to Kestrel" : "Install this extension in Kestrel";
 	const detail =
-		installed
+		message || (installed
 			? installedExtension?.compatibility?.summary ??
 				"Installed from the reviewed Chrome Web Store package."
-			: message ||
-				"Google's Add to Chrome button only works in Chrome. Kestrel verifies the package, shows its declared access, then asks before installing.";
+			: "Google's Add to Chrome button only works in Chrome. Kestrel verifies the package, shows its declared access, then asks before installing.");
 
 	return (
 		<section
@@ -80,8 +77,7 @@ export function ChromeWebStoreInstallBar({
 				<strong>{title}</strong>
 				<small>{detail}</small>
 			</span>
-			{!installed && (
-				<div className="chrome-web-store-install-actions">
+			<div className="chrome-web-store-install-actions">
 					<button
 						type="button"
 						className="primary"
@@ -92,10 +88,9 @@ export function ChromeWebStoreInstallBar({
 							? "Reviewing…"
 							: phase === "error"
 								? "Try again"
-								: "Review & add"}
+								: installed ? "Check updates" : "Review & add"}
 					</button>
-				</div>
-			)}
+			</div>
 		</section>
 	);
 }

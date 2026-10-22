@@ -39,6 +39,11 @@ export type ExtensionCompatibilityRuntimeBackend = "electron" | "chromium";
 export const CHROMIUM_EXTENSION_CAPABILITY_REGISTRY: readonly CapabilityDefinition[] =
 	[
 		{
+			capability: "chrome.storage",
+			status: "partial",
+			reason: "Native Chromium verifies local extension storage. The sync namespace retains a local cache, but Kestrel does not provide account or cross-device synchronization.",
+		},
+		{
 			capability: "chrome.storage.local",
 			status: "full",
 			reason:
@@ -46,8 +51,8 @@ export const CHROMIUM_EXTENSION_CAPABILITY_REGISTRY: readonly CapabilityDefiniti
 		},
 		{
 			capability: "chrome.storage.sync",
-			status: "unsupported",
-			reason: "Kestrel does not enable chrome.storage.sync in the native host.",
+			status: "partial",
+			reason: "Native Chromium smokes verify sync-namespace reads and writes across restart as a local cache. Account and cross-device synchronization are unavailable.",
 		},
 		{
 			capability: "chrome.storage.managed",
@@ -610,11 +615,11 @@ function summaryForState(state: ExtensionCompatibilityState): string {
 		case "expected_compatible":
 			return "No unsupported requirements were detected. Kestrel will verify persistence on the next browser start.";
 		case "partial":
-			return "This extension uses capability areas that Electron supports only in part.";
+			return "This extension has requirements with partial support in this Kestrel runtime.";
 		case "unsupported":
-			return "This extension requires a capability Electron documents as unsupported.";
+			return "This extension requires a capability unavailable in this Kestrel runtime.";
 		case "unknown":
-			return "This extension uses capability areas Kestrel has not verified in Electron.";
+			return "This extension has requirements Kestrel has not yet verified in this runtime.";
 	}
 }
 

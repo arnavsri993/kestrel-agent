@@ -56,6 +56,48 @@ let stopping = false;
 let outputClosed = false;
 let nextRequest = 0;
 const pending = new Map();
+const extensionRequests = new Map();
+let nextExtensionRequest = 0;
+const liveExtensions = process.env.KESTREL_NATIVE_LIVE_EXTENSIONS === "1";
+const extensionRequestTypes = new Set([
+	"browser-list-extensions", "browser-inspect-extension-url",
+	"browser-install-extension-url", "browser-toggle-extension",
+	"browser-reload-extension", "browser-uninstall-extension",
+]);
+let extensionService;
+let extensionServicePromise;
+
+function requestExtensionRuntime(operation, fields) {
+	if (stopping || extensionRequests.size >= 32)
+		return Promise.reject(new Error("Native extension runtime is unavailable."));
+	return new Promise((resolveRequest, rejectRequest) => {
+		const requestId = "native-extension-" + ++nextExtensionRequest;
+		const timeout = setTimeout(() => {
+			extensionRequests.delete(requestId);
+			rejectRequest(new Error("Native extension runtime timed out."));
+		}, 30_000);
+		extensionRequests.set(requestId, { resolveRequest, rejectRequest, timeout });
+		write({ type: "extension-runtime-request", requestId, request: { operation, ...fields } });
+	});
+}
+
+function getExtensionService() {
+	extensionServicePromise ??= (async () => {
+		const { createNativeExtensionService, createNativeExtensionHostPort } =
+			await import("./native-extension-service.mjs");
+		extensionService = createNativeExtensionService({
+			profileRoot: resolve(profileRoot),
+			chromiumVersion: process.env.KESTREL_NATIVE_CHROMIUM_VERSION,
+			host: createNativeExtensionHostPort({
+				profileRoot: resolve(profileRoot), request: requestExtensionRuntime,
+			}),
+		});
+		const restored = await extensionService.initialize();
+		write({ type: "extension-runtime-status", ok: restored.ok });
+		return extensionService;
+	})();
+	return extensionServicePromise;
+}
 /** @type {Map<string, "core" | "smoke">} */
 const pendingBrowserBackend = new Map();
 /** @type {string | undefined} */
@@ -77,6 +119,11 @@ process.stdout.on("error", (error) => {
 });
 
 function failPending(error) {
+	for (const request of extensionRequests.values()) {
+		clearTimeout(request.timeout);
+		request.rejectRequest(new Error(error));
+	}
+	extensionRequests.clear();
 	for (const id of pending.values()) {
 		write({ type: "response", id, response: { ok: false, error } });
 	}
@@ -148,6 +195,9 @@ core.on("message", (message) => {
 	if (message.type === "ready") {
 		coreReady = true;
 		write({ type: "ready" });
+		if (liveExtensions) void getExtensionService().catch(() => {
+			write({ type: "extension-runtime-status", ok: false });
+		});
 		beginSmokeBrowserBackend();
 		return;
 	}
@@ -222,6 +272,16 @@ lines.on("line", (line) => {
 	}
 	if (message?.type === "shutdown") {
 		void shutdown(0);
+		return;
+	}
+	if (message?.type === "extension-runtime-response" &&
+		typeof message.requestId === "string") {
+		const pendingExtension = extensionRequests.get(message.requestId);
+		if (!pendingExtension) return;
+		extensionRequests.delete(message.requestId);
+		clearTimeout(pendingExtension.timeout);
+		if (message.ok === true) pendingExtension.resolveRequest(message.result);
+		else pendingExtension.rejectRequest(new Error("Native extension operation failed."));
 		return;
 	}
 	if (
@@ -661,6 +721,14 @@ lines.on("line", (line) => {
 			id: message.id,
 			response: { ok: false, error: "Kestrel native Core is not ready." },
 		});
+		return;
+	}
+	if (liveExtensions && extensionRequestTypes.has(message.request.type)) {
+		void getExtensionService()
+			.then((service) => service.handle(message.request))
+			.then((response) => write({ type: "response", id: message.id, response }))
+			.catch(() => write({ type: "response", id: message.id,
+				response: { ok: false, error: "Kestrel could not complete this extension operation." } }));
 		return;
 	}
 	const requestId = "native-relay-" + ++nextRequest;

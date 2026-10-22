@@ -1,7 +1,8 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RendererRequestSchema } from "@kestrel/shared-types";
@@ -82,8 +83,9 @@ function signedCrx3(
 	files: Record<string, string> = {
 		"manifest.json": '{"name":"Verified extension","version":"1.0.0"}',
 	},
+	keys = generateKeyPairSync("rsa", { modulusLength: 2048 }),
 ) {
-	const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+	const { privateKey, publicKey } = keys;
 	const publicDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
 	const id = extensionId(createHash("sha256").update(publicDer).digest().subarray(0, 16));
 	const idBytes = Buffer.from(id.match(/../g)!.map((pair) => Number.parseInt(pair.replace(/[a-p]/g, (letter) => (letter.charCodeAt(0) - 97).toString(16)), 16)));
@@ -107,7 +109,7 @@ function signedCrx3(
 	prefix.write("Cr24", 0, "utf8");
 	prefix.writeUInt32LE(3, 4);
 	prefix.writeUInt32LE(header.length, 8);
-	return { archive, crx: Buffer.concat([prefix, header, archive]), id, publicDer };
+	return { archive, crx: Buffer.concat([prefix, header, archive]), id, publicDer, keys };
 }
 
 function extensionRuntime(
@@ -140,6 +142,7 @@ function extensionRuntime(
 					: null,
 			),
 		startServiceWorker,
+		...(overrides.uninstallExtension ? { uninstallExtension: overrides.uninstallExtension } : {}),
 	};
 }
 
@@ -181,6 +184,406 @@ describe("localized extension manifest metadata", () => {
 		const fallback = readExtensionManifest(directory, "extension-id");
 		expect(fallback.name).toBe("extension-id");
 		expect(fallback).not.toHaveProperty("description");
+	});
+});
+
+describe("extension uninstall acknowledgement", () => {
+	it.each([true, false])("retains registry and package on runtime failure, using explicit uninstall when available (%s)", async (explicit) => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-uninstall-"));
+		directories.push(directory);
+		const { crx, id } = signedCrx3({
+			"manifest.json": JSON.stringify({ name: "Removal fixture", version: "1.0.0", manifest_version: 3 }),
+		});
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(crx))));
+		const manager = new BrowserExtensionManager(directory);
+		const remove = vi.fn(async () => undefined);
+		const disable = vi.fn(async () => undefined);
+		const runtime = extensionRuntime(id, {
+			removeExtension: explicit ? disable : remove,
+			...(explicit ? { uninstallExtension: remove } : {}),
+		});
+		await inspectAndInstall(manager, id, runtime);
+		const registryPath = join(directory, "browser-extensions", "extensions.json");
+		const packagePath = join(directory, "browser-extensions", id);
+		const registryBefore = readFileSync(registryPath, "utf8");
+		const installedBefore = manager.list();
+		remove.mockRejectedValueOnce(new Error("Native uninstall did not complete"));
+		await expect(manager.uninstall(id, runtime)).rejects.toThrow("did not complete");
+		expect(() => manager.list()).toThrow(/uninstall recovery is required/);
+		expect(readFileSync(registryPath, "utf8")).toBe(registryBefore);
+		expect(existsSync(join(packagePath, "manifest.json"))).toBe(true);
+		await manager.uninstall(id, runtime);
+		expect(manager.list()).toEqual([]);
+		expect(JSON.parse(readFileSync(registryPath, "utf8"))).toEqual([]);
+		expect(existsSync(packagePath)).toBe(false);
+		expect(remove).toHaveBeenCalledTimes(2);
+		if (explicit) expect(disable).not.toHaveBeenCalled();
+	});
+	it("keeps uninstall intent gated when registry persistence fails, then retries", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-uninstall-"));
+		directories.push(directory);
+		const { crx, id } = signedCrx3();
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(crx))));
+		const manager = new BrowserExtensionManager(directory);
+		const runtime = extensionRuntime(id);
+		const installed = await inspectAndInstall(manager, id, runtime);
+		vi.spyOn(manager as unknown as { saveRegistry(): void }, "saveRegistry")
+			.mockImplementationOnce(() => { throw new Error("Registry persistence failed"); });
+		await expect(manager.uninstall(id, runtime)).rejects.toThrow(/Registry persistence failed/);
+		expect(() => manager.list()).toThrow(/uninstall recovery is required/);
+		expect(existsSync(join(directory, "browser-extensions", id, "manifest.json"))).toBe(true);
+		await manager.loadAll(runtime);
+		expect(manager.list()).toEqual([]);
+		expect(existsSync(join(directory, "browser-extensions", id))).toBe(false);
+		expect(installed.id).toBe(id);
+	});
+	it("resumes an acknowledged runtime uninstall after a process crash before registry commit", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-uninstall-crash-"));
+		directories.push(directory);
+		const { crx, id } = signedCrx3();
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(crx))));
+		const manager = new BrowserExtensionManager(directory);
+		const runtime = extensionRuntime(id);
+		await inspectAndInstall(manager, id, runtime);
+		const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+			const settings = JSON.parse(process.argv[1]);
+			const { BrowserExtensionManager } = await import(settings.module);
+			const manager = new BrowserExtensionManager(settings.directory);
+			manager.saveRegistry = () => process.exit(86);
+			await manager.uninstall(settings.id, { removeExtension: async () => {} });
+		` , JSON.stringify({ directory, id, module: new URL("./browser-extension-manager.ts", import.meta.url).href })], { encoding: "utf8", timeout: 15_000 });
+		expect(child.status).toBe(86);
+		const extensionsDirectory = join(directory, "browser-extensions");
+		const journalPath = join(extensionsDirectory, ".store-uninstall-journal.json");
+		expect(JSON.parse(readFileSync(journalPath, "utf8"))).toEqual({ format: 1, id, source: "chrome_web_store" });
+		const restarted = new BrowserExtensionManager(directory);
+		expect(() => restarted.list()).toThrow(/uninstall recovery is required/);
+		const uninstall = vi.fn(async () => undefined);
+		await restarted.loadAll(extensionRuntime(id, { uninstallExtension: uninstall }));
+		expect(uninstall).toHaveBeenCalledWith(id);
+		expect(restarted.list()).toEqual([]);
+		expect(existsSync(journalPath)).toBe(false);
+		expect(existsSync(join(extensionsDirectory, id))).toBe(false);
+	});
+	it.each([
+		["oversized", "x".repeat(1025)],
+		["external path", JSON.stringify({ format: 1, id: "a".repeat(32), source: "chrome_web_store", path: "/tmp/user-data" })],
+	])("rejects %s uninstall journal without touching its payload", (_caseName, payload) => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-uninstall-journal-"));
+		directories.push(directory);
+		const extensionsDirectory = join(directory, "browser-extensions");
+		mkdirSync(extensionsDirectory, { recursive: true });
+		const journalPath = join(extensionsDirectory, ".store-uninstall-journal.json");
+		writeFileSync(journalPath, payload);
+		const manager = new BrowserExtensionManager(directory);
+		expect(() => manager.list()).toThrow(/journal could not be verified/);
+		expect(readFileSync(journalPath, "utf8")).toBe(payload);
+	});
+
+});
+
+describe("reviewed Chrome Web Store updates", () => {
+	async function fixture(version = "1.0.0") {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-update-"));
+		directories.push(directory);
+		const original = signedCrx3({ "manifest.json": JSON.stringify({ name: "Update fixture", version, manifest_version: 3 }) });
+		let download = original.crx;
+		const fetchMock = vi.fn(async () => new Response(new Uint8Array(download)));
+		vi.stubGlobal("fetch", fetchMock);
+		const manager = new BrowserExtensionManager(directory);
+		let active: ReturnType<ExtensionRuntime["getExtension"]> = null;
+		const events: string[] = [];
+		const load = vi.fn(async (path: string) => {
+			const manifest = JSON.parse(readFileSync(join(path, "manifest.json"), "utf8"));
+			events.push(`load:${manifest.version}`);
+			active = { id: original.id, path, name: manifest.name, version: manifest.version, manifest };
+			return { id: original.id, ready: "passed" as const };
+		});
+		const remove = vi.fn(async () => {
+			events.push(`disable:${active?.version ?? "none"}`);
+			active = null;
+		});
+		const uninstall = vi.fn(async () => { throw new Error("Updates must preserve runtime data"); });
+		const runtime: ExtensionRuntime = {
+			loadExtension: load, removeExtension: remove, uninstallExtension: uninstall,
+			getExtension: () => active, startServiceWorker: vi.fn(async () => undefined),
+		};
+		const installed = await inspectAndInstall(manager, original.id, runtime);
+		const packagePath = join(directory, "browser-extensions", original.id);
+		const registryPath = join(directory, "browser-extensions", "extensions.json");
+		const stage = (nextVersion: string, permissions: string[] = []) => {
+			download = signedCrx3({ "manifest.json": JSON.stringify({ name: "Update fixture", version: nextVersion,
+				manifest_version: 3, permissions }) }, original.keys).crx;
+		};
+		return { directory, id: original.id, manager, runtime, load, remove, uninstall, events, installed,
+			packagePath, registryPath, stage, fetchMock, active: () => active,
+			download: () => download,
+			staging: () => readdirSync(join(directory, "browser-extensions")).filter(name => name.startsWith(".inspection-")),
+		};
+	}
+
+	it.each(["journal", "old-rename", "candidate-swap", "before-registry", "after-registry"])(
+		"recovers a real process interruption at %s before exposing or loading candidate bytes", async checkpoint => {
+			const f = await fixture();
+			f.stage("2.0", ["storage"]);
+			const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+				import fs from "node:fs";
+				import { syncBuiltinESMExports } from "node:module";
+				const settings = JSON.parse(process.argv[1]);
+				const { BrowserExtensionManager } = await import(settings.module);
+				const stable = settings.directory + "/browser-extensions/" + settings.id;
+				const rename = fs.renameSync;
+				fs.renameSync = (source, target) => {
+					const result = rename(source, target);
+					if ((settings.checkpoint === "old-rename" && source === stable && target.endsWith(".backup")) ||
+						(settings.checkpoint === "candidate-swap" && source.includes("/.inspection-") && target === stable)) process.exit(86);
+					return result;
+				};
+				syncBuiltinESMExports();
+				const manager = new BrowserExtensionManager(settings.directory);
+				const writeJournal = manager.writeUpdateJournal.bind(manager);
+				manager.writeUpdateJournal = journal => {
+					writeJournal(journal);
+					if (settings.checkpoint === "journal") process.exit(86);
+				};
+				const save = manager.saveRegistry.bind(manager);
+				manager.saveRegistry = (...args) => {
+					if (settings.checkpoint === "before-registry") process.exit(86);
+					const result = save(...args);
+					if (settings.checkpoint === "after-registry") process.exit(86);
+					return result;
+				};
+				let active = null;
+				const runtime = {
+					loadExtension: async path => {
+						const manifest = JSON.parse(fs.readFileSync(path + "/manifest.json", "utf8"));
+						active = { id: settings.id, path, name: manifest.name, version: manifest.version, manifest };
+						return { id: settings.id, ready: "passed" };
+					},
+					removeExtension: async () => { active = null; },
+					getExtension: () => active,
+					startServiceWorker: async () => {},
+				};
+				globalThis.fetch = async () => new Response(new Uint8Array(Buffer.from(settings.crx, "base64")));
+				const inspection = await manager.inspectChromeWebStore(settings.id);
+				await manager.installInspectedChromeWebStore(inspection.inspectionId, runtime);
+				throw new Error("The interruption checkpoint was not reached");
+			`, JSON.stringify({ directory: f.directory, id: f.id, checkpoint,
+				module: new URL("./browser-extension-manager.ts", import.meta.url).href,
+				crx: f.download().toString("base64") })], { encoding: "utf8", timeout: 15_000 });
+			expect(child.stderr).toBe("");
+			expect(child.status).toBe(86);
+			const extensionsDirectory = join(f.directory, "browser-extensions");
+			const journalPath = join(extensionsDirectory, ".store-update-journal.json");
+			const journal = JSON.parse(readFileSync(journalPath, "utf8"));
+			expect(journal.previousRecord.version).toBe("1.0.0");
+			if (checkpoint === "old-rename") expect(existsSync(f.packagePath)).toBe(false);
+			if (["candidate-swap", "before-registry", "after-registry"].includes(checkpoint))
+				expect(JSON.parse(readFileSync(join(f.packagePath, "manifest.json"), "utf8")).version).toBe("2.0");
+			expect(JSON.parse(readFileSync(f.registryPath, "utf8"))[0].version)
+				.toBe(checkpoint === "after-registry" ? "2.0" : "1.0.0");
+			const beforeConstructor = readdirSync(extensionsDirectory).sort();
+			const restarted = new BrowserExtensionManager(f.directory);
+			expect(readdirSync(extensionsDirectory).sort()).toEqual(beforeConstructor);
+			expect(() => restarted.list()).toThrow(/recovery is required/);
+			await expect(restarted.inspectChromeWebStore(f.id)).rejects.toThrow(/recovery is required/);
+			await expect(restarted.uninstall(f.id, f.runtime)).rejects.toThrow(/recovery is required/);
+			await expect(restarted.toggle(f.id, false, f.runtime)).rejects.toThrow(/recovery is required/);
+			await expect(restarted.reload(f.id, f.runtime)).rejects.toThrow(/recovery is required/);
+			await expect(restarted.installInspectedChromeWebStore("missing", f.runtime)).rejects.toThrow(/recovery is required/);
+			f.events.length = 0;
+			await restarted.loadAll(f.runtime);
+			expect(f.events).toEqual(["disable:1.0.0", "load:1.0.0"]);
+			expect(restarted.list()[0]).toMatchObject({ version: "1.0.0", installedAt: f.installed.installedAt });
+			expect(restarted.list()[0]?.compatibility?.manifest.permissions).toEqual([]);
+			expect(existsSync(journalPath)).toBe(false);
+			expect(existsSync(join(extensionsDirectory, journal.candidateName, "manifest.json"))).toBe(true);
+			expect(JSON.parse(readFileSync(join(extensionsDirectory, journal.candidateName, "manifest.json"), "utf8")).version).toBe("2.0");
+			expect(f.uninstall).not.toHaveBeenCalled();
+		}, 20_000,
+	);
+
+	it("keeps recovery pending across restart while runtime disable is unacknowledged", async () => {
+		const f = await fixture();
+		f.stage("2.0");
+		const load = f.load.getMockImplementation()!;
+		f.load.mockImplementationOnce(async path => { await load(path); throw new Error("Candidate failed"); });
+		f.remove.mockImplementationOnce(async () => undefined);
+		f.remove.mockRejectedValueOnce(new Error("Candidate still active"));
+		await expect(inspectAndInstall(f.manager, f.id, f.runtime)).rejects.toThrow(/Runtime state is unresolved/);
+		const journalPath = join(f.directory, "browser-extensions", ".store-update-journal.json");
+		const before = readdirSync(join(f.directory, "browser-extensions")).sort();
+		const restarted = new BrowserExtensionManager(f.directory);
+		f.remove.mockRejectedValueOnce(new Error("Runtime unreachable"));
+		await expect(restarted.loadAll(f.runtime)).rejects.toThrow(/Runtime unreachable/);
+		expect(() => restarted.list()).toThrow(/recovery is required/);
+		expect(readdirSync(join(f.directory, "browser-extensions")).sort()).toEqual(before);
+		expect(existsSync(journalPath)).toBe(true);
+		await restarted.loadAll(f.runtime);
+		expect(restarted.list()[0]?.version).toBe("1.0.0");
+		expect(existsSync(journalPath)).toBe(false);
+	});
+
+	it("requires a fresh exact-package review for new access and disables old runtime before replacing files", async () => {
+		const f = await fixture();
+		const oldReview = await f.manager.inspectChromeWebStore(f.id);
+		await f.manager.installInspectedChromeWebStore(oldReview.inspectionId, f.runtime);
+		f.stage("1.2.0", ["storage"]);
+		const review = await f.manager.inspectChromeWebStore(f.id);
+		expect(review.inspectionId).not.toBe(oldReview.inspectionId);
+		expect(review.compatibility.manifest.permissions).toContain("storage");
+		expect(f.manager.list()[0]?.version).toBe("1.0.0");
+		await expect(f.manager.installInspectedChromeWebStore(oldReview.inspectionId, f.runtime)).rejects.toThrow(/expired/);
+		// A different Store response cannot change the already reviewed bytes.
+		f.stage("1.3.0", ["tabs"]);
+		const installed = await f.manager.installInspectedChromeWebStore(review.inspectionId, f.runtime);
+		expect(installed).toMatchObject({ version: "1.2.0", installedAt: f.installed.installedAt, enabled: true });
+		expect(f.active()?.version).toBe("1.2.0");
+		expect(f.events).toEqual(["load:1.0.0", "disable:1.0.0", "load:1.2.0"]);
+		expect(f.uninstall).not.toHaveBeenCalled();
+		expect(f.fetchMock).toHaveBeenCalledTimes(3);
+		expect(f.staging()).toEqual([]);
+	});
+
+	it("cleans same-version staging and treats missing version components as zero", async () => {
+		const f = await fixture("1");
+		f.stage("1.0.0.0");
+		const installed = await inspectAndInstall(f.manager, f.id, f.runtime);
+		expect(installed).toEqual(f.installed);
+		expect(f.load).toHaveBeenCalledTimes(1);
+		expect(f.remove).not.toHaveBeenCalled();
+		expect(f.staging()).toEqual([]);
+	});
+
+	it("rejects numeric downgrades without touching the installed package or runtime", async () => {
+		const f = await fixture("1.10.0");
+		f.stage("1.9.65535");
+		await expect(inspectAndInstall(f.manager, f.id, f.runtime)).rejects.toThrow(/downgrade/);
+		expect(f.manager.list()).toEqual([f.installed]);
+		expect(JSON.parse(readFileSync(join(f.packagePath, "manifest.json"), "utf8")).version).toBe("1.10.0");
+		expect(f.remove).not.toHaveBeenCalled();
+		expect(f.staging()).toEqual([]);
+	});
+
+	it.each(["0", "0.0.0.0", "01.1", "1.00", "65536", "1.2.3.4.5", "1.beta"])("rejects invalid Chrome version %s during review", async (version) => {
+		const f = await fixture();
+		f.stage(version);
+		await expect(f.manager.inspectChromeWebStore(f.id)).rejects.toThrow(/version is invalid/);
+		expect(f.manager.list()).toEqual([f.installed]);
+		expect(f.staging()).toEqual([]);
+	});
+
+	it("preserves a disabled extension and install date without loading the new version", async () => {
+		const f = await fixture();
+		await f.manager.toggle(f.id, false, f.runtime);
+		f.stage("2.0");
+		const installed = await inspectAndInstall(f.manager, f.id, f.runtime);
+		expect(installed).toMatchObject({ version: "2.0", enabled: false, installedAt: f.installed.installedAt });
+		expect(f.load).toHaveBeenCalledTimes(1);
+		expect(f.active()).toBeNull();
+		expect(f.uninstall).not.toHaveBeenCalled();
+	});
+
+	it("disables a partially loaded candidate before restoring and reactivating the old version", async () => {
+		const f = await fixture();
+		const registryBefore = readFileSync(f.registryPath, "utf8");
+		f.stage("2.0");
+		const originalLoad = f.load.getMockImplementation()!;
+		f.load.mockImplementationOnce(async path => {
+			await originalLoad(path);
+			throw new Error("Candidate startup failed");
+		});
+		await expect(inspectAndInstall(f.manager, f.id, f.runtime)).rejects.toThrow(/Candidate startup failed/);
+		expect(f.events).toEqual(["load:1.0.0", "disable:1.0.0", "load:2.0", "disable:2.0", "load:1.0.0"]);
+		expect(f.manager.list()).toEqual([f.installed]);
+		expect(JSON.parse(readFileSync(f.registryPath, "utf8"))).toEqual(JSON.parse(registryBefore));
+		expect(f.active()?.version).toBe("1.0.0");
+		expect(f.uninstall).not.toHaveBeenCalled();
+	});
+
+	it("restores the old registry and live package when persistence of an update fails", async () => {
+		const f = await fixture();
+		const registryBefore = readFileSync(f.registryPath, "utf8");
+		f.stage("2.0");
+		vi.spyOn(f.manager as unknown as { saveRegistry(): void }, "saveRegistry")
+			.mockImplementationOnce(() => { throw new Error("Registry write failed"); });
+		await expect(inspectAndInstall(f.manager, f.id, f.runtime)).rejects.toThrow(/Registry write failed/);
+		expect(f.manager.list()).toEqual([f.installed]);
+		expect(JSON.parse(readFileSync(f.registryPath, "utf8"))).toEqual(JSON.parse(registryBefore));
+		expect(f.active()?.version).toBe("1.0.0");
+		expect(f.events).toEqual(["load:1.0.0", "disable:1.0.0", "load:2.0", "disable:2.0", "load:1.0.0"]);
+	});
+
+	it("leaves old files and registry untouched when old-runtime disable is rejected", async () => {
+		const f = await fixture();
+		f.stage("2.0");
+		f.remove.mockRejectedValueOnce(new Error("Old runtime disable failed"));
+		await expect(inspectAndInstall(f.manager, f.id, f.runtime)).rejects.toThrow(/Old runtime disable failed/);
+		expect(f.manager.list()).toEqual([f.installed]);
+		expect(f.active()?.version).toBe("1.0.0");
+		expect(JSON.parse(readFileSync(join(f.packagePath, "manifest.json"), "utf8")).version).toBe("1.0.0");
+		expect(f.load).toHaveBeenCalledTimes(1);
+		expect(f.staging()).toEqual([]);
+	});
+
+	it("rolls back when the candidate cannot acknowledge live readiness", async () => {
+		const f = await fixture();
+		f.stage("2.0");
+		const originalLoad = f.load.getMockImplementation()!;
+		f.runtime.loadExtension = vi.fn(async path => {
+			const loaded = await originalLoad(path);
+			return { ...loaded, ready: f.active()?.version === "2.0" ? "not_checked" as const : "passed" as const };
+		});
+		await expect(inspectAndInstall(f.manager, f.id, f.runtime)).rejects.toThrow(/live readiness acknowledgement/);
+		expect(f.active()?.version).toBe("1.0.0");
+		expect(f.manager.list()).toEqual([f.installed]);
+	});
+
+	it("rejects stale old-version runtime registration at the unchanged stable path", async () => {
+		const f = await fixture();
+		f.stage("2.0");
+		f.runtime.getExtension = () => {
+			const observed = f.active();
+			return observed ? { ...observed, version: "1.0.0" } : null;
+		};
+		await expect(inspectAndInstall(f.manager, f.id, f.runtime)).rejects.toThrow(/did not register the verified package/);
+		expect(f.manager.list()).toEqual([f.installed]);
+		expect(f.active()?.version).toBe("1.0.0");
+	});
+
+	it("retains candidate files and the backup when candidate disable is not acknowledged", async () => {
+		const f = await fixture();
+		f.stage("2.0");
+		const originalLoad = f.load.getMockImplementation()!;
+		f.load.mockImplementationOnce(async path => { await originalLoad(path); throw new Error("Candidate failed"); });
+		f.remove.mockImplementationOnce(async () => { f.events.push("disable:old"); });
+		f.remove.mockRejectedValueOnce(new Error("Candidate disable failed"));
+		await expect(inspectAndInstall(f.manager, f.id, f.runtime)).rejects.toThrow(/Runtime state is unresolved/);
+		expect(f.active()?.version).toBe("2.0");
+		expect(JSON.parse(readFileSync(join(f.packagePath, "manifest.json"), "utf8")).version).toBe("2.0");
+		const backup = readdirSync(join(f.directory, "browser-extensions")).find(name => name.endsWith(".backup"));
+		expect(backup).toBeDefined();
+		expect(JSON.parse(readFileSync(join(f.directory, "browser-extensions", backup!, "manifest.json"), "utf8")).version).toBe("1.0.0");
+		expect(() => f.manager.list()).toThrow(/recovery is required/);
+		expect(f.uninstall).not.toHaveBeenCalled();
+	});
+});
+
+describe("Chrome Web Store browser version", () => {
+	it("advertises a validated explicit runtime version", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-version-"));
+		directories.push(directory);
+		const { crx, id } = signedCrx3();
+		const fetchMock = vi.fn(async () => new Response(new Uint8Array(crx)));
+		vi.stubGlobal("fetch", fetchMock);
+		await new BrowserExtensionManager(directory, { chromiumVersion: "152.0.6.0" }).inspectChromeWebStore(id);
+		expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("prodversion=152.0.6.0&"), expect.anything());
+	});
+
+	it.each(["152", "152.0.6", "01.0.0.0", "1.0.0.65536", "152.0.6.0&x=other", "0.0.0.0"])("rejects invalid browser version %s", version => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-version-"));
+		directories.push(directory);
+		expect(() => new BrowserExtensionManager(directory, { chromiumVersion: version })).toThrow(/version/);
 	});
 });
 
@@ -594,7 +997,7 @@ describe("BrowserExtensionManager release gates", () => {
 		);
 		expect(manager.list()).toEqual([]);
 		expect(existsSync(join(directory, "browser-extensions", id))).toBe(false);
-		expect(existsSync(join(directory, "browser-extensions", "extensions.json"))).toBe(false);
+		expect(JSON.parse(readFileSync(join(directory, "browser-extensions", "extensions.json"), "utf8"))).toEqual([]);
 	});
 
 	it("restores a preserved legacy store directory when verified reinstall loading fails", async () => {

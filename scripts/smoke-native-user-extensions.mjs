@@ -515,6 +515,19 @@ try {
 	console.log(
 		"Native user extension checks passed: same-window Chrome-style user view with Alloy Kestrel shell, real renderer/Core, MV3 messaging, tabs.get/tabs.query, scripting, actual DNR blocking, bridge isolation, extension identity/storage after a full app restart without reloading the extension, and clean shutdown.",
 	);
+	let liveLifecyclePassed = false;
+	if (requireParity) {
+		const live = spawnSync(process.execPath, [join(root, "scripts/smoke-native-live-extensions.mjs")], {
+			cwd: root, stdio: "inherit", timeout: 180_000,
+			env: { ...process.env, KESTREL_NATIVE_TEST_APP: resolve(app) },
+		});
+		if (live.status === 0) {
+			const receipt = JSON.parse(await readFile(join(root, ".tmp/native-live-extension-evidence/report.json"), "utf8"));
+			liveLifecyclePassed = receipt.ok === true && receipt.executableSha256 === executableSha256 &&
+				receipt.executableUnchanged === true && receipt.checks?.storageSurvivedToggleReloadRestart === true &&
+				receipt.checks?.officialMv3Worker?.id === "aapbdbdomjkkjkaonfhkkikfgjllcleb";
+		}
+	}
 	const checks = {
 		realKestrelRendererAndCore: true,
 		mv3ContentScriptsAndWorkerMessaging: true,
@@ -528,9 +541,11 @@ try {
 		userViewFitsReactBrowserViewport: true,
 		tabsQuery: tabsQuerySupported,
 		allKestrelTabsHaveChromeOwnership: tabOwnership?.passed === true,
-		kestrelExtensionManagerInstallAndLiveToggle: false,
+		kestrelExtensionManagerInstallAndLiveToggle: liveLifecyclePassed,
 		toolbarActionPopups: toolbarActionPopup,
-		chromeWebStoreInstall: false,
+		chromeWebStoreInstall: liveLifecyclePassed,
+		// Fresh reviewed update checks and transactional unit tests do not prove
+		// Chromium's background Store updater or a published-version upgrade.
 		chromeWebStoreUpdates: false,
 	};
 	const missing = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name);

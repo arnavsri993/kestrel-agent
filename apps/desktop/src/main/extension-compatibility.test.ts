@@ -19,6 +19,7 @@ afterEach(() => {
 function inspectPackage(
 	manifest: Record<string, unknown>,
 	files: Record<string, string> = {},
+	options?: { runtimeBackend: "electron" | "chromium" },
 ) {
 	const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-analysis-"));
 	directories.push(directory);
@@ -28,7 +29,7 @@ function inspectPackage(
 		mkdirSync(join(target, ".."), { recursive: true });
 		writeFileSync(target, source);
 	}
-	return analyzeExtensionCompatibility(directory);
+	return analyzeExtensionCompatibility(directory, options);
 }
 
 describe("extension compatibility analysis", () => {
@@ -95,6 +96,20 @@ describe("extension compatibility analysis", () => {
 				status: "unsupported",
 			}),
 		);
+	});
+
+	it("allows native sync-namespace caching without claiming account synchronization", () => {
+		const report = inspectPackage(
+			{ name: "Native sync cache", version: "1", manifest_version: 3, permissions: ["storage"] },
+			{ "worker.js": "chrome.storage.sync.set({ setting: true });" },
+			{ runtimeBackend: "chromium" },
+		);
+		expect(report.state).toBe("partial");
+		expect(report.findings).toContainEqual(expect.objectContaining({
+			capability: "chrome.storage.sync", status: "partial",
+			reason: expect.stringContaining("local cache"),
+		}));
+		expect(report.findings.some((finding) => finding.status === "unsupported")).toBe(false);
 	});
 
 	it("marks documented limitations as partial rather than full compatibility", () => {

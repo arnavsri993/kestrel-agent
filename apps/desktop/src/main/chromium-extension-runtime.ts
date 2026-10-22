@@ -29,6 +29,12 @@ export class ChromiumExtensionRuntime implements ExtensionRuntime {
 		this.cache.delete(id);
 	}
 
+	async uninstallExtension(id: string): Promise<void> {
+		if (this.host.uninstallExtension) await this.host.uninstallExtension(id);
+		else await this.host.removeExtension(id);
+		this.cache.delete(id);
+	}
+
 	getExtension(id: string): ExtensionRuntimeExtension | null {
 		return this.cache.get(id) ?? null;
 	}

@@ -16,6 +16,7 @@
     "test:native-extensions": "node scripts/smoke-native-extensions.mjs",
     "test:native-user-extensions": "node scripts/smoke-native-user-extensions.mjs",
     "test:native-chrome-tab-model": "node scripts/smoke-native-user-extensions.mjs --chrome-tab-model",
+    "test:native-live-extensions": "node scripts/smoke-native-live-extensions.mjs",
     "test:native-extension-parity": "node scripts/smoke-native-user-extensions.mjs --require-extension-parity",
     "test:native-durable-browser-library": "node scripts/smoke-native-durable-browser-library.mjs",
     "test:native-download-capture": "node scripts/smoke-native-download-capture.mjs",

@@ -210,6 +210,8 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     if (!extension_workbench_ && !user_extensions_enabled_)
       command_line->AppendSwitch("disable-extensions");
     if (user_extensions_enabled_) {
+      if (command_line->HasSwitch("kestrel-live-extensions"))
+        command_line->AppendSwitch("remote-debugging-pipe");
       // BrowserExtensionManager persists verified unpack paths through the
       // ChromiumExtensionRuntime file port. Apply them with Chromium's startup
       // --load-extension switch because CEF 152 has no LoadExtension API.
@@ -217,7 +219,9 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
       // --switch=value through GetSwitchValue, so use the already validated
       // profile root instead of reparsing that separate argument here.
       const std::vector<std::string> persisted =
-          persisted_user_extension_paths(isolated_profile_root_);
+          command_line->HasSwitch("kestrel-live-extensions")
+              ? std::vector<std::string>{}
+              : persisted_user_extension_paths(isolated_profile_root_);
       if (!persisted.empty()) {
         std::string joined = command_line->GetSwitchValue("load-extension").ToString();
         for (const auto& path : persisted) {

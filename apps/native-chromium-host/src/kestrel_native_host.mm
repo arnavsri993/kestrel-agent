@@ -40,6 +40,7 @@
 #include "include/cef_scheme.h"
 #include "include/cef_stream.h"
 #include "include/cef_task.h"
+#include "include/cef_version.h"
 #include "include/views/cef_browser_view.h"
 #include "include/views/cef_window.h"
 #include "include/wrapper/cef_library_loader.h"
@@ -50,6 +51,7 @@
 #include "kestrel_extension_workbench.h"
 #include "kestrel_native_credentials.h"
 #include "kestrel_chrome_window_mac.h"
+#include "kestrel_live_extension_control.h"
 
 @interface KestrelNativeCoreRelay : NSObject
 - (instancetype)initWithProfileRoot:(NSString*)profileRoot
@@ -212,6 +214,8 @@ bool full_renderer_enabled = false;
 bool user_extensions_enabled = false;
 bool chrome_extension_view_enabled = false;
 bool chrome_tab_model_enabled = false;
+std::shared_ptr<KestrelPrivateChromePipe> private_chrome_pipe;
+std::shared_ptr<KestrelLiveExtensionControl> live_extension_control;
 bool durable_profile_enabled = false;
 bool real_keychain_enabled = false;
 bool smoke_durable_library_seed = false;
@@ -464,6 +468,19 @@ std::string http_origin_from_url(const std::string& url) {
   return url.substr(0, host_end);
 }
 
+std::optional<std::string> safe_extension_page_url(const std::string& candidate) {
+  if (!chrome_tab_model_enabled || !user_extensions_enabled || candidate.size() > 8192 ||
+      has_control_character(candidate)) return std::nullopt;
+  CefURLParts parts;
+  if (!CefParseURL(candidate, parts)) return std::nullopt;
+  const std::string id = CefString(&parts.host).ToString();
+  if (CefString(&parts.scheme) != "chrome-extension" || id.size() != 32 ||
+      id.find_first_not_of("abcdefghijklmnop") != std::string::npos ||
+      !CefString(&parts.username).empty() || !CefString(&parts.password).empty() ||
+      !CefString(&parts.port).empty()) return std::nullopt;
+  return CefString(&parts.spec).ToString();
+}
+
 bool is_about_blank_url(const std::string& url) {
   return url == "about:blank" || url.rfind("about:blank?", 0) == 0;
 }
@@ -480,7 +497,10 @@ std::optional<std::string> normalize_user_browser_input(std::string input) {
   const bool has_explicit_scheme =
       colon != std::string::npos &&
       (separator == std::string::npos || colon < separator);
-  if (has_explicit_scheme) return safe_user_browser_url(input);
+  if (has_explicit_scheme) {
+    const auto web = safe_user_browser_url(input);
+    return web ? web : safe_extension_page_url(input);
+  }
 
   const bool has_whitespace = std::any_of(
       input.begin(), input.end(), [](unsigned char character) {
@@ -1005,7 +1025,8 @@ class KestrelUserBrowserClient final : public CefClient,
                        CefRefPtr<CefFrame> frame,
                        const CefString& url) override {
     if (!frame || !frame->IsMain() || !on_address_) return;
-    const auto safe_url = safe_user_browser_url(url.ToString());
+    auto safe_url = safe_user_browser_url(url.ToString());
+    if (!safe_url) safe_url = safe_extension_page_url(url.ToString());
     if (safe_url) on_address_(TabId(browser), *safe_url);
   }
 
@@ -1426,6 +1447,8 @@ class KestrelClient : public CefClient,
   }
 
   void ChromeWindowClosing() {
+    if (live_extension_control) live_extension_control->Shutdown();
+    if (private_chrome_pipe) private_chrome_pipe->Quiesce();
     if (closing_) return;
     closing_ = true;
     for (auto& tab : user_browser_tabs_) {
@@ -1444,6 +1467,8 @@ class KestrelClient : public CefClient,
   }
 
   bool DoClose(CefRefPtr<CefBrowser> browser) override {
+    if (live_extension_control) live_extension_control->Shutdown();
+    if (private_chrome_pipe) private_chrome_pipe->Quiesce();
     if (!closing_) {
       closing_ = true;
       std::cout << "KESTREL_NATIVE_CHROMIUM_MAIN_CLOSE_BEGIN" << std::endl;
@@ -1595,6 +1620,7 @@ class KestrelClient : public CefClient,
   bool IsClosing() const { return closing_; }
 
   void CloseBrowser() {
+    if (live_extension_control) live_extension_control->Shutdown();
     if (chrome_tab_model_enabled) {
       ChromeWindowClosing();
       std::vector<CefRefPtr<CefBrowser>> browsers;
@@ -1618,6 +1644,31 @@ class KestrelClient : public CefClient,
     }
     CefRefPtr<CefDictionaryValue> value = message->GetDictionary();
     const std::string type = value->GetString("type").ToString();
+    if (type == "extension-runtime-status") {
+      std::cout << "KESTREL_NATIVE_EXTENSION_SERVICE_READY ok="
+                << value->GetBool("ok") << std::endl;
+      return;
+    }
+    if (type == "extension-runtime-request") {
+      const std::string id = value->GetString("requestId").ToString();
+      if (id.empty() || id.size() > 128) return;
+      const std::weak_ptr<bool> owner_token = native_owner_alive_;
+      auto respond = [this, owner_token, id](CefRefPtr<CefDictionaryValue> result, const std::string& error) {
+        const auto alive = owner_token.lock();
+        if (!alive || !*alive || !core_relay_) return;
+        auto envelope = CefDictionaryValue::Create();
+        envelope->SetString("type", "extension-runtime-response");
+        envelope->SetString("requestId", id);
+        envelope->SetBool("ok", error.empty() && result != nullptr);
+        if (result) envelope->SetDictionary("result", result->Copy(false));
+        auto root = CefValue::Create(); root->SetDictionary(envelope);
+        const std::string serialized = CefWriteJSON(root, JSON_WRITER_DEFAULT).ToString();
+        [core_relay_ sendLine:[NSString stringWithUTF8String:serialized.c_str()]];
+      };
+      if (!live_extension_control) respond(nullptr, "Native extension control unavailable.");
+      else live_extension_control->Handle(value->GetDictionary("request"), respond);
+      return;
+    }
     if (type == "ready") {
       core_ready_ = true;
       std::cout << "KESTREL_NATIVE_CHROMIUM_CORE_READY" << std::endl;
@@ -3571,6 +3622,10 @@ class KestrelClient : public CefClient,
                                  BridgeCallback callback) {
     if (!request || request->GetType("type") != VTYPE_STRING) return false;
     const std::string type = request->GetString("type").ToString();
+    if (live_extension_control &&
+        (type == "browser-list-extensions" || type == "browser-inspect-extension-url" ||
+         type == "browser-install-extension-url" || type == "browser-toggle-extension" ||
+         type == "browser-reload-extension" || type == "browser-uninstall-extension")) return false;
     if (type == "window-minimize" || type == "window-toggle-zoom" ||
         type == "window-close") {
       if (chrome_window_) {
@@ -5505,6 +5560,11 @@ class KestrelClient : public CefClient,
     const std::weak_ptr<bool> owner_token = native_owner_alive_;
     NSMutableDictionary<NSString*, NSString*>* environment =
         [NSMutableDictionary dictionary];
+    if (live_extension_control) {
+      environment[@"KESTREL_NATIVE_LIVE_EXTENSIONS"] = @"1";
+      environment[@"KESTREL_NATIVE_CHROMIUM_VERSION"] = [NSString stringWithFormat:@"%d.%d.%d.%d",
+          CHROME_VERSION_MAJOR, CHROME_VERSION_MINOR, CHROME_VERSION_BUILD, CHROME_VERSION_PATCH];
+    }
     if (smoke_browser_backend) {
       environment[@"KESTREL_SMOKE_BROWSER_BACKEND"] = @"1";
       if (smoke_browser_backend_url) {
@@ -6025,6 +6085,20 @@ std::string bundled_shell_url() {
 }
 
 int main(int argc, char* argv[]) {
+  if (has_argument(argc, argv, "--kestrel-live-extensions")) {
+    if (!has_argument(argc, argv, "--kestrel-user-extensions") ||
+        !has_argument(argc, argv, "--kestrel-chrome-tab-model") ||
+        has_argument(argc, argv, "--remote-debugging-pipe")) {
+      std::cerr << "Live extensions require Kestrel's private Chromium tab model." << std::endl;
+      return 1;
+    }
+    std::string error;
+    private_chrome_pipe = KestrelPrivateChromePipe::Create(&error);
+    if (!private_chrome_pipe) {
+      std::cerr << "Kestrel could not reserve its private extension transport: " << error << std::endl;
+      return 1;
+    }
+  }
   CefScopedLibraryLoader library_loader;
   if (!library_loader.LoadInMain()) {
     std::cerr << "Kestrel could not load the bundled Chromium framework." << std::endl;
@@ -6251,6 +6325,10 @@ int main(int argc, char* argv[]) {
       return 1;
     }
     isolated_profile_path = resolved_profile;
+    if (private_chrome_pipe) live_extension_control =
+        std::make_shared<KestrelLiveExtensionControl>(private_chrome_pipe, isolated_profile_path, [] {
+          if (main_client_owner) main_client_owner->CloseBrowser();
+        });
     CefString(&settings.root_cache_path) = isolated_profile_path;
     CefString(&settings.cache_path) = isolated_profile_path;
     ephemeral_core_enabled =
@@ -6391,6 +6469,8 @@ int main(int argc, char* argv[]) {
       NSApp.mainMenu = menu;
     }
     CefRunMessageLoop();
+    if (live_extension_control) live_extension_control->Shutdown();
+    if (private_chrome_pipe) private_chrome_pipe->Quiesce();
     if (main_client_owner) {
       main_client_owner->FinalizeUserBrowserShutdown();
     }
@@ -6407,6 +6487,9 @@ int main(int argc, char* argv[]) {
     }
     app = nullptr;
     CefShutdown();
+    live_extension_control.reset();
+    if (private_chrome_pipe) private_chrome_pipe->Shutdown();
+    private_chrome_pipe.reset();
     delegate = nil;
   }
   return extension_workbench_exit_code;

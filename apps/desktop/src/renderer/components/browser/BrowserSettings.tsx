@@ -393,14 +393,14 @@ export function BrowserSettings({
     }
   };
 
-  const handleInspectExtensionFromUrl = async () => {
-    if (!extensionUrlInput.trim()) return;
+  const handleInspectExtensionFromUrl = async (urlOrId = extensionUrlInput.trim()) => {
+    if (!urlOrId) return;
     setExtensionLoading(true);
     setExtensionMessage(null);
     try {
       const response = await window.kestrel.request({
         type: "browser-inspect-extension-url",
-        urlOrId: extensionUrlInput.trim(),
+        urlOrId,
       });
       if (response.ok && "extensionInspection" in response) {
         setExtensionInspection(response.extensionInspection);
@@ -1789,6 +1789,13 @@ export function BrowserSettings({
                         />
                       </label>
                       <div className="extension-card-action-buttons">
+                        {extension.source === "chrome_web_store" && (
+                          <button type="button" className="button subtle"
+                            disabled={extensionLoading}
+                            onClick={() => void handleInspectExtensionFromUrl(extension.id)}>
+                            {extensionLoading ? "Checking…" : "Check updates"}
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="button subtle"
@@ -2009,6 +2016,7 @@ export function BrowserSettings({
       {extensionInspection && (
         <ExtensionCompatibilityDialog
           inspection={extensionInspection}
+          installedVersion={extensions.find((extension) => extension.id === extensionInspection.id)?.version}
           onCancel={() => setExtensionInspection(null)}
           onInstall={handleInstallReviewedExtension}
         />
