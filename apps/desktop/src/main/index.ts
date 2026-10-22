@@ -38,7 +38,6 @@ import {
 	isLoginCodeChallenge,
 	PRODUCT_IDENTITY,
 	RendererRequestSchema,
-	UserBrowserStateSchema,
 	SelectedAttachmentSchema,
 	type BrowserTabFolderName,
 	type BrowserTabFolderNamingGroup,
@@ -80,6 +79,7 @@ import {
 } from "./migration-plan-store";
 import { ElectronBrowserService } from "./electron-browser-service";
 import { BrowserTabTransferAccess } from "./browser-tab-transfer-access";
+import { restoreDetachedWindowStates } from "./detached-window-recovery";
 import {
   UserBrowserService,
   isUserBrowserBackendWireRequest,
@@ -2126,18 +2126,10 @@ function createDetachedBrowserWindow(
 }
 
 async function restoreDetachedBrowserWindows(): Promise<void> {
- const directory = join(app.getPath("userData"), "browser", "detached");
- const names = await readdir(directory).catch(() => [] as string[]);
- for (const name of names.filter(value => /^window-[a-f0-9-]+\.json$/.test(value)).slice(0, 20)) {
-  try {
-   const path = join(directory, name); const metadata = await lstat(path);
-   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 5_000_000) continue;
-   const state = UserBrowserStateSchema.parse(JSON.parse(await readFile(path, "utf8")));
-   if (!state.settings.restoreSession || state.settings.startupBehavior !== "restore") continue;
-   const tab = state.tabs.find(item => item.id === state.activeTabId) ?? state.tabs[0];
-   if (tab) createDetachedBrowserWindow(state, tab, undefined, path);
-  } catch { /* Preserve malformed or incompatible state for recovery. */ }
- }
+  const directory = join(app.getPath("userData"), "browser", "detached");
+  await restoreDetachedWindowStates(directory, (state, tab, statePath) => {
+    createDetachedBrowserWindow(state, tab, undefined, statePath);
+  });
 }
 
 async function petOverlayPosition(): Promise<{ x?: number; y?: number }> {
