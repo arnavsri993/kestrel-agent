@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { createNativeBrowserRelay } from "./native-browser-relay.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
 const argument = (name) => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
@@ -13,7 +14,7 @@ const profile = await realpath(argument("--profile-root"));
 const browserPid = Number(argument("--browser-pid"));
 if (!Number.isSafeInteger(browserPid) || browserPid !== process.ppid) throw new Error("Native broker requires its owning browser.");
 const peerInspector = createRequire(import.meta.url)(join(resources, "native-peer.node"));
-const { RendererRequestSchema, CoreRequestSchema } = await import("./native-ui-contracts.mjs");
+const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema } = await import("./native-ui-contracts.mjs");
 const MAX_FRAME = 1024 * 1024;
 const MAX_PENDING = 64;
 const key = randomBytes(32);
@@ -76,7 +77,17 @@ function send(socket, message) {
 }
 function failPending(socket) {
 	for (const [id, request] of pending) if (request.socket === socket) { clearTimeout(request.timeout); pending.delete(id); }
+	browserRelay.disconnect(socket);
 }
+const browserRelay = createNativeBrowserRelay({
+	validate: (request) => BrowserBackendWireRequestSchema.safeParse(request),
+	writeCore: (message) => {
+		if (stopping) return;
+		if (core.stdin.destroyed || !core.stdin.writable || core.stdin.writableLength >= MAX_FRAME) { void shutdown(1); return; }
+		core.stdin.write(JSON.stringify(message) + "\n");
+	},
+	send, currentOwner: () => active && !active.destroyed ? active : undefined,
+});
 createInterface({ input: core.stdout }).on("line", (line) => {
 	if (line.length > 8 * MAX_FRAME) { void shutdown(1); return; }
 	let message; try { message = JSON.parse(line); } catch { void shutdown(1); return; }
@@ -86,12 +97,8 @@ createInterface({ input: core.stdout }).on("line", (line) => {
 		pending.delete(message.id); clearTimeout(request.timeout);
 		send(request.socket, { kind: "response", id: request.uiId, response: message.response });
 	} else if (message.type === "event" && active) send(active, { kind: "event", channel: message.channel, event: message.event });
-	else if (message.type === "browser-backend-request") {
-		// Privileged browser automation is deliberately rejected until its
-		// approval-preserving native adapter has passed the backend contract.
-		core.stdin.write(JSON.stringify({ type: "browser-backend-response", requestId: message.requestId, ok: false,
-			error: "Native browser automation is not connected yet." }) + "\n");
-	}
+	else if (message.type === "browser-backend-request") browserRelay.request(message);
+	else if (message.type === "browser-backend-cancel") browserRelay.cancel(message.requestId);
 });
 core.on("error", () => void shutdown(1));
 core.stdin.on("error", () => void shutdown(1));
@@ -131,6 +138,7 @@ const server = createServer((socket) => {
 				state = "authenticated"; clearTimeout(deadline); active = socket;
 				signalReady();
 			} else {
+				if (message.kind === "browser-backend-response") { browserRelay.response(socket, message); continue; }
 				if (message.kind !== "request" || typeof message.id !== "string" || message.id.length > 100 || pending.size >= MAX_PENDING) { socket.destroy(); return; }
 				const parsed = RendererRequestSchema.safeParse(message.request);
 				if (!parsed.success) { send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Invalid Kestrel request." } }); continue; }

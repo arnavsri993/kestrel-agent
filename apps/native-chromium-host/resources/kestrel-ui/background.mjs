@@ -2,12 +2,15 @@ import { createBrowserAdapter } from "./browser.mjs";
 import { createNativeConnection } from "./native-connection.mjs";
 import { trackNativePanels } from "./panel-state.mjs";
 import { RendererRequestSchema } from "../../../../packages/shared-types/src/contracts.ts";
+import { BrowserBackendWireRequestSchema } from "../../../core-service/src/browser-backend-wire.ts";
 
 const ui = new Set();
 const origin = new URL(chrome.runtime.getURL(""));
 const emit = (channel, event) => { for (const port of ui) { try { port.postMessage({ kind: "event", channel, event }); } catch { ui.delete(port); } } };
 const browser = createBrowserAdapter(chrome, { emit, uiUrl: chrome.runtime.getURL("index.html") });
-const core = createNativeConnection({ runtime: chrome.runtime, emit });
+const core = createNativeConnection({ runtime: chrome.runtime, emit,
+	handleBrowserRequest: (request, signal) => browser.backend(BrowserBackendWireRequestSchema.parse(request), signal),
+});
 trackNativePanels(chrome);
 // Register synchronously so a cold startup wakes Chromium's existing worker.
 chrome.runtime.onStartup.addListener(() => core.reconnect());

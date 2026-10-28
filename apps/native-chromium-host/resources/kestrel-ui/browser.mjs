@@ -109,10 +109,18 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	let focusedWindowId;
 
 	async function stored(key, fallback) {
-		const result = await invoke(chromeApi.storage.local, "get", key);
+		const area = key === TAB_IDS_KEY ? chromeApi.storage.session : chromeApi.storage.local;
+		if (!area) throw new Error("Native browser session storage is unavailable.");
+		const result = await invoke(area, "get", key);
 		return result?.[key] ?? fallback;
 	}
-	async function persist(key, value) { await invoke(chromeApi.storage.local, "set", { [key]: value }); }
+	async function persist(key, value) {
+		// Chrome tab numbers are reused after restart. Their Kestrel identities
+		// must expire with that browser session so saved tool targets cannot
+		// silently select or close an unrelated tab after restart.
+		const area = key === TAB_IDS_KEY ? chromeApi.storage.session : chromeApi.storage.local;
+		await invoke(area, "set", { [key]: value });
+	}
 	async function mutateStoredMap(key, mutate) {
 		const work = idMapQueue.then(async () => {
 			const map = await stored(key, {});
@@ -391,5 +399,60 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			return { ok: false, error: error instanceof Error ? error.message.slice(0, 500) : "The native browser request failed." };
 		}
 	}
-	return { handles: (type) => SUPPORTED.has(type), request };
+	const publicTab = (tab) => tab.url === "about:blank" || /^https?:\/\//i.test(tab.url || "");
+	async function backend(input, signal) {
+		signal?.throwIfAborted();
+		// This method is called only over the authenticated Core channel. It is
+		// intentionally absent from the renderer request protocol.
+		if (input.operation === "visible-tabs") {
+			const tabs = await invoke(chromeApi.tabs, "query", {});
+			const map = await tabMap(tabs);
+			const windowId = await focusedWindow();
+			signal?.throwIfAborted();
+			return tabs.filter(publicTab).map(tab => ({ id: map[String(tab.id)],
+				title: (tab.title || "New Tab").slice(0, 500), url: (tab.url || "").slice(0, 8192),
+				active: Boolean(tab.active && tab.windowId === windowId), loading: tab.status === "loading",
+				discarded: Boolean(tab.discarded), trust: "untrusted_browser" }));
+		}
+		if (input.operation === "visible-history") {
+			const history = await readHistory();
+			signal?.throwIfAborted();
+			const query = (input.query || "").toLowerCase();
+			return history.filter(item => !query || `${item.title} ${item.url}`.toLowerCase().includes(query)).slice(0, input.limit || 50);
+		}
+		if (input.operation === "visible-downloads") {
+			const downloads = await readDownloads();
+			signal?.throwIfAborted();
+			return downloads;
+		}
+		function publicAddress(value) {
+			const address = normalizeAddress(value, DEFAULT_SETTINGS).url;
+			if (!/^https?:\/\//i.test(address)) throw new Error("Core browser tools may navigate only HTTP(S) user pages.");
+			return address;
+		}
+		if (input.operation === "visible-create") {
+			const url = input.input ? publicAddress(input.input) : "about:blank";
+			const windowId = await focusedWindow();
+			signal?.throwIfAborted();
+			const tab = await invoke(chromeApi.tabs, "create", { url, active: true, ...(windowId === undefined ? {} : { windowId }) });
+			const map = await tabMap([tab]);
+			return { tabId: map[String(tab.id)] };
+		}
+		if (!["visible-navigate", "visible-select", "visible-close"].includes(input.operation))
+			throw new Error("This native browser tool is not connected yet.");
+		const tab = await nativeId(input.tabId);
+		if (!publicTab(tab)) throw new Error("Core browser tools cannot control protected Kestrel or browser pages.");
+		signal?.throwIfAborted();
+		if (input.operation === "visible-navigate") {
+			await invoke(chromeApi.tabs, "update", tab.id, { url: publicAddress(input.input) });
+			return { navigated: true };
+		}
+		if (input.operation === "visible-select") {
+			await invoke(chromeApi.tabs, "update", tab.id, { active: true });
+			return { selected: true };
+		}
+		await invoke(chromeApi.tabs, "remove", tab.id);
+		return { closed: true };
+	}
+	return { handles: (type) => SUPPORTED.has(type), request, backend };
 }

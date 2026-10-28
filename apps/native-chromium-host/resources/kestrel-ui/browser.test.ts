@@ -8,6 +8,7 @@ const sender = { id: extensionId, url: uiUrl, tab: { id: 91, windowId: 7 } };
 
 function makeChrome() {
 	const storage: Record<string, unknown> = {};
+	const session: Record<string, unknown> = {};
 	const handlers = new Map<string, (...args: any[]) => void>();
 	const event = (name: string) => ({ addListener: (listener: (...args: any[]) => void) => handlers.set(name, listener) });
 	const tabs = [
@@ -27,7 +28,10 @@ function makeChrome() {
 	};
 	const chrome = {
 		runtime: { id: extensionId },
-		storage: { local: {
+		storage: { session: {
+			get: invoke((key: string) => ({ [key]: session[key] })),
+			set: invoke((value: Record<string, unknown>) => Object.assign(session, value)),
+		}, local: {
 			get: invoke((key: string) => ({ [key]: storage[key] })),
 			set: invoke((value: Record<string, unknown>) => Object.assign(storage, value)),
 		} },
@@ -66,7 +70,7 @@ function makeChrome() {
 		downloads: { search: invoke(() => downloads), cancel: invoke(() => undefined), onChanged: event("download-changed") },
 		management: { getAll: invoke(() => [{ id: "b".repeat(32), type: "extension", name: "Fixture", version: "1.0", enabled: true, installType: "normal" }]) },
 	};
-	return { chrome, tabs, storage };
+	return { chrome, tabs, storage, session };
 }
 
 describe("native first-party browser adapter", () => {
@@ -130,6 +134,49 @@ describe("native first-party browser adapter", () => {
 		for (const input of ["chrome://flags/", "file:///Users/test/private", "javascript:alert(1)", "https://user:password@example.com/"]) {
 			expect((await adapter.request({ type: "browser-create-tab", input }, sender)).ok).toBe(false);
 		}
+	});
+
+	it("routes Core tools to exact native tabs and excludes protected UI pages", async () => {
+		const { chrome, tabs } = makeChrome();
+		const adapter = createBrowserAdapter(chrome, { uiUrl });
+		const initial = (await adapter.request({ type: "browser-get-state" }, sender)).browserState;
+		expect(await adapter.backend({ operation: "visible-tabs" })).toEqual([]);
+		const created = await Promise.all([
+			adapter.backend({ operation: "visible-create", input: "https://one.example/" }),
+			adapter.backend({ operation: "visible-create", input: "https://two.example/" }),
+		]);
+		expect(new Set(created.map((tab: any) => tab.tabId)).size).toBe(2);
+		const visible = await adapter.backend({ operation: "visible-tabs" });
+		expect(visible.map((tab: any) => tab.id)).toEqual(created.map((tab: any) => tab.tabId));
+		expect(visible.every((tab: any) => tab.trust === "untrusted_browser")).toBe(true);
+		await adapter.backend({ operation: "visible-navigate", tabId: created[0].tabId, input: "https://updated.example/" });
+		expect(tabs[2].url).toBe("https://updated.example/");
+		await expect(adapter.backend({ operation: "visible-close", tabId: initial.tabs[0].id })).rejects.toThrow(/protected/);
+		await expect(adapter.backend({ operation: "visible-create", input: "chrome://extensions/" })).rejects.toThrow(/HTTP/);
+		await expect(adapter.backend({ operation: "visible-navigate", tabId: created[0].tabId, input: "kestrel://settings" })).rejects.toThrow(/HTTP/);
+		await adapter.backend({ operation: "visible-close", tabId: created[0].tabId });
+		expect((await adapter.backend({ operation: "visible-tabs" })).map((tab: any) => tab.id)).toEqual([created[1].tabId]);
+	});
+
+	it("does not execute a Core operation cancelled before dispatch", async () => {
+		const { chrome, tabs } = makeChrome();
+		const adapter = createBrowserAdapter(chrome, { uiUrl });
+		const controller = new AbortController();
+		controller.abort();
+		await expect(adapter.backend({ operation: "visible-create", input: "https://one.example/" }, controller.signal)).rejects.toThrow();
+		expect(tabs).toHaveLength(2);
+	});
+
+	it("rejects stale tool IDs when Chrome reuses numeric tab IDs after restart", async () => {
+		const { chrome, tabs, session } = makeChrome();
+		const adapter = createBrowserAdapter(chrome, { uiUrl });
+		const opened = await adapter.backend({ operation: "visible-create", input: "https://before.example/" });
+		for (const key of Object.keys(session)) delete session[key];
+		tabs[2].url = "https://different.example/"; // Same Chrome number in a new session.
+		const restarted = createBrowserAdapter(chrome, { uiUrl });
+		await expect(restarted.backend({ operation: "visible-close", tabId: opened.tabId })).rejects.toThrow(/no longer open/);
+		expect(tabs[2].url).toBe("https://different.example/");
+		expect((await restarted.backend({ operation: "visible-tabs" }))[0].id).not.toBe(opened.tabId);
 	});
 
 	it("returns the shared installed-extension shape and rejects other extension pages", async () => {

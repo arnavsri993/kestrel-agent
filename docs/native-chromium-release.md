@@ -84,20 +84,35 @@ regression run passed 25 tests, including browser-free module imports and
 exact Store-origin matching. The initial dependency audit found vulnerable
 Zod and website Next.js versions; these are updated to Zod 4.6.6 and Next.js
 16.4.1, including the older transitive Zod copy. The production audit now
-reports no known vulnerabilities. Aggregate `pnpm verify` and remote CI
-still require their own completed results; these focused passes do not
-establish full native product parity.
+reports no known vulnerabilities. The full local `pnpm verify` command passed
+at the prior checkpoint, including website and Electron compatibility flows;
+that is separate from proving full native product parity. Remote CodeQL and
+packaged desktop checks passed at `92293718`; Core CI stopped at its full
+development dependency audit with 25 advisories. Remote CI is not wholly green.
 
 Native builds compile the peer inspector against headers from the same
 checksum-verified Node archive as the bundled runtime. CI runs the new
 Chromium desktop and native authentication smokes against its exact native
 candidate, in addition to the historical host probes.
 
+Core now routes visible tab listing, creation, navigation, selection, closing,
+history, and download metadata through the authenticated native worker. The
+visible tab tools exclude protected Kestrel and browser pages. The live Core
+canary verified that an unapproved open request creates no tab, an approved
+request opens and navigates a real Chromium tab, closing removes that exact
+tab, and even an approved request cannot close the Kestrel UI. Cancellation,
+disconnect, timeout, and single-owner response matching have focused tests;
+sent operations are never replayed automatically. The focused native suite
+now has 62 passing tests. Browser tab identities live in Chromium session
+storage; a stale tool target cannot silently alias a different tab when Chrome
+reuses numeric tab IDs after a full restart.
+
 Release acceptance still requires the complete native product workflow:
 
 - Provider sign-in and credential storage, local models, workspace/file
   operations, settings, approvals, and agent execution on the new host.
-- Approval-preserving Core browser automation, context extraction, isolated
+- Full Core browser automation beyond the verified visible tab primitives:
+  context extraction, snapshots and actions, screenshots, isolated
   browsing, downloads, autofill, recovery, and functional extension/update
   checks on this exact window architecture.
 - A tested, explicit profile transfer and rollback path that preserves the

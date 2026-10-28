@@ -105,4 +105,34 @@ describe("native worker connection", () => {
 		await vi.advanceTimersByTimeAsync(42_000);
 		expect((await Promise.all(requests)).every((result) => !result.ok && /timed out/.test(result.error))).toBe(true);
 	});
+
+	it("accepts Core browser requests only after native authentication", async () => {
+		const handleBrowserRequest = vi.fn(async () => ({ tabId: "canary" }));
+		const { ports, authenticate } = harness({ handleBrowserRequest });
+		const request = { kind: "browser-backend-request", id: "core-1", request: { operation: "visible-create" } };
+		await ports[0].onMessage.emit(request);
+		expect(handleBrowserRequest).not.toHaveBeenCalled();
+		await authenticate();
+		await ports[0].onMessage.emit(request);
+		expect(ports[0].postMessage).toHaveBeenLastCalledWith({ kind: "browser-backend-response", id: "core-1", ok: true, result: { tabId: "canary" } });
+	});
+
+	it.each(["cancel", "disconnect"])("aborts Core work on %s without replay or a stale response", async (reason) => {
+		let finish!: (value: any) => void;
+		let signal!: AbortSignal;
+		const handleBrowserRequest = vi.fn((_request: unknown, inputSignal: AbortSignal) => {
+			signal = inputSignal;
+			return new Promise((resolve) => { finish = resolve; });
+		});
+		const { ports, authenticate } = harness({ handleBrowserRequest });
+		await authenticate();
+		const work = ports[0].onMessage.emit({ kind: "browser-backend-request", id: "core-1", request: { operation: "visible-create" } });
+		if (reason === "cancel") await ports[0].onMessage.emit({ kind: "browser-backend-cancel", id: "core-1" });
+		else { ports[0].disconnect(); await vi.advanceTimersByTimeAsync(250); await authenticate(ports[1]); }
+		expect(signal.aborted).toBe(true);
+		finish({ tabId: "late" });
+		await work;
+		expect(handleBrowserRequest).toHaveBeenCalledTimes(1);
+		for (const port of ports) expect(port.postMessage.mock.calls.map(([message]: any[]) => message.kind)).toEqual(["authenticate"]);
+	});
 });

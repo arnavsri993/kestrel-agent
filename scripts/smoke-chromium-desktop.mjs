@@ -96,7 +96,40 @@ try{
  const external=await createdPage(url=>url===fixtureUrl);
  await external.getByRole('heading',{name:'Native browser canary'}).waitFor();
  assert.deepEqual(await external.evaluate(()=>({bridge:typeof window.kestrel,query:typeof window.__kestrelNativeQuery,transport:typeof window.__kestrelHostTransport})),{bridge:'undefined',query:'undefined',transport:'undefined'});
- await external.close();await home.bringToFront();
+ async function coreTool(toolName,input,approved=true){
+  const response=await home.evaluate(({sessionId,toolName,input,approved})=>window.kestrel.request({type:'runtime-call-tool',sessionId,toolName,input,
+   ...(approved?{approvalStatus:'approved'}:{}),idempotencyKey:crypto.randomUUID()}),{sessionId:savedSession,toolName,input,approved});
+  assert.equal(response.ok,true,response.error);return response.execution;
+ }
+ const listed=await coreTool('browser.tabs',{});
+ assert.equal(listed.status,'verified',JSON.stringify(listed));
+ assert(listed.output.tabs.some(tab=>tab.url===fixtureUrl),'Actual Core must see the native user tab.');
+ assert(listed.output.tabs.every(tab=>!tab.url.startsWith('chrome-extension:')),'Core must not receive protected Kestrel UI tabs.');
+ const coreUrl=fixtureUrl+'?created-by=core';
+ const blocked=await coreTool('browser.open-tab',{input:coreUrl},false);
+ assert.equal(blocked.status,'blocked','Core approval must precede browser dispatch.');
+ assert(!(await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}))).browserState.tabs.some(tab=>tab.url===coreUrl));
+ const opened=await coreTool('browser.open-tab',{input:coreUrl});
+ assert(opened.output?.tabId,JSON.stringify(opened));
+ const coreTab=await createdPage(url=>url===coreUrl);await coreTab.getByRole('heading',{name:'Native browser canary'}).waitFor();
+ await home.bringToFront();
+ const selected=await coreTool('browser.select-tab',{tabId:opened.output.tabId});assert(!['failed','blocked'].includes(selected.status),JSON.stringify(selected));
+ assert.equal((await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}))).browserState.activeTabId,opened.output.tabId);
+ const navigatedUrl=fixtureUrl+'?navigated-by=core';
+ const navigated=await coreTool('browser.navigate-tab',{tabId:opened.output.tabId,input:navigatedUrl});
+ assert(!['failed','blocked'].includes(navigated.status),JSON.stringify(navigated));
+ await coreTab.waitForURL(navigatedUrl);
+ const uiState=(await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}))).browserState;
+ const protectedTab=uiState.tabs.find(tab=>!tab.url);assert(protectedTab);
+ const denied=await coreTool('browser.close-tab',{tabId:protectedTab.id});assert(['failed','blocked'].includes(denied.status),'Core must not control Kestrel UI pages.');
+ assert.equal(home.isClosed(),false);
+ const closing=coreTab.waitForEvent('close');
+ const closed=await coreTool('browser.close-tab',{tabId:opened.output.tabId});assert(!['failed','blocked'].includes(closed.status),JSON.stringify(closed));
+ await closing;
+ receipt.phases.push({phase:'native-core-tab-tools-and-approval',passed:true});
+ // A native-created target may have required a CDP reconnect above. Close
+ // through a fresh handle rather than a disconnected Playwright object.
+ await (await createdPage(url=>url===fixtureUrl)).close();await home.bringToFront();
  await home.getByRole('button',{name:'Open settings',exact:true}).click();
  const settings=await createdPage(url=>url.includes('index.html?app=settings'));await settings.waitForURL(/index.html\?app=settings/);
  await settings.locator('[data-app-page="settings"]').waitFor();
@@ -136,7 +169,7 @@ try{
  if(store){const extensions=await restarted.home.evaluate(()=>window.kestrel.request({type:'browser-list-extensions'}));const installed=extensions.extensions?.find(item=>item.id===formatter);assert(installed?.enabled,'Chrome-installed extension must survive full restart.');receipt.phases.push({phase:'native-extension-restart',passed:true,id:installed.id,version:installed.version});await formatterRuns('native-extension-functional-after-restart');}
  await close();receipt.phases.push({phase:'durable-core-and-clean-restart',passed:true});
  await writeFile(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2));
- console.log('Native Chromium desktop passed: real Kestrel Home/Settings, actual Core, native tabs, web bridge isolation, durable restart, and clean shutdown'+(store?', plus native Store install and extension restart.':'.'));
+ console.log('Native Chromium desktop passed: real Kestrel Home/Settings, Core tab tools and approval enforcement, native tabs, web bridge isolation, durable restart, and clean shutdown'+(store?', plus native Store install and functional extension restart.':'.'));
 }catch(error){await writeFile(join(evidence,'failure.log'),output+'\n'+String(error));throw error;}
 finally{
  await browser?.close().catch(()=>{});

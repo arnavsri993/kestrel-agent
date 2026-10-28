@@ -222,6 +222,11 @@ core.on("message", (message) => {
 		);
 		return;
 	}
+	if (message.type === "browser-backend-cancel" && typeof message.requestId === "string") {
+		pendingBrowserBackend.delete(message.requestId);
+		write({ type: "browser-backend-cancel", requestId: message.requestId });
+		return;
+	}
 	if (message.type === "runtime-event" || message.type === "agent-stream") {
 		write({ type: "event", channel: message.type, event: message.event });
 		return;

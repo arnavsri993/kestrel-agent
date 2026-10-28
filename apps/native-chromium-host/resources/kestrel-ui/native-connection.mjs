@@ -1,5 +1,5 @@
 // Sent actions fail when their connection closes. They are never replayed.
-export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = crypto,
+export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = crypto, handleBrowserRequest,
 	loadConfiguration = async (nonce) => {
 		const response = await fetch(runtime.getURL("launch-config.json") + "?challenge=" + nonce, { cache: "no-store", redirect: "error" });
 		if (!response.ok) throw new Error("Native launch configuration is unavailable.");
@@ -7,6 +7,7 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 	},
 }) {
 	const pending = new Map();
+	const browserRequests = new Map();
 	let native, retry;
 	let ready = false, sequence = 0, delay = 250;
 	function disconnected(connection) {
@@ -18,6 +19,10 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 			request.resolve({ ok: false, error: "Kestrel's native connection closed. Retry the request." });
 		}
 		pending.clear();
+		for (const [id, request] of browserRequests) if (request.connection === connection) {
+			browserRequests.delete(id);
+			request.controller.abort();
+		}
 		clearTimeout(retry);
 		retry = setTimeout(connect, delay);
 		delay = Math.min(delay * 2, 30_000);
@@ -65,6 +70,22 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 					if (native !== connection) break;
 					request.sent = connection;
 					post(connection, request.message);
+				}
+			} else if (phase === "ready" && message?.kind === "browser-backend-cancel") {
+				const request = browserRequests.get(message.id);
+				if (request?.connection === connection) { browserRequests.delete(message.id); request.controller.abort(); }
+			} else if (phase === "ready" && message?.kind === "browser-backend-request") {
+				if (typeof message.id !== "string" || !message.id || message.id.length > 200 || browserRequests.has(message.id) || browserRequests.size >= 16) { abort(connection); return; }
+				const request = { connection, controller: new AbortController() };
+				browserRequests.set(message.id, request);
+				let response;
+				try {
+					if (!handleBrowserRequest) throw new Error("Native browser tools are unavailable.");
+					response = { ok: true, result: await handleBrowserRequest(message.request, request.controller.signal) };
+				} catch (error) { response = { ok: false, error: error instanceof Error ? error.message.slice(0, 500) : "Native browser request failed." }; }
+				if (native === connection && browserRequests.get(message.id) === request) {
+					browserRequests.delete(message.id);
+					post(connection, { kind: "browser-backend-response", id: message.id, ...response });
 				}
 			} else if (phase === "ready" && message?.kind === "response") {
 				const request = pending.get(message.id);
