@@ -1668,14 +1668,13 @@ try {
 		"Native page remained above the extensions menu",
 	);
 	const storeLink = extensionsMenu.getByRole("menuitem", {
-		name: "Go to store",
+		name: "Open Chrome Web Store",
 		exact: true,
 	});
 	assert.equal(await storeLink.count(), 1);
-	assert.equal(
-		await storeLink.getAttribute("href"),
-		"https://chromewebstore.google.com",
-	);
+	assert.equal(await storeLink.getAttribute("type"), "button");
+	assert.equal(await extensionsMenu.getByText("Native browser", { exact: true }).count(), 0);
+	const windowsBeforeStore = application.windows().length;
 	await storeLink.click();
 	state = await waitForBrowserState(
 		(value) =>
@@ -1685,8 +1684,9 @@ try {
 					tab.id === value.activeTabId &&
 					tab.url.startsWith("https://chromewebstore.google.com"),
 			),
-		"Go to store did not open the Chrome Web Store in a new tab",
+		"Chrome Web Store did not open in the existing Kestrel window",
 	);
+	assert.equal(application.windows().length, windowsBeforeStore, "The Store action must preserve Kestrel's existing window.");
 	const storeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
 	assert(storeTab);
 	const storeExtensionId = "bcjindcccaagfpapjjmafapmmgkkhgoa";
@@ -1714,6 +1714,7 @@ try {
 		name: "Chrome Web Store installation",
 	});
 	await storeInstallBar.waitFor();
+	assert.equal(await storeInstallBar.getByRole("button", { name: "Open in native browser", exact: true }).count(), 0);
 	const reviewAndAdd = storeInstallBar.getByRole("button", {
 		name: "Review & add",
 		exact: true,
@@ -3359,7 +3360,7 @@ try {
 		`Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, extension-store navigation and ${
 			verifyRealChromeWebStoreInstall
 				? "reviewed extension installation"
-				: "Review & add affordance"
+				: "same-window Store navigation and review affordance"
 		}, hidden-view routing, and restart restore.\n`,
 	);
 } catch (error) {

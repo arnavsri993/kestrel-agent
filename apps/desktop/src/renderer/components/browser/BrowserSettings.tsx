@@ -23,6 +23,7 @@ import { PaymentSettings } from "./PaymentSettings";
 import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
 import { browserExtensionOperationErrorMessage } from "../../../browser-extension-error";
 import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
+import { NativeBrowserControls } from "./NativeBrowserControls";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
   NEW_TAB_BACKGROUND_OPTIONS,
@@ -1616,10 +1617,24 @@ export function BrowserSettings({
               <Icon name="extensions" /> Web extensions and add-ons
             </h2>
             <p>
-              Only verified store packages or explicitly enabled development
-              packages are loaded.
+              Browse the Chrome Web Store and review extension access before
+              installing. Some extensions require Chrome features Kestrel does
+              not support yet.
             </p>
           </header>
+          <button
+            type="button"
+            className="button quiet-action-link"
+            onClick={() => void browser.createTab("https://chromewebstore.google.com")}
+          >
+            <Icon name="globe" /> Open Chrome Web Store
+          </button>
+          <details>
+            <summary>Compatibility browser — separate window</summary>
+            <NativeBrowserControls
+              currentUrl={browser.state?.tabs.find((tab) => tab.id === browser.state?.activeTabId)?.url}
+            />
+          </details>
           {extensionMessage && (
             <div
               className={`extension-alert ${extensionMessage.type}`}
@@ -1658,20 +1673,6 @@ export function BrowserSettings({
             >
               {extensionLoading ? "Reviewing…" : "Review from Web Store"}
             </button>
-          </div>
-          <div className="extension-actions-row">
-            <a
-              href="https://chromewebstore.google.com"
-              target="_blank"
-              rel="noreferrer"
-              className="button quiet-action-link"
-              onClick={(event) => {
-                event.preventDefault();
-                void browser.createTab("https://chromewebstore.google.com");
-              }}
-            >
-              <Icon name="globe" /> Browse Chrome Web Store ↗
-            </a>
           </div>
           <p className="honest-status">
             Review extension access before installing. Some Chrome APIs are unsupported.

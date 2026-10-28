@@ -1,3 +1,4 @@
+import { NativeBrowserManager } from "./native-browser-manager";
 import { normalizeWhatsAppTimestamp } from "./whatsapp-source";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -600,6 +601,18 @@ const isPackagedKestrelApp = isPackagedKestrelRuntime(
 	process.env.NODE_ENV_ELECTRON_VITE,
 );
 const execFileAsync = promisify(execFile);
+let nativeBrowserManagerInstance: NativeBrowserManager | undefined;
+function nativeBrowserManager(): NativeBrowserManager {
+  const root = isPackagedKestrelApp
+    ? join(process.resourcesPath, "native-browser")
+    : join(app.getAppPath(), "..", "..", ".tmp", "native-browser-sidecar");
+  return nativeBrowserManagerInstance ??= new NativeBrowserManager({
+    executable: join(root, "Kestrel.app", "Contents", "MacOS", "Kestrel"),
+    profileRoot: join(app.getPath("userData"), "native-browser", "profile-v1"),
+    profileOwnerRoot: app.getPath("userData"),
+  });
+}
+
 
 function computerUseManager(): ComputerUseManager {
 	return (computerUseManagerInstance ??= new ComputerUseManager(
@@ -3671,6 +3684,15 @@ function registerIpc(): void {
 				),
 			};
 		}
+    if (request.type === "browser-native-status") {
+      return { ok: true, nativeBrowser: await nativeBrowserManager().status() };
+    }
+    if (request.type === "browser-open-native-extensions") {
+      return { ok: true, nativeBrowser: await nativeBrowserManager().openExtensions() };
+    }
+    if (request.type === "browser-open-native") {
+      return { ok: true, nativeBrowser: await nativeBrowserManager().open(request.input) };
+    }
     if (request.type === "browser-list-extensions") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
@@ -4832,6 +4854,7 @@ function registerIpc(): void {
         };
       await supervisor.stop();
       await macWidgetsStore?.clear().catch(() => undefined);
+      await nativeBrowserManagerInstance?.stop();
       await rm(app.getPath("userData"), { recursive: true, force: true });
       app.relaunch();
       quitting = true;
@@ -5033,6 +5056,7 @@ async function performAppShutdown(): Promise<void> {
   await cancelActiveOAuthFlows();
   await Promise.all([
     supervisor.stop().catch(() => undefined),
+    (nativeBrowserManagerInstance?.stop() ?? Promise.resolve()).catch(() => undefined),
     (managedLocalRuntime?.stop() ?? Promise.resolve()).catch(() => undefined),
   ]);
   await pastedTextAttachmentStore?.dispose().catch(() => undefined);
