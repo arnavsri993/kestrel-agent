@@ -1,4 +1,5 @@
-import { UserBrowserSettingsSchema } from "../../../../packages/shared-types/src/contracts.ts";
+import { UserBrowserSettingsSchema, UserBrowserPageContextSchema } from "../../../../packages/shared-types/src/contracts.ts";
+import { capturePageContext } from "./page-context.mjs";
 
 const TAB_IDS_KEY = "kestrel.native.browser.tabIds.v1";
 const SETTINGS_KEY = "kestrel.native.browser.settings.v1";
@@ -45,6 +46,7 @@ const SUPPORTED = new Set([
 	"browser-toggle-bookmark", "browser-remove-bookmark", "browser-clear-history",
 	"browser-list-extensions", "browser-cancel-download",
 	"browser-update-settings",
+	"browser-get-context",
 ]);
 const APP_ROUTES = new Set([
 	"settings", "history", "bookmarks", "downloads", "commands", "writing", "agent", "projects",
@@ -323,6 +325,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			return { ok: false, error: "Only the Kestrel UI can control native browser tabs." };
 		if (Number.isInteger(sender.tab?.windowId)) focusedWindowId = sender.tab.windowId;
 		try {
+			if (input.type === "browser-get-context") return { ok: true, browserContext: await pageContext(input.tabId) };
 			if (input.type === "browser-update-settings") {
 				const allowed = new Set(["newTabBackground", "newTabBackgroundDataUrl", "newTabGreetingActivity", "newTabWidgets"]);
 				const current = UserBrowserSettingsSchema.parse({ ...DEFAULT_SETTINGS, ...await stored(SETTINGS_KEY, DEFAULT_SETTINGS) });
@@ -400,8 +403,32 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		}
 	}
 	const publicTab = (tab) => tab.url === "about:blank" || /^https?:\/\//i.test(tab.url || "");
+	async function pageContext(tabId, signal) {
+		signal?.throwIfAborted();
+		const tab = tabId ? await nativeId(tabId) : (await visibleTabs()).find(tab => tab.active);
+		if (!tab || !/^https?:\/\//i.test(tab.url || "") || tab.pendingUrl && tab.pendingUrl !== tab.url)
+			throw new Error("Select a loaded HTTP(S) user page before reading it.");
+		const map = await tabMap([tab]);
+		const frame = await invoke(chromeApi.webNavigation, "getFrame", { tabId: tab.id, frameId: 0 });
+		signal?.throwIfAborted();
+		if (!frame?.documentId || frame.documentLifecycle !== "active" || frame.url !== tab.url)
+			throw new Error("The page changed before it could be read. Read the current page again.");
+		const results = await invoke(chromeApi.scripting, "executeScript", {
+			target: { tabId: tab.id, documentIds: [frame.documentId] }, world: "ISOLATED",
+			func: capturePageContext, args: [map[String(tab.id)]],
+		});
+		signal?.throwIfAborted();
+		const current = await invoke(chromeApi.webNavigation, "getFrame", { tabId: tab.id, frameId: 0 });
+		const result = results?.[0];
+		if (results?.length !== 1 || result.frameId !== 0 || result.documentId !== frame.documentId ||
+			current?.documentId !== frame.documentId || current.documentLifecycle !== "active" || current.url !== frame.url || result.result?.sourceUrl !== frame.url)
+			throw new Error("The page changed while being read. Discard this result and read the current page again.");
+		signal?.throwIfAborted();
+		return UserBrowserPageContextSchema.parse(result.result.context);
+	}
 	async function backend(input, signal) {
 		signal?.throwIfAborted();
+		if (input.operation === "visible-context") return pageContext(input.tabId, signal);
 		// This method is called only over the authenticated Core channel. It is
 		// intentionally absent from the renderer request protocol.
 		if (input.operation === "visible-tabs") {

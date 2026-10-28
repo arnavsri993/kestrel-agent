@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InstalledExtensionSchema, UserBrowserStateSchema } from "../../../../packages/shared-types/src/contracts.ts";
 import { createBrowserAdapter } from "./browser.mjs";
 
@@ -165,6 +165,51 @@ describe("native first-party browser adapter", () => {
 		controller.abort();
 		await expect(adapter.backend({ operation: "visible-create", input: "https://one.example/" }, controller.signal)).rejects.toThrow();
 		expect(tabs).toHaveLength(2);
+	});
+
+	it("pins context reads to one main document in Chrome's isolated world", async () => {
+		const { chrome, tabs } = makeChrome();
+		tabs[0].url = "https://example.com/page?token=private";
+		const getFrame = vi.fn(async () => ({ documentId: "document-one", documentLifecycle: "active", url: tabs[0].url }));
+		const executeScript = vi.fn(async (options: any) => [{ frameId: 0, documentId: "document-one", result: {
+			sourceUrl: tabs[0].url, context: { tabId: options.args[0], url: "https://example.com/page", title: "Example", selectedText: "", visibleText: "Read the page",
+				headings: [], links: [], forms: [], viewport: { width: 800, height: 600, scrollX: 0, scrollY: 0 }, capturedAt: new Date().toISOString(), trust: "untrusted_browser" },
+		} }]);
+		Object.assign(chrome, { webNavigation: { getFrame }, scripting: { executeScript } });
+		const adapter = createBrowserAdapter(chrome, { uiUrl });
+		const tabId = (await adapter.backend({ operation: "visible-tabs" }))[0].id;
+		const context = await adapter.backend({ operation: "visible-context", tabId });
+		expect(context.url).toBe("https://example.com/page");
+		expect(executeScript.mock.calls[0][0]).toMatchObject({ target: { tabId: 11, documentIds: ["document-one"] }, world: "ISOLATED", args: [tabId] });
+		expect(getFrame).toHaveBeenCalledTimes(2);
+		const fromUi = await adapter.request({ type: "browser-get-context", tabId }, sender);
+		expect(fromUi).toMatchObject({ ok: true, browserContext: { ...context, capturedAt: expect.any(String) } });
+	});
+
+	it("discards context after same-URL navigation and fails before reading protected pages", async () => {
+		const { chrome, tabs } = makeChrome();
+		const executeScript = vi.fn(async () => [{ frameId: 0, documentId: "document-one", result: { sourceUrl: "https://example.com/", context: {} } }]);
+		const getFrame = vi.fn().mockResolvedValueOnce({ documentId: "document-one", documentLifecycle: "active", url: "https://example.com/" })
+			.mockResolvedValue({ documentId: "document-two", documentLifecycle: "active", url: "https://example.com/" });
+		Object.assign(chrome, { webNavigation: { getFrame }, scripting: { executeScript } });
+		const adapter = createBrowserAdapter(chrome, { uiUrl });
+		const protectedId = (await adapter.request({ type: "browser-get-state" }, sender)).browserState.tabs[0].id;
+		await expect(adapter.backend({ operation: "visible-context", tabId: protectedId })).rejects.toThrow(/HTTP/);
+		expect(executeScript).not.toHaveBeenCalled();
+		tabs[0].url = "https://example.com/";
+		await expect(adapter.backend({ operation: "visible-context", tabId: protectedId })).rejects.toThrow(/changed while/);
+		expect(executeScript).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not release a context read cancelled during native script execution", async () => {
+		const { chrome, tabs } = makeChrome();
+		tabs[0].url = "https://example.com/";
+		const controller = new AbortController();
+		const getFrame = vi.fn(async () => ({ documentId: "document-one", documentLifecycle: "active", url: tabs[0].url }));
+		Object.assign(chrome, { webNavigation: { getFrame }, scripting: { executeScript: async () => { controller.abort(); return []; } } });
+		const adapter = createBrowserAdapter(chrome, { uiUrl });
+		await expect(adapter.backend({ operation: "visible-context" }, controller.signal)).rejects.toThrow();
+		expect(getFrame).toHaveBeenCalledTimes(1);
 	});
 
 	it("rejects stale tool IDs when Chrome reuses numeric tab IDs after restart", async () => {

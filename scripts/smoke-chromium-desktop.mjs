@@ -22,7 +22,13 @@ const receipt={at:new Date().toISOString(),executableSha256:createHash('sha256')
 const jsonFixture={source:'kestrel-native-canary',nested:{installedExtensionRuns:true},values:[1,2,3]};
 const server=createServer((req,res)=>{
  if(req.url==='/formatter.json'){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(jsonFixture));return;}
- res.writeHead(200,{'content-type':'text/html'});res.end('<!doctype html><title>Native browser canary</title><h1>Native browser canary</h1>');
+ res.writeHead(200,{'content-type':'text/html'});res.end(`<!doctype html><title>Native browser canary</title><h1>Native browser canary</h1>
+ <p>Public page text. api_key=canary_secret_abcdefghijklmnop</p>
+ <a href="/readable?access_token=canary_url_secret#canary_fragment_secret">Public link</a>
+ <label>Password <input type="password" value="canary_password_secret"></label>
+ <textarea>canary_textarea_secret</textarea><div contenteditable>canary_editable_secret</div>
+ <div data-private>canary_private_secret</div><div hidden>canary_hidden_secret</div>
+ <script>window.getSelection=()=>({rangeCount:1,toString:()=>"canary_page_world_spoof_secret"});</script>`);
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 let child,browser,output='';
@@ -39,9 +45,21 @@ async function start(){
  }
  assert(endpoint,'Owned native endpoint missing: '+output);
  browser=await chromium.connectOverCDP(endpoint);
- const context=browser.contexts()[0];
+ let context=browser.contexts()[0];
  let home;
- for(let i=0;i<200;i++){home=context.pages().find(page=>/chrome-extension:\/\/[^/]+\/index.html$/.test(page.url()));if(home)break;await delay(100);}
+ for(let i=0;i<200;i++){
+  home=context.pages().find(page=>/chrome-extension:\/\/[^/]+\/index.html$/.test(page.url()));if(home)break;
+  if(i%10===0){
+   const session=await browser.newBrowserCDPSession();
+   const targets=await session.send('Target.getTargets');await session.detach();
+   if(targets.targetInfos.some(target=>target.type==='page'&&/chrome-extension:\/\/[^/]+\/index.html$/.test(target.url))){
+    // Chrome may have created the first page between Playwright's discovery
+    // and auto-attach setup. Reconnect only when that real target exists.
+    await browser.close();browser=await chromium.connectOverCDP(endpoint);context=browser.contexts()[0];
+   }
+  }
+  await delay(100);
+ }
  assert(home,'Authenticated native Home did not open: '+output);
  await home.waitForFunction(()=>typeof window.kestrel?.request==='function');
  return {context,home,endpoint};
@@ -105,6 +123,19 @@ try{
  assert.equal(listed.status,'verified',JSON.stringify(listed));
  assert(listed.output.tabs.some(tab=>tab.url===fixtureUrl),'Actual Core must see the native user tab.');
  assert(listed.output.tabs.every(tab=>!tab.url.startsWith('chrome-extension:')),'Core must not receive protected Kestrel UI tabs.');
+ const readableTab=listed.output.tabs.find(tab=>tab.url===fixtureUrl);assert(readableTab);
+ const read=await coreTool('browser.current-context',{tabId:readableTab.id});
+ assert.equal(read.status,'verified',JSON.stringify(read));
+ assert(read.output.visibleText.includes('Public page text.'),JSON.stringify(read));
+ assert(read.output.headings.includes('Native browser canary'));
+ assert(read.output.forms.some(field=>field.type==='sensitive'));
+ assert.equal(read.output.links[0].url,`http://127.0.0.1:${server.address().port}/readable`);
+ assert(!/canary_(?:secret|password|textarea|editable|private|hidden|url|fragment|page_world)/.test(JSON.stringify(read.output)),'Sensitive page data must not leave the isolated capture.');
+ const uiRead=await home.evaluate(tabId=>window.kestrel.request({type:'browser-get-context',tabId}),readableTab.id);
+ assert.equal(uiRead.ok,true,uiRead.error);assert(uiRead.browserContext.visibleText.includes('Public page text.'));
+ assert(!/canary_(?:secret|password|textarea|editable|private|hidden|url|fragment|page_world)/.test(JSON.stringify(uiRead.browserContext)),'UI context must be redacted before Core processing too.');
+ assert.deepEqual(await external.evaluate(()=>({bridge:typeof window.kestrel,query:typeof window.__kestrelNativeQuery})),{bridge:'undefined',query:'undefined'});
+ receipt.phases.push({phase:'native-page-context-and-private-field-isolation',passed:true});
  const coreUrl=fixtureUrl+'?created-by=core';
  const blocked=await coreTool('browser.open-tab',{input:coreUrl},false);
  assert.equal(blocked.status,'blocked','Core approval must precede browser dispatch.');

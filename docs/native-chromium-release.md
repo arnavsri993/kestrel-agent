@@ -88,7 +88,10 @@ reports no known vulnerabilities. The full local `pnpm verify` command passed
 at the prior checkpoint, including website and Electron compatibility flows;
 that is separate from proving full native product parity. Remote CodeQL and
 packaged desktop checks passed at `92293718`; Core CI stopped at its full
-development dependency audit with 25 advisories. Remote CI is not wholly green.
+development dependency audit with 25 advisories. Vite, Vitest, the retained
+Electron compatibility dependency, undici, and fast-uri are now patched too;
+the full local audit reports zero vulnerabilities. Remote checks must still
+be verified on the new commit.
 
 Native builds compile the peer inspector against headers from the same
 checksum-verified Node archive as the bundled runtime. CI runs the new
@@ -103,16 +106,31 @@ request opens and navigates a real Chromium tab, closing removes that exact
 tab, and even an approved request cannot close the Kestrel UI. Cancellation,
 disconnect, timeout, and single-owner response matching have focused tests;
 sent operations are never replayed automatically. The focused native suite
-now has 62 passing tests. Browser tab identities live in Chromium session
+now has 65 passing tests. Browser tab identities live in Chromium session
 storage; a stale tool target cannot silently alias a different tab when Chrome
 reuses numeric tab IDs after a full restart.
+
+Core's current-context tool and the existing UI context request now read an
+HTTP(S) main document through Chromium's scripting API in its isolated world.
+The worker pins the main document ID before execution and checks that same ID
+and URL afterwards, including same-URL navigation. It excludes editable and
+private content, never reads form values, redacts credential-like text, and
+removes URL queries and fragments before returning context. Core separately
+validates and redacts the result. The live native canary verifies public text,
+headings, links, sensitive field metadata, page-world isolation, and absence
+of fixture secrets from both the UI and Core results. This does not yet read
+cross-origin child frames or provide interaction references.
+
+All 1,712 workspace tests and workspace TypeScript checks passed after these
+changes. The native desktop canary also passed page reading, tab tools,
+approval enforcement, durable restart, and clean shutdown on the new build.
 
 Release acceptance still requires the complete native product workflow:
 
 - Provider sign-in and credential storage, local models, workspace/file
   operations, settings, approvals, and agent execution on the new host.
 - Full Core browser automation beyond the verified visible tab primitives:
-  context extraction, snapshots and actions, screenshots, isolated
+  snapshots and actions, screenshots, isolated
   browsing, downloads, autofill, recovery, and functional extension/update
   checks on this exact window architecture.
 - A tested, explicit profile transfer and rollback path that preserves the
