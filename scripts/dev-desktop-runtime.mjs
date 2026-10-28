@@ -18,7 +18,6 @@ if (runtime === "chromium" || runtime === "native") {
 		process.execPath,
 		[
 			join(root, "scripts", "dev-native-chromium-host.mjs"),
-			"--user-extensions",
 			"--durable",
 		],
 		{ stdio: "inherit", cwd: root, env: process.env },

@@ -47,6 +47,7 @@
 #include "include/wrapper/cef_message_router.h"
 #include "include/wrapper/cef_stream_resource_handler.h"
 #include "kestrel_chromium_app.h"
+#include "kestrel_chromium_desktop.h"
 #include "kestrel_durable_browser_library.h"
 #include "kestrel_extension_workbench.h"
 #include "kestrel_native_credentials.h"
@@ -6041,6 +6042,7 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 }
 
 - (void)terminate:(id)sender {
+  if (CloseKestrelChromiumDesktop()) return;
   if (extension_workbench_client) {
     extension_workbench_client->CloseAll();
     return;
@@ -6056,6 +6058,7 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 
 @implementation KestrelAppDelegate
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
+  if (CloseKestrelChromiumDesktop()) return NSTerminateCancel;
   if (extension_workbench_client) {
     extension_workbench_client->CloseAll();
     return NSTerminateCancel;
@@ -6108,6 +6111,11 @@ int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);
   @autoreleasepool {
     [KestrelApplication sharedApplication];
+    if (has_argument(argc, argv, "--kestrel-chromium-desktop")) {
+      KestrelAppDelegate* desktop_delegate = [[KestrelAppDelegate alloc] init];
+      [NSApp setDelegate:desktop_delegate];
+      return RunKestrelChromiumDesktop(argc, argv);
+    }
     const bool extension_workbench =
         has_argument(argc, argv, "--kestrel-extension-workbench");
     user_extensions_enabled =

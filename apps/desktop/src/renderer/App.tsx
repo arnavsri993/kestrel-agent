@@ -1,3 +1,4 @@
+import { closeNativeAgentPanel, nativeChromiumPanel, useNativeCompanionOpen } from "./native-extension-transport";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
@@ -10239,6 +10240,7 @@ function Empty({ title, text }: { title: string; text?: string }) {
 
 export function App() {
 	const browser = useUserBrowser();
+	const nativeCompanionOpen = useNativeCompanionOpen();
 	const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
 	const [runtimeRefreshRevision, setRuntimeRefreshRevision] = useState(0);
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
@@ -10822,6 +10824,10 @@ export function App() {
 		void openAppPage("approvals");
 	}, [focusRuntimeApproval, openAppPage, runtimeWaiting, snapshotPendingCount]);
 	const toggleAgentSidebar = useCallback(() => {
+		if (nativeChromiumPanel) {
+			void closeNativeAgentPanel().catch(() => {});
+			return;
+		}
 		const activeTab = browser.state?.tabs.find(
 			(tab) => tab.id === browser.state?.activeTabId,
 		);
@@ -11223,7 +11229,7 @@ export function App() {
 		(project) => project.id === projectSettingsProjectId,
 	);
 	const presentedAgentSidebarOpen =
-		appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen;
+		nativeChromiumPanel || (!nativeCompanionOpen && (appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen));
 	const appPage = appPageId ? (
 		<motion.div
 			key={appPageId}
@@ -11426,7 +11432,7 @@ export function App() {
 				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
-					<section className="browser-main-plane">
+					{!nativeChromiumPanel && <section className="browser-main-plane">
 						<AnimatePresence initial={false}>
 							{deepLinkNotice && (
 								<motion.small
@@ -11485,8 +11491,8 @@ export function App() {
 						onOpenLifeMemory={() => void openAppPage("memory")}
 						{...(appPage ? { appPage } : {})}
 					/>
-				</section>
-				<AgentSidebar
+				</section>}
+				{!nativeCompanionOpen && <AgentSidebar
 					communicationAssistant={
 						<CommunicationCodeAssistant
 							browser={browser}
@@ -11497,7 +11503,7 @@ export function App() {
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
-					collapsed={!presentedAgentSidebarOpen}
+					collapsed={!nativeChromiumPanel && !presentedAgentSidebarOpen}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}
@@ -11538,7 +11544,7 @@ export function App() {
 						}}
 						onReviewLearnedSkill={reviewLearnedSkill}
 					/>
-				</AgentSidebar>
+				</AgentSidebar>}
 				<DefaultBrowserPrompt
 					isOpen={showDefaultBrowserPrompt}
 					onClose={() => {

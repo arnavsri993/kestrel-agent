@@ -178,12 +178,14 @@ KestrelChromiumApp::KestrelChromiumApp(
     bool extension_workbench,
     bool user_extensions_enabled,
     std::string isolated_profile_root,
-    DefaultClient default_client)
+    DefaultClient default_client,
+    std::string desktop_ui_path)
     : on_context_initialized_(std::move(on_context_initialized)),
       default_client_(std::move(default_client)),
       extension_workbench_(extension_workbench),
       user_extensions_enabled_(user_extensions_enabled),
-      isolated_profile_root_(std::move(isolated_profile_root)) {}
+      isolated_profile_root_(std::move(isolated_profile_root)),
+      desktop_ui_path_(std::move(desktop_ui_path)) {}
 
 void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
@@ -195,15 +197,21 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
   // limiting this change to the browser process follows CEF's safety guidance
   // for child process command lines.
   if (process_type.empty()) {
+    if (!desktop_ui_path_.empty()) {
+      command_line->RemoveSwitch("disable-extensions");
+      command_line->AppendSwitchWithValue("load-extension", desktop_ui_path_);
+    }
     if (!command_line->HasSwitch("kestrel-real-keychain")) {
       command_line->AppendSwitch("use-mock-keychain");
     }
     // Kestrel starts local-first. The Chromium embed must not create a
     // background account, telemetry, component-updater, or reliability
     // network channel before a person explicitly chooses a provider route.
-    command_line->AppendSwitch("disable-background-networking");
-    command_line->AppendSwitch("disable-component-update");
-    command_line->AppendSwitch("disable-component-extensions-with-background-pages");
+    if (desktop_ui_path_.empty()) {
+      command_line->AppendSwitch("disable-background-networking");
+      command_line->AppendSwitch("disable-component-update");
+      command_line->AppendSwitch("disable-component-extensions-with-background-pages");
+    }
     // Extensions stay disabled unless the isolated Chrome-style workbench or
     // the opt-in user-browser extension lane is active. The privileged shell
     // still runs on a separate request context when user extensions are on.
@@ -246,7 +254,7 @@ void KestrelChromiumApp::OnBeforeCommandLineProcessing(
 
 void KestrelChromiumApp::OnRegisterCustomSchemes(
     CefRawPtr<CefSchemeRegistrar> registrar) {
-  if (extension_workbench_) return;
+  if (extension_workbench_ || !desktop_ui_path_.empty() || CefCommandLine::GetGlobalCommandLine()->HasSwitch("kestrel-chromium-desktop")) return;
   registrar->AddCustomScheme(
       "kestrel",
       CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
@@ -261,6 +269,9 @@ KestrelChromiumApp::GetBrowserProcessHandler() {
 
 CefRefPtr<CefRenderProcessHandler>
 KestrelChromiumApp::GetRenderProcessHandler() {
+  // The Chrome desktop uses ordinary extension documents and native messaging.
+  // It has no CEF preload or privileged custom-scheme renderer in any tab.
+  if (!desktop_ui_path_.empty() || CefCommandLine::GetGlobalCommandLine()->HasSwitch("kestrel-chromium-desktop")) return nullptr;
   return this;
 }
 
@@ -276,6 +287,7 @@ CefRefPtr<CefClient> KestrelChromiumApp::GetDefaultClient() {
 
 void KestrelChromiumApp::OnBeforeChildProcessLaunch(
     CefRefPtr<CefCommandLine> command_line) {
+  if (!desktop_ui_path_.empty()) command_line->AppendSwitch("kestrel-chromium-desktop");
   if (extension_workbench_)
     command_line->AppendSwitch("kestrel-extension-workbench");
   if (user_extensions_enabled_)

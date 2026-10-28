@@ -194,7 +194,7 @@ core.on("message", (message) => {
 	if (!message || typeof message !== "object" || Array.isArray(message)) return;
 	if (message.type === "ready") {
 		coreReady = true;
-		write({ type: "ready" });
+		write({ type: "ready", workspaceGrants: bootstrapConfiguration.projects, projects: bootstrapConfiguration.projects });
 		if (liveExtensions) void getExtensionService().catch(() => {
 			write({ type: "extension-runtime-status", ok: false });
 		});
@@ -243,10 +243,11 @@ core.once("exit", (code) => {
 	failPending(error);
 	void shutdown(1);
 });
+core.on("error", () => {
+	if (!stopping) void shutdown(1);
+});
 
-core.send({
-	type: "bootstrap",
-	config: {
+const bootstrapConfiguration = {
 		databasePath: coreProfile.databasePath,
 		encryptionKeyBase64: coreProfile.encryptionKeyBase64,
 		workspaceRoots: [],
@@ -257,8 +258,8 @@ core.send({
 		learnedSkillRoot: join(stateRoot, "learned-skills"),
 		secureEnvironment: {},
 		providerAccounts: [],
-	},
-});
+	};
+core.send({ type: "bootstrap", config: bootstrapConfiguration });
 
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
 lines.once("close", () => void shutdown(0));

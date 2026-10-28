@@ -1,3 +1,4 @@
+import { nativeChromiumSurface } from "../../native-extension-transport";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import type {
 	ChromeWebStoreExtensionInspection,
@@ -1616,8 +1617,7 @@ export function BrowserSettings({
               <Icon name="extensions" /> Web extensions and add-ons
             </h2>
             <p>
-              Only verified store packages or explicitly enabled development
-              packages are loaded.
+              {nativeChromiumSurface ? "Install from Chrome Web Store and review access in the browser’s permission prompt." : "Only verified store packages or explicitly enabled development packages are loaded."}
             </p>
           </header>
           {extensionMessage && (
@@ -1635,7 +1635,7 @@ export function BrowserSettings({
               </button>
             </div>
           )}
-          <div className="extension-install-bar">
+          {!nativeChromiumSurface && <div className="extension-install-bar">
             <input
               type="text"
               placeholder="Paste Chrome Web Store URL or Extension ID"
@@ -1658,7 +1658,7 @@ export function BrowserSettings({
             >
               {extensionLoading ? "Reviewing…" : "Review from Web Store"}
             </button>
-          </div>
+          </div>}
           <div className="extension-actions-row">
             <a
               href="https://chromewebstore.google.com"
@@ -1674,7 +1674,7 @@ export function BrowserSettings({
             </a>
           </div>
           <p className="honest-status">
-            Review extension access before installing. Some Chrome APIs are unsupported.
+            {nativeChromiumSurface ? <button type="button" className="quiet-link" onClick={() => void browser.createTab("chrome://extensions/")}>Manage extension permissions and updates</button> : "Review extension access before installing. Some Chrome APIs are unsupported."}
           </p>
           <div className="installed-extensions-section">
             <h4>Installed extensions ({extensions.length})</h4>

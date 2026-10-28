@@ -1,0 +1,36 @@
+/* Chromium owns the window's tab strip, omnibox and web content. These are
+ * actual Kestrel surfaces, with no duplicate browser controls underneath. */
+html[data-desktop-runtime="chromium"] .ai-browser-app {
+	--agent-panel-top: 0px;
+}
+html[data-desktop-runtime="chromium"] .ai-browser-app .browser-workspace {
+	grid-template-areas: "viewport .";
+	grid-template-rows: minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr) var(--agent-panel-width);
+}
+html[data-desktop-runtime="chromium"] .ai-browser-app .browser-workspace:has(.kestrel-sidebar) {
+	grid-template-areas: "kestrel-sidebar viewport .";
+	grid-template-columns: var(--kestrel-sidebar-width, 216px) minmax(0, 1fr) var(--agent-panel-width);
+}
+html[data-native-surface="panel"] .ai-browser-app {
+	display: block;
+	min-width: 0;
+	--agent-panel-width: 100%;
+	--agent-panel-open-width: 100%;
+}
+html[data-native-surface="panel"] .agent-sidebar {
+	display: grid;
+	grid-template-rows: auto auto minmax(0, 1fr);
+	position: relative;
+	top: auto;
+	width: 100%;
+	height: 100dvh;
+	max-height: none;
+	border: 0;
+}
+html[data-native-surface="panel"] .agent-sidebar-resize-handle {
+	display: none;
+}
+html[data-native-surface="panel"] .agent-compact-dock {
+	display: none;
+}

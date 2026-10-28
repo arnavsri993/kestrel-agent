@@ -1,5 +1,12 @@
 # Incremental desktop runtime migration
 
+The current native desktop candidate uses a normal Chromium-owned window and
+the existing Kestrel UI as a private extension. See
+[Native Chromium release evidence](native-chromium-release.md) for its commands,
+security boundary, verified Store behavior, and remaining release gates. The
+Alloy and reparented-window probes below are historical implementation work;
+their passes do not establish parity for the current desktop candidate.
+
 Kestrel's installed desktop still uses Electron for its window and browser host.
 Chromium is the target browser engine, but migration is now happening on the
 shipping process path as well as in the thin Chromium host: packaged Kestrel

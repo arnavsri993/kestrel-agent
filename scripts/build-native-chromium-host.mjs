@@ -7,6 +7,7 @@ import { prepareNativeChromiumRuntime } from "./prepare-native-chromium-runtime.
 import { buildNativeChromiumWrapper } from "./build-native-chromium-wrapper.mjs";
 import { buildNativeChromiumRenderer } from "./build-native-chromium-renderer.mjs";
 import { buildNativeExtensionService } from "./build-native-extension-service.mjs";
+import { buildNativeUi } from "./build-native-ui.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = join(root, ".tmp");
@@ -113,6 +114,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			join(paths.app, "Contents", "Info.plist"),
 		);
 		await copyFile(join(runtime, "LICENSE.txt"), join(paths.resources, "CEF_LICENSE.txt"));
+		await copyFile(join(root, "apps/desktop/build/icon.icns"), join(paths.resources, "AppIcon.icns"));
 		run("/usr/bin/ditto", [
 			"--rsrc",
 			"--extattr",
@@ -130,6 +132,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 		);
 		await copyFile(join(extensions, "native-extension-service.mjs"),
 			join(paths.resources, "native-extension-service.mjs"));
+		await buildNativeUi({ renderer, resources: paths.resources });
 		run("/usr/bin/ditto", [
 			"--rsrc",
 			"--extattr",
@@ -186,6 +189,8 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"IOSurface",
 			"-framework",
 			"Security",
+			"-framework",
+			"ServiceManagement",
 			"-Wl,-search_paths_first",
 			"-Wl,-ObjC",
 			"-Wl,-pie",
@@ -197,6 +202,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-F",
 			paths.frameworks,
 			join(nativeHostRoot, "src", "kestrel_native_host.mm"),
+			join(nativeHostRoot, "src", "kestrel_chromium_desktop.mm"),
 			join(nativeHostRoot, "src", "kestrel_chrome_window_mac.mm"),
 			join(nativeHostRoot, "src", "kestrel_private_chrome_pipe.mm"),
 			join(nativeHostRoot, "src", "kestrel_live_extension_control.mm"),
@@ -208,6 +214,13 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			...linkFlags,
 		]);
 		await chmod(paths.executable, 0o755);
+		run(compiler, ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-mmacosx-version-min=13.0", "-isysroot", sdkPath,
+			join(nativeHostRoot, "src", "kestrel_native_messaging.cc"), "-o", join(paths.app, "Contents/MacOS/Kestrel Native Bridge")]);
+		const nodeHeaders = process.env.KESTREL_NODE_HEADERS ?? "/opt/homebrew/include/node";
+		if (!existsSync(join(nodeHeaders, "node_api.h"))) throw new Error("Node N-API headers are required to compile the native peer inspector (KESTREL_NODE_HEADERS).");
+		run(compiler, ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-mmacosx-version-min=13.0", "-isysroot", sdkPath,
+			"-bundle", "-undefined", "dynamic_lookup", "-I", nodeHeaders,
+			join(nativeHostRoot, "src", "kestrel_native_peer.cc"), "-o", join(paths.resources, "native-peer.node")]);
 		const helperExecutable = join(staging, "Kestrel Chromium Helper");
 		run(compiler, [
 			...compileFlags,
