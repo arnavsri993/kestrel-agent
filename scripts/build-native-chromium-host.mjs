@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareNativeChromiumRuntime } from "./prepare-native-chromium-runtime.mjs";
@@ -13,6 +14,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = join(root, ".tmp");
 const nativeHostRoot = join(root, "apps", "native-chromium-host");
 const agentCoreSidecar = join(temporaryRoot, "agent-core-sidecar");
+const pinnedNode = createRequire(import.meta.url)("../apps/desktop/build/agent-core-sidecar.cjs");
 const helperVariants = [
 	{ name: "Kestrel Helper", bundleSuffix: "" },
 	{ name: "Kestrel Helper (Alerts)", bundleSuffix: ".alerts" },
@@ -216,11 +218,16 @@ export async function buildNativeChromiumHost({ output } = {}) {
 		await chmod(paths.executable, 0o755);
 		run(compiler, ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-mmacosx-version-min=13.0", "-isysroot", sdkPath,
 			join(nativeHostRoot, "src", "kestrel_native_messaging.cc"), "-o", join(paths.app, "Contents/MacOS/Kestrel Native Bridge")]);
-		const nodeHeaders = process.env.KESTREL_NODE_HEADERS ?? "/opt/homebrew/include/node";
+		// Use the headers from the same checksum-verified archive as the bundled
+		// Node runtime. A developer's Homebrew installation is not a build input.
+		const nodeHeaders = process.env.KESTREL_NODE_HEADERS ?? join(staging, `node-v${pinnedNode.NODE_RUNTIME_VERSION}-darwin-arm64`, "include/node");
+		if (!process.env.KESTREL_NODE_HEADERS) run("/usr/bin/tar", ["-xzf", join(temporaryRoot, "agent-core-sidecar-cache", pinnedNode.NODE_RUNTIME_ARCHIVE),
+			"-C", staging, `node-v${pinnedNode.NODE_RUNTIME_VERSION}-darwin-arm64/include/node`]);
 		if (!existsSync(join(nodeHeaders, "node_api.h"))) throw new Error("Node N-API headers are required to compile the native peer inspector (KESTREL_NODE_HEADERS).");
 		run(compiler, ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-mmacosx-version-min=13.0", "-isysroot", sdkPath,
 			"-bundle", "-undefined", "dynamic_lookup", "-I", nodeHeaders,
 			join(nativeHostRoot, "src", "kestrel_native_peer.cc"), "-o", join(paths.resources, "native-peer.node")]);
+		if (!process.env.KESTREL_NODE_HEADERS) await rm(join(staging, `node-v${pinnedNode.NODE_RUNTIME_VERSION}-darwin-arm64`), { recursive: true });
 		const helperExecutable = join(staging, "Kestrel Chromium Helper");
 		run(compiler, [
 			...compileFlags,

@@ -15,6 +15,7 @@ const profile=await mkdtemp(join(tmpdir(),'kestrel-chromium-desktop-canary-'));
 const evidence=resolve('.tmp/chromium-desktop-evidence');
 await mkdir(evidence,{recursive:true});
 const {UserBrowserStateSchema}=await tsImport('../packages/shared-types/src/contracts.ts',import.meta.url);
+const {isChromeWebStoreUrl}=await tsImport('../packages/shared-types/src/chrome-web-store.ts',import.meta.url);
 const store=process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE==='1';
 const formatter='bcjindcccaagfpapjjmafapmmgkkhgoa';
 const receipt={at:new Date().toISOString(),executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),storeRequested:store,phases:[]};
@@ -107,7 +108,7 @@ try{
  receipt.phases.push({phase:'native-ui-core-and-tabs',passed:true,rendererErrors:errors});assert.deepEqual(errors,[]);
  if(store){
   await settings.getByRole('link',{name:/Browse Chrome Web Store/}).click();
-  const listing=await createdPage(url=>url.startsWith('https://chromewebstore.google.com'));await listing.goto(`https://chromewebstore.google.com/detail/json-formatter/${formatter}`,{waitUntil:'domcontentloaded'});
+  const listing=await createdPage(isChromeWebStoreUrl);await listing.goto(`https://chromewebstore.google.com/detail/json-formatter/${formatter}`,{waitUntil:'domcontentloaded'});
   await listing.getByRole('button',{name:'Add to Chrome',exact:true}).waitFor();
   const session=await browser.newBrowserCDPSession();
   let panel;

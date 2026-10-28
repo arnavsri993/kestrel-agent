@@ -78,11 +78,20 @@ Native keyboard New Tab, Close Tab, zoom, and Kestrel's own panel collapse
 control were exercised on screen. Home presents one conversation surface
 while Chromium's companion is open.
 
-Focused UI/transport tests passed (19 tests), the full native build and
-desktop TypeScript checks passed, and the kernel-peer/authentication smoke
-passed. Repository-wide `pnpm verify` stopped at its initial production
-dependency audit: the existing Zod 4.4.3 and website Next.js 16.3.8 dependencies
-have four reported advisories. The aggregate verification did not pass.
+The full native build, native authentication and restart smokes, workspace
+TypeScript checks, and all 1,700 unit tests passed. An additional focused
+regression run passed 25 tests, including browser-free module imports and
+exact Store-origin matching. The initial dependency audit found vulnerable
+Zod and website Next.js versions; these are updated to Zod 4.6.6 and Next.js
+16.4.1, including the older transitive Zod copy. The production audit now
+reports no known vulnerabilities. Aggregate `pnpm verify` and remote CI
+still require their own completed results; these focused passes do not
+establish full native product parity.
+
+Native builds compile the peer inspector against headers from the same
+checksum-verified Node archive as the bundled runtime. CI runs the new
+Chromium desktop and native authentication smokes against its exact native
+candidate, in addition to the historical host probes.
 
 Release acceptance still requires the complete native product workflow:
 

@@ -1,4 +1,4 @@
-import { createRendererBridge, type RendererTransport, type RendererResponse } from "@kestrel/shared-types";
+import { createRendererBridge, isChromeWebStoreUrl, type RendererTransport, type RendererResponse } from "@kestrel/shared-types";
 import { useSyncExternalStore } from "react";
 
 interface ExtensionPort {
@@ -25,7 +25,7 @@ interface NativeChromeUi {
 
 const chromeUi = (globalThis as typeof globalThis & { chrome?: NativeChromeUi }).chrome;
 const runtime = chromeUi?.runtime;
-export const nativeChromiumSurface = location.protocol === "chrome-extension:" && runtime?.id === location.hostname;
+export const nativeChromiumSurface = typeof location !== "undefined" && location.protocol === "chrome-extension:" && runtime?.id === location.hostname;
 export const nativeChromiumPanel = nativeChromiumSurface && new URLSearchParams(location.search).get("surface") === "panel";
 let nativeWindowId: number | undefined;
 const openPanelsKey = "kestrel.native.openPanels.v1";
@@ -105,7 +105,7 @@ if (nativeChromiumSurface && runtime) {
 	});
 	const transport: RendererTransport = {
 		request(request) {
-			if (request.type === "browser-create-tab" && request.input?.startsWith("https://chromewebstore.google.com")) {
+			if (request.type === "browser-create-tab" && request.input && isChromeWebStoreUrl(request.input)) {
 				// Called in the original UI gesture before awaiting any tab work.
 				void openNativeAgentPanel().catch(() => {});
 			}

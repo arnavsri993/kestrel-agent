@@ -1,5 +1,16 @@
 const CHROME_WEB_STORE_EXTENSION_ID = /^[a-p]{32}$/i;
 
+/** Match the parsed official origin, including Store home/category pages. */
+export function isChromeWebStoreUrl(input: string): boolean {
+	try {
+		const url = new URL(input);
+		return url.protocol === "https:" && url.hostname === "chromewebstore.google.com" &&
+			!url.username && !url.password && !url.port;
+	} catch {
+		return false;
+	}
+}
+
 function chromeWebStoreDetailSegments(url: URL): string[] | null {
 	if (
 		url.protocol !== "https:" ||
