@@ -1,7 +1,7 @@
 # Browser extension compatibility
 
 **Extensions → Open Chrome Web Store** opens a tab in the existing Kestrel
-window, preserving its sidebar, tab rail and agent controls. Store listings offer
+window, keeping its tab rail and agent controls. Store listings offer
 Kestrel's **Review & add** flow below. Full native Chromium extension support
 inside that window is not complete; opening a separate stock Chromium window
 does not satisfy that integration.
@@ -142,6 +142,22 @@ old reports. Until then, the Extensions subsystem is **abstracted,
 Electron-backed, and dual-backend-ready**, not Chromium-owned.
 
 ## Verification scope
+
+To exercise the normal Store route against the canonical installed app:
+
+```bash
+KESTREL_DESKTOP_EXECUTABLE=/Applications/Kestrel.app/Contents/MacOS/Kestrel \
+  KESTREL_TEST_REAL_CHROME_WEB_STORE=1 corepack pnpm test:desktop-extension-store
+```
+
+This canary uses a disposable profile and checks the actual native window IDs,
+Kestrel's tab rail and agent sidebar, signed-package review and installation,
+and enablement after a full app restart. Its receipt records the installed
+`app.asar` hash and explicitly identifies the Electron runtime. Evidence stays
+under `.tmp/kestrel-store-window-evidence/`; no personal profile is modified.
+The navigation sidebar follows Kestrel's normal page layout and the agent panel
+remains accessible beside the Store. This is separate from native Chromium
+extension-parity verification.
 
 Focused unit coverage uses disposable temporary profiles and synthetic signed
 CRX3 fixtures to exercise content scripts, action/background declarations,

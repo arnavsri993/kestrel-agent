@@ -46,6 +46,7 @@
     "test:desktop-smoke": "node scripts/smoke-desktop.mjs",
     "test:desktop-single-instance": "node scripts/test-desktop-single-instance.mjs",
     "test:desktop-browser": "node scripts/test-desktop-browser.mjs",
+    "test:desktop-extension-store": "node scripts/test-desktop-extension-store.mjs",
     "test:desktop-tab-interactions": "node scripts/test-desktop-tab-interactions.mjs",
     "test:desktop-autofill": "node --import tsx scripts/test-autofill-preload.mjs && node scripts/test-autofill-desktop.mjs",
     "test:desktop-auth-links": "node scripts/test-desktop-auth-links.mjs",
