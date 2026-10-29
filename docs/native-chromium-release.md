@@ -223,6 +223,16 @@ rejects a competing draft, and requires the original task to finish. It also
 passes full app restart. This was verified on candidate `00ed37ae`; the complete
 unit suite now has 1,741 passing tests and workspace typecheck passes.
 
+The live Chrome Web Store canary was repeated on that same `00ed37ae`
+candidate after provider and companion integration. Chromium's real permission
+sheet installed JSON Formatter `0.10.2`; it rendered an actual JSON page before
+and after a complete restart. Home, Settings, and Store all belonged to native
+window `1137455833`, with companion target
+`A4AE3205F1926D3A19614DCE901017D0`. The combined provider, busy-task, download,
+Core recovery, Store, and restart receipt is retained under
+`.tmp/chromium-store-companion-evidence-00ed37ae/`. The canonical installed
+Electron app and its existing user data remain preserved pending cutover.
+
 Release acceptance still requires the complete native product workflow:
 
 - Provider sign-in and credential storage, local models, workspace/file
