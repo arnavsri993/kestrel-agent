@@ -5182,6 +5182,8 @@ export const LocalRuntimeStatusSchema = z.object({
 	runtimeVersion: z.string().min(1).max(100).optional(),
 	runtimeDownloadBytes: z.number().int().positive(),
 	localModels: z.array(LocalModelSummarySchema),
+	/** Discovered models are choices, not configured or live-verified routes. */
+	detectedModels: z.array(LocalModelSummarySchema).max(200).optional(),
 	verifiedModel: z.string().min(1).max(200).optional(),
 	verifiedAt: z.string().datetime().optional(),
 	/** A host can explicitly defer local-runtime ownership without pretending it is a device limitation. */

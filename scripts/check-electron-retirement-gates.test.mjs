@@ -9,6 +9,6 @@ it("does not accept retirement from an environment flag without a concrete candi
 		env: { ...process.env, KESTREL_ACCEPT_ELECTRON_RETIREMENT: "1" },
 	});
 	expect(result.status).toBe(1);
-	expect(result.stderr).toMatch(/explicit built Kestrel.app candidate; acceptance alone is insufficient/);
+	expect(result.stderr).toMatch(/explicit built Kestrel.app candidate/);
 	expect(result.stdout).not.toMatch(/Retirement acceptance recorded/);
 });

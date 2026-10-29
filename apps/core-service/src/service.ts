@@ -39,6 +39,8 @@ import {
 import { CoreRequestSchema } from "@kestrel/shared-types";
 import type { CoreParentPort } from "./transport";
 import { normalizeBrowserPageContext } from "./browser-page-context";
+import { normalizeBrowserAccessibilitySnapshot } from "./browser-accessibility-snapshot";
+import { decodeNativeBrowserScreenshot } from "./browser-screenshot";
 import { normalizeBrowserVisibleTabs, normalizeBrowserHistory, normalizeBrowserDownloads } from "./browser-observation-metadata";
 
 export function startCoreService(port: CoreParentPort): void {
@@ -175,15 +177,16 @@ export function startCoreService(port: CoreParentPort): void {
 				{ operation: "visible-context", ...(tabId ? { tabId } : {}) },
 				signal,
 			)),
-		visibleSnapshot: (tabId, signal) =>
-			browserRequest(
+		visibleSnapshot: async (tabId, signal) =>
+			normalizeBrowserAccessibilitySnapshot(await browserRequest(
 				{ operation: "visible-snapshot", ...(tabId ? { tabId } : {}) },
 				signal,
-			),
+			)),
 		visibleScreenshot: async (tabId, signal) => {
 			const result = await browserRequest<
-				ScreenshotFrame & { trust: "untrusted_browser" }
+				ScreenshotFrame & { trust: "untrusted_browser"; encoding?: unknown }
 			>({ operation: "visible-screenshot", ...(tabId ? { tabId } : {}) }, signal);
+			if (result.encoding !== undefined) return decodeNativeBrowserScreenshot(result, signal);
 			return {
 				...result,
 				rgba: new Uint8Array(result.rgba),

@@ -9,7 +9,7 @@ describe("shared request execution and native transport deadlines", () => {
 		expect(coreRequestTimeoutMs({ type: "snapshot" })).toBe(30_000);
 	});
 	it("leaves room for bounded connection setup and Core's cancellation response", () => {
-		for (const type of ["snapshot", "runtime-run-agent", "media-transcribe", "oauth-chatgpt-connect"]) {
+		for (const type of ["snapshot", "runtime-run-agent", "media-transcribe", "oauth-chatgpt-connect", "provider-account-connect", "local-runtime-bootstrap"]) {
 			const request = { type };
 			const broker = nativeRequestTimeoutMs(request, "broker");
 			const worker = nativeRequestTimeoutMs(request, "worker");
@@ -19,5 +19,12 @@ describe("shared request execution and native transport deadlines", () => {
 			expect(broker).toBeGreaterThan(coreRequestTimeoutMs(request));
 			expect(renderer).toBeLessThan(32 * 60_000);
 		}
+	});
+	it("allows local chat warm-up and Core restart within a bounded setup budget", () => {
+		expect(nativeRequestTimeoutMs({ type: "local-runtime-bootstrap" }, "broker")).toBe(100_000);
+	});
+	it("allows the same bounded login budget for managed and shared Codex accounts", () => {
+		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "broker")).toBe(610_000);
+		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "renderer")).toBe(nativeRequestTimeoutMs({ type: "oauth-chatgpt-connect" }, "renderer"));
 	});
 });

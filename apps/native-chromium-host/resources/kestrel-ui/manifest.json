@@ -6,7 +6,7 @@
   "background": { "service_worker": "background.mjs", "type": "module" },
   "side_panel": { "default_path": "index.html?surface=panel" },
   "action": { "default_title": "Open Kestrel" },
-  "permissions": ["tabs", "bookmarks", "history", "downloads", "storage", "sidePanel", "nativeMessaging", "management", "scripting", "webNavigation"],
+  "permissions": ["tabs", "bookmarks", "history", "downloads", "storage", "sidePanel", "nativeMessaging", "management", "scripting", "webNavigation", "debugger"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "incognito": "not_allowed",
   "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';" }

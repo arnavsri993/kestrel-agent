@@ -237,7 +237,7 @@ function rejectSensitiveBrowserTyping(
  * boundary instead of relying on a particular browser host to remember it.
  */
 function redactBrowserSnapshot(snapshot: BrowserSnapshot): BrowserSnapshot {
-	const annotated = annotateAccessibilityTree(snapshot.accessibilityTree);
+	const annotated = annotateAccessibilityTree(snapshot.accessibilityTree, 200, { preserveExistingRefs: true });
 	const interactive =
 		annotated.interactive.length > 0
 			? annotated.interactive

@@ -78,6 +78,9 @@ const publishSnapshot = async () => {
 };
 const providers = new NativeProviderHost({ root: profile.root, encryptionKeyBase64: profile.encryptionKeyBase64,
 	homeDirectory: homedir(), environment: process.env, reconfigure: mutation => configuration.reconfigure(mutation),
+	openAuthUrl: async (url, signal) => {
+		await browserRequest({ operation: "visible-create", input: url }, signal);
+	},
 });
 const configuration = createNativeCoreConfiguration({ core,
 	isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning,
@@ -97,6 +100,7 @@ core.on("recovered", () => {
 async function shutdown(code = 0) {
 	if (stopping) return; stopping = true;
 	cancelBrowsers();
+	await providers.close();
 	await core.stop();
 	await profile.close();
 	process.exit(code);
@@ -128,7 +132,7 @@ input.on("line", line => {
 	if (!isHost) activeCoreRequests.add(message.id);
 	void Promise.resolve().then(() => isHost ? providers.handle(parsed.data) : core.request(parsed.data))
 		.then(response => write({ type: "response", id: message.id, response }))
-		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? "Provider settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
+		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? parsed.data.type === "local-runtime-bootstrap" && error instanceof Error && error.message === "Choose an installed model with confirmed tool support for Kestrel tasks." ? error.message : "Provider settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
 		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); });
 });
 try {

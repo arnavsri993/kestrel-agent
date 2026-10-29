@@ -6120,10 +6120,19 @@ int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);
   @autoreleasepool {
     [KestrelApplication sharedApplication];
-    if (has_argument(argc, argv, "--kestrel-chromium-desktop")) {
+    // An explicit --kestrel-chromium-desktop selects the real desktop. Any
+    // other --kestrel-* switch keeps the historical explicit probe/workbench
+    // path (including a standalone --kestrel-cache-path). Finder/Dock launches
+    // have no Kestrel switches (Finder may add -psn) and open the real UI.
+    bool legacy_selector = false;
+    for (int i = 1; i < argc; ++i) {
+      if (std::string(argv[i]).rfind("--kestrel-", 0) == 0) legacy_selector = true;
+    }
+    const bool explicit_desktop = has_argument(argc, argv, "--kestrel-chromium-desktop");
+    if (explicit_desktop || !legacy_selector) {
       KestrelAppDelegate* desktop_delegate = [[KestrelAppDelegate alloc] init];
       [NSApp setDelegate:desktop_delegate];
-      return RunKestrelChromiumDesktop(argc, argv);
+      return RunKestrelChromiumDesktop(argc, argv, !explicit_desktop);
     }
     const bool extension_workbench =
         has_argument(argc, argv, "--kestrel-extension-workbench");

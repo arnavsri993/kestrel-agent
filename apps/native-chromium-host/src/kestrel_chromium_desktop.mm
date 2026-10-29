@@ -1,6 +1,9 @@
 #import <Cocoa/Cocoa.h>
 #import <ServiceManagement/ServiceManagement.h>
 #include <poll.h>
+#include <pwd.h>
+#include <cstring>
+#include <cerrno>
 #include <limits.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -46,6 +49,8 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int http_status) override {
+    if (frame->IsMain() && frame->GetURL() == ui_url_ && http_status >= 200 && http_status < 400)
+      std::cout << "KESTREL_CHROMIUM_DESKTOP_DOCUMENT_LOADED" << std::endl;
     if (frame->IsMain() && first_browser_ && browser->IsSame(first_browser_) &&
         frame->GetURL() == "about:blank") {
       // The first document wakes a dormant MV3 worker through runtime.connect.
@@ -241,10 +246,121 @@ bool ReopenKestrelChromiumDesktop() {
   return true;
 }
 
-int RunKestrelChromiumDesktop(int argc, char** argv) {
-  NSString* requested = Argument(argc, argv, "--kestrel-cache-path");
+// Only an owned, private, separately marked default profile may reopen without
+// another choice. Never infer ownership from a pre-existing nonempty folder.
+static NSString* DefaultNativeProfile() {
+  NSFileManager* files = NSFileManager.defaultManager;
+  struct passwd* user = getpwuid(getuid());
+  if (!user || !user->pw_dir) return nil;
+  NSString* home = [NSString stringWithUTF8String:user->pw_dir];
+  NSString* support = [home stringByAppendingPathComponent:@"Library/Application Support"];
+  NSString* legacy = [support stringByAppendingPathComponent:@"Kestrel"];
+  NSString* root = [support stringByAppendingPathComponent:@"Kestrel Native"];
+  NSString* profile = [root stringByAppendingPathComponent:@"Default"];
+  const char* test_env = getenv("KESTREL_NATIVE_TEST_PROFILE_ROOT");
+  const bool test = test_env && *test_env;
+  if (test) {
+    // A private, already-existing directory inside macOS's per-user temporary
+    // directory permits a no-CLI canary without touching a real profile.
+    char temporary[PATH_MAX]{};
+    char resolved_temp[PATH_MAX]{};
+    char resolved_test[PATH_MAX]{};
+    if (!confstr(_CS_DARWIN_USER_TEMP_DIR, temporary, sizeof(temporary)) ||
+        !realpath(temporary, resolved_temp) || !realpath(test_env, resolved_test)) return nil;
+    const std::string base = std::string(resolved_temp) + "/";
+    const std::string selected = resolved_test;
+    struct stat supplied{};
+    if (test_env[0] != '/' || lstat(test_env, &supplied) || !S_ISDIR(supplied.st_mode) ||
+        supplied.st_uid != getuid() || (supplied.st_mode & 0077) ||
+        selected.compare(0, base.size(), base) != 0) return nil;
+    profile = [NSString stringWithUTF8String:resolved_test];
+  }
+  if (!test) {
+    // Do not allow an ancestor alias to redirect the default into another
+    // profile. The usual Application Support location must already exist.
+    char resolved_home[PATH_MAX]{};
+    char resolved_support[PATH_MAX]{};
+    if (!realpath(home.fileSystemRepresentation, resolved_home) ||
+        !realpath(support.fileSystemRepresentation, resolved_support) ||
+        std::string(resolved_support) != std::string(resolved_home) + "/Library/Application Support") return nil;
+    struct stat parent{};
+    if (lstat(root.fileSystemRepresentation, &parent) == 0) {
+      if (!S_ISDIR(parent.st_mode) || parent.st_uid != getuid() || (parent.st_mode & 0077)) return nil;
+    } else if (errno != ENOENT) return nil;
+  }
+  const char* path = profile.fileSystemRepresentation;
+  struct stat info{};
+  bool exists = lstat(path, &info) == 0;
+  if (!exists && errno != ENOENT) return nil;
+  if (exists && (!S_ISDIR(info.st_mode) || info.st_uid != getuid() || (info.st_mode & 0077))) return nil;
+  NSString* marker = [profile stringByAppendingPathComponent:@".kestrel-native-default-v1"];
+  const char* marker_path = marker.fileSystemRepresentation;
+  if (exists) {
+    int fd = open(marker_path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd >= 0) {
+      struct stat marker_info{};
+      char data[32]{};
+      const ssize_t count = read(fd, data, sizeof(data));
+      const bool valid = !fstat(fd, &marker_info) && S_ISREG(marker_info.st_mode) &&
+          marker_info.st_uid == getuid() && marker_info.st_nlink == 1 &&
+          !(marker_info.st_mode & 0077) && count == 18 && !memcmp(data, "kestrel-native-v1\n", 18);
+      close(fd);
+      return valid ? profile : nil;
+    }
+    if (errno != ENOENT) return nil;
+    NSArray* contents = [files contentsOfDirectoryAtPath:profile error:nil];
+    if (!contents || contents.count != 0) {
+      std::cerr << "Native default profile is not recognized; existing files were preserved." << std::endl;
+      return nil;
+    }
+  }
+  bool existing_data = false;
+  if (!test) {
+    // PRODUCT_IDENTITY uses "Kestrel" for Electron's Application Support
+    // directory. Any other entry under Kestrel Native (including Development)
+    // may be another profile; preserve it and ask before making Default.
+    existing_data = [files fileExistsAtPath:legacy];
+    struct stat parent{};
+    if (!lstat(root.fileSystemRepresentation, &parent)) {
+      NSError* inventory_error = nil;
+      NSArray<NSString*>* entries = [files contentsOfDirectoryAtPath:root error:&inventory_error];
+      if (!entries) return nil;
+      for (NSString* entry in entries) if (![entry isEqualToString:@"Default"]) existing_data = true;
+    } else if (errno != ENOENT) return nil;
+  }
+  if (existing_data) {
+    NSAlert* choice = [[NSAlert alloc] init];
+    choice.messageText = @"Use a separate Kestrel profile?";
+    choice.informativeText = @"Existing Kestrel data was found. Continue with a separate native profile, or cancel. Your existing profile and credentials will remain untouched; they will not be transferred.";
+    [choice addButtonWithTitle:@"Continue with Separate Profile"];
+    [choice addButtonWithTitle:@"Cancel"];
+    if ([choice runModal] != NSAlertFirstButtonReturn) return nil;
+  }
+  if (!test) {
+    // The native parent must be an actual owned directory, never a link to the
+    // legacy profile. Create no profile at all until after the choice above.
+    struct stat parent{};
+    if (lstat(root.fileSystemRepresentation, &parent)) {
+      if (errno != ENOENT || mkdir(root.fileSystemRepresentation, 0700)) return nil;
+      if (lstat(root.fileSystemRepresentation, &parent)) return nil;
+    }
+    if (!S_ISDIR(parent.st_mode) || parent.st_uid != getuid() || (parent.st_mode & 0077)) return nil;
+    if (!exists && mkdir(path, 0700)) return nil;
+    if (lstat(path, &info) || !S_ISDIR(info.st_mode) || info.st_uid != getuid() || (info.st_mode & 0077)) return nil;
+  }
+  const int fd = open(marker_path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+  if (fd < 0) return nil;
+  const char marker_data[] = "kestrel-native-v1\n";
+  const bool saved = write(fd, marker_data, sizeof(marker_data) - 1) == sizeof(marker_data) - 1 && fsync(fd) == 0;
+  close(fd);
+  if (!saved) return nil; // Preserve an incomplete marker for explicit recovery.
+  return profile;
+}
+
+int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
+  NSString* requested = default_profile ? DefaultNativeProfile() : Argument(argc, argv, "--kestrel-cache-path");
   if (!requested || !requested.isAbsolutePath) {
-    std::cerr << "Native Chromium requires an explicit isolated profile." << std::endl;
+    std::cerr << (default_profile ? "Native default profile is unavailable or setup was cancelled; existing data was preserved." : "Native Chromium requires an explicit isolated profile.") << std::endl;
     return 1;
   }
   NSError* error = nil;
@@ -267,7 +383,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv) {
   NSMutableArray* arguments = [NSMutableArray arrayWithArray:@[
     [resources stringByAppendingPathComponent:@"native-ui-broker.mjs"], @"--profile-root", profile,
     @"--browser-pid", [NSString stringWithFormat:@"%d", getpid()]]];
-  if (HasArgument(argc, argv, "--kestrel-durable-profile")) [arguments addObject:@"--durable-profile"];
+  if (default_profile || HasArgument(argc, argv, "--kestrel-durable-profile")) [arguments addObject:@"--durable-profile"];
   broker.arguments = arguments;
   NSDictionary* inherited = NSProcessInfo.processInfo.environment;
   NSMutableDictionary* environment = [NSMutableDictionary dictionary];
@@ -309,7 +425,14 @@ int RunKestrelChromiumDesktop(int argc, char** argv) {
       [event_buffer replaceBytesInRange:NSMakeRange(0, range.location + 1) withBytes:nullptr length:0];
       NSDictionary* value = [NSJSONSerialization JSONObjectWithData:message options:0 error:nil];
       if (![value isKindOfClass:NSDictionary.class]) continue;
-      if ([value[@"kind"] isEqualToString:@"ui-ready"]) dispatch_async(dispatch_get_main_queue(), ^{ if (desktop_client) desktop_client->UiReady(); });
+      if ([value[@"kind"] isEqualToString:@"ui-ready"]) dispatch_async(dispatch_get_main_queue(), ^{
+        if (desktop_client) {
+          desktop_client->UiReady();
+          // This comes only after Core is ready and the authenticated extension
+          // worker has connected. It does not assert React has rendered.
+          std::cout << "KESTREL_CHROMIUM_DESKTOP_BRIDGE_READY" << std::endl;
+        }
+      });
       if ([value[@"kind"] isEqualToString:@"host-request"] && [value[@"id"] isKindOfClass:NSString.class] && [value[@"request"] isKindOfClass:NSDictionary.class]) {
         dispatch_async(dispatch_get_main_queue(), ^{
           NSString* type = value[@"request"][@"type"];

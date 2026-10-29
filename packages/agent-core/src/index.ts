@@ -4537,6 +4537,7 @@ export {
 } from "./ui-presentation";
 export {
 	annotateAccessibilityTree,
+	isSensitiveBrowserInteractiveRef,
 	ELEMENT_REF_PATTERN,
 	isBrowserElementRef,
 	normalizeBrowserElementRef,

@@ -17,6 +17,12 @@ KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
   corepack pnpm test:chromium-native-auth
 KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
   corepack pnpm test:chromium-desktop
+KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
+  corepack pnpm test:chromium-default-launch
+# Requires an already-installed Ollama model that supports tools.
+KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
+KESTREL_TEST_LOCAL_MODEL="your-installed-model:tag" \
+  corepack pnpm test:chromium-first-run
 ```
 
 Development uses an isolated durable profile under
@@ -233,13 +239,54 @@ Core recovery, Store, and restart receipt is retained under
 `.tmp/chromium-store-companion-evidence-00ed37ae/`. The canonical installed
 Electron app and its existing user data remain preserved pending cutover.
 
+### Native input and normal launch checkpoint
+
+Candidate executable `5c1a9c91` passed real Core accessibility snapshots,
+trusted Chromium click/type/key/wheel input, selection changes, consumed/stale
+reference rejection, same-URL document replacement rejection, sensitive-field
+refusal, and compressed screenshots decoded and independently checked in Core.
+It also passed the provider/companion task, download, crash-recovery, and restart
+canary. Evidence is retained in
+`.tmp/chromium-actions-provider-evidence-5c1a9c91/`. Screenshots refuse editable,
+private, embedded, and ambiguous content rather than exposing it. A review also
+found that attributes past the traversal limit could hide private markers; such
+nodes and descendants now fail closed, with regression coverage.
+
+No-argument launch now selects the real native desktop and a private durable
+Default profile, rather than opening the historical extension workbench.
+Existing unrecognized data is preserved, and creating a separate profile needs
+an on-screen choice. A test-only private temporary profile avoids touching the
+user's real data. The no-argument smoke verified an authenticated worker/Core
+bridge, first-party document load, durable key, restart, and clean shutdown;
+document load alone does not prove React rendered. The first-run canary checks
+the actual setup screens and a real subsequent task without setting onboarding
+flags. Its current local-model acceptance work is still in progress.
+
+Native sign-in now has guarded start/cancel handling through the official
+provider flow and opens its approved provider URL in the native browser.
+Deterministic tests cover cancellation, cleanup, busy-state protection, and
+managed accounts; a new interactive login has not yet been visibly exercised.
+Installed Ollama models are shown as choices separately from configured routes.
+Local setup requires confirmed tool support and a real `/api/chat` response;
+a text-generation response alone no longer establishes readiness for the guided
+first task. Automatic runtime installation/model downloads remain unavailable.
+
+Retirement acceptance now additionally requires a complete-bundle fingerprint,
+separate gate receipts, and unchanged supporting artifacts. These are reviewed
+attestations, not cryptographic proof that a workflow happened. The installer
+also validates the staged copy against the evidence and its release signature
+before moving any installed app. The current canonical on-screen gate still
+requires a staged cutover/rollback implementation; `native-cutover-plan.mjs`
+only describes that plan and makes no changes. No complete manifest has been
+asserted for this candidate. The canonical installed app remains unchanged.
+
 Release acceptance still requires the complete native product workflow:
 
 - Provider sign-in and credential storage, local models, workspace/file
   operations, settings, approvals, and agent execution on the new host.
-- Full Core browser automation beyond the verified visible tab primitives:
-  snapshots and actions, screenshots, isolated
-  browsing, downloads, autofill, recovery, and functional extension/update
+- Full Core browser automation beyond the verified visible tabs, snapshots,
+  actions, and screenshots: isolated browsing,
+  downloads, autofill, recovery, and functional extension/update
   checks on this exact window architecture.
 - A tested, explicit profile transfer and rollback path that preserves the
   existing user profile and credentials.

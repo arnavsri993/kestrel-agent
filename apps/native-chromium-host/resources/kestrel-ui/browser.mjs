@@ -1,5 +1,6 @@
 import { UserBrowserSettingsSchema, UserBrowserPageContextSchema } from "../../../../packages/shared-types/src/contracts.ts";
 import { capturePageContext } from "./page-context.mjs";
+import { createNativeAutomation } from "./native-automation.mjs";
 
 const TAB_IDS_KEY = "kestrel.native.browser.tabIds.v1";
 const SETTINGS_KEY = "kestrel.native.browser.settings.v1";
@@ -403,6 +404,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		}
 	}
 	const publicTab = (tab) => tab.url === "about:blank" || /^https?:\/\//i.test(tab.url || "");
+	const automation = createNativeAutomation(chromeApi, { invoke, resolveTab: async tabId => tabId ? nativeId(tabId) : (await visibleTabs()).find(tab => tab.active) });
 	async function pageContext(tabId, signal) {
 		signal?.throwIfAborted();
 		const tab = tabId ? await nativeId(tabId) : (await visibleTabs()).find(tab => tab.active);
@@ -429,6 +431,9 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	async function backend(input, signal) {
 		signal?.throwIfAborted();
 		if (input.operation === "visible-context") return pageContext(input.tabId, signal);
+		if (input.operation === "visible-snapshot") return automation.snapshot(input.tabId, signal);
+		if (input.operation === "visible-act") return automation.act(input.tabId, input.action, signal);
+		if (input.operation === "visible-screenshot") return automation.screenshot(input.tabId, signal);
 		// This method is called only over the authenticated Core channel. It is
 		// intentionally absent from the renderer request protocol.
 		if (input.operation === "visible-tabs") {

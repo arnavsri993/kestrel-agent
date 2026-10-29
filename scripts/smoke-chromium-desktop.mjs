@@ -9,6 +9,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from '@playwright/test';
 import {tsImport} from 'tsx/esm/api';
 import {nativeProviderCanary,nativeCodexCanary} from './native-provider-canary.mjs';
+import {nativeBrowserActionsCanary} from './native-browser-actions-canary.mjs';
 
 const app=resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app');
 const executable=join(app,'Contents/MacOS/Kestrel');
@@ -30,6 +31,13 @@ const formatter='bcjindcccaagfpapjjmafapmmgkkhgoa';
 const receipt={at:new Date().toISOString(),executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),storeRequested:store,lifecycleRequested:lifecycle,phases:[]};
 const jsonFixture={source:'kestrel-native-canary',nested:{installedExtensionRuns:true},values:[1,2,3]};
 const server=createServer((req,res)=>{
+ if(req.url==='/actions'){
+  res.writeHead(200,{'content-type':'text/html'});res.end(`<!doctype html><title>Native browser action canary</title><style>body{min-height:2600px;background:#f6f6f6;font:18px system-ui;padding:20px}input,button,select{font:inherit;margin:10px;padding:10px}</style><h1>Native browser action canary</h1>
+  <label>Public query<input id="query" name="query" autocomplete="off"></label><button id="add">Add one</button><p id="click-result">0</p>
+  <label>Country<select id="country"><option value="first">First</option><option value="second">Second</option></select></label><p id="selection-result">first</p>
+  <script>query.addEventListener('input',event=>window.nativeTrustedInput=event.isTrusted);query.addEventListener('keydown',event=>{if(event.key==='Enter')window.nativeTrustedKey=event.isTrusted});add.addEventListener('click',event=>{window.nativeTrustedClick=event.isTrusted;document.querySelector('#click-result').textContent=String(Number(document.querySelector('#click-result').textContent)+1)});country.addEventListener('change',()=>document.querySelector('#selection-result').textContent=country.value);</script>`);return;
+ }
+ if(req.url==='/visual'){res.writeHead(200,{'content-type':'text/html'});res.end('<!doctype html><title>Native screenshot canary</title><style>body{background:#e8edf2;color:#20242a;font:24px system-ui;padding:40px}</style><h1>Native screenshot canary</h1><p>Public static content captured through Chromium and validated inside Core.</p>');return;}
  if(req.url==='/formatter.json'){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(jsonFixture));return;}
  if(req.url.startsWith('/download?')){res.writeHead(200,{'content-type':'application/octet-stream','content-disposition':'attachment; filename="canary.txt"'});res.end('Native Chromium download canary.');return;}
  res.writeHead(200,{'content-type':'text/html'});res.end(`<!doctype html><title>Native browser canary</title><h1>Native browser canary</h1>
@@ -173,6 +181,18 @@ try{
  assert(!/canary_(?:secret|password|textarea|editable|private|hidden|url|fragment|page_world)/.test(JSON.stringify(uiRead.browserContext)),'UI context must be redacted before Core processing too.');
  assert.deepEqual(await external.evaluate(()=>({bridge:typeof window.kestrel,query:typeof window.__kestrelNativeQuery})),{bridge:'undefined',query:'undefined'});
  receipt.phases.push({phase:'native-page-context-and-private-field-isolation',passed:true});
+ const accessibility=await coreTool('browser.visible-snapshot',{tabId:readableTab.id});
+ assert.equal(accessibility.status,'verified',JSON.stringify(accessibility));
+ assert.equal(accessibility.output.url,fixturePublicUrl);
+ assert(accessibility.output.interactive.some(item=>item.role==='link'));
+ assert(accessibility.output.interactive.some(item=>item.name==='Sensitive field'));
+ assert(!/canary_(?:secret|password|textarea|editable|private|hidden|url|fragment|page_world|metadata)/.test(JSON.stringify(accessibility.output)),'Native AX snapshots must not expose private fields, text or URL credentials.');
+ const nextAccessibility=await coreTool('browser.visible-snapshot',{tabId:readableTab.id});
+ assert.equal(nextAccessibility.status,'verified',JSON.stringify(nextAccessibility));
+ const previousRefs=new Set(accessibility.output.interactive.map(item=>item.ref));
+ assert(nextAccessibility.output.interactive.every(item=>!previousRefs.has(item.ref)),'A later snapshot must not reuse a stale native action reference.');
+ receipt.phases.push({phase:'native-Core-accessibility-and-private-field-isolation',passed:true,interactive:accessibility.output.interactive.length});
+ await nativeBrowserActionsCanary({getHome:()=>home,createdPage,coreTool,baseUrl:`http://127.0.0.1:${server.address().port}`,readableTab,evidence,receipt});
  const originalNodes=ownedNodeProcesses();assert.equal(originalNodes.length,3,'The test must identify its exact broker, relay, and Core.');
  const originalCore=originalNodes.find(node=>!originalNodes.some(child=>child.ppid===node.pid));assert(originalCore);
  process.kill(originalCore.pid,'SIGKILL'); // Only this disposable canary's verified Core child.

@@ -1367,7 +1367,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const localRuntimeUnavailableReason = localRuntime?.unavailableReason ?? "";
 	const recommendedModel = localRuntimeUnavailableReason
 		? null
-		: recommendedLocalModel(systemProfile);
+		: localRuntime?.automaticSupported === false ? null : recommendedLocalModel(systemProfile);
 	const recommendedModelInstalled = Boolean(
 		recommendedModel &&
 		localModels.some(
@@ -1381,7 +1381,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 		(ollamaAvailable || localRuntime?.automaticSupported === true);
 	const recommendedTiers = localRuntimeUnavailableReason
 		? []
-		: recommendedLocalModelTiers(systemProfile);
+		: localRuntime?.automaticSupported === false ? [] : recommendedLocalModelTiers(systemProfile);
 	const compatibleLocalModels = localRuntimeUnavailableReason
 		? []
 		: supportedLocalModels(systemProfile);
@@ -1969,6 +1969,22 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											</p>
 										) : (
 											<>
+										{Boolean(localRuntime?.detectedModels?.length) && (
+											<section className="recommended-model-tiers" aria-label="Installed local models">
+												<p>Choose an installed model to verify a local response and enable it.</p>
+												<div className="model-tier-grid">
+													{localRuntime!.detectedModels!.map(model => (
+														<article key={model.name}>
+															<code>{model.name}</code>
+															<button className="button secondary" aria-label={`Verify ${model.name}`}
+																disabled={automaticBusy || Boolean(downloading)} onClick={() => void bootstrapLocal(model.name)}>
+																{automaticBusy && automaticModel === model.name ? "Verifying…" : "Verify and use"}
+															</button>
+														</article>
+													))}
+												</div>
+											</section>
+										)}
 										{recommendedModel && (
 											<section
 												className="local-auto-setup"
