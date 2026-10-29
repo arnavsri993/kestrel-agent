@@ -1,9 +1,10 @@
 import { createInterface } from "node:readline";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema } from "./agent-core/service/native-desktop-runtime.mjs";
+import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NativeProviderHost, NATIVE_PROVIDER_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
+import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
 const index = process.argv.indexOf("--profile-root");
@@ -13,6 +14,8 @@ const profile = await openNativeCoreProfile(resolve(process.argv[index + 1]), { 
 const MAX_FRAME = 1024 * 1024;
 const pendingBrowser = new Map();
 const pending = new Set();
+const activeCoreRequests = new Set();
+let backgroundJobsRunning = false;
 let sequence = 0;
 let stopping = false;
 let outputClosed = false;
@@ -65,14 +68,30 @@ const core = new CoreSupervisor(browserRequest, async () => cancelBrowsers(), {
 	}),
 });
 for (const channel of ["runtime-event", "agent-stream", "background-jobs"])
-	core.on(channel, event => write({ type: "event", channel, event }));
+	core.on(channel, event => {
+		if (channel === "background-jobs") backgroundJobsRunning = event.jobs.some(job => ["running", "waiting_approval"].includes(job.status));
+		write({ type: "event", channel, event });
+	});
+const publishSnapshot = async () => {
+	const response = await core.request({ type: "snapshot" });
+	if (response.ok && response.snapshot) write({ type: "event", channel: "snapshot", event: response.snapshot });
+};
+const providers = new NativeProviderHost({ root: profile.root, encryptionKeyBase64: profile.encryptionKeyBase64,
+	homeDirectory: homedir(), environment: process.env, reconfigure: mutation => configuration.reconfigure(mutation),
+});
+const configuration = createNativeCoreConfiguration({ core,
+	isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning,
+	configuration: async () => ({ databasePath: profile.databasePath, encryptionKeyBase64: profile.encryptionKeyBase64,
+		workspaceRoots: [], configuredWorkspaceRoots: [], projects: [], pluginRoots: [], managedPluginRoots: [],
+		learnedSkillRoot: join(profile.root, "learned-skills"), ...await providers.runtimeConfiguration(),
+	}),
+	changed: publishSnapshot,
+});
 core.on("crash", () => process.stderr.write("KESTREL_NATIVE_CORE_INTERRUPTED\n"));
 core.on("recovery-failed", () => process.stderr.write("KESTREL_NATIVE_CORE_RECOVERY_FAILED\n"));
 core.on("recovered", () => {
 	process.stderr.write("KESTREL_NATIVE_CORE_RECOVERED\n");
-	void core.request({ type: "snapshot" }).then(response => {
-		if (response.ok && response.snapshot) write({ type: "event", channel: "snapshot", event: response.snapshot });
-	}).catch(() => {});
+	void publishSnapshot().catch(() => {});
 });
 
 async function shutdown(code = 0) {
@@ -100,19 +119,20 @@ input.on("line", line => {
 		else request.reject(new Error(typeof message.error === "string" ? message.error.slice(0, 500) : "The native browser request failed."));
 		return;
 	}
-	if (message?.type !== "request" || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
-	const parsed = CoreRequestSchema.safeParse(message.request);
-	if (!parsed.success) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid Core request." } }); return; }
+	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
+	const isHost = message.type === "host-request";
+	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
+	if (!parsed.success || (isHost && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
+	if (!isHost && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Provider settings are being applied. Wait for Agent Core to restart." } }); return; }
 	pending.add(message.id);
-	void core.request(parsed.data).then(response => write({ type: "response", id: message.id, response }))
-		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
-		.finally(() => pending.delete(message.id));
+	if (!isHost) activeCoreRequests.add(message.id);
+	void Promise.resolve().then(() => isHost ? providers.handle(parsed.data) : core.request(parsed.data))
+		.then(response => write({ type: "response", id: message.id, response }))
+		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? "Provider settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
+		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); });
 });
 try {
-	await core.start({ databasePath: profile.databasePath, encryptionKeyBase64: profile.encryptionKeyBase64,
-		workspaceRoots: [], configuredWorkspaceRoots: [], projects: [], pluginRoots: [], managedPluginRoots: [],
-		learnedSkillRoot: join(profile.root, "learned-skills"), secureEnvironment: {}, providerAccounts: [],
-	});
+	await configuration.start();
 	if (!stopping) write({ type: "ready", workspaceGrants: [], projects: [] });
 } catch {
 	write({ type: "start-error", error: "Kestrel Core could not open the native profile. Existing data was preserved." });

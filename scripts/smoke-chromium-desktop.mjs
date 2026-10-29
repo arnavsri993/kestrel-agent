@@ -8,6 +8,7 @@ import {join,resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from '@playwright/test';
 import {tsImport} from 'tsx/esm/api';
+import {nativeProviderCanary,nativeCodexCanary} from './native-provider-canary.mjs';
 
 const app=resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app');
 const executable=join(app,'Contents/MacOS/Kestrel');
@@ -24,6 +25,7 @@ const {UserBrowserStateSchema}=await tsImport('../packages/shared-types/src/cont
 const {isChromeWebStoreUrl}=await tsImport('../packages/shared-types/src/chrome-web-store.ts',import.meta.url);
 const store=process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE==='1';
 const lifecycle=process.env.KESTREL_TEST_NATIVE_WINDOW_LIFECYCLE==='1';
+const providers=process.env.KESTREL_TEST_NATIVE_PROVIDERS==='1';
 const formatter='bcjindcccaagfpapjjmafapmmgkkhgoa';
 const receipt={at:new Date().toISOString(),executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),storeRequested:store,lifecycleRequested:lifecycle,phases:[]};
 const jsonFixture={source:'kestrel-native-canary',nested:{installedExtensionRuns:true},values:[1,2,3]};
@@ -41,7 +43,7 @@ const server=createServer((req,res)=>{
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 let child,browser,output='';
-let savedSession;
+let savedSession,providerEvidence;
 function ownedNodeProcesses(){
  const rows=execFileSync('/bin/ps',['-axo','pid=,ppid=,comm='],{encoding:'utf8'}).trim().split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).filter(Boolean);
  const owned=new Set([child.pid]);let changed=true;
@@ -214,6 +216,9 @@ try{
  await home.getByRole('button',{name:'Open settings',exact:true}).click();
  const settings=await createdPage(url=>url.includes('index.html?app=settings'));await settings.waitForURL(/index.html\?app=settings/);
  await settings.locator('[data-app-page="settings"]').waitFor();
+ if(providers)providerEvidence=await nativeProviderCanary({settings,home,profile,evidence,receipt});
+ if(process.env.KESTREL_TEST_REAL_CODEX==='1')await nativeCodexCanary({settings,home,evidence,receipt});
+ await settings.bringToFront();
  await settings.getByRole('tab',{name:'Browser',exact:true}).click();
  await settings.getByRole('combobox',{name:'Browser settings section',exact:true}).selectOption('browser-extensions');
  await settings.locator('[data-settings-panel="browser-extensions"]').waitFor();
@@ -271,11 +276,16 @@ try{
  const restarted=await start();
  home=restarted.home;context=restarted.context;endpoint=restarted.endpoint;
  const sessions=await restarted.home.evaluate(()=>window.kestrel.request({type:'runtime-list-sessions'}));assert.equal(sessions.ok,true);assert(sessions.sessions.some(session=>session.id===savedSession),'Actual Core session must survive full app restart.');
+ if(providerEvidence){
+  const accounts=await home.evaluate(()=>window.kestrel.request({type:'provider-account-list'}));assert(accounts.ok&&accounts.providerAccounts.some(account=>account.id===providerEvidence.accountId));
+  const messages=await home.evaluate(sessionId=>window.kestrel.request({type:'runtime-list-messages',sessionId}),providerEvidence.sessionId);assert(messages.ok&&messages.messages.some(message=>message.content.includes(providerEvidence.answer)));
+  receipt.phases.push({phase:'native-provider-settings-and-conversation-restart',passed:true});
+ }
  if(store){const extensions=await restarted.home.evaluate(()=>window.kestrel.request({type:'browser-list-extensions'}));const installed=extensions.extensions?.find(item=>item.id===formatter);assert(installed?.enabled,'Chrome-installed extension must survive full restart.');receipt.phases.push({phase:'native-extension-restart',passed:true,id:installed.id,version:installed.version});await formatterRuns('native-extension-functional-after-restart');}
  await close();receipt.phases.push({phase:'durable-core-and-clean-restart',passed:true});
  await writeFile(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2));
  console.log('Native Chromium desktop passed: real Kestrel Home/Settings, Core tab tools and approval enforcement, native tabs, web bridge isolation, durable restart, and clean shutdown'+(store?', plus native Store install and functional extension restart.':'.'));
-}catch(error){await writeFile(join(evidence,'failure.log'),output+'\n'+String(error));throw error;}
+}catch(error){await writeFile(join(evidence,'failure.log'),output+'\n'+String(error));await writeFile(join(evidence,'receipt.json'),JSON.stringify({...receipt,failed:String(error)},null,2));throw error;}
 finally{
  await browser?.close().catch(()=>{});
  if(child&&child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await new Promise(resolve=>child.once('exit',resolve));}

@@ -188,6 +188,30 @@ tests, workspace TypeScript checks, a fresh native build, native authentication,
 and the real native desktop/Core-recovery canary passed. This is transport
 evidence; a full native provider-driven workflow is still a release gate.
 
+The native first-party UI now routes provider account creation, updates,
+removal, credential summaries/storage/revocation, and vendor CLI enablement
+to the portable provider host. Provider changes acquire an idle-Core guard
+before persisting anything; concurrent edits and active/background tasks
+reject changes. Core stops before the accepted mutation and restarts with
+the same database/key. A rejected mutation restores the previous runtime.
+Existing vendor routes persist only their detected executable and enablement;
+the selected vendor child receives its original home while Agent Core keeps
+its private home. Ambient API credentials are never imported.
+
+The visible native Settings canary added a loopback provider with an encrypted
+header, discovered its model, and sent a prompt from Home. The real standalone
+Core streamed and persisted the answer in the existing conversation UI. A
+second held provider request finished after a concurrent credential change was
+rejected without saving it. Account settings and the conversation survived a
+full app restart. The opt-in `KESTREL_TEST_REAL_CODEX=1` canary also enabled the
+existing official ChatGPT/Codex login through Settings, discovered entitled
+models, and received a real `gpt-5.6-luna` response from the Home composer.
+Receipts for candidate executable `5f4f1473` are retained in
+`.tmp/chromium-provider-evidence-5f4f1473/` and
+`.tmp/chromium-Codex-evidence-5f4f1473/`. The full unit suite now passes 1,735
+tests. This does not verify every new sign-in/local-model flow, public
+Keychain protection, or the installed canonical app.
+
 Release acceptance still requires the complete native product workflow:
 
 - Provider sign-in and credential storage, local models, workspace/file

@@ -14,7 +14,7 @@ const profile = await realpath(argument("--profile-root"));
 const browserPid = Number(argument("--browser-pid"));
 if (!Number.isSafeInteger(browserPid) || browserPid !== process.ppid) throw new Error("Native broker requires its owning browser.");
 const peerInspector = createRequire(import.meta.url)(join(resources, "native-peer.node"));
-const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, nativeRequestTimeoutMs } = await import("./native-ui-contracts.mjs");
+const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, nativeRequestTimeoutMs, NATIVE_PROVIDER_REQUEST_TYPES } = await import("./native-ui-contracts.mjs");
 const MAX_FRAME = 1024 * 1024;
 const MAX_PENDING = 64;
 const key = randomBytes(32);
@@ -151,7 +151,8 @@ const server = createServer((socket) => {
 					pending.set(id, { socket, uiId: message.id, timeout });
 					process.stdout.write(JSON.stringify({ kind: "host-request", id, request: parsed.data }) + "\n"); continue;
 				}
-				if (!CoreRequestSchema.safeParse(parsed.data).success) {
+				const providerRequest = NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type);
+				if (!providerRequest && !CoreRequestSchema.safeParse(parsed.data).success) {
 					if (!reportedUnsupported.has(parsed.data.type)) {
 						reportedUnsupported.add(parsed.data.type);
 						process.stderr.write("KESTREL_NATIVE_UNSUPPORTED_REQUEST " + parsed.data.type + "\n");
@@ -162,7 +163,7 @@ const server = createServer((socket) => {
 				const id = `ui-${++sequence}`;
 				const timeout = setTimeout(() => { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Kestrel Core response timed out. Check the task before retrying." } }); }, nativeRequestTimeoutMs(parsed.data, "broker"));
 				pending.set(id, { socket, uiId: message.id, timeout });
-				core.stdin.write(JSON.stringify({ type: "request", id, request: parsed.data }) + "\n");
+				core.stdin.write(JSON.stringify({ type: providerRequest ? "host-request" : "request", id, request: parsed.data }) + "\n");
 			}
 		}
 	});
