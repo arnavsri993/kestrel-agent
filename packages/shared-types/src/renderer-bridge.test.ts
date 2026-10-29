@@ -20,6 +20,19 @@ function fixture() {
 }
 
 describe("portable renderer bridge", () => {
+	it("validates cross-page project updates and ignores them after disposal", () => {
+		const { bridge, listeners } = fixture();
+		const callback = vi.fn();
+		const dispose = bridge.onWorkspaceProjectsChanged!(callback);
+		const emit = listeners.get("workspace-projects")!;
+		emit([{ id: "untrusted-incomplete-project" }]);
+		expect(callback).not.toHaveBeenCalled();
+		emit([]);
+		expect(callback).toHaveBeenCalledExactlyOnceWith([]);
+		dispose();
+		emit([]);
+		expect(callback).toHaveBeenCalledOnce();
+	});
 	it("rejects unsupported requests before they cross the host transport", async () => {
 		const { bridge, transport } = fixture();
 		expect(() => bridge.request({ type: "arbitrary-host-command" } as never)).toThrow();

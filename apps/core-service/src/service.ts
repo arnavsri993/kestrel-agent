@@ -9,7 +9,6 @@ import {
 	BrowserController,
 	type BrowserDiagnostic,
 	type BrowserDownload,
-	type BrowserSnapshot,
 	type BrowserViewport,
 	createEnvironmentMediaProviders,
 	createEnvironmentModelProviders,
@@ -112,16 +111,17 @@ export function startCoreService(port: CoreParentPort): void {
 		act: async (sessionId, action: BrowserAction, signal) => {
 			await browserRequest({ operation: "act", sessionId, action }, signal);
 		},
-		snapshot: (sessionId, signal) =>
-			browserRequest<BrowserSnapshot>(
+		snapshot: async (sessionId, signal) =>
+			normalizeBrowserAccessibilitySnapshot(await browserRequest(
 				{ operation: "snapshot", sessionId },
 				signal,
-			),
+			)),
 		screenshot: async (sessionId, signal) => {
-			const result = await browserRequest<ScreenshotFrame>(
+			const result = await browserRequest<ScreenshotFrame & { encoding?: unknown }>(
 				{ operation: "screenshot", sessionId },
 				signal,
 			);
+			if (result.encoding !== undefined) return decodeNativeBrowserScreenshot(result, signal);
 			return {
 				...result,
 				rgba: new Uint8Array(result.rgba),

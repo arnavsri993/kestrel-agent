@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	PROVIDER_CONNECT_TIMEOUT_MS,
 	PROVIDER_RESPONSE_TIMEOUT_MS,
+	MAX_TRUSTED_PROVIDER_CONNECT_TIMEOUT_MS,
 	providerFetch,
 	quotaFromResponseHeaders,
 } from "./http";
@@ -104,9 +105,12 @@ describe("provider HTTP helpers", () => {
 		};
 		const caller = new AbortController();
 		try {
-			const response = await providerFetch("fixture", "https://provider.example.test", {
-				signal: caller.signal,
-			});
+			const response = await providerFetch(
+				"fixture",
+				"https://provider.example.test",
+				{ signal: caller.signal },
+				{ connectTimeoutMs: MAX_TRUSTED_PROVIDER_CONNECT_TIMEOUT_MS },
+			);
 			expect(requestSignal).toBeDefined();
 			expect(requestSignal!.aborted).toBe(false);
 			caller.abort();
@@ -177,6 +181,17 @@ describe("provider HTTP helpers", () => {
 			vi.useRealTimers();
 			globalThis.fetch = originalFetch;
 		}
+	});
+
+	it("rejects trusted connect deadlines above the fixed cap", async () => {
+		await expect(
+			providerFetch(
+				"fixture",
+				"https://provider.example.test",
+				{},
+				{ connectTimeoutMs: MAX_TRUSTED_PROVIDER_CONNECT_TIMEOUT_MS + 1 },
+			),
+		).rejects.toThrow("Provider connect timeout is outside the trusted bound.");
 	});
 
 	it("bounds a response body without a caller signal", async () => {

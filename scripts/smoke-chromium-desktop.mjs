@@ -10,6 +10,9 @@ import {chromium} from '@playwright/test';
 import {tsImport} from 'tsx/esm/api';
 import {nativeProviderCanary,nativeCodexCanary} from './native-provider-canary.mjs';
 import {nativeBrowserActionsCanary} from './native-browser-actions-canary.mjs';
+import {createIsolationFixtures,nativeIsolatedBrowserCanary,prepareIsolatedCoreResetCanary,finishIsolatedCoreResetCanary} from './native-isolated-browser-canary.mjs';
+import {nativeWorkspaceCanary,finishNativeWorkspaceCanary} from './native-workspace-canary.mjs';
+import {candidateDigest} from './native-retirement-evidence.mjs';
 
 const app=resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app');
 const executable=join(app,'Contents/MacOS/Kestrel');
@@ -28,9 +31,11 @@ const store=process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE==='1';
 const lifecycle=process.env.KESTREL_TEST_NATIVE_WINDOW_LIFECYCLE==='1';
 const providers=process.env.KESTREL_TEST_NATIVE_PROVIDERS==='1';
 const formatter='bcjindcccaagfpapjjmafapmmgkkhgoa';
-const receipt={at:new Date().toISOString(),executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),storeRequested:store,lifecycleRequested:lifecycle,phases:[]};
+const receipt={at:new Date().toISOString(),candidate:app,candidateSha256:await candidateDigest(app),executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),storeRequested:store,lifecycleRequested:lifecycle,phases:[]};
 const jsonFixture={source:'kestrel-native-canary',nested:{installedExtensionRuns:true},values:[1,2,3]};
+const isolationFixtures=createIsolationFixtures();
 const server=createServer((req,res)=>{
+ if(isolationFixtures.handle(req,res))return;
  if(req.url==='/actions'){
   res.writeHead(200,{'content-type':'text/html'});res.end(`<!doctype html><title>Native browser action canary</title><style>body{min-height:2600px;background:#f6f6f6;font:18px system-ui;padding:20px}input,button,select{font:inherit;margin:10px;padding:10px}</style><h1>Native browser action canary</h1>
   <label>Public query<input id="query" name="query" autocomplete="off"></label><button id="add">Add one</button><p id="click-result">0</p>
@@ -51,7 +56,7 @@ const server=createServer((req,res)=>{
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 let child,browser,output='';
-let savedSession,providerEvidence;
+let savedSession,providerEvidence,workspaceEvidence;
 function ownedNodeProcesses(){
  const rows=execFileSync('/bin/ps',['-axo','pid=,ppid=,comm='],{encoding:'utf8'}).trim().split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).filter(Boolean);
  const owned=new Set([child.pid]);let changed=true;
@@ -193,6 +198,8 @@ try{
  assert(nextAccessibility.output.interactive.every(item=>!previousRefs.has(item.ref)),'A later snapshot must not reuse a stale native action reference.');
  receipt.phases.push({phase:'native-Core-accessibility-and-private-field-isolation',passed:true,interactive:accessibility.output.interactive.length});
  await nativeBrowserActionsCanary({getHome:()=>home,createdPage,coreTool,baseUrl:`http://127.0.0.1:${server.address().port}`,readableTab,evidence,receipt});
+ if(process.env.KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION==='1')await nativeIsolatedBrowserCanary({coreTool,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures,createdPage,getHome:()=>home,evidence,receipt});
+ if(process.env.KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION==='1')await prepareIsolatedCoreResetCanary({coreTool,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures});
  const originalNodes=ownedNodeProcesses();assert.equal(originalNodes.length,3,'The test must identify its exact broker, relay, and Core.');
  const originalCore=originalNodes.find(node=>!originalNodes.some(child=>child.ppid===node.pid));assert(originalCore);
  process.kill(originalCore.pid,'SIGKILL'); // Only this disposable canary's verified Core child.
@@ -208,6 +215,7 @@ try{
  assert((await home.evaluate(()=>window.kestrel.request({type:'runtime-list-sessions'}))).sessions.some(session=>session.id===savedSession),'Core recovery must retain the real conversation.');
  const afterRecovery=await coreTool('browser.tabs',{});assert.equal(afterRecovery.status,'verified',JSON.stringify(afterRecovery));assert(afterRecovery.output.tabs.some(tab=>tab.id===readableTab.id));
  receipt.phases.push({phase:'native-Core-crash-recovery',passed:true,previousCorePid:originalCore.pid,recoveredCorePid:recoveredCore.pid,browserPid:child.pid});
+ if(process.env.KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION==='1')await finishIsolatedCoreResetCanary({coreTool,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures,receipt});
  const coreUrl=fixturePublicUrl+'?created-by=core';
  const blocked=await coreTool('browser.open-tab',{input:coreUrl},false);
  assert.equal(blocked.status,'blocked','Core approval must precede browser dispatch.');
@@ -236,6 +244,7 @@ try{
  await home.getByRole('button',{name:'Open settings',exact:true}).click();
  const settings=await createdPage(url=>url.includes('index.html?app=settings'));await settings.waitForURL(/index.html\?app=settings/);
  await settings.locator('[data-app-page="settings"]').waitFor();
+ if(process.env.KESTREL_TEST_NATIVE_WORKSPACE==='1')workspaceEvidence=await nativeWorkspaceCanary({settings,getHome:()=>home,profile,evidence,receipt,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures});
  if(providers)providerEvidence=await nativeProviderCanary({settings,home,profile,evidence,receipt,endpoint});
  if(process.env.KESTREL_TEST_REAL_CODEX==='1')await nativeCodexCanary({settings,home,evidence,receipt});
  await settings.bringToFront();
@@ -296,6 +305,7 @@ try{
  const restarted=await start();
  home=restarted.home;context=restarted.context;endpoint=restarted.endpoint;
  const sessions=await restarted.home.evaluate(()=>window.kestrel.request({type:'runtime-list-sessions'}));assert.equal(sessions.ok,true);assert(sessions.sessions.some(session=>session.id===savedSession),'Actual Core session must survive full app restart.');
+ if(workspaceEvidence)await finishNativeWorkspaceCanary({home,state:workspaceEvidence,receipt});
  if(providerEvidence){
   const accounts=await home.evaluate(()=>window.kestrel.request({type:'provider-account-list'}));assert(accounts.ok&&accounts.providerAccounts.some(account=>account.id===providerEvidence.accountId));
   const messages=await home.evaluate(sessionId=>window.kestrel.request({type:'runtime-list-messages',sessionId}),providerEvidence.sessionId);assert(messages.ok&&messages.messages.some(message=>message.content.includes(providerEvidence.answer)));
@@ -303,6 +313,7 @@ try{
  }
  if(store){const extensions=await restarted.home.evaluate(()=>window.kestrel.request({type:'browser-list-extensions'}));const installed=extensions.extensions?.find(item=>item.id===formatter);assert(installed?.enabled,'Chrome-installed extension must survive full restart.');receipt.phases.push({phase:'native-extension-restart',passed:true,id:installed.id,version:installed.version});await formatterRuns('native-extension-functional-after-restart');}
  await close();receipt.phases.push({phase:'durable-core-and-clean-restart',passed:true});
+ assert.equal(await candidateDigest(app),receipt.candidateSha256,'The candidate bundle changed during native desktop verification.');
  await writeFile(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2));
  console.log('Native Chromium desktop passed: real Kestrel Home/Settings, Core tab tools and approval enforcement, native tabs, web bridge isolation, durable restart, and clean shutdown'+(store?', plus native Store install and functional extension restart.':'.'));
 }catch(error){await writeFile(join(evidence,'failure.log'),output+'\n'+String(error));await writeFile(join(evidence,'receipt.json'),JSON.stringify({...receipt,failed:String(error)},null,2));throw error;}

@@ -11,7 +11,9 @@ const node = z.object({
 	backendDOMNodeId: z.number().int().positive().optional(),
 	ref: ref.optional(),
 	ignored: z.boolean().optional(),
-	properties: z.array(z.object({ name: z.string().max(100), value: z.object({ value: z.union([z.string().max(1_000), z.boolean(), z.number().finite()]).optional() }) })).max(100).optional(),
+	// The retained host clears rich secret-field properties to an empty string.
+	// Accept exactly that redacted representation, never arbitrary string values.
+	properties: z.array(z.object({ name: z.string().max(100), value: z.union([z.literal(""), z.object({ value: z.union([z.string().max(1_000), z.boolean(), z.number().finite()]).optional() })]) })).max(100).optional(),
 });
 const schema = z.object({
 	url: z.string().max(8_192), title: z.string().max(10_000),
@@ -31,7 +33,10 @@ export function normalizeBrowserAccessibilitySnapshot(raw: unknown) {
 	const url = snapshot.url === "about:blank" ? snapshot.url : browserObservationUrl(snapshot.url);
 	if (!url) throw new Error("The selected tab does not have a safe readable URL.");
 	const sensitiveTargets = new Set<string>();
-	const sensitiveNode = (node: z.infer<typeof schema>["accessibilityTree"]["nodes"][number]) => isSensitiveBrowserInteractiveRef({ name: [node.name === undefined ? "" : value(node.name), ...(node.properties ?? []).map(property => `${property.name} ${property.value.value ?? ""}`)].join(" ") });
+	const sensitiveNode = (node: z.infer<typeof schema>["accessibilityTree"]["nodes"][number]) => {
+		const name = node.name === undefined ? "" : value(node.name);
+		return isSensitiveBrowserInteractiveRef({ name }) || isSensitiveBrowserInteractiveRef({ name: [name, ...(node.properties ?? []).map(property => `${property.name} ${property.value === "" ? "" : property.value.value ?? ""}`)].join(" ") });
+	};
 	for (const node of snapshot.accessibilityTree.nodes) if (sensitiveNode(node)) {
 		if (node.ref) sensitiveTargets.add(node.ref);
 		if (node.backendDOMNodeId) sensitiveTargets.add(`node:${node.backendDOMNodeId}`);

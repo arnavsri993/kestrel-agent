@@ -1,5 +1,5 @@
 import { createServer, type RequestListener, type Server } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnthropicMessagesProvider } from "./anthropic-messages";
 import { createEnvironmentModelProviders } from "./environment";
 import { GeminiGenerateContentProvider } from "./gemini-generate-content";
@@ -777,6 +777,65 @@ describe("model provider adapters", () => {
 		});
 		expect(requestBody.options).toMatchObject({ num_ctx: 32_768 });
 		expect(requestBody.think).toBe(false);
+	});
+
+	it("allows Ollama chat headers after 20 seconds within the fixed 120 second adapter grace", async () => {
+		vi.useFakeTimers();
+		const originalFetch = globalThis.fetch;
+		let requestSignal: AbortSignal | undefined;
+		globalThis.fetch = async (_input, init) =>
+			new Promise((resolve, reject) => {
+				requestSignal = init?.signal ?? undefined;
+				const timer = setTimeout(
+					() => resolve(new Response(`${JSON.stringify({ message: { role: "assistant", content: "ready" }, done: true })}\n`)),
+					21_000,
+				);
+				requestSignal?.addEventListener("abort", () => {
+					clearTimeout(timer);
+					reject(requestSignal?.reason ?? new DOMException("Aborted", "AbortError"));
+				}, { once: true });
+			});
+		try {
+			const pending = new OllamaChatProvider().complete({
+				model: "local-test",
+				messages: [{ role: "user", content: textContent("ready") }],
+			});
+			const settled = expect(pending).resolves.toMatchObject({
+				text: "ready",
+				finishReason: "stop",
+			});
+			await vi.advanceTimersByTimeAsync(20_500);
+			expect(requestSignal?.aborted).toBe(false);
+			await vi.advanceTimersByTimeAsync(500);
+			await settled;
+		} finally {
+			globalThis.fetch = originalFetch;
+			vi.useRealTimers();
+		}
+	});
+
+	it("honors caller abort before the Ollama chat connect grace expires", async () => {
+		const originalFetch = globalThis.fetch;
+		const controller = new AbortController();
+		const abortError = new DOMException("Caller stopped local chat", "AbortError");
+		globalThis.fetch = async (_input, init) =>
+			new Promise((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+			});
+		try {
+			const pending = new OllamaChatProvider().complete(
+				{
+					model: "local-test",
+					messages: [{ role: "user", content: textContent("ready") }],
+				},
+				{ signal: controller.signal },
+			);
+			const rejected = expect(pending).rejects.toBe(abortError);
+			controller.abort(abortError);
+			await rejected;
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
 	});
 
 	it("maps the supported Ollama thinking effort to the chat request", async () => {

@@ -71,6 +71,153 @@ describe("fresh application state", () => {
 	});
 });
 
+describe("first-run read-only purpose", () => {
+	const purpose = "first-run-read-only-check" as const;
+	const safeTools = new Set([
+		"tools.search",
+		"workspace.list",
+		"workspace.read",
+	]);
+
+	it("keeps the policy intersection and four-turn cap scoped to the guided run", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const requests: Array<{
+			tools?: Array<{ name: string }>;
+		}> = [];
+		const provider: ModelProvider = {
+			id: "first-run-fixture",
+			defaultModel: "first-run-model",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			profileHints: { features: { reasoningLevels: true } },
+			complete: async (request) => {
+				requests.push(request);
+				if (requests.length === 1)
+					return {
+						providerId: provider.id,
+						model: request.model,
+						text: "",
+						toolCalls: [
+							{
+								id: "first-run-search",
+								name: "tools.search",
+								arguments: { query: "read_only" },
+							},
+						],
+						usage: { inputTokens: 2, outputTokens: 1 },
+						finishReason: "tool_calls",
+					};
+				return {
+					providerId: provider.id,
+					model: request.model,
+					text: "One local read-only check is complete.",
+					toolCalls: [],
+					usage: { inputTokens: 2, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const core = new AgentCore({ database, modelProviders: [provider] });
+		const session = core.runtime.ensureMainSession();
+		const guided = await core.handle({
+			type: "runtime-run-agent",
+			sessionId: session.id,
+			message: "Complete the guided read-only check.",
+			model: "auto",
+			providerIds: ["auto"],
+			maximumTurns: 12,
+			purpose,
+		});
+		expect(guided).toMatchObject({
+			ok: true,
+			run: { status: "completed", maximumTurns: 4 },
+		});
+		const guidedTools = requests[0]?.tools?.map((tool) => tool.name) ?? [];
+		expect(guidedTools).toContain("tools.search");
+		expect(guidedTools.every((name) => safeTools.has(name))).toBe(true);
+		expect(
+			core.runtime
+				.listMessages(session.id)
+				.some((message) => message.role === "tool" && message.toolName === "tools.search"),
+		).toBe(true);
+
+		const ordinary = await core.handle({
+			type: "runtime-run-agent",
+			sessionId: session.id,
+			message: "Answer this normal question.",
+			model: "auto",
+			providerIds: ["auto"],
+		});
+		expect(ordinary).toMatchObject({ ok: true, run: { status: "completed" } });
+		const ordinaryTools = requests[2]?.tools?.map((tool) => tool.name) ?? [];
+		expect(ordinaryTools).toContain("tools.activate");
+		expect(ordinaryTools.length).toBeGreaterThan(guidedTools.length);
+		await core.close();
+	});
+
+	it("rejects a forged out-of-scope model tool call without invoking it", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let requestedTools: string[] = [];
+		let callCount = 0;
+		const provider: ModelProvider = {
+			id: "first-run-forgery-fixture",
+			defaultModel: "first-run-forgery-model",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			profileHints: { features: { reasoningLevels: true } },
+			complete: async (request) => {
+				callCount += 1;
+				requestedTools = request.tools?.map((tool) => tool.name) ?? [];
+				return {
+					providerId: provider.id,
+					model: request.model,
+					text: callCount === 1 ? "" : "The unavailable request was rejected.",
+					toolCalls:
+						callCount === 1
+							? [{ id: "forged-events-list", name: "events.list", arguments: {} }]
+							: [],
+					usage: { inputTokens: 2, outputTokens: 1 },
+					finishReason: callCount === 1 ? "tool_calls" : "stop",
+				};
+			},
+		};
+		const core = new AgentCore({ database, modelProviders: [provider] });
+		const session = core.runtime.ensureMainSession();
+		const response = await core.handle({
+			type: "runtime-run-agent",
+			sessionId: session.id,
+			message: "Complete the guided read-only check.",
+			model: "auto",
+			providerIds: ["auto"],
+			purpose,
+		});
+		expect(response).toMatchObject({ ok: true, run: { status: "completed" } });
+		expect(requestedTools).not.toContain("events.list");
+		expect(database.listToolExecutions(session.id)).toEqual([]);
+		expect(
+			core.runtime.listMessages(session.id).some(
+				(message) =>
+					message.role === "tool" &&
+					message.toolName === "events.list" &&
+					message.content.includes("unavailable"),
+			),
+		).toBe(true);
+		await core.close();
+	});
+});
+
 describe("independent verifier contract", () => {
 	it("accepts only explicit first-line pass or fail verdicts", () => {
 		expect(

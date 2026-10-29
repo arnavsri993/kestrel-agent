@@ -7,6 +7,8 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { createNativeBrowserRelay } from "./native-browser-relay.mjs";
+import { createNativeAutomationRelay } from "./native-automation-relay.mjs";
+import { createNativeDialogRelay } from "./native-dialog-relay.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
 const argument = (name) => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
@@ -14,7 +16,7 @@ const profile = await realpath(argument("--profile-root"));
 const browserPid = Number(argument("--browser-pid"));
 if (!Number.isSafeInteger(browserPid) || browserPid !== process.ppid) throw new Error("Native broker requires its owning browser.");
 const peerInspector = createRequire(import.meta.url)(join(resources, "native-peer.node"));
-const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, nativeRequestTimeoutMs, NATIVE_PROVIDER_REQUEST_TYPES } = await import("./native-ui-contracts.mjs");
+const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES } = await import("./native-ui-contracts.mjs");
 const MAX_FRAME = 1024 * 1024;
 const MAX_PENDING = 64;
 const key = randomBytes(32);
@@ -56,9 +58,9 @@ const sockets = new Set();
 const reportedUnsupported = new Set();
 let active;
 let coreReady = false;
-let workspaceState;
 let sequence = 0;
 let stopping = false;
+let shuttingDown = false;
 function signalReady() {
 	if (!active || !coreReady) return;
 	send(active, { kind: "ready" });
@@ -79,26 +81,53 @@ function failPending(socket) {
 	for (const [id, request] of pending) if (request.socket === socket) { clearTimeout(request.timeout); pending.delete(id); }
 	browserRelay.disconnect(socket);
 }
+function writeCore(message) {
+	if (stopping) return;
+	const line = JSON.stringify(message);
+	if (Buffer.byteLength(line, "utf8") + 1 > MAX_FRAME || core.stdin.destroyed || !core.stdin.writable || core.stdin.writableLength >= MAX_FRAME) { void shutdown(1); return; }
+	core.stdin.write(line + "\n");
+}
 const browserRelay = createNativeBrowserRelay({
-	validate: (request) => BrowserBackendWireRequestSchema.safeParse(request),
-	writeCore: (message) => {
-		if (stopping) return;
-		if (core.stdin.destroyed || !core.stdin.writable || core.stdin.writableLength >= MAX_FRAME) { void shutdown(1); return; }
-		core.stdin.write(JSON.stringify(message) + "\n");
+	validate: (request) => {
+		const parsed = BrowserBackendWireRequestSchema.safeParse(request);
+		return parsed.success && isUserBrowserBackendWireRequest(parsed.data) ? parsed : { success: false };
 	},
-	send, currentOwner: () => active && !active.destroyed ? active : undefined,
+	writeCore, send, currentOwner: () => active && !active.destroyed ? active : undefined,
 });
+function writeOwner(line) {
+	if (stopping || process.stdout.destroyed || !process.stdout.writable || process.stdout.writableLength + Buffer.byteLength(line, "utf8") + 1 > MAX_FRAME) return false;
+	try { process.stdout.write(line + "\n"); return true; } catch { return false; }
+}
+const automationRelay = createNativeAutomationRelay({
+	validate: (request) => BrowserBackendWireRequestSchema.safeParse(request),
+	isUserRequest: isUserBrowserBackendWireRequest,
+	writeCore, writeOwner,
+});
+const dialogRelay = createNativeDialogRelay({ writeCore, writeOwner });
 createInterface({ input: core.stdout }).on("line", (line) => {
 	if (line.length > 8 * MAX_FRAME) { void shutdown(1); return; }
 	let message; try { message = JSON.parse(line); } catch { void shutdown(1); return; }
-	if (message.type === "ready") { coreReady = true; workspaceState = { workspaceGrants: message.workspaceGrants, projects: message.projects }; signalReady(); }
+	if (message.type === "ready") { coreReady = true; signalReady(); }
 	else if (message.type === "response") {
 		const request = pending.get(message.id); if (!request) return;
 		pending.delete(message.id); clearTimeout(request.timeout);
 		send(request.socket, { kind: "response", id: request.uiId, response: message.response });
 	} else if (message.type === "event" && active) send(active, { kind: "event", channel: message.channel, event: message.event });
-	else if (message.type === "browser-backend-request") browserRelay.request(message);
-	else if (message.type === "browser-backend-cancel") browserRelay.cancel(message.requestId);
+	else if (message.type === "browser-backend-request") {
+		const parsed = BrowserBackendWireRequestSchema.safeParse(message.request);
+		if (parsed.success && isUserBrowserBackendWireRequest(parsed.data)) browserRelay.request(message);
+		else automationRelay.request(message);
+	} else if (message.type === "browser-backend-cancel") {
+		browserRelay.cancel(message.requestId); automationRelay.cancel(message.requestId);
+	} else if (message.type === "native-dialog-request") dialogRelay.request(message);
+	else if (message.type === "native-dialog-cancel") dialogRelay.cancel(message.requestId);
+	else if (message.type === "browser-backend-reset" && typeof message.requestId === "string" && message.requestId.length > 0 && message.requestId.length <= 200) {
+		const requestId = message.requestId;
+		void automationRelay.reset().then(
+			() => writeCore({ type: "browser-backend-reset-response", requestId, ok: true }),
+			() => writeCore({ type: "browser-backend-reset-response", requestId, ok: false, error: "Native automation reset failed." }),
+		);
+	}
 });
 core.on("error", () => void shutdown(1));
 core.stdin.on("error", () => void shutdown(1));
@@ -142,17 +171,14 @@ const server = createServer((socket) => {
 				if (message.kind !== "request" || typeof message.id !== "string" || message.id.length > 100 || pending.size >= MAX_PENDING) { socket.destroy(); return; }
 				const parsed = RendererRequestSchema.safeParse(message.request);
 				if (!parsed.success) { send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Invalid Kestrel request." } }); continue; }
-				if (parsed.data.type === "get-workspace-grants" && workspaceState) {
-					send(socket, { kind: "response", id: message.id, response: { ok: true, ...workspaceState } }); continue;
-				}
 				if (["get-system-state", "get-default-browser-status"].includes(parsed.data.type)) {
 					const id = `host-${++sequence}`;
 					const timeout = setTimeout(() => { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "The native desktop did not respond." } }); }, 30_000);
 					pending.set(id, { socket, uiId: message.id, timeout });
 					process.stdout.write(JSON.stringify({ kind: "host-request", id, request: parsed.data }) + "\n"); continue;
 				}
-				const providerRequest = NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type);
-				if (!providerRequest && !CoreRequestSchema.safeParse(parsed.data).success) {
+				const hostRequest = NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) || NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type);
+				if (!hostRequest && !CoreRequestSchema.safeParse(parsed.data).success) {
 					if (!reportedUnsupported.has(parsed.data.type)) {
 						reportedUnsupported.add(parsed.data.type);
 						process.stderr.write("KESTREL_NATIVE_UNSUPPORTED_REQUEST " + parsed.data.type + "\n");
@@ -161,15 +187,19 @@ const server = createServer((socket) => {
 				}
 				if (!coreReady || core.stdin.writableLength > MAX_FRAME) { socket.destroy(); return; }
 				const id = `ui-${++sequence}`;
-				const timeout = setTimeout(() => { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Kestrel Core response timed out. Check the task before retrying." } }); }, nativeRequestTimeoutMs(parsed.data, "broker"));
+				const timeout = setTimeout(() => { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Kestrel Core response timed out. Check the task before retrying." } }); }, parsed.data.type === "select-workspace-folder" ? 10 * 60_000 + 30_000 : nativeRequestTimeoutMs(parsed.data, "broker"));
 				pending.set(id, { socket, uiId: message.id, timeout });
-				core.stdin.write(JSON.stringify({ type: providerRequest ? "host-request" : "request", id, request: parsed.data }) + "\n");
+				core.stdin.write(JSON.stringify({ type: hostRequest ? "host-request" : "request", id, request: parsed.data }) + "\n");
 			}
 		}
 	});
 });
 async function shutdown(code = 0) {
-	if (stopping) return; stopping = true;
+	if (stopping || shuttingDown) return;
+	shuttingDown = true;
+	automationRelay.close();
+	dialogRelay.close();
+	stopping = true;
 	for (const socket of sockets) socket.destroy();
 	server.close();
 	if (!core.stdin.destroyed) core.stdin.end(JSON.stringify({ type: "shutdown" }) + "\n");
@@ -182,13 +212,17 @@ async function shutdown(code = 0) {
 	key.fill(0);
 	process.exit(code);
 }
+process.stdout.on("error", () => void shutdown(1));
 process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 const ownerInput = createInterface({ input: process.stdin, crlfDelay: Infinity });
 ownerInput.once("close", () => void shutdown());
 ownerInput.on("line", (line) => {
-	if (line.length > MAX_FRAME) { void shutdown(1); return; }
+	if (Buffer.byteLength(line, "utf8") + 1 > MAX_FRAME) { void shutdown(1); return; }
 	let message; try { message = JSON.parse(line); } catch { void shutdown(1); return; }
+	if (message?.kind === "automation-response") { automationRelay.response(message); return; }
+	if (message?.kind === "automation-reset-response") { automationRelay.resetResponse(message); return; }
+	if (dialogRelay.response(message)) return;
 	if (message.kind !== "host-response" || typeof message.id !== "string" || !message.id.startsWith("host-")) return;
 	const request = pending.get(message.id); if (!request) return;
 	pending.delete(message.id); clearTimeout(request.timeout);

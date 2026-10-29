@@ -16,6 +16,7 @@ const MAX_OLLAMA_SHOW_BYTES = 256 * 1024;
 const MAX_OLLAMA_MODELS = 64;
 const OLLAMA_SHOW_CONCURRENCY = 4;
 const OLLAMA_SHOW_TIMEOUT_MS = 1_000;
+const OLLAMA_CHAT_CONNECT_TIMEOUT_MS = 120_000;
 const OLLAMA_MODEL_CAPABILITIES = new Set([
 	"completion",
 	"tools",
@@ -341,7 +342,9 @@ export class OllamaChatProvider implements ModelProvider {
 					: { options: { num_ctx: this.contextWindow } }),
 			}),
 			...(options.signal ? { signal: options.signal } : {}),
-		});
+		},
+		{ connectTimeoutMs: OLLAMA_CHAT_CONNECT_TIMEOUT_MS },
+	);
 		let text = "";
 		let inputTokens = 0;
 		let outputTokens = 0;

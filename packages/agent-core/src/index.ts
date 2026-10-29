@@ -185,6 +185,12 @@ import {
 	parseBrowserTabFolderNames,
 } from "./browser-tab-folder-naming";
 
+const FIRST_RUN_READ_ONLY_TOOLS = new Set([
+	"tools.search",
+	"workspace.list",
+	"workspace.read",
+]);
+
 function persistedCompactionCount(value: unknown): number {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
 	const count = (value as { removedMessages?: unknown }).removedMessages;
@@ -4051,6 +4057,33 @@ export class AgentCore {
 							userModelContext,
 							honchoContext,
 						});
+						const policyAllowedTools = personality.toolNames
+							? this.configuration.filterToolNames(
+									this.runtime
+										.discoverTools(request.sessionId)
+										.map((tool) => tool.name),
+									personality.toolNames,
+									{
+										includeProtectedRecovery:
+											personality.toolNames.length > 0 &&
+											this.configuration.isConfigurationRequest(
+												request.message,
+											),
+									},
+								)
+							: this.configuration.filterToolNames(
+									this.runtime
+										.discoverTools(request.sessionId)
+										.map((tool) => tool.name),
+								);
+						// Apply this fixed host purpose after normal policy/personality
+						// filtering so protected recovery tools cannot widen its scope.
+						const allowedTools =
+							request.purpose === "first-run-read-only-check"
+								? policyAllowedTools.filter((name) =>
+										FIRST_RUN_READ_ONLY_TOOLS.has(name),
+									)
+								: policyAllowedTools;
 						const result = await this.agentLoop.run({
 							...(workingTask ? { workingTaskId: workingTask.id } : {}),
 							sessionId: request.sessionId,
@@ -4078,30 +4111,7 @@ export class AgentCore {
 								: request.reasoningEffort
 									? { reasoningEffort: request.reasoningEffort }
 									: {}),
-							...(personality.toolNames
-								? {
-										allowedTools: this.configuration.filterToolNames(
-											this.runtime
-												.discoverTools(request.sessionId)
-												.map((tool) => tool.name),
-											personality.toolNames,
-											{
-												includeProtectedRecovery:
-													personality.toolNames !== undefined &&
-													personality.toolNames.length > 0 &&
-													this.configuration.isConfigurationRequest(
-														request.message,
-													),
-											},
-										),
-									}
-								: {
-										allowedTools: this.configuration.filterToolNames(
-											this.runtime
-												.discoverTools(request.sessionId)
-												.map((tool) => tool.name),
-										),
-									}),
+							allowedTools,
 							userContent: [
 								...textContent(request.message),
 								...this.attachmentParts(request.sessionId, request.attachments),
@@ -4134,6 +4144,9 @@ export class AgentCore {
 								.filter(Boolean)
 								.join("\n\n"),
 							maximumTurns: Math.min(
+								request.purpose === "first-run-read-only-check"
+									? 4
+									: Number.MAX_SAFE_INTEGER,
 								request.maximumTurns ?? configuration.workflows.maximumTurns,
 								configuration.workflows.maximumTurns,
 							),

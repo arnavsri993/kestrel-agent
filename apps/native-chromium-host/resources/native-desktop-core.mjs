@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NativeProviderHost, NATIVE_PROVIDER_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
+import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
@@ -19,6 +19,9 @@ let backgroundJobsRunning = false;
 let sequence = 0;
 let stopping = false;
 let outputClosed = false;
+let browserReset;
+let folderDialog;
+let dialogSequence = 0;
 
 function write(message) {
 	if (outputClosed) return;
@@ -59,7 +62,46 @@ function cancelBrowsers() {
 	pendingBrowser.clear();
 }
 
-const core = new CoreSupervisor(browserRequest, async () => cancelBrowsers(), {
+function resetBrowsers() {
+	cancelBrowsers();
+	if (stopping || outputClosed) return Promise.resolve();
+	if (browserReset) return browserReset.promise;
+	const requestId = `native-browser-reset-${++sequence}`;
+	let resolveReset, rejectReset;
+	const promise = new Promise((resolve, reject) => { resolveReset = resolve; rejectReset = reject; });
+	const timer = setTimeout(() => {
+		if (browserReset?.requestId !== requestId) return;
+		browserReset = undefined;
+		rejectReset(new Error("Isolated browser cleanup was not acknowledged. Restart Kestrel before creating another session."));
+	}, 11_000);
+	browserReset = { requestId, promise, timer, resolve: resolveReset, reject: rejectReset };
+	write({ type: "browser-backend-reset", requestId });
+	return promise;
+}
+
+function cancelFolderDialog() {
+	if (!folderDialog) return;
+	const dialog = folderDialog; folderDialog = undefined; clearTimeout(dialog.timer);
+	write({ type: "native-dialog-cancel", requestId: dialog.requestId });
+	dialog.resolve(null);
+}
+function selectWorkspaceFolder() {
+	if (stopping || folderDialog || dialogSequence >= Number.MAX_SAFE_INTEGER) return Promise.reject(new Error("The native folder picker is unavailable."));
+	const requestId = `native-dialog-${++dialogSequence}`;
+	let resolveDialog, rejectDialog;
+	const promise = new Promise((resolve, reject) => { resolveDialog = resolve; rejectDialog = reject; });
+	const timer = setTimeout(() => {
+		if (folderDialog?.requestId !== requestId) return;
+		folderDialog = undefined;
+		write({ type: "native-dialog-cancel", requestId });
+		rejectDialog(new Error("The native folder picker timed out."));
+	}, 600_000);
+	folderDialog = { requestId, timer, resolve: resolveDialog, reject: rejectDialog };
+	write({ type: "native-dialog-request", requestId, operation: "select-workspace-folder" });
+	return promise;
+}
+
+const core = new CoreSupervisor(browserRequest, resetBrowsers, {
 	processFactory: () => nodeCoreProcess({
 		executable: process.execPath, entryPath: join(resources, "agent-core/service/index.js"), stdout: "ignore",
 		env: { HOME: profile.root, LANG: process.env.LANG ?? "en_US.UTF-8", PATH: process.env.PATH ?? "", TMPDIR: process.env.TMPDIR ?? tmpdir(),
@@ -82,10 +124,13 @@ const providers = new NativeProviderHost({ root: profile.root, encryptionKeyBase
 		await browserRequest({ operation: "visible-create", input: url }, signal);
 	},
 });
+const workspaces = new NativeWorkspaceHost({ root: profile.root, selectFolder: selectWorkspaceFolder,
+	reconfigure: mutation => configuration.reconfigure(mutation),
+});
 const configuration = createNativeCoreConfiguration({ core,
 	isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning,
 	configuration: async () => ({ databasePath: profile.databasePath, encryptionKeyBase64: profile.encryptionKeyBase64,
-		workspaceRoots: [], configuredWorkspaceRoots: [], projects: [], pluginRoots: [], managedPluginRoots: [],
+		...await workspaces.runtimeConfiguration(), pluginRoots: [], managedPluginRoots: [],
 		learnedSkillRoot: join(profile.root, "learned-skills"), ...await providers.runtimeConfiguration(),
 	}),
 	changed: publishSnapshot,
@@ -99,7 +144,10 @@ core.on("recovered", () => {
 
 async function shutdown(code = 0) {
 	if (stopping) return; stopping = true;
+	cancelFolderDialog();
+	if (browserReset) { clearTimeout(browserReset.timer); browserReset.reject(new Error("The browser owner is shutting down.")); browserReset = undefined; }
 	cancelBrowsers();
+	await workspaces.close();
 	await providers.close();
 	await core.stop();
 	await profile.close();
@@ -116,6 +164,24 @@ input.on("line", line => {
 	let message;
 	try { message = JSON.parse(line); } catch { void shutdown(1); return; }
 	if (message?.type === "shutdown") { void shutdown(); return; }
+	if (message?.type === "native-dialog-response") {
+		const dialog = folderDialog;
+		if (!dialog || message.requestId !== dialog.requestId) return;
+		folderDialog = undefined; clearTimeout(dialog.timer);
+		const response = message.response;
+		if (response?.ok === true && response.cancelled === true) dialog.resolve(null);
+		else if (response?.ok === true && typeof response.selectedWorkspacePath === "string" && response.selectedWorkspacePath.startsWith("/") && response.selectedWorkspacePath.length <= 4096 && !response.selectedWorkspacePath.includes("\0")) dialog.resolve(response.selectedWorkspacePath);
+		else dialog.reject(new Error("The native folder picker did not return a valid selection."));
+		return;
+	}
+	if (message?.type === "browser-backend-reset-response") {
+		const reset = browserReset;
+		if (!reset || message.requestId !== reset.requestId) return;
+		browserReset = undefined; clearTimeout(reset.timer);
+		if (message.ok === true) reset.resolve();
+		else reset.reject(new Error("Isolated browser cleanup failed. Restart Kestrel before creating another session."));
+		return;
+	}
 	if (message?.type === "browser-backend-response") {
 		const request = pendingBrowser.get(message.requestId); if (!request) return;
 		pendingBrowser.delete(message.requestId); clearTimeout(request.timer); request.signal.removeEventListener("abort", request.abort);
@@ -126,18 +192,22 @@ input.on("line", line => {
 	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
 	const isHost = message.type === "host-request";
 	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
-	if (!parsed.success || (isHost && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
-	if (!isHost && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Provider settings are being applied. Wait for Agent Core to restart." } }); return; }
+	if (!parsed.success || (isHost && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
+	if (!isHost && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Settings are being applied. Wait for Agent Core to restart." } }); return; }
 	pending.add(message.id);
 	if (!isHost) activeCoreRequests.add(message.id);
-	void Promise.resolve().then(() => isHost ? providers.handle(parsed.data) : core.request(parsed.data))
-		.then(response => write({ type: "response", id: message.id, response }))
-		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? parsed.data.type === "local-runtime-bootstrap" && error instanceof Error && error.message === "Choose an installed model with confirmed tool support for Kestrel tasks." ? error.message : "Provider settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
+	void Promise.resolve().then(() => isHost ? NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) ? workspaces.handle(parsed.data) : providers.handle(parsed.data) : core.request(parsed.data))
+		.then(response => {
+			write({ type: "response", id: message.id, response });
+			if (isHost && NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && parsed.data.type !== "get-workspace-grants" && response.ok && !response.cancelled && Array.isArray(response.projects))
+				write({ type: "event", channel: "workspace-projects", event: response.projects });
+		})
+		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? parsed.data.type === "local-runtime-bootstrap" && error instanceof Error && error.message === "Choose an installed model with confirmed tool support for Kestrel tasks." ? error.message : "Kestrel settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
 		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); });
 });
 try {
 	await configuration.start();
-	if (!stopping) write({ type: "ready", workspaceGrants: [], projects: [] });
+	if (!stopping) { const { projects } = await workspaces.runtimeConfiguration(); write({ type: "ready", workspaceGrants: projects, projects }); }
 } catch {
 	write({ type: "start-error", error: "Kestrel Core could not open the native profile. Existing data was preserved." });
 	await shutdown(1);

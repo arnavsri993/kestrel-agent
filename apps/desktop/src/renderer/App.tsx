@@ -188,7 +188,9 @@ import {
 } from "./runtime-session-state";
 import {
 	FIRST_TASK_PROMPT,
+	FIRST_TASK_PURPOSE,
 	FIRST_TASK_SLOW_MODEL_NOTICE,
+	isFirstTaskPrompt,
 } from "./first-task";
 import { canCompleteOnboarding } from "./setup-onboarding";
 import {
@@ -1609,6 +1611,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												: modelView === "local"
 													? localRuntimeUnavailableReason
 														? localRuntimeUnavailableReason
+														: localRuntime?.automaticSupported === false
+															? "Verify an installed model to run tasks on this Mac."
 														: recommendedModel
 															? `Kestrel recommends ${recommendedModel.title} for this Mac.`
 															: "Checking this Mac's hardware…"
@@ -1973,7 +1977,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<section className="recommended-model-tiers" aria-label="Installed local models">
 												<p>Choose an installed model to verify a local response and enable it.</p>
 												<div className="model-tier-grid">
-													{localRuntime!.detectedModels!.map(model => (
+											{(localRuntime?.detectedModels ?? []).map(model => (
 														<article key={model.name}>
 															<code>{model.name}</code>
 															<button className="button secondary" aria-label={`Verify ${model.name}`}
@@ -3946,7 +3950,11 @@ function RuntimeConversation({
 		}
 	}
 
-	async function submit(promptOverride?: string, draft?: NewTabComposerDraft) {
+	async function submit(
+		promptOverride?: string,
+		draft?: NewTabComposerDraft,
+		purpose?: typeof FIRST_TASK_PURPOSE,
+	) {
 		const prompt = (promptOverride ?? input).trim();
 		if (!prompt) return;
 		const runChoice = draft?.modelChoice ?? modelChoice;
@@ -4046,6 +4054,9 @@ function RuntimeConversation({
 				type: "runtime-run-agent",
 				sessionId,
 				message: prompt,
+				...(purpose === FIRST_TASK_PURPOSE && isFirstTaskPrompt(prompt)
+					? { purpose: FIRST_TASK_PURPOSE }
+					: {}),
 				model: runChoice.executionMode === "automatic" ? "auto" : runChoice.model.trim(),
 				providerIds: runChoice.executionMode === "automatic" ? ["auto"] : [runChoice.providerId],
 				streamId,
@@ -4088,7 +4099,7 @@ function RuntimeConversation({
 		if (!shouldAutoSubmitFirstTaskRef.current) return;
 		shouldAutoSubmitFirstTaskRef.current = false;
 		setGuidedFirstTaskActive(true);
-		void submit(FIRST_TASK_PROMPT);
+		void submit(FIRST_TASK_PROMPT, undefined, FIRST_TASK_PURPOSE);
 	}, []);
 
 	useEffect(() => {
@@ -10374,6 +10385,13 @@ export function App() {
 		setProjectsLoaded(true);
 		return next;
 	}, []);
+	useEffect(
+		() => window.kestrel.onWorkspaceProjectsChanged?.((next) => {
+			setProjects(next);
+			setProjectsLoaded(true);
+		}),
+		[],
+	);
 
 	useEffect(() => {
 		// Setup links keep their provider-owned/system-browser handoff. A managed

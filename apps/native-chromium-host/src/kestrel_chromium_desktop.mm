@@ -21,11 +21,13 @@
 #include "include/cef_focus_handler.h"
 #include "include/cef_display_handler.h"
 #include "include/cef_load_handler.h"
+#include "include/cef_parser.h"
 #include "include/cef_task.h"
 #include "include/cef_id_mappers.h"
 #include "include/cef_path_util.h"
 #include "kestrel_chromium_app.h"
 #include "kestrel_chromium_desktop.h"
+#include "native_isolated_automation.h"
 
 namespace {
 class OpenKestrelNewTabTask final : public CefTask {
@@ -43,7 +45,8 @@ class OpenKestrelNewTabTask final : public CefTask {
 };
 class DesktopClient final : public CefClient, public CefLifeSpanHandler, public CefFocusHandler, public CefDisplayHandler, public CefLoadHandler {
  public:
-  explicit DesktopClient(std::string ui_url) : ui_url_(std::move(ui_url)) {}
+  DesktopClient(std::string ui_url, NativeIsolatedAutomation::Reply automation_reply)
+      : ui_url_(std::move(ui_url)), automation_reply_(std::move(automation_reply)) {}
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -88,13 +91,39 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     std::cout << "KESTREL_CHROMIUM_DESKTOP_TAB_CLOSED remaining=" << browsers_.size() << std::endl;
     // Closing a macOS window must not terminate active Core work. Quit owns
     // the process lifetime; Dock activation and New Window can reopen Home.
-    if (browsers_.empty() && closing_) CefQuitMessageLoop();
+    MaybeQuit();
   }
   void Close() {
     closing_ = true;
-    if (browsers_.empty()) { CefQuitMessageLoop(); return; }
+    if (automation_) {
+      CefRefPtr<DesktopClient> self = this;
+      automation_->Shutdown([self] { self->automation_closed_ = true; self->MaybeQuit(); });
+    }
+    if (browsers_.empty()) { MaybeQuit(); return; }
     const auto snapshot = browsers_;
     for (const auto& [id, browser] : snapshot) browser->GetHost()->CloseBrowser(true);
+  }
+  void AutomationRequest(const std::string& id, CefRefPtr<CefDictionaryValue> request) {
+    if (closing_ || automation_resetting_) { automation_reply_(id, false, "", "The native browser is shutting down or resetting its isolated sessions."); return; }
+    if (!automation_) {
+      automation_closed_ = false;
+      automation_ = std::make_unique<NativeIsolatedAutomation>(Active(), automation_reply_);
+    }
+    automation_->Request(id, request);
+  }
+  void AutomationCancel(const std::string& id) { if (automation_) automation_->Cancel(id); }
+  void AutomationReset(std::function<void()> done) {
+    if (automation_resetting_) return; // The private broker permits one barrier at a time.
+    automation_resetting_ = true;
+    if (!automation_) { automation_resetting_ = false; if (done) done(); return; }
+    CefRefPtr<DesktopClient> self = this;
+    automation_->Shutdown([self, done] {
+      self->automation_closed_ = true;
+      self->automation_.reset();
+      self->automation_resetting_ = false;
+      if (done) done();
+      self->MaybeQuit();
+    });
   }
   void UiReady() { ui_ready_ = true; OpenUiWhenReady(); }
   CefRefPtr<CefBrowser> Active() {
@@ -123,6 +152,7 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     else OpenWindow(ui_url_ + "?app=settings");
   }
  private:
+  void MaybeQuit() { if (closing_ && browsers_.empty() && automation_closed_) CefQuitMessageLoop(); }
   void OpenUiWhenReady() {
     if (!document_ready_ || ui_opened_ || !first_browser_) return;
     ui_opened_ = true;
@@ -130,6 +160,10 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     if (url.empty() || url == "about:blank") first_browser_->GetMainFrame()->LoadURL(ui_url_);
   }
   const std::string ui_url_;
+  NativeIsolatedAutomation::Reply automation_reply_;
+  std::unique_ptr<NativeIsolatedAutomation> automation_;
+  bool automation_closed_ = true;
+  bool automation_resetting_ = false;
   bool ui_ready_ = false;
   bool document_ready_ = false;
   int startup_retries_ = 0;
@@ -142,6 +176,8 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
 };
 CefRefPtr<DesktopClient> desktop_client;
 NSFileHandle* desktop_broker_input;
+NSOpenPanel* desktop_workspace_panel;
+NSString* desktop_workspace_panel_id;
 NSString* Argument(int argc, char** argv, const char* name) {
   for (int i = 1; i + 1 < argc; ++i) if (std::string(argv[i]) == name) return [NSString stringWithUTF8String:argv[i + 1]];
   return nil;
@@ -232,6 +268,7 @@ static void InstallDesktopMenu() {
 
 bool CloseKestrelChromiumDesktop() {
   if (!desktop_client) return false;
+  if (desktop_workspace_panel) [desktop_workspace_panel cancel:nil];
   if (desktop_broker_input) {
     @try { [desktop_broker_input closeFile]; } @catch (NSException*) {}
     desktop_broker_input = nil;
@@ -410,21 +447,81 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   }
   std::string ui_path(extension_root.UTF8String);
   std::string ui_url = "chrome-extension://" + std::string(extension_id.UTF8String) + "/index.html";
-  desktop_client = new DesktopClient(ui_url);
+  desktop_client = new DesktopClient(ui_url, [broker, input](const std::string& request_key, bool ok,
+      const std::string& result_json, const std::string& error) {
+    if (!broker.running || request_key.empty() || request_key.size() > 100) return;
+    NSString* request_id = [NSString stringWithUTF8String:request_key.c_str()];
+    if (!request_id) return;
+    NSMutableDictionary* response = [@{@"kind":@"automation-response", @"id":request_id, @"ok":@(ok)} mutableCopy];
+    if (ok && result_json.size() <= 1'048'000) {
+      NSData* result_data = [NSData dataWithBytes:result_json.data() length:result_json.size()];
+      id result = [NSJSONSerialization JSONObjectWithData:result_data options:NSJSONReadingFragmentsAllowed error:nil];
+      if (result) response[@"result"] = result;
+      else { response[@"ok"] = @NO; response[@"error"] = @"The native automation response was invalid."; }
+    } else {
+      response[@"ok"] = @NO;
+      response[@"error"] = !ok && error.size() <= 500 ? ([NSString stringWithUTF8String:error.c_str()] ?: @"Native automation failed.") : @"The native automation response exceeded its limit.";
+    }
+    NSData* bytes = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
+    if (!bytes || bytes.length > 1'048'576) return;
+    NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
+    @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) { /* Broker shutdown settles its pending requests. */ }
+  });
   desktop_broker_input = input.fileHandleForWriting;
   NSMutableData* event_buffer = [[NSMutableData alloc] init];
   output.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
     NSData* data = handle.availableData;
     if (!data.length) { handle.readabilityHandler = nil; return; }
-    [event_buffer appendData:data];
-    if (event_buffer.length > 65536) { handle.readabilityHandler = nil; return; }
     const uint8_t newline = '\n';
+    // Bound each newline frame, not a coalesced read containing several valid
+    // requests. Large type/upload requests must not disable future dispatch.
+    NSUInteger offset = 0;
+    while (offset < data.length) {
+    const NSUInteger count = MIN(data.length - offset, 1'048'577 - event_buffer.length);
+    [event_buffer appendBytes:static_cast<const uint8_t*>(data.bytes) + offset length:count];
+    offset += count;
     NSRange range;
     while ((range = [event_buffer rangeOfData:[NSData dataWithBytes:&newline length:1] options:0 range:NSMakeRange(0, event_buffer.length)]).location != NSNotFound) {
+      if (range.location > 1'048'576) {
+        handle.readabilityHandler = nil;
+        std::cerr << "Native desktop protocol frame exceeded its limit." << std::endl;
+        dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; }); return;
+      }
       NSData* message = [event_buffer subdataWithRange:NSMakeRange(0, range.location)];
       [event_buffer replaceBytesInRange:NSMakeRange(0, range.location + 1) withBytes:nullptr length:0];
       NSDictionary* value = [NSJSONSerialization JSONObjectWithData:message options:0 error:nil];
       if (![value isKindOfClass:NSDictionary.class]) continue;
+      if ([value[@"kind"] isEqualToString:@"dialog-cancel"] && [value[@"id"] isKindOfClass:NSString.class]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (desktop_workspace_panel && [desktop_workspace_panel_id isEqualToString:value[@"id"]]) [desktop_workspace_panel cancel:nil];
+        });
+      }
+      if ([value[@"kind"] isEqualToString:@"automation-reset"] && [value[@"id"] isKindOfClass:NSString.class] &&
+          [value[@"id"] length] <= 100 && [value[@"id"] hasPrefix:@"automation-"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (!desktop_client) return;
+          desktop_client->AutomationReset([broker, input, value] {
+            if (!broker.running) return;
+            NSData* bytes = [NSJSONSerialization dataWithJSONObject:@{@"kind":@"automation-reset-response", @"id":value[@"id"], @"ok":@YES} options:0 error:nil];
+            if (!bytes) return;
+            NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
+            @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) {}
+          });
+        });
+      }
+      if (([value[@"kind"] isEqualToString:@"automation-request"] || [value[@"kind"] isEqualToString:@"automation-cancel"]) &&
+          [value[@"id"] isKindOfClass:NSString.class] && [value[@"id"] length] <= 100 && [value[@"id"] hasPrefix:@"automation-"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (!desktop_client) return;
+          const std::string request_id([value[@"id"] UTF8String]);
+          if ([value[@"kind"] isEqualToString:@"automation-cancel"]) { desktop_client->AutomationCancel(request_id); return; }
+          if (![value[@"request"] isKindOfClass:NSDictionary.class]) return;
+          NSData* data = [NSJSONSerialization dataWithJSONObject:value[@"request"] options:0 error:nil];
+          if (!data || data.length > 1'048'576) return;
+          const auto parsed = CefParseJSON(std::string(static_cast<const char*>(data.bytes), data.length), JSON_PARSER_RFC);
+          if (parsed && parsed->GetType() == VTYPE_DICTIONARY) desktop_client->AutomationRequest(request_id, parsed->GetDictionary());
+        });
+      }
       if ([value[@"kind"] isEqualToString:@"ui-ready"]) dispatch_async(dispatch_get_main_queue(), ^{
         if (desktop_client) {
           desktop_client->UiReady();
@@ -445,6 +542,29 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
             NSURL* handler = [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:[NSURL URLWithString:@"https://kestrel.invalid/"]];
             BOOL is_default = handler && [handler.URLByResolvingSymlinksInPath isEqual:NSBundle.mainBundle.bundleURL.URLByResolvingSymlinksInPath];
             response = @{@"ok":@YES, @"isDefault":@(is_default), @"canSetAsDefault":@([NSBundle.mainBundle.bundlePath isEqualToString:@"/Applications/Kestrel.app"])};
+          } else if ([type isEqualToString:@"select-workspace-folder"] && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
+            if (desktop_workspace_panel) response = @{@"ok":@NO, @"error":@"A native folder picker is already open."};
+            else {
+              NSOpenPanel* panel = NSOpenPanel.openPanel;
+              panel.title = @"Grant Kestrel a project folder"; panel.prompt = @"Grant folder";
+              panel.canChooseDirectories = YES; panel.canChooseFiles = NO;
+              panel.allowsMultipleSelection = NO; panel.canCreateDirectories = YES;
+              desktop_workspace_panel = panel; desktop_workspace_panel_id = value[@"id"];
+              [panel beginWithCompletionHandler:^(NSModalResponse result) {
+                const bool owned = desktop_workspace_panel == panel && [desktop_workspace_panel_id isEqualToString:value[@"id"]];
+                if (!owned) return;
+                desktop_workspace_panel = nil; desktop_workspace_panel_id = nil;
+                NSURL* selected = result == NSModalResponseOK ? panel.URLs.firstObject : nil;
+                NSDictionary* selection = selected.isFileURL && selected.path.length > 0 && selected.path.length <= 4096
+                    ? @{@"ok":@YES, @"selectedWorkspacePath":selected.path}
+                    : @{@"ok":@YES, @"cancelled":@YES};
+                NSData* bytes = [NSJSONSerialization dataWithJSONObject:@{@"kind":@"host-response", @"id":value[@"id"], @"response":selection} options:0 error:nil];
+                if (!bytes || !broker.running) return;
+                NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
+                @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) {}
+              }];
+              return;
+            }
           }
           NSData* bytes = [NSJSONSerialization dataWithJSONObject:@{@"kind":@"host-response", @"id":value[@"id"], @"response":response} options:0 error:nil];
           if (!bytes || !broker.running) return;
@@ -454,9 +574,16 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
         });
       }
     }
+    if (event_buffer.length > 1'048'576) {
+      handle.readabilityHandler = nil;
+      std::cerr << "Native desktop protocol frame exceeded its limit." << std::endl;
+      dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; }); return;
+    }
+    }
   };
   CefMainArgs args(argc, argv);
   CefSettings settings;
+  settings.windowless_rendering_enabled = true;
   settings.persist_session_cookies = true;
   CefString(&settings.root_cache_path) = profile.UTF8String;
   CefString(&settings.cache_path) = profile.UTF8String;

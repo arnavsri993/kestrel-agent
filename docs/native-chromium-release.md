@@ -260,7 +260,12 @@ user's real data. The no-argument smoke verified an authenticated worker/Core
 bridge, first-party document load, durable key, restart, and clean shutdown;
 document load alone does not prove React rendered. The first-run canary checks
 the actual setup screens and a real subsequent task without setting onboarding
-flags. Its current local-model acceptance work is still in progress.
+flags. Fresh-profile acceptance passed on 2026-10-29: all five rendered setup
+screens, installed-model discovery and live verification, a guided task with a
+real tool result, a separate Home prompt, and the persisted reply after a full
+restart. The receipt and screenshots are in
+`.tmp/native-first-run-evidence-cxGvhF/`; its complete-bundle fingerprint is
+`92026063798d7967935d9a2244da70d27b4a7aed893a864eb8817472090ab917`.
 
 Native sign-in now has guarded start/cancel handling through the official
 provider flow and opens its approved provider URL in the native browser.
@@ -298,3 +303,70 @@ Release acceptance still requires the complete native product workflow:
 Unsupported native requests fail explicitly. The existing installed app and
 its data remain preserved while these gates are implemented; the migration
 must not be called release-ready from a binary or Store canary alone.
+
+### Native workspace and isolated recovery checkpoint
+
+The native workspace host reuses the existing project/grant store. Settings
+opens a real Cocoa folder picker over a private Core sideband; renderer input
+cannot supply the selected path. Adding, removing, renaming, and editing
+project instructions use the idle-Core configuration guard. Existing grants
+are loaded at startup; unavailable paths remain listed. No user folders or
+existing profiles are implicitly granted or imported.
+
+The background browser backend now creates windowless Alloy renderers inside
+the same native Chromium process, with a fresh nonpersistent request context
+per session. They create no visible tabs or stock browser windows. Live checks
+cover cookie/localStorage separation from the user and other sessions, origin
+allowlists, trusted input, consumed references, viewport changes, AX snapshots,
+and screenshots decoded independently by Core. Authentication handoff,
+background downloads, and desktop automation remain separate parity gaps.
+
+Core shutdown/recovery uses a private reset barrier. An additional live check
+keeps an isolated page actively emitting requests while terminating only the
+owned Core child. It exposed a synchronous `CloseBrowser` callback releasing
+the manager before its shutdown method returned. Shutdown now retains its
+implementation for that entire call stack. The rebuilt candidate passed:
+the old page stopped running, a new Core recovered, and a fresh isolated page
+worked without restarting the visible browser. This receipt is retained at
+`.tmp/chromium-active-isolated-recovery-evidence-fixed/`; its complete-bundle
+fingerprint is `35e001692c9f480e7345384b3131fc63a8949467f5c99e1c09f4b147295551f0`.
+
+To repeat the native folder, upload, isolated recovery, and real Store checks:
+
+```sh
+KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
+KESTREL_TEST_NATIVE_WORKSPACE=1 \
+KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION=1 \
+KESTREL_TEST_REAL_CHROME_WEB_STORE=1 corepack pnpm test:chromium-desktop
+```
+
+At the picker marker, select only the disposable `workspace-fixture` path
+printed by the test. At the Store marker, review the actual native permission
+sheet. The automated checks require Core to read the granted file, upload its
+exact synthetic bytes while refusing an existing file outside that grant,
+retain the grant after full restart, and deny reads after revocation. The
+Store check requires functional JSON formatting before and after restart,
+one window for Home/Settings/Store, and the real Kestrel companion. Receipts
+include a complete-bundle fingerprint checked again before success.
+
+The full unit suite at this checkpoint passed 1,858 tests across 256 files,
+and workspace TypeScript checks and the native build passed. Those results
+are distinct from full `pnpm verify`, exact-head remote CI, public signing,
+profile transfer/rollback, and canonical installation acceptance.
+
+Visual inspection also found that granting a folder from Settings left other
+Kestrel pages' Projects sidebars stale. Successful workspace mutations now
+broadcast bounded project metadata over the authenticated worker connection;
+the renderer validates that event and updates each page. The live workspace
+canary additionally requires the project in both Home and Settings before
+continuing, and its removal after revocation. Final units passed 1,861 tests
+across 256 files, and final TypeScript checks passed.
+
+The first broad verification run exposed a retained-host compatibility issue:
+secret-field redaction clears some rich AX properties to an empty string. Core
+now accepts exactly that redacted form, continues rejecting nonempty scalar
+properties, and preserves the Sensitive field marker when other properties
+are present. The focused privacy regressions and all 50 browser benchmark
+workflows passed. The first aggregate verification run stopped at the original
+regression; aggregate rerun and final on-screen sidebar evidence are separate
+checks.

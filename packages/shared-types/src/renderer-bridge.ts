@@ -8,6 +8,7 @@ import {
 	PasswordPromptSchema,
 	PetActivityStateSchema,
 	PetStatusSchema,
+	ProjectSchema,
 	type RendererBridge,
 	type RendererRequest,
 	RendererRequestSchema,
@@ -28,6 +29,7 @@ export type RendererEventChannel =
 	| "deep-link"
 	| "external-intake"
 	| "snapshot"
+	| "workspace-projects"
 	| "pet-status"
 	| "pet-activity"
 	| "runtime-event"
@@ -90,6 +92,7 @@ export function createRendererBridge(transport: RendererTransport): RendererBrid
 		onDeepLink: (callback) => subscribe("deep-link", KestrelDeepLinkSchema, callback, "deep-link-ready", "deep-link-not-ready"),
 		onExternalIntake: (callback) => subscribe("external-intake", ExternalIntakeSchema, callback, "external-intake-ready"),
 		onSnapshot: (callback) => subscribe("snapshot", WorkspaceSnapshotSchema, callback),
+		onWorkspaceProjectsChanged: (callback) => subscribe("workspace-projects", ProjectSchema.array().max(500), callback),
 		onPetStatus: (callback) => subscribe("pet-status", PetStatusSchema, callback),
 		onPetActivity: (callback) => subscribe("pet-activity", PetActivityStateSchema, callback),
 		onRuntimeEvent: (callback) => subscribe("runtime-event", RuntimeEventSchema, callback),

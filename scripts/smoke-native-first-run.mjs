@@ -9,6 +9,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from '@playwright/test';
+import {candidateDigest} from './native-retirement-evidence.mjs';
 
 const supplied=process.env.KESTREL_NATIVE_TEST_APP;
 if(!supplied)throw new Error('Set KESTREL_NATIVE_TEST_APP to a disposable candidate. No app was launched.');
@@ -18,11 +19,12 @@ const app=await realpath(resolve(supplied));
 assert.notEqual(app,'/Applications/Kestrel.app','The canonical app cannot be used for this test.');
 assert(!app.startsWith('/Applications/Kestrel.app/'),'The canonical app cannot be used for this test.');
 const executable=join(app,'Contents/MacOS/Kestrel');
-const candidateSha256=createHash('sha256').update(await readFile(executable)).digest('hex');
+const executableSha256=createHash('sha256').update(await readFile(executable)).digest('hex');
+const candidateSha256=await candidateDigest(app);
 const profile=await mkdtemp(join(tmpdir(),'kestrel-native-first-run-profile-'));
 await mkdir('.tmp',{recursive:true});
 const evidence=await mkdtemp(resolve('.tmp/native-first-run-evidence-'));
-const receipt={at:new Date().toISOString(),candidate:app,candidateSha256,model,profile,evidence,phases:[]};
+const receipt={at:new Date().toISOString(),candidate:app,candidateSha256,executableSha256,model,profile,evidence,phases:[]};
 let child,browser,home,endpoint,output='';
 
 async function start(){
@@ -132,6 +134,9 @@ try{
  const guidedMessages=await home.evaluate(id=>window.kestrel.request({type:'runtime-list-messages',sessionId:id}),guided.id);
  assert(guidedMessages.messages?.some(message=>message.role==='tool'),'The guided task must actually use a read-only tool.');
  receipt.phases.push({phase:'guided-first-task-completed-with-real-tool-result',passed:true,sessionId:guided.id});
+ // Core can finish the executor before its response/audit work settles. Wait
+ // for the actual conversation UI to leave its busy state before a new task.
+ await home.getByRole('button',{name:'Stop',exact:true}).waitFor({state:'hidden',timeout:180_000});
  await home.screenshot({path:join(evidence,'native-first-run-home-before-task.png')});
  const marker=`FIRST_RUN_LOCAL_OK_${Date.now()}`;
  await home.locator('#new-tab-chat-input').fill(`Reply with only ${marker}. Do not use tools.`);
@@ -164,6 +169,7 @@ try{
  await home.screenshot({path:join(evidence,'native-first-run-home-after-restart.png')});
  receipt.phases.push({phase:'same-profile-restart-preserves-first-task',passed:true,sessionId:session.id});
  await stop();
+ assert.equal(await candidateDigest(app),candidateSha256,'The tested candidate changed during first-run verification.');
  await writeFile(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2));
  console.log(`Native Chromium first-run passed. Evidence: ${evidence}`);
 }catch(error){

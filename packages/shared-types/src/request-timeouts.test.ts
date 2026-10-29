@@ -23,6 +23,10 @@ describe("shared request execution and native transport deadlines", () => {
 	it("allows local chat warm-up and Core restart within a bounded setup budget", () => {
 		expect(nativeRequestTimeoutMs({ type: "local-runtime-bootstrap" }, "broker")).toBe(100_000);
 	});
+	it("allows a person time to select a native project folder", () => {
+		expect(nativeRequestTimeoutMs({ type: "select-workspace-folder" }, "broker")).toBe(610_000);
+		expect(nativeRequestTimeoutMs({ type: "select-workspace-folder" }, "renderer")).toBe(660_000);
+	});
 	it("allows the same bounded login budget for managed and shared Codex accounts", () => {
 		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "broker")).toBe(610_000);
 		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "renderer")).toBe(nativeRequestTimeoutMs({ type: "oauth-chatgpt-connect" }, "renderer"));

@@ -205,6 +205,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			paths.frameworks,
 			join(nativeHostRoot, "src", "kestrel_native_host.mm"),
 			join(nativeHostRoot, "src", "kestrel_chromium_desktop.mm"),
+			join(nativeHostRoot, "src", "native_isolated_automation.mm"),
 			join(nativeHostRoot, "src", "kestrel_chrome_window_mac.mm"),
 			join(nativeHostRoot, "src", "kestrel_private_chrome_pipe.mm"),
 			join(nativeHostRoot, "src", "kestrel_live_extension_control.mm"),
