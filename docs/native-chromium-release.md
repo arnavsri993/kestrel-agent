@@ -137,6 +137,17 @@ PIDs before and after reopening and the saved conversation to remain visible.
 This flow passed with the native close control and app reactivation. The
 normal canary also exercises real Core history and download-list contracts.
 
+Core now validates tab, history, and download metadata independently of the
+browser host. It removes credential-bearing query/fragment values, rejects
+privileged and credential-embedded URLs, and redacts text before returning
+those observations to the agent. Malformed and oversized responses fail with
+a fixed error rather than reflecting host data. All 1,716 workspace tests pass.
+The live canary downloaded a real file using Chromium's download manager,
+verified the exact bytes in its disposable profile, and verified that Core's
+tab/history/download results omit the fixture URL secret. Test connections
+use Playwright's `noDefaults` option so its download, focus, and media overrides
+do not replace the native browser behavior under test.
+
 Release acceptance still requires the complete native product workflow:
 
 - Provider sign-in and credential storage, local models, workspace/file

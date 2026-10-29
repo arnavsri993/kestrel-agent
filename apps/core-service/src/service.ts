@@ -39,6 +39,7 @@ import {
 import { CoreRequestSchema } from "@kestrel/shared-types";
 import type { CoreParentPort } from "./transport";
 import { normalizeBrowserPageContext } from "./browser-page-context";
+import { normalizeBrowserVisibleTabs, normalizeBrowserHistory, normalizeBrowserDownloads } from "./browser-observation-metadata";
 
 export function startCoreService(port: CoreParentPort): void {
 	let core: AgentCore | undefined;
@@ -167,8 +168,8 @@ export function startCoreService(port: CoreParentPort): void {
 		desktopAct: async (action: DesktopAction, signal) => {
 			await browserRequest({ operation: "desktop-act", action }, signal);
 		},
-		visibleTabs: (signal) =>
-			browserRequest({ operation: "visible-tabs" }, signal),
+		visibleTabs: async (signal) =>
+			normalizeBrowserVisibleTabs(await browserRequest({ operation: "visible-tabs" }, signal)),
 		visibleContext: async (tabId, signal) =>
 			normalizeBrowserPageContext(await browserRequest(
 				{ operation: "visible-context", ...(tabId ? { tabId } : {}) },
@@ -190,17 +191,17 @@ export function startCoreService(port: CoreParentPort): void {
 				trust: "untrusted_browser",
 			};
 		},
-		visibleHistory: (query, limit, signal) =>
-			browserRequest(
+		visibleHistory: async (query, limit, signal) =>
+			normalizeBrowserHistory(await browserRequest(
 				{
 					operation: "visible-history",
 					...(query ? { query } : {}),
 					...(limit !== undefined ? { limit } : {}),
 				},
 				signal,
-			),
-		visibleDownloads: (signal) =>
-			browserRequest({ operation: "visible-downloads" }, signal),
+			)),
+		visibleDownloads: async (signal) =>
+			normalizeBrowserDownloads(await browserRequest({ operation: "visible-downloads" }, signal)),
 		visibleAutofill: (tabId, signal) =>
 			browserRequest({ operation: "visible-autofill", tabId }, signal),
 		visibleAct: async (tabId, action, signal) => {

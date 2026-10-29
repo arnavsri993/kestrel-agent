@@ -12,6 +12,12 @@ import {tsImport} from 'tsx/esm/api';
 const app=resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app');
 const executable=join(app,'Contents/MacOS/Kestrel');
 const profile=await mkdtemp(join(tmpdir(),'kestrel-chromium-desktop-canary-'));
+const downloadPath=join(profile,'test-downloads');
+await mkdir(downloadPath,{mode:0o700});await mkdir(join(profile,'Default'),{mode:0o700});
+// CEF's Chrome profile is not an off-the-record context registered with the
+// Browser CDP handler. Configure its real preference before first startup so
+// the download canary writes only into this disposable profile.
+await writeFile(join(profile,'Default/Preferences'),JSON.stringify({download:{default_directory:downloadPath,prompt_for_download:false,directory_upgrade:true}}),{mode:0o600});
 const evidence=resolve('.tmp/chromium-desktop-evidence');
 await mkdir(evidence,{recursive:true});
 const {UserBrowserStateSchema}=await tsImport('../packages/shared-types/src/contracts.ts',import.meta.url);
@@ -23,9 +29,11 @@ const receipt={at:new Date().toISOString(),executableSha256:createHash('sha256')
 const jsonFixture={source:'kestrel-native-canary',nested:{installedExtensionRuns:true},values:[1,2,3]};
 const server=createServer((req,res)=>{
  if(req.url==='/formatter.json'){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(jsonFixture));return;}
+ if(req.url.startsWith('/download?')){res.writeHead(200,{'content-type':'application/octet-stream','content-disposition':'attachment; filename="canary.txt"'});res.end('Native Chromium download canary.');return;}
  res.writeHead(200,{'content-type':'text/html'});res.end(`<!doctype html><title>Native browser canary</title><h1>Native browser canary</h1>
  <p>Public page text. api_key=canary_secret_abcdefghijklmnop</p>
  <a href="/readable?access_token=canary_url_secret#canary_fragment_secret">Public link</a>
+ <a href="/download?access_token=canary_metadata_secret">Download canary</a>
  <label>Password <input type="password" value="canary_password_secret"></label>
  <textarea>canary_textarea_secret</textarea><div contenteditable>canary_editable_secret</div>
  <div data-private>canary_private_secret</div><div hidden>canary_hidden_secret</div>
@@ -45,7 +53,7 @@ async function start(){
   if(endpoint)break;await delay(100);
  }
  assert(endpoint,'Owned native endpoint missing: '+output);
- browser=await chromium.connectOverCDP(endpoint);
+ browser=await chromium.connectOverCDP(endpoint,{noDefaults:true});
  let context=browser.contexts()[0];
  let home;
  for(let i=0;i<200;i++){
@@ -56,7 +64,7 @@ async function start(){
    if(targets.targetInfos.some(target=>target.type==='page'&&/chrome-extension:\/\/[^/]+\/index.html$/.test(target.url))){
     // Chrome may have created the first page between Playwright's discovery
     // and auto-attach setup. Reconnect only when that real target exists.
-    await browser.close();browser=await chromium.connectOverCDP(endpoint);context=browser.contexts()[0];
+    await browser.close();browser=await chromium.connectOverCDP(endpoint,{noDefaults:true});context=browser.contexts()[0];
    }
   }
   await delay(100);
@@ -82,7 +90,7 @@ try{
   if(page)return page;
   // CEF's browser target does not auto-attach every native-created tab.
   // Reconnect to its existing targets; the product tab/window stays intact.
-  await browser.close();browser=await chromium.connectOverCDP(endpoint);context=browser.contexts()[0];
+  await browser.close();browser=await chromium.connectOverCDP(endpoint,{noDefaults:true});context=browser.contexts()[0];
   home=context.pages().find(page=>/chrome-extension:\/\/[^/]+\/index.html$/.test(page.url()));
   for(let i=0;i<100;i++){page=browser.contexts().flatMap(context=>context.pages()).find(page=>predicate(page.url()));if(page)return page;await delay(100);}
   throw Error('Native-created target could not be attached by the test connection.');
@@ -111,12 +119,22 @@ try{
  const nativeSystem=await home.evaluate(()=>window.kestrel.request({type:'get-system-state'}));assert.equal(nativeSystem.ok,true);assert.equal(typeof nativeSystem.launchAtLogin,'boolean');
  const created=await home.evaluate(()=>window.kestrel.request({type:'runtime-create-session',title:'Chromium restart canary',kind:'conversation'}));assert.equal(created.ok,true);savedSession=created.session?.id;assert(savedSession);
  await home.screenshot({path:join(evidence,'home.png')});
- const fixtureUrl=`http://127.0.0.1:${server.address().port}/canary`;
+ const fixturePublicUrl=`http://127.0.0.1:${server.address().port}/canary`;
+ const fixtureUrl=fixturePublicUrl+'?access_token=canary_metadata_secret';
  const tabResult=await home.evaluate(url=>window.kestrel.request({type:'browser-create-tab',input:url}),fixtureUrl);
  assert.equal(tabResult.ok,true,tabResult.error);
  const external=await createdPage(url=>url===fixtureUrl);
  await external.getByRole('heading',{name:'Native browser canary'}).waitFor();
  assert.deepEqual(await external.evaluate(()=>({bridge:typeof window.kestrel,query:typeof window.__kestrelNativeQuery,transport:typeof window.__kestrelHostTransport})),{bridge:'undefined',query:'undefined',transport:'undefined'});
+ await external.getByRole('link',{name:'Download canary',exact:true}).click();
+ let nativeDownload;
+ for(const deadline=Date.now()+30_000;Date.now()<deadline;){nativeDownload=(await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}))).browserState.downloads.find(item=>item.filename==='canary.txt'&&item.status==='completed');if(nativeDownload)break;await delay(100);}
+ const downloadedFiles=await home.evaluate(()=>chrome.downloads.search({query:['canary_metadata_secret']}));
+ const savedPreferences=JSON.parse(await readFile(join(profile,'Default/Preferences'),'utf8'));
+ await writeFile(join(evidence,'native-download-diagnostics.json'),JSON.stringify({downloadPath,preferences:savedPreferences.download,files:downloadedFiles.map(item=>({id:item.id,filename:item.filename,state:item.state,exists:item.exists,danger:item.danger,error:item.error,paused:item.paused}))},null,2));
+ assert(nativeDownload,'Chromium must record the completed real download.');
+ assert(downloadedFiles.some(item=>item.filename===join(downloadPath,'canary.txt')),'The native download must stay in the disposable profile.');
+ assert.equal(await readFile(join(downloadPath,'canary.txt'),'utf8'),'Native Chromium download canary.');
  async function coreTool(toolName,input,approved=true){
   const response=await home.evaluate(({sessionId,toolName,input,approved})=>window.kestrel.request({type:'runtime-call-tool',sessionId,toolName,input,
    ...(approved?{approvalStatus:'approved'}:{}),idempotencyKey:crypto.randomUUID()}),{sessionId:savedSession,toolName,input,approved});
@@ -124,13 +142,17 @@ try{
  }
  const listed=await coreTool('browser.tabs',{});
  assert.equal(listed.status,'verified',JSON.stringify(listed));
- assert(listed.output.tabs.some(tab=>tab.url===fixtureUrl),'Actual Core must see the native user tab.');
+ assert(listed.output.tabs.some(tab=>tab.url===fixturePublicUrl),'Actual Core must see the native user tab.');
  assert(listed.output.tabs.every(tab=>!tab.url.startsWith('chrome-extension:')),'Core must not receive protected Kestrel UI tabs.');
+ assert(!JSON.stringify(listed.output).includes('canary_metadata_secret'),'Core tab metadata must omit URL credentials.');
  const history=await coreTool('browser.search-history',{query:'127.0.0.1',limit:10});
  assert.equal(history.status,'verified',JSON.stringify(history));assert(Array.isArray(history.output.entries));assert(history.output.entries.length<=10);
+ assert(!JSON.stringify(history.output).includes('canary_metadata_secret'),'Core history metadata must omit URL credentials.');
  const downloads=await coreTool('browser.visible-downloads',{});
- assert.equal(downloads.status,'verified',JSON.stringify(downloads));assert(Array.isArray(downloads.output.downloads));
- const readableTab=listed.output.tabs.find(tab=>tab.url===fixtureUrl);assert(readableTab);
+ assert.equal(downloads.status,'verified',JSON.stringify(downloads));assert(downloads.output.downloads.some(item=>item.filename==='canary.txt'&&item.status==='completed'));
+ assert(!JSON.stringify(downloads.output).includes('canary_metadata_secret'),'Core download metadata must omit URL credentials.');
+ receipt.phases.push({phase:'native-download-and-Core-metadata-redaction',passed:true});
+ const readableTab=listed.output.tabs.find(tab=>tab.url===fixturePublicUrl);assert(readableTab);
  const read=await coreTool('browser.current-context',{tabId:readableTab.id});
  assert.equal(read.status,'verified',JSON.stringify(read));
  assert(read.output.visibleText.includes('Public page text.'),JSON.stringify(read));
@@ -143,7 +165,7 @@ try{
  assert(!/canary_(?:secret|password|textarea|editable|private|hidden|url|fragment|page_world)/.test(JSON.stringify(uiRead.browserContext)),'UI context must be redacted before Core processing too.');
  assert.deepEqual(await external.evaluate(()=>({bridge:typeof window.kestrel,query:typeof window.__kestrelNativeQuery})),{bridge:'undefined',query:'undefined'});
  receipt.phases.push({phase:'native-page-context-and-private-field-isolation',passed:true});
- const coreUrl=fixtureUrl+'?created-by=core';
+ const coreUrl=fixturePublicUrl+'?created-by=core';
  const blocked=await coreTool('browser.open-tab',{input:coreUrl},false);
  assert.equal(blocked.status,'blocked','Core approval must precede browser dispatch.');
  assert(!(await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}))).browserState.tabs.some(tab=>tab.url===coreUrl));
@@ -153,7 +175,7 @@ try{
  await home.bringToFront();
  const selected=await coreTool('browser.select-tab',{tabId:opened.output.tabId});assert(!['failed','blocked'].includes(selected.status),JSON.stringify(selected));
  assert.equal((await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}))).browserState.activeTabId,opened.output.tabId);
- const navigatedUrl=fixtureUrl+'?navigated-by=core';
+ const navigatedUrl=fixturePublicUrl+'?navigated-by=core';
  const navigated=await coreTool('browser.navigate-tab',{tabId:opened.output.tabId,input:navigatedUrl});
  assert(!['failed','blocked'].includes(navigated.status),JSON.stringify(navigated));
  await coreTab.waitForURL(navigatedUrl);
