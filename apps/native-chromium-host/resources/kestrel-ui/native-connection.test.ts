@@ -86,6 +86,32 @@ describe("native worker connection", () => {
 		expect(ports[1].postMessage.mock.calls.map(([message]: any[]) => message.kind)).toEqual(["authenticate"]);
 	});
 
+	it("keeps a dispatched agent request alive beyond the old 42-second transport deadline", async () => {
+		const { connection, ports, authenticate } = harness();
+		await authenticate();
+		const settled = vi.fn();
+		const response = connection.request({ type: "runtime-run-agent", sessionId: "session-long", streamId: "stream-long" }).then((result: unknown) => { settled(result); return result; });
+		const sent = ports[0].postMessage.mock.calls.at(-1)[0];
+		await vi.advanceTimersByTimeAsync(90_000);
+		expect(settled).not.toHaveBeenCalled();
+		await ports[0].onMessage.emit({ kind: "response", id: sent.id, response: { ok: true } });
+		expect(await response).toEqual({ ok: true });
+		expect(ports[0].postMessage.mock.calls.filter(([message]: any[]) => message.kind === "request")).toHaveLength(1);
+	});
+
+	it("bounds connection setup separately and allows a queued agent request to finish after authentication", async () => {
+		const { connection, ports, authenticate } = harness();
+		const settled = vi.fn();
+		const response = connection.request({ type: "runtime-call-tool", sessionId: "session-long", toolName: "browser.tabs", input: {} }).then((result: unknown) => { settled(result); return result; });
+		await vi.advanceTimersByTimeAsync(40_000);
+		await authenticate();
+		const sent = ports[0].postMessage.mock.calls.at(-1)[0];
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(settled).not.toHaveBeenCalled();
+		await ports[0].onMessage.emit({ kind: "response", id: sent.id, response: { ok: true } });
+		expect(await response).toEqual({ ok: true });
+	});
+
 	it("fails a synchronous send error and rejects ready before authentication", async () => {
 		const { connection, ports, authenticate } = harness();
 		await authenticate();

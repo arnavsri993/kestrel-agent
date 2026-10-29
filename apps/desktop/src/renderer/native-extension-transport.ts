@@ -1,4 +1,4 @@
-import { createRendererBridge, isChromeWebStoreUrl, type RendererTransport, type RendererResponse } from "@kestrel/shared-types";
+import { createRendererBridge, isChromeWebStoreUrl, nativeRequestTimeoutMs, type RendererTransport, type RendererResponse } from "@kestrel/shared-types";
 import { useSyncExternalStore } from "react";
 
 interface ExtensionPort {
@@ -112,7 +112,7 @@ if (nativeChromiumSurface && runtime) {
 			if (closed || pending.size >= 64) return Promise.reject(new Error("Kestrel's browser connection is unavailable."));
 			return new Promise((resolve, reject) => {
 				const id = ++sequence;
-				const timeout = setTimeout(() => { pending.delete(id); reject(new Error("Kestrel's browser request timed out.")); }, 45_000);
+				const timeout = setTimeout(() => { pending.delete(id); reject(new Error("Kestrel's browser request timed out. Check the task or browser state before retrying.")); }, nativeRequestTimeoutMs(request, "renderer"));
 				pending.set(id, { resolve, reject, timeout });
 				try { port.postMessage({ kind: "request", id, request }); }
 				catch (error) { clearTimeout(timeout); pending.delete(id); reject(error); }

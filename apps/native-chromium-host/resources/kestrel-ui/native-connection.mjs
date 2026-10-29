@@ -1,4 +1,5 @@
 // Sent actions fail when their connection closes. They are never replayed.
+import { nativeRequestTimeoutMs } from "../../../../packages/shared-types/src/request-timeouts.ts";
 export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = crypto, handleBrowserRequest,
 	loadConfiguration = async (nonce) => {
 		const response = await fetch(runtime.getURL("launch-config.json") + "?challenge=" + nonce, { cache: "no-store", redirect: "error" });
@@ -10,13 +11,22 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 	const browserRequests = new Map();
 	let native, retry;
 	let ready = false, sequence = 0, delay = 250;
+	function arm(id, request, waiting = false) {
+		clearTimeout(request.timeout);
+		const budget = waiting ? 42_000 : nativeRequestTimeoutMs(request.message.request, "worker");
+		request.timeout = setTimeout(() => {
+			if (pending.get(id) !== request) return;
+			pending.delete(id);
+			request.resolve({ ok: false, error: waiting ? "Kestrel's native connection setup timed out." : "Kestrel's native request timed out. Check the task or browser state before retrying." });
+		}, Math.max(1, budget - (Date.now() - request.startedAt)));
+	}
 	function disconnected(connection) {
 		if (native !== connection) return;
 		native = undefined;
 		ready = false;
 		for (const request of pending.values()) {
 			clearTimeout(request.timeout);
-			request.resolve({ ok: false, error: "Kestrel's native connection closed. Retry the request." });
+			request.resolve({ ok: false, error: "Kestrel's native connection closed. Check the task or browser state before retrying." });
 		}
 		pending.clear();
 		for (const [id, request] of browserRequests) if (request.connection === connection) {
@@ -66,9 +76,10 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 				phase = "ready";
 				ready = true;
 				delay = 250;
-				for (const request of pending.values()) {
+				for (const [id, request] of pending) {
 					if (native !== connection) break;
 					request.sent = connection;
+					arm(id, request);
 					post(connection, request.message);
 				}
 			} else if (phase === "ready" && message?.kind === "browser-backend-cancel") {
@@ -108,8 +119,9 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 			return new Promise((resolve) => {
 				const id = `native-${++sequence}`;
 				const message = { kind: "request", id, request };
-				const timeout = setTimeout(() => { pending.delete(id); resolve({ ok: false, error: "Kestrel's native request timed out." }); }, 42_000);
-				pending.set(id, { message, resolve, timeout, sent: ready ? native : undefined });
+				const entry = { message, resolve, startedAt: Date.now(), sent: ready ? native : undefined };
+				pending.set(id, entry);
+				arm(id, entry, !ready);
 				if (ready) post(native, message);
 			});
 		},

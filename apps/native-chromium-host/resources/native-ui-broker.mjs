@@ -14,7 +14,7 @@ const profile = await realpath(argument("--profile-root"));
 const browserPid = Number(argument("--browser-pid"));
 if (!Number.isSafeInteger(browserPid) || browserPid !== process.ppid) throw new Error("Native broker requires its owning browser.");
 const peerInspector = createRequire(import.meta.url)(join(resources, "native-peer.node"));
-const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema } = await import("./native-ui-contracts.mjs");
+const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, nativeRequestTimeoutMs } = await import("./native-ui-contracts.mjs");
 const MAX_FRAME = 1024 * 1024;
 const MAX_PENDING = 64;
 const key = randomBytes(32);
@@ -160,7 +160,7 @@ const server = createServer((socket) => {
 				}
 				if (!coreReady || core.stdin.writableLength > MAX_FRAME) { socket.destroy(); return; }
 				const id = `ui-${++sequence}`;
-				const timeout = setTimeout(() => { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Kestrel Core request timed out." } }); }, 40_000);
+				const timeout = setTimeout(() => { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Kestrel Core response timed out. Check the task before retrying." } }); }, nativeRequestTimeoutMs(parsed.data, "broker"));
 				pending.set(id, { socket, uiId: message.id, timeout });
 				core.stdin.write(JSON.stringify({ type: "request", id, request: parsed.data }) + "\n");
 			}

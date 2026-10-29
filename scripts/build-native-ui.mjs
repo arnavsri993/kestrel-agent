@@ -16,7 +16,7 @@ export async function buildNativeUi({ renderer, resources }) {
 	await build({ entryPoints: [join(root, "apps/native-chromium-host/resources/kestrel-ui/background.mjs")],
 		outfile: join(resources, "kestrel-ui/background.mjs"), bundle: true, platform: "browser", format: "esm", target: "chrome152",
 		logLevel: "warning" });
-	await build({ stdin: { contents: 'export {RendererRequestSchema, CoreRequestSchema, UserBrowserStateSchema} from "./packages/shared-types/src/contracts.ts"; export {BrowserBackendWireRequestSchema} from "./apps/core-service/src/browser-backend-wire.ts";', resolveDir: root },
+	await build({ stdin: { contents: 'export {RendererRequestSchema, CoreRequestSchema, UserBrowserStateSchema} from "./packages/shared-types/src/contracts.ts"; export {BrowserBackendWireRequestSchema} from "./apps/core-service/src/browser-backend-wire.ts"; export {nativeRequestTimeoutMs} from "./packages/shared-types/src/request-timeouts.ts";', resolveDir: root },
 		outfile: join(resources, "native-ui-contracts.mjs"), bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "warning" });
 	await build({ stdin: { contents: 'export {CoreSupervisor} from "./apps/core-service/src/core-supervisor.ts"; export {nodeCoreProcess} from "./apps/core-service/src/node-core-process.ts"; export {CoreRequestSchema} from "./packages/shared-types/src/contracts.ts";', resolveDir: root },
 		outfile: join(resources, "agent-core/service/native-desktop-runtime.mjs"), bundle: true, platform: "node", format: "esm", target: "node22", external: ["better-sqlite3", "sharp"], logLevel: "warning",

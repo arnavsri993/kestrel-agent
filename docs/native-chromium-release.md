@@ -160,6 +160,23 @@ authentication and clean child/secret shutdown passed with this supervisor.
 The focused supervisor/native regression run passed 76 tests. In-flight
 requests fail on interruption; recovery does not automatically replay actions.
 
+The full local `pnpm verify` run passed at `6aeb89f8`. Its first attempt found a
+payment test comparing a three-digit CVV against the entire serialized result;
+the same digits can occur in a random field ID. The test now deliberately
+creates that collision and checks emitted field values, while retaining blank
+CVV and blocked-fill assertions. Both the focused autofill flow and the complete
+verification run passed.
+
+Native request deadlines now share Core's existing execution budgets. Agent
+tasks retain their bounded 30-minute budget and transcription retains 125
+seconds. The worker separately bounds initial connection setup and the outer
+layers leave room for Core's cancellation response. Clock-based regressions
+verify that authenticated and initially queued requests survive the old
+40–45-second cutoff without replay. All 1,720 workspace tests, 69 focused native
+tests, workspace TypeScript checks, a fresh native build, native authentication,
+and the real native desktop/Core-recovery canary passed. This is transport
+evidence; a full native provider-driven workflow is still a release gate.
+
 Release acceptance still requires the complete native product workflow:
 
 - Provider sign-in and credential storage, local models, workspace/file
