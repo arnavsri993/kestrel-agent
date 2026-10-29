@@ -11,10 +11,16 @@ export async function buildNativeUi({ renderer, resources }) {
 	await cp(renderer, join(resources, "kestrel-ui"), { recursive: true });
 	await cp(join(root, "apps/native-chromium-host/resources/kestrel-ui"), join(resources, "kestrel-ui"), { recursive: true, filter: (path) => !path.endsWith(".test.ts") });
 	await cp(join(root, "apps/native-chromium-host/resources/native-ui-broker.mjs"), join(resources, "native-ui-broker.mjs"));
+	await cp(join(root, "apps/native-chromium-host/resources/native-desktop-core.mjs"), join(resources, "native-desktop-core.mjs"));
 	await cp(join(root, "apps/native-chromium-host/resources/native-browser-relay.mjs"), join(resources, "native-browser-relay.mjs"));
 	await build({ entryPoints: [join(root, "apps/native-chromium-host/resources/kestrel-ui/background.mjs")],
 		outfile: join(resources, "kestrel-ui/background.mjs"), bundle: true, platform: "browser", format: "esm", target: "chrome152",
 		logLevel: "warning" });
 	await build({ stdin: { contents: 'export {RendererRequestSchema, CoreRequestSchema, UserBrowserStateSchema} from "./packages/shared-types/src/contracts.ts"; export {BrowserBackendWireRequestSchema} from "./apps/core-service/src/browser-backend-wire.ts";', resolveDir: root },
 		outfile: join(resources, "native-ui-contracts.mjs"), bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "warning" });
+	await build({ stdin: { contents: 'export {CoreSupervisor} from "./apps/core-service/src/core-supervisor.ts"; export {nodeCoreProcess} from "./apps/core-service/src/node-core-process.ts"; export {CoreRequestSchema} from "./packages/shared-types/src/contracts.ts";', resolveDir: root },
+		outfile: join(resources, "agent-core/service/native-desktop-runtime.mjs"), bundle: true, platform: "node", format: "esm", target: "node22", external: ["better-sqlite3", "sharp"], logLevel: "warning",
+		banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
+		plugins: [{ name: "reject-electron", setup(builder) { builder.onResolve({ filter: /^electron(?:$|\/|-)/ }, ({ path }) => ({ errors: [{ text: `Native desktop Core cannot import ${path}` }] })); } }],
+	});
 }

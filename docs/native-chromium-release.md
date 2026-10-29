@@ -148,6 +148,18 @@ tab/history/download results omit the fixture URL secret. Test connections
 use Playwright's `noDefaults` option so its download, focus, and media overrides
 do not replace the native browser behavior under test.
 
+The native desktop now uses the shared standalone Node Core supervisor,
+rather than the historical one-shot relay. Core startup, bounded crash
+recovery, request settlement, browser cancellation, and shutdown use the same
+tested supervisor as the existing desktop. Core stdout is excluded from the
+framed host protocol, and the native runtime bundle rejects Electron imports.
+The live native canary killed only its verified Core child, observed a new
+Core PID under the same relay, retained the same browser/Home and conversation,
+and successfully used the existing Chromium tab after recovery. Native
+authentication and clean child/secret shutdown passed with this supervisor.
+The focused supervisor/native regression run passed 76 tests. In-flight
+requests fail on interruption; recovery does not automatically replay actions.
+
 Release acceptance still requires the complete native product workflow:
 
 - Provider sign-in and credential storage, local models, workspace/file

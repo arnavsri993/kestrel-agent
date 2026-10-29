@@ -42,6 +42,12 @@ const server=createServer((req,res)=>{
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 let child,browser,output='';
 let savedSession;
+function ownedNodeProcesses(){
+ const rows=execFileSync('/bin/ps',['-axo','pid=,ppid=,comm='],{encoding:'utf8'}).trim().split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).filter(Boolean);
+ const owned=new Set([child.pid]);let changed=true;
+ while(changed){changed=false;for(const row of rows)if(owned.has(Number(row[2]))&&!owned.has(Number(row[1]))){owned.add(Number(row[1]));changed=true;}}
+ return rows.filter(row=>owned.has(Number(row[1]))&&row[3].endsWith('/node')).map(row=>({pid:Number(row[1]),ppid:Number(row[2])}));
+}
 async function start(){
  output='';
  child=spawn(executable,['--kestrel-chromium-desktop','--kestrel-cache-path',profile,'--kestrel-durable-profile','--remote-debugging-port=0'],{stdio:['ignore','pipe','pipe']});
@@ -165,6 +171,21 @@ try{
  assert(!/canary_(?:secret|password|textarea|editable|private|hidden|url|fragment|page_world)/.test(JSON.stringify(uiRead.browserContext)),'UI context must be redacted before Core processing too.');
  assert.deepEqual(await external.evaluate(()=>({bridge:typeof window.kestrel,query:typeof window.__kestrelNativeQuery})),{bridge:'undefined',query:'undefined'});
  receipt.phases.push({phase:'native-page-context-and-private-field-isolation',passed:true});
+ const originalNodes=ownedNodeProcesses();assert.equal(originalNodes.length,3,'The test must identify its exact broker, relay, and Core.');
+ const originalCore=originalNodes.find(node=>!originalNodes.some(child=>child.ppid===node.pid));assert(originalCore);
+ process.kill(originalCore.pid,'SIGKILL'); // Only this disposable canary's verified Core child.
+ let recoveredCore,recoveredSnapshot;
+ for(const deadline=Date.now()+15_000;Date.now()<deadline;){
+  assert.equal(child.exitCode,null,'A Core crash must not terminate the browser.');
+  recoveredCore=ownedNodeProcesses().find(node=>node.ppid===originalCore.ppid&&node.pid!==originalCore.pid);
+  if(recoveredCore){recoveredSnapshot=await home.evaluate(()=>window.kestrel.request({type:'snapshot'}));if(recoveredSnapshot.ok)break;}
+  await delay(100);
+ }
+ assert(recoveredCore&&recoveredSnapshot?.ok,'Native Core did not recover. '+output);
+ assert.equal(home.isClosed(),false,'Core recovery must preserve the native Home tab.');
+ assert((await home.evaluate(()=>window.kestrel.request({type:'runtime-list-sessions'}))).sessions.some(session=>session.id===savedSession),'Core recovery must retain the real conversation.');
+ const afterRecovery=await coreTool('browser.tabs',{});assert.equal(afterRecovery.status,'verified',JSON.stringify(afterRecovery));assert(afterRecovery.output.tabs.some(tab=>tab.id===readableTab.id));
+ receipt.phases.push({phase:'native-Core-crash-recovery',passed:true,previousCorePid:originalCore.pid,recoveredCorePid:recoveredCore.pid,browserPid:child.pid});
  const coreUrl=fixturePublicUrl+'?created-by=core';
  const blocked=await coreTool('browser.open-tab',{input:coreUrl},false);
  assert.equal(blocked.status,'blocked','Core approval must precede browser dispatch.');
@@ -203,12 +224,7 @@ try{
   assert(!store,'Run the window lifecycle and Store prompts as separate canaries.');
   for(const page of context.pages())if(page!==home)await page.close();
   await home.bringToFront();
-  function nodeDescendants(){
-   const rows=execFileSync('/bin/ps',['-axo','pid=,ppid=,comm='],{encoding:'utf8'}).trim().split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).filter(Boolean);
-   const owned=new Set([child.pid]);let changed=true;
-   while(changed){changed=false;for(const row of rows)if(owned.has(Number(row[2]))&&!owned.has(Number(row[1]))){owned.add(Number(row[1]));changed=true;}}
-   return rows.filter(row=>owned.has(Number(row[1]))&&row[3].endsWith('/node')).map(row=>Number(row[1])).sort((a,b)=>a-b);
-  }
+  const nodeDescendants=()=>ownedNodeProcesses().map(node=>node.pid).sort((a,b)=>a-b);
   const coreProcesses=nodeDescendants();assert(coreProcesses.length>=3,'The browser must own broker, relay, and Core.');
   console.log('OWNED_CHROMIUM_WINDOW_READY: close this candidate’s last window using its normal native control.');
   for(let i=0;i<2400&&!home.isClosed();i++){assert.equal(child.exitCode,null,output);await delay(100);}

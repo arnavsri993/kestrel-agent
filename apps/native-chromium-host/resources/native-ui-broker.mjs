@@ -64,7 +64,7 @@ function signalReady() {
 	send(active, { kind: "ready" });
 	process.stdout.write(JSON.stringify({ kind: "ui-ready" }) + "\n");
 }
-const core = spawn(process.execPath, [join(resources, "native-core-relay.mjs"), "--profile-root", profile,
+const core = spawn(process.execPath, [join(resources, "native-desktop-core.mjs"), "--profile-root", profile,
 	...(process.argv.includes("--durable-profile") ? ["--durable-profile"] : [])], {
 	stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, KESTREL_NATIVE_LIVE_EXTENSIONS: "0" },
 });
