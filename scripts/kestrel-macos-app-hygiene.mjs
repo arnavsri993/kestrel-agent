@@ -71,6 +71,7 @@ export function isKestrelBundle(bundlePath) {
 	const name = plistValue(bundlePath, "CFBundleName");
 	const displayName = plistValue(bundlePath, "CFBundleDisplayName");
 	const isKestrelIdentifier =
+		supportedBundleIdentifiers.has(identifier) ||
 		identifier === kestrelBundleIdentifier ||
 		identifier.startsWith(`${kestrelBundleIdentifier}.`);
 	const isKestrelName = [name, displayName].some(

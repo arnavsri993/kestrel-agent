@@ -60,6 +60,19 @@ function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath) {
 const testSuite = process.platform === "darwin" ? describe : describe.skip;
 
 testSuite("development macOS app installer", () => {
+  it("rejects a native source without cutover acceptance before moving any app", () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-installer-native-guard-"));
+    const installRoot = join(root, "Applications"), trashRoot = join(root, "Trash");
+    const source = createBundle(join(root, "release"), "Kestrel.app", "com.kestrel.native-chromium-host.dev");
+    const canonical = createBundle(installRoot, "Kestrel.app");
+    writeFileSync(join(canonical, "Contents", "payload.txt"), "working canonical");
+    const result = spawnSync(process.execPath, [script, source], { encoding: "utf8", env: { ...process.env, KESTREL_INSTALL_NATIVE_CANONICAL: "", KESTREL_MACOS_INSTALL_ROOT: installRoot, KESTREL_MACOS_TRASH_ROOT: trashRoot, KESTREL_SKIP_SPOTLIGHT: "1", KESTREL_SKIP_LSREGISTER: "1" } });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("Native cutover is not accepted");
+    expect(readPayload(canonical)).toBe("working canonical");
+    expect(existsSync(source)).toBe(true);
+    expect(existsSync(trashRoot)).toBe(false);
+  });
   it("keeps one canonical app and trashes duplicates", () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-installer-test-"));
     const installRoot = join(root, "Applications");

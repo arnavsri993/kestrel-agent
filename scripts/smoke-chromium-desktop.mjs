@@ -11,7 +11,7 @@ import {tsImport} from 'tsx/esm/api';
 import {nativeProviderCanary,nativeCodexCanary} from './native-provider-canary.mjs';
 import {nativeBrowserActionsCanary} from './native-browser-actions-canary.mjs';
 import {createIsolationFixtures,nativeIsolatedBrowserCanary,prepareIsolatedCoreResetCanary,finishIsolatedCoreResetCanary} from './native-isolated-browser-canary.mjs';
-import {nativeWorkspaceCanary,finishNativeWorkspaceCanary} from './native-workspace-canary.mjs';
+import {nativeWorkspaceCanary,finishNativeWorkspaceCanary,prepareNativeWorkspaceFixture} from './native-workspace-canary.mjs';
 import {candidateDigest} from './native-retirement-evidence.mjs';
 
 const app=resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app');
@@ -19,6 +19,8 @@ const executable=join(app,'Contents/MacOS/Kestrel');
 const profile=await mkdtemp(join(tmpdir(),'kestrel-chromium-desktop-canary-'));
 const downloadPath=join(profile,'test-downloads');
 await mkdir(downloadPath,{mode:0o700});await mkdir(join(profile,'Default'),{mode:0o700});
+const workspaceFixture=process.env.KESTREL_TEST_NATIVE_WORKSPACE_FIXTURE==='1';
+if(workspaceFixture)await prepareNativeWorkspaceFixture(profile);
 // CEF's Chrome profile is not an off-the-record context registered with the
 // Browser CDP handler. Configure its real preference before first startup so
 // the download canary writes only into this disposable profile.
@@ -244,7 +246,7 @@ try{
  await home.getByRole('button',{name:'Open settings',exact:true}).click();
  const settings=await createdPage(url=>url.includes('index.html?app=settings'));await settings.waitForURL(/index.html\?app=settings/);
  await settings.locator('[data-app-page="settings"]').waitFor();
- if(process.env.KESTREL_TEST_NATIVE_WORKSPACE==='1')workspaceEvidence=await nativeWorkspaceCanary({settings,getHome:()=>home,profile,evidence,receipt,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures});
+ if(process.env.KESTREL_TEST_NATIVE_WORKSPACE==='1'||workspaceFixture)workspaceEvidence=await nativeWorkspaceCanary({settings,getHome:()=>home,profile,evidence,receipt,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures,fixtureGranted:workspaceFixture});
  if(providers)providerEvidence=await nativeProviderCanary({settings,home,profile,evidence,receipt,endpoint});
  if(process.env.KESTREL_TEST_REAL_CODEX==='1')await nativeCodexCanary({settings,home,evidence,receipt});
  await settings.bringToFront();

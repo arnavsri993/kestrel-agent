@@ -101,6 +101,9 @@ function stageBundle() {
 function install() {
   const nativeCutover = process.env.KESTREL_INSTALL_NATIVE_CANONICAL === "1";
   validateSource(source);
+  if (plistValue(source, "CFBundleIdentifier") === "com.kestrel.native-chromium-host.dev" && !nativeCutover) {
+    throw new Error("Native cutover is not accepted. Use the native installer and candidate-bound evidence before replacing the canonical app. No app was installed.");
+  }
   preventSpotlightIndexing(repositoryRoot);
   mkdirSync(installRoot, { recursive: true });
   if (nativeCutover && samePath(source, destination)) {

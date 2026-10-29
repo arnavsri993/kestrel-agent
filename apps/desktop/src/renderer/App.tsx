@@ -8926,6 +8926,7 @@ function ApprovalRulesSettings() {
 
 function AgentWorkspaceSettings() {
 	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
+	useEffect(() => window.kestrel.onWorkspaceProjectsChanged?.(setGrants), []);
 	const [sessions, setSessions] = useState<RuntimeSession[]>([]);
 	const [busy, setBusy] = useState(false);
 	const [planetBusySessionId, setPlanetBusySessionId] = useState<string | null>(

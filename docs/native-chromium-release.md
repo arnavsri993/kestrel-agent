@@ -370,3 +370,34 @@ are present. The focused privacy regressions and all 50 browser benchmark
 workflows passed. The first aggregate verification run stopped at the original
 regression; aggregate rerun and final on-screen sidebar evidence are separate
 checks.
+
+The final workspace event canary passed with both the Settings grant row and
+Home/Settings sidebars showing the renamed project. It uses a clearly marked
+pre-granted disposable fixture to isolate metadata broadcasts; it does not
+replace the separately recorded real Cocoa picker check. Its final 21-phase
+CI-equivalent run also includes provider Settings, an actual streamed Home
+task, a rejected provider mutation while busy, isolated active-page recovery,
+workspace upload and containment refusal, full restart, and revocation.
+The receipt is `.tmp/chromium-final-ci-variant-evidence/receipt.json`, bound to
+complete bundle `5f9bf76ca1e4c7b9fdb1481cec278bd917b20f93ccdc8a1db2aec85106b7bf79`.
+CI now enables these isolated/workspace fixture checks alongside providers.
+
+Fresh first-run setup was repeated successfully on bundle `b264bff1` at
+`.tmp/native-first-run-evidence-P2HmF7/`: all five screens, a verified installed
+Ollama model, the guided tool task, a separate Home reply, zero renderer errors,
+and conversation persistence after restart. These exact-build receipts remain
+separate from the real Store proof on bundle `35e00169`; repeat the interactive
+Store flow on a final release bundle before asserting its release gate.
+
+Installer recognition now includes the explicitly supported native bundle ID.
+The generic installer rejects that native source unless native cutover is
+explicitly accepted; the existing candidate evidence/signature checks still run
+before replacement. Focused installer/hygiene checks passed 12 tests. The final
+full unit run passed 1,863 tests across 256 files and TypeScript passed. Aggregate
+verification then stopped at the retained Electron tab-interaction hover
+preview. The remaining checks were run separately: 19 passed, while the broader
+Electron browser check failed at the same preview condition. The Mac was
+confirmed locked and previews require a focused owner window. Both failures
+remain recorded for rechecking after unlock; aggregate verification is not
+reported as fully passed. Generated verification screenshots were preserved
+under `.tmp/native-verification-generated-screenshots/`.
