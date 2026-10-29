@@ -6057,6 +6057,15 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 @end
 
 @implementation KestrelAppDelegate
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
+  (void)sender;
+  return NO;
+}
+- (BOOL)applicationShouldHandleReopen:(NSApplication*)sender hasVisibleWindows:(BOOL)has_visible_windows {
+  (void)sender;
+  if (!has_visible_windows && ReopenKestrelChromiumDesktop()) return YES;
+  return YES;
+}
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
   if (CloseKestrelChromiumDesktop()) return NSTerminateCancel;
   if (extension_workbench_client) {

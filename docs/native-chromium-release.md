@@ -90,8 +90,9 @@ that is separate from proving full native product parity. Remote CodeQL and
 packaged desktop checks passed at `92293718`; Core CI stopped at its full
 development dependency audit with 25 advisories. Vite, Vitest, the retained
 Electron compatibility dependency, undici, and fast-uri are now patched too;
-the full local audit reports zero vulnerabilities. Remote checks must still
-be verified on the new commit.
+the full local audit reports zero vulnerabilities. All remote checks passed
+at `063756b1`, including CodeQL, Core/website/security, and the packaged
+desktop job. Later changes require fresh checks.
 
 Native builds compile the peer inspector against headers from the same
 checksum-verified Node archive as the bundled runtime. CI runs the new
@@ -124,6 +125,17 @@ cross-origin child frames or provide interaction references.
 All 1,712 workspace tests and workspace TypeScript checks passed after these
 changes. The native desktop canary also passed page reading, tab tools,
 approval enforcement, durable restart, and clean shutdown on the new build.
+
+Closing the last native window now leaves Agent Core running. Dock activation,
+New Window, and Settings can create a fresh Chromium window; quitting still
+owns the broker, Core, and browser shutdown sequence. The development
+launcher's SIGTERM follows that same clean Quit path. To exercise window
+recovery visibly, run `KESTREL_TEST_NATIVE_WINDOW_LIFECYCLE=1` with the desktop
+canary, close the candidate's last window at its prompt, and reopen it using
+the native app controls. The canary requires the exact same broker/relay/Core
+PIDs before and after reopening and the saved conversation to remain visible.
+This flow passed with the native close control and app reactivation. The
+normal canary also exercises real Core history and download-list contracts.
 
 Release acceptance still requires the complete native product workflow:
 

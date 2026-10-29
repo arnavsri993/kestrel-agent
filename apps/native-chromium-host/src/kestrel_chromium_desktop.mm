@@ -5,6 +5,7 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
 #include <iostream>
 #include <map>
@@ -77,12 +78,16 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   }
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
     browsers_.erase(browser->GetIdentifier());
-    if (first_browser_ && first_browser_->GetIdentifier() == browser->GetIdentifier()) first_browser_ = nullptr;
+    if (first_browser_ && first_browser_->GetIdentifier() == browser->GetIdentifier())
+      first_browser_ = browsers_.empty() ? nullptr : browsers_.begin()->second;
     std::cout << "KESTREL_CHROMIUM_DESKTOP_TAB_CLOSED remaining=" << browsers_.size() << std::endl;
-    if (browsers_.empty()) CefQuitMessageLoop();
+    // Closing a macOS window must not terminate active Core work. Quit owns
+    // the process lifetime; Dock activation and New Window can reopen Home.
+    if (browsers_.empty() && closing_) CefQuitMessageLoop();
   }
   void Close() {
     closing_ = true;
+    if (browsers_.empty()) { CefQuitMessageLoop(); return; }
     const auto snapshot = browsers_;
     for (const auto& [id, browser] : snapshot) browser->GetHost()->CloseBrowser(true);
   }
@@ -91,7 +96,27 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     const auto active = browsers_.find(active_id_);
     return active != browsers_.end() ? active->second : first_browser_;
   }
-  void OpenSettings() { const auto browser = Active(); if (browser) browser->GetMainFrame()->LoadURL(ui_url_ + "?app=settings"); }
+  void OpenWindow(const std::string& url = "") {
+    if (closing_) return;
+    CefWindowInfo window;
+    window.runtime_style = CEF_RUNTIME_STYLE_CHROME;
+    CefBrowserSettings settings;
+    CefBrowserHost::CreateBrowserSync(window, this, url.empty() ? ui_url_ : url, settings, nullptr, nullptr);
+  }
+  void Reopen() {
+    if (closing_) return;
+    const auto browser = Active();
+    if (!browser) { OpenWindow(); return; }
+    NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+    NSWindow* window = view.window;
+    if (window.miniaturized) [window deminiaturize:nil];
+    [window makeKeyAndOrderFront:nil];
+  }
+  void OpenSettings() {
+    const auto browser = Active();
+    if (browser) browser->GetMainFrame()->LoadURL(ui_url_ + "?app=settings");
+    else OpenWindow(ui_url_ + "?app=settings");
+  }
  private:
   void OpenUiWhenReady() {
     if (!document_ready_ || ui_opened_ || !first_browser_) return;
@@ -129,13 +154,17 @@ bool HasArgument(int argc, char** argv, const char* name) {
 @implementation KestrelChromiumMenuTarget
 - (void)chromeCommand:(NSMenuItem*)item {
   const auto browser = desktop_client ? desktop_client->Active() : nullptr;
+  if (!browser && desktop_client && ([item.representedObject isEqualToString:@"IDC_NEW_WINDOW"] || [item.representedObject isEqualToString:@"IDC_NEW_TAB"])) {
+    desktop_client->OpenWindow(); return;
+  }
   const int command = cef_id_for_command_id_name([item.representedObject UTF8String]);
   if (browser && command >= 0) browser->GetHost()->ExecuteChromeCommand(command, CEF_WOD_CURRENT_TAB);
 }
 - (void)settings:(id)sender { if (desktop_client) desktop_client->OpenSettings(); }
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
   const auto browser = desktop_client ? desktop_client->Active() : nullptr;
-  if (item.action != @selector(chromeCommand:)) return browser != nullptr;
+  if (item.action != @selector(chromeCommand:)) return desktop_client != nullptr;
+  if (!browser && desktop_client && ([item.representedObject isEqualToString:@"IDC_NEW_WINDOW"] || [item.representedObject isEqualToString:@"IDC_NEW_TAB"])) return YES;
   const int command = cef_id_for_command_id_name([item.representedObject UTF8String]);
   return browser && command >= 0 && browser->GetHost()->CanExecuteChromeCommand(command);
 }
@@ -203,6 +232,12 @@ bool CloseKestrelChromiumDesktop() {
     desktop_broker_input = nil;
   }
   desktop_client->Close();
+  return true;
+}
+
+bool ReopenKestrelChromiumDesktop() {
+  if (!desktop_client) return false;
+  desktop_client->Reopen();
   return true;
 }
 
@@ -328,7 +363,15 @@ int RunKestrelChromiumDesktop(int argc, char** argv) {
   // does, so Quit owns the Core and messaging lifetimes as well as the window.
   NSApp.delegate = owner_delegate;
   InstallDesktopMenu();
+  // The documented dev launcher stops its owned process with SIGTERM. Route
+  // that through the same clean Quit path as the menu, on AppKit's thread.
+  const auto previous_sigterm = signal(SIGTERM, SIG_IGN);
+  dispatch_source_t termination = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_main_queue());
+  dispatch_source_set_event_handler(termination, ^{ [NSApp terminate:nil]; });
+  dispatch_resume(termination);
   CefRunMessageLoop();
+  dispatch_source_cancel(termination);
+  signal(SIGTERM, previous_sigterm);
   // Native messaging keeps the extension worker alive. End the owned broker
   // before Chromium teardown, otherwise each can wait for the other's pipe.
   output.fileHandleForReading.readabilityHandler = nil;

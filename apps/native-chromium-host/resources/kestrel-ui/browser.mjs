@@ -445,12 +445,12 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			const history = await readHistory();
 			signal?.throwIfAborted();
 			const query = (input.query || "").toLowerCase();
-			return history.filter(item => !query || `${item.title} ${item.url}`.toLowerCase().includes(query)).slice(0, input.limit || 50);
+			return { entries: history.filter(item => !query || `${item.title} ${item.url}`.toLowerCase().includes(query)).slice(0, input.limit || 50), trust: "untrusted_browser" };
 		}
 		if (input.operation === "visible-downloads") {
 			const downloads = await readDownloads();
 			signal?.throwIfAborted();
-			return downloads;
+			return { downloads, trust: "untrusted_browser" };
 		}
 		function publicAddress(value) {
 			const address = normalizeAddress(value, DEFAULT_SETTINGS).url;

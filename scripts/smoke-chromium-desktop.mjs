@@ -17,8 +17,9 @@ await mkdir(evidence,{recursive:true});
 const {UserBrowserStateSchema}=await tsImport('../packages/shared-types/src/contracts.ts',import.meta.url);
 const {isChromeWebStoreUrl}=await tsImport('../packages/shared-types/src/chrome-web-store.ts',import.meta.url);
 const store=process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE==='1';
+const lifecycle=process.env.KESTREL_TEST_NATIVE_WINDOW_LIFECYCLE==='1';
 const formatter='bcjindcccaagfpapjjmafapmmgkkhgoa';
-const receipt={at:new Date().toISOString(),executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),storeRequested:store,phases:[]};
+const receipt={at:new Date().toISOString(),executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),storeRequested:store,lifecycleRequested:lifecycle,phases:[]};
 const jsonFixture={source:'kestrel-native-canary',nested:{installedExtensionRuns:true},values:[1,2,3]};
 const server=createServer((req,res)=>{
  if(req.url==='/formatter.json'){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(jsonFixture));return;}
@@ -66,7 +67,9 @@ async function start(){
 }
 async function close(){
  const exited=new Promise(resolve=>child.once('exit',(code,signal)=>resolve({code,signal})));
- const session=await browser.newBrowserCDPSession();await session.send('Browser.close');
+ // Exercise the production launcher's clean process-stop path. Closing the
+ // last browser window intentionally keeps the macOS app and Core alive.
+ assert(child.kill('SIGTERM'),'Native process could not receive its stop signal.');
  const result=await Promise.race([exited,delay(12_000,undefined,{ref:false}).then(()=>{throw Error('Native shutdown timed out: '+output);})]);
  assert.deepEqual(result,{code:0,signal:null},output);
  await browser.close().catch(()=>{});browser=undefined;
@@ -123,6 +126,10 @@ try{
  assert.equal(listed.status,'verified',JSON.stringify(listed));
  assert(listed.output.tabs.some(tab=>tab.url===fixtureUrl),'Actual Core must see the native user tab.');
  assert(listed.output.tabs.every(tab=>!tab.url.startsWith('chrome-extension:')),'Core must not receive protected Kestrel UI tabs.');
+ const history=await coreTool('browser.search-history',{query:'127.0.0.1',limit:10});
+ assert.equal(history.status,'verified',JSON.stringify(history));assert(Array.isArray(history.output.entries));assert(history.output.entries.length<=10);
+ const downloads=await coreTool('browser.visible-downloads',{});
+ assert.equal(downloads.status,'verified',JSON.stringify(downloads));assert(Array.isArray(downloads.output.downloads));
  const readableTab=listed.output.tabs.find(tab=>tab.url===fixtureUrl);assert(readableTab);
  const read=await coreTool('browser.current-context',{tabId:readableTab.id});
  assert.equal(read.status,'verified',JSON.stringify(read));
@@ -170,6 +177,35 @@ try{
  assert.equal(await settings.getByRole('button',{name:'Review from Web Store',exact:true}).count(),0);
  await settings.screenshot({path:join(evidence,'extensions-settings.png')});
  receipt.phases.push({phase:'native-ui-core-and-tabs',passed:true,rendererErrors:errors});assert.deepEqual(errors,[]);
+ if(lifecycle){
+  assert(!store,'Run the window lifecycle and Store prompts as separate canaries.');
+  for(const page of context.pages())if(page!==home)await page.close();
+  await home.bringToFront();
+  function nodeDescendants(){
+   const rows=execFileSync('/bin/ps',['-axo','pid=,ppid=,comm='],{encoding:'utf8'}).trim().split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).filter(Boolean);
+   const owned=new Set([child.pid]);let changed=true;
+   while(changed){changed=false;for(const row of rows)if(owned.has(Number(row[2]))&&!owned.has(Number(row[1]))){owned.add(Number(row[1]));changed=true;}}
+   return rows.filter(row=>owned.has(Number(row[1]))&&row[3].endsWith('/node')).map(row=>Number(row[1])).sort((a,b)=>a-b);
+  }
+  const coreProcesses=nodeDescendants();assert(coreProcesses.length>=3,'The browser must own broker, relay, and Core.');
+  console.log('OWNED_CHROMIUM_WINDOW_READY: close this candidate’s last window using its normal native control.');
+  for(let i=0;i<2400&&!home.isClosed();i++){assert.equal(child.exitCode,null,output);await delay(100);}
+  assert(home.isClosed(),'Native last-window close was not exercised.');
+  await delay(1_000);assert.equal(child.exitCode,null,'Closing a window must not quit Core.');assert.deepEqual(nodeDescendants(),coreProcesses,'Closing a window must preserve the same Core processes.');
+  console.log('OWNED_CHROMIUM_WINDOW_CLOSED: reopen Home with native New Window or Dock activation.');
+  let restored;
+  for(let i=0;i<2400;i++){
+   assert.equal(child.exitCode,null,output);
+   const session=await browser.newBrowserCDPSession();const targets=await session.send('Target.getTargets');await session.detach();
+   if(targets.targetInfos.some(target=>target.type==='page'&&/chrome-extension:\/\/[^/]+\/index.html$/.test(target.url))){restored=await createdPage(url=>/chrome-extension:\/\/[^/]+\/index.html$/.test(url));break;}
+   await delay(100);
+  }
+  assert(restored,'Native window did not reopen.');home=restored;
+  await home.waitForFunction(()=>typeof window.kestrel?.request==='function');
+  assert((await home.evaluate(()=>window.kestrel.request({type:'runtime-list-sessions'}))).sessions.some(session=>session.id===savedSession));
+  assert.deepEqual(nodeDescendants(),coreProcesses,'Reopening Home must reuse the same Core.');
+  receipt.phases.push({phase:'native-last-window-close-and-reopen',passed:true,coreProcesses});
+ }
  if(store){
   await settings.getByRole('link',{name:/Browse Chrome Web Store/}).click();
   const listing=await createdPage(isChromeWebStoreUrl);await listing.goto(`https://chromewebstore.google.com/detail/json-formatter/${formatter}`,{waitUntil:'domcontentloaded'});
