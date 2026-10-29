@@ -187,9 +187,11 @@ open -a Kestrel
 corepack pnpm test:packaged-desktop:arm64
 ```
 
-`install:mac:dev` keeps the canonical app at `/Applications/Kestrel.app`, moves other
-Kestrel bundles found in common install locations or by Finder/Spotlight to Trash,
-and leaves `release/mac-arm64/Kestrel.app` as a non-indexed build artifact only.
+`install:mac:dev` keeps the canonical app at `/Applications/Kestrel.app` and moves
+duplicate Kestrel bundles directly inside configured install/search locations to
+Trash. Spotlight results outside those locations are preserved, including other
+worktrees' packages. Only the invoking repository's build trees are marked
+non-indexed; `release/mac-arm64/Kestrel.app` remains available for smoke tests.
 It is an in-place refresh of the canonical app, not a second installed version.
 
 ## Repository map
