@@ -59,6 +59,7 @@ jobs:
           corepack pnpm test:native-browser-backend
           corepack pnpm test:native-isolated-automation
           corepack pnpm test:chromium-native-auth
+          corepack pnpm test:chromium-provider-store
           corepack pnpm test:chromium-desktop
       - name: Upload native extension compatibility evidence
         if: ${{ always() }}

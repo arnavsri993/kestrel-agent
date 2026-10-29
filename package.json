@@ -25,6 +25,7 @@
     "test:native-credential-bootstrap": "node scripts/smoke-native-credential-bootstrap.mjs",
     "test:chromium-desktop": "node scripts/smoke-chromium-desktop.mjs",
     "test:chromium-native-auth": "node scripts/smoke-native-ui-auth.mjs",
+    "test:chromium-provider-store": "node scripts/smoke-native-provider-store.mjs",
     "test:chromium-ui": "vitest run apps/native-chromium-host/resources packages/shared-types/src/renderer-bridge.test.ts packages/shared-types/src/chrome-web-store.test.ts packages/shared-types/src/request-timeouts.test.ts",
     "dev:native-chromium-host": "node scripts/dev-native-chromium-host.mjs",
     "dev:desktop": "node scripts/dev-desktop-runtime.mjs",

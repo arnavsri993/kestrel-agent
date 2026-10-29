@@ -25,6 +25,17 @@ own disposable profiles and remove only those profiles on exit. Neither path
 opens or imports the existing Electron profile. `dev:native-extensions` remains
 an isolated extension workbench, rather than the desktop UI.
 
+The portable credential broker no longer imports Electron. Electron supplies
+its own secure-storage adapter explicitly; native development uses the
+already-opened native profile key. `test:chromium-provider-store` runs the
+bundled Node/runtime to verify encrypted credential persistence, secret-free
+summaries, revocation, no second database key, and preservation of a real Core
+conversation across provider storage and restart. This storage foundation does
+not by itself prove native provider setup or public Keychain parity. The full
+workspace unit suite has 1,725 passing tests at this checkpoint; typecheck,
+native desktop/authentication smokes, and retained desktop setup/CLI safety
+checks also pass. All remote checks passed at `777df42d` before this change.
+
 For the live official marketplace canary, run:
 
 ```sh
