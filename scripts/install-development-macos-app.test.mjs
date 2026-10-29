@@ -110,7 +110,7 @@ testSuite("development macOS app installer", () => {
     expect(readdirSync(trashRoot)).toHaveLength(1);
   });
 
-  it("trashes Spotlight-indexed build artifacts outside common install roots", () => {
+  it("preserves Spotlight-indexed build artifacts outside configured install roots", () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-installer-spotlight-"));
     const installRoot = join(root, "Applications");
     const trashRoot = join(root, "Trash");
@@ -122,18 +122,50 @@ testSuite("development macOS app installer", () => {
     const staleRoot = join(root, "old-worktree", "release", "mac-arm64");
     mkdirSync(staleRoot, { recursive: true });
     const stale = createBundle(staleRoot, "Kestrel.app");
+    const otherRoot = join(
+      root, "Documents", "Agent-other", "release", "mac-arm64",
+    );
+    mkdirSync(otherRoot, { recursive: true });
+    const otherBuild = createBundle(otherRoot, "Kestrel.app");
 
     const fakeMdfind = join(root, "mdfind");
     writeFileSync(
       fakeMdfind,
-      `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(`${stale}\n`)});\n`,
+      `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(`${stale}\n${otherBuild}\n`)});\n`,
       { mode: 0o755 },
     );
     chmodSync(fakeMdfind, 0o755);
 
     runInstaller(source, installRoot, [installRoot], trashRoot, fakeMdfind);
 
-    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(stale)).toBe(true);
+    expect(existsSync(otherBuild)).toBe(true);
+    expect(readPayload(join(installRoot, "Kestrel.app"))).toBe("Kestrel.app");
+    expect(existsSync(trashRoot)).toBe(false);
+    expect(
+      existsSync(join(root, "Documents", "Agent-other", "release", ".metadata_never_index")),
+    ).toBe(false);
+  });
+
+  it("keeps the source and canonical app when search roots use symlink aliases", () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-installer-alias-"));
+    const installRoot = join(root, "Applications");
+    const sourceRoot = join(root, "source");
+    const sourceAlias = join(root, "source-alias");
+    const installAlias = join(root, "Applications-alias");
+    const trashRoot = join(root, "Trash");
+    mkdirSync(installRoot);
+    mkdirSync(sourceRoot);
+    const source = createBundle(sourceRoot, "Kestrel.app");
+    const previous = createBundle(installRoot, "Kestrel.app");
+    writeFileSync(join(previous, "Contents", "payload.txt"), "previous");
+    symlinkSync(sourceRoot, sourceAlias);
+    symlinkSync(installRoot, installAlias);
+
+    runInstaller(source, installRoot, [installRoot, sourceAlias, installAlias], trashRoot);
+
+    expect(readPayload(source)).toBe("Kestrel.app");
+    expect(readPayload(join(installRoot, "Kestrel.app"))).toBe("Kestrel.app");
     expect(readdirSync(trashRoot)).toHaveLength(1);
   });
 

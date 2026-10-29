@@ -3,6 +3,7 @@ import {
 	existsSync,
 	mkdirSync,
 	readdirSync,
+	realpathSync,
 	renameSync,
 	rmSync,
 	statSync,
@@ -10,6 +11,7 @@ import {
 } from "node:fs";
 import {
 	basename,
+	dirname,
 	extname,
 	isAbsolute,
 	join,
@@ -33,7 +35,12 @@ export function uniquePaths(paths) {
 }
 
 export function samePath(left, right) {
-	return resolve(left) === resolve(right);
+	if (resolve(left) === resolve(right)) return true;
+	try {
+		return realpathSync(left) === realpathSync(right);
+	} catch {
+		return false;
+	}
 }
 
 export function isInside(path, root) {
@@ -112,13 +119,11 @@ export function agentRepositoryRoots(documentsRoot = resolveDocumentsRoot()) {
 
 export function preventSpotlightIndexing(repositoryRoot) {
 	const marked = [];
-	for (const root of [repositoryRoot, ...agentRepositoryRoots()]) {
-		for (const directory of [
-			join(root, "release"),
-			join(root, ".kestrel-dev-app"),
-		]) {
-			if (markDirectoryUnindexed(directory)) marked.push(directory);
-		}
+	for (const directory of [
+		join(repositoryRoot, "release"),
+		join(repositoryRoot, ".kestrel-dev-app"),
+	]) {
+		if (markDirectoryUnindexed(directory)) marked.push(directory);
 	}
 	return marked;
 }
@@ -229,14 +234,15 @@ export function allAppCandidates({
 	trashRoot,
 	mdfindPath,
 	skipSpotlight,
-	documentsRoot,
 }) {
 	return [
 		...searchRoots.flatMap((root) => appCandidates(root)),
 		...spotlightCandidates({ mdfindPath, trashRoot, skipSpotlight }),
-		...worktreeReleaseCandidates(documentsRoot),
 	].filter(
 		(candidate, index, candidates) =>
+			// Spotlight may still list another worktree's in-progress package.
+			// Discovery is not permission to move files outside install locations.
+			searchRoots.some((root) => samePath(dirname(candidate), root)) &&
 			candidates.findIndex((other) => samePath(candidate, other)) === index,
 	);
 }
