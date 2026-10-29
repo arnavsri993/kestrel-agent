@@ -1,7 +1,7 @@
-import type { Honcho } from "@honcho-ai/sdk";
+import { Honcho } from "@honcho-ai/sdk";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	HonchoMemoryProvider,
 	installHonchoMemoryTools,
@@ -95,6 +95,34 @@ function enabledConfiguration() {
 }
 
 describe("opt-in Honcho memory provider", () => {
+	it("validates messages through the real SDK without sending memory content", async () => {
+		const client = new Honcho({
+			apiKey: "fixture-only-not-a-key",
+			workspaceId: "kestrel-test",
+			baseURL: "http://127.0.0.1:1",
+		});
+		const post = vi.spyOn(client.http, "post").mockResolvedValue({
+			id: "user",
+			metadata: {},
+			configuration: {},
+		});
+		try {
+			const peer = await client.peer("user");
+			const requestCount = post.mock.calls.length;
+			expect(
+				peer.message("A local-only memory", { metadata: { source: "fixture" } }),
+			).toMatchObject({
+				peerId: "user",
+				content: "A local-only memory",
+				metadata: { source: "fixture" },
+			});
+			expect(() => peer.message(" \t ")).toThrow();
+			expect(post).toHaveBeenCalledTimes(requestCount);
+		} finally {
+			post.mockRestore();
+		}
+	});
+
 	it("keeps local memory default, requires a protected cloud key, and permits explicit loopback self-hosting", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const provider = new HonchoMemoryProvider(database);
