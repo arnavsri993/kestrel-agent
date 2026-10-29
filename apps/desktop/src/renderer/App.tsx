@@ -1,4 +1,4 @@
-import { closeNativeAgentPanel, nativeChromiumPanel, useNativeCompanionOpen } from "./native-extension-transport";
+import { closeNativeAgentPanel, nativeChromiumPanel, useNativeCompanionOpen, sendNativeAgentAction, subscribeNativeAgentActions } from "./native-extension-transport";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
@@ -3081,6 +3081,7 @@ function RuntimeConversation({
 	newAgentProjectId,
 	newAgentFocusTarget,
 	newAgentDraft,
+	onNewAgentHandled,
 	projects,
 	onProjectsChange,
 	refreshRevision,
@@ -3109,6 +3110,7 @@ function RuntimeConversation({
 	newAgentProjectId: string | null;
 	newAgentFocusTarget: "prompt" | "task-settings";
 	newAgentDraft: NewTabComposerDraft | null;
+	onNewAgentHandled?(accepted: boolean): void;
 	projects: Project[];
 	onProjectsChange(projects: Project[]): void;
 	refreshRevision: number;
@@ -3289,6 +3291,7 @@ function RuntimeConversation({
 		previousNewAgentRequestIdRef.current = newAgentRequestId;
 		if (busy) {
 			setError("Finish or cancel the active task before starting a new one.");
+			onNewAgentHandled?.(false);
 			window.setTimeout(() => promptRef.current?.focus(), 0);
 			return;
 		}
@@ -3312,6 +3315,7 @@ function RuntimeConversation({
 			promptRef.current?.focus();
 		}, 0);
 		if (newAgentPrompt.trim()) void submit(newAgentPrompt, newAgentDraft ?? undefined);
+		onNewAgentHandled?.(true);
 	}, [
 		busy,
 		newAgentFocusTarget,
@@ -3320,6 +3324,7 @@ function RuntimeConversation({
 		newAgentRequestId,
 		newAgentWorkspace,
 		newAgentDraft,
+		onNewAgentHandled,
 		onActiveSession,
 	]);
 
@@ -10292,6 +10297,13 @@ export function App() {
 		() => localStorage.getItem("kestrel:active-project-id"),
 	);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
+	const nativeAgentIntakeRef = useRef<{ resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> } | null>(null);
+	const nativeAgentHandled = useCallback((accepted: boolean) => {
+		const intake = nativeAgentIntakeRef.current; if (!intake) return;
+		nativeAgentIntakeRef.current = null; clearTimeout(intake.timer);
+		if (accepted) intake.resolve(); else intake.reject(new Error("Finish or cancel the active task before starting a new one."));
+	}, []);
+	useEffect(() => () => nativeAgentHandled(false), [nativeAgentHandled]);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
 	const [newAgentDraft, setNewAgentDraft] = useState<NewTabComposerDraft | null>(null);
 	const [newAgentFocusTarget, setNewAgentFocusTarget] = useState<
@@ -10455,6 +10467,10 @@ export function App() {
 	}, [projects, projectsLoaded]);
 	const selectionRequestRef = useRef(0);
 	const openRuntimeSession = useCallback((sessionId: string | null) => {
+		if (nativeCompanionOpen) {
+			void sendNativeAgentAction({ type: "open-session", sessionId }).catch(() => setDeepLinkNotice("The agent panel could not open this conversation. Check the current task before trying again."));
+			return;
+		}
 		setActiveRuntimeSessionId(sessionId);
 		const requestId = ++selectionRequestRef.current;
 		void window.kestrel
@@ -10471,7 +10487,7 @@ export function App() {
 						: "Could not persist the selected conversation.",
 				);
 			});
-	}, []);
+	}, [nativeCompanionOpen]);
 	const selectProject = useCallback((projectId: string | null) => {
 		setActiveProjectId(projectId);
 		if (projectId) localStorage.setItem("kestrel:active-project-id", projectId);
@@ -10527,12 +10543,18 @@ export function App() {
 					? projects.find((project) => project.id === projectId)
 					: undefined;
 		const trimmed = prompt.trim();
+		if (nativeCompanionOpen) {
+			return sendNativeAgentAction({ type: "new-agent", prompt, focusTarget,
+				...(workspaceRoot ?? selectedProject?.path ? { workspaceRoot: workspaceRoot ?? selectedProject!.path } : {}),
+				...(selectedProject?.id ? { projectId: selectedProject.id } : { projectId: null }), ...(draft ? { draft } : {}),
+			}).then(() => true, () => { setDeepLinkNotice("The agent panel did not accept the task. Check the current task before trying again."); return false; });
+		}
 		if (
 			focusTarget === "prompt" &&
 			!trimmed &&
 			Date.now() - lastPromptedNewAgentAtRef.current < 500
 		) {
-			return;
+			return false;
 		}
 		if (trimmed) lastPromptedNewAgentAtRef.current = Date.now();
 		setNewAgentPrompt(prompt);
@@ -10542,11 +10564,23 @@ export function App() {
 		setNewAgentFocusTarget(focusTarget);
 		setNewAgentRequestId((current) => current + 1);
 		revealAgentSidebar();
-	}, [activeProjectId, projects, revealAgentSidebar]);
+		return true;
+	}, [activeProjectId, projects, revealAgentSidebar, nativeCompanionOpen]);
+	useEffect(() => {
+		if (!nativeChromiumPanel) return;
+		return subscribeNativeAgentActions(action => {
+			if (action.type === "open-session") { openRuntimeSession(action.sessionId); return; }
+			if (nativeAgentIntakeRef.current || runtimeAgentState !== null) throw new Error("Finish or cancel the active task before starting a new one.");
+			return new Promise<void>((resolve, reject) => {
+				const timer = setTimeout(() => nativeAgentHandled(false), 8_000);
+				nativeAgentIntakeRef.current = { resolve, reject, timer };
+				startNewAgent(action.prompt, action.workspaceRoot, action.focusTarget, action.projectId, action.draft);
+			});
+		});
+	}, [startNewAgent, openRuntimeSession, runtimeAgentState, nativeAgentHandled]);
 	const submitNewTabDraft = useCallback((draft: NewTabComposerDraft) => {
 		if (runtimeAgentState !== null) return false;
-		startNewAgent(draft.prompt, draft.workspaceRoot, "prompt", draft.projectId ?? null, draft);
-		return true;
+		return startNewAgent(draft.prompt, draft.workspaceRoot, "prompt", draft.projectId ?? null, draft);
 	}, [runtimeAgentState, startNewAgent]);
 	const createPersistentAgent = useCallback(
 		async (title: string, agentTemplate?: AgentTemplate) => {
@@ -11523,6 +11557,7 @@ export function App() {
 						externalIntake={externalIntake}
 						externalIntakeRequestId={externalIntakeRequestId}
 						newAgentRequestId={newAgentRequestId}
+						onNewAgentHandled={nativeAgentHandled}
 						newAgentPrompt={newAgentPrompt}
 						newAgentWorkspace={newAgentWorkspace}
 						newAgentProjectId={newAgentProjectId}

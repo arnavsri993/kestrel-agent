@@ -24,7 +24,7 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 	projects: Project[];
 	onProjectsChange(projects: Project[]): void;
 	onNavigate(input: string): void;
-	onSubmitDraft(draft: NewTabComposerDraft): boolean;
+	onSubmitDraft(draft: NewTabComposerDraft): boolean | Promise<boolean>;
 }) {
 	const [input, setInput] = useState("");
 	const [expanded, setExpanded] = useState(false);
@@ -156,7 +156,7 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 		} finally { setBusy(false); }
 	}
 
-	function send(event?: FormEvent) {
+	async function send(event?: FormEvent) {
 		event?.preventDefault();
 		if (busy || voiceState !== "idle" || !canSend) return;
 		const prompt = input.trim() || "Review the attached file.";
@@ -169,13 +169,13 @@ export function NewTabComposer({ agentName, projects, onProjectsChange, onNaviga
 			setInput("");
 			return;
 		}
-		const accepted = onSubmitDraft({ prompt, ...(workspaceRoot ? { workspaceRoot } : {}), ...(selectedProject ? { projectId: selectedProject.id } : {}), modelChoice: choice, approvalPolicy, attachments });
-		if (!accepted) {
-			setError("Finish or stop the active task before starting this one.");
-			return;
-		}
-		setInput("");
-		setAttachments([]);
+		setBusy(true); setError("");
+		try {
+			const accepted = await onSubmitDraft({ prompt, ...(workspaceRoot ? { workspaceRoot } : {}), ...(selectedProject ? { projectId: selectedProject.id } : {}), modelChoice: choice, approvalPolicy, attachments });
+			if (!accepted) { setError("The agent did not accept this task. Your message is still here."); return; }
+			setInput(""); setAttachments([]);
+		} catch { setError("The agent did not accept this task. Check the current task before trying again."); }
+		finally { if (aliveRef.current) setBusy(false); }
 	}
 
 	async function startVoice() {

@@ -212,6 +212,17 @@ Receipts for candidate executable `5f4f1473` are retained in
 tests. This does not verify every new sign-in/local-model flow, public
 Keychain protection, or the installed canonical app.
 
+Home now hands new tasks and conversation selection to the actual native
+companion when it is open. The private extension uses a bounded, same-origin,
+window-specific channel with validation, acceptance receipts, duplicate
+suppression, and no persisted/replayed actions. Home waits for acceptance
+before clearing a prompt. A busy companion rejects a competing prompt and
+Home preserves that draft. The native canary verifies a Home task rendering
+inside the actual Chromium side-panel target, then holds a real provider call,
+rejects a competing draft, and requires the original task to finish. It also
+passes full app restart. This was verified on candidate `00ed37ae`; the complete
+unit suite now has 1,741 passing tests and workspace typecheck passes.
+
 Release acceptance still requires the complete native product workflow:
 
 - Provider sign-in and credential storage, local models, workspace/file

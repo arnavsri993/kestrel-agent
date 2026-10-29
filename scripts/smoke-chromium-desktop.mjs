@@ -216,7 +216,7 @@ try{
  await home.getByRole('button',{name:'Open settings',exact:true}).click();
  const settings=await createdPage(url=>url.includes('index.html?app=settings'));await settings.waitForURL(/index.html\?app=settings/);
  await settings.locator('[data-app-page="settings"]').waitFor();
- if(providers)providerEvidence=await nativeProviderCanary({settings,home,profile,evidence,receipt});
+ if(providers)providerEvidence=await nativeProviderCanary({settings,home,profile,evidence,receipt,endpoint});
  if(process.env.KESTREL_TEST_REAL_CODEX==='1')await nativeCodexCanary({settings,home,evidence,receipt});
  await settings.bringToFront();
  await settings.getByRole('tab',{name:'Browser',exact:true}).click();

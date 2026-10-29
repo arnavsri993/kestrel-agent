@@ -1,5 +1,6 @@
 import { createRendererBridge, isChromeWebStoreUrl, nativeRequestTimeoutMs, type RendererTransport, type RendererResponse } from "@kestrel/shared-types";
 import { useSyncExternalStore } from "react";
+import { createNativeAgentChannel, type NativeAgentAction } from "./native-agent-channel";
 
 interface ExtensionPort {
 	postMessage(message: unknown): void;
@@ -33,6 +34,17 @@ const panelListeners = new Set<() => void>();
 let companionOpen = false;
 let panelRevision = 0;
 let panelWindows: Record<string, unknown> = {};
+let agentChannel: ReturnType<typeof createNativeAgentChannel> | undefined;
+let agentActionHandler: ((action: NativeAgentAction) => void | Promise<void>) | undefined;
+let unsubscribeAgentAction: (() => void) | undefined;
+export function sendNativeAgentAction(action: NativeAgentAction): Promise<void> {
+	return agentChannel?.send(action) ?? Promise.reject(new Error("Kestrel's agent panel is not ready in this window."));
+}
+export function subscribeNativeAgentActions(handler: (action: NativeAgentAction) => void | Promise<void>): () => void {
+	agentActionHandler = handler;
+	unsubscribeAgentAction?.(); unsubscribeAgentAction = agentChannel?.subscribe(handler);
+	return () => { if (agentActionHandler === handler) { unsubscribeAgentAction?.(); unsubscribeAgentAction = undefined; agentActionHandler = undefined; } };
+}
 function updateCompanion() {
 	const next = !nativeChromiumPanel && nativeWindowId !== undefined && panelWindows[nativeWindowId] === true;
 	if (next === companionOpen) return;
@@ -49,6 +61,10 @@ if (nativeChromiumSurface) {
 	});
 	void chromeUi?.windows?.getCurrent().then(async (window) => {
 		nativeWindowId = window.id;
+		if (window.id !== undefined && typeof BroadcastChannel !== "undefined") {
+			agentChannel = createNativeAgentChannel({ channel: new BroadcastChannel("kestrel.native.agent-actions.v1"), windowId: window.id, panel: nativeChromiumPanel });
+			if (agentActionHandler) unsubscribeAgentAction = agentChannel.subscribe(agentActionHandler);
+		}
 		const revision = panelRevision;
 		const stored = await chromeUi?.storage?.session.get(openPanelsKey);
 		if (revision === panelRevision) {
@@ -57,6 +73,7 @@ if (nativeChromiumSurface) {
 		}
 		updateCompanion();
 	}).catch(() => {});
+	window.addEventListener("pagehide", () => agentChannel?.close(), { once: true });
 }
 export function useNativeCompanionOpen(): boolean {
 	return useSyncExternalStore(

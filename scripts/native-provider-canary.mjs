@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
+import { nativePanelProbe } from "./native-panel-probe.mjs";
 
 // A real native Settings -> provider discovery -> Home prompt -> Core ->
 // streaming HTTP response flow. No API purchase, account token or user data.
-export async function nativeProviderCanary({ settings, home, profile, evidence, receipt }) {
+export async function nativeProviderCanary({ settings, home, profile, evidence, receipt, endpoint }) {
 	const secret = "native-provider-header-fixture-secret";
 	const answer = "Native provider task completed through Chromium and Agent Core.";
 	let completions = 0;
 	let hold = false;
 	let release;
+	const rejectedPrompt = "NATIVE_PANEL_BUSY_DRAFT_MUST_STAY_IN_HOME";
+	let rejectedPromptDispatched = false;
 	const requests = [];
 	const server = createServer(async (request, response) => {
 		requests.push({ path: request.url, protectedHeader: request.headers["x-kestrel-canary"] === secret });
@@ -21,6 +24,7 @@ export async function nativeProviderCanary({ settings, home, profile, evidence, 
 		if (request.url !== "/v1/chat/completions") { response.writeHead(404); response.end(); return; }
 		let input = ""; for await (const chunk of request) { input += chunk; if (input.length > 2_000_000) { response.destroy(); return; } }
 		const body = JSON.parse(input); assert.equal(body.model, "native-canary"); completions++;
+		if (input.includes(rejectedPrompt)) rejectedPromptDispatched = true;
 		if (hold) await new Promise(resolve => { release = resolve; });
 		if (response.destroyed) return;
 		response.writeHead(200, { "content-type": "text/event-stream" });
@@ -81,6 +85,52 @@ export async function nativeProviderCanary({ settings, home, profile, evidence, 
 		release(); release = undefined; hold = false;
 		const completed = await home.evaluate(() => window.__nativeProviderPending); assert(completed.ok, completed.error); assert.equal(completed.run?.status, "completed");
 		receipt.phases.push({ phase: "native-provider-change-preserves-active-task", passed: true });
+
+		// Opening the marketplace from Settings also opens Chromium's actual
+		// companion. A subsequent Home prompt must execute and render there.
+		await settings.bringToFront(); await selectSettingsSection(settings, "browser-extensions", "Extensions");
+		await settings.getByRole("link", { name: /Browse Chrome Web Store/ }).click();
+		await home.bringToFront();
+		await home.waitForFunction(() => document.querySelectorAll(".agent-sidebar").length === 0);
+		const uiUrl = new URL(home.url());
+		const panel = await nativePanelProbe(endpoint, `${uiUrl.protocol}//${uiUrl.host}`);
+		try {
+			const before = completions;
+			await home.locator("#new-tab-chat-input").fill("Complete the native companion canary.");
+			await home.getByRole("button", { name: /^Send message to / }).click();
+			let rendered = false;
+			for (const deadline = Date.now() + 30_000; Date.now() < deadline;) {
+				if (completions > before && (await panel.text()).includes(answer)) { rendered = true; break; }
+				await delay(100);
+			}
+			assert(rendered, "The Home task must reach and render in Chromium's actual native companion.");
+			assert.equal(await home.locator("#new-tab-chat-input").inputValue(), "", "Home clears the prompt only after the native panel accepts it.");
+			await writeFile(join(evidence, "native-companion-provider-conversation.png"), await panel.screenshot());
+			receipt.phases.push({ phase: "native-Home-task-handoff-to-Chromium-companion", passed: true, targetId: panel.id });
+			hold = true;
+			await home.locator("#new-tab-chat-input").fill("Hold this native companion task until the test releases it.");
+			await home.getByRole("button", { name: /^Send message to / }).click();
+			for (const deadline = Date.now() + 15_000; !release && Date.now() < deadline;) await delay(50);
+			assert(release, "The companion task did not reach the provider.");
+			await home.locator("#new-tab-chat-input").fill(rejectedPrompt);
+			await home.getByRole("button", { name: /^Send message to / }).click();
+			await home.getByText("The agent did not accept this task. Your message is still here.", { exact: true }).waitFor();
+			assert.equal(await home.locator("#new-tab-chat-input").inputValue(), rejectedPrompt);
+			assert.equal(rejectedPromptDispatched, false, "A busy companion must not dispatch the rejected draft.");
+			release(); release = undefined; hold = false;
+			let taskCompleted = false;
+			for (const deadline = Date.now() + 30_000; Date.now() < deadline;) {
+				const sessions = await home.evaluate(() => window.kestrel.request({ type: "runtime-list-sessions" }));
+				const task = sessions.sessions?.find(session => session.title.startsWith("Hold this native companion task"));
+				if (task) {
+					const runs = await home.evaluate(sessionId => window.kestrel.request({ type: "runtime-list-runs", sessionId }), task.id);
+					if (runs.runs?.some(run => run.status === "completed")) { taskCompleted = true; break; }
+				}
+				await delay(100);
+			}
+			assert(taskCompleted, "The original companion task must finish after rejecting the competing Home draft.");
+			receipt.phases.push({ phase: "native-companion-busy-task-and-Home-draft-preservation", passed: true });
+		} finally { panel.close(); }
 		return { accountId: account.id, sessionId, answer };
 	} finally {
 		release?.(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

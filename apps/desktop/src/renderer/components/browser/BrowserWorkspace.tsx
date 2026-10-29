@@ -108,7 +108,7 @@ export function BrowserWorkspace({
 	onOpenLifeMemory?(): void;
 	projects?: Project[];
 	onProjectsChange(projects: Project[]): void;
-	onSubmitNewTabDraft(draft: NewTabComposerDraft): boolean;
+	onSubmitNewTabDraft(draft: NewTabComposerDraft): boolean | Promise<boolean>;
 }) {
   const reducedMotion = useReducedMotion() ?? false;
   const viewportRef = useRef<HTMLDivElement | null>(null);
