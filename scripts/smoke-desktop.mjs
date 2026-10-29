@@ -98,7 +98,11 @@ try {
 		{ decoder: petDecoder?.decoder, ok: petDecoder?.ok },
 		{ decoder: "sharp", ok: true },
 	);
-	assert.match(petDecoder?.version ?? "", /^\d+\.\d+\.\d+/);
+	assert.equal(
+		petDecoder?.version,
+		requireFromDesktop("./package.json").dependencies.sharp,
+		"Desktop image decoder must match the pinned Sharp version.",
+	);
 
 	const typedReceiptSentinel = "receipt-typed-body-sentinel";
 	const browserSmoke = await page.evaluate(

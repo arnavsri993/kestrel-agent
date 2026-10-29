@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -58,6 +58,15 @@ function firstLine(stream) {
 
 try {
 	assert.match(command(cli, ["help"]), /kestrel acp/);
+	const decoder = JSON.parse(command(cli, ["pets", "doctor"])).terminal.decoder;
+	const expectedSharp = JSON.parse(
+		readFileSync(resolve("apps/cli/package.json"), "utf8"),
+	).dependencies.sharp;
+	assert.deepEqual(decoder, {
+		decoder: "sharp",
+		version: expectedSharp,
+		ok: true,
+	});
 	const created = JSON.parse(
 		command(cli, [
 			"session",
@@ -387,7 +396,7 @@ try {
 		stderr || "Packaged ACP host exited unsuccessfully.",
 	);
 	process.stdout.write(
-		"Packaged CLI, authenticated remote HTTP/SSE, signed channels, and ACP stdio smoke test passed.\n",
+		`Packaged CLI, native Sharp ${decoder.version}, authenticated remote HTTP/SSE, signed channels, and ACP stdio smoke test passed.\n`,
 	);
 } finally {
 	rmSync(root, { recursive: true, force: true });
