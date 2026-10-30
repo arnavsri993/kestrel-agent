@@ -428,3 +428,13 @@ proving arrival, isolated cookie/storage continuity, fresh observations, active
 Core crash recovery, full restart, and clean shutdown. CI includes the form
 check. All 1,864 unit tests and workspace TypeScript checks passed at this
 checkpoint. The separately developed attachment host is not yet integrated.
+
+GitHub diagnostics were recovered through the connected GitHub tool. Exact
+head `6f4b18331093abda4fe85785cdc7728ef090c9d4` passed the Desktop/packaged
+arm64 job, including its browser benchmark and packaged tests. Its Core job
+failed at `test:chromium-host`: the older Playwright host returned a flat AX
+array instead of Core's structural `{ nodes }` contract. That host now emits
+the required shape, with a regression that validates its output through the
+actual Core normalizer while retaining secret/hidden-content rejection. The
+three focused host tests and full browser/provider/form/approval smoke passed
+locally. Fresh remote checks are required for the correction.

@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserContext, Page } from "playwright";
 import { ChromiumTabManager, browserEvidenceUrl } from "./tab-manager";
+import { normalizeBrowserAccessibilitySnapshot } from "../../core-service/src/browser-accessibility-snapshot";
 class TestPage extends EventEmitter {
   closed = false;
   isClosed() { return this.closed; }
@@ -28,7 +29,10 @@ describe("Chromium tab ownership", () => {
     const manager = new ChromiumTabManager(context, shell as unknown as Page, () => {});
     const [tab] = await manager.snapshot();
     const result = await manager.readSnapshot(tab!.id, new AbortController().signal);
-    expect(result.accessibilityTree).toHaveLength(500);
+    expect(result.accessibilityTree.nodes).toHaveLength(500);
+    const normalized = normalizeBrowserAccessibilitySnapshot(result);
+    expect(normalized.accessibilityTree.nodes[0]).toMatchObject({ role: { value: "heading" }, name: { value: "Visible evidence" } });
+    expect(JSON.stringify(normalized)).not.toMatch(/secret|hidden|Password/);
     expect(result.truncated).toBe(true);
     expect(JSON.stringify(result)).not.toMatch(/secret|hidden|Password/);
     expect(detach).toHaveBeenCalledOnce();
