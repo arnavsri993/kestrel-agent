@@ -13,7 +13,7 @@ export function coreRequestTimeoutMs<T extends { type: string }>(request: T): nu
 }
 
 export function nativeRequestTimeoutMs<T extends { type: string }>(request: T, layer: "broker" | "worker" | "renderer"): number {
-	const execution = ["oauth-chatgpt-connect", "provider-account-connect", "oauth-cursor-connect", "oauth-google-connect", "select-workspace-folder"].includes(request.type)
+	const execution = ["oauth-chatgpt-connect", "provider-account-connect", "oauth-cursor-connect", "oauth-google-connect", "select-workspace-folder", "select-context-files"].includes(request.type)
 		? 10 * 60_000 : request.type === "local-runtime-bootstrap" ? 90_000 : coreRequestTimeoutMs(request);
 	// Core owns execution cancellation. The outer budgets leave room for its
 	// response and the worker's bounded 42-second initial connection setup.

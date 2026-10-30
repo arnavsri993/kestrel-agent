@@ -24,8 +24,10 @@ describe("shared request execution and native transport deadlines", () => {
 		expect(nativeRequestTimeoutMs({ type: "local-runtime-bootstrap" }, "broker")).toBe(100_000);
 	});
 	it("allows a person time to select a native project folder", () => {
-		expect(nativeRequestTimeoutMs({ type: "select-workspace-folder" }, "broker")).toBe(610_000);
-		expect(nativeRequestTimeoutMs({ type: "select-workspace-folder" }, "renderer")).toBe(660_000);
+		for (const type of ["select-workspace-folder", "select-context-files"]) {
+			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(610_000);
+			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(660_000);
+		}
 	});
 	it("allows the same bounded login budget for managed and shared Codex accounts", () => {
 		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "broker")).toBe(610_000);

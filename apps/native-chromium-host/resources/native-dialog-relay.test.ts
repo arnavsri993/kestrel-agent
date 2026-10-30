@@ -66,3 +66,71 @@ it("cancels at ten minutes and ignores old responses when a new picker opens", a
   expect(h.writeCore.mock.calls.map(([m]) => m.requestId)).toEqual(["native-dialog-1", "native-dialog-2"]);
   expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/late");
 });
+it("forwards only the bounded private context picker root and its matching file selections", () => {
+  const h = harness(); h.request(1, { operation: "select-context-files", workspaceRoot: "/granted/project" });
+  expect(h.frames()).toEqual([{ kind: "host-request", id: "dialog-1", request: { type: "select-context-files", workspaceRoot: "/granted/project" } }]);
+  expect(h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, selectedContextPaths: ["/granted/project/notes.txt"] } })).toBe(true);
+  expect(h.writeCore).toHaveBeenCalledExactlyOnceWith({ type: "native-dialog-response", requestId: "native-dialog-1", response: { ok: true, selectedContextPaths: ["/granted/project/notes.txt"] } });
+});
+it("rejects malformed roots and renderer-injected selection fields before opening a context picker", () => {
+  const h = harness(); let n = 0;
+  for (const workspaceRoot of [undefined, "relative", "/bad\0root", "/bad\nroot", "/" + "x".repeat(4096), 12])
+    h.request(++n, { operation: "select-context-files", workspaceRoot });
+  h.request(++n, { operation: "select-context-files", workspaceRoot: "/granted/project", selectedContextPaths: ["/injected"] });
+  h.request(++n, { workspaceRoot: "/injected" });
+  expect(h.frames()).toEqual([]);
+  expect(h.writeCore.mock.calls).toHaveLength(n);
+  expect(h.writeCore.mock.calls.every(([message]) => !message.response.ok)).toBe(true);
+});
+it("rejects wrong-kind, malformed, duplicate or excess context selections without disclosing them", () => {
+  const h = harness(); let n = 0;
+  const invalid = [
+    { ok: true, selectedWorkspacePath: "/private" },
+    { ok: true, selectedContextPaths: [] },
+    { ok: true, selectedContextPaths: ["relative"] },
+    { ok: true, selectedContextPaths: ["/private\0file"] },
+    { ok: true, selectedContextPaths: ["/private\nfile"] },
+    { ok: true, selectedContextPaths: Array(9).fill("/private") },
+    { ok: true, selectedContextPaths: ["/private", "/private"] },
+    { ok: true, selectedContextPaths: ["/private"], cancelled: true },
+    { ok: true, selectedContextPaths: ["/private"], injected: true },
+    { ok: false, error: "secret /private" },
+  ];
+  for (const response of invalid) {
+    h.request(++n, { operation: "select-context-files", workspaceRoot: "/granted" });
+    h.relay.response({ kind: "host-response", id: `dialog-${n}`, response });
+  }
+  expect(h.writeCore.mock.calls.every(([message]) => !message.response.ok)).toBe(true);
+  expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/private");
+});
+it("serializes folder and file pickers and rejects cross-operation private replies", () => {
+  const h = harness(); h.request(1, { operation: "select-context-files", workspaceRoot: "/granted" });
+  h.request(2);
+  expect(h.frames()).toHaveLength(1);
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, selectedWorkspacePath: "/wrong" } });
+  h.request(3);
+  h.relay.response({ kind: "host-response", id: "dialog-2", response: { ok: true, selectedContextPaths: ["/wrong"] } });
+  expect(h.writeCore.mock.calls.every(([message]) => !message.response.ok)).toBe(true);
+});
+it("cancels context pickers on timeout, explicit cancel and close and ignores late selections", async () => {
+  const h = harness();
+  h.request(1, { operation: "select-context-files", workspaceRoot: "/granted" });
+  await vi.advanceTimersByTimeAsync(600_000);
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, selectedContextPaths: ["/late"] } });
+  h.request(2, { operation: "select-context-files", workspaceRoot: "/granted" }); h.relay.cancel("native-dialog-2");
+  h.relay.response({ kind: "host-response", id: "dialog-2", response: { ok: true, selectedContextPaths: ["/late"] } });
+  h.request(3, { operation: "select-context-files", workspaceRoot: "/granted" }); h.relay.close();
+  h.relay.response({ kind: "host-response", id: "dialog-3", response: { ok: true, selectedContextPaths: ["/late"] } });
+  expect(h.frames().filter(frame => frame.kind === "dialog-cancel")).toHaveLength(3);
+  expect(h.writeCore.mock.calls.map(([message]) => message.requestId)).toEqual(["native-dialog-1", "native-dialog-2", "native-dialog-3"]);
+  expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/late");
+});
+it("returns a real context picker cancellation and rejects unexpected response-envelope keys", () => {
+  const h = harness(); h.request(1, { operation: "select-context-files", workspaceRoot: "/granted" });
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, cancelled: true } });
+  expect(h.writeCore.mock.calls[0]?.[0]).toMatchObject({ response: { ok: true, cancelled: true } });
+  h.request(2, { operation: "select-context-files", workspaceRoot: "/granted" });
+  h.relay.response({ kind: "host-response", id: "dialog-2", response: { ok: true, selectedContextPaths: ["/private"] }, injected: true });
+  expect(h.writeCore.mock.calls[1]?.[0]).toMatchObject({ response: { ok: false } });
+  expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/private");
+});

@@ -178,6 +178,10 @@ CefRefPtr<DesktopClient> desktop_client;
 NSFileHandle* desktop_broker_input;
 NSOpenPanel* desktop_workspace_panel;
 NSString* desktop_workspace_panel_id;
+bool ValidNativeDialogPath(id path) {
+  return [path isKindOfClass:NSString.class] && [path length] > 0 && [path length] <= 4096 &&
+      [path isAbsolutePath] && [path rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location == NSNotFound;
+}
 NSString* Argument(int argc, char** argv, const char* name) {
   for (int i = 1; i + 1 < argc; ++i) if (std::string(argv[i]) == name) return [NSString stringWithUTF8String:argv[i + 1]];
   return nil;
@@ -532,7 +536,8 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
       });
       if ([value[@"kind"] isEqualToString:@"host-request"] && [value[@"id"] isKindOfClass:NSString.class] && [value[@"request"] isKindOfClass:NSDictionary.class]) {
         dispatch_async(dispatch_get_main_queue(), ^{
-          NSString* type = value[@"request"][@"type"];
+          id request_type = value[@"request"][@"type"];
+          NSString* type = [request_type isKindOfClass:NSString.class] ? request_type : nil;
           NSDictionary* response = @{@"ok":@NO, @"error":@"Unsupported native desktop request."};
           if ([type isEqualToString:@"get-system-state"]) {
             SMAppServiceStatus status = SMAppService.mainAppService.status;
@@ -542,22 +547,53 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
             NSURL* handler = [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:[NSURL URLWithString:@"https://kestrel.invalid/"]];
             BOOL is_default = handler && [handler.URLByResolvingSymlinksInPath isEqual:NSBundle.mainBundle.bundleURL.URLByResolvingSymlinksInPath];
             response = @{@"ok":@YES, @"isDefault":@(is_default), @"canSetAsDefault":@([NSBundle.mainBundle.bundlePath isEqualToString:@"/Applications/Kestrel.app"])};
-          } else if ([type isEqualToString:@"select-workspace-folder"] && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
-            if (desktop_workspace_panel) response = @{@"ok":@NO, @"error":@"A native folder picker is already open."};
+          } else if (([type isEqualToString:@"select-workspace-folder"] || [type isEqualToString:@"select-context-files"]) && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
+            const bool context_files = [type isEqualToString:@"select-context-files"];
+            NSString* workspace_root = context_files ? value[@"request"][@"workspaceRoot"] : nil;
+            BOOL root_directory = NO;
+            const bool valid_request = context_files
+                ? [value[@"request"] count] == 2 && ValidNativeDialogPath(workspace_root) &&
+                    [workspace_root isEqualToString:workspace_root.stringByResolvingSymlinksInPath] &&
+                    [NSFileManager.defaultManager fileExistsAtPath:workspace_root isDirectory:&root_directory] && root_directory
+                : [value[@"request"] count] == 1;
+            if (!valid_request) response = @{@"ok":@NO, @"error":@"The native file picker request is invalid."};
+            else if (desktop_workspace_panel) response = @{@"ok":@NO, @"error":@"A native file or folder picker is already open."};
             else {
               NSOpenPanel* panel = NSOpenPanel.openPanel;
-              panel.title = @"Grant Kestrel a project folder"; panel.prompt = @"Grant folder";
-              panel.canChooseDirectories = YES; panel.canChooseFiles = NO;
-              panel.allowsMultipleSelection = NO; panel.canCreateDirectories = YES;
+              panel.title = context_files ? @"Add files from this task workspace" : @"Grant Kestrel a project folder";
+              panel.prompt = context_files ? @"Add context" : @"Grant folder";
+              panel.canChooseDirectories = !context_files; panel.canChooseFiles = context_files;
+              panel.allowsMultipleSelection = context_files; panel.canCreateDirectories = !context_files;
+              panel.treatsFilePackagesAsDirectories = YES;
+              if (context_files) panel.directoryURL = [NSURL fileURLWithPath:workspace_root isDirectory:YES];
               desktop_workspace_panel = panel; desktop_workspace_panel_id = value[@"id"];
               [panel beginWithCompletionHandler:^(NSModalResponse result) {
                 const bool owned = desktop_workspace_panel == panel && [desktop_workspace_panel_id isEqualToString:value[@"id"]];
                 if (!owned) return;
                 desktop_workspace_panel = nil; desktop_workspace_panel_id = nil;
-                NSURL* selected = result == NSModalResponseOK ? panel.URLs.firstObject : nil;
-                NSDictionary* selection = selected.isFileURL && selected.path.length > 0 && selected.path.length <= 4096
-                    ? @{@"ok":@YES, @"selectedWorkspacePath":selected.path}
-                    : @{@"ok":@YES, @"cancelled":@YES};
+                NSDictionary* selection = @{@"ok":@YES, @"cancelled":@YES};
+                if (result == NSModalResponseOK && context_files) {
+                  NSMutableArray<NSString*>* paths = [NSMutableArray array];
+                  bool valid = panel.URLs.count > 0 && panel.URLs.count <= 8;
+                  for (NSURL* url in panel.URLs) {
+                    NSString* path = url.URLByResolvingSymlinksInPath.path;
+                    NSDictionary* attributes = ValidNativeDialogPath(path)
+                        ? [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] : nil;
+                    if (!valid || !url.isFileURL || !ValidNativeDialogPath(path) ||
+                        ![path hasPrefix:[workspace_root stringByAppendingString:@"/"]] || [paths containsObject:path] ||
+                        ![attributes[NSFileType] isEqualToString:NSFileTypeRegular] || [attributes[NSFileSize] unsignedLongLongValue] > 10 * 1024 * 1024) {
+                      valid = false; break;
+                    }
+                    [paths addObject:path];
+                  }
+                  selection = valid ? @{@"ok":@YES, @"selectedContextPaths":paths}
+                      : @{@"ok":@NO, @"error":@"Select at most 8 regular files inside the task workspace, no larger than 10 MB each."};
+                } else if (result == NSModalResponseOK) {
+                  NSURL* selected = panel.URLs.firstObject;
+                  selection = selected.isFileURL && ValidNativeDialogPath(selected.path)
+                      ? @{@"ok":@YES, @"selectedWorkspacePath":selected.path}
+                      : @{@"ok":@NO, @"error":@"The native folder picker returned an invalid selection."};
+                }
                 NSData* bytes = [NSJSONSerialization dataWithJSONObject:@{@"kind":@"host-response", @"id":value[@"id"], @"response":selection} options:0 error:nil];
                 if (!bytes || !broker.running) return;
                 NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];

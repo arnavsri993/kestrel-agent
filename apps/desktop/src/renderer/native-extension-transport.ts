@@ -129,9 +129,15 @@ if (nativeChromiumSurface && runtime) {
 			if (closed || pending.size >= 64) return Promise.reject(new Error("Kestrel's browser connection is unavailable."));
 			return new Promise((resolve, reject) => {
 				const id = ++sequence;
+				const frame = { kind: "request", id, request };
+				const serialized = JSON.stringify(frame);
+				if (serialized.length > 768 * 1024 || new TextEncoder().encode(serialized).byteLength > 1_000_000) {
+					reject(new Error("This request is too large for Kestrel's native connection. Reduce the text and try again."));
+					return;
+				}
 				const timeout = setTimeout(() => { pending.delete(id); reject(new Error("Kestrel's browser request timed out. Check the task or browser state before retrying.")); }, nativeRequestTimeoutMs(request, "renderer"));
 				pending.set(id, { resolve, reject, timeout });
-				try { port.postMessage({ kind: "request", id, request }); }
+				try { port.postMessage(frame); }
 				catch (error) { clearTimeout(timeout); pending.delete(id); reject(error); }
 			});
 		},

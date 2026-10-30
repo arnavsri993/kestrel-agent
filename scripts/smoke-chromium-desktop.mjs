@@ -13,6 +13,7 @@ import {nativeBrowserActionsCanary} from './native-browser-actions-canary.mjs';
 import {createIsolationFixtures,nativeIsolatedBrowserCanary,prepareIsolatedCoreResetCanary,finishIsolatedCoreResetCanary} from './native-isolated-browser-canary.mjs';
 import {nativeWorkspaceCanary,finishNativeWorkspaceCanary,prepareNativeWorkspaceFixture} from './native-workspace-canary.mjs';
 import {candidateDigest} from './native-retirement-evidence.mjs';
+import {createIsolatedDownloadFixtures,nativeIsolatedDownloadsCanary} from './native-isolated-downloads-canary.mjs';
 
 const app=resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app');
 const executable=join(app,'Contents/MacOS/Kestrel');
@@ -36,7 +37,9 @@ const formatter='bcjindcccaagfpapjjmafapmmgkkhgoa';
 const receipt={at:new Date().toISOString(),candidate:app,candidateSha256:await candidateDigest(app),executableSha256:createHash('sha256').update(await readFile(executable)).digest('hex'),storeRequested:store,lifecycleRequested:lifecycle,phases:[]};
 const jsonFixture={source:'kestrel-native-canary',nested:{installedExtensionRuns:true},values:[1,2,3]};
 const isolationFixtures=createIsolationFixtures();
+const isolatedDownloadFixtures=createIsolatedDownloadFixtures();
 const server=createServer((req,res)=>{
+ if(isolatedDownloadFixtures.handle(req,res))return;
  if(isolationFixtures.handle(req,res))return;
  if(req.url==='/actions'){
   res.writeHead(200,{'content-type':'text/html'});res.end(`<!doctype html><title>Native browser action canary</title><style>body{min-height:2600px;background:#f6f6f6;font:18px system-ui;padding:20px}input,button,select{font:inherit;margin:10px;padding:10px}</style><h1>Native browser action canary</h1>
@@ -201,6 +204,7 @@ try{
  receipt.phases.push({phase:'native-Core-accessibility-and-private-field-isolation',passed:true,interactive:accessibility.output.interactive.length});
  await nativeBrowserActionsCanary({getHome:()=>home,createdPage,coreTool,baseUrl:`http://127.0.0.1:${server.address().port}`,readableTab,evidence,receipt});
  if(process.env.KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION==='1')await nativeIsolatedBrowserCanary({coreTool,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures,createdPage,getHome:()=>home,evidence,receipt});
+ if(process.env.KESTREL_TEST_NATIVE_ISOLATED_DOWNLOADS==='1')await nativeIsolatedDownloadsCanary({coreTool,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolatedDownloadFixtures,receipt});
  if(process.env.KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION==='1')await prepareIsolatedCoreResetCanary({coreTool,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures});
  const originalNodes=ownedNodeProcesses();assert.equal(originalNodes.length,3,'The test must identify its exact broker, relay, and Core.');
  const originalCore=originalNodes.find(node=>!originalNodes.some(child=>child.ppid===node.pid));assert(originalCore);

@@ -438,3 +438,61 @@ the required shape, with a regression that validates its output through the
 actual Core normalizer while retaining secret/hidden-content rejection. The
 three focused host tests and full browser/provider/form/approval smoke passed
 locally. Fresh remote checks are required for the correction.
+
+### Context attachments, native file selection, and controlled downloads
+
+The portable native context host now handles granted-project file search,
+pasted-text attachment creation/removal, and file selection through the private
+Cocoa sideband. It rejects arbitrary external paths before Core reads a file or
+calls a provider. Generated pastes belong to one launch and private directory;
+selected workspace files retain canonical grant, identity, size, and media-type
+checks. Selection is limited to eight regular project files of at most 10 MB
+each. Cancellation, revoked grants, replaced files/directories, escaped paths,
+late picker replies, and shutdown have regression coverage. The native renderer
+also rejects oversized serialized requests before they can disconnect its
+authenticated worker. Core stops before generated attachments are removed.
+
+The file picker shares the existing singleton Cocoa panel and trusted cancel
+path. `test:chromium-context-dialog` runs the real bundled Node/Core host with
+simulated trusted picker replies. It verified selected file metadata, cancel,
+containment, unselected-external-file refusal, pending-picker shutdown, and
+generated-file cleanup. This proves the private protocol, not a physical panel
+interaction; an unlocked-Mac file-picker check remains required. No existing
+user profile or project folder was imported or changed.
+
+Isolated downloads now use fresh private session directories, opaque filenames,
+allowed-origin GET/POST requests, a four-active limit, 100-entry history, and
+100,000,000-byte per-file/session completion budgets. Actual file identity and
+bytes are hashed on CEF's background file thread before completion is published;
+worker results are cancellation/generation checked. Close cancels without joining
+workers and removes only owned temporary files. Server-provided names, URLs and
+local paths are absent from observations. Unknown-length limits use CEF progress
+callbacks and are not a hard cap on network or transient disk bytes between
+callbacks. Authentication handoff and whole-desktop automation remain open gaps.
+
+The real loopback download check independently read the retained artifact and
+verified its bytes/SHA-256, refused an advertised oversized body after a small
+sniffing block, kept four transfers active, refused a fifth without hanging
+navigation, and cancelled/cleaned all of them when the session closed. The
+complete native run also verified that a large paste from Home reached the
+protected fixture provider through Core, an unselected external file never
+reached it, oversized frames left the connection usable, and project search
+refused an ungranted root. The 26-phase receipt is retained under
+`.tmp/chromium-context-download-complete-evidence/`, bound to complete bundle
+`cae91c3e1926f7c5bbb3cbeeea7223984fb3197206e19ae4b52f915a2dc2246d`.
+The private picker protocol receipt is
+`.tmp/native-context-dialog-evidence/receipt.json` for that same bundle.
+All 1,901 tests across 257 files, workspace TypeScript, and the native build
+passed. CI enables these fixture workflows and uploads both evidence folders.
+
+```sh
+KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
+  corepack pnpm test:chromium-context-dialog
+KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
+KESTREL_TEST_NATIVE_PROVIDERS=1 \
+KESTREL_TEST_NATIVE_WORKSPACE_FIXTURE=1 \
+KESTREL_TEST_NATIVE_CONTEXT_ATTACHMENTS=1 \
+KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION=1 \
+KESTREL_TEST_NATIVE_FORM_NAVIGATION=1 \
+KESTREL_TEST_NATIVE_ISOLATED_DOWNLOADS=1 corepack pnpm test:chromium-desktop
+```

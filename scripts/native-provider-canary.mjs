@@ -16,6 +16,8 @@ export async function nativeProviderCanary({ settings, home, profile, evidence, 
 	let release;
 	const rejectedPrompt = "NATIVE_PANEL_BUSY_DRAFT_MUST_STAY_IN_HOME";
 	let rejectedPromptDispatched = false;
+	const attachmentMarker = "NATIVE_OWNED_PASTE_CONTENT_";
+	let ownedPasteReachedProvider = false;
 	const requests = [];
 	const server = createServer(async (request, response) => {
 		requests.push({ path: request.url, protectedHeader: request.headers["x-kestrel-canary"] === secret });
@@ -25,6 +27,7 @@ export async function nativeProviderCanary({ settings, home, profile, evidence, 
 		let input = ""; for await (const chunk of request) { input += chunk; if (input.length > 2_000_000) { response.destroy(); return; } }
 		const body = JSON.parse(input); assert.equal(body.model, "native-canary"); completions++;
 		if (input.includes(rejectedPrompt)) rejectedPromptDispatched = true;
+		if (input.includes(attachmentMarker)) ownedPasteReachedProvider = true;
 		if (hold) await new Promise(resolve => { release = resolve; });
 		if (response.destroyed) return;
 		response.writeHead(200, { "content-type": "text/event-stream" });
@@ -55,6 +58,33 @@ export async function nativeProviderCanary({ settings, home, profile, evidence, 
 			localStorage.setItem("kestrel:provider-account-id", id); localStorage.setItem("kestrel:model", "native-canary");
 		}, account.id);
 		await home.bringToFront(); await home.reload(); await home.locator("#new-tab-chat-input").waitFor();
+		if (process.env.KESTREL_TEST_NATIVE_CONTEXT_ATTACHMENTS === "1") {
+			const oversized = await home.evaluate(async () => {
+				// Stay within the schema's character limit while exceeding the
+				// serialized frame limit through JSON control-character escaping.
+				try { return await window.kestrel.request({ type: "create-pasted-text-attachment", text: "\u0001".repeat(250_000) }); }
+				catch (error) { return { ok: false, error: String(error.message) }; }
+			});
+			assert.equal(oversized.ok, false); assert.match(oversized.error, /too large for Kestrel's native connection/);
+			assert((await home.evaluate(() => window.kestrel.request({ type: "snapshot" }))).ok, "An oversized request must leave the authenticated connection usable.");
+			const unselected = join(profile, "unselected-attachment-fixture.txt");
+			await writeFile(unselected, "Owned test file that was never selected or pasted.\n", { mode: 0o600 });
+			const before = completions;
+			const refused = await home.evaluate(async ({ accountId, path }) => {
+				const created = await window.kestrel.request({ type: "runtime-create-session", title: "Unselected attachment refusal fixture", kind: "conversation" });
+				if (!created.ok) return created;
+				return window.kestrel.request({ type: "runtime-run-agent", sessionId: created.session.id, message: "This unselected attachment must never be sent.", model: "native-canary", providerIds: [accountId], maximumTurns: 1, streamId: "native-unselected-file-refusal", attachments: [{ path, name: "unselected-attachment-fixture.txt", mediaType: "text/plain", size: 50, source: "external" }] });
+			}, { accountId: account.id, path: unselected });
+			assert.equal(refused.ok, false, JSON.stringify(refused));
+			assert.match(refused.error, /external files created by this native attachment host/);
+			assert.equal(completions, before, "An unselected external file must be rejected before reaching the provider.");
+			await home.locator("#new-tab-chat-input").evaluate((node, text) => {
+				const clipboardData = new DataTransfer(); clipboardData.setData("text/plain", text);
+				node.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+			}, attachmentMarker + "synthetic local fixture text. ".repeat(400));
+			await home.getByRole("button", { name: /^Remove pasted-text-/ }).waitFor();
+			await home.screenshot({ path: join(evidence, "native-Home-owned-pasted-text-attachment.png") });
+		}
 		await home.locator("#new-tab-chat-input").fill("Complete the native provider canary with one short confirmation.");
 		await home.getByRole("button", { name: /^Send message to / }).click();
 		let sessionId;
@@ -68,6 +98,10 @@ export async function nativeProviderCanary({ settings, home, profile, evidence, 
 		}
 		assert(sessionId, "The visible Home composer must produce a persisted assistant response through the native provider.");
 		assert(completions > 0); assert(requests.every(request => request.protectedHeader));
+		if (process.env.KESTREL_TEST_NATIVE_CONTEXT_ATTACHMENTS === "1") {
+			assert(ownedPasteReachedProvider, "The actual Home paste attachment must reach the protected loopback provider through Core.");
+			receipt.phases.push({ phase: "native-Home-large-paste-to-provider-and-unselected-external-file-refusal", passed: true });
+		}
 		receipt.phases.push({ phase: "native-provider-settings-discovery-and-Home-agent", passed: true, accountId: account.id, sessionId, completions });
 
 		// Hold one real request at the endpoint; a provider edit must not stop it

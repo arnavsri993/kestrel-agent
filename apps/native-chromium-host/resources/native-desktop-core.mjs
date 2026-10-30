@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
+import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
@@ -82,24 +82,30 @@ function resetBrowsers() {
 function cancelFolderDialog() {
 	if (!folderDialog) return;
 	const dialog = folderDialog; folderDialog = undefined; clearTimeout(dialog.timer);
+	dialog.detachAbort?.();
 	write({ type: "native-dialog-cancel", requestId: dialog.requestId });
 	dialog.resolve(null);
 }
-function selectWorkspaceFolder() {
-	if (stopping || folderDialog || dialogSequence >= Number.MAX_SAFE_INTEGER) return Promise.reject(new Error("The native folder picker is unavailable."));
+function selectNativeDialog(operation, workspaceRoot, signal) {
+	if (signal?.aborted) return Promise.reject(signal.reason);
+	if (stopping || folderDialog || dialogSequence >= Number.MAX_SAFE_INTEGER) return Promise.reject(new Error("The native file or folder picker is unavailable."));
 	const requestId = `native-dialog-${++dialogSequence}`;
 	let resolveDialog, rejectDialog;
 	const promise = new Promise((resolve, reject) => { resolveDialog = resolve; rejectDialog = reject; });
 	const timer = setTimeout(() => {
 		if (folderDialog?.requestId !== requestId) return;
 		folderDialog = undefined;
+		signal?.removeEventListener("abort", abort);
 		write({ type: "native-dialog-cancel", requestId });
-		rejectDialog(new Error("The native folder picker timed out."));
+		rejectDialog(new Error("The native file or folder picker timed out."));
 	}, 600_000);
-	folderDialog = { requestId, timer, resolve: resolveDialog, reject: rejectDialog };
-	write({ type: "native-dialog-request", requestId, operation: "select-workspace-folder" });
+	const abort = () => { if (folderDialog?.requestId === requestId) cancelFolderDialog(); };
+	folderDialog = { requestId, timer, operation, resolve: resolveDialog, reject: rejectDialog, detachAbort: () => signal?.removeEventListener("abort", abort) };
+	signal?.addEventListener("abort", abort, { once: true });
+	write({ type: "native-dialog-request", requestId, operation, ...(operation === "select-context-files" ? { workspaceRoot } : {}) });
 	return promise;
 }
+function selectWorkspaceFolder() { return selectNativeDialog("select-workspace-folder"); }
 
 const core = new CoreSupervisor(browserRequest, resetBrowsers, {
 	processFactory: () => nodeCoreProcess({
@@ -127,6 +133,10 @@ const providers = new NativeProviderHost({ root: profile.root, encryptionKeyBase
 const workspaces = new NativeWorkspaceHost({ root: profile.root, selectFolder: selectWorkspaceFolder,
 	reconfigure: mutation => configuration.reconfigure(mutation),
 });
+const attachments = new NativeContextAttachmentHost({ root: profile.root,
+	workspaceRoots: async () => (await workspaces.runtimeConfiguration()).workspaceRoots,
+	selectFiles: (workspaceRoot, signal) => selectNativeDialog("select-context-files", workspaceRoot, signal),
+});
 const configuration = createNativeCoreConfiguration({ core,
 	isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning,
 	configuration: async () => ({ databasePath: profile.databasePath, encryptionKeyBase64: profile.encryptionKeyBase64,
@@ -150,6 +160,10 @@ async function shutdown(code = 0) {
 	await workspaces.close();
 	await providers.close();
 	await core.stop();
+	// Core may still be reading a just-approved paste when Quit arrives. Stop
+	// that owner before removing this launch's temporary attachment files.
+	try { await attachments.close(); }
+	catch { process.stderr.write("KESTREL_NATIVE_ATTACHMENT_CLEANUP_INCOMPLETE\n"); code = code || 1; }
 	await profile.close();
 	process.exit(code);
 }
@@ -167,11 +181,13 @@ input.on("line", line => {
 	if (message?.type === "native-dialog-response") {
 		const dialog = folderDialog;
 		if (!dialog || message.requestId !== dialog.requestId) return;
-		folderDialog = undefined; clearTimeout(dialog.timer);
+		folderDialog = undefined; clearTimeout(dialog.timer); dialog.detachAbort?.();
 		const response = message.response;
+		const validPath = path => typeof path === "string" && path.startsWith("/") && path.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(path);
 		if (response?.ok === true && response.cancelled === true) dialog.resolve(null);
-		else if (response?.ok === true && typeof response.selectedWorkspacePath === "string" && response.selectedWorkspacePath.startsWith("/") && response.selectedWorkspacePath.length <= 4096 && !response.selectedWorkspacePath.includes("\0")) dialog.resolve(response.selectedWorkspacePath);
-		else dialog.reject(new Error("The native folder picker did not return a valid selection."));
+		else if (dialog.operation === "select-workspace-folder" && response?.ok === true && validPath(response.selectedWorkspacePath)) dialog.resolve(response.selectedWorkspacePath);
+		else if (dialog.operation === "select-context-files" && response?.ok === true && Array.isArray(response.selectedContextPaths) && response.selectedContextPaths.length >= 1 && response.selectedContextPaths.length <= 8 && response.selectedContextPaths.every(validPath) && new Set(response.selectedContextPaths).size === response.selectedContextPaths.length) dialog.resolve(response.selectedContextPaths);
+		else dialog.reject(new Error("The native file or folder picker did not return a valid selection."));
 		return;
 	}
 	if (message?.type === "browser-backend-reset-response") {
@@ -192,11 +208,19 @@ input.on("line", line => {
 	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
 	const isHost = message.type === "host-request";
 	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
-	if (!parsed.success || (isHost && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
+	if (!parsed.success || (isHost && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
 	if (!isHost && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Settings are being applied. Wait for Agent Core to restart." } }); return; }
 	pending.add(message.id);
 	if (!isHost) activeCoreRequests.add(message.id);
-	void Promise.resolve().then(() => isHost ? NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) ? workspaces.handle(parsed.data) : providers.handle(parsed.data) : core.request(parsed.data))
+	void Promise.resolve().then(async () => {
+		if (isHost) {
+			if (NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type)) return workspaces.handle(parsed.data);
+			if (NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type)) return attachments.handle(parsed.data);
+			return providers.handle(parsed.data);
+		}
+		if (parsed.data.type === "runtime-run-agent") await attachments.assertRequestAttachments(parsed.data);
+		return core.request(parsed.data);
+	})
 		.then(response => {
 			write({ type: "response", id: message.id, response });
 			if (isHost && NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && parsed.data.type !== "get-workspace-grants" && response.ok && !response.cancelled && Array.isArray(response.projects))

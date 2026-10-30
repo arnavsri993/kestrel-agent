@@ -1,4 +1,5 @@
 #include "native_isolated_automation.h"
+#include "native_isolated_downloads.h"
 #import <Foundation/Foundation.h>
 #include <algorithm>
 #include <cmath>
@@ -138,21 +139,22 @@ class Observer final : public CefDevToolsMessageObserver {
 
 class BackgroundClient final : public CefClient, public CefLifeSpanHandler,
     public CefLoadHandler, public CefRequestHandler, public CefRenderHandler,
-    public CefJSDialogHandler, public CefPermissionHandler, public CefDownloadHandler {
+    public CefJSDialogHandler, public CefPermissionHandler {
  public:
   std::function<void(CefRefPtr<CefBrowser>)> created;
   std::function<void()> closed, navigating;
   std::function<void(bool)> loaded;
   std::function<void(const std::string&)> failed;
   int width = 1280, height = 720;
-  explicit BackgroundClient(std::set<std::string> origins, CefRefPtr<OriginPolicy> policy) : origins_(std::move(origins)), policy_(policy) {}
+  BackgroundClient(std::set<std::string> origins, CefRefPtr<OriginPolicy> policy, CefRefPtr<NativeIsolatedDownloads> downloads)
+      : origins_(std::move(origins)), policy_(policy), downloads_(downloads) {}
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
   CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
-  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return downloads_; }
   void GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) override { rect = CefRect(0, 0, width, height); }
   bool GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) override { info.device_scale_factor = 1; info.depth = 32; info.depth_per_component = 8; info.is_monochrome = false; info.rect = info.available_rect = CefRect(0, 0, width, height); return true; }
   void OnPaint(CefRefPtr<CefBrowser>, PaintElementType, const RectList&, const void*, int, int) override {}
@@ -167,17 +169,23 @@ class BackgroundClient final : public CefClient, public CefLifeSpanHandler,
   }
   bool OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString&, WindowOpenDisposition, bool) override { return true; }
   void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int status) override { if (frame && frame->IsMain() && loaded) loaded(status >= 200 && status < 400 || frame->GetURL() == "about:blank"); }
+  void OnLoadingStateChange(CefRefPtr<CefBrowser>, bool is_loading, bool, bool) override {
+    // Attachment responses end loading without OnLoadEnd for a new document.
+    // LoadFinished independently checks the actual main-frame URL; subsequent
+    // observations still pin Chromium's real frame and loader identifiers.
+    if (!is_loading && loaded) loaded(true);
+  }
   void OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, ErrorCode code, const CefString&, const CefString&) override { if (frame && frame->IsMain() && code != ERR_ABORTED && failed) failed("The isolated browser document failed to load."); }
   void OnRenderProcessTerminated(CefRefPtr<CefBrowser>, TerminationStatus, int, const CefString&) override { if (failed) failed("The isolated browser renderer stopped."); }
   CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest>, bool, bool, const CefString&, bool&) override { return policy_; }
   bool OnJSDialog(CefRefPtr<CefBrowser>, const CefString&, JSDialogType, const CefString&, const CefString&, CefRefPtr<CefJSDialogCallback> callback, bool&) override { callback->Continue(false, ""); return true; }
   bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString&, bool, CefRefPtr<CefJSDialogCallback> callback) override { callback->Continue(true, ""); return true; }
-  bool CanDownload(CefRefPtr<CefBrowser>, const CefString&, const CefString&) override { return false; }
   bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString&, uint32_t, CefRefPtr<CefMediaAccessCallback> callback) override { callback->Cancel(); return true; }
   bool OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t, const CefString&, uint32_t, CefRefPtr<CefPermissionPromptCallback> callback) override { callback->Continue(CEF_PERMISSION_RESULT_DENY); return true; }
  private:
   const std::set<std::string> origins_;
   CefRefPtr<OriginPolicy> policy_;
+  CefRefPtr<NativeIsolatedDownloads> downloads_;
   IMPLEMENT_REFCOUNTING(BackgroundClient);
 };
 
@@ -312,6 +320,7 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
     std::chrono::steady_clock::time_point refs_created;
     CefRefPtr<CefBrowser> browser;
     CefRefPtr<BackgroundClient> client;
+    CefRefPtr<NativeIsolatedDownloads> downloads;
     CefRefPtr<CefRequestContext> context;
     CefRefPtr<ContextHandler> context_handler;
     CefRefPtr<CefRegistration> registration;
@@ -364,13 +373,15 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
   }
   void Closed(const std::shared_ptr<Session>& s) {
     if (!s->request.empty()) Finish(s, false, "", "The isolated browser session closed.");
-    s->registration = nullptr; s->browser = nullptr; s->client = nullptr;
+    if (s->downloads) s->downloads->Close();
+    s->registration = nullptr; s->browser = nullptr; s->client = nullptr; s->downloads = nullptr;
     s->context_handler = nullptr; s->context = nullptr; sessions.erase(s->id);
     CheckShutdown();
   }
   void Close(const std::shared_ptr<Session>& s) {
     if (s->closing) return;
     s->closing = true; s->refs.clear(); s->commands.clear();
+    if (s->downloads) s->downloads->Close();
     if (s->browser && s->browser->IsValid()) {
       // CEF forbids closing synchronously from OnBeforeBrowse. Invalidate the
       // session immediately, then perform the close after that callback exits.
@@ -747,7 +758,18 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
       if (!context || !context->GetCachePath().empty() || context->IsSharingWith(CefRequestContext::GetGlobalContext())) { self->Finish(session, false, "", "Fresh isolated Chromium storage could not be verified."); self->Close(session); return; }
       for (const auto& [id, other] : self->sessions) if (other != session && other->context && context->IsSharingWith(other->context)) { self->Finish(session, false, "", "Separate browser session storage could not be verified."); self->Close(session); return; }
       session->context = context;
-      session->client = new BackgroundClient(session->origins, policy);
+      const auto origins = session->origins;
+      session->downloads = new NativeIsolatedDownloads([origins](const std::string& url) { return Allowed(origins, url); }, [weak, weak_session] {
+        auto self = weak.lock(); auto session = weak_session.lock();
+        if (!self || !session || !self->Current(session) || session->operation != "act-navigation") return;
+        const auto url = session->browser->GetMainFrame()->GetURL().ToString();
+        if (!Allowed(session->origins, url)) return;
+        // Chromium keeps the old document for attachment responses. A real
+        // download callback, not a synthetic load, settles that transition.
+        session->url = url; session->loaded = true;
+        if (!session->input_pair_pending) self->Finish(session, false, "", "The browser started a download during input. Take a fresh observation and do not replay the action.");
+      });
+      session->client = new BackgroundClient(session->origins, policy, session->downloads);
       session->client->created = [weak, weak_session](CefRefPtr<CefBrowser> browser) {
         auto self = weak.lock(); auto session = weak_session.lock();
         if (!self || !session || session->closing || self->stopping) { browser->GetHost()->CloseBrowser(true); return; }
@@ -804,7 +826,7 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
       auto list = CefListValue::Create(); for (size_t i = 0; i < s->diagnostics.size(); ++i) { auto item = CefDictionaryValue::Create(); item->SetString("type", "error"); item->SetString("message", s->diagnostics[i]); list->SetDictionary(i, item); }
       auto root = CefValue::Create(); root->SetList(list); ReplyNow(request, true, JSON(root)); return;
     }
-    if (operation == "downloads") { ReplyNow(request, true, "[]"); return; } // Downloads are denied by this background client.
+    if (operation == "downloads") { ReplyNow(request, true, s->downloads ? s->downloads->SnapshotJson() : "[]"); return; }
     if (operation != "snapshot" && operation != "act" && operation != "screenshot" && operation != "viewport" && operation != "upload") { ReplyNow(request, false, "", "This operation is unavailable for isolated background sessions."); return; }
     Start(s, request, operation);
     if (operation == "snapshot") { Snapshot(s); return; }

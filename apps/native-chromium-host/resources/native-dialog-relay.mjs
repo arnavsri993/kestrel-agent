@@ -8,7 +8,8 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
   let lastCoreSequence = 0;
   let closed = false;
   const MAX_FRAME = 1024 * 1024;
-  const failed = "The native folder picker is unavailable.";
+  const failed = "The native file or folder picker is unavailable.";
+  const validPath = path => typeof path === "string" && path.length > 0 && path.length <= 4096 && isAbsolute(path) && !/[\u0000-\u001f\u007f]/.test(path);
   function send(message) {
     try {
       const line = JSON.stringify(message);
@@ -33,18 +34,22 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
       respond(id, { ok: false, error: failed }); return;
     }
     lastCoreSequence = number;
+    const folder = message.operation === "select-workspace-folder";
+    const files = message.operation === "select-context-files";
+    const allowedKeys = folder ? ["type", "requestId", "operation"] : ["type", "requestId", "operation", "workspaceRoot"];
     if (closed || pending || sequence >= Number.MAX_SAFE_INTEGER || message.type !== "native-dialog-request" ||
-        message.operation !== "select-workspace-folder" || Object.keys(message).some(key => !["type", "requestId", "operation"].includes(key))) {
+        (!folder && !files) || (files && !validPath(message.workspaceRoot)) || Object.keys(message).some(key => !allowedKeys.includes(key))) {
       respond(id, { ok: false, error: failed }); return;
     }
     const privateId = `dialog-${++sequence}`;
     const timer = setTimeout(() => {
       const item = take(); if (!item) return;
       send({ kind: "dialog-cancel", id: item.id });
-      respond(item.requestId, { ok: false, error: "The native folder picker timed out." });
+      respond(item.requestId, { ok: false, error: "The native file or folder picker timed out." });
     }, 10 * 60_000);
-    pending = { id: privateId, requestId: id, timer };
-    if (!send({ kind: "host-request", id: privateId, request: { type: "select-workspace-folder" } })) {
+    pending = { id: privateId, requestId: id, operation: message.operation, timer };
+    const request = folder ? { type: "select-workspace-folder" } : { type: "select-context-files", workspaceRoot: message.workspaceRoot };
+    if (!send({ kind: "host-request", id: privateId, request })) {
       const item = take(); if (item) respond(item.requestId, { ok: false, error: failed });
     }
   }
@@ -53,19 +58,25 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
     const item = take();
     const value = message.response;
     const keys = value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
-    if (value?.ok === true && value.cancelled === true && keys.length === 2 && keys.includes("ok") && keys.includes("cancelled")) {
+    if (Object.keys(message).some(key => !["kind", "id", "response"].includes(key))) {
+      respond(item.requestId, { ok: false, error: failed });
+    } else if (value?.ok === true && value.cancelled === true && keys.length === 2 && keys.includes("ok") && keys.includes("cancelled")) {
       respond(item.requestId, { ok: true, cancelled: true });
-    } else if (value?.ok === true && typeof value.selectedWorkspacePath === "string" && value.selectedWorkspacePath.length <= 4096 &&
-        isAbsolute(value.selectedWorkspacePath) && !value.selectedWorkspacePath.includes("\0") &&
+    } else if (item.operation === "select-workspace-folder" && value?.ok === true && validPath(value.selectedWorkspacePath) &&
         keys.length === 2 && keys.includes("ok") && keys.includes("selectedWorkspacePath")) {
       respond(item.requestId, { ok: true, selectedWorkspacePath: value.selectedWorkspacePath });
+    } else if (item.operation === "select-context-files" && value?.ok === true && Array.isArray(value.selectedContextPaths) &&
+        value.selectedContextPaths.length > 0 && value.selectedContextPaths.length <= 8 && value.selectedContextPaths.every(validPath) &&
+        new Set(value.selectedContextPaths).size === value.selectedContextPaths.length &&
+        keys.length === 2 && keys.includes("ok") && keys.includes("selectedContextPaths")) {
+      respond(item.requestId, { ok: true, selectedContextPaths: [...value.selectedContextPaths] });
     } else respond(item.requestId, { ok: false, error: failed });
     return true;
   }
   function cancel(requestId) {
     if (!pending || pending.requestId !== requestId) return;
     const item = take(); send({ kind: "dialog-cancel", id: item.id });
-    respond(item.requestId, { ok: false, error: "The native folder picker was cancelled." });
+    respond(item.requestId, { ok: false, error: "The native file or folder picker was cancelled." });
   }
   function close() {
     if (closed) return;

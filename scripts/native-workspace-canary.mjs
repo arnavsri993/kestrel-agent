@@ -55,6 +55,13 @@ export async function nativeWorkspaceCanary({ settings, getHome, profile, eviden
 	const read = await workspaceRead(getHome(), state.sessionId);
 	assert.equal(read.status, "verified", JSON.stringify(read));
 	assert.equal(read.output?.content, content);
+	if (process.env.KESTREL_TEST_NATIVE_CONTEXT_ATTACHMENTS === "1") {
+		const listed = await getHome().evaluate(workspaceRoot => window.kestrel.request({ type: "list-workspace-files", workspaceRoot, query: "README" }), state.path);
+		assert(listed.ok && listed.workspaceFiles?.some(item => item.name === "README.md" && item.path === join(state.path, "README.md")), JSON.stringify(listed));
+		const refused = await getHome().evaluate(workspaceRoot => window.kestrel.request({ type: "list-workspace-files", workspaceRoot }), profile);
+		assert.equal(refused.ok, false, "A renderer must not search outside its explicit project grant.");
+		receipt.phases.push({ phase: "native-granted-project-file-search-and-ungranted-root-refusal", passed: true });
+	}
 	const call = async (toolName, input) => {
 		const response = await getHome().evaluate(({ sessionId, toolName, input }) => window.kestrel.request({ type: "runtime-call-tool", sessionId, toolName, input, approvalStatus: "approved", idempotencyKey: crypto.randomUUID() }), { sessionId: state.sessionId, toolName, input });
 		return response.execution ?? response;
