@@ -7,6 +7,8 @@ export function nodeCoreProcess(options: {
 	executable: string;
 	entryPath: string;
 	env: NodeJS.ProcessEnv;
+	/** Framed hosts reserve stdout for their own protocol. */
+	stdout?: "inherit" | "ignore";
 }): CoreProcess {
 	const nodeExecutable = options.executable;
 	if (!nodeExecutable)
@@ -18,7 +20,7 @@ export function nodeCoreProcess(options: {
 		execArgv: [],
 		env: options.env,
 		serialization: "json",
-		stdio: ["ignore", "inherit", "inherit", "ipc"],
+		stdio: ["ignore", options.stdout ?? "inherit", "inherit", "ipc"],
 	});
 	const events = new EventEmitter();
 	let failed = false;

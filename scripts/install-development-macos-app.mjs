@@ -99,19 +99,45 @@ function stageBundle() {
 }
 
 function install() {
+  const nativeCutover = process.env.KESTREL_INSTALL_NATIVE_CANONICAL === "1";
   validateSource(source);
+  if (plistValue(source, "CFBundleIdentifier") === "com.kestrel.native-chromium-host.dev" && !nativeCutover) {
+    throw new Error("Native cutover is not accepted. Use the native installer and candidate-bound evidence before replacing the canonical app. No app was installed.");
+  }
   preventSpotlightIndexing(repositoryRoot);
   mkdirSync(installRoot, { recursive: true });
+  if (nativeCutover && samePath(source, destination)) {
+    throw new Error("Native cutover requires a separate staged source bundle; canonical app was not changed.");
+  }
   if (existsSync(destination) && !isKestrelBundle(destination)) {
     throw new Error(`Refusing to replace a non-Kestrel app at ${destination}`);
   }
 
-  const removedStaging = removeStaleInstallStagingDirectories(installRoot);
-  const moved = moveDuplicatesToTrash([source, destination]);
+  let removedStaging = [];
+  const moved = [];
   let staged;
+  if (!nativeCutover) {
+    removedStaging = removeStaleInstallStagingDirectories(installRoot);
+    moved.push(...moveDuplicatesToTrash([source, destination]));
+  }
   if (!samePath(source, destination)) {
     staged = stageBundle();
     try {
+      if (nativeCutover) {
+        // Re-validate the exact ditto copy before touching the canonical app or
+        // any discovered duplicate. The fixed helper checks the candidate-bound
+        // evidence and Developer ID signature on this staged bundle.
+        execFileSync(
+          process.execPath,
+          [join(repositoryRoot, "scripts", "native-install-stage.mjs"), staged.stagedBundle],
+          { stdio: "inherit", env: process.env },
+        );
+      }
+
+      if (nativeCutover) {
+        removedStaging = removeStaleInstallStagingDirectories(installRoot);
+        moved.push(...moveDuplicatesToTrash([source, destination]));
+      }
       if (existsSync(destination)) {
         moved.push({
           from: destination,

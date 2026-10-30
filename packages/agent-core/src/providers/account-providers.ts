@@ -44,6 +44,8 @@ export interface ProviderAccountRuntimeConfig {
 	defaultModel?: string;
 	executable?: string;
 	profilePath?: string;
+	/** Host-selected vendor CLI home. Runtime-only; never a renderer input. */
+	homeDirectory?: string;
 	contextWindow?: number;
 	/** Non-secret metadata revision for catalog invalidation. */
 	configurationVersion?: string;
@@ -108,11 +110,12 @@ function isLoopbackOpenAICompatibleBaseUrl(value: string): boolean {
 
 function accountEnvironment(
 	account: ProviderAccountRuntimeConfig,
-	key: "CODEX_HOME",
 ): NodeJS.ProcessEnv {
 	return {
 		...process.env,
-		...(account.profilePath ? { [key]: account.profilePath } : {}),
+		...(account.homeDirectory ? { HOME: account.homeDirectory } : {}),
+		...(account.adapter === "codex-app-server" && account.profilePath
+			? { CODEX_HOME: account.profilePath } : {}),
 	};
 }
 
@@ -216,11 +219,12 @@ export function createAccountModelProviders(
 					...(account.defaultModel
 						? { defaultModel: account.defaultModel }
 						: {}),
-					environment: accountEnvironment(account, "CODEX_HOME"),
+					environment: accountEnvironment(account),
 				});
 				break;
 			case "opencode-cli":
 				provider = new OpenCodeSubscriptionProvider({
+					environment: accountEnvironment(account),
 					id: account.id,
 					poolId: account.providerId,
 					...(account.executable ? { executable: account.executable } : {}),
@@ -231,6 +235,7 @@ export function createAccountModelProviders(
 				break;
 			case "claude-cli":
 				provider = new ClaudeSubscriptionProvider({
+					environment: accountEnvironment(account),
 					id: account.id,
 					poolId: account.providerId,
 					...(account.executable ? { executable: account.executable } : {}),
@@ -241,6 +246,7 @@ export function createAccountModelProviders(
 				break;
 			case "cursor-cli":
 				provider = new CursorSubscriptionProvider({
+					environment: accountEnvironment(account),
 					id: account.id,
 					poolId: account.providerId,
 					...(account.executable ? { executable: account.executable } : {}),

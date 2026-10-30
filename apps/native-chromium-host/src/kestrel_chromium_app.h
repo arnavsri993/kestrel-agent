@@ -3,6 +3,7 @@
 #pragma once
 
 #include <functional>
+#include <string>
 
 #include "include/cef_app.h"
 #include "include/cef_browser_process_handler.h"
@@ -21,10 +22,15 @@ class KestrelChromiumApp final : public CefApp,
                                  public CefRenderProcessHandler {
  public:
   using BrowserContextInitialized = std::function<void()>;
+  using DefaultClient = std::function<CefRefPtr<CefClient>()>;
 
   explicit KestrelChromiumApp(
       BrowserContextInitialized on_context_initialized = {},
-      bool extension_workbench = false);
+      bool extension_workbench = false,
+      bool user_extensions_enabled = false,
+      std::string isolated_profile_root = {},
+      DefaultClient default_client = {},
+      std::string desktop_ui_path = {});
 
   void OnBeforeCommandLineProcessing(
       const CefString& process_type,
@@ -36,6 +42,7 @@ class KestrelChromiumApp final : public CefApp,
   CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override;
 
   void OnContextInitialized() override;
+  CefRefPtr<CefClient> GetDefaultClient() override;
   void OnBeforeChildProcessLaunch(CefRefPtr<CefCommandLine> command_line) override;
 
   void OnWebKitInitialized() override;
@@ -52,7 +59,11 @@ class KestrelChromiumApp final : public CefApp,
 
  private:
   BrowserContextInitialized on_context_initialized_;
+  DefaultClient default_client_;
   bool extension_workbench_;
+  bool user_extensions_enabled_;
+  const std::string isolated_profile_root_;
+  const std::string desktop_ui_path_;
   CefRefPtr<CefMessageRouterRendererSide> renderer_router_;
 
   IMPLEMENT_REFCOUNTING(KestrelChromiumApp);

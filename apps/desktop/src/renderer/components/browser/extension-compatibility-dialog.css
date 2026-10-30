@@ -307,7 +307,7 @@
 .extension-compatibility-primary {
 	border: 1px solid color-mix(in srgb, var(--solid) 72%, transparent);
 	background: var(--solid);
-	color: var(--solid-ink, #fff);
+	color: var(--on-solid);
 }
 
 .extension-compatibility-secondary:hover,

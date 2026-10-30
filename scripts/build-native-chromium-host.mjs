@@ -1,16 +1,20 @@
 import { execFileSync } from "node:child_process";
 import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareNativeChromiumRuntime } from "./prepare-native-chromium-runtime.mjs";
 import { buildNativeChromiumWrapper } from "./build-native-chromium-wrapper.mjs";
 import { buildNativeChromiumRenderer } from "./build-native-chromium-renderer.mjs";
+import { buildNativeExtensionService } from "./build-native-extension-service.mjs";
+import { buildNativeUi } from "./build-native-ui.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = join(root, ".tmp");
 const nativeHostRoot = join(root, "apps", "native-chromium-host");
 const agentCoreSidecar = join(temporaryRoot, "agent-core-sidecar");
+const pinnedNode = createRequire(import.meta.url)("../apps/desktop/build/agent-core-sidecar.cjs");
 const helperVariants = [
 	{ name: "Kestrel Helper", bundleSuffix: "" },
 	{ name: "Kestrel Helper (Alerts)", bundleSuffix: ".alerts" },
@@ -91,6 +95,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 	const runtime = await prepareNativeChromiumRuntime();
 	const wrapper = await buildNativeChromiumWrapper({ runtime });
 	const renderer = await buildNativeChromiumRenderer();
+	const extensions = await buildNativeExtensionService();
 	// This is the same Electron-free Node Core runtime packaged in the current
 	// desktop app. The native host never executes Electron's utility process.
 	run(process.execPath, [join(root, "scripts", "prepare-agent-core-sidecar.mjs")]);
@@ -111,6 +116,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			join(paths.app, "Contents", "Info.plist"),
 		);
 		await copyFile(join(runtime, "LICENSE.txt"), join(paths.resources, "CEF_LICENSE.txt"));
+		await copyFile(join(root, "apps/desktop/build/icon.icns"), join(paths.resources, "AppIcon.icns"));
 		run("/usr/bin/ditto", [
 			"--rsrc",
 			"--extattr",
@@ -122,6 +128,13 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			join(nativeHostRoot, "resources", "native-core-relay.mjs"),
 			join(paths.resources, "native-core-relay.mjs"),
 		);
+		await copyFile(
+			join(nativeHostRoot, "resources", "native-core-profile.mjs"),
+			join(paths.resources, "native-core-profile.mjs"),
+		);
+		await copyFile(join(extensions, "native-extension-service.mjs"),
+			join(paths.resources, "native-extension-service.mjs"));
+		await buildNativeUi({ renderer, resources: paths.resources });
 		run("/usr/bin/ditto", [
 			"--rsrc",
 			"--extattr",
@@ -173,7 +186,13 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-framework",
 			"Cocoa",
 			"-framework",
+			"ImageIO",
+			"-framework",
 			"IOSurface",
+			"-framework",
+			"Security",
+			"-framework",
+			"ServiceManagement",
 			"-Wl,-search_paths_first",
 			"-Wl,-ObjC",
 			"-Wl,-pie",
@@ -185,12 +204,32 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-F",
 			paths.frameworks,
 			join(nativeHostRoot, "src", "kestrel_native_host.mm"),
+			join(nativeHostRoot, "src", "kestrel_chromium_desktop.mm"),
+			join(nativeHostRoot, "src", "native_isolated_automation.mm"),
+			join(nativeHostRoot, "src", "native_isolated_downloads.mm"),
+			join(nativeHostRoot, "src", "kestrel_chrome_window_mac.mm"),
+			join(nativeHostRoot, "src", "kestrel_private_chrome_pipe.mm"),
+			join(nativeHostRoot, "src", "kestrel_live_extension_control.mm"),
+			join(nativeHostRoot, "src", "kestrel_native_credentials.mm"),
+			join(nativeHostRoot, "src", "kestrel_durable_browser_library.cc"),
 			join(nativeHostRoot, "src", "kestrel_chromium_app.cc"),
 			"-o",
 			paths.executable,
 			...linkFlags,
 		]);
 		await chmod(paths.executable, 0o755);
+		run(compiler, ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-mmacosx-version-min=13.0", "-isysroot", sdkPath,
+			join(nativeHostRoot, "src", "kestrel_native_messaging.cc"), "-o", join(paths.app, "Contents/MacOS/Kestrel Native Bridge")]);
+		// Use the headers from the same checksum-verified archive as the bundled
+		// Node runtime. A developer's Homebrew installation is not a build input.
+		const nodeHeaders = process.env.KESTREL_NODE_HEADERS ?? join(staging, `node-v${pinnedNode.NODE_RUNTIME_VERSION}-darwin-arm64`, "include/node");
+		if (!process.env.KESTREL_NODE_HEADERS) run("/usr/bin/tar", ["-xzf", join(temporaryRoot, "agent-core-sidecar-cache", pinnedNode.NODE_RUNTIME_ARCHIVE),
+			"-C", staging, `node-v${pinnedNode.NODE_RUNTIME_VERSION}-darwin-arm64/include/node`]);
+		if (!existsSync(join(nodeHeaders, "node_api.h"))) throw new Error("Node N-API headers are required to compile the native peer inspector (KESTREL_NODE_HEADERS).");
+		run(compiler, ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-mmacosx-version-min=13.0", "-isysroot", sdkPath,
+			"-bundle", "-undefined", "dynamic_lookup", "-I", nodeHeaders,
+			join(nativeHostRoot, "src", "kestrel_native_peer.cc"), "-o", join(paths.resources, "native-peer.node")]);
+		if (!process.env.KESTREL_NODE_HEADERS) await rm(join(staging, `node-v${pinnedNode.NODE_RUNTIME_VERSION}-darwin-arm64`), { recursive: true });
 		const helperExecutable = join(staging, "Kestrel Chromium Helper");
 		run(compiler, [
 			...compileFlags,

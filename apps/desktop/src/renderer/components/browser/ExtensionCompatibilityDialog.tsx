@@ -30,10 +30,12 @@ export function ExtensionCompatibilityDialog({
 	inspection,
 	onCancel,
 	onInstall,
+	installedVersion,
 }: {
 	inspection: ChromeWebStoreExtensionInspection;
 	onCancel(): void;
 	onInstall(inspectionId: string): Promise<void>;
+	installedVersion?: string | undefined;
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
 	const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -45,6 +47,7 @@ export function ExtensionCompatibilityDialog({
 	busyRef.current = busy;
 	const compatibility = inspection.compatibility;
 	const blocked = compatibility.state === "unsupported";
+	const current = installedVersion === inspection.version;
 	const findings = useMemo(
 		() =>
 			compatibility.findings.filter(
@@ -145,7 +148,7 @@ export function ExtensionCompatibilityDialog({
 						</span>
 						<span>
 							<strong id="extension-compatibility-title">
-								{blocked ? "Extension cannot be installed" : "Review extension"}
+								{blocked ? "Extension cannot be installed" : current ? "Extension is up to date" : installedVersion ? "Review update" : "Review extension"}
 							</strong>
 							<small>
 								{inspection.name} · version {inspection.version}
@@ -174,6 +177,7 @@ export function ExtensionCompatibilityDialog({
 						<span className="extension-compatibility-source">Verified Chrome Web Store package</span>
 					</div>
 					<p id="extension-compatibility-description" className="extension-compatibility-summary">
+						{installedVersion && !current && <>Installed version {installedVersion}. </>}
 						{compatibility.summary}
 					</p>
 
@@ -196,7 +200,7 @@ export function ExtensionCompatibilityDialog({
 					<section className="extension-compatibility-section" aria-labelledby="extension-capabilities-title">
 						<div className="extension-compatibility-section-heading">
 							<h3 id="extension-capabilities-title">Compatibility evidence</h3>
-							<small>Electron support is not the same as Chrome support.</small>
+							<small>Declared access and observed runtime behavior are checked separately.</small>
 						</div>
 						{findings.length === 0 ? (
 							<p className="extension-compatibility-empty">No incompatible Chrome API use was detected in the scanned package.</p>
@@ -242,9 +246,9 @@ export function ExtensionCompatibilityDialog({
 						onClick={onCancel}
 						disabled={busy}
 					>
-						{blocked ? "Close" : "Cancel"}
+						{blocked || current ? "Close" : "Cancel"}
 					</button>
-					{!blocked && (
+					{!blocked && !current && (
 						<button
 							ref={installRef}
 							type="button"
@@ -252,7 +256,7 @@ export function ExtensionCompatibilityDialog({
 							onClick={() => void install()}
 							disabled={busy}
 						>
-							{busy ? "Installing…" : "Install reviewed extension"}
+							{busy ? installedVersion ? "Updating…" : "Installing…" : installedVersion ? "Install reviewed update" : "Install reviewed extension"}
 						</button>
 					)}
 				</footer>

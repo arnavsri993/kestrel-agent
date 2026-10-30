@@ -99,7 +99,7 @@ export function NewTabPage({
 	onOpenSession?: ((sessionId: string) => void) | undefined;
 	projects?: Project[];
 	onProjectsChange(projects: Project[]): void;
-	onSubmitDraft(draft: NewTabComposerDraft): boolean;
+	onSubmitDraft(draft: NewTabComposerDraft): boolean | Promise<boolean>;
 	shortcutSettings?: UserBrowserSettings["newTabShortcuts"];
 	onUpdateHomeSettings(next: Partial<UserBrowserSettings>): Promise<unknown>;
 }) {

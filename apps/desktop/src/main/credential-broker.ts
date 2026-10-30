@@ -9,7 +9,6 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { SafeStorage } from "electron";
 import { ProtectedDatabaseError } from "@kestrel/database";
 import { decryptText, encryptText } from "@kestrel/encryption";
 import { PRODUCT_IDENTITY } from "@kestrel/shared-types";
@@ -210,7 +209,7 @@ export interface ProtectedDecryption {
 	shouldReEncrypt: boolean;
 }
 
-interface SecretProtection {
+export interface SecretProtection {
 	isEncryptionAvailable?(): boolean;
 	prepare?(): Promise<void>;
 	encryptString(value: string): Promise<Buffer>;
@@ -227,17 +226,7 @@ export class PlaintextSecretProtection implements SecretProtection {
 	}
 
 	async prepare(): Promise<void> {
-		if (this.migrationStorage) {
-			this.safeStorage = this.migrationStorage;
-			return;
-		}
-		try {
-			const { safeStorage } = await import("electron");
-			if (safeStorage.isEncryptionAvailable())
-				this.safeStorage = safeStorage;
-		} catch {
-			// Electron is unavailable in isolated unit tests.
-		}
+		this.safeStorage = this.migrationStorage;
 	}
 
 	async encryptString(value: string): Promise<Buffer> {
@@ -294,10 +283,11 @@ export class PlaintextSecretProtection implements SecretProtection {
 	}
 }
 
-type SafeStorageLike = Pick<
-	SafeStorage,
-	"decryptString" | "encryptString" | "isEncryptionAvailable"
->;
+export interface SafeStorageLike {
+	isEncryptionAvailable(): boolean;
+	encryptString(value: string): Buffer;
+	decryptString(value: Buffer): string;
+}
 
 export class SafeStorageSecretProtection implements SecretProtection {
 	constructor(private readonly storage: SafeStorageLike) {}
@@ -359,10 +349,9 @@ let defaultProtection: Promise<SecretProtection> | undefined;
 async function createDefaultProtection(): Promise<SecretProtection> {
 	if (!shouldUseSafeStorage(process.env, PRODUCT_IDENTITY.updateChannel))
 		return new PlaintextSecretProtection();
-	const { safeStorage } = await import("electron");
-	if (!safeStorage.isEncryptionAvailable())
-		throw new SecureStorageError(SECURE_STORAGE_UNAVAILABLE_MESSAGE);
-	return new SafeStorageSecretProtection(safeStorage);
+	// A portable broker cannot choose a platform Keychain implementation. A
+	// protected host must supply one explicitly, and must never fall back.
+	throw new SecureStorageError(SECURE_STORAGE_UNAVAILABLE_MESSAGE);
 }
 
 function loadDefaultProtection(): Promise<SecretProtection> {
@@ -376,6 +365,7 @@ export class CredentialBroker {
 	private readonly credentialRoot: string;
 	private readonly protection: Promise<SecretProtection>;
 	private databaseKey: Promise<Buffer> | undefined;
+	private readonly hostKeyProvider: (() => Promise<Buffer>) | undefined;
 	private readonly credentialCache = new Map<
 		BrokeredCredentialId,
 		Promise<string | undefined>
@@ -385,22 +375,39 @@ export class CredentialBroker {
 		Promise<string | undefined>
 	>();
 
-	constructor(userDataPath: string, protection?: SecretProtection) {
+	constructor(userDataPath: string, protection?: SecretProtection, options?: {
+		/** Runtime-only resolver for a host's already-opened, protected profile. */
+		keyProvider?: () => Promise<Buffer>;
+	}) {
 		this.keyPath = join(userDataPath, "secure", "database-key.bin");
 		this.databasePath = join(userDataPath, "database", "kestrel.sqlite");
 		this.credentialRoot = join(userDataPath, "secure", "credentials");
+		this.hostKeyProvider = options?.keyProvider;
 		this.protection = protection
 			? Promise.resolve(protection)
 			: loadDefaultProtection();
 	}
 
 	async getDatabaseKey(): Promise<Buffer> {
-		this.databaseKey ??= this.loadDatabaseKey();
+		this.databaseKey ??= this.hostKeyProvider ? this.loadHostDatabaseKey(this.hostKeyProvider) : this.loadDatabaseKey();
 		try {
 			return await this.databaseKey;
 		} catch (error) {
 			this.databaseKey = undefined;
 			throw error;
+		}
+	}
+
+	private async loadHostDatabaseKey(resolveKey: () => Promise<Buffer>): Promise<Buffer> {
+		try {
+			await this.availableProtection(SECURE_STORAGE_UNAVAILABLE_MESSAGE);
+			const key = await resolveKey();
+			if (!Buffer.isBuffer(key) || key.length !== 32)
+				throw new SecureStorageError("The host did not provide a valid protected database key. Existing data was preserved.");
+			return Buffer.from(key);
+		} catch (error) {
+			if (isSecureStorageError(error)) throw error;
+			throw new SecureStorageError("Kestrel could not unlock the host's protected profile. Existing data was preserved.", error);
 		}
 	}
 

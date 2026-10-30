@@ -1,3 +1,4 @@
+import { closeNativeAgentPanel, nativeChromiumPanel, useNativeCompanionOpen, sendNativeAgentAction, subscribeNativeAgentActions } from "./native-extension-transport";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
@@ -187,7 +188,9 @@ import {
 } from "./runtime-session-state";
 import {
 	FIRST_TASK_PROMPT,
+	FIRST_TASK_PURPOSE,
 	FIRST_TASK_SLOW_MODEL_NOTICE,
+	isFirstTaskPrompt,
 } from "./first-task";
 import { canCompleteOnboarding } from "./setup-onboarding";
 import {
@@ -1366,7 +1369,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const localRuntimeUnavailableReason = localRuntime?.unavailableReason ?? "";
 	const recommendedModel = localRuntimeUnavailableReason
 		? null
-		: recommendedLocalModel(systemProfile);
+		: localRuntime?.automaticSupported === false ? null : recommendedLocalModel(systemProfile);
 	const recommendedModelInstalled = Boolean(
 		recommendedModel &&
 		localModels.some(
@@ -1380,7 +1383,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 		(ollamaAvailable || localRuntime?.automaticSupported === true);
 	const recommendedTiers = localRuntimeUnavailableReason
 		? []
-		: recommendedLocalModelTiers(systemProfile);
+		: localRuntime?.automaticSupported === false ? [] : recommendedLocalModelTiers(systemProfile);
 	const compatibleLocalModels = localRuntimeUnavailableReason
 		? []
 		: supportedLocalModels(systemProfile);
@@ -1608,6 +1611,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												: modelView === "local"
 													? localRuntimeUnavailableReason
 														? localRuntimeUnavailableReason
+														: localRuntime?.automaticSupported === false
+															? "Verify an installed model to run tasks on this Mac."
 														: recommendedModel
 															? `Kestrel recommends ${recommendedModel.title} for this Mac.`
 															: "Checking this Mac's hardware…"
@@ -1968,6 +1973,22 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											</p>
 										) : (
 											<>
+										{Boolean(localRuntime?.detectedModels?.length) && (
+											<section className="recommended-model-tiers" aria-label="Installed local models">
+												<p>Choose an installed model to verify a local response and enable it.</p>
+												<div className="model-tier-grid">
+											{(localRuntime?.detectedModels ?? []).map(model => (
+														<article key={model.name}>
+															<code>{model.name}</code>
+															<button className="button secondary" aria-label={`Verify ${model.name}`}
+																disabled={automaticBusy || Boolean(downloading)} onClick={() => void bootstrapLocal(model.name)}>
+																{automaticBusy && automaticModel === model.name ? "Verifying…" : "Verify and use"}
+															</button>
+														</article>
+													))}
+												</div>
+											</section>
+										)}
 										{recommendedModel && (
 											<section
 												className="local-auto-setup"
@@ -3080,6 +3101,7 @@ function RuntimeConversation({
 	newAgentProjectId,
 	newAgentFocusTarget,
 	newAgentDraft,
+	onNewAgentHandled,
 	projects,
 	onProjectsChange,
 	refreshRevision,
@@ -3108,6 +3130,7 @@ function RuntimeConversation({
 	newAgentProjectId: string | null;
 	newAgentFocusTarget: "prompt" | "task-settings";
 	newAgentDraft: NewTabComposerDraft | null;
+	onNewAgentHandled?(accepted: boolean): void;
 	projects: Project[];
 	onProjectsChange(projects: Project[]): void;
 	refreshRevision: number;
@@ -3288,6 +3311,7 @@ function RuntimeConversation({
 		previousNewAgentRequestIdRef.current = newAgentRequestId;
 		if (busy) {
 			setError("Finish or cancel the active task before starting a new one.");
+			onNewAgentHandled?.(false);
 			window.setTimeout(() => promptRef.current?.focus(), 0);
 			return;
 		}
@@ -3311,6 +3335,7 @@ function RuntimeConversation({
 			promptRef.current?.focus();
 		}, 0);
 		if (newAgentPrompt.trim()) void submit(newAgentPrompt, newAgentDraft ?? undefined);
+		onNewAgentHandled?.(true);
 	}, [
 		busy,
 		newAgentFocusTarget,
@@ -3319,6 +3344,7 @@ function RuntimeConversation({
 		newAgentRequestId,
 		newAgentWorkspace,
 		newAgentDraft,
+		onNewAgentHandled,
 		onActiveSession,
 	]);
 
@@ -3924,7 +3950,11 @@ function RuntimeConversation({
 		}
 	}
 
-	async function submit(promptOverride?: string, draft?: NewTabComposerDraft) {
+	async function submit(
+		promptOverride?: string,
+		draft?: NewTabComposerDraft,
+		purpose?: typeof FIRST_TASK_PURPOSE,
+	) {
 		const prompt = (promptOverride ?? input).trim();
 		if (!prompt) return;
 		const runChoice = draft?.modelChoice ?? modelChoice;
@@ -4024,6 +4054,9 @@ function RuntimeConversation({
 				type: "runtime-run-agent",
 				sessionId,
 				message: prompt,
+				...(purpose === FIRST_TASK_PURPOSE && isFirstTaskPrompt(prompt)
+					? { purpose: FIRST_TASK_PURPOSE }
+					: {}),
 				model: runChoice.executionMode === "automatic" ? "auto" : runChoice.model.trim(),
 				providerIds: runChoice.executionMode === "automatic" ? ["auto"] : [runChoice.providerId],
 				streamId,
@@ -4066,7 +4099,7 @@ function RuntimeConversation({
 		if (!shouldAutoSubmitFirstTaskRef.current) return;
 		shouldAutoSubmitFirstTaskRef.current = false;
 		setGuidedFirstTaskActive(true);
-		void submit(FIRST_TASK_PROMPT);
+		void submit(FIRST_TASK_PROMPT, undefined, FIRST_TASK_PURPOSE);
 	}, []);
 
 	useEffect(() => {
@@ -8893,6 +8926,7 @@ function ApprovalRulesSettings() {
 
 function AgentWorkspaceSettings() {
 	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
+	useEffect(() => window.kestrel.onWorkspaceProjectsChanged?.(setGrants), []);
 	const [sessions, setSessions] = useState<RuntimeSession[]>([]);
 	const [busy, setBusy] = useState(false);
 	const [planetBusySessionId, setPlanetBusySessionId] = useState<string | null>(
@@ -10239,6 +10273,7 @@ function Empty({ title, text }: { title: string; text?: string }) {
 
 export function App() {
 	const browser = useUserBrowser();
+	const nativeCompanionOpen = useNativeCompanionOpen();
 	const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
 	const [runtimeRefreshRevision, setRuntimeRefreshRevision] = useState(0);
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
@@ -10290,6 +10325,13 @@ export function App() {
 		() => localStorage.getItem("kestrel:active-project-id"),
 	);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
+	const nativeAgentIntakeRef = useRef<{ resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> } | null>(null);
+	const nativeAgentHandled = useCallback((accepted: boolean) => {
+		const intake = nativeAgentIntakeRef.current; if (!intake) return;
+		nativeAgentIntakeRef.current = null; clearTimeout(intake.timer);
+		if (accepted) intake.resolve(); else intake.reject(new Error("Finish or cancel the active task before starting a new one."));
+	}, []);
+	useEffect(() => () => nativeAgentHandled(false), [nativeAgentHandled]);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
 	const [newAgentDraft, setNewAgentDraft] = useState<NewTabComposerDraft | null>(null);
 	const [newAgentFocusTarget, setNewAgentFocusTarget] = useState<
@@ -10344,6 +10386,13 @@ export function App() {
 		setProjectsLoaded(true);
 		return next;
 	}, []);
+	useEffect(
+		() => window.kestrel.onWorkspaceProjectsChanged?.((next) => {
+			setProjects(next);
+			setProjectsLoaded(true);
+		}),
+		[],
+	);
 
 	useEffect(() => {
 		// Setup links keep their provider-owned/system-browser handoff. A managed
@@ -10453,6 +10502,10 @@ export function App() {
 	}, [projects, projectsLoaded]);
 	const selectionRequestRef = useRef(0);
 	const openRuntimeSession = useCallback((sessionId: string | null) => {
+		if (nativeCompanionOpen) {
+			void sendNativeAgentAction({ type: "open-session", sessionId }).catch(() => setDeepLinkNotice("The agent panel could not open this conversation. Check the current task before trying again."));
+			return;
+		}
 		setActiveRuntimeSessionId(sessionId);
 		const requestId = ++selectionRequestRef.current;
 		void window.kestrel
@@ -10469,7 +10522,7 @@ export function App() {
 						: "Could not persist the selected conversation.",
 				);
 			});
-	}, []);
+	}, [nativeCompanionOpen]);
 	const selectProject = useCallback((projectId: string | null) => {
 		setActiveProjectId(projectId);
 		if (projectId) localStorage.setItem("kestrel:active-project-id", projectId);
@@ -10525,12 +10578,18 @@ export function App() {
 					? projects.find((project) => project.id === projectId)
 					: undefined;
 		const trimmed = prompt.trim();
+		if (nativeCompanionOpen) {
+			return sendNativeAgentAction({ type: "new-agent", prompt, focusTarget,
+				...(workspaceRoot ?? selectedProject?.path ? { workspaceRoot: workspaceRoot ?? selectedProject!.path } : {}),
+				...(selectedProject?.id ? { projectId: selectedProject.id } : { projectId: null }), ...(draft ? { draft } : {}),
+			}).then(() => true, () => { setDeepLinkNotice("The agent panel did not accept the task. Check the current task before trying again."); return false; });
+		}
 		if (
 			focusTarget === "prompt" &&
 			!trimmed &&
 			Date.now() - lastPromptedNewAgentAtRef.current < 500
 		) {
-			return;
+			return false;
 		}
 		if (trimmed) lastPromptedNewAgentAtRef.current = Date.now();
 		setNewAgentPrompt(prompt);
@@ -10540,11 +10599,23 @@ export function App() {
 		setNewAgentFocusTarget(focusTarget);
 		setNewAgentRequestId((current) => current + 1);
 		revealAgentSidebar();
-	}, [activeProjectId, projects, revealAgentSidebar]);
+		return true;
+	}, [activeProjectId, projects, revealAgentSidebar, nativeCompanionOpen]);
+	useEffect(() => {
+		if (!nativeChromiumPanel) return;
+		return subscribeNativeAgentActions(action => {
+			if (action.type === "open-session") { openRuntimeSession(action.sessionId); return; }
+			if (nativeAgentIntakeRef.current || runtimeAgentState !== null) throw new Error("Finish or cancel the active task before starting a new one.");
+			return new Promise<void>((resolve, reject) => {
+				const timer = setTimeout(() => nativeAgentHandled(false), 8_000);
+				nativeAgentIntakeRef.current = { resolve, reject, timer };
+				startNewAgent(action.prompt, action.workspaceRoot, action.focusTarget, action.projectId, action.draft);
+			});
+		});
+	}, [startNewAgent, openRuntimeSession, runtimeAgentState, nativeAgentHandled]);
 	const submitNewTabDraft = useCallback((draft: NewTabComposerDraft) => {
 		if (runtimeAgentState !== null) return false;
-		startNewAgent(draft.prompt, draft.workspaceRoot, "prompt", draft.projectId ?? null, draft);
-		return true;
+		return startNewAgent(draft.prompt, draft.workspaceRoot, "prompt", draft.projectId ?? null, draft);
 	}, [runtimeAgentState, startNewAgent]);
 	const createPersistentAgent = useCallback(
 		async (title: string, agentTemplate?: AgentTemplate) => {
@@ -10822,6 +10893,10 @@ export function App() {
 		void openAppPage("approvals");
 	}, [focusRuntimeApproval, openAppPage, runtimeWaiting, snapshotPendingCount]);
 	const toggleAgentSidebar = useCallback(() => {
+		if (nativeChromiumPanel) {
+			void closeNativeAgentPanel().catch(() => {});
+			return;
+		}
 		const activeTab = browser.state?.tabs.find(
 			(tab) => tab.id === browser.state?.activeTabId,
 		);
@@ -11223,7 +11298,7 @@ export function App() {
 		(project) => project.id === projectSettingsProjectId,
 	);
 	const presentedAgentSidebarOpen =
-		appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen;
+		nativeChromiumPanel || (!nativeCompanionOpen && (appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen));
 	const appPage = appPageId ? (
 		<motion.div
 			key={appPageId}
@@ -11426,7 +11501,7 @@ export function App() {
 				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
-					<section className="browser-main-plane">
+					{!nativeChromiumPanel && <section className="browser-main-plane">
 						<AnimatePresence initial={false}>
 							{deepLinkNotice && (
 								<motion.small
@@ -11485,8 +11560,8 @@ export function App() {
 						onOpenLifeMemory={() => void openAppPage("memory")}
 						{...(appPage ? { appPage } : {})}
 					/>
-				</section>
-				<AgentSidebar
+				</section>}
+				{!nativeCompanionOpen && <AgentSidebar
 					communicationAssistant={
 						<CommunicationCodeAssistant
 							browser={browser}
@@ -11497,7 +11572,7 @@ export function App() {
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
-					collapsed={!presentedAgentSidebarOpen}
+					collapsed={!nativeChromiumPanel && !presentedAgentSidebarOpen}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}
@@ -11517,6 +11592,7 @@ export function App() {
 						externalIntake={externalIntake}
 						externalIntakeRequestId={externalIntakeRequestId}
 						newAgentRequestId={newAgentRequestId}
+						onNewAgentHandled={nativeAgentHandled}
 						newAgentPrompt={newAgentPrompt}
 						newAgentWorkspace={newAgentWorkspace}
 						newAgentProjectId={newAgentProjectId}
@@ -11538,7 +11614,7 @@ export function App() {
 						}}
 						onReviewLearnedSkill={reviewLearnedSkill}
 					/>
-				</AgentSidebar>
+				</AgentSidebar>}
 				<DefaultBrowserPrompt
 					isOpen={showDefaultBrowserPrompt}
 					onClose={() => {

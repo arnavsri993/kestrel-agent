@@ -34,16 +34,61 @@ The extension subsystem has three layers:
 Kestrel browser UI and typed IPC
   -> BrowserExtensionManager and compatibility report
   -> ExtensionRuntime adapter
-  -> ElectronExtensionRuntime today
+  -> ElectronExtensionRuntime (shipping desktop) or ChromiumExtensionRuntime (native CEF lane)
 ```
 
 `BrowserExtensionManager` owns signed-package validation, safe extraction,
 review-token lifecycle, persistence, enable/disable/reload, compatibility
 analysis, and public record redaction. It has no Electron `Session` dependency.
-`ElectronExtensionRuntime` is the only adapter that calls Electron's extension
-and service-worker APIs. A future `ChromiumExtensionRuntime` can implement the
-same small runtime boundary without changing the installer, stored report, or
-management UI.
+`ElectronExtensionRuntime` remains the shipping desktop adapter. The native CEF
+lane injects `ChromiumExtensionRuntime` with either a legacy startup-registration
+port or an opt-in live native port. Chromium-backed compatibility
+analysis may emit `chromium_documented` evidence; existing Electron-era reports
+are never rewritten in place.
+
+### Live native extension lane
+
+The CEF 152 normal-tab-model host supports `--kestrel-live-extensions` together
+with `--kestrel-user-extensions` and `--kestrel-chrome-tab-model`. The trusted
+native process owns a private browser-protocol socket pair; it creates no TCP
+listener unless debugging is explicitly requested at launch. The renderer can
+only list, inspect, install a reviewed package, toggle, reload, or uninstall.
+It cannot submit a protocol method, script, package path, or profile path.
+
+The native host seeds denied file access before loading each reviewed package,
+then verifies actual Chromium identity, version, path, enabled state, and file
+permission. A hidden Chromium management document supplies data-preserving
+enable/disable controls without a second visible window or tab. The privileged
+Kestrel shell remains in its separate extension-free browser context.
+
+`Check updates` downloads a fresh signed package using the actual native Chromium
+version. A newer version requires a new review handle; downgrade attempts are
+rejected. Update and uninstall journals prevent a process interruption from
+loading new bytes under old permission metadata or resurrecting an uninstall.
+Uncertain runtime removal preserves package copies and blocks further changes
+until acknowledged recovery. These are reviewed updates; Chromium's background
+Store updater remains outside this lane's verified behavior.
+
+The live smoke uses a disposable profile and the real JSON Formatter Store
+package. It exercises Kestrel's visible review/install and update controls,
+content-script behavior, toggles, reload, storage after restart, uninstall, and
+the absence of Kestrel's privileged bridge on extension/user pages:
+
+```sh
+corepack pnpm build:native-chromium-host
+KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
+  corepack pnpm test:native-live-extensions
+```
+
+The native `storage.sync` namespace has verified local caching across restart;
+account and cross-device synchronization remain unavailable. This development
+lane does not replace `/Applications/Kestrel.app` or establish arbitrary Store
+extension compatibility, production signing, profile transfer, or Electron
+retirement. The native parity gate continues reporting its separate gaps.
+
+The normal native development route (`KESTREL_DESKTOP_RUNTIME=chromium corepack
+pnpm dev:desktop`) uses this live user-browser lane in its separate durable
+native development profile. It does not open the isolated extension workbench.
 
 The current runtime is Electron's persistent user-browser partition. Electron
 only supports unpacked extensions and requires extensions to be loaded again at

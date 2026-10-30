@@ -1106,7 +1106,9 @@ export class TaskRequirementAnalyzer {
 			mark("image_understanding", 0.86);
 		if (
 			input.requiresStructuredOutput ||
-			/\b(json|structured output|csv)\b/.test(normalized) ||
+			// Reading package.json or a .csv file does not request structured
+			// model output. Keep explicit format requests as capability gates.
+			/(?<![.\w-])(?:json|structured output|csv)\b/.test(normalized) ||
 			(/\bschema\b/.test(normalized) && softwareContext)
 		)
 			mark("structured_output", 0.86);

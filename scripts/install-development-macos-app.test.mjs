@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -60,6 +60,19 @@ function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath) {
 const testSuite = process.platform === "darwin" ? describe : describe.skip;
 
 testSuite("development macOS app installer", () => {
+  it("rejects a native source without cutover acceptance before moving any app", () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-installer-native-guard-"));
+    const installRoot = join(root, "Applications"), trashRoot = join(root, "Trash");
+    const source = createBundle(join(root, "release"), "Kestrel.app", "com.kestrel.native-chromium-host.dev");
+    const canonical = createBundle(installRoot, "Kestrel.app");
+    writeFileSync(join(canonical, "Contents", "payload.txt"), "working canonical");
+    const result = spawnSync(process.execPath, [script, source], { encoding: "utf8", env: { ...process.env, KESTREL_INSTALL_NATIVE_CANONICAL: "", KESTREL_MACOS_INSTALL_ROOT: installRoot, KESTREL_MACOS_TRASH_ROOT: trashRoot, KESTREL_SKIP_SPOTLIGHT: "1", KESTREL_SKIP_LSREGISTER: "1" } });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("Native cutover is not accepted");
+    expect(readPayload(canonical)).toBe("working canonical");
+    expect(existsSync(source)).toBe(true);
+    expect(existsSync(trashRoot)).toBe(false);
+  });
   it("keeps one canonical app and trashes duplicates", () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-installer-test-"));
     const installRoot = join(root, "Applications");
@@ -175,6 +188,50 @@ testSuite("development macOS app installer", () => {
     expect(readlinkSync(join(installedFramework, "Electron Framework"))).toBe(
       "Versions/Current/Electron Framework",
     );
+  });
+
+  it("preserves canonical and duplicate bundles when staged native evidence mismatches", () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-installer-native-stage-"));
+    const installRoot = join(root, "Applications");
+    const desktopRoot = join(root, "Desktop");
+    const trashRoot = join(root, "Trash");
+    mkdirSync(installRoot);
+    mkdirSync(desktopRoot);
+
+    const sourceRoot = join(root, "release");
+    mkdirSync(sourceRoot);
+    const source = createBundle(sourceRoot, "Kestrel.app");
+    const canonical = createBundle(installRoot, "Kestrel.app");
+    writeFileSync(join(canonical, "Contents", "payload.txt"), "working canonical");
+    const duplicate = createBundle(desktopRoot, "Kestrel 2.app");
+    const manifestPath = join(root, "evidence.json");
+    writeFileSync(manifestPath, JSON.stringify({
+      version: 1,
+      candidateSha256: "0".repeat(64),
+      gates: {},
+    }));
+
+    const result = spawnSync(process.execPath, [script, source], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        KESTREL_INSTALL_NATIVE_CANONICAL: "1",
+        KESTREL_NATIVE_RETIREMENT_EVIDENCE: manifestPath,
+        KESTREL_MACOS_INSTALL_ROOT: installRoot,
+        KESTREL_MACOS_SEARCH_ROOTS: [installRoot, desktopRoot].join(":"),
+        KESTREL_MACOS_TRASH_ROOT: trashRoot,
+        KESTREL_DOCUMENTS_ROOT: join(root, "Documents"),
+        KESTREL_SKIP_SPOTLIGHT: "1",
+        KESTREL_SKIP_LSREGISTER: "1",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("does not match the complete candidate bundle");
+    expect(readPayload(canonical)).toBe("working canonical");
+    expect(readPayload(duplicate)).toBe("Kestrel 2.app");
+    expect(existsSync(source)).toBe(true);
+    expect(existsSync(trashRoot)).toBe(false);
   });
 });
 

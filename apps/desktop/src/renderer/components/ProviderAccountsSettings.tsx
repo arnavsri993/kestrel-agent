@@ -202,6 +202,7 @@ function groupsFor(
 
 export function ProviderAccountsSettings() {
 	const [accounts, setAccounts] = useState<ProviderAccountSummary[]>([]);
+	const [managedAccountIds, setManagedAccountIds] = useState<Set<string>>(new Set());
 	const [form, setForm] = useState<AccountForm>(INITIAL_FORM);
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
@@ -229,6 +230,7 @@ export function ProviderAccountsSettings() {
 			configured.providerAccounts ?? [],
 			runtime.providerAccounts ?? [],
 		);
+		setManagedAccountIds(new Set((configured.providerAccounts ?? []).map(account => account.id)));
 		setAccounts(merged);
 		return merged;
 	}
@@ -433,6 +435,7 @@ export function ProviderAccountsSettings() {
 								<div className="provider-account-cards">
 									{group.accounts.map((account) => {
 										const status = statusFor(account);
+										const managed = managedAccountIds.has(account.id);
 										return (
 											<article key={account.id} className="provider-account-card">
 												<header>
@@ -461,7 +464,7 @@ export function ProviderAccountsSettings() {
 													>
 														{busy === `refresh:${account.id}` ? "Refreshing…" : "Refresh models"}
 													</button>
-													{account.authTransport === "oauth" ? (
+													{managed && account.authTransport === "oauth" ? (
 														<button
 															type="button"
 															className="button primary"
@@ -471,7 +474,7 @@ export function ProviderAccountsSettings() {
 															{busy === `connect:${account.id}` ? "Connecting…" : "Connect"}
 														</button>
 													) : null}
-													<button
+													{managed && <button
 														type="button"
 														className="button secondary"
 														disabled={Boolean(busy)}
@@ -488,11 +491,12 @@ export function ProviderAccountsSettings() {
 															: account.enabled
 																? "Disable"
 																: "Enable"}
-													</button>
+													</button>}
 												</div>
+												{!managed && <p>Manage this connection in Accounts and access.</p>}
 												<details className="provider-account-details">
 													<summary>Account details</summary>
-													<form
+													{managed && <form
 														className="provider-account-rename"
 														onSubmit={(event) => {
 															event.preventDefault();
@@ -512,8 +516,8 @@ export function ProviderAccountsSettings() {
 															<button type="submit" className="button secondary" disabled={Boolean(busy)}>
 																Rename
 															</button>
-														</form>
-													{account.authTransport === "api_key" ? (
+														</form>}
+													{managed && account.authTransport === "api_key" ? (
 														<form
 															className="provider-account-rename"
 															onSubmit={(event) => {
@@ -562,14 +566,14 @@ export function ProviderAccountsSettings() {
 															<p>No models have been discovered for this account yet.</p>
 														)}
 													</div>
-													<button
+													{managed && <button
 														type="button"
 														className="quiet-link provider-account-remove"
 														disabled={Boolean(busy)}
 														onClick={() => void removeAccount(account)}
 													>
 														{busy === `remove:${account.id}` ? "Removing…" : "Remove account"}
-													</button>
+													</button>}
 												</details>
 											</article>
 										);

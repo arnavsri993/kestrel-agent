@@ -3411,6 +3411,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("runtime-run-agent"),
 		sessionId: z.string().min(1),
 		message: z.string().min(1).max(1_000_000),
+		purpose: z.literal("first-run-read-only-check").optional(),
 		model: z.string().min(1).max(200),
 		providerIds: z.array(z.string().min(1).max(100)).min(1),
 		providerModels: z.record(z.string(), z.string().min(1).max(200)).optional(),
@@ -5182,6 +5183,8 @@ export const LocalRuntimeStatusSchema = z.object({
 	runtimeVersion: z.string().min(1).max(100).optional(),
 	runtimeDownloadBytes: z.number().int().positive(),
 	localModels: z.array(LocalModelSummarySchema),
+	/** Discovered models are choices, not configured or live-verified routes. */
+	detectedModels: z.array(LocalModelSummarySchema).max(200).optional(),
 	verifiedModel: z.string().min(1).max(200).optional(),
 	verifiedAt: z.string().datetime().optional(),
 	/** A host can explicitly defer local-runtime ownership without pretending it is a device limitation. */
@@ -5356,6 +5359,7 @@ export interface RendererBridge {
 	onDeepLink(callback: (deepLink: KestrelDeepLink) => void): () => void;
 	onExternalIntake(callback: (intake: ExternalIntake) => void): () => void;
 	onSnapshot(callback: (snapshot: WorkspaceSnapshot) => void): () => void;
+	onWorkspaceProjectsChanged?(callback: (projects: Project[]) => void): () => void;
 	onPetStatus(callback: (status: PetStatus) => void): () => void;
 	onPetActivity(callback: (activity: PetActivityState) => void): () => void;
 	onRuntimeEvent(callback: (event: RuntimeEvent) => void): () => void;

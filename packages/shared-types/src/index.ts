@@ -18,3 +18,5 @@ export * from "./agent-templates";
 export * from "./resource-access";
 
 export * from "./source-observations";
+export * from "./renderer-bridge";
+export * from "./request-timeouts";

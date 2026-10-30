@@ -14,6 +14,14 @@ import type { ModelProvider } from "./providers";
 import { ModelCatalog } from "./providers/model-catalog";
 import { AccountAvailabilityMonitor } from "./routing/account-availability";
 
+it("does not require structured model output merely to inspect a manifest filename", () => {
+	const analyzer = new TaskRequirementAnalyzer();
+	for (const path of ["package.json", "config.json", "records.csv"])
+		expect(analyzer.analyze("read-file", `Read one small manifest file (${path}) and state a fact.`).requiresStructuredOutput).toBe(false);
+	for (const format of ["JSON", "CSV", "structured output"])
+		expect(analyzer.analyze("format", `Return the answer as ${format}.`).requiresStructuredOutput).toBe(true);
+});
+
 function provider(input: {
 	id: string;
 	model: string;

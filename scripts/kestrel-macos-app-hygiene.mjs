@@ -26,6 +26,7 @@ export const supportedBundleIdentifiers = new Set([
 	"com.kestrel.desktop",
 	"com.kestrel.desktop.dev",
 	"com.kestrel.desktop.dev.launcher",
+	"com.kestrel.native-chromium-host.dev",
 ]);
 
 export function uniquePaths(paths) {
@@ -70,6 +71,7 @@ export function isKestrelBundle(bundlePath) {
 	const name = plistValue(bundlePath, "CFBundleName");
 	const displayName = plistValue(bundlePath, "CFBundleDisplayName");
 	const isKestrelIdentifier =
+		supportedBundleIdentifiers.has(identifier) ||
 		identifier === kestrelBundleIdentifier ||
 		identifier.startsWith(`${kestrelBundleIdentifier}.`);
 	const isKestrelName = [name, displayName].some(

@@ -8,7 +8,9 @@ import { fileURLToPath } from "node:url";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const app = await buildNativeChromiumHost();
+const app = process.env.KESTREL_NATIVE_TEST_APP
+	? resolve(process.env.KESTREL_NATIVE_TEST_APP)
+	: await buildNativeChromiumHost();
 const executable = join(app, "Contents", "MacOS", "Kestrel");
 // Older CEF builds started GCM registration shortly after startup, after the
 // host-ready marker. Keep each clean-profile instance alive long enough to
@@ -131,7 +133,7 @@ async function startNativeHost(args, requiredMarkers, label) {
 function assertHostSecurity(output, label) {
 	assert.match(
 		output,
-		/KESTREL_NATIVE_CHROMIUM_HOST_READY pid=\d+ credential_storage=disabled background_networking=disabled/,
+		/KESTREL_NATIVE_CHROMIUM_HOST_READY pid=\d+ credential_storage=profile-sealed chromium_keychain=mock background_networking=disabled/,
 		`${label} must avoid Keychain and background networking: ${output}`,
 	);
 	assert.doesNotMatch(
@@ -178,8 +180,8 @@ function assertSandboxedWorkers(child, label) {
 function assertFullRendererSetupStatus(output) {
 	assert.match(
 		output,
-		/KESTREL_NATIVE_CHROMIUM_CREDENTIAL_STATUS_EMPTY/,
-		`The native full renderer must receive an empty credential status without Keychain: ${output}`,
+		/KESTREL_NATIVE_CHROMIUM_CREDENTIAL_LIST_OK mode=profile-sealed/,
+		`The native full renderer must receive profile-sealed credential status without Keychain: ${output}`,
 	);
 	assert.match(
 		output,

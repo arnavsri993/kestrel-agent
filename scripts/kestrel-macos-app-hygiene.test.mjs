@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
 	cleanupDuplicateKestrelApps,
+	isKestrelBundle,
 	markDirectoryUnindexed,
 	preventSpotlightIndexing,
 	removeStaleInstallStagingDirectories,
@@ -39,6 +40,11 @@ function createBundle(root, name, identifier = "com.kestrel.desktop.dev") {
 const testSuite = process.platform === "darwin" ? describe : describe.skip;
 
 testSuite("kestrel macOS app hygiene", () => {
+	it("recognizes the supported native bundle without accepting unrelated native identifiers", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-hygiene-native-"));
+		expect(isKestrelBundle(createBundle(root, "Kestrel Native.app", "com.kestrel.native-chromium-host.dev"))).toBe(true);
+		expect(isKestrelBundle(createBundle(root, "Unrelated.app", "com.kestrel.native-unrelated"))).toBe(false);
+	});
 	it("finds Agent worktree release bundles under Documents", () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-hygiene-worktree-"));
 		const documentsRoot = join(root, "Documents");

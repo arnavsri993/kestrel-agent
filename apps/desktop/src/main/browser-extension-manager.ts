@@ -1,6 +1,10 @@
 import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
 import {
+	closeSync,
 	existsSync,
+	fsyncSync,
+	openSync,
+	statSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -23,6 +27,7 @@ import {
 	analyzeExtensionCompatibility,
 	compatibilityWithRuntime,
 	emptyRuntimeVerification,
+	type ExtensionCompatibilityRuntimeBackend,
 } from "./extension-compatibility";
 import type { ExtensionRuntime } from "./extension-runtime";
 
@@ -364,7 +369,7 @@ async function confirmServiceWorkerStartup(
 					() =>
 						reject(
 							new Error(
-								"Electron could not start this extension's background service worker. The extension may rely on Chrome APIs that Kestrel does not support.",
+								"Kestrel could not start this extension's background service worker. The extension may rely on Chrome APIs that Kestrel does not support.",
 							),
 						),
 					EXTENSION_STARTUP_TIMEOUT_MS,
@@ -373,7 +378,7 @@ async function confirmServiceWorkerStartup(
 		]);
 	} catch (cause) {
 		throw new Error(
-			"Electron could not start this extension's background service worker. The extension may rely on Chrome APIs that Kestrel does not support.",
+			"Kestrel could not start this extension's background service worker. The extension may rely on Chrome APIs that Kestrel does not support.",
 			{ cause },
 		);
 	} finally {
@@ -580,6 +585,10 @@ function injectVerifiedManifestKey(extensionDir: string, publicKey: Buffer): voi
 		);
 	}
 
+	if (typeof manifest.version !== "string")
+		throw new Error("Kestrel rejected the package because its extension version is invalid.");
+	chromeVersionParts(manifest.version);
+
 	if (typeof manifest.key === "string") {
 		try {
 			if (extensionIdFromPublicKey(Buffer.from(manifest.key, "base64")) === extensionIdFromPublicKey(publicKey))
@@ -640,6 +649,52 @@ type PendingInspection = {
 	stagingDir?: string;
 	expiresAt: number;
 };
+
+const UpdateJournalSchema = z.object({
+	format: z.literal(1),
+	id: z.string().regex(/^[a-p]{32}$/),
+	stagingName: z.string().regex(/^\.inspection-[a-f0-9-]{36}$/),
+	backupName: z.string().regex(/^\.[a-p]{32}-[a-f0-9-]{36}\.backup$/),
+	candidateName: z.string().regex(/^\.recovery-[a-p]{32}-[a-f0-9-]{36}$/),
+	previousPackageManifestHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+	previousRecord: StoredExtensionSchema.nullable(),
+	previousRecordManaged: z.boolean(),
+}).strict();
+type UpdateJournal = z.infer<typeof UpdateJournalSchema>;
+const MAX_UPDATE_JOURNAL_BYTES = 256 * 1024;
+const UninstallJournalSchema = z.object({
+	format: z.literal(1),
+	id: z.string().regex(/^[a-p]{32}$/),
+	source: z.literal("chrome_web_store"),
+}).strict();
+type UninstallJournal = z.infer<typeof UninstallJournalSchema>;
+const MAX_UNINSTALL_JOURNAL_BYTES = 1024;
+
+function syncDirectory(directory: string): void {
+	const fd = openSync(directory, "r");
+	try { fsyncSync(fd); } finally { closeSync(fd); }
+}
+
+function writeDurableJson(path: string, value: unknown): void {
+	const temporaryPath = `${path}.${randomUUID()}.new`;
+	let fd: number | undefined;
+	try {
+		fd = openSync(temporaryPath, "wx", 0o600);
+		writeFileSync(fd, JSON.stringify(value, null, 2), "utf8");
+		fsyncSync(fd);
+		closeSync(fd);
+		fd = undefined;
+		renameSync(temporaryPath, path);
+		syncDirectory(dirname(path));
+	} finally {
+		if (fd !== undefined) closeSync(fd);
+		if (existsSync(temporaryPath)) rmSync(temporaryPath, { force: true });
+	}
+}
+
+function packageManifestHash(path: string): string {
+	return createHash("sha256").update(readFileSync(join(path, "manifest.json"))).digest("hex");
+}
 
 function publicExtension(extension: StoredExtension): InstalledExtension {
 	const { path: _path, ...publicRecord } = extension;
@@ -725,6 +780,27 @@ function isManagedChromeWebStoreExtension(
 	);
 }
 
+// Chrome compares one to four unsigned 16-bit components, padding missing
+// components with zero. A reviewed package must never downgrade an install.
+function chromeVersionParts(version: string): number[] {
+	if (!/^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){0,3}$/.test(version))
+		throw new Error("Kestrel rejected the package because its extension version is invalid.");
+	const parts = version.split(".").map(Number);
+	if (parts.some((part) => part > 65535) || parts.every((part) => part === 0))
+		throw new Error("Kestrel rejected the package because its extension version is invalid.");
+	return parts;
+}
+
+function compareChromeVersions(next: string, installed: string): number {
+	const nextParts = chromeVersionParts(next);
+	const installedParts = chromeVersionParts(installed);
+	for (let index = 0; index < 4; index++) {
+		const difference = (nextParts[index] ?? 0) - (installedParts[index] ?? 0);
+		if (difference !== 0) return Math.sign(difference);
+	}
+	return 0;
+}
+
 function isOwnedExtensionDirectory(path: string, extensionsDir: string): boolean {
 	return (
 		resolve(path).startsWith(
@@ -736,7 +812,15 @@ function isOwnedExtensionDirectory(path: string, extensionsDir: string): boolean
 export class BrowserExtensionManager {
 	private readonly extensionsDir: string;
 	private readonly metadataPath: string;
+	private readonly updateJournalPath: string;
+	private readonly uninstallJournalPath: string;
+	private readonly chromiumVersion: string;
+	private pendingUpdate: UpdateJournal | null = null;
+	private updateJournalError: Error | null = null;
+	private pendingUninstall: UninstallJournal | null = null;
+	private uninstallJournalError: Error | null = null;
 	private readonly allowLocalExtensions: boolean;
+	private readonly runtimeBackend: ExtensionCompatibilityRuntimeBackend;
 	private readonly loadedFromRegistry = new Set<string>();
 	private readonly pendingInspections = new Map<string, PendingInspection>();
 	private extensions: Map<string, StoredExtension> = new Map();
@@ -745,14 +829,34 @@ export class BrowserExtensionManager {
 
 	constructor(
 		baseStorageDir: string,
-		options: { allowLocalExtensions?: boolean } = {},
+		options: {
+			allowLocalExtensions?: boolean;
+			runtimeBackend?: ExtensionCompatibilityRuntimeBackend;
+			chromiumVersion?: string;
+		} = {},
 	) {
 		this.extensionsDir = join(baseStorageDir, "browser-extensions");
 		this.metadataPath = join(this.extensionsDir, "extensions.json");
+		this.updateJournalPath = join(this.extensionsDir, ".store-update-journal.json");
+		this.uninstallJournalPath = join(this.extensionsDir, ".store-uninstall-journal.json");
+		const chromiumVersion = options.chromiumVersion ?? "128.0.6613.120";
+		if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(chromiumVersion))
+			throw new Error("The Chromium version must contain four numeric components.");
+		chromeVersionParts(chromiumVersion);
+		this.chromiumVersion = chromiumVersion;
 		this.allowLocalExtensions = options.allowLocalExtensions === true;
+		this.runtimeBackend = options.runtimeBackend ?? "electron";
 		mkdirSync(this.extensionsDir, { recursive: true, mode: 0o700 });
-		this.removeExpiredInspectionDirectories();
+		this.loadUpdateJournal();
+		this.loadUninstallJournal();
+		if (!this.pendingUpdate && !this.updateJournalError && !this.pendingUninstall && !this.uninstallJournalError) this.removeExpiredInspectionDirectories();
 		this.loadRegistry();
+	}
+
+	private analyzePackage(directory: string): ExtensionCompatibilityReport {
+		return analyzeExtensionCompatibility(directory, {
+			runtimeBackend: this.runtimeBackend,
+		});
 	}
 
 	private serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -810,18 +914,154 @@ export class BrowserExtensionManager {
 		}
 	}
 
-	private saveRegistry(): void {
-		const list = [...this.skippedExtensions, ...this.extensions.values()];
-		const temporaryPath = `${this.metadataPath}.${randomUUID()}.new`;
+	private saveRegistry(previousRecord?: UpdateJournal["previousRecord"]): void {
+		const records = [...this.skippedExtensions, ...this.extensions.values()];
+		writeDurableJson(this.metadataPath, records.map(record =>
+			previousRecord?.id === record.id ? previousRecord : record));
+	}
+
+	private loadUpdateJournal(): void {
+		if (!existsSync(this.updateJournalPath)) return;
 		try {
-			writeFileSync(temporaryPath, JSON.stringify(list, null, 2), {
-				encoding: "utf8",
-				mode: 0o600,
-			});
-			renameSync(temporaryPath, this.metadataPath);
-		} finally {
-			if (existsSync(temporaryPath)) rmSync(temporaryPath, { force: true });
+			if (statSync(this.updateJournalPath).size > MAX_UPDATE_JOURNAL_BYTES)
+				throw new Error("The extension recovery journal exceeds its safety limit.");
+			const journal = UpdateJournalSchema.parse(JSON.parse(readFileSync(this.updateJournalPath, "utf8")));
+			if (!journal.backupName.startsWith(`.${journal.id}-`) ||
+				!journal.candidateName.startsWith(`.recovery-${journal.id}-`) ||
+				(journal.previousRecordManaged && !journal.previousRecord) ||
+				(journal.previousRecord && journal.previousPackageManifestHash === null) ||
+				(journal.previousRecord && (journal.previousRecord.id !== journal.id ||
+					resolve(journal.previousRecord.path) !== resolve(join(this.extensionsDir, journal.id)))))
+				throw new Error("The extension recovery journal contains inconsistent package paths.");
+			this.pendingUpdate = journal;
+		} catch (cause) {
+			this.updateJournalError = new Error("Extension recovery is required; the update journal could not be verified. All package copies were preserved.", { cause });
 		}
+	}
+
+	private assertRecoveryComplete(): void {
+		if (this.updateJournalError) throw this.updateJournalError;
+		if (this.uninstallJournalError) throw this.uninstallJournalError;
+		if (this.pendingUninstall)
+			throw new Error("Extension uninstall recovery is required. Initialize the extension runtime to finish removing the extension before listing or changing extensions.");
+		if (this.pendingUpdate)
+			throw new Error("Extension update recovery is required. Initialize the extension runtime to recover the previous package before listing or changing extensions.");
+	}
+
+	private loadUninstallJournal(): void {
+		if (!existsSync(this.uninstallJournalPath)) return;
+		try {
+			if (statSync(this.uninstallJournalPath).size > MAX_UNINSTALL_JOURNAL_BYTES)
+				throw new Error("The extension uninstall journal exceeds its safety limit.");
+			const journal = UninstallJournalSchema.parse(JSON.parse(readFileSync(this.uninstallJournalPath, "utf8")));
+			const record = this.extensions.get(journal.id);
+			if (record && !isManagedChromeWebStoreExtension(record, this.extensionsDir))
+				throw new Error("The extension uninstall journal does not identify an owned Store package.");
+			this.pendingUninstall = journal;
+		} catch (cause) {
+			this.uninstallJournalError = new Error("Extension uninstall recovery is required; the uninstall journal could not be verified. All package data was preserved.", { cause });
+		}
+	}
+
+	private writeUninstallJournal(journal: UninstallJournal): void {
+		this.pendingUninstall = journal;
+		writeDurableJson(this.uninstallJournalPath, journal);
+	}
+
+	private clearUninstallJournal(): void {
+		rmSync(this.uninstallJournalPath, { force: true });
+		syncDirectory(this.extensionsDir);
+		this.pendingUninstall = null;
+	}
+
+	private async recoverPendingUninstall(runtime?: ExtensionRuntime): Promise<void> {
+		if (this.uninstallJournalError) throw this.uninstallJournalError;
+		const journal = this.pendingUninstall;
+		if (!journal) return;
+		if (runtime) {
+			if (runtime.uninstallExtension) await runtime.uninstallExtension(journal.id);
+			else await runtime.removeExtension(journal.id);
+		}
+		const previousRecord = this.extensions.get(journal.id);
+		const previousSkipped = this.skippedExtensions;
+		const wasLoaded = this.loadedFromRegistry.has(journal.id);
+		this.extensions.delete(journal.id);
+		this.skippedExtensions = this.skippedExtensions.filter(item => item.id !== journal.id);
+		this.loadedFromRegistry.delete(journal.id);
+		try { this.saveRegistry(); } catch (cause) {
+			if (previousRecord) this.extensions.set(journal.id, previousRecord);
+			this.skippedExtensions = previousSkipped;
+			if (wasLoaded) this.loadedFromRegistry.add(journal.id);
+			throw cause;
+		}
+		this.clearUninstallJournal();
+		const packagePath = join(this.extensionsDir, journal.id);
+		try { rmSync(packagePath, { recursive: true, force: true }); } catch { /* registry removal is durable */ }
+	}
+
+	private writeUpdateJournal(journal: UpdateJournal): void {
+		if (Buffer.byteLength(JSON.stringify(journal, null, 2), "utf8") > MAX_UPDATE_JOURNAL_BYTES)
+			throw new Error("The extension recovery journal exceeds its safety limit.");
+		// Set the guard before writing: an fsync failure may occur after rename.
+		this.pendingUpdate = journal;
+		writeDurableJson(this.updateJournalPath, journal);
+	}
+
+	private clearUpdateJournal(): void {
+		rmSync(this.updateJournalPath, { force: true });
+		syncDirectory(this.extensionsDir);
+		this.pendingUpdate = null;
+	}
+
+	private async recoverPendingUpdate(runtime: ExtensionRuntime, alreadyDisabled = false): Promise<void> {
+		if (this.updateJournalError) throw this.updateJournalError;
+		const journal = this.pendingUpdate;
+		if (!journal) return;
+		const target = join(this.extensionsDir, journal.id);
+		const backup = join(this.extensionsDir, journal.backupName);
+		const candidate = join(this.extensionsDir, journal.candidateName);
+		const staging = join(this.extensionsDir, journal.stagingName);
+		// The native profile may have auto-registered a candidate even though
+		// this manager has not loaded anything yet. Disable by identity and wait.
+		if (!alreadyDisabled) await runtime.removeExtension(journal.id);
+		if (existsSync(backup)) {
+			if (existsSync(target)) {
+				if (existsSync(candidate)) throw new Error("Extension recovery found ambiguous candidate copies; all files were preserved.");
+				renameSync(target, candidate);
+				syncDirectory(this.extensionsDir);
+			}
+			renameSync(backup, target);
+			syncDirectory(this.extensionsDir);
+		}
+		if (journal.previousPackageManifestHash !== null) {
+			if (!existsSync(target) || packageManifestHash(target) !== journal.previousPackageManifestHash)
+				throw new Error("Extension recovery could not verify the previous package; all copies were preserved.");
+			if (journal.previousRecordManaged && journal.previousRecord &&
+				compareChromeVersions(readExtensionManifest(target, journal.id).version, journal.previousRecord.version) !== 0)
+				throw new Error("Extension recovery found mismatched previous version metadata; all copies were preserved.");
+		} else if (existsSync(target)) {
+			if (existsSync(candidate)) throw new Error("Extension recovery found ambiguous candidate copies; all files were preserved.");
+			renameSync(target, candidate);
+			syncDirectory(this.extensionsDir);
+		}
+		if (existsSync(staging)) {
+			if (existsSync(candidate)) throw new Error("Extension recovery found multiple candidate packages; all copies were preserved.");
+			renameSync(staging, candidate);
+			syncDirectory(this.extensionsDir);
+		}
+		this.extensions.delete(journal.id);
+		this.skippedExtensions = this.skippedExtensions.filter(extension => extension.id !== journal.id);
+		if (journal.previousRecord) {
+			const { compatibility, ...previousFields } = journal.previousRecord;
+			const previous: StoredExtension = {
+				...previousFields,
+				...(compatibility !== undefined ? { compatibility: restoredCompatibility(compatibility) } : {}),
+			};
+			if (journal.previousRecordManaged) this.extensions.set(journal.id, previous);
+			else this.skippedExtensions.push(previous);
+		}
+		this.saveRegistry(journal.previousRecord);
+		this.clearUpdateJournal();
 	}
 
 	private assertLocalExtensionsAllowed(): void {
@@ -843,7 +1083,7 @@ export class BrowserExtensionManager {
 		id: string,
 		inspectionId: string,
 	): Promise<PendingInspection> {
-		const crxUrl = `https://clients2.google.com/service/update2/crx?response=redirect&prodversion=128.0.6613.120&acceptformat=crx3&x=id%3D${id}%26uc`;
+		const crxUrl = `https://clients2.google.com/service/update2/crx?response=redirect&prodversion=${this.chromiumVersion}&acceptformat=crx3&x=id%3D${id}%26uc`;
 		const downloadController = new AbortController();
 		const downloadTimeout = setTimeout(
 			() =>
@@ -873,7 +1113,8 @@ export class BrowserExtensionManager {
 			extractCrxOrZip(verifiedCrx.archive, stagingDir);
 			injectVerifiedManifestKey(stagingDir, verifiedCrx.publicKey);
 			const manifest = readExtensionManifest(stagingDir, id);
-			const compatibility = analyzeExtensionCompatibility(stagingDir);
+			chromeVersionParts(manifest.version);
+			const compatibility = this.analyzePackage(stagingDir);
 			return {
 				id,
 				inspection: {
@@ -898,6 +1139,7 @@ export class BrowserExtensionManager {
 		urlOrId: string,
 	): Promise<ChromeWebStoreExtensionInspection> {
 		return this.serialize(async () => {
+			this.assertRecoveryComplete();
 			this.cleanupExpiredInspections();
 			const id = parseExtensionIdFromUrlOrId(urlOrId);
 			if (!id)
@@ -905,24 +1147,6 @@ export class BrowserExtensionManager {
 					"Invalid Chrome Web Store URL or extension ID. Must be a 32-character ID.",
 				);
 			const inspectionId = randomUUID();
-			const existing = this.extensions.get(id);
-			if (existing) {
-				const inspection: ChromeWebStoreExtensionInspection = {
-					inspectionId,
-					id,
-					name: existing.name,
-					version: existing.version,
-					...(existing.description ? { description: existing.description } : {}),
-					source: "chrome_web_store",
-					compatibility: existing.compatibility ?? legacyCompatibility(),
-				};
-				this.pendingInspections.set(inspectionId, {
-					id,
-					inspection,
-					expiresAt: Date.now() + INSPECTION_TTL_MS,
-				});
-				return inspection;
-			}
 			const pending = await this.downloadVerifiedStorePackage(id, inspectionId);
 			this.pendingInspections.set(inspectionId, pending);
 			return pending.inspection;
@@ -934,6 +1158,8 @@ export class BrowserExtensionManager {
 		extensionPath: string,
 		expectedId: string,
 		requiresServiceWorker: boolean,
+		cleanupOnFailure = true,
+		onLoaded?: (id: string) => void,
 	): Promise<Pick<
 		ExtensionCompatibilityReport["runtime"],
 		"registered" | "ready" | "backgroundServiceWorker" | "remainedLoaded"
@@ -946,13 +1172,18 @@ export class BrowserExtensionManager {
 				allowFileAccess: false,
 			});
 			loadedId = loaded.id;
+			onLoaded?.(loaded.id);
 			if (loaded.id !== expectedId)
 				throw new Error("The extension runtime loaded an unexpected identity.");
 			const observed = runtime.getExtension(expectedId);
 			if (
 				!observed ||
 				observed.id !== expectedId ||
-				resolve(observed.path) !== resolve(extensionPath)
+				resolve(observed.path) !== resolve(extensionPath) ||
+				compareChromeVersions(
+					observed.version,
+					readExtensionManifest(extensionPath, expectedId).version,
+				) !== 0
 			)
 				throw new Error("The extension runtime did not register the verified package.");
 			let backgroundServiceWorker: "passed" | "not_applicable" = "not_applicable";
@@ -967,7 +1198,7 @@ export class BrowserExtensionManager {
 				remainedLoaded: "passed",
 			};
 		} catch (cause) {
-			if (loadedId) {
+			if (loadedId && cleanupOnFailure) {
 				try {
 					await runtime.removeExtension(loadedId);
 				} catch {
@@ -987,6 +1218,8 @@ export class BrowserExtensionManager {
 
 	async loadAll(runtime: ExtensionRuntime): Promise<void> {
 		return this.serialize(async () => {
+			await this.recoverPendingUninstall(runtime);
+			await this.recoverPendingUpdate(runtime);
 			let registryChanged = false;
 			for (const extension of this.extensions.values()) {
 				if (!extension.enabled || !existsSync(extension.path)) continue;
@@ -1035,6 +1268,7 @@ export class BrowserExtensionManager {
 	}
 
 	list(): InstalledExtension[] {
+		this.assertRecoveryComplete();
 		return [...this.extensions.values()].map(publicExtension);
 	}
 
@@ -1043,94 +1277,144 @@ export class BrowserExtensionManager {
 		runtime: ExtensionRuntime,
 	): Promise<InstalledExtension> {
 		return this.serialize(async () => {
+			this.assertRecoveryComplete();
 			this.cleanupExpiredInspections();
 			const pending = this.pendingInspections.get(inspectionId);
 			if (!pending || pending.expiresAt <= Date.now())
 				throw new Error("This extension review has expired. Review the package again before installing it.");
 			this.pendingInspections.delete(inspectionId);
-			if (pending.inspection.compatibility.state === "unsupported") {
-				if (pending.stagingDir && existsSync(pending.stagingDir))
-					rmSync(pending.stagingDir, { recursive: true, force: true });
-				throw new Error(
-					"Kestrel will not install this extension because its reviewed package requires a Chrome API Electron documents as unsupported.",
-				);
-			}
 			const existing = this.extensions.get(pending.id);
-			if (existing) return publicExtension(existing);
-			if (!pending.stagingDir || !existsSync(pending.stagingDir))
-				throw new Error("The reviewed extension package is no longer available. Review it again before installing.");
+			const previousSkipped = this.skippedExtensions;
 			const targetDir = join(this.extensionsDir, pending.id);
 			const backupDir = join(this.extensionsDir, `.${pending.id}-${randomUUID()}.backup`);
 			let backupCreated = false;
-			let targetInstalled = false;
+			let oldRuntimeDisabled = false;
+			const candidateIds = new Set<string>();
 			try {
+				if (pending.inspection.compatibility.state === "unsupported")
+					throw new Error(
+						"Kestrel will not install this extension because its reviewed package requires a Chrome API that Kestrel documents as unsupported.",
+					);
+				if (!pending.stagingDir || !existsSync(pending.stagingDir))
+					throw new Error("The reviewed extension package is no longer available. Review it again before installing.");
 				const manifest = readExtensionManifest(pending.stagingDir, pending.id);
+				chromeVersionParts(manifest.version);
+				if (existing) {
+					const comparison = compareChromeVersions(manifest.version, existing.version);
+					if (comparison < 0)
+						throw new Error("Kestrel will not downgrade an installed extension to an older reviewed version.");
+					if (comparison === 0) return publicExtension(existing);
+				}
+				const previousRecord = existing ?? previousSkipped.find(extension => extension.id === pending.id) ?? null;
+				const rawRecords = existsSync(this.metadataPath) ? JSON.parse(readFileSync(this.metadataPath, "utf8")) : [];
+				const persistedPrevious = Array.isArray(rawRecords)
+					? rawRecords.find((record: StoredExtension) => record.id === pending.id) : undefined;
+				const journal: UpdateJournal = {
+					format: 1, id: pending.id,
+					stagingName: pending.stagingDir.slice(this.extensionsDir.length + 1),
+					backupName: backupDir.slice(this.extensionsDir.length + 1),
+					candidateName: `.recovery-${pending.id}-${randomUUID()}`,
+					previousPackageManifestHash: existsSync(targetDir) ? packageManifestHash(targetDir) : null,
+					previousRecord: persistedPrevious ? StoredExtensionSchema.parse(persistedPrevious) : previousRecord,
+					previousRecordManaged: !!existing,
+				};
+				if (Buffer.byteLength(JSON.stringify(journal, null, 2), "utf8") > MAX_UPDATE_JOURNAL_BYTES)
+					throw new Error("The extension recovery journal exceeds its safety limit.");
+				if (existing?.enabled || runtime.getExtension(pending.id)) {
+					// This is a data-preserving disable, never an uninstall. Wait for
+					// acknowledgement before moving any package the runtime may use.
+					await runtime.removeExtension(pending.id);
+					oldRuntimeDisabled = true;
+				}
+				this.writeUpdateJournal(journal);
 				if (existsSync(targetDir)) {
 					renameSync(targetDir, backupDir);
+					syncDirectory(this.extensionsDir);
 					backupCreated = true;
 				}
 				// Only the exact signed package the person reviewed becomes durable.
 				renameSync(pending.stagingDir, targetDir);
-				targetInstalled = true;
-				const checks = await this.loadVerifiedStoreExtension(
-					runtime,
-					targetDir,
-					pending.id,
-					manifest.requiresServiceWorker,
-				);
+				syncDirectory(this.extensionsDir);
+				const enabled = existing?.enabled ?? true;
+				let compatibility = pending.inspection.compatibility;
+				if (enabled) {
+					// A rejected load can still have activated the candidate. Its
+					// disable must succeed before rollback touches the package.
+					candidateIds.add(pending.id);
+					const checks = await this.loadVerifiedStoreExtension(
+						runtime,
+						targetDir,
+						pending.id,
+						manifest.requiresServiceWorker,
+						false,
+						(id) => candidateIds.add(id),
+					);
+					if (existing && checks.ready !== "passed")
+						throw new Error("The updated extension did not provide live readiness acknowledgement.");
+					compatibility = compatibilityWithRuntime(compatibility, {
+						...unresolvedRuntimeChecks(compatibility),
+						...checks,
+						persistedAcrossRestart: "not_checked",
+					});
+				}
 				const record: StoredExtension = {
 					id: pending.id,
 					name: manifest.name,
 					version: manifest.version,
 					...(manifest.description ? { description: manifest.description } : {}),
 					...(manifest.homepageUrl ? { homepageUrl: manifest.homepageUrl } : {}),
-					enabled: true,
+					enabled,
 					source: "chrome_web_store",
 					path: targetDir,
-					installedAt: new Date().toISOString(),
-					compatibility: compatibilityWithRuntime(pending.inspection.compatibility, {
-						...unresolvedRuntimeChecks(pending.inspection.compatibility),
-						...checks,
-						persistedAcrossRestart: "not_checked",
-					}),
+					installedAt: existing?.installedAt ?? new Date().toISOString(),
+					compatibility,
 				};
-				this.skippedExtensions = this.skippedExtensions.filter(
+				this.skippedExtensions = previousSkipped.filter(
 					(extension) => extension.id !== pending.id,
 				);
 				this.extensions.set(pending.id, record);
 				this.saveRegistry();
+				this.clearUpdateJournal();
 				if (backupCreated) {
 					try {
 						rmSync(backupDir, { recursive: true, force: true });
 					} catch {
-						// The verified install is already durable. A recoverable backup is
-						// safer than rolling back because only cleanup failed.
+						// The verified update is durable; retain a recoverable backup
+						// if only housekeeping failed.
 					}
-					backupCreated = false;
 				}
 				return publicExtension(record);
 			} catch (cause) {
+				if (!this.pendingUpdate) throw cause;
 				try {
-					await runtime.removeExtension(pending.id);
-				} catch {
-					// Best effort cleanup after persistence fails.
+					for (const candidateId of candidateIds)
+						await runtime.removeExtension(candidateId);
+				} catch (disableCause) {
+					throw new AggregateError([cause, disableCause],
+						`Extension update failed and candidate disable was not acknowledged. Runtime state is unresolved; all package copies and recovery journal remain at ${this.extensionsDir}.`,
+					);
 				}
-				if (targetInstalled && existsSync(targetDir))
-					rmSync(targetDir, { recursive: true, force: true });
-				if (backupCreated && existsSync(backupDir)) {
-					try {
-						renameSync(backupDir, targetDir);
-						backupCreated = false;
-					} catch (restoreCause) {
-						throw new AggregateError(
-							[cause, restoreCause],
-							`Extension install failed and the previous extension remains recoverable at ${backupDir}.`,
+				try {
+					await this.recoverPendingUpdate(runtime, candidateIds.size > 0 || oldRuntimeDisabled);
+					if (existing?.enabled && oldRuntimeDisabled) {
+						const previousManifest = readExtensionManifest(existing.path, existing.id);
+						const checks = await this.loadVerifiedStoreExtension(
+							runtime, existing.path, existing.id, previousManifest.requiresServiceWorker,
 						);
+						if (checks.ready !== "passed")
+							throw new Error("The previous extension did not acknowledge readiness after rollback.");
 					}
+				} catch (recoveryCause) {
+					if (!this.pendingUpdate && existing) {
+						this.extensions.set(pending.id, { ...existing, enabled: false });
+						this.saveRegistry();
+					}
+					throw new AggregateError([cause, recoveryCause],
+						`Extension update failed and recovery could not be fully verified. All remaining package copies were preserved at ${this.extensionsDir}.`);
 				}
 				throw cause;
 			} finally {
-				if (existsSync(pending.stagingDir))
+				if (!this.pendingUpdate && pending.stagingDir && existsSync(pending.stagingDir))
 					rmSync(pending.stagingDir, { recursive: true, force: true });
 			}
 		});
@@ -1141,6 +1425,7 @@ export class BrowserExtensionManager {
 		runtime?: ExtensionRuntime,
 	): Promise<InstalledExtension> {
 		return this.serialize(async () => {
+			this.assertRecoveryComplete();
 			this.assertLocalExtensionsAllowed();
 			const resolvedPath = resolve(folderPath);
 			if (!existsSync(resolvedPath))
@@ -1157,7 +1442,7 @@ export class BrowserExtensionManager {
 				source: "unpacked",
 				path: resolvedPath,
 				installedAt: new Date().toISOString(),
-				compatibility: analyzeExtensionCompatibility(resolvedPath),
+				compatibility: this.analyzePackage(resolvedPath),
 			};
 			if (runtime) await this.loadLocalExtension(runtime, resolvedPath);
 			this.extensions.set(id, record);
@@ -1171,6 +1456,7 @@ export class BrowserExtensionManager {
 		runtime?: ExtensionRuntime,
 	): Promise<InstalledExtension> {
 		return this.serialize(async () => {
+			this.assertRecoveryComplete();
 			this.assertLocalExtensionsAllowed();
 			const resolvedPath = resolve(filePath);
 			if (!existsSync(resolvedPath))
@@ -1192,7 +1478,7 @@ export class BrowserExtensionManager {
 					source: "file",
 					path: targetDir,
 					installedAt: new Date().toISOString(),
-					compatibility: analyzeExtensionCompatibility(targetDir),
+					compatibility: this.analyzePackage(targetDir),
 				};
 				if (runtime) await this.loadLocalExtension(runtime, targetDir);
 				this.extensions.set(id, record);
@@ -1211,6 +1497,7 @@ export class BrowserExtensionManager {
 		runtime?: ExtensionRuntime,
 	): Promise<InstalledExtension> {
 		return this.serialize(async () => {
+			this.assertRecoveryComplete();
 			const extension = this.extensions.get(id);
 			if (!extension) throw new Error("Extension not found.");
 			if (extension.enabled === enabled) return publicExtension(extension);
@@ -1246,13 +1533,14 @@ export class BrowserExtensionManager {
 
 	async reload(id: string, runtime: ExtensionRuntime): Promise<InstalledExtension> {
 		return this.serialize(async () => {
+			this.assertRecoveryComplete();
 			const extension = this.extensions.get(id);
 			if (!extension) throw new Error("Extension not found.");
 			if (!extension.enabled) throw new Error("Enable this extension before reloading it.");
 			try {
 				await runtime.removeExtension(id);
 			} catch {
-				// A reload should also recover if Electron had already unloaded it.
+				// A reload should also recover if the runtime had already unloaded it.
 			}
 			try {
 				const manifest = readExtensionManifest(extension.path, extension.id);
@@ -1290,24 +1578,28 @@ export class BrowserExtensionManager {
 
 	async uninstall(id: string, runtime?: ExtensionRuntime): Promise<void> {
 		return this.serialize(async () => {
+			if (this.pendingUninstall?.id === id && runtime) return this.recoverPendingUninstall(runtime);
+			this.assertRecoveryComplete();
 			const extension = this.extensions.get(id);
 			if (!extension) return;
-			if (runtime) {
-				try {
-					await runtime.removeExtension(id);
-				} catch {
-					// Ignore an unload failure when removing Kestrel's own record.
+			if (!isManagedChromeWebStoreExtension(extension, this.extensionsDir)) {
+				// Local development packages are not eligible for durable Store uninstall intent.
+				if (runtime) {
+					if (runtime.uninstallExtension) await runtime.uninstallExtension(id);
+					else await runtime.removeExtension(id);
 				}
-			}
-			this.extensions.delete(id);
-			this.saveRegistry();
-			if (isOwnedExtensionDirectory(extension.path, this.extensionsDir)) {
-				try {
-					rmSync(extension.path, { recursive: true, force: true });
-				} catch {
-					// Registry removal remains durable if the package cannot be cleaned up.
+				this.extensions.delete(id);
+				try { this.saveRegistry(); } catch (cause) {
+					this.extensions.set(id, extension);
+					throw cause;
 				}
+				if (isOwnedExtensionDirectory(extension.path, this.extensionsDir)) {
+					try { rmSync(extension.path, { recursive: true, force: true }); } catch { /* durable registry removal */ }
+				}
+				return;
 			}
+			this.writeUninstallJournal({ format: 1, id, source: "chrome_web_store" });
+			return this.recoverPendingUninstall(runtime);
 		});
 	}
 }
