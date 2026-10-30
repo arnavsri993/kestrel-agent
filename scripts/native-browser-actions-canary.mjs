@@ -35,6 +35,7 @@ export async function nativeBrowserActionsCanary({ getHome, createdPage, coreToo
 	await action({ type: "type", target: secondQuery.ref, text: " more" });
 	await snapshot(); await action({ type: "key", key: "Enter" });
 	assert.equal(await page.evaluate(() => window.nativeTrustedKey), true, "Page keys must stay in Chromium's native input path.");
+	assert.equal(await page.evaluate(() => window.nativeTrustedKeypress), true, "Enter must deliver its real character event, not only key-down metadata.");
 	await snapshot(); await action({ type: "scroll", x: 0, y: 450 });
 	await page.waitForFunction(() => scrollY > 0);
 	receipt.phases.push({ phase: "native-Core-trusted-click-type-select-key-scroll-and-stale-ref-rejection", passed: true });

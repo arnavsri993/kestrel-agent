@@ -54,6 +54,7 @@ jobs:
           KESTREL_NATIVE_TEST_APP: ${{ github.workspace }}/.tmp/native-chromium-host/Kestrel.app
           KESTREL_TEST_NATIVE_PROVIDERS: "1"
           KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION: "1"
+          KESTREL_TEST_NATIVE_FORM_NAVIGATION: "1"
           KESTREL_TEST_NATIVE_WORKSPACE_FIXTURE: "1"
         run: |
           corepack pnpm test:native-user-extensions

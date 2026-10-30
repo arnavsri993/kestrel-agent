@@ -29,7 +29,8 @@ export function createIsolationFixtures() {
 			visits.push({ role, cookie: request.headers.cookie || "" });
 			response.writeHead(200, { "content-type": "text/html", "set-cookie": `native_isolation=${encodeURIComponent(role)}; Path=/; SameSite=Lax` });
 			response.end(`<!doctype html><title>Isolated browser ${role}</title><style>body{min-height:2400px;font:20px system-ui;padding:20px}input,button{font:inherit;padding:10px}</style>
-			<h1>Isolated browser fixture</h1><label>Public query <input id="query" autocomplete="off"></label><button id="act">Act once</button>
+			<h1>Isolated browser fixture</h1><label>Public query <input id="query" autocomplete="off"></label><button id="act">Act once</button><a href="/isolation-page?role=first-next">Next fixture page</a>
+			<form action="/isolation-page"><input type="hidden" name="role" value="first-key"><label>Form query <input name="q" autocomplete="off"></label><button type="submit">Submit fixture</button></form>
 			<script>const role=${JSON.stringify(role)};fetch('/isolation-probe?role='+encodeURIComponent(role)+'&previous='+encodeURIComponent(localStorage.getItem('native_isolation')||''));localStorage.setItem('native_isolation',role);
 			const emit=(kind,event,value='')=>fetch('/isolation-act?role='+encodeURIComponent(role)+'&kind='+kind+'&trusted='+event.isTrusted+'&value='+encodeURIComponent(value));
 			document.querySelector('#query').addEventListener('input',event=>emit('input',event,event.target.value));document.querySelector('#act').addEventListener('click',event=>emit('click',event));</script>`);
@@ -119,6 +120,33 @@ export async function nativeIsolatedBrowserCanary({ coreTool, origin, fixtures, 
 		const stale = await coreTool("browser.act", { browserSessionId: first, action: { type: "click", target: button.ref } });
 		assert(["failed", "blocked"].includes(stale.status), "A consumed ref must not act again.");
 		assert.equal(fixtures.actions.filter(item => item.role === "first" && item.kind === "click").length, 1);
+		snapshot = await call("browser.snapshot", { browserSessionId: first });
+		const nextPage = snapshot.interactive?.find(item => item.name === "Next fixture page"); assert(nextPage);
+		const clicked = await coreTool("browser.act", { browserSessionId: first, action: { type: "click", target: nextPage.ref } });
+		assert(clicked.status === "verified" || clicked.status === "failed" && /navigated during input|document changed/.test(clicked.error ?? ""), JSON.stringify(clicked));
+		await wait(() => fixtures.storage.some(item => item.role === "first-next"), "A native link click must navigate the existing isolated renderer.");
+		assert.equal(fixtures.storage.find(item => item.role === "first-next")?.previous, "first", "Link navigation must retain this isolated context's storage.");
+		assert.match(fixtures.visits.find(item => item.role === "first-next")?.cookie ?? "", /native_isolation=first(?:;|$)/);
+		let arrived;
+		for (const end = Date.now() + 10_000; Date.now() < end;) {
+			const result = await coreTool("browser.snapshot", { browserSessionId: first });
+			if (result.status === "verified" && result.output?.url === `${origin}/isolation-page`) { arrived = result.output; break; }
+			await delay(50);
+		}
+		assert(arrived?.interactive?.some(item => item.name === "Act once"), "The same isolated session must support a fresh observation after navigation.");
+		receipt.phases.push({ phase: "native-isolated-trusted-link-navigation-and-fresh-observation", passed: true, acknowledgment: clicked.status });
+		if (process.env.KESTREL_TEST_NATIVE_FORM_NAVIGATION === "1") {
+			const field = arrived.interactive.find(item => item.name === "Form query"); assert(field);
+			await call("browser.act", { browserSessionId: first, action: { type: "type", target: field.ref, text: "native-form-input" } });
+			await call("browser.snapshot", { browserSessionId: first });
+			const entered = await coreTool("browser.act", { browserSessionId: first, action: { type: "key", key: "Enter" } });
+			assert(entered.status === "verified" || entered.status === "failed" && /navigated during input|document changed/.test(entered.error ?? ""), JSON.stringify(entered));
+			await wait(() => fixtures.storage.some(item => item.role === "first-key"), "A trusted Enter key must submit the native form.");
+			const afterSubmit = await call("browser.snapshot", { browserSessionId: first });
+			assert(afterSubmit.interactive.some(item => item.name === "Act once"));
+			assert.equal(fixtures.storage.find(item => item.role === "first-key")?.previous, "first-next");
+			receipt.phases.push({ phase: "native-isolated-trusted-Enter-form-navigation", passed: true, acknowledgment: entered.status });
+		}
 		const outside = await coreTool("browser.navigate", { browserSessionId: second, url: "https://example.invalid/" });
 		assert(["failed", "blocked"].includes(outside.status), "An isolated session may not leave its origin allowlist.");
 		receipt.phases.push({ phase: "native-Chrome-owner-isolated-cookie-storage-and-trusted-input", passed: true });
@@ -131,6 +159,6 @@ export async function nativeIsolatedBrowserCanary({ coreTool, origin, fixtures, 
 	} finally {
 		for (const browserSessionId of sessions) await coreTool("browser.close", { browserSessionId }).catch(() => {});
 		if (userTab?.tabId) await coreTool("browser.close-tab", { tabId: userTab.tabId }).catch(() => {});
-		await getHome().bringToFront();
+		await getHome().bringToFront().catch(() => {});
 	}
 }

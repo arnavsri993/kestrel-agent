@@ -401,3 +401,30 @@ confirmed locked and previews require a focused owner window. Both failures
 remain recorded for rechecking after unlock; aggregate verification is not
 reported as fully passed. Generated verification screenshots were preserved
 under `.tmp/native-verification-generated-screenshots/`.
+
+### Navigation during native input
+
+A real isolated link click exposed an unsafe synchronous `CloseBrowser` call
+inside CEF's navigation callback. Session invalidation is now immediate while
+the actual close is deferred. Deferred tasks release their callbacks after
+execution, and a rejected CEF close-task post falls back to the macOS main queue.
+Enter now includes Chromium's character data; native key-down metadata alone
+did not submit a form. Pointer/key pairs are queued once to the pinned widget.
+
+Navigation overlapping an unacknowledged gesture never proves success. The
+isolated host retains both acknowledgments, waits for the allowed document to
+load, then returns an explicit uncertain/no-replay result. The same session can
+provide a fresh read-only observation. Same-document success requires both
+acknowledgments and a fresh document check. Visible-tab input likewise rechecks
+the pinned document after the pair; cancellation/timeout tests retain no replay.
+An independent read-only review confirmed the earlier false-success finding was
+resolved. The navigation-during-press regression and 26 native input tests pass.
+
+The 23-phase provider/workspace/isolated canary passed on complete bundle
+`116f488008441f7529b285710f3fc9ead44b2261312f5b2cadeac285d220f1f5`;
+receipt `.tmp/chromium-gesture-final-ci-evidence/receipt.json` records the link
+and Enter navigation acknowledgments as failed/uncertain while independently
+proving arrival, isolated cookie/storage continuity, fresh observations, active
+Core crash recovery, full restart, and clean shutdown. CI includes the form
+check. All 1,864 unit tests and workspace TypeScript checks passed at this
+checkpoint. The separately developed attachment host is not yet integrated.

@@ -198,7 +198,7 @@ export function createNativeAutomation(chromeApi, { invoke, resolveTab, operatio
 		const keys = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34, " ": 32 };
 		if (action.type === "key" && !Object.hasOwn(keys, action.key)) throw new Error("Native browser key is unsupported; use one unmodified page key.");
 		if (action.type === "scroll" && ![action.x, action.y].every(value => Number.isFinite(value) && Math.abs(value) <= 100_000)) throw new Error("Native browser scroll exceeds limits.");
-		return attached(tabId, signal, async (owner, command, raw) => {
+		return attached(tabId, signal, async (owner, command, raw, run) => {
 			const saved = snapshots.get(owner.tab.id);
 			if (!saved || saved.owner.frame.documentId !== owner.frame.documentId || saved.owner.frame.url !== owner.frame.url || Date.now() - saved.createdAt > 30_000) throw new Error("Read a fresh browser snapshot before acting; the document or refs are stale.");
 			const ref = targeted ? saved.refs.get(targetRef) : undefined;
@@ -215,6 +215,23 @@ export function createNativeAutomation(chromeApi, { invoke, resolveTab, operatio
 			const objectIds = [];
 			async function releaseInput(method, params) {
 				try { await bounded(assertPinned(owner), undefined, Date.now() + 250); await raw(method, params, true); } catch {}
+			}
+			async function pairedInput(method, down, up) {
+				await run(assertPinned(owner, signal)); signal?.throwIfAborted();
+				let started = false, releaseSent = false;
+				try {
+					started = true;
+					const pressed = raw(method, down);
+					if (signal?.aborted) { await pressed.catch(() => {}); signal.throwIfAborted(); }
+					// Submit both halves before awaiting either acknowledgment. A
+					// valid gesture can itself navigate the pinned old document.
+					releaseSent = true;
+					const released = raw(method, up);
+					await Promise.all([pressed, released]);
+					// A changed document is an uncertain effect, never a performed
+					// claim. Both halves have already been submitted once.
+					await run(assertPinned(owner, signal));
+				} finally { if (started && !releaseSent) await releaseInput(method, up); }
 			}
 			async function resolve(backendNodeId) {
 				const result = await command("DOM.resolveNode", { backendNodeId, executionContextId: world.executionContextId });
@@ -262,9 +279,7 @@ export function createNativeAutomation(chromeApi, { invoke, resolveTab, operatio
 						const point = await inspect(objectId, "click");
 						if (![point.x, point.y].every(Number.isFinite)) throw new Error("Native browser target bounds are invalid.");
 						const pointer = { x: point.x, y: point.y, button: "left", clickCount: 1, modifiers: 0 };
-						let released = false, started = false;
-						try { await command("Input.dispatchMouseEvent", { ...pointer, type: "mousePressed", buttons: 1 }, () => { started = true; }); await command("Input.dispatchMouseEvent", { ...pointer, type: "mouseReleased", buttons: 0 }); released = true; }
-						finally { if (started && !released) await releaseInput("Input.dispatchMouseEvent", { ...pointer, type: "mouseReleased", buttons: 0 }); }
+						await pairedInput("Input.dispatchMouseEvent", { ...pointer, type: "mousePressed", buttons: 1 }, { ...pointer, type: "mouseReleased", buttons: 0 });
 					} else if (action.type === "type") {
 						await command("DOM.focus", { backendNodeId });
 						await inspect(objectId, "focused");
@@ -275,10 +290,9 @@ export function createNativeAutomation(chromeApi, { invoke, resolveTab, operatio
 						// modifiers, clipboard access, or browser chrome keys are exposed.
 						const check = await command("Runtime.callFunctionOn", { objectId, functionDeclaration: "function () { return this.ownerDocument.activeElement === this; }", returnByValue: true });
 						if (check.exceptionDetails || check.result?.value !== true) throw new Error("Native browser focus changed.");
-						const event = { key: action.key, windowsVirtualKeyCode: keys[action.key], nativeVirtualKeyCode: keys[action.key], modifiers: 0 };
-						let released = false, started = false;
-						try { await command("Input.dispatchKeyEvent", { ...event, type: "keyDown" }, () => { started = true; }); await command("Input.dispatchKeyEvent", { ...event, type: "keyUp" }); released = true; }
-						finally { if (started && !released) await releaseInput("Input.dispatchKeyEvent", { ...event, type: "keyUp" }); }
+						const event = { key: action.key, code: action.key === " " ? "Space" : action.key, windowsVirtualKeyCode: keys[action.key], modifiers: 0 };
+						const text = action.key === "Enter" ? "\r" : action.key === " " ? " " : undefined;
+						await pairedInput("Input.dispatchKeyEvent", { ...event, type: "keyDown", ...(text === undefined ? {} : { text, unmodifiedText: text }) }, { ...event, type: "keyUp" });
 					}
 				}
 				return { performed: true, trust: "untrusted_browser" };

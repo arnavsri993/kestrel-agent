@@ -169,6 +169,18 @@ describe("native Chromium actions", () => {
 		expect(sendCommand.mock.calls.filter(([, method, params]) => method === "Input.dispatchKeyEvent" && params?.type === "keyDown")).toHaveLength(1);
 		expect(chrome.debugger.detach).toHaveBeenCalledTimes(2);
 	});
+	it("returns uncertainty when navigation overlaps a paired click without replaying either half", async () => {
+		const { automation, sendCommand, frame } = fixture();
+		const snapshot = await automation.snapshot("tab-first", signal());
+		const original = sendCommand.getMockImplementation()!;
+		sendCommand.mockImplementation(async (target, method, params) => {
+			if (method === "Input.dispatchMouseEvent" && params?.type === "mousePressed") frame.documentId = "replacement-during-press";
+			return original(target, method);
+		});
+		await expect(automation.act("tab-first", { type: "click", target: snapshot.interactive[0].ref }, signal())).rejects.toThrow("document changed");
+		const inputs = sendCommand.mock.calls.filter(([, method]) => method === "Input.dispatchMouseEvent");
+		expect(inputs.map(([, , params]) => params.type)).toEqual(["mousePressed", "mouseReleased"]);
+	});
 	it("bounds attachment and detaches a late successful attach without stealing another debugger", async () => {
 		const { chrome, options } = fixture(); let finish!: () => void;
 		chrome.debugger.attach.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));

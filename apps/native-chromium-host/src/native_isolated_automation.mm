@@ -94,7 +94,7 @@ std::string Ref(std::string ref) {
 class FunctionTask final : public CefTask {
  public:
   explicit FunctionTask(std::function<void()> fn) : fn_(std::move(fn)) {}
-  void Execute() override { if (fn_) fn_(); }
+  void Execute() override { auto fn = std::move(fn_); if (fn) fn(); }
  private:
   std::function<void()> fn_;
   IMPLEMENT_REFCOUNTING(FunctionTask);
@@ -308,7 +308,7 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
     std::string id, request, operation, url, loader, frame, navigate_url;
     uint64_t request_token = 0, generation = 0, refs_generation = 0;
     int world = 0;
-    bool loaded = false, closing = false, initial_document = true, input_started = false;
+    bool loaded = false, closing = false, initial_document = true, input_started = false, input_pair_pending = false;
     std::chrono::steady_clock::time_point refs_created;
     CefRefPtr<CefBrowser> browser;
     CefRefPtr<BackgroundClient> client;
@@ -347,6 +347,7 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
     const auto request = std::exchange(s->request, "");
     const bool uncertain_input = !ok && s->input_started;
     s->input_started = false;
+    s->input_pair_pending = false;
     if (s->browser && s->browser->IsValid()) { auto release = CefDictionaryValue::Create(); release->SetString("objectGroup", "kestrel-automation-" + std::to_string(s->request_token)); s->browser->GetHost()->ExecuteDevToolsMethod(0, "Runtime.releaseObjectGroup", release); }
     s->operation.clear(); s->commands.clear(); ++s->request_token;
     // Destroy the renderer after any uncertain input acknowledgement, so a
@@ -370,7 +371,20 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
   void Close(const std::shared_ptr<Session>& s) {
     if (s->closing) return;
     s->closing = true; s->refs.clear(); s->commands.clear();
-    if (s->browser && s->browser->IsValid()) s->browser->GetHost()->CloseBrowser(true);
+    if (s->browser && s->browser->IsValid()) {
+      // CEF forbids closing synchronously from OnBeforeBrowse. Invalidate the
+      // session immediately, then perform the close after that callback exits.
+      std::weak_ptr<Session> weak_session = s;
+      const std::function<void()> close = [weak_session] {
+        auto session = weak_session.lock();
+        if (session && session->browser && session->browser->IsValid()) session->browser->GetHost()->CloseBrowser(true);
+      };
+      if (!CefPostTask(TID_UI, new FunctionTask(close))) {
+        // The macOS CEF UI thread is the main thread. Preserve deferred close
+        // even when CEF rejects its queue during a concurrent teardown.
+        dispatch_async(dispatch_get_main_queue(), ^{ close(); });
+      }
+    }
     else if (!s->client) Closed(s);
     // Browser creation may still be asynchronous. Its callback closes it and
     // OnBeforeClose remains the only terminal signal once creation was sent.
@@ -389,6 +403,14 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
   void NavigateStarted(const std::shared_ptr<Session>& s) {
     if (!Current(s)) return;
     ++s->generation; s->loaded = false; s->world = 0; s->refs.clear(); s->loader.clear(); s->frame.clear();
+    if (!s->request.empty() && s->operation == "act" && s->input_pair_pending) {
+      // Keep both input acknowledgments, but never infer action success from
+      // a concurrent navigation. Once the pair settles and the page loads,
+      // return uncertainty and permit a fresh read-only observation.
+      s->operation = "act-navigation";
+      return;
+    }
+    if (s->operation == "act-navigation") return;
     if (!s->request.empty() && s->operation != "navigate" && s->operation != "create") Finish(s, false, "", "The isolated browser document changed. Read it again; do not replay an action.");
   }
   void LoadFinished(const std::shared_ptr<Session>& s, bool success) {
@@ -398,17 +420,18 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
     if (!success || !Allowed(s->origins, url)) { if (!s->request.empty()) Finish(s, false, "", "The isolated browser navigation failed or left its origin allowlist."); return; }
     s->loaded = true; s->url = url;
     if (s->operation == "navigate") Finish(s, true);
+    else if (s->operation == "act-navigation" && !s->input_pair_pending) Finish(s, false, "", "The browser navigated during input. The effect may have started; take a fresh observation and do not replay the action.");
   }
-  void Command(const std::shared_ptr<Session>& s, const std::string& method, Dict params, CommandReply callback) {
+  void Command(const std::shared_ptr<Session>& s, const std::string& method, Dict params, CommandReply callback, bool input_ack = false) {
     if (!Current(s) || s->request.empty() || !s->browser || !s->browser->IsValid()) return;
     const auto token = s->request_token, generation = s->generation;
     const int id = s->browser->GetHost()->ExecuteDevToolsMethod(0, method, params ? params : CefDictionaryValue::Create());
     if (id <= 0) { Finish(s, false, "", "The isolated Chromium command could not be submitted."); return; }
     std::weak_ptr<Impl> weak = weak_from_this(); std::weak_ptr<Session> weak_session = s;
-    s->commands[id] = [weak, weak_session, token, generation, callback = std::move(callback)](bool success, const std::string& json) {
+    s->commands[id] = [weak, weak_session, token, generation, input_ack, callback = std::move(callback)](bool success, const std::string& json) {
       auto self = weak.lock(); auto session = weak_session.lock();
       if (!self || !session || !self->Current(session) || session->request_token != token || session->request.empty()) return;
-      if (session->generation != generation) { self->Finish(session, false, "", "The isolated browser document changed; do not replay the action."); return; }
+      if (session->generation != generation && !input_ack) { self->Finish(session, false, "", "The isolated browser document changed; do not replay the action."); return; }
       const auto result = success ? Parse(json) : nullptr;
       if (!result || result->HasKey("exceptionDetails")) { self->Finish(session, false, "", "The isolated Chromium operation failed. Take a fresh observation before continuing."); return; }
       callback(result);
@@ -541,8 +564,28 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
       // Set the OSR browser's focus before DOM.focus/native input; this never
       // creates, activates, shows, or reparents a native window.
       if (method == "DOM.focus" || method.starts_with("Input.")) s->browser->GetHost()->SetFocus(true);
-      if (method.starts_with("Input.")) s->input_started = true;
+      if (method.starts_with("Input.")) {
+        s->input_started = true;
+      }
       Command(s, method, params, [next](Dict) { next(); });
+    });
+  }
+  void InputPair(const std::shared_ptr<Session>& s, const std::string& method, Dict down, Dict up) {
+    Document(s, [this, s, method, down, up] {
+      s->browser->GetHost()->SetFocus(true);
+      s->input_started = true; s->input_pair_pending = true;
+      auto remaining = std::make_shared<int>(2);
+      auto acknowledged = [this, s, remaining](Dict) {
+        if (--*remaining != 0) return;
+        s->input_pair_pending = false; s->input_started = false;
+        if (s->operation == "act-navigation") {
+          if (s->loaded) Finish(s, false, "", "The browser navigated during input. The effect may have started; take a fresh observation and do not replay the action.");
+        } else Document(s, [this, s] { Finish(s, true); });
+      };
+      // Queue the complete gesture to the pinned widget before yielding to
+      // navigation callbacks. Neither half is replayed on a replacement page.
+      Command(s, method, down, acknowledged, true);
+      Command(s, method, up, acknowledged, true);
     });
   }
   void Target(const std::shared_ptr<Session>& s, const ElementRef& ref, const std::string& mode, std::function<void(const std::string&, Dict)> next) {
@@ -573,7 +616,7 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
         if (!std::isfinite(x) || !std::isfinite(y)) { Finish(s, false, "", "The observed browser target has invalid bounds."); return; }
         auto down = CefDictionaryValue::Create(); down->SetString("type", "mousePressed"); down->SetString("button", "left"); down->SetInt("buttons", 1); down->SetInt("clickCount", 1); down->SetDouble("x", x); down->SetDouble("y", y);
         auto up = down->Copy(false); up->SetString("type", "mouseReleased"); up->SetInt("buttons", 0);
-        Input(s, "Input.dispatchMouseEvent", down, [this, s, up] { Input(s, "Input.dispatchMouseEvent", up, [this, s] { Finish(s, true); }); });
+        InputPair(s, "Input.dispatchMouseEvent", down, up);
       } else if (type == "type") {
         auto focus = CefDictionaryValue::Create(); focus->SetInt("backendNodeId", ref.backend);
         Input(s, "DOM.focus", focus, [this, s, object, action] { Inspect(s, object, "focused", "", [this, s, action](Dict) {
@@ -602,9 +645,10 @@ struct NativeIsolatedAutomation::Impl : std::enable_shared_from_this<Impl> {
           auto check = CefDictionaryValue::Create(); check->SetString("objectId", object); check->SetString("functionDeclaration", "function () { return this.ownerDocument.activeElement === this; }"); check->SetBool("returnByValue", true);
           Command(s, "Runtime.callFunctionOn", check, [this, s, key](Dict result) {
             if (result->GetType("result") != VTYPE_DICTIONARY || !result->GetDictionary("result")->GetBool("value")) { Finish(s, false, "", "The browser focus changed before key input."); return; }
-            auto down = CefDictionaryValue::Create(); down->SetString("key", key); down->SetInt("windowsVirtualKeyCode", keys.at(key)); down->SetString("type", "keyDown"); down->SetInt("modifiers", 0);
+            auto down = CefDictionaryValue::Create(); down->SetString("key", key); down->SetString("code", key == " " ? "Space" : key); down->SetInt("windowsVirtualKeyCode", keys.at(key)); down->SetString("type", "keyDown"); down->SetInt("modifiers", 0);
             auto up = down->Copy(false); up->SetString("type", "keyUp");
-            Input(s, "Input.dispatchKeyEvent", down, [this, s, up] { Input(s, "Input.dispatchKeyEvent", up, [this, s] { Finish(s, true); }); });
+            if (key == "Enter" || key == " ") { down->SetString("text", key == "Enter" ? "\r" : " "); down->SetString("unmodifiedText", key == "Enter" ? "\r" : " "); }
+            InputPair(s, "Input.dispatchKeyEvent", down, up);
           });
         });
       });
