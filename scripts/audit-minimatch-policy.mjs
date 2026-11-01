@@ -9,10 +9,10 @@ export const PATCHES = Object.freeze({
   "10.2.5": "64ec7340d0f1276aaaa0ac54d3f77dbe3cebee2fc76a545a4b958f5850083279",
 });
 export const SOURCES = Object.freeze({
-  "3.1.5": { "minimatch.js": "53a5a37ca8a8be0339b406570843c49a5ce9238c92d77b55247bad6a38cc458b" },
-  "5.1.9": { "minimatch.js": "1ecfc91de11294ef8c32afaa13cb1a0d0840cb36563ad033caeeb4fc781bfa50" },
-  "9.0.9": { "dist/commonjs/index.js": "d2bd4e4e096f9dff676b95ead6c3b18a257f560e45262a48248073b8aae5c019", "dist/esm/index.js": "9b9fc973ee4b1669fbd60a8067492958ac9eff8b3a554f387ba8ec93fca0d778" },
-  "10.2.5": { "dist/commonjs/index.js": "7e835c0a30f7b4f29f4ad8cf8c3e92b97ab23ed854a7a777f240d6bdf3d19231", "dist/esm/index.js": "37ba4ff4010cda499e890975983b78ebd5f2be2dd8506d938472de4af8e9ed25" },
+  "3.1.5": { "package.json": "eefa1c89527d52bbb2e8b053fe8ecf3e3ced399bdba82cf27e0e92edfd833938", "minimatch.js": "53a5a37ca8a8be0339b406570843c49a5ce9238c92d77b55247bad6a38cc458b" },
+  "5.1.9": { "package.json": "dc1b9424c2ec4c845ba05e7402f7d22807f4ac85d31725892fd3dcafaa08f800", "minimatch.js": "1ecfc91de11294ef8c32afaa13cb1a0d0840cb36563ad033caeeb4fc781bfa50" },
+  "9.0.9": { "package.json": "07347ae64d38f4cc1be3ffcc83322ec40d4609f5f3e9dc027ae91a4617239ac2", "dist/commonjs/index.js": "d2bd4e4e096f9dff676b95ead6c3b18a257f560e45262a48248073b8aae5c019", "dist/esm/index.js": "9b9fc973ee4b1669fbd60a8067492958ac9eff8b3a554f387ba8ec93fca0d778" },
+  "10.2.5": { "package.json": "4b3a08a7ad20dead8bbe4b4fe97a2746bded7c51d218ef3034eb4e330ad31f08", "dist/commonjs/index.js": "7e835c0a30f7b4f29f4ad8cf8c3e92b97ab23ed854a7a777f240d6bdf3d19231", "dist/esm/index.js": "37ba4ff4010cda499e890975983b78ebd5f2be2dd8506d938472de4af8e9ed25" },
 });
 export const BRACE = Object.freeze({
   "package.json": "8af7dc0916002266f3b01459ef691d9f834d8ecdb0e021263280a50b913d85fa",

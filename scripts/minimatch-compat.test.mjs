@@ -34,6 +34,25 @@ const entries = [
 ];
 
 describe("patched minimatch and brace expansion compatibility", () => {
+  it.each(entries)("uses the reviewed public consumer entrypoint on %s %s", (version, format) => {
+    const file = minimatchFile(version, format);
+    const consumer = consumers[version];
+    if (format === "commonjs") {
+      expect(consumer.resolve("minimatch")).toBe(file);
+      expect(new (consumer("minimatch").Minimatch)("*.{js,ts}").match("a.ts")).toBe(true);
+      return;
+    }
+    const code = `const path = import.meta.resolve('minimatch');
+      if (path !== process.env.EXPECTED) throw new Error('unexpected ESM entrypoint: ' + path);
+      const m = await import('minimatch');
+      if (!new m.Minimatch('*.{js,ts}').match('a.ts')) throw new Error('public ESM match failed');`;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+      cwd: dirname(consumer.resolve("./package.json")), encoding: "utf8", timeout: 5_000,
+      env: { ...process.env, EXPECTED: pathToFileURL(file).href },
+    });
+    expect(result.error, result.stderr).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+  });
   it.each(entries)("matches braces and normal globs on %s %s", async (version, format) => {
     const module = await load(version, format);
     const Minimatch = module.Minimatch;

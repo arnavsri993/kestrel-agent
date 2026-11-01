@@ -31,8 +31,11 @@ function resolveConsumer(path) {
   const [workspace, ...packages] = path.split(">");
   if (workspace !== "apps__desktop" && workspace !== "apps__website") throw new Error(`Unexpected workspace ${workspace}.`);
   let from = createRequire(join(root, workspace.replace("__", "/"), "package.json"));
-  for (const name of packages) from = createRequire(from.resolve(`${name}/package.json`));
-  return from;
+  for (const name of packages.slice(0, -1)) from = createRequire(from.resolve(`${name}/package.json`));
+  if (packages.at(-1) !== "minimatch") throw new Error(`Unexpected audit dependency: ${path}.`);
+  const entrypoint = from.resolve("minimatch");
+  const manifest = from.resolve("minimatch/package.json");
+  return { consumer: createRequire(manifest), entrypoint, manifest };
 }
 function verifyConfiguration() {
   const desktop = createRequire(join(root, "apps/desktop/package.json"));
@@ -45,10 +48,11 @@ function verifyConfiguration() {
 function verifyInstalled(accepted) {
   const verified = new Set();
   for (const finding of accepted) {
-    const consumer = resolveConsumer(finding.path);
-    const packagePath = consumer.resolve("./package.json");
+    const { consumer, entrypoint, manifest: packagePath } = resolveConsumer(finding.path);
     const installedVersion = JSON.parse(readFileSync(packagePath, "utf8")).version;
     if (installedVersion !== finding.version || !packagePath.includes(`minimatch@${finding.version}_patch_hash=${PATCHES[finding.version]}`)) throw new Error(`Resolved package identity does not match: ${finding.path}.`);
+    const entryFile = ["3.1.5", "5.1.9"].includes(finding.version) ? "minimatch.js" : "dist/commonjs/index.js";
+    if (entrypoint !== join(dirname(packagePath), entryFile)) throw new Error(`Resolved minimatch entrypoint changed: ${finding.path}.`);
     const braceManifest = consumer.resolve("brace-expansion/package.json");
     const braceRoot = dirname(braceManifest);
     const braceVersion = JSON.parse(readFileSync(braceManifest, "utf8")).version;

@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
 import { ADVISORY, ALLOWED_PATHS, BRACE, EXPIRES, PATCHES, SOURCES, applyAuditPolicy, assessAudit, auditEnvironment, parseAuditResult, verifyManifest, verifySourceHashes } from "./audit-minimatch-policy.mjs";
 const now = new Date("2026-11-01T12:00:00Z");
 const knownPath = "apps__desktop>electron-builder>app-builder-lib>minimatch";
@@ -70,5 +74,33 @@ describe("temporary minimatch audit policy", () => {
     expect(() => verifySourceHashes("9.0.9", { ...SOURCES["9.0.9"] }, { ...BRACE, "dist/commonjs/index.js": "bad" }, "5.0.12")).toThrow(/brace/);
     expect(() => verifySourceHashes("9.0.9", { ...SOURCES["9.0.9"] }, { ...BRACE }, "5.0.11")).toThrow(/brace/);
     expect(() => verifySourceHashes("11.0.1", {}, { ...BRACE }, "5.0.12")).toThrow(/minimatch/);
+  });
+  it("rejects entrypoint redirection in each installed minimatch manifest", () => {
+    const desktop = createRequire(resolve("apps/desktop/package.json"));
+    const dependency = (parent, name) => createRequire(parent.resolve(`${name}/package.json`));
+    const builder = dependency(dependency(desktop, "electron-builder"), "app-builder-lib");
+    const asar = dependency(builder, "@electron/asar");
+    const parents = {
+      "3.1.5": dependency(asar, "glob"),
+      "5.1.9": dependency(dependency(dependency(builder, "ejs"), "jake"), "filelist"),
+      "9.0.9": dependency(builder, "@electron/universal"),
+      "10.2.5": builder,
+    };
+    for (const [version, parent] of Object.entries(parents)) {
+      const bytes = readFileSync(parent.resolve("minimatch/package.json"));
+      const digest = value => createHash("sha256").update(value).digest("hex");
+      expect(digest(bytes)).toBe(SOURCES[version]["package.json"]);
+      const original = bytes.toString("utf8");
+      const replacements = version === "3.1.5" || version === "5.1.9"
+        ? [['"main": "minimatch.js"', '"main": "redirect.cjs"']]
+        : [['"default": "./dist/commonjs/index.js"', '"default": "./redirect.cjs"'], ['"default": "./dist/esm/index.js"', '"default": "./redirect.mjs"']];
+      for (const [before, after] of replacements) {
+        expect(original).toContain(before);
+        const changed = original.replace(before, after);
+        const hashes = { ...SOURCES[version], "package.json": digest(changed) };
+        expect(JSON.parse(changed).version).toBe(version);
+        expect(() => verifySourceHashes(version, hashes, { ...BRACE }, "5.0.12")).toThrow(/minimatch/);
+      }
+    }
   });
 });
