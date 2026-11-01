@@ -153,6 +153,7 @@ async function activateUi(page) {
   const current = await chrome.tabs.getCurrent();
   if (!Number.isInteger(current?.id) || !Number.isInteger(current?.windowId)) throw new Error('UI document has no own Chromium tab');
   await chrome.tabs.update(current.id, { active: true });
+  await chrome.windows.update(current.windowId, { focused: true });
   return { id: current.id, windowId: current.windowId };
  });
  await page.bringToFront();
@@ -237,6 +238,24 @@ try {
  assert.equal(systemAfter.launchStatus, systemBefore.launchStatus);
  phase('native-system-status-and-visible-development-guard-refusal');
  const firstSettingsId = await settings.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+ await selectSettingsSection(settings, 'agent-diagnostics', 'Diagnostics');
+ await settings.getByRole('button', { name: 'Check readiness', exact: true }).click();
+ const diagnostics = settings.locator('.diagnostics-readiness');
+ await diagnostics.getByText('Needs attention', { exact: true }).waitFor();
+ await diagnostics.getByText(/Local agent core · The local agent process responded/).waitFor();
+ await diagnostics.getByText(/No project folder is granted/).waitFor();
+ const readinessCreated = await settings.evaluate(() => window.kestrel.request({ type: 'browser-create-tab', input: 'kestrel://readiness' }));
+ assert(readinessCreated.ok, JSON.stringify(readinessCreated));
+ const readinessPage = await pageFor(url => /index\.html\?app=readiness(?:&|$)/.test(url));
+ await activateUi(readinessPage);
+ await readinessPage.getByRole('heading', { name: 'Readiness', exact: true }).waitFor();
+ await readinessPage.locator('.readiness-checks .check-pass').filter({ hasText: 'Local agent core' }).waitFor();
+ await readinessPage.locator('.readiness-checks .check-fail').filter({ hasText: 'Installed build' }).waitFor();
+ await readinessPage.locator('.loading-screen').waitFor({ state: 'hidden' });
+ await readinessPage.screenshot({ path: join(evidence, 'native-readiness.png') });
+ await readinessPage.close();
+ settings = await pageByNativeTabId(firstSettingsId);
+ phase('native-settings-diagnostics-and-Readiness-page-live-Core-checks');
  home = await pageByNativeTabId(homeId);
  const second = await home.evaluate(() => window.kestrel.request({ type: 'browser-create-tab', input: 'kestrel://settings' }));
  assert(second.ok, JSON.stringify(second));
@@ -272,10 +291,18 @@ try {
   await boundsSession.send('Browser.setWindowBounds', { windowId: ownerWindow, bounds: { width: 1024, height: 800 } });
   await activateUi(home);
   await eventually(() => home.evaluate(() => innerWidth <= 1120), 'Owned Chromium window did not enter narrow layout');
+  await eventually(() => home.evaluate(() => {
+   const saved = localStorage.getItem('kestrel:navigation-sidebar');
+   const expected = saved === 'open' ? 'false' : saved === 'collapsed' ? 'true' : String(matchMedia('(max-width: 1120px)').matches);
+   return document.querySelector('.kestrel-sidebar')?.dataset.collapsed === expected;
+  }), 'Sidebar did not apply the responsive state before activation');
   const expand = home.getByRole('button', { name: 'Expand sidebar', exact: true });
   if (await expand.isVisible()) await expand.click();
   await home.getByRole('heading', { name: 'Projects', exact: true }).waitFor();
-  const sidebarWidth = await home.locator('.kestrel-sidebar').evaluate(element => element.getBoundingClientRect().width);
+  const sidebarWidth = await eventually(async () => {
+   const width = await home.locator('.kestrel-sidebar').evaluate(element => ({ collapsed: element.dataset.collapsed, width: element.getBoundingClientRect().width }));
+   return width.collapsed === 'false' && width.width >= 200 ? width.width : false;
+  }, 'Expanded sidebar did not reach its readable width');
   assert(sidebarWidth > 56, `Expanded sidebar too narrow: ${sidebarWidth}`);
   await home.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
   await home.getByRole('heading', { name: 'Projects', exact: true }).waitFor({ state: 'hidden' });

@@ -16,7 +16,7 @@ const profile = await realpath(argument("--profile-root"));
 const browserPid = Number(argument("--browser-pid"));
 if (!Number.isSafeInteger(browserPid) || browserPid !== process.ppid) throw new Error("Native broker requires its owning browser.");
 const peerInspector = createRequire(import.meta.url)(join(resources, "native-peer.node"));
-const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES } = await import("./native-ui-contracts.mjs");
+const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_READINESS_REQUEST_TYPES, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES } = await import("./native-ui-contracts.mjs");
 const MAX_FRAME = 1024 * 1024;
 const MAX_PENDING = 64;
 const key = randomBytes(32);
@@ -216,7 +216,7 @@ const server = createServer((socket) => {
 					pending.set(id, { socket, uiId: message.id, timeout });
 					process.stdout.write(JSON.stringify({ kind: "host-request", id, request: parsed.data }) + "\n"); continue;
 				}
-				const hostRequest = NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) || NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) || NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type);
+				const hostRequest = NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) || NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) || NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type);
 				if (!hostRequest && !CoreRequestSchema.safeParse(parsed.data).success) {
 					if (!reportedUnsupported.has(parsed.data.type)) {
 						reportedUnsupported.add(parsed.data.type);

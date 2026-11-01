@@ -667,3 +667,62 @@ layout, collapses through the real control, and verifies compact layout and
 200% zoom. The focused complete `test:desktop-layout` passes, including window
 controls and Agent navigation. The unexecuted remainder of `verify` is not
 reported as passed.
+
+
+### Backported dependency checks and native health probes
+
+The pinned minimatch 3/5/9/10 APIs now retain compatibility with the existing
+brace-expansion 5 override. The modern versions include the upstream bounded
+optimizer fix in both module formats. Actual installed consumer tests cover
+braces, normal glob behavior, optimizer limits, real glob 7 traversal and ASAR
+packing/unpacking; all 18 behavioral checks passed. The development package
+build, packaged smoke and packaged layout checks passed. No package was installed.
+
+`audit:dependencies` runs the raw scanner from an isolated lockfile-only
+workspace so project or inherited ignore/severity settings cannot hide findings.
+It preserves the original advisory output. The one temporary backport policy
+accepts only the exact development-only minimatch advisory, reviewed versions,
+all 23 known paths and unchanged metadata after checking patch/lock hashes,
+installed manifests and source, actual public entrypoint resolution,
+brace-expansion identity and the behavioral tests. Unknown findings, altered
+paths/versions/configuration, missing patches, source/manifest changes, transport
+errors or expiry fail. Evidence checks run even for an empty scanner report.
+The exception expires at `2026-12-01T00:00:00.000Z`; the raw registry still reports
+[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249).
+The live guard and 36 focused policy/compatibility tests pass. Independent review
+found and corrected inherited-ignore, empty-report and entrypoint-remapping gaps.
+No global advisory ignore was added. The current isolated scanner does not report
+the previously ignored sprintf-js finding; that observation is not remediation
+proof. CI and release auditing now use this explicit guard.
+
+An incremental pnpm 11.15.1 frozen install reported success but linked unpatched
+contents under patch-hash directories. A separately reproduced fresh frozen
+install applied all patches. The isolated release worktree retained its old
+node_modules in `.tmp/node-modules-before-minimatch-refresh/` and refreshed only
+its own dependencies. Consumer-resolved tests and source hashes catch that false
+install result rather than trusting directory names. User profiles and the
+primary dirty checkout were not touched.
+
+Native `system-readiness` now reaches actual Core, model-route, fixed-loopback
+Ollama status and workspace availability probes. It distinguishes configured
+routes from live responses and labels timestamped model verification as
+historical. Unsupported desktop, backup and production acceptance remain
+unverified; the report does not manufacture a ready state. The new standalone
+private-Core protocol test passed. Actual Settings diagnostics and the Readiness
+page rendered their results on complete bundle
+`fdecbcd481850174e820d0ca417a13bb3739ff788e15627b4bac7f806231c27d`.
+All 14 settings/window phases passed with matching before/after bundle hashes in
+`.tmp/native-readiness-complete-evidence/receipt.json`; its `native-readiness.png`
+was visually inspected after actual native activation. Resize assertions now
+wait for the applied media-query state before clicking Expand.
+
+The native build, workspace typecheck and all 1,967 tests across 263 files passed
+at this checkpoint. Packaged CLI, editor integration contract and production
+secret-scan checks passed. The Store canary for this newer bundle reached its
+native install handoff but could not accept the sheet because the computer tool
+reported a locked Mac. It timed out without observing installation and shut down
+its owned processes; evidence is retained in
+`.tmp/native-readiness-store-locked-evidence/`. The earlier complete 30-phase
+Store receipt remains the `f3d60a92` bundle above. The pending unlock request is
+required for a fresh interactive check; no current-bundle Store success or
+canonical cutover is inferred from prior receipts.

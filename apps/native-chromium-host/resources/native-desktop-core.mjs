@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
+import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
@@ -208,12 +208,16 @@ input.on("line", line => {
 	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
 	const isHost = message.type === "host-request";
 	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
-	if (!parsed.success || (isHost && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
+	if (!parsed.success || (isHost && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
 	if (!isHost && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Settings are being applied. Wait for Agent Core to restart." } }); return; }
 	pending.add(message.id);
 	if (!isHost) activeCoreRequests.add(message.id);
 	void Promise.resolve().then(async () => {
 		if (isHost) {
+			if (NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type)) return { ok: true, systemReadiness: await nativeSystemReadiness({
+				coreRequest: request => core.request(request), workspaceConfiguration: () => workspaces.runtimeConfiguration(),
+				localStatus: () => providers.handle({ type: "local-model-status" }),
+			}) };
 			if (NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type)) return workspaces.handle(parsed.data);
 			if (NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type)) return attachments.handle(parsed.data);
 			return providers.handle(parsed.data);

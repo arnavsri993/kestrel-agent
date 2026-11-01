@@ -40,7 +40,7 @@ jobs:
           path: .tmp/source-ingestion-benchmark/*.json
           if-no-files-found: warn
           retention-days: 14
-      - run: corepack pnpm audit
+      - run: corepack pnpm audit:dependencies
       - run: corepack pnpm assets:verify
       - run: corepack pnpm audit:references
       - run: corepack pnpm verify:openclaw2
@@ -67,6 +67,7 @@ jobs:
           corepack pnpm test:chromium-native-auth
           corepack pnpm test:chromium-provider-store
           corepack pnpm test:chromium-context-dialog
+          corepack pnpm test:chromium-readiness
           corepack pnpm test:chromium-system-integration
           corepack pnpm test:chromium-external-urls
           corepack pnpm test:chromium-browser-settings
