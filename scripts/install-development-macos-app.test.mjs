@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -36,6 +37,11 @@ function createBundle(
 `,
   );
   writeFileSync(join(bundle, "Contents", "payload.txt"), name);
+  if (identifier !== "com.kestrel.native-chromium-host.dev") {
+    mkdirSync(join(bundle, "Contents", "Frameworks", "Electron Framework.framework"), { recursive: true });
+    mkdirSync(join(bundle, "Contents", "Resources"), { recursive: true });
+    writeFileSync(join(bundle, "Contents", "Resources", "app.asar"), "electron app");
+  }
   return bundle;
 }
 
@@ -69,6 +75,29 @@ testSuite("development macOS app installer", () => {
     const result = spawnSync(process.execPath, [script, source], { encoding: "utf8", env: { ...process.env, KESTREL_INSTALL_NATIVE_CANONICAL: "", KESTREL_MACOS_INSTALL_ROOT: installRoot, KESTREL_MACOS_TRASH_ROOT: trashRoot, KESTREL_SKIP_SPOTLIGHT: "1", KESTREL_SKIP_LSREGISTER: "1" } });
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain("Native cutover is not accepted");
+    expect(readPayload(canonical)).toBe("working canonical");
+    expect(existsSync(source)).toBe(true);
+    expect(existsSync(trashRoot)).toBe(false);
+  });
+  it.each(["native", "ambiguous"])("rejects a production-ID %s source before moving any app", (runtime) => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-installer-runtime-guard-"));
+    const installRoot = join(root, "Applications"), trashRoot = join(root, "Trash");
+    const source = createBundle(join(root, "release"), "Kestrel.app", "com.kestrel.desktop");
+    const contents = join(source, "Contents");
+    mkdirSync(join(contents, "Frameworks", "Chromium Embedded Framework.framework"), { recursive: true });
+    if (runtime === "native") {
+      // Native release identity can match Electron's production identifier.
+      rmSync(join(contents, "Frameworks", "Electron Framework.framework"), { recursive: true });
+      rmSync(join(contents, "Resources", "app.asar"));
+      mkdirSync(join(contents, "MacOS"), { recursive: true });
+      writeFileSync(join(contents, "MacOS", "Kestrel Native Bridge"), "native");
+      writeFileSync(join(contents, "Resources", "native-core-relay.mjs"), "native");
+    }
+    const canonical = createBundle(installRoot, "Kestrel.app");
+    writeFileSync(join(canonical, "Contents", "payload.txt"), "working canonical");
+    const result = spawnSync(process.execPath, [script, source], { encoding: "utf8", env: { ...process.env, KESTREL_INSTALL_NATIVE_CANONICAL: "", KESTREL_MACOS_INSTALL_ROOT: installRoot, KESTREL_MACOS_TRASH_ROOT: trashRoot, KESTREL_SKIP_SPOTLIGHT: "1", KESTREL_SKIP_LSREGISTER: "1" } });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("No app was installed");
     expect(readPayload(canonical)).toBe("working canonical");
     expect(existsSync(source)).toBe(true);
     expect(existsSync(trashRoot)).toBe(false);

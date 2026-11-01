@@ -1,6 +1,6 @@
 // Sent actions fail when their connection closes. They are never replayed.
 import { nativeRequestTimeoutMs } from "../../../../packages/shared-types/src/request-timeouts.ts";
-export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = crypto, handleBrowserRequest, handleExternalOpenUrl,
+export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = crypto, handleBrowserRequest, handleExternalOpenUrl, handleOpenNativeWindow,
 	loadConfiguration = async (nonce) => {
 		const response = await fetch(runtime.getURL("launch-config.json") + "?challenge=" + nonce, { cache: "no-store", redirect: "error" });
 		if (!response.ok) throw new Error("Native launch configuration is unavailable.");
@@ -17,7 +17,7 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 		request.timeout = setTimeout(() => {
 			if (pending.get(id) !== request) return;
 			pending.delete(id);
-			request.resolve({ ok: false, error: waiting ? "Kestrel's native connection setup timed out." : "Kestrel's native request timed out. Check the task or browser state before retrying." });
+			request.resolve({ ok: false, error: waiting ? "Kestrel's native connection setup timed out." : request.message.request.type === "set-default-browser" ? "The default-browser request timed out; its outcome is uncertain. Check System Settings before retrying." : "Kestrel's native request timed out. Check the task or browser state before retrying." });
 		}, Math.max(1, budget - (Date.now() - request.startedAt)));
 	}
 	function disconnected(connection) {
@@ -26,7 +26,7 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 		ready = false;
 		for (const request of pending.values()) {
 			clearTimeout(request.timeout);
-			request.resolve({ ok: false, error: "Kestrel's native connection closed. Check the task or browser state before retrying." });
+			request.resolve({ ok: false, error: request.message.request.type === "set-default-browser" && request.sent ? "The default-browser connection closed; its outcome is uncertain. Check System Settings before retrying." : "Kestrel's native connection closed. Check the task or browser state before retrying." });
 		}
 		pending.clear();
 		for (const [id, request] of browserRequests) if (request.connection === connection) {
@@ -93,7 +93,17 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
         } catch {
           if (native === connection) post(connection, { kind: "external-open-url-result", id: message.id, ok: false });
         }
-      } else if (phase === "ready" && message?.kind === "browser-backend-cancel") {
+      } else if (phase === "ready" && message?.kind === "open-native-window") {
+				if (typeof message.id !== "string" || !/^window-[0-9]{1,20}$/.test(message.id)) { abort(connection); return; }
+				try {
+					if (!handleOpenNativeWindow) throw new Error("New browser windows are unavailable.");
+					const result = await handleOpenNativeWindow();
+					if (!Number.isSafeInteger(result?.tabId) || !Number.isSafeInteger(result?.windowId)) throw new Error("Browser did not confirm the new window.");
+					if (native === connection) post(connection, { kind: "open-native-window-result", id: message.id, ok: true, tabId: result.tabId, windowId: result.windowId });
+				} catch {
+					if (native === connection) post(connection, { kind: "open-native-window-result", id: message.id, ok: false });
+				}
+				} else if (phase === "ready" && message?.kind === "browser-backend-cancel") {
 				const request = browserRequests.get(message.id);
 				if (request?.connection === connection) { browserRequests.delete(message.id); request.controller.abort(); }
 			} else if (phase === "ready" && message?.kind === "browser-backend-request") {

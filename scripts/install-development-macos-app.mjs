@@ -29,6 +29,7 @@ import {
   uniquePaths,
   unregister,
 } from "./kestrel-macos-app-hygiene.mjs";
+import { macosAppRuntime } from "./macos-app-runtime.mjs";
 
 if (process.platform !== "darwin") {
   throw new Error("The macOS development app installer only runs on macOS.");
@@ -70,6 +71,13 @@ function validateSource(bundlePath) {
   }
 }
 
+function requireElectronSource(bundlePath) {
+  const runtime = macosAppRuntime(bundlePath, plistValue(bundlePath, "CFBundleIdentifier"));
+  if (runtime !== "electron") {
+    throw new Error("Native cutover is not accepted or the bundle runtime is ambiguous. Use the native installer and candidate-bound evidence before replacing the canonical app. No app was installed.");
+  }
+}
+
 function moveDuplicatesToTrash(excludedPaths) {
   return moveDuplicateKestrelAppsToTrash({
     excludedPaths,
@@ -101,9 +109,7 @@ function stageBundle() {
 function install() {
   const nativeCutover = process.env.KESTREL_INSTALL_NATIVE_CANONICAL === "1";
   validateSource(source);
-  if (plistValue(source, "CFBundleIdentifier") === "com.kestrel.native-chromium-host.dev" && !nativeCutover) {
-    throw new Error("Native cutover is not accepted. Use the native installer and candidate-bound evidence before replacing the canonical app. No app was installed.");
-  }
+  if (!nativeCutover) requireElectronSource(source);
   preventSpotlightIndexing(repositoryRoot);
   mkdirSync(installRoot, { recursive: true });
   if (nativeCutover && samePath(source, destination)) {
@@ -116,10 +122,6 @@ function install() {
   let removedStaging = [];
   const moved = [];
   let staged;
-  if (!nativeCutover) {
-    removedStaging = removeStaleInstallStagingDirectories(installRoot);
-    moved.push(...moveDuplicatesToTrash([source, destination]));
-  }
   if (!samePath(source, destination)) {
     staged = stageBundle();
     try {
@@ -132,12 +134,10 @@ function install() {
           [join(repositoryRoot, "scripts", "native-install-stage.mjs"), staged.stagedBundle],
           { stdio: "inherit", env: process.env },
         );
-      }
+      } else requireElectronSource(staged.stagedBundle);
 
-      if (nativeCutover) {
-        removedStaging = removeStaleInstallStagingDirectories(installRoot);
-        moved.push(...moveDuplicatesToTrash([source, destination]));
-      }
+      removedStaging = removeStaleInstallStagingDirectories(installRoot);
+      moved.push(...moveDuplicatesToTrash([source, destination]));
       if (existsSync(destination)) {
         moved.push({
           from: destination,
@@ -153,6 +153,11 @@ function install() {
       unregister(staged.stagedBundle);
       rmSync(staged.stageRoot, { recursive: true, force: true });
     }
+  }
+
+  if (samePath(source, destination)) {
+    removedStaging = removeStaleInstallStagingDirectories(installRoot);
+    moved.push(...moveDuplicatesToTrash([source, destination]));
   }
 
   // A second pass catches duplicates that shared the canonical install root.

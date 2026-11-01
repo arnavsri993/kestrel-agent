@@ -44,6 +44,32 @@ describe("native worker connection", () => {
 		expect(ports[0].postMessage).toHaveBeenCalledWith({ kind: "external-open-url-result", id: "external-1", ok: true, tabId: 17, windowId: 5 });
 	});
 
+	it("opens a native window only on the authenticated connection and confirms it", async () => {
+		const open = vi.fn(async () => ({ tabId: 210, windowId: 21 }));
+		const { ports, authenticate } = harness({ handleOpenNativeWindow: open });
+		await ports[0].onMessage.emit({ kind: "open-native-window", id: "window-1" });
+		expect(open).not.toHaveBeenCalled();
+		await authenticate();
+		await ports[0].onMessage.emit({ kind: "open-native-window", id: "window-1" });
+		expect(open).toHaveBeenCalledOnce();
+		expect(ports[0].postMessage).toHaveBeenCalledWith({ kind: "open-native-window-result", id: "window-1", ok: true, tabId: 210, windowId: 21 });
+	});
+
+	it("does not replay or acknowledge a new-window action after disconnect", async () => {
+		let resolve!: (value: unknown) => void;
+		const open = vi.fn(() => new Promise((done) => { resolve = done; }));
+		const { ports, authenticate } = harness({ handleOpenNativeWindow: open });
+		await authenticate();
+		const pending = ports[0].onMessage.emit({ kind: "open-native-window", id: "window-2" });
+		ports[0].disconnect();
+		await vi.advanceTimersByTimeAsync(250);
+		await authenticate(ports[1]);
+		resolve({ tabId: 211, windowId: 22 }); await pending;
+		expect(open).toHaveBeenCalledOnce();
+		expect(ports[0].postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "open-native-window-result" }));
+		expect(ports[1].postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "open-native-window-result" }));
+	});
+
 	it("does not replay or acknowledge an external open after disconnect", async () => {
 		let resolve!: (value: unknown) => void;
 		const open = vi.fn(() => new Promise((done) => { resolve = done; }));
@@ -110,6 +136,19 @@ describe("native worker connection", () => {
 		await vi.advanceTimersByTimeAsync(250);
 		await authenticate(ports[1]);
 		expect(ports[1].postMessage.mock.calls.map(([message]: any[]) => message.kind)).toEqual(["authenticate"]);
+	});
+
+	it("bounds default-browser consent and never replays a timed-out mutation", async () => {
+		const { connection, ports, authenticate } = harness();
+		await authenticate();
+		const result = connection.request({ type: "set-default-browser" });
+		await vi.advanceTimersByTimeAsync(655_000);
+		expect(await result).toEqual({ ok: false, error: expect.stringMatching(/outcome is uncertain.*System Settings/) });
+		ports[0].disconnect();
+		await vi.advanceTimersByTimeAsync(250);
+		await authenticate(ports[1]);
+		expect(ports[0].postMessage.mock.calls.filter(([message]: any[]) => message.request?.type === "set-default-browser")).toHaveLength(1);
+		expect(ports[1].postMessage.mock.calls.filter(([message]: any[]) => message.request?.type === "set-default-browser")).toHaveLength(0);
 	});
 
 	it("keeps a dispatched agent request alive beyond the old 42-second transport deadline", async () => {

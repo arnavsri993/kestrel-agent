@@ -23,8 +23,8 @@ describe("shared request execution and native transport deadlines", () => {
 	it("allows local chat warm-up and Core restart within a bounded setup budget", () => {
 		expect(nativeRequestTimeoutMs({ type: "local-runtime-bootstrap" }, "broker")).toBe(100_000);
 	});
-	it("allows a person time to select a native project folder", () => {
-		for (const type of ["select-workspace-folder", "select-context-files"]) {
+	it("allows time for native pickers and default-browser consent", () => {
+		for (const type of ["select-workspace-folder", "select-context-files", "set-default-browser"]) {
 			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(610_000);
 			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(660_000);
 		}

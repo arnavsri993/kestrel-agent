@@ -612,6 +612,7 @@ try {
 	await page.getByLabel("Message Kestrel").fill("");
 	await page.setViewportSize({ width: 640, height: 760 });
 	await page.locator(".kestrel-sidebar").waitFor({ state: "visible" });
+	await page.waitForFunction(() => document.querySelector(".kestrel-sidebar")?.getAttribute("data-collapsed") === "true");
 	assert.equal(
 		await page.locator(".kestrel-sidebar-brand span").evaluate(
 			(node) => window.getComputedStyle(node).display === "none",
@@ -627,6 +628,26 @@ try {
 		),
 		false,
 	);
+	// With no saved preference the rail tracks viewport changes in both
+	// directions. An explicit expansion then remains open at narrow widths.
+	await page.setViewportSize({ width: 1320, height: 860 });
+	await page.waitForFunction(() => document.querySelector(".kestrel-sidebar")?.getAttribute("data-collapsed") === "false");
+	await page.setViewportSize({ width: 640, height: 760 });
+	await page.waitForFunction(() => document.querySelector(".kestrel-sidebar")?.getAttribute("data-collapsed") === "true");
+	await page.getByRole("button", { name: "Expand sidebar" }).click();
+	await page.locator(".kestrel-sidebar").getByRole("heading", { name: "Projects" }).waitFor({ state: "visible" });
+	assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:navigation-sidebar")), "open");
+	await page.setViewportSize({ width: 1320, height: 860 });
+	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+	await page.setViewportSize({ width: 640, height: 760 });
+	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+	await page.waitForFunction(() => document.querySelector(".kestrel-sidebar")?.getAttribute("data-collapsed") === "false");
+	await page.locator(".kestrel-sidebar").getByRole("heading", { name: "Projects" }).waitFor({ state: "visible" });
+	await page.evaluate(() => localStorage.removeItem("kestrel:navigation-sidebar"));
+	await page.setViewportSize({ width: 1320, height: 860 });
+	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+	await page.setViewportSize({ width: 640, height: 760 });
+	await page.waitForFunction(() => document.querySelector(".kestrel-sidebar")?.getAttribute("data-collapsed") === "true");
 	await page.keyboard.press("Meta+K");
 	await page.getByLabel("Search Kestrel").waitFor();
 	const compactCommandCenter = page.locator(".command-center");

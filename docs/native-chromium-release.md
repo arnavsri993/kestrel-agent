@@ -581,9 +581,78 @@ Fresh exact-head CI is still required. The GitHub connector became unavailable
 during this checkpoint, and Codex Code Review also reports its connection is
 unavailable. Neither condition is reported as a green remote check.
 
-These changes do not complete system-default/login-item setters, public
-credential protection, whole-desktop automation/authentication handoff, automatic
+These changes do not complete production acceptance for system-default/login-item
+setters, public credential protection, whole-desktop automation/authentication handoff, automatic
 local-runtime installation, lossless profile transfer, rollback or canonical
 cutover. Developer ID/notarization still requires an Apple Developer account.
 The existing `/Applications/Kestrel.app`, its profile and unrelated source
 changes remain preserved; no Electron-retirement gate is asserted.
+
+
+### Native window recovery and macOS system requests
+
+Default-browser and launch-at-login requests now reach Cocoa. Default-browser
+changes use the asynchronous system consent API, attempt both HTTP and HTTPS,
+and read back both handlers. Only one request may remain pending; its timeout
+and disconnect messages identify the outcome as uncertain and require checking
+System Settings before a retry. Launch-at-login reports the actual
+SMAppService status, including required approval, without optimistic state.
+The actual Settings row shows errors and disables its switch during a request.
+Both mutations require the canonical production identity and a loaded canonical
+CEF framework. Development candidates cannot modify those macOS settings.
+Production identity, actual OS mutation acceptance and cutover remain pending;
+no Mac settings were changed to claim this evidence.
+
+Zero-window native reopen and New Window now use the authenticated worker rather
+than CEF startup creation. A real native close/reopen test exposed that a
+URL-less Chrome window restores the old Home and creates another Home. The
+corrected operation creates one uniquely identified temporary blank tab. It
+reuses a restored first-party Home and removes only its still-owned temporary
+tab; if no Home is restored it navigates only that temporary tab. Pre-existing
+blank, public and duplicate Home tabs are preserved. Changed tab identity/URLs
+produce an uncertain result without replay. Extension identity compares the
+protocol, host and path explicitly instead of an opaque URL origin.
+
+The final development bundle is
+`f3d60a92ffbe1d3912723d601a05deef090ebb7ad384c57257813da0e31ffe0c`.
+Its 11-phase native lifecycle run passed actual last-window close, native
+reopening with exactly one Home, visible sidebar/Home controls, unchanged Core
+processes, persisted conversation and full restart/clean shutdown. Evidence is
+`.tmp/native-window-marker-lifecycle-evidence/receipt.json`. All 13 settings
+phases also passed on this bundle, including the actual Run at login guard
+refusal rendered as an alert with unchanged system readback and switch state;
+its before/after bundle hashes match in
+`.tmp/native-window-marker-settings-evidence/receipt.json`.
+
+The native build, workspace TypeScript, 1,926 tests across 260 files, native
+authentication, injected Cocoa system tests and three compiled URL/path tests
+passed. The generic installer now identifies native, Electron and ambiguous
+bundle contents independently of their shared production ID and rechecks the
+staged copy before moving the canonical app or duplicates. Ten focused
+classifier/installer tests passed with owned temporary fixtures. No app was
+installed. Fresh-profile setup and visible conversation restoration also passed
+on prior bundle `add394828f8d071d2`; the current exact-bundle first-run check is
+not inferred from that earlier receipt.
+
+At exact published head `10ed887a53a9a74f7fa0625f29d27065cfb0f2aa`, Desktop CI
+failed the automatic narrow-viewport collapse assertion. The sidebar now tracks
+viewport changes when no explicit preference exists and retains an explicit
+expansion. The expanded Projects section remains visible. The complete local
+`test:desktop-setup` run passed these automatic/explicit resize checks. Core CI
+passed TypeScript, all 1,915 tests and the source-ingestion benchmark before
+full dependency audit failed [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249).
+The production-only audit passed locally. Full audit remains a release gap;
+major-version forcing would break legacy minimatch/brace-expansion consumers,
+and no blanket advisory exemption was applied. Public GitHub REST supplied
+these exact-head logs while connected Code Review remained unavailable.
+
+The same final `f3d60a92ffbe1d39` bundle then passed the complete 30-phase native
+flow, including the physical Chromium permission sheet, official JSON Formatter
+0.10.2 installation, actual formatting before/after full restart, and
+Home/Settings/Store window ID `595895288` with companion target
+`E4A4D0563417ED2769F4BE9200AA0CD5`. The retained receipt is
+`.tmp/native-window-marker-store-30-evidence/receipt.json`. Provider/project and
+conversation persistence, large context paste delivery, unselected-path refusal,
+isolated browser/screenshot/download checks and active-renderer/Core recovery
+also passed in that run. This is candidate evidence; canonical installation and
+public release remain unproven.

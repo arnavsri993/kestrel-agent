@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include "include/cef_app.h"
@@ -32,9 +33,11 @@
 #include "native_external_url_queue.h"
 #include "native_external_url_validation.h"
 #include "native_dialog_paths.h"
+#include "native_system_integration.h"
 #include "native_isolated_automation.h"
 
 namespace {
+bool RequestNativeWindow(bool dock_activation);
 class OpenKestrelNewTabTask final : public CefTask {
  public:
   OpenKestrelNewTabTask(CefRefPtr<CefBrowser> browser, std::string expected, std::string ui)
@@ -145,7 +148,7 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   void Reopen() {
     if (closing_) return;
     const auto browser = Active();
-    if (!browser) { OpenWindow(); return; }
+    if (!browser) { RequestNativeWindow(true); return; }
     NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
     NSWindow* window = view.window;
     if (window.miniaturized) [window deminiaturize:nil];
@@ -181,10 +184,53 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
 };
 CefRefPtr<DesktopClient> desktop_client;
 NSFileHandle* desktop_broker_input;
+bool desktop_bridge_ready = false;
+bool desktop_window_closing = false;
+unsigned long long native_window_sequence = 0;
+std::set<std::string> native_window_pending;
+std::set<std::string> native_window_dispatched;
+std::vector<std::string> native_window_waiting;
+std::string dock_window_pending;
+void DispatchNativeWindow(const std::string& id) {
+  if (desktop_window_closing || !desktop_broker_input || !desktop_bridge_ready || !native_window_pending.count(id)) return;
+  NSString* ns_id = [NSString stringWithUTF8String:id.c_str()];
+  NSData* bytes = [NSJSONSerialization dataWithJSONObject:@{@"kind":@"open-native-window", @"id":ns_id} options:0 error:nil];
+  if (!bytes) { native_window_pending.erase(id); if (dock_window_pending == id) dock_window_pending.clear(); return; }
+  NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
+  native_window_dispatched.insert(id);
+  @try { [desktop_broker_input writeData:line]; }
+  @catch (NSException*) { std::cerr << "New window delivery was interrupted; check Kestrel before retrying." << std::endl; }
+  const std::string request_id = id;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    if (native_window_pending.erase(request_id)) {
+      native_window_dispatched.erase(request_id);
+      if (dock_window_pending == request_id) dock_window_pending.clear();
+      std::cerr << "New window delivery timed out; check Kestrel before retrying." << std::endl;
+    }
+  });
+}
+bool RequestNativeWindow(bool dock_activation) {
+  if (desktop_window_closing) return false;
+  if (dock_activation && !dock_window_pending.empty()) return true;
+  if (native_window_pending.size() >= 8) { std::cerr << "Kestrel has too many pending new-window requests." << std::endl; return false; }
+  const std::string id = "window-" + std::to_string(++native_window_sequence);
+  native_window_pending.insert(id);
+  if (dock_activation) dock_window_pending = id;
+  if (desktop_bridge_ready) DispatchNativeWindow(id);
+  else native_window_waiting.push_back(id);
+  return true;
+}
+void CancelNativeWindowRequests() {
+  desktop_window_closing = true;
+  desktop_bridge_ready = false;
+  native_window_pending.clear();
+  native_window_dispatched.clear();
+  native_window_waiting.clear();
+  dock_window_pending.clear();
+}
 NativeExternalUrlQueue external_urls([](const std::string& id, const std::string& url) {
   if (!desktop_broker_input || !desktop_client || ![NSThread isMainThread]) return false;
-  // The worker creates a Chrome-owned window when none exists. Re-entering
-  // CEF's startup browser creation here also restores the previous session.
+  // The authenticated extension worker creates the Chrome-owned window when none exists.
   if (desktop_client->Active()) desktop_client->Reopen();
   NSString* ns_id = [NSString stringWithUTF8String:id.c_str()];
   NSString* ns_url = [NSString stringWithUTF8String:url.c_str()];
@@ -199,6 +245,7 @@ NativeExternalUrlQueue external_urls([](const std::string& id, const std::string
     return true;
   }
 });
+bool desktop_default_browser_pending = false;
 NSOpenPanel* desktop_workspace_panel;
 NSString* desktop_workspace_panel_id;
 NSString* Argument(int argc, char** argv, const char* name) {
@@ -226,7 +273,7 @@ bool EnqueueKestrelExternalURL(NSURL* url) {
 - (void)chromeCommand:(NSMenuItem*)item {
   const auto browser = desktop_client ? desktop_client->Active() : nullptr;
   if (!browser && desktop_client && ([item.representedObject isEqualToString:@"IDC_NEW_WINDOW"] || [item.representedObject isEqualToString:@"IDC_NEW_TAB"])) {
-    desktop_client->OpenWindow(); return;
+    RequestNativeWindow(false); return;
   }
   const int command = cef_id_for_command_id_name([item.representedObject UTF8String]);
   if (browser && command >= 0) browser->GetHost()->ExecuteChromeCommand(command, CEF_WOD_CURRENT_TAB);
@@ -299,6 +346,7 @@ static void InstallDesktopMenu() {
 bool CloseKestrelChromiumDesktop() {
   if (!desktop_client) return false;
   external_urls.SetReady(false);
+  CancelNativeWindowRequests();
   if (desktop_workspace_panel) [desktop_workspace_panel cancel:nil];
   if (desktop_broker_input) {
     @try { [desktop_broker_input closeFile]; } @catch (NSException*) {}
@@ -574,8 +622,19 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
           if (parsed && parsed->GetType() == VTYPE_DICTIONARY) desktop_client->AutomationRequest(request_id, parsed->GetDictionary());
         });
       }
+      if ([value[@"kind"] isEqualToString:@"open-native-window-result"] && [value[@"id"] isKindOfClass:NSString.class]) dispatch_async(dispatch_get_main_queue(), ^{
+        const char* raw_id = [value[@"id"] UTF8String]; if (!raw_id) return;
+        const std::string id(raw_id);
+        if (!native_window_pending.erase(id)) return;
+        native_window_dispatched.erase(id);
+        if (dock_window_pending == id) dock_window_pending.clear();
+        if (![value[@"ok"] boolValue]) std::cerr << ([value[@"uncertain"] boolValue] ? "New window delivery was interrupted; check Kestrel before retrying." : "Kestrel could not open a new window.") << std::endl;
+      });
       if ([value[@"kind"] isEqualToString:@"ui-ready"]) dispatch_async(dispatch_get_main_queue(), ^{
-        if (desktop_client) {
+        if (desktop_client && !desktop_window_closing) {
+          desktop_bridge_ready = true;
+          const auto waiting = native_window_waiting; native_window_waiting.clear();
+          for (const auto& id : waiting) DispatchNativeWindow(id);
           desktop_client->UiReady();
           external_urls.SetReady(true);
           // This comes only after Core is ready and the authenticated extension
@@ -584,6 +643,13 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
         }
       });
       if ([value[@"kind"] isEqualToString:@"ui-disconnected"]) dispatch_async(dispatch_get_main_queue(), ^{
+        desktop_bridge_ready = false;
+        if (!native_window_dispatched.empty()) std::cerr << "New window delivery was interrupted; check Kestrel before retrying." << std::endl;
+        for (const auto& id : native_window_dispatched) {
+          native_window_pending.erase(id);
+          if (dock_window_pending == id) dock_window_pending.clear();
+        }
+        native_window_dispatched.clear();
         external_urls.SetReady(false);
         if (external_urls.uncertain()) std::cerr << "External link delivery was interrupted; check the browser before retrying." << std::endl;
       });
@@ -598,12 +664,30 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
           NSDictionary* response = @{@"ok":@NO, @"error":@"Unsupported native desktop request."};
           if ([type isEqualToString:@"get-system-state"]) {
             SMAppServiceStatus status = SMAppService.mainAppService.status;
-            NSString* label = status == SMAppServiceStatusEnabled ? @"enabled" : status == SMAppServiceStatusRequiresApproval ? @"requires-approval" : status == SMAppServiceStatusNotFound ? @"not-found" : @"not-registered";
-            response = @{@"ok":@YES, @"launchAtLogin":@(status == SMAppServiceStatusEnabled), @"launchStatus":label, @"userName":NSFullUserName()};
+            BOOL is_default = [KestrelDefaultBrowserReadback(KestrelSystemCurrentIdentityAllowed(), KestrelDefaultBrowserReader())[@"isDefault"] boolValue];
+            response = @{@"ok":@YES, @"launchAtLogin":@(status == SMAppServiceStatusEnabled), @"launchStatus":KestrelLoginStatusLabel(status), @"isDefaultBrowser":@(is_default), @"userName":NSFullUserName()};
           } else if ([type isEqualToString:@"get-default-browser-status"]) {
-            NSURL* handler = [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:[NSURL URLWithString:@"https://kestrel.invalid/"]];
-            BOOL is_default = handler && [handler.URLByResolvingSymlinksInPath isEqual:NSBundle.mainBundle.bundleURL.URLByResolvingSymlinksInPath];
-            response = @{@"ok":@YES, @"isDefault":@(is_default), @"canSetAsDefault":@([NSBundle.mainBundle.bundlePath isEqualToString:@"/Applications/Kestrel.app"])};
+            response = KestrelDefaultBrowserReadback(KestrelSystemCurrentIdentityAllowed(), KestrelDefaultBrowserReader());
+          } else if ([type isEqualToString:@"set-launch-at-login"]) {
+            id enabled = value[@"request"][@"enabled"];
+            response = [value[@"request"] count] == 2 && enabled && CFGetTypeID((__bridge CFTypeRef)enabled) == CFBooleanGetTypeID()
+                ? KestrelSetLaunchAtLogin([enabled boolValue]) : @{@"ok":@NO, @"error":@"Invalid launch-at-login request."};
+          } else if ([type isEqualToString:@"set-default-browser"] && [value[@"request"] count] == 1) {
+            if (desktop_default_browser_pending) {
+              response = @{@"ok":@NO, @"error":@"A default-browser request is still pending. Check System Settings before retrying."};
+            } else {
+              desktop_default_browser_pending = true;
+              KestrelSetDefaultBrowser(^(NSDictionary* result) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                  desktop_default_browser_pending = false;
+                  NSData* bytes = [NSJSONSerialization dataWithJSONObject:@{@"kind":@"host-response", @"id":value[@"id"], @"response":result} options:0 error:nil];
+                  if (!bytes || !broker.running) return;
+                  NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
+                  @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) {}
+                });
+              });
+              return;
+            }
           } else if (([type isEqualToString:@"select-workspace-folder"] || [type isEqualToString:@"select-context-files"]) && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
             const bool context_files = [type isEqualToString:@"select-context-files"];
             NSString* workspace_root = context_files ? value[@"request"][@"workspaceRoot"] : nil;

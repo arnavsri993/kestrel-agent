@@ -499,6 +499,79 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		await invoke(chromeApi.tabs, "remove", tab.id);
 		return { closed: true };
 	}
+	async function openNativeWindow() {
+		// This unique tab is the only tab this operation may navigate or close.
+		// Chromium may simultaneously restore any number of user-owned tabs.
+		const marker = `about:blank#kestrel-window-${crypto.randomUUID()}`;
+		const window = await invoke(chromeApi.windows, "create", { type: "normal", focused: true, url: marker });
+		if (!Number.isInteger(window?.id) || window.id < 0) throw new Error("Kestrel's new browser window could not be confirmed. Check Kestrel before retrying.");
+		const homeUrl = new URL(uiUrl);
+		const currentUrl = (tab) => tab?.pendingUrl || tab?.url || "";
+		const isHome = (tab) => {
+			try {
+				if (!tab?.url || (tab.pendingUrl && tab.pendingUrl !== tab.url)) return false;
+				const url = new URL(tab.url);
+				return url.protocol === homeUrl.protocol && url.hostname === homeUrl.hostname &&
+					url.pathname === homeUrl.pathname && !url.search && !url.hash;
+			} catch { return false; }
+		};
+		const validId = (tab) => Number.isInteger(tab?.id) && tab.id >= 0 && tab.windowId === window.id;
+		const uncertain = () => new Error("The new browser window changed before Kestrel could confirm it. Check Kestrel before retrying.");
+		let markerId;
+		let home;
+		// Give session restoration time to surface before deciding that a Home
+		// needs to be created. Never infer ownership from an ordinary blank tab.
+		for (let attempt = 0; attempt < 10; attempt++) {
+			const tabs = await invoke(chromeApi.tabs, "query", { windowId: window.id });
+			if (!Array.isArray(tabs)) throw uncertain();
+			if (markerId === undefined) {
+				const markers = tabs.filter((tab) => validId(tab) && currentUrl(tab) === marker);
+				if (markers.length > 1) throw uncertain();
+				if (markers.length === 1) markerId = markers[0].id;
+			}
+			if (markerId !== undefined) {
+				const owned = tabs.find((tab) => tab.id === markerId);
+				if (!validId(owned) || currentUrl(owned) !== marker) throw uncertain();
+				home = tabs.find((tab) => validId(tab) && tab.id !== markerId && isHome(tab));
+				if (home) break;
+			}
+			if (attempt < 9) await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		if (markerId === undefined) throw uncertain();
+		// Re-read immediately before every destructive operation. A changed tab
+		// belongs to the user now and must be left untouched.
+		const readMarker = async () => {
+			const tab = await invoke(chromeApi.tabs, "get", markerId);
+			if (!validId(tab) || currentUrl(tab) !== marker) throw uncertain();
+			return tab;
+		};
+		if (home) {
+			const freshHome = await invoke(chromeApi.tabs, "get", home.id);
+			if (!validId(freshHome) || !isHome(freshHome)) throw uncertain();
+			await readMarker();
+			await invoke(chromeApi.tabs, "update", home.id, { active: true });
+			await readMarker();
+			await invoke(chromeApi.tabs, "remove", markerId);
+			const confirmed = await invoke(chromeApi.tabs, "get", home.id);
+			if (!validId(confirmed) || !isHome(confirmed)) throw uncertain();
+			focusedWindowId = window.id;
+			return { tabId: home.id, windowId: window.id };
+		}
+		await readMarker();
+		await invoke(chromeApi.tabs, "update", markerId, { url: homeUrl.toString(), active: true });
+		for (let attempt = 0; attempt < 10; attempt++) {
+			const tab = await invoke(chromeApi.tabs, "get", markerId);
+			if (!validId(tab)) throw uncertain();
+			if (isHome(tab)) {
+				focusedWindowId = window.id;
+				return { tabId: markerId, windowId: window.id };
+			}
+			if (currentUrl(tab) !== marker && currentUrl(tab) !== homeUrl.toString()) throw uncertain();
+			if (attempt < 9) await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		throw uncertain();
+	}
+
 	async function openExternalUrl(value) {
 		// Only the private browser-owner channel calls this method. A received
 		// OS URL must never become a search, internal route, or a new app window.
@@ -525,5 +598,5 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		focusedWindowId = window.id;
 		return { tabId: tab.id, windowId: window.id };
 	}
-	return { handles: (type) => SUPPORTED.has(type), request, backend, openExternalUrl };
+	return { handles: (type) => SUPPORTED.has(type), request, backend, openExternalUrl, openNativeWindow };
 }

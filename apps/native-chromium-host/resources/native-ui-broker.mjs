@@ -62,6 +62,8 @@ let sequence = 0;
 let stopping = false;
 let shuttingDown = false;
 let externalPending;
+const windowPending = new Map();
+const MAX_WINDOW_PENDING = 8;
 function finishExternal(ok, uncertain = false) {
   if (!externalPending) return;
   const id = externalPending.id;
@@ -161,6 +163,10 @@ const server = createServer((socket) => {
       active = undefined;
       process.stdout.write(JSON.stringify({ kind: "ui-disconnected" }) + "\n");
       if (externalPending?.socket === socket) { clearTimeout(externalPending.timer); externalPending = undefined; }
+      for (const [id, request] of windowPending) if (request.socket === socket) {
+        clearTimeout(request.timer); windowPending.delete(id);
+        writeOwner(JSON.stringify({ kind: "open-native-window-result", id, ok: false, uncertain: true }));
+      }
     } });
 	socket.on("data", (chunk) => {
 		if (buffer.length + chunk.length > 2 * MAX_FRAME) { socket.destroy(); return; }
@@ -184,7 +190,16 @@ const server = createServer((socket) => {
 				state = "authenticated"; clearTimeout(deadline); active = socket;
 				signalReady();
 			} else {
-				if (message.kind === "external-open-url-result") {
+				if (message.kind === "open-native-window-result") {
+          const request = windowPending.get(message.id);
+          if (request?.socket === socket) {
+            clearTimeout(request.timer); windowPending.delete(message.id);
+            const ok = message.ok === true && Number.isSafeInteger(message.tabId) && Number.isSafeInteger(message.windowId);
+            writeOwner(JSON.stringify({ kind: "open-native-window-result", id: message.id, ok, ...(ok ? { tabId: message.tabId, windowId: message.windowId } : { uncertain: true }) }));
+          }
+          continue;
+        }
+        if (message.kind === "external-open-url-result") {
           if (externalPending?.socket === socket && message.id === externalPending.id) {
             const ok = message.ok === true && Number.isSafeInteger(message.tabId) && Number.isSafeInteger(message.windowId);
             finishExternal(ok, !ok);
@@ -195,9 +210,9 @@ const server = createServer((socket) => {
 				if (message.kind !== "request" || typeof message.id !== "string" || message.id.length > 100 || pending.size >= MAX_PENDING) { socket.destroy(); return; }
 				const parsed = RendererRequestSchema.safeParse(message.request);
 				if (!parsed.success) { send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Invalid Kestrel request." } }); continue; }
-				if (["get-system-state", "get-default-browser-status"].includes(parsed.data.type)) {
+				if (["get-system-state", "get-default-browser-status", "set-default-browser", "set-launch-at-login"].includes(parsed.data.type)) {
 					const id = `host-${++sequence}`;
-					const timeout = setTimeout(() => { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "The native desktop did not respond." } }); }, 30_000);
+					const timeout = setTimeout(() => { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: parsed.data.type === "set-default-browser" ? "The default-browser request timed out; its outcome is uncertain. Check System Settings before retrying." : "The native desktop did not respond." } }); }, nativeRequestTimeoutMs(parsed.data, "broker"));
 					pending.set(id, { socket, uiId: message.id, timeout });
 					process.stdout.write(JSON.stringify({ kind: "host-request", id, request: parsed.data }) + "\n"); continue;
 				}
@@ -252,6 +267,21 @@ ownerInput.on("line", (line) => {
     const socket = active;
     externalPending = { id: message.id, socket, timer: setTimeout(() => finishExternal(false, true), 30000) };
     send(socket, { kind: "external-open-url", id: message.id, url: message.url });
+    return;
+  }
+  if (message?.kind === "open-native-window") {
+    if (typeof message.id !== "string" || !/^window-[0-9]{1,20}$/.test(message.id)) return;
+    if (!active || active.destroyed || !coreReady || windowPending.has(message.id) || windowPending.size >= MAX_WINDOW_PENDING) {
+      writeOwner(JSON.stringify({ kind: "open-native-window-result", id: message.id, ok: false, uncertain: false })); return;
+    }
+    const socket = active;
+    const request = { socket, timer: setTimeout(() => {
+      if (windowPending.get(message.id) !== request) return;
+      windowPending.delete(message.id);
+      writeOwner(JSON.stringify({ kind: "open-native-window-result", id: message.id, ok: false, uncertain: true }));
+    }, 30000) };
+    windowPending.set(message.id, request);
+    send(socket, { kind: "open-native-window", id: message.id });
     return;
   }
   if (message?.kind === "automation-response") { automationRelay.response(message); return; }

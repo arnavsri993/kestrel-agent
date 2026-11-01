@@ -219,6 +219,23 @@ try {
  assert(createdSession.ok && createdSession.session?.id, JSON.stringify(createdSession));
  const sessionId = createdSession.session.id;
  await openSettings();
+ const systemBefore = await settings.evaluate(() => window.kestrel.request({ type: 'get-system-state' }));
+ const defaultStatus = await settings.evaluate(() => window.kestrel.request({ type: 'get-default-browser-status' }));
+ assert(systemBefore.ok && defaultStatus.ok, 'Native system status must be connected');
+ assert.equal(defaultStatus.canSetAsDefault, false, 'The disposable development candidate must refuse system-setting mutations');
+ await selectSettingsSection(settings, 'agent-general', 'General');
+ const loginSwitch = settings.getByRole('switch', { name: 'Run Kestrel at login', exact: true });
+ await eventually(() => loginSwitch.isEnabled(), 'Run-at-login status did not finish loading');
+ const checkedBefore = await loginSwitch.getAttribute('aria-checked');
+ // The same production-identity guard protects both setters. This owned dev
+ // candidate must return its refusal and display it, without touching macOS.
+ await loginSwitch.click();
+ await settings.getByRole('alert').filter({ hasText: 'Install the production Kestrel app in /Applications' }).waitFor();
+ assert.equal(await loginSwitch.getAttribute('aria-checked'), checkedBefore, 'A refused mutation must not change the displayed state');
+ const systemAfter = await settings.evaluate(() => window.kestrel.request({ type: 'get-system-state' }));
+ assert.equal(systemAfter.launchAtLogin, systemBefore.launchAtLogin);
+ assert.equal(systemAfter.launchStatus, systemBefore.launchStatus);
+ phase('native-system-status-and-visible-development-guard-refusal');
  const firstSettingsId = await settings.evaluate(async () => (await chrome.tabs.getCurrent()).id);
  home = await pageByNativeTabId(homeId);
  const second = await home.evaluate(() => window.kestrel.request({ type: 'browser-create-tab', input: 'kestrel://settings' }));

@@ -280,6 +280,12 @@ try{
   }
   assert(restored,'Native window did not reopen.');home=restored;
   await home.waitForFunction(()=>typeof window.kestrel?.request==='function');
+  await home.locator('.kestrel-sidebar').waitFor();
+  await home.locator('#new-tab-title').waitFor();
+  const reopenedTargets=await browser.newBrowserCDPSession();
+  const reopenedHomes=(await reopenedTargets.send('Target.getTargets')).targetInfos.filter(target=>target.type==='page'&&/chrome-extension:\/\/[^/]+\/index.html$/.test(target.url));
+  await reopenedTargets.detach();
+  assert.equal(reopenedHomes.length,1,'Native New Window must not duplicate restored Kestrel Home');
   assert((await home.evaluate(()=>window.kestrel.request({type:'runtime-list-sessions'}))).sessions.some(session=>session.id===savedSession));
   assert.deepEqual(nodeDescendants(),coreProcesses,'Reopening Home must reuse the same Core.');
   receipt.phases.push({phase:'native-last-window-close-and-reopen',passed:true,coreProcesses});

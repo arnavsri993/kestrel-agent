@@ -11,6 +11,7 @@ const emit = (channel, event) => { for (const port of ui) { try { port.postMessa
 const browser = createBrowserAdapter(chrome, { emit, uiUrl: chrome.runtime.getURL("index.html") });
 const core = createNativeConnection({ runtime: chrome.runtime, emit,
 	handleExternalOpenUrl: (url) => browser.openExternalUrl(url),
+	handleOpenNativeWindow: () => browser.openNativeWindow(),
 	handleBrowserRequest: (request, signal) => browser.backend(BrowserBackendWireRequestSchema.parse(request), signal),
 });
 trackNativePanels(chrome);

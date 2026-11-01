@@ -37,6 +37,7 @@ function makeChrome() {
 			set: invoke((value: Record<string, unknown>) => Object.assign(storage, value)),
 		} },
 		tabs: {
+			get: invoke((id: number) => { const tab = tabs.find((item) => item.id === id); if (!tab) throw new Error("Missing tab"); return { ...tab }; }),
 			query: invoke((query: Record<string, unknown> = {}) => tabs.filter((tab) =>
 				(query.windowId === undefined || tab.windowId === query.windowId) &&
 				(query.currentWindow !== true || tab.windowId === 7) &&
@@ -185,6 +186,83 @@ describe("native first-party browser adapter", () => {
 			await expect(adapter.openExternalUrl(value)).rejects.toThrow();
 		expect(tabs).toHaveLength(count);
 	});
+	it("keeps restored Home duplicates and public tabs while removing only the owned marker", async () => {
+		const { chrome, tabs } = makeChrome();
+		tabs.splice(0);
+		const originalCreate = chrome.windows.create;
+		chrome.windows.create = vi.fn((properties: any, callback: any) => {
+			expect(properties.url).toMatch(/^about:blank#kestrel-window-[a-f0-9-]+$/);
+			const result = originalCreate(properties, callback);
+			tabs.push({ id: 201, windowId: 8, active: false, status: "complete", title: "Restored Home", url: uiUrl });
+			tabs.push({ id: 202, windowId: 8, active: false, status: "complete", title: "Another Home", url: uiUrl });
+			tabs.push({ id: 203, windowId: 8, active: false, status: "complete", title: "Website", url: "https://example.com/" });
+			tabs.push({ id: 204, windowId: 8, active: false, status: "complete", title: "Blank", url: "about:blank" });
+			return result;
+		}) as any;
+		const result = await createBrowserAdapter(chrome, { uiUrl }).openNativeWindow();
+		expect(result).toEqual({ windowId: 8, tabId: 201 });
+		expect(chrome.windows.create).toHaveBeenCalledOnce();
+		expect(tabs.map(tab => tab.id)).toEqual([201, 202, 203, 204]);
+		expect(tabs[0].active).toBe(true);
+	});
+
+	it("converts only the owned marker when no Home is restored", async () => {
+		const { chrome, tabs } = makeChrome();
+		tabs.splice(0);
+		vi.useFakeTimers();
+		try {
+			const originalCreate = chrome.windows.create;
+			chrome.windows.create = vi.fn((properties: any, callback: any) => {
+				const result = originalCreate(properties, callback);
+				tabs.push({ id: 201, windowId: 8, active: false, status: "complete", title: "Blank", url: "about:blank" });
+				return result;
+			}) as any;
+			const opening = createBrowserAdapter(chrome, { uiUrl }).openNativeWindow();
+			await vi.runAllTimersAsync();
+			expect(await opening).toEqual({ windowId: 8, tabId: 100 });
+			expect(tabs.map(tab => tab.url)).toEqual([uiUrl, "about:blank"]);
+			expect(chrome.windows.create).toHaveBeenCalledOnce();
+		} finally { vi.useRealTimers(); }
+	});
+
+	it("leaves a marker that a user navigated untouched and reports uncertainty", async () => {
+		const { chrome, tabs } = makeChrome();
+		tabs.splice(0);
+		const originalCreate = chrome.windows.create;
+		chrome.windows.create = ((properties: any, callback: any) => {
+			const result = originalCreate(properties, callback);
+			tabs.push({ id: 201, windowId: 8, active: false, status: "complete", title: "Home", url: uiUrl });
+			return result;
+		}) as any;
+		const originalGet = chrome.tabs.get;
+		chrome.tabs.get = ((id: number, callback: any) => {
+			if (id === 100) tabs.find(tab => tab.id === 100)!.url = "https://example.com/changed";
+			return originalGet(id, callback);
+		}) as any;
+		await expect(createBrowserAdapter(chrome, { uiUrl }).openNativeWindow()).rejects.toThrow(/changed.*Check Kestrel/);
+		expect(tabs.map(tab => tab.url)).toEqual(["https://example.com/changed", uiUrl]);
+	});
+
+	it("does not treat a different extension or an app route as Kestrel Home", async () => {
+		const { chrome, tabs } = makeChrome();
+		tabs.splice(0);
+		vi.useFakeTimers();
+		try {
+			const originalCreate = chrome.windows.create;
+			chrome.windows.create = ((properties: any, callback: any) => {
+				const result = originalCreate(properties, callback);
+				tabs.push({ id: 201, windowId: 8, active: false, status: "complete", title: "Other extension", url: `chrome-extension://${"b".repeat(32)}/index.html` });
+				tabs.push({ id: 202, windowId: 8, active: false, status: "complete", title: "Settings", url: `${uiUrl}?app=settings` });
+				return result;
+			}) as any;
+			const opening = createBrowserAdapter(chrome, { uiUrl }).openNativeWindow();
+			await vi.runAllTimersAsync();
+			expect(await opening).toEqual({ windowId: 8, tabId: 100 });
+			expect(tabs.map(tab => tab.id)).toEqual([100, 201, 202]);
+			expect(tabs[0].url).toBe(uiUrl);
+		} finally { vi.useRealTimers(); }
+	});
+
 	it("lets Chromium create the external tab without adding a duplicate Home to its restored session", async () => {
 		const { chrome, tabs } = makeChrome();
 		tabs.splice(0);

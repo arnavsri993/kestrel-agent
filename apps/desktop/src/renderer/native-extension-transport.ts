@@ -165,7 +165,7 @@ if (nativeChromiumSurface && runtime) {
 					reject(new Error("This request is too large for Kestrel's native connection. Reduce the text and try again."));
 					return;
 				}
-				const timeout = setTimeout(() => { pending.delete(id); reject(new Error("Kestrel's browser request timed out. Check the task or browser state before retrying.")); }, nativeRequestTimeoutMs(request, "renderer"));
+				const timeout = setTimeout(() => { pending.delete(id); reject(new Error(request.type === "set-default-browser" ? "The default-browser request timed out; its outcome is uncertain. Check System Settings before retrying." : "Kestrel's browser request timed out. Check the task or browser state before retrying.")); }, nativeRequestTimeoutMs(request, "renderer"));
 				pending.set(id, { resolve, reject, timeout });
 				try { port.postMessage(frame); }
 				catch (error) { clearTimeout(timeout); pending.delete(id); reject(error); }

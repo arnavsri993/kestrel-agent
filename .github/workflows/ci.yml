@@ -67,6 +67,7 @@ jobs:
           corepack pnpm test:chromium-native-auth
           corepack pnpm test:chromium-provider-store
           corepack pnpm test:chromium-context-dialog
+          corepack pnpm test:chromium-system-integration
           corepack pnpm test:chromium-external-urls
           corepack pnpm test:chromium-browser-settings
           corepack pnpm test:chromium-desktop
