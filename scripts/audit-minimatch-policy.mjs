@@ -31,6 +31,13 @@ export const ALLOWED_PATHS = Object.freeze(Object.fromEntries([
   ...Object.entries(tails).flatMap(([version, paths]) => parents.flatMap(parent => paths.map(path => [`${desktop}${parent}${path}minimatch`, version]))),
   ["apps__website>serve>serve-handler>minimatch", "3.1.5"],
 ]));
+// Do not inherit npm/pnpm configuration, registry overrides, ignore lists or
+// NODE_OPTIONS from the caller. The lockfile-only workspace has no config.
+export function auditEnvironment(environment, temporary, corepackHome) {
+  if (!environment.PATH || !temporary || !corepackHome) throw new Error("Cannot isolate audit environment.");
+  return { PATH: environment.PATH, HOME: temporary, XDG_CONFIG_HOME: temporary,
+    NPM_CONFIG_USERCONFIG: "/dev/null", NPM_CONFIG_GLOBALCONFIG: "/dev/null", COREPACK_HOME: corepackHome, COREPACK_ENABLE_NETWORK: "0" };
+}
 function fail(message) { throw new Error(message); }
 
 export function parseAuditResult(result) {
@@ -69,6 +76,13 @@ export function assessAudit(report, now) {
   }
   const actual = report.metadata?.vulnerabilities;
   if (!actual || Object.keys(actual).length !== Object.keys(counts).length || Object.entries(counts).some(([key, count]) => actual[key] !== count)) fail("Audit vulnerability counts are inconsistent.");
+  return accepted;
+}
+
+// Evidence is mandatory even when the scanner returns no advisories.
+export function applyAuditPolicy(report, now, verifyEvidence) {
+  const accepted = assessAudit(report, now);
+  verifyEvidence();
   return accepted;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ADVISORY, ALLOWED_PATHS, BRACE, EXPIRES, PATCHES, SOURCES, assessAudit, parseAuditResult, verifyManifest, verifySourceHashes } from "./audit-minimatch-policy.mjs";
+import { ADVISORY, ALLOWED_PATHS, BRACE, EXPIRES, PATCHES, SOURCES, applyAuditPolicy, assessAudit, auditEnvironment, parseAuditResult, verifyManifest, verifySourceHashes } from "./audit-minimatch-policy.mjs";
 const now = new Date("2026-11-01T12:00:00Z");
 const knownPath = "apps__desktop>electron-builder>app-builder-lib>minimatch";
 const report = () => ({
@@ -39,6 +39,18 @@ describe("temporary minimatch audit policy", () => {
     expect(() => parseAuditResult({ status: 1, stdout: "not json", stderr: "registry error" })).toThrow(/registry error/);
     expect(() => parseAuditResult({ status: 0, stdout: JSON.stringify(report()) })).toThrow(/inconsistent/);
     expect(() => parseAuditResult({ status: 1, stdout: JSON.stringify({ advisories: {} }) })).toThrow(/inconsistent/);
+  });
+  it("removes inherited audit ignore, severity and config overrides", () => {
+    const isolated = auditEnvironment({ PATH: "/bin", npm_config_ignore: "GHSA-unexpected", npm_config_audit_level: "critical", PNPM_AUDIT_CONFIG: "ignore", NODE_OPTIONS: "--require evil", HOME: "/untrusted" }, "/private/temporary", "/trusted/corepack");
+    expect(isolated).toEqual({ PATH: "/bin", HOME: "/private/temporary", XDG_CONFIG_HOME: "/private/temporary", NPM_CONFIG_USERCONFIG: "/dev/null", NPM_CONFIG_GLOBALCONFIG: "/dev/null", COREPACK_HOME: "/trusted/corepack", COREPACK_ENABLE_NETWORK: "0" });
+    expect(() => auditEnvironment({}, "/private/temporary", "/trusted/corepack")).toThrow();
+  });
+  it("requires installed evidence even when the audit report has no findings", () => {
+    const empty = { advisories: {}, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 } } };
+    let called = false;
+    expect(applyAuditPolicy(empty, now, () => { called = true; })).toEqual([]);
+    expect(called).toBe(true);
+    expect(() => applyAuditPolicy(empty, now, () => { throw new Error("unpatched source"); })).toThrow(/unpatched source/);
   });
   it("rejects changed declarations, patch bytes, lock hashes and unpatched snapshots", () => {
     expect(() => verifyManifest(...manifest())).not.toThrow();
