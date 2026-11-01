@@ -719,9 +719,51 @@ describe("model provider adapters", () => {
 	});
 
 
+	it.each(["tag", "show", "malformed-show", "chat"])("fails closed on remote or malformed Ollama %s metadata without leaking upstream values", async stage => {
+		const calls: string[] = []; const events: unknown[] = [];
+		const baseUrl = await serve((request, response) => {
+			calls.push(request.url!);
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "plain-alias", ...(stage === "tag" ? { remote_host: "https://private.invalid" } : {}) }] })); return; }
+			if (request.url === "/api/show") { response.end(JSON.stringify(stage === "show" ? { remote_model: "upstream-secret" } : stage === "malformed-show" ? { remote_host: null } : {})); return; }
+			response.end(JSON.stringify({ message: { content: "private content" }, done: true, remote_model: "upstream-secret" }) + "\n");
+		});
+		const error = await new OllamaChatProvider({ baseUrl }).complete({ model: "plain-alias", messages: [{ role: "user", content: textContent("private prompt") }] }, { onEvent: event => events.push(event) }).catch(error => error);
+		expect(error.message).toContain("remote-backed");
+		expect(error.message).not.toContain("private.invalid"); expect(error.message).not.toContain("upstream-secret");
+		if (stage !== "chat") expect(calls).not.toContain("/api/chat");
+		expect(events).toEqual([]);
+	});
+
+	it("marks a remote Ollama tag unsupported during discovery, regardless of its alias", async () => {
+		let showed = false;
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "plain-alias", remote_model: "upstream-secret" }] })); return; }
+			showed = true; response.end(JSON.stringify({ capabilities: ["completion", "tools"] }));
+		});
+		const result = await new OllamaChatProvider({ baseUrl }).discoverModels();
+		expect(result[0]).toMatchObject({ id: "plain-alias", availability: "unsupported" });
+		expect(showed).toBe(false); expect(JSON.stringify(result)).not.toContain("upstream-secret");
+	});
+
+	it("rechecks an alias before each prompt after previously local discovery", async () => {
+		let remote = false; let chats = 0;
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "plain-alias" }] })); return; }
+			if (request.url === "/api/show") { response.end(JSON.stringify({ capabilities: ["completion", "tools"], ...(remote ? { remote_host: "https://private.invalid" } : {}) })); return; }
+			chats++; response.end(JSON.stringify({ message: { content: "ok" }, done: true }) + "\n");
+		});
+		const provider = new OllamaChatProvider({ baseUrl });
+		expect((await provider.discoverModels())[0]?.availability).toBe("available");
+		remote = true;
+		await expect(provider.complete({ model: "plain-alias", messages: [{ role: "user", content: textContent("private") }] })).rejects.toThrow("remote-backed");
+		expect(chats).toBe(0);
+	});
+
 	it("maps Ollama NDJSON streaming responses and local tool calls", async () => {
 		let requestBody: Record<string, unknown> = {};
 		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "local-test" }, { name: "thinking-model" }] })); return; }
+			if (request.url === "/api/show") { response.end("{}"); return; }
 			const chunks: Buffer[] = [];
 			request.on("data", (chunk: Buffer) => chunks.push(chunk));
 			request.on("end", () => {
@@ -783,8 +825,10 @@ describe("model provider adapters", () => {
 		vi.useFakeTimers();
 		const originalFetch = globalThis.fetch;
 		let requestSignal: AbortSignal | undefined;
-		globalThis.fetch = async (_input, init) =>
-			new Promise((resolve, reject) => {
+		globalThis.fetch = async (input, init) => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "local-test" }] });
+			if (String(input).endsWith("/api/show")) return Response.json({});
+			return new Promise((resolve, reject) => {
 				requestSignal = init?.signal ?? undefined;
 				const timer = setTimeout(
 					() => resolve(new Response(`${JSON.stringify({ message: { role: "assistant", content: "ready" }, done: true })}\n`)),
@@ -795,6 +839,7 @@ describe("model provider adapters", () => {
 					reject(requestSignal?.reason ?? new DOMException("Aborted", "AbortError"));
 				}, { once: true });
 			});
+		};
 		try {
 			const pending = new OllamaChatProvider().complete({
 				model: "local-test",
@@ -841,6 +886,8 @@ describe("model provider adapters", () => {
 	it("maps the supported Ollama thinking effort to the chat request", async () => {
 		let requestBody: Record<string, unknown> = {};
 		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "local-test" }, { name: "thinking-model" }] })); return; }
+			if (request.url === "/api/show") { response.end("{}"); return; }
 			const chunks: Buffer[] = [];
 			request.on("data", (chunk: Buffer) => chunks.push(chunk));
 			request.on("end", () => {
@@ -858,7 +905,9 @@ describe("model provider adapters", () => {
 	});
 
 	it("normalizes malformed Ollama usage metadata", async () => {
-		const baseUrl = await serve((_request, response) => {
+		const baseUrl = await serve((request, response) => {
+			if (request.url === "/api/tags") { response.end(JSON.stringify({ models: [{ name: "local-test" }] })); return; }
+			if (request.url === "/api/show") { response.end("{}"); return; }
 			response.writeHead(200, { "content-type": "application/x-ndjson" });
 			response.end(
 				`${JSON.stringify({ message: { role: "assistant", content: "ok" }, done: true, prompt_eval_count: "not-a-number", eval_count: -4 })}\n`,

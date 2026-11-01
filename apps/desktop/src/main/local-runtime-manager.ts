@@ -17,6 +17,7 @@ import {
 import { dirname, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 import { readBoundedResponseBytes } from "@kestrel/agent-core";
+import { assertLocalOllamaMetadata } from "@kestrel/shared-types";
 import type {
 	LocalModelSummary,
 	LocalRuntimeProgress,
@@ -262,6 +263,47 @@ export class LocalRuntimeManager {
 		);
 	}
 
+	/** Display only tags whose own metadata does not advertise a remote model.
+	 * The raw listing remains separate so setup never pulls an existing alias. */
+	async listLocalModels(timeoutMs = 1_500): Promise<LocalModelSummary[]> {
+		const response = await this.fetcher(`${this.ollamaOrigin}/api/tags`, { redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
+		if (!response.ok) throw new Error("The local model service could not be checked.");
+		const payload: unknown = JSON.parse(new TextDecoder().decode(await readBoundedResponseBytes(response, MAX_LOCAL_MODEL_RESPONSE_BYTES, "The local model service response exceeds 1 MB.")));
+		if (!payload || typeof payload !== "object" || !("models" in payload) || !Array.isArray(payload.models)) throw new Error("The local model service returned invalid metadata.");
+		return modelSummaries({ models: payload.models.filter((item: unknown) => {
+			try { assertLocalOllamaMetadata(item); return true; } catch { return false; }
+		}) });
+	}
+
+	async assertLocalTag(model: string, signal?: AbortSignal): Promise<void> {
+		const response = await this.fetcher(`${this.ollamaOrigin}/api/tags`, { redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(1_500)]) : AbortSignal.timeout(1_500) });
+		if (!response.ok) throw new Error("Ollama could not confirm whether the selected model is local.");
+		let payload: unknown;
+		try { payload = JSON.parse(new TextDecoder().decode(await readBoundedResponseBytes(response, MAX_LOCAL_MODEL_RESPONSE_BYTES, "The local model service response exceeds 1 MB."))); }
+		catch { throw new Error("Ollama could not confirm whether the selected model is local."); }
+		if (!payload || typeof payload !== "object" || !("models" in payload) || !Array.isArray(payload.models)) throw new Error("Ollama could not confirm whether the selected model is local.");
+		const matches = payload.models.filter((item: unknown) => item && typeof item === "object" && !Array.isArray(item) && "name" in item && (item.name === model || item.name === `${model}:latest`));
+		if (!matches.length) throw new Error("Ollama could not confirm whether the selected model is local.");
+		for (const item of matches) assertLocalOllamaMetadata(item);
+	}
+
+	async assertLocalDescriptor(model: string, signal?: AbortSignal): Promise<void> {
+		await this.assertLocalTag(model, signal);
+		await this.assertLocalShow(model, signal);
+	}
+
+	async assertLocalShow(model: string, signal?: AbortSignal): Promise<void> {
+		const show = await this.fetcher(`${this.ollamaOrigin}/api/show`, {
+			method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model }),
+			redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(1_500)]) : AbortSignal.timeout(1_500),
+		});
+		if (!show.ok) throw new Error("Ollama could not confirm whether the selected model is local.");
+		let descriptor: unknown;
+		try { descriptor = JSON.parse(new TextDecoder().decode(await readBoundedResponseBytes(show, 256 * 1024, "Ollama model descriptor exceeded the size limit."))); }
+		catch { throw new Error("Ollama could not confirm whether the selected model is local."); }
+		assertLocalOllamaMetadata(descriptor);
+	}
+
 	private async hasManagedInstall(): Promise<boolean> {
 		try {
 			const marker = JSON.parse(await readFile(this.markerPath(), "utf8")) as {
@@ -286,8 +328,12 @@ export class LocalRuntimeManager {
 		const automaticSupported = this.automaticSupported();
 		const managedRuntime = await this.hasManagedInstall();
 		try {
-			const localModels = await this.listModels();
-			const verification = await this.readVerification(localModels);
+			const localModels = await this.listLocalModels();
+			let verification = await this.readVerification(localModels);
+			if ("verifiedModel" in verification) {
+				try { await this.assertLocalDescriptor(verification.verifiedModel); }
+				catch { verification = {}; }
+			}
 			return {
 				automaticSupported,
 				managedRuntime,
@@ -759,6 +805,7 @@ export class LocalRuntimeManager {
 			message: `Asking ${model} for one real local response before marking setup complete.`,
 			model,
 		});
+		await this.assertLocalDescriptor(model, signal);
 		const response = await this.fetcher(`${this.ollamaOrigin}/api/chat`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -782,12 +829,11 @@ export class LocalRuntimeManager {
 			MAX_LOCAL_MODEL_RESPONSE_BYTES,
 			"The local model verification response exceeds 1 MB.",
 		);
-		const result = JSON.parse(new TextDecoder().decode(bytes)) as {
-			done?: unknown;
-			message?: { content?: unknown };
-			error?: unknown;
-		};
-		if (typeof result.error === "string") throw new Error(result.error);
+		let result: { done?: unknown; message?: { content?: unknown }; error?: unknown };
+		try { result = JSON.parse(new TextDecoder().decode(bytes)); }
+		catch { throw new Error("The local model service returned an invalid verification response."); }
+		assertLocalOllamaMetadata(result);
+		if (typeof result.error === "string") throw new Error("The local model service could not verify the selected model.");
 		if (
 			result.done !== true ||
 			typeof result.message?.content !== "string" ||

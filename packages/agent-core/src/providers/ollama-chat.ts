@@ -1,3 +1,4 @@
+import { assertLocalOllamaMetadata } from "@kestrel/shared-types";
 import { providerFetch, readNdjson } from "./http";
 import { readBoundedResponseBytes } from "../bounded-http";
 import {
@@ -97,6 +98,9 @@ function modelFromShow(
 	show: Record<string, unknown> | undefined,
 	fallbackContextWindow: number,
 ): DiscoveredModel {
+	if (show) {
+		try { assertLocalOllamaMetadata(show); } catch { return unknownModel(name, fallbackContextWindow, "unsupported"); }
+	}
 	const modelInfo = objectRecord(show?.model_info);
 	const contextWindow = modelContextWindow(modelInfo, fallbackContextWindow);
 	const capabilities = parsedOllamaCapabilities(show?.capabilities);
@@ -259,6 +263,12 @@ export class OllamaChatProvider implements ModelProvider {
 		}
 		if (!payload || !Array.isArray(payload.models))
 			throw new Error("Ollama returned malformed model discovery JSON.");
+		const remoteNames = new Set<string>();
+		for (const raw of payload.models) {
+			const item = objectRecord(raw);
+			if (!item || typeof item.name !== "string") continue;
+			try { assertLocalOllamaMetadata(item); } catch { remoteNames.add(item.name); }
+		}
 		const names = [
 			...new Set(
 				payload.models.flatMap((raw) => {
@@ -283,7 +293,8 @@ export class OllamaChatProvider implements ModelProvider {
 					const index = next++;
 					const name = names[index];
 					if (name === undefined) return;
-					discovered[index] = await discoverOllamaModel(
+					if (remoteNames.has(name)) { discovered[index] = unknownModel(name, this.contextWindow, "unsupported"); continue; }
+				discovered[index] = await discoverOllamaModel(
 						this.id,
 						this.baseUrl,
 						this.options.headers ?? {},
@@ -302,6 +313,30 @@ export class OllamaChatProvider implements ModelProvider {
 		request: ModelRequest,
 		options: ModelCallOptions = {},
 	): Promise<ModelResult> {
+		const tags = await providerFetch(this.id, `${this.baseUrl}/api/tags`, { method: "GET", headers: this.options.headers ?? {}, ...(options.signal ? { signal: options.signal } : {}) });
+		const tagBytes = await readBoundedResponseBytes(tags, MAX_OLLAMA_TAGS_BYTES, "Ollama model list exceeded the size limit.");
+		let tagPayload: unknown;
+		try { tagPayload = JSON.parse(new TextDecoder().decode(tagBytes)); }
+		catch { throw new Error("Ollama could not confirm whether the selected model is local."); }
+		const tagList = objectRecord(tagPayload)?.models;
+		if (!Array.isArray(tagList)) throw new Error("Ollama could not confirm whether the selected model is local.");
+		const matches = tagList.filter((value) => {
+			const item = objectRecord(value);
+			return item && (item.name === request.model || item.name === `${request.model}:latest` || item.model === request.model || item.model === `${request.model}:latest`);
+		});
+		if (!matches.length) throw new Error("Ollama could not confirm whether the selected model is local.");
+		for (const item of matches) assertLocalOllamaMetadata(item);
+		// Re-read before every prompt: aliases can be repointed after discovery.
+		// Fail closed when the daemon cannot establish the model's locality.
+		const show = await providerFetch(this.id, `${this.baseUrl}/api/show`, {
+			method: "POST", headers: { "content-type": "application/json", ...this.options.headers },
+			body: JSON.stringify({ model: request.model }), ...(options.signal ? { signal: options.signal } : {}),
+		});
+		const showBytes = await readBoundedResponseBytes(show, MAX_OLLAMA_SHOW_BYTES, "Ollama model descriptor exceeded the size limit.");
+		let descriptor: unknown;
+		try { descriptor = JSON.parse(new TextDecoder().decode(showBytes)); }
+		catch { throw new Error("Ollama could not confirm whether the selected model is local."); }
+		assertLocalOllamaMetadata(descriptor);
 		const response = await providerFetch(this.id, `${this.baseUrl}/api/chat`, {
 			method: "POST",
 			headers: { "content-type": "application/json", ...this.options.headers },
@@ -351,6 +386,7 @@ export class OllamaChatProvider implements ModelProvider {
 		let doneReason = "";
 		const toolCalls: ModelToolCall[] = [];
 		await readNdjson(response, this.id, (raw) => {
+			assertLocalOllamaMetadata(raw);
 			const chunk = raw as Record<string, unknown>;
 			const message =
 				(chunk.message as Record<string, unknown> | undefined) ?? {};

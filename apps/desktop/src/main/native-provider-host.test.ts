@@ -70,7 +70,8 @@ describe("native provider host", () => {
 
 	it("probes existing Ollama without claiming that its detected models are configured or verified", async () => {
 		const { host, localFetch, reconfigure } = await fixture();
-		localFetch.mockResolvedValue(Response.json({ models: [{ name: "fixture:small", size: 1024 }] }));
+		localFetch.mockImplementation(async input => String(input).endsWith("/api/tags")
+			? Response.json({ models: [{ name: "fixture:small", size: 1024 }] }) : Response.json({}));
 		const result = await host.handle({ type: "local-model-status" });
 		expect(result).toMatchObject({ ok: true, ollamaAvailable: true, localModels: [], localRuntime: { localModels: [] } });
 		if (!result.ok || !("localRuntime" in result)) throw new Error("Missing status");
@@ -319,6 +320,70 @@ describe("native provider host", () => {
 		await expect(host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true })).rejects.toThrow();
 		expect(core.start).toHaveBeenCalledTimes(2); expect(configuration.changing).toBe(false);
 		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
+		await host.close();
+	});
+
+	it.each(["tag", "show", "chat", "malformed-show"])("refuses remote or malformed %s metadata and never persists a local route", async stage => {
+		const { host, localFetch, root } = await fixture();
+		const events: string[] = [];
+		localFetch.mockImplementation(async input => {
+			const url = String(input); events.push(url);
+			if (url.endsWith("/api/tags")) return Response.json({ models: [{ name: "plain-alias:latest", size: 1, ...(stage === "tag" ? { remote_host: "https://private.invalid" } : {}) }] });
+			if (url.endsWith("/api/show")) return Response.json({ capabilities: ["completion", "tools"], ...(stage === "show" ? { remote_model: "upstream-secret" } : stage === "malformed-show" ? { remote_host: null } : {}) });
+			if (url.endsWith("/api/chat")) return Response.json({ done: true, message: { content: "OK" }, ...(stage === "chat" ? { remote_host: "https://private.invalid" } : {}) });
+			throw new Error("unexpected endpoint");
+		});
+		await expect(host.handle({ type: "local-runtime-bootstrap", model: "plain-alias:latest", consent: true })).rejects.toThrow("remote-backed");
+		if (stage !== "chat") expect(events.some(url => url.endsWith("/api/chat"))).toBe(false);
+		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
+		await expect(readFile(join(root, "local-runtime", "last-verification.json"), "utf8")).rejects.toThrow();
+		await host.close();
+	});
+
+	it("does not offer cloud-backed tags as installed local model choices", async () => {
+		const { host, localFetch } = await fixture();
+		localFetch.mockImplementation(async input => String(input).endsWith("/api/tags")
+			? Response.json({ models: [{ name: "plain-alias", size: 1, remote_model: "upstream-secret" }, { name: "real-local", size: 1 }] }) : Response.json({}));
+		const response = await host.handle({ type: "local-model-status" });
+		if (!response.ok || !("localRuntime" in response)) throw new Error("Missing status");
+		expect(response.localRuntime.detectedModels?.map(item => item.name)).toEqual(["real-local"]);
+		await host.close();
+	});
+
+	it("only offers installed choices whose descriptors confirm local backing", async () => {
+		const { host, localFetch } = await fixture();
+		localFetch.mockImplementation(async (input, init) => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: ["local", "remote", "malformed", "unavailable"].map(name => ({ name, size: 1 })) });
+			if (String(input).endsWith("/api/show")) {
+				const { model } = JSON.parse(String(init?.body));
+				if (model === "remote") return Response.json({ remote_host: "https://private.invalid" });
+				if (model === "malformed") return Response.json({ remote_model: null });
+				if (model === "unavailable") return new Response("unavailable", { status: 500 });
+				return Response.json({ remote_model: "", remote_host: "" });
+			}
+			throw new Error("Unexpected endpoint");
+		});
+		const response = await host.handle({ type: "local-model-status" });
+		if (!response.ok || !("localRuntime" in response)) throw new Error("Missing status");
+		expect(response.localRuntime.detectedModels?.map(item => item.name)).toEqual(["local"]);
+		expect(JSON.stringify(response)).not.toContain("private.invalid");
+		expect(localFetch.mock.calls.every(([input]) => !String(input).endsWith("/api/chat") && !String(input).endsWith("/api/pull"))).toBe(true);
+		await host.close();
+	});
+
+	it("stops reporting a previously verified alias as local when its descriptor becomes remote", async () => {
+		const { host, localFetch } = await fixture(); let remote = false;
+		localFetch.mockImplementation(async input => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "plain-alias:latest", size: 1 }] });
+			if (String(input).endsWith("/api/show")) return Response.json({ capabilities: ["completion", "tools"], ...(remote ? { remote_model: "upstream" } : {}) });
+			return Response.json({ done: true, message: { content: "OK" } });
+		});
+		expect((await host.handle({ type: "local-runtime-bootstrap", model: "plain-alias:latest", consent: true })).ok).toBe(true);
+		remote = true;
+		const status = await host.handle({ type: "local-model-status" });
+		expect(status).toMatchObject({ localModels: [], localRuntime: { localModels: [] } });
+		if (!status.ok || !("localRuntime" in status)) throw new Error("Missing status");
+		expect(status.localRuntime.verifiedModel).toBeUndefined();
 		await host.close();
 	});
 

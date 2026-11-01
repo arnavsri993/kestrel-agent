@@ -87,6 +87,7 @@ describe("managed local runtime", () => {
 					{ status: 200 },
 				);
 			}
+			if (url.endsWith("/api/show")) return Response.json({});
 			if (url.endsWith("/api/chat"))
 				return Response.json({ done: true, message: { content: "READY" } });
 			throw new Error(`Unexpected URL: ${url}`);
@@ -295,6 +296,32 @@ describe("managed local runtime", () => {
 		expect(kills).toBe(0); await manager.stop(); expect(kills).toBe(1);
 	});
 
+	it.each(["tag", "show", "chat"])("does not mark the default desktop path ready for a remote %s alias", async stage => {
+		const root = await mkdtemp(join(tmpdir(), "kestrel-locality-manager-")); roots.push(root);
+		const calls: string[] = [];
+		const manager = new LocalRuntimeManager(root, () => {}, { fetch: async input => {
+			const url = String(input); calls.push(url);
+			if (url.endsWith("/api/tags")) return Response.json({ models: [{ name: "plain-alias", size: 1, ...(stage === "tag" ? { remote_model: "hidden" } : {}) }] });
+			if (url.endsWith("/api/show")) return Response.json(stage === "show" ? { remote_host: "https://private.invalid" } : {});
+			if (url.endsWith("/api/chat")) return Response.json({ done: true, message: { content: "READY" }, ...(stage === "chat" ? { remote_model: "hidden" } : {}) });
+			throw new Error("unexpected endpoint");
+		} });
+		await expect(manager.bootstrap("plain-alias")).rejects.toThrow("remote-backed");
+		if (stage !== "chat") expect(calls.some(url => url.endsWith("/api/chat"))).toBe(false);
+		await expect(readFile(join(root, "local-runtime", "last-verification.json"), "utf8")).rejects.toThrow();
+	});
+
+	it("withdraws an earlier local verification when an alias later advertises remote backing", async () => {
+		const root = await mkdtemp(join(tmpdir(), "kestrel-locality-changed-")); roots.push(root); let remote = false;
+		const manager = new LocalRuntimeManager(root, () => {}, { fetch: async input => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "plain-alias", size: 1, ...(remote ? { remote_host: "https://private.invalid" } : {}) }] });
+			if (String(input).endsWith("/api/show")) return Response.json({});
+			return Response.json({ done: true, message: { content: "ok" } });
+		} });
+		expect((await manager.bootstrap("plain-alias")).verifiedModel).toBe("plain-alias");
+		remote = true; expect((await manager.status()).verifiedModel).toBeUndefined();
+	});
+
 	it("rejects a managed runtime origin outside the loopback interface", async () => {
 		const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
 		roots.push(root);
@@ -388,7 +415,8 @@ describe("managed local runtime", () => {
 							{ status: 200 },
 						);
 					}
-					if (url.endsWith("/api/chat"))
+					if (url.endsWith("/api/show")) return Response.json({});
+			if (url.endsWith("/api/chat"))
 						return Response.json({ done: true, message: { content: "READY" } });
 					throw new Error(`Unexpected URL: ${url}`);
 				}) as typeof fetch,

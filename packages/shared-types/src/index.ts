@@ -22,3 +22,4 @@ export * from "./resource-access";
 export * from "./source-observations";
 export * from "./renderer-bridge";
 export * from "./request-timeouts";
+export * from "./ollama-locality";
