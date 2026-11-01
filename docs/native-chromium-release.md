@@ -656,3 +656,14 @@ conversation persistence, large context paste delivery, unselected-path refusal,
 isolated browser/screenshot/download checks and active-renderer/Core recovery
 also passed in that run. This is candidate evidence; canonical installation and
 public release remain unproven.
+
+The broad local `verify` run passed the production audit, workspace typecheck,
+all 1,926 unit tests, settings/reference/product audits, builds, Node Core,
+native extension regressions, Core sidecar/browser benchmark, all 50 website E2E
+checks, desktop smoke and single-instance checks. It stopped at the desktop
+layout fixture, which explicitly saved an expanded sidebar but expected a
+forced 56px rail at 920px. The fixture now verifies the actual expanded 216px
+layout, collapses through the real control, and verifies compact layout and
+200% zoom. The focused complete `test:desktop-layout` passes, including window
+controls and Agent navigation. The unexecuted remainder of `verify` is not
+reported as passed.

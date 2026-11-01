@@ -1239,10 +1239,9 @@ function assertZoomReflow(layout, reflow, navigationWidth = 56) {
 	assertTheme(layout);
 }
 
-function assertInTabAgentLayout(layout) {
+function assertInTabAgentLayout(layout, navigationWidth = expectedNavigationWidth(layout.innerWidth)) {
 	assert.doesNotMatch(layout.classes, /agent-full-page/);
 	assert.match(layout.classes, /agent-sidebar-collapsed/);
-	const navigationWidth = expectedNavigationWidth(layout.innerWidth);
 	assertNear(layout.navigation.width, navigationWidth, "in-tab Agent navigation width");
 	assertNear(
 		layout.main.left,
@@ -1566,6 +1565,12 @@ try {
 
 	await setDesktopWindowWidth(application, page, 920);
 	await waitForCollapsedLayout(page);
+	// This fixture explicitly saved an expanded navigation rail. A narrow
+	// viewport preserves that choice; collapse it through the actual control
+	// before exercising the compact rail at high zoom.
+	assertInTabAgentLayout(await readLayout(page), 216);
+	await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
+	await page.waitForFunction(() => document.querySelector(".kestrel-sidebar")?.getAttribute("data-collapsed") === "true");
 	assertInTabAgentLayout(await readLayout(page));
 	const baselineViewportWidth = await page.evaluate(() => innerWidth);
 	await setDesktopZoom(application, page, 2, baselineViewportWidth / 2);
