@@ -574,7 +574,7 @@ export class LocalRuntimeManager {
 			});
 			if (digest.digest("hex") !== this.manifest.sha256)
 				throw new Error(
-					"The local runtime checksum did not match the signed release manifest.",
+					"The local runtime checksum did not match the pinned release manifest.",
 				);
 			const contents = safeArchiveEntries(
 				(await this.execute("/usr/bin/tar", ["-tzf", archive])).stdout,

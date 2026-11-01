@@ -28,6 +28,7 @@
     "test:chromium-first-run": "node scripts/smoke-native-first-run.mjs",
     "test:chromium-native-auth": "node scripts/smoke-native-ui-auth.mjs",
     "test:chromium-provider-store": "node scripts/smoke-native-provider-store.mjs",
+    "test:chromium-local-setup": "node scripts/smoke-native-local-setup.mjs",
     "test:chromium-context-dialog": "node scripts/smoke-native-context-dialog.mjs",
     "test:chromium-system-integration": "node --test apps/native-chromium-host/tests/native_system_integration.test.mjs",
     "test:chromium-external-urls": "node --test apps/native-chromium-host/tests/native_external_url_plist.test.mjs",

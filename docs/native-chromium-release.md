@@ -726,3 +726,31 @@ its owned processes; evidence is retained in
 Store receipt remains the `f3d60a92` bundle above. The pending unlock request is
 required for a fresh interactive check; no current-bundle Store success or
 canonical cutover is inferred from prior receipts.
+
+### Guarded native local setup checkpoint
+
+The native host now supports explicit guided runtime/model setup and custom
+model downloads through the existing guarded local-runtime manager. Progress,
+cancellation and real chat/tool-capability verification reach the Kestrel UI.
+Route selection is committed together with preferences and Core restart;
+failure or cancellation restores the prior configuration and stops only a new
+managed child acquired by that attempt. Existing external daemons remain owned
+by the user. Runtime downloads validate every redirect host and the pinned
+release checksum before extracting into an owned staging directory.
+
+Workspace typechecking, the native build and all 1,985 tests across 263 files
+passed. The optional `test:chromium-local-setup` requires an explicit candidate
+and exact already-installed model, and runs the bundled Node/Core implementation
+in a disposable profile. Its six phases passed on complete bundle
+`f0608672439cc0b4a4e6bc183edbafeca41f417be6b469ffa17d188d3cdee23b`:
+setup verified the existing model, selected the live local route, persisted a
+real assistant response, and preserved that route and response after restart.
+The external Ollama listener PID and model digests were unchanged after both
+stops. Receipt: `.tmp/native-local-setup-evidence-hKij5o/receipt.json`.
+
+This run observed detecting, verifying-model and ready stages only. Managed
+runtime installation, model downloads and Ollama runner-descendant cleanup were
+not exercised. Preflight and progress monitoring cannot atomically prevent a
+pull if another actor removes the model between checking and setup. The current
+candidate is separate from the canonical installed app; no profile transfer or
+canonical replacement has been performed.

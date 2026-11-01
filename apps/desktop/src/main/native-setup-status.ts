@@ -10,8 +10,9 @@ export function nativeSystemProfile(): SetupSystemProfile {
 	return { platform: platform(), architecture: arch(), memoryBytes: totalmem(), logicalCpus: Math.max(1, cpus().length) };
 }
 
-/** Uses only the fixed loopback service. No shell, download, server startup,
- * model installation, ambient API credentials, or untrusted endpoint selection. */
+/** Guarded setup uses the fixed loopback service and pinned managed runtime.
+ * Explicit setup owns runtime/model downloads and only its private child;
+ * ambient API credentials and caller-selected endpoints are never accepted. */
 export class NativeLocalRuntime {
 	private readonly manager: LocalRuntimeManager;
 	private readonly fetcher: typeof fetch;
