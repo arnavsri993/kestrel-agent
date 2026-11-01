@@ -21,6 +21,12 @@ overrides:
   undici@>=7.28.0 <7.30.1: 7.30.1
   fast-uri@>=3.0.0 <3.1.9: 3.1.9
 
+patchedDependencies:
+  minimatch@10.2.5: 64ec7340d0f1276aaaa0ac54d3f77dbe3cebee2fc76a545a4b958f5850083279
+  minimatch@3.1.5: 705181d6ce27255ac9b9769d779e324711acf7c08b1514e9db7d03a986de7465
+  minimatch@5.1.9: 91207d50d68c402b0870e4bcf6e701c5ed32f7ce911083c5a474d2d9054b8d1d
+  minimatch@9.0.9: a0c33db4af776735520d1384a1b8ac08d416e1acc831758c26229ef13d592ff6
+
 importers:
 
   .:
@@ -3003,7 +3009,7 @@ snapshots:
     dependencies:
       commander: 5.1.0
       glob: 7.2.3
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=705181d6ce27255ac9b9769d779e324711acf7c08b1514e9db7d03a986de7465)
 
   '@electron/fuses@1.8.0':
     dependencies:
@@ -3075,7 +3081,7 @@ snapshots:
       debug: 4.4.3(supports-color@7.2.0)
       dir-compare: 4.2.0
       fs-extra: 11.3.6
-      minimatch: 9.0.9
+      minimatch: 9.0.9(patch_hash=a0c33db4af776735520d1384a1b8ac08d416e1acc831758c26229ef13d592ff6)
       plist: 3.1.0
     transitivePeerDependencies:
       - supports-color
@@ -3776,7 +3782,7 @@ snapshots:
       js-yaml: 4.3.2
       json5: 2.2.3
       lazy-val: 1.0.5
-      minimatch: 10.2.5
+      minimatch: 10.2.5(patch_hash=64ec7340d0f1276aaaa0ac54d3f77dbe3cebee2fc76a545a4b958f5850083279)
       pkijs: 3.4.0
       plist: 3.1.0
       proper-lockfile: 4.1.2
@@ -4063,7 +4069,7 @@ snapshots:
 
   dir-compare@4.2.0:
     dependencies:
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=705181d6ce27255ac9b9769d779e324711acf7c08b1514e9db7d03a986de7465)
       p-limit: 3.1.0
 
   dmg-builder@26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@7.2.0):
@@ -4284,7 +4290,7 @@ snapshots:
 
   filelist@1.0.6:
     dependencies:
-      minimatch: 5.1.9
+      minimatch: 5.1.9(patch_hash=91207d50d68c402b0870e4bcf6e701c5ed32f7ce911083c5a474d2d9054b8d1d)
 
   form-data@4.0.6:
     dependencies:
@@ -4387,7 +4393,7 @@ snapshots:
       fs.realpath: 1.0.0
       inflight: 1.0.6
       inherits: 2.0.4
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=705181d6ce27255ac9b9769d779e324711acf7c08b1514e9db7d03a986de7465)
       once: 1.4.0
       path-is-absolute: 1.0.1
 
@@ -4621,19 +4627,19 @@ snapshots:
 
   mimic-response@3.1.0: {}
 
-  minimatch@10.2.5:
+  minimatch@10.2.5(patch_hash=64ec7340d0f1276aaaa0ac54d3f77dbe3cebee2fc76a545a4b958f5850083279):
     dependencies:
       brace-expansion: 5.0.12
 
-  minimatch@3.1.5:
+  minimatch@3.1.5(patch_hash=705181d6ce27255ac9b9769d779e324711acf7c08b1514e9db7d03a986de7465):
     dependencies:
       brace-expansion: 5.0.12
 
-  minimatch@5.1.9:
+  minimatch@5.1.9(patch_hash=91207d50d68c402b0870e4bcf6e701c5ed32f7ce911083c5a474d2d9054b8d1d):
     dependencies:
       brace-expansion: 5.0.12
 
-  minimatch@9.0.9:
+  minimatch@9.0.9(patch_hash=a0c33db4af776735520d1384a1b8ac08d416e1acc831758c26229ef13d592ff6):
     dependencies:
       brace-expansion: 5.0.12
 
@@ -4977,7 +4983,7 @@ snapshots:
       bytes: 3.0.0
       content-disposition: 0.5.2
       mime-types: 2.1.18
-      minimatch: 3.1.5
+      minimatch: 3.1.5(patch_hash=705181d6ce27255ac9b9769d779e324711acf7c08b1514e9db7d03a986de7465)
       path-is-inside: 1.0.2
       path-to-regexp: 3.3.0
       range-parser: 1.2.0

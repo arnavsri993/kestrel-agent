@@ -30,6 +30,15 @@ overrides:
   "undici@>=7.28.0 <7.30.1": 7.30.1
   "fast-uri@>=3.0.0 <3.1.9": "3.1.9"
 
+# Preserve legacy minimatch APIs with brace-expansion 5 and backport the
+# bounded level-two optimizer fix from minimatch 11.0.1 to versions 9 and 10.
+# https://github.com/isaacs/minimatch/commit/77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8
+patchedDependencies:
+  minimatch@3.1.5: patches/minimatch@3.1.5.patch
+  minimatch@5.1.9: patches/minimatch@5.1.9.patch
+  minimatch@9.0.9: patches/minimatch@9.0.9.patch
+  minimatch@10.2.5: patches/minimatch@10.2.5.patch
+
 minimumReleaseAgeExclude:
   - '@next/env@16.4.1'
   - '@next/swc-darwin-arm64@16.4.1'
