@@ -1,3 +1,30 @@
+# Native browser settings and window ownership — October 30, 2026
+
+Existing product integration, with frequent use and a high consequence for
+misleading preference or profile state. Preserve Kestrel's actual Home,
+Settings, sidebar and agent conversation in Chromium's window. The frontend
+classifier's landing-page suggestion does not fit this runtime migration.
+
+- Keep existing system type, graphite/light theme tokens, 4px rhythm, existing
+  section headings, dividers, buttons, focus indicators and reduced motion.
+  Browser and Agent remain distinct Settings scopes. Add no fonts or imagery.
+- Home background, shortcuts and widgets belong to Kestrel. Chromium owns its
+  browser preferences: category actions open the actual browser settings tab
+  in the same window with Kestrel's companion. Compatibility defaults must
+  never appear as measured Chromium preference values.
+- Each Home/Settings document retains its own route and draft. The companion
+  and Core tools follow the actual active browser tab. Duplicate Settings
+  documents are valid and must never be identified by URL matching alone.
+- Narrow windows start with a compact rail when no preference is saved. The
+  Expand sidebar control reveals Projects and chats at every window width;
+  its visual and accessibility states must agree.
+- Verify real native routes, keyboard controls, image upload/removal, actual
+  search-provider changes, independent documents, narrow expansion, restart,
+  external links, window ownership and clean shutdown on an owned candidate.
+  Source/build evidence never substitutes for canonical installation evidence.
+- Why this is not generic: settings follow Kestrel's real preference owners,
+  project navigation and same-window agent workflow, using its existing UI.
+
 # Memory workspace — September 16, 2026
 
 Thesis: a calm, editable account of what Kestrel knows, organized around the

@@ -1,6 +1,6 @@
 // Sent actions fail when their connection closes. They are never replayed.
 import { nativeRequestTimeoutMs } from "../../../../packages/shared-types/src/request-timeouts.ts";
-export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = crypto, handleBrowserRequest,
+export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = crypto, handleBrowserRequest, handleExternalOpenUrl,
 	loadConfiguration = async (nonce) => {
 		const response = await fetch(runtime.getURL("launch-config.json") + "?challenge=" + nonce, { cache: "no-store", redirect: "error" });
 		if (!response.ok) throw new Error("Native launch configuration is unavailable.");
@@ -82,7 +82,18 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 					arm(id, request);
 					post(connection, request.message);
 				}
-			} else if (phase === "ready" && message?.kind === "browser-backend-cancel") {
+			} else if (phase === "ready" && message?.kind === "external-open-url") {
+        if (typeof message.id !== "string" || !/^external-[0-9]{1,20}$/.test(message.id) || typeof message.url !== "string" || message.url.length > 8192) { abort(connection); return; }
+        let result;
+        try {
+          if (!handleExternalOpenUrl) throw new Error("External links are unavailable.");
+          result = await handleExternalOpenUrl(message.url);
+          if (!Number.isSafeInteger(result?.tabId) || !Number.isSafeInteger(result?.windowId)) throw new Error("Browser did not confirm the tab.");
+          if (native === connection) post(connection, { kind: "external-open-url-result", id: message.id, ok: true, tabId: result.tabId, windowId: result.windowId });
+        } catch {
+          if (native === connection) post(connection, { kind: "external-open-url-result", id: message.id, ok: false });
+        }
+      } else if (phase === "ready" && message?.kind === "browser-backend-cancel") {
 				const request = browserRequests.get(message.id);
 				if (request?.connection === connection) { browserRequests.delete(message.id); request.controller.abort(); }
 			} else if (phase === "ready" && message?.kind === "browser-backend-request") {

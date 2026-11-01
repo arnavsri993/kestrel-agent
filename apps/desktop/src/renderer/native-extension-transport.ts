@@ -1,5 +1,6 @@
-import { createRendererBridge, isChromeWebStoreUrl, nativeRequestTimeoutMs, type RendererTransport, type RendererResponse } from "@kestrel/shared-types";
+import { createRendererBridge, isChromeWebStoreUrl, isNativeBrowserSettingsUrl, nativeRendererFrameFits, nativeRequestTimeoutMs, type RendererTransport, type RendererResponse } from "@kestrel/shared-types";
 import { useSyncExternalStore } from "react";
+import { createNativeDocumentTabResolver, type NativeDocumentTabStatus } from "./native-document-tab";
 import { createNativeAgentChannel, type NativeAgentAction } from "./native-agent-channel";
 
 interface ExtensionPort {
@@ -15,9 +16,10 @@ interface NativeChromeUi {
 	runtime?: ExtensionRuntime;
 	storage?: {
 		session: { get(key: string): Promise<Record<string, unknown>> };
-		onChanged: { addListener(callback: (changes: Record<string, { newValue?: unknown }>, area: string) => void): void };
+		onChanged: { addListener(callback: (changes: Record<string, { newValue?: unknown }>, area: string) => void): void; removeListener(callback: (changes: Record<string, { newValue?: unknown }>, area: string) => void): void };
 	};
 	windows?: { getCurrent(): Promise<{ id?: number }> };
+	tabs?: { getCurrent(): Promise<{ id?: number } | undefined> };
 	sidePanel?: {
 		open(options: { windowId: number }): Promise<void>;
 		close(options: { windowId: number }): Promise<void>;
@@ -30,6 +32,34 @@ export const nativeChromiumSurface = typeof location !== "undefined" && location
 export const nativeChromiumPanel = nativeChromiumSurface && new URLSearchParams(location.search).get("surface") === "panel";
 let nativeWindowId: number | undefined;
 const openPanelsKey = "kestrel.native.openPanels.v1";
+const tabIdsKey = "kestrel.native.browser.tabIds.v1";
+const inactiveDocumentStatus: NativeDocumentTabStatus = { state: "loading" };
+const documentTabResolver = nativeChromiumSurface && !nativeChromiumPanel
+	? createNativeDocumentTabResolver({
+		getCurrent: () => chromeUi?.tabs?.getCurrent() ?? Promise.resolve(undefined),
+		readMapping: async () => (await chromeUi?.storage?.session.get(tabIdsKey))?.[tabIdsKey],
+		subscribeMapping: callback => {
+			// Chrome's event supports removeListener; keep the subscription scoped to
+			// this document so pagehide cancels retries and late results.
+			const handler = (changes: Record<string, { newValue?: unknown }>, area: string) => {
+				if (area === "session" && changes[tabIdsKey]) callback(changes[tabIdsKey].newValue);
+			};
+			chromeUi?.storage?.onChanged.addListener(handler);
+			return () => chromeUi?.storage?.onChanged.removeListener(handler);
+		},
+	}) : undefined;
+export function useNativeDocumentStatus(): NativeDocumentTabStatus {
+	return useSyncExternalStore(
+		(listener) => documentTabResolver?.subscribe(listener) ?? (() => {}),
+		() => documentTabResolver?.getSnapshot() ?? inactiveDocumentStatus,
+		() => inactiveDocumentStatus,
+	);
+}
+export function useNativeDocumentTabId(): string | undefined {
+	const status = useNativeDocumentStatus();
+	return status.state === "ready" ? status.id : undefined;
+}
+export function retryNativeDocumentTab(): void { documentTabResolver?.retry(); }
 const panelListeners = new Set<() => void>();
 let companionOpen = false;
 let panelRevision = 0;
@@ -73,7 +103,7 @@ if (nativeChromiumSurface) {
 		}
 		updateCompanion();
 	}).catch(() => {});
-	window.addEventListener("pagehide", () => agentChannel?.close(), { once: true });
+	window.addEventListener("pagehide", () => { agentChannel?.close(); documentTabResolver?.close(); }, { once: true });
 }
 export function useNativeCompanionOpen(): boolean {
 	return useSyncExternalStore(
@@ -122,7 +152,7 @@ if (nativeChromiumSurface && runtime) {
 	});
 	const transport: RendererTransport = {
 		request(request) {
-			if (request.type === "browser-create-tab" && request.input && isChromeWebStoreUrl(request.input)) {
+			if (request.type === "browser-create-tab" && request.input && (isChromeWebStoreUrl(request.input) || isNativeBrowserSettingsUrl(request.input))) {
 				// Called in the original UI gesture before awaiting any tab work.
 				void openNativeAgentPanel().catch(() => {});
 			}
@@ -131,7 +161,7 @@ if (nativeChromiumSurface && runtime) {
 				const id = ++sequence;
 				const frame = { kind: "request", id, request };
 				const serialized = JSON.stringify(frame);
-				if (serialized.length > 768 * 1024 || new TextEncoder().encode(serialized).byteLength > 1_000_000) {
+				if (!nativeRendererFrameFits(serialized, request.type)) {
 					reject(new Error("This request is too large for Kestrel's native connection. Reduce the text and try again."));
 					return;
 				}

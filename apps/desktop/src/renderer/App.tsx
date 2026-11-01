@@ -1,4 +1,4 @@
-import { closeNativeAgentPanel, nativeChromiumPanel, useNativeCompanionOpen, sendNativeAgentAction, subscribeNativeAgentActions } from "./native-extension-transport";
+import { closeNativeAgentPanel, nativeChromiumPanel, nativeChromiumSurface, useNativeCompanionOpen, useNativeDocumentStatus, retryNativeDocumentTab, sendNativeAgentAction, subscribeNativeAgentActions } from "./native-extension-transport";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
@@ -10274,6 +10274,32 @@ function Empty({ title, text }: { title: string; text?: string }) {
 export function App() {
 	const browser = useUserBrowser();
 	const nativeCompanionOpen = useNativeCompanionOpen();
+	const nativeDocumentStatus = useNativeDocumentStatus();
+	const nativeDocumentTabId = nativeDocumentStatus.state === "ready" ? nativeDocumentStatus.id : undefined;
+	const presentationTabId = nativeChromiumSurface && !nativeChromiumPanel
+		? nativeDocumentTabId : browser.state?.activeTabId;
+	const [nativeViewRetry, setNativeViewRetry] = useState(0);
+	const [nativeViewTimedOut, setNativeViewTimedOut] = useState(false);
+	const nativeViewRefreshKey = useRef("");
+	const nativeViewPresent = !!nativeDocumentTabId && !!browser.state?.tabs.some(tab => tab.id === nativeDocumentTabId);
+	const refreshNativeBrowser = browser.refresh;
+	useEffect(() => {
+		setNativeViewTimedOut(false);
+		if (!nativeChromiumSurface || nativeChromiumPanel || nativeDocumentStatus.state !== "ready" || nativeViewPresent) return;
+		const key = `${nativeDocumentStatus.id}:${nativeViewRetry}`;
+		if (nativeViewRefreshKey.current !== key) {
+			nativeViewRefreshKey.current = key;
+			void refreshNativeBrowser().catch(() => undefined);
+		}
+		const timeout = window.setTimeout(() => setNativeViewTimedOut(true), 10_000);
+		return () => window.clearTimeout(timeout);
+	}, [nativeDocumentStatus.state, nativeDocumentTabId, nativeViewPresent, nativeViewRetry, refreshNativeBrowser]);
+	const retryNativeView = () => {
+		setNativeViewTimedOut(false);
+		setNativeViewRetry(value => value + 1);
+		retryNativeDocumentTab();
+		void refreshNativeBrowser().catch(() => undefined);
+	};
 	const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
 	const [runtimeRefreshRevision, setRuntimeRefreshRevision] = useState(0);
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
@@ -10533,13 +10559,13 @@ export function App() {
 		setAgentSidebarOpen(true);
 		localStorage.setItem("kestrel:agent-sidebar", "open");
 		const activeTab = browser.state?.tabs.find(
-			(tab) => tab.id === browser.state?.activeTabId,
+			(tab) => tab.id === presentationTabId,
 		);
 		if (parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent") {
 			setAgentUniverseRailOpen(true);
 			localStorage.setItem("kestrel:agent-universe-rail", "open");
 		}
-	}, [browser]);
+	}, [browser, presentationTabId]);
 	const acceptExternalIntake = useCallback(
 		(intake: ExternalIntake) => {
 			setExternalIntake(intake);
@@ -10898,7 +10924,7 @@ export function App() {
 			return;
 		}
 		const activeTab = browser.state?.tabs.find(
-			(tab) => tab.id === browser.state?.activeTabId,
+			(tab) => tab.id === presentationTabId,
 		);
 		const onAgentUniverse = parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent";
 		if (onAgentUniverse) {
@@ -10930,7 +10956,7 @@ export function App() {
 			});
 			return next;
 		});
-	}, [browser]);
+	}, [browser, presentationTabId]);
 	const openBrowser = useCallback(() => {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
@@ -10970,14 +10996,14 @@ export function App() {
 	);
 	const closeCommandCenter = useCallback(() => {
 		const active = browser.state?.tabs.find(
-			(tab) => tab.id === browser.state?.activeTabId,
+			(tab) => tab.id === presentationTabId,
 		);
 		if (active && parseKestrelAppPage(active.url)?.id === "commands") {
 			void browser.closeTab(active.id);
 			return;
 		}
 		void openBrowserWorkspace();
-	}, [browser, openBrowserWorkspace]);
+	}, [browser, openBrowserWorkspace, presentationTabId]);
 	useEffect(
 		() =>
 			window.kestrel.onDeepLink((deepLink) => {
@@ -11075,7 +11101,7 @@ export function App() {
 				(typeof browserConfig.historyRetentionDays === "number" &&
 					current.historyRetentionDays !==
 						browserConfig.historyRetentionDays);
-			if (isDiff) {
+			if (isDiff && browser.state.settingsOwnership !== "chromium") {
 				void browser.updateSettings({
 					...(browserConfig.searchEngine
 						? { searchEngine: browserConfig.searchEngine }
@@ -11247,8 +11273,18 @@ export function App() {
 			</ProductShellTransition>
 		);
 	const activeBrowserTab = browser.state?.tabs.find(
-		(tab) => tab.id === browser.state?.activeTabId,
+		(tab) => tab.id === presentationTabId,
 	);
+	if (nativeChromiumSurface && !nativeChromiumPanel && !activeBrowserTab) {
+		if (nativeDocumentStatus.state === "error" || nativeViewTimedOut) return (
+			<ProductShellTransition><main className="loading-screen error-screen" role="alert">
+				<h1>Could not open this tab.</h1>
+				<p>Kestrel could not identify this browser tab. Try again.</p>
+				<button type="button" className="button secondary" onClick={retryNativeView}>Try again</button>
+			</main></ProductShellTransition>
+		);
+		return <ProductShellTransition><Loading key="loading" /></ProductShellTransition>;
+	}
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
 	const showKestrelSidebar =
 		(!activeBrowserTab?.url || isKestrelAppPageUrl(activeBrowserTab.url));
@@ -11386,7 +11422,7 @@ export function App() {
 				<PageFrame title="Connections" text="Manage connected accounts and access.">
 					<label className="memory-scope-selector">Access for
       <select aria-label="Connection scope" value={currentAppPage?.scopeSessionId ?? ""} onChange={event => {
-       const tabId = browser.state?.activeTabId;
+       const tabId = presentationTabId;
        if (tabId) void browser.navigate(tabId, kestrelAppPageUrl("connections", event.target.value || undefined));
       }}>
        <option value="">Personal / global accounts</option>

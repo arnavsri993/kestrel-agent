@@ -1279,49 +1279,17 @@
 }
 
 @media (max-width: 1120px) {
-	.ai-browser-app,
-	.ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
-		--kestrel-sidebar-width: 56px;
+	.ai-browser-app {
 		--browser-tab-rail-width: 180px;
 	}
-	.kestrel-sidebar {
+	.kestrel-sidebar.is-collapsed {
 		padding-inline: 8px;
 	}
 	.kestrel-sidebar-resize-handle {
 		display: none;
 	}
-	.kestrel-sidebar-drag {
+	.kestrel-sidebar.is-collapsed .kestrel-sidebar-drag {
 		margin-inline: -8px;
-	}
-	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-brand span,
-	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-new-task span,
-	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-new-task kbd,
-	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-nav-item span,
-	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-section {
-		display: none;
-	}
-	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-header {
-		flex-direction: column;
-		align-items: stretch;
-		gap: 4px;
-	}
-	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-brand {
-		justify-content: center;
-		padding: 5px;
-	}
-	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-header-actions {
-		position: static;
-		justify-content: center;
-	}
-	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-new-task {
-		grid-template-columns: 1fr;
-		place-items: center;
-		padding: 0;
-	}
-	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-nav-item {
-		grid-template-columns: 1fr;
-		place-items: center;
-		padding: 0;
 	}
 }
 

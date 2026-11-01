@@ -4431,6 +4431,10 @@ export const UserBrowserStateSchema = z.object({
 		.max(500)
 		.default([]),
 	settings: UserBrowserSettingsSchema,
+	// With Chromium ownership, only Kestrel Home fields in `settings` are
+	// authoritative. The remaining fields provide legacy shape compatibility;
+	// actual browser preferences must be read/changed in Chromium's settings UI.
+	settingsOwnership: z.enum(["kestrel", "chromium"]).optional(),
 });
 export type UserBrowserState = z.infer<typeof UserBrowserStateSchema>;
 

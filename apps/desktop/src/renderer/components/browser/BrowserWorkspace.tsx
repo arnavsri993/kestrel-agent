@@ -28,7 +28,7 @@ import {
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import { BookmarksBar } from "./BookmarksBar";
-import { nativeChromiumSurface } from "../../native-extension-transport";
+import { nativeChromiumPanel, nativeChromiumSurface, useNativeDocumentTabId } from "../../native-extension-transport";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { BookmarkDialog, type BookmarkDialogSaveInput } from "./BookmarkDialog";
 import { ChromeWebStoreInstallBar } from "./ChromeWebStoreInstallBar";
@@ -229,7 +229,9 @@ export function BrowserWorkspace({
     void openOrganizeTabs();
   }, [openOrganizeTabs, organizeTabsRequestId]);
 
-  const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
+  const nativeDocumentTabId = useNativeDocumentTabId();
+  const presentationTabId = nativeChromiumSurface && !nativeChromiumPanel ? nativeDocumentTabId : state?.activeTabId;
+  const activeTab = state?.tabs.find((tab) => tab.id === presentationTabId);
   const prepareTabTransfer = useCallback(async (tabId: string) => {
     const response = await window.kestrel.request({
       type: "browser-prepare-tab-transfer",

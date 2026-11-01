@@ -6054,9 +6054,16 @@ class KestrelWindowDelegate : public CefWindowDelegate {
 @end
 
 @interface KestrelAppDelegate : NSObject <NSApplicationDelegate>
+@property(nonatomic) BOOL acceptsExternalURLs;
 @end
 
 @implementation KestrelAppDelegate
+- (void)application:(NSApplication*)application openURLs:(NSArray<NSURL*>*)urls {
+  (void)application;
+  if (!self.acceptsExternalURLs) return;
+  for (NSURL* url in urls) if (!EnqueueKestrelExternalURL(url))
+    std::cerr << "Kestrel could not accept an external URL." << std::endl;
+}
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
   (void)sender;
   return NO;
@@ -6131,6 +6138,7 @@ int main(int argc, char* argv[]) {
     const bool explicit_desktop = has_argument(argc, argv, "--kestrel-chromium-desktop");
     if (explicit_desktop || !legacy_selector) {
       KestrelAppDelegate* desktop_delegate = [[KestrelAppDelegate alloc] init];
+      desktop_delegate.acceptsExternalURLs = YES;
       [NSApp setDelegate:desktop_delegate];
       return RunKestrelChromiumDesktop(argc, argv, !explicit_desktop);
     }

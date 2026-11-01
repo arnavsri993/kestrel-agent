@@ -3,12 +3,14 @@ import { createNativeConnection } from "./native-connection.mjs";
 import { trackNativePanels } from "./panel-state.mjs";
 import { RendererRequestSchema } from "../../../../packages/shared-types/src/contracts.ts";
 import { BrowserBackendWireRequestSchema } from "../../../core-service/src/browser-backend-wire.ts";
+import { nativeRendererFrameFits } from "../../../../packages/shared-types/src/native-request-frame.ts";
 
 const ui = new Set();
 const origin = new URL(chrome.runtime.getURL(""));
 const emit = (channel, event) => { for (const port of ui) { try { port.postMessage({ kind: "event", channel, event }); } catch { ui.delete(port); } } };
 const browser = createBrowserAdapter(chrome, { emit, uiUrl: chrome.runtime.getURL("index.html") });
 const core = createNativeConnection({ runtime: chrome.runtime, emit,
+	handleExternalOpenUrl: (url) => browser.openExternalUrl(url),
 	handleBrowserRequest: (request, signal) => browser.backend(BrowserBackendWireRequestSchema.parse(request), signal),
 });
 trackNativePanels(chrome);
@@ -24,7 +26,7 @@ chrome.runtime.onConnect.addListener((port) => {
 	port.onDisconnect.addListener(() => ui.delete(port));
 	let count = 0;
 	port.onMessage.addListener(async (message) => {
-		if (message?.kind !== "request" || !Number.isSafeInteger(message.id) || ++count > 64 || JSON.stringify(message).length > 768 * 1024) { port.disconnect(); return; }
+		if (message?.kind !== "request" || !Number.isSafeInteger(message.id) || ++count > 64 || !nativeRendererFrameFits(JSON.stringify(message), message.request?.type)) { port.disconnect(); return; }
 		let response;
 		try {
 			const parsed = RendererRequestSchema.safeParse(message.request);

@@ -496,3 +496,94 @@ KESTREL_TEST_NATIVE_ISOLATED_AUTOMATION=1 \
 KESTREL_TEST_NATIVE_FORM_NAVIGATION=1 \
 KESTREL_TEST_NATIVE_ISOLATED_DOWNLOADS=1 corepack pnpm test:chromium-desktop
 ```
+
+### Browser preference ownership, document identity, and OS web links
+
+Native Browser Settings retains Kestrel's existing section navigation, Home
+background controls and page-context consent. Chromium-owned preferences open
+the actual `chrome://settings` category in the same window with the agent
+companion. Native state identifies Chromium preference ownership so Core's
+legacy browser configuration cannot overwrite it or display compatibility
+defaults as measured preferences. Home searches use Chromium's selected provider
+through `chrome.search.query`; the adapter no longer chooses a hardcoded engine.
+Home images, shortcuts and widgets persist only their Kestrel-owned fields.
+The full-size image allowance is local to the authenticated extension worker;
+the native messaging/Core frame limit remains unchanged.
+
+Home and Settings now retain their own document/tab identities while another
+tab is active. The mapping uses each extension document's `tabs.getCurrent()`
+and session UUID, with stale-read protection; it never guesses by matching URLs.
+Duplicate Settings documents are independent. Core and the companion continue
+to observe the actual active user tab. Browser state includes tabs from every
+window so a background document is not lost when a different window has focus.
+The narrow sidebar starts compact unless an explicit preference exists, and
+Expand reveals Projects and chats at narrow widths rather than hiding them
+behind CSS while claiming to be expanded.
+
+The native app declares HTTP/HTTPS handlers and accepts credential-free OS web
+links through a bounded main-thread queue, including links delivered before
+worker readiness. Consumed launch arguments are removed before Chromium startup
+so they cannot open twice. The authenticated broker serializes delivery, checks
+the acknowledgement's owner and ID, and never replays a dispatched link after an
+uncertain disconnect. Existing windows receive a native tab. With no window,
+Chromium creates one and retains its normal session restoration; Kestrel does
+not add another Home to the restored session or deduplicate user tabs.
+
+The physical Cocoa file-picker check exposed a canonical-path mismatch:
+Foundation displays `/var/...` where Core's POSIX `realpath` returns
+`/private/var/...`. Root validation and selected-file attestations now use POSIX
+canonical paths, preserving the component boundary and Core's grant, identity
+and size revalidation. The real picker cancellation and selection passed in
+`.tmp/native-cocoa-picker-interrupted-evidence/receipt.json` on complete bundle
+`4d5180b4e62709b183c64c56ffc129751deb5df062f6ba72b0ffffd45449a5fb`.
+That run completed 24 phases before an interrupted process exited at the Store
+handoff; it is not a completed Store receipt.
+
+The integrated 30-phase run passed on complete bundle
+`1105da83f947a240f96a9acb82e6cc01ac813db276cde1719566ab6f734d3af9`,
+including real JSON Formatter 0.10.2 Store installation, Chromium's permission
+sheet, actual formatting before/after restart, workspace/provider persistence,
+download quotas/cancellation, active-renderer crash recovery and zero renderer
+errors. Home, Settings and Store shared native window `1941597296`, as recorded
+by `native-web-store-install.windowIds`. Receipts remain local under
+`.tmp/chromium-desktop-evidence/`; no canonical installation is implied.
+
+The current source passed workspace TypeScript, 1,915 unit tests across 259
+files, the native build, authentication smoke, private picker protocol and
+three compiled native URL/path tests. The separate settings canary verifies
+actual provider choice, an uploaded 1.23 MB image, restart/removal, independent
+Home/duplicate Settings documents, narrow expansion, OS cold/warm links, and
+reopening after all windows close while retaining the same Core process/session.
+All 12 settings/window phases passed on complete bundle
+`add394828f8d071d2d1fdcb72985b52939e9c624922b85f04199a69151ce8cd0`;
+the before/after complete bundle digests match in
+`.tmp/native-document-recovery-final-evidence/receipt.json`. This run also injects
+a transient missing document identity, then a persistent failure, verifies the
+bounded error and actual Try again control, and recovers to the real sidebar.
+The resolver cancels stale requests and has a ten-second deadline even when a
+Chrome API promise never settles. A read-only independent review found no
+confirmed resolver/frame issues after checking the native keyboard guard.
+Fresh default-profile setup also passed on that complete bundle, using the
+already-installed `huihui_ai/qwen3.5-abliterated:9b` model: all five rendered
+steps, actual model verification, a guided task with a real tool result, a second
+Home response, zero renderer errors and conversation persistence after restart.
+The evidence is `.tmp/native-first-run-evidence-aUrYtR/receipt.json`; no runtime
+or model was installed, and the existing local daemon was not reconfigured.
+CI runs that canary and the compiled URL/path tests in addition to the integrated
+native flow. Physical picker and Store acceptance remain explicit interactive
+checks, separate from their automatic fixture/protocol tests.
+
+At exact head `19abc76081765f582c1e47256498addccd280dee`, Desktop/packaged arm64
+CI passed; Core, audits and the corrected Chromium-host smoke passed before the
+native combined job stopped at a viewport-dependent sidebar visibility check.
+The narrow sidebar and canary expansion fixes address that observed failure.
+Fresh exact-head CI is still required. The GitHub connector became unavailable
+during this checkpoint, and Codex Code Review also reports its connection is
+unavailable. Neither condition is reported as a green remote check.
+
+These changes do not complete system-default/login-item setters, public
+credential protection, whole-desktop automation/authentication handoff, automatic
+local-runtime installation, lossless profile transfer, rollback or canonical
+cutover. Developer ID/notarization still requires an Apple Developer account.
+The existing `/Applications/Kestrel.app`, its profile and unrelated source
+changes remain preserved; no Electron-retirement gate is asserted.

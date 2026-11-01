@@ -46,6 +46,12 @@ export async function nativeWorkspaceCanary({ settings, getHome, profile, eviden
 	// Wait for the actual Settings mutation response before starting new work.
 	await row.getByRole("button", { name: "Add folder", exact: true }).waitFor({ state: "visible" });
 	await settings.waitForFunction(() => document.querySelector("#setting-agent-workspace-grants > button")?.disabled === false);
+	for (const page of [settings, getHome()]) {
+		const sidebar = page.locator(".kestrel-sidebar");
+		await sidebar.waitFor();
+		const expand = sidebar.getByRole("button", { name: "Expand sidebar", exact: true });
+		if (await expand.isVisible()) await expand.click();
+	}
 	await settings.locator(".kestrel-sidebar").getByRole("button", { name: /^(Open|Collapse) workspace-fixture project$/ }).waitFor();
 	await getHome().locator(".kestrel-sidebar").getByRole("button", { name: /^(Open|Collapse) workspace-fixture project$/ }).waitFor();
 	await row.getByText("workspace-fixture", { exact: true }).waitFor();
@@ -55,6 +61,19 @@ export async function nativeWorkspaceCanary({ settings, getHome, profile, eviden
 	const read = await workspaceRead(getHome(), state.sessionId);
 	assert.equal(read.status, "verified", JSON.stringify(read));
 	assert.equal(read.output?.content, content);
+	if (process.env.KESTREL_TEST_NATIVE_CONTEXT_PICKER === "1") {
+		const cancel = getHome().evaluate(workspaceRoot => window.kestrel.request({ type: "select-context-files", workspaceRoot }), state.path);
+		console.log("OWNED_NATIVE_CONTEXT_CANCEL_READY: cancel the candidate's native file picker.");
+		const cancelled = await cancel;
+		assert(cancelled.ok && cancelled.cancelled === true && cancelled.selectedAttachments?.length === 0, JSON.stringify(cancelled));
+		const choose = getHome().evaluate(workspaceRoot => window.kestrel.request({ type: "select-context-files", workspaceRoot }), state.path);
+		console.log(`OWNED_NATIVE_CONTEXT_PICKER_READY: select only ${join(state.path, "README.md")}`);
+		const selected = await choose;
+		assert(selected.ok && selected.selectedAttachments?.length === 1, JSON.stringify(selected));
+		assert.equal(selected.selectedAttachments[0].path, join(state.path, "README.md"));
+		assert.equal(selected.selectedAttachments[0].size, Buffer.byteLength(content));
+		receipt.phases.push({ phase: "native-Cocoa-context-file-picker-cancel-and-selection", passed: true });
+	}
 	if (process.env.KESTREL_TEST_NATIVE_CONTEXT_ATTACHMENTS === "1") {
 		const listed = await getHome().evaluate(workspaceRoot => window.kestrel.request({ type: "list-workspace-files", workspaceRoot, query: "README" }), state.path);
 		assert(listed.ok && listed.workspaceFiles?.some(item => item.name === "README.md" && item.path === join(state.path, "README.md")), JSON.stringify(listed));

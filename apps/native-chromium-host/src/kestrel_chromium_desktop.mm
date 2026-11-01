@@ -3,6 +3,7 @@
 #include <poll.h>
 #include <pwd.h>
 #include <cstring>
+#include <strings.h>
 #include <cerrno>
 #include <limits.h>
 #include <sys/file.h>
@@ -13,6 +14,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <vector>
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
@@ -27,6 +29,9 @@
 #include "include/cef_path_util.h"
 #include "kestrel_chromium_app.h"
 #include "kestrel_chromium_desktop.h"
+#include "native_external_url_queue.h"
+#include "native_external_url_validation.h"
+#include "native_dialog_paths.h"
 #include "native_isolated_automation.h"
 
 namespace {
@@ -176,12 +181,26 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
 };
 CefRefPtr<DesktopClient> desktop_client;
 NSFileHandle* desktop_broker_input;
+NativeExternalUrlQueue external_urls([](const std::string& id, const std::string& url) {
+  if (!desktop_broker_input || !desktop_client || ![NSThread isMainThread]) return false;
+  // The worker creates a Chrome-owned window when none exists. Re-entering
+  // CEF's startup browser creation here also restores the previous session.
+  if (desktop_client->Active()) desktop_client->Reopen();
+  NSString* ns_id = [NSString stringWithUTF8String:id.c_str()];
+  NSString* ns_url = [NSString stringWithUTF8String:url.c_str()];
+  if (!ns_id || !ns_url) return false;
+  NSData* bytes = [NSJSONSerialization dataWithJSONObject:@{@"kind":@"external-open-url", @"id":ns_id, @"url":ns_url} options:0 error:nil];
+  if (!bytes) return false;
+  NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
+  @try { [desktop_broker_input writeData:line]; return true; }
+  @catch (NSException*) {
+    // A failed pipe write can be partial. Never replay an ambiguous dispatch.
+    std::cerr << "External link delivery was interrupted; check the browser before retrying." << std::endl;
+    return true;
+  }
+});
 NSOpenPanel* desktop_workspace_panel;
 NSString* desktop_workspace_panel_id;
-bool ValidNativeDialogPath(id path) {
-  return [path isKindOfClass:NSString.class] && [path length] > 0 && [path length] <= 4096 &&
-      [path isAbsolutePath] && [path rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location == NSNotFound;
-}
 NSString* Argument(int argc, char** argv, const char* name) {
   for (int i = 1; i + 1 < argc; ++i) if (std::string(argv[i]) == name) return [NSString stringWithUTF8String:argv[i + 1]];
   return nil;
@@ -190,6 +209,13 @@ bool HasArgument(int argc, char** argv, const char* name) {
   for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == name) return true;
   return false;
 }
+}
+
+bool EnqueueKestrelExternalURL(NSURL* url) {
+  if (![NSThread isMainThread] || !IsAllowedKestrelExternalURL(url)) return false;
+  NSString* text = url.absoluteString;
+  const char* utf8 = text.UTF8String;
+  return utf8 && external_urls.Enqueue(utf8);
 }
 
 @interface KestrelChromiumMenuTarget : NSObject <NSMenuItemValidation>
@@ -272,6 +298,7 @@ static void InstallDesktopMenu() {
 
 bool CloseKestrelChromiumDesktop() {
   if (!desktop_client) return false;
+  external_urls.SetReady(false);
   if (desktop_workspace_panel) [desktop_workspace_panel cancel:nil];
   if (desktop_broker_input) {
     @try { [desktop_broker_input closeFile]; } @catch (NSException*) {}
@@ -399,6 +426,27 @@ static NSString* DefaultNativeProfile() {
 }
 
 int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
+  // Finder normally delivers URLs through openURLs:. Direct invocations can
+  // pass URLs as positional arguments; skip option values and legacy paths.
+  bool skip_option_value = false;
+  bool positional_only = false;
+  std::vector<char*> cef_arguments;
+  cef_arguments.push_back(argv[0]);
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg(argv[i]);
+    if (skip_option_value) { skip_option_value = false; if (arg.empty() || arg[0] != '-') { cef_arguments.push_back(argv[i]); continue; } }
+    if (!positional_only && arg == "--") { positional_only = true; cef_arguments.push_back(argv[i]); continue; }
+    if (!positional_only && !arg.empty() && arg[0] == '-') {
+      cef_arguments.push_back(argv[i]);
+      if (arg == "--kestrel-chromium-desktop" || arg == "--kestrel-durable-profile" ||
+          arg.rfind("-psn_", 0) == 0 || arg.find('=') != std::string::npos) continue;
+      skip_option_value = true;
+      continue;
+    }
+    if (strncasecmp(arg.c_str(), "http://", 7) != 0 && strncasecmp(arg.c_str(), "https://", 8) != 0) { cef_arguments.push_back(argv[i]); continue; }
+    NSString* text = [NSString stringWithUTF8String:arg.c_str()];
+    if (text) EnqueueKestrelExternalURL([NSURL URLWithString:text]);
+  }
   NSString* requested = default_profile ? DefaultNativeProfile() : Argument(argc, argv, "--kestrel-cache-path");
   if (!requested || !requested.isAbsolutePath) {
     std::cerr << (default_profile ? "Native default profile is unavailable or setup was cancelled; existing data was preserved." : "Native Chromium requires an explicit isolated profile.") << std::endl;
@@ -529,10 +577,19 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
       if ([value[@"kind"] isEqualToString:@"ui-ready"]) dispatch_async(dispatch_get_main_queue(), ^{
         if (desktop_client) {
           desktop_client->UiReady();
+          external_urls.SetReady(true);
           // This comes only after Core is ready and the authenticated extension
           // worker has connected. It does not assert React has rendered.
           std::cout << "KESTREL_CHROMIUM_DESKTOP_BRIDGE_READY" << std::endl;
         }
+      });
+      if ([value[@"kind"] isEqualToString:@"ui-disconnected"]) dispatch_async(dispatch_get_main_queue(), ^{
+        external_urls.SetReady(false);
+        if (external_urls.uncertain()) std::cerr << "External link delivery was interrupted; check the browser before retrying." << std::endl;
+      });
+      if ([value[@"kind"] isEqualToString:@"external-open-url-result"] && [value[@"id"] isKindOfClass:NSString.class]) dispatch_async(dispatch_get_main_queue(), ^{
+        if (external_urls.Complete([value[@"id"] UTF8String]) && ![value[@"ok"] boolValue])
+          std::cerr << ([value[@"uncertain"] boolValue] ? "External link delivery timed out; check the browser before retrying." : "An external link could not be opened.") << std::endl;
       });
       if ([value[@"kind"] isEqualToString:@"host-request"] && [value[@"id"] isKindOfClass:NSString.class] && [value[@"request"] isKindOfClass:NSDictionary.class]) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -553,7 +610,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
             BOOL root_directory = NO;
             const bool valid_request = context_files
                 ? [value[@"request"] count] == 2 && ValidNativeDialogPath(workspace_root) &&
-                    [workspace_root isEqualToString:workspace_root.stringByResolvingSymlinksInPath] &&
+                    [workspace_root isEqualToString:CanonicalNativeDialogPath(workspace_root)] &&
                     [NSFileManager.defaultManager fileExistsAtPath:workspace_root isDirectory:&root_directory] && root_directory
                 : [value[@"request"] count] == 1;
             if (!valid_request) response = @{@"ok":@NO, @"error":@"The native file picker request is invalid."};
@@ -576,7 +633,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
                   NSMutableArray<NSString*>* paths = [NSMutableArray array];
                   bool valid = panel.URLs.count > 0 && panel.URLs.count <= 8;
                   for (NSURL* url in panel.URLs) {
-                    NSString* path = url.URLByResolvingSymlinksInPath.path;
+                    NSString* path = url.isFileURL ? CanonicalNativeDialogPath(url.path) : nil;
                     NSDictionary* attributes = ValidNativeDialogPath(path)
                         ? [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] : nil;
                     if (!valid || !url.isFileURL || !ValidNativeDialogPath(path) ||
@@ -617,7 +674,11 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     }
     }
   };
-  CefMainArgs args(argc, argv);
+  // Kestrel alone consumes positional web links. Passing them to Chromium as
+  // well could create a second startup tab before the private queue drains.
+  const int cef_argument_count = static_cast<int>(cef_arguments.size());
+  cef_arguments.push_back(nullptr);
+  CefMainArgs args(cef_argument_count, cef_arguments.data());
   CefSettings settings;
   settings.windowless_rendering_enabled = true;
   settings.persist_session_cookies = true;

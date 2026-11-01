@@ -284,7 +284,10 @@ export function KestrelSidebar({
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
 	const [collapsed, setCollapsed] = useState(
-		() => localStorage.getItem("kestrel:navigation-sidebar") === "collapsed",
+		() => {
+			const saved = localStorage.getItem("kestrel:navigation-sidebar");
+			return saved === "collapsed" || (saved !== "open" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 1120px)").matches);
+		},
 	);
 	const [sidebarWidth, setSidebarWidth] = useState(() => {
 		const stored = Number.parseFloat(

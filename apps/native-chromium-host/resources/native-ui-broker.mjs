@@ -61,6 +61,19 @@ let coreReady = false;
 let sequence = 0;
 let stopping = false;
 let shuttingDown = false;
+let externalPending;
+function finishExternal(ok, uncertain = false) {
+  if (!externalPending) return;
+  const id = externalPending.id;
+  clearTimeout(externalPending.timer);
+  externalPending = undefined;
+  process.stdout.write(JSON.stringify({ kind: "external-open-url-result", id, ok, uncertain }) + "\n");
+}
+function validExternalUrl(value) {
+  if (typeof value !== "string" || Buffer.byteLength(value) > 8192 || /[\u0000-\u0020\u007f]/.test(value)) return false;
+  try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !!url.hostname && !url.username && !url.password; }
+  catch { return false; }
+}
 function signalReady() {
 	if (!active || !coreReady) return;
 	send(active, { kind: "ready" });
@@ -144,7 +157,11 @@ const server = createServer((socket) => {
 	let nonce;
 	const deadline = setTimeout(() => socket.destroy(), 10_000);
 	socket.on("error", () => socket.destroy());
-	socket.on("close", () => { clearTimeout(deadline); sockets.delete(socket); failPending(socket); if (active === socket) active = undefined; });
+	socket.on("close", () => { clearTimeout(deadline); sockets.delete(socket); failPending(socket); if (active === socket) {
+      active = undefined;
+      process.stdout.write(JSON.stringify({ kind: "ui-disconnected" }) + "\n");
+      if (externalPending?.socket === socket) { clearTimeout(externalPending.timer); externalPending = undefined; }
+    } });
 	socket.on("data", (chunk) => {
 		if (buffer.length + chunk.length > 2 * MAX_FRAME) { socket.destroy(); return; }
 		buffer = Buffer.concat([buffer, chunk]);
@@ -167,7 +184,14 @@ const server = createServer((socket) => {
 				state = "authenticated"; clearTimeout(deadline); active = socket;
 				signalReady();
 			} else {
-				if (message.kind === "browser-backend-response") { browserRelay.response(socket, message); continue; }
+				if (message.kind === "external-open-url-result") {
+          if (externalPending?.socket === socket && message.id === externalPending.id) {
+            const ok = message.ok === true && Number.isSafeInteger(message.tabId) && Number.isSafeInteger(message.windowId);
+            finishExternal(ok, !ok);
+          }
+          continue;
+        }
+        if (message.kind === "browser-backend-response") { browserRelay.response(socket, message); continue; }
 				if (message.kind !== "request" || typeof message.id !== "string" || message.id.length > 100 || pending.size >= MAX_PENDING) { socket.destroy(); return; }
 				const parsed = RendererRequestSchema.safeParse(message.request);
 				if (!parsed.success) { send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Invalid Kestrel request." } }); continue; }
@@ -220,7 +244,17 @@ ownerInput.once("close", () => void shutdown());
 ownerInput.on("line", (line) => {
 	if (Buffer.byteLength(line, "utf8") + 1 > MAX_FRAME) { void shutdown(1); return; }
 	let message; try { message = JSON.parse(line); } catch { void shutdown(1); return; }
-	if (message?.kind === "automation-response") { automationRelay.response(message); return; }
+	if (message?.kind === "external-open-url") {
+    if (typeof message.id !== "string" || !/^external-[0-9]{1,20}$/.test(message.id) || !validExternalUrl(message.url) || !active || active.destroyed || !coreReady || externalPending) {
+      if (typeof message.id === "string" && /^external-[0-9]{1,20}$/.test(message.id)) process.stdout.write(JSON.stringify({ kind: "external-open-url-result", id: message.id, ok: false }) + "\n");
+      return;
+    }
+    const socket = active;
+    externalPending = { id: message.id, socket, timer: setTimeout(() => finishExternal(false, true), 30000) };
+    send(socket, { kind: "external-open-url", id: message.id, url: message.url });
+    return;
+  }
+  if (message?.kind === "automation-response") { automationRelay.response(message); return; }
 	if (message?.kind === "automation-reset-response") { automationRelay.resetResponse(message); return; }
 	if (dialogRelay.response(message)) return;
 	if (message.kind !== "host-response" || typeof message.id !== "string" || !message.id.startsWith("host-")) return;

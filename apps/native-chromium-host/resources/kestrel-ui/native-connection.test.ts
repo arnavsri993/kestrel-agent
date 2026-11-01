@@ -33,6 +33,32 @@ function harness(options: Record<string, any> = {}) {
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 describe("native worker connection", () => {
+	it("opens an external URL only on the authenticated connection and acknowledges the created tab", async () => {
+		const open = vi.fn(async () => ({ tabId: 17, windowId: 5 }));
+		const { ports, authenticate } = harness({ handleExternalOpenUrl: open });
+		await ports[0].onMessage.emit({ kind: "external-open-url", id: "external-1", url: "https://example.com/" });
+		expect(open).not.toHaveBeenCalled();
+		await authenticate();
+		await ports[0].onMessage.emit({ kind: "external-open-url", id: "external-1", url: "https://example.com/" });
+		expect(open).toHaveBeenCalledOnce();
+		expect(ports[0].postMessage).toHaveBeenCalledWith({ kind: "external-open-url-result", id: "external-1", ok: true, tabId: 17, windowId: 5 });
+	});
+
+	it("does not replay or acknowledge an external open after disconnect", async () => {
+		let resolve!: (value: unknown) => void;
+		const open = vi.fn(() => new Promise((done) => { resolve = done; }));
+		const { ports, authenticate } = harness({ handleExternalOpenUrl: open });
+		await authenticate();
+		const pending = ports[0].onMessage.emit({ kind: "external-open-url", id: "external-2", url: "https://example.com/" });
+		ports[0].disconnect();
+		await vi.advanceTimersByTimeAsync(250);
+		await authenticate(ports[1]);
+		resolve({ tabId: 18, windowId: 5 }); await pending;
+		expect(open).toHaveBeenCalledOnce();
+		expect(ports[0].postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "external-open-url-result" }));
+		expect(ports[1].postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "external-open-url-result" }));
+	});
+
 	it("holds requests until authentication and accepts only current responses", async () => {
 		const { connection, ports, authenticate, emit } = harness();
 		const response = connection.request({ type: "snapshot" });

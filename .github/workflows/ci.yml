@@ -67,6 +67,8 @@ jobs:
           corepack pnpm test:chromium-native-auth
           corepack pnpm test:chromium-provider-store
           corepack pnpm test:chromium-context-dialog
+          corepack pnpm test:chromium-external-urls
+          corepack pnpm test:chromium-browser-settings
           corepack pnpm test:chromium-desktop
       - name: Upload native extension compatibility evidence
         if: ${{ always() }}
@@ -77,6 +79,7 @@ jobs:
             .tmp/native-user-extension-evidence/
             .tmp/chromium-desktop-evidence/
             .tmp/native-context-dialog-evidence/
+            .tmp/native-browser-settings-evidence/
           if-no-files-found: warn
           retention-days: 14
       - run: corepack pnpm test:e2e

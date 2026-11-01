@@ -161,6 +161,8 @@ try{
  receipt.phases.push({phase:'first-run-renderer-errors',passed:true,count:0});
  await stop();
  await start();
+ await home.locator('.kestrel-sidebar').waitFor({timeout:30_000});
+ await home.locator('#new-tab-title').waitFor({timeout:30_000});
  assert.equal(await home.locator('.setup-onboarding').count(),0,'The native first-run completion must survive restart in the same disposable profile.');
  const persisted=await home.evaluate(()=>window.kestrel.request({type:'runtime-list-sessions'}));
  assert(persisted.ok,persisted.error);assert(persisted.sessions.some(item=>item.id===session.id),'Fresh-profile conversation must survive a full native app restart.');
@@ -174,6 +176,8 @@ try{
  console.log(`Native Chromium first-run passed. Evidence: ${evidence}`);
 }catch(error){
  await mkdir(evidence,{recursive:true});
+ receipt.failureState={browserPid:child?.pid,exitCode:child?.exitCode,signalCode:child?.signalCode,pageClosed:home?.isClosed(),browserConnected:browser?.isConnected()};
+ try{if(browser?.isConnected()){const session=await browser.newBrowserCDPSession();receipt.targetsAtFailure=(await session.send('Target.getTargets')).targetInfos.map(({targetId,type,url})=>({targetId,type,url}));await session.detach();}}catch{}
  await writeFile(join(evidence,'failure.log'),output+'\n'+String(error));
  await writeFile(join(evidence,'receipt.json'),JSON.stringify({...receipt,failed:String(error)},null,2));
  throw error;

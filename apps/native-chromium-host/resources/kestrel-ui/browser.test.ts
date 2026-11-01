@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { InstalledExtensionSchema, UserBrowserStateSchema } from "../../../../packages/shared-types/src/contracts.ts";
 import { createBrowserAdapter } from "./browser.mjs";
+import { NATIVE_BROWSER_SETTINGS_URLS } from "../../../../packages/shared-types/src/native-browser-settings";
 
 const extensionId = "abcdefghijklmnopabcdefghijklmnop";
 const uiUrl = `chrome-extension://${extensionId}/index.html`;
@@ -58,7 +59,23 @@ function makeChrome() {
 			onCreated: event("tab-created"), onRemoved: event("tab-removed"), onActivated: event("tab-activated"),
 			onUpdated: event("tab-updated"), onMoved: event("tab-moved"), onAttached: event("tab-attached"), onDetached: event("tab-detached"),
 		},
-		windows: { getLastFocused: invoke(() => ({ id: 7 })), onFocusChanged: event("window-focused") },
+		windows: {
+			getLastFocused: invoke(() => ({ id: 7 })),
+			getAll: invoke(() => [...new Set(tabs.map(tab => tab.windowId))].map(id => ({ id }))),
+			update: invoke((id: number) => ({ id })),
+			create: invoke(({ url }: { url: string | string[] }) => {
+				const id = 8;
+				const urls = Array.isArray(url) ? url : [url];
+				for (const [index, address] of urls.entries()) tabs.push({ id: 100 + index, windowId: id, active: index === urls.length - 1, status: "complete", title: "New tab", url: address });
+				return { id };
+			}),
+			onFocusChanged: event("window-focused"),
+		},
+		search: { query: vi.fn(invoke(({ text, tabId }: { text: string; tabId: number }) => {
+			const tab = tabs.find(item => item.id === tabId);
+			if (!tab) throw new Error("Missing search tab");
+			tab.url = `https://native-provider.example/search?q=${encodeURIComponent(text)}`;
+		})) },
 		bookmarks: {
 			getTree: invoke(() => [{ id: "0", children: bookmarks }]),
 			search: invoke((query: { url: string }) => bookmarks.flatMap((folder) => folder.children).filter((item) => item.url === query.url)),
@@ -91,10 +108,10 @@ describe("native first-party browser adapter", () => {
 		expect(state.downloads[0]?.id).toMatch(/^download-[a-f0-9-]{36}$/);
 		expect(state.bookmarks[0]?.id).toBe(concurrent.browserState.bookmarks[0]?.id);
 		expect(state.downloads[0]?.id).toBe(concurrent.browserState.downloads[0]?.id);
-		expect(state.settings.searchEngine).toBe("google");
+		expect(state.settingsOwnership).toBe("chromium");
 	});
 
-	it("round-trips internal routes and creates a single correctly encoded search URL", async () => {
+	it("round-trips internal routes and delegates each search to Chromium's selected provider in the exact tab", async () => {
 		const { chrome, tabs } = makeChrome();
 		const adapter = createBrowserAdapter(chrome, { uiUrl });
 		const initial = await adapter.request({ type: "browser-get-state" }, sender);
@@ -103,7 +120,18 @@ describe("native first-party browser adapter", () => {
 		expect(tabs[0].url).toBe(`${uiUrl}?app=settings`);
 		expect((await adapter.request({ type: "browser-get-state" }, sender)).browserState.tabs[0].url).toBe("kestrel://settings");
 		await adapter.request({ type: "browser-create-tab", input: "cats and dogs" }, sender);
-		expect(tabs.at(-1)?.url).toBe("https://www.google.com/search?q=cats%20and%20dogs");
+		expect(tabs.at(-1)?.url).toBe("https://native-provider.example/search?q=cats%20and%20dogs");
+		expect(chrome.search.query.mock.calls[0]?.[0]).toEqual({ text: "cats and dogs", tabId: tabs.at(-1)?.id });
+		await adapter.request({ type: "browser-navigate", tabId, input: "one & two" }, sender);
+		expect(tabs[0].url).toBe("https://native-provider.example/search?q=one%20%26%20two");
+		expect(chrome.search.query.mock.calls[1]?.[0]).toEqual({ text: "one & two", tabId: 11 });
+	});
+	it("fails unavailable search before creating a tab and never substitutes a provider", async () => {
+		const { chrome, tabs } = makeChrome();
+		delete (chrome as any).search;
+		const adapter = createBrowserAdapter(chrome, { uiUrl });
+		expect(await adapter.request({ type: "browser-create-tab", input: "private query" }, sender)).toMatchObject({ ok: false, error: expect.stringContaining("Native search is unavailable") });
+		expect(tabs).toHaveLength(2);
 	});
 
 	it("handles bookmark and download actions without requiring a tab ID", async () => {
@@ -115,7 +143,7 @@ describe("native first-party browser adapter", () => {
 	});
 
 	it("persists Kestrel Home changes while rejecting unapplied Chromium preferences", async () => {
-		const { chrome } = makeChrome();
+		const { chrome, storage } = makeChrome();
 		const adapter = createBrowserAdapter(chrome, { uiUrl });
 		const original = (await adapter.request({ type: "browser-get-state" }, sender)).browserState.settings;
 		const homeSettings = { ...original, newTabBackground: "paper" };
@@ -124,16 +152,57 @@ describe("native first-party browser adapter", () => {
 		expect(after.settings.newTabBackground).toBe("paper");
 		expect((await adapter.request({ type: "browser-update-settings", settings: { ...after.settings, searchEngine: "bing" } }, sender)).ok).toBe(false);
 		expect((await adapter.request({ type: "browser-get-state" }, sender)).browserState.settings.searchEngine).toBe(original.searchEngine);
+		const image = "data:image/png;base64,aGVsbG8=";
+		expect((await adapter.request({ type: "browser-update-settings", settings: { ...after.settings, newTabBackground: "custom", newTabBackgroundCustomDataUrl: image, newTabShortcuts: [{ title: "Example", url: "https://example.com/" }] } }, sender)).ok).toBe(true);
+		expect(storage["kestrel.native.browser.settings.v1"]).toMatchObject({ newTabBackground: "custom", newTabBackgroundCustomDataUrl: image, newTabShortcuts: [{ title: "Example", url: "https://example.com/" }] });
+		expect(storage["kestrel.native.browser.settings.v1"]).not.toHaveProperty("searchEngine");
+		const restored = createBrowserAdapter(chrome, { uiUrl });
+		const saved = (await restored.request({ type: "browser-get-state" }, sender)).browserState.settings;
+		expect(saved.newTabBackgroundCustomDataUrl).toBe(image);
+		expect((await restored.request({ type: "browser-update-settings", settings: { ...saved, newTabBackground: "graphite", newTabBackgroundCustomDataUrl: undefined } }, sender)).ok).toBe(true);
+		expect((await restored.request({ type: "browser-get-state" }, sender)).browserState.settings).not.toHaveProperty("newTabBackgroundCustomDataUrl");
 	});
 
 	it("limits privileged navigation to native settings pages", async () => {
 		const { chrome, tabs } = makeChrome();
 		const adapter = createBrowserAdapter(chrome, { uiUrl });
-		expect((await adapter.request({ type: "browser-create-tab", input: "chrome://extensions/" }, sender)).ok).toBe(true);
-		expect(tabs.at(-1)?.url).toBe("chrome://extensions/");
-		for (const input of ["chrome://flags/", "file:///Users/test/private", "javascript:alert(1)", "https://user:password@example.com/"]) {
+		for (const input of NATIVE_BROWSER_SETTINGS_URLS) {
+			expect((await adapter.request({ type: "browser-create-tab", input }, sender)).ok).toBe(true);
+			expect(tabs.at(-1)?.url).toBe(input);
+		}
+		for (const input of ["chrome://flags/", "chrome://settings/?injected=1", "chrome://settings/../flags", "chrome://settings/search#extra", "file:///Users/test/private", "javascript:alert(1)", "https://user:password@example.com/"]) {
 			expect((await adapter.request({ type: "browser-create-tab", input }, sender)).ok).toBe(false);
 		}
+	});
+	it("opens an OS link in the existing normal browser window and rejects privileged or credentialed input", async () => {
+		const { chrome, tabs } = makeChrome();
+		const adapter = createBrowserAdapter(chrome, { uiUrl });
+		const result = await adapter.openExternalUrl("https://example.com/from-system?q=1#part");
+		expect(result).toMatchObject({ tabId: expect.any(Number), windowId: 7 });
+		expect(tabs.at(-1)).toMatchObject({ windowId: 7, active: true, url: "https://example.com/from-system?q=1#part" });
+		const count = tabs.length;
+		for (const value of ["a search", "example.com", "chrome://settings/", "kestrel://settings", "https://user:secret@example.com/", "https://example.com/\n", "https://example.com/" + "x".repeat(8192)])
+			await expect(adapter.openExternalUrl(value)).rejects.toThrow();
+		expect(tabs).toHaveLength(count);
+	});
+	it("lets Chromium create the external tab without adding a duplicate Home to its restored session", async () => {
+		const { chrome, tabs } = makeChrome();
+		tabs.splice(0);
+		const adapter = createBrowserAdapter(chrome, { uiUrl });
+		const result = await adapter.openExternalUrl("https://example.com/reopen");
+		expect(result).toEqual({ windowId: 8, tabId: 100 });
+		expect(tabs.map(tab => tab.url)).toEqual(["https://example.com/reopen"]);
+	});
+	it("keeps every document tab available without a background UI request changing actual focus", async () => {
+		const { chrome, tabs } = makeChrome();
+		tabs.push({ id: 13, windowId: 8, active: true, status: "complete", title: "Other window", url: "https://example.com/other" });
+		const adapter = createBrowserAdapter(chrome, { uiUrl });
+		const response = await adapter.request({ type: "browser-get-state" }, { ...sender, tab: { id: 13, windowId: 8 } });
+		expect(response.browserState.tabs).toHaveLength(3);
+		expect(response.browserState.activeTabId).toBe(response.browserState.tabs[0].id);
+		expect((await adapter.backend({ operation: "visible-tabs" }))[0]).toMatchObject({ url: "https://example.com/other", active: false });
+		expect((await adapter.request({ type: "browser-select-tab", tabId: response.browserState.tabs[2].id }, sender)).ok).toBe(true);
+		expect((await adapter.request({ type: "browser-get-state" }, sender)).browserState.activeTabId).toBe(response.browserState.tabs[2].id);
 	});
 
 	it("routes Core tools to exact native tabs and excludes protected UI pages", async () => {

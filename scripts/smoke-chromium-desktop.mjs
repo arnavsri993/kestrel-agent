@@ -285,8 +285,19 @@ try{
   receipt.phases.push({phase:'native-last-window-close-and-reopen',passed:true,coreProcesses});
  }
  if(store){
+  // The provider companion phase already opened its own Store fixture tab.
+  // Close only those tabs in this disposable profile before measuring one
+  // fresh activation; an all-tabs count otherwise mistakes the two phases
+  // for duplicate delivery by the product.
+  const previousStoreState=await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}));
+  for(const tab of previousStoreState.browserState.tabs.filter(tab=>isChromeWebStoreUrl(tab.url))){const closed=await home.evaluate(tabId=>window.kestrel.request({type:'browser-close-tab',tabId}),tab.id);assert(closed.ok,closed.error);}
   await settings.getByRole('link',{name:/Browse Chrome Web Store/}).click();
-  const listing=await createdPage(isChromeWebStoreUrl);await listing.goto(`https://chromewebstore.google.com/detail/json-formatter/${formatter}`,{waitUntil:'domcontentloaded'});
+  const listing=await createdPage(isChromeWebStoreUrl);
+  const storeState=await home.evaluate(()=>window.kestrel.request({type:'browser-get-state'}));
+  const storeTabs=storeState.browserState.tabs.filter(tab=>isChromeWebStoreUrl(tab.url));
+  assert.equal(storeTabs.length,1,'One Store activation must create exactly one Store tab.');
+  const selectedStore=await home.evaluate(tabId=>window.kestrel.request({type:'browser-select-tab',tabId}),storeTabs[0].id);assert(selectedStore.ok,selectedStore.error);
+  await listing.goto(`https://chromewebstore.google.com/detail/json-formatter/${formatter}`,{waitUntil:'domcontentloaded'});
   await listing.getByRole('button',{name:'Add to Chrome',exact:true}).waitFor();
   const session=await browser.newBrowserCDPSession();
   let panel;
@@ -300,6 +311,8 @@ try{
   await listing.screenshot({path:join(evidence,'store.png')});
   await writeFile(join(evidence,'live-profile.txt'),profile);
   await writeFile(join(evidence,'receipt.json'),JSON.stringify({...receipt,awaitingNativeInstall:true,windowIds,panelTarget:panel.targetId},null,2));
+  const recommendation=listing.getByRole('button',{name:'No thanks',exact:true});if(await recommendation.isVisible())await recommendation.click();
+  await listing.getByRole('button',{name:'Add to Chrome',exact:true}).click();
   console.log('OWNED_CHROMIUM_STORE_READY: native JSON Formatter install prompt can now be exercised in the visible candidate.');
   let installed;
   for(let i=0;i<6000;i++){const result=await home.evaluate(()=>window.kestrel.request({type:'browser-list-extensions'}));installed=result.extensions?.find(item=>item.id===formatter&&item.enabled);if(installed)break;assert.equal(child.exitCode,null,output);await delay(100);}
@@ -327,5 +340,5 @@ finally{
  await browser?.close().catch(()=>{});
  if(child&&child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await new Promise(resolve=>child.once('exit',resolve));}
  await new Promise(resolve=>server.close(resolve));
- await rm(profile,{recursive:true,force:true});
+ await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});
 }

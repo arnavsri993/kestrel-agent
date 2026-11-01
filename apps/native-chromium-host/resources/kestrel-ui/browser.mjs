@@ -1,25 +1,13 @@
 import { UserBrowserSettingsSchema, UserBrowserPageContextSchema } from "../../../../packages/shared-types/src/contracts.ts";
 import { capturePageContext } from "./page-context.mjs";
 import { createNativeAutomation } from "./native-automation.mjs";
+import { isNativeBrowserSettingsUrl } from "../../../../packages/shared-types/src/native-browser-settings.ts";
 
 const TAB_IDS_KEY = "kestrel.native.browser.tabIds.v1";
 const SETTINGS_KEY = "kestrel.native.browser.settings.v1";
 const INSTALL_DATES_KEY = "kestrel.native.browser.extensionInstallDates.v1";
 
-const SEARCH_ENGINES = {
-	duckduckgo: "https://duckduckgo.com/?q=%s",
-	google: "https://www.google.com/search?q=%s",
-	bing: "https://www.bing.com/search?q=%s",
-	brave: "https://search.brave.com/search?q=%s",
-	ecosia: "https://www.ecosia.org/search?q=%s",
-	startpage: "https://www.startpage.com/sp/search?query=%s",
-	yahoo: "https://search.yahoo.com/search?p=%s",
-	kagi: "https://kagi.com/search?q=%s",
-	qwant: "https://www.qwant.com/?q=%s",
-	mojeek: "https://www.mojeek.com/search?q=%s",
-	baidu: "https://www.baidu.com/s?wd=%s",
-	yandex: "https://yandex.com/search/?text=%s",
-};
+const HOME_SETTINGS_KEYS = ["newTabBackground", "newTabBackgroundCustomDataUrl", "newTabShortcuts", "newTabGreetingActivity", "newTabWidgets"];
 
 // Normalize the Kestrel UI's complete settings shape. Chromium-owned
 // preferences remain native; unsupported writes fail rather than reporting
@@ -79,23 +67,17 @@ function invoke(api, method, ...args) {
 	});
 }
 
-function normalizeAddress(input, settings) {
+function normalizeAddress(input) {
 	const value = String(input ?? "").trim();
 	if (!value || value.length > 8192 || /[\u0000-\u001f\u007f]/.test(value))
 		throw new Error("Enter a valid address or search.");
-	if (new Set(["chrome://extensions/", "chrome://settings/", "chrome://downloads/", "chrome://history/", "chrome://bookmarks/"]).has(value)) return { url: value };
+	if (isNativeBrowserSettingsUrl(value)) return { url: value };
 	if (/^kestrel:\/\//i.test(value)) return { url: value };
 	const loopback = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d{1,5})?(?:[/?#]|$)/i.test(value);
 	const explicit = /^[A-Za-z][A-Za-z\d+.-]*:/.test(value) && !loopback;
 	if (explicit && !/^https?:/i.test(value)) throw new Error("Kestrel tabs support HTTP and HTTPS pages only.");
 	const hostLike = loopback || /^(?:[A-Za-z\d](?:[A-Za-z\d-]{0,62}[A-Za-z\d])?\.)+[A-Za-z]{2,63}(?::\d{1,5})?(?:[/?#]|$)/.test(value) || /^(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?(?:[/?#]|$)/.test(value);
-	if (!explicit && !hostLike) {
-		const template = settings.searchEngine === "custom" ? settings.customSearchUrl : SEARCH_ENGINES[settings.searchEngine] || SEARCH_ENGINES.google;
-		if (settings.searchEngine === "custom" && (!template || !/^https?:\/\//i.test(template)))
-			throw new Error("Custom search URL is not configured.");
-		const encoded = encodeURIComponent(value);
-		return { url: template.includes("%s") ? template.replace(/%s/g, encoded) : `${template}${template.includes("?") ? "&q=" : "?q="}${encoded}` };
-	}
+	if (!explicit && !hostLike) return { query: value };
 	const url = new URL(explicit ? value : `${loopback ? "http" : "https"}://${value}`);
 	if (!(["http:", "https:"].includes(url.protocol)) || url.username || url.password)
 		throw new Error("Enter an HTTP(S) address without embedded credentials.");
@@ -195,9 +177,12 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		return target.toString();
 	}
 	async function state() {
-		const tabs = await visibleTabs();
+		// Every first-party document needs its own tab even when another window
+		// has focus. activeTabId continues to describe the real focused window.
+		const tabs = await invoke(chromeApi.tabs, "query", {});
+		const windowId = await focusedWindow();
 		const map = await tabMap(tabs);
-		const settings = await stored(SETTINGS_KEY, DEFAULT_SETTINGS);
+		const settings = await homeSettings();
 		const [bookmarkData, history, downloads] = await Promise.all([readBookmarks(), readHistory(), readDownloads()]);
 		const normalized = tabs.map((tab) => ({
 			id: map[String(tab.id)], title: (tab.title || "New Tab").slice(0, 500), url: displayUrl(tab.url || "").slice(0, 8192),
@@ -206,11 +191,38 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			createdAt: now(), lastActiveAt: now(),
 		}));
 		return {
-			tabs: normalized, tabFolders: [], activeTabId: map[String(tabs.find((tab) => tab.active)?.id)] || null,
+			tabs: normalized, tabFolders: [], activeTabId: map[String(tabs.find((tab) => tab.active && tab.windowId === windowId)?.id)] || null,
 			history, originFavicons: [], downloads, bookmarks: bookmarkData.bookmarks,
 			bookmarkFolders: bookmarkData.folders, recentlyClosedTabs: [],
-			sitePermissions: [], settings: { ...DEFAULT_SETTINGS, ...settings },
+			sitePermissions: [], settings, settingsOwnership: "chromium",
 		};
+	}
+	async function homeSettings() {
+		const value = await stored(SETTINGS_KEY, {});
+		// Ignore old compatibility fields in storage. They were never applied to
+		// Chromium, and must not override native browser preferences or searches.
+		return UserBrowserSettingsSchema.parse({ ...DEFAULT_SETTINGS,
+			...Object.fromEntries(HOME_SETTINGS_KEYS.filter(key => value && Object.hasOwn(value, key)).map(key => [key, value[key]])),
+		});
+	}
+	function assertSearchAvailable(address) {
+		if (address.query && typeof chromeApi.search?.query !== "function")
+			throw new Error("Native search is unavailable. Open Search settings or enter a website address.");
+	}
+	async function navigateAddress(tabId, address) {
+		if (address.query) {
+			// Chromium owns provider choice and query encoding. Never silently
+			// send a search to a provider inferred from compatibility defaults.
+			await invoke(chromeApi.search, "query", { text: address.query, tabId });
+		} else await invoke(chromeApi.tabs, "update", tabId, { url: address.url.startsWith("kestrel://") ? uiUrlFor(address.url) : address.url });
+	}
+	async function createAddress(address, active) {
+		assertSearchAvailable(address);
+		const windowId = await focusedWindow();
+		const url = address.query ? "about:blank" : address.url?.startsWith("kestrel://") || !address.url ? uiUrlFor(address.url) : address.url;
+		const tab = await invoke(chromeApi.tabs, "create", { url, active, ...(windowId === undefined ? {} : { windowId }) });
+		if (address.query) await navigateAddress(tab.id, address);
+		return tab;
 	}
 	async function emitState() {
 		try { emit("browser-event", { type: "state", state: await state() }); } catch { /* event refresh is best-effort; request callers receive errors */ }
@@ -324,17 +336,16 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		try { senderUrl = new URL(sender?.url || ""); } catch { /* reject below */ }
 		if (!sender || sender.id !== chromeApi.runtime.id || senderUrl?.protocol !== ui.protocol || senderUrl?.hostname !== ui.hostname || senderUrl?.pathname !== ui.pathname)
 			return { ok: false, error: "Only the Kestrel UI can control native browser tabs." };
-		if (Number.isInteger(sender.tab?.windowId)) focusedWindowId = sender.tab.windowId;
 		try {
 			if (input.type === "browser-get-context") return { ok: true, browserContext: await pageContext(input.tabId) };
 			if (input.type === "browser-update-settings") {
-				const allowed = new Set(["newTabBackground", "newTabBackgroundDataUrl", "newTabGreetingActivity", "newTabWidgets"]);
-				const current = UserBrowserSettingsSchema.parse({ ...DEFAULT_SETTINGS, ...await stored(SETTINGS_KEY, DEFAULT_SETTINGS) });
+				const allowed = new Set(HOME_SETTINGS_KEYS);
+				const current = await homeSettings();
 				const next = UserBrowserSettingsSchema.parse(input.settings);
 				const changed = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(current[key]));
 				if (changed.some(key => !allowed.has(key)))
 					throw new Error("Use the native browser settings to change this preference.");
-				await persist(SETTINGS_KEY, next);
+				await persist(SETTINGS_KEY, Object.fromEntries(HOME_SETTINGS_KEYS.filter(key => next[key] !== undefined).map(key => [key, next[key]])));
 				await emitState();
 				return response();
 			}
@@ -356,11 +367,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 				return response();
 			}
 			if (input.type === "browser-create-tab") {
-				const settings = await stored(SETTINGS_KEY, DEFAULT_SETTINGS);
-				const requestedUrl = input.input ? normalizeAddress(input.input, settings).url : "";
-				const url = requestedUrl.startsWith("kestrel://") || !requestedUrl ? uiUrlFor(requestedUrl) : requestedUrl;
-				const windowId = await focusedWindow();
-				await invoke(chromeApi.tabs, "create", { url, active: input.active !== false, ...(windowId === undefined ? {} : { windowId }) });
+				await createAddress(input.input ? normalizeAddress(input.input) : { url: "" }, input.active !== false);
 				return response();
 			}
 			if (input.type === "browser-cancel-download") {
@@ -382,11 +389,15 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			const tab = await nativeId(input.tabId);
 			switch (input.type) {
 				case "browser-close-tab": await invoke(chromeApi.tabs, "remove", tab.id); break;
-				case "browser-select-tab": await invoke(chromeApi.tabs, "update", tab.id, { active: true }); break;
+				case "browser-select-tab":
+					await invoke(chromeApi.tabs, "update", tab.id, { active: true });
+					await invoke(chromeApi.windows, "update", tab.windowId, { focused: true });
+					focusedWindowId = tab.windowId;
+					break;
 				case "browser-navigate": {
-					const settings = await stored(SETTINGS_KEY, DEFAULT_SETTINGS);
-					const url = normalizeAddress(input.input, settings).url;
-					await invoke(chromeApi.tabs, "update", tab.id, { url: url.startsWith("kestrel://") ? uiUrlFor(url) : url });
+					const address = normalizeAddress(input.input);
+					assertSearchAvailable(address);
+					await navigateAddress(tab.id, address);
 					break;
 				}
 				case "browser-back": await invoke(chromeApi.tabs, "goBack", tab.id); break;
@@ -458,15 +469,15 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			return { downloads, trust: "untrusted_browser" };
 		}
 		function publicAddress(value) {
-			const address = normalizeAddress(value, DEFAULT_SETTINGS).url;
-			if (!/^https?:\/\//i.test(address)) throw new Error("Core browser tools may navigate only HTTP(S) user pages.");
+			const address = normalizeAddress(value);
+			if (!address.query && !/^https?:\/\//i.test(address.url)) throw new Error("Core browser tools may navigate only HTTP(S) user pages.");
+			assertSearchAvailable(address);
 			return address;
 		}
 		if (input.operation === "visible-create") {
-			const url = input.input ? publicAddress(input.input) : "about:blank";
-			const windowId = await focusedWindow();
+			const address = input.input ? publicAddress(input.input) : { url: "about:blank" };
 			signal?.throwIfAborted();
-			const tab = await invoke(chromeApi.tabs, "create", { url, active: true, ...(windowId === undefined ? {} : { windowId }) });
+			const tab = await createAddress(address, true);
 			const map = await tabMap([tab]);
 			return { tabId: map[String(tab.id)] };
 		}
@@ -476,15 +487,43 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		if (!publicTab(tab)) throw new Error("Core browser tools cannot control protected Kestrel or browser pages.");
 		signal?.throwIfAborted();
 		if (input.operation === "visible-navigate") {
-			await invoke(chromeApi.tabs, "update", tab.id, { url: publicAddress(input.input) });
+			await navigateAddress(tab.id, publicAddress(input.input));
 			return { navigated: true };
 		}
 		if (input.operation === "visible-select") {
 			await invoke(chromeApi.tabs, "update", tab.id, { active: true });
+			await invoke(chromeApi.windows, "update", tab.windowId, { focused: true });
+			focusedWindowId = tab.windowId;
 			return { selected: true };
 		}
 		await invoke(chromeApi.tabs, "remove", tab.id);
 		return { closed: true };
 	}
-	return { handles: (type) => SUPPORTED.has(type), request, backend };
+	async function openExternalUrl(value) {
+		// Only the private browser-owner channel calls this method. A received
+		// OS URL must never become a search, internal route, or a new app window.
+		if (typeof value !== "string" || value.length > 8192 || /[\u0000-\u0020\u007f]/.test(value) || !/^https?:\/\//i.test(value)) throw new Error("External links must use HTTP or HTTPS.");
+		const address = normalizeAddress(value);
+		if (!address.url || !/^https?:\/\//i.test(address.url)) throw new Error("External links must use HTTP or HTTPS.");
+		const windows = await invoke(chromeApi.windows, "getAll", { windowTypes: ["normal"] });
+		if (!windows.length) {
+			// Chromium restores the existing session when opening its first
+			// window. Supply only the new link; adding another Home here would
+			// duplicate the person's restored Home tab. New Tab opens Kestrel.
+			const window = await invoke(chromeApi.windows, "create", { url: address.url, type: "normal", focused: true });
+			if (!Number.isInteger(window?.id) || window.id < 0) throw new Error("Kestrel's new browser window could not be confirmed. Check Kestrel before retrying.");
+			const members = await invoke(chromeApi.tabs, "query", { windowId: window.id });
+			const tab = members.find(tab => (tab.url || tab.pendingUrl) === address.url);
+			if (!Number.isInteger(tab?.id) || tab.windowId !== window.id) throw new Error("Kestrel's new browser tab could not be confirmed. Check Kestrel before retrying.");
+			focusedWindowId = window.id;
+			return { tabId: tab.id, windowId: window.id };
+		}
+		const window = await invoke(chromeApi.windows, "getLastFocused", { windowTypes: ["normal"] });
+		if (!Number.isInteger(window?.id) || window.id < 0) throw new Error("Kestrel's browser window is not ready.");
+		const tab = await invoke(chromeApi.tabs, "create", { url: address.url, active: true, windowId: window.id });
+		if (!Number.isInteger(tab?.id) || tab.windowId !== window.id) throw new Error("The external link's browser tab could not be confirmed. Check Kestrel before retrying.");
+		focusedWindowId = window.id;
+		return { tabId: tab.id, windowId: window.id };
+	}
+	return { handles: (type) => SUPPORTED.has(type), request, backend, openExternalUrl };
 }
