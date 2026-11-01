@@ -1,30 +1,31 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const require = createRequire(import.meta.url);
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const store = join(root, "node_modules", ".pnpm");
 const temporary = [];
 afterEach(() => { for (const path of temporary.splice(0)) rmSync(path, { recursive: true, force: true }); });
-function packageRoot(name, version) {
-  const prefix = `${name}@${version}`;
-  const names = readdirSync(store).filter(name => name === prefix || name.startsWith(`${prefix}_`));
-  expect(names, `Expected one installed ${name}@${version}`).toHaveLength(1);
-  if (name === "minimatch") expect(names[0]).toContain("_patch_hash=");
-  return join(store, names[0], "node_modules", ...name.split("+"));
-}
+const desktopRequire = createRequire(join(root, "apps/desktop/package.json"));
+const dependency = (parent, name) => createRequire(parent.resolve(`${name}/package.json`));
+const builder = dependency(dependency(desktopRequire, "electron-builder"), "app-builder-lib");
+const asar = dependency(builder, "@electron/asar");
+const glob = dependency(asar, "glob");
+const filelist = dependency(dependency(dependency(builder, "ejs"), "jake"), "filelist");
+const universal = dependency(builder, "@electron/universal");
+const consumers = { "3.1.5": glob, "5.1.9": filelist, "9.0.9": universal, "10.2.5": builder };
 function minimatchFile(version, format) {
-  const root = packageRoot("minimatch", version);
-  return join(root, version.startsWith("3.") || version.startsWith("5.") ? "minimatch.js" : `dist/${format}/index.js`);
+  const manifest = consumers[version].resolve("minimatch/package.json");
+  expect(JSON.parse(readFileSync(manifest, "utf8")).version).toBe(version);
+  expect(manifest).toContain("_patch_hash=");
+  return join(dirname(manifest), version.startsWith("3.") || version.startsWith("5.") ? "minimatch.js" : `dist/${format}/index.js`);
 }
 async function load(version, format) {
   const file = minimatchFile(version, format);
-  return format === "esm" ? import(pathToFileURL(file).href) : require(file);
+  return format === "esm" ? import(pathToFileURL(file).href) : desktopRequire(file);
 }
 const entries = [
   ["3.1.5", "commonjs"], ["5.1.9", "commonjs"],
@@ -86,8 +87,8 @@ describe("patched minimatch and brace expansion compatibility", () => {
     const dir = mkdtempSync(join(tmpdir(), "kestrel-minimatch-glob-")); temporary.push(dir);
     mkdirSync(join(dir, "nested"));
     for (const name of ["a.js", "b.ts", "c.txt"]) writeFileSync(join(dir, "nested", name), "fixture");
-    const glob = require(packageRoot("glob", "7.2.3"));
-    expect(glob.sync("**/*.{js,ts}", { cwd: dir }).sort()).toEqual(["nested/a.js", "nested/b.ts"]);
+    expect(asar.resolve("minimatch/package.json")).toBe(glob.resolve("minimatch/package.json"));
+    expect(asar("glob").sync("**/*.{js,ts}", { cwd: dir }).sort()).toEqual(["nested/a.js", "nested/b.ts"]);
   });
   it("packs, unpacks and extracts ASAR files using brace patterns", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kestrel-minimatch-asar-")); temporary.push(dir);
@@ -96,11 +97,11 @@ describe("patched minimatch and brace expansion compatibility", () => {
     writeFileSync(join(source, "app.js"), "application");
     writeFileSync(join(source, "addon.node"), "native addon");
     writeFileSync(join(source, "library.dylib"), "native library");
-    const asar = require(packageRoot("@electron+asar", "3.4.1"));
-    await asar.createPackageWithOptions(source, archive, { unpack: "*.{node,dylib}" });
+    const asarPackage = builder("@electron/asar");
+    await asarPackage.createPackageWithOptions(source, archive, { unpack: "*.{node,dylib}" });
     expect(readFileSync(join(`${archive}.unpacked`, "addon.node"), "utf8")).toBe("native addon");
     expect(readFileSync(join(`${archive}.unpacked`, "library.dylib"), "utf8")).toBe("native library");
-    asar.extractAll(archive, output);
+    asarPackage.extractAll(archive, output);
     expect(readFileSync(join(output, "app.js"), "utf8")).toBe("application");
     expect(readFileSync(join(output, "addon.node"), "utf8")).toBe("native addon");
   });
