@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { ProviderAccountRuntimeConfig } from "@kestrel/agent-core";
-import { RendererRequestSchema, type RendererResponse, type SubscriptionCliStatus } from "@kestrel/shared-types";
+import { RendererRequestSchema, type RendererResponse, type SubscriptionCliStatus, type LocalRuntimeProgress } from "@kestrel/shared-types";
 import { CredentialBroker, PlaintextSecretProtection } from "./credential-broker";
 import { ChatGptOAuthManager, type ChatGptOAuthStatus } from "./chatgpt-oauth";
 import { ProviderAccountStore } from "./provider-account-store";
 import { NATIVE_PROVIDER_REQUEST_TYPES } from "./native-provider-requests";
-import { NativeLocalRuntime, nativeSystemProfile, NATIVE_LOCAL_RUNTIME_UNAVAILABLE, type NativeLocalSelection } from "./native-setup-status";
+import type { ManagerDependencies } from "./local-runtime-manager";
+import { NativeLocalRuntime, nativeSystemProfile, type NativeLocalSelection } from "./native-setup-status";
 
 const CLI = {
 	codex: { name: "Codex", label: "ChatGPT plan through Codex", adapter: "codex-app-server", providerId: "codex", env: "KESTREL_CODEX_PATH" },
@@ -34,7 +35,7 @@ interface Options {
 	/** Original host home, not the private Agent Core HOME. */
 	homeDirectory: string;
 	environment: NodeJS.ProcessEnv;
-	reconfigure<T>(mutation: () => Promise<T>): Promise<T>;
+	reconfigure<T>(mutation: () => Promise<T>, rollback?: () => Promise<void>, validate?: () => void, shouldRestoreCore?: () => boolean): Promise<T>;
 	/** Account metadata only; injectable for deterministic tests. */
 	accountStatus?: (executable: string, environment: NodeJS.ProcessEnv) => Promise<ChatGptOAuthStatus>;
 	/** Open a provider-owned sign-in page in this Kestrel Chromium window. */
@@ -43,6 +44,11 @@ interface Options {
 	createOAuthManager?: (options: OAuthOptions) => OAuthManager;
 	/** Fixed loopback transport; injectable for deterministic local setup tests. */
 	localFetch?: typeof fetch;
+	localRuntimeDependencies?: ManagerDependencies;
+	onLocalRuntimeProgress?: (progress: LocalRuntimeProgress) => void;
+	localSetupTimeoutMs?: number;
+	/** Optional transaction barrier for deterministic tests. */
+	beforeLocalPreferenceCommit?: () => Promise<void>;
 }
 
 function authUrl(raw: string): string {
@@ -90,6 +96,7 @@ export class NativeProviderHost {
 	private login: { controller: AbortController; manager: OAuthManager | undefined; done: Promise<RendererResponse> } | undefined;
 	private closing = false;
 	private localSetup: { controller: AbortController; done: Promise<RendererResponse> } | undefined;
+	private localStartup: { controller: AbortController; done: Promise<void> } | undefined;
 
 	constructor(private readonly options: Options) {
 		this.broker = new CredentialBroker(options.root, new PlaintextSecretProtection(), {
@@ -97,7 +104,7 @@ export class NativeProviderHost {
 		});
 		this.store = new ProviderAccountStore(join(options.root, "provider-accounts.json"), this.broker, options.root);
 		this.preferencesPath = join(options.root, "native-runtime-preferences.json");
-		this.localRuntime = new NativeLocalRuntime(options.root, options.localFetch);
+		this.localRuntime = new NativeLocalRuntime(options.root, options.localFetch, event => options.onLocalRuntimeProgress?.(event), options.localRuntimeDependencies);
 	}
 
 	private async preferences(): Promise<Preferences> {
@@ -137,12 +144,13 @@ export class NativeProviderHost {
 		await this.writePreferences({ ...await this.preferences(), subscriptions });
 	}
 
-	private async writePreferences(preferences: Preferences): Promise<void> {
+	private async writePreferences(preferences: Preferences, signal?: AbortSignal): Promise<void> {
 		const path = `${this.preferencesPath}.${randomUUID()}.new`;
 		try {
 			const file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
 			try { await file.writeFile(JSON.stringify({ version: 1, ...preferences }) + "\n"); await file.sync(); }
 			finally { await file.close(); }
+			signal?.throwIfAborted();
 			await rename(path, this.preferencesPath);
 		} finally { await rm(path, { force: true }); }
 	}
@@ -256,7 +264,19 @@ export class NativeProviderHost {
 	/** Wait for the guarded mutation to unwind and restore Core before shutdown. */
 	async close(): Promise<void> {
 		this.closing = true;
-		await Promise.all([this.cancelLogin(), this.cancelLocalSetup(), ...[...this.statusManagers].map(manager => manager.cancel().catch(() => undefined))]);
+		this.localStartup?.controller.abort();
+		await Promise.all([this.localStartup?.done.catch(() => undefined), this.cancelLogin(), this.cancelLocalSetup(), ...[...this.statusManagers].map(manager => manager.cancel().catch(() => undefined))]);
+		await this.localRuntime.stop();
+	}
+
+	async startManagedIfInstalled(): Promise<void> {
+		if (this.closing) throw new Error("The native provider host is shutting down.");
+		if (this.localStartup) return this.localStartup.done;
+		const controller = new AbortController();
+		const startup = { controller, done: undefined as unknown as Promise<void> };
+		this.localStartup = startup;
+		startup.done = this.localRuntime.startManagedIfInstalled(controller.signal).finally(() => { if (this.localStartup === startup) this.localStartup = undefined; });
+		return startup.done;
 	}
 
 	private setupLocal(model: string): Promise<RendererResponse> {
@@ -264,14 +284,59 @@ export class NativeProviderHost {
 		const controller = new AbortController();
 		const setup = { controller, done: undefined as unknown as Promise<RendererResponse> };
 		this.localSetup = setup;
-		setup.done = this.options.reconfigure(async (): Promise<RendererResponse> => {
-			controller.signal.throwIfAborted();
-			const selection = await this.localRuntime.verify(model, controller.signal);
-			const preferences = await this.preferences();
-			controller.signal.throwIfAborted();
-			await this.writePreferences({ ...preferences, localModel: selection });
-			return { ok: true, localRuntime: await this.localRuntime.status(selection) };
-		}).finally(() => { if (this.localSetup === setup) this.localSetup = undefined; });
+		const timeout = setTimeout(() => controller.abort(new Error("Local model setup timed out.")), this.options.localSetupTimeoutMs ?? 29 * 60_000);
+		timeout.unref();
+		let previousPreferences: Buffer | null | undefined;
+		let preferencesWritten = false;
+		let runtimeStatus: Awaited<ReturnType<NativeLocalRuntime["status"]>> | undefined;
+		setup.done = this.localRuntime.bootstrap(model, controller.signal, {
+			transaction: (work, rollback, signal) => this.options.reconfigure(work, rollback, () => signal.throwIfAborted(), () => !this.closing),
+			commit: async (selection, signal) => {
+				const preferences = await this.preferences();
+				let snapshot;
+				try {
+					snapshot = await open(this.preferencesPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+					const info = await snapshot.stat();
+					if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 16_384) throw new Error("Native provider preferences cannot be safely backed up.");
+					previousPreferences = await snapshot.readFile();
+				} catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") previousPreferences = null; else throw error; }
+				finally { await snapshot?.close(); }
+				runtimeStatus = await this.localRuntime.status(selection);
+				await this.options.beforeLocalPreferenceCommit?.();
+				signal.throwIfAborted();
+				await this.writePreferences({ ...preferences, localModel: selection }, signal);
+				preferencesWritten = true;
+			},
+			rollback: async () => {
+				if (!preferencesWritten) return;
+				if (previousPreferences === null) await rm(this.preferencesPath, { force: true });
+				else if (previousPreferences) {
+					const path = `${this.preferencesPath}.${randomUUID()}.rollback`;
+					try { await writeFile(path, previousPreferences, { mode: 0o600, flag: "wx" }); await rename(path, this.preferencesPath); }
+					finally { await rm(path, { force: true }); }
+				}
+				preferencesWritten = false;
+			},
+		}).then((): RendererResponse => {
+			if (!runtimeStatus) throw new Error("Local model status was unavailable after setup.");
+			this.options.onLocalRuntimeProgress?.({ stage: "ready", model, message: `${model} completed a real local response and is ready.`, percent: 100, updatedAt: new Date().toISOString() });
+			return { ok: true, localRuntime: runtimeStatus };
+		}).finally(() => { clearTimeout(timeout); if (this.localSetup === setup) this.localSetup = undefined; });
+		return setup.done;
+	}
+
+	private downloadLocalModel(model: string): Promise<RendererResponse> {
+		if (this.localSetup) return Promise.reject(new Error("Local model setup is already in progress."));
+		const controller = new AbortController();
+		const setup = { controller, done: undefined as unknown as Promise<RendererResponse> };
+		this.localSetup = setup;
+		const timeout = setTimeout(() => controller.abort(new Error("Local model setup timed out.")), this.options.localSetupTimeoutMs ?? 29 * 60_000);
+		timeout.unref();
+		setup.done = this.localRuntime.downloadModelOnly(model, controller.signal).then(localModels => {
+			const downloadedModel = localModels.find(item => item.name === model || item.name === `${model}:latest`);
+			if (!downloadedModel) throw new Error("The downloaded model was not found in Ollama.");
+			return { ok: true, downloadedModel, localModels } as RendererResponse;
+		}).finally(() => { clearTimeout(timeout); if (this.localSetup === setup) this.localSetup = undefined; });
 		return setup.done;
 	}
 
@@ -347,7 +412,7 @@ export class NativeProviderHost {
 				const localRuntime = await this.localRuntime.status(this.localSetup ? undefined : (await this.preferences()).localModel);
 				return { ok: true, systemProfile: nativeSystemProfile(), ollamaAvailable: localRuntime.ollamaAvailable, localModels: localRuntime.localModels, localRuntime };
 			}
-			case "local-model-pull": return { ok: false, error: NATIVE_LOCAL_RUNTIME_UNAVAILABLE };
+			case "local-model-pull": return this.downloadLocalModel(request.model);
 			case "local-runtime-bootstrap": return this.setupLocal(request.model);
 			case "local-runtime-cancel": await this.cancelLocalSetup(); return { ok: true };
 			case "oauth-chatgpt-connect": return this.connect();

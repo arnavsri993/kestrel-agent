@@ -125,7 +125,8 @@ const publishSnapshot = async () => {
 	if (response.ok && response.snapshot) write({ type: "event", channel: "snapshot", event: response.snapshot });
 };
 const providers = new NativeProviderHost({ root: profile.root, encryptionKeyBase64: profile.encryptionKeyBase64,
-	homeDirectory: homedir(), environment: process.env, reconfigure: mutation => configuration.reconfigure(mutation),
+	homeDirectory: homedir(), environment: process.env, reconfigure: (mutation, rollback, validate, shouldRestoreCore) => configuration.reconfigure(mutation, rollback, validate, shouldRestoreCore),
+	onLocalRuntimeProgress: event => write({ type: "event", channel: "local-runtime-progress", event }),
 	openAuthUrl: async (url, signal) => {
 		await browserRequest({ operation: "visible-create", input: url }, signal);
 	},
@@ -230,11 +231,13 @@ input.on("line", line => {
 			if (isHost && NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && parsed.data.type !== "get-workspace-grants" && response.ok && !response.cancelled && Array.isArray(response.projects))
 				write({ type: "event", channel: "workspace-projects", event: response.projects });
 		})
-		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? parsed.data.type === "local-runtime-bootstrap" && error instanceof Error && error.message === "Choose an installed model with confirmed tool support for Kestrel tasks." ? error.message : "Kestrel settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
+		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? ["local-runtime-bootstrap", "local-model-pull"].includes(parsed.data.type) && error instanceof Error && ["Choose an installed model with confirmed tool support for Kestrel tasks.", "Start Ollama or use guided local setup before downloading a model.", "The local runtime checksum did not match the signed release manifest.", "Local model setup was cancelled. Partial downloads may remain in Ollama.", "Local model setup timed out. Partial downloads may remain in Ollama."].includes(error.message) ? error.message : "Kestrel settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
 		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); });
 });
 try {
-	await configuration.start();
+	try { await providers.startManagedIfInstalled(); }
+	catch { process.stderr.write("KESTREL_NATIVE_MANAGED_RUNTIME_UNAVAILABLE\n"); }
+	if (!stopping) await configuration.start();
 	if (!stopping) { const { projects } = await workspaces.runtimeConfiguration(); write({ type: "ready", workspaceGrants: projects, projects }); }
 } catch {
 	write({ type: "start-error", error: "Kestrel Core could not open the native profile. Existing data was preserved." });

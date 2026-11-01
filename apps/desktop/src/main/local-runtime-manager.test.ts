@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
+	chmod,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -209,6 +211,88 @@ describe("managed local runtime", () => {
 		await warmed.ensureChatReady();
 		expect(serviceReady).toBe(true);
 		await warmed.stop();
+	});
+
+	it("does not contact an untrusted intermediate redirect even if it could lead back to GitHub", async () => {
+		const root = await mkdtemp(join(tmpdir(), "kestrel-local-redirect-")); roots.push(root);
+		const archive = new TextEncoder().encode("fixture"); const manifest = testManifest(archive);
+		const calls: string[] = [];
+		const manager = new LocalRuntimeManager(root, () => {}, { platform: "darwin", architecture: "arm64", manifest,
+			fetch: async input => { const url = String(input); calls.push(url); if (url === manifest.url) return new Response(null, { status: 302, headers: { location: "https://untrusted.example/redirect" } }); throw new Error("offline"); },
+		});
+		await expect(manager.bootstrap("qwen:test")).rejects.toThrow("untrusted host");
+		expect(calls).not.toContain("https://untrusted.example/redirect");
+	});
+
+	it("handles asynchronous spawn errors and reaps a startup child when cancelled", async () => {
+		for (const mode of ["spawn-error", "cancel"]) {
+			const root = await mkdtemp(join(tmpdir(), "kestrel-local-startup-")); roots.push(root);
+			const manifest = testManifest(new TextEncoder().encode("fixture"));
+			const folder = join(root, "local-runtime", "ollama", "test"); await mkdir(folder, { recursive: true });
+			await writeFile(join(folder, "ollama"), "owned"); await chmod(join(folder, "ollama"), 0o700);
+			await writeFile(join(folder, "workstrand-install.json"), JSON.stringify({ version: manifest.version, sha256: manifest.sha256, binaryPath: manifest.binaryPath }));
+			const child = fakeChild(); let killed = false; const originalKill = child.kill; child.kill = signal => { killed = true; return originalKill(signal); };
+			const controller = new AbortController();
+			const manager = new LocalRuntimeManager(root, () => {}, { platform: "darwin", architecture: "arm64", manifest,
+				fetch: async () => { throw new Error("offline"); }, spawn: (() => { if (mode === "spawn-error") queueMicrotask(() => child.emit("error", new Error("EACCES"))); else setTimeout(() => controller.abort(), 10); return child; }) as unknown as typeof import("node:child_process").spawn });
+			await expect(manager.startManagedIfInstalled(controller.signal)).rejects.toThrow();
+			expect(killed).toBe(true);
+		}
+	});
+
+	it("restores the prior verification when cancellation arrives after rename during status", async () => {
+		const root = await mkdtemp(join(tmpdir(), "kestrel-verification-rollback-")); roots.push(root);
+		await mkdir(join(root, "local-runtime"), { recursive: true });
+		const prior = '{"model":"old:model","verifiedAt":"2025-01-01T00:00:00.000Z"}\n';
+		const file = join(root, "local-runtime", "last-verification.json"); await writeFile(file, prior, { mode: 0o600 });
+		let count = 0, release!: () => void, entered!: () => void;
+		const held = new Promise<void>(resolve => { release = resolve; }); const reached = new Promise<void>(resolve => { entered = resolve; });
+		const manager = new LocalRuntimeManager(root, () => {}, { fetch: async input => {
+			if (String(input).endsWith("/api/tags")) { if (++count === 3) { entered(); await held; } return Response.json({ models: [{ name: "qwen:test", size: 1 }] }); }
+			throw new Error("Unexpected fixture call");
+		} });
+		const pending = manager.bootstrap("qwen:test", { verify: async () => {} });
+		const rejected = expect(pending).rejects.toThrow(); await reached;
+		expect(await readFile(file, "utf8")).not.toBe(prior);
+		manager.cancel(); release(); await rejected;
+		expect(await readFile(file, "utf8")).toBe(prior);
+	});
+
+	it("escalates and reaps its owned child when SIGTERM is ignored within the broker budget", async () => {
+		const root = await mkdtemp(join(tmpdir(), "kestrel-owned-child-")); roots.push(root);
+		const manifest = testManifest(new TextEncoder().encode("fixture"));
+		const folder = join(root, "local-runtime", "ollama", "test"); await mkdir(folder, { recursive: true });
+		await writeFile(join(folder, "ollama"), "fixture", { mode: 0o700 });
+		await writeFile(join(folder, "workstrand-install.json"), JSON.stringify({ version: manifest.version, sha256: manifest.sha256, binaryPath: manifest.binaryPath }));
+		let service = false; let child: ReturnType<typeof spawn> | undefined;
+		const manager = new LocalRuntimeManager(root, () => {}, { platform: "darwin", architecture: "arm64", manifest,
+			fetch: async () => { if (!service) throw new Error("offline"); return Response.json({ models: [] }); },
+			spawn: (() => {
+				child = spawn(process.execPath, ["-e", 'process.on("SIGTERM",()=>{}); process.stdout.write("ready\\n"); setInterval(()=>{}, 1000)'], { stdio: ["ignore", "pipe", "ignore"] });
+				child.stdout!.once("data", () => { service = true; });
+				return child;
+			}) as typeof spawn,
+		});
+		try {
+			await manager.startManagedIfInstalled(); const started = Date.now(); await manager.stop();
+			expect(Date.now() - started).toBeLessThan(1500); expect(child?.signalCode).toBe("SIGKILL");
+		} finally { if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }
+	});
+
+	it("does not stop an already-owned managed daemon when a later setup fails", async () => {
+		const root = await mkdtemp(join(tmpdir(), "kestrel-existing-owned-")); roots.push(root);
+		const manifest = testManifest(new TextEncoder().encode("fixture"));
+		const folder = join(root, "local-runtime", "ollama", "test"); await mkdir(folder, { recursive: true });
+		await writeFile(join(folder, "ollama"), "fixture", { mode: 0o700 });
+		await writeFile(join(folder, "workstrand-install.json"), JSON.stringify({ version: manifest.version, sha256: manifest.sha256, binaryPath: manifest.binaryPath }));
+		let service = false, kills = 0; const child = fakeChild(); const kill = child.kill;
+		child.kill = signal => { kills++; return kill(signal); };
+		const manager = new LocalRuntimeManager(root, () => {}, { platform: "darwin", architecture: "arm64", manifest,
+			fetch: async () => { if (!service) throw new Error("offline"); return Response.json({ models: [{ name: "qwen:test", size: 1 }] }); },
+			spawn: (() => { service = true; return child; }) as unknown as typeof import("node:child_process").spawn });
+		await manager.startManagedIfInstalled();
+		await expect(manager.bootstrap("qwen:test", { verify: async () => { throw new Error("fixture failed"); } })).rejects.toThrow("fixture failed");
+		expect(kills).toBe(0); await manager.stop(); expect(kills).toBe(1);
 	});
 
 	it("rejects a managed runtime origin outside the loopback interface", async () => {

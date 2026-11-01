@@ -1,5 +1,6 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import { once } from "node:events";
 import {
 	chmod,
@@ -56,7 +57,7 @@ interface OllamaTag {
 	modified_at?: unknown;
 }
 
-interface ManagerDependencies {
+export interface ManagerDependencies {
 	fetch?: typeof fetch;
 	execFile?: (
 		file: string,
@@ -291,7 +292,7 @@ export class LocalRuntimeManager {
 				automaticSupported,
 				managedRuntime,
 				ollamaAvailable: true,
-				source: managedRuntime ? "managed" : "external",
+				source: this.child && this.child.exitCode === null ? "managed" : "external",
 				runtimeVersion: this.manifest.version,
 				runtimeDownloadBytes: this.manifest.bytes,
 				localModels,
@@ -331,14 +332,32 @@ export class LocalRuntimeManager {
 		);
 	}
 
-	async bootstrap(model: string): Promise<LocalRuntimeStatus> {
+	async bootstrap(model: string, options: { verify?: (model: string, signal: AbortSignal) => Promise<void>; commit?: (signal: AbortSignal) => Promise<void>; rollback?: () => Promise<void>; transaction?: <T>(work: () => Promise<T>, rollback: () => Promise<void>, signal: AbortSignal) => Promise<T> } = {}): Promise<LocalRuntimeStatus> {
 		if (this.operation)
 			throw new Error("A local setup operation is already running.");
 		if (!/^[a-z0-9][a-z0-9._/-]*(?::[a-z0-9][a-z0-9._-]*)?$/i.test(model))
 			throw new Error("Choose a valid Ollama model name.");
 		const operation = new AbortController();
+		const existingChild = this.child;
 		this.operation = operation;
-		try {
+		let previousVerification: Buffer | null | undefined;
+		let verificationWritten = false;
+		let rolledBack = false;
+		const rollback = async () => {
+			if (rolledBack) return;
+			await options.rollback?.();
+			if (verificationWritten) {
+				const path = this.verificationPath();
+				if (previousVerification === null) await rm(path, { force: true });
+				else if (previousVerification) {
+					const temporary = `${path}.${randomUUID()}.rollback`;
+					try { await writeFile(temporary, previousVerification, { mode: 0o600, flag: "wx" }); await rename(temporary, path); }
+					finally { await rm(temporary, { force: true }); }
+				}
+			}
+			rolledBack = true;
+		};
+		const work = async (): Promise<LocalRuntimeStatus> => {
 			this.progress({
 				stage: "detecting",
 				message: "Checking for an existing local model service.",
@@ -365,11 +384,30 @@ export class LocalRuntimeManager {
 				!existing.some(
 					(item) => item.name === model || item.name === `${model}:latest`,
 				)
-			)
+			) {
 				await this.pullModel(model, operation.signal);
-			await this.verifyModel(model, operation.signal);
-			await this.recordVerification(model);
+			}
+			if (options.verify) {
+				this.progress({ stage: "verifying-model", model, message: `Verifying ${model} before marking setup complete.` });
+				await options.verify(model, operation.signal);
+			} else await this.verifyModel(model, operation.signal);
+			operation.signal.throwIfAborted();
+			let snapshot;
+			try {
+				snapshot = await open(this.verificationPath(), fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+				const info = await snapshot.stat();
+				if (!info.isFile() || info.nlink !== 1 || (typeof process.getuid === "function" && info.uid !== process.getuid()) || (process.platform !== "win32" && (info.mode & 0o077) !== 0) || info.size > 16_384) throw new Error("The prior local verification cannot be safely preserved.");
+				previousVerification = await snapshot.readFile();
+			} catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") previousVerification = null; else throw error; }
+			finally { await snapshot?.close(); }
+			operation.signal.throwIfAborted();
+			await this.recordVerification(model, operation.signal);
+			verificationWritten = true;
+			operation.signal.throwIfAborted();
 			const status = await this.status();
+			operation.signal.throwIfAborted();
+			await options.commit?.(operation.signal);
+			operation.signal.throwIfAborted();
 			this.progress({
 				stage: "ready",
 				message: `${model} completed a real local response and is ready.`,
@@ -377,12 +415,17 @@ export class LocalRuntimeManager {
 				percent: 100,
 			});
 			return status;
+		};
+		try {
+			return options.transaction ? await options.transaction(work, rollback, operation.signal) : await work();
 		} catch (error) {
 			const cancelled = isAbort(error) || operation.signal.aborted;
+			try { await rollback(); }
+			finally { if (this.child && this.child !== existingChild) await this.stop(); }
 			this.progress({
 				stage: cancelled ? "cancelled" : "error",
 				message: cancelled
-					? "Local setup stopped. Partial downloads were removed."
+					? "Local setup stopped. Check the local model service for any partial model download."
 					: error instanceof Error
 						? error.message
 						: "Local setup failed.",
@@ -392,6 +435,30 @@ export class LocalRuntimeManager {
 		} finally {
 			this.operation = null;
 		}
+	}
+
+	/** Pull only the requested missing model from an already-running service. */
+	async downloadModelOnly(model: string): Promise<LocalModelSummary[]> {
+		if (this.operation) throw new Error("A local setup operation is already running.");
+		if (!/^[a-z0-9][a-z0-9._/-]*(?::[a-z0-9][a-z0-9._-]*)?$/i.test(model)) throw new Error("Choose a valid Ollama model name.");
+		const operation = new AbortController();
+		this.operation = operation;
+		try {
+			this.progress({ stage: "detecting", message: "Checking the local model service.", model });
+			let installed: LocalModelSummary[];
+			try { installed = await this.listModels(5_000, operation.signal); }
+			catch { operation.signal.throwIfAborted(); throw new Error("Start Ollama or use guided local setup before downloading a model."); }
+			if (!installed.some(item => item.name === model || item.name === `${model}:latest`)) {
+				await this.pullModel(model, operation.signal);
+				installed = await this.listModels(5_000, operation.signal);
+			}
+			operation.signal.throwIfAborted();
+			return installed;
+		} catch (error) {
+			this.progress({ stage: operation.signal.aborted || isAbort(error) ? "cancelled" : "error", model,
+				message: operation.signal.aborted || isAbort(error) ? "Local download stopped. Check Ollama for partial downloads." : "The local model download failed." });
+			throw error;
+		} finally { this.operation = null; }
 	}
 
 	private async readVerification(
@@ -422,7 +489,7 @@ export class LocalRuntimeManager {
 		}
 	}
 
-	private async recordVerification(model: string): Promise<void> {
+	private async recordVerification(model: string, signal?: AbortSignal): Promise<void> {
 		const path = this.verificationPath();
 		const temporary = `${path}.new`;
 		await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -431,15 +498,17 @@ export class LocalRuntimeManager {
 			`${JSON.stringify({ model, verifiedAt: this.now().toISOString() }, null, 2)}\n`,
 			{ mode: 0o600 },
 		);
-		await rename(temporary, path);
+		try {
+			signal?.throwIfAborted();
+			await rename(temporary, path);
+		} finally { await rm(temporary, { force: true }); }
 	}
 
 	private async install(signal: AbortSignal): Promise<void> {
 		const parent = dirname(this.installRoot());
-		const staging = `${this.installRoot()}.partial`;
+		const staging = `${this.installRoot()}.partial-${randomUUID()}`;
 		const archive = join(staging, this.manifest.fileName);
 		await mkdir(parent, { recursive: true, mode: 0o700 });
-		await rm(staging, { recursive: true, force: true });
 		await mkdir(staging, { recursive: false, mode: 0o700 });
 		try {
 			this.progress({
@@ -449,27 +518,21 @@ export class LocalRuntimeManager {
 				totalBytes: this.manifest.bytes,
 				percent: 0,
 			});
-			const response = await this.fetcher(this.manifest.url, {
-				redirect: "follow",
-				signal,
-			});
-			if (!response.ok || !response.body)
-				throw new Error(
-					`The local runtime download returned ${response.status}.`,
-				);
-			const finalUrl = new URL(response.url || this.manifest.url);
-			if (
-				finalUrl.protocol !== "https:" ||
-				![
-					"github.com",
-					"objects.githubusercontent.com",
-					"release-assets.githubusercontent.com",
-				].includes(finalUrl.hostname)
-			) {
-				throw new Error(
-					"The local runtime download redirected to an untrusted host.",
-				);
+			const allowedHost = (url: URL) => url.protocol === "https:" && !url.username && !url.password && !url.port &&
+				["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"].includes(url.hostname);
+			let url = new URL(this.manifest.url);
+			let response: Response | undefined;
+			for (let redirects = 0; redirects <= 5; redirects++) {
+				if (!allowedHost(url)) throw new Error("The local runtime download redirected to an untrusted host.");
+				response = await this.fetcher(url.toString(), { redirect: "manual", signal });
+				if (![301, 302, 303, 307, 308].includes(response.status)) break;
+				const location = response.headers.get("location");
+				if (!location || redirects === 5) throw new Error("The local runtime download has an invalid redirect chain.");
+				await response.body?.cancel();
+				url = new URL(location, url);
 			}
+			if (!response?.ok || !response.body) throw new Error(`The local runtime download returned ${response?.status ?? "no response"}.`);
+			if (response.url && !allowedHost(new URL(response.url))) throw new Error("The local runtime download redirected to an untrusted host.");
 			const file = await open(archive, "wx", 0o600);
 			const digest = createHash("sha256");
 			let downloaded = 0;
@@ -550,7 +613,9 @@ export class LocalRuntimeManager {
 				)}\n`,
 				{ mode: 0o600, flag: "wx" },
 			);
-			await rm(this.installRoot(), { recursive: true, force: true });
+			signal.throwIfAborted();
+			try { await lstat(this.installRoot()); throw new Error("An existing local runtime installation was preserved; it could not be verified."); }
+			catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
 			await rename(staging, this.installRoot());
 		} catch (error) {
 			await rm(staging, { recursive: true, force: true });
@@ -588,27 +653,30 @@ export class LocalRuntimeManager {
 			},
 		});
 		this.child = child;
-		child.once("exit", () => {
-			if (this.child === child) this.child = null;
-		});
+		let spawnError: Error | undefined;
+		child.on("error", error => { spawnError = error; });
+		child.once("exit", () => { if (this.child === child) this.child = null; });
 		const deadline = Date.now() + 20_000;
-		while (Date.now() < deadline) {
-			signal.throwIfAborted();
-			if (child.exitCode !== null)
-				throw new Error(
-					`The managed local model service exited with code ${child.exitCode}.`,
-				);
-			try {
-				await this.listModels(750, signal);
-				return;
-			} catch {
-				await new Promise((resolve) => setTimeout(resolve, 250));
+		try {
+			while (Date.now() < deadline) {
+				signal.throwIfAborted();
+				if (spawnError) throw new Error("The managed local model service could not start.");
+				if (child.exitCode !== null) throw new Error(`The managed local model service exited with code ${child.exitCode}.`);
+				try {
+					await this.listModels(750, signal);
+					if (spawnError || child.exitCode !== null) throw new Error("The managed local model service could not start.");
+					return;
+				} catch {
+					signal.throwIfAborted();
+					if (spawnError) throw new Error("The managed local model service could not start.");
+					await new Promise((resolve) => setTimeout(resolve, 250));
+				}
 			}
+			throw new Error("The managed local model service did not become ready in time.");
+		} catch (error) {
+			if (this.child === child) await this.stop();
+			throw error;
 		}
-		child.kill("SIGTERM");
-		throw new Error(
-			"The managed local model service did not become ready in time.",
-		);
 	}
 
 	private async pullModel(model: string, signal: AbortSignal): Promise<void> {
@@ -735,21 +803,27 @@ export class LocalRuntimeManager {
 		this.cancel();
 		const child = this.child;
 		this.child = null;
-		if (!child || child.exitCode !== null) return;
+		if (!child || child.exitCode !== null || child.signalCode != null) return;
 		child.kill("SIGTERM");
 		await Promise.race([
-			once(child, "exit"),
-			new Promise((resolve) => setTimeout(resolve, 2_000)),
+			once(child, "exit").catch(() => undefined),
+			new Promise((resolve) => setTimeout(resolve, 500)),
 		]);
-		if (child.exitCode === null) child.kill("SIGKILL");
+		if (child.exitCode === null && child.signalCode == null) {
+			child.kill("SIGKILL");
+			await Promise.race([once(child, "exit").catch(() => undefined), new Promise(resolve => setTimeout(resolve, 250))]);
+		}
 	}
 
-	async startManagedIfInstalled(): Promise<void> {
+	async startManagedIfInstalled(signal?: AbortSignal): Promise<void> {
+		signal?.throwIfAborted();
 		if (!(await this.hasManagedInstall())) return;
+		signal?.throwIfAborted();
 		try {
-			await this.listModels(700);
+			await this.listModels(700, signal);
 		} catch {
-			await this.start(AbortSignal.timeout(20_000));
+			signal?.throwIfAborted();
+			await this.start(signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000));
 		}
 	}
 

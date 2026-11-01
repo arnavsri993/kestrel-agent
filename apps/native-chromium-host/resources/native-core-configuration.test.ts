@@ -35,4 +35,19 @@ describe("native provider Core reconfiguration", () => {
 		await expect(controller.reconfigure(mutation)).rejects.toThrow("settings were preserved");
 		expect(mutation).toHaveBeenCalledOnce(); expect(core.start).toHaveBeenCalledTimes(2);
 	});
+	it("rolls back a committed preference when post-restart validation fails", async () => {
+		const { controller, core } = fixture(); await controller.start();
+		const rollback = vi.fn(async () => {});
+		await expect(controller.reconfigure(async () => "saved", rollback, () => { throw new Error("cancelled"); }, () => true)).rejects.toThrow("cancelled");
+		expect(rollback).toHaveBeenCalledOnce();
+		expect(core.stop).toHaveBeenCalledTimes(2);
+		expect(core.start).toHaveBeenLastCalledWith({ version: 1 });
+	});
+	it("restores files without restarting Core during shutdown", async () => {
+		const { controller, core } = fixture(); await controller.start();
+		const rollback = vi.fn(async () => {});
+		await expect(controller.reconfigure(async () => { throw new Error("cancelled"); }, rollback, () => {}, () => false)).rejects.toThrow("cancelled");
+		expect(rollback).toHaveBeenCalledOnce(); expect(core.start).toHaveBeenCalledOnce();
+	});
+
 });

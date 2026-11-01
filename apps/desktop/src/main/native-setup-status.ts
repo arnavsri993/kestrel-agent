@@ -1,9 +1,9 @@
 import { arch, cpus, platform, totalmem } from "node:os";
-import type { LocalRuntimeStatus, SetupSystemProfile } from "@kestrel/shared-types";
+import type { LocalRuntimeProgress, LocalRuntimeStatus, SetupSystemProfile } from "@kestrel/shared-types";
 import { readBoundedResponseBytes } from "@kestrel/agent-core";
-import { LocalRuntimeManager, MANAGED_OLLAMA_MANIFEST } from "./local-runtime-manager";
+import { LocalRuntimeManager, type ManagerDependencies } from "./local-runtime-manager";
 
-export const NATIVE_LOCAL_RUNTIME_UNAVAILABLE = "Native Chromium can verify an already-installed Ollama model at 127.0.0.1:11434. Automatic runtime installation and model downloads are unavailable; install through Ollama or use a provider account.";
+export const NATIVE_LOCAL_RUNTIME_UNAVAILABLE = "Use guided local setup or install Ollama through its official application.";
 export interface NativeLocalSelection { model: string; verifiedAt: string }
 
 export function nativeSystemProfile(): SetupSystemProfile {
@@ -14,24 +14,71 @@ export function nativeSystemProfile(): SetupSystemProfile {
  * model installation, ambient API credentials, or untrusted endpoint selection. */
 export class NativeLocalRuntime {
 	private readonly manager: LocalRuntimeManager;
-	constructor(root: string, private readonly fetcher: typeof fetch = fetch) {
-		this.manager = new LocalRuntimeManager(root, () => {}, { fetch: (input, options) => fetcher(input, { ...options, redirect: "error" }) });
+	private readonly fetcher: typeof fetch;
+	constructor(root: string, fetcher: typeof fetch = fetch, emit: (event: LocalRuntimeProgress) => void = () => {}, dependencies: ManagerDependencies = {}) {
+		this.fetcher = fetcher;
+		this.manager = new LocalRuntimeManager(root, event => {
+			if (event.stage === "ready") return;
+			const messages: Record<LocalRuntimeProgress["stage"], string> = {
+				detecting: "Checking the local model service.", "downloading-runtime": "Downloading the local runtime.",
+				"verifying-runtime": "Verifying the runtime checksum.", "installing-runtime": "Installing the local runtime in Kestrel's private data.",
+				"starting-runtime": "Starting Kestrel's local model service.", "downloading-model": "Downloading the selected model.",
+				"verifying-model": "Verifying the selected model.", ready: "Local setup is ready.",
+				cancelled: "Local setup stopped. Check for partial model downloads.", error: "Local setup could not be completed.",
+			};
+			emit({ ...event, message: messages[event.stage] });
+		}, {
+			...dependencies, fetch: (input, options) => fetcher(input, String(input).startsWith("http://127.0.0.1:") ? { ...options, redirect: "error" } : options),
+		});
 	}
 
 	async status(selection?: NativeLocalSelection): Promise<LocalRuntimeStatus> {
-		const base = { automaticSupported: false, managedRuntime: false, runtimeDownloadBytes: MANAGED_OLLAMA_MANIFEST.bytes };
-		try {
-			const detected = await this.manager.listModels(1_500);
-			// Onboarding treats a nonempty model list as configured. Discovered
-			// models stay unavailable until guarded setup has selected a Core route.
-			const selected = selection ? detected.find(model => model.name === selection.model) : undefined;
-			return { ...base, ollamaAvailable: true, source: "external", localModels: selected ? [selected] : [], detectedModels: detected.slice(0, 200),
-				...(selected && selection ? { verifiedModel: selected.name, verifiedAt: selection.verifiedAt } : {}),
-			};
-		} catch {
-			return { ...base, ollamaAvailable: false, source: "none", localModels: [], unavailableReason: NATIVE_LOCAL_RUNTIME_UNAVAILABLE };
-		}
+		const status = await this.manager.status();
+		const detected = status.localModels;
+		const selected = selection ? detected.find(model => model.name === selection.model) : undefined;
+		return { ...status, localModels: selected ? [selected] : [], detectedModels: detected.slice(0, 200),
+			verifiedModel: selected && selection ? selected.name : undefined, verifiedAt: selected && selection ? selection.verifiedAt : undefined };
 	}
+
+	async bootstrap(model: string, signal: AbortSignal, options: { commit: (selection: NativeLocalSelection, signal: AbortSignal) => Promise<void>; rollback: () => Promise<void>; transaction: <T>(work: () => Promise<T>, rollback: () => Promise<void>, signal: AbortSignal) => Promise<T> }): Promise<NativeLocalSelection> {
+		let selection: NativeLocalSelection | undefined;
+		const cancel = () => this.manager.cancel();
+		signal.throwIfAborted();
+		signal.addEventListener("abort", cancel, { once: true });
+		try {
+			await this.manager.bootstrap(model, {
+				verify: async (requested, operationSignal) => { selection = await this.verify(requested, operationSignal); },
+				commit: async operationSignal => { if (!selection) throw new Error("Local model verification did not complete."); await options.commit(selection, operationSignal); },
+				rollback: options.rollback, transaction: options.transaction,
+			});
+			if (!selection) throw new Error("Local model verification did not complete.");
+			return selection;
+		} catch (error) {
+			if (signal.aborted) throw new Error(signal.reason instanceof Error && signal.reason.message === "Local model setup timed out."
+				? "Local model setup timed out. Partial downloads may remain in Ollama."
+				: "Local model setup was cancelled. Partial downloads may remain in Ollama.");
+			throw error;
+		} finally { signal.removeEventListener("abort", cancel); }
+	}
+
+	async downloadModelOnly(model: string, signal: AbortSignal) {
+		const cancel = () => this.manager.cancel();
+		signal.throwIfAborted();
+		signal.addEventListener("abort", cancel, { once: true });
+		try {
+			const models = await this.manager.downloadModelOnly(model);
+			signal.throwIfAborted();
+			return models;
+		} catch (error) {
+			if (signal.aborted) throw new Error(signal.reason instanceof Error && signal.reason.message === "Local model setup timed out."
+				? "Local model setup timed out. Partial downloads may remain in Ollama."
+				: "Local model setup was cancelled. Partial downloads may remain in Ollama.");
+			throw error;
+		} finally { signal.removeEventListener("abort", cancel); }
+	}
+
+	async startManagedIfInstalled(signal?: AbortSignal): Promise<void> { await this.manager.startManagedIfInstalled(signal); }
+	async stop(): Promise<void> { await this.manager.stop(); }
 
 	async verify(model: string, signal: AbortSignal): Promise<NativeLocalSelection> {
 		const budget = AbortSignal.any([signal, AbortSignal.timeout(60_000)]);

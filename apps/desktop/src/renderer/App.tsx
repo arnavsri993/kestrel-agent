@@ -1198,6 +1198,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 		}
 		setDownloading(clean);
 		setLocalError("");
+		setLocalProgress(null);
 		try {
 			const response = await window.kestrel.request({
 				type: "local-model-pull",
@@ -1208,8 +1209,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 					"error" in response ? response.error : "Model download failed.",
 				);
 			if ("localModels" in response) {
-				setLocalModels(response.localModels);
-				setOllamaAvailable(true);
+				await loadLocalModels();
 				setCustomModel("");
 			}
 		} catch (cause) {
@@ -2090,7 +2090,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																	<button
 																		className={`button ${isRecommended ? "primary" : "secondary"}`}
 																		disabled={
-																			automaticBusy ||
+																		automaticBusy ||
 																			Boolean(downloading) ||
 																			!localSetupAvailable
 																		}
@@ -2110,7 +2110,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												</div>
 											</section>
 										)}
-										{localProgress && automaticBusy && (
+										{localProgress && (automaticBusy || (nativeChromiumSurface && Boolean(downloading))) && (
 											<div
 												className="local-bootstrap-progress"
 												role="status"
@@ -2258,6 +2258,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 															className="button secondary"
 															disabled={
 																!ollamaAvailable ||
+																automaticBusy ||
 																Boolean(downloading) ||
 																!customModel.trim()
 															}

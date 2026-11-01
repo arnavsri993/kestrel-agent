@@ -1,11 +1,12 @@
-import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NativeProviderHost } from "./native-provider-host";
 import type { ChatGptOAuthManager, ChatGptOAuthStatus } from "./chatgpt-oauth";
-import { LocalRuntimeStatusSchema, SetupSystemProfileSchema } from "@kestrel/shared-types";
+import { CoreRequestSchema, LocalRuntimeStatusSchema, SetupSystemProfileSchema } from "@kestrel/shared-types";
 // @ts-expect-error Native runtime modules are executed unchanged by bundled Node.
 import { createNativeCoreConfiguration } from "../../../native-chromium-host/resources/native-core-configuration.mjs";
 
@@ -14,7 +15,7 @@ afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { rec
 async function fixture() {
 	const root = await mkdtemp(join(tmpdir(), "kestrel-native-provider-host-")); roots.push(root);
 	const environment: NodeJS.ProcessEnv = { KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", OPENAI_API_KEY: "ambient-secret-must-not-import" };
-	const reconfigure = vi.fn(async (mutation: () => Promise<unknown>) => mutation());
+	const reconfigure = vi.fn(async (mutation: () => Promise<unknown>, _rollback?: () => Promise<void>, validate?: () => void, _shouldRestoreCore?: () => boolean) => { const result = await mutation(); validate?.(); return result; });
 	const accountStatus = vi.fn(async () => ({ connected: true, accountType: "chatgpt" as const }));
 	const manager = { status: vi.fn(async (): Promise<ChatGptOAuthStatus> => ({ connected: false })),
 		connect: vi.fn(async (_signal?: AbortSignal): Promise<ChatGptOAuthStatus> => ({ connected: true, accountType: "chatgpt" })), cancel: vi.fn(async () => {}) };
@@ -22,7 +23,7 @@ async function fixture() {
 	const openAuthUrl = vi.fn(async (_url: string, _signal: AbortSignal) => {});
 	const localFetch = vi.fn<typeof fetch>(async () => { throw new Error("Local service unavailable in fixture"); });
 	const options = { root, encryptionKeyBase64: randomBytes(32).toString("base64"), homeDirectory: root, environment,
-		reconfigure: <T>(mutation: () => Promise<T>): Promise<T> => reconfigure(mutation) as Promise<T>, accountStatus, createOAuthManager, openAuthUrl, localFetch };
+		reconfigure: <T>(mutation: () => Promise<T>, rollback?: () => Promise<void>, validate?: () => void, shouldRestoreCore?: () => boolean): Promise<T> => reconfigure(mutation, rollback, validate, shouldRestoreCore) as Promise<T>, accountStatus, createOAuthManager, openAuthUrl, localFetch };
 	return { root, options, host: new NativeProviderHost(options), reconfigure, manager, createOAuthManager, openAuthUrl, localFetch };
 }
 
@@ -46,7 +47,7 @@ describe("native provider host", () => {
 		expect(SetupSystemProfileSchema.safeParse(status.systemProfile).success).toBe(true);
 		expect(LocalRuntimeStatusSchema.safeParse(status.localRuntime).success).toBe(true);
 		expect(status).toMatchObject({ ollamaAvailable: false, localModels: [], localRuntime: {
-			automaticSupported: false, managedRuntime: false, localModels: [], unavailableReason: expect.stringContaining("Automatic runtime installation and model downloads are unavailable"),
+			managedRuntime: false, localModels: [],
 		} });
 		expect(status.localRuntime.verifiedModel).toBeUndefined();
 		expect(reconfigure).not.toHaveBeenCalled(); expect(createOAuthManager).not.toHaveBeenCalled();
@@ -59,9 +60,9 @@ describe("native provider host", () => {
 		}));
 	});
 
-	it("explicitly defers model downloads without running or mutating anything", async () => {
+	it("requires an available service for model-only downloads without changing configuration", async () => {
 		const { host, reconfigure, createOAuthManager } = await fixture();
-		expect(await host.handle({ type: "local-model-pull", model: "fixture:small" })).toEqual({ ok: false, error: expect.stringContaining("Automatic runtime installation and model downloads are unavailable") });
+		await expect(host.handle({ type: "local-model-pull", model: "fixture:small" })).rejects.toThrow("Start Ollama or use guided local setup");
 		expect(await host.handle({ type: "local-runtime-cancel" })).toEqual({ ok: true });
 		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
 		expect(reconfigure).not.toHaveBeenCalled(); expect(createOAuthManager).not.toHaveBeenCalled();
@@ -71,7 +72,7 @@ describe("native provider host", () => {
 		const { host, localFetch, reconfigure } = await fixture();
 		localFetch.mockResolvedValue(Response.json({ models: [{ name: "fixture:small", size: 1024 }] }));
 		const result = await host.handle({ type: "local-model-status" });
-		expect(result).toMatchObject({ ok: true, ollamaAvailable: true, localModels: [], localRuntime: { automaticSupported: false, localModels: [] } });
+		expect(result).toMatchObject({ ok: true, ollamaAvailable: true, localModels: [], localRuntime: { localModels: [] } });
 		if (!result.ok || !("localRuntime" in result)) throw new Error("Missing status");
 		expect(result.localRuntime.verifiedModel).toBeUndefined();
 		expect(result.localRuntime.detectedModels).toEqual([expect.objectContaining({ name: "fixture:small" })]);
@@ -86,7 +87,7 @@ describe("native provider host", () => {
 		const configuration = createNativeCoreConfiguration({ core, isBusy: () => false, configuration: async () => ({
 			databasePath: "same-database", encryptionKeyBase64: options.encryptionKeyBase64, ...await host.runtimeConfiguration(),
 		}) });
-		options.reconfigure = mutation => configuration.reconfigure(mutation);
+		options.reconfigure = (mutation, rollback, validate, shouldRestoreCore) => configuration.reconfigure(mutation, rollback, validate, shouldRestoreCore);
 		await configuration.start();
 		localFetch.mockImplementation(async (input, init) => {
 			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "fixture:small", size: 1024 }] });
@@ -120,6 +121,207 @@ describe("native provider host", () => {
 		expect(await readFile(join(root, "native-runtime-preferences.json"), "utf8")).not.toContain("fixture-private-response");
 	});
 
+	it("downloads a custom model without stopping Core or selecting a route and reports progress", async () => {
+		const { options, localFetch, reconfigure } = await fixture();
+		let installed = false;
+		const stages: string[] = [];
+		localFetch.mockImplementation(async (input, init) => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "existing:stable", size: 1 }, ...(installed ? [{ name: "fixture:small", size: 1 }] : [])] });
+			if (String(input).endsWith("/api/pull")) { expect(JSON.parse(String(init?.body))).toEqual({ model: "fixture:small", stream: true }); installed = true; return new Response('{"status":"success"}\n'); }
+			throw new Error("Unexpected operation");
+		});
+		const host = new NativeProviderHost({ ...options, onLocalRuntimeProgress: event => stages.push(event.stage) });
+		expect(CoreRequestSchema.safeParse({ type: "local-model-pull", model: "fixture:small" }).success).toBe(false);
+		const result = await host.handle({ type: "local-model-pull", model: "fixture:small" });
+		expect(result).toMatchObject({ ok: true, downloadedModel: { name: "fixture:small" } });
+		expect(stages).toContain("downloading-model");
+		expect(reconfigure).not.toHaveBeenCalled(); expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
+		await host.close();
+	});
+
+	it("treats an installed custom model as a no-op and does not select it", async () => {
+		const { options, localFetch, reconfigure } = await fixture();
+		localFetch.mockResolvedValue(Response.json({ models: [{ name: "fixture:small", size: 1 }] }));
+		const host = new NativeProviderHost(options);
+		expect(await host.handle({ type: "local-model-pull", model: "fixture:small" })).toMatchObject({ ok: true, downloadedModel: { name: "fixture:small" } });
+		expect(localFetch.mock.calls.every(([input]) => String(input).endsWith("/api/tags"))).toBe(true);
+		expect(reconfigure).not.toHaveBeenCalled(); expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
+		await host.close();
+	});
+
+	it("cancels a custom model pull without selecting a route or touching existing models", async () => {
+		const { options, localFetch } = await fixture();
+		localFetch.mockImplementation(async (input, init) => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "existing:stable", size: 1 }] });
+			if (String(input).endsWith("/api/pull")) return new Promise((_resolve, reject) => init!.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+			throw new Error("Unexpected operation");
+		});
+		const host = new NativeProviderHost(options);
+		const request = host.handle({ type: "local-model-pull", model: "fixture:small" });
+		const rejected = expect(request).rejects.toThrow("Partial downloads may remain in Ollama");
+		await vi.waitFor(() => expect(localFetch.mock.calls.some(([input]) => String(input).endsWith("/api/pull"))).toBe(true));
+		await host.handle({ type: "local-runtime-cancel" }); await rejected;
+		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]); await host.close();
+	});
+
+	it("reuses an external installed service without pulling, spawning, or killing it", async () => {
+		const { options, localFetch } = await fixture();
+		const spawn = vi.fn(() => { throw new Error("Must not spawn"); });
+		localFetch.mockImplementation(async input => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "fixture:small", size: 1 }] });
+			if (String(input).endsWith("/api/show")) return Response.json({ capabilities: ["completion", "tools"] });
+			if (String(input).endsWith("/api/chat")) return Response.json({ done: true, message: { content: "OK" } });
+			throw new Error("Must not download or pull");
+		});
+		const host = new NativeProviderHost({ ...options, localRuntimeDependencies: { spawn: spawn as unknown as typeof import("node:child_process").spawn } });
+		expect((await host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true })).ok).toBe(true);
+		await host.close();
+		expect(spawn).not.toHaveBeenCalled();
+		expect(localFetch.mock.calls.some(([input]) => String(input).endsWith("/api/pull"))).toBe(false);
+	});
+
+	it("pulls only the explicitly selected missing model on an external service without changing existing models", async () => {
+		const { options, localFetch } = await fixture();
+		let installed = false;
+		localFetch.mockImplementation(async (input, init) => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "existing:stable", size: 1 }, ...(installed ? [{ name: "fixture:small", size: 1 }] : [])] });
+			if (String(input).endsWith("/api/pull")) { expect(JSON.parse(String(init?.body))).toEqual({ model: "fixture:small", stream: true }); installed = true; return new Response('{"status":"success"}\n'); }
+			if (String(input).endsWith("/api/show")) return Response.json({ capabilities: ["completion", "tools"] });
+			if (String(input).endsWith("/api/chat")) return Response.json({ done: true, message: { content: "OK" } });
+			throw new Error("Unexpected operation against external service");
+		});
+		const spawn = vi.fn();
+		const host = new NativeProviderHost({ ...options, localRuntimeDependencies: { spawn: spawn as unknown as typeof import("node:child_process").spawn } });
+		expect((await host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true })).ok).toBe(true);
+		expect(localFetch.mock.calls.filter(([input]) => String(input).endsWith("/api/pull"))).toHaveLength(1);
+		expect(spawn).not.toHaveBeenCalled(); await host.close();
+	});
+
+	it("cancels an external pull without killing or deleting the daemon or selecting the model", async () => {
+		const { options, localFetch } = await fixture();
+		localFetch.mockImplementation(async (input, init) => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "existing:stable", size: 1 }] });
+			if (String(input).endsWith("/api/pull")) return new Promise((_resolve, reject) => init!.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+			throw new Error("Unexpected operation against external service");
+		});
+		const spawn = vi.fn();
+		const host = new NativeProviderHost({ ...options, localRuntimeDependencies: { spawn: spawn as unknown as typeof import("node:child_process").spawn } });
+		const pending = host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true });
+		const rejected = expect(pending).rejects.toThrow("Partial downloads may remain in Ollama");
+		await vi.waitFor(() => expect(localFetch.mock.calls.some(([input]) => String(input).endsWith("/api/pull"))).toBe(true));
+		await host.handle({ type: "local-runtime-cancel" }); await rejected;
+		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
+		expect(spawn).not.toHaveBeenCalled();
+		expect(localFetch.mock.calls.every(([input]) => /\/api\/(tags|pull)$/.test(String(input)))).toBe(true);
+		await host.close();
+	});
+
+	it("does not download or persist an invalid checksum in native setup", async () => {
+		const { options, root, localFetch } = await fixture();
+		const archive = new TextEncoder().encode("bad archive");
+		const manifest = { runtime: "ollama" as const, version: "fixture", platform: "darwin" as const, architectures: ["arm64"] as ["arm64"],
+			url: "https://github.com/ollama/ollama/releases/download/test/ollama.tgz", fileName: "ollama.tgz", sha256: "0".repeat(64), bytes: archive.byteLength, binaryPath: "ollama" };
+		localFetch.mockImplementation(async input => { if (String(input) === manifest.url) return new Response(archive); throw new Error("offline"); });
+		const extract = vi.fn();
+		const host = new NativeProviderHost({ ...options, localRuntimeDependencies: { platform: "darwin", architecture: "arm64", manifest, execFile: extract } });
+		await expect(host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true })).rejects.toThrow(/checksum/);
+		expect(extract).not.toHaveBeenCalled();
+		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
+		expect(await import("node:fs/promises").then(fs => fs.readdir(join(root, "local-runtime", "ollama")))).toEqual([]);
+		await host.close();
+	});
+
+	it("installs a mocked pinned runtime and model, verifies tools and chat, then publishes and owns only its child", async () => {
+		const { options, root, localFetch } = await fixture();
+		const archive = new TextEncoder().encode("owned test archive");
+		const manifest = { runtime: "ollama" as const, version: "fixture", platform: "darwin" as const, architectures: ["arm64"] as ["arm64"],
+			url: "https://github.com/ollama/ollama/releases/download/test/ollama.tgz", fileName: "ollama.tgz",
+			sha256: createHash("sha256").update(archive).digest("hex"), bytes: archive.byteLength, binaryPath: "ollama" };
+		let service = false, installed = false, verified = false;
+		const child = new EventEmitter() as EventEmitter & { exitCode: number | null; kill: ReturnType<typeof vi.fn> };
+		child.exitCode = null; child.kill = vi.fn(() => { child.exitCode = 0; queueMicrotask(() => child.emit("exit", 0, null)); return true; });
+		const stages: string[] = [];
+		const opts = { ...options, onLocalRuntimeProgress: (event: { stage: string }) => { if (event.stage === "ready") expect(verified).toBe(true); stages.push(event.stage); },
+			localRuntimeDependencies: { platform: "darwin" as const, architecture: "arm64", manifest,
+				execFile: async (_file: string, args: string[]) => { if (args[0] === "-tzf") return { stdout: "ollama\n", stderr: "" };
+					await writeFile(join(args[args.indexOf("-C") + 1]!, "ollama"), "fake binary"); return { stdout: "", stderr: "" }; },
+				spawn: vi.fn(() => { service = true; return child; }) as unknown as typeof import("node:child_process").spawn } };
+		localFetch.mockImplementation(async input => {
+			const url = String(input);
+			if (url === manifest.url) return new Response(archive);
+			if (url.endsWith("/api/tags")) { if (!service) throw new Error("offline"); return Response.json({ models: installed ? [{ name: "fixture:small", size: 1 }] : [] }); }
+			if (url.endsWith("/api/pull")) { installed = true; return new Response('{"status":"done"}\n'); }
+			if (url.endsWith("/api/show")) return Response.json({ capabilities: ["completion", "tools"] });
+			if (url.endsWith("/api/chat")) { verified = true; expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]); return Response.json({ done: true, message: { content: "OK" } }); }
+			throw new Error("unexpected URL");
+		});
+		const host = new NativeProviderHost(opts);
+		const result = await host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true });
+		expect(result).toMatchObject({ ok: true, localRuntime: { verifiedModel: "fixture:small", managedRuntime: true } });
+		expect(stages).toEqual(expect.arrayContaining(["downloading-runtime", "verifying-runtime", "installing-runtime", "starting-runtime", "downloading-model", "verifying-model", "ready"]));
+		expect((await host.runtimeConfiguration()).providerAccounts).toContainEqual(expect.objectContaining({ id: "native-local-ollama", defaultModel: "fixture:small" }));
+		expect(await readFile(join(root, "local-runtime", "ollama", "fixture", "ollama"), "utf8")).toBe("fake binary");
+		await host.close(); expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+	});
+
+	it.each(["cancel", "failure", "close"])("restores prior preferences and verification and reaps the new child on %s before commit", async action => {
+		const { options, root, localFetch } = await fixture();
+		const archive = new TextEncoder().encode("fixture");
+		const manifest = { runtime: "ollama" as const, version: "fixture", platform: "darwin" as const, architectures: ["arm64"] as ["arm64"],
+			url: "https://github.com/ollama/ollama/releases/download/test/ollama.tgz", fileName: "ollama.tgz", sha256: createHash("sha256").update(archive).digest("hex"), bytes: archive.byteLength, binaryPath: "ollama" };
+		const folder = join(root, "local-runtime", "ollama", "fixture"); await mkdir(folder, { recursive: true });
+		await writeFile(join(folder, "ollama"), "fixture", { mode: 0o700 });
+		await writeFile(join(folder, "workstrand-install.json"), JSON.stringify({ version: "fixture", sha256: manifest.sha256, binaryPath: "ollama" }));
+		const oldVerification = '{"model":"old:model","verifiedAt":"2025-01-01T00:00:00.000Z"}\n';
+		const oldPreferences = '{"version":1,"subscriptions":{}}\n';
+		await writeFile(join(root, "local-runtime", "last-verification.json"), oldVerification, { mode: 0o600 });
+		await writeFile(join(root, "native-runtime-preferences.json"), oldPreferences, { mode: 0o600 });
+		let service = false;
+		const child = new EventEmitter() as EventEmitter & { exitCode: number | null; kill: ReturnType<typeof vi.fn> };
+		child.exitCode = null; child.kill = vi.fn(() => { child.exitCode = 0; queueMicrotask(() => child.emit("exit", 0, null)); return true; });
+		localFetch.mockImplementation(async input => {
+			if (String(input).endsWith("/api/tags")) { if (!service) throw new Error("offline"); return Response.json({ models: [{ name: "fixture:small", size: 1 }] }); }
+			if (String(input).endsWith("/api/show")) return Response.json({ capabilities: ["completion", "tools"] });
+			if (String(input).endsWith("/api/chat")) return Response.json({ done: true, message: { content: "OK" } });
+			throw new Error("Unexpected fixture call");
+		});
+		let release!: () => void; let entered!: () => void;
+		const held = new Promise<void>(resolve => { release = resolve; }); const reached = new Promise<void>(resolve => { entered = resolve; });
+		const core = { start: vi.fn(async (_config: unknown) => {}), stop: vi.fn(async () => {}) };
+		const configuration = createNativeCoreConfiguration({ core, isBusy: () => false, configuration: async () => ({ key: options.encryptionKeyBase64 }) });
+		await configuration.start();
+		const host = new NativeProviderHost({ ...options,
+			reconfigure: (mutation, rollback, validate, restore) => configuration.reconfigure(mutation, rollback, validate, restore),
+			beforeLocalPreferenceCommit: async () => { entered(); await held; if (action === "failure") throw new Error("fixture write failure"); },
+			localRuntimeDependencies: { platform: "darwin", architecture: "arm64", manifest, spawn: (() => { service = true; return child; }) as unknown as typeof import("node:child_process").spawn },
+		});
+		const pending = host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true });
+		const rejected = expect(pending).rejects.toThrow(); await reached;
+		const stopping = action === "close" ? host.close() : action === "cancel" ? host.handle({ type: "local-runtime-cancel" }) : Promise.resolve();
+		release(); await stopping; await rejected;
+		expect(await readFile(join(root, "native-runtime-preferences.json"), "utf8")).toBe(oldPreferences);
+		expect(await readFile(join(root, "local-runtime", "last-verification.json"), "utf8")).toBe(oldVerification);
+		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+		expect(core.start).toHaveBeenCalledTimes(action === "close" ? 1 : 2);
+		if (action !== "close") await host.close();
+	});
+
+	it("times out a hanging setup, restores Core, and does not persist a model", async () => {
+		const { options, localFetch } = await fixture();
+		const core = { start: vi.fn(async (_config: unknown) => {}), stop: vi.fn(async () => {}) };
+		const configuration = createNativeCoreConfiguration({ core, isBusy: () => false, configuration: async () => ({ key: options.encryptionKeyBase64 }) });
+		await configuration.start();
+		localFetch.mockImplementation(async (input, init) => {
+			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "fixture:small" }] });
+			return new Promise((_resolve, reject) => init!.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+		});
+		const host = new NativeProviderHost({ ...options, reconfigure: (mutation, rollback, validate, shouldRestoreCore) => configuration.reconfigure(mutation, rollback, validate, shouldRestoreCore), localSetupTimeoutMs: 30 });
+		await expect(host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true })).rejects.toThrow();
+		expect(core.start).toHaveBeenCalledTimes(2); expect(configuration.changing).toBe(false);
+		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
+		await host.close();
+	});
+
 	it("rejects a busy local setup before probing or saving provider preferences", async () => {
 		const { host, reconfigure, localFetch } = await fixture();
 		reconfigure.mockRejectedValueOnce(new Error("Active task"));
@@ -128,7 +330,7 @@ describe("native provider host", () => {
 		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
 	});
 
-	it.each(["not-installed", "empty-response", "private-error"])("does not configure a local route after %s verification", async failure => {
+	it.each(["empty-response", "private-error"])("does not configure a local route after %s verification", async failure => {
 		const { host, localFetch } = await fixture();
 		localFetch.mockImplementation(async input => {
 			if (String(input).endsWith("/api/tags")) return Response.json({ models: failure === "not-installed" ? [] : [{ name: "fixture:small" }] });
@@ -138,13 +340,12 @@ describe("native provider host", () => {
 		});
 		await expect(host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true })).rejects.toThrow(/^The installed local model did not complete a real chat response\./);
 		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
-		if (failure === "not-installed") expect(localFetch).toHaveBeenCalledOnce();
 	});
 	it("does not mark a completion-only model ready for tool-capable Home tasks", async () => {
 		const { host, localFetch } = await fixture();
 		localFetch.mockImplementation(async input => String(input).endsWith("/api/tags") ? Response.json({ models: [{ name: "fixture:small" }] }) : Response.json({ capabilities: ["completion"] }));
 		await expect(host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true })).rejects.toThrow("confirmed tool support");
-		expect(localFetch).toHaveBeenCalledTimes(2);
+		expect(localFetch.mock.calls.some(([url]) => String(url).endsWith("/api/chat"))).toBe(false);
 		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
 	});
 
@@ -152,7 +353,7 @@ describe("native provider host", () => {
 		const { host, options, localFetch } = await fixture();
 		const core = { start: vi.fn(async (_config: unknown) => {}), stop: vi.fn(async () => {}) };
 		const configuration = createNativeCoreConfiguration({ core, isBusy: () => false, configuration: async () => ({ key: options.encryptionKeyBase64 }) });
-		options.reconfigure = mutation => configuration.reconfigure(mutation);
+		options.reconfigure = (mutation, rollback, validate, shouldRestoreCore) => configuration.reconfigure(mutation, rollback, validate, shouldRestoreCore);
 		await configuration.start();
 		localFetch.mockImplementation(async (input, init) => {
 			if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "fixture:small" }] });
@@ -160,11 +361,11 @@ describe("native provider host", () => {
 		});
 		const pending = host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: true });
 		const rejected = expect(pending).rejects.toThrow("cancelled");
-		await vi.waitFor(() => expect(localFetch).toHaveBeenCalledTimes(2));
+		await vi.waitFor(() => expect(localFetch.mock.calls.some(([url]) => String(url).endsWith("/api/show"))).toBe(true));
 		if (action === "close") await host.close();
 		else expect(await host.handle({ type: "local-runtime-cancel" })).toEqual({ ok: true });
 		await rejected;
-		expect(core.start).toHaveBeenCalledTimes(2); expect(configuration.changing).toBe(false);
+		expect(core.start).toHaveBeenCalledTimes(action === "close" ? 1 : 2); expect(configuration.changing).toBe(false);
 		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
 	});
 
@@ -226,6 +427,7 @@ describe("native provider host", () => {
 		const { host, reconfigure } = await fixture();
 		expect((await host.handle({ type: "credential-set", credentialId: "arbitrary", value: "secret" })).ok).toBe(false);
 		expect((await host.handle({ type: "runtime-run-agent" })).ok).toBe(false);
+		expect((await host.handle({ type: "local-runtime-bootstrap", model: "fixture:small", consent: false })).ok).toBe(false);
 		expect(reconfigure).not.toHaveBeenCalled();
 	});
 
@@ -341,7 +543,7 @@ describe("native provider host", () => {
 		const core = { start: vi.fn(async (_config: unknown) => {}), stop: vi.fn(async () => {}) };
 		const config = { databasePath: "same-database", encryptionKeyBase64: options.encryptionKeyBase64 };
 		const configuration = createNativeCoreConfiguration({ core, configuration: async () => config, isBusy: () => false });
-		options.reconfigure = mutation => configuration.reconfigure(mutation);
+		options.reconfigure = (mutation, rollback, validate, shouldRestoreCore) => configuration.reconfigure(mutation, rollback, validate, shouldRestoreCore);
 		await configuration.start();
 		manager.connect.mockImplementation(async signal => new Promise((_resolve, reject) => {
 			signal!.addEventListener("abort", () => reject(new Error("private auth diagnostic")), { once: true });

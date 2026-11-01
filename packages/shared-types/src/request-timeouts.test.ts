@@ -21,7 +21,11 @@ describe("shared request execution and native transport deadlines", () => {
 		}
 	});
 	it("allows local chat warm-up and Core restart within a bounded setup budget", () => {
-		expect(nativeRequestTimeoutMs({ type: "local-runtime-bootstrap" }, "broker")).toBe(100_000);
+		for (const type of ["local-runtime-bootstrap", "local-model-pull"]) {
+			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(1_810_000);
+			expect(nativeRequestTimeoutMs({ type }, "worker")).toBe(1_855_000);
+			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(1_860_000);
+		}
 	});
 	it("allows time for native pickers and default-browser consent", () => {
 		for (const type of ["select-workspace-folder", "select-context-files", "set-default-browser"]) {
