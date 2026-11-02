@@ -360,7 +360,7 @@ try {
   home = await pageFor(url => /^chrome-extension:\/\/[^/]+\/index\.html$/.test(url));
   const before = new Set((await cdpTargets()).map(t => t.targetId));
   const result = await home.evaluate(input => window.kestrel.request({ type: 'browser-create-tab', input }), `kestrel canary ${suffix}`); assert(result.ok, result.error);
-  return eventually(async () => (await cdpTargets()).find(t => { try { return !before.has(t.targetId) && new URL(t.url).hostname.endsWith('duckduckgo.com'); } catch { return false; } }), 'Search did not open a new DuckDuckGo target');
+  return eventually(async () => (await cdpTargets()).find(t => { try { const host = new URL(t.url).hostname; return !before.has(t.targetId) && (host === 'duckduckgo.com' || host.endsWith('.duckduckgo.com')); } catch { return false; } }), 'Search did not open a new DuckDuckGo target');
  };
  await searchQuery('before restart'); phase('native-search-provider-change-and-query');
  settings = await pageFor(url => /index\.html\?app=settings(?:&|$)/.test(url));

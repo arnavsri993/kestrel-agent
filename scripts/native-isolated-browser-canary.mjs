@@ -3,12 +3,29 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+function fixtureRole(value) {
+	switch (value) {
+		case null: return "unknown";
+		case "user": return "user";
+		case "first": return "first";
+		case "second": return "second";
+		case "first-next": return "first-next";
+		case "first-key": return "first-key";
+		case "orphan": return "orphan";
+		case "recovered": return "recovered";
+		default: return undefined;
+	}
+}
+
 export function createIsolationFixtures() {
 	const visits = [], storage = [], actions = [], pulses = [], uploads = [];
 	return { visits, storage, actions, pulses, uploads, handle(request, response) {
 		const url = new URL(request.url, "http://127.0.0.1");
 		if (!url.pathname.startsWith("/isolation-")) return false;
-		const role = url.searchParams.get("role") || "unknown";
+		const role = fixtureRole(url.searchParams.get("role"));
+		if (role === undefined || url.searchParams.getAll("role").length > 1) {
+			response.writeHead(400); response.end("Invalid fixture role."); return true;
+		}
 		if (url.pathname === "/isolation-uploaded") {
 			let body = "";
 			request.on("data", chunk => { body += chunk; if (body.length > 4096) request.destroy(); });
