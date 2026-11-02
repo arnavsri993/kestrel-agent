@@ -1,9 +1,13 @@
 import { NATIVE_PLUGIN_REQUEST_TYPES } from "../../../desktop/src/main/native-plugin-requests.ts";
 import { NATIVE_MEMORY_RECOVERY_REQUEST_TYPES } from "../../../desktop/src/main/native-memory-recovery-requests.ts";
-export function isNativeCancellableRequest(type) {
- return NATIVE_PLUGIN_REQUEST_TYPES.has(type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(type);
+import { NATIVE_DIAGNOSTIC_REQUEST_TYPES } from "../../../desktop/src/main/native-diagnostic-requests.ts";
+export function isNativeFileRequest(type) {
+ return NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(type);
 }
-// Each renderer port owns only its own plugin and knowledge file requests.
+export function isNativeCancellableRequest(type) {
+ return NATIVE_PLUGIN_REQUEST_TYPES.has(type) || isNativeFileRequest(type);
+}
+// Each renderer port owns only its own plugin and file requests.
 export function createNativeRequestScope() {
  const active = new Set(); let closed = false;
  return {

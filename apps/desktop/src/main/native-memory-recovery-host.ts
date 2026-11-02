@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { TextDecoder } from "node:util";
 import { MemoryRecoveryPreviewSchema, type CoreRequest, type RendererResponse } from "@kestrel/shared-types";
 import { z } from "zod";
+import { NativePrivateFileError, writeNativePrivateFile } from "./native-private-file";
 export { NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest } from "./native-memory-recovery-requests";
 
 const RequestSchema = z.object({
@@ -94,7 +95,13 @@ export class NativeMemoryRecoveryHost {
 		const path = join(parent, basename(selected));
 		if (!validPath(path)) throw new RecoveryFailure("The selected backup location is invalid.");
 		if (data) {
-			await this.save(path, parent, data);
+			try { await writeNativePrivateFile(path, parent, data, () => this.check(), error => error instanceof Closed); }
+			catch (error) {
+				if (error instanceof NativePrivateFileError) throw new RecoveryFailure(error.created
+					? "Saving did not finish safely. The new backup file has been preserved and may be incomplete. Choose a different filename to retry."
+					: "The backup could not be created. Choose a new filename in an existing writable folder; existing files are never overwritten.");
+				throw error;
+			}
 			return { ok: true };
 		}
 		const encoded = await this.read(path, parent);
@@ -116,53 +123,6 @@ export class NativeMemoryRecoveryHost {
 		const [held, current] = await Promise.all([directory.stat({ bigint: true }), lstat(parent, { bigint: true })]);
 		this.check();
 		if (!held.isDirectory() || !current.isDirectory() || !sameIdentity(held, current)) throw new RecoveryFailure("The backup folder changed. Choose it again.");
-	}
-	private async save(path: string, parent: string, data: Buffer): Promise<void> {
-		const directory = await this.parentHandle(parent);
-		let file: FileHandle | undefined;
-		let created = false;
-		try {
-			await this.checkParent(parent, directory);
-			this.check();
-			file = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
-			created = true;
-			this.check();
-			await this.checkParent(parent, directory);
-			const initial = await file.stat({ bigint: true });
-			this.check();
-			const named = await lstat(path, { bigint: true });
-			this.check();
-			if (!regular(initial) || initial.size !== 0n || (initial.mode & 0o077n) !== 0n || !sameIdentity(initial, named)) throw new RecoveryFailure("The new backup file changed before it could be written.");
-			let offset = 0;
-			while (offset < data.length) {
-				this.check();
-				const { bytesWritten } = await file.write(data, offset, data.length - offset, offset);
-				this.check();
-				if (!bytesWritten) throw new RecoveryFailure("The backup could not be completely written.");
-				offset += bytesWritten;
-			}
-			this.check();
-			await file.sync();
-			this.check();
-			const [final, finalName] = await Promise.all([file.stat({ bigint: true }), lstat(path, { bigint: true })]);
-			this.check();
-			if (!regular(final) || (final.mode & 0o077n) !== 0n || !sameIdentity(initial, final) || !sameIdentity(final, finalName) || final.size !== BigInt(data.length)) throw new RecoveryFailure("The backup file changed while saving.");
-			await this.checkParent(parent, directory);
-			await directory.sync();
-			this.check();
-		} catch (error) {
-			if (created) throw new RecoveryFailure("Saving did not finish safely. The new backup file has been preserved and may be incomplete. Choose a different filename to retry.");
-			if (error instanceof Closed) throw error;
-			throw new RecoveryFailure("The backup could not be created. Choose a new filename in an existing writable folder; existing files are never overwritten.");
-		} finally {
-			try {
-				try { await file?.close(); } finally { await directory.close(); }
-			} catch {
-				throw new RecoveryFailure(created
-					? "Saving did not finish safely. The new backup file has been preserved and may be incomplete. Choose a different filename to retry."
-					: "The backup location could not be closed safely. Choose it again.");
-			}
-		}
 	}
 
 	private async read(path: string, parent: string): Promise<string> {

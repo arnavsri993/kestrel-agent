@@ -28,7 +28,7 @@ describe("shared request execution and native transport deadlines", () => {
 		}
 	});
 	it("allows time for native pickers and default-browser consent", () => {
-		for (const type of ["select-workspace-folder", "select-context-files", "set-default-browser", "request-microphone-access", "memory-recovery-save-file", "memory-recovery-open-file"]) {
+		for (const type of ["select-workspace-folder", "select-context-files", "set-default-browser", "request-microphone-access", "memory-recovery-save-file", "memory-recovery-open-file", "export-diagnostic-report"]) {
 			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(610_000);
 			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(660_000);
 		}

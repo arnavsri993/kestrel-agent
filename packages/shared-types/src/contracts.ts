@@ -5344,6 +5344,7 @@ export type RendererResponse =
 	| { ok: true; systemReadiness: SystemReadiness }
 	| { ok: true; computerUseStatus: ComputerUseStatus }
 	| { ok: true; diagnosticReportPath: string; cancelled?: boolean }
+	| { ok: true; diagnosticReportSaved: true }
 	| { ok: true; localBackup: LocalBackupResult; cancelled?: boolean }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }
 	| { ok: true; providerAccounts: ProviderAccountSummary[] }

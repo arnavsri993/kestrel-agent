@@ -5521,6 +5521,7 @@ function Readiness() {
 		"refresh" | "models" | "backup" | "workspace" | "diagnostic" | ""
 	>("");
 	const [error, setError] = useState("");
+	const [diagnosticNotice, setDiagnosticNotice] = useState("");
 
 	async function refresh() {
 		setBusy("refresh");
@@ -5602,6 +5603,7 @@ function Readiness() {
 	async function exportDiagnostic() {
 		setBusy("diagnostic");
 		setError("");
+		setDiagnosticNotice("");
 		try {
 			const response = await window.kestrel.request({
 				type: "export-diagnostic-report",
@@ -5610,12 +5612,15 @@ function Readiness() {
 				throw new Error(
 					"error" in response ? response.error : "Diagnostic export failed.",
 				);
-			if ("diagnosticReportPath" in response && response.diagnosticReportPath) {
+			if ("cancelled" in response && response.cancelled) return;
+			if ("diagnosticReportSaved" in response && response.diagnosticReportSaved) {
+				setDiagnosticNotice("Diagnostic report saved to the file you chose.");
+			} else if ("diagnosticReportPath" in response && response.diagnosticReportPath) {
 				await window.kestrel.request({
 					type: "reveal-local-backup",
 					path: response.diagnosticReportPath,
 				});
-			}
+			} else throw new Error("Diagnostic report export failed.");
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : "Diagnostic export failed.",
@@ -5847,6 +5852,7 @@ function Readiness() {
 						>
 							{busy === "diagnostic" ? "Saving…" : "Save diagnostic report"}
 						</button>
+						{diagnosticNotice && <p role="status">{diagnosticNotice}</p>}
 					</section>
 				</aside>
 			</div>
@@ -9344,11 +9350,13 @@ function AgentDiagnosticsSettings() {
 		setNotice("");
 		try {
 			const response = await window.kestrel.request({ type: "export-diagnostic-report" });
-			if (!response.ok || !("diagnosticReportPath" in response))
-				throw new Error(
-					"error" in response ? response.error : "Diagnostic report export failed.",
-				);
-			setNotice(`Diagnostic report exported to ${response.diagnosticReportPath}.`);
+			if (!response.ok) throw new Error(response.error);
+			if ("cancelled" in response && response.cancelled) return;
+			if ("diagnosticReportSaved" in response && response.diagnosticReportSaved)
+				setNotice("Diagnostic report saved to the file you chose.");
+			else if ("diagnosticReportPath" in response)
+				setNotice(`Diagnostic report exported to ${response.diagnosticReportPath}.`);
+			else throw new Error("Diagnostic report export failed.");
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : "Diagnostic report export failed.",

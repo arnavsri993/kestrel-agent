@@ -183,3 +183,69 @@ it("cancels recovery panels on deadline, explicit cancellation and close, ignori
   expect(h.writeCore.mock.calls.map(([message]) => message.requestId)).toEqual(["native-dialog-1", "native-dialog-2", "native-dialog-3"]);
   expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/late");
 });
+
+
+it("only sends the fixed private diagnostic save operation and matching private destination", () => {
+  const h = harness(); let n = 0;
+  for (const extra of [
+    { path: "/injected" }, { filename: "injected.json" }, { workspaceRoot: "/injected" },
+    { sessionId: "secret" }, { report: { content: "secret" } }, { selectedDiagnosticPath: "/injected" },
+  ]) h.request(++n, { operation: "save-diagnostic-report", ...extra });
+  expect(h.frames()).toEqual([]);
+  expect(h.writeCore.mock.calls.every(([message]) => message.response.ok === false)).toBe(true);
+  h.request(++n, { operation: "save-diagnostic-report" });
+  h.request(++n, { operation: "save-memory-recovery-file" });
+  expect(h.frames()).toEqual([{ kind: "host-request", id: "dialog-1", request: { type: "save-diagnostic-report" } }]);
+  expect(h.relay.response({ kind: "host-response", id: "dialog-wrong", response: { ok: true, selectedDiagnosticPath: "/wrong" } })).toBe(false);
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, selectedDiagnosticPath: "/chosen/kestrel-diagnostic.json" } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response).toEqual({ ok: true, selectedDiagnosticPath: "/chosen/kestrel-diagnostic.json" });
+  expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/injected");
+});
+
+it("rejects malformed, cross-operation and extra diagnostic response fields without disclosure", () => {
+  const h = harness(); let n = 0;
+  for (const response of [
+    { ok: true, selectedRecoveryPath: "/private" }, { ok: true, selectedWorkspacePath: "/private" },
+    { ok: true, selectedContextPaths: ["/private"] }, { ok: true, selectedDiagnosticPath: "relative" },
+    { ok: true, selectedDiagnosticPath: "/private\0file" }, { ok: true, selectedDiagnosticPath: "/private\nfile" },
+    { ok: true, selectedDiagnosticPath: "/" + "x".repeat(4096) },
+    { ok: true, selectedDiagnosticPath: "/private", report: "secret" },
+    { ok: true, selectedDiagnosticPath: "/private", cancelled: true }, { ok: false, error: "secret /private" },
+  ]) {
+    h.request(++n, { operation: "save-diagnostic-report" });
+    h.relay.response({ kind: "host-response", id: `dialog-${n}`, response });
+  }
+  h.request(++n, { operation: "save-diagnostic-report" });
+  h.relay.response({ kind: "host-response", id: `dialog-${n}`, response: { ok: true, selectedDiagnosticPath: "/private" }, injected: true });
+  expect(h.writeCore.mock.calls.every(([message]) => message.response.ok === false)).toBe(true);
+  expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/private");
+  h.request(++n, { operation: "open-memory-recovery-file" });
+  h.relay.response({ kind: "host-response", id: `dialog-${n}`, response: { ok: true, selectedDiagnosticPath: "/private" } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response.ok).toBe(false);
+});
+
+it("settles diagnostic save cancellation, deadline, duplicate id, shutdown and owner failure once", async () => {
+  const h = harness();
+  h.request(1, { operation: "save-diagnostic-report" });
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, cancelled: true } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response).toEqual({ ok: true, cancelled: true });
+  h.request(2, { operation: "save-diagnostic-report" });
+  await vi.advanceTimersByTimeAsync(600_000);
+  h.request(3, { operation: "save-diagnostic-report" });
+  expect(h.relay.response({ kind: "host-response", id: "dialog-2", response: { ok: true, selectedDiagnosticPath: "/late" } })).toBe(false);
+  h.relay.cancel("native-dialog-2");
+  expect(h.frames().at(-1)?.kind).toBe("host-request");
+  h.relay.cancel("native-dialog-3");
+  h.relay.cancel("native-dialog-3");
+  h.request(4, { operation: "save-diagnostic-report" });
+  h.request(4, { operation: "save-diagnostic-report" });
+  expect(h.relay.response({ kind: "host-response", id: "dialog-4", response: { ok: true, selectedDiagnosticPath: "/late" } })).toBe(false);
+  h.writeOwner.mockImplementationOnce(() => false);
+  h.request(5, { operation: "save-diagnostic-report" });
+  h.request(6, { operation: "save-diagnostic-report" });
+  h.relay.close(); h.relay.close();
+  h.relay.response({ kind: "host-response", id: "dialog-6", response: { ok: true, selectedDiagnosticPath: "/late" } });
+  expect(h.frames().filter(frame => frame.kind === "dialog-cancel").map(frame => frame.id)).toEqual(["dialog-2", "dialog-3", "dialog-4", "dialog-6"]);
+  expect(h.writeCore.mock.calls.map(([message]) => message.requestId)).toEqual(["native-dialog-1", "native-dialog-2", "native-dialog-3", "native-dialog-4", "native-dialog-5", "native-dialog-6"]);
+  expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/late");
+});

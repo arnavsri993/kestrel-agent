@@ -1845,3 +1845,74 @@ encrypted payloads, including stale asynchronous embedding writes. Those require
 suppression. Native diagnostics/local-profile backup, other native integration
 routes, existing-profile/vendor-login acceptance, actual Store version upgrade,
 release signing/notarization and canonical cutover remain unfinished.
+
+
+## Native diagnostic export and current validation (2026-11-02)
+
+The native host now implements diagnostic export from Settings and Readiness
+through a fixed-purpose Cocoa Save panel. Core gathers allowlisted app/runtime
+metadata and readiness counts; the host writes a new 0600 JSON file. Only a
+saved/cancelled result returns to the renderer. Report contents and file paths
+stay in the private host. No Finder path or raw provider/error content is
+forwarded. The existing Electron adapter remains compatible with the shared
+host-neutral envelope builder.
+
+Knowledge backups and diagnostics share the exclusive private-file writer.
+It retains the existing final-symlink, identity, ownership, link-count, bounded
+write, sync and abort checks. Incomplete files after creation are preserved and
+reported honestly. Queued/sent file requests share page-owned cancellation
+through worker, broker and Core. The fixed native dialog accepts JSON only;
+caller-supplied report content, filename, path or configuration is not admitted.
+
+Current ad-hoc candidate:
+`ef5179289355a110e7bbdf7c970d839a2bd26b57c5701ba3e3c0e05cebd40d9f`.
+
+- All four actual Cocoa/UI phases passed: cancel without a false success, save
+  a private content-free file with a visible success notice, close the requesting
+  Settings tab to dismiss its pending picker, and verify Settings/Core data after
+  full restart. Receipt: `.tmp/native-diagnostic-ui-evidence/receipt.json`.
+  The saved Settings capture and generated report were inspected.
+- Six bundled Node/private Core phases passed with explicitly simulated picker
+  replies and permission-status probes: file privacy/projection, cancellation,
+  existing-destination refusal, final-symlink refusal, matched cancellation with
+  late-selection rejection, and shutdown with no owned workers left. Receipt:
+  `.tmp/native-diagnostic-bundled-evidence/receipt.json`. This is protocol proof,
+  not an additional Cocoa test.
+- Twenty-three broader native workflow/restart phases passed at the same digest:
+  `.tmp/native-diagnostic-workflow-evidence/receipt.json`. All receipt digests
+  matched, and the candidate digest was checked again after aggregate validation.
+- **2,326 tests in 289 files**, workspace typechecking and the full native build
+  passed. The new complete `pnpm verify` invocation also passed audits, production
+  dependency audit, typechecks/units/build, native extension compatibility, browser
+  benchmark, 50 website E2E cases, all desktop workflows, packaged CLI, editor
+  integrations and the production secret scan. Log:
+  `.tmp/native-diagnostic-aggregate-verify.log`. Strict extension retirement
+  acceptance remains separate from these passing compatibility helpers.
+
+The earlier aggregate stopped at tab-hover preview while macOS was locked. The
+unchanged focused check passed once unlocked, and the new full run passed.
+Eight known generated screenshot outputs were preserved under
+`.tmp/native-diagnostic-aggregate-images-after/` before restoring their exact
+pre-run baselines from `.tmp/native-knowledge-aggregate-images-before/`.
+
+Remote CI at `c7dc3455` passed its desktop/package job but its Core unit job
+skipped 23 profile-selection cases after the fixture compiler exceeded Vitest's
+ten-second hook. The compiler already had a 30-second subprocess deadline. SDK
+lookup is now bounded at five seconds and this one hook at 40 seconds; runtime
+assertions and compiler bounds remain enforced. All 23 focused cases passed
+after the change. New-head CI and the five remaining fingerprint findings must
+still be resolved; no global timeout or security suppression was added.
+
+All new execution used generated profiles and test keys. Chromium used its
+development mock Keychain and Core used its disposable test-key route. There
+was no new microphone capture, desktop control, real-profile transfer, provider
+login movement or canonical installation. The new build also includes the
+subsequent linear email-anchor change described above.
+
+Remaining release scope is unchanged: embedding fingerprint privacy/stale-write
+remediation; native local-profile backup and external-secret/Google Workspace
+integrations; existing-profile and vendor-login acceptance; large/older-profile
+and interrupted-preparation management; an observed published Store upgrade;
+production identity/signing/notarization and the canonical Chromium cutover.
+Developer ID credentials are unavailable, and `/Applications/Kestrel.app` remains
+the existing Electron installation until the full cutover is proven.

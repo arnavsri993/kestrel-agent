@@ -130,7 +130,7 @@ describe("native worker connection", () => {
 		expect(ports[0].postMessage.mock.calls.some(([message]: any[]) => message.kind === "request")).toBe(false);
 	});
 
-	it.each(["memory-recovery-save-file", "memory-recovery-open-file"])("cancels only the disconnected port's sent %s request", async (type) => {
+	it.each(["memory-recovery-save-file", "memory-recovery-open-file", "export-diagnostic-report"])("cancels only the disconnected port's sent %s request", async (type) => {
 		const { connection, ports, authenticate } = harness();
 		await authenticate();
 		const closedPort = createNativeRequestScope();
@@ -151,7 +151,7 @@ describe("native worker connection", () => {
 		expect(ports[0].postMessage.mock.calls.filter(([message]: any[]) => message.kind === "cancel-request")).toHaveLength(1);
 	});
 
-	it.each(["memory-recovery-save-file", "memory-recovery-open-file"])("does not send a queued or already-aborted %s request", async (type) => {
+	it.each(["memory-recovery-save-file", "memory-recovery-open-file", "export-diagnostic-report"])("does not send a queued or already-aborted %s request", async (type) => {
 		const { connection, ports, authenticate } = harness();
 		const controller = new AbortController();
 		const response = connection.request({ type, sessionId: "session" }, { signal: controller.signal });
@@ -171,7 +171,7 @@ describe("native worker connection", () => {
 		const sent = ports[0].postMessage.mock.calls.at(-1)[0];
 		await vi.advanceTimersByTimeAsync(nativeRequestTimeoutMs(request, "worker"));
 		expect(ports[0].postMessage).toHaveBeenLastCalledWith({ kind: "cancel-request", id: sent.id });
-		expect(await response).toEqual({ ok: false, error: "The knowledge backup or recovery request timed out. Check whether the file was saved before retrying." });
+		expect(await response).toEqual({ ok: false, error: "The file request timed out. Check whether the file was saved before retrying." });
 		await ports[0].onMessage.emit({ kind: "response", id: sent.id, response: { ok: true } });
 		expect(ports[0].postMessage.mock.calls.filter(([message]: any[]) => message.kind === "cancel-request")).toHaveLength(1);
 	});

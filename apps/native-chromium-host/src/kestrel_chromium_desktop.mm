@@ -925,9 +925,11 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
               });
               return;
             }
-          } else if (([type isEqualToString:@"select-workspace-folder"] || [type isEqualToString:@"select-context-files"] || [type isEqualToString:@"select-plugin-bundle"] || [type isEqualToString:@"select-plugin-publisher"] || [type isEqualToString:@"save-memory-recovery-file"] || [type isEqualToString:@"open-memory-recovery-file"]) && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
+          } else if (([type isEqualToString:@"select-workspace-folder"] || [type isEqualToString:@"select-context-files"] || [type isEqualToString:@"select-plugin-bundle"] || [type isEqualToString:@"select-plugin-publisher"] || [type isEqualToString:@"save-memory-recovery-file"] || [type isEqualToString:@"open-memory-recovery-file"] || [type isEqualToString:@"save-diagnostic-report"]) && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
             const bool recovery_save = [type isEqualToString:@"save-memory-recovery-file"];
             const bool recovery_open = [type isEqualToString:@"open-memory-recovery-file"];
+            const bool diagnostic_save = [type isEqualToString:@"save-diagnostic-report"];
+            const bool save_panel = recovery_save || diagnostic_save;
             const bool context_files = [type isEqualToString:@"select-context-files"];
             const bool plugin_publisher = [type isEqualToString:@"select-plugin-publisher"];
             const bool plugin_bundle = [type isEqualToString:@"select-plugin-bundle"];
@@ -941,17 +943,22 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
             if (!valid_request) response = @{@"ok":@NO, @"error":@"The native file picker request is invalid."};
             else if (desktop_workspace_panel) response = @{@"ok":@NO, @"error":@"A native file or folder picker is already open."};
             else {
-              NSSavePanel* panel = recovery_save ? NSSavePanel.savePanel : NSOpenPanel.openPanel;
-              NSOpenPanel* open_panel = recovery_save ? nil : (NSOpenPanel*)panel;
-              panel.title = recovery_save ? @"Save encrypted knowledge backup" : recovery_open ? @"Preview encrypted knowledge recovery" : plugin_publisher ? @"Trust a plugin publisher key" : plugin_bundle ? @"Select a signed plugin bundle" : context_files ? @"Add files from this task workspace" : @"Grant Kestrel a project folder";
-              panel.prompt = recovery_save ? @"Save backup" : recovery_open ? @"Preview recovery" : plugin_publisher ? @"Trust publisher" : plugin_bundle ? @"Select plugin" : context_files ? @"Add context" : @"Grant folder";
+              NSSavePanel* panel = save_panel ? NSSavePanel.savePanel : NSOpenPanel.openPanel;
+              NSOpenPanel* open_panel = save_panel ? nil : (NSOpenPanel*)panel;
+              panel.title = diagnostic_save ? @"Save a content-free diagnostic report" : recovery_save ? @"Save encrypted knowledge backup" : recovery_open ? @"Preview encrypted knowledge recovery" : plugin_publisher ? @"Trust a plugin publisher key" : plugin_bundle ? @"Select a signed plugin bundle" : context_files ? @"Add files from this task workspace" : @"Grant Kestrel a project folder";
+              panel.prompt = diagnostic_save ? @"Save report" : recovery_save ? @"Save backup" : recovery_open ? @"Preview recovery" : plugin_publisher ? @"Trust publisher" : plugin_bundle ? @"Select plugin" : context_files ? @"Add context" : @"Grant folder";
               open_panel.canChooseDirectories = !context_files && !plugin_publisher && !recovery_open; open_panel.canChooseFiles = context_files || plugin_publisher || recovery_open;
-              open_panel.allowsMultipleSelection = context_files; panel.canCreateDirectories = recovery_save || (!context_files && !plugin_publisher && !plugin_bundle && !recovery_open);
+              open_panel.allowsMultipleSelection = context_files; panel.canCreateDirectories = save_panel || (!context_files && !plugin_publisher && !plugin_bundle && !recovery_open);
               open_panel.treatsFilePackagesAsDirectories = YES;
               if (recovery_save || recovery_open) {
                 panel.allowedFileTypes = @[@"kestrel-memory"];
                 panel.allowsOtherFileTypes = NO;
                 if (recovery_save) panel.nameFieldStringValue = @"kestrel-knowledge.kestrel-memory";
+              }
+              if (diagnostic_save) {
+                panel.allowedFileTypes = @[@"json"];
+                panel.allowsOtherFileTypes = NO;
+                panel.nameFieldStringValue = @"kestrel-diagnostic.json";
               }
               if (context_files) panel.directoryURL = [NSURL fileURLWithPath:workspace_root isDirectory:YES];
               desktop_workspace_panel = panel; desktop_workspace_panel_id = value[@"id"];
@@ -961,13 +968,13 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
                 desktop_workspace_panel = nil; desktop_workspace_panel_id = nil;
                 if (!broker.running) return;
                 NSDictionary* selection = @{@"ok":@YES, @"cancelled":@YES};
-                if (result == NSModalResponseOK && (recovery_save || recovery_open)) {
+                if (result == NSModalResponseOK && (save_panel || recovery_open)) {
                   NSURL* selected = panel.URL;
                   NSString* raw = selected.isFileURL ? selected.path : nil;
                   NSString* path = nil;
                   struct stat info{};
-                  if (ValidNativeDialogPath(raw) && [raw.pathExtension.lowercaseString isEqualToString:@"kestrel-memory"]) {
-                    if (recovery_save) {
+                  if (ValidNativeDialogPath(raw) && [raw.pathExtension.lowercaseString isEqualToString:(diagnostic_save ? @"json" : @"kestrel-memory")]) {
+                    if (save_panel) {
                       NSString* name = raw.lastPathComponent;
                       NSString* parent = CanonicalNativeDialogPath(raw.stringByDeletingLastPathComponent);
                       if (parent && name.length && ![name isEqualToString:@"."] && ![name isEqualToString:@".."] &&
@@ -979,7 +986,9 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
                       path = CanonicalNativeDialogPath(raw);
                     }
                   }
-                  selection = path ? @{@"ok":@YES, @"selectedRecoveryPath":path} : @{@"ok":@NO, @"error":@"Select a valid encrypted knowledge backup file."};
+                  selection = diagnostic_save
+                      ? (path ? @{@"ok":@YES, @"selectedDiagnosticPath":path} : @{@"ok":@NO, @"error":@"Choose a new JSON diagnostic report file."})
+                      : (path ? @{@"ok":@YES, @"selectedRecoveryPath":path} : @{@"ok":@NO, @"error":@"Select a valid encrypted knowledge backup file."});
                 } else if (result == NSModalResponseOK && plugin_publisher) {
                   NSURL* selected = open_panel.URLs.firstObject;
                   NSString* path = selected.isFileURL ? CanonicalNativeDialogPath(selected.path) : nil;

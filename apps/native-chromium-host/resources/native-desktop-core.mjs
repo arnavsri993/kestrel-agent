@@ -1,9 +1,10 @@
+import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest } from "./agent-core/service/native-desktop-runtime.mjs";
+import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 import { dispatchNativeComputerHostRequest } from "./native-computer-host-routing.mjs";
 
@@ -223,6 +224,28 @@ const memoryRecovery = new NativeMemoryRecoveryHost({
 	coreRequest: request => core.request(request),
 	selectFile: (operation, signal) => selectNativeDialog(operation === "save" ? "save-memory-recovery-file" : "open-memory-recovery-file", undefined, signal),
 });
+const diagnostics = new NativeDiagnosticHost({
+ selectSaveFile: signal => selectNativeDialog("save-diagnostic-report", undefined, signal),
+ diagnosticMetadata: async () => {
+  let appVersion;
+  try {
+   const plist = await readFile(join(resources, "../Info.plist"), "utf8");
+   if (plist.length <= 64_000) {
+    const key = "<key>CFBundleShortVersionString</key>";
+    const at = plist.indexOf(key);
+    const field = at >= 0 ? plist.slice(at + key.length, at + key.length + 128).trimStart() : "";
+    const end = field.indexOf("</string>", 8);
+    if (field.startsWith("<string>") && end >= 8) appVersion = field.slice(8, end);
+   }
+  } catch { /* Metadata stays unknown when the bundle has no readable version. */ }
+  return { appVersion, platform: process.platform, arch: process.arch, runtime: "native-chromium", node: process.versions.node,
+   packaged: resources.endsWith("/Contents/Resources"), distribution: "unknown",
+   readiness: await nativeSystemReadiness({ coreRequest: request => core.request(request),
+    workspaceConfiguration: () => workspaces.runtimeConfiguration(), localStatus: () => providers.handle({ type: "local-model-status" }),
+    computerUseStatus: () => computerUse.status() }),
+  };
+ },
+});
 const plugins = new NativePluginHost({ root: profile.root,
 	selectBundle: signal => selectNativeDialog("select-plugin-bundle", undefined, signal),
 	selectPublisher: async signal => (await selectNativeDialog("select-plugin-publisher", undefined, signal))?.[0] ?? null,
@@ -250,6 +273,7 @@ async function shutdown(code = 0) {
 	if (browserReset) { clearTimeout(browserReset.timer); browserReset.reject(new Error("The browser owner is shutting down.")); browserReset = undefined; }
 	cancelBrowsers();
 	await memoryRecovery.close();
+	await diagnostics.close();
 	await workspaces.close();
 	await plugins.close();
 	await providers.close();
@@ -280,6 +304,7 @@ input.on("line", line => {
 		const validPath = path => typeof path === "string" && path.startsWith("/") && path.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(path);
 		if (response?.ok === true && response.cancelled === true) dialog.resolve(null);
 		else if (["select-workspace-folder", "select-plugin-bundle"].includes(dialog.operation) && response?.ok === true && validPath(response.selectedWorkspacePath)) dialog.resolve(response.selectedWorkspacePath);
+		else if (dialog.operation === "save-diagnostic-report" && response?.ok === true && validPath(response.selectedDiagnosticPath)) dialog.resolve(response.selectedDiagnosticPath);
 		else if (["save-memory-recovery-file", "open-memory-recovery-file"].includes(dialog.operation) && response?.ok === true && validPath(response.selectedRecoveryPath)) dialog.resolve(response.selectedRecoveryPath);
 		else if (["select-context-files", "select-plugin-publisher"].includes(dialog.operation) && response?.ok === true && Array.isArray(response.selectedContextPaths) && response.selectedContextPaths.length >= 1 && response.selectedContextPaths.length <= (dialog.operation === "select-plugin-publisher" ? 1 : 8) && response.selectedContextPaths.every(validPath) && new Set(response.selectedContextPaths).size === response.selectedContextPaths.length) dialog.resolve(response.selectedContextPaths);
 		else dialog.reject(new Error("The native file or folder picker did not return a valid selection."));
@@ -310,14 +335,14 @@ input.on("line", line => {
 	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
 	const isHost = message.type === "host-request";
 	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
-	if (!parsed.success || (isHost && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
+	if (!parsed.success || (isHost && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
 	if (!isHost && isNativeMemoryRecoveryInternalRequest(parsed.data.type)) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
-	if ((!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type)) && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Settings are being applied. Wait for Agent Core to restart." } }); return; }
+	if ((!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Settings are being applied. Wait for Agent Core to restart." } }); return; }
 	pending.add(message.id);
-	const hostController = isHost && (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
+	const hostController = isHost && (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
 	const hostTimer = hostController ? setTimeout(() => hostController.abort(new Error("The native host request timed out.")), 9 * 60_000 + 50_000) : undefined;
 	if (hostController) hostRequests.set(message.id, hostController);
-	if (!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type)) activeCoreRequests.add(message.id);
+	if (!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) activeCoreRequests.add(message.id);
 	void Promise.resolve().then(async () => {
 		if (isHost) {
 			if (parsed.data.type === "system-readiness") return { ok: true, systemReadiness: await nativeSystemReadiness({
@@ -329,6 +354,7 @@ input.on("line", line => {
 			if (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type)) return plugins.handle(parsed.data, hostController.signal);
 			if (NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type)) return attachments.handle(parsed.data);
 			if (NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type)) return memoryRecovery.handle(parsed.data, hostController.signal);
+			if (NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) return diagnostics.handle(parsed.data, hostController.signal);
 			return providers.handle(parsed.data);
 		}
 		if (parsed.data.type === "runtime-run-agent") await attachments.assertRequestAttachments(parsed.data);
