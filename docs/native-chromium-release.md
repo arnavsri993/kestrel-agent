@@ -1563,3 +1563,61 @@ Store version plus the compatibility checks; an unsuccessful query or failed
 compatibility phase exits **1**. This additional receipt does not replace or relax
 the strict retirement validator, and it does not certify a fresh Store install
 on this candidate, existing user data, signing or canonical cutover.
+
+### Keep an interrupted preparation and retry separately (2026-11-02)
+
+A failed plan/apply/activation now offers **Keep Files & Start Again**, **Show
+Prepared Folder** and **Cancel**. Keeping files confirms that Kestrel's private
+transfer worker stopped, preserves the old preparation at its existing canonical
+path and opens a new source picker. The next review allocates a separate stable
+destination and requires source closure and Apply acceptance again. An active or
+previously selected data profile cannot be discarded through this path. The old
+files, SQLite recovery metadata and profile key identity remain available for
+later review; this action does not move or delete them.
+
+The native host retains an unconfirmed worker instead of dropping its task
+handle or starting another transfer. Shutdown checks the launched child's parent
+and kernel start time before signalling it, waits for termination and uses a
+bounded forced-stop fallback for that same child. Identity mismatch refuses the
+signal. Verified imports are selected only after worker termination is confirmed.
+Protected pipe deadlines use a monotonic clock. No new renderer, Core, extension
+or tool route is added.
+
+The actual native module passed **23 focused cases**, including real subprocess
+checks for normal termination, a paused child that ignores termination and a
+mismatched start time that must remain unsignalled until fixture cleanup.
+All **2,215 tests in 281 files** and the full native build passed.
+
+Bundle `ebde540cfe45b746f71832418c51e873296ba81720ad06dadffacb2058958ba9`
+passed eight live preservation/retry phases in
+`.tmp/native-transfer-preserved-retry-ui-evidence/receipt.json`. After the first
+native review, a test-only preload killed a separate bundled Node transfer worker
+immediately before publication, leaving a real encrypted stage and paired
+journal/lock in the prepared destination. The app refused to overwrite it at
+apply and again during a subsequent review. The native Keep Files action opened
+a fresh picker, and the second accepted transfer used a different destination.
+The imported conversation appeared after restart; switching back restored the
+original conversation and retained later work in the imported profile. The source
+database/key bytes, every interrupted database-directory file and its independent
+test key were unchanged. A new read-only private-worker inspection still
+recognized that original stage for recovery. Both conversation captures were
+visually inspected.
+
+The same bundle passed seven packaged transfer phases, five forced-process-death
+recovery phases, all 16 native Settings/window/restart phases and bundled Core
+durability/recovery. Receipts are
+`.tmp/native-transfer-preserved-retry-file-evidence/receipt.json`,
+`.tmp/native-transfer-preserved-retry-recovery-evidence/receipt.json` and
+`.tmp/native-transfer-preserved-retry-settings-evidence/receipt.json`. All four
+receipts have unchanged before/after candidate digests. The test-only crash
+preload and new retry mode belong only to the generated fixture; the app has no
+crash flag or approval bypass. No real profile, Keychain, credential, vendor login,
+canonical app or desktop capture/input permission was changed.
+
+Run the interactive retry test with `KESTREL_TEST_NATIVE_TRANSFER_RETRY=1` alongside
+the exact `KESTREL_NATIVE_TEST_APP` and a fresh
+`KESTREL_NATIVE_PROFILE_UI_EVIDENCE` directory when invoking
+`test:native-profile-transfer-ui`. Ordinary mode retains the original five-phase
+workflow. Prepared-profile management and in-place archive/adoption of incomplete
+stages or abandoned recovery reservations remain unfinished, along with the
+other existing-profile, browser/credential, signing and canonical-cutover gates.

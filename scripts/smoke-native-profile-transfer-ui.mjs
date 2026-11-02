@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -15,6 +16,7 @@ assert(process.env.KESTREL_NATIVE_TEST_APP, "Set the exact disposable native can
 const app = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
 assert.notEqual(app, await realpath("/Applications/Kestrel.app").catch(() => "/Applications/Kestrel.app"));
 const executable = join(app, "Contents/MacOS/Kestrel");
+const retryRequested = process.env.KESTREL_TEST_NATIVE_TRANSFER_RETRY === "1";
 const evidence = resolve(process.env.KESTREL_NATIVE_PROFILE_UI_EVIDENCE || `.tmp/native-profile-transfer-ui-${Date.now()}`);
 await mkdir(evidence, { recursive: true, mode: 0o700 }); assert.equal((await readdir(evidence)).length, 0);
 const temporary = await realpath(await mkdtemp(join(tmpdir(), "kestrel-profile-transfer-ui-")));
@@ -36,9 +38,11 @@ seeded.saveRuntimeMessage({ id: randomUUID(), sessionId: sourceSessionId, role: 
 seeded.setPrivateState("orchestrator.scheduled-jobs", [{ id: "generated-inherited-job", title: "Generated inherited schedule", sessionId: sourceSessionId, model: "fixture", providerIds: ["fixture"], schedule: { kind: "once", nextRunAt: at }, status: "pending", prompt: "Do not automatically run this generated job", createdAt: at, updatedAt: at }]);
 seeded.close();
 const sourceBefore = await readFile(sourceDatabase), keyBefore = await readFile(sourceKeyPath);
-const receipt = { version: 1, startedAt: new Date().toISOString(), candidate: app, candidateSha256: await candidateDigest(app),
+const receipt = { version: 1, startedAt: new Date().toISOString(), candidate: app, candidateSha256: await candidateDigest(app), retryRequested,
 	scope: "Generated disposable browser/source profiles and test keys only. No real Keychain, user profile, credentials or whole-desktop control.", phases: [] };
 let running, browser;
+let interruptedPreparation;
+const fixtureClients = [], fixtureKeys = [];
 let interrupted = false;
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { interrupted = true; });
 function phase(name) { receipt.phases.push({ phase: name, passed: true }); console.log(`PASS ${name}`); }
@@ -84,18 +88,51 @@ async function live(stage, state) {
 	await writeFile(join(evidence, "live-state.json"), JSON.stringify({ stage, candidate: app, pid: state.child.pid, source, browserProfile: profile }, null, 2), { mode: 0o600 });
 	console.log(stage);
 }
+async function databaseDirectoryDigest(root) {
+	const records = [];
+	async function visit(path, relative) {
+		const info = await lstat(path); assert(info.uid === process.getuid() && !info.isSymbolicLink());
+		const row = { path: relative, mode: info.mode & 0o777, device: info.dev, inode: info.ino, links: info.nlink };
+		if (info.isDirectory()) { records.push({ ...row, type: "directory" }); for (const name of (await readdir(path)).sort()) await visit(join(path, name), relative + "/" + name); }
+		else { assert(info.isFile()); const digest = createHash("sha256"); for await (const bytes of createReadStream(path)) digest.update(bytes); records.push({ ...row, type: "file", size: info.size, sha256: digest.digest("hex") }); }
+	}
+	await visit(root, "database"); return createHash("sha256").update(JSON.stringify(records)).digest("hex");
+}
 try {
 	const first = await start();
 	const created = await first.home.evaluate(() => window.kestrel.request({ type: "runtime-create-session", title: "Original native conversation", kind: "conversation" }));
 	assert.equal(created.ok, true); const originalId = created.session.id;
 	phase("existing-native-conversation-created-before-transfer");
 	await live("NATIVE_PROFILE_TRANSFER_UI_READY", first.state);
+	if (retryRequested) {
+		await eventually(() => first.state.output.includes("KESTREL_NATIVE_CORE_TRANSFER_REVIEW_READY"), "The first native review was not opened.", 10 * 60_000);
+		const children = (await readdir(join(profile, "native-core-profiles"))).filter(name => /^[a-f0-9-]{36}$/i.test(name)); assert.equal(children.length, 1);
+		const root = join(profile, "native-core-profiles", children[0]), database = join(root, "native-core/database/kestrel.sqlite");
+		const destinationKey = await readFile(join(root, ".kestrel-native-test-core-key-v1")); assert.equal(destinationKey.length, 32); fixtureKeys.push(destinationKey);
+		const { writeCoreTransferCrashPreload, launchCoreTransferFixture } = await tsImport("./native-core-transfer-crash-fixture.ts", import.meta.url);
+		const preload = join(temporary, "before-link-fixture.mjs"); await writeCoreTransferCrashPreload(preload, database, "before-link");
+		const workerOptions = { executable: join(app, "Contents/Resources/agent-core/node/bin/node"), entry: join(app, "Contents/Resources/agent-core/service/host-profile-file-transfer.js"), home: temporary };
+		const crashed = launchCoreTransferFixture({ ...workerOptions, preload }); fixtureClients.push(crashed);
+		const plan = await crashed.request("plan", { sourceDatabasePath: sourceDatabase, destinationDatabasePath: database, sourceKeyBase64: sourceKey.toString("base64") }); assert.equal(plan.ok, true);
+		crashed.send("apply", { planId: plan.planId, acceptedPlanSha256: plan.preview.planSha256, approved: true, destinationKeyBase64: destinationKey.toString("base64") });
+		assert.deepEqual(await crashed.exited, { code: null, signal: "SIGKILL" }); assert.equal(crashed.errors(), "");
+		for (const key of [sourceKey, destinationKey]) assert(!crashed.output().includes(key.toString("base64")));
+		const digest = await databaseDirectoryDigest(join(root, "native-core/database"));
+		interruptedPreparation = { root, database, digest, destinationKey, workerOptions };
+		phase("actual-bundled-worker-crash-leaves-encrypted-preparation-after-native-review");
+		await live("NATIVE_PROFILE_TRANSFER_RETRY_FIXTURE_READY", first.state);
+		await eventually(() => first.state.output.includes("KESTREL_NATIVE_CORE_TRANSFER_RETRY_READY"), "The native keep-files/start-again choice was not completed.", 10 * 60_000);
+		assert.equal(await databaseDirectoryDigest(join(root, "native-core/database")), digest);
+		phase("native-error-keeps-interrupted-files-before-opening-a-fresh-source-picker");
+		await live("NATIVE_PROFILE_TRANSFER_RETRY_SOURCE_READY", first.state);
+	}
 	await eventually(async () => {
 		const selection = JSON.parse(await readFile(join(profile, "native-core-profile.json"), "utf8"));
 		return /^native-core-profiles\/[a-f0-9-]{36}$/i.test(selection.active) && selection.previous === "" && first.state.output.includes("KESTREL_NATIVE_CORE_TRANSFER_SELECTED");
 	}, "The native transfer/review/apply interface was not completed.", 10 * 60_000);
 	phase("native-picker-review-explicit-acceptance-and-selection-saved");
 	const selected = JSON.parse(await readFile(join(profile, "native-core-profile.json"), "utf8")), importedRoot = join(profile, selected.active);
+	if (interruptedPreparation) assert.notEqual(importedRoot, interruptedPreparation.root);
 	await stop();
 	const second = await start();
 	const sessions = await second.home.evaluate(() => window.kestrel.request({ type: "runtime-list-sessions" }));
@@ -128,10 +165,24 @@ try {
 	} finally { imported.close(); importedKey?.fill(0); }
 	assert.deepEqual(await readFile(sourceDatabase), sourceBefore); assert.deepEqual(await readFile(sourceKeyPath), keyBefore);
 	phase("new-native-work-retained-scheduled-authority-cancelled-source-bytes-unchanged");
+	if (interruptedPreparation) {
+		const kept = interruptedPreparation;
+		assert.equal(await databaseDirectoryDigest(join(kept.root, "native-core/database")), kept.digest);
+		const sameKey = await readFile(join(kept.root, ".kestrel-native-test-core-key-v1")); try { assert.deepEqual(sameKey, kept.destinationKey); } finally { sameKey.fill(0); }
+		const { launchCoreTransferFixture } = await tsImport("./native-core-transfer-crash-fixture.ts", import.meta.url);
+		const inspector = launchCoreTransferFixture(kept.workerOptions); fixtureClients.push(inspector);
+		const reviewed = await inspector.request("inspect-interrupted", { destinationDatabasePath: kept.database }); assert.equal(reviewed.ok, true); assert.equal(reviewed.preview.state, "staged");
+		assert.deepEqual(await inspector.stop(), { code: 0, signal: null }); assert.equal(inspector.errors(), "");
+		assert.equal(await databaseDirectoryDigest(join(kept.root, "native-core/database")), kept.digest);
+		receipt.preservedPreparationSha256 = kept.digest;
+		phase("old-interrupted-stage-and-stable-test-key-remain-reviewable-after-successful-separate-transfer");
+	}
 	receipt.result = "passed";
 } catch (error) { receipt.result = "failed"; receipt.error = interrupted ? "UI_CANARY_INTERRUPTED" : error?.code || "Native profile transfer UI canary failed at its next phase."; process.exitCode = 1; }
 finally {
 	await stop().catch(() => { receipt.result = "failed"; process.exitCode = 1; });
+	for (const client of fixtureClients) { if (client.child.exitCode === null && client.child.signalCode === null) client.child.kill("SIGKILL"); await client.exited; }
+	for (const key of fixtureKeys) key.fill(0);
 	sourceKey.fill(0); sourceBefore.fill(0); keyBefore.fill(0);
 	await rm(temporary, { recursive: true, force: true });
 	receipt.candidateSha256After = await candidateDigest(app);

@@ -30,6 +30,19 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 		const result = spawnSync(executable, [path, "--source"], { encoding: "utf8" }); expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout);
 	}
 	function sourceProfile() { const value = profile(); for (const name of ["secure", "database"]) mkdirSync(join(value.root, name), { mode: 0o700 }); return value; }
+	function stopWorker(mode) {
+		const result = spawnSync(executable, [temporary, `--stop-${mode}`], { encoding: "utf8", timeout: 10000 });
+		expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout);
+	}
+	it("confirms a private child has stopped before releasing its task", () => {
+		const result = stopWorker("worker"); expect(result).toMatchObject({ stopped: true, identity: true, preservedBeforeFixtureCleanup: false }); expect(result.milliseconds).toBeLessThan(3500);
+	});
+	it("stops an unresponsive paused private child using its captured process identity", () => {
+		const result = stopWorker("paused-worker"); expect(result).toMatchObject({ stopped: true, identity: true, preservedBeforeFixtureCleanup: false, signal: 9 }); expect(result.milliseconds).toBeLessThan(3500);
+	});
+	it("does not force a signal when the captured child start time no longer matches", () => {
+		const result = stopWorker("mismatched-worker"); expect(result).toMatchObject({ stopped: false, identity: true, preservedBeforeFixtureCleanup: true, signal: null }); expect(result.milliseconds).toBeLessThan(3500);
+	});
 	it("canonicalizes an explicit native source without Cocoa shortening /private/var", () => {
 		const root = realpathSync(mkdtempSync("/var/tmp/kestrel-source-alias-")), value = { root };
 		try {
