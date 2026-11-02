@@ -1101,14 +1101,15 @@ export class KestrelDatabase {
 			);
 	}
 
-	listToolExecutions(sessionId: string): RuntimeToolExecution[] {
-		return (
-			this.db
+	listToolExecutions(sessionId: string, toolName?: string): RuntimeToolExecution[] {
+		const rows = (toolName === undefined ? this.db
 				.prepare(
 					"SELECT payload FROM tool_executions WHERE session_id = ? ORDER BY started_at ASC",
 				)
-				.all(sessionId) as Array<{ payload: string }>
-		).map((row) => this.decodeToolExecution(row.payload));
+				.all(sessionId) : this.db.prepare(
+					"SELECT payload FROM tool_executions WHERE session_id = ? AND tool_name = ? ORDER BY started_at ASC",
+				).all(sessionId, toolName)) as Array<{ payload: string }>;
+		return rows.map((row) => this.decodeToolExecution(row.payload));
 	}
 
 	saveActionReceipt(receipt: ActionReceipt): void {

@@ -149,6 +149,10 @@ export function ComputerUseSettings() {
 					Let Kestrel inspect and control Mac apps after you approve each action.
 					It is off by default and separate from the Kestrel browser.
 				</p>
+				<p>
+					Computer control needs a model that can read images. Captures go to the
+					model used for the task; choose a local model to keep them on this Mac.
+				</p>
 				{status ? (
 					<div className="computer-use-permissions" aria-label="macOS permission status">
 						<PermissionStatus

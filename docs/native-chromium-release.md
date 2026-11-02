@@ -982,3 +982,83 @@ indicator appeared ahead of the focused browser in the window-server list. The
 test rejected the target bounds before proposing input. No native input has
 been verified by that failed receipt; the native focus fix and its live check
 remain separate work.
+
+
+### Native screenshot delivery and approved input acceptance (2026-11-02)
+
+The native focus owner now selects Kestrel's actual key-window number, or a
+uniquely matched focused Accessibility window for another app. Chromium's
+sharing indicator can no longer replace the input-bound window. Ambiguous or
+missing focus fails closed. A compiled C++ fixture exercises the production
+selection function, including helper windows, overlapping windows, negative
+coordinates, invalid bounds and focused modal windows.
+
+Screenshot tools now retain compact capture metadata in conversation text and
+supply validated PNG pixels as an actual image content part. Only the current
+run's latest retained observation is rehydrated, only for the requesting
+provider and model. Route changes, compaction and expiry cannot replay an old
+image. Automatic provider fallback is disabled for that image-bearing request.
+Encrypted execution records retain the pixels; ordinary conversation text does
+not. Local Ollama rechecks the selected model's image capability before sending
+pixels. Its generated tool-call IDs are now unique across completions, avoiding
+cross-turn idempotency collisions. A desktop-input run cannot complete until
+the final model request has received a distinct screenshot captured after its
+last delivered input.
+
+Bundle `32840e893c4d5a78c16842a49d7331be7718b6156470feac38734a3875067fa0`
+ran the user's explicitly approved disposable local test. Receipt
+`.tmp/native-desktop-computer-canary-6cc053d0-636f-41fb-a23b-bbfebeed206f.json`
+records six successful phases: default-off, loopback model configuration,
+explicit Settings enablement, a real native companion Allow once decision
+followed by one trusted native click changing the generated counter from 0 to 1,
+agent post-action capture/model image delivery, and product opt-out/fail-closed
+capture. Both model images matched independently read Core execution hashes.
+Raw SQLite checks found the screenshot and idempotency envelopes protected and
+sampled PNG fragments absent. The stub used a known generated DOM target for
+its coordinates; this is platform/image/approval proof, not vision-model
+reasoning or unrestricted desktop-task evidence. Images stayed on this Mac.
+No image bytes were written into the receipt.
+
+That full receipt remains **failed**: its final restart step reused the prior
+launch's DevTools address. The harness now scopes launch output locally. The
+separate **restart-only** receipt
+`.tmp/native-desktop-computer-canary-68da4e66-7b46-4604-96e3-ae024e81e7b3.json`
+passed three clean starts with default-off status on the same bundle. It did
+not capture, enable control, issue model completions or input. It does not turn
+the earlier failed receipt into a complete single-run pass, nor prove enabled-
+then-disabled restart on that earlier test profile. Both generated profiles
+were removed and all owned processes stopped; no second click was attempted.
+An earlier parser-only attempt also failed before input and cleaned up.
+
+`test:native-desktop-computer` requires an explicit disposable candidate,
+reviewed candidate hash and opt-in environment flag. It never enables access
+or approves input itself. `--restart-only` is a separately scoped no-input
+check. The canonical app and real profiles remain untouched.
+
+Local validation after the selected-model capability check: **2,081 tests in
+272 files** and workspace typechecking passed. Full CI at the preceding
+published head `acda2d647f1d9271e153ee1e5f0faea3e82ff97e` also passed (runs
+`41393665571` and `41393658718`). A rebuilt bundle and subsequent CI are
+separate evidence from the input-test fingerprint above. Real published Store
+version upgrade, complete profile/credential migration and rollback, vendor
+sign-in parity, production signing/notarization and canonical cutover remain
+release requirements.
+
+The next bundle,
+`1a38007c983a51ea8e2a79a736551289b16c635061e8b200846b5a50fee61a7b`,
+passed the complete 16-phase settings/window/restart canary, including the
+visible image-model explanation, real macOS permission status, enforced opt-out
+and saved off state. Receipt:
+`.tmp/native-model-image-settings-evidence/receipt.json`.
+This run made no desktop capture/input requests and does not extend the
+single-click proof to a second bundle. Completion checks query only desktop
+input rows and the current frame, avoiding decryption of all historical image
+payloads during ordinary conversation completion.
+
+The final completion-query refinement rebuilt as
+`26666290ae4dfaf2d121e1cdbaccc0b2f2360ee43e47de6345ef0904a497c1dc`.
+All 2,081 tests/272 files, workspace typechecking and the full native build
+passed again. Its full 16-phase settings/window/restart canary also passed:
+`.tmp/native-model-image-release-settings-evidence/receipt.json`, unchanged
+before/after bundle digest. That current candidate ran only the no-input
+settings flow; the approved click remains bound to the earlier fingerprint.

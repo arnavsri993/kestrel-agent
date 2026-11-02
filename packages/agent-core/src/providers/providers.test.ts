@@ -33,6 +33,47 @@ afterEach(async () => {
 });
 
 describe("model provider adapters", () => {
+	it.each([undefined, ["completion", "tools"], ["completion", "vision"]])("confirms the selected Ollama model's image support before sending pixels (%s)", async capabilities => {
+		let chatBody: Record<string, unknown> | undefined;
+		const baseUrl = await serve((request, response) => {
+			response.setHeader("content-type", "application/json");
+			if (request.url === "/api/tags") response.end(JSON.stringify({ models: [{ name: "fixture" }] }));
+			else if (request.url === "/api/show") response.end(JSON.stringify({ capabilities }));
+			else {
+				let raw = "";
+				request.on("data", chunk => { raw += chunk; });
+				request.on("end", () => { chatBody = JSON.parse(raw); response.end(JSON.stringify({ message: { content: "Seen" }, done: true }) + "\n"); });
+			}
+		});
+		const provider = new OllamaChatProvider({ baseUrl });
+		const request = { model: "fixture", messages: [{ role: "user" as const, content: [{ type: "image" as const, source: "base64" as const, mediaType: "image/png", data: "generated-image-fixture" }] }] };
+		if (capabilities?.includes("vision")) {
+			await expect(provider.complete(request)).resolves.toMatchObject({ text: "Seen" });
+			expect(chatBody?.messages).toEqual([{ role: "user", content: "", images: ["generated-image-fixture"] }]);
+		} else {
+			await expect(provider.complete(request)).rejects.toThrow(/vision-capable/);
+			expect(chatBody).toBeUndefined();
+		}
+	});
+	it("gives Ollama calls unique identities across turns and within each chunk", async () => {
+		const baseUrl = await serve((request, response) => {
+			response.setHeader("content-type", "application/json");
+			if (request.url === "/api/tags") response.end(JSON.stringify({ models: [{ name: "fixture" }] }));
+			else if (request.url === "/api/show") response.end(JSON.stringify({ capabilities: ["completion", "tools"] }));
+			else response.end(JSON.stringify({ message: { tool_calls: [
+				{ function: { name: "computer.screenshot", arguments: {} } },
+				{ function: { name: "test.other", arguments: {} } },
+			] }, done: true }) + "\n");
+		});
+		const provider = new OllamaChatProvider({ baseUrl });
+		const request = { model: "fixture", messages: [{ role: "user" as const, content: textContent("Generated fixture") }] };
+		const first = await provider.complete(request);
+		const second = await provider.complete(request);
+		const calls = [...first.toolCalls, ...second.toolCalls];
+		expect(calls).toHaveLength(4);
+		expect(new Set(calls.map(call => call.id)).size).toBe(4);
+		expect(calls.map(call => call.name)).toEqual(["computer.screenshot", "test.other", "computer.screenshot", "test.other"]);
+	});
 	it("creates logical credential pools from protected primary and backup environments", () => {
 		const providers = createEnvironmentModelProviders({
 			OPENAI_API_KEY: "primary",

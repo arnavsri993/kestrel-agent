@@ -1860,7 +1860,7 @@ export function installBrowserTools(
 		},
 		({ signal }, input) =>
 			controller.desktopAct(input.action as DesktopAction, signal),
-		"Native Chromium requires the exact single-use captureId returned by the latest computer.screenshot call.",
+		"Native Chromium requires the exact single-use captureId returned by the latest computer.screenshot call. After input, take a fresh computer.screenshot and inspect the visible result before completing the task. A performed input alone does not verify the result.",
 	);
 	if (visualValidator)
 		add(

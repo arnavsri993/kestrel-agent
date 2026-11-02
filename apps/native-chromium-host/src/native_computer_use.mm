@@ -1,4 +1,5 @@
 #import "native_computer_use.h"
+#include "native_computer_window.h"
 
 #import <ApplicationServices/ApplicationServices.h>
 #import <ImageIO/ImageIO.h>
@@ -86,6 +87,44 @@ bool SameRect(CGRect left, CGRect right) {
          NearlyEqual(left.origin.y, right.origin.y) &&
          NearlyEqual(left.size.width, right.size.width) &&
          NearlyEqual(left.size.height, right.size.height);
+}
+
+bool FocusedAccessibilityWindowBounds(pid_t pid, CGRect* bounds) {
+  AXUIElementRef application = AXUIElementCreateApplication(pid);
+  if (!application) return false;
+  AXUIElementSetMessagingTimeout(application, 0.25);
+  CFTypeRef window = nullptr;
+  const AXError focused = AXUIElementCopyAttributeValue(
+      application, kAXFocusedWindowAttribute, &window);
+  CFRelease(application);
+  if (focused != kAXErrorSuccess || !window ||
+      CFGetTypeID(window) != AXUIElementGetTypeID()) {
+    if (window) CFRelease(window);
+    return false;
+  }
+  auto focusedWindow = static_cast<AXUIElementRef>(window);
+  AXUIElementSetMessagingTimeout(focusedWindow, 0.25);
+  CFTypeRef position = nullptr, size = nullptr;
+  const AXError positionResult = AXUIElementCopyAttributeValue(
+      focusedWindow, kAXPositionAttribute, &position);
+  const AXError sizeResult = AXUIElementCopyAttributeValue(
+      focusedWindow, kAXSizeAttribute, &size);
+  CGPoint point = CGPointZero;
+  CGSize dimensions = CGSizeZero;
+  const bool valid = positionResult == kAXErrorSuccess &&
+      sizeResult == kAXErrorSuccess && position && size &&
+      CFGetTypeID(position) == AXValueGetTypeID() &&
+      CFGetTypeID(size) == AXValueGetTypeID() &&
+      AXValueGetValue(static_cast<AXValueRef>(position), kAXValueTypeCGPoint, &point) &&
+      AXValueGetValue(static_cast<AXValueRef>(size), kAXValueTypeCGSize, &dimensions) &&
+      std::isfinite(point.x) && std::isfinite(point.y) &&
+      std::isfinite(dimensions.width) && std::isfinite(dimensions.height) &&
+      dimensions.width > 0 && dimensions.height > 0;
+  if (position) CFRelease(position);
+  if (size) CFRelease(size);
+  CFRelease(window);
+  if (valid) *bounds = CGRectMake(point.x, point.y, dimensions.width, dimensions.height);
+  return valid;
 }
 
 bool SameIdentity(const NativeComputerUseIdentity& left,
@@ -188,6 +227,28 @@ bool NativeComputerUseService::CurrentIdentity(
     if (error) *error = "There is no frontmost application to bind desktop input.";
     return false;
   }
+  CGWindowID ownFocusedWindow = kCGNullWindowID;
+  CGRect accessibilityBounds = CGRectZero;
+  bool requireAccessibilityBounds = false;
+  if (app.processIdentifier == NSProcessInfo.processInfo.processIdentifier) {
+    // A sharing indicator can be above the browser in the CG window list.
+    // The application's key window supplies its actual public window number;
+    // querying our own AX server synchronously here could deadlock its UI thread.
+    NSWindow* focused = NSApp.keyWindow;
+    if (!focused || !focused.visible || focused.miniaturized || focused.windowNumber <= 0) {
+      if (error) *error = "Focus a Kestrel window before capturing the desktop.";
+      return false;
+    }
+    ownFocusedWindow = static_cast<CGWindowID>(focused.windowNumber);
+  } else if (AXIsProcessTrusted()) {
+    // Control already requires Accessibility permission. Bind other apps to
+    // their focused AX window, rather than a floating helper or sharing badge.
+    if (!FocusedAccessibilityWindowBounds(app.processIdentifier, &accessibilityBounds)) {
+      if (error) *error = "The focused application window could not be identified safely.";
+      return false;
+    }
+    requireAccessibilityBounds = true;
+  }
   CFArrayRef rawWindows = CGWindowListCopyWindowInfo(
       kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
       kCGNullWindowID);
@@ -195,8 +256,8 @@ bool NativeComputerUseService::CurrentIdentity(
     if (error) *error = "The frontmost desktop window could not be identified.";
     return false;
   }
-  NSDictionary* frontmost = nil;
   CGRect windowBounds = CGRectZero;
+  std::vector<NativeComputerWindowCandidate> candidates;
   const CFIndex count = CFArrayGetCount(rawWindows);
   for (CFIndex index = 0; index < count; ++index) {
     id item = (__bridge id)CFArrayGetValueAtIndex(rawWindows, index);
@@ -206,21 +267,29 @@ bool NativeComputerUseService::CurrentIdentity(
     NSNumber* layer = info[(NSString*)kCGWindowLayer];
     NSNumber* windowId = info[(NSString*)kCGWindowNumber];
     if (![ownerPid isKindOfClass:[NSNumber class]] || ownerPid.intValue != app.processIdentifier ||
-        ![layer isKindOfClass:[NSNumber class]] || layer.intValue != 0 ||
+        ![layer isKindOfClass:[NSNumber class]] ||
         ![windowId isKindOfClass:[NSNumber class]] || windowId.unsignedIntValue == 0 ||
         !RectFromWindowInfo(info, &windowBounds)) continue;
     NSNumber* alpha = info[(NSString*)kCGWindowAlpha];
-    if ([alpha isKindOfClass:[NSNumber class]] && alpha.doubleValue <= 0.01) continue;
-    frontmost = info;
-    identity->frontmost_window_id = windowId.unsignedIntValue;
-    break;
+    candidates.push_back({ownerPid.intValue, windowId.unsignedIntValue, layer.intValue,
+        [alpha isKindOfClass:[NSNumber class]] ? alpha.doubleValue : 1.0,
+        {windowBounds.origin.x, windowBounds.origin.y, windowBounds.size.width, windowBounds.size.height}});
   }
   CFRelease(rawWindows);
-  if (!frontmost) {
-    if (error) *error = "The frontmost application has no visible window to bind desktop input.";
+  const NativeComputerWindowRect focusedBounds = {accessibilityBounds.origin.x,
+      accessibilityBounds.origin.y, accessibilityBounds.size.width, accessibilityBounds.size.height};
+  const auto selectedWindow = SelectNativeComputerWindow(candidates,
+      app.processIdentifier, ownFocusedWindow, requireAccessibilityBounds ? &focusedBounds : nullptr);
+  if (!selectedWindow.found) {
+    if (error) *error = selectedWindow.ambiguous
+        ? "The focused application window has an ambiguous desktop identity."
+        : "The focused application has no matching visible window to bind desktop input.";
     return false;
   }
   identity->foreground_process_id = app.processIdentifier;
+  identity->frontmost_window_id = selectedWindow.window.window_id;
+  const auto& selectedWindowBounds = selectedWindow.window.bounds;
+  windowBounds = CGRectMake(selectedWindowBounds.x, selectedWindowBounds.y, selectedWindowBounds.width, selectedWindowBounds.height);
   identity->frontmost_window_bounds = windowBounds;
 
   CGDirectDisplayID selected = kCGNullDirectDisplay;

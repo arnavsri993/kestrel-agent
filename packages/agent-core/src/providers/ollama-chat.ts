@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { assertLocalOllamaMetadata } from "@kestrel/shared-types";
 import { providerFetch, readNdjson } from "./http";
 import { readBoundedResponseBytes } from "../bounded-http";
@@ -337,6 +338,10 @@ export class OllamaChatProvider implements ModelProvider {
 		try { descriptor = JSON.parse(new TextDecoder().decode(showBytes)); }
 		catch { throw new Error("Ollama could not confirm whether the selected model is local."); }
 		assertLocalOllamaMetadata(descriptor);
+		if (request.messages.some(message => message.content.some(part => part.type === "image")) &&
+			!parsedOllamaCapabilities(objectRecord(descriptor)?.capabilities)?.has("vision")) {
+			throw new Error("The selected local model has not confirmed image support. Choose a vision-capable model before sending a screenshot.");
+		}
 		const response = await providerFetch(this.id, `${this.baseUrl}/api/chat`, {
 			method: "POST",
 			headers: { "content-type": "application/json", ...this.options.headers },
@@ -385,6 +390,9 @@ export class OllamaChatProvider implements ModelProvider {
 		let outputTokens = 0;
 		let doneReason = "";
 		const toolCalls: ModelToolCall[] = [];
+		// Ollama has no stable call IDs. Scope generated IDs to this completion,
+		// otherwise a later turn can replay an earlier tool's idempotency result.
+		const completionId = randomUUID();
 		await readNdjson(response, this.id, (raw) => {
 			assertLocalOllamaMetadata(raw);
 			const chunk = raw as Record<string, unknown>;
@@ -395,13 +403,13 @@ export class OllamaChatProvider implements ModelProvider {
 				options.onEvent?.({ type: "text_delta", delta: message.content });
 			}
 			const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-			for (const [index, rawCall] of calls.entries()) {
+			for (const rawCall of calls) {
 				const fn =
 					((rawCall as Record<string, unknown>).function as
 						| Record<string, unknown>
 						| undefined) ?? {};
 				const call: ModelToolCall = {
-					id: `ollama-call-${toolCalls.length + index + 1}`,
+					id: `ollama-call-${completionId}-${toolCalls.length + 1}`,
 					name: String(fn.name ?? "unknown_tool"),
 					arguments:
 						fn.arguments !== null && typeof fn.arguments === "object"

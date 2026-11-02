@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { RuntimeToolExecution } from "@kestrel/shared-types";
+import { screenshotTextOutput } from "./screenshot-model-context";
 
 interface RedactionState {
 	redactions: number;
@@ -163,7 +164,7 @@ export function modelVisibleToolResult(execution: RuntimeToolExecution): string 
 	const output =
 		execution.output === undefined
 			? undefined
-			: redactValue(execution.output, state);
+			: redactValue(screenshotTextOutput(execution), state);
 	const error = execution.error
 		? redactText(execution.error, state)
 		: undefined;
