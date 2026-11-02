@@ -26,3 +26,12 @@ test('fixture roles reject injected HTML and script in both rendered pages', () 
   }
  }
 });
+
+test('recovery heartbeat serves a constant script for every admitted role', () => {
+ const fixtures = createIsolationFixtures();
+ const absent = requestFixture(fixtures, '/isolation-alive');
+ assert.equal(absent.status, 200);
+ for (const role of ['user', 'first', 'second', 'first-next', 'first-key', 'orphan', 'recovered']) {
+  assert.equal(requestFixture(fixtures, `/isolation-alive?role=${role}`).body, absent.body);
+ }
+});

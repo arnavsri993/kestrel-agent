@@ -38,7 +38,7 @@ export function createIsolationFixtures() {
 		else if (url.pathname === "/isolation-pulse") pulses.push(role);
 		else if (url.pathname === "/isolation-alive") {
 			response.writeHead(200, { "content-type": "text/html" });
-			response.end(`<!doctype html><title>Owned isolated recovery fixture</title><h1>Owned recovery fixture</h1><script>const pulse=()=>fetch('/isolation-pulse?role='+${JSON.stringify(encodeURIComponent(role))});pulse();setInterval(pulse,150);</script>`); return true;
+			response.end("<!doctype html><title>Owned isolated recovery fixture</title><h1>Owned recovery fixture</h1><script>const role=new URLSearchParams(location.search).get('role');const pulse=()=>fetch('/isolation-pulse'+(role===null?'':'?role='+encodeURIComponent(role)));pulse();setInterval(pulse,150);</script>"); return true;
 		}
 		else if (url.pathname === "/isolation-probe") storage.push({ role, previous: url.searchParams.get("previous") });
 		else if (url.pathname === "/isolation-act") actions.push({ role, kind: url.searchParams.get("kind"), trusted: url.searchParams.get("trusted"), value: url.searchParams.get("value") });

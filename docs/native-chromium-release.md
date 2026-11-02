@@ -1754,3 +1754,13 @@ the service schema is preserved separately. No product code changed for that
 correction. All receipts show the unchanged candidate digest; the probe stopped
 its owned processes and removed only its generated profile. This does not verify
 a hosted transcription service or move any real profile or credentials.
+
+At `9b7bd7af`, both the desktop/package and Core/website/security CI jobs passed.
+CodeQL aggregation reported 14 annotations: two fixture findings cleared, while
+the recovery-heartbeat fixture still embedded an encoded role in JavaScript.
+That endpoint now serves one constant script for every admitted role and reads
+the role from its URL at runtime. Both focused fixture tests pass, and all 26
+native workflow phases passed again against the unchanged `16649a22` bundle in
+`.tmp/native-core-input-guards-constant-pulse-evidence/receipt.json`. Remote CodeQL
+must confirm the final result; successful analysis jobs alone do not clear its
+aggregate findings.
