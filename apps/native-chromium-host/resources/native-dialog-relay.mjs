@@ -37,9 +37,10 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
     const folder = ["select-workspace-folder", "select-plugin-bundle"].includes(message.operation);
     const publisher = message.operation === "select-plugin-publisher";
     const files = message.operation === "select-context-files";
+    const recovery = ["save-memory-recovery-file", "open-memory-recovery-file"].includes(message.operation);
     const allowedKeys = files ? ["type", "requestId", "operation", "workspaceRoot"] : ["type", "requestId", "operation"];
     if (closed || pending || sequence >= Number.MAX_SAFE_INTEGER || message.type !== "native-dialog-request" ||
-        (!folder && !files && !publisher) || (files && !validPath(message.workspaceRoot)) || Object.keys(message).some(key => !allowedKeys.includes(key))) {
+        (!folder && !files && !publisher && !recovery) || (files && !validPath(message.workspaceRoot)) || Object.keys(message).some(key => !allowedKeys.includes(key))) {
       respond(id, { ok: false, error: failed }); return;
     }
     const privateId = `dialog-${++sequence}`;
@@ -66,6 +67,9 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
     } else if (["select-workspace-folder", "select-plugin-bundle"].includes(item.operation) && value?.ok === true && validPath(value.selectedWorkspacePath) &&
         keys.length === 2 && keys.includes("ok") && keys.includes("selectedWorkspacePath")) {
       respond(item.requestId, { ok: true, selectedWorkspacePath: value.selectedWorkspacePath });
+    } else if (["save-memory-recovery-file", "open-memory-recovery-file"].includes(item.operation) && value?.ok === true && validPath(value.selectedRecoveryPath) &&
+        keys.length === 2 && keys.includes("ok") && keys.includes("selectedRecoveryPath")) {
+      respond(item.requestId, { ok: true, selectedRecoveryPath: value.selectedRecoveryPath });
     } else if (["select-context-files", "select-plugin-publisher"].includes(item.operation) && value?.ok === true && Array.isArray(value.selectedContextPaths) &&
         value.selectedContextPaths.length > 0 && value.selectedContextPaths.length <= (item.operation === "select-plugin-publisher" ? 1 : 8) && value.selectedContextPaths.every(validPath) &&
         new Set(value.selectedContextPaths).size === value.selectedContextPaths.length &&

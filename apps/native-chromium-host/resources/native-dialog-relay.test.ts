@@ -147,3 +147,39 @@ it("only allows fixed private plugin pickers and a single publisher key", () => 
   h.relay.response({ kind: "host-response", id: "dialog-2", response: { ok: true, selectedWorkspacePath: "/selected/bundle" } });
   expect(h.writeCore.mock.calls.at(-1)?.[0].response).toEqual({ ok: true, selectedWorkspacePath: "/selected/bundle" });
 });
+
+it.each(["save-memory-recovery-file", "open-memory-recovery-file"])("restricts private recovery picker %s to its fixed request and response", (operation) => {
+  const h = harness();
+  h.request(1, { operation, path: "/injected" });
+  h.request(2, { operation, key: "secret" });
+  h.request(3, { operation, sessionId: "secret" });
+  expect(h.frames()).toEqual([]);
+  h.request(4, { operation });
+  h.request(5, { operation });
+  expect(h.frames()).toEqual([{ kind: "host-request", id: "dialog-1", request: { type: operation } }]);
+  expect(h.relay.response({ kind: "host-response", id: "dialog-wrong", response: { ok: true, selectedRecoveryPath: "/wrong" } })).toBe(false);
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, selectedRecoveryPath: "/private/var/backup.kestrel-memory" } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response).toEqual({ ok: true, selectedRecoveryPath: "/private/var/backup.kestrel-memory" });
+  h.request(6, { operation });
+  h.relay.response({ kind: "host-response", id: "dialog-2", response: { ok: true, selectedRecoveryPath: "/secret", data: "blob" } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response.ok).toBe(false);
+  h.request(7, { operation });
+  h.relay.response({ kind: "host-response", id: "dialog-3", response: { ok: true, cancelled: true } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response).toEqual({ ok: true, cancelled: true });
+  expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/secret");
+});
+
+it("cancels recovery panels on deadline, explicit cancellation and close, ignoring late replies", async () => {
+  const h = harness();
+  h.request(1, { operation: "save-memory-recovery-file" });
+  await vi.advanceTimersByTimeAsync(600_000);
+  h.request(2, { operation: "open-memory-recovery-file" });
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, selectedRecoveryPath: "/late" } });
+  h.relay.cancel("native-dialog-2");
+  h.request(3, { operation: "save-memory-recovery-file" });
+  h.relay.close();
+  h.relay.response({ kind: "host-response", id: "dialog-3", response: { ok: true, selectedRecoveryPath: "/late" } });
+  expect(h.frames().filter(frame => frame.kind === "dialog-cancel")).toHaveLength(3);
+  expect(h.writeCore.mock.calls.map(([message]) => message.requestId)).toEqual(["native-dialog-1", "native-dialog-2", "native-dialog-3"]);
+  expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/late");
+});

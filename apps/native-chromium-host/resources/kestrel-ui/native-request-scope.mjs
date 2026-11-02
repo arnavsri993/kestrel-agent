@@ -1,10 +1,14 @@
 import { NATIVE_PLUGIN_REQUEST_TYPES } from "../../../desktop/src/main/native-plugin-requests.ts";
-// Each renderer port owns only its own plugin request cancellation signals.
-export function createPluginPortScope() {
+import { NATIVE_MEMORY_RECOVERY_REQUEST_TYPES } from "../../../desktop/src/main/native-memory-recovery-requests.ts";
+export function isNativeCancellableRequest(type) {
+ return NATIVE_PLUGIN_REQUEST_TYPES.has(type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(type);
+}
+// Each renderer port owns only its own plugin and knowledge file requests.
+export function createNativeRequestScope() {
  const active = new Set(); let closed = false;
  return {
   begin(request) {
-   if (!NATIVE_PLUGIN_REQUEST_TYPES.has(request.type)) return { signal: undefined, done() {} };
+   if (!isNativeCancellableRequest(request.type)) return { signal: undefined, done() {} };
    const controller = new AbortController();
    if (closed) controller.abort(); else active.add(controller);
    return { signal: controller.signal, done() { active.delete(controller); } };

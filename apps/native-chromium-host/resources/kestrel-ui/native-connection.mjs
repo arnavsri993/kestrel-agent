@@ -1,5 +1,6 @@
 // Sent actions fail when their connection closes. They are never replayed.
-import { NATIVE_PLUGIN_REQUEST_TYPES } from "../../../desktop/src/main/native-plugin-requests.ts";
+import { isNativeCancellableRequest } from "./native-request-scope.mjs";
+import { NATIVE_MEMORY_RECOVERY_REQUEST_TYPES } from "../../../desktop/src/main/native-memory-recovery-requests.ts";
 import { nativeRequestTimeoutMs } from "../../../../packages/shared-types/src/request-timeouts.ts";
 export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = crypto, handleBrowserRequest, handleExternalOpenUrl, handleOpenNativeWindow,
 	loadConfiguration = async (nonce) => {
@@ -19,8 +20,8 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 			if (pending.get(id) !== request) return;
 			pending.delete(id);
 			request.cleanup?.();
-			if (request.sent && NATIVE_PLUGIN_REQUEST_TYPES.has(request.message.request.type)) post(request.sent, { kind: "cancel-request", id });
-			request.resolve({ ok: false, error: request.sent && NATIVE_PLUGIN_REQUEST_TYPES.has(request.message.request.type) ? "The plugin request timed out; its outcome is uncertain. Check installed plugins before retrying." : waiting ? "Kestrel's native connection setup timed out." : request.message.request.type === "set-default-browser" ? "The default-browser request timed out; its outcome is uncertain. Check System Settings before retrying." : "Kestrel's native request timed out. Check the task or browser state before retrying." });
+			if (request.sent && isNativeCancellableRequest(request.message.request.type)) post(request.sent, { kind: "cancel-request", id });
+			request.resolve({ ok: false, error: request.sent && isNativeCancellableRequest(request.message.request.type) ? NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(request.message.request.type) ? "The knowledge backup or recovery request timed out. Check whether the file was saved before retrying." : "The plugin request timed out; its outcome is uncertain. Check installed plugins before retrying." : waiting ? "Kestrel's native connection setup timed out." : request.message.request.type === "set-default-browser" ? "The default-browser request timed out; its outcome is uncertain. Check System Settings before retrying." : "Kestrel's native request timed out. Check the task or browser state before retrying." });
 		}, Math.max(1, budget - (Date.now() - request.startedAt)));
 	}
 	function disconnected(connection) {
@@ -147,11 +148,11 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 				const message = { kind: "request", id, request };
 				const entry = { message, resolve, startedAt: Date.now(), sent: ready ? native : undefined, cleanup: undefined };
 				pending.set(id, entry);
-				if (signal && NATIVE_PLUGIN_REQUEST_TYPES.has(request.type)) {
+				if (signal && isNativeCancellableRequest(request.type)) {
 					const abort = () => {
 						if (pending.get(id) !== entry) return;
 						if (entry.sent) post(entry.sent, { kind: "cancel-request", id });
-						else { pending.delete(id); clearTimeout(entry.timeout); entry.cleanup?.(); resolve({ ok: false, error: "The plugin request was cancelled before it started." }); }
+						else { pending.delete(id); clearTimeout(entry.timeout); entry.cleanup?.(); resolve(NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(request.type) ? { ok: true, cancelled: true } : { ok: false, error: "The plugin request was cancelled before it started." }); }
 					};
 					entry.cleanup = () => signal.removeEventListener("abort", abort);
 					signal.addEventListener("abort", abort, { once: true });

@@ -10,7 +10,7 @@ import { createNativeBrowserRelay } from "./native-browser-relay.mjs";
 import { createNativeAutomationRelay } from "./native-automation-relay.mjs";
 import { createNativeComputerRelay } from "./native-computer-relay.mjs";
 import { createNativeDialogRelay } from "./native-dialog-relay.mjs";
-import { cancelPluginOnClientLoss, cancelPluginByUiRequest } from "./native-plugin-cancellation.mjs";
+import { cancelNativeHostOnClientLoss, cancelNativeHostByUiRequest } from "./native-host-cancellation.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
 const argument = (name) => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
@@ -23,7 +23,7 @@ if (!coreProfileInfo.isDirectory() || coreProfileInfo.isSymbolicLink() || corePr
 const browserPid = Number(argument("--browser-pid"));
 if (!Number.isSafeInteger(browserPid) || browserPid !== process.ppid) throw new Error("Native broker requires its owning browser.");
 const peerInspector = createRequire(import.meta.url)(join(resources, "native-peer.node"));
-const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_READINESS_REQUEST_TYPES, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PLUGIN_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES } = await import("./native-ui-contracts.mjs");
+const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_READINESS_REQUEST_TYPES, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PLUGIN_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest } = await import("./native-ui-contracts.mjs");
 const MAX_FRAME = 1024 * 1024;
 const MAX_PENDING = 64;
 const key = randomBytes(32);
@@ -103,7 +103,7 @@ function send(socket, message) {
 	socket.write(Buffer.concat([header, bytes]));
 }
 function failPending(socket) {
-	for (const [id, request] of pending) if (request.socket === socket) { clearTimeout(request.timeout); pending.delete(id); cancelPluginOnClientLoss(id, request, writeCore); }
+	for (const [id, request] of pending) if (request.socket === socket) { clearTimeout(request.timeout); pending.delete(id); cancelNativeHostOnClientLoss(id, request, writeCore); }
 	browserRelay.disconnect(socket);
 }
 function writeCore(message) {
@@ -236,17 +236,18 @@ const server = createServer((socket) => {
           continue;
         }
         if (message.kind === "browser-backend-response") { browserRelay.response(socket, message); continue; }
-				if (message.kind === "cancel-request") { cancelPluginByUiRequest(pending, socket, message.id, writeCore); continue; }
+				if (message.kind === "cancel-request") { cancelNativeHostByUiRequest(pending, socket, message.id, writeCore); continue; }
 				if (message.kind !== "request" || typeof message.id !== "string" || message.id.length > 100 || pending.size >= MAX_PENDING) { socket.destroy(); return; }
 				const parsed = RendererRequestSchema.safeParse(message.request);
 				if (!parsed.success) { send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Invalid Kestrel request." } }); continue; }
+				if (isNativeMemoryRecoveryInternalRequest(parsed.data.type)) { send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Invalid Kestrel request." } }); continue; }
 				if (["get-system-state", "get-default-browser-status", "set-default-browser", "set-launch-at-login", "request-microphone-access"].includes(parsed.data.type)) {
 					const id = `host-${++sequence}`;
 					const timeout = setTimeout(() => { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: parsed.data.type === "set-default-browser" ? "The default-browser request timed out; its outcome is uncertain. Check System Settings before retrying." : "The native desktop did not respond." } }); }, nativeRequestTimeoutMs(parsed.data, "broker"));
 					pending.set(id, { socket, uiId: message.id, timeout });
 					process.stdout.write(JSON.stringify({ kind: "host-request", id, request: parsed.data }) + "\n"); continue;
 				}
-				const hostRequest = NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) || NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type);
+				const hostRequest = NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) || NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type);
 				if (!hostRequest && !CoreRequestSchema.safeParse(parsed.data).success) {
 					if (!reportedUnsupported.has(parsed.data.type)) {
 						reportedUnsupported.add(parsed.data.type);
@@ -258,12 +259,12 @@ const server = createServer((socket) => {
 				const id = `ui-${++sequence}`;
 				const timeout = setTimeout(() => {
           const entry = pending.get(id); if (!entry) return;
-          if (entry.plugin) {
-            cancelPluginOnClientLoss(id, entry, writeCore);
-            entry.timeout = setTimeout(() => { if (!pending.delete(id)) return; send(socket, { kind: "response", id: message.id, response: { ok: false, error: "The plugin operation timed out and its outcome is uncertain. Check installed plugins before retrying." } }); }, 8_000);
+          if (entry.cancellable) {
+            cancelNativeHostOnClientLoss(id, entry, writeCore);
+            entry.timeout = setTimeout(() => { if (!pending.delete(id)) return; send(socket, { kind: "response", id: message.id, response: { ok: false, error: entry.recovery ? "The knowledge backup or recovery request timed out. Check whether the file was saved before retrying." : "The plugin operation timed out and its outcome is uncertain. Check installed plugins before retrying." } }); }, 8_000);
           } else { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Kestrel Core response timed out. Check the task before retrying." } }); }
         }, ["select-workspace-folder", "select-context-files"].includes(parsed.data.type) ? 10 * 60_000 + 30_000 : nativeRequestTimeoutMs(parsed.data, "broker"));
-				pending.set(id, { socket, uiId: message.id, timeout, plugin: NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) });
+				pending.set(id, { socket, uiId: message.id, timeout, cancellable: NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type), recovery: NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) });
 				core.stdin.write(JSON.stringify({ type: hostRequest ? "host-request" : "request", id, request: parsed.data }) + "\n");
 			}
 		}

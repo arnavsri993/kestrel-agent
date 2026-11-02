@@ -1764,3 +1764,69 @@ native workflow phases passed again against the unchanged `16649a22` bundle in
 `.tmp/native-core-input-guards-constant-pulse-evidence/receipt.json`. Remote CodeQL
 must confirm the final result; successful analysis jobs alone do not clear its
 aggregate findings.
+
+
+## Native Knowledge recovery and picker ownership (2026-11-02)
+
+The Memory page now exposes **Agent knowledge and recovery** for the selected
+agent. Its existing scoped inspector and explicit restore preview are reachable
+from the Memory view. These backups contain eligible standalone knowledge in
+the same profile and scope; they do not transfer profiles, credentials, chats,
+source history or browser state.
+
+`NativeMemoryRecoveryHost` privately requests Core export/preview and handles
+the selected file. Only native save/open operations are renderer-admitted;
+direct renderer export/preview requests are rejected at both native ingress
+layers. Ciphertext, keys and selected file paths do not return to the renderer.
+The host bounds UTF-8 files at 16 MB, refuses final symlinks, hardlinks, changing
+files and non-regular objects, and checks file/directory identity through held
+handles. New backups use an exclusive 0600 file and file/directory sync. This
+is an exclusive direct write, not atomic publication; failures after creation
+preserve the incomplete file and report that outcome instead of deleting it.
+
+Fixed-purpose NSSavePanel/NSOpenPanel operations travel over the private dialog
+relay. Page ownership cancels both queued and sent recovery requests, closes
+the Cocoa panel and ignores late selections. A shared worker predicate covers
+plugin and recovery cancellation. A real page-close test caught a plugin-only
+gate in the worker connection; the fixed build was tested again on screen.
+
+The latest candidate is
+`2fcb3499158dbcafe5269d5d676aef89372348e21fb4e0f2006b4a2ab4d5b360`.
+It passed three real native picker/owner/restart phases in
+`.tmp/native-knowledge-lifetime-fixed-evidence/receipt.json` and 24 broader native
+workflow/window/restart phases in
+`.tmp/native-knowledge-lifetime-fixed-workflow-evidence/receipt.json`.
+The generated fact was scrolled into the viewport after restart and its capture
+was inspected. Candidate digests matched before and after both runs.
+
+The preceding candidate
+`2d59a7a5a72f3794b08f13f923f2cadb8677cff1b53fcf382481c362209e1e16`
+passed all nine generated-profile recovery phases: actual Cocoa save/open and
+cancellation, private encrypted file, existing-record preview/cancel, wrong
+scope and damaged-file refusal, explicit missing-record restoration preserving
+existing records, and Core inspection after full app restart. Receipt:
+`.tmp/native-knowledge-ui-final-evidence/receipt.json`. This was before the
+worker cancellation fix; it is not substituted for the latest candidate's
+owner-lifetime result. Two earlier harness failures (CEF attachment and exact
+wrapped-label matching) and the interrupted failing owner test remain recorded.
+
+The final source passed **2,306 tests in 287 files**, workspace typechecking,
+focused host/relay/transport checks and a full native rebuild. A new aggregate
+`pnpm verify` run is in progress; its outcome is not yet claimed. These tests
+used marked generated profiles and test keys, with no real Keychain, existing
+profile, microphone or desktop-input access. The canonical installed app has
+not been replaced.
+
+Routing prompt budget/list parsing, anchor punctuation trimming and bounded
+routing metadata checks now avoid four confirmed polynomial scans. An
+independent review found no semantic regression in those replacements. Store
+test assertions compare the parsed URL origin rather than a hostname prefix.
+Remote CodeQL must confirm the new head; the preceding head's Core CI passed,
+desktop job was cancelled, and CodeQL still reported security annotations.
+
+Remaining security work includes an adjacent email-anchor scan and embedding
+fingerprints persisted outside encrypted payloads, including stale asynchronous
+embedding writes. Those require a real remediation and migration, not a global
+suppression. Native diagnostics/local-profile backup, other native integration
+routes, existing-profile/vendor-login acceptance, actual Store version upgrade,
+release signing/notarization and canonical cutover remain unfinished.

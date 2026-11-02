@@ -1,6 +1,8 @@
 import { createHmac, webcrypto } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNativeConnection } from "./native-connection.mjs";
+import { createNativeRequestScope } from "./native-request-scope.mjs";
+import { nativeRequestTimeoutMs } from "../../../../packages/shared-types/src/request-timeouts";
 
 const nonce = "a".repeat(64);
 const secret = Buffer.alloc(32, 7);
@@ -126,6 +128,52 @@ describe("native worker connection", () => {
 		expect(await response).toEqual({ ok: false, error: "The plugin request was cancelled before it started." });
 		await authenticate(ports[0]);
 		expect(ports[0].postMessage.mock.calls.some(([message]: any[]) => message.kind === "request")).toBe(false);
+	});
+
+	it.each(["memory-recovery-save-file", "memory-recovery-open-file"])("cancels only the disconnected port's sent %s request", async (type) => {
+		const { connection, ports, authenticate } = harness();
+		await authenticate();
+		const closedPort = createNativeRequestScope();
+		const otherPort = createNativeRequestScope();
+		const owned = closedPort.begin({ type });
+		const other = otherPort.begin({ type });
+		const response = connection.request({ type, sessionId: "session" }, { signal: owned.signal });
+		const sent = ports[0].postMessage.mock.calls.at(-1)[0];
+		const otherResponse = connection.request({ type, sessionId: "other" }, { signal: other.signal });
+		const otherSent = ports[0].postMessage.mock.calls.at(-1)[0];
+		closedPort.close();
+		expect(ports[0].postMessage).toHaveBeenLastCalledWith({ kind: "cancel-request", id: sent.id });
+		expect(other.signal.aborted).toBe(false);
+		await ports[0].onMessage.emit({ kind: "response", id: sent.id, response: { ok: true, cancelled: true } });
+		expect(await response).toEqual({ ok: true, cancelled: true });
+		await ports[0].onMessage.emit({ kind: "response", id: otherSent.id, response: { ok: true } });
+		expect(await otherResponse).toEqual({ ok: true });
+		expect(ports[0].postMessage.mock.calls.filter(([message]: any[]) => message.kind === "cancel-request")).toHaveLength(1);
+	});
+
+	it.each(["memory-recovery-save-file", "memory-recovery-open-file"])("does not send a queued or already-aborted %s request", async (type) => {
+		const { connection, ports, authenticate } = harness();
+		const controller = new AbortController();
+		const response = connection.request({ type, sessionId: "session" }, { signal: controller.signal });
+		controller.abort();
+		expect(await response).toEqual({ ok: true, cancelled: true });
+		const alreadyAborted = connection.request({ type, sessionId: "session" }, { signal: controller.signal });
+		expect(await alreadyAborted).toEqual({ ok: true, cancelled: true });
+		await authenticate();
+		expect(ports[0].postMessage.mock.calls.some(([message]: any[]) => message.kind === "request")).toBe(false);
+	});
+
+	it("cancels a timed-out recovery request and ignores its late response", async () => {
+		const { connection, ports, authenticate } = harness();
+		await authenticate();
+		const request = { type: "memory-recovery-save-file", sessionId: "session" };
+		const response = connection.request(request);
+		const sent = ports[0].postMessage.mock.calls.at(-1)[0];
+		await vi.advanceTimersByTimeAsync(nativeRequestTimeoutMs(request, "worker"));
+		expect(ports[0].postMessage).toHaveBeenLastCalledWith({ kind: "cancel-request", id: sent.id });
+		expect(await response).toEqual({ ok: false, error: "The knowledge backup or recovery request timed out. Check whether the file was saved before retrying." });
+		await ports[0].onMessage.emit({ kind: "response", id: sent.id, response: { ok: true } });
+		expect(ports[0].postMessage.mock.calls.filter(([message]: any[]) => message.kind === "cancel-request")).toHaveLength(1);
 	});
 
 	it.each(["configuration", "signature"])("ignores an old delayed %s after reconnecting", async (stage) => {

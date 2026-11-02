@@ -358,7 +358,7 @@ NativeExternalUrlQueue external_urls([](const std::string& id, const std::string
   }
 });
 bool desktop_default_browser_pending = false;
-NSOpenPanel* desktop_workspace_panel;
+NSSavePanel* desktop_workspace_panel;
 NSString* desktop_workspace_panel_id;
 NSString* Argument(int argc, char** argv, const char* name) {
   for (int i = 1; i + 1 < argc; ++i) if (std::string(argv[i]) == name) return [NSString stringWithUTF8String:argv[i + 1]];
@@ -925,7 +925,9 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
               });
               return;
             }
-          } else if (([type isEqualToString:@"select-workspace-folder"] || [type isEqualToString:@"select-context-files"] || [type isEqualToString:@"select-plugin-bundle"] || [type isEqualToString:@"select-plugin-publisher"]) && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
+          } else if (([type isEqualToString:@"select-workspace-folder"] || [type isEqualToString:@"select-context-files"] || [type isEqualToString:@"select-plugin-bundle"] || [type isEqualToString:@"select-plugin-publisher"] || [type isEqualToString:@"save-memory-recovery-file"] || [type isEqualToString:@"open-memory-recovery-file"]) && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
+            const bool recovery_save = [type isEqualToString:@"save-memory-recovery-file"];
+            const bool recovery_open = [type isEqualToString:@"open-memory-recovery-file"];
             const bool context_files = [type isEqualToString:@"select-context-files"];
             const bool plugin_publisher = [type isEqualToString:@"select-plugin-publisher"];
             const bool plugin_bundle = [type isEqualToString:@"select-plugin-bundle"];
@@ -939,29 +941,55 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
             if (!valid_request) response = @{@"ok":@NO, @"error":@"The native file picker request is invalid."};
             else if (desktop_workspace_panel) response = @{@"ok":@NO, @"error":@"A native file or folder picker is already open."};
             else {
-              NSOpenPanel* panel = NSOpenPanel.openPanel;
-              panel.title = plugin_publisher ? @"Trust a plugin publisher key" : plugin_bundle ? @"Select a signed plugin bundle" : context_files ? @"Add files from this task workspace" : @"Grant Kestrel a project folder";
-              panel.prompt = plugin_publisher ? @"Trust publisher" : plugin_bundle ? @"Select plugin" : context_files ? @"Add context" : @"Grant folder";
-              panel.canChooseDirectories = !context_files && !plugin_publisher; panel.canChooseFiles = context_files || plugin_publisher;
-              panel.allowsMultipleSelection = context_files; panel.canCreateDirectories = !context_files && !plugin_publisher && !plugin_bundle;
-              panel.treatsFilePackagesAsDirectories = YES;
+              NSSavePanel* panel = recovery_save ? NSSavePanel.savePanel : NSOpenPanel.openPanel;
+              NSOpenPanel* open_panel = recovery_save ? nil : (NSOpenPanel*)panel;
+              panel.title = recovery_save ? @"Save encrypted knowledge backup" : recovery_open ? @"Preview encrypted knowledge recovery" : plugin_publisher ? @"Trust a plugin publisher key" : plugin_bundle ? @"Select a signed plugin bundle" : context_files ? @"Add files from this task workspace" : @"Grant Kestrel a project folder";
+              panel.prompt = recovery_save ? @"Save backup" : recovery_open ? @"Preview recovery" : plugin_publisher ? @"Trust publisher" : plugin_bundle ? @"Select plugin" : context_files ? @"Add context" : @"Grant folder";
+              open_panel.canChooseDirectories = !context_files && !plugin_publisher && !recovery_open; open_panel.canChooseFiles = context_files || plugin_publisher || recovery_open;
+              open_panel.allowsMultipleSelection = context_files; panel.canCreateDirectories = recovery_save || (!context_files && !plugin_publisher && !plugin_bundle && !recovery_open);
+              open_panel.treatsFilePackagesAsDirectories = YES;
+              if (recovery_save || recovery_open) {
+                panel.allowedFileTypes = @[@"kestrel-memory"];
+                panel.allowsOtherFileTypes = NO;
+                if (recovery_save) panel.nameFieldStringValue = @"kestrel-knowledge.kestrel-memory";
+              }
               if (context_files) panel.directoryURL = [NSURL fileURLWithPath:workspace_root isDirectory:YES];
               desktop_workspace_panel = panel; desktop_workspace_panel_id = value[@"id"];
               [panel beginWithCompletionHandler:^(NSModalResponse result) {
                 const bool owned = desktop_workspace_panel == panel && [desktop_workspace_panel_id isEqualToString:value[@"id"]];
                 if (!owned) return;
                 desktop_workspace_panel = nil; desktop_workspace_panel_id = nil;
+                if (!broker.running) return;
                 NSDictionary* selection = @{@"ok":@YES, @"cancelled":@YES};
-                if (result == NSModalResponseOK && plugin_publisher) {
-                  NSURL* selected = panel.URLs.firstObject;
+                if (result == NSModalResponseOK && (recovery_save || recovery_open)) {
+                  NSURL* selected = panel.URL;
+                  NSString* raw = selected.isFileURL ? selected.path : nil;
+                  NSString* path = nil;
+                  struct stat info{};
+                  if (ValidNativeDialogPath(raw) && [raw.pathExtension.lowercaseString isEqualToString:@"kestrel-memory"]) {
+                    if (recovery_save) {
+                      NSString* name = raw.lastPathComponent;
+                      NSString* parent = CanonicalNativeDialogPath(raw.stringByDeletingLastPathComponent);
+                      if (parent && name.length && ![name isEqualToString:@"."] && ![name isEqualToString:@".."] &&
+                          [name rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location == NSNotFound) {
+                        NSString* candidate = [parent isEqualToString:@"/"] ? [parent stringByAppendingString:name] : [[parent stringByAppendingString:@"/"] stringByAppendingString:name];
+                        if (ValidNativeDialogPath(candidate) && lstat(candidate.fileSystemRepresentation, &info) != 0 && errno == ENOENT) path = candidate;
+                      }
+                    } else if (lstat(raw.fileSystemRepresentation, &info) == 0 && S_ISREG(info.st_mode) && info.st_size >= 0 && info.st_size <= 16000000) {
+                      path = CanonicalNativeDialogPath(raw);
+                    }
+                  }
+                  selection = path ? @{@"ok":@YES, @"selectedRecoveryPath":path} : @{@"ok":@NO, @"error":@"Select a valid encrypted knowledge backup file."};
+                } else if (result == NSModalResponseOK && plugin_publisher) {
+                  NSURL* selected = open_panel.URLs.firstObject;
                   NSString* path = selected.isFileURL ? CanonicalNativeDialogPath(selected.path) : nil;
                   NSDictionary* attributes = ValidNativeDialogPath(path) ? [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] : nil;
                   selection = selected.isFileURL && [path.pathExtension.lowercaseString isEqualToString:@"json"] && [attributes[NSFileType] isEqualToString:NSFileTypeRegular] && [attributes[NSFileSize] unsignedLongLongValue] <= 64000
                       ? @{@"ok":@YES, @"selectedContextPaths":@[path]} : @{@"ok":@NO, @"error":@"Select one public publisher key JSON file."};
                 } else if (result == NSModalResponseOK && context_files) {
                   NSMutableArray<NSString*>* paths = [NSMutableArray array];
-                  bool valid = panel.URLs.count > 0 && panel.URLs.count <= 8;
-                  for (NSURL* url in panel.URLs) {
+                  bool valid = open_panel.URLs.count > 0 && open_panel.URLs.count <= 8;
+                  for (NSURL* url in open_panel.URLs) {
                     NSString* path = url.isFileURL ? CanonicalNativeDialogPath(url.path) : nil;
                     NSDictionary* attributes = ValidNativeDialogPath(path)
                         ? [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] : nil;
@@ -975,7 +1003,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
                   selection = valid ? @{@"ok":@YES, @"selectedContextPaths":paths}
                       : @{@"ok":@NO, @"error":@"Select at most 8 regular files inside the task workspace, no larger than 10 MB each."};
                 } else if (result == NSModalResponseOK) {
-                  NSURL* selected = panel.URLs.firstObject;
+                  NSURL* selected = open_panel.URLs.firstObject;
                   selection = selected.isFileURL && ValidNativeDialogPath(selected.path)
                       ? @{@"ok":@YES, @"selectedWorkspacePath":selected.path}
                       : @{@"ok":@NO, @"error":@"The native folder picker returned an invalid selection."};

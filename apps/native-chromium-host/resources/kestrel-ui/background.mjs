@@ -1,4 +1,4 @@
-import { createPluginPortScope } from "./plugin-port-scope.mjs";
+import { createNativeRequestScope } from "./native-request-scope.mjs";
 import { createBrowserAdapter } from "./browser.mjs";
 import { createNativeConnection } from "./native-connection.mjs";
 import { trackNativePanels } from "./panel-state.mjs";
@@ -25,7 +25,7 @@ chrome.runtime.onConnect.addListener((port) => {
 	try { url = new URL(sender?.url); } catch { port.disconnect(); return; }
 	if (port.name !== "kestrel-ui" || sender.id !== chrome.runtime.id || url.protocol !== origin.protocol || url.host !== origin.host || url.pathname !== "/index.html" || (sender.frameId !== undefined && sender.frameId !== 0)) { port.disconnect(); return; }
 	ui.add(port);
-	const scope = createPluginPortScope();
+	const scope = createNativeRequestScope();
 	port.onDisconnect.addListener(() => { scope.close(); ui.delete(port); });
 	let count = 0;
 	port.onMessage.addListener(async (message) => {
