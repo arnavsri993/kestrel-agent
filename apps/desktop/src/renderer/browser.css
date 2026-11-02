@@ -5692,6 +5692,7 @@ body:has(.calculator-overlay),
 .background-option-preview {
 	position: relative;
 	display: block;
+	pointer-events: none;
 	aspect-ratio: 16 / 8;
 	min-height: 92px;
 	background-position: center;
