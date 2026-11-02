@@ -949,3 +949,36 @@ upgrade requirement. These results do not replace the canonical Electron app;
 whole-desktop enabled capture/input, full profile transfer and rollback, vendor
 sign-in parity, production signing/notarization and canonical installation still
 need their own acceptance evidence.
+
+Native screenshot persistence was audited before enabled input acceptance.
+The three built-in screenshot tools now use the protected tool-execution
+AES-GCM envelope. Their completed and pending idempotency journals also use an
+unambiguous encrypted codec, preserving normal JSON values and extension
+metadata. Legacy logical records are converted in bounded pages; this is not
+secure erasure of old SQLite pages, WAL copies, backups or filesystem snapshots.
+Those user-owned backups are not removed. Metrics read the stored tool/status
+columns so encrypted payloads retain accurate outcome counts.
+
+The privacy change passed all 2,065 tests across 270 files, all 30 database tests
+and workspace typechecking. Bundle
+`d8b21f0836d6830906ef881b6662625e27dd19f3f15ae7fb882d0abd6e0f5a89`
+built successfully and passed private broker/key protocol and durable Core
+restart canaries. These two protocol runs use synthetic parent keys, not real
+Keychain or GUI evidence. The real-Keychain acceptance above remains bound to
+its earlier bundle. The full visible-browser compatibility smoke passed after
+rebuilding the desktop, including HEIC conversion; its upload helper now waits
+for the exact fixture view instead of choosing an arbitrary first window.
+
+CI run `41388932911` at `282a6053` passed the complete Desktop job. The Core job
+then timed out in the standalone readiness fixture: its synthetic parent did
+not answer the newly added private permission-status request. The fixture now
+answers only the read-only permission request with synthetic unavailable
+status, rejects capture/input attempts, and passed on the rebuilt bundle with
+its original time budget. This is not a real OS permission query.
+
+The user approved the disposable local capture-and-one-click acceptance test.
+Its first actual capture exposed a native focus bug: Chromium's small sharing
+indicator appeared ahead of the focused browser in the window-server list. The
+test rejected the target bounds before proposing input. No native input has
+been verified by that failed receipt; the native focus fix and its live check
+remain separate work.

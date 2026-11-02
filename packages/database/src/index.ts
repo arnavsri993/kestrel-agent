@@ -92,6 +92,14 @@ import {
 
 const MAX_BROWSER_ACTIVITY_PER_OWNER = 500;
 const MAX_ACTION_RECEIPTS_PER_SESSION = 500;
+const ENCRYPTED_TOOL_EXECUTION_NAMES = new Set([
+	"sources.read",
+	"computer.screenshot",
+	"browser.screenshot",
+	"browser.visible-screenshot",
+]);
+const ENCRYPTED_IDEMPOTENCY_PREFIX = "kestrel-encrypted-idempotency-v1:";
+const SENSITIVE_ROW_PAGE_SIZE = 8;
 
 export const PROTECTED_DATABASE_ERROR_CODE = "kestrel-protected-database";
 
@@ -444,7 +452,7 @@ export class KestrelDatabase {
 			this.db.pragma("secure_delete = ON");
 			this.assertDatabaseIntegrity();
 			this.lastMigrationBackupPath = this.migrate();
-            this.protectLegacySourceReceipts();
+			this.protectLegacySensitiveToolExecutions();
 		} catch (error) {
 			try {
 				database?.close();
@@ -1007,21 +1015,68 @@ export class KestrelDatabase {
         }
     }
 
-    private protectLegacySourceReceipts(): void {
+    private protectLegacySensitiveToolExecutions(): void {
         this.db.transaction(() => {
             const update = this.db.prepare("UPDATE tool_executions SET payload = ? WHERE id = ?");
-            for (const row of this.db.prepare("SELECT id, payload FROM tool_executions WHERE tool_name = 'sources.read'").all() as Array<{ id: string; payload: string }>) {
-                if (JSON.parse(row.payload).kestrelEncryptedTool === 1) continue;
-                update.run(this.encodeToolExecution(this.decodeToolExecution(row.payload)), row.id);
+            let cursor = "";
+            while (true) {
+                const rows = this.db.prepare("SELECT id, payload FROM tool_executions WHERE tool_name IN ('sources.read', 'computer.screenshot', 'browser.screenshot', 'browser.visible-screenshot') AND id > ? ORDER BY id LIMIT ?").all(cursor, SENSITIVE_ROW_PAGE_SIZE) as Array<{ id: string; payload: string }>;
+                if (!rows.length) break;
+                cursor = rows[rows.length - 1]!.id;
+                for (const row of rows) {
+                    if (JSON.parse(row.payload).kestrelEncryptedTool === 1) continue;
+                    update.run(this.encodeToolExecution(this.decodeToolExecution(row.payload)), row.id);
+                }
             }
+            this.protectLegacySensitiveIdempotencyRows("idempotency_keys", "result");
+            this.protectLegacySensitiveIdempotencyRows("idempotency_claims", "pending_result");
         })();
+    }
+
+    private protectLegacySensitiveIdempotencyRows(
+        table: "idempotency_keys" | "idempotency_claims",
+        column: "result" | "pending_result",
+    ): void {
+        let cursor = "";
+        while (true) {
+            const rows = this.db.prepare(`SELECT key, ${column} AS payload FROM ${table} WHERE key > ? ORDER BY key LIMIT ?`).all(cursor, SENSITIVE_ROW_PAGE_SIZE) as Array<{ key: string; payload: string }>;
+            if (!rows.length) break;
+            cursor = rows[rows.length - 1]!.key;
+            const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE key = ?`);
+            for (const row of rows) {
+                if (row.payload.startsWith(ENCRYPTED_IDEMPOTENCY_PREFIX)) continue;
+                let value: unknown;
+                try {
+                    value = JSON.parse(row.payload);
+                } catch {
+                    if (this.idempotencyKeyNamesProtectedTool(row.key))
+                        throw new Error("A protected tool idempotency record is corrupt and cannot be safely opened.");
+                    continue;
+                }
+                const execution = RuntimeToolExecutionSchema.safeParse(value);
+                if (execution.success && this.requiresEncryptedToolExecution(execution.data.toolName)) {
+                    update.run(this.serializeIdempotencyValue(value), row.key);
+                } else if (this.idempotencyKeyNamesProtectedTool(row.key)) {
+                    throw new Error("A protected tool idempotency record is invalid and cannot be safely opened.");
+                }
+            }
+        }
+    }
+
+    private idempotencyKeyNamesProtectedTool(key: string): boolean {
+        const parts = key.split(":");
+        return parts[0] === "runtime-tool" && ENCRYPTED_TOOL_EXECUTION_NAMES.has(parts[2] ?? "");
     }
 
     private encodeToolExecution(execution: RuntimeToolExecution): string {
         const payload = JSON.stringify(execution);
-        return execution.toolName === "sources.read"
+        return this.requiresEncryptedToolExecution(execution.toolName)
             ? JSON.stringify({ kestrelEncryptedTool: 1, ...encryptText(payload, this.encryptionKey) })
             : payload;
+    }
+
+    private requiresEncryptedToolExecution(toolName: string): boolean {
+        return ENCRYPTED_TOOL_EXECUTION_NAMES.has(toolName);
     }
 
     private decodeToolExecution(payload: string): RuntimeToolExecution {
@@ -1164,8 +1219,8 @@ export class KestrelDatabase {
 		const rows = this.db
 			.prepare(`
       SELECT
-        json_extract(payload, '$.toolName') as tool,
-        CASE json_extract(payload, '$.status')
+        tool_name as tool,
+        CASE status
           WHEN 'verified' THEN 'success'
           WHEN 'blocked' THEN 'blocked'
           WHEN 'failed' THEN 'error'
@@ -1173,7 +1228,7 @@ export class KestrelDatabase {
         END as outcome,
         COUNT(*) as count
       FROM tool_executions
-      GROUP BY json_extract(payload, '$.toolName'), CASE json_extract(payload, '$.status') WHEN 'verified' THEN 'success' WHEN 'blocked' THEN 'blocked' WHEN 'failed' THEN 'error' ELSE 'pending' END
+      GROUP BY tool_name, CASE status WHEN 'verified' THEN 'success' WHEN 'blocked' THEN 'blocked' WHEN 'failed' THEN 'error' ELSE 'pending' END
     `)
 			.all() as Array<{ tool: string | null; outcome: string; count: number }>;
 		return rows.map((row) => ({
@@ -1757,7 +1812,7 @@ export class KestrelDatabase {
 		const row = this.db
 			.prepare("SELECT result FROM idempotency_keys WHERE key = ?")
 			.get(key) as { result: string } | undefined;
-		return row ? (JSON.parse(row.result) as T) : undefined;
+		return row ? this.deserializeIdempotencyValue<T>(row.result) : undefined;
 	}
 
 	saveIdempotentResult(key: string, result: unknown): void {
@@ -1765,13 +1820,13 @@ export class KestrelDatabase {
 			.prepare(
 				"INSERT OR IGNORE INTO idempotency_keys (key, result, created_at) VALUES (?, ?, ?)",
 			)
-			.run(key, JSON.stringify(result), new Date().toISOString());
+			.run(key, this.serializeIdempotencyValue(result), new Date().toISOString());
 	}
 
 	updateIdempotentResult(key: string, result: unknown): void {
 		const update = this.db
 			.prepare("UPDATE idempotency_keys SET result = ? WHERE key = ?")
-			.run(JSON.stringify(result), key);
+			.run(this.serializeIdempotencyValue(result), key);
 		if (update.changes !== 1)
 			throw new Error("Idempotency journal entry does not exist.");
 	}
@@ -1803,7 +1858,7 @@ export class KestrelDatabase {
 					.run(key);
 				return {
 					state: "completed" as const,
-					result: JSON.parse(completed.result) as T,
+					result: this.deserializeIdempotencyValue<T>(completed.result),
 				};
 			}
 			const row = this.db
@@ -4683,7 +4738,7 @@ export class KestrelDatabase {
 				)
 				.run(key, ownerToken);
 			return {
-				result: JSON.parse(completed.result) as T,
+			result: this.deserializeIdempotencyValue<T>(completed.result),
 				completed: insertion.changes === 1,
 			};
 		})();
@@ -4696,7 +4751,7 @@ export class KestrelDatabase {
 			key: row.key,
 			ownerToken: row.owner_token,
 			ownerPid: row.owner_pid,
-			pendingResult: JSON.parse(row.pending_result) as T,
+			pendingResult: this.deserializeIdempotencyValue<T>(row.pending_result),
 			createdAt: row.created_at,
 		};
 	}
@@ -4705,7 +4760,17 @@ export class KestrelDatabase {
 		const serialized = JSON.stringify(value);
 		if (serialized === undefined)
 			throw new Error("Idempotency journal values must be JSON-serializable.");
-		return serialized;
+		const execution = RuntimeToolExecutionSchema.safeParse(value);
+		if (!execution.success || !this.requiresEncryptedToolExecution(execution.data.toolName)) return serialized;
+		return ENCRYPTED_IDEMPOTENCY_PREFIX + JSON.stringify(encryptText(serialized, this.encryptionKey));
+	}
+
+	private deserializeIdempotencyValue<T>(serialized: string): T {
+		if (!serialized.startsWith(ENCRYPTED_IDEMPOTENCY_PREFIX)) return JSON.parse(serialized) as T;
+		const envelope = JSON.parse(serialized.slice(ENCRYPTED_IDEMPOTENCY_PREFIX.length));
+		const value: unknown = JSON.parse(decryptText(envelope, this.encryptionKey));
+		RuntimeToolExecutionSchema.parse(value);
+		return value as T;
 	}
 
 	private retireActiveAgentHistoryInTransaction(

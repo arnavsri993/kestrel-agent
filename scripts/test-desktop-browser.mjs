@@ -751,45 +751,77 @@ async function activeViewScript(source) {
 	}, source);
 }
 
-async function setActiveViewFileInput(selector, files) {
-	return application.evaluate(
-		async ({ BrowserWindow }, { selector: target, files: paths }) => {
-			const window = BrowserWindow.getAllWindows().find(
-				(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
-			);
-			const view = window?.contentView.children.find(
-				(child) => "webContents" in child,
-			);
-			if (!view || !("webContents" in view))
-				throw new Error("No active user browser view is attached.");
-			const webContents = view.webContents;
-			const attachedHere = !webContents.debugger.isAttached();
-			if (attachedHere) webContents.debugger.attach("1.3");
-			try {
-				const document = await webContents.debugger.sendCommand("DOM.getDocument", {
-					depth: 0,
-				});
-				const selected = await webContents.debugger.sendCommand(
-					"DOM.querySelector",
-					{ nodeId: document.root.nodeId, selector: target },
-				);
-				if (!selected.nodeId)
-					throw new Error("The native upload fixture was not found.");
-				await webContents.debugger.sendCommand("DOM.setFileInputFiles", {
-					nodeId: selected.nodeId,
-					files: paths,
-				});
-			} finally {
-				if (attachedHere && webContents.debugger.isAttached())
-					webContents.debugger.detach();
-			}
-		},
-		{ selector, files },
+async function setActiveViewFileInput(selector, files, expectedUrl) {
+	const deadline = Date.now() + 30_000;
+	let latestWindows = [];
+	while (Date.now() < deadline) {
+		const result = await application.evaluate(
+			async ({ BrowserWindow }, { selector: target, files: paths, url }) => {
+				const sanitizeUrl = (value) => {
+					try {
+						const parsed = new URL(value);
+						if (parsed.protocol === "http:" || parsed.protocol === "https:")
+							return `${parsed.origin}${parsed.pathname}`;
+						return `${parsed.protocol}//<redacted>`;
+					} catch {
+						return "<unavailable>";
+					}
+				};
+				const windows = BrowserWindow.getAllWindows()
+					.filter((candidate) => !candidate.webContents.getURL().includes("petOverlay=1"))
+					.map((candidate) => ({
+						windowUrl: sanitizeUrl(candidate.webContents.getURL()),
+						views: candidate.contentView.children
+							.filter((child) => "webContents" in child)
+							.map((child) => ({
+								url: sanitizeUrl(child.webContents.getURL()),
+								matches: child.webContents.getURL() === url,
+							})),
+					}));
+				const view = BrowserWindow.getAllWindows()
+					.filter((candidate) => !candidate.webContents.getURL().includes("petOverlay=1"))
+					.flatMap((candidate) => candidate.contentView.children)
+					.find(
+						(child) => "webContents" in child && child.webContents.getURL() === url,
+					);
+				if (!view || !("webContents" in view))
+					return { attached: false, windows };
+				const webContents = view.webContents;
+				const attachedHere = !webContents.debugger.isAttached();
+				if (attachedHere) webContents.debugger.attach("1.3");
+				try {
+					const document = await webContents.debugger.sendCommand("DOM.getDocument", {
+						depth: 0,
+					});
+					const selected = await webContents.debugger.sendCommand(
+						"DOM.querySelector",
+						{ nodeId: document.root.nodeId, selector: target },
+					);
+					if (!selected.nodeId)
+						throw new Error("The native upload fixture was not found.");
+					await webContents.debugger.sendCommand("DOM.setFileInputFiles", {
+						nodeId: selected.nodeId,
+						files: paths,
+					});
+				} finally {
+					if (attachedHere && webContents.debugger.isAttached())
+						webContents.debugger.detach();
+				}
+				return { attached: true, windows };
+			},
+			{ selector, files, url: expectedUrl },
+		);
+		latestWindows = result.windows;
+		if (result.attached) return;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	throw new Error(
+		`The native upload fixture view did not attach at ${expectedUrl}: ${JSON.stringify(latestWindows)}`,
 	);
 }
 
 async function assertHeicUploadConversion() {
-	await setActiveViewFileInput("#image-upload", [heicUploadFixture]);
+	await setActiveViewFileInput("#image-upload", [heicUploadFixture], `${origin}/one`);
 	const deadline = Date.now() + 30_000;
 	let result = "";
 	while (Date.now() < deadline) {
