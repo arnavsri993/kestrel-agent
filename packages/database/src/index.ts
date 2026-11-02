@@ -83,6 +83,8 @@ import {
 	WorkspaceMutationSchema,
 } from "@kestrel/shared-types";
 export type { MemoryDeleteResult } from "@kestrel/shared-types";
+export { planHostProfileFileTransfer, applyHostProfileFileTransfer, verifyHostProfileFileTransferRecovery, HostProfileFileTransferError } from "./host-profile-file-transfer.js";
+export type { HostProfileFileTransferPlan, HostProfileFileTransferReceipt } from "./host-profile-file-transfer.js";
 import Database from "better-sqlite3";
 import {
 	backupDatabaseBeforeMigration,

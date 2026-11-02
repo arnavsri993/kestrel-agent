@@ -1277,3 +1277,77 @@ files** passed, including 18 fixture/marker tests covering incomplete checks,
 strict acceptance, candidate drift, unpacked provenance, missing shutdown,
 receipt changes, private-key metadata and a removed temporary profile.
 This proves preparation/persistence, not an actual published-version upgrade.
+
+### Offline Core file transfer and protected Node worker (2026-11-02)
+
+The host-only Core transfer now has read-only planning, offline file apply and
+read-only recovery verification. Plans contain paths, file/directory identity,
+counts, explicit lifecycle exclusions and a consistency digest; no key or
+decrypted content is returned. The source must have an authenticated encrypted
+record, so a legacy CBC-decoded key is never accepted solely from valid base64.
+An empty source uses a separate fresh-profile decision. Source schema/aggregate
+limits are checked before integrity scans, and foreign-key validation reads
+only its first violation rather than materializing an unbounded error list.
+
+Apply requires the exact reviewed plan and an independent destination key.
+It rechecks source identity/content and destination identity, acquires an
+exclusive transfer lock, initializes a private staging database, semantically
+rewraps and verifies its data, closes and synchronizes it, then publishes the
+final filename through a no-replace hard link in the same directory. Existing
+databases, SQLite side files, recovery locks, linked sources and nonprivate
+directories are refused. Successful cleanup leaves one mode-0600 database with
+one filesystem link. Source files are never opened through the writable
+Kestrel database constructor, migrated or replaced.
+
+Failures before publication preserve the source and any destination that
+appeared concurrently. Failures after publication explicitly report a committed
+recovery condition and retain the destination. Cleanup failures have their own
+bounded outcome. A process crash can still leave encrypted staging/lock files
+requiring explicit recovery; automatic crash adoption/cleanup is not exposed.
+Recovery verification authenticates both Core files and checks the original
+semantic digest. It refuses changed native data and never deletes later work.
+It does not switch applications or activate a profile. The source must be
+quiesced by the product before final cutover; a read-only snapshot cannot stop
+an unrelated process from writing after verification.
+
+The standalone Node build also packages `host-profile-file-transfer.js`.
+Its dedicated anonymous pipes support content-free preview, single-use apply,
+cancel and read-only recovery checks. Frames are bounded to 64 KiB and output
+backpressure pauses input. Keys travel only over the private pipe, remain in
+owned buffers, expire with the pending review/recovery and are cleared on
+cancel, replacement, consumed-apply failure, EOF or shutdown. The worker accepts no keys in
+argv/env, discovers no profiles, opens no network listener and is registered
+with no renderer, model tool, Core RPC or extension API. A plan digest or
+`approved` JSON field is not a user-authorization boundary: the future native
+caller must hold the plan privately and obtain the person's explicit consent.
+
+All **27 focused tests** passed: 18 file/apply/failure tests and nine worker
+lifecycle cases. Fault injection exercises a publication collision, failure
+before publication, directory synchronization failure after publication,
+staging cleanup failure and a source write during verification. Other cases
+cover wrong keys, replaced files, invalid/tampered reviews, expiry, cancellation,
+private-worker isolation, replay refusal and preservation of later native work.
+Only generated private temporary files and keys were used.
+
+Integrated validation passed **2,172 tests in 279 files**, workspace typechecking
+and the full native build. Final bundle
+`ca863aac40e292d7ac16fbc3cb71db65371c088213bdf332efbfb3b8a87cf1fb`
+passed seven packaged transfer-worker phases over its actual bundled Node
+executable, including ordinary destination readers, source byte equality,
+both-file recovery, later-work preservation and oversized-frame refusal without
+input echo (`.tmp/native-core-file-transfer-current-evidence/receipt.json`).
+The same bundle passed all 16 native Settings/window/restart phases with equal
+before/after digests
+(`.tmp/native-core-file-transfer-current-settings-evidence/receipt.json`) and
+bundled Core durability/recovery with the fake host-key broker
+(`.tmp/native-core-file-transfer-current-durability.log`). The preceding published
+head `7503645ccac863972c0c1c2eb7fa4d37f436fe2e` passed full CI `41468336106`
+and PR analysis `41468328751`; the new head needs its own CI result.
+
+This completes a packaged Core file-transfer layer, not the user-facing
+migration or rollback flow. The native UI/host launcher, legacy Keychain adapter
+connection, stable final-profile key allocation, crash-recovery adoption,
+large-profile streaming, older schema handling, browser/credential handling,
+application/profile activation and user-reviewed cutover still need completion.
+No real profile, Keychain item, credential, vendor login or canonical app was
+read or changed; no whole-desktop capture/input was enabled by these checks.
