@@ -895,3 +895,57 @@ canary records actual process identities and retains that failed receipt in
 `.tmp/native-managed-runtime-evidence-TPDuEr/`. Cleanup is not counted as passing
 if the test must signal an orphan itself. The successful run required no such
 cleanup and preserved the candidate fingerprint.
+
+The protected native Core key channel is integrated in bundle
+`255a9b9cbc1b352301960a4617b7234e7ab7685d84a0b5a460ca88f95b294db7`.
+Production durable profiles use the Cocoa Security.framework Keychain backend,
+with a path-bound account and a private host/broker/Core key exchange. Existing
+legacy file-key profiles fail closed pending an explicit migration. Test keys
+are restricted to marked, fresh temporary profiles in development candidates;
+they are not real-Keychain evidence. The current source passed all 2,060 tests
+across 270 files, including the strengthened retirement receipt contract.
+
+The opt-in `test:native-real-keychain` canary passed two actual app starts on
+that bundle using a fresh generated profile, the production Keychain route,
+and no test or legacy key files. A generated conversation/message survived
+restart and decrypted correctly; its unique content was absent from raw SQLite
+and WAL bytes. The candidate hash matched throughout. Evidence is in
+`.tmp/native-real-keychain-evidence-1793593368970-5c3982ce-b9ed-471f-a449-3c008c88c150/receipt.json`.
+The temporary profile was removed. One Keychain item scoped to that generated
+profile remains; the canary never exports its value. This proves native Core
+key custody and encrypted conversation restart, not transfer of existing
+Electron credentials or production signing identity.
+
+The same bundle completed all 34 desktop Store workflow phases in
+`.tmp/chromium-desktop-evidence/receipt.json`. Both JSON Formatter 0.10.2 and
+uBlock Origin Lite 2026.1026.1812 were installed through their official Store
+listings and real Chromium confirmation sheets. Home, Settings and Store shared
+one native window with the real Kestrel companion. JSON Formatter transformed
+the generated JSON fixture, stopped while disabled in chrome://extensions,
+resumed after re-enable and remained functional after app restart. The official
+uBO Lite worker created, updated and removed a same-window tab observed by
+Kestrel; its real action popup opened and exposed no Kestrel renderer bridge.
+Both extensions persisted enabled across restart. Popup imagery is recorded in
+`native-extension-action-popup.png`.
+
+The strict extension parity result remains incomplete: five of its six checks
+passed, while Chrome's real update check returned `no_update`. That confirms
+the current version, not a published version transition. JSON Formatter has no
+background worker or toolbar popup; those capabilities are correctly measured
+using uBO Lite rather than treated as absent browser support. A failed earlier
+expanded canary retained a stale test-client manager handle and left its
+throwaway extension disabled; that receipt remains in
+`.tmp/native-protected-core-store-stale-harness-evidence/`. The corrected handle
+lifecycle passed disable/re-enable and persistence. A subsequent 34-phase run
+in `.tmp/native-protected-core-two-store-34-evidence/` isolated the popup's
+inactive-window precondition; focusing the real Chrome window resolved it.
+
+Retirement now validates the hashed, exact-candidate Chromium desktop receipt
+and its specific Store, tab, popup, toggle and restart evidence instead of
+launching the obsolete CEF extension probe. Every other retirement gate,
+explicit cutover acceptance and complete bundle fingerprint remains required.
+A `no_update`, throttled or failed check cannot satisfy the actual published
+upgrade requirement. These results do not replace the canonical Electron app;
+whole-desktop enabled capture/input, full profile transfer and rollback, vendor
+sign-in parity, production signing/notarization and canonical installation still
+need their own acceptance evidence.
