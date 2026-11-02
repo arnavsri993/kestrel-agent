@@ -13,9 +13,9 @@
     "@kestrel/core-service": "workspace:*",
     "@kestrel/shared-types": "workspace:*",
     "playwright": "1.61.1",
-    "zod": "4.4.3",
+    "zod": "4.6.6",
     "better-sqlite3": "13.0.1",
-    "sharp": "0.35.4"
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
