@@ -754,3 +754,67 @@ not exercised. Preflight and progress monitoring cannot atomically prevent a
 pull if another actor removes the model between checking and setup. The current
 candidate is separate from the canonical installed app; no profile transfer or
 canonical replacement has been performed.
+
+### Locality guards, signed plugins and native settings acceptance
+
+Local setup and the Ollama provider reject advertised or malformed remote-model
+metadata in tags, descriptors and chat responses. The provider checks tags and
+descriptors before every prompt; detected local choices also require descriptor
+confirmation with four concurrent requests and a three-second overall budget.
+An explicitly selected local endpoint stays pinned. Existing automatic or
+explicit multi-provider routing can use other configured routes; this is not a
+network attestation of a daemon that falsifies its metadata.
+
+All 2,012 tests across 264 files and workspace typechecking passed for the
+locality checkpoint. The native build and six-phase installed-model setup and
+restart canary passed on bundle
+`7ad4c21519dc4645591afbb01d7a815ab320365e0dd1270ab93bc67d8b1b80e8`.
+Receipt: `.tmp/native-local-setup-evidence-JxNuWV/receipt.json`; the external
+Ollama listener and model digests remained unchanged. The separate Store run on
+the preceding `f0608672` bundle timed out at its physical installation sheet
+while the computer tool still reported a locked Mac. It did not prove installation.
+
+Native plugin settings now use a profile-owned host for public publisher-key
+import and signed install/update/remove/recovery. No vendor cache is imported.
+Install, enable and MCP connection are separate actions; normal tool approval
+still applies. Whole-operation deadlines, origin-port cancellation and rollback
+cover settings mutation and Core restart. If rollback cannot acknowledge before
+the bounded transport grace expires, the response explicitly reports an uncertain
+outcome. A disconnected renderer cannot cancel another renderer's request or an
+ordinary agent task. Public documents reject extra/private material. Managed
+plugins require signature checks at startup, enable, MCP connection and skill
+reads; saved activation is bound to both the host token and verified bundle
+identity. Signed out-of-band replacements require renewed activation.
+
+Independent reviews found and corrected cancellation, rollback, public-document,
+managed-root, skill-read and activation-binding gaps. All 2,038 tests across 267
+files, workspace typechecking and the native Cocoa/Chromium build passed. The
+133 focused host/security regressions passed separately. This does not prove a
+physical Cocoa picker interaction for plugins.
+
+Complete bundle
+`1b44588e15785c0fb51bac750ee14cc9d02679f2eae65c88ecd089dcdb45d12e`
+passed all 14 native settings/window phases with matching before/after hashes
+in `.tmp/native-browser-settings-evidence/receipt.json`. Improved CI diagnostics
+exposed a real uploaded-image preview overlap; its grid sizing and decorative
+hit testing are fixed. The real Remove upload click now passes, and the canary
+also checks that preview geometry does not cover its text or controls. Its
+`home-image.png` was visually inspected.
+
+The same bundle passed `test:chromium-plugins`, which exercises actual bundled
+Node/Core using generated signed fixtures and synthetic private dialog replies:
+pending-picker cancellation without trust mutation; disabled install; explicit
+enable; skill activation; MCP echo blocked before approval and verified after
+approval; disconnect; restart persistence; and rejection of a tampered update
+without replacing the installed version. The MCP child's executable resolved
+to the bundled Node. Candidate hashes matched. Receipt:
+`.tmp/native-plugin-core-evidence-iSSRwC/receipt.json`. This is private-Core
+protocol acceptance, not physical picker or live plugin-UI acceptance.
+
+At published `6ef57e40`, CI passed the dependency audit but failed native image
+removal and a packaged layout assertion that still inferred sidebar width from
+viewport size despite an explicit saved preference. The actual image defect is
+fixed, and layout checks now assert that saved preference and its corresponding
+geometry together. Fresh exact-head CI remains required. Canonical installation,
+user-profile transfer, real Keychain protection, whole-desktop execution and
+production signing remain incomplete.

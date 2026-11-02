@@ -179,6 +179,15 @@ async function openSettings() {
  settings = await pageFor(url => /index\.html\?app=settings(?:&|$)/.test(url));
  await settings.locator('[data-app-page="settings"]').waitFor();
 }
+async function assertUploadedPreviewLayout() {
+ const geometry = await settings.locator('.background-upload-card').evaluate(card => {
+  const bounds = element => { const r=element.getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}; };
+  return {card:bounds(card),preview:bounds(card.querySelector('.background-option-preview')),copy:bounds(card.querySelector('.background-upload-copy')),stacked:matchMedia('(max-width: 760px)').matches};
+ });
+ assert(geometry.preview.width>0 && geometry.preview.height>0, 'Uploaded background preview must remain visible');
+ assert(geometry.preview.left>=geometry.card.left-1 && geometry.preview.right<=geometry.card.right+1, 'Uploaded background preview escaped its card');
+ assert(geometry.stacked ? geometry.preview.bottom<=geometry.copy.top+1 : geometry.preview.right<=geometry.copy.left+1, 'Uploaded background preview overlaps its text or controls');
+}
 async function section(id, label) {
  settings = await pageFor(url => /index\.html\?app=settings(?:&|$)/.test(url));
  await selectSettingsSection(settings, id, label);
@@ -347,6 +356,7 @@ try {
  const chooser = settings.waitForEvent('filechooser'); await settings.getByRole('button', { name: 'Choose image' }).click();
  await (await chooser).setFiles({ name: 'owned-canary.png', mimeType: 'image/png', buffer: png });
  await eventually(async () => { const s = await state(); return s.settings.newTabBackground === 'custom' && s.settings.newTabBackgroundCustomDataUrl?.length > 1024 * 1024; }, 'Custom Home image not saved');
+ await assertUploadedPreviewLayout();
  await settings.screenshot({ path: join(evidence, 'home-image.png') }); phase('home-image-upload', { bytes: png.length });
  currentOperation = 'stop and restart candidate to verify persisted Home image and search settings';
  await stop(); await start();
@@ -354,6 +364,7 @@ try {
  await searchQuery('after restart'); phase('home-image-and-search-persist-after-restart');
  currentOperation = 'remove uploaded Home image after restart';
  home = await pageFor(url => /^chrome-extension:\/\/[^/]+\/index\.html$/.test(url)); await openSettings(); await activateUi(settings); await section('browser-appearance', 'Appearance & new tab');
+ await assertUploadedPreviewLayout();
  await settings.getByRole('button', { name: 'Remove upload' }).click();
  await eventually(async () => { const s = await state(); return s.settings.newTabBackground !== 'custom' && !s.settings.newTabBackgroundCustomDataUrl; }, 'Custom Home image was not removed');
  phase('home-image-removal');
