@@ -174,9 +174,9 @@ export function ComputerUseSettings() {
 					</p>
 				)}
 				<p className="computer-use-boundary">
-					This check never requests permission. Even when enabled, approvals still
-					pause consequential actions; Kestrel cannot purchase, create accounts, or
-					bypass a CAPTCHA.
+					This status check does not request macOS access. Turning on desktop control
+					keeps your task's approval policy. Review the target and effect before
+					approving an input.
 				</p>
 				{error && <small className="computer-use-error" role="alert">{error}</small>}
 			</div>

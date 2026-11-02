@@ -1156,3 +1156,53 @@ October 27. The earlier `no_update` result therefore still lacks a real
 published-version upgrade. Future update acceptance should retain a generated
 Store-installed test profile for an actual later release instead of always
 starting with the newest version and deleting that profile immediately.
+
+### Native legacy Core key compatibility (2026-11-02)
+
+The Chromium host now compiles a narrow, decryption-only adapter for Kestrel's
+historical macOS database-key envelope. It accepts the broker's wrapped or bare
+`v10` format and a canonical 32-byte key; development plaintext requires an
+explicit development-transfer choice. Unknown formats, bad padding, malformed
+base64, missing passwords and wrong keys fail closed. Owned intermediate
+buffers are cleared. Legacy CBC has no authentication, so a caller must also
+authenticate source database records before accepting the recovered key.
+
+Compatibility parameters and the fixed `Kestrel Safe Storage` / `Kestrel`
+service/account come from the pinned [Electron app-name configuration](https://github.com/electron/electron/blob/v43.8.1/shell/browser/electron_browser_main_parts.cc)
+and [Chromium macOS key provider](https://chromium.googlesource.com/chromium/src/+/150.0.7871.250/components/os_crypt/async/browser/keychain_key_provider.mm),
+with ciphertext framing from the [Chromium encryptor](https://chromium.googlesource.com/chromium/src/+/150.0.7871.250/components/os_crypt/async/common/encryptor.cc).
+The adapter does not implement weak-key or missing-item creation fallbacks.
+Its read-only Keychain backend uses a fixed-purpose interface and explicit
+noninteractive/user-prompt policy. It cannot enumerate another product's
+items, create keys, rewrite the source key file or authorize a migration.
+There is no renderer/Core RPC or startup invocation of this adapter yet.
+
+All **23 native compatibility tests** compile the production C++/Objective-C++
+with warnings treated as errors and use generated inputs and a fake reader.
+They cover canonical and corrupt envelopes, denied development plaintext,
+locked/missing/failing readers, explicit prompt propagation and output clearing.
+One test creates the actual CredentialBroker envelope, decodes it natively,
+authenticates a generated encrypted message through a read-only SQLite handle,
+and semantically transfers it under an independent destination key. The source
+database and key file remain byte-for-byte unchanged. Decoded fixture keys use
+an anonymous test pipe, never stdout/stderr. The real Keychain was not queried.
+The normal writable database constructor and broker key getter must not be used
+to inspect an existing source during a dry-run because they can migrate it.
+
+Integrated validation passed **2,127 tests in 274 files**, workspace
+typechecking and the full native build. Bundle
+`da335ab1e363c1b11e01754ae151b4b485fc612844932a128125319bf9415622`
+passed all 16 native settings/window/restart phases with unchanged before/after
+digest (`.tmp/native-legacy-key-settings-evidence/receipt.json`). Bundled Core
+durability/recovery also passed with an in-memory fake host-key broker
+(`.tmp/native-legacy-key-core-durability.log`). The public Settings capture was
+visually inspected, including corrected approval guidance. These checks used
+generated profiles; no capture/input enablement, real-profile transfer,
+canonical refresh or new real-Keychain acceptance is claimed. The preceding
+head `e9a5aca1920664037da8088e3ef563e07d7f881e` passed both CI runs
+`41459957228` and `41459944161`; later heads require their own CI result.
+
+This removes an Electron dependency from a future migration implementation,
+but does not complete migration. Read-only legacy source projection must also
+enforce deletion fences without startup rewrites, and the reviewed dry-run,
+apply, rollback, large-profile, browser and credential paths remain required.
