@@ -1756,42 +1756,70 @@ describe("core agent request path", () => {
 
 	it("transcribes bounded voice data without exposing provider credentials to the request surface", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const received: Buffer[] = [];
 		const core = new AgentCore({
 			database,
 			transcriptionProvider: {
 				id: "voice-test",
-				transcribe: async ({ data, mediaType }) => ({
-					text: `${mediaType}:${data.byteLength}`,
-					model: "voice-model",
-					providerRequestId: "voice-1",
-				}),
+				transcribe: async ({ data, mediaType }) => {
+					received.push(Buffer.from(data));
+					return {
+						text: `${mediaType}:${data.byteLength}`,
+						model: "voice-model",
+						providerRequestId: "voice-1",
+					};
+				},
 			},
 		});
 		const encoded = Buffer.from([1, 2, 3, 4]).toString("base64");
+		for (const dataBase64 of [encoded, encoded.slice(0, -2)]) {
+			expect(
+				await core.handle({
+					type: "media-transcribe",
+					dataBase64,
+					mediaType: "audio/webm",
+				}),
+			).toEqual({
+				ok: true,
+				transcription: {
+					text: "audio/webm:4",
+					model: "voice-model",
+					providerRequestId: "voice-1",
+				},
+			});
+		}
+		for (const dataBase64 of [
+			"",
+			"not base64",
+			"AA===",
+			"AB==",
+			`AA${"=".repeat(1_000_000)}!`,
+		]) {
+			expect(
+				await core.handle({
+					type: "media-transcribe",
+					dataBase64,
+					mediaType: "audio/webm",
+				}),
+			).toMatchObject({
+				ok: false,
+				error: "Voice recording contains invalid base64 data.",
+			});
+		}
 		expect(
 			await core.handle({
 				type: "media-transcribe",
-				dataBase64: encoded,
-				mediaType: "audio/webm",
-			}),
-		).toEqual({
-			ok: true,
-			transcription: {
-				text: "audio/webm:4",
-				model: "voice-model",
-				providerRequestId: "voice-1",
-			},
-		});
-		expect(
-			await core.handle({
-				type: "media-transcribe",
-				dataBase64: "not base64",
+				dataBase64: Buffer.alloc(25 * 1024 * 1024 + 1).toString("base64"),
 				mediaType: "audio/webm",
 			}),
 		).toMatchObject({
 			ok: false,
-			error: "Voice recording contains invalid base64 data.",
+			error: "Voice recording must be between 1 byte and 25 MB.",
 		});
+		expect(received).toEqual([
+			Buffer.from([1, 2, 3, 4]),
+			Buffer.from([1, 2, 3, 4]),
+		]);
 		await core.close();
 	});
 

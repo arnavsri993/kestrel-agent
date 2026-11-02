@@ -1702,3 +1702,55 @@ are rejected, and DuckDuckGo uses an exact or dot-boundary hostname check. The
 focused attack cases pass; remote CodeQL must confirm the new result. The other
 13 flagged lines predate the PR merge base; changed data flows were not audited
 as part of this comparison. No security check or retirement gate was weakened.
+
+### Bounded voice decoding and private-key redaction (2026-11-02)
+
+Core now validates voice recordings with a canonical padded/unpadded base64
+comparison, without the suffix expression that repeatedly rescanned malformed
+padding. The decoded 25 MiB limit is checked before allocation. Invalid padding,
+garbage, whitespace, URL-safe substitutions and noncanonical end bits are rejected
+before transcription-provider dispatch; valid standard encodings preserve their
+exact bytes.
+
+Private-key redaction now advances through recognized markers once. Complete
+blocks require matching labels. Nested, mismatched or unterminated blocks, and
+recognizable private-key headers with missing closing dashes, redact the remainder
+conservatively. ASCII whitespace variants are recognized; arbitrary prose and
+incomplete PRIVATE/KEY words are outside that recognition policy. Memory capture
+uses the shared redactor without a second full-block expression. Per-result token
+deduplication and model-visible result limits remain enforced.
+
+The full native build, workspace typechecking and **2,255 tests in 284 files**
+passed. Regression cases include long malformed padding, the exact decoded-size
+boundary, provider non-dispatch, 40,000 unmatched private-key markers, multiple
+valid keys and malformed delimiters with trailing synthetic secrets. The complete
+repository `verify` run recorded above passed at the preceding `9b7bd7af` source;
+these later Core changes received the unit/type/build and bundled checks below.
+
+Current bundle
+`16649a22c19c91d9547cdc7294c9932b94cd72bf28a6d3e07078a018e7b57841`
+passed all 26 native workflow phases in
+`.tmp/native-core-input-guards-desktop-evidence/receipt.json`: actual Home-to-Core
+tasks through a loopback synthetic provider, companion handoff, busy-task and draft
+preservation, granted workspace operations and containment refusal, private-field
+isolation, native browser input/downloads, Core crash recovery and full restart.
+The completed companion conversation was visually inspected. The same bundle
+passed all five mocked voice lifetime checks in
+`.tmp/native-core-input-guards-voice-evidence/receipt.json`; its rendered Home/chat
+capture was inspected. No additional microphone or whole-desktop capture/input
+was authorized or performed.
+
+A separate five-phase probe used the actual bundled Node executable, supervisor,
+protected IPC and Core service. Only fetch was replaced with an in-memory synthetic
+transcription response; every other fetch was refused. Valid padded/unpadded
+inputs uploaded the exact four synthetic bytes. Five invalid requests, including
+1,000,003 characters of malformed padding, caused no further provider calls. Core
+still answered snapshots, redacted complete/nested malformed key content through
+the real memory route, and retained the session and two redacted memories after
+same-generated-key restart. Its receipt is
+`.tmp/native-core-input-guards-probe-evidence/receipt.json`. An initial
+assertion-only failure expecting decoder wording for an input rejected earlier by
+the service schema is preserved separately. No product code changed for that
+correction. All receipts show the unchanged candidate digest; the probe stopped
+its owned processes and removed only its generated profile. This does not verify
+a hosted transcription service or move any real profile or credentials.

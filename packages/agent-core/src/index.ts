@@ -97,6 +97,7 @@ import {
 	type MediaGenerationProvider,
 } from "./media-artifacts";
 import type { VoiceTranscriptionProvider } from "./media-providers";
+import { decodeVoiceRecording } from "./voice-recording";
 import { installMemoryTools, MemoryManager } from "./memory";
 import { MemorySubstrate } from "./memory-substrate";
 import { MemoryConsolidator, type MemoryModelRequest } from "./memory-consolidation";
@@ -3806,13 +3807,7 @@ export class AgentCore {
 						throw new Error(
 							"Voice transcription is not configured. Add an OpenAI credential in Connections.",
 						);
-					const data = Buffer.from(request.dataBase64, "base64");
-					if (
-						data.byteLength === 0 ||
-						data.toString("base64").replace(/=+$/, "") !==
-							request.dataBase64.replace(/=+$/, "")
-					)
-						throw new Error("Voice recording contains invalid base64 data.");
+					const data = decodeVoiceRecording(request.dataBase64);
 					const result = await this.deps.transcriptionProvider.transcribe({
 						data,
 						mediaType: request.mediaType,

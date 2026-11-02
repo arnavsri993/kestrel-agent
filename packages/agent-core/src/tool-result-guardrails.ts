@@ -8,8 +8,9 @@ interface RedactionState {
 	nextTokenByKind: Map<string, number>;
 }
 
-const PRIVATE_KEY_PATTERN =
-	/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+// Match through KEY before checking the trailing delimiter so malformed
+// headers cannot hide key material. Words and whitespace do not overlap.
+const PRIVATE_KEY_MARKER = /-----(BEGIN|END)[ \t\r\n]+((?:[A-Z0-9]+[ \t\r\n]+)*)PRIVATE[ \t\r\n]+KEY/gi;
 const SENSITIVE_ASSIGNMENT_PATTERN =
 	/\b(api[_ -]?key|access[_ -]?token|auth(?:orization)?|client[_ -]?secret|password|secret|private[_ -]?key|session[_ -]?cookie|credential)\b(\s*[:=]\s*)(["'`]?)([^\s"'`,;&}]{8,})(\3)/gi;
 const ANTHROPIC_KEY_PATTERN = /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g;
@@ -81,11 +82,34 @@ function isSensitiveKey(key: string): boolean {
 	);
 }
 
+// Scan each marker once. Ambiguous nested, mismatched or incomplete blocks
+// redact the remainder because it may still contain key material.
+function redactPrivateKeys(value: string, state: RedactionState): string {
+	PRIVATE_KEY_MARKER.lastIndex = 0;
+	const parts: string[] = [];
+	let cursor = 0;
+	let begin: RegExpExecArray | null;
+	while ((begin = PRIVATE_KEY_MARKER.exec(value))) {
+		if (begin[1]!.toUpperCase() !== "BEGIN") continue;
+		const beginComplete = value.startsWith("-----", PRIVATE_KEY_MARKER.lastIndex);
+		if (beginComplete) PRIVATE_KEY_MARKER.lastIndex += 5;
+		const end = beginComplete ? PRIVATE_KEY_MARKER.exec(value) : null;
+		const label = (marker: RegExpExecArray) => marker[2]!.trim().replace(/[ \t\r\n]+/g, " ").toUpperCase();
+		const matches = end?.[1]?.toUpperCase() === "END" && label(end) === label(begin) &&
+			value.startsWith("-----", PRIVATE_KEY_MARKER.lastIndex);
+		const blockEnd = matches ? PRIVATE_KEY_MARKER.lastIndex + 5 : value.length;
+		if (matches) PRIVATE_KEY_MARKER.lastIndex = blockEnd;
+		parts.push(value.slice(cursor, begin.index), tokenFor("PRIVATE_KEY", value.slice(begin.index, blockEnd), state));
+		cursor = blockEnd;
+		if (!matches) break;
+	}
+	if (cursor === 0) return value;
+	parts.push(value.slice(cursor));
+	return parts.join("");
+}
+
 function redactText(value: string, state: RedactionState): string {
-	let redacted = value.replace(
-		PRIVATE_KEY_PATTERN,
-		(match) => tokenFor("PRIVATE_KEY", match, state),
-	);
+	let redacted = redactPrivateKeys(value, state);
 	redacted = redacted.replace(
 		SENSITIVE_ASSIGNMENT_PATTERN,
 		(_match, key: string, separator: string, quote: string, secret: string) =>

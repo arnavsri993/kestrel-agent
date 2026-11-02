@@ -76,6 +76,41 @@ describe("model-facing tool result guardrails", () => {
 		expect(redactSensitiveContent(persisted)).not.toContain(secret);
 	});
 
+	it("redacts multiple and incomplete private key blocks conservatively", () => {
+		const first = "-----BEGIN PRIVATE KEY-----\nfirst-secret\n-----END PRIVATE KEY-----";
+		const second = "-----begin rsa private key-----\nsecond-secret\n-----end rsa private key-----";
+		expect(redactSensitiveContent(`before ${first} between ${second} after`))
+			.toBe("before [PRIVATE_KEY_1] between [PRIVATE_KEY_2] after");
+		expect(redactSensitiveContent("before -----BEGIN\tRSA PRIVATE KEY-----\nsecret\n-----END RSA PRIVATE KEY----- after"))
+			.toBe("before [PRIVATE_KEY_1] after");
+		expect(redactSensitiveContent(`prefix -----BEGIN PRIVATE KEY-----\nunfinished-secret`))
+			.toBe("prefix [PRIVATE_KEY_1]");
+		const mismatched = "-----BEGIN RSA PRIVATE KEY-----\nsecret\n-----END EC PRIVATE KEY-----\ntrailing-secret";
+		const nested = "-----BEGIN PRIVATE KEY-----\n-----BEGIN EC PRIVATE KEY-----\nsecret\n-----END EC PRIVATE KEY-----\ntrailing-secret";
+		for (const malformed of [mismatched, nested]) {
+			expect(redactSensitiveContent(`prefix ${malformed}`)).toBe("prefix [PRIVATE_KEY_1]");
+		}
+		for (const header of [
+			"-----BEGIN PRIVATE KEY----",
+			"-----BEGIN PRIVATE KEY\n",
+			"-----BEGIN\tRSA  PRIVATE\tKEY----",
+			"-----BEGIN\nPRIVATE KEY-----",
+		]) {
+			const value = `prefix ${header}\ntrailing-secret`;
+			expect(redactSensitiveContent(value)).toBe("prefix [PRIVATE_KEY_1]");
+		}
+	});
+
+	it("handles many unterminated private key markers before applying the result limit", () => {
+		const markers = "-----BEGIN PRIVATE KEY-----".repeat(40_000);
+		const visible = modelVisibleToolResult(execution({ content: `${markers}secret-at-end` }));
+		expect(visible).not.toContain("secret-at-end");
+		expect(JSON.parse(visible)).toMatchObject({
+			output: { content: "[PRIVATE_KEY_1]" },
+			safety: { redactedSensitiveData: true },
+		});
+	});
+
 	it("does not add a safety envelope when no sensitive value is present", () => {
 		const visible = modelVisibleToolResult(
 			execution({
