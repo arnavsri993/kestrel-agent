@@ -89,6 +89,11 @@ import {
 	listMigrationVersions,
 	loadMigrationSql,
 } from "./migrations.js";
+import {
+	createHostProfileTransferSnapshot,
+	importHostProfileTransferSnapshot,
+	type HostProfileTransferSnapshot,
+} from "./profile-transfer.js";
 
 const MAX_BROWSER_ACTIVITY_PER_OWNER = 500;
 const MAX_ACTION_RECEIPTS_PER_SESSION = 500;
@@ -480,6 +485,19 @@ export class KestrelDatabase {
 		throw new DatabaseIntegrityError(
 			`Kestrel's local database failed integrity verification (${result}). ${DATABASE_INTEGRITY_RECOVERY_MESSAGE}`,
 		);
+	}
+
+	/** Host-only in-memory semantic snapshot. Never expose this through Core/renderer IPC. */
+	exportHostProfileTransferSnapshot(options: { maxBytes?: number } = {}): HostProfileTransferSnapshot {
+		return createHostProfileTransferSnapshot(this.db, this.encryptionKey, options.maxBytes);
+	}
+
+	/** Host-only atomic import into a newly initialized, empty database. */
+	importHostProfileTransferSnapshot(
+		snapshot: HostProfileTransferSnapshot,
+		options: { maxBytes?: number } = {},
+	): { semanticSha256: string; importedRows: Record<string, number>; excluded: HostProfileTransferSnapshot["excluded"] } {
+		return importHostProfileTransferSnapshot(this.db, this.encryptionKey, snapshot, options.maxBytes);
 	}
 
 	private getAppliedSchemaVersion(): number {

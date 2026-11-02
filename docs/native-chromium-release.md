@@ -1088,3 +1088,71 @@ That GUI flow used a new disposable profile and no desktop capture/input; the
 on-disk source deletion test used generated database fixtures. Existing user
 data, canonical installation and provider logins were untouched. The partial
 host profile-transfer primitive remains unintegrated and is not release proof.
+
+
+### Host-only Core database transfer primitives (2026-11-02)
+
+The database now has host-only semantic export/import primitives for the exact
+migration-001-through-018 schema. They run in memory, expose no renderer/Core
+request, export no database key and write no plaintext snapshot file. Source
+reads use one consistent read transaction; import requires an empty destination
+and commits only after foreign-key/integrity checks and semantic readback.
+Unknown tables/schema objects, corrupt envelopes, inconsistent indexed payload
+metadata, invalid checksums, over-limit input and nonempty targets fail closed.
+The current primitive is bounded to 64 MiB and 100,000 total source rows,
+including indexes; it rejects excess data without truncation. Large-profile
+streaming remains required before this can serve every real profile.
+
+The generated-fixture tests cover all 28 encrypted field families with an
+independent destination key and ordinary database readers. Literal non-tool
+JSON and unknown tool metadata survive. Runtime and timeline search terms are
+rewrapped only if retained in the source, including partial exclusions;
+unkeyed timeline links are copied rather than regenerated. Forgotten workspace
+documents retain their deletion markers without confusing the newer SQL
+version with their older encrypted payload. Source evidence deletion fences
+remain effective against late receipt/cache writes after transfer.
+
+Operational claims are excluded. Live runs, active working tasks and leased
+jobs are cancelled; live tool records and cached results become cancelled or
+uncertain. Unexecuted recommendation approvals lose execution authority, and
+unsettled action receipts are reconciled while settled historical evidence is
+preserved. These explicit policy changes are counted in the snapshot report.
+The source remains unchanged, including active statuses; one test compares its
+complete generated SQLite serialization before and after export.
+
+All **53 focused database tests in two files**, including 22 transfer cases,
+and database typechecking passed before integration. Recomputed-checksum
+attacks against payload/index bindings, source corruption, wrong keys, partial
+search-index suppression, nullable/forgotten documents, lifecycle retirement,
+row bounds and atomic rollback are exercised. Only generated in-memory or
+temporary fixtures were used. No real profile, Keychain item, provider login,
+credential or canonical app was read, moved or changed by this work.
+
+This is a database primitive, not a complete profile migration or a cutover
+claim. The user-reviewed dry-run/apply/rollback flow, bounded transport for
+large profiles, browser data import and protected credential handling or
+reauthentication still need implementation and live acceptance. Existing
+profiles must not be copied, merged or replaced implicitly. The native
+Keychain identity must be allocated for its stable final profile path before
+any approved staging/import; renaming a temporary profile changes its account.
+
+
+Integrated validation passed **2,104 tests in 273 files**, workspace
+typechecking and the full native build. The final review preserves prior run/
+tool/job diagnostics, recommendation policy text, task progress summaries and
+opaque job metadata when retiring live state.
+Bundle `b1d941107d073c16ba9b240d1bf7299715748fc5b6f5d7e76e62ecb156840a35`
+passed all 16 native settings/window/restart phases, with unchanged before/
+after digest (`.tmp/native-profile-transfer-settings-evidence/receipt.json`).
+The bundled Core durability/recovery smoke also passed
+(`.tmp/native-profile-transfer-core-durability.log`), using an in-memory fake
+host-key broker. This is not new real-Keychain or desktop-input evidence. The
+public test-profile Settings capture was inspected visually. Both runtime
+checks used generated profiles and left the canonical app unchanged.
+
+The [official uBO Lite Store listing](https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh)
+was rechecked on November 2: it still lists version `2026.1026.1812`, updated
+October 27. The earlier `no_update` result therefore still lacks a real
+published-version upgrade. Future update acceptance should retain a generated
+Store-installed test profile for an actual later release instead of always
+starting with the newest version and deleting that profile immediately.
