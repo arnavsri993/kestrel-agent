@@ -244,8 +244,8 @@ function expectedAgentPanelWidth(viewportWidth) {
 	return 336;
 }
 
-function expectedNavigationWidth(viewportWidth) {
-	return viewportWidth <= 1_120 ? 56 : 216;
+function expectedNavigationWidth(collapsed) {
+	return collapsed ? 56 : 216;
 }
 
 async function readLayout(page) {
@@ -269,7 +269,13 @@ async function readLayout(page) {
 			innerWidth,
 			classes: shell.className,
 			columns: getComputedStyle(shell).gridTemplateColumns,
-			navigation: bounds(".kestrel-sidebar", true),
+			navigation: {
+				...bounds(".kestrel-sidebar", true),
+				collapsed:
+					document.querySelector(".kestrel-sidebar")?.classList.contains("is-collapsed") ??
+					false,
+				preference: localStorage.getItem("kestrel:navigation-sidebar"),
+			},
 			main: bounds(".browser-main-plane"),
 			viewport: bounds("#browser-viewport"),
 			agent: bounds(".agent-sidebar"),
@@ -882,12 +888,7 @@ async function assertVerticalTabLayout(page) {
 
 function assertCollapsedLayout(layout) {
 	assert.match(layout.classes, /agent-sidebar-collapsed/);
-	assertNear(layout.navigation.left, 0, "collapsed navigation left");
-	assertNear(
-		layout.navigation.width,
-		expectedNavigationWidth(layout.innerWidth),
-		"collapsed navigation width",
-	);
+	assertNavigationLayout(layout);
 	assertNear(
 		layout.main.left,
 		0,
@@ -917,12 +918,7 @@ function assertCollapsedLayout(layout) {
 
 function assertOpenLayout(layout) {
 	assert.doesNotMatch(layout.classes, /agent-sidebar-collapsed/);
-	assertNear(layout.navigation.left, 0, "open navigation left");
-	assertNear(
-		layout.navigation.width,
-		expectedNavigationWidth(layout.innerWidth),
-		"open navigation width",
-	);
+	assertNavigationLayout(layout);
 	assertNear(
 		layout.main.left,
 		0,
@@ -945,6 +941,26 @@ function assertOpenLayout(layout) {
 		"open Pragmatic width",
 	);
 	assertTheme(layout);
+}
+
+function assertNavigationLayout(layout) {
+	const expectedCollapsed =
+		layout.navigation.preference === "collapsed"
+			? true
+			: layout.navigation.preference === "open"
+				? false
+				: layout.innerWidth <= 1_120;
+	assert.equal(
+		layout.navigation.collapsed,
+		expectedCollapsed,
+		`Navigation collapsed state did not honor the saved preference (${layout.navigation.preference ?? "automatic"}).`,
+	);
+	assertNear(layout.navigation.left, 0, "navigation left");
+	assertNear(
+		layout.navigation.width,
+		expectedNavigationWidth(expectedCollapsed),
+		"navigation width",
+	);
 }
 
 function agentPanelWidthBounds(viewportWidth) {
@@ -1239,9 +1255,10 @@ function assertZoomReflow(layout, reflow, navigationWidth = 56) {
 	assertTheme(layout);
 }
 
-function assertInTabAgentLayout(layout, navigationWidth = expectedNavigationWidth(layout.innerWidth)) {
+function assertInTabAgentLayout(layout, navigationWidth = expectedNavigationWidth(layout.navigation.collapsed)) {
 	assert.doesNotMatch(layout.classes, /agent-full-page/);
 	assert.match(layout.classes, /agent-sidebar-collapsed/);
+	assertNavigationLayout(layout);
 	assertNear(layout.navigation.width, navigationWidth, "in-tab Agent navigation width");
 	assertNear(
 		layout.main.left,

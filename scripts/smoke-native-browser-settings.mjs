@@ -39,7 +39,13 @@ const server = createServer((req, res) => { res.writeHead(200, { 'content-type':
 await new Promise(done => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
 let child, browser, endpoint, output = '', home, settings;
-const phase = (name, details = {}) => { receipt.phases.push({ phase: name, passed: true, ...details }); console.log(`PASS ${name}`); };
+let currentOperation = 'launch native Chromium candidate';
+const phase = (name, details = {}) => { receipt.phases.push({ phase: name, passed: true, ...details }); currentOperation = name; console.log(`PASS ${name}`); };
+function diagnosticOutput(value) {
+ return String(value)
+  .replace(/\b(?:https?|chrome-extension|chrome):\/\/[^\s"'<>]+/gi, '[redacted URL]')
+  .replace(/((?:api[_-]?key|token|secret|password|cookie|authorization)[=: ]+)\S+/gi, '$1[redacted]');
+}
 async function eventually(fn, description, timeout = 30000) {
  const end = Date.now() + timeout; let last;
  while (Date.now() < end) { try { last = await fn(); if (last) return last; } catch (error) { last = error; } await delay(150); }
@@ -325,6 +331,7 @@ try {
  await searchPage.locator('cr-radio-button').filter({ hasText: 'DuckDuckGo' }).click();
  await searchPage.getByRole('button', { name: 'Set as Default', exact: true }).click();
  const searchQuery = async (suffix) => {
+  currentOperation = `run native search query ${suffix}`;
   home = await pageFor(url => /^chrome-extension:\/\/[^/]+\/index\.html$/.test(url));
   const before = new Set((await cdpTargets()).map(t => t.targetId));
   const result = await home.evaluate(input => window.kestrel.request({ type: 'browser-create-tab', input }), `kestrel canary ${suffix}`); assert(result.ok, result.error);
@@ -341,15 +348,19 @@ try {
  await (await chooser).setFiles({ name: 'owned-canary.png', mimeType: 'image/png', buffer: png });
  await eventually(async () => { const s = await state(); return s.settings.newTabBackground === 'custom' && s.settings.newTabBackgroundCustomDataUrl?.length > 1024 * 1024; }, 'Custom Home image not saved');
  await settings.screenshot({ path: join(evidence, 'home-image.png') }); phase('home-image-upload', { bytes: png.length });
+ currentOperation = 'stop and restart candidate to verify persisted Home image and search settings';
  await stop(); await start();
  await eventually(async () => { const s = await state(); return s.settings.newTabBackground === 'custom' && s.settings.newTabBackgroundCustomDataUrl?.length > 1024 * 1024; }, 'Custom Home image did not survive restart');
  await searchQuery('after restart'); phase('home-image-and-search-persist-after-restart');
+ currentOperation = 'remove uploaded Home image after restart';
  home = await pageFor(url => /^chrome-extension:\/\/[^/]+\/index\.html$/.test(url)); await openSettings(); await activateUi(settings); await section('browser-appearance', 'Appearance & new tab');
  await settings.getByRole('button', { name: 'Remove upload' }).click();
  await eventually(async () => { const s = await state(); return s.settings.newTabBackground !== 'custom' && !s.settings.newTabBackgroundCustomDataUrl; }, 'Custom Home image was not removed');
  phase('home-image-removal');
+ currentOperation = 'verify Core session persisted after restart';
  const persistedSession = await home.evaluate(() => window.kestrel.request({ type: 'runtime-list-sessions' }));
  assert(persistedSession.ok && persistedSession.sessions?.some(item => item.id === sessionId), 'Core session did not survive restart');
+ currentOperation = 'close and reopen the last native window while preserving Core';
  const corePid = ownedCorePid();
  const worker = await eventually(() => browser.contexts().flatMap(context => context.serviceWorkers()).find(item => item.url().startsWith('chrome-extension://')), 'Owned extension worker not attached');
  const normalWindows = await worker.evaluate(() => chrome.windows.getAll({ windowTypes: ['normal'] }));
@@ -381,9 +392,17 @@ try {
  try { if (settings && !settings.isClosed()) await settings.screenshot({ path: join(evidence, 'failure.png') }); else if (home && !home.isClosed()) await home.screenshot({ path: join(evidence, 'failure.png') }); } catch {}
  try { if (browser) receipt.targetsAtFailure = (await cdpTargets()).map(({ targetId, type, url }) => ({ targetId, type, url })); } catch {}
  try { if (home && !home.isClosed()) { const s = await state(); receipt.browserStateAtFailure = { activeTabId: s.activeTabId, tabs: s.tabs, settings: { newTabBackground: s.settings.newTabBackground, customImageBytes: s.settings.newTabBackgroundCustomDataUrl?.length || 0 } }; } } catch {}
+ const childState = child ? { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode, killed: child.killed } : null;
+ process.stderr.write(`Native settings smoke failed during ${currentOperation}: ${diagnosticOutput(receipt.error)}\n`);
+ process.stderr.write(`Native settings smoke process state: ${JSON.stringify(childState)}\n`);
+ process.stderr.write(`Native settings smoke final candidate output (last 40 lines):\n${diagnosticOutput(output.split(/\r?\n/).slice(-40).join('\n'))}\n`);
  process.exitCode = 1;
 } finally {
- try { await stop(); } catch (error) { receipt.result = 'failed'; receipt.shutdownError = String(error); process.exitCode = 1; }
+ try { await stop(); } catch (error) {
+  receipt.result = 'failed'; receipt.shutdownError = String(error?.stack || error); process.exitCode = 1;
+  process.stderr.write(`Native settings smoke shutdown failed during ${currentOperation}: ${diagnosticOutput(receipt.shutdownError)}\n`);
+  process.stderr.write(`Native settings smoke shutdown process state: ${JSON.stringify(child ? { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode, killed: child.killed } : null)}\n`);
+ }
  if (child && child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await new Promise(done => child.once('exit', done)); }
  await browser?.close().catch(() => {});
  await new Promise(done => server.close(done));
