@@ -17,6 +17,11 @@ namespace {
 constexpr size_t kFrameLimit = 64 * 1024;
 NSString* const kSelectionName = @"native-core-profile.json";
 NSError* Failure(NSString* text) { return [NSError errorWithDomain:@"com.kestrel.core-transfer" code:1 userInfo:@{NSLocalizedDescriptionKey:text}]; }
+NSString* CanonicalPath(NSString* path) {
+  if (!path.isAbsolutePath) return nil;
+  char canonical[PATH_MAX]{};
+  return realpath(path.fileSystemRepresentation,canonical) ? [NSString stringWithUTF8String:canonical] : nil;
+}
 bool PrivateDirectory(NSString* path) {
   if (!path.isAbsolutePath) return false;
   char canonical[PATH_MAX]{}; struct stat info{};
@@ -100,6 +105,14 @@ NSString* KestrelResolveNativeCoreProfile(NSString* browser_profile, NSError** e
   NSString* result = selected ? Profile(browser_profile, selected[@"active"]) : nil;
   if (!result && error) *error = Failure(@"Kestrel's data profile selection is unavailable. Existing profiles were preserved.");
   return result;
+}
+
+NSString* KestrelCanonicalNativeCoreTransferSource(NSString* selected_path) {
+  // NSString's resolvingSymlinksInPath shortens /private/var back to /var on
+  // macOS. The file checks and Node worker use realpath's canonical spelling.
+  NSString* source = CanonicalPath(selected_path);
+  return PrivateDirectory(source) && PrivateDirectory([source stringByAppendingPathComponent:@"secure"]) &&
+      PrivateDirectory([source stringByAppendingPathComponent:@"database"]) ? source : nil;
 }
 
 KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSString* root, NSString* active, NSString* previous, NSString* expected_active) {
@@ -237,15 +250,15 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   [picker beginWithCompletionHandler:^(NSModalResponse result) {
     KestrelNativeProfileTransferController* owner = weakSelf; if (!owner || owner.stopped) return;
     owner.picker = nil;
-    NSString* source = result == NSModalResponseOK && picker.URL.isFileURL ? picker.URL.path.stringByResolvingSymlinksInPath : nil;
-    if (!source) { owner.busy = NO; return; }
-    if (!PrivateDirectory(source) || !PrivateDirectory([source stringByAppendingPathComponent:@"secure"]) || !PrivateDirectory([source stringByAppendingPathComponent:@"database"])) {
+    if (result != NSModalResponseOK || !picker.URL.isFileURL) { owner.busy = NO; return; }
+    NSString* source = KestrelCanonicalNativeCoreTransferSource(picker.URL.path);
+    if (!source) {
       owner.busy = NO; Alert(@"Profile unavailable",@"Choose an owned, private Kestrel profile folder containing its database and secure data. No existing files were changed."); return;
     }
     if (owner.testKeys) {
-      NSString* temporary = NSFileManager.defaultManager.temporaryDirectory.path.stringByResolvingSymlinksInPath;
+      NSString* temporary = CanonicalPath(NSFileManager.defaultManager.temporaryDirectory.path);
       NSData* marker = ReadPrivateFile([source stringByAppendingPathComponent:@".kestrel-native-transfer-source-test-v1"],64);
-      if (![source hasPrefix:[temporary stringByAppendingString:@"/"]] || ![marker isEqualToData:[@"kestrel-transfer-source-test-v1\n" dataUsingEncoding:NSUTF8StringEncoding]]) {
+      if (!temporary || ![source hasPrefix:[temporary stringByAppendingString:@"/"]] || ![marker isEqualToData:[@"kestrel-transfer-source-test-v1\n" dataUsingEncoding:NSUTF8StringEncoding]]) {
         owner.busy = NO; Alert(@"Generated profile required",@"This disposable test session can review only a marked generated temporary profile. Real Kestrel data was not opened."); return;
       }
     }

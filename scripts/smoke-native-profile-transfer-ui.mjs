@@ -69,6 +69,8 @@ async function start() {
 	await home.waitForFunction(() => typeof window.kestrel?.request === "function");
 	await home.evaluate(() => { localStorage.setItem("kestrel:onboarded", "yes"); localStorage.setItem("kestrel:default-browser-prompted", "yes"); });
 	await home.reload(); await home.locator(".kestrel-sidebar").waitFor();
+	const expand = home.getByRole("button", { name: "Expand sidebar", exact: true });
+	if (await expand.isVisible()) await expand.click();
 	return { state, home };
 }
 async function stop() {

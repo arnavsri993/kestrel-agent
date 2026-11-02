@@ -26,6 +26,32 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 			save(active, previous = "", expected = "", fault) { const result = spawnSync(executable, [root, active, previous, expected], { encoding: "utf8", env: { ...process.env, ...(fault ? { KESTREL_SELECTION_FIXTURE_FSYNC_FAULT: fault } : {}) } }); expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout); },
 			resolve() { const result = spawnSync(executable, [root], { encoding: "utf8" }); expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout); } };
 	}
+	function source(value, path = value.root) {
+		const result = spawnSync(executable, [path, "--source"], { encoding: "utf8" }); expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout);
+	}
+	function sourceProfile() { const value = profile(); for (const name of ["secure", "database"]) mkdirSync(join(value.root, name), { mode: 0o700 }); return value; }
+	it("canonicalizes an explicit native source without Cocoa shortening /private/var", () => {
+		const root = realpathSync(mkdtempSync("/var/tmp/kestrel-source-alias-")), value = { root };
+		try {
+			for (const name of ["secure", "database"]) mkdirSync(join(root, name), { mode: 0o700 });
+			expect(source(value)).toMatchObject({ ok: true, profile: root });
+			expect(root.startsWith("/private/var/")).toBe(true);
+			expect(source(value, root.replace(/^\/private\/var\//, "/var/"))).toMatchObject({ ok: true, profile: root });
+		} finally { rmSync(root, { recursive: true, force: true }); }
+	});
+	it("canonicalizes an explicitly selected source folder alias", () => {
+		const value = sourceProfile(), alias = join(temporary, randomUUID()); symlinkSync(value.root, alias);
+		expect(source(value, alias)).toMatchObject({ ok: true, profile: value.root });
+	});
+	it("rejects relative or incomplete source profiles", () => {
+		const value = profile(); expect(source(value).ok).toBe(false); expect(source(value, "relative/profile").ok).toBe(false);
+	});
+	it("rejects source data directories readable by other users", () => {
+		const value = sourceProfile(); chmodSync(join(value.root, "database"), 0o755); expect(source(value).ok).toBe(false);
+	});
+	it("rejects linked source data directories", () => {
+		const value = profile(), other = profile(); mkdirSync(join(value.root, "secure"), { mode: 0o700 }); symlinkSync(other.root, join(value.root, "database")); expect(source(value).ok).toBe(false);
+	});
 	it("keeps the current profile when no selection was made", () => { const value = profile(); expect(value.resolve()).toEqual({ ok: true, profile: value.root, error: false }); });
 	it("resolves a selected stable child without moving either profile", () => {
 		const value = profile(), relative = `native-core-profiles/${randomUUID()}`;

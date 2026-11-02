@@ -21,12 +21,13 @@ static int FixtureFsync(int fd) {
 
 int main(int argc, char** argv) {
   @autoreleasepool {
-    if (argc != 2 && argc != 5) return 2;
+    if (argc != 2 && argc != 3 && argc != 5) return 2;
     NSString* root = [NSString stringWithUTF8String:argv[1]];
     KestrelNativeProfileSelectionResult result = KestrelNativeProfileSelectionResult::Unchanged;
     if (argc == 5) result = KestrelSaveNativeCoreProfileSelection(root,[NSString stringWithUTF8String:argv[2]],[NSString stringWithUTF8String:argv[3]],[NSString stringWithUTF8String:argv[4]]);
     NSError* error = nil;
-    NSString* selected = KestrelResolveNativeCoreProfile(root,&error);
+    if (argc == 3 && strcmp(argv[2],"--source")) return 2;
+    NSString* selected = argc == 3 ? KestrelCanonicalNativeCoreTransferSource(root) : KestrelResolveNativeCoreProfile(root,&error);
     NSMutableDictionary* response = [@{@"ok":@(selected != nil),@"profile":selected ?: NSNull.null,@"error":@(error != nil)} mutableCopy];
     if (argc == 5) response[@"saved"] = result == KestrelNativeProfileSelectionResult::Selected ? @"selected" : result == KestrelNativeProfileSelectionResult::SelectedDurabilityUnconfirmed ? @"selected-durability-unconfirmed" : @"unchanged";
     NSData* bytes = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];

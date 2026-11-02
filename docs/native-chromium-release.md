@@ -1414,7 +1414,10 @@ acceptance.
 
 The Chromium desktop now exposes **Kestrel → Transfer Conversations & Memory…**
 and **Use Previous Data Profile…** in its native application menu. A native folder
-picker selects the source explicitly. After a separate read-only review consent,
+picker selects the source explicitly. Its selected path uses `realpath`, avoiding
+macOS Foundation shortening `/private/var` into the noncanonical `/var` alias.
+Stored selection metadata and internal source directories still reject links.
+After a separate read-only review consent,
 the fixed-purpose legacy key reader unlocks the selected Core database on a worker
 queue. Keys travel only over the bundled transfer worker's anonymous private
 pipes; there is no new renderer, Core RPC, tool or user-extension entry point.
@@ -1463,8 +1466,49 @@ three receipts: `.tmp/native-profile-ui-final-file-transfer-evidence/receipt.jso
 `.tmp/native-profile-ui-final-recovery-evidence/receipt.json` and
 `.tmp/native-profile-ui-final-settings-evidence/receipt.json`. The public Settings
 capture was visually inspected. These use generated temporary data and do not
-exercise the new native transfer menu. That live picker/apply/switch-back test is
-awaiting an unlocked Mac; its first attempt stopped before opening the picker.
+exercise the new native transfer menu. These precede the live-test path fix.
+
+The native picker then reproduced and safely rejected a valid OS-temporary
+source because Cocoa had shortened its canonical path. The corrected module
+passed **2,212 tests in 281 files**, including 20 native source/selection cases
+covering both path spellings, explicit folder aliases and rejection of linked or
+readable-by-other-users source data directories. The complete native build passed.
+
+Corrected bundle
+`1533c596a3564b0d70893f29b96245edaf5d5f4f49f15b58c866cc441c8a16e1`
+passed all five live native transfer/switch-back phases. The actual menu, picker,
+development-source consent, counts and initially disabled Apply control were
+inspected. Applying the reviewed generated source, restarting Kestrel and opening
+its imported conversation displayed the generated message. After creating new
+work in the imported profile, the native previous-profile confirmation and a
+second clean restart restored the original conversation. The inactive imported
+database retained the newer work; its inherited scheduled job was cancelled;
+source database/key bytes were unchanged. Both conversation captures were visually
+inspected. The receipt is
+`.tmp/native-profile-transfer-ui-canonical-evidence/receipt.json`.
+
+The same corrected bundle also passed seven packaged transfer phases, five
+process-crash recovery phases, all 16 native Settings/window/restart phases and
+bundled Core durability/recovery. The three additional receipts are
+`.tmp/native-profile-canonical-file-transfer-evidence/receipt.json`,
+`.tmp/native-profile-canonical-recovery-evidence/receipt.json` and
+`.tmp/native-profile-canonical-settings-evidence/receipt.json`. All four receipts
+have unchanged before/after candidate digests. This is generated-data native UI
+acceptance, with test keys and no real Keychain, existing profile, credential,
+provider login, desktop capture/input enablement or canonical app modification.
+
+The aggregate `verify` command passed dependency/security audits, typechecking,
+unit tests, build, native extension checks, the browser benchmark, website E2E
+and initial desktop checks, then stopped at the Electron tab-hover preview
+assertion. Its focused recheck passed on the unlocked Mac, and every remaining
+aggregate command passed when resumed from that checkpoint, including browser,
+autofill, onboarding, recovery, approvals, policy, packaged CLI and production
+secret scanning. The original aggregate invocation remains recorded as failed.
+Logs are `.tmp/native-profile-ui-aggregate-pinned-verify.log`,
+`.tmp/native-profile-ui-tab-hover-recheck.log` and
+`.tmp/native-profile-ui-verify-remainder.log`. Test-generated tracked screenshots
+were preserved under `.tmp/native-profile-ui-aggregate-screenshots` and their
+tracked baseline copies restored.
 
 Incomplete-stage archive/cancellation and abandoned recovery reservation handling
 remain unfinished. So do large-profile streaming, older schemas, browser and
