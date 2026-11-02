@@ -30,6 +30,15 @@ overrides:
   # Honcho pins an older Zod v4 exactly; keep its security override scoped.
   "@honcho-ai/sdk>zod": 4.6.6
 
+# Preserve legacy minimatch APIs with brace-expansion 5 and backport the
+# bounded level-two optimizer fix from minimatch 11.0.1 to versions 9 and 10.
+# https://github.com/isaacs/minimatch/commit/77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8
+patchedDependencies:
+  minimatch@3.1.5: patches/minimatch@3.1.5.patch
+  minimatch@5.1.9: patches/minimatch@5.1.9.patch
+  minimatch@9.0.9: patches/minimatch@9.0.9.patch
+  minimatch@10.2.5: patches/minimatch@10.2.5.patch
+
 minimumReleaseAgeExclude:
   - better-sqlite3@13.0.1
   - react-dom@19.2.8
