@@ -255,7 +255,9 @@ function normalizeRepair(value: unknown): unknown {
 function extractAnchors(text: string): string[] {
 	const anchors: string[] = [];
 	const add = (value: string) => {
-		const trimmed = value.replace(/[.,;:!?]+$/u, "");
+		let end = value.length;
+		while (end > 0 && /[.,;:!?]/u.test(value[end - 1]!)) end--;
+		const trimmed = value.slice(0, end);
 		if (trimmed && !anchors.includes(trimmed)) anchors.push(trimmed);
 	};
 	for (const match of text.matchAll(/https?:\/\/[^\s)\]}>,]+/giu)) add(match[0]);

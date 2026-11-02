@@ -509,7 +509,24 @@ const ROUTING_KNOWN_SECRET_PATTERN =
 	/^(?:gh[pousr]_|github_pat_|xox[a-z]-|xapp-|gsk_|akia[0-9a-z]{16}|asia[0-9a-z]{16}|aiza[0-9a-z_-]{20,}|glpat-|glrt-|npm_|pypi-)/i;
 const ROUTING_JWT_PATTERN = /^eyj[a-z0-9_-]{8,}\.[a-z0-9_-]+\.[a-z0-9_-]+$/i;
 const ROUTING_EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
-const ROUTING_URL_PATTERN = /(?:^|[^A-Z0-9_])[A-Z][A-Z0-9+.-]*:\/\//i;
+// The widest routing field is a 300-character profile ID or display name.
+const ROUTING_METADATA_MAX_LENGTH = 300;
+
+// Scan once instead of trying a scheme at every position in a long string.
+function hasRoutingUrlScheme(value: string): boolean {
+	let inScheme = false;
+	for (let i = 0; i < value.length; i++) {
+		const char = value[i]!;
+		if (char === ":" && inScheme && value[i + 1] === "/" && value[i + 2] === "/") {
+			return true;
+		}
+		const isLetter = /[A-Za-z]/.test(char);
+		const isSchemeChar = isLetter || /[0-9+.-]/.test(char);
+		const startsScheme = isLetter && (i === 0 || !/[A-Za-z0-9_]/.test(value[i - 1]!));
+		inScheme = isSchemeChar && (inScheme || startsScheme);
+	}
+	return false;
+}
 
 export function isRoutingSecretLikeValue(value: string): boolean {
 	return (
@@ -521,9 +538,10 @@ export function isRoutingSecretLikeValue(value: string): boolean {
 
 export function isRoutingUnsafeMetadataValue(value: string): boolean {
 	return (
+		value.length > ROUTING_METADATA_MAX_LENGTH ||
 		isRoutingSecretLikeValue(value) ||
 		ROUTING_EMAIL_PATTERN.test(value) ||
-		ROUTING_URL_PATTERN.test(value) ||
+		hasRoutingUrlScheme(value) ||
 		/^www\./i.test(value)
 	);
 }

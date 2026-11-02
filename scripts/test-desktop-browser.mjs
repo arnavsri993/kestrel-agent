@@ -1715,7 +1715,7 @@ try {
 			value.tabs.some(
 				(tab) =>
 					tab.id === value.activeTabId &&
-					tab.url.startsWith("https://chromewebstore.google.com"),
+					URL.parse(tab.url)?.origin === "https://chromewebstore.google.com",
 			),
 		"Go to store did not open the Chrome Web Store in a new tab",
 	);

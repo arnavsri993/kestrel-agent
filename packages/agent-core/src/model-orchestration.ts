@@ -933,12 +933,52 @@ function routingSummary(profile: RoutingTaskProfile): string {
 		.slice(0, 240);
 }
 
+function budgetAmount(text: string): number | undefined {
+	// Scan each prefix's whitespace once instead of backtracking between two
+	// adjacent whitespace repetitions when a malformed amount follows it.
+	for (const prefix of text.matchAll(/\b(?:under|below|no more than|budget(?: of)?)/g)) {
+		let start = prefix.index + prefix[0].length;
+		while (start < text.length && /\s/.test(text[start]!)) start++;
+		if (text[start] === "$") start++;
+		while (start < text.length && /\s/.test(text[start]!)) start++;
+		let end = start;
+		while (end < text.length && /[0-9]/.test(text[end]!)) end++;
+		if (end === start) continue;
+		const integerEnd = end;
+		if (text[end] === ".") {
+			let decimalEnd = end + 1;
+			while (decimalEnd <= end + 2 && /[0-9]/.test(text[decimalEnd] ?? ""))
+				decimalEnd++;
+			if (decimalEnd > end + 1 && !/[a-z0-9_]/.test(text[decimalEnd] ?? ""))
+				return Number(text.slice(start, decimalEnd));
+		}
+		if (!/[a-z0-9_]/.test(text[integerEnd] ?? ""))
+			return Number(text.slice(start, integerEnd));
+	}
+	return undefined;
+}
+
+function hasNumberedList(text: string): boolean {
+	for (let index = 0; index < text.length; index++) {
+		if (text[index] !== "\n") continue;
+		// All newlines in this whitespace run share the same possible item.
+		while (index + 1 < text.length && /\s/.test(text[index + 1]!)) index++;
+		let end = index + 1;
+		while (end < text.length && /[0-9]/.test(text[end]!)) end++;
+		if (end === index + 1 || (text[end] !== "." && text[end] !== ")")) continue;
+		end++;
+		if (end >= text.length || !/\s/.test(text[end]!)) continue;
+		while (end < text.length && /\s/.test(text[end]!)) end++;
+		if (end < text.length) return true;
+		return false;
+	}
+	return false;
+}
+
 export class TaskRequirementAnalyzer {
 	routingPolicy(prompt: string, base: RoutingPolicySeed): RoutingPolicy {
 		const normalized = prompt.toLowerCase();
-		const amount = normalized.match(
-			/\b(?:under|below|no more than|budget(?: of)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\b/,
-		);
+		const amount = budgetAmount(normalized);
 		let mode = base.mode;
 		let allowExternal = base.allowExternal;
 		let preferLocal = base.preferLocal;
@@ -977,13 +1017,13 @@ export class TaskRequirementAnalyzer {
 			allowExternal = false;
 			preferLocal = true;
 		}
-		if (amount) mode = "custom_budget";
+		if (amount !== undefined) mode = "custom_budget";
 		return RoutingPolicySchema.parse({
 			...base,
 			mode,
 			allowExternal,
 			preferLocal,
-			...(amount ? { maximumTaskCostUsd: Number(amount[1]) } : {}),
+			...(amount !== undefined ? { maximumTaskCostUsd: amount } : {}),
 		});
 	}
 
@@ -1137,7 +1177,7 @@ export class TaskRequirementAnalyzer {
 				(isLowLevelOrMath ? 0.2 : 0) +
 				(Object.keys(capabilities).length >= 6 ? 0.18 : 0) +
 				(/```/.test(prompt) ? 0.08 : 0) +
-				(/\n\s*\d+[.)]\s+\S/.test(prompt) ? 0.08 : 0),
+				(hasNumberedList(prompt) ? 0.08 : 0),
 		);
 		const shortQuestion =
 			words < 28 &&

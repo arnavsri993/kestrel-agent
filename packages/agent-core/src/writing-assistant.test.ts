@@ -6,6 +6,7 @@ import {
 	DevelopmentEmailConnector,
 	type ModelProvider,
 } from "./index";
+import { writingProtectedAnchors } from "./writing-assistant";
 
 const NOW = "2026-08-25T15:00:00.000Z";
 
@@ -52,6 +53,24 @@ function result(
 }
 
 describe("Writing Studio", () => {
+	it("preserves factual anchors while trimming only trailing punctuation", () => {
+		expect(writingProtectedAnchors(
+			'Visit https://example.test/path!?;:., email Person@example.test, keep $42 and “Confirmed fact!”.',
+		)).toEqual([
+			"https://example.test/path",
+			"Person@example.test",
+			"$42",
+			"Confirmed fact",
+		]);
+	});
+
+	it("preserves a long internal URL punctuation run and trims a trailing run", () => {
+		const url = `http://x/${"!".repeat(29_980)}x`;
+		expect(writingProtectedAnchors(`${url}!?;:.`)).toEqual([url]);
+		expect(writingProtectedAnchors(`http://x/${"!".repeat(29_980)}`))
+			.toEqual(["http://x/"]);
+	});
+
 	it("previews confirmed context and gates sensitive recipient records", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const core = new AgentCore({

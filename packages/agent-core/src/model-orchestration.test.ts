@@ -22,6 +22,65 @@ it("does not require structured model output merely to inspect a manifest filena
 		expect(analyzer.analyze("format", `Return the answer as ${format}.`).requiresStructuredOutput).toBe(true);
 });
 
+describe("routing prompt scans", () => {
+	const policy = RoutingPolicySchema.parse({
+		mode: "balanced",
+		allowExternal: true,
+		preferLocal: false,
+		maximumParallelism: 4,
+		maximumRetries: 2,
+		maximumDelegationDepth: 3,
+		maximumTaskDurationMs: 600_000,
+		requireReviewAboveRisk: "sensitive",
+	});
+	const analyzer = new TaskRequirementAnalyzer();
+
+	it.each([
+		["Keep it UNDER $12.34", 12.34],
+		["below\t\n$\u00a00.5", 0.5],
+		["no more than 0", 0],
+		["budget of 4", 4],
+		["budget$5", 5],
+		["under 1.234", 1],
+		["under 1.2x; below 3", 1],
+		["under 2x; below 3", 3],
+		["under 2_; budget of 8.25", 8.25],
+	])("preserves budget amount semantics for %s", (prompt, amount) => {
+		expect(analyzer.routingPolicy(prompt, policy)).toMatchObject({
+			mode: "custom_budget",
+			maximumTaskCostUsd: amount,
+		});
+	});
+
+	it("rejects malformed budgets and reaches later valid prefixes after long whitespace", () => {
+		for (const prompt of ["thunder 2", "under 2x", "budget of $x", `under${" ".repeat(30_000)}x`])
+			expect(analyzer.routingPolicy(prompt, policy)).toEqual(policy);
+		expect(analyzer.routingPolicy(`under${" ".repeat(30_000)}x; below $7.50`, policy))
+			.toMatchObject({ mode: "custom_budget", maximumTaskCostUsd: 7.5 });
+	});
+
+	it.each([
+		["notes\n  12. next", true],
+		["notes\n\n\t12) \n next", true],
+		["12. next", false],
+		["notes\n12.next", false],
+		["notes\n12x. next", false],
+		["notes\n12. \n ", false],
+	])("preserves numbered-list complexity for %j", (prompt, isList) => {
+		const words = prompt.trim().split(/\s+/).filter(Boolean).length;
+		expect(analyzer.analyze("list-scan", prompt).complexity)
+			.toBeCloseTo(words / 700 + (isList ? 0.08 : 0));
+	});
+
+	it("handles long newline runs before malformed and valid numbered items", () => {
+		const newlines = "\n".repeat(30_000);
+		expect(analyzer.analyze("malformed-list", `${newlines}x`).complexity)
+			.toBeCloseTo(1 / 700);
+		expect(analyzer.analyze("valid-list", `${newlines}12) next`).complexity)
+			.toBeCloseTo(2 / 700 + 0.08);
+	});
+});
+
 function provider(input: {
 	id: string;
 	model: string;
