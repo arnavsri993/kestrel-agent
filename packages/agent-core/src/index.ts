@@ -3,7 +3,7 @@ import { OnshapeClient, installOnshapeTools, parseOnshapeDocument } from "./onsh
 export { OnshapeClient } from "./onshape";
 import { AgentMemoryRecovery } from "./memory-recovery";
 import { randomUUID } from "node:crypto";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
 import { mayExecute } from "@kestrel/policy-engine";
@@ -70,6 +70,7 @@ import {
 	installEventApplicationTools,
 } from "./event-applications";
 import { PluginMcpManager } from "./extensions/plugin-mcp";
+import { PluginInstaller } from "./extensions/plugin-installer";
 import { PluginRegistry } from "./extensions/plugins";
 import {
 	installSkillLearningTools,
@@ -240,6 +241,9 @@ export interface AgentCoreDependencies {
 	learnedSkillRoot?: string;
 	pluginRoots?: string[];
 	managedPluginRoots?: string[];
+	/** When present, managed plugins must verify against these publisher keys. */
+	pluginTrustKeys?: Array<{ keyId: string; publicKey: string }>;
+	pluginActivationIds?: Record<string, string>;
 	honchoApiKey?: string;
 	customPersonalities?: Array<Omit<AgentPersonality, "builtin">>;
 	onAgentTextDelta?: (event: {
@@ -320,6 +324,7 @@ export class AgentCore {
 		{ controller: AbortController; sessionId: string; steering: string[] }
 	>();
 	private readonly coreInstanceId: string;
+	private readonly verifiedManagedPluginIdentities: Record<string, string> = {};
 
 	constructor(private readonly deps: AgentCoreDependencies) {
 		const seedDevelopmentFixtures = deps.seedDevelopmentFixtures === true;
@@ -518,11 +523,29 @@ export class AgentCore {
 		);
 		if (deps.channels?.adapters.length)
 			installChannelTools(this.runtime, this.channelGateway, mainSession.id);
+		const verifiedPluginIdentities = this.verifiedManagedPluginIdentities;
+		if (this.deps.pluginTrustKeys !== undefined) {
+			for (const root of this.deps.managedPluginRoots ?? []) {
+				if (!existsSync(root)) continue;
+				if (!lstatSync(root).isDirectory() || lstatSync(root).isSymbolicLink()) throw new Error("Managed plugin root is invalid.");
+				const installer = new PluginInstaller({ managedRoot: root, trustKeys: this.deps.pluginTrustKeys });
+				for (const entry of readdirSync(root, { withFileTypes: true })) {
+					if (entry.name === ".trash") continue;
+					if (entry.name.startsWith(".")) throw new Error("Unexpected hidden managed plugin entry.");
+					if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("Managed plugin entry is invalid.");
+					const bundle = installer.inspect(join(root, entry.name));
+					if (bundle.name !== entry.name) throw new Error("Managed plugin directory does not match its signed name.");
+					verifiedPluginIdentities[bundle.name] = `${bundle.keyId}:${bundle.digest}`;
+				}
+			}
+		}
 		const pluginRegistry = this.deps.pluginRoots?.length
 			? new PluginRegistry(
 					this.deps.pluginRoots,
 					this.deps.database,
 					this.deps.managedPluginRoots,
+					this.deps.pluginActivationIds,
+					verifiedPluginIdentities,
 				)
 			: undefined;
 		if (pluginRegistry) {
@@ -539,7 +562,10 @@ export class AgentCore {
 			...(pluginRegistry?.skillRoots() ?? []),
 		];
 		if (skillRoots.length || pluginRegistry) {
-			this.skillRegistry = new SkillRegistry(skillRoots);
+			this.skillRegistry = new SkillRegistry(skillRoots, skillRoot => {
+				const owner = this.pluginRegistry?.list().find(plugin => plugin.managed && (skillRoot === plugin.root || skillRoot.startsWith(`${plugin.root}${sep}`)));
+				if (owner) this.verifyManagedPlugin(owner.name);
+			});
 			installSkillTools(this.runtime, this.skillRegistry, mainSession.id);
 			if (this.deps.learnedSkillRoot) {
 				this.skillLearning = new SkillLearningManager(
@@ -2145,6 +2171,21 @@ export class AgentCore {
 		);
 	}
 
+	private verifyManagedPlugin(name: string): void {
+		if (this.deps.pluginTrustKeys === undefined || !this.pluginRegistry) return;
+		const plugin = this.pluginRegistry.get(name);
+		if (!plugin.managed) return;
+		const root = (this.deps.managedPluginRoots ?? []).find(candidate => {
+			const canonical = realpathSync(candidate);
+			return plugin.root.startsWith(`${canonical}${sep}`);
+		});
+		if (!root) throw new Error("Managed plugin is outside its configured root.");
+		const bundle = new PluginInstaller({ managedRoot: root, trustKeys: this.deps.pluginTrustKeys }).inspect(plugin.root);
+		if (bundle.name !== plugin.name || bundle.version !== plugin.version ||
+			`${bundle.keyId}:${bundle.digest}` !== this.verifiedManagedPluginIdentities[name])
+			throw new Error("Managed plugin identity changed; restart Kestrel and review its activation.");
+	}
+
 	private pluginSummaries() {
 		const connected = new Set(
 			this.pluginMcpManager
@@ -2312,6 +2353,7 @@ export class AgentCore {
 				case "plugin-list":
 					return { ok: true, plugins: this.pluginSummaries() };
 				case "plugin-set-enabled": {
+					if (request.enabled) this.verifyManagedPlugin(request.name);
 					if (!this.pluginRegistry || !this.skillRegistry)
 						throw new Error("Plugin discovery is not configured.");
 					if (!request.enabled)
@@ -2340,6 +2382,7 @@ export class AgentCore {
 					return { ok: true, plugins: this.pluginSummaries() };
 				}
 				case "plugin-connect-mcp": {
+					this.verifyManagedPlugin(request.name);
 					if (!this.pluginMcpManager)
 						throw new Error("Plugin MCP is not configured.");
 					await this.pluginMcpManager.connect(

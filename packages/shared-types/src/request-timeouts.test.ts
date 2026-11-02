@@ -37,4 +37,12 @@ describe("shared request execution and native transport deadlines", () => {
 		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "broker")).toBe(610_000);
 		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "renderer")).toBe(nativeRequestTimeoutMs({ type: "oauth-chatgpt-connect" }, "renderer"));
 	});
+	it("gives all six plugin mutations the same ten-minute execution and transport budgets", () => {
+		const executionBudget = 10 * 60_000;
+		for (const type of ["plugin-import-publisher", "plugin-remove-publisher", "plugin-install-bundle", "plugin-update-bundle", "plugin-remove-installed", "plugin-restore-removed"]) {
+			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(executionBudget + 10_000);
+			expect(nativeRequestTimeoutMs({ type }, "worker")).toBe(executionBudget + 55_000);
+			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(executionBudget + 60_000);
+		}
+	});
 });

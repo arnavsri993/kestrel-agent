@@ -688,8 +688,10 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
               });
               return;
             }
-          } else if (([type isEqualToString:@"select-workspace-folder"] || [type isEqualToString:@"select-context-files"]) && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
+          } else if (([type isEqualToString:@"select-workspace-folder"] || [type isEqualToString:@"select-context-files"] || [type isEqualToString:@"select-plugin-bundle"] || [type isEqualToString:@"select-plugin-publisher"]) && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
             const bool context_files = [type isEqualToString:@"select-context-files"];
+            const bool plugin_publisher = [type isEqualToString:@"select-plugin-publisher"];
+            const bool plugin_bundle = [type isEqualToString:@"select-plugin-bundle"];
             NSString* workspace_root = context_files ? value[@"request"][@"workspaceRoot"] : nil;
             BOOL root_directory = NO;
             const bool valid_request = context_files
@@ -701,10 +703,10 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
             else if (desktop_workspace_panel) response = @{@"ok":@NO, @"error":@"A native file or folder picker is already open."};
             else {
               NSOpenPanel* panel = NSOpenPanel.openPanel;
-              panel.title = context_files ? @"Add files from this task workspace" : @"Grant Kestrel a project folder";
-              panel.prompt = context_files ? @"Add context" : @"Grant folder";
-              panel.canChooseDirectories = !context_files; panel.canChooseFiles = context_files;
-              panel.allowsMultipleSelection = context_files; panel.canCreateDirectories = !context_files;
+              panel.title = plugin_publisher ? @"Trust a plugin publisher key" : plugin_bundle ? @"Select a signed plugin bundle" : context_files ? @"Add files from this task workspace" : @"Grant Kestrel a project folder";
+              panel.prompt = plugin_publisher ? @"Trust publisher" : plugin_bundle ? @"Select plugin" : context_files ? @"Add context" : @"Grant folder";
+              panel.canChooseDirectories = !context_files && !plugin_publisher; panel.canChooseFiles = context_files || plugin_publisher;
+              panel.allowsMultipleSelection = context_files; panel.canCreateDirectories = !context_files && !plugin_publisher && !plugin_bundle;
               panel.treatsFilePackagesAsDirectories = YES;
               if (context_files) panel.directoryURL = [NSURL fileURLWithPath:workspace_root isDirectory:YES];
               desktop_workspace_panel = panel; desktop_workspace_panel_id = value[@"id"];
@@ -713,7 +715,13 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
                 if (!owned) return;
                 desktop_workspace_panel = nil; desktop_workspace_panel_id = nil;
                 NSDictionary* selection = @{@"ok":@YES, @"cancelled":@YES};
-                if (result == NSModalResponseOK && context_files) {
+                if (result == NSModalResponseOK && plugin_publisher) {
+                  NSURL* selected = panel.URLs.firstObject;
+                  NSString* path = selected.isFileURL ? CanonicalNativeDialogPath(selected.path) : nil;
+                  NSDictionary* attributes = ValidNativeDialogPath(path) ? [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] : nil;
+                  selection = selected.isFileURL && [path.pathExtension.lowercaseString isEqualToString:@"json"] && [attributes[NSFileType] isEqualToString:NSFileTypeRegular] && [attributes[NSFileSize] unsignedLongLongValue] <= 64000
+                      ? @{@"ok":@YES, @"selectedContextPaths":@[path]} : @{@"ok":@NO, @"error":@"Select one public publisher key JSON file."};
+                } else if (result == NSModalResponseOK && context_files) {
                   NSMutableArray<NSString*>* paths = [NSMutableArray array];
                   bool valid = panel.URLs.count > 0 && panel.URLs.count <= 8;
                   for (NSURL* url in panel.URLs) {

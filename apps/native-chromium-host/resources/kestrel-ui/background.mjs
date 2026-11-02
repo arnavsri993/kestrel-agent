@@ -1,3 +1,4 @@
+import { createPluginPortScope } from "./plugin-port-scope.mjs";
 import { createBrowserAdapter } from "./browser.mjs";
 import { createNativeConnection } from "./native-connection.mjs";
 import { trackNativePanels } from "./panel-state.mjs";
@@ -24,18 +25,20 @@ chrome.runtime.onConnect.addListener((port) => {
 	try { url = new URL(sender?.url); } catch { port.disconnect(); return; }
 	if (port.name !== "kestrel-ui" || sender.id !== chrome.runtime.id || url.protocol !== origin.protocol || url.host !== origin.host || url.pathname !== "/index.html" || (sender.frameId !== undefined && sender.frameId !== 0)) { port.disconnect(); return; }
 	ui.add(port);
-	port.onDisconnect.addListener(() => ui.delete(port));
+	const scope = createPluginPortScope();
+	port.onDisconnect.addListener(() => { scope.close(); ui.delete(port); });
 	let count = 0;
 	port.onMessage.addListener(async (message) => {
 		if (message?.kind !== "request" || !Number.isSafeInteger(message.id) || ++count > 64 || !nativeRendererFrameFits(JSON.stringify(message), message.request?.type)) { port.disconnect(); return; }
-		let response;
+		let response, owned;
 		try {
 			const parsed = RendererRequestSchema.safeParse(message.request);
 			if (!parsed.success) throw new Error("Invalid Kestrel request.");
-			response = browser.handles(parsed.data.type) ? await browser.request(parsed.data, sender) : await core.request(parsed.data);
+			owned = scope.begin(parsed.data);
+			response = browser.handles(parsed.data.type) ? await browser.request(parsed.data, sender) : await core.request(parsed.data, { signal: owned.signal });
 		}
 		catch (error) { response = { ok: false, error: error instanceof Error ? error.message : "Kestrel could not complete this request." }; }
-		finally { --count; }
-		try { port.postMessage({ kind: "response", id: message.id, response }); } catch { ui.delete(port); }
+		finally { owned?.done(); --count; }
+		try { port.postMessage({ kind: "response", id: message.id, response }); } catch { scope.close(); ui.delete(port); }
 	});
 });

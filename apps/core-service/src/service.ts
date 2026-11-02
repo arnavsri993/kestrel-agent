@@ -244,6 +244,8 @@ export function startCoreService(port: CoreParentPort): void {
 				projects?: import("@kestrel/shared-types").Project[];
 				pluginRoots: string[];
 				managedPluginRoots: string[];
+				pluginTrustKeys?: Array<{ keyId: string; publicKey: string }>;
+				pluginActivationIds?: Record<string, string>;
 				learnedSkillRoot: string;
 				secureEnvironment: NodeJS.ProcessEnv;
 				providerAccounts?: ProviderAccountRuntimeConfig[];
@@ -345,6 +347,8 @@ export function startCoreService(port: CoreParentPort): void {
 					learnedSkillRoot: message.config.learnedSkillRoot,
 					pluginRoots: message.config.pluginRoots,
 					managedPluginRoots: message.config.managedPluginRoots,
+					...(message.config.pluginActivationIds !== undefined ? { pluginActivationIds: message.config.pluginActivationIds } : {}),
+					...(message.config.pluginTrustKeys !== undefined ? { pluginTrustKeys: message.config.pluginTrustKeys } : {}),
 					artifactRoot,
 					petRoot: join(dirname(message.config.databasePath), "pets"),
 					onAgentTextDelta: (event) =>

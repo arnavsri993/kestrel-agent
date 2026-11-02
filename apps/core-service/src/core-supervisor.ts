@@ -35,6 +35,9 @@ export interface CoreBootstrapConfig {
 	projects?: Project[];
 	pluginRoots: string[];
 	managedPluginRoots: string[];
+	/** Native host may require trusted signatures on every managed plugin. */
+	pluginTrustKeys?: Array<{ keyId: string; publicKey: string }>;
+	pluginActivationIds?: Record<string, string>;
 	learnedSkillRoot: string;
 	secureEnvironment: NodeJS.ProcessEnv;
 	/** Runtime-only protected account credentials for the child bootstrap. */
@@ -73,6 +76,8 @@ function cloneBootstrapConfig(
 		projects: config.projects?.map((project) => ({ ...project })) ?? [],
 		pluginRoots: [...config.pluginRoots],
 		managedPluginRoots: [...config.managedPluginRoots],
+		...(config.pluginActivationIds !== undefined ? { pluginActivationIds: { ...config.pluginActivationIds } } : {}),
+		...(config.pluginTrustKeys !== undefined ? { pluginTrustKeys: config.pluginTrustKeys.map(key => ({ ...key })) } : {}),
 		secureEnvironment: { ...config.secureEnvironment },
 		...(config.providerAccounts !== undefined
 			? {

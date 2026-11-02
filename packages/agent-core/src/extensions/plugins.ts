@@ -87,6 +87,8 @@ export class PluginRegistry {
 		private readonly roots: string[],
 		private readonly database?: KestrelDatabase,
 		managedRoots: string[] = [],
+		private readonly activationIds?: Record<string, string>,
+		private readonly verifiedIdentities: Record<string, string> = {},
 	) {
 		this.managedRoots = managedRoots
 			.filter(existsSync)
@@ -224,7 +226,8 @@ export class PluginRegistry {
 							}
 						: {}),
 					enabled:
-						this.database?.getState<unknown>(`plugin.enabled.${name}`) === true,
+						this.database?.getState<unknown>(`plugin.enabled.${name}`) === true &&
+						(!this.activationIds || !this.managedRoots.some((root) => within(root, pluginRoot)) || (typeof this.activationIds[name] === "string" && typeof this.verifiedIdentities[name] === "string" && this.database?.getState<unknown>(`plugin.native-activation.${name}`) === `${this.activationIds[name]}:${this.verifiedIdentities[name]}`)),
 					managed: this.managedRoots.some((managedRoot) =>
 						within(managedRoot, pluginRoot),
 					),
@@ -283,6 +286,7 @@ export class PluginRegistry {
 		const updated = { ...plugin, enabled };
 		this.plugins.set(name, updated);
 		this.database?.setState(`plugin.enabled.${name}`, enabled);
+		if (enabled && plugin.managed && this.activationIds) this.database?.setState(`plugin.native-activation.${name}`, `${this.activationIds[name] ?? ""}:${this.verifiedIdentities[name] ?? ""}`);
 		return updated;
 	}
 

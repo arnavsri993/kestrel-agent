@@ -34,11 +34,12 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
       respond(id, { ok: false, error: failed }); return;
     }
     lastCoreSequence = number;
-    const folder = message.operation === "select-workspace-folder";
+    const folder = ["select-workspace-folder", "select-plugin-bundle"].includes(message.operation);
+    const publisher = message.operation === "select-plugin-publisher";
     const files = message.operation === "select-context-files";
-    const allowedKeys = folder ? ["type", "requestId", "operation"] : ["type", "requestId", "operation", "workspaceRoot"];
+    const allowedKeys = files ? ["type", "requestId", "operation", "workspaceRoot"] : ["type", "requestId", "operation"];
     if (closed || pending || sequence >= Number.MAX_SAFE_INTEGER || message.type !== "native-dialog-request" ||
-        (!folder && !files) || (files && !validPath(message.workspaceRoot)) || Object.keys(message).some(key => !allowedKeys.includes(key))) {
+        (!folder && !files && !publisher) || (files && !validPath(message.workspaceRoot)) || Object.keys(message).some(key => !allowedKeys.includes(key))) {
       respond(id, { ok: false, error: failed }); return;
     }
     const privateId = `dialog-${++sequence}`;
@@ -48,7 +49,7 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
       respond(item.requestId, { ok: false, error: "The native file or folder picker timed out." });
     }, 10 * 60_000);
     pending = { id: privateId, requestId: id, operation: message.operation, timer };
-    const request = folder ? { type: "select-workspace-folder" } : { type: "select-context-files", workspaceRoot: message.workspaceRoot };
+    const request = files ? { type: "select-context-files", workspaceRoot: message.workspaceRoot } : { type: message.operation };
     if (!send({ kind: "host-request", id: privateId, request })) {
       const item = take(); if (item) respond(item.requestId, { ok: false, error: failed });
     }
@@ -62,11 +63,11 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
       respond(item.requestId, { ok: false, error: failed });
     } else if (value?.ok === true && value.cancelled === true && keys.length === 2 && keys.includes("ok") && keys.includes("cancelled")) {
       respond(item.requestId, { ok: true, cancelled: true });
-    } else if (item.operation === "select-workspace-folder" && value?.ok === true && validPath(value.selectedWorkspacePath) &&
+    } else if (["select-workspace-folder", "select-plugin-bundle"].includes(item.operation) && value?.ok === true && validPath(value.selectedWorkspacePath) &&
         keys.length === 2 && keys.includes("ok") && keys.includes("selectedWorkspacePath")) {
       respond(item.requestId, { ok: true, selectedWorkspacePath: value.selectedWorkspacePath });
-    } else if (item.operation === "select-context-files" && value?.ok === true && Array.isArray(value.selectedContextPaths) &&
-        value.selectedContextPaths.length > 0 && value.selectedContextPaths.length <= 8 && value.selectedContextPaths.every(validPath) &&
+    } else if (["select-context-files", "select-plugin-publisher"].includes(item.operation) && value?.ok === true && Array.isArray(value.selectedContextPaths) &&
+        value.selectedContextPaths.length > 0 && value.selectedContextPaths.length <= (item.operation === "select-plugin-publisher" ? 1 : 8) && value.selectedContextPaths.every(validPath) &&
         new Set(value.selectedContextPaths).size === value.selectedContextPaths.length &&
         keys.length === 2 && keys.includes("ok") && keys.includes("selectedContextPaths")) {
       respond(item.requestId, { ok: true, selectedContextPaths: [...value.selectedContextPaths] });

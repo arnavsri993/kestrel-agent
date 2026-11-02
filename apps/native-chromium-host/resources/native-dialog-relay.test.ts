@@ -134,3 +134,16 @@ it("returns a real context picker cancellation and rejects unexpected response-e
   expect(h.writeCore.mock.calls[1]?.[0]).toMatchObject({ response: { ok: false } });
   expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/private");
 });
+
+it("only allows fixed private plugin pickers and a single publisher key", () => {
+  const h = harness();
+  h.request(1, { operation: "select-plugin-publisher", path: "/injected" });
+  expect(h.frames()).toEqual([]);
+  h.request(2, { operation: "select-plugin-publisher" });
+  expect(h.frames()).toEqual([{ kind: "host-request", id: "dialog-1", request: { type: "select-plugin-publisher" } }]);
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, selectedContextPaths: ["/key.json", "/extra.json"] } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response.ok).toBe(false);
+  h.request(3, { operation: "select-plugin-bundle" });
+  h.relay.response({ kind: "host-response", id: "dialog-2", response: { ok: true, selectedWorkspacePath: "/selected/bundle" } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response).toEqual({ ok: true, selectedWorkspacePath: "/selected/bundle" });
+});

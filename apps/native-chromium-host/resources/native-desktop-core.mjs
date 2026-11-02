@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
+import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
@@ -14,6 +14,7 @@ const profile = await openNativeCoreProfile(resolve(process.argv[index + 1]), { 
 const MAX_FRAME = 1024 * 1024;
 const pendingBrowser = new Map();
 const pending = new Set();
+const pluginRequests = new Map();
 const activeCoreRequests = new Set();
 let backgroundJobsRunning = false;
 let sequence = 0;
@@ -138,10 +139,16 @@ const attachments = new NativeContextAttachmentHost({ root: profile.root,
 	workspaceRoots: async () => (await workspaces.runtimeConfiguration()).workspaceRoots,
 	selectFiles: (workspaceRoot, signal) => selectNativeDialog("select-context-files", workspaceRoot, signal),
 });
+const plugins = new NativePluginHost({ root: profile.root,
+	selectBundle: signal => selectNativeDialog("select-plugin-bundle", undefined, signal),
+	selectPublisher: async signal => (await selectNativeDialog("select-plugin-publisher", undefined, signal))?.[0] ?? null,
+	reconfigure: (mutation, rollback, validate, shouldRestoreCore) => configuration.reconfigure(mutation, rollback, validate, shouldRestoreCore),
+	listPlugins: async () => { const response = await core.request({ type: "plugin-list" }); if (!response.ok) throw new Error("Plugin discovery failed."); return response.plugins ?? []; },
+});
 const configuration = createNativeCoreConfiguration({ core,
 	isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning,
 	configuration: async () => ({ databasePath: profile.databasePath, encryptionKeyBase64: profile.encryptionKeyBase64,
-		...await workspaces.runtimeConfiguration(), pluginRoots: [], managedPluginRoots: [],
+		...await workspaces.runtimeConfiguration(), ...await plugins.runtimeConfiguration(),
 		learnedSkillRoot: join(profile.root, "learned-skills"), ...await providers.runtimeConfiguration(),
 	}),
 	changed: publishSnapshot,
@@ -159,6 +166,7 @@ async function shutdown(code = 0) {
 	if (browserReset) { clearTimeout(browserReset.timer); browserReset.reject(new Error("The browser owner is shutting down.")); browserReset = undefined; }
 	cancelBrowsers();
 	await workspaces.close();
+	await plugins.close();
 	await providers.close();
 	await core.stop();
 	// Core may still be reading a just-approved paste when Quit arrives. Stop
@@ -179,6 +187,7 @@ input.on("line", line => {
 	let message;
 	try { message = JSON.parse(line); } catch { void shutdown(1); return; }
 	if (message?.type === "shutdown") { void shutdown(); return; }
+	if (message?.type === "host-cancel") { pluginRequests.get(message.id)?.abort(new Error("The plugin request was interrupted.")); return; }
 	if (message?.type === "native-dialog-response") {
 		const dialog = folderDialog;
 		if (!dialog || message.requestId !== dialog.requestId) return;
@@ -186,8 +195,8 @@ input.on("line", line => {
 		const response = message.response;
 		const validPath = path => typeof path === "string" && path.startsWith("/") && path.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(path);
 		if (response?.ok === true && response.cancelled === true) dialog.resolve(null);
-		else if (dialog.operation === "select-workspace-folder" && response?.ok === true && validPath(response.selectedWorkspacePath)) dialog.resolve(response.selectedWorkspacePath);
-		else if (dialog.operation === "select-context-files" && response?.ok === true && Array.isArray(response.selectedContextPaths) && response.selectedContextPaths.length >= 1 && response.selectedContextPaths.length <= 8 && response.selectedContextPaths.every(validPath) && new Set(response.selectedContextPaths).size === response.selectedContextPaths.length) dialog.resolve(response.selectedContextPaths);
+		else if (["select-workspace-folder", "select-plugin-bundle"].includes(dialog.operation) && response?.ok === true && validPath(response.selectedWorkspacePath)) dialog.resolve(response.selectedWorkspacePath);
+		else if (["select-context-files", "select-plugin-publisher"].includes(dialog.operation) && response?.ok === true && Array.isArray(response.selectedContextPaths) && response.selectedContextPaths.length >= 1 && response.selectedContextPaths.length <= (dialog.operation === "select-plugin-publisher" ? 1 : 8) && response.selectedContextPaths.every(validPath) && new Set(response.selectedContextPaths).size === response.selectedContextPaths.length) dialog.resolve(response.selectedContextPaths);
 		else dialog.reject(new Error("The native file or folder picker did not return a valid selection."));
 		return;
 	}
@@ -209,9 +218,12 @@ input.on("line", line => {
 	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
 	const isHost = message.type === "host-request";
 	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
-	if (!parsed.success || (isHost && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
+	if (!parsed.success || (isHost && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
 	if (!isHost && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Settings are being applied. Wait for Agent Core to restart." } }); return; }
 	pending.add(message.id);
+	const pluginController = isHost && NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) ? new AbortController() : undefined;
+	const pluginTimer = pluginController ? setTimeout(() => pluginController.abort(new Error("The plugin request timed out.")), 9 * 60_000 + 50_000) : undefined;
+	if (pluginController) pluginRequests.set(message.id, pluginController);
 	if (!isHost) activeCoreRequests.add(message.id);
 	void Promise.resolve().then(async () => {
 		if (isHost) {
@@ -220,6 +232,7 @@ input.on("line", line => {
 				localStatus: () => providers.handle({ type: "local-model-status" }),
 			}) };
 			if (NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type)) return workspaces.handle(parsed.data);
+			if (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type)) return plugins.handle(parsed.data, pluginController.signal);
 			if (NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type)) return attachments.handle(parsed.data);
 			return providers.handle(parsed.data);
 		}
@@ -232,7 +245,7 @@ input.on("line", line => {
 				write({ type: "event", channel: "workspace-projects", event: response.projects });
 		})
 		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? ["local-runtime-bootstrap", "local-model-pull"].includes(parsed.data.type) && error instanceof Error && [OLLAMA_REMOTE_MODEL_ERROR, "Choose an installed model with confirmed tool support for Kestrel tasks.", "Start Ollama or use guided local setup before downloading a model.", "The local runtime checksum did not match the pinned release manifest.", "Local model setup was cancelled. Partial downloads may remain in Ollama.", "Local model setup timed out. Partial downloads may remain in Ollama."].includes(error.message) ? error.message : "Kestrel settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
-		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); });
+		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); pluginRequests.delete(message.id); if (pluginTimer) clearTimeout(pluginTimer); });
 });
 try {
 	try { await providers.startManagedIfInstalled(); }

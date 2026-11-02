@@ -98,6 +98,36 @@ describe("native worker connection", () => {
 		expect(await response).toEqual({ ok: true });
 	});
 
+	it("sends a per-request cancellation for an aborted plugin request and waits for Core's response", async () => {
+		const { connection, ports, authenticate } = harness();
+		await authenticate();
+		const controller = new AbortController();
+		let settled = false;
+		const response = connection.request({ type: "plugin-install-bundle", publisherId: "publisher", bundleId: "bundle" }, { signal: controller.signal })
+			.then((result: unknown) => { settled = true; return result; });
+		const sent = ports[0].postMessage.mock.calls.at(-1)[0];
+
+		controller.abort();
+
+		expect(ports[0].postMessage).toHaveBeenLastCalledWith({ kind: "cancel-request", id: sent.id });
+		expect(settled).toBe(false);
+		await ports[0].onMessage.emit({ kind: "response", id: sent.id, response: { ok: false, error: "Plugin installation cancelled." } });
+		expect(await response).toEqual({ ok: false, error: "Plugin installation cancelled." });
+		expect(ports[0].postMessage.mock.calls.filter(([message]: any[]) => message.kind === "request")).toHaveLength(1);
+	});
+
+	it("cancels an unsent queued plugin request before authentication without replay", async () => {
+		const { connection, ports, authenticate } = harness();
+		const controller = new AbortController();
+		const response = connection.request({ type: "plugin-install-bundle", publisherId: "publisher", bundleId: "bundle" }, { signal: controller.signal });
+
+		controller.abort();
+
+		expect(await response).toEqual({ ok: false, error: "The plugin request was cancelled before it started." });
+		await authenticate(ports[0]);
+		expect(ports[0].postMessage.mock.calls.some(([message]: any[]) => message.kind === "request")).toBe(false);
+	});
+
 	it.each(["configuration", "signature"])("ignores an old delayed %s after reconnecting", async (stage) => {
 		let release!: (value: any) => void;
 		const held = new Promise((resolve) => { release = resolve; });

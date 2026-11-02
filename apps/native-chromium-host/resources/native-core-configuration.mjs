@@ -33,9 +33,9 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 				const result = await mutation();
 				const next = await configuration();
 				await core.start(next); stopped = false;
-				validate?.();
+				await validate?.();
 				await changed?.();
-				validate?.();
+				await validate?.();
 				current = next;
 				return result;
 			} catch (error) {
