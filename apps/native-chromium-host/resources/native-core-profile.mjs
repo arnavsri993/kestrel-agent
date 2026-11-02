@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 async function privateDirectory(path) {
@@ -19,64 +18,53 @@ async function ensurePrivateDirectory(path) {
 	}
 }
 
-async function durableKey(root, databasePath) {
+async function suppliedProtectedKey(root, value) {
 	const keyPath = join(root, "database.key");
 	try {
 		await lstat(keyPath);
+		throw new Error("Native Core profile has a legacy file-backed key; explicit migration is required.");
 	} catch (error) {
 		if (error.code !== "ENOENT") throw error;
-		// Never generate a new key over an existing encrypted database. Losing a
-		// key is a recovery error, not permission to reset the person's data.
-		for (const path of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
-			try {
-				await lstat(path);
-				throw new Error("Native Core database key is missing. Restore the key; the database was preserved.");
-			} catch (error) {
-				if (error.code !== "ENOENT") throw error;
-			}
-		}
-		let created;
-		try {
-			created = await open(keyPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-			await created.writeFile(randomBytes(32));
-			await created.sync();
-		} catch (error) {
-			if (error.code !== "EEXIST") throw error;
-		} finally {
-			await created?.close();
-		}
 	}
-	const file = await open(keyPath, constants.O_RDONLY | constants.O_NOFOLLOW);
-	try {
-		const info = await file.stat();
-		if (!info.isFile() || info.nlink !== 1 || info.size !== 32 ||
-			(info.mode & 0o077) !== 0 || info.uid !== process.getuid()) {
-			throw new Error("Native Core database key is invalid or not private. Existing data was preserved.");
-		}
-		const key = await file.readFile();
-		if (key.length !== 32) throw new Error("Native Core database key changed during startup.");
-		return key.toString("base64");
-	} finally {
-		await file.close();
+	if (typeof value !== "string") {
+		throw new Error("Native Core requires its protected profile key from the trusted host.");
 	}
+	const key = Buffer.from(value, "base64");
+	if (key.length !== 32 || key.toString("base64") !== value) {
+		key.fill(0);
+		throw new Error("Native Core received a malformed protected profile key.");
+	}
+	const canonical = key.toString("base64");
+	key.fill(0);
+	return canonical;
 }
 
 // Called only with the native host's explicitly selected profile. It never
 // discovers, imports or opens the Electron profile or provider login caches.
-export async function openNativeCoreProfile(profileRoot, { durable = false } = {}) {
+export async function openNativeCoreProfile(profileRoot, { durable = false, protectedKeyBase64 } = {}) {
 	if (!isAbsolute(profileRoot)) throw new Error("Native Core requires an absolute profile root.");
-	const profile = await realpath(profileRoot);
+	const requestedProfile = await realpath(profileRoot);
+	const requestedInfo = await lstat(profileRoot);
+	if (!requestedInfo.isDirectory() || requestedInfo.isSymbolicLink() ||
+		requestedProfile !== profileRoot || (requestedInfo.mode & 0o077) !== 0 ||
+		requestedInfo.uid !== process.getuid()) {
+		throw new Error("Native Core requires a canonical, owned private profile directory.");
+	}
+	const profile = requestedProfile;
 	const root = durable
 		? join(profile, "native-core")
 		: await mkdtemp(join(profile, "native-core-"));
 	try {
+		// Validate the trusted host key before creating native-core. The host
+		// uses absence of this directory to distinguish a genuinely fresh
+		// profile from existing data that must not be silently re-keyed.
+		const encryptionKeyBase64 = durable
+			? await suppliedProtectedKey(root, protectedKeyBase64)
+			: randomBytes(32).toString("base64");
 		await ensurePrivateDirectory(root);
 		const databaseRoot = join(root, "database");
 		await ensurePrivateDirectory(databaseRoot);
 		const databasePath = join(databaseRoot, "kestrel.sqlite");
-		const encryptionKeyBase64 = durable
-			? await durableKey(root, databasePath)
-			: randomBytes(32).toString("base64");
 		// Block links for SQLite and its side files before handing their paths to
 		// the database layer. The profile remains owned by the current user.
 		for (const path of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {

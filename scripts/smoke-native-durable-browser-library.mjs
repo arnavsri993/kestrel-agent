@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
+import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const app = process.env.KESTREL_NATIVE_TEST_APP
@@ -14,6 +15,7 @@ const executable = join(app, "Contents", "MacOS", "Kestrel");
 const profile = await mkdtemp(
 	join(tmpdir(), "kestrel-native-durable-browser-library-"),
 );
+await markDisposableNativeTestProfile(profile);
 const exitAfterReadyMs = 8_000;
 
 async function runPhase(args, requiredMarkers, label) {
@@ -73,6 +75,7 @@ try {
 			profile,
 			"--kestrel-ephemeral-core",
 			"--kestrel-durable-profile",
+			"--kestrel-test-profile-key",
 			"--kestrel-smoke-durable-library",
 			"--kestrel-exit-after-ready-ms",
 			String(exitAfterReadyMs),
@@ -124,6 +127,7 @@ try {
 			profile,
 			"--kestrel-ephemeral-core",
 			"--kestrel-durable-profile",
+			"--kestrel-test-profile-key",
 			"--kestrel-smoke-durable-library-verify",
 			"--kestrel-exit-after-ready-ms",
 			String(exitAfterReadyMs),

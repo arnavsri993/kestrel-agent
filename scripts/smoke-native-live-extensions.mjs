@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "@playwright/test";
+import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
 
 // Explicit candidate selection prevents this integration check from racing a
 // native build or touching the canonical app/profile. The TCP CDP endpoint is
@@ -21,6 +22,7 @@ const listingUrl = `https://chromewebstore.google.com/detail/json-formatter/${id
 const evidence = join(root, ".tmp/native-live-extension-evidence");
 await mkdir(evidence, { recursive: true });
 const profile = await mkdtemp(join(tmpdir(), "kestrel-live-extension-smoke-"));
+await markDisposableNativeTestProfile(profile);
 const sentinel = randomUUID();
 const report = {
 	app, executableSha256: createHash("sha256").update(await readFile(executable)).digest("hex"),
@@ -154,7 +156,7 @@ async function start() {
 	child = spawn(executable, [
 		"--kestrel-cache-path", profile, "--kestrel-live-extensions",
 		"--kestrel-user-extensions", "--kestrel-chrome-tab-model",
-		"--kestrel-ephemeral-core", "--kestrel-renderer", "--kestrel-durable-profile",
+		"--kestrel-ephemeral-core", "--kestrel-renderer", "--kestrel-durable-profile", "--kestrel-test-profile-key",
 		"--remote-debugging-port=0", "--kestrel-smoke-user-browser-url", `${base}/`,
 	], { stdio: ["ignore", "pipe", "pipe"] });
 	for (const stream of [child.stdout, child.stderr]) stream.on("data", (chunk) => {

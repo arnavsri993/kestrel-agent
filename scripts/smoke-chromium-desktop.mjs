@@ -14,10 +14,12 @@ import {createIsolationFixtures,nativeIsolatedBrowserCanary,prepareIsolatedCoreR
 import {nativeWorkspaceCanary,finishNativeWorkspaceCanary,prepareNativeWorkspaceFixture} from './native-workspace-canary.mjs';
 import {candidateDigest} from './native-retirement-evidence.mjs';
 import {createIsolatedDownloadFixtures,nativeIsolatedDownloadsCanary} from './native-isolated-downloads-canary.mjs';
+import {markDisposableNativeTestProfile} from './native-test-profile.mjs';
 
 const app=resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app');
 const executable=join(app,'Contents/MacOS/Kestrel');
 const profile=await mkdtemp(join(tmpdir(),'kestrel-chromium-desktop-canary-'));
+await markDisposableNativeTestProfile(profile);
 const downloadPath=join(profile,'test-downloads');
 await mkdir(downloadPath,{mode:0o700});await mkdir(join(profile,'Default'),{mode:0o700});
 const workspaceFixture=process.env.KESTREL_TEST_NATIVE_WORKSPACE_FIXTURE==='1';
@@ -72,7 +74,7 @@ function ownedNodeProcesses(){
 }
 async function start(){
  output='';
- child=spawn(executable,['--kestrel-chromium-desktop','--kestrel-cache-path',profile,'--kestrel-durable-profile','--remote-debugging-port=0'],{stdio:['ignore','pipe','pipe']});
+ child=spawn(executable,['--kestrel-chromium-desktop','--kestrel-cache-path',profile,'--kestrel-durable-profile','--kestrel-test-profile-key','--remote-debugging-port=0'],{stdio:['ignore','pipe','pipe']});
  child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);
  let endpoint;
  for(let i=0;i<200;i++){

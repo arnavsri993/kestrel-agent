@@ -10,6 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "@playwright/test";
 import { tsImport } from "tsx/esm/api";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
+import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
 
 /**
  * Proves the product-shell lane can keep the privileged Kestrel bridge while
@@ -71,6 +72,7 @@ assert.match(
 );
 
 const profile = await mkdtemp(join(tmpdir(), "kestrel-native-user-extensions-"));
+await markDisposableNativeTestProfile(profile);
 const registeredFixture = join(profile, 'extension with "quotes" and spaces');
 await cp(fixture, registeredFixture, { recursive: true });
 // Verified CRX installs retain a manifest public key. Check that registry IDs
@@ -271,6 +273,7 @@ try {
 				"--kestrel-ephemeral-core",
 				"--kestrel-renderer",
 				"--kestrel-durable-profile",
+				"--kestrel-test-profile-key",
 				"--remote-debugging-port=0",
 				"--kestrel-smoke-user-browser-url",
 				probeUrl,

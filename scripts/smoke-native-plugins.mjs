@@ -2,7 +2,7 @@
 // Private bundled-Core protocol coverage using only generated plugin fixtures.
 // This does not start Kestrel's UI or touch the installed app/profile.
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,7 +30,7 @@ const receipt = {
 	syntheticPickerReplies: true, cocoaOrPhysicalUiTested: false, phases: [], result: "running",
 };
 
-const profile = await mkdtemp(join(tmpdir(), "kestrel-native-plugins-"));
+const profile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-native-plugins-")));
 await chmod(profile, 0o700);
 const fixtures = join(profile, "generated-fixtures");
 await mkdir(fixtures, { mode: 0o700 });
@@ -113,6 +113,7 @@ let dialogHandler;
 const pending = new Map();
 const dialogRequests = new Map();
 const cancelledDialogs = new Set();
+const protectedKeyBase64 = randomBytes(32).toString("base64");
 function recordPhase(phase, details = {}) { receipt.phases.push({ phase, passed: true, ...details }); }
 
 function write(message) {
@@ -135,7 +136,10 @@ function startCore() {
 		let message;
 		try { message = JSON.parse(line); }
 		catch (error) { stderr += `\nInvalid Core stdout JSON: ${String(error)}`; child.kill("SIGTERM"); return; }
-		if (message.type === "ready") ready = true;
+		if (message.kind === "native-core-profile-key-request") {
+			assert.equal(message.requestId, "native-core-profile-key-v1");
+			write({ kind: "native-core-profile-key-response", requestId: message.requestId, ok: true, keyBase64: protectedKeyBase64 });
+		} else if (message.type === "ready") ready = true;
 		else if (message.type === "response") {
 			const item = pending.get(message.id);
 			if (!item) return;

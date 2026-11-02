@@ -11,7 +11,39 @@ const resources = dirname(fileURLToPath(import.meta.url));
 const index = process.argv.indexOf("--profile-root");
 if (index < 0 || !process.argv[index + 1]) throw new Error("Native Core requires its owning browser profile.");
 const durable = process.argv.includes("--durable-profile");
-const profile = await openNativeCoreProfile(resolve(process.argv[index + 1]), { durable });
+const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+async function requestProtectedProfileKey() {
+	if (!durable) return undefined;
+	const requestId = "native-core-profile-key-v1";
+	return new Promise((resolveKey, rejectKey) => {
+		const finish = (error, value) => {
+			clearTimeout(timer);
+			input.off("line", onLine);
+			input.off("close", onClose);
+			if (error) rejectKey(error); else resolveKey(value);
+		};
+		const onClose = () => finish(new Error("Trusted host disconnected before providing the native profile key."));
+		const onLine = line => {
+			if (Buffer.byteLength(line, "utf8") > 1024 * 1024) return finish(new Error("Trusted host key response exceeded its limit."));
+			let message;
+			try { message = JSON.parse(line); } catch { return finish(new Error("Trusted host key response was invalid.")); }
+			if (message?.kind !== "native-core-profile-key-response" || message.requestId !== requestId || message.ok !== true || typeof message.keyBase64 !== "string")
+				return finish(new Error("Trusted host could not unlock the native profile key."));
+			finish(undefined, message.keyBase64);
+		};
+		// Keychain authorization can require a human security prompt. Keep the
+		// private request alive long enough for that prompt while bounding hangs.
+		const timer = setTimeout(() => finish(new Error("Trusted host did not provide the native profile key.")), 5 * 60_000);
+		input.on("line", onLine);
+		input.once("close", onClose);
+		process.stdout.write(JSON.stringify({ kind: "native-core-profile-key-request", requestId }) + "\n");
+	});
+}
+const protectedKeyBase64 = await requestProtectedProfileKey();
+const profile = await openNativeCoreProfile(resolve(process.argv[index + 1]), {
+	durable,
+	protectedKeyBase64,
+});
 const MAX_FRAME = 1024 * 1024;
 const pendingBrowser = new Map();
 const pendingNativeComputer = new Map();
@@ -227,7 +259,6 @@ async function shutdown(code = 0) {
 process.stdout.on("error", () => { outputClosed = true; void shutdown(); });
 process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
-const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.once("close", () => void shutdown());
 input.on("line", line => {
 	if (stopping) return;

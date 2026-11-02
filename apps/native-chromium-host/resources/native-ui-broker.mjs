@@ -66,6 +66,9 @@ let shuttingDown = false;
 let externalPending;
 const windowPending = new Map();
 const MAX_WINDOW_PENDING = 8;
+const pendingNativeCoreKeyRequests = new Set();
+let nativeDesktopHostStarted = false;
+let nativeDesktopParentReady = false;
 function finishExternal(ok, uncertain = false) {
   if (!externalPending) return;
   const id = externalPending.id;
@@ -119,6 +122,11 @@ const nativeComputerRelay = createNativeComputerRelay({
 	writeCore,
 	writeOwner: message => writeOwner(JSON.stringify(message)),
 });
+function forwardNativeCoreKeyRequest() {
+	if (!nativeDesktopHostStarted || !nativeDesktopParentReady || pendingNativeCoreKeyRequests.size !== 1) return;
+	const [requestId] = pendingNativeCoreKeyRequests;
+	if (!writeOwner(JSON.stringify({ kind: "native-core-profile-key-request", requestId }))) void shutdown(1);
+}
 const automationRelay = createNativeAutomationRelay({
 	validate: (request) => BrowserBackendWireRequestSchema.safeParse(request),
 	isUserRequest: isUserBrowserBackendWireRequest,
@@ -129,6 +137,12 @@ createInterface({ input: core.stdout }).on("line", (line) => {
 	if (line.length > 8 * MAX_FRAME) { void shutdown(1); return; }
 	let message; try { message = JSON.parse(line); } catch { void shutdown(1); return; }
 	if (message.type === "ready") { coreReady = true; signalReady(); }
+	else if (message.kind === "native-core-profile-key-request") {
+		const requestId = message.requestId;
+		if (requestId !== "native-core-profile-key-v1" || pendingNativeCoreKeyRequests.has(requestId) || coreReady) { void shutdown(1); return; }
+		pendingNativeCoreKeyRequests.add(requestId);
+		forwardNativeCoreKeyRequest();
+	}
 	else if (message.type === "response") {
 		const request = pending.get(message.id); if (!request) return;
 		pending.delete(message.id); clearTimeout(request.timeout);
@@ -277,6 +291,21 @@ ownerInput.once("close", () => void shutdown());
 ownerInput.on("line", (line) => {
 	if (Buffer.byteLength(line, "utf8") + 1 > MAX_FRAME) { void shutdown(1); return; }
 	let message; try { message = JSON.parse(line); } catch { void shutdown(1); return; }
+	if (message?.kind === "native-desktop-parent-ready") {
+		nativeDesktopParentReady = true;
+		forwardNativeCoreKeyRequest();
+		return;
+	}
+	if (message?.kind === "native-core-profile-key-response") {
+		const requestId = message.requestId;
+		if (requestId !== "native-core-profile-key-v1" || !pendingNativeCoreKeyRequests.delete(requestId)) return;
+		const key = typeof message.keyBase64 === "string" ? Buffer.from(message.keyBase64, "base64") : Buffer.alloc(0);
+		const ok = message.ok === true && key.length === 32 && key.toString("base64") === message.keyBase64;
+		writeCore({ kind: "native-core-profile-key-response", requestId,
+			ok, ...(ok ? { keyBase64: message.keyBase64 } : { error: "Protected native profile key is unavailable." }) });
+		key.fill(0);
+		return;
+	}
 	if (message?.kind === "external-open-url") {
     if (typeof message.id !== "string" || !/^external-[0-9]{1,20}$/.test(message.id) || !validExternalUrl(message.url) || !active || active.destroyed || !coreReady || externalPending) {
       if (typeof message.id === "string" && /^external-[0-9]{1,20}$/.test(message.id)) process.stdout.write(JSON.stringify({ kind: "external-open-url-result", id: message.id, ok: false }) + "\n");
@@ -314,3 +343,5 @@ ownerInput.on("line", (line) => {
 await new Promise((done, reject) => { server.once("error", reject); server.listen(socketPath, done); });
 await chmod(socketPath, 0o600);
 process.stdout.write(JSON.stringify({ extensionRoot, extensionId }) + "\n");
+nativeDesktopHostStarted = true;
+forwardNativeCoreKeyRequest();

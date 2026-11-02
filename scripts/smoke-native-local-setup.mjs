@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Existing external Ollama model only. No GUI or managed-runtime installation.
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -41,8 +42,9 @@ const fingerprint = await candidateDigest(candidate);
 await mkdir(resolve(".tmp"), { recursive: true });
 const evidence = await mkdtemp(resolve(".tmp/native-local-setup-evidence-"));
 await chmod(evidence, 0o700);
-const profile = await mkdtemp(join(tmpdir(), "kestrel-native-local-setup-"));
+const profile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-native-local-setup-")));
 await chmod(profile, 0o700);
+const protectedKeyBase64 = randomBytes(32).toString("base64");
 const resources = join(candidate, "Contents/Resources");
 const receipt = { at: new Date().toISOString(), scope: "existing-external-ollama-model-only", candidate, candidateSha256: fingerprint,
   requestedModel: requested, selectedModel: model, initialExternal: initial, phases: [], progress: [],
@@ -61,7 +63,8 @@ function start() {
   createInterface({ input: child.stdout }).on("line", line => {
     let message;
     try { message = JSON.parse(line); } catch { forbidden = true; child.kill("SIGTERM"); return; }
-    if (message.type === "ready") ready = true;
+    if (message.kind === "native-core-profile-key-request") write({ kind: "native-core-profile-key-response", requestId: message.requestId, ok: true, keyBase64: protectedKeyBase64 });
+    else if (message.type === "ready") ready = true;
     else if (message.type === "response") {
       const item = pending.get(message.id); if (!item) return;
       pending.delete(message.id); clearTimeout(item.timer); item.resolve(message.response);

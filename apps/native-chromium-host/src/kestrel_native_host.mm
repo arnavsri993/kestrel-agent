@@ -19,6 +19,8 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -51,6 +53,7 @@
 #include "kestrel_durable_browser_library.h"
 #include "kestrel_extension_workbench.h"
 #include "kestrel_native_credentials.h"
+#include "kestrel_native_core_keychain.h"
 #include "kestrel_chrome_window_mac.h"
 #include "kestrel_live_extension_control.h"
 
@@ -218,6 +221,7 @@ bool chrome_tab_model_enabled = false;
 std::shared_ptr<KestrelPrivateChromePipe> private_chrome_pipe;
 std::shared_ptr<KestrelLiveExtensionControl> live_extension_control;
 bool durable_profile_enabled = false;
+bool disposable_test_profile_key_enabled = false;
 bool real_keychain_enabled = false;
 bool smoke_durable_library_seed = false;
 bool smoke_durable_library_verify = false;
@@ -1645,6 +1649,37 @@ class KestrelClient : public CefClient,
     }
     CefRefPtr<CefDictionaryValue> value = message->GetDictionary();
     const std::string type = value->GetString("type").ToString();
+    if (type == "native-core-profile-key-request") {
+      const std::string request_id = value->GetString("requestId").ToString();
+      if (request_id != "native-core-profile-key-v1" || !durable_profile_enabled ||
+          !core_relay_) {
+        return;
+      }
+      std::string key_base64;
+      std::string error;
+      const bool ok = disposable_test_profile_key_enabled
+          ? core_profile_key_store_.GetOrCreateDisposableTestKey(
+                isolated_profile_root_,
+                std::string(NSBundle.mainBundle.bundleIdentifier.UTF8String ?: ""),
+                std::string(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: ""),
+                &key_base64, &error)
+          : core_profile_key_store_.GetOrCreate(
+                isolated_profile_root_, &key_base64, &error);
+      auto response = CefDictionaryValue::Create();
+      response->SetString("type", "native-core-profile-key-response");
+      response->SetString("requestId", request_id);
+      response->SetBool("ok", ok);
+      if (ok) response->SetString("keyBase64", key_base64);
+      else response->SetString("error", "Protected native profile key is unavailable.");
+      auto envelope = CefValue::Create();
+      envelope->SetDictionary(response);
+      std::string serialized =
+          CefWriteJSON(envelope, JSON_WRITER_DEFAULT).ToString();
+      [core_relay_ sendLine:[NSString stringWithUTF8String:serialized.c_str()]];
+      std::fill(serialized.begin(), serialized.end(), '\0');
+      std::fill(key_base64.begin(), key_base64.end(), '\0');
+      return;
+    }
     if (type == "extension-runtime-status") {
       std::cout << "KESTREL_NATIVE_EXTENSION_SERVICE_READY ok="
                 << value->GetBool("ok") << std::endl;
@@ -5703,6 +5738,7 @@ class KestrelClient : public CefClient,
   std::string user_browser_cache_path_;
   DurableBrowserLibrary browser_library_;
   NativeCredentialStore credential_store_;
+  NativeCoreProfileKeyStore core_profile_key_store_;
   bool credential_store_opened_ = false;
   std::map<std::string, NativeAutomationSession> automation_sessions_;
   std::map<uint32_t, std::string> cef_download_ids_;
@@ -6152,6 +6188,13 @@ int main(int argc, char* argv[]) {
         has_argument(argc, argv, "--kestrel-chrome-tab-model");
     durable_profile_enabled =
         has_argument(argc, argv, "--kestrel-durable-profile");
+    disposable_test_profile_key_enabled =
+        has_argument(argc, argv, "--kestrel-test-profile-key");
+    if (disposable_test_profile_key_enabled && !durable_profile_enabled) {
+      std::cerr << "Disposable native test keys require --kestrel-durable-profile."
+                << std::endl;
+      return 1;
+    }
     real_keychain_enabled =
         has_argument(argc, argv, "--kestrel-real-keychain") ||
         (std::getenv("KESTREL_USE_REAL_KEYCHAIN") != nullptr &&
@@ -6342,13 +6385,31 @@ int main(int argc, char* argv[]) {
                 << std::endl;
       return 1;
     }
+    requested_profile = [requested_profile stringByStandardizingPath];
+    struct stat requested_profile_info {};
+    if (lstat(requested_profile.fileSystemRepresentation,
+              &requested_profile_info) == 0 &&
+        !S_ISDIR(requested_profile_info.st_mode)) {
+      std::cerr << "Kestrel native Chromium profile must be a real directory."
+                << std::endl;
+      return 1;
+    }
     NSError* profile_error = nil;
     if (![[NSFileManager defaultManager]
             createDirectoryAtPath:requested_profile
        withIntermediateDirectories:YES
-                        attributes:nil
+                        attributes:@{NSFilePosixPermissions : @0700}
                              error:&profile_error]) {
       std::cerr << "Kestrel could not create its explicit isolated profile path."
+                << std::endl;
+      return 1;
+    }
+    if (lstat(requested_profile.fileSystemRepresentation,
+              &requested_profile_info) != 0 ||
+        !S_ISDIR(requested_profile_info.st_mode) ||
+        requested_profile_info.st_uid != getuid() ||
+        (requested_profile_info.st_mode & 0077) != 0) {
+      std::cerr << "Kestrel native Chromium profile must be an owned private directory."
                 << std::endl;
       return 1;
     }

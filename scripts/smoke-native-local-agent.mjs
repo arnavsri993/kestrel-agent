@@ -20,7 +20,7 @@ assert(!app.startsWith('/Applications/Kestrel.app/'),'The canonical app cannot b
 const resources=join(app,'Contents/Resources');
 const candidateSha256=await candidateDigest(app);
 const bundledNode=join(resources,'agent-core/node/bin/node');
-const profile=await mkdtemp(join(tmpdir(),'kestrel-native-local-agent-profile-'));
+const profile=await realpath(await mkdtemp(join(tmpdir(),'kestrel-native-local-agent-profile-')));
 await mkdir('.tmp',{recursive:true});
 const evidenceDir=await mkdtemp(resolve('.tmp/native-local-agent-evidence-'));
 const taskSource=await readFile(resolve('apps/desktop/src/renderer/first-task.ts'),'utf8');
@@ -32,6 +32,7 @@ const receipt={at:new Date().toISOString(),candidate:app,candidateSha256,model,e
 
 const source=String.raw`
 import assert from 'node:assert/strict';
+import {randomBytes} from 'node:crypto';
 import {createServer} from 'node:http';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -98,7 +99,7 @@ const address=proxy.address();assert(address&&typeof address==='object');
 const {openNativeCoreProfile}=await import(pathToFileURL(join(resources,'native-core-profile.mjs')));
 const {CoreSupervisor,nodeCoreProcess}=await import(pathToFileURL(join(resources,'agent-core/service/native-desktop-runtime.mjs')));
 assert.equal(process.versions.electron,undefined);
-const profile=await openNativeCoreProfile(profileRoot,{durable:true});
+const profile=await openNativeCoreProfile(profileRoot,{durable:true,protectedKeyBase64:randomBytes(32).toString('base64')});
 const core=new CoreSupervisor(undefined,undefined,{processFactory:()=>nodeCoreProcess({executable:process.execPath,entryPath:join(resources,'agent-core/service/index.js'),stdout:'ignore',env:{HOME:profile.root,PATH:process.env.PATH||'',TMPDIR:process.env.TMPDIR||'',KESTREL_DATA_DIR:profile.root,KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY:'1'}})});
 const account={id:'native-local-ollama',providerId:'ollama',adapter:'ollama',displayName:'Local Ollama canary',authTransport:'local',enabled:true,baseUrl:'http://127.0.0.1:'+address.port,defaultModel:model,contextWindow:32768};
 const config={databasePath:profile.databasePath,encryptionKeyBase64:profile.encryptionKeyBase64,workspaceRoots:[],configuredWorkspaceRoots:[],projects:[],pluginRoots:[],managedPluginRoots:[],learnedSkillRoot:join(profile.root,'learned-skills'),secureEnvironment:{},providerAccounts:[account]};

@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <ServiceManagement/ServiceManagement.h>
+#include <algorithm>
 #include <poll.h>
 #include <pwd.h>
 #include <cstring>
@@ -40,6 +41,7 @@
 #include "native_system_integration.h"
 #include "native_isolated_automation.h"
 #include "native_computer_use.h"
+#include "kestrel_native_core_keychain.h"
 
 namespace {
 bool RequestNativeWindow(bool dock_activation);
@@ -284,6 +286,7 @@ std::set<std::string> native_window_pending;
 std::set<std::string> native_window_dispatched;
 std::vector<std::string> native_window_waiting;
 std::string dock_window_pending;
+NativeCoreProfileKeyStore native_core_profile_key_store;
 void DispatchNativeWindow(const std::string& id) {
   if (desktop_window_closing || !desktop_broker_input || !desktop_bridge_ready || !native_window_pending.count(id)) return;
   NSString* ns_id = [NSString stringWithUTF8String:id.c_str()];
@@ -567,6 +570,14 @@ static NSString* DefaultNativeProfile() {
 }
 
 int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
+  const char* test_key_env = getenv("KESTREL_NATIVE_TEST_PROFILE_KEY");
+  const bool disposable_test_key = HasArgument(argc, argv, "--kestrel-test-profile-key") ||
+      (test_key_env && std::string(test_key_env) == "1");
+  if (disposable_test_key && !default_profile &&
+      !HasArgument(argc, argv, "--kestrel-durable-profile")) {
+    std::cerr << "Disposable native test keys require durable test mode." << std::endl;
+    return 1;
+  }
   // Finder normally delivers URLs through openURLs:. Direct invocations can
   // pass URLs as positional arguments; skip option values and legacy paths.
   bool skip_option_value = false;
@@ -580,6 +591,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     if (!positional_only && !arg.empty() && arg[0] == '-') {
       cef_arguments.push_back(argv[i]);
       if (arg == "--kestrel-chromium-desktop" || arg == "--kestrel-durable-profile" ||
+          arg == "--kestrel-test-profile-key" ||
           arg.rfind("-psn_", 0) == 0 || arg.find('=') != std::string::npos) continue;
       skip_option_value = true;
       continue;
@@ -680,6 +692,19 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) { /* Broker shutdown settles its pending requests. */ }
   });
   desktop_broker_input = input.fileHandleForWriting;
+  NSData* parent_ready = [NSJSONSerialization
+      dataWithJSONObject:@{@"kind" : @"native-desktop-parent-ready"}
+                   options:0
+                     error:nil];
+  if (parent_ready) {
+    NSMutableData* line = [parent_ready mutableCopy];
+    [line appendBytes:"\n" length:1];
+    @try { [input.fileHandleForWriting writeData:line]; }
+    @catch (NSException*) { [broker terminate]; return 1; }
+  } else {
+    [broker terminate];
+    return 1;
+  }
   NSMutableData* event_buffer = [[NSMutableData alloc] init];
   output.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
     NSData* data = handle.availableData;
@@ -703,6 +728,35 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
       [event_buffer replaceBytesInRange:NSMakeRange(0, range.location + 1) withBytes:nullptr length:0];
       NSDictionary* value = [NSJSONSerialization JSONObjectWithData:message options:0 error:nil];
       if (![value isKindOfClass:NSDictionary.class]) continue;
+      if ([value[@"kind"] isEqualToString:@"native-core-profile-key-request"] &&
+          [value[@"requestId"] isKindOfClass:NSString.class] &&
+          [value[@"requestId"] isEqualToString:@"native-core-profile-key-v1"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          std::string key_base64;
+          std::string error;
+          const bool ok = disposable_test_key
+              ? native_core_profile_key_store.GetOrCreateDisposableTestKey(
+                    std::string(profile.fileSystemRepresentation),
+                    std::string(NSBundle.mainBundle.bundleIdentifier.UTF8String ?: ""),
+                    std::string(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: ""),
+                    &key_base64, &error)
+              : native_core_profile_key_store.GetOrCreate(
+                    std::string(profile.fileSystemRepresentation), &key_base64, &error);
+          std::string response = ok
+              ? std::string("{\"kind\":\"native-core-profile-key-response\",\"requestId\":\"native-core-profile-key-v1\",\"ok\":true,\"keyBase64\":\"") + key_base64 + "\"}"
+              : "{\"kind\":\"native-core-profile-key-response\",\"requestId\":\"native-core-profile-key-v1\",\"ok\":false,\"error\":\"Protected native profile key is unavailable.\"}";
+          NSMutableData* line = [NSMutableData dataWithBytes:response.data()
+                                                      length:response.size()];
+          [line appendBytes:"\n" length:1];
+          std::fill(response.begin(), response.end(), '\0');
+          std::fill(key_base64.begin(), key_base64.end(), '\0');
+          if (broker.running) {
+            @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) {}
+          }
+          if (line.length) std::memset(line.mutableBytes, 0, line.length);
+        });
+        continue;
+      }
       if ([value[@"kind"] isEqualToString:@"dialog-cancel"] && [value[@"id"] isKindOfClass:NSString.class]) {
         dispatch_async(dispatch_get_main_queue(), ^{
           if (desktop_workspace_panel && [desktop_workspace_panel_id isEqualToString:value[@"id"]]) [desktop_workspace_panel cancel:nil];

@@ -1,5 +1,6 @@
+import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openNativeCoreProfile } from "../apps/native-chromium-host/resources/native-core-profile.mjs";
@@ -8,27 +9,34 @@ const profiles = [];
 async function profile() {
 	const root = await mkdtemp(join(tmpdir(), "kestrel-native-core-profile-test-"));
 	profiles.push(root);
-	return root;
+	return realpath(root);
 }
+const key = () => randomBytes(32).toString("base64");
 afterEach(async () => {
 	await Promise.all(profiles.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("native Core profile ownership", () => {
-	it("keeps the same durable key and database path after closing", async () => {
+	it("uses the same host-supplied durable key after close without writing a key file", async () => {
 		const root = await profile();
-		const first = await openNativeCoreProfile(root, { durable: true });
+		const protectedKeyBase64 = key();
+		const first = await openNativeCoreProfile(root, { durable: true, protectedKeyBase64 });
 		await writeFile(first.databasePath, "encrypted database fixture");
-		const key = first.encryptionKeyBase64;
 		await first.close();
-		const second = await openNativeCoreProfile(root, { durable: true });
+		const second = await openNativeCoreProfile(root, { durable: true, protectedKeyBase64 });
 		expect(second.databasePath).toBe(first.databasePath);
-		expect(second.encryptionKeyBase64).toBe(key);
-		expect(Buffer.from(key, "base64")).toHaveLength(32);
-		expect((await lstat(join(first.root, "database.key"))).mode & 0o777).toBe(0o600);
+		expect(second.encryptionKeyBase64).toBe(protectedKeyBase64);
 		expect((await lstat(second.root)).mode & 0o777).toBe(0o700);
+		await expect(lstat(join(first.root, "database.key"))).rejects.toMatchObject({ code: "ENOENT" });
 		await second.close();
 		expect(await readFile(first.databasePath, "utf8")).toBe("encrypted database fixture");
+	});
+
+	it("requires a valid host key for durable profiles and preserves data on failure", async () => {
+		const root = await profile();
+		await expect(openNativeCoreProfile(root, { durable: true })).rejects.toThrow(/trusted host/);
+		await expect(openNativeCoreProfile(root, { durable: true, protectedKeyBase64: "short" })).rejects.toThrow(/malformed/);
+		expect(await lstat(join(root, "native-core")).catch(() => undefined)).toBeUndefined();
 	});
 
 	it("cleans only its own disposable directory", async () => {
@@ -45,35 +53,31 @@ describe("native Core profile ownership", () => {
 		await second.close();
 	});
 
-	it("refuses to rotate a missing key over existing data", async () => {
+	it("does not create a new durable key over an existing database", async () => {
 		const root = await profile();
-		const opened = await openNativeCoreProfile(root, { durable: true });
+		const opened = await openNativeCoreProfile(root, { durable: true, protectedKeyBase64: key() });
 		await writeFile(opened.databasePath, "preserve me");
-		await rm(join(opened.root, "database.key"));
-		await expect(openNativeCoreProfile(root, { durable: true })).rejects.toThrow(/key is missing/);
+		await expect(openNativeCoreProfile(root, { durable: true })).rejects.toThrow(/trusted host/);
 		expect(await readFile(opened.databasePath, "utf8")).toBe("preserve me");
-		await expect(lstat(join(opened.root, "database.key"))).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
-	it.each(["symlink", "hardlink", "public", "truncated"])("rejects a %s key without altering it", async (kind) => {
+	it.each(["symlink", "public", "truncated"])("rejects a legacy %s key without altering it", async (kind) => {
 		const root = await profile();
-		const opened = await openNativeCoreProfile(root, { durable: true });
-		const key = join(opened.root, "database.key");
-		const before = await readFile(key);
+		const opened = await openNativeCoreProfile(root, { durable: true, protectedKeyBase64: key() });
+		const keyPath = join(opened.root, "database.key");
+		const fixture = Buffer.from("legacy-key-fixture");
 		if (kind === "symlink") {
-			await rm(key);
 			const target = join(root, "external-key");
-			await writeFile(target, before, { mode: 0o600 });
-			await symlink(target, key);
-		} else if (kind === "hardlink") {
-			await link(key, join(root, "linked-key"));
+			await writeFile(target, fixture, { mode: 0o600 });
+			await symlink(target, keyPath);
 		} else if (kind === "public") {
-			await chmod(key, 0o644);
+			await writeFile(keyPath, fixture, { mode: 0o644 });
 		} else {
-			await writeFile(key, "invalid");
+			await writeFile(keyPath, "invalid");
 		}
-		await expect(openNativeCoreProfile(root, { durable: true })).rejects.toThrow();
-		expect(await readFile(key)).toEqual(kind === "truncated" ? Buffer.from("invalid") : before);
+		await expect(openNativeCoreProfile(root, { durable: true, protectedKeyBase64: key() })).rejects.toThrow(/legacy file-backed key/);
+		if (kind === "symlink") expect(await readFile(join(root, "external-key"))).toEqual(fixture);
+		else expect(await readFile(keyPath)).toEqual(kind === "truncated" ? Buffer.from("invalid") : fixture);
 	});
 
 	it("rejects linked profile subdirectories and linked databases", async () => {
@@ -81,13 +85,13 @@ describe("native Core profile ownership", () => {
 		const outside = join(root, "outside");
 		await mkdir(outside, { mode: 0o700 });
 		await symlink(outside, join(root, "native-core"));
-		await expect(openNativeCoreProfile(root, { durable: true })).rejects.toThrow(/private directory/);
+		await expect(openNativeCoreProfile(root, { durable: true, protectedKeyBase64: key() })).rejects.toThrow(/private directory/);
 		await rm(join(root, "native-core"));
-		const opened = await openNativeCoreProfile(root, { durable: true });
+		const opened = await openNativeCoreProfile(root, { durable: true, protectedKeyBase64: key() });
 		const externalDb = join(outside, "db");
 		await writeFile(externalDb, "untouched");
 		await symlink(externalDb, opened.databasePath);
-		await expect(openNativeCoreProfile(root, { durable: true })).rejects.toThrow(/regular files/);
+		await expect(openNativeCoreProfile(root, { durable: true, protectedKeyBase64: key() })).rejects.toThrow(/regular files/);
 		expect(await readFile(externalDb, "utf8")).toBe("untouched");
 	});
 });

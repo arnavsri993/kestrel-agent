@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -11,9 +12,11 @@ const app = process.env.KESTREL_NATIVE_TEST_APP
 	? resolve(process.env.KESTREL_NATIVE_TEST_APP)
 	: await buildNativeChromiumHost();
 const resources = join(app, "Contents", "Resources");
-const profile = await mkdtemp(join(tmpdir(), "kestrel-native-core-durability-"));
+const profile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-native-core-durability-")));
 const children = new Set();
 const ownedCorePids = new Set();
+// A test-only in-memory trusted host stands in for the Keychain service.
+const protectedKeyBase64 = randomBytes(32).toString("base64");
 
 function start() {
 	const child = spawn(join(resources, "agent-core", "node", "bin", "node"),
@@ -24,7 +27,12 @@ function start() {
 	let output = "";
 	const readers = new Set();
 	createInterface({ input: child.stdout }).on("line", (line) => {
-		try { messages.push(JSON.parse(line)); } catch { output += "Invalid relay JSON\n"; }
+		let message;
+		try { message = JSON.parse(line); messages.push(message); } catch { output += "Invalid relay JSON\n"; }
+		if (message?.type === "native-core-profile-key-request") {
+			assert.equal(message.requestId, "native-core-profile-key-v1");
+			child.stdin.write(JSON.stringify({ type: "native-core-profile-key-response", requestId: message.requestId, ok: true, keyBase64: protectedKeyBase64 }) + "\n");
+		}
 		for (const read of readers) read();
 	});
 	child.stderr.on("data", (chunk) => { output += chunk; });
@@ -105,26 +113,26 @@ try {
 	const created = await first.request({ type: "runtime-create-session", title: "Native durable conversation", kind: "conversation" });
 	assert.ok(created.session?.id);
 	const keyPath = join(profile, "native-core", "database.key");
-	const key = await readFile(keyPath);
+	await assert.rejects(readFile(keyPath), { code: "ENOENT" });
 	await first.stop();
 	const second = start();
 	await second.ready();
 	const restored = await second.request({ type: "runtime-list-sessions" });
 	assert.ok(restored.sessions?.some((session) => session.id === created.session.id && session.title === "Native durable conversation"));
-	assert.deepEqual(await readFile(keyPath), key);
+	await assert.rejects(readFile(keyPath), { code: "ENOENT" });
 	await second.crash();
 	const recovered = start();
 	await recovered.ready();
 	const afterCrash = await recovered.request({ type: "runtime-list-sessions" });
 	assert.ok(afterCrash.sessions?.some((session) => session.id === created.session.id));
-	assert.deepEqual(await readFile(keyPath), key);
+	await assert.rejects(readFile(keyPath), { code: "ENOENT" });
 	await recovered.closeOutput();
 	const final = start();
 	await final.ready();
 	const afterHostClose = await final.request({ type: "runtime-list-sessions" });
 	assert.ok(afterHostClose.sessions?.some((session) => session.id === created.session.id));
 	await final.stop();
-	console.log("Native Core durability: conversation + database key survive normal restart, relay crash and closed host pipe; no Electron profile or Keychain access.");
+	console.log("Native Core durability: conversation survives restart and relay recovery using an in-memory test host-key broker; no file-backed key or real Keychain access.");
 } finally {
 	for (const child of children) child.kill("SIGTERM");
 	for (const pid of ownedCorePids) { try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ } }

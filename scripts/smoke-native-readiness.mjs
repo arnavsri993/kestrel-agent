@@ -1,5 +1,6 @@
 // Disposable private-Core protocol canary; it does not launch a window or run inference.
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,7 +11,8 @@ import { setTimeout as delay } from "node:timers/promises";
 assert(process.env.KESTREL_NATIVE_TEST_APP, "Supply an explicit disposable native candidate.");
 const candidate = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
 assert(!candidate.startsWith("/Applications/"), "The canary must not use an installed app.");
-const profile = await mkdtemp(join(tmpdir(), "kestrel-native-readiness-"));
+const profile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-native-readiness-")));
+const protectedKeyBase64 = randomBytes(32).toString("base64");
 const resources = join(candidate, "Contents/Resources");
 const child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--durable-profile"], {
   env: { ...process.env, KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1" }, stdio: ["pipe", "pipe", "pipe"],
@@ -20,7 +22,8 @@ const exit = new Promise(resolve => child.once("exit", (code, signal) => resolve
 child.stderr.on("data", chunk => { output += chunk; });
 createInterface({ input: child.stdout }).on("line", line => {
   const message = JSON.parse(line);
-  if (message.type === "ready") ready = true;
+  if (message.kind === "native-core-profile-key-request") child.stdin.write(JSON.stringify({ kind: "native-core-profile-key-response", requestId: message.requestId, ok: true, keyBase64: protectedKeyBase64 }) + "\n");
+  else if (message.type === "ready") ready = true;
   else if (message.type === "response" && message.id === "readiness-canary") resolveResponse?.(message.response);
   else if (message.type === "browser-backend-reset") child.stdin.write(JSON.stringify({ type: "browser-backend-reset-response", requestId: message.requestId, ok: true }) + "\n");
 });

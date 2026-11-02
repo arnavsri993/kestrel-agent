@@ -1,6 +1,7 @@
 // Private Core/host protocol integration in an owned fixture. Picker replies
 // are simulated here; only the separate on-screen test proves a Cocoa panel.
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, realpath, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +14,7 @@ assert(process.env.KESTREL_NATIVE_TEST_APP, "Supply an explicit disposable nativ
 const candidate = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
 assert(!candidate.startsWith("/Applications/"), "This fixture must not use an installed app.");
 const fingerprint = await candidateDigest(candidate);
-const profile = await mkdtemp(join(tmpdir(), "kestrel-native-context-dialog-"));
+const profile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-native-context-dialog-")));
 const workspace = join(profile, "workspace");
 await mkdir(workspace, { mode: 0o700 }); await mkdir(join(profile, "native-core"), { mode: 0o700 });
 await writeFile(join(workspace, "README.md"), "Owned native picker protocol fixture.\n", { mode: 0o600 });
@@ -21,6 +22,7 @@ await writeFile(join(profile, "outside.txt"), "Never selected.\n", { mode: 0o600
 const root = await realpath(workspace), file = join(root, "README.md");
 await writeFile(join(profile, "native-core/workspace-grants.json"), JSON.stringify([{ path: root, name: "Native picker fixture" }]), { mode: 0o600 });
 const resources = join(candidate, "Contents/Resources");
+const protectedKeyBase64 = randomBytes(32).toString("base64");
 const child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--durable-profile"], { env: { ...process.env, KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1" }, stdio: ["pipe", "pipe", "pipe"] });
 let output = "", ready = false, mode = "select", sequence = 0, held, cancelled = false;
 const pending = new Map(), dialogs = [];
@@ -31,7 +33,8 @@ function write(value) { child.stdin.write(JSON.stringify(value) + "\n"); }
 createInterface({ input: child.stdout }).on("line", line => {
 	try {
 		const message = JSON.parse(line);
-		if (message.type === "ready") ready = true;
+		if (message.kind === "native-core-profile-key-request") write({ kind: "native-core-profile-key-response", requestId: message.requestId, ok: true, keyBase64: protectedKeyBase64 });
+		else if (message.type === "ready") ready = true;
 		else if (message.type === "response") {
 			const item = pending.get(message.id); if (!item) return;
 			pending.delete(message.id); clearTimeout(item.timer); item.resolve(message.response);

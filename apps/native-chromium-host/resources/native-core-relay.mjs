@@ -30,10 +30,54 @@ const smokeUploadPath =
 		? process.env.KESTREL_SMOKE_UPLOAD_PATH
 		: "";
 
-// Durable mode retains only the explicitly selected native profile. No
-// Electron database, Keychain item or provider-owned login is imported.
+// Durable mode obtains the protected key from the owning native host over this
+// private pipe. It never imports Electron data or puts the key in argv/env.
 const durableProfile = process.argv.includes("--durable-profile");
-const coreProfile = await openNativeCoreProfile(resolve(profileRoot), { durable: durableProfile });
+const MAX_FRAME = 1024 * 1024;
+const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+let stopping = false;
+let outputClosed = false;
+
+function write(message) {
+	if (outputClosed) return;
+	const line = JSON.stringify(message);
+	if (Buffer.byteLength(line, "utf8") + 1 > MAX_FRAME) return;
+	process.stdout.write(line + "\n");
+}
+
+async function requestProtectedKey() {
+	if (!durableProfile) return undefined;
+	return new Promise((resolveKey, rejectKey) => {
+		const requestId = "native-core-profile-key-v1";
+		const finish = (error, value) => {
+			clearTimeout(timer);
+			lines.off("line", onLine);
+			lines.off("close", onClose);
+			if (error) rejectKey(error); else resolveKey(value);
+		};
+		const onClose = () => finish(new Error("Trusted host disconnected before providing the native profile key."));
+		const onLine = line => {
+			if (Buffer.byteLength(line, "utf8") > MAX_FRAME) return finish(new Error("Trusted host key response exceeded its limit."));
+			let message;
+			try { message = JSON.parse(line); } catch { return finish(new Error("Trusted host key response was invalid.")); }
+			if (message?.type !== "native-core-profile-key-response" || message.requestId !== requestId || message.ok !== true || typeof message.keyBase64 !== "string")
+				return finish(new Error("Trusted host could not unlock the native profile key."));
+			finish(undefined, message.keyBase64);
+		};
+		// Keychain authorization can require a human security prompt. Keep the
+		// private request alive long enough for that prompt while bounding hangs.
+		const timer = setTimeout(() => finish(new Error("Trusted host did not provide the native profile key.")), 5 * 60_000);
+		lines.on("line", onLine);
+		lines.once("close", onClose);
+		write({ type: "native-core-profile-key-request", requestId });
+	});
+}
+
+const protectedKeyBase64 = await requestProtectedKey();
+const coreProfile = await openNativeCoreProfile(resolve(profileRoot), {
+	durable: durableProfile,
+	protectedKeyBase64,
+});
 const stateRoot = coreProfile.root;
 const coreEntry = join(resourceRoot, "agent-core", "service", "index.js");
 const core = fork(coreEntry, [], {
@@ -52,8 +96,6 @@ const core = fork(coreEntry, [], {
 });
 
 let coreReady = false;
-let stopping = false;
-let outputClosed = false;
 let nextRequest = 0;
 const pending = new Map();
 const extensionRequests = new Map();
@@ -105,11 +147,6 @@ let smokeIsolatedSessionId;
 let smokeSecondIsolatedSessionId;
 /** @type {string | undefined} */
 let smokeVisibleTabId;
-
-function write(message) {
-	if (outputClosed) return;
-	process.stdout.write(JSON.stringify(message) + "\n");
-}
 
 process.stdout.on("error", (error) => {
 	// The native window can close its pipe while a Core response is queued.
@@ -266,7 +303,6 @@ const bootstrapConfiguration = {
 	};
 core.send({ type: "bootstrap", config: bootstrapConfiguration });
 
-const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
 lines.once("close", () => void shutdown(0));
 lines.on("line", (line) => {
 	let message;

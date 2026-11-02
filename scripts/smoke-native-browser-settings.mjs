@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from '@playwright/test';
 import { candidateDigest } from './native-retirement-evidence.mjs';
 import { selectSettingsSection } from './desktop-browser-test-helpers.mjs';
+import { markDisposableNativeTestProfile } from './native-test-profile.mjs';
 
 // This test launches only a caller-selected, noncanonical candidate with a new
 // private profile. Never use it to exercise the user's installed application.
@@ -29,6 +30,7 @@ for (const row of processRows) {
  assert.notEqual(existing, candidateExecutable, 'The candidate is already running; the canary requires its own single instance.');
 }
 const profile = await mkdtemp(join(tmpdir(), 'kestrel-settings-canary-'));
+await markDisposableNativeTestProfile(profile);
 const helper = join(profile, 'send-external-url');
 try { execFileSync('/usr/bin/xcrun', ['clang++', '-std=c++17', '-fobjc-arc', '-framework', 'Foundation', resolve('apps/native-chromium-host/tests/send_external_url.mm'), '-o', helper], { timeout: 30000, stdio: 'pipe' }); }
 catch (error) { await rm(profile, { recursive: true, force: true }); throw error; }
@@ -79,7 +81,7 @@ async function installIdentityFault(page) {
 }
 async function start(coldUrl) {
  output = '';
- const args = ['--kestrel-chromium-desktop', '--kestrel-cache-path', profile, '--kestrel-durable-profile', '--remote-debugging-port=0'];
+ const args = ['--kestrel-chromium-desktop', '--kestrel-cache-path', profile, '--kestrel-durable-profile', '--kestrel-test-profile-key', '--remote-debugging-port=0'];
  if (coldUrl) args.push(coldUrl);
  child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'pipe'] });
  child.stdout.on('data', b => { output += b; }); child.stderr.on('data', b => { output += b; });

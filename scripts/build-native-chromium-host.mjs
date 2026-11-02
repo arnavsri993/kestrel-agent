@@ -216,6 +216,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			join(nativeHostRoot, "src", "kestrel_private_chrome_pipe.mm"),
 			join(nativeHostRoot, "src", "kestrel_live_extension_control.mm"),
 			join(nativeHostRoot, "src", "kestrel_native_credentials.mm"),
+			join(nativeHostRoot, "src", "kestrel_native_core_keychain.mm"),
 			join(nativeHostRoot, "src", "kestrel_durable_browser_library.cc"),
 			join(nativeHostRoot, "src", "kestrel_chromium_app.cc"),
 			"-o",
