@@ -1206,3 +1206,25 @@ This removes an Electron dependency from a future migration implementation,
 but does not complete migration. Read-only legacy source projection must also
 enforce deletion fences without startup rewrites, and the reviewed dry-run,
 apply, rollback, large-profile, browser and credential paths remain required.
+
+### Read-only legacy deletion projection (2026-11-02)
+
+Two generated on-disk regressions reproduced deleted source text surviving in
+an older profile's raw JSON and encrypted journals despite an existing deletion
+fence. Export now applies a shared pure redaction codec in memory after source
+row/index validation. It removes stale receipt outputs, completed-cache results,
+explicitly linked messages and the same legacy unlinked assistant fallback used
+by source deletion, then clears affected search eligibility before rewrapping.
+Unrelated results, generic JSON, opaque metadata and messages with explicit
+unrelated provenance remain intact. No source startup migration is invoked.
+
+Both tests fail before the fix and pass afterward using a read-only SQLite
+handle, ordinary destination readers, decrypted destination journal inspection
+and byte-for-byte unchanged source files. They cover version-1 raw and
+version-2 structured message bodies. All **2,129 tests in 275 files**, workspace
+typechecking and the full native build passed. Bundle
+`06e3babd66a2d540ca8527ce7ea4e8a4ca67ec304fc1b9d24a1b25761bc1fae4`
+passed all 16 native settings/window/restart phases with unchanged digests
+(`.tmp/native-readonly-deletion-settings-evidence/receipt.json`), and bundled
+Core durability/recovery passed with the fake host-key broker. Generated
+fixtures only; the canonical app and real user data remain untouched.

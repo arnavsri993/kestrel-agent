@@ -4,6 +4,7 @@ import { decryptText, encryptText } from "@kestrel/encryption";
 import { ActionReceiptSchema, AgentRunSchema, MemoryJobSchema, RuntimeToolExecutionSchema } from "@kestrel/shared-types";
 import * as Contracts from "@kestrel/shared-types";
 import { listMigrationVersions, loadMigrationSql } from "./migrations.js";
+import { redactDeletedSourceToolResult, SOURCE_EVIDENCE_REMOVED_TEXT, SOURCE_RECEIPT_DELETION_PREFIX, sourceReceiptDeletionKey } from "./source-evidence-redaction.js";
 
 export const HOST_PROFILE_TRANSFER_VERSION = 1 as const;
 export const HOST_PROFILE_TRANSFER_POLICY = "kestrel-host-profile-transfer-in-flight-v1" as const;
@@ -256,6 +257,57 @@ function validateSchema(db: Database.Database): void {
 
 function jsonByteLength(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8"); }
 
+// Older profiles can have a deletion fence alongside stale source receipts or
+// journals. Apply the same fence in memory, after validating the original rows
+// and retained index bindings. Never open the source with a writable constructor
+// or rely on its startup conversion to enforce this privacy boundary.
+function projectDeletedSourceEvidence(rows: TransferTables): void {
+	const markers = new Set((rows.private_runtime_state ?? []).filter(row =>
+		typeof row.values.key === "string" && row.values.key.startsWith(SOURCE_RECEIPT_DELETION_PREFIX) &&
+		Boolean(JSON.parse(String(row.cleartext!.value_ciphertext))))
+		.map(row => String(row.values.key)));
+	if (!markers.size) return;
+	const isDeleted = (id: string) => markers.has(sourceReceiptDeletionKey(id));
+	const earliestDeletedReceipt = new Map<string, { id: string; startedAt: string }>();
+	for (const row of rows.tool_executions ?? []) {
+		const payload = row.cleartext!.payload as { value: Record<string, unknown> };
+		const value = redactDeletedSourceToolResult(payload.value, isDeleted);
+		if (value === payload.value) {
+			// Already-redacted receipts still fence legacy unlinked messages.
+			if (payload.value.toolName !== "sources.read" || !isDeleted(String(row.values.id))) continue;
+		} else {
+			payload.value = value as Record<string, unknown>;
+			row.values.status = "failed";
+		}
+		const sessionId = String(row.values.session_id), startedAt = String(row.values.started_at);
+		const previous = earliestDeletedReceipt.get(sessionId);
+		if (!previous || startedAt < previous.startedAt) earliestDeletedReceipt.set(sessionId, { id: String(row.values.id), startedAt });
+	}
+	for (const row of rows.idempotency_keys ?? []) {
+		const result = row.cleartext!.idempotency_result as { value: unknown };
+		result.value = redactDeletedSourceToolResult(result.value, isDeleted);
+	}
+	for (const row of rows.runtime_messages ?? []) {
+		const cleartext = row.cleartext!;
+		let stored: Record<string, unknown> = {};
+		try {
+			const parsed: unknown = JSON.parse(String(cleartext.content_ciphertext));
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && (parsed as Record<string, unknown>).version === 2) stored = parsed as Record<string, unknown>;
+		} catch { /* Version 1 stores raw text. */ }
+		const references = stored.sourceToolExecutionIds;
+		if (references !== undefined && (!Array.isArray(references) || references.some(id => typeof id !== "string"))) fail("Profile transfer found malformed message source references.");
+		const sourceIds = references as string[] | undefined;
+		const deletedIds = [...(sourceIds ?? []), ...(typeof row.values.tool_execution_id === "string" ? [row.values.tool_execution_id] : [])].filter(isDeleted);
+		const fallback = earliestDeletedReceipt.get(String(row.values.session_id));
+		if (!sourceIds && row.values.role === "assistant" && fallback && String(row.values.created_at) >= fallback.startedAt) deletedIds.push(fallback.id);
+		if (!deletedIds.length) continue;
+		cleartext.content_ciphertext = JSON.stringify({ version: 2, content: SOURCE_EVIDENCE_REMOVED_TEXT,
+			...(typeof stored.toolName === "string" ? { toolName: stored.toolName } : {}),
+			sourceToolExecutionIds: [...new Set([...(sourceIds ?? []), ...deletedIds])] });
+		cleartext.indexedTerms = [];
+	}
+}
+
 export function createHostProfileTransferSnapshot(db: Database.Database, key: Buffer, maxBytes = HOST_PROFILE_TRANSFER_MAX_BYTES): HostProfileTransferSnapshot {
 	return db.transaction(() => createHostProfileTransferSnapshotInReadTransaction(db, key, maxBytes)).deferred();
 }
@@ -466,6 +518,7 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 		if (result.length !== expectedCount) fail(`Profile transfer source changed while reading ${table}.`);
 		rows[table] = result;
 	}
+	projectDeletedSourceEvidence(rows);
 	const snapshot: HostProfileTransferSnapshot = {
 		format: "kestrel-host-profile-transfer",
 		version: HOST_PROFILE_TRANSFER_VERSION,

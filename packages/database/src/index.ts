@@ -2,6 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { decryptText, encryptText } from "@kestrel/encryption";
+import { redactDeletedSourceToolResult, sourceReceiptDeletionKey } from "./source-evidence-redaction.js";
 import {
 	type ActionReceipt,
 	ActionReceiptSchema,
@@ -1007,7 +1008,7 @@ export class KestrelDatabase {
 	}
 
     private sourceReceiptDeletionKey(id: string): string {
-        return `source-receipt-deleted.${createHash("sha256").update(id).digest("hex")}`;
+        return sourceReceiptDeletionKey(id);
     }
 
     private redactSourceReceipts(eventId: string): void {
@@ -4805,14 +4806,7 @@ export class KestrelDatabase {
 	}
 
 	private redactDeletedSourceIdempotencyValue(value: unknown): unknown {
-		if (!value || typeof value !== "object" || Array.isArray(value) ||
-			(value as Record<string, unknown>).toolName !== "sources.read") return value;
-		const execution = RuntimeToolExecutionSchema.safeParse(value);
-		if (!execution.success || !this.getPrivateState(this.sourceReceiptDeletionKey(execution.data.id))) return value;
-		const removedError = "Source evidence was deleted or expired.";
-		if (execution.data.status === "failed" && execution.data.error === removedError &&
-			execution.data.output?.sourceEvidenceRemoved === true && Object.keys(execution.data.output).length === 1) return value;
-		return { ...value, status: "failed", output: { sourceEvidenceRemoved: true }, error: removedError };
+		return redactDeletedSourceToolResult(value, id => Boolean(this.getPrivateState(this.sourceReceiptDeletionKey(id))));
 	}
 
 	private deserializeIdempotencyValue<T>(serialized: string): T {
