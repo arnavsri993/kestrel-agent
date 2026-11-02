@@ -97,6 +97,12 @@ export function ComputerUseSettings() {
 			);
 		} catch (cause) {
 			setError(errorMessage(cause, "Computer-use preference could not be saved."));
+			// A failed opt-out still disables this run; refresh the authoritative
+			// in-memory status so the switch reflects the enforced state.
+			try {
+				const response = await window.kestrel.request({ type: "computer-use-status" });
+				if (response.ok && "computerUseStatus" in response) setStatus(ComputerUseStatusSchema.parse(response.computerUseStatus));
+			} catch { /* Keep the persistence error visible if status is unavailable. */ }
 		} finally {
 			setBusy("");
 		}

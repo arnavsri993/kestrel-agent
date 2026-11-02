@@ -3,8 +3,9 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
+import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
+import { dispatchNativeComputerHostRequest } from "./native-computer-host-routing.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
 const index = process.argv.indexOf("--profile-root");
@@ -13,6 +14,7 @@ const durable = process.argv.includes("--durable-profile");
 const profile = await openNativeCoreProfile(resolve(process.argv[index + 1]), { durable });
 const MAX_FRAME = 1024 * 1024;
 const pendingBrowser = new Map();
+const pendingNativeComputer = new Map();
 const pending = new Set();
 const pluginRequests = new Map();
 const activeCoreRequests = new Set();
@@ -35,18 +37,33 @@ function write(message) {
 	process.stdout.write(line + "\n");
 }
 
-function browserRequest(request, signal) {
+function nativeComputerHostRequest(request, signal) {
+	if (stopping || pendingNativeComputer.size >= 4 || signal.aborted) return Promise.reject(new Error("The native desktop request is unavailable."));
+	if (pendingNativeComputer.size >= 4) return Promise.reject(new Error("Native desktop access is busy."));
+	const requestId = `native-computer-${++sequence}`;
+	return new Promise((resolveRequest, rejectRequest) => {
+		const fail = (error) => {
+			if (!pendingNativeComputer.delete(requestId)) return;
+			clearTimeout(timer); signal.removeEventListener("abort", abort);
+			write({ type: "native-computer-cancel", requestId });
+			rejectRequest(error);
+		};
+		const abort = () => fail(new Error("The native desktop request was interrupted. Check its outcome before retrying."));
+		const timer = setTimeout(() => fail(new Error("The native desktop request timed out. Check its outcome before retrying.")), 30_000);
+		pendingNativeComputer.set(requestId, { resolve: resolveRequest, reject: rejectRequest, timer, signal, abort });
+		signal.addEventListener("abort", abort, { once: true });
+		if (signal.aborted) { abort(); return; }
+		write({ type: "native-computer-request", requestId, request });
+	});
+}
+
+function nativeHostBackendRequest(request, signal) {
 	if (stopping || pendingBrowser.size >= 16 || signal.aborted) return Promise.reject(new Error("The native browser connection is unavailable."));
 	const requestId = `native-browser-${++sequence}`;
 	return new Promise((resolveRequest, rejectRequest) => {
-		const fail = (error) => {
-			if (!pendingBrowser.delete(requestId)) return;
-			clearTimeout(timer); signal.removeEventListener("abort", abort);
-			write({ type: "browser-backend-cancel", requestId });
-			rejectRequest(error);
-		};
-		const abort = () => fail(new Error("The browser request was interrupted. Check its outcome before retrying."));
-		const timer = setTimeout(() => fail(new Error("The browser request timed out. Check its outcome before retrying.")), 30_000);
+		const fail = error => { if (!pendingBrowser.delete(requestId)) return; clearTimeout(timer); signal.removeEventListener("abort", abort); write({ type: "browser-backend-cancel", requestId }); rejectRequest(error); };
+		const abort = () => fail(new Error("The native browser request was interrupted."));
+		const timer = setTimeout(() => fail(new Error("The native browser request timed out.")), 30_000);
 		pendingBrowser.set(requestId, { resolve: resolveRequest, reject: rejectRequest, timer, signal, abort });
 		signal.addEventListener("abort", abort, { once: true });
 		if (signal.aborted) { abort(); return; }
@@ -54,13 +71,44 @@ function browserRequest(request, signal) {
 	});
 }
 
+const computerUse = new NativeComputerUseManager(join(profile.root, "computer-use.json"), {
+	permissions: async () => nativeComputerHostRequest({ operation: "native-computer-permissions" }, AbortSignal.timeout(30_000)),
+	capture: signal => nativeComputerHostRequest({ operation: "native-computer-capture" }, signal),
+	currentIdentity: signal => nativeComputerHostRequest({ operation: "native-computer-context" }, signal),
+	act: (action, capture, signal) => nativeComputerHostRequest({
+		operation: "native-computer-act", action, captureId: capture.captureId,
+		enabled: true, enablementGeneration: capture.enablementGeneration,
+		capturedAt: capture.capturedAt, width: capture.width, height: capture.height,
+		identity: {
+			displayId: capture.displayId, logicalBounds: capture.logicalBounds,
+			foregroundProcessId: capture.foregroundProcessId,
+			frontmostWindowId: capture.frontmostWindowId,
+			frontmostWindowBounds: capture.frontmostWindowBounds,
+		},
+	}, signal),
+	openSettings: surface => nativeComputerHostRequest({ operation: "native-computer-open-settings", surface }, AbortSignal.timeout(30_000)),
+});
+
+async function browserRequest(request, signal) {
+	if (request?.operation === "desktop-screenshot" || request?.operation === "desktop-act")
+		return computerUse.handleBackendRequest(request, signal);
+	return nativeHostBackendRequest(request, signal);
+}
+
 function cancelBrowsers() {
+	computerUse.invalidate();
 	for (const [requestId, request] of pendingBrowser) {
 		clearTimeout(request.timer); request.signal.removeEventListener("abort", request.abort);
 		write({ type: "browser-backend-cancel", requestId });
 		request.reject(new Error("Core stopped during the browser request. Check its outcome before retrying."));
 	}
 	pendingBrowser.clear();
+	for (const [requestId, request] of pendingNativeComputer) {
+		clearTimeout(request.timer); request.signal.removeEventListener("abort", request.abort);
+		write({ type: "native-computer-cancel", requestId });
+		request.reject(new Error("The native desktop owner stopped during a request. Check its outcome before retrying."));
+	}
+	pendingNativeComputer.clear();
 }
 
 function resetBrowsers() {
@@ -153,7 +201,7 @@ const configuration = createNativeCoreConfiguration({ core,
 	}),
 	changed: publishSnapshot,
 });
-core.on("crash", () => process.stderr.write("KESTREL_NATIVE_CORE_INTERRUPTED\n"));
+core.on("crash", () => { computerUse.invalidate(); process.stderr.write("KESTREL_NATIVE_CORE_INTERRUPTED\n"); });
 core.on("recovery-failed", () => process.stderr.write("KESTREL_NATIVE_CORE_RECOVERY_FAILED\n"));
 core.on("recovered", () => {
 	process.stderr.write("KESTREL_NATIVE_CORE_RECOVERED\n");
@@ -215,6 +263,13 @@ input.on("line", line => {
 		else request.reject(new Error(typeof message.error === "string" ? message.error.slice(0, 500) : "The native browser request failed."));
 		return;
 	}
+	if (message?.type === "native-computer-response") {
+		const request = pendingNativeComputer.get(message.requestId); if (!request) return;
+		pendingNativeComputer.delete(message.requestId); clearTimeout(request.timer); request.signal.removeEventListener("abort", request.abort);
+		if (message.ok === true) request.resolve(message.result);
+		else request.reject(new Error(typeof message.error === "string" ? message.error.slice(0, 500) : "The native desktop request failed."));
+		return;
+	}
 	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
 	const isHost = message.type === "host-request";
 	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
@@ -227,10 +282,11 @@ input.on("line", line => {
 	if (!isHost) activeCoreRequests.add(message.id);
 	void Promise.resolve().then(async () => {
 		if (isHost) {
-			if (NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type)) return { ok: true, systemReadiness: await nativeSystemReadiness({
+			if (parsed.data.type === "system-readiness") return { ok: true, systemReadiness: await nativeSystemReadiness({
 				coreRequest: request => core.request(request), workspaceConfiguration: () => workspaces.runtimeConfiguration(),
-				localStatus: () => providers.handle({ type: "local-model-status" }),
+				localStatus: () => providers.handle({ type: "local-model-status" }), computerUseStatus: () => computerUse.status(),
 			}) };
+			if (NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && parsed.data.type.startsWith("computer-use-")) return dispatchNativeComputerHostRequest(computerUse, parsed.data);
 			if (NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type)) return workspaces.handle(parsed.data);
 			if (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type)) return plugins.handle(parsed.data, pluginController.signal);
 			if (NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type)) return attachments.handle(parsed.data);

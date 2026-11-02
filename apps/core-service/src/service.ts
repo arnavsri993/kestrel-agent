@@ -39,7 +39,7 @@ import { CoreRequestSchema } from "@kestrel/shared-types";
 import type { CoreParentPort } from "./transport";
 import { normalizeBrowserPageContext } from "./browser-page-context";
 import { normalizeBrowserAccessibilitySnapshot } from "./browser-accessibility-snapshot";
-import { decodeNativeBrowserScreenshot } from "./browser-screenshot";
+import { decodeNativeBrowserScreenshot, decodeNativeDesktopScreenshot } from "./browser-screenshot";
 import { normalizeBrowserVisibleTabs, normalizeBrowserHistory, normalizeBrowserDownloads } from "./browser-observation-metadata";
 
 export function startCoreService(port: CoreParentPort): void {
@@ -157,10 +157,11 @@ export function startCoreService(port: CoreParentPort): void {
 				signal,
 			),
 		desktopScreenshot: async (signal) => {
-			const result = await browserRequest<ScreenshotFrame>(
+			const result = await browserRequest<ScreenshotFrame & { encoding?: unknown }>(
 				{ operation: "desktop-screenshot" },
 				signal,
 			);
+			if (result.encoding !== undefined) return decodeNativeDesktopScreenshot(result, signal);
 			return {
 				...result,
 				rgba: new Uint8Array(result.rgba),

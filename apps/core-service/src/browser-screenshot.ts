@@ -39,3 +39,41 @@ export async function decodeNativeBrowserScreenshot(raw: unknown, signal?: Abort
 		throw new Error(INVALID);
 	} finally { signal?.removeEventListener("abort", abort); image.destroy(); activeDecodes--; }
 }
+
+const desktopFrameSchema = z.object({
+	version: z.literal(1), encoding: z.literal("png"),
+	width: z.number().int().min(1).max(4_096), height: z.number().int().min(1).max(4_096),
+	pngBase64: z.string().min(44).max(700_000), trust: z.literal("untrusted_desktop"),
+	captureId: z.string().uuid(), displayId: z.number().int().positive(),
+	capturedAt: z.string().datetime(),
+	logicalBounds: z.object({ x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive() }).strict(),
+	foregroundProcessId: z.number().int().positive(), frontmostWindowId: z.number().int().positive(),
+	frontmostWindowBounds: z.object({ x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive() }).strict(),
+}).strict();
+
+export async function decodeNativeDesktopScreenshot(raw: unknown, signal?: AbortSignal) {
+	signal?.throwIfAborted();
+	const result = desktopFrameSchema.safeParse(raw);
+	if (!result.success) throw new Error("The desktop returned an invalid or oversized screenshot.");
+	const { width, height, pngBase64, ...desktopCapture } = result.data;
+	if (width * height > MAX_PIXELS || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(pngBase64)) throw new Error("The desktop returned an invalid or oversized screenshot.");
+	const png = Buffer.from(pngBase64, "base64");
+	if (png.toString("base64") !== pngBase64 || png.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") throw new Error("The desktop returned an invalid or oversized screenshot.");
+	if (activeDecodes >= 2) throw new Error("Wait for the current captures to finish before capturing another image.");
+	activeDecodes++;
+	const image = sharp(png, { limitInputPixels: MAX_PIXELS, failOn: "warning" });
+	const abort = () => image.destroy();
+	signal?.addEventListener("abort", abort, { once: true });
+	try {
+		signal?.throwIfAborted();
+		const metadata = await image.metadata();
+		if (metadata.format !== "png" || metadata.width !== width || metadata.height !== height || (metadata.pages ?? 1) !== 1) throw new Error("invalid image");
+		const { data, info } = await image.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+		signal?.throwIfAborted();
+		if (info.width !== width || info.height !== height || info.channels !== 4 || data.byteLength !== width * height * 4) throw new Error("invalid image");
+		return { width, height, rgba: new Uint8Array(data), png: new Uint8Array(png), desktopCapture, trust: "untrusted_desktop" as const };
+	} catch {
+		signal?.throwIfAborted();
+		throw new Error("The desktop returned an invalid or oversized screenshot.");
+	} finally { signal?.removeEventListener("abort", abort); image.destroy(); activeDecodes--; }
+}

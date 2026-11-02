@@ -1,12 +1,18 @@
-import { LocalRuntimeStatusSchema, SystemReadinessSchema, type SystemReadiness } from "@kestrel/shared-types";
+import { ComputerUseStatusSchema, LocalRuntimeStatusSchema, SystemReadinessSchema, type ComputerUseStatus, type SystemReadiness } from "@kestrel/shared-types";
 
-export const NATIVE_READINESS_REQUEST_TYPES = new Set(["system-readiness"]);
+export const NATIVE_READINESS_REQUEST_TYPES = new Set([
+	"system-readiness",
+	"computer-use-status",
+	"computer-use-update",
+	"computer-use-open-settings",
+]);
 
 type CoreRequest = (request: { type: "snapshot" | "runtime-list-providers" }) => Promise<unknown>;
 interface Options {
 	coreRequest: CoreRequest;
 	workspaceConfiguration: () => Promise<unknown>;
 	localStatus: () => Promise<unknown>;
+	computerUseStatus: () => Promise<unknown>;
 	now?: () => Date;
 }
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -51,8 +57,24 @@ export async function nativeSystemReadiness(options: Options): Promise<SystemRea
 			? `${active} granted project folder${active === 1 ? " is" : "s are"} available; ${missing} configured folder${missing === 1 ? " is" : "s are"} unavailable.`
 			: active ? `${active} granted project folder${active === 1 ? " is" : "s are"} available.` : "No project folder is granted. Conversation-only tasks can still work." });
 	} else checks.push({ id: "workspace", label: "Project access", status: "warning", detail: "Project folder availability could not be checked." });
+	let computerUse: ComputerUseStatus | undefined;
+	try {
+		const parsed = ComputerUseStatusSchema.safeParse(await options.computerUseStatus());
+		if (parsed.success) computerUse = parsed.data;
+	} catch { /* An unavailable native probe is not permission to claim readiness. */ }
 	checks.push(
-		{ id: "computer-use", label: "Whole-desktop computer use", status: "warning", detail: "Whole-desktop control and its macOS permissions are not verified in the native host." },
+		{
+			id: "computer-use",
+			label: "Whole-desktop computer use",
+			status: computerUse?.enabled && computerUse.captureReady && computerUse.controlReady ? "pass" : "warning",
+			detail: !computerUse
+				? "Native computer-use permission status could not be checked."
+				: !computerUse.enabled
+					? "Disabled by default. Enable it in Settings → Agent → Permissions & sandbox before capture or control."
+					: computerUse.captureReady && computerUse.controlReady
+						? "Enabled with Screen Recording and Accessibility permission. This is a permission probe, not proof of a completed desktop action."
+						: `Enabled, but permissions are incomplete: Screen Recording ${computerUse.screenRecording}; Accessibility ${computerUse.accessibility}.`,
+		},
 		{ id: "backup", label: "Recovery snapshot", status: "warning", detail: "A verified native-profile backup has not been established by this check." },
 		{ id: "distribution", label: "Installed build", status: "fail", detail: "Production signing, canonical installation, and rollback have not been verified by the native host." },
 	);

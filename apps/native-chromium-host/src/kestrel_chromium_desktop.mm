@@ -3,6 +3,10 @@
 #include <poll.h>
 #include <pwd.h>
 #include <cstring>
+#include <functional>
+#include <atomic>
+#include <memory>
+#include <mutex>
 #include <strings.h>
 #include <cerrno>
 #include <limits.h>
@@ -35,6 +39,7 @@
 #include "native_dialog_paths.h"
 #include "native_system_integration.h"
 #include "native_isolated_automation.h"
+#include "native_computer_use.h"
 
 namespace {
 bool RequestNativeWindow(bool dock_activation);
@@ -53,8 +58,11 @@ class OpenKestrelNewTabTask final : public CefTask {
 };
 class DesktopClient final : public CefClient, public CefLifeSpanHandler, public CefFocusHandler, public CefDisplayHandler, public CefLoadHandler {
  public:
-  DesktopClient(std::string ui_url, NativeIsolatedAutomation::Reply automation_reply)
-      : ui_url_(std::move(ui_url)), automation_reply_(std::move(automation_reply)) {}
+  using NativeComputerReply = std::function<void(const std::string&, bool, const std::string&, const std::string&)>;
+  DesktopClient(std::string ui_url, NativeIsolatedAutomation::Reply automation_reply,
+                NativeComputerReply native_computer_reply)
+      : ui_url_(std::move(ui_url)), automation_reply_(std::move(automation_reply)),
+        native_computer_reply_(std::move(native_computer_reply)) {}
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -120,6 +128,10 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
     automation_->Request(id, request);
   }
   void AutomationCancel(const std::string& id) { if (automation_) automation_->Cancel(id); }
+  void NativeComputerRequest(const std::string& id, CefRefPtr<CefDictionaryValue> request);
+  bool PrepareNativeComputerRequest(const std::string& id);
+  void NativeComputerCancel(const std::string& id);
+  void CompleteNativeComputerCapture(const std::string& id, bool ok, const std::string& error, const std::string& result);
   void AutomationReset(std::function<void()> done) {
     if (automation_resetting_) return; // The private broker permits one barrier at a time.
     automation_resetting_ = true;
@@ -169,6 +181,11 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   }
   const std::string ui_url_;
   NativeIsolatedAutomation::Reply automation_reply_;
+  NativeComputerReply native_computer_reply_;
+  std::set<std::string> native_computer_cancelled_;
+  std::set<std::string> native_computer_active_;
+  std::mutex native_computer_mutex_;
+  std::map<std::string, std::shared_ptr<std::atomic_bool>> native_computer_cancel_tokens_;
   std::unique_ptr<NativeIsolatedAutomation> automation_;
   bool automation_closed_ = true;
   bool automation_resetting_ = false;
@@ -182,6 +199,82 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   std::map<int, CefRefPtr<CefBrowser>> browsers_;
   IMPLEMENT_REFCOUNTING(DesktopClient);
 };
+class NativeComputerCaptureResultTask final : public CefTask {
+ public:
+  NativeComputerCaptureResultTask(CefRefPtr<DesktopClient> client, std::string id,
+      bool ok, std::string error, std::string result)
+      : client_(std::move(client)), id_(std::move(id)), ok_(ok),
+        error_(std::move(error)), result_(std::move(result)) {}
+  void Execute() override { if (client_) client_->CompleteNativeComputerCapture(id_, ok_, error_, result_); }
+ private:
+  CefRefPtr<DesktopClient> client_;
+  std::string id_, error_, result_;
+  bool ok_;
+  IMPLEMENT_REFCOUNTING(NativeComputerCaptureResultTask);
+};
+
+void DesktopClient::NativeComputerRequest(const std::string& id, CefRefPtr<CefDictionaryValue> request) {
+  if (closing_ || id.empty() || id.size() > 100 || !id.starts_with("native-computer-") || !request || request->GetType("operation") != VTYPE_STRING) {
+    native_computer_reply_(id, false, "", "Native desktop request was invalid or unavailable."); return;
+  }
+  const std::string operation = request->GetString("operation").ToString();
+  std::shared_ptr<std::atomic_bool> token;
+  { std::lock_guard<std::mutex> lock(native_computer_mutex_); const auto found = native_computer_cancel_tokens_.find(id); if (found != native_computer_cancel_tokens_.end()) token = found->second; }
+  if (!token) { native_computer_reply_(id, false, "", "Native desktop request was not registered."); return; }
+  if (operation == "native-computer-permissions") {
+    CompleteNativeComputerCapture(id, true, "", NativeComputerUseService::PermissionStatusJson()); return;
+  }
+  if (operation == "native-computer-context") {
+    NativeComputerUseIdentity identity; std::string error;
+    if (!NativeComputerUseService::CurrentIdentity(&identity, &error)) CompleteNativeComputerCapture(id, false, error, "");
+    else CompleteNativeComputerCapture(id, true, "", NativeComputerUseService::IdentityJson(identity));
+    return;
+  }
+  if (operation == "native-computer-capture") {
+    CefRefPtr<DesktopClient> self(this);
+    NativeComputerUseService::Capture([self, id](bool ok, const std::string& error, const std::string& result) {
+      CefPostTask(TID_UI, new NativeComputerCaptureResultTask(self, id, ok, error, result));
+    });
+    return;
+  }
+  if (operation == "native-computer-act") {
+    std::string error;
+    if (NativeComputerUseService::Act(request, &error, [token] { return !token->load(); })) CompleteNativeComputerCapture(id, true, "", "{\"performed\":true}");
+    else CompleteNativeComputerCapture(id, false, error, "");
+    return;
+  }
+  if (operation == "native-computer-open-settings") {
+    std::string error;
+    if (request->GetType("surface") != VTYPE_STRING || !NativeComputerUseService::OpenSettings(request->GetString("surface").ToString(), &error)) CompleteNativeComputerCapture(id, false, error.empty() ? "Native privacy settings request was invalid." : error, "");
+    else CompleteNativeComputerCapture(id, true, "", "null");
+    return;
+  }
+  CompleteNativeComputerCapture(id, false, "Native desktop operation is unsupported.", "");
+}
+bool DesktopClient::PrepareNativeComputerRequest(const std::string& id) {
+  if (id.empty() || id.size() > 100 || !id.starts_with("native-computer-")) return false;
+  std::lock_guard<std::mutex> lock(native_computer_mutex_);
+  if (native_computer_active_.size() >= 4 || native_computer_active_.count(id)) return false;
+  native_computer_active_.insert(id);
+  native_computer_cancel_tokens_[id] = std::make_shared<std::atomic_bool>(false);
+  return true;
+}
+void DesktopClient::NativeComputerCancel(const std::string& id) {
+  std::lock_guard<std::mutex> lock(native_computer_mutex_);
+  const auto found = native_computer_cancel_tokens_.find(id);
+  if (found != native_computer_cancel_tokens_.end()) found->second->store(true);
+  if (native_computer_active_.count(id)) native_computer_cancelled_.insert(id);
+}
+void DesktopClient::CompleteNativeComputerCapture(const std::string& id, bool ok, const std::string& error, const std::string& result) {
+  bool cancelled = false;
+  { std::lock_guard<std::mutex> lock(native_computer_mutex_);
+    native_computer_active_.erase(id); native_computer_cancel_tokens_.erase(id);
+    cancelled = native_computer_cancelled_.erase(id) > 0;
+  }
+  if (cancelled) return;
+  native_computer_reply_(id, ok, result, error);
+}
+
 CefRefPtr<DesktopClient> desktop_client;
 NSFileHandle* desktop_broker_input;
 bool desktop_bridge_ready = false;
@@ -566,6 +659,25 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     if (!bytes || bytes.length > 1'048'576) return;
     NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
     @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) { /* Broker shutdown settles its pending requests. */ }
+  }, [broker, input](const std::string& request_key, bool ok,
+      const std::string& result_json, const std::string& error) {
+    if (!broker.running || request_key.empty() || request_key.size() > 100) return;
+    NSString* request_id = [NSString stringWithUTF8String:request_key.c_str()];
+    if (!request_id) return;
+    NSMutableDictionary* response = [@{ @"kind":@"native-computer-response", @"id":request_id, @"ok":@(ok) } mutableCopy];
+    if (ok && result_json.size() <= 700'000) {
+      NSData* result_data = [NSData dataWithBytes:result_json.data() length:result_json.size()];
+      id result = [NSJSONSerialization JSONObjectWithData:result_data options:NSJSONReadingFragmentsAllowed error:nil];
+      if (result) response[@"result"] = result;
+      else { response[@"ok"] = @NO; response[@"error"] = @"The native desktop response was invalid."; }
+    } else {
+      response[@"ok"] = @NO;
+      response[@"error"] = !ok && error.size() <= 500 ? ([NSString stringWithUTF8String:error.c_str()] ?: @"Native desktop request failed.") : @"The native desktop response exceeded its limit.";
+    }
+    NSData* bytes = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
+    if (!bytes || bytes.length > 1'048'576) return;
+    NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
+    @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) { /* Broker shutdown settles its pending requests. */ }
   });
   desktop_broker_input = input.fileHandleForWriting;
   NSMutableData* event_buffer = [[NSMutableData alloc] init];
@@ -620,6 +732,31 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
           if (!data || data.length > 1'048'576) return;
           const auto parsed = CefParseJSON(std::string(static_cast<const char*>(data.bytes), data.length), JSON_PARSER_RFC);
           if (parsed && parsed->GetType() == VTYPE_DICTIONARY) desktop_client->AutomationRequest(request_id, parsed->GetDictionary());
+        });
+      }
+      if ([value[@"kind"] isEqualToString:@"native-computer-cancel"] &&
+          [value[@"id"] isKindOfClass:NSString.class] && [value[@"id"] length] <= 100 && [value[@"id"] hasPrefix:@"native-computer-"]) {
+        const std::string request_id([value[@"id"] UTF8String]);
+        CefRefPtr<DesktopClient> owner = desktop_client;
+        if (owner) owner->NativeComputerCancel(request_id);
+      }
+      if ([value[@"kind"] isEqualToString:@"native-computer-request"] &&
+          [value[@"id"] isKindOfClass:NSString.class] && [value[@"id"] length] <= 100 && [value[@"id"] hasPrefix:@"native-computer-"]) {
+        CefRefPtr<DesktopClient> owner = desktop_client;
+        if (!owner) {
+          NSData* failure = [NSJSONSerialization dataWithJSONObject:@{@"kind":@"native-computer-response", @"id":value[@"id"], @"ok":@NO, @"error":@"Native desktop owner is unavailable."} options:0 error:nil];
+          if (failure) { NSMutableData* line = [failure mutableCopy]; [line appendBytes:"\n" length:1]; @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) {} }
+          continue;
+        }
+        owner->PrepareNativeComputerRequest(std::string([value[@"id"] UTF8String]));
+        dispatch_async(dispatch_get_main_queue(), ^{
+          if (!desktop_client) return;
+          const std::string request_id([value[@"id"] UTF8String]);
+          if (![value[@"request"] isKindOfClass:NSDictionary.class]) return;
+          NSData* data = [NSJSONSerialization dataWithJSONObject:value[@"request"] options:0 error:nil];
+          if (!data || data.length > 700'000) return;
+          const auto parsed = CefParseJSON(std::string(static_cast<const char*>(data.bytes), data.length), JSON_PARSER_RFC);
+          if (parsed && parsed->GetType() == VTYPE_DICTIONARY) desktop_client->NativeComputerRequest(request_id, parsed->GetDictionary());
         });
       }
       if ([value[@"kind"] isEqualToString:@"open-native-window-result"] && [value[@"id"] isKindOfClass:NSString.class]) dispatch_async(dispatch_get_main_queue(), ^{

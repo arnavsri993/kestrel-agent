@@ -54,6 +54,15 @@ export interface ScreenshotFrame {
 	height: number;
 	rgba: Uint8Array;
 	png?: Uint8Array;
+	desktopCapture?: {
+		captureId: string;
+		displayId: number;
+		capturedAt: string;
+		logicalBounds: { x: number; y: number; width: number; height: number };
+		foregroundProcessId: number;
+		frontmostWindowId: number;
+		frontmostWindowBounds: { x: number; y: number; width: number; height: number };
+	};
 }
 export interface BrowserViewport {
 	name: string;
@@ -77,10 +86,11 @@ export interface BrowserDownload {
 	createdAt: string;
 }
 export type DesktopAction =
-	| { type: "click"; x: number; y: number }
-	| { type: "type"; text: string }
+	| { type: "click"; x: number; y: number; captureId?: string | undefined }
+	| { type: "type"; text: string; captureId?: string | undefined }
 	| {
 			type: "key";
+			captureId?: string | undefined;
 			key:
 				| "Enter"
 				| "Escape"
@@ -1787,6 +1797,7 @@ export function installBrowserTools(
 				height: frame.height,
 				pngBase64: Buffer.from(frame.png!).toString("base64"),
 				trust: "untrusted_desktop",
+				...(frame.desktopCapture ?? {}),
 			};
 		},
 	);
@@ -1805,6 +1816,7 @@ export function installBrowserTools(
 								type: { const: "click" },
 								x: { type: "integer", minimum: 0, maximum: 20_000 },
 								y: { type: "integer", minimum: 0, maximum: 20_000 },
+				captureId: { type: "string", format: "uuid" },
 							},
 							required: ["type", "x", "y"],
 							additionalProperties: false,
@@ -1814,6 +1826,7 @@ export function installBrowserTools(
 							properties: {
 								type: { const: "type" },
 								text: { type: "string", minLength: 1, maxLength: 20_000 },
+								captureId: { type: "string", format: "uuid" },
 							},
 							required: ["type", "text"],
 							additionalProperties: false,
@@ -1822,6 +1835,7 @@ export function installBrowserTools(
 							type: "object",
 							properties: {
 								type: { const: "key" },
+									captureId: { type: "string", format: "uuid" },
 								key: {
 									enum: [
 										"Enter",
@@ -1846,6 +1860,7 @@ export function installBrowserTools(
 		},
 		({ signal }, input) =>
 			controller.desktopAct(input.action as DesktopAction, signal),
+		"Native Chromium requires the exact single-use captureId returned by the latest computer.screenshot call.",
 	);
 	if (visualValidator)
 		add(

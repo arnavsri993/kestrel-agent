@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { createNativeBrowserRelay } from "./native-browser-relay.mjs";
 import { createNativeAutomationRelay } from "./native-automation-relay.mjs";
+import { createNativeComputerRelay } from "./native-computer-relay.mjs";
 import { createNativeDialogRelay } from "./native-dialog-relay.mjs";
 import { cancelPluginOnClientLoss, cancelPluginByUiRequest } from "./native-plugin-cancellation.mjs";
 
@@ -114,6 +115,10 @@ function writeOwner(line) {
 	if (stopping || process.stdout.destroyed || !process.stdout.writable || process.stdout.writableLength + Buffer.byteLength(line, "utf8") + 1 > MAX_FRAME) return false;
 	try { process.stdout.write(line + "\n"); return true; } catch { return false; }
 }
+const nativeComputerRelay = createNativeComputerRelay({
+	writeCore,
+	writeOwner: message => writeOwner(JSON.stringify(message)),
+});
 const automationRelay = createNativeAutomationRelay({
 	validate: (request) => BrowserBackendWireRequestSchema.safeParse(request),
 	isUserRequest: isUserBrowserBackendWireRequest,
@@ -135,6 +140,10 @@ createInterface({ input: core.stdout }).on("line", (line) => {
 		else automationRelay.request(message);
 	} else if (message.type === "browser-backend-cancel") {
 		browserRelay.cancel(message.requestId); automationRelay.cancel(message.requestId);
+	} else if (message.type === "native-computer-request") {
+		nativeComputerRelay.request(message);
+	} else if (message.type === "native-computer-cancel") {
+		nativeComputerRelay.cancel(message);
 	} else if (message.type === "native-dialog-request") dialogRelay.request(message);
 	else if (message.type === "native-dialog-cancel") dialogRelay.cancel(message.requestId);
 	else if (message.type === "browser-backend-reset" && typeof message.requestId === "string" && message.requestId.length > 0 && message.requestId.length <= 200) {
@@ -245,6 +254,7 @@ async function shutdown(code = 0) {
 	if (stopping || shuttingDown) return;
 	shuttingDown = true;
 	automationRelay.close();
+	nativeComputerRelay.close();
 	dialogRelay.close();
 	stopping = true;
 	for (const socket of sockets) socket.destroy();
@@ -293,6 +303,7 @@ ownerInput.on("line", (line) => {
     return;
   }
   if (message?.kind === "automation-response") { automationRelay.response(message); return; }
+	if (message?.kind === "native-computer-response") { nativeComputerRelay.response(message); return; }
 	if (message?.kind === "automation-reset-response") { automationRelay.resetResponse(message); return; }
 	if (dialogRelay.response(message)) return;
 	if (message.kind !== "host-response" || typeof message.id !== "string" || !message.id.startsWith("host-")) return;

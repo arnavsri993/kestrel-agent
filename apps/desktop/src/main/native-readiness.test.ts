@@ -8,7 +8,8 @@ function fixture() {
 		? { ok: true, snapshot: {} } : { ok: true, providers: [{ id: "auto" }, { id: "ollama" }] });
 	const workspaceConfiguration = vi.fn(async (): Promise<unknown> => ({ workspaceRoots: ["/project"], configuredWorkspaceRoots: ["/project"] }));
 	const localStatus = vi.fn(async (): Promise<unknown> => ({ ok: true, localRuntime: { automaticSupported: false, managedRuntime: false, ollamaAvailable: true, source: "external", runtimeDownloadBytes: 1, localModels: [{ name: "local:test", size: 1 }], verifiedModel: "local:test", verifiedAt: "2026-09-30T12:00:00.000Z" } }));
-	return { coreRequest, workspaceConfiguration, localStatus, now: () => now };
+	const computerUseStatus = vi.fn(async (): Promise<unknown> => ({ enabled: false, platform: "darwin", screenRecording: "not-determined", accessibility: "not-granted", captureReady: false, controlReady: false, checkedAt: now.toISOString() }));
+	return { coreRequest, workspaceConfiguration, localStatus, computerUseStatus, now: () => now };
 }
 const check = (readiness: Awaited<ReturnType<typeof nativeSystemReadiness>>, id: string) => readiness.checks.find(item => item.id === id)!;
 
@@ -24,7 +25,14 @@ describe("native system readiness", () => {
 		expect(check(result, "local-model").detail).toContain("previously verified at 2026-09-30");
 		expect(result.readyForLiveWork).toBe(false);
 		expect(check(result, "distribution").status).toBe("fail");
+		expect(check(result, "computer-use").detail).toContain("Disabled by default");
 		expect(input.coreRequest.mock.calls.map(([request]) => request.type)).toEqual(["snapshot", "runtime-list-providers"]);
+	});
+	it("reports permission probes without claiming a completed action", async () => {
+		const input = fixture();
+		input.computerUseStatus.mockResolvedValue({ enabled: true, platform: "darwin", screenRecording: "granted", accessibility: "granted", captureReady: true, controlReady: true, checkedAt: now.toISOString() });
+		const result = await nativeSystemReadiness(input);
+		expect(check(result, "computer-use")).toMatchObject({ status: "pass", detail: expect.stringContaining("not proof of a completed desktop action") });
 	});
 	it("handles a disconnected Core without interpreting unavailable routes as empty", async () => {
 		const input = fixture(); input.coreRequest.mockRejectedValue(new Error("down"));
