@@ -5771,7 +5771,10 @@ body:has(.calculator-overlay),
 		transform var(--motion-feedback) var(--ease-kestrel);
 }
 .background-upload-card .background-option-preview {
+	width: 100%;
+	min-width: 0;
 	height: 100%;
+	aspect-ratio: auto;
 }
 .background-upload-copy {
 	align-content: center;
@@ -7683,6 +7686,7 @@ body:has(.calculator-overlay),
 		grid-template-columns: 1fr;
 	}
 	.background-upload-card .background-option-preview {
+		aspect-ratio: 16 / 8;
 		height: auto;
 	}
 }
