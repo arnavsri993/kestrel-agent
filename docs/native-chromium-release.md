@@ -1621,3 +1621,84 @@ the exact `KESTREL_NATIVE_TEST_APP` and a fresh
 workflow. Prepared-profile management and in-place archive/adoption of incomplete
 stages or abandoned recovery reservations remain unfinished, along with the
 other existing-profile, browser/credential, signing and canonical-cutover gates.
+
+### Native microphone permission and capture lifetime (2026-11-02)
+
+Home and Agent voice capture now use the native macOS microphone authorization
+route. The app carries a microphone purpose string and audio-input entitlement.
+CEF admits audio-only requests from the owned top-level Kestrel document only
+after macOS authorization; other origins retain Chromium's existing permission
+handling. The owned document cannot use this path for camera, mixed media or
+screen capture. Permission transport budgets allow time for the human prompt.
+
+A shared capture owner prevents concurrent starts, invalidates pending permission
+and stream acquisition when the composer closes, and immediately stops a stream
+that arrives after cancellation. Agent capture and transcription are scoped to
+the selected conversation. Both composers display a requesting state and keep
+their microphone button disabled while permission is pending. Closing or changing
+the conversation cancels pending capture and prevents a not-yet-dispatched
+recording from being sent for transcription. Late transcription results cannot
+change the new conversation's draft.
+
+The native build and **2,225 tests in 283 files**, workspace typechecking and two
+native system/policy fixtures passed. The policy fixture covers authorized audio,
+denied OS authorization, child frames, other documents, camera, screen and mixed
+requests. Bundle
+`689a29cb4990d6ebfa5dbc537dd825c857a2d175be361ecebbff7145760862e2`
+passed five bundled UI cancellation/screenshot phases in
+`.tmp/native-voice-mock-remount-evidence/receipt.json`: both Home unmount and real
+Agent session switching were exercised with deferred permission and deferred
+media. No recorder started and no transcription was dispatched in those cases.
+These fixtures mock only their own first-party document; they do not authorize
+the operating system or enable real recording.
+
+With explicit user approval, the same bundle passed the six-phase test in
+`.tmp/native-voice-approved-capture-evidence/receipt.json`. Its unmocked native
+permission route and Chromium media APIs recorded one second, produced 12,568
+bytes and ended every audio track. Audio remained in page memory and was
+discarded; it was not saved or submitted for transcription. This proves native
+capture, not speech recognition or a provider's transcription service. The same
+bundle passed all 16 native Settings/window/restart phases in
+`.tmp/native-voice-final-settings-evidence/receipt.json`. Candidate digests were
+unchanged before and after each run. A separate generated-profile layout check
+found no settled widget overlaps after conversation selection or resizing, and
+the actual native Home/chat window was inspected on the unlocked Mac. The
+installed canonical app remains the previous Electron build.
+
+The complete `corepack pnpm verify` command also passed on this source with the
+native candidate explicitly pinned. This includes repository audits, production
+dependency audit, typechecking, unit tests, build, native extension checks, browser
+benchmark, website E2E, desktop setup/browser/autofill/recovery/approval workflows,
+packaged CLI, editor integrations and the production secret scan. Its log is
+`.tmp/native-voice-aggregate-verify.log`. Generated tracked screenshots were
+preserved separately before restoring their known pre-check copies.
+
+Run `test:native-voice` with the exact noncanonical `KESTREL_NATIVE_TEST_APP` and
+a fresh `KESTREL_NATIVE_VOICE_EVIDENCE` directory for the default mocked checks.
+CI runs this default mode. Only after specific user approval, set
+`KESTREL_TEST_NATIVE_MICROPHONE_CAPTURE=1` to add the one-second real capture;
+macOS security prompts must be handled directly by the person. That approval
+does not authorize additional recordings or transcription.
+
+The harness also terminates its owned candidate immediately when interrupted,
+including while an evaluation or permission promise is pending. Its non-recording
+interruption fixture exited with the expected failure code and `INTERRUPTED`
+receipt, left no candidate process, and preserved the candidate digest. Evidence
+is `.tmp/native-voice-interrupted-evidence/receipt.json`; that deliberate failed
+receipt is not counted as a successful capture run.
+
+Onboarding now describes a successful provider probe as a route check; only the
+verified local-model path claims a real model response. Authentication status
+and model inference remain distinct. The completion gate is unchanged.
+
+CI run `41510928583` for the preceding `57465130` commit never started its desktop
+job: GitHub could not acquire a hosted macOS arm64 runner. Its Core/website/security
+job passed. Separately, CodeQL aggregation reported 16 annotations also present
+on the two preceding inspected heads, despite successful analysis jobs; those
+heads did not have fully green required checks. Three annotations concerned
+fixtures added by this PR: role reflection into HTML/script and a hostname suffix
+check. Fixture roles now come from a literal allowlist, malicious/duplicate roles
+are rejected, and DuckDuckGo uses an exact or dot-boundary hostname check. The
+focused attack cases pass; remote CodeQL must confirm the new result. The other
+13 flagged lines predate the PR merge base; changed data flows were not audited
+as part of this comparison. No security check or retirement gate was weakened.

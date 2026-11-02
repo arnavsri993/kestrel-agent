@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <AVFoundation/AVFoundation.h>
 #import <ServiceManagement/ServiceManagement.h>
 #include <algorithm>
 #include <poll.h>
@@ -30,6 +31,7 @@
 #include "include/cef_display_handler.h"
 #include "include/cef_load_handler.h"
 #include "include/cef_parser.h"
+#include "include/cef_permission_handler.h"
 #include "include/cef_task.h"
 #include "include/cef_id_mappers.h"
 #include "include/cef_path_util.h"
@@ -41,6 +43,7 @@
 #include "native_system_integration.h"
 #include "native_isolated_automation.h"
 #include "native_computer_use.h"
+#include "native_microphone_policy.h"
 #include "kestrel_native_core_keychain.h"
 #include "kestrel_native_profile_transfer.h"
 
@@ -59,7 +62,7 @@ class OpenKestrelNewTabTask final : public CefTask {
   const std::string expected_, ui_;
   IMPLEMENT_REFCOUNTING(OpenKestrelNewTabTask);
 };
-class DesktopClient final : public CefClient, public CefLifeSpanHandler, public CefFocusHandler, public CefDisplayHandler, public CefLoadHandler {
+class DesktopClient final : public CefClient, public CefLifeSpanHandler, public CefFocusHandler, public CefDisplayHandler, public CefLoadHandler, public CefPermissionHandler {
  public:
   using NativeComputerReply = std::function<void(const std::string&, bool, const std::string&, const std::string&)>;
   DesktopClient(std::string ui_url, NativeIsolatedAutomation::Reply automation_reply,
@@ -70,6 +73,18 @@ class DesktopClient final : public CefClient, public CefLifeSpanHandler, public 
   CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+  CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+  bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+      const CefString& origin, uint32_t requested, CefRefPtr<CefMediaAccessCallback> callback) override {
+    const auto decision = NativeMicrophonePolicy(ui_url_, origin.ToString(),
+        frame ? frame->GetURL().ToString() : "", frame && frame->IsMain(), requested,
+        CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE,
+        [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] == AVAuthorizationStatusAuthorized);
+    if (decision == NativeMicrophoneDecision::kChromiumDefault) return false;
+    if (decision == NativeMicrophoneDecision::kAllowAudio) callback->Continue(CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE);
+    else callback->Cancel();
+    return true;
+  }
   void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int http_status) override {
     if (frame->IsMain() && frame->GetURL() == ui_url_ && http_status >= 200 && http_status < 400)
       std::cout << "KESTREL_CHROMIUM_DESKTOP_DOCUMENT_LOADED" << std::endl;
@@ -875,6 +890,25 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
             id enabled = value[@"request"][@"enabled"];
             response = [value[@"request"] count] == 2 && enabled && CFGetTypeID((__bridge CFTypeRef)enabled) == CFBooleanGetTypeID()
                 ? KestrelSetLaunchAtLogin([enabled boolValue]) : @{@"ok":@NO, @"error":@"Invalid launch-at-login request."};
+          } else if ([type isEqualToString:@"request-microphone-access"] && [value[@"request"] count] == 1) {
+            // The broker only accepts requests from the authenticated first-party UI.
+            // Never prompt without the required usage description: macOS terminates
+            // the process if it is missing.
+            NSString* usage = NSBundle.mainBundle.infoDictionary[@"NSMicrophoneUsageDescription"];
+            if (![usage isKindOfClass:NSString.class] || !usage.length) {
+              response = @{@"ok":@NO, @"error":@"Microphone access is unavailable in this Kestrel build."};
+            } else {
+              [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                  const BOOL authorized = granted && [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] == AVAuthorizationStatusAuthorized;
+                  NSData* bytes = [NSJSONSerialization dataWithJSONObject:@{@"kind":@"host-response", @"id":value[@"id"], @"response":@{@"ok":@YES, @"microphoneAccess":@(authorized)}} options:0 error:nil];
+                  if (!bytes || !broker.running) return;
+                  NSMutableData* line = [bytes mutableCopy]; [line appendBytes:"\n" length:1];
+                  @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) {}
+                });
+              }];
+              return;
+            }
           } else if ([type isEqualToString:@"set-default-browser"] && [value[@"request"] count] == 1) {
             if (desktop_default_browser_pending) {
               response = @{@"ok":@NO, @"error":@"A default-browser request is still pending. Check System Settings before retrying."};

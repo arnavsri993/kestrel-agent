@@ -28,6 +28,8 @@
 	</dict></array>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Kestrel uses your microphone when you choose to record a voice message.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

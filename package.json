@@ -32,6 +32,7 @@
     "test:chromium-plugins": "node scripts/smoke-native-plugins.mjs",
     "test:native-managed-runtime": "node --import tsx scripts/smoke-native-managed-runtime.mjs",
     "test:native-desktop-computer": "node scripts/smoke-native-desktop-computer.mjs",
+    "test:native-voice": "node scripts/smoke-native-voice.mjs",
     "test:chromium-context-dialog": "node scripts/smoke-native-context-dialog.mjs",
     "test:chromium-system-integration": "node --test apps/native-chromium-host/tests/native_system_integration.test.mjs",
     "test:chromium-external-urls": "node --test apps/native-chromium-host/tests/native_external_url_plist.test.mjs",

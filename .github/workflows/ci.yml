@@ -71,6 +71,7 @@ jobs:
           corepack pnpm test:chromium-system-integration
           corepack pnpm test:chromium-external-urls
           corepack pnpm test:chromium-browser-settings
+          corepack pnpm test:native-voice
           corepack pnpm test:chromium-desktop
       - name: Upload native extension compatibility evidence
         if: ${{ always() }}
@@ -80,6 +81,7 @@ jobs:
           path: |
             .tmp/native-user-extension-evidence/
             .tmp/chromium-desktop-evidence/
+            .tmp/native-voice-*/
             .tmp/native-context-dialog-evidence/
             .tmp/native-browser-settings-evidence/
           if-no-files-found: warn

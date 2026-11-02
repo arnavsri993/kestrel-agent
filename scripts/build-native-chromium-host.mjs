@@ -184,6 +184,8 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			"-framework",
 			"AppKit",
 			"-framework",
+			"AVFoundation",
+			"-framework",
 			"Cocoa",
 			"-framework",
 			"ImageIO",

@@ -28,7 +28,7 @@ describe("shared request execution and native transport deadlines", () => {
 		}
 	});
 	it("allows time for native pickers and default-browser consent", () => {
-		for (const type of ["select-workspace-folder", "select-context-files", "set-default-browser"]) {
+		for (const type of ["select-workspace-folder", "select-context-files", "set-default-browser", "request-microphone-access"]) {
 			expect(nativeRequestTimeoutMs({ type }, "broker")).toBe(610_000);
 			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(660_000);
 		}

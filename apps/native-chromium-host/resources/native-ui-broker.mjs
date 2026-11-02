@@ -240,7 +240,7 @@ const server = createServer((socket) => {
 				if (message.kind !== "request" || typeof message.id !== "string" || message.id.length > 100 || pending.size >= MAX_PENDING) { socket.destroy(); return; }
 				const parsed = RendererRequestSchema.safeParse(message.request);
 				if (!parsed.success) { send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Invalid Kestrel request." } }); continue; }
-				if (["get-system-state", "get-default-browser-status", "set-default-browser", "set-launch-at-login"].includes(parsed.data.type)) {
+				if (["get-system-state", "get-default-browser-status", "set-default-browser", "set-launch-at-login", "request-microphone-access"].includes(parsed.data.type)) {
 					const id = `host-${++sequence}`;
 					const timeout = setTimeout(() => { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: parsed.data.type === "set-default-browser" ? "The default-browser request timed out; its outcome is uncertain. Check System Settings before retrying." : "The native desktop did not respond." } }); }, nativeRequestTimeoutMs(parsed.data, "broker"));
 					pending.set(id, { socket, uiId: message.id, timeout });

@@ -5,6 +5,17 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+test("native microphone access admits only authorized audio in the owned document", { skip: process.platform !== "darwin" }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "kestrel-microphone-policy-test-"));
+  try {
+    const binary = join(root, "microphone-policy-test");
+    execFileSync("/usr/bin/xcrun", ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", fileURLToPath(new URL("native_microphone_policy_test.cc", import.meta.url)), "-o", binary], { timeout: 30_000, stdio: "pipe" });
+    execFileSync(binary, [], { timeout: 5_000, stdio: "pipe" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("native system integration requires the production native identity and reports verified settings", { skip: process.platform !== "darwin" }, async () => {
   const root = await mkdtemp(join(tmpdir(), "kestrel-system-integration-test-"));
   try {

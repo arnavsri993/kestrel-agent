@@ -193,7 +193,8 @@ import {
 	FIRST_TASK_SLOW_MODEL_NOTICE,
 	isFirstTaskPrompt,
 } from "./first-task";
-import { canCompleteOnboarding } from "./setup-onboarding";
+import { canCompleteOnboarding, setupVerificationCopy } from "./setup-onboarding";
+import { VoiceCaptureOwner, type VoiceCapture } from "./voice-capture";
 import {
 	loadInitialDesktopState,
 	startupFailureMessage,
@@ -1417,8 +1418,12 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const finishHeading = verifiedModelReady
 		? "Ready for a first task"
 		: "You're set.";
+	const verificationCopy = setupVerificationCopy(
+		providerChecks.filter((check) => check.ok).length,
+		localRuntime?.verifiedModel,
+	);
 	const finishDescription = verifiedModelReady
-		? "A real model route responded. Try one guided task now, or open Kestrel and explore."
+		? verificationCopy.description
 		: modelReady
 			? "The route is saved but not live-verified yet."
 			: "Explore now. Connect a model when you need live work.";
@@ -2427,15 +2432,12 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										<span>
 											<strong>
 												{verifiedModelReady
-													? "Live model route"
+													? verificationCopy.label
 													: "Model route"}
 											</strong>
 											<small>
 												{verifiedModelReady
-													? providerChecks.filter((check) => check.ok).length >
-														0
-														? `${providerChecks.filter((check) => check.ok).length} route${providerChecks.filter((check) => check.ok).length === 1 ? "" : "s"} responded to an account check`
-														: `${localRuntime?.verifiedModel ?? "A local model"} returned a real response during setup`
+													? verificationCopy.detail
 													: providerCheckBusy
 														? "Checking the configured route now…"
 														: modelReady
@@ -3223,7 +3225,7 @@ function RuntimeConversation({
 	const sessionLoadSequenceRef = useRef(0);
 	const transcriptLoadKeyRef = useRef<string | null>(null);
 	const recorderRef = useRef<MediaRecorder | null>(null);
-	const microphoneStreamRef = useRef<MediaStream | null>(null);
+	const voiceCaptureOwnerRef = useRef(new VoiceCaptureOwner());
 	const reduced = useReducedMotion();
 
 	useEffect(() => {
@@ -3232,7 +3234,7 @@ function RuntimeConversation({
 	}, [busy, onRuntimeAgentState, pending]);
 	const promptRef = useRef<HTMLTextAreaElement | null>(null);
 	const [voiceState, setVoiceState] = useState<
-		"idle" | "recording" | "transcribing"
+		"idle" | "requesting" | "recording" | "transcribing"
 	>("idle");
 	const activeSession = sessions.find(
 		(session) => session.id === activeSessionId,
@@ -3729,62 +3731,66 @@ function RuntimeConversation({
 		[activeSessionId],
 	);
 
-	useEffect(
-		() => () => {
-			if (recorderRef.current?.state === "recording")
-				recorderRef.current.stop();
-			microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
-		},
-		[],
-	);
+	useEffect(() => {
+		setVoiceState("idle");
+		return () => {
+			const recorder = recorderRef.current;
+			recorderRef.current = null;
+			if (recorder) {
+				recorder.ondataavailable = null;
+				recorder.onstop = null;
+				recorder.onerror = null;
+				if (recorder.state !== "inactive") recorder.stop();
+			}
+			voiceCaptureOwnerRef.current.cancel();
+		};
+	}, [activeSessionId]);
 
 	async function startVoice() {
-		if (busy || voiceState !== "idle") return;
+		const owner = voiceCaptureOwnerRef.current;
+		if (busy || voiceState !== "idle" || owner.busy) return;
+		const sessionId = activeSessionId;
+		let capture: VoiceCapture<MediaStream> | undefined;
 		setError("");
+		setVoiceState("requesting");
 		try {
-			if (
-				!navigator.mediaDevices?.getUserMedia ||
-				typeof MediaRecorder === "undefined"
-			)
+			if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined")
 				throw new Error("Voice capture is unavailable on this device.");
-			const permission = await window.kestrel.request({
-				type: "request-microphone-access",
+			capture = await owner.acquire(async () => {
+				const permission = await window.kestrel.request({ type: "request-microphone-access" });
+				if (!("microphoneAccess" in permission) || !permission.microphoneAccess)
+					throw new Error("Microphone access was not granted. You can enable it in System Settings → Privacy & Security → Microphone.");
+			}, () => {
+				if (activeSessionIdRef.current !== sessionId)
+					throw new Error("Voice capture was cancelled.");
+				return navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 			});
-			if (!("microphoneAccess" in permission) || !permission.microphoneAccess)
-				throw new Error(
-					"Microphone access was not granted. You can enable it in System Settings → Privacy & Security → Microphone.",
-				);
-			const stream = await navigator.mediaDevices.getUserMedia({
-				audio: true,
-				video: false,
-			});
-			microphoneStreamRef.current = stream;
-			const preferred = [
-				"audio/webm;codecs=opus",
-				"audio/webm",
-				"audio/mp4",
-			].find((kind) => MediaRecorder.isTypeSupported(kind));
-			const recorder = new MediaRecorder(
-				stream,
-				preferred ? { mimeType: preferred } : undefined,
-			);
+			if (!capture) return;
+			const owned = capture;
+			const isCurrent = () => owned.isCurrent() && activeSessionIdRef.current === sessionId;
+			if (!isCurrent()) { owned.release(); return; }
+			const stream = owned.stream;
+			const preferred = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+				.find((kind) => MediaRecorder.isTypeSupported(kind));
+			const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
 			const chunks: Blob[] = [];
 			recorder.ondataavailable = (event) => {
-				if (event.data.size) chunks.push(event.data);
+				if (isCurrent() && event.data.size) chunks.push(event.data);
 			};
 			recorder.onerror = () => {
+				if (!isCurrent()) return;
+				recorderRef.current = null;
+				owned.release();
 				setError("Voice recording failed.");
 				setVoiceState("idle");
-				stream.getTracks().forEach((track) => track.stop());
 			};
 			recorder.onstop = () => {
 				stream.getTracks().forEach((track) => track.stop());
-				microphoneStreamRef.current = null;
+				if (!isCurrent()) return;
 				recorderRef.current = null;
-				const blob = new Blob(chunks, {
-					type: recorder.mimeType || "audio/webm",
-				});
+				const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
 				if (blob.size === 0 || blob.size > 25 * 1024 * 1024) {
+					owned.release();
 					setError("Voice recording is empty or exceeds 25 MB.");
 					setVoiceState("idle");
 					return;
@@ -3792,35 +3798,32 @@ function RuntimeConversation({
 				setVoiceState("transcribing");
 				const reader = new FileReader();
 				reader.onerror = () => {
+					if (!isCurrent()) return;
+					owned.release();
 					setError("Could not read the voice recording.");
 					setVoiceState("idle");
 				};
 				reader.onload = () => {
+					if (!isCurrent()) return;
 					const encoded = String(reader.result).split(",")[1] ?? "";
-					void window.kestrel
-						.request({
-							type: "media-transcribe",
-							dataBase64: encoded,
-							mediaType: blob.type.split(";")[0] || "audio/webm",
-						})
-						.then((response) => {
-							if (!response.ok) throw new Error(response.error);
-							if (!("transcription" in response) || !response.transcription)
-								throw new Error("Transcription returned no text.");
-							setInput((current) =>
-								current
-									? `${current.trimEnd()} ${response.transcription!.text}`
-									: response.transcription!.text,
-							);
-						})
-						.catch((cause) =>
-							setError(
-								cause instanceof Error
-									? cause.message
-									: "Voice transcription failed.",
-							),
-						)
-						.finally(() => setVoiceState("idle"));
+					void window.kestrel.request({
+						type: "media-transcribe", dataBase64: encoded,
+						mediaType: blob.type.split(";")[0] || "audio/webm",
+					}).then((response) => {
+						if (!isCurrent()) return;
+						if (!response.ok) throw new Error(response.error);
+						if (!("transcription" in response) || !response.transcription)
+							throw new Error("Transcription returned no text.");
+						setInput((current) => current
+							? `${current.trimEnd()} ${response.transcription!.text}`
+							: response.transcription!.text);
+					}).catch((cause) => {
+						if (isCurrent()) setError(cause instanceof Error ? cause.message : "Voice transcription failed.");
+					}).finally(() => {
+						if (!isCurrent()) return;
+						owned.release();
+						setVoiceState("idle");
+					});
 				};
 				reader.readAsDataURL(blob);
 			};
@@ -3828,15 +3831,12 @@ function RuntimeConversation({
 			recorder.start(1_000);
 			setVoiceState("recording");
 		} catch (cause) {
-			microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
-			microphoneStreamRef.current = null;
+			if (capture && (!capture.isCurrent() || activeSessionIdRef.current !== sessionId)) return;
+			if (!capture && activeSessionIdRef.current !== sessionId) return;
+			capture?.release();
 			recorderRef.current = null;
 			setVoiceState("idle");
-			setError(
-				cause instanceof Error
-					? cause.message
-					: "Could not start voice capture.",
-			);
+			setError(cause instanceof Error ? cause.message : "Could not start voice capture.");
 		}
 	}
 
@@ -4339,7 +4339,7 @@ function RuntimeConversation({
 					? "Stop and transcribe voice"
 					: "Record voice"
 			}
-			disabled={busy || voiceState === "transcribing"}
+			disabled={busy || voiceState === "requesting" || voiceState === "transcribing"}
 			onClick={() =>
 				voiceState === "recording" ? stopVoice() : void startVoice()
 			}
@@ -4349,10 +4349,10 @@ function RuntimeConversation({
 					<Icon name="pause" />
 					<span className="sr-only">Stop recording</span>
 				</>
-			) : voiceState === "transcribing" ? (
+			) : voiceState === "requesting" || voiceState === "transcribing" ? (
 				<>
 					<Icon name="loader" />
-					<span className="sr-only">Transcribing</span>
+					<span className="sr-only">{voiceState === "requesting" ? "Requesting microphone" : "Transcribing"}</span>
 				</>
 			) : (
 				<Icon name="voice" />
@@ -5104,7 +5104,9 @@ function RuntimeConversation({
 							</details>
 						</div>
 						<span className="composer-status">
-							{voiceState === "recording"
+							{voiceState === "requesting"
+								? "Requesting microphone access…"
+								: voiceState === "recording"
 								? "Microphone live · tap Stop to transcribe"
 								: activeSessionBusy
 									? "Send an update at the next safe turn boundary"
