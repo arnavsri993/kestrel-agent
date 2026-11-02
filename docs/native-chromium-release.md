@@ -1515,3 +1515,51 @@ remain unfinished. So do large-profile streaming, older schemas, browser and
 credential handling, provider sign-in parity, final enabled-control/restart
 acceptance, production signing/notarization and canonical installed-app cutover.
 The existing app, real profiles, credentials and provider logins remain untouched.
+
+### Resume a retained official Store update fixture (2026-11-02)
+
+`test:native-store-update-resume` revalidates the existing generated checkpoint,
+original receipt digest, private temporary profile and normal Store provenance.
+It refuses the canonical app, an occupied evidence directory or an already-used
+profile. Before launch it reads only the generated Chrome preference metadata to
+establish the active installed versions. It then runs the exact selected native
+candidate with the existing test key, without reinstalling extensions, changing
+versions, toggling enablement or replacing the original checkpoint.
+
+The canary binds directly to browser-reported CDP targets, avoiding CEF's race
+between loaded documents and Playwright automatic attachment. It exercises the
+official action extension's own tabs/runtime APIs from its existing options
+document, allowing its MV3 background worker to suspend normally.
+Restart formatting uses Kestrel's first-party tab API and does not require an
+unrelated background worker to remain active. Both contexts keep ordinary user
+extensions and web pages isolated from Kestrel's privileged bridge.
+
+```bash
+KESTREL_NATIVE_TEST_APP=/absolute/path/to/Kestrel.app \
+KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT=/absolute/path/to/generated/store-update-checkpoint.json \
+KESTREL_NATIVE_STORE_RESUME_EVIDENCE=/absolute/path/to/new-evidence \
+pnpm_config_verify_deps_before_run=false corepack pnpm test:native-store-update-resume
+```
+
+Bundle `1533c596a3564b0d70893f29b96245edaf5d5f4f49f15b58c866cc441c8a16e1`
+passed all five compatibility phases against the retained Store profile from
+bundle `06e3babd66a2d540ca8527ce7ea4e8a4ca67ec304fc1b9d24a1b25761bc1fae4`.
+JSON Formatter `0.10.2` and uBO Lite `2026.1026.1812` remained enabled normal
+Store installations. A tab created by the official uBO Lite extension stayed in
+Kestrel's native window, JSON formatting ran with no privileged web bridge, and
+formatting, both installed versions and both existing Core sessions survived a
+clean restart. The post-restart formatted JSON capture was visually inspected.
+The candidate digest was unchanged in
+`.tmp/native-store-resume-final-options-evidence/receipt.json`. The earlier
+direct-target worker run also passed the same compatibility phases in
+`.tmp/native-store-resume-bound-target-evidence/receipt.json`. Admission checks
+also rejected a missing candidate, the canonical app and occupied evidence before
+profile launch, preserving existing evidence.
+
+Chrome's update query succeeded with `no_update`; no installed version increased.
+The receipt therefore reports `incomplete` and exits **2**, preserving the fixture
+for a future published update. Exit **0** requires a genuinely increased normal
+Store version plus the compatibility checks; an unsuccessful query or failed
+compatibility phase exits **1**. This additional receipt does not replace or relax
+the strict retirement validator, and it does not certify a fresh Store install
+on this candidate, existing user data, signing or canonical cutover.
