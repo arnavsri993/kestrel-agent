@@ -818,3 +818,30 @@ fixed, and layout checks now assert that saved preference and its corresponding
 geometry together. Fresh exact-head CI remains required. Canonical installation,
 user-profile transfer, real Keychain protection, whole-desktop execution and
 production signing remain incomplete.
+
+The next exact-head CI run (`2cb7b4c5`, run `41367746125`) passed the Desktop
+and packaged arm64 job. Core CI passed the dependency audit and all 14 native
+settings phases, then found a workspace test clicking a background Home
+document. The canary now selects each actual Chromium tab and waits for visible
+document ownership before interacting. With the complete CI environment,
+including isolation, form navigation, downloads, context and workspace fixtures,
+all 26 integrated non-Store phases passed on the unchanged `1b44588e` bundle.
+Its receipt is `.tmp/chromium-desktop-evidence/receipt.json`; the smaller prior
+run is retained separately in `.tmp/native-plugin-ci-subset-evidence/`.
+Current source and packaged desktop layout and packaged smoke also passed.
+
+Additional new-lane Store probes now cover extension-created tabs and model
+adoption, the real action-popup target, Chrome's own extension-manager toggle,
+update-check status/version and restart persistence. These new Store probes
+have only syntax validation while the physical installation sheet remains
+unavailable. Missing capabilities are recorded explicitly. Set
+`KESTREL_TEST_REQUIRE_CHROMIUM_EXTENSION_PARITY=1` together with the real-Store
+flag to make incomplete parity fail the run; a `no_update` check is not reported
+as a version upgrade. The existing retirement gate still invokes the older
+probe lane, which cannot establish the new Chromium-owned desktop's parity.
+It remains fail-closed pending a verified replacement acceptance path.
+
+A worker's automatic pnpm run reinstalled shared linked dependencies. Actual
+consumer/backport checks were rerun afterward: all 36 focused tests and the live
+audit guard passed, with unchanged source and lockfile. Further worker validation
+uses direct tools rather than allowing pnpm to mutate a shared installation.

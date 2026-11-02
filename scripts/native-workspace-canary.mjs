@@ -6,6 +6,21 @@ import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 
 const content = "Native Kestrel workspace fixture. This disposable folder contains no user data.\n";
 
+async function activateNativeDocument(page) {
+	const current = await page.evaluate(async () => {
+		const tab = await chrome.tabs.getCurrent();
+		if (!Number.isInteger(tab?.id) || !Number.isInteger(tab?.windowId)) throw new Error("The workspace test has no owned Chromium tab.");
+		await chrome.tabs.update(tab.id, { active: true });
+		await chrome.windows.update(tab.windowId, { focused: true });
+		return { id: tab.id, windowId: tab.windowId };
+	});
+	await page.bringToFront();
+	await page.waitForFunction(async ({ id, windowId }) => {
+		const active = await chrome.tabs.query({ active: true, windowId });
+		return document.visibilityState === "visible" && active.length === 1 && active[0].id === id;
+	}, current);
+}
+
 export async function prepareNativeWorkspaceFixture(profile) {
 	const folder = join(profile, "workspace-fixture");
 	await mkdir(folder, { mode: 0o700 });
@@ -19,6 +34,7 @@ export async function nativeWorkspaceCanary({ settings, getHome, profile, eviden
 	await writeFile(join(folder, "README.md"), content, { mode: 0o600 });
 	await writeFile(join(profile, "outside-workspace-fixture.txt"), "Owned synthetic file outside the granted folder.\n", { mode: 0o600 });
 	const canonical = await realpath(folder);
+	await activateNativeDocument(settings);
 	await selectSettingsSection(settings, "agent-workspace", "Workspace & sessions");
 	const row = settings.locator("#setting-agent-workspace-grants");
 	if (!fixtureGranted) {
@@ -47,6 +63,7 @@ export async function nativeWorkspaceCanary({ settings, getHome, profile, eviden
 	await row.getByRole("button", { name: "Add folder", exact: true }).waitFor({ state: "visible" });
 	await settings.waitForFunction(() => document.querySelector("#setting-agent-workspace-grants > button")?.disabled === false);
 	for (const page of [settings, getHome()]) {
+		await activateNativeDocument(page);
 		const sidebar = page.locator(".kestrel-sidebar");
 		await sidebar.waitFor();
 		const expand = sidebar.getByRole("button", { name: "Expand sidebar", exact: true });
@@ -99,6 +116,7 @@ export async function nativeWorkspaceCanary({ settings, getHome, profile, eviden
 		for (const end = Date.now() + 10_000; Date.now() < end && !fixtures.uploads.length;) await delay(50);
 		assert.deepEqual(fixtures.uploads, [content], "The native input must transfer the actual approved fixture bytes.");
 	} finally { await call("browser.close", { browserSessionId }); }
+	await activateNativeDocument(settings);
 	await settings.screenshot({ path: join(evidence, "native-workspace-granted.png") });
 	receipt.phases.push({ phase: fixtureGranted ? "native-fixture-project-update-cross-page-sidebar-and-Core-read" : "native-macOS-folder-picker-to-Core-workspace-read", passed: true, projectId: project.id, sessionId: state.sessionId });
 	receipt.phases.push({ phase: "native-granted-workspace-browser-upload-and-containment-refusal", passed: true });
