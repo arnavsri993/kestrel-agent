@@ -1228,3 +1228,52 @@ passed all 16 native settings/window/restart phases with unchanged digests
 (`.tmp/native-readonly-deletion-settings-evidence/receipt.json`), and bundled
 Core durability/recovery passed with the fake host-key broker. Generated
 fixtures only; the canonical app and real user data remain untouched.
+
+### Retained official Store update fixture (2026-11-02)
+
+The desktop canary can now explicitly retain its generated Store-installed
+profile after a clean shutdown and unchanged bundle digest. Use a new evidence
+directory for each preparation run; a nonempty directory is rejected before
+launch, so an existing checkpoint/receipt cannot be overwritten:
+
+```sh
+KESTREL_NATIVE_TEST_APP=.tmp/native-chromium-host/Kestrel.app \
+KESTREL_TEST_REAL_CHROME_WEB_STORE=1 \
+KESTREL_TEST_KEEP_STORE_UPDATE_PROFILE=1 \
+KESTREL_NATIVE_DESKTOP_EVIDENCE=.tmp/new-store-update-evidence \
+node scripts/smoke-chromium-desktop.mjs
+```
+
+Retention is a fixture-preparation mode, separate from strict extension
+acceptance. Every non-update capability must pass, and Chromium management
+must report both official IDs as enabled `normal` installations with matching
+restart versions. The profile stays under the OS temporary root with its
+owned/private directory, fixed marker and mode-0600 test-key checks. Only
+metadata is inspected; the key is not read by the checkpoint helpers. Failed
+runs still remove their generated profile. The default remains cleanup.
+
+The checkpoint binds the unchanged candidate, exact receipt SHA-256, original
+Store provenance and observed versions. `loadRetainedStoreUpdateFixture()`
+revalidates the actual directory, marker and key metadata, receipt digest and
+versions. A stale saved path is not a live process or verified external wait;
+the OS may remove temporary files. This does not weaken the native test-key
+guard or satisfy the real-update retirement gate.
+
+The live preparation run on bundle
+`06e3babd66a2d540ca8527ce7ea4e8a4ca67ec304fc1b9d24a1b25761bc1fae4`
+passed 17 phases. Both aggregate extension-parity phases remain incomplete
+solely because Chromium returned `no_update` for uBO Lite `2026.1026.1812`.
+Official JSON Formatter `0.10.2` and uBO Lite were installed through their
+native Store sheets; functional formatting, same-window extension tab
+lifecycle, isolated toolbar popup, disable/re-enable and enabled restart
+persistence passed. The popup capture was visually inspected. All owned
+processes stopped cleanly. No whole-desktop capture/input was enabled.
+
+Local evidence is `.tmp/native-store-update-fixture-evidence/receipt.json`
+with sibling `store-update-checkpoint.json`; the earlier Store receipt remains
+untouched. The generated profile was revalidated after shutdown and after a
+refused attempt to reuse its evidence directory. All **2,145 tests in 276
+files** passed, including 18 fixture/marker tests covering incomplete checks,
+strict acceptance, candidate drift, unpacked provenance, missing shutdown,
+receipt changes, private-key metadata and a removed temporary profile.
+This proves preparation/persistence, not an actual published-version upgrade.

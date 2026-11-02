@@ -6,6 +6,29 @@ import { join, resolve } from "node:path";
 const markerName = ".kestrel-native-test-profile-v1";
 const marker = "native-test-profile-v1\n";
 
+// Validation for deliberately retained generated fixtures. This does not read
+// the test key or relax the native host's independent development-only guard.
+export async function validateDisposableNativeTestProfile(profileRoot) {
+	const requested = resolve(profileRoot), canonical = await realpath(requested);
+	const info = await lstat(requested), temporary = await realpath(tmpdir());
+	if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 ||
+		info.uid !== process.getuid() || !canonical.startsWith(`${temporary}/`)) {
+		throw new Error("Retained native fixtures require an owned private temporary profile.");
+	}
+	for (const [name, size] of [[markerName, Buffer.byteLength(marker)], [".kestrel-native-test-core-key-v1", 32]]) {
+		const entry = await lstat(join(canonical, name));
+		if (!entry.isFile() || entry.isSymbolicLink() || entry.uid !== process.getuid() ||
+			(entry.mode & 0o777) !== 0o600 || entry.size !== size) {
+			throw new Error("Retained native fixture marker or test-key metadata is invalid.");
+		}
+	}
+	const handle = await open(join(canonical, markerName), "r");
+	try {
+		if (await handle.readFile("utf8") !== marker) throw new Error("Retained native fixture marker is invalid.");
+	} finally { await handle.close(); }
+	return canonical;
+}
+
 // Explicit opt-in used only by disposable native Chromium canaries. The native
 // host independently checks the temp-root containment, marker, mode, owner,
 // and development bundle identity before it will use a test key file.
