@@ -70,7 +70,9 @@ it("reports committed recovery after a directory-sync failure and preserves the 
 	const value = fixture(); fault.mode = "after-publication";
 	expect(failure(value.apply)).toMatchObject({ code: "PUBLISHED_RECOVERY_REQUIRED", published: true });
 	fault.mode = "";
-	expect(readdirSync(dirname(value.target))).toEqual(["kestrel.sqlite"]);
+	expect(readdirSync(dirname(value.target))).toContain("kestrel.sqlite");
+	expect(readdirSync(dirname(value.target))).toContain("kestrel.sqlite.kestrel-transfer-journal");
+	expect(readdirSync(dirname(value.target))).toContain("kestrel.sqlite.kestrel-transfer-lock");
 	const db = new KestrelDatabase(value.target, value.destinationKey);
 	try { expect(db.getPrivateState("generated-transfer-proof")).toEqual({ text: "Generated confidential fixture" }); } finally { db.close(); }
 	expect(readFileSync(value.source)).toEqual(value.before);
@@ -79,8 +81,9 @@ it("reports committed recovery after a directory-sync failure and preserves the 
 it("reports an encrypted staging cleanup problem without masking it or deleting source data", () => {
 	const value = fixture(); fault.mode = "cleanup";
 	expect(failure(value.apply)).toMatchObject({ code: "STAGING_RECOVERY_REQUIRED", published: false });
-	expect(readdirSync(dirname(value.target))).toHaveLength(1);
-	expect(readdirSync(dirname(value.target))[0]).toMatch(/^\.kestrel-core-transfer-/);
+	expect(readdirSync(dirname(value.target)).some(name => /^\.kestrel-core-transfer-/.test(name))).toBe(true);
+	expect(readdirSync(dirname(value.target))).toContain("kestrel.sqlite.kestrel-transfer-journal");
+	expect(readdirSync(dirname(value.target))).toContain("kestrel.sqlite.kestrel-transfer-lock");
 	expect(readFileSync(value.source)).toEqual(value.before);
 });
 

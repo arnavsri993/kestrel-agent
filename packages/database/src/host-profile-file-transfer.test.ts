@@ -82,7 +82,7 @@ it("refuses changed source data and source replacement after review", () => {
 	expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
 });
 
-it.each(["", "-wal", "-shm", "-journal", ".kestrel-transfer-lock"])("never overwrites an existing destination%s", suffix => {
+it.each(["", "-wal", "-shm", "-journal", ".kestrel-transfer-lock", ".kestrel-transfer-journal", ".kestrel-transfer-recovery-lock"])("never overwrites an existing destination%s", suffix => {
 	const value = fixture(), plan = value.plan(), existing = value.destinationDatabasePath + suffix;
 	writeFileSync(existing, "generated-existing-destination", { mode: 0o600 });
 	expect(code(() => apply(value, plan))).toBe("DESTINATION_EXISTS");

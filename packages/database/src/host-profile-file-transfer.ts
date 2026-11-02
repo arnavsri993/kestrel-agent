@@ -1,6 +1,6 @@
-import { createHash, timingSafeEqual } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, realpathSync, rmSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, readSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { createHostProfileTransferSnapshot, importHostProfileTransferSnapshot, type HostProfileTransferSnapshot } from "./profile-transfer.js";
 import { listMigrationVersions, loadMigrationSql } from "./migrations.js";
@@ -29,6 +29,17 @@ export type HostProfileFileTransferReceipt = {
 	authenticatedEnvelopes: number;
 	activationPerformed: false;
 };
+type TransferJournal = {
+	format: "kestrel-core-transfer-journal"; version: 1; runId: string; ownerPid: number;
+	plan: HostProfileFileTransferPlan;
+	staging: { path: string; directory: Identity; file: Identity };
+};
+type TransferLock = { format: "kestrel-core-transfer-lock"; version: 1; runId: string; ownerPid: number; planSha256: string; journalSha256: string };
+export type HostProfileInterruptedTransferReview = {
+	format: "kestrel-core-transfer-recovery-review"; version: 1;
+	destinationDatabasePath: string; state: "published" | "staged" | "missing-stage";
+	plan: HostProfileFileTransferPlan; recoverySha256: string;
+};
 export class HostProfileFileTransferError extends Error {
 	constructor(readonly code: string, message: string, readonly published = false) {
 		super(message); this.name = "HostProfileFileTransferError";
@@ -51,9 +62,10 @@ function directory(path: string): Identity {
 		fail("UNSAFE_PATH", "Core transfer requires canonical private directories owned by the current user.");
 	return identity(info);
 }
-function ownedFile(path: string): Identity {
+function ownedFile(path: string, recoveryLink?: Identity): Identity {
 	const info = lstatSync(path);
-	if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid?.() || info.nlink !== 1)
+	if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid?.() ||
+		(info.nlink !== 1 && !(info.nlink === 2 && recoveryLink && same(identity(info), recoveryLink))))
 		fail("UNSAFE_PATH", "Core transfer requires owned regular database files without links.");
 	return identity(info);
 }
@@ -61,17 +73,19 @@ function absolute(path: string): string {
 	if (typeof path !== "string" || !isAbsolute(path) || resolve(path) !== path) fail("UNSAFE_PATH", "Core transfer requires an explicit canonical database path.");
 	return path;
 }
-function sourceAt(path: string): Source {
+function sourceAt(path: string, recoveryLink?: Identity): Source {
 	absolute(path);
-	const parent = directory(dirname(path)), file = ownedFile(path);
+	const parent = directory(dirname(path)), file = ownedFile(path, recoveryLink);
 	for (const suffix of ["-wal", "-shm", "-journal"]) if (!missing(path + suffix)) ownedFile(path + suffix);
 	return { path, file, directory: parent };
 }
 const lockPath = (path: string) => path + ".kestrel-transfer-lock";
-function destinationAt(path: string, ignoreOwnedLock = false): Destination {
+const journalPath = (path: string) => path + ".kestrel-transfer-journal";
+const recoveryLockPath = (path: string) => path + ".kestrel-transfer-recovery-lock";
+function destinationAt(path: string, ignoreOwnedReservation = false): Destination {
 	absolute(path);
 	const parent = directory(dirname(path));
-	for (const suffix of ["", "-wal", "-shm", "-journal", ...(ignoreOwnedLock ? [] : [".kestrel-transfer-lock"])]) {
+	for (const suffix of ["", "-wal", "-shm", "-journal", ...(ignoreOwnedReservation ? [] : [".kestrel-transfer-lock", ".kestrel-transfer-journal", ".kestrel-transfer-recovery-lock"])]) {
 		if (!missing(path + suffix)) fail("DESTINATION_EXISTS", "Core transfer destination or its recovery files already exist; nothing was overwritten.");
 	}
 	return { path, directory: parent };
@@ -79,10 +93,10 @@ function destinationAt(path: string, ignoreOwnedLock = false): Destination {
 function summary(snapshot: HostProfileTransferSnapshot): Summary {
 	return { schemaVersion: snapshot.schemaVersion, policy: snapshot.policy, counts: snapshot.counts, excluded: snapshot.excluded, semanticSha256: snapshot.semanticSha256 };
 }
-function readSource(source: Source, key: Buffer): { snapshot: HostProfileTransferSnapshot; authenticatedEnvelopes: number } {
+function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { snapshot: HostProfileTransferSnapshot; authenticatedEnvelopes: number } {
 	let db: Database.Database | undefined;
 	try {
-		if (!same(sourceAt(source.path), source)) fail("SOURCE_CHANGED", "The selected Core source was replaced. Review it again.");
+		if (!same(sourceAt(source.path, recoveryLink), source)) fail("SOURCE_CHANGED", "The selected Core source was replaced. Review it again.");
 		db = new Database(source.path, { readonly: true, fileMustExist: true });
 		const reader = db;
 		const result = reader.transaction(() => {
@@ -99,7 +113,7 @@ function readSource(source: Source, key: Buffer): { snapshot: HostProfileTransfe
 			if (!authenticatedEnvelopes) fail("NO_AUTHENTICATED_RECORDS", "This Core source has no authenticated encrypted records. Use the separate empty-profile choice; no data was changed.");
 			return { snapshot, authenticatedEnvelopes };
 		}).deferred();
-		if (!same(sourceAt(source.path), source)) fail("SOURCE_CHANGED", "The selected Core source was replaced. Review it again.");
+		if (!same(sourceAt(source.path, recoveryLink), source)) fail("SOURCE_CHANGED", "The selected Core source was replaced. Review it again.");
 		return result;
 	} catch (error) {
 		if (error instanceof HostProfileFileTransferError) throw error;
@@ -146,8 +160,159 @@ function syncPath(path: string): void {
 function validatePlan(plan: HostProfileFileTransferPlan): void {
 	if (!plan || typeof plan !== "object") fail("PLAN_CHANGED", "The Core transfer review is invalid. Review the source again.");
 	const { planSha256, ...value } = plan;
-	if (plan.format !== "kestrel-host-core-file-transfer" || plan.version !== 1 || hash(value) !== planSha256)
+	if (!same(Object.keys(plan).sort(), ["format", "version", "source", "destination", "summary", "authenticatedEnvelopes", "planSha256"].sort()) ||
+		plan.format !== "kestrel-host-core-file-transfer" || plan.version !== 1 || hash(value) !== planSha256)
 		fail("PLAN_CHANGED", "The Core transfer review is invalid. Review the source again.");
+}
+
+const MAX_RECOVERY_METADATA = 64 * 1024;
+function exactFields(value: unknown, names: string[]): value is Record<string, unknown> {
+	return Boolean(value && typeof value === "object" && !Array.isArray(value) && same(Object.keys(value).sort(), [...names].sort()));
+}
+function validIdentity(value: unknown): value is Identity {
+	return exactFields(value, ["device", "inode"]) && [value.device, value.inode].every(part => typeof part === "string" && /^\d{1,30}$/.test(part));
+}
+function validPid(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) > 0 && Number(value) <= 0x7fff_ffff; }
+function alive(pid: number): boolean {
+	try { process.kill(pid, 0); return true; } catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+		if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
+		fail("RECOVERY_UNAVAILABLE", "The previous transfer worker's ownership could not be verified.");
+	}
+}
+function metadata(path: string): { value: unknown; sha256: string; file: Identity } {
+	ownedFile(path);
+	const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+	try {
+		const before = fstatSync(fd);
+		if (!before.isFile() || before.uid !== process.getuid?.() || before.nlink !== 1 || (before.mode & 0o777) !== 0o600 || before.size < 1 || before.size > MAX_RECOVERY_METADATA)
+			fail("RECOVERY_METADATA_INVALID", "The interrupted Core transfer metadata is invalid; all files were preserved.");
+		const bytes = Buffer.alloc(MAX_RECOVERY_METADATA + 1); let length = 0;
+		while (length < bytes.length) { const count = readSync(fd, bytes, length, bytes.length - length, length); if (!count) break; length += count; }
+		const after = fstatSync(fd);
+		if (length !== before.size || length > MAX_RECOVERY_METADATA || before.mtimeMs !== after.mtimeMs || !same(identity(before), identity(lstatSync(path))))
+			fail("RECOVERY_METADATA_INVALID", "The interrupted Core transfer metadata changed during inspection.");
+		const raw = bytes.subarray(0, length);
+		return { value: JSON.parse(raw.toString("utf8")), sha256: createHash("sha256").update(raw).digest("hex"), file: identity(before) };
+	} finally { closeSync(fd); }
+}
+function validateJournal(value: unknown): asserts value is TransferJournal {
+	if (!exactFields(value, ["format", "version", "runId", "ownerPid", "plan", "staging"]) || value.format !== "kestrel-core-transfer-journal" || value.version !== 1 ||
+		typeof value.runId !== "string" || !/^[a-f0-9-]{36}$/.test(value.runId) || !validPid(value.ownerPid))
+		fail("RECOVERY_METADATA_INVALID", "The interrupted Core transfer journal is invalid; all files were preserved.");
+	validatePlan(value.plan as HostProfileFileTransferPlan);
+	const plan = value.plan as HostProfileFileTransferPlan;
+	if (!exactFields(plan.source, ["path", "file", "directory"]) || typeof plan.source.path !== "string" || !validIdentity(plan.source.file) || !validIdentity(plan.source.directory) ||
+		!exactFields(plan.destination, ["path", "directory"]) || typeof plan.destination.path !== "string" || !validIdentity(plan.destination.directory) ||
+		!exactFields(plan.summary, ["schemaVersion", "policy", "counts", "excluded", "semanticSha256"]) ||
+		plan.summary.schemaVersion !== 18 || plan.summary.policy !== "kestrel-host-profile-transfer-in-flight-v1" || !/^[a-f0-9]{64}$/.test(plan.summary.semanticSha256) ||
+		!Number.isSafeInteger(plan.authenticatedEnvelopes) || plan.authenticatedEnvelopes < 1 ||
+		![plan.summary.counts, plan.summary.excluded].every(record => record && typeof record === "object" && !Array.isArray(record) && Object.keys(record).length <= 100 && Object.entries(record).every(([name, count]) => /^[a-zA-Z_]{1,64}$/.test(name) && Number.isSafeInteger(count) && Number(count) >= 0)))
+		fail("RECOVERY_METADATA_INVALID", "The interrupted Core transfer plan metadata is invalid.");
+	if (!exactFields(value.staging, ["path", "directory", "file"]) || typeof value.staging.path !== "string" || !validIdentity(value.staging.directory) || !validIdentity(value.staging.file))
+		fail("RECOVERY_METADATA_INVALID", "The interrupted Core staging identity is invalid.");
+}
+function fingerprint(path: string, recoveryLink?: Identity): Record<string, unknown> {
+	const file = ownedFile(path, recoveryLink), info = lstatSync(path);
+	if ((info.mode & 0o777) !== 0o600) fail("RECOVERY_METADATA_INVALID", "Interrupted Core files require private permissions.");
+	return { file, links: info.nlink, size: info.size, modifiedAt: info.mtimeMs };
+}
+function inspectInterrupted(path: string, ownedRecoveryLock?: Identity) {
+	absolute(path); const parent = directory(dirname(path));
+	if (!missing(recoveryLockPath(path)) && !same(ownedFile(recoveryLockPath(path)), ownedRecoveryLock)) {
+		const reservation = metadata(recoveryLockPath(path)).value as { ownerPid?: unknown };
+		if (validPid(reservation?.ownerPid) && alive(reservation.ownerPid)) fail("RECOVERY_BUSY", "Another recovery worker still owns this Core destination.");
+		fail("RECOVERY_RESERVED", "A previous recovery reservation needs its own review; no files were changed.");
+	}
+	const saved = metadata(journalPath(path)); validateJournal(saved.value);
+	const journal = saved.value, plan = journal.plan;
+	if (plan.destination.path !== path || !same(plan.destination.directory, parent)) fail("RECOVERY_METADATA_INVALID", "The Core destination no longer matches its recovery journal.");
+	if (alive(journal.ownerPid)) fail("RECOVERY_BUSY", "The original Core transfer worker is still running. Stop it before recovery.");
+	let lock: ReturnType<typeof metadata> | undefined;
+	if (!missing(lockPath(path))) {
+		lock = metadata(lockPath(path)); const value = lock.value;
+		if (!exactFields(value, ["format", "version", "runId", "ownerPid", "planSha256", "journalSha256"]) || value.format !== "kestrel-core-transfer-lock" || value.version !== 1 ||
+			value.runId !== journal.runId || value.ownerPid !== journal.ownerPid || value.planSha256 !== plan.planSha256 || value.journalSha256 !== saved.sha256)
+			fail("RECOVERY_METADATA_INVALID", "The Core transfer lock and journal do not match.");
+	}
+	const stage = journal.staging.path;
+	if (dirname(stage) !== dirname(path) || !/^\.kestrel-core-transfer-[a-zA-Z0-9]+$/.test(basename(stage))) fail("RECOVERY_METADATA_INVALID", "The recorded Core staging path is outside its destination.");
+	const stagePresent = !missing(stage);
+	if (stagePresent && !same(directory(stage), journal.staging.directory)) fail("RECOVERY_METADATA_INVALID", "The recorded Core staging directory was replaced.");
+	const entries = stagePresent ? readdirSync(stage).sort() : [];
+	if (entries.some(name => !["kestrel.sqlite", "kestrel.sqlite-journal", "kestrel.sqlite-wal", "kestrel.sqlite-shm"].includes(name))) fail("RECOVERY_METADATA_INVALID", "The Core staging directory contains unrecognized files; it was preserved.");
+	const stagedPath = join(stage, "kestrel.sqlite"), stagedPresent = stagePresent && !missing(stagedPath), targetPresent = !missing(path);
+	const staged = stagedPresent ? fingerprint(stagedPath, journal.staging.file) : null;
+	const target = targetPresent ? fingerprint(path, journal.staging.file) : null;
+	if ((staged && !same(staged.file, journal.staging.file)) || (target && !same(target.file, journal.staging.file)) ||
+		(target && target.links !== (staged ? 2 : 1)) || (staged && staged.links !== (target ? 2 : 1)))
+		fail("RECOVERY_METADATA_INVALID", "The staged and published Core file identities do not match; all files were preserved.");
+	const state = target ? "published" as const : staged ? "staged" as const : "missing-stage" as const;
+	const source = sourceAt(plan.source.path);
+	if (!same(source, plan.source)) fail("SOURCE_CHANGED", "The original Core source was replaced. Preserve both profiles for review.");
+	const recoverySha256 = hash({ journalSha256: saved.sha256, journalFile: saved.file, lockFile: lock?.file ?? null, stagePresent, entries, staged, target,
+		source: { ...source, size: lstatSync(source.path).size, modifiedAt: lstatSync(source.path).mtimeMs } });
+	return { journal, saved, lock, stage, entries, stagedPath, staged, target, state, recoverySha256 };
+}
+
+// Read metadata only; no database, Keychain, key or process termination. The
+// native profile owner must hold this review privately and obtain recovery
+// consent. A dead recovery-worker reservation is deliberately not stolen.
+export function inspectInterruptedHostProfileFileTransfer(destinationDatabasePath: string): HostProfileInterruptedTransferReview {
+	try {
+		const value = inspectInterrupted(destinationDatabasePath);
+		return { format: "kestrel-core-transfer-recovery-review", version: 1, destinationDatabasePath, state: value.state, plan: value.journal.plan, recoverySha256: value.recoverySha256 };
+	} catch (error) {
+		if (error instanceof HostProfileFileTransferError) throw error;
+		return fail("RECOVERY_METADATA_INVALID", "The interrupted Core transfer could not be inspected safely; all files were preserved.");
+	}
+}
+
+// Explicit offline recovery for a fully verified staged/published import.
+// Preserve incomplete/corrupt stages and later work for a separate review.
+// The dedicated reservation serializes recovery; a crashed recovery reservation
+// stays blocked pending its own review, rather than stealing a live lease.
+export function recoverInterruptedHostProfileFileTransfer(options: { destinationDatabasePath: string; sourceKey: Buffer; destinationKey: Buffer; acceptedRecoverySha256: string }): HostProfileFileTransferReceipt {
+	verifyKey(options.sourceKey); verifyKey(options.destinationKey);
+	if (timingSafeEqual(options.sourceKey, options.destinationKey)) fail("KEY_REUSE", "Core transfer requires an independent destination key.");
+	let lease: number | undefined, leaseIdentity: Identity | undefined, published = false, finalizing = false;
+	const path = options.destinationDatabasePath;
+	try {
+		const reviewed = inspectInterrupted(path);
+		published = Boolean(reviewed.target);
+		if (reviewed.recoverySha256 !== options.acceptedRecoverySha256) fail("RECOVERY_REVIEW_CHANGED", "The interrupted Core transfer changed after review. Inspect it again.");
+		if (reviewed.state === "missing-stage" || reviewed.entries.some(name => name !== "kestrel.sqlite")) fail("STAGING_UNAVAILABLE", "The interrupted stage is incomplete or unsettled. Preserve it and the original profile for a separate recovery review.");
+		lease = openSync(recoveryLockPath(path), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+		leaseIdentity = identity(fstatSync(lease));
+		writeFileSync(lease, canonical({ format: "kestrel-core-transfer-recovery-lock", version: 1, ownerPid: process.pid, recoverySha256: reviewed.recoverySha256 })); fsyncSync(lease); syncPath(dirname(path));
+		const plan = reviewed.journal.plan;
+		const original = readSource(plan.source, options.sourceKey);
+		if (!same(planFor(plan.source, plan.destination, original.snapshot, original.authenticatedEnvelopes), plan)) fail("RECOVERY_CHANGED", "Original Core data changed after transfer review. Preserve both profiles for a new review.");
+		const databasePath = reviewed.target ? path : reviewed.stagedPath;
+		const imported = readSource({ path: databasePath, file: reviewed.journal.staging.file, directory: reviewed.target ? plan.destination.directory : reviewed.journal.staging.directory }, options.destinationKey, reviewed.journal.staging.file);
+		if (imported.snapshot.semanticSha256 !== plan.summary.semanticSha256) fail("RECOVERY_CHANGED", "Native Core data changed after transfer. Preserve all work for a new review.");
+		if (inspectInterrupted(path, leaseIdentity).recoverySha256 !== reviewed.recoverySha256) fail("RECOVERY_REVIEW_CHANGED", "The interrupted Core files changed during verification. Inspect them again.");
+		if (!reviewed.target) { syncPath(reviewed.stagedPath); syncPath(reviewed.stage); linkSync(reviewed.stagedPath, path); }
+		published = true; finalizing = true;
+		if (reviewed.staged) unlinkSync(reviewed.stagedPath);
+		syncPath(dirname(path));
+		const file = ownedFile(path);
+		if (!missing(reviewed.stage)) rmdirSync(reviewed.stage);
+		if (reviewed.lock && !missing(lockPath(path)) && same(ownedFile(lockPath(path)), reviewed.lock.file)) unlinkSync(lockPath(path));
+		if (!same(ownedFile(journalPath(path)), reviewed.saved.file)) fail("RECOVERY_REVIEW_CHANGED", "The Core recovery journal changed during finalization.");
+		unlinkSync(journalPath(path));
+		return { format: "kestrel-host-core-file-transfer-receipt", version: 1, planSha256: plan.planSha256, source: plan.source, destination: { ...plan.destination, file },
+			summary: plan.summary, authenticatedEnvelopes: plan.authenticatedEnvelopes, activationPerformed: false };
+	} catch (error) {
+		if (finalizing) throw new HostProfileFileTransferError("PUBLISHED_RECOVERY_REQUIRED", "The recovered encrypted Core database was preserved, but finalization still requires review.", true);
+		if (error instanceof HostProfileFileTransferError) throw new HostProfileFileTransferError(error.code, error.message, published || error.published);
+		return fail("RECOVERY_UNAVAILABLE", "Interrupted Core transfer recovery could not finish; all data files were preserved.");
+	} finally {
+		let cleanupFailed = false;
+		try { if (lease !== undefined) closeSync(lease); } catch { cleanupFailed = true; }
+		try { if (leaseIdentity && !missing(recoveryLockPath(path)) && same(ownedFile(recoveryLockPath(path)), leaseIdentity)) unlinkSync(recoveryLockPath(path)); } catch { cleanupFailed = true; }
+		if (cleanupFailed) throw new HostProfileFileTransferError("RECOVERY_RESERVATION_RETAINED", "The Core recovery reservation needs review. All data files were preserved.", published);
+	}
 }
 
 // Offline file apply: neither source nor destination Core may be activated by
@@ -161,19 +326,29 @@ export function applyHostProfileFileTransfer(options: { plan: HostProfileFileTra
 	if (options.acceptedPlanSha256 !== options.plan.planSha256) fail("PLAN_NOT_ACCEPTED", "Apply requires the exact reviewed Core transfer plan.");
 	if (timingSafeEqual(options.sourceKey, options.destinationKey)) fail("KEY_REUSE", "Core transfer requires an independent destination key.");
 	const { plan, sourceKey, destinationKey } = options;
-	let lock: number | undefined, lockIdentity: Identity | undefined, staging: string | undefined, db: Database.Database | undefined;
-	let published = false;
+	let lock: number | undefined, lockIdentity: Identity | undefined, journalIdentity: Identity | undefined, staging: string | undefined, db: Database.Database | undefined;
+	let published = false, completed = false;
 	try {
 		const fresh = planHostProfileFileTransfer({ sourceDatabasePath: plan.source.path, sourceKey, destinationDatabasePath: plan.destination.path });
 		if (!same(fresh, plan)) fail("SOURCE_CHANGED", "The Core source or destination changed after review. Review it again.");
-		lock = openSync(lockPath(plan.destination.path), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-		lockIdentity = identity(fstatSync(lock)); writeFileSync(lock, plan.planSha256 + "\n"); fsyncSync(lock);
-		if (!same(destinationAt(plan.destination.path, true), plan.destination)) fail("DESTINATION_CHANGED", "The Core destination changed after review.");
 		const source = readSource(plan.source, sourceKey);
 		if (!same(planFor(plan.source, plan.destination, source.snapshot, source.authenticatedEnvelopes), plan)) fail("SOURCE_CHANGED", "The Core source changed after review. Review it again.");
 		staging = mkdtempSync(join(dirname(plan.destination.path), ".kestrel-core-transfer-"));
 		const stagedDatabase = join(staging, "kestrel.sqlite");
 		const fd = openSync(stagedDatabase, "wx", 0o600); closeSync(fd);
+		const runId = randomUUID();
+		const journal: TransferJournal = { format: "kestrel-core-transfer-journal", version: 1, runId, ownerPid: process.pid, plan,
+			staging: { path: staging, directory: directory(staging), file: ownedFile(stagedDatabase) } };
+		const journalBytes = Buffer.from(canonical(journal));
+		const reservation: TransferLock = { format: "kestrel-core-transfer-lock", version: 1, runId, ownerPid: process.pid,
+			planSha256: plan.planSha256, journalSha256: createHash("sha256").update(journalBytes).digest("hex") };
+		lock = openSync(lockPath(plan.destination.path), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+		lockIdentity = identity(fstatSync(lock)); writeFileSync(lock, canonical(reservation)); fsyncSync(lock);
+		const journalFd = openSync(journalPath(plan.destination.path), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+		journalIdentity = identity(fstatSync(journalFd));
+		try { writeFileSync(journalFd, journalBytes); fsyncSync(journalFd); } finally { closeSync(journalFd); }
+		syncPath(dirname(plan.destination.path));
+		if (!same(destinationAt(plan.destination.path, true), plan.destination)) fail("DESTINATION_CHANGED", "The Core destination changed after review.");
 		db = new Database(stagedDatabase, { fileMustExist: true }); initializeEmpty(db);
 		importHostProfileTransferSnapshot(db, destinationKey, source.snapshot);
 		db.close(); db = undefined; syncPath(stagedDatabase); syncPath(staging);
@@ -185,6 +360,7 @@ export function applyHostProfileFileTransfer(options: { plan: HostProfileFileTra
 		linkSync(stagedDatabase, plan.destination.path); published = true;
 		unlinkSync(stagedDatabase); syncPath(dirname(plan.destination.path));
 		const file = ownedFile(plan.destination.path);
+		completed = true;
 		return { format: "kestrel-host-core-file-transfer-receipt", version: 1, planSha256: plan.planSha256, source: plan.source,
 			destination: { ...plan.destination, file }, summary: plan.summary, authenticatedEnvelopes: plan.authenticatedEnvelopes, activationPerformed: false };
 	} catch (error) {
@@ -193,12 +369,18 @@ export function applyHostProfileFileTransfer(options: { plan: HostProfileFileTra
 		return fail("APPLY_FAILED", "Core transfer failed before publication. The source and any existing destination were preserved.");
 	} finally {
 		let cleanupFailed = false;
-		for (const clean of [
-			() => db?.close(),
-			() => { if (staging) rmSync(staging, { recursive: true, force: true }); },
-			() => { if (lock !== undefined) closeSync(lock); },
-			() => { if (lockIdentity && !missing(lockPath(plan.destination.path)) && same(identity(lstatSync(lockPath(plan.destination.path))), lockIdentity)) unlinkSync(lockPath(plan.destination.path)); },
-		]) { try { clean(); } catch { cleanupFailed = true; } }
+		try { db?.close(); } catch { cleanupFailed = true; }
+		if (completed || !published) { try { if (staging) rmSync(staging, { recursive: true, force: true }); } catch { cleanupFailed = true; } }
+		if (lock !== undefined) { try { closeSync(lock); } catch { cleanupFailed = true; } }
+		// Keep the immutable journal whenever committed/cleanup recovery is
+		// required. Removing the lock first leaves a valid journal-only recovery
+		// record if the final metadata unlink is interrupted.
+		if (!cleanupFailed && (completed || !published)) {
+			try {
+				if (lockIdentity && !missing(lockPath(plan.destination.path)) && same(identity(lstatSync(lockPath(plan.destination.path))), lockIdentity)) unlinkSync(lockPath(plan.destination.path));
+				if (journalIdentity && !missing(journalPath(plan.destination.path)) && same(identity(lstatSync(journalPath(plan.destination.path))), journalIdentity)) unlinkSync(journalPath(plan.destination.path));
+			} catch { cleanupFailed = true; }
+		}
 		if (cleanupFailed) throw new HostProfileFileTransferError(published ? "PUBLISHED_RECOVERY_REQUIRED" : "STAGING_RECOVERY_REQUIRED",
 			"Core transfer cleanup needs recovery. Preserve both profiles and any encrypted staging files; do not retry automatically.", published);
 	}

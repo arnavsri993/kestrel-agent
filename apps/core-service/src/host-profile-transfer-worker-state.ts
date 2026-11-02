@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { applyHostProfileFileTransfer, HostProfileFileTransferError, planHostProfileFileTransfer, verifyHostProfileFileTransferRecovery, type HostProfileFileTransferPlan, type HostProfileFileTransferReceipt } from "@kestrel/database";
+import { applyHostProfileFileTransfer, HostProfileFileTransferError, inspectInterruptedHostProfileFileTransfer, planHostProfileFileTransfer, recoverInterruptedHostProfileFileTransfer, verifyHostProfileFileTransferRecovery, type HostProfileFileTransferPlan, type HostProfileFileTransferReceipt, type HostProfileInterruptedTransferReview } from "@kestrel/database";
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const PLAN_TTL = 15 * 60_000, RECOVERY_TTL = 5 * 60_000;
 type Pending = { id: string; plan: HostProfileFileTransferPlan; sourceKey: Buffer; expiresAt: number };
 type Recovery = { id: string; receipt: HostProfileFileTransferReceipt; sourceKey: Buffer; destinationKey: Buffer; expiresAt: number };
+type Interrupted = { id: string; review: HostProfileInterruptedTransferReview; expiresAt: number };
 type Request = Record<string, unknown>;
 const invalid = () => new HostProfileFileTransferError("INVALID_REQUEST", "The protected Core transfer request is invalid.");
 function key(value: unknown): Buffer {
@@ -28,13 +29,15 @@ function path(value: unknown): string {
 export class HostProfileTransferWorkerState {
 	private pending: Pending | undefined;
 	private recovery: Recovery | undefined;
+	private interrupted: Interrupted | undefined;
 	constructor(private readonly now: () => number = Date.now) {}
 	private clearPlan(): void { this.pending?.sourceKey.fill(0); this.pending = undefined; }
 	private clearRecovery(): void { this.recovery?.sourceKey.fill(0); this.recovery?.destinationKey.fill(0); this.recovery = undefined; }
-	close(): void { this.clearPlan(); this.clearRecovery(); }
+	close(): void { this.clearPlan(); this.clearRecovery(); this.interrupted = undefined; }
 	expire(): void {
 		if (this.pending && this.pending.expiresAt <= this.now()) this.clearPlan();
 		if (this.recovery && this.recovery.expiresAt <= this.now()) this.clearRecovery();
+		if (this.interrupted && this.interrupted.expiresAt <= this.now()) this.interrupted = undefined;
 	}
 	handle(input: unknown): Record<string, unknown> {
 		this.expire();
@@ -42,6 +45,28 @@ export class HostProfileTransferWorkerState {
 		const requestId = typeof request.requestId === "string" && UUID.test(request.requestId) ? request.requestId : null;
 		try {
 			if (!requestId) throw invalid();
+			if (request.method === "inspect-interrupted") {
+				fields(request, ["destinationDatabasePath"]); this.close();
+				const review = inspectInterruptedHostProfileFileTransfer(path(request.destinationDatabasePath));
+				this.interrupted = { id: randomUUID(), review, expiresAt: this.now() + PLAN_TTL };
+				return { requestId, ok: true, reviewId: this.interrupted.id, expiresAt: this.interrupted.expiresAt,
+					preview: { state: review.state, sourceDatabasePath: review.plan.source.path, destinationDatabasePath: review.destinationDatabasePath,
+						counts: review.plan.summary.counts, excluded: review.plan.summary.excluded, recoverySha256: review.recoverySha256 } };
+			}
+			if (request.method === "recover-interrupted") {
+				fields(request, ["reviewId", "acceptedRecoverySha256", "approved", "sourceKeyBase64", "destinationKeyBase64"]);
+				if (!this.interrupted || request.reviewId !== this.interrupted.id) throw new HostProfileFileTransferError("RECOVERY_EXPIRED", "The interrupted Core transfer review expired. Inspect it again.");
+				if (request.approved !== true || request.acceptedRecoverySha256 !== this.interrupted.review.recoverySha256) throw new HostProfileFileTransferError("PLAN_NOT_ACCEPTED", "Review and accept the exact interrupted Core transfer before recovery.");
+				const review = this.interrupted.review; this.interrupted = undefined;
+				let sourceKey: Buffer | undefined, destinationKey: Buffer | undefined;
+				try {
+					sourceKey = key(request.sourceKeyBase64); destinationKey = key(request.destinationKeyBase64);
+					delete request.sourceKeyBase64; delete request.destinationKeyBase64;
+					const receipt = recoverInterruptedHostProfileFileTransfer({ destinationDatabasePath: review.destinationDatabasePath, sourceKey, destinationKey, acceptedRecoverySha256: review.recoverySha256 });
+					this.recovery = { id: randomUUID(), receipt, sourceKey, destinationKey, expiresAt: this.now() + RECOVERY_TTL };
+					return { requestId, ok: true, recoveryId: this.recovery.id, expiresAt: this.recovery.expiresAt, receipt };
+				} catch (error) { sourceKey?.fill(0); destinationKey?.fill(0); throw error; }
+			}
 			if (request.method === "plan") {
 				fields(request, ["sourceDatabasePath", "destinationDatabasePath", "sourceKeyBase64"]);
 				this.close();

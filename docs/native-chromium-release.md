@@ -1351,3 +1351,61 @@ large-profile streaming, older schema handling, browser/credential handling,
 application/profile activation and user-reviewed cutover still need completion.
 No real profile, Keychain item, credential, vendor login or canonical app was
 read or changed; no whole-desktop capture/input was enabled by these checks.
+
+### Reviewed recovery after an interrupted Core import (2026-11-02)
+
+Offline apply now writes a paired private lock and immutable journal before
+writing imported records. The journal records the reviewed plan, original
+worker PID, unique run ID and exact staging-directory/database identities; the
+lock binds its SHA-256. Both are bounded metadata files with mode 0600 inside
+the private destination directory. They contain no database keys or decrypted
+records. Committed/cleanup errors retain their recovery metadata instead of
+discarding the information needed after process death.
+
+The protected Node worker can inspect that journal without keys or database
+reads, then hold an expiring opaque recovery review for explicit acceptance.
+Recovery refuses a live original owner, mismatched metadata, replaced paths,
+unknown staging files, wrong keys, changed source data and later native work.
+A separate exclusive reservation prevents overlapping recovery workers. Normal
+file APIs still reject hard links; the recovery lane accepts exactly the
+journal-bound staged/published pair, authenticates its contents and removes
+only its redundant staging link. It can finish a verified stage before
+publication, a published two-link database, or finalization after the staging
+link was already removed. It returns the same read-only both-file verification
+receipt and never activates a profile or deletes the published database.
+
+The new tests kill actual generated Node subprocesses at those three boundaries,
+and also immediately after journal persistence. An actual live worker is held
+at publication to prove a second worker cannot steal its reservation. Other
+cases cover journal-only finalization, tampered metadata/permissions, changed
+source data, replaced destinations, wrong keys, single-use private-worker
+acceptance and preservation of later native work. Test-only preload code
+instruments only the generated destination and kills only its own process;
+no crash flag or bypass is added to the production worker.
+
+All **2,191 tests in 280 files**, workspace typechecking and the full native
+build passed. The 46 focused cases across four files include 17 subprocess
+recovery scenarios and explicit preservation of pre-existing journal/recovery
+reservation files.
+
+Bundle `95b3c8d071a9055daaf3044a9d76646ed7eee8d1417af0949de54ef24f7eda5b`
+passed all five packaged recovery phases using its actual bundled Node
+executable, seven normal transfer phases, all 16 Settings/window/restart phases
+and bundled Core durability/recovery with the fake host-key broker. The three
+receipts have unchanged before/after digests:
+`.tmp/native-interrupted-transfer-recovery-evidence/receipt.json`,
+`.tmp/native-interrupted-transfer-apply-evidence/receipt.json` and
+`.tmp/native-interrupted-transfer-settings-evidence/receipt.json`.
+Only generated temporary Core files and in-memory host keys were used. No real
+profile, Keychain, credential, vendor login, canonical installation or desktop
+capture/input enablement was involved.
+
+Incomplete/corrupt stages and abandoned recovery-worker reservations are
+preserved for a separate review. They are not automatically deleted or adopted.
+Explicit cancellation/archive handling and recovery of that second reservation
+remain required alongside the native migration UI/launcher, profile activation,
+large-profile and credential/browser paths. The preceding head
+`607bb22f29ce8e704c8cfded3e48ba943adaed14` passed full CI `41474489827`
+and PR analysis `41474480600`; the new head requires its own CI result. This
+is interrupted Core import infrastructure, not completed migration or release
+acceptance.
