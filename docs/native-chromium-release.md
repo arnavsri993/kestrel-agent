@@ -1409,3 +1409,65 @@ large-profile and credential/browser paths. The preceding head
 and PR analysis `41474480600`; the new head requires its own CI result. This
 is interrupted Core import infrastructure, not completed migration or release
 acceptance.
+
+### Native conversation transfer and data profile selection (2026-11-02)
+
+The Chromium desktop now exposes **Kestrel → Transfer Conversations & Memory…**
+and **Use Previous Data Profile…** in its native application menu. A native folder
+picker selects the source explicitly. After a separate read-only review consent,
+the fixed-purpose legacy key reader unlocks the selected Core database on a worker
+queue. Keys travel only over the bundled transfer worker's anonymous private
+pipes; there is no new renderer, Core RPC, tool or user-extension entry point.
+
+The review shows conversation, message, memory and timeline counts plus active
+tasks, approvals and scheduled jobs that will be retired. Apply stays disabled
+until the person confirms that the source Kestrel instance is closed. Policy
+`kestrel-host-profile-transfer-in-flight-v2` also cancels pending, running and
+approval-waiting scheduled jobs, preserving their definitions and diagnostics
+without retaining authority to execute after import. Browser data, saved
+credentials, provider setup files and workspace grants are outside this flow.
+
+A new private destination gets a stable final path and its protected native key
+before Core directories are created. Verified publication and both-file recovery
+verification precede activation. The browser profile's bounded private
+`native-core-profile.json` selects a child beneath `native-core-profiles/UUID`;
+the running Core stays bound to its launch profile until normal app restart.
+The broker accepts only the owning browser profile or its private native child.
+Switching to the previous data profile swaps that selection and preserves the
+source, imported profile and later native work. It does not replace the installed
+application or undo browser changes.
+
+Selection writes use a private staged file, file sync, atomic rename and directory
+sync. A pre-commit failure preserves the old selection. A directory-sync failure
+after rename reports that the selection was made but final durability could not
+be confirmed. It does not claim that activation remained unchanged. Generated
+native tests compile the actual storage/controller module with fixture-only sync
+failures and cover safe resolution, links, metadata permissions, changed reviews,
+selection/restore and both sync failure boundaries.
+
+The new `test:native-profile-transfer-ui` canary creates only marked OS-temporary
+source/browser profiles. Its native test mode refuses a real profile or Keychain
+password request. The canary exercises the real picker, review, acceptance,
+restart, imported conversation and previous-profile UI, then checks source-byte
+preservation, cancelled schedule authority and retained later native work. Its
+live acceptance result must be recorded separately; the code alone is not proof
+that those UI phases passed.
+
+All **2,207 tests in 281 files**, workspace typechecking and the full native
+build passed locally. Bundle
+`c2f8826414d91ab8516b64f4d270ee2ac2a50dc76c7fc646621cbc0dba5c434f`
+passed seven packaged transfer-worker phases, five process-crash recovery phases,
+all 16 native Settings/window/restart phases and bundled Core durability/recovery
+with the in-memory host-key broker. Candidate digests were unchanged in all
+three receipts: `.tmp/native-profile-ui-final-file-transfer-evidence/receipt.json`,
+`.tmp/native-profile-ui-final-recovery-evidence/receipt.json` and
+`.tmp/native-profile-ui-final-settings-evidence/receipt.json`. The public Settings
+capture was visually inspected. These use generated temporary data and do not
+exercise the new native transfer menu. That live picker/apply/switch-back test is
+awaiting an unlocked Mac; its first attempt stopped before opening the picker.
+
+Incomplete-stage archive/cancellation and abandoned recovery reservation handling
+remain unfinished. So do large-profile streaming, older schemas, browser and
+credential handling, provider sign-in parity, final enabled-control/restart
+acceptance, production signing/notarization and canonical installed-app cutover.
+The existing app, real profiles, credentials and provider logins remain untouched.

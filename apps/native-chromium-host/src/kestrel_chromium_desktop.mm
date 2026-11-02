@@ -42,6 +42,7 @@
 #include "native_isolated_automation.h"
 #include "native_computer_use.h"
 #include "kestrel_native_core_keychain.h"
+#include "kestrel_native_profile_transfer.h"
 
 namespace {
 bool RequestNativeWindow(bool dock_activation);
@@ -364,7 +365,10 @@ bool EnqueueKestrelExternalURL(NSURL* url) {
 @interface KestrelChromiumMenuTarget : NSObject <NSMenuItemValidation>
 - (void)chromeCommand:(NSMenuItem*)item;
 - (void)settings:(id)sender;
+- (void)transferCore:(id)sender;
+- (void)previousCore:(id)sender;
 @end
+static KestrelNativeProfileTransferController* desktop_profile_transfer;
 @implementation KestrelChromiumMenuTarget
 - (void)chromeCommand:(NSMenuItem*)item {
   const auto browser = desktop_client ? desktop_client->Active() : nullptr;
@@ -375,7 +379,10 @@ bool EnqueueKestrelExternalURL(NSURL* url) {
   if (browser && command >= 0) browser->GetHost()->ExecuteChromeCommand(command, CEF_WOD_CURRENT_TAB);
 }
 - (void)settings:(id)sender { if (desktop_client) desktop_client->OpenSettings(); }
+- (void)transferCore:(id)sender { [desktop_profile_transfer beginTransfer]; }
+- (void)previousCore:(id)sender { [desktop_profile_transfer restorePrevious]; }
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
+  if (item.action == @selector(transferCore:) || item.action == @selector(previousCore:)) return [desktop_profile_transfer canBegin];
   const auto browser = desktop_client ? desktop_client->Active() : nullptr;
   if (item.action != @selector(chromeCommand:)) return desktop_client != nullptr;
   if (!browser && desktop_client && ([item.representedObject isEqualToString:@"IDC_NEW_WINDOW"] || [item.representedObject isEqualToString:@"IDC_NEW_TAB"])) return YES;
@@ -400,6 +407,8 @@ static void InstallDesktopMenu() {
   NSMenu* app_menu = submenu(@"Kestrel");
   [app_menu addItemWithTitle:@"About Kestrel" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
   NSMenuItem* settings = [app_menu addItemWithTitle:@"Settings…" action:@selector(settings:) keyEquivalent:@","]; settings.target = desktop_menu_target;
+  NSMenuItem* transfer = [app_menu addItemWithTitle:@"Transfer Conversations & Memory…" action:@selector(transferCore:) keyEquivalent:@""]; transfer.target = desktop_menu_target;
+  NSMenuItem* previous = [app_menu addItemWithTitle:@"Use Previous Data Profile…" action:@selector(previousCore:) keyEquivalent:@""]; previous.target = desktop_menu_target;
   [app_menu addItem:NSMenuItem.separatorItem];
   [app_menu addItemWithTitle:@"Hide Kestrel" action:@selector(hide:) keyEquivalent:@"h"];
   [app_menu addItemWithTitle:@"Quit Kestrel" action:@selector(terminate:) keyEquivalent:@"q"];
@@ -619,11 +628,14 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     std::cerr << "This native Kestrel profile is already in use or unavailable." << std::endl; return 1;
   }
   struct LockOwner { int fd; ~LockOwner() { close(fd); } } lock_owner{lock_fd};
+  NSString* core_profile = KestrelResolveNativeCoreProfile(profile,&error);
+  if (!core_profile) { NSAlert* alert = [[NSAlert alloc] init]; alert.messageText = @"Core profile unavailable"; alert.informativeText = error.localizedDescription ?: @"Existing profiles were preserved."; [alert runModal]; return 1; }
+  desktop_profile_transfer = [[KestrelNativeProfileTransferController alloc] initWithBrowserProfile:profile currentCoreProfile:core_profile testKeys:disposable_test_key];
   NSString* resources = NSBundle.mainBundle.resourcePath;
   NSTask* broker = [[NSTask alloc] init];
   broker.executableURL = [NSURL fileURLWithPath:[resources stringByAppendingPathComponent:@"agent-core/node/bin/node"]];
   NSMutableArray* arguments = [NSMutableArray arrayWithArray:@[
-    [resources stringByAppendingPathComponent:@"native-ui-broker.mjs"], @"--profile-root", profile,
+    [resources stringByAppendingPathComponent:@"native-ui-broker.mjs"], @"--profile-root", profile, @"--core-profile-root", core_profile,
     @"--browser-pid", [NSString stringWithFormat:@"%d", getpid()]]];
   if (default_profile || HasArgument(argc, argv, "--kestrel-durable-profile")) [arguments addObject:@"--durable-profile"];
   broker.arguments = arguments;
@@ -736,12 +748,12 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
           std::string error;
           const bool ok = disposable_test_key
               ? native_core_profile_key_store.GetOrCreateDisposableTestKey(
-                    std::string(profile.fileSystemRepresentation),
+                    std::string(core_profile.fileSystemRepresentation),
                     std::string(NSBundle.mainBundle.bundleIdentifier.UTF8String ?: ""),
                     std::string(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: ""),
                     &key_base64, &error)
               : native_core_profile_key_store.GetOrCreate(
-                    std::string(profile.fileSystemRepresentation), &key_base64, &error);
+                    std::string(core_profile.fileSystemRepresentation), &key_base64, &error);
           std::string response = ok
               ? std::string("{\"kind\":\"native-core-profile-key-response\",\"requestId\":\"native-core-profile-key-v1\",\"ok\":true,\"keyBase64\":\"") + key_base64 + "\"}"
               : "{\"kind\":\"native-core-profile-key-response\",\"requestId\":\"native-core-profile-key-v1\",\"ok\":false,\"error\":\"Protected native profile key is unavailable.\"}";
@@ -1000,6 +1012,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   dispatch_source_set_event_handler(termination, ^{ [NSApp terminate:nil]; });
   dispatch_resume(termination);
   CefRunMessageLoop();
+  [desktop_profile_transfer shutdown];
   dispatch_source_cancel(termination);
   signal(SIGTERM, previous_sigterm);
   // Native messaging keeps the extension worker alive. End the owned broker
@@ -1015,5 +1028,6 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   app = nullptr;
   CefShutdown();
   desktop_menu_target = nil;
+  desktop_profile_transfer = nil;
   return 0;
 }

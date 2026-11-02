@@ -15,6 +15,11 @@ import { cancelPluginOnClientLoss, cancelPluginByUiRequest } from "./native-plug
 const resources = dirname(fileURLToPath(import.meta.url));
 const argument = (name) => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
 const profile = await realpath(argument("--profile-root"));
+const coreProfile = await realpath(argument("--core-profile-root") || profile);
+if (coreProfile !== profile && (!coreProfile.startsWith(join(profile, "native-core-profiles") + "/") ||
+	!/^native-core-profiles\/[a-f0-9-]{36}$/i.test(coreProfile.slice(profile.length + 1)))) throw new Error("Native Core profile must belong to its owning browser profile.");
+const coreProfileInfo = await lstat(coreProfile);
+if (!coreProfileInfo.isDirectory() || coreProfileInfo.isSymbolicLink() || coreProfileInfo.uid !== process.getuid() || (coreProfileInfo.mode & 0o077)) throw new Error("Native Core profile must be an owned private directory.");
 const browserPid = Number(argument("--browser-pid"));
 if (!Number.isSafeInteger(browserPid) || browserPid !== process.ppid) throw new Error("Native broker requires its owning browser.");
 const peerInspector = createRequire(import.meta.url)(join(resources, "native-peer.node"));
@@ -86,7 +91,7 @@ function signalReady() {
 	send(active, { kind: "ready" });
 	process.stdout.write(JSON.stringify({ kind: "ui-ready" }) + "\n");
 }
-const core = spawn(process.execPath, [join(resources, "native-desktop-core.mjs"), "--profile-root", profile,
+const core = spawn(process.execPath, [join(resources, "native-desktop-core.mjs"), "--profile-root", coreProfile,
 	...(process.argv.includes("--durable-profile") ? ["--durable-profile"] : [])], {
 	stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, KESTREL_NATIVE_LIVE_EXTENSIONS: "0" },
 });

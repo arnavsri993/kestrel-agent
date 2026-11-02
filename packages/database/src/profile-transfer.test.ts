@@ -89,6 +89,24 @@ function seedProtectedFamilies(source: KestrelDatabase, key: Buffer): void {
 }
 
 describe("host profile transfer", () => {
+	it("cancels inherited scheduled execution authority while preserving job prompts and history", () => {
+		const source = database(), target = database();
+		const jobs = ["pending", "running", "waiting_approval", "completed", "failed", "cancelled"].map(status => ({
+			id: `scheduled-${status}`, title: "Generated scheduled fixture", sessionId: "generated-session", model: "fixture", providerIds: ["fixture"],
+			schedule: { kind: "once", nextRunAt: timestamp }, status, createdAt: timestamp, updatedAt: timestamp,
+			prompt: "Preserve this generated prompt", error: "Preserve prior diagnostic", opaqueMetadata: { keep: true },
+		}));
+		const generic = { toolName: "literal", status: "pending", keep: true };
+		source.setPrivateState("orchestrator.scheduled-jobs", [...jobs, generic]);
+		const snapshot = source.exportHostProfileTransferSnapshot(); expect(snapshot.excluded.scheduledJobsCancelled).toBe(3);
+		target.importHostProfileTransferSnapshot(snapshot);
+		const restored = target.getPrivateState<Array<Record<string, unknown>>>("orchestrator.scheduled-jobs")!;
+		for (let index = 0; index < 3; index++) expect(restored[index]).toMatchObject({ status: "cancelled", prompt: jobs[index]!.prompt, opaqueMetadata: { keep: true } });
+		expect(String(restored[0]!.error)).toContain("Preserve prior diagnostic");
+		expect(restored.slice(3)).toEqual([...jobs.slice(3), generic]);
+		expect(source.getPrivateState("orchestrator.scheduled-jobs")).toEqual([...jobs, generic]);
+		expect(target.exportHostProfileTransferSnapshot().excluded.scheduledJobsCancelled).toBe(0);
+	});
 	it("preserves logical protected data under an independent key and rebuilds keyed indexes", () => {
 		const sourceKey = createEncryptionKey();
 		const targetKey = createEncryptionKey();

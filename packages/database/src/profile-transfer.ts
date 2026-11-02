@@ -7,7 +7,7 @@ import { listMigrationVersions, loadMigrationSql } from "./migrations.js";
 import { redactDeletedSourceToolResult, SOURCE_EVIDENCE_REMOVED_TEXT, SOURCE_RECEIPT_DELETION_PREFIX, sourceReceiptDeletionKey } from "./source-evidence-redaction.js";
 
 export const HOST_PROFILE_TRANSFER_VERSION = 1 as const;
-export const HOST_PROFILE_TRANSFER_POLICY = "kestrel-host-profile-transfer-in-flight-v1" as const;
+export const HOST_PROFILE_TRANSFER_POLICY = "kestrel-host-profile-transfer-in-flight-v2" as const;
 export const HOST_PROFILE_TRANSFER_MAX_BYTES = 64 * 1024 * 1024;
 export const HOST_PROFILE_TRANSFER_MAX_ROWS = 100_000;
 const SCHEMA_VERSION = 18;
@@ -25,7 +25,7 @@ export type HostProfileTransferSnapshot = {
 	policy: typeof HOST_PROFILE_TRANSFER_POLICY;
 	rows: TransferTables;
 	counts: Record<string, number>;
-	excluded: { idempotencyClaims: number; runningMemoryJobsCancelled: number; activeAgentRunsCancelled: number; activeToolExecutionsRetired: number; activeWorkingTasksCancelled: number; unexecutedApprovalsRetired: number; unsettledActionReceiptsRetired: number };
+	excluded: { idempotencyClaims: number; runningMemoryJobsCancelled: number; activeAgentRunsCancelled: number; activeToolExecutionsRetired: number; activeWorkingTasksCancelled: number; unexecutedApprovalsRetired: number; unsettledActionReceiptsRetired: number; scheduledJobsCancelled: number };
 	semanticSha256: string;
 };
 
@@ -312,6 +312,25 @@ export function createHostProfileTransferSnapshot(db: Database.Database, key: Bu
 	return db.transaction(() => createHostProfileTransferSnapshotInReadTransaction(db, key, maxBytes)).deferred();
 }
 
+function retireScheduledJobs(rows: TransferTables): number {
+	let retired = 0;
+	for (const row of rows.private_runtime_state ?? []) {
+		if (row.values.key !== "orchestrator.scheduled-jobs") continue;
+		const stored: unknown = JSON.parse(String(row.cleartext!.value_ciphertext));
+		if (!Array.isArray(stored)) continue;
+		const next = stored.map(value => {
+			const parsed = Contracts.ScheduledJobSummarySchema.safeParse(value);
+			if (!parsed.success || !value || typeof value !== "object" || typeof value.prompt !== "string" || !parsed.data.providerIds.length ||
+				!["pending", "running", "waiting_approval"].includes(parsed.data.status)) return value;
+			retired++;
+			return { ...value, status: "cancelled", error: [typeof value.error === "string" ? value.error : undefined,
+				"Cancelled by explicit Core transfer; review and schedule again before execution."].filter(Boolean).join("\n") };
+		});
+		row.cleartext!.value_ciphertext = JSON.stringify(next);
+	}
+	return retired;
+}
+
 function createHostProfileTransferSnapshotInReadTransaction(db: Database.Database, key: Buffer, maxBytes: number): HostProfileTransferSnapshot {
 	verifyKey(key);
 	if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > HOST_PROFILE_TRANSFER_MAX_BYTES) fail("Profile transfer byte limit is invalid.");
@@ -519,6 +538,7 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 		rows[table] = result;
 	}
 	projectDeletedSourceEvidence(rows);
+	const scheduledJobsCancelled = retireScheduledJobs(rows);
 	const snapshot: HostProfileTransferSnapshot = {
 		format: "kestrel-host-profile-transfer",
 		version: HOST_PROFILE_TRANSFER_VERSION,
@@ -526,7 +546,7 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 		policy: HOST_PROFILE_TRANSFER_POLICY,
 		rows,
 		counts,
-		excluded: { idempotencyClaims, runningMemoryJobsCancelled, activeAgentRunsCancelled, activeToolExecutionsRetired, activeWorkingTasksCancelled, unexecutedApprovalsRetired, unsettledActionReceiptsRetired },
+		excluded: { idempotencyClaims, runningMemoryJobsCancelled, activeAgentRunsCancelled, activeToolExecutionsRetired, activeWorkingTasksCancelled, unexecutedApprovalsRetired, unsettledActionReceiptsRetired, scheduledJobsCancelled },
 		semanticSha256: "",
 	};
 	snapshot.semanticSha256 = computeHostProfileTransferSemanticHash(rows);
@@ -538,9 +558,9 @@ function validateSnapshot(snapshot: HostProfileTransferSnapshot): void {
 	if (!snapshot || snapshot.format !== "kestrel-host-profile-transfer" || snapshot.version !== HOST_PROFILE_TRANSFER_VERSION || snapshot.schemaVersion !== SCHEMA_VERSION || snapshot.policy !== HOST_PROFILE_TRANSFER_POLICY) fail("Profile transfer snapshot format, schema, or policy is unsupported.");
 	if (canonical(Object.keys(snapshot).sort()) !== canonical(["format", "version", "schemaVersion", "policy", "rows", "counts", "excluded", "semanticSha256"].sort())) fail("Profile transfer snapshot contains unsupported metadata.");
 	if (!snapshot.counts || !snapshot.excluded || canonical(Object.keys(snapshot.counts).sort()) !== canonical(Object.keys(TABLES).sort()) || Object.values(snapshot.counts).some(count => !Number.isSafeInteger(count) || count < 0)) fail("Profile transfer snapshot table counts are malformed.");
-	if (canonical(Object.keys(snapshot.excluded).sort()) !== canonical(["idempotencyClaims", "runningMemoryJobsCancelled", "activeAgentRunsCancelled", "activeToolExecutionsRetired", "activeWorkingTasksCancelled", "unexecutedApprovalsRetired", "unsettledActionReceiptsRetired"].sort())) fail("Profile transfer snapshot policy report contains unsupported fields.");
+	if (canonical(Object.keys(snapshot.excluded).sort()) !== canonical(["idempotencyClaims", "runningMemoryJobsCancelled", "activeAgentRunsCancelled", "activeToolExecutionsRetired", "activeWorkingTasksCancelled", "unexecutedApprovalsRetired", "unsettledActionReceiptsRetired", "scheduledJobsCancelled"].sort())) fail("Profile transfer snapshot policy report contains unsupported fields.");
 	if (snapshot.counts.schema_migrations !== SCHEMA_VERSION || snapshot.counts.idempotency_claims !== snapshot.excluded.idempotencyClaims) fail("Profile transfer snapshot schema or exclusion counts are inconsistent.");
-	for (const key of ["idempotencyClaims", "runningMemoryJobsCancelled", "activeAgentRunsCancelled", "activeToolExecutionsRetired", "activeWorkingTasksCancelled", "unexecutedApprovalsRetired", "unsettledActionReceiptsRetired"] as const) if (!Number.isSafeInteger(snapshot.excluded[key]) || snapshot.excluded[key] < 0) fail("Profile transfer snapshot policy report is malformed.");
+	for (const key of ["idempotencyClaims", "runningMemoryJobsCancelled", "activeAgentRunsCancelled", "activeToolExecutionsRetired", "activeWorkingTasksCancelled", "unexecutedApprovalsRetired", "unsettledActionReceiptsRetired", "scheduledJobsCancelled"] as const) if (!Number.isSafeInteger(snapshot.excluded[key]) || snapshot.excluded[key] < 0) fail("Profile transfer snapshot policy report is malformed.");
 	const expectedDataTables = Object.keys(TABLES).filter(table => !OMIT_TABLES.has(table) && !DERIVED_TABLES.has(table)).sort();
 	if (canonical(Object.keys(snapshot.rows).sort()) !== canonical(expectedDataTables)) fail("Profile transfer snapshot has missing or unknown table data.");
 	const rowCount = Object.values(snapshot.rows).reduce((total, rows) => total + rows.length, 0);

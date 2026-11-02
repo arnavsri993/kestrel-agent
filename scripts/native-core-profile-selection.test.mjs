@@ -1,0 +1,72 @@
+import { describe, beforeAll, afterAll, expect, it } from "vitest";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
+
+describe.skipIf(process.platform !== "darwin")("native Core data profile selection", () => {
+	let temporary, executable;
+	beforeAll(() => {
+		const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+		temporary = realpathSync(mkdtempSync(join(tmpdir(), "kestrel-profile-selection-"))); executable = join(temporary, "selection-fixture");
+		const sdk = execFileSync("/usr/bin/xcrun", ["--show-sdk-path"], { encoding: "utf8" }).trim();
+		execFileSync("/usr/bin/xcrun", ["clang++", "-std=c++20", "-fobjc-arc", "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=13.0", "-isysroot", sdk,
+			"-I", join(repository, "apps/native-chromium-host/src"),
+			... ["kestrel_native_core_keychain.mm", "kestrel_legacy_core_key.cc", "kestrel_legacy_keychain.mm"].map(file => join(repository, "apps/native-chromium-host/src", file)),
+			join(repository, "apps/native-chromium-host/tests/profile_selection_fixture.mm"), "-framework", "Foundation", "-framework", "AppKit", "-framework", "Security", "-framework", "LocalAuthentication", "-o", executable], { timeout: 30000, stdio: "pipe" });
+	});
+	afterAll(() => { if (temporary) rmSync(temporary, { recursive: true, force: true }); });
+	function profile() {
+		const root = join(temporary, randomUUID()); mkdirSync(root, { mode: 0o700 });
+		return { root, file: join(root, "native-core-profile.json"),
+			select(value) { writeFileSync(join(root, "native-core-profile.json"), JSON.stringify(value), { mode: 0o600 }); },
+			child() { const relative = `native-core-profiles/${randomUUID()}`; mkdirSync(join(root, "native-core-profiles"), { mode: 0o700 }); mkdirSync(join(root, relative), { mode: 0o700 }); return relative; },
+			save(active, previous = "", expected = "", fault) { const result = spawnSync(executable, [root, active, previous, expected], { encoding: "utf8", env: { ...process.env, ...(fault ? { KESTREL_SELECTION_FIXTURE_FSYNC_FAULT: fault } : {}) } }); expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout); },
+			resolve() { const result = spawnSync(executable, [root], { encoding: "utf8" }); expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout); } };
+	}
+	it("keeps the current profile when no selection was made", () => { const value = profile(); expect(value.resolve()).toEqual({ ok: true, profile: value.root, error: false }); });
+	it("resolves a selected stable child without moving either profile", () => {
+		const value = profile(), relative = `native-core-profiles/${randomUUID()}`;
+		mkdirSync(join(value.root, "native-core-profiles"), { mode: 0o700 }); mkdirSync(join(value.root, relative), { mode: 0o700 });
+		value.select({ version: 1, active: relative, previous: "" }); expect(value.resolve()).toEqual({ ok: true, profile: join(value.root, relative), error: false });
+	});
+	it.each([
+		{ version: 2, active: "", previous: "" }, { version: true, active: "", previous: "" }, { version: 1.1, active: "", previous: "" },
+		{ version: 1, active: "../other", previous: "" }, { version: 1, active: "/other", previous: "" },
+		{ version: 1, active: "", previous: "", extra: true },
+	])("refuses malformed or unsupported selection metadata", selected => { const value = profile(); value.select(selected); expect(value.resolve()).toMatchObject({ ok: false, error: true }); });
+	it("refuses linked or readable-by-others selection files", () => {
+		const value = profile(); value.select({ version: 1, active: "", previous: "" }); chmodSync(value.file, 0o644); expect(value.resolve().ok).toBe(false);
+		const linked = profile(); symlinkSync(value.file, linked.file); expect(linked.resolve().ok).toBe(false);
+	});
+	it("refuses a linked child profile even when its target is private", () => {
+		const value = profile(), other = profile(), relative = `native-core-profiles/${randomUUID()}`;
+		mkdirSync(join(value.root, "native-core-profiles"), { mode: 0o700 }); symlinkSync(other.root, join(value.root, relative));
+		value.select({ version: 1, active: relative, previous: "" }); expect(value.resolve().ok).toBe(false);
+	});
+	it("saves an atomic selection and can switch back without moving either profile", () => {
+		const value = profile(), child = value.child();
+		expect(value.save(child)).toMatchObject({ saved: "selected", profile: join(value.root, child) });
+		expect(value.save("", child, child)).toMatchObject({ saved: "selected", profile: value.root });
+		expect(existsSync(join(value.root, child))).toBe(true);
+	});
+	it("does not overwrite a selection changed since review", () => {
+		const value = profile(), child = value.child(); value.select({ version: 1, active: child, previous: "" });
+		expect(value.save("", child)).toMatchObject({ saved: "unchanged", profile: join(value.root, child) });
+	});
+	it("refuses unavailable or escaping selection targets without creating metadata", () => {
+		const value = profile(); expect(value.save(`native-core-profiles/${randomUUID()}`).saved).toBe("unchanged"); expect(value.save("../other").saved).toBe("unchanged"); expect(existsSync(value.file)).toBe(false);
+	});
+	it("keeps the original selection and removes the staging file if data sync fails", () => {
+		const value = profile(), child = value.child();
+		expect(value.save(child, "", "", "file")).toMatchObject({ saved: "unchanged", profile: value.root });
+		expect(readdirSync(value.root)).toEqual(["native-core-profiles"]);
+	});
+	it("reports the committed selection honestly when directory sync fails after rename", () => {
+		const value = profile(), child = value.child();
+		expect(value.save(child, "", "", "directory")).toMatchObject({ saved: "selected-durability-unconfirmed", profile: join(value.root, child) });
+		expect(value.resolve()).toMatchObject({ profile: join(value.root, child) });
+	});
+});

@@ -2,7 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, readSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import Database from "better-sqlite3";
-import { createHostProfileTransferSnapshot, importHostProfileTransferSnapshot, type HostProfileTransferSnapshot } from "./profile-transfer.js";
+import { createHostProfileTransferSnapshot, HOST_PROFILE_TRANSFER_POLICY, importHostProfileTransferSnapshot, type HostProfileTransferSnapshot } from "./profile-transfer.js";
 import { listMigrationVersions, loadMigrationSql } from "./migrations.js";
 
 type Identity = { device: string; inode: string };
@@ -205,7 +205,7 @@ function validateJournal(value: unknown): asserts value is TransferJournal {
 	if (!exactFields(plan.source, ["path", "file", "directory"]) || typeof plan.source.path !== "string" || !validIdentity(plan.source.file) || !validIdentity(plan.source.directory) ||
 		!exactFields(plan.destination, ["path", "directory"]) || typeof plan.destination.path !== "string" || !validIdentity(plan.destination.directory) ||
 		!exactFields(plan.summary, ["schemaVersion", "policy", "counts", "excluded", "semanticSha256"]) ||
-		plan.summary.schemaVersion !== 18 || plan.summary.policy !== "kestrel-host-profile-transfer-in-flight-v1" || !/^[a-f0-9]{64}$/.test(plan.summary.semanticSha256) ||
+		plan.summary.schemaVersion !== 18 || plan.summary.policy !== HOST_PROFILE_TRANSFER_POLICY || !/^[a-f0-9]{64}$/.test(plan.summary.semanticSha256) ||
 		!Number.isSafeInteger(plan.authenticatedEnvelopes) || plan.authenticatedEnvelopes < 1 ||
 		![plan.summary.counts, plan.summary.excluded].every(record => record && typeof record === "object" && !Array.isArray(record) && Object.keys(record).length <= 100 && Object.entries(record).every(([name, count]) => /^[a-zA-Z_]{1,64}$/.test(name) && Number.isSafeInteger(count) && Number(count) >= 0)))
 		fail("RECOVERY_METADATA_INVALID", "The interrupted Core transfer plan metadata is invalid.");
