@@ -994,11 +994,13 @@ export class KestrelDatabase {
 
     private redactSourceReceipts(eventId: string): void {
         const rows = this.db.prepare("SELECT payload FROM tool_executions WHERE tool_name = 'sources.read'").all() as Array<{ payload: string }>;
+        let removedEvidence = false;
         for (const row of rows) {
             const receipt = this.decodeToolExecution(row.payload);
             const events = receipt.output?.events;
             if (!Array.isArray(events) || !events.some(event => event && typeof event === "object" && event.id === eventId)) continue;
             this.setPrivateState(this.sourceReceiptDeletionKey(receipt.id), { deleted: true });
+            removedEvidence = true;
             this.saveToolExecution(receipt);
             const messages = (this.db.prepare("SELECT * FROM runtime_messages").all() as RuntimeMessageRow[]).map(row => this.parseRuntimeMessage(row)).filter(message =>
                 message.toolExecutionId === receipt.id || message.sourceToolExecutionIds?.includes(receipt.id) ||
@@ -1012,6 +1014,10 @@ export class KestrelDatabase {
                     .run(encrypted.ciphertext, encrypted.iv, encrypted.authTag, message.id);
                 this.db.prepare("DELETE FROM runtime_message_terms WHERE message_id = ?").run(message.id);
             }
+        }
+        if (removedEvidence) {
+            this.protectLegacySensitiveIdempotencyRows("idempotency_keys", "result");
+            this.protectLegacySensitiveIdempotencyRows("idempotency_claims", "pending_result");
         }
     }
 
@@ -1044,7 +1050,12 @@ export class KestrelDatabase {
             cursor = rows[rows.length - 1]!.key;
             const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE key = ?`);
             for (const row of rows) {
-                if (row.payload.startsWith(ENCRYPTED_IDEMPOTENCY_PREFIX)) continue;
+                if (row.payload.startsWith(ENCRYPTED_IDEMPOTENCY_PREFIX)) {
+                    const value = this.parseIdempotencyValue(row.payload);
+                    const retained = this.redactDeletedSourceIdempotencyValue(value);
+                    if (retained !== value) update.run(this.serializeIdempotencyValue(retained), row.key);
+                    continue;
+                }
                 let value: unknown;
                 try {
                     value = JSON.parse(row.payload);
@@ -4758,6 +4769,7 @@ export class KestrelDatabase {
 	}
 
 	private serializeIdempotencyValue(value: unknown): string {
+		value = this.redactDeletedSourceIdempotencyValue(value);
 		const serialized = JSON.stringify(value);
 		if (serialized === undefined)
 			throw new Error("Idempotency journal values must be JSON-serializable.");
@@ -4766,12 +4778,27 @@ export class KestrelDatabase {
 		return ENCRYPTED_IDEMPOTENCY_PREFIX + JSON.stringify(encryptText(serialized, this.encryptionKey));
 	}
 
-	private deserializeIdempotencyValue<T>(serialized: string): T {
-		if (!serialized.startsWith(ENCRYPTED_IDEMPOTENCY_PREFIX)) return JSON.parse(serialized) as T;
+	private parseIdempotencyValue(serialized: string): unknown {
+		if (!serialized.startsWith(ENCRYPTED_IDEMPOTENCY_PREFIX)) return JSON.parse(serialized);
 		const envelope = JSON.parse(serialized.slice(ENCRYPTED_IDEMPOTENCY_PREFIX.length));
 		const value: unknown = JSON.parse(decryptText(envelope, this.encryptionKey));
 		RuntimeToolExecutionSchema.parse(value);
-		return value as T;
+		return value;
+	}
+
+	private redactDeletedSourceIdempotencyValue(value: unknown): unknown {
+		if (!value || typeof value !== "object" || Array.isArray(value) ||
+			(value as Record<string, unknown>).toolName !== "sources.read") return value;
+		const execution = RuntimeToolExecutionSchema.safeParse(value);
+		if (!execution.success || !this.getPrivateState(this.sourceReceiptDeletionKey(execution.data.id))) return value;
+		const removedError = "Source evidence was deleted or expired.";
+		if (execution.data.status === "failed" && execution.data.error === removedError &&
+			execution.data.output?.sourceEvidenceRemoved === true && Object.keys(execution.data.output).length === 1) return value;
+		return { ...value, status: "failed", output: { sourceEvidenceRemoved: true }, error: removedError };
+	}
+
+	private deserializeIdempotencyValue<T>(serialized: string): T {
+		return this.redactDeletedSourceIdempotencyValue(this.parseIdempotencyValue(serialized)) as T;
 	}
 
 	private retireActiveAgentHistoryInTransaction(

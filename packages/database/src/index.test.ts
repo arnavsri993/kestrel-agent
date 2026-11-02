@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createEncryptionKey, encryptText } from "@kestrel/encryption";
+import { createEncryptionKey, decryptText, encryptText } from "@kestrel/encryption";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -1373,5 +1373,48 @@ it("encrypts source tool receipts and upgrades legacy payloads on reopen", () =>
   const rawAfter = new Database(path, { readonly: true });
   try { expect(JSON.stringify(rawAfter.prepare("SELECT payload FROM tool_executions").all())).not.toContain("PRIVATE SOURCE RECEIPT"); }
   finally { rawAfter.close(); }
+ } finally { database.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+it("does not replay deleted source evidence from completed or pending idempotency journals", () => {
+ const root = mkdtempSync(join(tmpdir(), "kestrel-deleted-source-journal-"));
+ const path = join(root, "fixture.sqlite"); const key = createEncryptionKey();
+ const timestamp = "2026-10-01T12:00:00.000Z";
+ const receipt = { id: "source-cache-receipt", sessionId: "source-cache-session", toolName: "sources.read", status: "verified" as const, riskLevel: "low" as const, input: {}, output: { events: [{ id: "source-event", text: "GENERATED DELETED SOURCE CONTENT" }] }, startedAt: timestamp, unknownMetadata: { preserved: true } };
+ let database = new KestrelDatabase(path, key);
+ try {
+  database.saveRuntimeSession({ id: receipt.sessionId, title: "Fixture", allowedTools: [], status: "active", checkpoints: [], createdAt: timestamp, updatedAt: timestamp });
+  database.upsertTimelineEvent({ id: "source-event", startedAt: timestamp, eventType: "note", source: "connected-source", actor: "user", projectIds: [], personIds: [], entityIds: [], textSummary: "Generated source fixture", structuredData: {}, importance: 0.5, sensitivity: "personal", retentionPolicy: "durable", embeddingStatus: "not_requested", status: "active", createdAt: timestamp, updatedAt: timestamp });
+  database.saveToolExecution(receipt);
+  database.saveIdempotentResult("source-completed", receipt);
+  database.claimIdempotentResult("source-pending", "fixture-owner", process.pid, receipt);
+  expect(database.getIdempotentResult("source-completed")).toEqual(receipt);
+  database.deleteTimelineEvent("source-event");
+  const redacted = { ...receipt, status: "failed", output: { sourceEvidenceRemoved: true }, error: "Source evidence was deleted or expired." };
+  const journalValues = () => database.db.prepare("SELECT result AS payload FROM idempotency_keys UNION ALL SELECT pending_result AS payload FROM idempotency_claims").all() as Array<{ payload: string }>;
+  const assertLogicalRowsRedacted = () => {
+   for (const row of journalValues()) {
+    const envelope = JSON.parse(row.payload.slice("kestrel-encrypted-idempotency-v1:".length));
+    expect(JSON.parse(decryptText(envelope, key))).toEqual(redacted);
+   }
+  };
+  assertLogicalRowsRedacted();
+  expect(database.getIdempotentResult("source-completed")).toEqual(redacted);
+  expect(database.getIdempotentClaim("source-pending")?.pendingResult).toEqual(redacted);
+  expect(database.claimIdempotentResult("source-completed", "replay-owner", process.pid, receipt)).toEqual({ state: "completed", result: redacted });
+  // A late producer cannot restore a deleted source through a journal write.
+  database.updateIdempotentResult("source-completed", receipt);
+  database.saveIdempotentResult("source-late", receipt);
+  expect(database.getIdempotentResult("source-late")).toEqual(redacted);
+  // Simulate caches produced by an older version after the tombstone exists.
+  const insertOld = database.db.prepare("INSERT INTO idempotency_keys (key, result, created_at) VALUES (?, ?, ?)");
+  insertOld.run("source-old-plaintext", JSON.stringify(receipt), timestamp);
+  insertOld.run("source-old-encrypted", "kestrel-encrypted-idempotency-v1:" + JSON.stringify(encryptText(JSON.stringify(receipt), key)), timestamp);
+  database.close(); database = new KestrelDatabase(path, key);
+  expect(database.getIdempotentResult("source-completed")).toEqual(redacted);
+  expect(database.getIdempotentClaim("source-pending")?.pendingResult).toEqual(redacted);
+  expect(database.getIdempotentResult("source-old-plaintext")).toEqual(redacted);
+  expect(database.getIdempotentResult("source-old-encrypted")).toEqual(redacted);
+  assertLogicalRowsRedacted();
  } finally { database.close(); rmSync(root, { recursive: true, force: true }); }
 });

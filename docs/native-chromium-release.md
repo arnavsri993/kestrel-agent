@@ -1062,3 +1062,29 @@ passed again. Its full 16-phase settings/window/restart canary also passed:
 `.tmp/native-model-image-release-settings-evidence/receipt.json`, unchanged
 before/after bundle digest. That current candidate ran only the no-input
 settings flow; the approved click remains bound to the earlier fingerprint.
+
+
+### Deleted source journals (2026-11-02)
+
+The transfer audit reproduced a stale-evidence replay: deleting a connected
+source event cleared its visible tool receipt but left completed and pending
+idempotency results able to return its former content. Deletion now reconciles
+both journals in the same database transaction, and read/write codecs enforce
+the existing source-receipt tombstone so a late producer cannot restore the
+content. Startup also reconciles legacy plaintext and protected cache entries.
+Unknown metadata and unrelated generic JSON remain unchanged.
+
+The real on-disk regression failed before the fix and passes afterward. It
+covers ordinary reads, completed-claim replay, pending claims, late writes,
+legacy entries on reopen, and decrypted logical cache rows. This is logical
+redaction under the existing encryption policy; it does not claim secure
+erasure from old pages, WAL copies or backups. The full suite passed **2,082
+tests / 272 files**, workspace typechecking and the full native build passed.
+
+Bundle `35dea182d156ebf852e12d92b29f6af524742a4d4057d36cf9e9e6f98037169a`
+passed the 16-phase native settings/window/restart canary, with equal before/
+after digests: `.tmp/native-deleted-source-settings-evidence/receipt.json`.
+That GUI flow used a new disposable profile and no desktop capture/input; the
+on-disk source deletion test used generated database fixtures. Existing user
+data, canonical installation and provider logins were untouched. The partial
+host profile-transfer primitive remains unintegrated and is not release proof.
