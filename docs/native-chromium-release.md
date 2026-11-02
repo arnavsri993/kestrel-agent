@@ -845,3 +845,53 @@ A worker's automatic pnpm run reinstalled shared linked dependencies. Actual
 consumer/backport checks were rerun afterward: all 36 focused tests and the live
 audit guard passed, with unchanged source and lockfile. Further worker validation
 uses direct tools rather than allowing pnpm to mutate a shared installation.
+
+### Native desktop boundary and actual managed runtime acceptance
+
+CI run `41369466818` is fully green at `2ef88e68`, including both macOS jobs,
+native integration, website, CLI, editor, packaged desktop and security checks.
+
+The native desktop-control port now has a dedicated private Core/broker/Cocoa
+channel. It defaults off, reads nonprompting OS permission status, and binds
+each action to a fresh single-use capture ID, display geometry and foreground
+process/window identity. Disabling takes effect before preference I/O and stays
+disabled in memory if saving fails; the UI reports that restart persistence
+failed. Core resets invalidate capture authority. Permission and target checks
+are repeated before native input batches, and interruption after submission
+reports an uncertain effect. Unsupported macOS capture versions are unavailable
+rather than ready. Managed requests are separate from web/browser-user wire
+requests. Public sites do not receive this private surface.
+
+Independent review found and corrected wiring, disable-race and OS-readiness
+issues. Root review also bounded preference reads, prevented FIFO blocking,
+kept the enforced opt-out error visible and invalidated capture authority after
+Core interruption. All 2,054 tests across 269 files, workspace typechecking and
+the native build passed. The three changed native translation units also passed
+focused syntax compilation. No OS input, screen capture, permission prompt or
+enablement was invoked to obtain these results.
+
+Bundle `0b847291f0d51d1aa116b7289da869d80eb6a3e1b8f5c79a65a02bfcb4ca1f62`
+passed all 16 actual native settings/window phases, including real owner
+permission status, the rendered Off switch, explicit opt-out and opt-out after
+restart. Candidate hashes matched in
+`.tmp/native-desktop-control-optout-evidence/receipt.json`. Enabled desktop
+capture/input and action approval remain unverified until live acceptance.
+
+`test:native-managed-runtime` requires explicit opt-in, an exact development
+candidate, a stable external Ollama metadata baseline and at least 3 GiB free.
+It passed all seven phases on that same bundle in
+`.tmp/native-managed-runtime-evidence-FyYshN/receipt.json`: real pinned vendor
+download/checksum/extraction; Qwen3 0.6B download into a private store; actual
+server version and model digest/capabilities; a real chat response; restart;
+cancellation preserving prior verification; and reaping the owned server and
+llama-server descendants. The external port-11434 listener and model digests
+were unchanged. The test runtime/model directory was removed after cleanup.
+This is direct LocalRuntimeManager acceptance on a private injected loopback
+origin, not a bundled-Core/default-port installation claim.
+
+The first run reached real inference but its older runner-name assertion failed;
+the pinned Ollama version uses the upstream llama-server subprocess. The corrected
+canary records actual process identities and retains that failed receipt in
+`.tmp/native-managed-runtime-evidence-TPDuEr/`. Cleanup is not counted as passing
+if the test must signal an orphan itself. The successful run required no such
+cleanup and preserved the candidate fingerprint.
