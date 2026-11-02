@@ -1811,8 +1811,12 @@ owner-lifetime result. Two earlier harness failures (CEF attachment and exact
 wrapped-label matching) and the interrupted failing owner test remain recorded.
 
 The final source passed **2,306 tests in 287 files**, workspace typechecking,
-focused host/relay/transport checks and a full native rebuild. A new aggregate
-`pnpm verify` run is in progress; its outcome is not yet claimed. These tests
+focused host/relay/transport checks and a full native rebuild. The new aggregate
+`pnpm verify` run passed audits, typechecks, unit/build/native checks, browser
+benchmark, 50 website E2E cases and desktop checks through the file-icon guard,
+then stopped at the Electron tab-hover preview assertion. A focused retry also
+failed. macOS was subsequently confirmed locked; focus-dependent verification
+is pending an unlocked run. The aggregate is not a pass. These tests
 used marked generated profiles and test keys, with no real Keychain, existing
 profile, microphone or desktop-input access. The canonical installed app has
 not been replaced.
@@ -1821,12 +1825,23 @@ Routing prompt budget/list parsing, anchor punctuation trimming and bounded
 routing metadata checks now avoid four confirmed polynomial scans. An
 independent review found no semantic regression in those replacements. Store
 test assertions compare the parsed URL origin rather than a hostname prefix.
-Remote CodeQL must confirm the new head; the preceding head's Core CI passed,
-desktop job was cancelled, and CodeQL still reported security annotations.
+Remote CodeQL at `1f3d618a` confirmed that the four polynomial-scan findings
+and Store URL-prefix finding cleared. Five fingerprint/password-hash annotations
+remain; all four language analyses passed. Core CI is still running and the
+desktop job is queued. Packaged CLI, editor integration and the production
+secret scan also passed separately after the aggregate stopped. The preceding
+head’s Core CI passed and its desktop job was cancelled.
 
-Remaining security work includes an adjacent email-anchor scan and embedding
-fingerprints persisted outside encrypted payloads, including stale asynchronous
-embedding writes. Those require a real remediation and migration, not a global
+A subsequent source-only email-anchor fix replaces an adjacent polynomial
+email scan while preserving its permissive matching grammar, Unicode folds,
+word boundaries and partial-TLD continuation. The actual public API matched
+the former expression on 50,000 deterministic mixed inputs; a separate prototype
+covered 349,623 exact cases and every Unicode scalar. Final source passed
+2,314 tests in 287 files, Core typechecking, standalone Core build and Node/Core
+smoke. This later Core edit is not yet rebuilt into the native candidate above.
+
+Remaining security work includes embedding fingerprints persisted outside
+encrypted payloads, including stale asynchronous embedding writes. Those require a real remediation and migration, not a global
 suppression. Native diagnostics/local-profile backup, other native integration
 routes, existing-profile/vendor-login acceptance, actual Store version upgrade,
 release signing/notarization and canonical cutover remain unfinished.

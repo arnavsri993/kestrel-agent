@@ -71,6 +71,22 @@ describe("Writing Studio", () => {
 			.toEqual(["http://x/"]);
 	});
 
+	it.each<[string, string[]]>([
+		["a@.co a@..co", ["a@..co"]],
+		["a@b.co.uk a@b.co.foo1 a@b.co.foo_", ["a@b.co.uk", "a@b.co"]],
+		["a@b.co1 a@b.co_ a@@b.com", []],
+		["a@b.com-foo@d.com", ["a@b.com", "-foo@d.com"]],
+		["a@b.co+@d.test a@b.co_@d.test", ["a@b.co", "+@d.test", "b.co_@d.test"]],
+		["K@ſ.Kſ ſ@K.ſK1 éa@b.coé", ["K@ſ.Kſ", "a@b.co"]],
+		["😀a@b.co😀a@b.co a@b.co-1", ["a@b.co"]],
+	])("preserves email anchor boundaries and permissive grammar in %s", (text, expected) => {
+		expect(writingProtectedAnchors(text).filter(anchor => anchor.includes("@"))).toEqual(expected);
+	});
+
+	it("handles a long local-part run with many possible starts and no email separator", () => {
+		expect(writingProtectedAnchors("a+".repeat(50_000))).toEqual([]);
+	});
+
 	it("previews confirmed context and gates sensitive recipient records", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const core = new AgentCore({

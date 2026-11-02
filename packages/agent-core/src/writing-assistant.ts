@@ -252,6 +252,64 @@ function normalizeRepair(value: unknown): unknown {
 	};
 }
 
+function isEmailLetter(character: string | undefined): boolean {
+	// These two Unicode characters fold into ASCII under JavaScript's /iu.
+	return character !== undefined && (
+		(character >= "a" && character <= "z") ||
+		(character >= "A" && character <= "Z") ||
+		character === "K" || character === "ſ"
+	);
+}
+
+function isEmailWord(character: string | undefined): boolean {
+	return isEmailLetter(character) || character !== undefined && (
+		(character >= "0" && character <= "9") || character === "_"
+	);
+}
+
+function isEmailLocal(character: string | undefined): boolean {
+	return isEmailWord(character) || character === "." || character === "%" ||
+		character === "+" || character === "-";
+}
+
+function isEmailDomain(character: string | undefined): boolean {
+	return isEmailLetter(character) || character !== undefined && (
+		(character >= "0" && character <= "9") || character === "." || character === "-"
+	);
+}
+
+/** Preserve the legacy email expression's matches without retrying each boundary. */
+function* emailAnchors(text: string): Generator<string> {
+	let cursor = 0;
+	while (cursor < text.length) {
+		// Every possible start in a local run reaches the same @. Keep only
+		// its first word boundary, including punctuation after a previous match.
+		let firstBoundary = -1;
+		let end = cursor;
+		while (end < text.length && isEmailLocal(text[end])) {
+			if (firstBoundary < 0 && isEmailWord(text[end - 1]) !== isEmailWord(text[end]))
+				firstBoundary = end;
+			end++;
+		}
+		if (end === cursor) { cursor++; continue; }
+		if (text[end] !== "@" || firstBoundary < 0) { cursor = end; continue; }
+		const domainStart = end + 1;
+		let matchEnd = -1;
+		for (let scan = domainStart; scan < text.length && isEmailDomain(text[scan]); scan++) {
+			if (text[scan] !== "." || scan === domainStart) continue;
+			let lettersEnd = scan + 1;
+			while (isEmailLetter(text[lettersEnd])) lettersEnd++;
+			// The last eligible dot preserves greedy domain matching. Digits and
+			// underscores after the letters prevent the required word boundary.
+			if (lettersEnd - scan - 1 >= 2 && !isEmailWord(text[lettersEnd])) matchEnd = lettersEnd;
+		}
+		if (matchEnd >= 0) {
+			yield text.slice(firstBoundary, matchEnd);
+			cursor = matchEnd;
+		} else cursor = domainStart;
+	}
+}
+
 function extractAnchors(text: string): string[] {
 	const anchors: string[] = [];
 	const add = (value: string) => {
@@ -261,8 +319,7 @@ function extractAnchors(text: string): string[] {
 		if (trimmed && !anchors.includes(trimmed)) anchors.push(trimmed);
 	};
 	for (const match of text.matchAll(/https?:\/\/[^\s)\]}>,]+/giu)) add(match[0]);
-	for (const match of text.matchAll(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu))
-		add(match[0]);
+	for (const email of emailAnchors(text)) add(email);
 	for (const match of text.matchAll(/(?<![\w.])(?:[$€£]\s?)?\d[\d,.]*(?:%|\s?(?:million|billion|thousand|years?|months?|days?))?(?![\w.])/giu))
 		add(match[0]);
 	for (const match of text.matchAll(/[“"]([^”"\n]{2,120})[”"]/gu)) add(match[1]!);
