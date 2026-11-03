@@ -484,7 +484,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			if ((loginCodeRevision) !== revision) throw new Error();
 			const results = await invoke(chromeApi.scripting, "executeScript", {
 				target: { tabId: tab.id, documentIds: [before.frame.documentId] }, world: "ISOLATED",
-				func: loginCodeField, args: [request.operation, authority?.fieldId, request.code],
+				func: loginCodeField, args: [request.operation, authority?.fieldId ?? null, request.code ?? null],
 			});
 			signal?.throwIfAborted();
 			const after = await check();

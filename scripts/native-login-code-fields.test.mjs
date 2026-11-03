@@ -102,7 +102,7 @@ function fixture() {
   tabs: { query: callback(() => [tab]), get: callback(() => ({ ...tab })) },
   windows: { getLastFocused: callback(() => ({ id: 2, focused: true })) },
   webNavigation: { getFrame: callback(() => ({ ...frame })), onHistoryStateUpdated: historyEvent },
-  scripting: { executeScript: callback(({ func, args, target }) => { const result = func(...args); afterExecute(); return [{ frameId: 0, documentId: target.documentIds[0], result }]; }) },
+  scripting: { executeScript: callback(({ func, args, target }) => { assert(!args.includes(undefined), 'Chrome scripting arguments must be JSON serializable'); const result = func(...args); afterExecute(); return [{ frameId: 0, documentId: target.documentIds[0], result }]; }) },
  };
  const adapter = createBrowserAdapter(api, { uiUrl: 'chrome-extension://abcdef/index.html' });
  return { adapter, tab, frame, data, setAfter: fn => { afterExecute = fn; }, navigate: () => historyListener({ tabId: 7, frameId: 0 }) };

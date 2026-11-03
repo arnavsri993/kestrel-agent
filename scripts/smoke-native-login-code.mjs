@@ -113,7 +113,12 @@ try {
  const url = `http://127.0.0.1:${server.address().port}/login`;
  await start();
  const created = await request({ type: 'browser-create-tab', input: url, active: true }); assert(created.ok, created.error);
- const tabId = created.tabId ?? created.browserState?.tabs.find(tab => tab.url === url)?.id; assert(tabId);
+ let tabId;
+ await eventually(async () => {
+  const state = await request({ type: 'browser-get-state' });
+  tabId = state.browserState?.tabs.find(tab => tab.url === url && !tab.loading)?.id;
+  return Boolean(tabId);
+ }, 'Created loopback tab did not finish loading in the native tab model.');
  await attachPage(url); await page.locator('#otp').waitFor();
  assert.deepEqual(await page.evaluate(() => [typeof window.kestrel, typeof window.__kestrelNativeQuery, typeof window.__kestrelHostTransport]), ['undefined', 'undefined', 'undefined']);
  const raw = await request({ type: 'communication-code-search', domain: 'example.test', after: new Date(Date.now() - 60000).toISOString(), maxResults: 5 }); assert.equal(raw.ok, false);
@@ -181,6 +186,14 @@ try {
  phase('restart-discards-unconsumed-code-candidate');
  receipt.result = 'passed';
 } catch (error) {
+ if (panel) {
+  await writeFile(join(evidence, 'failed-companion.txt'), (await panel.text().catch(() => 'Unavailable')).slice(0, 16000), { mode: 0o600 });
+  await panel.screenshot(join(evidence, 'failed-companion.png')).catch(() => {});
+ }
+ if (home && !home.isClosed()) {
+  const status = await request({ type: 'communication-sources' }).catch(() => ({ ok: false }));
+  await writeFile(join(evidence, 'failed-generated-source-status.json'), JSON.stringify(status, null, 2), { mode: 0o600 });
+ }
  receipt.result = 'failed'; receipt.failedStage = stage; receipt.error = String(error?.message || error).slice(0, 1000); console.error(`Native login-code canary failed at ${stage}: ${receipt.error}`); process.exitCode = 1;
 } finally {
  await stop().catch(error => { receipt.shutdownError = String(error.message).slice(0, 300); receipt.result = 'failed'; process.exitCode = 1; });
