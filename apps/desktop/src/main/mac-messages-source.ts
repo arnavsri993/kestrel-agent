@@ -12,7 +12,17 @@ import {
 const execFileAsync = promisify(execFile);
 const SQLITE_PATH = "/usr/bin/sqlite3";
 const DEFAULT_DATABASE_PATH = join(homedir(), "Library/Messages/chat.db");
-const MESSAGE_QUERY = `
+const APPLE_EPOCH_MS = 978_307_200_000;
+const LOOKBACK_MS = 30 * 60_000;
+const QUERY_TIMEOUT_MS = 5_000;
+const MAX_OUTPUT_BYTES = 2_000_000;
+
+function messageQuery(now: Date): string {
+	const milliseconds = now.getTime();
+	if (!Number.isSafeInteger(milliseconds) || milliseconds < APPLE_EPOCH_MS + LOOKBACK_MS) throw new Error("Invalid Messages lookup time.");
+	const upper = BigInt(milliseconds - APPLE_EPOCH_MS) * 1_000_000n;
+	const lower = upper - BigInt(LOOKBACK_MS) * 1_000_000n;
+	return `
 SELECT
   message.text AS text,
   message.subject AS subject,
@@ -22,10 +32,13 @@ FROM message
 LEFT JOIN handle ON handle.ROWID = message.handle_id
 WHERE message.text IS NOT NULL
   AND length(message.text) > 0
-  AND message.date >= ((strftime('%s','now') - 1800 + 978307200) * 1000000000)
+  AND typeof(message.date) IN ('integer', 'real')
+  AND message.date >= ${lower}
+  AND message.date <= ${upper}
 ORDER BY message.date DESC
 LIMIT 100;
 `;
+}
 
 interface MessageRow {
 	text?: unknown;
@@ -63,7 +76,8 @@ export class MacMessagesSource {
 			options.runQuery ??
 			(async (file, args) => {
 				const result = await execFileAsync(file, [...args], {
-					maxBuffer: 2_000_000,
+					maxBuffer: MAX_OUTPUT_BYTES,
+					timeout: QUERY_TIMEOUT_MS,
 					encoding: "utf8",
 				});
 				return { stdout: result.stdout, stderr: result.stderr };
@@ -94,7 +108,7 @@ export class MacMessagesSource {
 				label: "Messages on this Mac",
 				kind: "local",
 				state: "connected",
-				detail: "Read-only lookup is available when you ask for a code.",
+				detail: "The Messages file appears readable. Lookup verifies access; attributed-body-only messages are unsupported.",
 			};
 		} catch {
 			return {
@@ -114,13 +128,15 @@ export class MacMessagesSource {
 		const before = this.status();
 		if (before.state !== "connected") return { matches: [], status: before };
 		try {
+			const lookupAt = this.now();
 			const result = await this.runQuery(SQLITE_PATH, [
 				"-readonly",
 				"-json",
 				this.databasePath,
-				MESSAGE_QUERY,
+				messageQuery(lookupAt),
 			]);
-			const raw = JSON.parse(result.stdout) as unknown;
+			if (Buffer.byteLength(result.stdout, "utf8") > MAX_OUTPUT_BYTES) throw new Error("Messages output exceeded its limit.");
+			const raw = result.stdout.trim() ? JSON.parse(result.stdout) as unknown : [];
 			if (!Array.isArray(raw)) throw new Error("Messages returned invalid data.");
 			const matches: CommunicationCodeMatch[] = [];
 			for (const value of raw.slice(0, 100)) {
@@ -132,7 +148,7 @@ export class MacMessagesSource {
 				const sender =
 					typeof row.sender === "string" ? row.sender.slice(0, 500) : "";
 				const codes = extractLoginCodes(`${subject}\n${text}`);
-				const receivedAt = messageDate(row.date, this.now());
+				const receivedAt = messageDate(row.date, lookupAt);
 				if (!receivedAt) continue;
 				for (const code of codes) {
 					matches.push({
@@ -151,7 +167,7 @@ export class MacMessagesSource {
 				status: {
 					...before,
 					state: "connected",
-					detail: "Read-only lookup is available when you ask for a code.",
+					detail: "Read-only text-message lookup succeeded; attributed-body-only messages are not supported.",
 				},
 			};
 		} catch (error) {
@@ -177,7 +193,8 @@ function messageDate(value: unknown, now: Date): Date | undefined {
 	const raw = Number(value);
 	if (!Number.isFinite(raw) || raw <= 0) return undefined;
 	const milliseconds =
-		raw > 100_000_000_000_000 ? raw / 1_000_000 + 978_307_200_000 : raw + 978_307_200_000;
-	const receivedAt = new Date(Math.min(milliseconds, now.getTime()));
+		raw > 100_000_000_000_000 ? raw / 1_000_000 + APPLE_EPOCH_MS : raw + APPLE_EPOCH_MS;
+	if (milliseconds > now.getTime() || milliseconds < now.getTime() - LOOKBACK_MS) return undefined;
+	const receivedAt = new Date(milliseconds);
 	return Number.isFinite(receivedAt.getTime()) ? receivedAt : undefined;
 }
