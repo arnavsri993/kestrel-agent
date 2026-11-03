@@ -3278,6 +3278,14 @@ export class KestrelDatabase {
 		return rows.map((row) => this.decodeMemoryJob(row));
 	}
 
+	/** Internal bounded primary-key cursor, including retired embedding claims. */
+	listMemoryJobPage(afterId = "", limit = 8): MemoryJob[] {
+		const bounded = Number.isFinite(limit) ? Math.max(1, Math.min(8, Math.trunc(limit))) : 8;
+		const rows = this.db.prepare("SELECT * FROM memory_jobs WHERE id > ? ORDER BY id LIMIT ?")
+			.all(afterId, bounded) as MemorySubstrateRow[];
+		return rows.map(row => this.decodeMemoryJob(row));
+	}
+
 	claimMemoryJob(now = new Date().toISOString(), leaseMs = 60_000): MemoryJob | undefined {
 		MemoryJobSchema.shape.updatedAt.parse(now);
 		if (!Number.isFinite(leaseMs)) throw new Error("Memory job lease is invalid.");
@@ -3922,6 +3930,14 @@ export class KestrelDatabase {
 		if (!embedding) return undefined;
 		this.db.prepare("DELETE FROM memory_embeddings WHERE id = ?").run(id);
 		return embedding;
+	}
+
+	/** Internal maintenance cursor; full vectors never cross a renderer response. */
+	listMemoryEmbeddingPage(afterId = "", limit = 8): EmbeddingRecord[] {
+		const bounded = Number.isFinite(limit) ? Math.max(1, Math.min(8, Math.trunc(limit))) : 8;
+		const rows = this.db.prepare("SELECT * FROM memory_embeddings WHERE id > ? ORDER BY id LIMIT ?")
+			.all(afterId, bounded) as MemorySubstrateRow[];
+		return rows.map(row => EmbeddingRecordSchema.parse(this.decryptPayload(row)));
 	}
 
 	deleteMemoryEmbeddingsForOwner(
@@ -4645,6 +4661,7 @@ export class KestrelDatabase {
 		const dedupeKey = `embed:${ownerType}:${ownerId}:${input.generation}`;
 		const existing = this.getMemoryJobByDedupeKey(dedupeKey);
 		if (existing && ["pending", "running", "completed"].includes(existing.status)) return;
+		if (existing && existing.attempts >= existing.maxAttempts) return;
 		this.queueMemoryJob(
 			MemoryJobSchema.parse({
 				id: existing?.id ?? `memory-job-${randomUUID()}`,

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
 	KestrelDatabase,
 	MemoryDeleteResult,
+	MemoryEmbeddingInputSnapshot,
 	TimelineEventListOptions,
 } from "@kestrel/database";
 import {
@@ -68,6 +69,8 @@ const BLOCK_GAP_MS = 12 * 60_000;
 const DEFAULT_RETENTION_DAYS = 90;
 const MAX_CONTEXT_CHARACTERS = 24_000;
 const MAX_BACKGROUND_JOBS_PER_TICK = 12;
+const EMBEDDING_REPAIR_PAGE_SIZE = 8;
+const EMBEDDING_REPAIR_BUDGET_MS = 25;
 const MAINTENANCE_BUCKET_MS = 15 * 60_000;
 
 /** Central scoring knobs keep relevance behavior reviewable and testable. */
@@ -330,6 +333,9 @@ export class MemorySubstrate {
 	private backgroundRunning = false;
 	private closed = false;
 	private readonly activeTaskIds = new Map<string, string>();
+	private embeddingRepairAfterId = "";
+	private embeddingJobRepairAfterId = "";
+	private repairEmbeddingJobsNext = false;
 	private readonly projects = new Map<string, MemoryProject>();
 
 	constructor(options: MemorySubstrateOptions) {
@@ -1672,9 +1678,17 @@ export class MemorySubstrate {
 		let memoriesExtracted = 0;
 		let memoriesChanged = 0;
 		let deletedArtifacts = 0;
+		let repairedEmbeddings = false;
 		for (let index = 0; index < bounded; index += 1) {
 			const job = this.database.claimMemoryJob(this.now().toISOString());
-			if (!job) break;
+			if (!job) {
+				if (!repairedEmbeddings) {
+					repairedEmbeddings = true;
+					this.repairMemoryEmbeddings();
+					continue;
+				}
+				break;
+			}
 			jobsProcessed += 1;
 			try {
 				let embeddingCompleted = false;
@@ -1708,6 +1722,7 @@ export class MemorySubstrate {
 				else if (retried) jobsFailed += 1;
 			}
 		}
+		if (!repairedEmbeddings) this.repairMemoryEmbeddings();
 		return MemoryMaintenanceResultSchema.parse({
 			jobsProcessed,
 			jobsCompleted,
@@ -1765,11 +1780,60 @@ export class MemorySubstrate {
 	private enqueueEmbedding(ownerType: EmbeddingRecord["ownerType"], ownerId: string): void {
 		const input = this.database.getMemoryEmbeddingInput(ownerType, ownerId);
 		if (!input) return;
+		this.enqueueEmbeddingInput(input);
+	}
+
+	private enqueueEmbeddingInput(input: MemoryEmbeddingInputSnapshot): void {
+		const { ownerType, ownerId } = input;
 		// Desired generations are durable, random and independent of the text.
 		// Returning to prior text still creates a distinct completed-job identity.
 		this.enqueue("embed", `embed:${ownerType}:${ownerId}:${input.generation}`, {
 			ownerType, ownerId, generation: input.generation,
 		});
+	}
+
+	private repairMemoryEmbeddings(): void {
+		// Alternate slices so expensive graphs cannot starve either durable
+		// discovery source. Retired jobs cover owners that never had a vector.
+		this.repairEmbeddingJobsNext = !this.repairEmbeddingJobsNext;
+		if (this.repairEmbeddingJobsNext) {
+			this.repairMemoryEmbeddingJobs();
+			return;
+		}
+		const startedAt = performance.now();
+		const page = this.database.listMemoryEmbeddingPage(this.embeddingRepairAfterId, EMBEDDING_REPAIR_PAGE_SIZE);
+		for (const [index, embedding] of page.entries()) {
+			// Resolve at most one graph per row, and yield after a bounded page or
+			// time slice. One graph is itself bounded by the authority resolver.
+			if (embedding.status !== "deleted") {
+				const input = this.database.getMemoryEmbeddingInput(embedding.ownerType, embedding.ownerId);
+				if (input && (input.generation !== embedding.generation || input.contentHash !== embedding.contentHash))
+					this.enqueueEmbeddingInput(input);
+			}
+			this.embeddingRepairAfterId = embedding.id;
+			if (index + 1 < page.length && performance.now() - startedAt >= EMBEDDING_REPAIR_BUDGET_MS) return;
+		}
+		if (page.length < EMBEDDING_REPAIR_PAGE_SIZE) this.embeddingRepairAfterId = "";
+	}
+
+	private repairMemoryEmbeddingJobs(): void {
+		const startedAt = performance.now();
+		// Walk all job IDs through the primary-key index; filtering the kind in
+		// SQL without a matching index could scan an unbounded non-embed gap.
+		const page = this.database.listMemoryJobPage(this.embeddingJobRepairAfterId, EMBEDDING_REPAIR_PAGE_SIZE);
+		for (const [index, job] of page.entries()) {
+			if (job.kind === "embed" && (job.status === "completed" || job.status === "failed")) {
+				const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
+				const id = job.payload.ownerId;
+				if (type.success && typeof id === "string" && id.length > 0 && id.length <= 200) {
+					const input = this.database.getMemoryEmbeddingInput(type.data, id);
+					if (input && input.generation !== job.payload.generation) this.enqueueEmbeddingInput(input);
+				}
+			}
+			this.embeddingJobRepairAfterId = job.id;
+			if (index + 1 < page.length && performance.now() - startedAt >= EMBEDDING_REPAIR_BUDGET_MS) return;
+		}
+		if (page.length < EMBEDDING_REPAIR_PAGE_SIZE) this.embeddingJobRepairAfterId = "";
 	}
 
 	private enqueue(kind: MemoryJob["kind"], dedupeKey: string, payload: Record<string, unknown>): void {
@@ -2378,7 +2442,12 @@ export class MemorySubstrate {
 
 	private async processEmbeddingJob(job: MemoryJob): Promise<boolean> {
 		const input = this.database.snapshotMemoryEmbeddingJob(job, this.now().toISOString());
-		if (!input) return false;
+		if (!input) {
+			const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
+			const id = job.payload.ownerId;
+			if (type.success && typeof id === "string" && id.length <= 200) this.enqueueEmbedding(type.data, id);
+			return false;
+		}
 		const { ownerType, ownerId, text, generation, contentHash } = input;
 		const timestamp = this.now().toISOString();
 		let provider = this.embeddingProvider;
@@ -2391,8 +2460,10 @@ export class MemorySubstrate {
 			// A configured remote/custom provider is optional.  Retrieval remains
 			// local and usable if that provider is unavailable.
 			if (provider.provider !== localMemoryEmbeddingProvider.provider) {
-				if (!this.database.isCurrentMemoryEmbeddingJob(job, input, this.now().toISOString()))
+				if (!this.database.isCurrentMemoryEmbeddingJob(job, input, this.now().toISOString())) {
+					this.enqueueEmbedding(ownerType, ownerId);
 					throw new Error("Memory embedding input or job authority changed.");
+				}
 				provider = localMemoryEmbeddingProvider;
 				try {
 					vector = [...await provider.embed(text)];
@@ -2410,8 +2481,10 @@ export class MemorySubstrate {
 			dimension: vector?.length ?? 1, contentHash, vector: vector ?? [0],
 			status: vector ? "ready" : "unavailable", createdAt: timestamp, updatedAt: completedAt,
 		});
-		if (!this.database.commitMemoryEmbeddingJob(job, input, embedding, completedAt))
+		if (!this.database.commitMemoryEmbeddingJob(job, input, embedding, completedAt)) {
+			this.enqueueEmbedding(ownerType, ownerId);
 			throw new Error("Memory embedding input or job authority changed.");
+		}
 		return true;
 	}
 

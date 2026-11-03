@@ -289,6 +289,144 @@ describe("memory substrate", () => {
 		}
 	});
 
+	it("repairs a completed descendant vector after source privacy changes without reading the descendant", async () => {
+		const calls: string[] = [];
+		const state = fixture({ embeddingProvider: { provider: "repair", model: "repair", async embed(text) { calls.push(text); return [1]; } } });
+		try {
+			const source = state.runtime.createSession({ title: "Repair source" });
+			const event = state.substrate.captureActivity({ id: "repair-source-event", eventType: "note", source: "fixture",
+				sourceSessionId: source.id, textSummary: "Repair source event" })!;
+			const text = "Repair descendant memory sentinel";
+			const memory = state.substrate.remember(memoryInput(text, event.id));
+			await state.substrate.runMaintenance(100);
+			const before = state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id, status: "ready" })[0]!;
+			expect(before).toBeDefined();
+			const priorCalls = calls.filter(value => value === text).length;
+			state.database.saveRuntimeSession({ ...source, privacyMode: "private" });
+			state.database.saveRuntimeSession({ ...source, privacyMode: "standard" });
+			expect(state.database.listMemoryJobs({ kind: "embed", status: "pending", limit: 2000 })
+				.some(job => job.payload.ownerType === "memory" && job.payload.ownerId === memory.id)).toBe(false);
+			for (let i = 0; i < 4; i++) await state.substrate.runMaintenance(100);
+			const current = state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id, status: "ready" });
+			expect(current.some(value => state.database.isMemoryEmbeddingCurrent(value))).toBe(true);
+			expect(calls.filter(value => value === text).length).toBeGreaterThan(priorCalls);
+		} finally { await state.close(); }
+	});
+
+	it("dispatches a fresh descendant generation when source authority changes before dispatch", async () => {
+		const calls: string[] = [];
+		const state = fixture({ embeddingProvider: { provider: "repair", model: "repair", async embed(text) { calls.push(text); return [1]; } } });
+		try {
+			const source = state.runtime.createSession({ title: "Pending source" });
+			const event = state.substrate.captureActivity({ id: "pending-source-event", eventType: "note", source: "fixture",
+				sourceSessionId: source.id, textSummary: "Pending source event" })!;
+			const text = "Pending descendant memory sentinel";
+			const memory = state.substrate.remember(memoryInput(text, event.id));
+			state.database.saveRuntimeSession({ ...source, privacyMode: "private" });
+			state.database.saveRuntimeSession({ ...source, privacyMode: "standard" });
+			for (let i = 0; i < 4; i++) await state.substrate.runMaintenance(100);
+			expect(calls).toContain(text);
+			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id, status: "ready" })
+				.some(value => state.database.isMemoryEmbeddingCurrent(value))).toBe(true);
+		} finally { await state.close(); }
+	});
+
+	it("requeues a changed descendant after an in-flight final attempt", async () => {
+		let release!: () => void;
+		let entered!: () => void;
+		const pending = new Promise<void>(resolve => { release = resolve; });
+		const started = new Promise<void>(resolve => { entered = resolve; });
+		const calls: string[] = [];
+		const state = fixture({ embeddingProvider: { provider: "repair", model: "repair", async embed(text) {
+			calls.push(text); if (calls.length === 1) { entered(); await pending; } return [1];
+		} } });
+		let maintenance: ReturnType<MemorySubstrate["runMaintenance"]> | undefined;
+		try {
+			const source = state.runtime.createSession({ title: "Deferred source" });
+			const event = state.substrate.captureActivity({ id: "deferred-source-event", eventType: "note", source: "fixture",
+				sourceSessionId: source.id, textSummary: "Deferred source event" })!;
+			const text = "Deferred descendant memory sentinel";
+			const memory = state.substrate.remember(memoryInput(text, event.id));
+			const generation = state.database.getMemoryEmbeddingInput("memory", memory.id)!.generation;
+			state.database.db.prepare("DELETE FROM memory_jobs").run();
+			const timestamp = "2026-07-22T12:00:00.000Z";
+			state.database.queueMemoryJob(MemoryJobSchema.parse({ id: "final-attempt", dedupeKey: "final-attempt", kind: "embed",
+				status: "pending", payload: { ownerType: "memory", ownerId: memory.id, generation }, attempts: 0, maxAttempts: 1,
+				runAfter: timestamp, createdAt: timestamp, updatedAt: timestamp }));
+			maintenance = state.substrate.runMaintenance(1);
+			await Promise.race([started, maintenance.then(() => { throw new Error("Provider was not dispatched"); })]);
+			state.database.saveRuntimeSession({ ...source, privacyMode: "private" });
+			state.database.saveRuntimeSession({ ...source, privacyMode: "standard" });
+			release(); await maintenance;
+			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id })).toHaveLength(0);
+			// The replacement must be durable even without an old cache row.
+			for (let i = 0; i < 4; i++) await state.substrate.runMaintenance(100);
+			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id, status: "ready" })
+				.some(value => state.database.isMemoryEmbeddingCurrent(value))).toBe(true);
+		} finally { release(); await maintenance; await state.close(); }
+	});
+
+	it("does not dispatch a descendant embedding while its source session is private", async () => {
+		const calls: string[] = [];
+		const state = fixture({ embeddingProvider: { provider: "repair", model: "repair", async embed(text) { calls.push(text); return [1]; } } });
+		try {
+			const source = state.runtime.createSession({ title: "Private source" });
+			const event = state.substrate.captureActivity({ id: "private-repair-event", eventType: "note", source: "fixture",
+				sourceSessionId: source.id, textSummary: "Private event sentinel" })!;
+			const text = "Private descendant sentinel";
+			const memory = state.substrate.remember(memoryInput(text, event.id));
+			state.database.saveRuntimeSession({ ...source, privacyMode: "private" });
+			for (let i = 0; i < 3; i++) await state.substrate.runMaintenance(100);
+			expect(calls).not.toContain(text);
+			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id })).toHaveLength(0);
+		} finally { await state.close(); }
+	});
+
+	it("rediscovers a denied pending descendant after its source is regranted without a cached vector", async () => {
+		const calls: string[] = [];
+		const state = fixture({ embeddingProvider: { provider: "repair", model: "repair", async embed(text) { calls.push(text); return [1]; } } });
+		try {
+			const source = state.runtime.createSession({ title: "Regrant source" });
+			const event = state.substrate.captureActivity({ id: "regrant-source-event", eventType: "note", source: "fixture",
+				sourceSessionId: source.id, textSummary: "Regrant source event" })!;
+			const text = "Regrant descendant sentinel";
+			const memory = state.substrate.remember(memoryInput(text, event.id));
+			state.database.saveRuntimeSession({ ...source, privacyMode: "private" });
+			for (let i = 0; i < 4; i++) await state.substrate.runMaintenance(100);
+			expect(calls).not.toContain(text);
+			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id })).toHaveLength(0);
+			expect(state.database.listMemoryJobs({ kind: "embed", status: "pending", limit: 2000 })
+				.some(job => job.payload.ownerType === "memory" && job.payload.ownerId === memory.id)).toBe(false);
+			state.database.saveRuntimeSession({ ...source, privacyMode: "standard" });
+			for (let i = 0; i < 12; i++) await state.substrate.runMaintenance(100);
+			expect(calls).toContain(text);
+			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id, status: "ready" })
+				.some(value => state.database.isMemoryEmbeddingCurrent(value))).toBe(true);
+		} finally { await state.close(); }
+	});
+
+	it("does not revive an exhausted current generation during repeated repair", async () => {
+		const calls: string[] = [];
+		const state = fixture({ embeddingProvider: { provider: "repair", model: "repair", async embed(text) { calls.push(text); return [1]; } } });
+		try {
+			const text = "Exhausted generation sentinel";
+			const memory = state.substrate.remember(memoryInput(text));
+			const input = state.database.getMemoryEmbeddingInput("memory", memory.id)!;
+			const job = state.database.listMemoryJobs({ kind: "embed", limit: 2000 })
+				.find(value => value.payload.ownerType === "memory" && value.payload.ownerId === memory.id)!;
+			expect(job.payload.generation).toBe(input.generation);
+			state.database.db.prepare("DELETE FROM memory_jobs WHERE id <> ?").run(job.id);
+			state.database.queueMemoryJob({ ...job, status: "failed", attempts: job.maxAttempts, lastError: "Exhausted fixture" });
+			const timestamp = "2026-07-22T12:00:00.000Z";
+			state.database.upsertMemoryEmbedding({ id: "exhausted-stale-vector", ownerType: "memory", ownerId: memory.id,
+				contentHash: input.contentHash, provider: "repair", model: "old", dimension: 1, vector: [1], status: "ready",
+				createdAt: timestamp, updatedAt: timestamp });
+			for (let i = 0; i < 12; i++) await state.substrate.runMaintenance(100);
+			expect(calls).not.toContain(text);
+			expect(state.database.getMemoryJob(job.id)).toMatchObject({ status: "failed", attempts: job.maxAttempts });
+		} finally { await state.close(); }
+	});
+
 	it("captures redacted runtime activity and builds searchable aggregates", async () => {
 		const state = fixture();
 		try {
