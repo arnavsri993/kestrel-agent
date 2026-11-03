@@ -37,8 +37,8 @@ describe.skipIf(process.platform !== "darwin")("native legacy Kestrel database-k
     const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     temporary = mkdtempSync(join(tmpdir(), "kestrel-legacy-key-fixture-"));
     executable = join(temporary, "legacy-core-key-fixture");
-    const compiler = execFileSync("/usr/bin/xcrun", ["--find", "clang++"], { encoding: "utf8" }).trim();
-    const sdk = execFileSync("/usr/bin/xcrun", ["--show-sdk-path"], { encoding: "utf8" }).trim();
+    const compiler = execFileSync("/usr/bin/xcrun", ["--find", "clang++"], { encoding: "utf8", timeout: 5_000 }).trim();
+    const sdk = execFileSync("/usr/bin/xcrun", ["--show-sdk-path"], { encoding: "utf8", timeout: 5_000 }).trim();
     execFileSync(compiler, ["-std=c++20", "-fobjc-arc", "-Wall", "-Wextra", "-Werror", "-isysroot", sdk,
       "-I", join(root, "apps/native-chromium-host/src"),
       join(root, "apps/native-chromium-host/src/kestrel_legacy_core_key.cc"),
@@ -46,7 +46,8 @@ describe.skipIf(process.platform !== "darwin")("native legacy Kestrel database-k
       join(root, "apps/native-chromium-host/tests/legacy_core_key_fixture.mm"),
       "-framework", "Foundation", "-framework", "Security", "-framework", "LocalAuthentication", "-o", executable,
     ], { timeout: 30_000, stdio: "pipe" });
-  });
+  // Allow the bounded discovery (2 × 5s) and compile (30s) budgets plus setup margin.
+  }, 45_000);
   afterAll(() => { if (temporary) rmSync(temporary, { recursive: true, force: true }); });
   function unwrap(envelope, secret = password, allowDevelopmentPlaintext = false, reader = {}) {
     const result = spawnSync(executable, [], {

@@ -2454,3 +2454,29 @@ on this final artifact. Durable test-profile retention and a fresh official
 Store baseline are required next. The canonical app remains the existing
 Electron installation (currently PID 1028); no real profile, credential,
 Keychain item, microphone or desktop-control permission was changed.
+
+
+The fresh official Store baseline subsequently passed on the same final
+`fbcdd338...` artifact. Both real Chromium permission prompts were operated in
+the generated profile, first for JSON Formatter and then uBlock Origin Lite.
+The complete Store receipt is
+`.tmp/native-generation-store-reseed2-evidence/receipt.json`, with matching
+before/after bundle hashes. Normal installation, extension-created tabs,
+toolbar popup, live management disable/re-enable, function and restart
+persistence pass; only an actual published version upgrade remains incomplete.
+The new checkpoint is
+`.tmp/native-generation-store-reseed2-evidence/store-update-checkpoint.json`.
+The previous failed/timeout run and previous missing-profile checkpoint remain
+preserved and are not relabeled as successful. A private archive of this
+marked, generated profile is being retained separately from macOS temporary
+storage; its manifest records that restoration has not yet been tested. The
+temporary-root test-key guards remain unchanged.
+
+Current-head CI `41650437331` passed desktop/package validation but failed the
+Core unit job because the legacy-key native fixture's beforeAll hook retained
+Vitest's 10-second default while its compiler already permitted 30 seconds.
+The fixture now bounds each xcrun discovery to five seconds and gives only
+that hook 45 seconds for the bounded discovery/compiler budgets plus setup.
+The compiler and per-case subprocess limits and all 23 assertions are unchanged.
+The exact fixture suite passed locally after the correction; this does not
+retroactively make the failed CI run green. A new CI run is required.
