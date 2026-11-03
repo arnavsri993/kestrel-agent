@@ -2351,3 +2351,23 @@ CI jobs. Its separate CodeQL check still reports five fingerprint findings;
 none has been dismissed or suppressed. Jules advisory review is unavailable
 because its API key is not configured. Canonical installation and the remaining
 profile, account, signing, privacy and Store-upgrade gates remain outstanding.
+
+
+The remaining verification commands ran sequentially in
+`.tmp/native-connections-tail2/receipt.json`: 18 of 19 passed initially. The
+external-secret desktop smoke alone expected the previous dynamic credential
+count in a status message. Its assertion now checks the actual sanitized static
+message and independently requires the command source to be verified with
+exactly the supported `openai` credential ID. The focused desktop smoke passed
+without a rebuild or real Bitwarden installation:
+`.tmp/native-external-secrets-focused/receipt.json`. Its generated screenshot
+was retained and the tracked baseline restored byte for byte. All 19 remaining
+commands thus passed individually; the two locked-desktop hover checks still
+prevent an aggregate pass claim.
+
+A separate current-artifact official Store update query succeeded with
+`no_update`. All five compatibility/restart phases also passed in that run:
+`.tmp/native-connections-current-store-update-evidence/receipt.json`. No newer
+published version was observed, so upgrade acceptance remains incomplete/exit 2.
+The retained generated profile, original checkpoint and bundle digest are
+unchanged. No real profile or credential was used.
