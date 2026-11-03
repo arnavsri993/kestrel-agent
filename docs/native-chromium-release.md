@@ -1983,3 +1983,23 @@ removed. A final source-only cleanup restored unchanged queue/getter formatting.
 This repairs job-state coherence, not stale-worker fencing or legacy profile
 transfer projection. Those remain part of the embedding/privacy and versioned
 transfer work; current transfer checksums and recovery policy were not changed.
+
+## Browser benchmark login sequencing (2026-11-02)
+
+The desktop CI failure at `96851b32` came from navigating onward while the
+fixture's async login handler was still awaiting its state response. Corpus
+1.1.1 (workflow revisions 2 for session continuity and logout) now observes the
+authenticated account page before the next direct navigation. This adds a
+completion check; it does not retry clicks, ignore aborted navigation or relax
+billing/logout predicates. The corpus version and pinned digest changed
+explicitly.
+
+A controller-only test wrapper delayed the generated loopback login state
+response by 250 ms. The prior workflow failed to reach authenticated billing;
+both corrected workflows passed under the same delay. The unchanged full
+benchmark then passed all 50 cases, and all 12 benchmark unit/fixture cases
+passed. Reports: `.tmp/native-ci-delayed-login-before.json`,
+`.tmp/native-ci-delayed-login-after.json`,
+`.tmp/native-ci-login-full-benchmark.json`. This change affects benchmark data,
+not app runtime code; the native bundle remains `16709dfc…`. Exact new-head
+remote CI is still required.
