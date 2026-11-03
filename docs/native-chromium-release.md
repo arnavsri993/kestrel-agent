@@ -1916,3 +1916,33 @@ and interrupted-preparation management; an observed published Store upgrade;
 production identity/signing/notarization and the canonical Chromium cutover.
 Developer ID credentials are unavailable, and `/Applications/Kestrel.app` remains
 the existing Electron installation until the full cutover is proven.
+
+## Transient redaction fingerprints (2026-11-02)
+
+Tool-result redaction now uses a random 32-byte HMAC key for each operation,
+shared across nested output and error values. Matching values retain the same
+numbered placeholder within that operation, including matches across secret
+kinds. Separate operations produce unrelated fingerprints. A `finally` block
+clears the key buffer on success, truncation and exceptions; unavailable secure
+randomness fails closed. This does not claim that all crypto-library memory is
+erased or repair the separate persisted embedding fingerprints.
+
+Validation passed 2,331 tests in 289 files, workspace typechecking and a full
+native build. Candidate executable SHA-256:
+`1662b3e36098c611f2d10b66fcebf423e57dbd08e16d7b4a4ea5b1f20b780d6e`.
+The same bundle passed 23 native workflow phases in
+`.tmp/native-redaction-hmac-workflow-evidence/receipt.json`, and six bundled
+Core phases in `.tmp/native-redaction-hmac-bundled-fixed-evidence/receipt.json`.
+The latter checks repeated redactions and persistence across restarts using
+generated fixture data; network transcription responses are simulated. Its
+first attempt incorrectly expected numbered placeholders in stored memories,
+which intentionally normalize assignments to `[redacted]`; the corrected
+assertion passed without an implementation change. No new microphone capture,
+real Keychain access or desktop control was performed. The full aggregate
+verification pass remains the preceding diagnostic checkpoint above.
+
+Exact-head CI at `96851b32` passed Core after the fixture-hook fix. Desktop CI
+passed 49 of 50 browser benchmark workflows, failing session continuity on an
+aborted navigation (`-3`). CodeQL still reported the five fingerprint findings
+on that preceding commit. Neither current-head CI nor complete release
+readiness is implied by these local passes.

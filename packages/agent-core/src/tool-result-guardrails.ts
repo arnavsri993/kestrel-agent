@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import type { RuntimeToolExecution } from "@kestrel/shared-types";
 import { screenshotTextOutput } from "./screenshot-model-context";
 
 interface RedactionState {
+	key: Buffer;
 	redactions: number;
 	tokens: Map<string, string>;
 	nextTokenByKind: Map<string, number>;
@@ -33,6 +34,7 @@ export const MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS = 250_000;
 
 function createRedactionState(): RedactionState {
 	return {
+		key: randomBytes(32),
 		redactions: 0,
 		tokens: new Map(),
 		nextTokenByKind: new Map(),
@@ -40,7 +42,7 @@ function createRedactionState(): RedactionState {
 }
 
 function tokenFor(kind: string, value: string, state: RedactionState): string {
-	const fingerprint = createHash("sha256").update(value).digest("hex");
+	const fingerprint = createHmac("sha256", state.key).update(value).digest("hex");
 	const existing = state.tokens.get(fingerprint);
 	if (existing) {
 		state.redactions += 1;
@@ -148,7 +150,9 @@ function redactText(value: string, state: RedactionState): string {
 
 /** Redact a previously persisted tool-message payload before replaying it. */
 export function redactSensitiveContent(value: string): string {
-	return redactText(value, createRedactionState());
+	const state = createRedactionState();
+	try { return redactText(value, state); }
+	finally { state.key.fill(0); }
 }
 
 function redactValue(
@@ -185,48 +189,52 @@ function redactValue(
  */
 export function modelVisibleToolResult(execution: RuntimeToolExecution): string {
 	const state = createRedactionState();
-	const output =
-		execution.output === undefined
-			? undefined
-			: redactValue(screenshotTextOutput(execution), state);
-	const error = execution.error
-		? redactText(execution.error, state)
-		: undefined;
-	const result = {
-		status: execution.status,
-		...(output === undefined ? {} : { output }),
-		...(error === undefined ? {} : { error }),
-		...(state.redactions > 0
-			? {
-					safety: {
-						redactedSensitiveData: true,
-						redactionCount: state.redactions,
-						note: "Sensitive-looking values were replaced locally before this result reached the model. Never reconstruct or request a redacted value.",
-					},
-				}
-			: {}),
-	};
-	const serialized = JSON.stringify(result);
-	if (serialized.length <= MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS)
-		return serialized;
+	try {
+		const output =
+			execution.output === undefined
+				? undefined
+				: redactValue(screenshotTextOutput(execution), state);
+		const error = execution.error
+			? redactText(execution.error, state)
+			: undefined;
+		const result = {
+			status: execution.status,
+			...(output === undefined ? {} : { output }),
+			...(error === undefined ? {} : { error }),
+			...(state.redactions > 0
+				? {
+						safety: {
+							redactedSensitiveData: true,
+							redactionCount: state.redactions,
+							note: "Sensitive-looking values were replaced locally before this result reached the model. Never reconstruct or request a redacted value.",
+						},
+					}
+				: {}),
+		};
+		const serialized = JSON.stringify(result);
+		if (serialized.length <= MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS)
+			return serialized;
 
-	return JSON.stringify({
-		status: execution.status,
-		output: {
-			truncated: true,
-			originalCharacterCount: serialized.length,
-			limitCharacterCount: MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
-			message:
-				"The tool result was too large to add to model context. Do not assume omitted details were read; use a narrower request or a scoped tool.",
-		},
-		...(state.redactions > 0
-			? {
-					safety: {
-						redactedSensitiveData: true,
-						redactionCount: state.redactions,
-						note: "Sensitive-looking values were handled locally before this result reached the model.",
-					},
-				}
-			: {}),
-	});
+		return JSON.stringify({
+			status: execution.status,
+			output: {
+				truncated: true,
+				originalCharacterCount: serialized.length,
+				limitCharacterCount: MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
+				message:
+					"The tool result was too large to add to model context. Do not assume omitted details were read; use a narrower request or a scoped tool.",
+			},
+			...(state.redactions > 0
+				? {
+						safety: {
+							redactedSensitiveData: true,
+							redactionCount: state.redactions,
+							note: "Sensitive-looking values were handled locally before this result reached the model.",
+						},
+					}
+				: {}),
+		});
+	} finally {
+		state.key.fill(0);
+	}
 }
