@@ -1,4 +1,6 @@
 import { UserBrowserSettingsSchema, UserBrowserPageContextSchema } from "../../../../packages/shared-types/src/contracts.ts";
+import { NativeLoginCodeBrowserRequestSchema } from "../../../../packages/shared-types/src/native-login-code.ts";
+import { loginCodeField } from "./login-code-fields.mjs";
 import { capturePageContext } from "./page-context.mjs";
 import { createNativeAutomation } from "./native-automation.mjs";
 import { isNativeBrowserSettingsUrl } from "../../../../packages/shared-types/src/native-browser-settings.ts";
@@ -439,6 +441,46 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		signal?.throwIfAborted();
 		return UserBrowserPageContextSchema.parse(result.result.context);
 	}
+	async function loginCode(input, signal) {
+		// Keep all errors static: neither page content nor the code enters logs.
+		try {
+			const request = NativeLoginCodeBrowserRequestSchema.parse(input);
+			signal?.throwIfAborted();
+			const authority = request.authority;
+			const tab = await nativeId(request.operation === "inspect" ? request.tabId : authority.tabId);
+			const check = async () => {
+				const window = await invoke(chromeApi.windows, "getLastFocused", { windowTypes: ["normal"] });
+				const current = await invoke(chromeApi.tabs, "get", tab.id);
+				signal?.throwIfAborted();
+				if (!window?.focused || window.id !== tab.windowId || !current?.active || current.windowId !== tab.windowId ||
+					current.pendingUrl || current.status !== "complete" || current.discarded || current.url !== tab.url) throw new Error();
+				const url = new URL(current.url);
+				if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error();
+				const frame = await invoke(chromeApi.webNavigation, "getFrame", { tabId: tab.id, frameId: 0 });
+				signal?.throwIfAborted();
+				if (!frame?.documentId || frame.documentLifecycle !== "active" || frame.url !== current.url) throw new Error();
+				return { frame, origin: url.origin };
+			};
+			const before = await check();
+			if (authority && (authority.chromeTabId !== tab.id || authority.windowId !== tab.windowId ||
+				authority.documentId !== before.frame.documentId || authority.origin !== before.origin)) throw new Error();
+			const results = await invoke(chromeApi.scripting, "executeScript", {
+				target: { tabId: tab.id, documentIds: [before.frame.documentId] }, world: "ISOLATED",
+				func: loginCodeField, args: [request.operation, authority?.fieldId, request.code],
+			});
+			signal?.throwIfAborted();
+			const after = await check();
+			const result = results?.[0];
+			if (results?.length !== 1 || result.frameId !== 0 || result.documentId !== before.frame.documentId ||
+				after.frame.documentId !== before.frame.documentId || after.frame.url !== before.frame.url || result.result?.ok !== true) throw new Error();
+			if (request.operation === "inspect") {
+				const value = { tabId: request.tabId, chromeTabId: tab.id, windowId: tab.windowId,
+					documentId: before.frame.documentId, origin: before.origin, fieldId: result.result.fieldId };
+				return NativeLoginCodeBrowserRequestSchema.parse({ operation: "validate", authority: value }).authority;
+			}
+			return request.operation === "validate" ? { valid: true } : { filled: true };
+		} catch { throw new Error("The verification code field is unavailable or has changed."); }
+	}
 	async function backend(input, signal) {
 		signal?.throwIfAborted();
 		if (input.operation === "visible-context") return pageContext(input.tabId, signal);
@@ -598,5 +640,5 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		focusedWindowId = window.id;
 		return { tabId: tab.id, windowId: window.id };
 	}
-	return { handles: (type) => SUPPORTED.has(type), request, backend, openExternalUrl, openNativeWindow };
+	return { handles: (type) => SUPPORTED.has(type), request, backend, loginCode, openExternalUrl, openNativeWindow };
 }
