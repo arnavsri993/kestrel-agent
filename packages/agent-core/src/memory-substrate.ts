@@ -336,6 +336,9 @@ export class MemorySubstrate {
 	private embeddingRepairAfterId = "";
 	private embeddingJobRepairAfterId = "";
 	private repairEmbeddingJobsNext = false;
+	private legacyMigrationPending = false;
+	private legacyMigrationBlocked = false;
+	private legacyMigrationTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly projects = new Map<string, MemoryProject>();
 
 	constructor(options: MemorySubstrateOptions) {
@@ -512,6 +515,9 @@ export class MemorySubstrate {
 
 	start(): void {
 		if (this.backgroundTimer || this.closed) return;
+		// Explicit active-Core preparation; database readers and transfer
+		// staging never perform this conversion in their constructors.
+		this.legacyMigrationPending = true;
 		this.scheduleAmbientJobs();
 		this.backgroundTimer = setInterval(() => {
 			if (this.closed) return;
@@ -1668,6 +1674,24 @@ export class MemorySubstrate {
 	}
 
 	async runMaintenance(maxJobs = MAX_BACKGROUND_JOBS_PER_TICK): Promise<MemoryMaintenanceResult> {
+		if (this.legacyMigrationPending) {
+			let progress: ReturnType<KestrelDatabase["migrateLegacyMemoryEmbeddingIdentifiers"]>;
+			try {
+				progress = this.database.migrateLegacyMemoryEmbeddingIdentifiers(this.now().toISOString());
+			} catch (error) {
+				// Damaged or unsupported state stays closed and uses the normal
+				// retry timer; it must not schedule a zero-delay failure loop.
+				this.legacyMigrationBlocked = true;
+				throw error;
+			}
+			this.legacyMigrationPending = !progress.done;
+			this.legacyMigrationBlocked = progress.blocked;
+			if (!progress.done) return MemoryMaintenanceResultSchema.parse({
+				jobsProcessed: 0, jobsCompleted: 0, jobsRetried: 0, jobsFailed: 0,
+				eventsSessionized: 0, blocksBuilt: 0, memoriesExtracted: 0, memoriesChanged: 0,
+				deletedArtifacts: 0, updatedAt: this.now().toISOString(),
+			});
+		}
 		const bounded = Math.max(1, Math.min(100, Math.trunc(maxJobs)));
 		let jobsProcessed = 0;
 		let jobsCompleted = 0;
@@ -1745,6 +1769,8 @@ export class MemorySubstrate {
 		this.closed = true;
 		if (this.backgroundTimer) clearInterval(this.backgroundTimer);
 		this.backgroundTimer = undefined;
+		if (this.legacyMigrationTimer) clearTimeout(this.legacyMigrationTimer);
+		this.legacyMigrationTimer = undefined;
 		if (this.runtime && this.runtimeListener) this.runtime.off("event", this.runtimeListener);
 		this.runtimeListener = undefined;
 		const backgroundPromise = this.backgroundPromise;
@@ -1767,6 +1793,16 @@ export class MemorySubstrate {
 			await this.runMaintenance();
 		} finally {
 			this.backgroundRunning = false;
+			// Yield between bounded pages without imposing a 15-second delay on
+			// every eight records in an older profile. Live leases use the normal
+			// timer instead of a busy retry loop.
+			if (this.legacyMigrationPending && !this.legacyMigrationBlocked && !this.closed && !this.legacyMigrationTimer) {
+				this.legacyMigrationTimer = setTimeout(() => {
+					this.legacyMigrationTimer = undefined;
+					this.kickBackgroundMaintenance();
+				}, 0);
+				this.legacyMigrationTimer.unref?.();
+			}
 		}
 	}
 
@@ -1822,12 +1858,15 @@ export class MemorySubstrate {
 		// SQL without a matching index could scan an unbounded non-embed gap.
 		const page = this.database.listMemoryJobPage(this.embeddingJobRepairAfterId, EMBEDDING_REPAIR_PAGE_SIZE);
 		for (const [index, job] of page.entries()) {
-			if (job.kind === "embed" && (job.status === "completed" || job.status === "failed")) {
+			if (job.kind === "embed" && (job.status === "completed" || job.status === "failed" || job.status === "cancelled")) {
 				const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
 				const id = job.payload.ownerId;
 				if (type.success && typeof id === "string" && id.length > 0 && id.length <= 200) {
-					const input = this.database.getMemoryEmbeddingInput(type.data, id);
-					if (input && input.generation !== job.payload.generation) this.enqueueEmbeddingInput(input);
+					const terminal = this.database.bindLegacyMemoryEmbeddingTerminalGuard(job.id, this.now().toISOString());
+					const input = terminal.terminal ? terminal.input : this.database.getMemoryEmbeddingInput(type.data, id);
+					if (input && input.generation !== job.payload.generation &&
+						(!terminal.terminal || (terminal.boundGeneration && terminal.boundGeneration !== input.generation)))
+						this.enqueueEmbeddingInput(input);
 				}
 			}
 			this.embeddingJobRepairAfterId = job.id;
@@ -1838,7 +1877,7 @@ export class MemorySubstrate {
 
 	private enqueue(kind: MemoryJob["kind"], dedupeKey: string, payload: Record<string, unknown>): void {
 		const existing = this.database.getMemoryJobByDedupeKey(dedupeKey);
-		if (existing && ["pending", "running", "completed"].includes(existing.status)) return;
+		if (existing && ["pending", "running", "completed", "cancelled"].includes(existing.status)) return;
 		if (existing && existing.attempts >= existing.maxAttempts) return;
 		const timestamp = this.now().toISOString();
 		this.database.queueMemoryJob(

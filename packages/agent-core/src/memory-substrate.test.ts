@@ -427,6 +427,85 @@ describe("memory substrate", () => {
 		} finally { await state.close(); }
 	});
 
+	it("does not spin the preparation scheduler on damaged migration metadata", async () => {
+		vi.useFakeTimers();
+		const state = fixture();
+		const migrate = vi.spyOn(state.database, "migrateLegacyMemoryEmbeddingIdentifiers");
+		try {
+			state.database.setPrivateState("kestrel.embedding-generation.v1.legacy-migration", { version: 99 });
+			state.substrate.start();
+			await vi.advanceTimersByTimeAsync(100);
+			expect(migrate).toHaveBeenCalledTimes(1);
+			expect(state.database.listMemoryJobs({ status: "completed" })).toEqual([]);
+		} finally { await state.close(); migrate.mockRestore(); vi.useRealTimers(); }
+	});
+
+	it("prepares legacy identifiers on active start before dispatching their replacement work", async () => {
+		const calls: string[] = [];
+		const state = fixture({ embeddingProvider: { provider: "migration", model: "migration", async embed(text) { calls.push(text); return [1]; } } });
+		try {
+			const text = "Generated legacy activation sentinel";
+			const memory = state.substrate.remember(memoryInput(text));
+			state.database.db.prepare("DELETE FROM memory_jobs").run();
+			const timestamp = "2026-07-22T12:00:00.000Z";
+			state.database.queueMemoryJob(MemoryJobSchema.parse({ id: `memory-job-${"a".repeat(64)}`, kind: "embed",
+				dedupeKey: `embed:memory:${memory.id}:${"b".repeat(16)}`, payload: { ownerType: "memory", ownerId: memory.id },
+				status: "pending", attempts: 0, maxAttempts: 3, runAfter: timestamp, createdAt: timestamp, updatedAt: timestamp }));
+			state.database.upsertMemoryEmbedding({ id: "generated-legacy-vector", ownerType: "memory", ownerId: memory.id,
+				contentHash: "c".repeat(64), provider: "old", model: "old", dimension: 1, vector: [1], status: "ready", createdAt: timestamp, updatedAt: timestamp });
+			state.substrate.start();
+			expect(calls).toEqual([]);
+			for (let i = 0; i < 64; i++) {
+				await state.substrate.runMaintenance(100);
+				if (calls.includes(text)) break;
+				await new Promise<void>(resolve => setImmediate(resolve));
+			}
+			expect(calls).toContain(text);
+			const indexed = state.database.db.prepare("SELECT id, dedupe_key FROM memory_jobs").all();
+			expect(JSON.stringify(indexed)).not.toContain("a".repeat(64));
+			expect(JSON.stringify(indexed)).not.toContain("b".repeat(16));
+			expect(state.database.getMemoryEmbedding("generated-legacy-vector")?.contentHash).not.toBe("c".repeat(64));
+			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id })
+				.some(value => state.database.isMemoryEmbeddingCurrent(value))).toBe(true);
+		} finally { await state.close(); }
+	});
+
+	it.each(["failed", "cancelled"] as const)("preserves a denied legacy %s budget on regrant and permits a later correction", async status => {
+		const calls: string[] = [];
+		const state = fixture({ embeddingProvider: { provider: "migration", model: "migration", async embed(text) { calls.push(text); return [1]; } } });
+		try {
+			const source = state.runtime.createSession({ title: "Legacy private source" });
+			const event = state.substrate.captureActivity({ id: "generated-terminal-source", source: "fixture", eventType: "note",
+				sourceSessionId: source.id, textSummary: "Generated source for terminal migration" })!;
+			const text = "Generated terminal legacy sentinel";
+			const memory = state.substrate.remember(memoryInput(text, event.id));
+			state.database.db.prepare("DELETE FROM memory_jobs").run();
+			const timestamp = "2026-07-22T12:00:00.000Z";
+			state.database.queueMemoryJob(MemoryJobSchema.parse({ id: "a", kind: "embed", dedupeKey: "generated-legacy-terminal", status,
+				payload: { ownerType: "memory", ownerId: memory.id }, attempts: status === "failed" ? 3 : 0, maxAttempts: 3,
+				runAfter: timestamp, createdAt: timestamp, updatedAt: timestamp }));
+			state.database.saveRuntimeSession({ ...source, privacyMode: "private" });
+			state.substrate.start();
+			for (let i = 0; i < 16; i++) await state.substrate.runMaintenance(100);
+			expect(calls).not.toContain(text);
+			state.database.saveRuntimeSession({ ...source, privacyMode: "standard" });
+			let guard: ReturnType<KestrelDatabase["getMemoryJobByDedupeKey"]>;
+			for (let i = 0; i < 64; i++) {
+				await state.substrate.runMaintenance(100);
+				guard = state.database.listMemoryJobs({ kind: "embed", limit: 2_000 }).find(job => job.payload.ownerId === memory.id && job.payload.generation !== undefined);
+				if (guard) break;
+			}
+			expect(guard).toMatchObject({ status, attempts: status === "failed" ? 3 : 0, maxAttempts: 3 });
+			expect(guard?.payload.generation).toBe(state.database.getMemoryEmbeddingInput("memory", memory.id)?.generation);
+			expect(calls).not.toContain(text);
+			const corrected = "Generated explicit correction after legacy terminal guard";
+			state.substrate.correct(memory.id, { content: corrected });
+			for (let i = 0; i < 64; i++) { await state.substrate.runMaintenance(100); if (calls.includes(corrected)) break; }
+			expect(calls).toContain(corrected);
+			expect(state.database.getMemoryJob(guard!.id)).toMatchObject({ status, attempts: status === "failed" ? 3 : 0 });
+		} finally { await state.close(); }
+	});
+
 	it("captures redacted runtime activity and builds searchable aggregates", async () => {
 		const state = fixture();
 		try {
