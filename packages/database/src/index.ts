@@ -3199,6 +3199,8 @@ export class KestrelDatabase {
 		if (payload.payload.legacyIdentifierMigration !== undefined) {
 			parseLegacyEmbeddingRetirement(payload.payload.legacyIdentifierMigration);
 			if (payload.kind !== "embed" || payload.payload.generation !== undefined ||
+				!EmbeddingRecordSchema.shape.ownerType.safeParse(payload.payload.ownerType).success ||
+				!EmbeddingRecordSchema.shape.ownerId.safeParse(payload.payload.ownerId).success ||
 				!/^legacy-retired-job-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(payload.id) || !/^legacy-embedding-opaque:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(payload.dedupeKey))
 				throw new Error("Invalid legacy embedding retirement binding.");
 		}

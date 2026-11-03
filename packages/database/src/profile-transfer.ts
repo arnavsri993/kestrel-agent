@@ -247,6 +247,8 @@ function validateProtectedPayload(table: string, values: Record<string, SqlValue
 		if (job.payload.legacyIdentifierMigration !== undefined) {
 			parseLegacyEmbeddingRetirement(job.payload.legacyIdentifierMigration);
 			if (job.kind !== "embed" || job.payload.generation !== undefined ||
+				!Contracts.EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType).success ||
+				!Contracts.EmbeddingRecordSchema.shape.ownerId.safeParse(job.payload.ownerId).success ||
 				!/^legacy-retired-job-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(job.id) || !/^legacy-embedding-opaque:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(job.dedupeKey))
 				fail("Profile transfer found an invalid legacy embedding retirement binding.");
 		}

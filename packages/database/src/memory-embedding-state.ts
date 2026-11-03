@@ -49,7 +49,7 @@ export function parseReservedEmbeddingState(
 		throw new Error("Invalid embedding generation state.");
 	const record = value as Record<string, unknown>;
 	if (key === EMBEDDING_LEGACY_MIGRATION_KEY) {
-		if (record.version !== 1 || !["jobs", "embeddings", "complete"].includes(String(record.phase)) ||
+		if (record.version !== 1 || typeof record.phase !== "string" || !["jobs", "embeddings", "complete"].includes(record.phase) ||
 			typeof record.afterId !== "string" || record.afterId.length > 200 || Object.keys(record).length !== 3 ||
 			(record.phase === "complete" && record.afterId !== "")) throw new Error("Invalid embedding legacy migration checkpoint.");
 		return record as EmbeddingLegacyMigration;

@@ -1,7 +1,7 @@
 import { createEncryptionKey } from "@kestrel/encryption";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	EMBEDDING_STATE_SECRET_KEY, EMBEDDING_LEGACY_MIGRATION_KEY,
+	EMBEDDING_STATE_SECRET_KEY, EMBEDDING_LEGACY_MIGRATION_KEY, parseReservedEmbeddingState,
 	embeddingOwnerKey,
 	newEmbeddingOwnerState,
 	newEmbeddingStateSecret,
@@ -45,15 +45,50 @@ describe("host profile transfer embedding state validation", () => {
 		expect(target.listMemoryJobs()).toEqual([]);
 	 });
 
+	 it.each([
+		{ ownerType: "invalid", ownerId: "ok" }, { ownerType: "memory", ownerId: "" },
+		{ ownerType: "memory", ownerId: "x".repeat(201) },
+	 ])("rejects an invalid retired-job owner in database reads and transfer", owner => {
+		const source = database(), target = database(), time = "2026-11-02T12:00:00.000Z";
+		const id = "legacy-retired-job-ad7d9896-b7ad-47ca-8fd4-e082b3dd653b";
+		source.queueMemoryJob({ id, kind: "embed", dedupeKey: "legacy-embedding-opaque:ad7d9896-b7ad-47ca-8fd4-e082b3dd653b", status: "failed",
+			payload: { ...owner, legacyIdentifierMigration: { version: 1 } }, attempts: 3, maxAttempts: 3,
+			runAfter: time, createdAt: time, updatedAt: time });
+		expect(() => source.getMemoryJob(id)).toThrow(/retirement binding/);
+		expect(() => source.bindLegacyMemoryEmbeddingTerminalGuard(id, time)).toThrow(/retirement binding/);
+		expect(() => source.migrateLegacyMemoryEmbeddingIdentifiers(time, 8)).toThrow(/retirement binding/);
+		expect(() => source.exportHostProfileTransferSnapshot()).toThrow();
+		// A forged snapshot with a correct checksum must fail before writing to target.
+		const valid = database();
+		valid.queueMemoryJob({ id, kind: "embed", dedupeKey: "legacy-embedding-opaque:ad7d9896-b7ad-47ca-8fd4-e082b3dd653b", status: "failed",
+			payload: { ownerType: "memory", ownerId: "ok", legacyIdentifierMigration: { version: 1 } }, attempts: 3, maxAttempts: 3,
+			runAfter: time, createdAt: time, updatedAt: time });
+		const snapshot = valid.exportHostProfileTransferSnapshot(), row = snapshot.rows.memory_jobs![0]!;
+		const job = JSON.parse(row.cleartext!.payload_ciphertext as string); Object.assign(job.payload, owner);
+		row.cleartext!.payload_ciphertext = JSON.stringify(job); snapshot.semanticSha256 = computeHostProfileTransferSemanticHash(snapshot.rows);
+		expect(() => target.importHostProfileTransferSnapshot(snapshot)).toThrow();
+		expect(target.listMemoryJobs()).toEqual([]);
+	 });
+
 	it("validates the exact legacy migration checkpoint schema during transfer", () => {
 		for (const invalid of [
 			{ version: 2, phase: "jobs", afterId: "" },
 			{ version: 1, phase: "future", afterId: "" },
+			{ version: 1, phase: ["jobs"], afterId: "" },
+			{ version: 1, phase: { value: "jobs" }, afterId: "" },
 			{ version: 1, phase: "complete", afterId: "x" },
 			{ version: 1, phase: "jobs", afterId: "", extra: true },
 		]) {
 			const source = database(); source.setPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY, invalid);
+			expect(() => parseReservedEmbeddingState(EMBEDDING_LEGACY_MIGRATION_KEY, invalid)).toThrow();
 			expect(() => source.exportHostProfileTransferSnapshot()).toThrow();
+			const valid = database(), target = database();
+			valid.setPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY, { version: 1, phase: "jobs", afterId: "" });
+			const snapshot = valid.exportHostProfileTransferSnapshot();
+			const row = snapshot.rows.private_runtime_state!.find(value => value.values.key === EMBEDDING_LEGACY_MIGRATION_KEY)!;
+			row.cleartext!.value_ciphertext = JSON.stringify(invalid);
+			snapshot.semanticSha256 = computeHostProfileTransferSemanticHash(snapshot.rows);
+			expect(() => target.importHostProfileTransferSnapshot(snapshot)).toThrow();
 		}
 	});
 
