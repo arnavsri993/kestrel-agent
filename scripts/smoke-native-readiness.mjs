@@ -14,7 +14,7 @@ assert(!candidate.startsWith("/Applications/"), "The canary must not use an inst
 const profile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-native-readiness-")));
 const protectedKeyBase64 = randomBytes(32).toString("base64");
 const resources = join(candidate, "Contents/Resources");
-const child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--durable-profile"], {
+const child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--browser-profile-root", profile, "--durable-profile"], {
   env: { ...process.env, KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1" }, stdio: ["pipe", "pipe", "pipe"],
 });
 let ready = false, output = "", resolveResponse, permissionRequests = 0, protocolFailure;

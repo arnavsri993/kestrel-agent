@@ -37,11 +37,17 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
     const folder = ["select-workspace-folder", "select-plugin-bundle"].includes(message.operation);
     const publisher = message.operation === "select-plugin-publisher";
     const files = message.operation === "select-context-files";
+    const backupFolder = message.operation === "select-local-backup-folder";
+    const revealBackupFolder = message.operation === "reveal-local-backup-folder";
     const recovery = ["save-memory-recovery-file", "open-memory-recovery-file"].includes(message.operation);
     const diagnostic = message.operation === "save-diagnostic-report";
-    const allowedKeys = files ? ["type", "requestId", "operation", "workspaceRoot"] : ["type", "requestId", "operation"];
+    const allowedKeys = files ? ["type", "requestId", "operation", "workspaceRoot"]
+      : revealBackupFolder ? ["type", "requestId", "operation", "backupPath"]
+        : ["type", "requestId", "operation"];
     if (closed || pending || sequence >= Number.MAX_SAFE_INTEGER || message.type !== "native-dialog-request" ||
-        (!folder && !files && !publisher && !recovery && !diagnostic) || (files && !validPath(message.workspaceRoot)) || Object.keys(message).some(key => !allowedKeys.includes(key))) {
+        (!folder && !files && !publisher && !backupFolder && !revealBackupFolder && !recovery && !diagnostic) ||
+        (files && !validPath(message.workspaceRoot)) || (revealBackupFolder && !validPath(message.backupPath)) ||
+        Object.keys(message).some(key => !allowedKeys.includes(key))) {
       respond(id, { ok: false, error: failed }); return;
     }
     const privateId = `dialog-${++sequence}`;
@@ -51,7 +57,9 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
       respond(item.requestId, { ok: false, error: "The native file or folder picker timed out." });
     }, 10 * 60_000);
     pending = { id: privateId, requestId: id, operation: message.operation, timer };
-    const request = files ? { type: "select-context-files", workspaceRoot: message.workspaceRoot } : { type: message.operation };
+    const request = files ? { type: "select-context-files", workspaceRoot: message.workspaceRoot }
+      : revealBackupFolder ? { type: "reveal-local-backup-folder", backupPath: message.backupPath }
+        : { type: message.operation };
     if (!send({ kind: "host-request", id: privateId, request })) {
       const item = take(); if (item) respond(item.requestId, { ok: false, error: failed });
     }
@@ -68,6 +76,13 @@ export function createNativeDialogRelay({ writeOwner, writeCore }) {
     } else if (["select-workspace-folder", "select-plugin-bundle"].includes(item.operation) && value?.ok === true && validPath(value.selectedWorkspacePath) &&
         keys.length === 2 && keys.includes("ok") && keys.includes("selectedWorkspacePath")) {
       respond(item.requestId, { ok: true, selectedWorkspacePath: value.selectedWorkspacePath });
+    } else if (item.operation === "select-local-backup-folder" && value?.ok === true &&
+        (value.selectedBackupPath === null || validPath(value.selectedBackupPath)) &&
+        keys.length === 2 && keys.includes("ok") && keys.includes("selectedBackupPath")) {
+      respond(item.requestId, { ok: true, selectedBackupPath: value.selectedBackupPath });
+    } else if (item.operation === "reveal-local-backup-folder" && value?.ok === true && value.revealed === true &&
+        keys.length === 2 && keys.includes("ok") && keys.includes("revealed")) {
+      respond(item.requestId, { ok: true, revealed: true });
     } else if (["save-memory-recovery-file", "open-memory-recovery-file"].includes(item.operation) && value?.ok === true && validPath(value.selectedRecoveryPath) &&
         keys.length === 2 && keys.includes("ok") && keys.includes("selectedRecoveryPath")) {
       respond(item.requestId, { ok: true, selectedRecoveryPath: value.selectedRecoveryPath });

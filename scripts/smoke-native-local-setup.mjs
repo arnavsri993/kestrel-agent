@@ -55,7 +55,7 @@ const forbiddenStages = new Set(["downloading-runtime", "verifying-runtime", "in
 function write(value) { assert(child?.stdin.writable, "The disposable native Core is unavailable."); child.stdin.write(JSON.stringify(value) + "\n"); }
 function start() {
   let ready = false;
-  child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--durable-profile"], {
+  child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--browser-profile-root", profile, "--durable-profile"], {
     env: { ...process.env, KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1" }, stdio: ["pipe", "pipe", "pipe"],
   });
   childExit = new Promise(resolveExit => child.once("exit", (code, signal) => resolveExit({ code, signal })));

@@ -2153,3 +2153,98 @@ proven separately from canonical cutover, existing-profile/vendor-login
 acceptance, privacy migration, production signing and the still-unobserved
 published Store upgrade. No new microphone capture, desktop-control permission,
 real Keychain access or real-profile mutation was performed.
+
+## Native app data backup and scoped recovery checks (2026-11-03)
+
+The native Readiness page now creates a verified backup of the active Core
+profile's app data. Its native folder picker explains the scope before the
+copy starts. Conversations, task records, settings, encrypted Kestrel credential
+records, installed plugins and learned skills are included. Browser history,
+cookies, website logins, other Core profiles, provider CLI stores, downloaded
+models and external project folders are excluded. Only `secure/credentials`
+is selected from the secure directory; database keys and credential master keys
+are excluded. These backups require the same Mac, original profile path and
+original Keychain identity. This is not a complete Chromium-profile backup or
+a portable restore/import feature.
+
+The host reserves maintenance before admitting other work, confirms a clean
+Core exit, checks source identity and the selected inventory, copies privately,
+independently verifies file hashes, syncs files/directories and publishes through
+macOS `renameatx_np(RENAME_EXCL)`. A pre-existing destination, including an empty
+folder, cannot be overwritten. An error after publication preserves the backup
+and reports unconfirmed durability. Interrupted private staging directories are
+retained: automatic recursive cleanup cannot safely delete a path that may have
+been replaced. The backup never exports its profile key.
+
+Core ownership is retained until an actual process exit. A forced or uncertain
+exit cannot authorize a database copy or a replacement Core. Quit interrupts
+the existing maintenance stop, first requests orderly service shutdown and then
+uses bounded termination if necessary. A completed backup remains available
+when Core restart fails. The renderer receives a UUID receipt and file counts;
+Finder reveal resolves an encrypted host receipt and rechecks directory identity
+instead of accepting a renderer-provided path. Readiness distinguishes the
+receipt's folder identity from a new content or restoration check.
+
+The initial focused suite passed 117 checks, and the full unit suite passed
+2,427 tests in 294 files. Workspace typechecks and native builds passed. The
+bundled backup canary passed 16 phases on artifact
+`3da0b588643d018646ad10bf4543bf7972c0d39598e744ede7030226692fecf4`:
+`.tmp/native-backup-bundled-recovery-evidence/receipt.json`. Its picker, permission
+and profile-key replies are synthetic private-pipe messages; its bundled Node,
+Core processes, native publication binding, encrypted SQLite and credential
+records are real. It verifies cancellation without restart, concurrent mutation
+rejection, clean stop/restart by PID, manifest hashes, decryptable fixture data,
+key/browser/model/project exclusions, encrypted receipts, persisted reveal and
+replaced-directory refusal. A separate test-only offline recovery to the SAME
+generated profile path reopened the original conversation/message and credential
+with the original generated key while preserving its pre-recovery Core folder.
+That test does not expose a production restore flow or verify a real Keychain.
+
+The first live Cocoa run verified cancellation and visibly created a backup,
+but failed on a temporary maintenance error left in the chat panel. The UI now
+clears that specific error after a successful post-maintenance refresh and waits
+for initial readiness before accepting a backup click. A later attempt was
+interrupted when the Mac locked; both earlier receipts remain preserved.
+
+After the Mac became accessible, all five real Cocoa/UI phases passed on the
+final candidate digest
+`adfe7137d33e9798b09e8c71864f5e4307b17e017775632e3624bf6ffc31639b`:
+`.tmp/native-backup-ui-current-evidence/receipt.json`. The observed picker Cancel,
+exact generated-folder selection, visible verified receipt, selected Finder
+folder and picker dismissal when its owner tab closed were real native actions.
+A complete native restart retained the generated Core session and backup. The
+created-backup screenshot was visually inspected; the temporary chat error was
+absent. Initial workspace activity caused one admission rejection before the
+picker; a real UI retry after it settled succeeded, as recorded in the separate
+operator observations. No active task or admission guard was bypassed.
+
+The same final candidate passed 16 bundled backup/recovery phases with an
+explicit successful receipt at
+`.tmp/native-backup-current-receipt-evidence/receipt.json`, seven packaged transfer
+phases at `.tmp/native-backup-current-transfer-evidence/receipt.json`, five
+process-death recovery phases at
+`.tmp/native-backup-current-transfer-recovery-evidence/receipt.json`, and 16 native
+browser/Settings phases at
+`.tmp/native-backup-current-workflow-evidence/receipt.json`. The final candidate also passed all 26 provider, companion, workspace,
+attachment, isolated browser/download, approval, crash and restart phases at
+`.tmp/native-backup-current-full-desktop-evidence/receipt.json`. Its completed
+companion conversation capture was visually inspected. Five retained official
+Store compatibility phases passed at
+`.tmp/native-backup-current-store-compatibility-evidence/receipt.json`: both
+normal official installations, extension-created native tabs, formatted JSON,
+Core sessions and versions survived restart. This compatibility-only run made
+no update query; it deliberately remains `incomplete`/exit 2 for upgrade
+acceptance. The original retained Store checkpoint was preserved. Each receipt
+retains matching before/after bundle digests. Full `pnpm verify` passed again:
+`.tmp/native-backup-aggregate-verify.log`. All eight generated tracked screenshots
+were preserved under `.tmp/native-backup-aggregate-images-after/` and restored
+byte-for-byte from `.tmp/native-backup-aggregate-images-before/`. A final focused
+67-check pass and native rebuild cover the final message wording and nonblocking
+file opens. Canonical installation, existing-profile acceptance, production
+signing and the other release gates remain separate.
+
+To repeat the generated-data checks, set `KESTREL_NATIVE_TEST_APP` to the exact
+disposable candidate and run `pnpm test:native-local-backup`. The optional
+`KESTREL_NATIVE_LOCAL_BACKUP_EVIDENCE` selects a fresh evidence directory.
+`pnpm test:native-local-backup-ui` exercises the real Cocoa panels with an
+operator; its `live-state.json` describes each observed action and acknowledgement.

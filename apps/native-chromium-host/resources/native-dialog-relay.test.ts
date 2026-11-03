@@ -18,6 +18,49 @@ it("only sends a fixed picker request and returns the exact matching private sel
   expect(h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, selectedWorkspacePath: "/chosen/folder" } })).toBe(true);
   expect(h.writeCore).toHaveBeenCalledExactlyOnceWith({ type: "native-dialog-response", requestId: "native-dialog-1", response: { ok: true, selectedWorkspacePath: "/chosen/folder" } });
 });
+it("selects only a backup folder and returns its nullable private path", () => {
+  const h = harness();
+  h.request(1, { operation: "select-local-backup-folder" });
+  expect(h.frames()).toEqual([{ kind: "host-request", id: "dialog-1", request: { type: "select-local-backup-folder" } }]);
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, selectedBackupPath: "/Users/example/Backups" } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0]).toEqual({ type: "native-dialog-response", requestId: "native-dialog-1", response: { ok: true, selectedBackupPath: "/Users/example/Backups" } });
+  h.request(2, { operation: "select-local-backup-folder" });
+  h.relay.response({ kind: "host-response", id: "dialog-2", response: { ok: true, selectedBackupPath: null } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response).toEqual({ ok: true, selectedBackupPath: null });
+  h.request(3, { operation: "select-local-backup-folder", backupPath: "/injected" });
+  expect(h.frames()).toHaveLength(2);
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response.ok).toBe(false);
+});
+it("reveals only the bounded Core-supplied backup path and returns a pathless acknowledgement", () => {
+  const h = harness();
+  h.request(1, { operation: "reveal-local-backup-folder", backupPath: "/Users/example/Backups/kestrel" });
+  expect(h.frames()).toEqual([{ kind: "host-request", id: "dialog-1", request: { type: "reveal-local-backup-folder", backupPath: "/Users/example/Backups/kestrel" } }]);
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, revealed: true } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response).toEqual({ ok: true, revealed: true });
+  expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/Users/example");
+  for (const backupPath of ["relative", "/bad\0path", "/bad\npath", "/" + "x".repeat(4096)])
+    h.request(2, { operation: "reveal-local-backup-folder", backupPath });
+  expect(h.frames()).toHaveLength(1);
+  expect(h.writeCore.mock.calls.slice(1).every(([message]) => !message.response.ok)).toBe(true);
+  h.request(3, { operation: "reveal-local-backup-folder", backupPath: "/Users/example/Backups/kestrel" });
+  h.relay.response({ kind: "host-response", id: "dialog-2", response: { ok: true, revealed: true, backupPath: "/injected" } });
+  expect(h.writeCore.mock.calls.at(-1)?.[0].response).toMatchObject({ ok: false });
+});
+it("cancels backup dialogs on request cancellation and timeout and ignores late owner replies", async () => {
+  const h = harness();
+  h.request(1, { operation: "select-local-backup-folder" });
+  h.relay.cancel("native-dialog-1");
+  h.relay.response({ kind: "host-response", id: "dialog-1", response: { ok: true, selectedBackupPath: "/late" } });
+  h.request(2, { operation: "reveal-local-backup-folder", backupPath: "/private/backup" });
+  await vi.advanceTimersByTimeAsync(600_000);
+  h.relay.response({ kind: "host-response", id: "dialog-2", response: { ok: true, revealed: true } });
+  expect(h.frames().filter(frame => frame.kind === "dialog-cancel")).toEqual([
+    { kind: "dialog-cancel", id: "dialog-1" },
+    { kind: "dialog-cancel", id: "dialog-2" },
+  ]);
+  expect(h.writeCore.mock.calls.map(([message]) => message.requestId)).toEqual(["native-dialog-1", "native-dialog-2"]);
+  expect(JSON.stringify(h.writeCore.mock.calls)).not.toContain("/late");
+});
 it("rejects other operations, supplied paths, repeated ids, and a second concurrent picker", () => {
   const h = harness();
   h.request(1, { operation: "arbitrary" });

@@ -13,6 +13,7 @@ interface Options {
 	workspaceConfiguration: () => Promise<unknown>;
 	localStatus: () => Promise<unknown>;
 	computerUseStatus: () => Promise<unknown>;
+	backupStatus?: () => Promise<{ verified: boolean; createdAt?: string }>;
 	now?: () => Date;
 }
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -62,6 +63,10 @@ export async function nativeSystemReadiness(options: Options): Promise<SystemRea
 		const parsed = ComputerUseStatusSchema.safeParse(await options.computerUseStatus());
 		if (parsed.success) computerUse = parsed.data;
 	} catch { /* An unavailable native probe is not permission to claim readiness. */ }
+	let backup: { verified: boolean; createdAt?: string } | undefined;
+	try { backup = await options.backupStatus?.(); } catch { /* An unavailable receipt is not a verified backup. */ }
+	const backupCreatedAt = backup?.verified === true && backup.createdAt && Number.isFinite(Date.parse(backup.createdAt)) && Date.parse(backup.createdAt) <= now.getTime()
+		? backup.createdAt : undefined;
 	checks.push(
 		{
 			id: "computer-use",
@@ -75,10 +80,12 @@ export async function nativeSystemReadiness(options: Options): Promise<SystemRea
 						? "Enabled with Screen Recording and Accessibility permission. This is a permission probe, not proof of a completed desktop action."
 						: `Enabled, but permissions are incomplete: Screen Recording ${computerUse.screenRecording}; Accessibility ${computerUse.accessibility}.`,
 		},
-		{ id: "backup", label: "Recovery snapshot", status: "warning", detail: "A verified native-profile backup has not been established by this check." },
+		{ id: "backup", label: "App data backup", status: backupCreatedAt ? "pass" : "warning", detail: backupCreatedAt
+			? `A backup verified when created at ${backupCreatedAt} still matches its saved folder identity. This check did not re-read its contents or test restoration.`
+			: "No verified backup receipt was confirmed in this session. Back up app data before changing the native profile." },
 		{ id: "distribution", label: "Installed build", status: "fail", detail: "Production signing, canonical installation, and rollback have not been verified by the native host." },
 	);
 	// This screen's global ready label cannot imply release readiness while the
 	// native installation and rollback checks are unverified.
-	return SystemReadinessSchema.parse({ checkedAt: now.toISOString(), readyForLiveWork: false, checks });
+	return SystemReadinessSchema.parse({ checkedAt: now.toISOString(), readyForLiveWork: false, backupScope: "native-core-data", checks });
 }

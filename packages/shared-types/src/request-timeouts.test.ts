@@ -33,6 +33,12 @@ describe("shared request execution and native transport deadlines", () => {
 			expect(nativeRequestTimeoutMs({ type }, "renderer")).toBe(660_000);
 		}
 	});
+	it("allows backup selection, verified copying and clean Core restart within the same bounded transport budget", () => {
+		expect(nativeRequestTimeoutMs({ type: "create-local-backup" }, "broker")).toBe(910_000);
+		expect(nativeRequestTimeoutMs({ type: "create-local-backup" }, "worker")).toBe(955_000);
+		expect(nativeRequestTimeoutMs({ type: "create-local-backup" }, "renderer")).toBe(960_000);
+		expect(nativeRequestTimeoutMs({ type: "reveal-created-local-backup" }, "broker")).toBe(610_000);
+	});
 	it("allows the same bounded login budget for managed and shared Codex accounts", () => {
 		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "broker")).toBe(610_000);
 		expect(nativeRequestTimeoutMs({ type: "provider-account-connect" }, "renderer")).toBe(nativeRequestTimeoutMs({ type: "oauth-chatgpt-connect" }, "renderer"));

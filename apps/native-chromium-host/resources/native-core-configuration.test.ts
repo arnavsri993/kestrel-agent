@@ -3,11 +3,16 @@ import { describe, expect, it, vi } from "vitest";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 
 function fixture() {
-	const core = { start: vi.fn(async (_config: unknown) => {}), stop: vi.fn(async () => {}) };
+	let running = false;
+	const core = {
+		get isReady() { return running; }, get hasProcess() { return running; },
+		start: vi.fn(async (_config: unknown) => { running = true; }),
+		stop: vi.fn(async (_options?: unknown) => { running = false; }),
+	};
 	const isBusy = vi.fn(() => false); let version = 1;
 	const configuration = vi.fn(async () => ({ version: version++ }));
 	const changed = vi.fn(async () => {});
-	return { core, isBusy, configuration, changed, controller: createNativeCoreConfiguration({ core, isBusy, configuration, changed }) };
+	return { core, isBusy, configuration, changed, setRunning: (value: boolean) => { running = value; }, controller: createNativeCoreConfiguration({ core, isBusy, configuration, changed }) };
 }
 describe("native provider Core reconfiguration", () => {
 	it("rejects a busy Core before stopping or persisting anything", async () => {
@@ -50,4 +55,90 @@ describe("native provider Core reconfiguration", () => {
 		expect(rollback).toHaveBeenCalledOnce(); expect(core.start).toHaveBeenCalledOnce();
 	});
 
+});
+
+describe("native Core stopped maintenance", () => {
+	it("reserves the controller synchronously and rejects competing maintenance", async () => {
+		const { controller, core } = fixture(); await controller.start();
+		let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+		const operation = vi.fn(async () => { await gate; return "backup"; });
+		const pending = controller.withStoppedCore(operation);
+		expect(controller.changing).toBe(true);
+		await expect(controller.withStoppedCore(vi.fn())).rejects.toThrow("active task");
+		release(); expect(await pending).toEqual({ completed: true, value: "backup", coreStatus: "ready" });
+		expect(core.stop).toHaveBeenCalledWith({ requireCleanExit: true, gracefulTimeoutMs: 60000 });
+	});
+
+	it("does not stop or mutate for busy or already-aborted admission", async () => {
+		const { controller, core, isBusy } = fixture(); await controller.start();
+		const mutation = vi.fn(); isBusy.mockReturnValue(true);
+		await expect(controller.withStoppedCore(mutation)).rejects.toThrow("active task");
+		isBusy.mockReturnValue(false);
+		const abort = new AbortController(); abort.abort();
+		expect(await controller.withStoppedCore(mutation, { signal: abort.signal })).toMatchObject({ completed: false, coreStatus: "ready" });
+		expect(core.stop).not.toHaveBeenCalled(); expect(mutation).not.toHaveBeenCalled();
+	});
+
+	it("runs after a confirmed clean stop and restarts from fresh configuration", async () => {
+		const { controller, core, configuration, changed } = fixture(); await controller.start();
+		const operation = vi.fn(async () => "preserved");
+		expect(await controller.withStoppedCore(operation)).toEqual({ completed: true, value: "preserved", coreStatus: "ready" });
+		expect(operation).toHaveBeenCalledOnce(); expect(configuration).toHaveBeenCalledTimes(2);
+		expect(core.start).toHaveBeenLastCalledWith({ version: 2 }); expect(changed).toHaveBeenCalledOnce();
+	});
+
+	it("gates uncertain old-owner exits and blocks subsequent reconfiguration", async () => {
+		const { controller, core } = fixture(); await controller.start();
+		core.stop.mockImplementationOnce(async () => { throw Object.assign(new Error("still exiting"), { exitConfirmed: false }); });
+		const operation = vi.fn();
+		const result = await controller.withStoppedCore(operation);
+		expect(result).toMatchObject({ completed: false, coreStatus: "restart-required" });
+		expect(operation).not.toHaveBeenCalled(); expect(core.start).toHaveBeenCalledOnce();
+		expect(controller.requiresRestart).toBe(true);
+		await expect(controller.reconfigure(vi.fn())).rejects.toThrow("Restart Kestrel");
+		await expect(controller.withStoppedCore(vi.fn())).rejects.toThrow("Restart Kestrel");
+	});
+
+	it("restarts after a confirmed forced-stop failure without running the operation", async () => {
+		const { controller, core, setRunning } = fixture(); await controller.start();
+		core.stop.mockImplementationOnce(async () => { setRunning(false); throw Object.assign(new Error("forced"), { exitConfirmed: true }); });
+		const operation = vi.fn();
+		expect(await controller.withStoppedCore(operation)).toMatchObject({ completed: false, coreStatus: "ready" });
+		expect(operation).not.toHaveBeenCalled(); expect(core.start).toHaveBeenCalledTimes(2);
+	});
+
+	it("restarts after operation failure and cancellation", async () => {
+		const { controller, core } = fixture(); await controller.start();
+		const failure = new Error("backup failed");
+		expect(await controller.withStoppedCore(async () => { throw failure; })).toEqual({ completed: false, error: failure, coreStatus: "ready" });
+		const abort = new AbortController();
+		const cancelled = await controller.withStoppedCore(async () => { abort.abort(); throw Object.assign(new Error("cancelled"), { name: "AbortError" }); }, { signal: abort.signal });
+		expect(cancelled).toMatchObject({ completed: false, coreStatus: "ready" });
+		expect(core.start).toHaveBeenCalledTimes(3);
+	});
+
+	it("retains a committed result when cancellation arrives after the operation", async () => {
+		const { controller } = fixture(); await controller.start(); const abort = new AbortController();
+		const result = await controller.withStoppedCore(async () => { abort.abort(); return "committed"; }, { signal: abort.signal });
+		expect(result).toEqual({ completed: true, value: "committed", coreStatus: "ready" });
+	});
+
+	it("retains successful work when Core restart fails", async () => {
+		const { controller, core } = fixture(); await controller.start();
+		core.start.mockRejectedValueOnce(new Error("startup failed"));
+		expect(await controller.withStoppedCore(async () => "saved")).toEqual({ completed: true, value: "saved", coreStatus: "restart-required" });
+		expect(controller.requiresRestart).toBe(true);
+	});
+
+	it("does not resurrect Core when the owner begins shutting down", async () => {
+		const { controller, core } = fixture(); await controller.start();
+		expect(await controller.withStoppedCore(async () => "saved", { shouldRestoreCore: () => false })).toEqual({ completed: true, value: "saved", coreStatus: "restart-required" });
+		expect(core.start).toHaveBeenCalledOnce(); expect(core.stop).toHaveBeenCalledOnce();
+	});
+	it("fails closed when the owner cannot determine whether Core should restart", async () => {
+		const { controller, core } = fixture(); await controller.start();
+		expect(await controller.withStoppedCore(async () => "saved", { shouldRestoreCore: () => { throw new Error("owner is closing"); } }))
+			.toEqual({ completed: true, value: "saved", coreStatus: "restart-required" });
+		expect(core.start).toHaveBeenCalledOnce();
+	});
 });

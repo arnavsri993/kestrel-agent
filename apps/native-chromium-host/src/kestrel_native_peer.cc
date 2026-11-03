@@ -7,6 +7,11 @@
 #include <climits>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
+#include <cerrno>
+#include <string>
+#include <vector>
+#include "kestrel_backup_publication.h"
 
 namespace {
 napi_value Fail(napi_env env, const char* message) {
@@ -56,10 +61,66 @@ napi_value Inspect(napi_env env, napi_callback_info info) {
   return result;
 }
 
+bool String(napi_env env, napi_value value, size_t maximum, std::string* output) {
+  napi_valuetype type;
+  size_t size = 0;
+  if (napi_typeof(env, value, &type) != napi_ok || type != napi_string ||
+      napi_get_value_string_utf8(env, value, nullptr, 0, &size) != napi_ok ||
+      size == 0 || size > maximum) return false;
+  std::vector<char> buffer(size + 1);
+  if (napi_get_value_string_utf8(env, value, buffer.data(), buffer.size(), &size) != napi_ok)
+    return false;
+  output->assign(buffer.data(), size);
+  return output->find('\0') == std::string::npos;
+}
+bool Identity(napi_env env, napi_value object, const char* name, uint64_t* result) {
+  napi_value value;
+  std::string text;
+  if (napi_get_named_property(env, object, name, &value) != napi_ok ||
+      !String(env, value, 20, &text)) return false;
+  for (char c : text) if (c < '0' || c > '9') return false;
+  errno = 0;
+  char* end = nullptr;
+  const auto number = strtoull(text.c_str(), &end, 10);
+  if (errno != 0 || !end || *end != '\0') return false;
+  *result = number;
+  return true;
+}
+napi_value PublishBackup(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value args[3], names;
+  std::string staging, final_path;
+  uint32_t count = 0;
+  kestrel::BackupDirectoryIdentity identity{};
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3 ||
+      !String(env, args[0], 4096, &staging) || !String(env, args[1], 4096, &final_path) ||
+      napi_get_property_names(env, args[2], &names) != napi_ok ||
+      napi_get_array_length(env, names, &count) != napi_ok || count != 4 ||
+      !Identity(env, args[2], "parentDev", &identity.parent_dev) ||
+      !Identity(env, args[2], "parentIno", &identity.parent_ino) ||
+      !Identity(env, args[2], "stagingDev", &identity.staging_dev) ||
+      !Identity(env, args[2], "stagingIno", &identity.staging_ino))
+    return Fail(env, "Invalid private backup publication request.");
+  const auto result = kestrel::PublishBackupDirectory(staging, final_path, identity);
+  if (result != kestrel::BackupPublication::kPublished) {
+    napi_throw_error(env, result == kestrel::BackupPublication::kCommittedSyncUncertain
+        ? "KESTREL_BACKUP_COMMITTED_SYNC_UNCERTAIN" : "KESTREL_BACKUP_PUBLISH_FAILED",
+        result == kestrel::BackupPublication::kCommittedSyncUncertain
+        ? "Backup was published but directory synchronization could not be confirmed."
+        : "Backup publication was refused.");
+    return nullptr;
+  }
+  napi_value value;
+  napi_get_undefined(env, &value);
+  return value;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
-  napi_value inspect;
+  napi_value inspect, publish;
   if (napi_create_function(env, "inspect", NAPI_AUTO_LENGTH, Inspect, nullptr, &inspect) != napi_ok ||
-      napi_set_named_property(env, exports, "inspect", inspect) != napi_ok)
+      napi_set_named_property(env, exports, "inspect", inspect) != napi_ok ||
+      napi_create_function(env, "publishBackupDirectory", NAPI_AUTO_LENGTH, PublishBackup, nullptr, &publish) != napi_ok ||
+      napi_set_named_property(env, exports, "publishBackupDirectory", publish) != napi_ok)
     return Fail(env, "could not initialize peer inspector");
   return exports;
 }

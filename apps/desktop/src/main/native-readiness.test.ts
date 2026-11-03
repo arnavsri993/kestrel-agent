@@ -24,9 +24,21 @@ describe("native system readiness", () => {
 		expect(check(result, "workspace").status).toBe("pass");
 		expect(check(result, "local-model").detail).toContain("previously verified at 2026-09-30");
 		expect(result.readyForLiveWork).toBe(false);
+		expect(result.backupScope).toBe("native-core-data");
+		expect(check(result, "backup").status).toBe("warning");
 		expect(check(result, "distribution").status).toBe("fail");
 		expect(check(result, "computer-use").detail).toContain("Disabled by default");
 		expect(input.coreRequest.mock.calls.map(([request]) => request.type)).toEqual(["snapshot", "runtime-list-providers"]);
+	});
+	it("distinguishes a created backup receipt from a fresh content or restore check", async () => {
+		const backupStatus = vi.fn(async () => ({ verified: true, createdAt: "2026-09-30T12:00:00.000Z" }));
+		const result = await nativeSystemReadiness({ ...fixture(), backupStatus });
+		expect(check(result, "backup")).toMatchObject({ status: "pass", detail: expect.stringContaining("did not re-read its contents or test restoration") });
+		expect(result.readyForLiveWork).toBe(false);
+		backupStatus.mockResolvedValue({ verified: true, createdAt: "2030-01-01T00:00:00.000Z" });
+		expect(check(await nativeSystemReadiness({ ...fixture(), backupStatus }), "backup").status).toBe("warning");
+		backupStatus.mockRejectedValue(new Error("unavailable"));
+		expect(check(await nativeSystemReadiness({ ...fixture(), backupStatus }), "backup").status).toBe("warning");
 	});
 	it("reports permission probes without claiming a completed action", async () => {
 		const input = fixture();

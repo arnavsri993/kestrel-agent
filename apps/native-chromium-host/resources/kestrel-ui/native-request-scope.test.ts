@@ -8,6 +8,8 @@ describe("renderer native request scopes", () => {
 		const firstPlugin = firstPort.begin({ type: "plugin-install-bundle" });
 		const firstRecovery = firstPort.begin({ type: "memory-recovery-save-file" });
 		const firstDiagnostic = firstPort.begin({ type: "export-diagnostic-report" });
+		const firstBackup = firstPort.begin({ type: "create-local-backup" });
+		const firstReveal = firstPort.begin({ type: "reveal-created-local-backup" });
 		const firstAgent = firstPort.begin({ type: "runtime-run-agent" });
 		const secondPlugin = secondPort.begin({ type: "plugin-remove-installed" });
 
@@ -21,6 +23,8 @@ describe("renderer native request scopes", () => {
 		expect(firstPlugin.signal?.aborted).toBe(true);
 		expect(firstRecovery.signal?.aborted).toBe(true);
 		expect(firstDiagnostic.signal?.aborted).toBe(true);
+		expect(firstBackup.signal?.aborted).toBe(true);
+		expect(firstReveal.signal?.aborted).toBe(true);
 		expect(firstAgent.signal).toBeUndefined();
 		expect(secondPlugin.signal?.aborted).toBe(false);
 		secondPort.close();

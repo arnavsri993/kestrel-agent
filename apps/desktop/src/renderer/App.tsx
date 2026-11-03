@@ -27,6 +27,7 @@ import type {
 	MigrationPlanPreviewContract,
 	MigrationResultContract,
 	ModelProfile,
+	NativeLocalBackupResult,
 	ProviderAccountSummary,
 	ModelRoutingDecision,
 	OrganizationMemberContract,
@@ -65,7 +66,7 @@ import type {
 	WorkspaceGrant,
 	WorkspaceSnapshot,
 } from "@kestrel/shared-types";
-import { parseExplicitMemoryCapture } from "@kestrel/shared-types";
+import { NATIVE_CORE_BACKUP_BUSY_MESSAGE, parseExplicitMemoryCapture } from "@kestrel/shared-types";
 import {
 	AnimatePresence,
 	LayoutGroup,
@@ -3657,7 +3658,8 @@ function RuntimeConversation({
 			sessionId ? loadSession(sessionId) : Promise.resolve(false),
 		])
 			.then(([, loaded]) => {
-				if (loaded && activeSessionIdRef.current === sessionId) setError("");
+				if (activeSessionIdRef.current === sessionId)
+					setError(current => loaded || current === NATIVE_CORE_BACKUP_BUSY_MESSAGE ? "" : current);
 			})
 			.catch((cause) => {
 				if (activeSessionIdRef.current === sessionId)
@@ -5516,12 +5518,15 @@ function Readiness() {
 	const [providerChecks, setProviderChecks] = useState<ProviderVerification[]>(
 		[],
 	);
-	const [backup, setBackup] = useState<LocalBackupResult | null>(null);
+	const [backup, setBackup] = useState<
+		LocalBackupResult | NativeLocalBackupResult | null
+	>(null);
 	const [busy, setBusy] = useState<
 		"refresh" | "models" | "backup" | "workspace" | "diagnostic" | ""
-	>("");
+	>("refresh");
 	const [error, setError] = useState("");
 	const [diagnosticNotice, setDiagnosticNotice] = useState("");
+	const [backupNotice, setBackupNotice] = useState("");
 
 	async function refresh() {
 		setBusy("refresh");
@@ -5581,6 +5586,7 @@ function Readiness() {
 	async function createBackup() {
 		setBusy("backup");
 		setError("");
+		setBackupNotice("");
 		try {
 			const response = await window.kestrel.request({
 				type: "create-local-backup",
@@ -5589,15 +5595,35 @@ function Readiness() {
 				throw new Error(
 					"error" in response ? response.error : "Backup failed.",
 				);
-			if ("localBackup" in response && response.localBackup) {
+			if ("cancelled" in response && response.cancelled) return;
+			if ("localBackupCreated" in response && response.localBackupCreated) {
+				setBackup(response.localBackupCreated);
+				if (response.localBackupCreated.coreStatus === "restart-required")
+					setBackupNotice("Backup verified. The local agent could not restart. Restart Kestrel before starting another task.");
+				else await refresh();
+			} else if ("localBackup" in response && response.localBackup) {
 				setBackup(response.localBackup);
 				await refresh();
-			}
+			} else throw new Error("Backup completed without a verified backup receipt.");
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : "Backup failed.");
 		} finally {
 			setBusy("");
 		}
+	}
+
+	async function revealBackup() {
+		if (!backup) return;
+		setBusy("backup");
+		setError("");
+		try {
+			const response = await window.kestrel.request("backupId" in backup
+				? { type: "reveal-created-local-backup", backupId: backup.backupId }
+				: { type: "reveal-local-backup", path: backup.path });
+			if (!response.ok) throw new Error(response.error);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Could not reveal the backup.");
+		} finally { setBusy(""); }
 	}
 
 	async function exportDiagnostic() {
@@ -5794,9 +5820,18 @@ function Readiness() {
 							</div>
 						</header>
 						<p>
-						Backs up encrypted conversations, settings, credentials, plugins, and
-						artifacts. Project folders are not copied. Treat the snapshot like a
-						password.
+							{readiness?.backupScope === "native-core-data" ? (
+								<>
+									Saves encrypted conversations, task records, Kestrel credentials,
+									settings, plugins, and learned skills from this profile.{" "}
+									Requires this Mac’s original profile and Keychain.{" "}
+									Excludes Chromium history, cookies and site logins, other Core
+									profiles, provider app logins, model downloads, and project folders.
+									Keep this backup private. Restoring it requires a separate recovery step.
+								</>
+							) : (
+								<>Backs up encrypted conversations, settings, credentials, plugins, and artifacts. Project folders are not copied. Treat the snapshot like a password.</>
+							)}
 						</p>
 						{backup && (
 							<div className="backup-result">
@@ -5812,24 +5847,21 @@ function Readiness() {
 								</small>
 								<button
 									className="quiet-link"
-									onClick={() =>
-										void window.kestrel.request({
-											type: "reveal-local-backup",
-											path: backup.path,
-										})
-									}
+									disabled={Boolean(busy)}
+									onClick={() => void revealBackup()}
 								>
 									Reveal in Finder
 								</button>
 							</div>
 						)}
+						{backupNotice && <p role="status">{backupNotice}</p>}
 						<button
 							className="button secondary"
 							disabled={Boolean(busy)}
 							onClick={() => void createBackup()}
 						>
 							{busy === "backup"
-								? "Stopping core and verifying…"
+								? "Working…"
 								: "Choose backup folder"}
 						</button>
 					</section>

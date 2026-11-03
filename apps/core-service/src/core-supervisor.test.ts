@@ -61,6 +61,83 @@ afterEach(() => {
 });
 
 describe("CoreSupervisor recovery", () => {
+	it("retains a non-exiting owner, escalates termination, and blocks a replacement", async () => {
+		vi.useFakeTimers();
+		const child = new FakeCoreProcess();
+		const signals: Array<NodeJS.Signals | undefined> = [];
+		child.kill = (signal?: NodeJS.Signals) => { signals.push(signal); return true; };
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: () => child });
+		const started = supervisor.start(config); child.ready(); await started;
+		const stop = supervisor.stop();
+		const rejected = expect(stop).rejects.toMatchObject({ exitConfirmed: false });
+		await vi.advanceTimersByTimeAsync(7_000);
+		await rejected;
+		expect(signals).toEqual([undefined, "SIGKILL"]);
+		expect(supervisor.hasProcess).toBe(true);
+		await expect(supervisor.start(config)).rejects.toThrow("still stopping");
+		child.crash(9);
+		expect(supervisor.hasProcess).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("does not declare a forced exit clean and shares concurrent shutdown ownership", async () => {
+		vi.useFakeTimers();
+		const child = new FakeCoreProcess();
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: () => child });
+		const started = supervisor.start(config); child.ready(); await started;
+		const ordinary = supervisor.stop();
+		const strict = supervisor.stop({ requireCleanExit: true });
+		const rejected = expect(strict).rejects.toMatchObject({ exitConfirmed: true });
+		await vi.advanceTimersByTimeAsync(2_000);
+		await ordinary; await rejected;
+		expect(child.messages.filter(message => (message as { type: string }).type === "shutdown")).toHaveLength(1);
+		expect(supervisor.hasProcess).toBe(false);
+	});
+	it("expedites the same maintenance stop on Quit without waiting for its clean-stop deadline", async () => {
+		vi.useFakeTimers();
+		const child = new FakeCoreProcess();
+		const terminate = vi.spyOn(child, "kill");
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: () => child });
+		const started = supervisor.start(config); child.ready(); await started;
+		const maintenance = supervisor.stop({ requireCleanExit: true, gracefulTimeoutMs: 60_000 });
+		const rejected = expect(maintenance).rejects.toMatchObject({ exitConfirmed: true });
+		const quitting = supervisor.stop({ gracefulTimeoutMs: 0 });
+		await vi.advanceTimersByTimeAsync(250);
+		await quitting;
+		await rejected;
+		expect(terminate).toHaveBeenCalledOnce();
+		expect(supervisor.hasProcess).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("observes the exit before browser cleanup and accepts only a clean backup stop", async () => {
+		let finishCleanup!: () => void;
+		const cleanup = new Promise<void>(resolve => { finishCleanup = resolve; });
+		const child = new FakeCoreProcess();
+		const supervisor = new CoreSupervisor(undefined, () => cleanup, { processFactory: () => child });
+		const started = supervisor.start(config); child.ready(); await started;
+		const stopped = supervisor.stop({ requireCleanExit: true });
+		await expect(supervisor.start(config)).rejects.toThrow("still stopping");
+		child.emit("exit", 0); finishCleanup(); await stopped;
+		expect(supervisor.hasProcess).toBe(false);
+	});
+
+	it.each(["timeout", "start-error"])("retains an uncertain %s startup owner until actual exit", async (failure) => {
+		vi.useFakeTimers();
+		const child = new FakeCoreProcess();
+		child.kill = () => true;
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: () => child, startupTimeoutMs: 20 });
+		const started = supervisor.start(config);
+		const rejected = expect(started).rejects.toThrow();
+		if (failure === "timeout") await vi.advanceTimersByTimeAsync(20);
+		else child.emit("message", { type: "start-error", error: "Generated startup failure" });
+		await rejected;
+		expect(supervisor.hasProcess).toBe(true);
+		await expect(supervisor.start(config)).rejects.toThrow("already running");
+		child.ready(); expect(supervisor.isReady).toBe(false);
+		child.crash(); expect(supervisor.hasProcess).toBe(false);
+	});
+
 	it.each(["throw", "reject"])("stops the core even when browser cleanup fails via %s", async (failure) => {
 		const child = new FakeCoreProcess();
 		child.exitOnShutdown = true;

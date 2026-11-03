@@ -241,7 +241,8 @@ export async function buildNativeChromiumHost({ output } = {}) {
 		if (!existsSync(join(nodeHeaders, "node_api.h"))) throw new Error("Node N-API headers are required to compile the native peer inspector (KESTREL_NODE_HEADERS).");
 		run(compiler, ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-mmacosx-version-min=13.0", "-isysroot", sdkPath,
 			"-bundle", "-undefined", "dynamic_lookup", "-I", nodeHeaders,
-			join(nativeHostRoot, "src", "kestrel_native_peer.cc"), "-o", join(paths.resources, "native-peer.node")]);
+			join(nativeHostRoot, "src", "kestrel_native_peer.cc"),
+			join(nativeHostRoot, "src", "kestrel_backup_publication.cc"), "-o", join(paths.resources, "native-peer.node")]);
 		if (!process.env.KESTREL_NODE_HEADERS) await rm(join(staging, `node-v${pinnedNode.NODE_RUNTIME_VERSION}-darwin-arm64`), { recursive: true });
 		const helperExecutable = join(staging, "Kestrel Chromium Helper");
 		run(compiler, [

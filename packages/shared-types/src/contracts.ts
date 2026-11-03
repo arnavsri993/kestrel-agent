@@ -4963,6 +4963,7 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("system-readiness") }),
 	z.object({ type: z.literal("export-diagnostic-report") }),
 	z.object({ type: z.literal("create-local-backup") }),
+	z.object({ type: z.literal("reveal-created-local-backup"), backupId: z.string().uuid() }),
 	z.object({ type: z.literal("reveal-local-backup"), path: z.string().min(1) }),
 	z.object({ type: z.literal("subscription-cli-status") }),
 	z.object({ type: z.literal("provider-account-list") }),
@@ -5226,6 +5227,7 @@ export const SystemReadinessSchema = z.object({
 	checkedAt: z.string().datetime(),
 	readyForLiveWork: z.boolean(),
 	checks: z.array(SystemReadinessCheckSchema),
+	backupScope: z.literal("native-core-data").optional(),
 });
 export type SystemReadiness = z.infer<typeof SystemReadinessSchema>;
 
@@ -5237,6 +5239,18 @@ export const LocalBackupResultSchema = z.object({
 	verified: z.boolean(),
 });
 export type LocalBackupResult = z.infer<typeof LocalBackupResultSchema>;
+
+export const NATIVE_CORE_BACKUP_BUSY_MESSAGE = "A native Core backup is in progress. Try again after it finishes.";
+export const NativeLocalBackupResultSchema = z.object({
+	backupId: z.string().uuid(),
+	createdAt: z.string().datetime(),
+	files: z.number().int().nonnegative(),
+	bytes: z.number().int().nonnegative(),
+	verified: z.literal(true),
+	scope: z.literal("native-core-data"),
+	coreStatus: z.enum(["ready", "restart-required"]),
+});
+export type NativeLocalBackupResult = z.infer<typeof NativeLocalBackupResultSchema>;
 
 export const SubscriptionCliStatusSchema = z.object({
 	id: z.enum(["codex", "claude", "opencode", "cursor"]),
@@ -5346,6 +5360,7 @@ export type RendererResponse =
 	| { ok: true; diagnosticReportPath: string; cancelled?: boolean }
 	| { ok: true; diagnosticReportSaved: true }
 	| { ok: true; localBackup: LocalBackupResult; cancelled?: boolean }
+	| { ok: true; localBackupCreated: NativeLocalBackupResult }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }
 	| { ok: true; providerAccounts: ProviderAccountSummary[] }
 	| { ok: true; googleWorkspaceOAuth: GoogleWorkspaceOAuthStatus }

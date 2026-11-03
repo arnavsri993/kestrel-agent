@@ -123,7 +123,7 @@ function write(message) {
 
 function startCore() {
 	ready = false;
-	child = spawn(bundledNode, [coreEntry, "--profile-root", profile, "--durable-profile"], {
+	child = spawn(bundledNode, [coreEntry, "--profile-root", profile, "--browser-profile-root", profile, "--durable-profile"], {
 		env: {
 			...process.env,
 			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",

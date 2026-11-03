@@ -23,7 +23,7 @@ const root = await realpath(workspace), file = join(root, "README.md");
 await writeFile(join(profile, "native-core/workspace-grants.json"), JSON.stringify([{ path: root, name: "Native picker fixture" }]), { mode: 0o600 });
 const resources = join(candidate, "Contents/Resources");
 const protectedKeyBase64 = randomBytes(32).toString("base64");
-const child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--durable-profile"], { env: { ...process.env, KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+const child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--browser-profile-root", profile, "--durable-profile"], { env: { ...process.env, KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1" }, stdio: ["pipe", "pipe", "pipe"] });
 let output = "", ready = false, mode = "select", sequence = 0, held, cancelled = false;
 const pending = new Map(), dialogs = [];
 const receipt = { at: new Date().toISOString(), candidateSha256: fingerprint, simulatedPickerReplies: true, phases: [] };

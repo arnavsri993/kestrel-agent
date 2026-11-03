@@ -54,6 +54,6 @@ export function nodeCoreProcess(options: {
 				if (error) fail();
 			});
 		},
-		kill: () => child.kill(),
+		kill: (signal) => child.kill(signal),
 	};
 }

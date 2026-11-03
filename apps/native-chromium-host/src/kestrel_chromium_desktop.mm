@@ -880,7 +880,17 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
           id request_type = value[@"request"][@"type"];
           NSString* type = [request_type isKindOfClass:NSString.class] ? request_type : nil;
           NSDictionary* response = @{@"ok":@NO, @"error":@"Unsupported native desktop request."};
-          if ([type isEqualToString:@"get-system-state"]) {
+          if ([type isEqualToString:@"reveal-local-backup-folder"]) {
+            id raw_path = value[@"request"][@"backupPath"];
+            NSString* path = CanonicalNativeDialogPath(raw_path);
+            const bool valid_request = [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100 &&
+                [value[@"request"] count] == 2 && path != nil;
+            if (valid_request) {
+              NSURL* url = [NSURL fileURLWithPath:path];
+              [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[url]];
+              response = @{@"ok":@YES, @"revealed":@YES};
+            } else response = @{@"ok":@NO, @"error":@"The backup location is invalid."};
+          } else if ([type isEqualToString:@"get-system-state"]) {
             SMAppServiceStatus status = SMAppService.mainAppService.status;
             BOOL is_default = [KestrelDefaultBrowserReadback(KestrelSystemCurrentIdentityAllowed(), KestrelDefaultBrowserReader())[@"isDefault"] boolValue];
             response = @{@"ok":@YES, @"launchAtLogin":@(status == SMAppServiceStatusEnabled), @"launchStatus":KestrelLoginStatusLabel(status), @"isDefaultBrowser":@(is_default), @"userName":NSFullUserName()};
@@ -925,10 +935,11 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
               });
               return;
             }
-          } else if (([type isEqualToString:@"select-workspace-folder"] || [type isEqualToString:@"select-context-files"] || [type isEqualToString:@"select-plugin-bundle"] || [type isEqualToString:@"select-plugin-publisher"] || [type isEqualToString:@"save-memory-recovery-file"] || [type isEqualToString:@"open-memory-recovery-file"] || [type isEqualToString:@"save-diagnostic-report"]) && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
+          } else if (([type isEqualToString:@"select-workspace-folder"] || [type isEqualToString:@"select-context-files"] || [type isEqualToString:@"select-plugin-bundle"] || [type isEqualToString:@"select-plugin-publisher"] || [type isEqualToString:@"select-local-backup-folder"] || [type isEqualToString:@"save-memory-recovery-file"] || [type isEqualToString:@"open-memory-recovery-file"] || [type isEqualToString:@"save-diagnostic-report"]) && [value[@"id"] hasPrefix:@"dialog-"] && [value[@"id"] length] <= 100) {
             const bool recovery_save = [type isEqualToString:@"save-memory-recovery-file"];
             const bool recovery_open = [type isEqualToString:@"open-memory-recovery-file"];
             const bool diagnostic_save = [type isEqualToString:@"save-diagnostic-report"];
+            const bool backup_folder = [type isEqualToString:@"select-local-backup-folder"];
             const bool save_panel = recovery_save || diagnostic_save;
             const bool context_files = [type isEqualToString:@"select-context-files"];
             const bool plugin_publisher = [type isEqualToString:@"select-plugin-publisher"];
@@ -945,11 +956,12 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
             else {
               NSSavePanel* panel = save_panel ? NSSavePanel.savePanel : NSOpenPanel.openPanel;
               NSOpenPanel* open_panel = save_panel ? nil : (NSOpenPanel*)panel;
-              panel.title = diagnostic_save ? @"Save a content-free diagnostic report" : recovery_save ? @"Save encrypted knowledge backup" : recovery_open ? @"Preview encrypted knowledge recovery" : plugin_publisher ? @"Trust a plugin publisher key" : plugin_bundle ? @"Select a signed plugin bundle" : context_files ? @"Add files from this task workspace" : @"Grant Kestrel a project folder";
-              panel.prompt = diagnostic_save ? @"Save report" : recovery_save ? @"Save backup" : recovery_open ? @"Preview recovery" : plugin_publisher ? @"Trust publisher" : plugin_bundle ? @"Select plugin" : context_files ? @"Add context" : @"Grant folder";
+              panel.title = diagnostic_save ? @"Save a content-free diagnostic report" : recovery_save ? @"Save encrypted knowledge backup" : recovery_open ? @"Preview encrypted knowledge recovery" : plugin_publisher ? @"Trust a plugin publisher key" : plugin_bundle ? @"Select a signed plugin bundle" : context_files ? @"Add files from this task workspace" : backup_folder ? @"Choose a Kestrel backup folder" : @"Grant Kestrel a project folder";
+              panel.prompt = diagnostic_save ? @"Save report" : recovery_save ? @"Save backup" : recovery_open ? @"Preview recovery" : plugin_publisher ? @"Trust publisher" : plugin_bundle ? @"Select plugin" : context_files ? @"Add context" : backup_folder ? @"Choose Folder" : @"Grant folder";
               open_panel.canChooseDirectories = !context_files && !plugin_publisher && !recovery_open; open_panel.canChooseFiles = context_files || plugin_publisher || recovery_open;
               open_panel.allowsMultipleSelection = context_files; panel.canCreateDirectories = save_panel || (!context_files && !plugin_publisher && !plugin_bundle && !recovery_open);
               open_panel.treatsFilePackagesAsDirectories = YES;
+              if (backup_folder) panel.message = @"Choose a folder for a Kestrel app data backup. Conversations and credentials stay encrypted. It requires this Mac’s original profile and Keychain. Browser history, cookies, website logins, projects, and provider app logins are excluded.";
               if (recovery_save || recovery_open) {
                 panel.allowedFileTypes = @[@"kestrel-memory"];
                 panel.allowsOtherFileTypes = NO;
@@ -967,7 +979,9 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
                 if (!owned) return;
                 desktop_workspace_panel = nil; desktop_workspace_panel_id = nil;
                 if (!broker.running) return;
-                NSDictionary* selection = @{@"ok":@YES, @"cancelled":@YES};
+                NSDictionary* selection = backup_folder
+                    ? @{@"ok":@YES, @"selectedBackupPath":[NSNull null]}
+                    : @{@"ok":@YES, @"cancelled":@YES};
                 if (result == NSModalResponseOK && (save_panel || recovery_open)) {
                   NSURL* selected = panel.URL;
                   NSString* raw = selected.isFileURL ? selected.path : nil;
@@ -1011,6 +1025,15 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
                   }
                   selection = valid ? @{@"ok":@YES, @"selectedContextPaths":paths}
                       : @{@"ok":@NO, @"error":@"Select at most 8 regular files inside the task workspace, no larger than 10 MB each."};
+                } else if (result == NSModalResponseOK && backup_folder) {
+                  NSURL* selected = open_panel.URLs.firstObject;
+                  NSString* path = selected.isFileURL ? CanonicalNativeDialogPath(selected.path) : nil;
+                  BOOL is_directory = NO;
+                  const bool valid = ValidNativeDialogPath(path) &&
+                      [NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&is_directory] && is_directory;
+                  selection = valid
+                      ? @{@"ok":@YES, @"selectedBackupPath":path}
+                      : @{@"ok":@NO, @"error":@"Choose an existing backup folder."};
                 } else if (result == NSModalResponseOK) {
                   NSURL* selected = open_panel.URLs.firstObject;
                   selection = selected.isFileURL && ValidNativeDialogPath(selected.path)
@@ -1093,7 +1116,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     @try { [desktop_broker_input closeFile]; } @catch (NSException*) {}
     desktop_broker_input = nil;
   }
-  for (int i = 0; broker.running && i < 40; ++i) usleep(100000);
+  for (int i = 0; broker.running && i < 150; ++i) usleep(100000);
   if (broker.running) [broker terminate];
   desktop_client = nullptr;
   app = nullptr;

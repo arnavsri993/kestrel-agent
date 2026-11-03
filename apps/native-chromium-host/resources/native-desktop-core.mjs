@@ -1,16 +1,22 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
+import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NATIVE_CORE_BACKUP_BUSY_MESSAGE, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NativeLocalBackupHost, NATIVE_LOCAL_BACKUP_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 import { dispatchNativeComputerHostRequest } from "./native-computer-host-routing.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
 const index = process.argv.indexOf("--profile-root");
 if (index < 0 || !process.argv[index + 1]) throw new Error("Native Core requires its owning browser profile.");
+const browserProfileIndex = process.argv.indexOf("--browser-profile-root");
+if (browserProfileIndex < 0 || !process.argv[browserProfileIndex + 1]) throw new Error("Native Core requires its owning browser profile.");
+const browserProfileRoot = resolve(process.argv[browserProfileIndex + 1]);
+if (await realpath(browserProfileRoot) !== browserProfileRoot) throw new Error("Native Core requires a canonical browser profile path.");
+const nativePeer = createRequire(import.meta.url)(join(dirname(fileURLToPath(import.meta.url)), "native-peer.node"));
 const durable = process.argv.includes("--durable-profile");
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 async function requestProtectedProfileKey() {
@@ -58,6 +64,7 @@ let outputClosed = false;
 let browserReset;
 let folderDialog;
 let dialogSequence = 0;
+let backupReservation = false;
 
 function write(message) {
 	if (outputClosed) return;
@@ -168,7 +175,7 @@ function cancelFolderDialog() {
 	write({ type: "native-dialog-cancel", requestId: dialog.requestId });
 	dialog.resolve(null);
 }
-function selectNativeDialog(operation, workspaceRoot, signal) {
+function selectNativeDialog(operation, workspaceRoot, signal, backupPath) {
 	if (signal?.aborted) return Promise.reject(signal.reason);
 	if (stopping || folderDialog || dialogSequence >= Number.MAX_SAFE_INTEGER) return Promise.reject(new Error("The native file or folder picker is unavailable."));
 	const requestId = `native-dialog-${++dialogSequence}`;
@@ -184,7 +191,9 @@ function selectNativeDialog(operation, workspaceRoot, signal) {
 	const abort = () => { if (folderDialog?.requestId === requestId) cancelFolderDialog(); };
 	folderDialog = { requestId, timer, operation, resolve: resolveDialog, reject: rejectDialog, detachAbort: () => signal?.removeEventListener("abort", abort) };
 	signal?.addEventListener("abort", abort, { once: true });
-	write({ type: "native-dialog-request", requestId, operation, ...(operation === "select-context-files" ? { workspaceRoot } : {}) });
+	write({ type: "native-dialog-request", requestId, operation,
+		...(operation === "select-context-files" ? { workspaceRoot } : {}),
+		...(operation === "reveal-local-backup-folder" ? { backupPath } : {}) });
 	return promise;
 }
 function selectWorkspaceFolder() { return selectNativeDialog("select-workspace-folder"); }
@@ -260,6 +269,32 @@ const configuration = createNativeCoreConfiguration({ core,
 	}),
 	changed: publishSnapshot,
 });
+async function nativeAppVersion() {
+	try {
+		const plist = await readFile(join(resources, "../Info.plist"), "utf8");
+		if (plist.length > 64_000) return "unknown";
+		const key = "<key>CFBundleShortVersionString</key>";
+		const at = plist.indexOf(key);
+		const field = at >= 0 ? plist.slice(at + key.length, at + key.length + 128).trimStart() : "";
+		const end = field.indexOf("</string>", 8);
+		return field.startsWith("<string>") && end >= 8 ? field.slice(8, end) : "unknown";
+	} catch { return "unknown"; }
+}
+const backups = new NativeLocalBackupHost({
+	root: profile.root,
+	forbiddenDestinationRoots: [browserProfileRoot],
+	appVersion: await nativeAppVersion(),
+	encryptionKeyBase64: profile.encryptionKeyBase64,
+	selectDestination: signal => selectNativeDialog("select-local-backup-folder", undefined, signal),
+	publishDirectory: (stage, final, identity) => nativePeer.publishBackupDirectory(stage, final, identity),
+	revealDirectory: async (path, signal) => {
+		const revealed = await selectNativeDialog("reveal-local-backup-folder", undefined, signal, path);
+		if (revealed !== true) throw new Error("The native host did not confirm backup reveal.");
+	},
+	withStoppedCore: (operation, options) => configuration.withStoppedCore(operation, options),
+	isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning || configuration.changing || core.isReady !== true,
+	shouldRestoreCore: () => !stopping,
+});
 core.on("crash", () => { computerUse.invalidate(); process.stderr.write("KESTREL_NATIVE_CORE_INTERRUPTED\n"); });
 core.on("recovery-failed", () => process.stderr.write("KESTREL_NATIVE_CORE_RECOVERY_FAILED\n"));
 core.on("recovered", () => {
@@ -272,15 +307,24 @@ async function shutdown(code = 0) {
 	cancelFolderDialog();
 	if (browserReset) { clearTimeout(browserReset.timer); browserReset.reject(new Error("The browser owner is shutting down.")); browserReset = undefined; }
 	cancelBrowsers();
+	const backupClosing = backups.close();
+	// Interrupt a long maintenance stop on Quit. Cancellation closes the copy
+	// first; the same Core stop confirms exit and cannot resurrect a new owner.
+	const coreStopping = backupReservation && configuration.changing ? core.stop({ gracefulTimeoutMs: 0 }) : undefined;
+	const backupOutcomes = await Promise.allSettled([backupClosing, coreStopping]);
+	if (backupOutcomes.some(result => result.status === "rejected")) {
+		process.stderr.write("KESTREL_NATIVE_BACKUP_SHUTDOWN_INCOMPLETE\n"); code = code || 1;
+	}
 	await memoryRecovery.close();
 	await diagnostics.close();
 	await workspaces.close();
 	await plugins.close();
 	await providers.close();
-	await core.stop();
+	try { await core.stop(); }
+	catch { process.stderr.write("KESTREL_NATIVE_CORE_SHUTDOWN_INCOMPLETE\n"); code = code || 1; }
 	// Core may still be reading a just-approved paste when Quit arrives. Stop
 	// that owner before removing this launch's temporary attachment files.
-	try { await attachments.close(); }
+	try { if (!core.hasProcess) await attachments.close(); else throw new Error("Core exit is unconfirmed."); }
 	catch { process.stderr.write("KESTREL_NATIVE_ATTACHMENT_CLEANUP_INCOMPLETE\n"); code = code || 1; }
 	await profile.close();
 	process.exit(code);
@@ -303,6 +347,9 @@ input.on("line", line => {
 		const response = message.response;
 		const validPath = path => typeof path === "string" && path.startsWith("/") && path.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(path);
 		if (response?.ok === true && response.cancelled === true) dialog.resolve(null);
+		else if (dialog.operation === "select-local-backup-folder" && response?.ok === true && response.selectedBackupPath === null) dialog.resolve(null);
+		else if (dialog.operation === "select-local-backup-folder" && response?.ok === true && validPath(response.selectedBackupPath)) dialog.resolve(response.selectedBackupPath);
+		else if (dialog.operation === "reveal-local-backup-folder" && response?.ok === true && response.revealed === true) dialog.resolve(true);
 		else if (["select-workspace-folder", "select-plugin-bundle"].includes(dialog.operation) && response?.ok === true && validPath(response.selectedWorkspacePath)) dialog.resolve(response.selectedWorkspacePath);
 		else if (dialog.operation === "save-diagnostic-report" && response?.ok === true && validPath(response.selectedDiagnosticPath)) dialog.resolve(response.selectedDiagnosticPath);
 		else if (["save-memory-recovery-file", "open-memory-recovery-file"].includes(dialog.operation) && response?.ok === true && validPath(response.selectedRecoveryPath)) dialog.resolve(response.selectedRecoveryPath);
@@ -335,12 +382,22 @@ input.on("line", line => {
 	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
 	const isHost = message.type === "host-request";
 	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
-	if (!parsed.success || (isHost && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
+	if (!parsed.success || (isHost && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
 	if (!isHost && isNativeMemoryRecoveryInternalRequest(parsed.data.type)) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
 	if ((!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Settings are being applied. Wait for Agent Core to restart." } }); return; }
+	const creatingBackup = isHost && parsed.data.type === "create-local-backup";
+	if (backupReservation) { write({ type: "response", id: message.id, response: { ok: false, error: NATIVE_CORE_BACKUP_BUSY_MESSAGE } }); return; }
+	if (configuration.requiresRestart && !(isHost && (parsed.data.type === "system-readiness" || parsed.data.type === "computer-use-status" || parsed.data.type === "reveal-created-local-backup"))) {
+		write({ type: "response", id: message.id, response: { ok: false, error: "Core restart is required. Restart Kestrel before changing or starting work." } }); return;
+	}
+	if (creatingBackup && (pending.size > 0 || backgroundJobsRunning || configuration.changing || core.isReady !== true)) {
+		write({ type: "response", id: message.id, response: { ok: false, error: "Core is busy. Try again when its current operation is complete." } }); return;
+	}
+	if (creatingBackup) backupReservation = true;
 	pending.add(message.id);
-	const hostController = isHost && (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
-	const hostTimer = hostController ? setTimeout(() => hostController.abort(new Error("The native host request timed out.")), 9 * 60_000 + 50_000) : undefined;
+	const hostController = isHost && (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
+	const hostBudget = creatingBackup ? 14 * 60_000 : 9 * 60_000 + 50_000;
+	const hostTimer = hostController ? setTimeout(() => hostController.abort(new Error("The native host request timed out.")), hostBudget) : undefined;
 	if (hostController) hostRequests.set(message.id, hostController);
 	if (!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) activeCoreRequests.add(message.id);
 	void Promise.resolve().then(async () => {
@@ -348,6 +405,7 @@ input.on("line", line => {
 			if (parsed.data.type === "system-readiness") return { ok: true, systemReadiness: await nativeSystemReadiness({
 				coreRequest: request => core.request(request), workspaceConfiguration: () => workspaces.runtimeConfiguration(),
 				localStatus: () => providers.handle({ type: "local-model-status" }), computerUseStatus: () => computerUse.status(),
+				backupStatus: () => backups.status(),
 			}) };
 			if (NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && parsed.data.type.startsWith("computer-use-")) return dispatchNativeComputerHostRequest(computerUse, parsed.data);
 			if (NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type)) return workspaces.handle(parsed.data);
@@ -355,6 +413,7 @@ input.on("line", line => {
 			if (NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type)) return attachments.handle(parsed.data);
 			if (NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type)) return memoryRecovery.handle(parsed.data, hostController.signal);
 			if (NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) return diagnostics.handle(parsed.data, hostController.signal);
+			if (NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type)) return backups.handle(parsed.data, hostController.signal);
 			return providers.handle(parsed.data);
 		}
 		if (parsed.data.type === "runtime-run-agent") await attachments.assertRequestAttachments(parsed.data);
@@ -366,7 +425,7 @@ input.on("line", line => {
 				write({ type: "event", channel: "workspace-projects", event: response.projects });
 		})
 		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? ["local-runtime-bootstrap", "local-model-pull"].includes(parsed.data.type) && error instanceof Error && [OLLAMA_REMOTE_MODEL_ERROR, "Choose an installed model with confirmed tool support for Kestrel tasks.", "Start Ollama or use guided local setup before downloading a model.", "The local runtime checksum did not match the pinned release manifest.", "Local model setup was cancelled. Partial downloads may remain in Ollama.", "Local model setup timed out. Partial downloads may remain in Ollama."].includes(error.message) ? error.message : "Kestrel settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
-		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); hostRequests.delete(message.id); if (hostTimer) clearTimeout(hostTimer); });
+		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); hostRequests.delete(message.id); if (hostTimer) clearTimeout(hostTimer); if (creatingBackup) { backupReservation = false; if (!stopping && core.isReady) void publishSnapshot().catch(() => {}); } });
 });
 try {
 	try { await providers.startManagedIfInstalled(); }

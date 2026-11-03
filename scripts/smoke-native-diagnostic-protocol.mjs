@@ -28,7 +28,7 @@ const receipt = { version: 1, startedAt: new Date().toISOString(), candidateSha2
   scope: "Bundled Node/private Native Core protocol; generated profile, home and key only. No real Keychain, profile, provider login, Chromium, microphone or desktop control.", phases: [] };
 let ready = false, sequence = 0, mode = "select", selectedPath, held, failure, stderr = "", stopping = false, syntheticPermissionReplies = 0;
 const pending = new Map(), dialogs = [], cancellations = new Set(), owned = new Map();
-const child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--durable-profile"], {
+const child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--browser-profile-root", profile, "--durable-profile"], {
   env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "en_US.UTF-8", TMPDIR: profile, HOME: profile,
     KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1" },
   stdio: ["pipe", "pipe", "pipe"],

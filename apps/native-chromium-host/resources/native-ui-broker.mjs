@@ -23,7 +23,7 @@ if (!coreProfileInfo.isDirectory() || coreProfileInfo.isSymbolicLink() || corePr
 const browserPid = Number(argument("--browser-pid"));
 if (!Number.isSafeInteger(browserPid) || browserPid !== process.ppid) throw new Error("Native broker requires its owning browser.");
 const peerInspector = createRequire(import.meta.url)(join(resources, "native-peer.node"));
-const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_READINESS_REQUEST_TYPES, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PLUGIN_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, NATIVE_DIAGNOSTIC_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest } = await import("./native-ui-contracts.mjs");
+const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_READINESS_REQUEST_TYPES, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PLUGIN_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NATIVE_LOCAL_BACKUP_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest } = await import("./native-ui-contracts.mjs");
 const MAX_FRAME = 1024 * 1024;
 const MAX_PENDING = 64;
 const key = randomBytes(32);
@@ -91,7 +91,7 @@ function signalReady() {
 	send(active, { kind: "ready" });
 	process.stdout.write(JSON.stringify({ kind: "ui-ready" }) + "\n");
 }
-const core = spawn(process.execPath, [join(resources, "native-desktop-core.mjs"), "--profile-root", coreProfile,
+const core = spawn(process.execPath, [join(resources, "native-desktop-core.mjs"), "--profile-root", coreProfile, "--browser-profile-root", profile,
 	...(process.argv.includes("--durable-profile") ? ["--durable-profile"] : [])], {
 	stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, KESTREL_NATIVE_LIVE_EXTENSIONS: "0" },
 });
@@ -247,7 +247,7 @@ const server = createServer((socket) => {
 					pending.set(id, { socket, uiId: message.id, timeout });
 					process.stdout.write(JSON.stringify({ kind: "host-request", id, request: parsed.data }) + "\n"); continue;
 				}
-				const hostRequest = NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) || NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type);
+				const hostRequest = NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) || NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type);
 				if (!hostRequest && !CoreRequestSchema.safeParse(parsed.data).success) {
 					if (!reportedUnsupported.has(parsed.data.type)) {
 						reportedUnsupported.add(parsed.data.type);
@@ -264,7 +264,7 @@ const server = createServer((socket) => {
             entry.timeout = setTimeout(() => { if (!pending.delete(id)) return; send(socket, { kind: "response", id: message.id, response: { ok: false, error: entry.fileRequest ? "The file request timed out. Check whether the file was saved before retrying." : "The plugin operation timed out and its outcome is uncertain. Check installed plugins before retrying." } }); }, 8_000);
           } else { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Kestrel Core response timed out. Check the task before retrying." } }); }
         }, ["select-workspace-folder", "select-context-files"].includes(parsed.data.type) ? 10 * 60_000 + 30_000 : nativeRequestTimeoutMs(parsed.data, "broker"));
-				pending.set(id, { socket, uiId: message.id, timeout, cancellable: NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type), fileRequest: NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) });
+				pending.set(id, { socket, uiId: message.id, timeout, cancellable: NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type), fileRequest: NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) });
 				core.stdin.write(JSON.stringify({ type: hostRequest ? "host-request" : "request", id, request: parsed.data }) + "\n");
 			}
 		}
@@ -280,9 +280,10 @@ async function shutdown(code = 0) {
 	for (const socket of sockets) socket.destroy();
 	server.close();
 	if (!core.stdin.destroyed) core.stdin.end(JSON.stringify({ type: "shutdown" }) + "\n");
-	const timer = setTimeout(() => core.kill("SIGTERM"), 2_000);
-	await new Promise((done) => { if (core.exitCode !== null) done(); else { core.once("exit", done); setTimeout(done, 4_000); } });
-	clearTimeout(timer);
+	const timer = setTimeout(() => core.kill("SIGTERM"), 8_000);
+	const deadline = setTimeout(() => core.kill("SIGKILL"), 12_000);
+	await new Promise((done) => { if (core.exitCode !== null || core.signalCode !== null) done(); else core.once("exit", done); });
+	clearTimeout(timer); clearTimeout(deadline);
 	await rm(socketDirectory, { recursive: true, force: true });
 	// Destroy the launch secret, preserving browser/profile state.
 	await rm(join(extensionRoot, configName), { force: true });
