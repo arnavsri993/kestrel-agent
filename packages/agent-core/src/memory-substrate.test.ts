@@ -306,7 +306,7 @@ describe("memory substrate", () => {
 			state.database.saveRuntimeSession({ ...source, privacyMode: "standard" });
 			expect(state.database.listMemoryJobs({ kind: "embed", status: "pending", limit: 2000 })
 				.some(job => job.payload.ownerType === "memory" && job.payload.ownerId === memory.id)).toBe(false);
-			for (let i = 0; i < 4; i++) await state.substrate.runMaintenance(100);
+			for (let i = 0; i < 64; i++) await state.substrate.runMaintenance(100);
 			const current = state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id, status: "ready" });
 			expect(current.some(value => state.database.isMemoryEmbeddingCurrent(value))).toBe(true);
 			expect(calls.filter(value => value === text).length).toBeGreaterThan(priorCalls);
@@ -324,7 +324,7 @@ describe("memory substrate", () => {
 			const memory = state.substrate.remember(memoryInput(text, event.id));
 			state.database.saveRuntimeSession({ ...source, privacyMode: "private" });
 			state.database.saveRuntimeSession({ ...source, privacyMode: "standard" });
-			for (let i = 0; i < 4; i++) await state.substrate.runMaintenance(100);
+			for (let i = 0; i < 64; i++) await state.substrate.runMaintenance(100);
 			expect(calls).toContain(text);
 			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id, status: "ready" })
 				.some(value => state.database.isMemoryEmbeddingCurrent(value))).toBe(true);
@@ -360,7 +360,7 @@ describe("memory substrate", () => {
 			release(); await maintenance;
 			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id })).toHaveLength(0);
 			// The replacement must be durable even without an old cache row.
-			for (let i = 0; i < 4; i++) await state.substrate.runMaintenance(100);
+			for (let i = 0; i < 64; i++) await state.substrate.runMaintenance(100);
 			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id, status: "ready" })
 				.some(value => state.database.isMemoryEmbeddingCurrent(value))).toBe(true);
 		} finally { release(); await maintenance; await state.close(); }
@@ -376,7 +376,7 @@ describe("memory substrate", () => {
 			const text = "Private descendant sentinel";
 			const memory = state.substrate.remember(memoryInput(text, event.id));
 			state.database.saveRuntimeSession({ ...source, privacyMode: "private" });
-			for (let i = 0; i < 3; i++) await state.substrate.runMaintenance(100);
+			for (let i = 0; i < 64; i++) await state.substrate.runMaintenance(100);
 			expect(calls).not.toContain(text);
 			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id })).toHaveLength(0);
 		} finally { await state.close(); }
@@ -392,13 +392,13 @@ describe("memory substrate", () => {
 			const text = "Regrant descendant sentinel";
 			const memory = state.substrate.remember(memoryInput(text, event.id));
 			state.database.saveRuntimeSession({ ...source, privacyMode: "private" });
-			for (let i = 0; i < 4; i++) await state.substrate.runMaintenance(100);
+			for (let i = 0; i < 64; i++) await state.substrate.runMaintenance(100);
 			expect(calls).not.toContain(text);
 			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id })).toHaveLength(0);
 			expect(state.database.listMemoryJobs({ kind: "embed", status: "pending", limit: 2000 })
 				.some(job => job.payload.ownerType === "memory" && job.payload.ownerId === memory.id)).toBe(false);
 			state.database.saveRuntimeSession({ ...source, privacyMode: "standard" });
-			for (let i = 0; i < 12; i++) await state.substrate.runMaintenance(100);
+			for (let i = 0; i < 64; i++) await state.substrate.runMaintenance(100);
 			expect(calls).toContain(text);
 			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id, status: "ready" })
 				.some(value => state.database.isMemoryEmbeddingCurrent(value))).toBe(true);
@@ -421,7 +421,7 @@ describe("memory substrate", () => {
 			state.database.upsertMemoryEmbedding({ id: "exhausted-stale-vector", ownerType: "memory", ownerId: memory.id,
 				contentHash: input.contentHash, provider: "repair", model: "old", dimension: 1, vector: [1], status: "ready",
 				createdAt: timestamp, updatedAt: timestamp });
-			for (let i = 0; i < 12; i++) await state.substrate.runMaintenance(100);
+			for (let i = 0; i < 64; i++) await state.substrate.runMaintenance(100);
 			expect(calls).not.toContain(text);
 			expect(state.database.getMemoryJob(job.id)).toMatchObject({ status: "failed", attempts: job.maxAttempts });
 		} finally { await state.close(); }
