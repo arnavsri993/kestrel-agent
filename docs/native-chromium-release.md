@@ -2672,3 +2672,59 @@ published Store upgrade, native Messages/login-code insertion, production
 identity/signing/notarization and canonical cutover remain release work. The
 existing `/Applications/Kestrel.app`, user profiles, Keychain and credentials
 remain untouched. No new microphone or desktop-control access was used.
+
+
+### Profile reservation outside the Chromium tree (2026-11-03)
+
+Native desktop startup now acquires an external profile-path reservation before
+Core, Keychain bootstrap or Chromium starts. It also retains the existing
+in-profile lock for compatibility with earlier native builds. The external
+lock lives beside the private canonical profile, so renaming or replacing the
+profile directory does not silently admit a second cooperating owner. The held
+parent/lock descriptors, named identities, ownership, modes and link counts are
+checked. Existing lock files are never truncated or removed. The reservation
+is held through broker and Chromium teardown.
+
+This is the first lifecycle requirement for whole-profile backup and recovery;
+it does not prove offline quiescence or provide a backup/restore interface.
+Future offline operations must revalidate the held reservation immediately
+before consequential steps, verify reviewed data and prove clean shutdown of
+all owners. Replacing a lock pathname by another process with the same user
+identity can invalidate a historic reservation. The operation must refuse that
+state rather than treating an earlier successful lock as permanent proof.
+
+Focused native tests passed **11** cases, including separate-process exclusion,
+release, an independent profile, profile replacement under the held external
+lock, changed parent/lock identities, and unsafe links/modes/content. **Two**
+ownership-mismatch cases are skipped without root privileges; the implementation
+checks ownership, and no privilege escalation was attempted. The complete source
+suite passed **2,606 tests in 304 files**, with those two skipped cases. The
+preceding `5fd495e2` full `pnpm verify` pass remains a separate source boundary.
+
+Exact ad-hoc native candidate
+`84ae9c2fdc6b2dae180b84a3d7d66b2b710e4a3e795d730753aa48c1c510b8da`
+passed these matching-before/after-hash receipts:
+
+- `.tmp/native-profile-fence-bundled-evidence/receipt.json`: **4** actual native
+  launch checks. A separately executed native fixture observes the held fence;
+  a second real candidate is refused while the first runs; clean process exit
+  releases the fence; the same generated profile restarts and releases it again.
+  No forced cleanup was used. This does not substitute for the future backup
+  controller's stronger Core/Chromium clean-quiescence witness.
+- `.tmp/native-profile-fence-workflow-evidence/receipt.json`: **26** full native
+  product phases with the existing UI, agents, workspace, browser actions,
+  isolated downloads, Core recovery and restart. The completed companion PNG
+  was inspected.
+- `.tmp/native-profile-fence-store-evidence/receipt.json`: **5** retained normal
+  official Store extension/function/tab-isolation/restart phases, compatibility
+  only, with no update query or observed version upgrade.
+
+Run `test:native-profile-reservation` with an exact disposable candidate and a
+fresh `KESTREL_NATIVE_PROFILE_RESERVATION_EVIDENCE` directory. The fixture uses
+only a generated test profile and test key. No real profile, credentials,
+microphone or desktop-input access was used; the probe performs no explicit OS
+Keychain operation. The canonical installed Electron app remains unchanged.
+Whole Chromium-profile backup/restore, same-Mac identity verification, reviewed
+replacement, no-replay recovery policy and durable recovery journaling are still
+required before claiming that backup feature. The formal profile-transfer and
+rollback retirement gate and the other outstanding release gates remain open.

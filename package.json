@@ -59,6 +59,7 @@
     "notarize:mac:native": "node scripts/notarize-native-chromium-macos.mjs",
     "install:mac:native": "node scripts/install-native-chromium-macos.mjs",
     "test:native-chromium-host": "node scripts/smoke-native-chromium-host.mjs",
+    "test:native-profile-reservation": "node scripts/smoke-native-profile-reservation.mjs",
     "test:native-local-backup": "node scripts/smoke-native-local-backup.mjs",
     "test:native-local-backup-ui": "node scripts/smoke-native-local-backup-ui.mjs",
     "test:native-provider-connections": "node scripts/smoke-native-provider-connections.mjs",
