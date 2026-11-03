@@ -1,8 +1,8 @@
 import {
-	EMBEDDING_STATE_SECRET_KEY, EMBEDDING_STATE_OWNER_PREFIX,
+	EMBEDDING_STATE_SECRET_KEY, EMBEDDING_STATE_OWNER_PREFIX, EMBEDDING_LEGACY_MIGRATION_KEY,
 	embeddingMac, embeddingOwnerKey, newEmbeddingStateSecret,
-	newEmbeddingOwnerState, parseReservedEmbeddingState,
-	type EmbeddingStateSecret, type EmbeddingOwnerState, type EmbeddingOwnerType,
+	newEmbeddingOwnerState, parseReservedEmbeddingState, parseLegacyEmbeddingRetirement,
+	type EmbeddingStateSecret, type EmbeddingOwnerState, type EmbeddingOwnerType, type EmbeddingLegacyMigration,
 } from "./memory-embedding-state.js";
 export { parseReservedEmbeddingState, EMBEDDING_STATE_SECRET_KEY, EMBEDDING_STATE_OWNER_PREFIX } from "./memory-embedding-state.js";
 import {
@@ -3196,6 +3196,12 @@ export class KestrelDatabase {
 	 */
 	private decodeMemoryJob(row: MemorySubstrateRow): MemoryJob {
 		const payload = MemoryJobSchema.parse(this.decryptPayload(row));
+		if (payload.payload.legacyIdentifierMigration !== undefined) {
+			parseLegacyEmbeddingRetirement(payload.payload.legacyIdentifierMigration);
+			if (payload.kind !== "embed" || payload.payload.generation !== undefined ||
+				!/^legacy-retired-job-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(payload.id) || !/^legacy-embedding-opaque:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(payload.dedupeKey))
+				throw new Error("Invalid legacy embedding retirement binding.");
+		}
 		if (
 			payload.id !== row.id || payload.kind !== row.kind ||
 			payload.dedupeKey !== row.dedupe_key ||
@@ -3284,6 +3290,75 @@ export class KestrelDatabase {
 		const rows = this.db.prepare("SELECT * FROM memory_jobs WHERE id > ? ORDER BY id LIMIT ?")
 			.all(afterId, bounded) as MemorySubstrateRow[];
 		return rows.map(row => this.decodeMemoryJob(row));
+	}
+
+	/** Explicit, resumable migration; never called by database opening or profile transfer. */
+	migrateLegacyMemoryEmbeddingIdentifiers(now: string, batchLimit = 8): { phase: EmbeddingLegacyMigration["phase"]; processed: number; blocked: boolean; done: boolean } {
+		MemoryJobSchema.shape.updatedAt.parse(now);
+		const limit = Number.isFinite(batchLimit) ? Math.max(1, Math.min(8, Math.trunc(batchLimit))) : 8;
+		return this.db.transaction(() => {
+			const stored = this.getPrivateState<unknown>(EMBEDDING_LEGACY_MIGRATION_KEY);
+			const checkpoint = stored === undefined ? { version: 1, phase: "jobs", afterId: "" } as EmbeddingLegacyMigration :
+				parseReservedEmbeddingState(EMBEDDING_LEGACY_MIGRATION_KEY, stored) as EmbeddingLegacyMigration;
+			if (checkpoint.phase === "complete") return { phase: checkpoint.phase, processed: 0, blocked: false, done: true };
+			const table = checkpoint.phase === "jobs" ? "memory_jobs" : "memory_embeddings";
+			const rows = this.db.prepare(`SELECT * FROM ${table} WHERE id > ? ORDER BY id LIMIT ?`).all(checkpoint.afterId, limit) as MemorySubstrateRow[];
+			let afterId = checkpoint.afterId;
+			let processed = 0;
+			let blocked = false;
+			for (const row of rows) {
+				const id = String(row.id);
+				if (checkpoint.phase === "jobs") {
+					const job = this.decodeMemoryJob(row);
+					if (job.kind === "embed" && job.payload.generation === undefined && !(job.payload.legacyIdentifierMigration !== undefined &&
+						/^legacy-retired-job-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(job.id) && /^legacy-embedding-opaque:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(job.dedupeKey))) {
+						if (job.status === "running" && (!job.leaseUntil || Date.parse(job.leaseUntil) > Date.parse(now))) { blocked = true; break; }
+						const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
+						const ownerId = job.payload.ownerId;
+						if (!type.success || typeof ownerId !== "string" || !ownerId || ownerId.length > 200) throw new Error("Invalid legacy embedding job owner.");
+						const retired = this.queueMemoryJob({ ...job, id: `legacy-retired-job-${randomUUID()}`, dedupeKey: `legacy-embedding-opaque:${randomUUID()}`,
+							payload: { ...job.payload, legacyIdentifierMigration: { version: 1 } } });
+						this.bindLegacyMemoryEmbeddingTerminalGuard(retired.id, now);
+						this.db.prepare("DELETE FROM memory_jobs WHERE id = ?").run(id);
+					}
+				} else {
+					const embedding = EmbeddingRecordSchema.parse(this.decryptPayload(row));
+					if (embedding.id !== row.id || embedding.ownerType !== row.owner_type || embedding.ownerId !== row.owner_id ||
+						embedding.provider !== row.provider || embedding.model !== row.model || embedding.dimension !== (row as unknown as { dimension: number }).dimension ||
+						embedding.contentHash !== row.content_hash || embedding.status !== row.status || embedding.createdAt !== row.created_at || embedding.updatedAt !== row.updated_at)
+						throw new Error("Memory embedding identity does not match its encrypted payload.");
+					if (!embedding.generation) this.upsertMemoryEmbedding({ ...embedding,
+						contentHash: embeddingMac(this.embeddingStateSecret(), "legacy-embedding-hash", embedding.contentHash) });
+				}
+				afterId = id; processed++;
+			}
+			const phase: EmbeddingLegacyMigration["phase"] = !blocked && rows.length < limit ? (checkpoint.phase === "jobs" ? "embeddings" : "complete") : checkpoint.phase;
+			const next: EmbeddingLegacyMigration = { version: 1, phase, afterId: phase === checkpoint.phase ? afterId : "" };
+			this.setPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY, next);
+			return { phase, processed, blocked, done: phase === "complete" };
+		})();
+	}
+
+	/** Bind a retired terminal job only when authority permits; never revive or overwrite it. */
+	bindLegacyMemoryEmbeddingTerminalGuard(jobId: string, now: string): { terminal: boolean; boundGeneration?: string; input?: MemoryEmbeddingInputSnapshot } {
+		MemoryJobSchema.shape.updatedAt.parse(now);
+		return this.db.transaction(() => {
+			const job = this.getMemoryJob(jobId);
+			if (!job || job.payload.legacyIdentifierMigration === undefined ||
+				!(job.status === "cancelled" || (job.status === "failed" && job.attempts >= job.maxAttempts))) return { terminal: false };
+			const marker = parseLegacyEmbeddingRetirement(job.payload.legacyIdentifierMigration);
+			const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
+			const id = job.payload.ownerId;
+			if (!type.success || typeof id !== "string" || !id || id.length > 200) throw new Error("Invalid legacy embedding job owner.");
+			const input = this.getMemoryEmbeddingInput(type.data, id);
+			if (!input) return { terminal: true, ...(marker.boundGeneration ? { boundGeneration: marker.boundGeneration } : {}) };
+			if (marker.boundGeneration) return { terminal: true, boundGeneration: marker.boundGeneration, input };
+			const dedupeKey = `embed:${type.data}:${id}:${input.generation}`;
+			if (!this.getMemoryJobByDedupeKey(dedupeKey)) this.queueMemoryJob({ ...job, id: `memory-job-${randomUUID()}`, dedupeKey,
+				payload: { ownerType: type.data, ownerId: id, generation: input.generation } });
+			this.queueMemoryJob({ ...job, payload: { ...job.payload, legacyIdentifierMigration: { version: 1, boundGeneration: input.generation } } });
+			return { terminal: true, boundGeneration: input.generation, input };
+		})();
 	}
 
 	claimMemoryJob(now = new Date().toISOString(), leaseMs = 60_000): MemoryJob | undefined {
@@ -4660,7 +4735,7 @@ export class KestrelDatabase {
 		if (!input) return;
 		const dedupeKey = `embed:${ownerType}:${ownerId}:${input.generation}`;
 		const existing = this.getMemoryJobByDedupeKey(dedupeKey);
-		if (existing && ["pending", "running", "completed"].includes(existing.status)) return;
+		if (existing && ["pending", "running", "completed", "cancelled"].includes(existing.status)) return;
 		if (existing && existing.attempts >= existing.maxAttempts) return;
 		this.queueMemoryJob(
 			MemoryJobSchema.parse({

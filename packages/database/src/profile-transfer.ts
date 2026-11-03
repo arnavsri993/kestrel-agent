@@ -8,7 +8,7 @@ import { redactDeletedSourceToolResult, SOURCE_EVIDENCE_REMOVED_TEXT, SOURCE_REC
 import {
 	EMBEDDING_STATE_OWNER_PREFIX,
 	EMBEDDING_STATE_SECRET_KEY,
-	parseReservedEmbeddingState,
+	parseReservedEmbeddingState, parseLegacyEmbeddingRetirement,
 	type EmbeddingStateSecret,
 } from "./memory-embedding-state.js";
 import {
@@ -242,6 +242,15 @@ function validateProtectedPayload(table: string, values: Record<string, SqlValue
 	PAYLOAD_SCHEMAS[table]?.parse(payload);
 	assertPayloadBindings(table, values, object);
 	const equals = (actual: unknown, expected: unknown) => { if (actual !== expected) fail(`Profile transfer found inconsistent ${table} metadata.`); };
+	if (table === "memory_jobs") {
+		const job = MemoryJobSchema.parse(object);
+		if (job.payload.legacyIdentifierMigration !== undefined) {
+			parseLegacyEmbeddingRetirement(job.payload.legacyIdentifierMigration);
+			if (job.kind !== "embed" || job.payload.generation !== undefined ||
+				!/^legacy-retired-job-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(job.id) || !/^legacy-embedding-opaque:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(job.dedupeKey))
+				fail("Profile transfer found an invalid legacy embedding retirement binding.");
+		}
+	}
 	if (table === "context_usage") equals(values.updated_at, object.createdAt);
 	if (table === "memory_versions") equals(values.updated_at, object.changedAt);
 	if (table === "action_receipts") equals(values.updated_at, object.completedAt ?? object.startedAt);

@@ -1,6 +1,8 @@
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 
 export const EMBEDDING_STATE_SECRET_KEY = "kestrel.embedding-generation.v1.secret";
+export const EMBEDDING_LEGACY_MIGRATION_KEY = "kestrel.embedding-generation.v1.legacy-migration";
+export type EmbeddingLegacyMigration = { version: 1; phase: "jobs" | "embeddings" | "complete"; afterId: string };
 export const EMBEDDING_STATE_OWNER_PREFIX = "kestrel.embedding-generation.v1.owner.";
 export type EmbeddingOwnerType =
 	| "timeline_event" | "timeline_session" | "activity_block" | "daily_summary"
@@ -41,11 +43,17 @@ export function newEmbeddingOwnerState(
 /** Validate reserved private-state values and, with a secret, their owner-key binding. */
 export function parseReservedEmbeddingState(
 	key: string, value: unknown, secret?: EmbeddingStateSecret,
-): EmbeddingStateSecret | EmbeddingOwnerState | undefined {
-	if (key !== EMBEDDING_STATE_SECRET_KEY && !key.startsWith(EMBEDDING_STATE_OWNER_PREFIX)) return undefined;
+): EmbeddingStateSecret | EmbeddingOwnerState | EmbeddingLegacyMigration | undefined {
+	if (key !== EMBEDDING_STATE_SECRET_KEY && key !== EMBEDDING_LEGACY_MIGRATION_KEY && !key.startsWith(EMBEDDING_STATE_OWNER_PREFIX)) return undefined;
 	if (!value || typeof value !== "object" || Array.isArray(value))
 		throw new Error("Invalid embedding generation state.");
 	const record = value as Record<string, unknown>;
+	if (key === EMBEDDING_LEGACY_MIGRATION_KEY) {
+		if (record.version !== 1 || !["jobs", "embeddings", "complete"].includes(String(record.phase)) ||
+			typeof record.afterId !== "string" || record.afterId.length > 200 || Object.keys(record).length !== 3 ||
+			(record.phase === "complete" && record.afterId !== "")) throw new Error("Invalid embedding legacy migration checkpoint.");
+		return record as EmbeddingLegacyMigration;
+	}
 	if (key === EMBEDDING_STATE_SECRET_KEY) {
 		if (record.version !== 1 || typeof record.key !== "string" || !HEX.test(record.key) || Object.keys(record).length !== 2)
 			throw new Error("Invalid embedding generation secret.");
@@ -62,4 +70,14 @@ export function parseReservedEmbeddingState(
 		(secret && embeddingOwnerKey(secret, parsed.ownerType, parsed.ownerId) !== key))
 		throw new Error("Invalid embedding owner generation binding.");
 	return parsed;
+}
+
+/** Strict authenticated metadata; it cannot itself authorize embedding work. */
+export function parseLegacyEmbeddingRetirement(value: unknown): { version: 1; boundGeneration?: string } {
+ if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid legacy embedding retirement marker.");
+ const marker = value as Record<string, unknown>;
+ if (marker.version !== 1 || Object.keys(marker).some(key => key !== "version" && key !== "boundGeneration") ||
+  (marker.boundGeneration !== undefined && (typeof marker.boundGeneration !== "string" || !UUID.test(marker.boundGeneration))))
+  throw new Error("Invalid legacy embedding retirement marker.");
+ return marker as { version: 1; boundGeneration?: string };
 }

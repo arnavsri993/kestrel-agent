@@ -1,7 +1,7 @@
 import { createEncryptionKey } from "@kestrel/encryption";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	EMBEDDING_STATE_SECRET_KEY,
+	EMBEDDING_STATE_SECRET_KEY, EMBEDDING_LEGACY_MIGRATION_KEY,
 	embeddingOwnerKey,
 	newEmbeddingOwnerState,
 	newEmbeddingStateSecret,
@@ -30,6 +30,33 @@ function setValidEmbeddingState(db: KestrelDatabase): { secret: ReturnType<typeo
 }
 
 describe("host profile transfer embedding state validation", () => {
+	 it("rejects forged legacy retirement markers before destination import", () => {
+		const source = database(), target = database(), time = "2026-11-02T12:00:00.000Z";
+		source.queueMemoryJob({ id: "old-job", kind: "embed", dedupeKey: "old-job", status: "pending",
+			payload: { ownerType: "memory", ownerId: "missing" }, attempts: 0, maxAttempts: 3,
+			runAfter: time, createdAt: time, updatedAt: time });
+		const snapshot = source.exportHostProfileTransferSnapshot();
+		const row = snapshot.rows.memory_jobs![0]!;
+		const job = JSON.parse(row.cleartext!.payload_ciphertext as string);
+		job.payload.legacyIdentifierMigration = { version: 1, boundGeneration: "bad" };
+		row.cleartext!.payload_ciphertext = JSON.stringify(job);
+		snapshot.semanticSha256 = computeHostProfileTransferSemanticHash(snapshot.rows);
+		expect(() => target.importHostProfileTransferSnapshot(snapshot)).toThrow();
+		expect(target.listMemoryJobs()).toEqual([]);
+	 });
+
+	it("validates the exact legacy migration checkpoint schema during transfer", () => {
+		for (const invalid of [
+			{ version: 2, phase: "jobs", afterId: "" },
+			{ version: 1, phase: "future", afterId: "" },
+			{ version: 1, phase: "complete", afterId: "x" },
+			{ version: 1, phase: "jobs", afterId: "", extra: true },
+		]) {
+			const source = database(); source.setPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY, invalid);
+			expect(() => source.exportHostProfileTransferSnapshot()).toThrow();
+		}
+	});
+
 	it("preserves bound dependency authority epochs under an independent database key", () => {
 		const source = database();
 		const target = database();
