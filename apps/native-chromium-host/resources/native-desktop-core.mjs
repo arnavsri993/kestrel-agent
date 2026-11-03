@@ -493,6 +493,7 @@ input.on("line", line => {
 			if (NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type)) return memoryRecovery.handle(parsed.data, hostController.signal);
 			if (NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) return diagnostics.handle(parsed.data, hostController.signal);
 			if (NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type)) return backups.handle(parsed.data, hostController.signal);
+			if (NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type)) communications.invalidate();
 			return providers.handle(parsed.data, hostController?.signal);
 		}
 		if (parsed.data.type === "runtime-run-agent") await attachments.assertRequestAttachments(parsed.data);

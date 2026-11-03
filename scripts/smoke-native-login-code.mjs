@@ -155,6 +155,7 @@ try {
  await settings.getByRole('button', { name: 'Open Manage extensions', exact: true }).click();
  await eventually(async () => { try { panel = await connectPanel(); return true; } catch { return false; } }, 'Actual native companion did not open.');
  const selected = await request({ type: 'browser-select-tab', tabId }); assert(selected.ok, selected.error);
+ await attachPage(url); // Settings discovery may have refreshed the CDP connection.
  await eventually(async () => (await panel.text()).includes('Find verification code'), 'Collapsed code helper missing.');
  await panel.click('Find verification code');
  await panel.click('Find code');

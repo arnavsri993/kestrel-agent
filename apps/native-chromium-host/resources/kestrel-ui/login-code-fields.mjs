@@ -4,10 +4,10 @@ export function loginCodeField(operation, fieldId, code) {
  const key = '__kestrelLoginCodeFieldsV1';
  const now = Date.now();
  let state = globalThis[key];
- if (!state || !(state.registry instanceof Map)) {
+ if (!state || !(state.registry instanceof Map) || !Number.isSafeInteger(state.generation)) {
   const registry = new Map();
-  state = globalThis[key] = { registry };
-  const invalidate = () => registry.clear();
+  state = globalThis[key] = { registry, generation: 0 };
+  const invalidate = () => { state.generation += 1; registry.clear(); };
   for (const event of ['blur', 'pagehide', 'popstate', 'hashchange']) globalThis.addEventListener(event, invalidate);
   document.addEventListener('visibilitychange', invalidate);
   globalThis.navigation?.addEventListener('currententrychange', invalidate);
@@ -59,13 +59,13 @@ export function loginCodeField(operation, fieldId, code) {
   if (!element) return fail();
   while (registry.size >= 32) registry.delete(registry.keys().next().value);
   const id = crypto.randomUUID();
-  registry.set(id, { element, href: location.href, navigationEntry: navigationEntry(), signature: signature(element), expires: now + 120000 });
+  registry.set(id, { element, generation: state.generation, href: location.href, navigationEntry: navigationEntry(), signature: signature(element), expires: now + 120000 });
   return { ok: true, fieldId: id };
  }
  const entry = registry.get(fieldId);
  // Consume before any attempted write, even if validation subsequently fails.
  if (operation === 'fill') registry.delete(fieldId);
- if (!entry || entry.expires <= now || entry.href !== location.href || JSON.stringify(entry.navigationEntry) !== JSON.stringify(navigationEntry()) || !eligible(entry.element) ||
+ if (!entry || entry.generation !== state.generation || entry.expires <= now || entry.href !== location.href || JSON.stringify(entry.navigationEntry) !== JSON.stringify(navigationEntry()) || !eligible(entry.element) ||
   entry.signature !== signature(entry.element)) return fail();
  if (operation === 'validate') return { ok: true };
  if (operation !== 'fill' || typeof code !== 'string' || !/^[A-Z0-9][A-Z0-9-]{3,15}$/.test(code)) return fail();
@@ -83,7 +83,15 @@ export function loginCodeField(operation, fieldId, code) {
   catch { return fail(); }
  }
  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
- if (!setter || document.visibilityState !== 'visible' || !document.hasFocus()) return fail();
+ if (!setter || document.visibilityState !== 'visible') return fail();
+ // The user chose this captured field from the companion. Focus that field in
+ // the already selected document; never activate a different tab or window.
+ // A background window still fails document.hasFocus(). Focus handlers may
+ // navigate or replace the field, so repeat authority checks before writing.
+ element.focus({ preventScroll: true });
+ if (entry.generation !== state.generation || !document.hasFocus() || document.activeElement !== element ||
+  entry.href !== location.href || JSON.stringify(entry.navigationEntry) !== JSON.stringify(navigationEntry()) ||
+  entry.signature !== signature(element) || !eligible(element) || document.visibilityState !== 'visible') return fail();
  setter.call(element, code);
  element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
  element.dispatchEvent(new Event('change', { bubbles: true }));

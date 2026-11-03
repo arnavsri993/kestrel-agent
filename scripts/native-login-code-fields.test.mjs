@@ -9,6 +9,7 @@ class Input {
  getBoundingClientRect() { return { width: 100, height: 20 }; }
  getClientRects() { return [this.getBoundingClientRect()]; }
  dispatchEvent(event) { this.events.push(event.type); return true; }
+ focus() { document.activeElement = this; }
  set value(value) { this.written = value; }
 }
 let fields;
@@ -105,7 +106,7 @@ function fixture() {
   scripting: { executeScript: callback(({ func, args, target }) => { assert(!args.includes(undefined), 'Chrome scripting arguments must be JSON serializable'); const result = func(...args); afterExecute(); return [{ frameId: 0, documentId: target.documentIds[0], result }]; }) },
  };
  const adapter = createBrowserAdapter(api, { uiUrl: 'chrome-extension://abcdef/index.html' });
- return { adapter, tab, frame, data, setAfter: fn => { afterExecute = fn; }, navigate: () => historyListener({ tabId: 7, frameId: 0 }) };
+ return { adapter, tab, frame, data, setAfter: fn => { afterExecute = fn; }, navigate: (tabId = 7) => historyListener({ tabId, frameId: 0 }) };
 }
 test('adapter binds active document and rejects navigation or changed tab', async () => {
  const f = fixture();
@@ -129,5 +130,29 @@ test('adapter rejects a same-URL history revision', async () => {
  const authority = await f.adapter.loginCode({ operation: 'inspect', tabId: id });
  f.navigate();
  await assert.rejects(f.adapter.loginCode({ operation: 'fill', authority, code: '123456' }));
+ assert.equal(fields[0].written, undefined);
+});
+test('another tab navigation does not revoke an unchanged verification field', async () => {
+ const f = fixture();
+ await assert.rejects(f.adapter.loginCode({ operation: 'inspect', tabId: 'tab-00000000-0000-4000-8000-000000000000' }));
+ const id = f.data['kestrel.native.browser.tabIds.v1']['7'];
+ const authority = await f.adapter.loginCode({ operation: 'inspect', tabId: id });
+ f.navigate(8);
+ assert.deepEqual(await f.adapter.loginCode({ operation: 'validate', authority }), { valid: true });
+});
+test('focuses only the captured visible field and rechecks focus-handler navigation', () => {
+ document.hasFocus = () => document.activeElement === fields[0];
+ let token = loginCodeField('inspect').fieldId;
+ assert.equal(loginCodeField('fill', token, '123456').ok, true);
+ assert.equal(fields[0].written, '123456');
+ fields[0].written = undefined;
+ token = loginCodeField('inspect').fieldId;
+ fields[0].focus = () => { document.activeElement = fields[0]; location.href += '?changed'; };
+ assert.equal(loginCodeField('fill', token, '123456').ok, false);
+ assert.equal(fields[0].written, undefined);
+ location.href = 'https://example.com/login';
+ token = loginCodeField('inspect').fieldId;
+ fields[0].focus = () => { windowEvents.dispatchEvent(new Event('blur')); document.activeElement = fields[0]; };
+ assert.equal(loginCodeField('fill', token, '123456').ok, false);
  assert.equal(fields[0].written, undefined);
 });
