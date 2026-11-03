@@ -1,3 +1,10 @@
+import {
+	EMBEDDING_STATE_SECRET_KEY, EMBEDDING_STATE_OWNER_PREFIX,
+	embeddingMac, embeddingOwnerKey, newEmbeddingStateSecret,
+	newEmbeddingOwnerState, parseReservedEmbeddingState,
+	type EmbeddingStateSecret, type EmbeddingOwnerState, type EmbeddingOwnerType,
+} from "./memory-embedding-state.js";
+export { parseReservedEmbeddingState, EMBEDDING_STATE_SECRET_KEY, EMBEDDING_STATE_OWNER_PREFIX } from "./memory-embedding-state.js";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -379,6 +386,8 @@ export interface MemoryEmbeddingInputSnapshot {
 	readonly ownerId: string;
 	readonly text: string;
 	readonly revision: string;
+	readonly generation: string;
+	readonly contentHash: string;
 }
 
 type MemoryPayloadTable =
@@ -633,6 +642,7 @@ export class KestrelDatabase {
 			version: parsed.version ?? 1,
 		};
 		this.db.transaction(() => {
+			this.syncEmbeddingGeneration("memory", parsed.id);
 			this.db
 				.prepare(`
       INSERT INTO memories (
@@ -682,6 +692,7 @@ export class KestrelDatabase {
 				metadata,
 				parsed.updatedAt,
 			);
+			this.syncEmbeddingGeneration("memory", parsed.id);
 		})();
 	}
 
@@ -1785,7 +1796,9 @@ export class KestrelDatabase {
 					"DELETE FROM memory_metadata WHERE memory_id IN (SELECT id FROM memories WHERE updated_at < ?)",
 				)
 				.run(cutoff);
+			const expiredMemoryIds = (this.db.prepare("SELECT id FROM memories WHERE updated_at < ?").all(cutoff) as Array<{id: string}>).map(row => row.id);
 			const memories = remove("DELETE FROM memories WHERE updated_at < ?");
+			for (const id of expiredMemoryIds) this.syncEmbeddingGeneration("memory", id);
 			// A mutation may finish just after its tool execution crosses the cutoff.
 			// Delete that dependent row with the expired execution instead of either
 			// violating the foreign key or retaining the parent past policy.
@@ -2536,25 +2549,31 @@ export class KestrelDatabase {
 	upsertDailySummary(summary: DailySummary): void {
 		const parsed = DailySummarySchema.parse(summary);
 		const encrypted = encryptText(JSON.stringify(parsed), this.encryptionKey);
-		this.db
-			.prepare(
-				`INSERT INTO memory_daily_summaries
-				 (id, day, created_at, updated_at, payload_ciphertext, payload_iv, payload_auth_tag)
-				 VALUES (?, ?, ?, ?, ?, ?, ?)
-				 ON CONFLICT(day) DO UPDATE SET
-				 id=excluded.id, created_at=excluded.created_at, updated_at=excluded.updated_at,
-				 payload_ciphertext=excluded.payload_ciphertext, payload_iv=excluded.payload_iv,
-				 payload_auth_tag=excluded.payload_auth_tag`,
-			)
-			.run(
-				parsed.id,
-				parsed.day,
-				parsed.createdAt,
-				parsed.updatedAt,
-				encrypted.ciphertext,
-				encrypted.iv,
-				encrypted.authTag,
-			);
+		this.db.transaction(() => {
+			const previous = this.getDailySummary(parsed.day);
+			this.syncEmbeddingGeneration("daily_summary", parsed.id);
+			this.db
+				.prepare(
+					`INSERT INTO memory_daily_summaries
+					 (id, day, created_at, updated_at, payload_ciphertext, payload_iv, payload_auth_tag)
+					 VALUES (?, ?, ?, ?, ?, ?, ?)
+					 ON CONFLICT(day) DO UPDATE SET
+					 id=excluded.id, created_at=excluded.created_at, updated_at=excluded.updated_at,
+					 payload_ciphertext=excluded.payload_ciphertext, payload_iv=excluded.payload_iv,
+					 payload_auth_tag=excluded.payload_auth_tag`,
+				)
+				.run(
+					parsed.id,
+					parsed.day,
+					parsed.createdAt,
+					parsed.updatedAt,
+					encrypted.ciphertext,
+					encrypted.iv,
+					encrypted.authTag,
+				);
+			if (previous && previous.id !== parsed.id) this.syncEmbeddingGeneration("daily_summary", previous.id);
+			this.syncEmbeddingGeneration("daily_summary", parsed.id);
+		})();
 	}
 
 	getDailySummary(dayOrId: string): DailySummary | undefined {
@@ -2964,6 +2983,7 @@ export class KestrelDatabase {
 		const provenance = this.deleteMemoryProvenance("agent_memory", id);
 		const jobs = this.deleteJobsForOwner(id);
 		this.db.prepare("DELETE FROM memory_agent_memories WHERE id = ?").run(id);
+		this.syncEmbeddingGeneration("agent_memory", id);
 		return { memory, embeddings, provenance, jobs };
 	}
 
@@ -3307,14 +3327,16 @@ export class KestrelDatabase {
 			const type = EmbeddingRecordSchema.shape.ownerType.safeParse(current.payload.ownerType);
 			const id = current.payload.ownerId;
 			if (!type.success || typeof id !== "string") return undefined;
-			return this.snapshotMemoryEmbeddingOwner(type.data, id);
+			const input = this.getMemoryEmbeddingInput(type.data, id);
+			return input && current.payload.generation === input.generation ? input : undefined;
 		})();
 	}
 
 	isCurrentMemoryEmbeddingJob(job: MemoryJob, input: MemoryEmbeddingInputSnapshot, now: string): boolean {
 		const current = this.snapshotMemoryEmbeddingJob(job, now);
 		return current !== undefined && current.ownerType === input.ownerType &&
-			current.ownerId === input.ownerId && current.revision === input.revision && current.text === input.text;
+			current.ownerId === input.ownerId && current.text === input.text &&
+			current.generation === input.generation && current.contentHash === input.contentHash;
 	}
 
 	commitMemoryEmbeddingJob(
@@ -3328,7 +3350,7 @@ export class KestrelDatabase {
 			(parsed.status !== "ready" && parsed.status !== "unavailable"))
 			throw new Error("Embedding result does not match its input owner.");
 		return this.db.transaction(() => {
-			if (!this.isCurrentMemoryEmbeddingJob(job, input, now)) return false;
+			if (parsed.generation !== input.generation || parsed.contentHash !== input.contentHash || !this.isCurrentMemoryEmbeddingJob(job, input, now)) return false;
 			this.upsertMemoryEmbedding(parsed);
 			if (input.ownerType === "timeline_event") {
 				const event = this.getTimelineEvent(input.ownerId)!;
@@ -3342,9 +3364,50 @@ export class KestrelDatabase {
 		})();
 	}
 
-	private snapshotMemoryEmbeddingOwner(
+	private embeddingStateSecret(): EmbeddingStateSecret {
+		const value = this.getPrivateState<unknown>(EMBEDDING_STATE_SECRET_KEY);
+		if (value !== undefined) return parseReservedEmbeddingState(EMBEDDING_STATE_SECRET_KEY, value) as EmbeddingStateSecret;
+		const existing = this.db.prepare("SELECT 1 FROM private_runtime_state WHERE key LIKE ? LIMIT 1").get(`${EMBEDDING_STATE_OWNER_PREFIX}%`);
+		if (existing) throw new Error("Embedding generation secret is missing.");
+		const secret = newEmbeddingStateSecret();
+		this.setPrivateState(EMBEDDING_STATE_SECRET_KEY, secret);
+		return secret;
+	}
+
+	private syncEmbeddingGeneration(ownerType: EmbeddingOwnerType, ownerId: string): EmbeddingOwnerState {
+		const secret = this.embeddingStateSecret();
+		const key = embeddingOwnerKey(secret, ownerType, ownerId);
+		const raw = this.rawMemoryEmbeddingOwner(ownerType, ownerId);
+		const fingerprint = embeddingMac(secret, "authority", raw ? JSON.stringify(["eligible", raw.text, raw.authority]) : "ineligible");
+		const stored = this.getPrivateState<unknown>(key);
+		const previous = stored === undefined ? undefined : parseReservedEmbeddingState(key, stored, secret) as EmbeddingOwnerState;
+		if (previous && previous.fingerprint === fingerprint) return previous;
+		const next = newEmbeddingOwnerState(ownerType, ownerId, fingerprint);
+		this.setPrivateState(key, next);
+		return next;
+	}
+
+	/** Direct owner text and eligibility only; transitive source revocation needs separate invalidation. */
+	getMemoryEmbeddingInput(ownerType: EmbeddingRecord["ownerType"], ownerId: string): MemoryEmbeddingInputSnapshot | undefined {
+		return this.db.transaction(() => {
+			const raw = this.rawMemoryEmbeddingOwner(ownerType, ownerId);
+			if (!raw) return undefined;
+			const state = this.syncEmbeddingGeneration(ownerType, ownerId);
+			const contentHash = embeddingMac(this.embeddingStateSecret(), "content", raw.text);
+			const { authority: _authority, ...input } = raw;
+			return { ...input, generation: state.generation, contentHash };
+		})();
+	}
+
+	isMemoryEmbeddingCurrent(embedding: EmbeddingRecord): boolean {
+		if (!embedding.generation) return false;
+		const current = this.getMemoryEmbeddingInput(embedding.ownerType, embedding.ownerId);
+		return Boolean(current && current.generation === embedding.generation && current.contentHash === embedding.contentHash);
+	}
+
+	private rawMemoryEmbeddingOwner(
 		ownerType: EmbeddingRecord["ownerType"], ownerId: string,
-	): MemoryEmbeddingInputSnapshot | undefined {
+	): (Omit<MemoryEmbeddingInputSnapshot, "generation" | "contentHash"> & { authority: string }) | undefined {
 		const tables = {
 			timeline_event: "memory_timeline_events", timeline_session: "memory_timeline_sessions",
 			activity_block: "memory_activity_blocks", daily_summary: "memory_daily_summaries",
@@ -3381,9 +3444,21 @@ export class KestrelDatabase {
 		}
 		if (!owner || !text) return undefined;
 		if (owner.id !== ownerId) throw new Error("Embedding owner identity is inconsistent.");
-		// Normal owner writes use fresh encryption IVs, so this also detects
-		// same-clock A -> B -> A and delete/recreate without a new schema or cache.
-		return { ownerType, ownerId, text, revision: JSON.stringify(row) };
+		// Retain the encrypted row revision for diagnostics. Commit authority is
+		// the durable generation, so a fresh IV on a metadata-only write cannot
+		// exhaust an otherwise valid job's retries.
+		const record = owner as unknown as Record<string, unknown>;
+		const authorityFields: Record<EmbeddingOwnerType, string[]> = {
+			timeline_event: ["source", "sourceId", "sourceSessionId", "sessionId", "agentId", "sensitivity", "status"],
+			timeline_session: ["eventIds", "sourceSessionIds", "status"],
+			activity_block: ["sessionId", "eventIds", "status"],
+			daily_summary: ["eventIds", "activityBlockIds"],
+			memory: ["sourceIds", "sourceType", "sensitivity", "status"],
+			agent_memory: ["agentId", "sourceIds", "sensitivity", "status"],
+			task: ["agentId", "sessionId", "sourceIds"],
+		};
+		const authority = JSON.stringify(authorityFields[ownerType].map(field => record[field] ?? null));
+		return { ownerType, ownerId, text, revision: JSON.stringify(row), authority };
 	}
 
 	upsertMemoryEmbedding(embedding: EmbeddingRecord): void {
@@ -3527,6 +3602,7 @@ export class KestrelDatabase {
 		const jobs = this.deleteJobsForOwner(memoryId);
 		const deleted =
 			this.db.prepare("DELETE FROM memories WHERE id = ?").run(memoryId).changes === 1;
+		if (deleted) this.syncEmbeddingGeneration("memory", memoryId);
 		return { deleted, embeddings, provenance, jobs };
 	}
 
@@ -4045,6 +4121,7 @@ export class KestrelDatabase {
 			const { block, remainingEvents } = plan;
 			if (remainingEvents.length === 0) {
 				const deleted = this.db.prepare("DELETE FROM memory_activity_blocks WHERE id = ?").run(block.id).changes;
+				if (deleted) this.syncEmbeddingGeneration("activity_block", block.id);
 				deletedBlocks += deleted;
 				provenance += this.deleteMemoryProvenance("activity_block", block.id);
 				continue;
@@ -4069,6 +4146,7 @@ export class KestrelDatabase {
 			const { session, remainingEvents, remainingBlocks } = plan;
 			if (remainingEvents.length === 0) {
 				const deleted = this.db.prepare("DELETE FROM memory_timeline_sessions WHERE id = ?").run(session.id).changes;
+				if (deleted) this.syncEmbeddingGeneration("timeline_session", session.id);
 				deletedSessions += deleted;
 				provenance += this.deleteMemoryProvenance("timeline_session", session.id);
 				continue;
@@ -4094,6 +4172,7 @@ export class KestrelDatabase {
 			const { summary, remainingEvents, remainingBlocks } = plan;
 			if (remainingEvents.length === 0) {
 				const deleted = this.db.prepare("DELETE FROM memory_daily_summaries WHERE id = ?").run(summary.id).changes;
+				if (deleted) this.syncEmbeddingGeneration("daily_summary", summary.id);
 				deletedSummaries += deleted;
 				provenance += this.deleteMemoryProvenance("daily_summary", summary.id);
 				continue;
@@ -4125,6 +4204,7 @@ export class KestrelDatabase {
 				this.queueMemoryEmbeddingRefresh("daily_summary", plan.summary.id, timestamp);
 		}
 		this.db.prepare("DELETE FROM memory_timeline_events WHERE id = ?").run(id);
+		this.syncEmbeddingGeneration("timeline_event", id);
 		return {
 			event,
 			agentMemories: deletedAgentMemories,
@@ -4160,6 +4240,7 @@ export class KestrelDatabase {
 		const jobs = this.deleteJobsForOwner(id, "task");
 		const deleted =
 			this.db.prepare("DELETE FROM memory_working_tasks WHERE id = ?").run(id).changes === 1;
+		if (deleted) this.syncEmbeddingGeneration("task", id);
 		return { deleted, embeddings, provenance, jobs };
 	}
 
@@ -4168,19 +4249,18 @@ export class KestrelDatabase {
 		ownerId: string,
 		updatedAt: string,
 	): void {
-		const dedupeKey = `embed-refresh:${ownerType}:${ownerId}:${updatedAt}`;
+		const input = this.getMemoryEmbeddingInput(ownerType, ownerId);
+		if (!input) return;
+		const dedupeKey = `embed:${ownerType}:${ownerId}:${input.generation}`;
 		const existing = this.getMemoryJobByDedupeKey(dedupeKey);
 		if (existing && ["pending", "running", "completed"].includes(existing.status)) return;
 		this.queueMemoryJob(
 			MemoryJobSchema.parse({
-				id: `memory-job-${createHmac("sha256", this.encryptionKey)
-					.update(dedupeKey)
-					.digest("hex")
-					.slice(0, 40)}`,
+				id: existing?.id ?? `memory-job-${randomUUID()}`,
 				kind: "embed",
 				dedupeKey,
 				status: "pending",
-				payload: { ownerType, ownerId },
+				payload: { ownerType, ownerId, generation: input.generation },
 				attempts: 0,
 				maxAttempts: 4,
 				runAfter: updatedAt,
@@ -5032,7 +5112,21 @@ export class KestrelDatabase {
 		return { runs, toolExecutions };
 	}
 
-	private upsertMemoryPayload(
+	private upsertMemoryPayload(table: MemoryPayloadTable, id: string, value: unknown, indexed: Record<string, string | number | null>, updatedAt: string): void {
+		const owners: Partial<Record<MemoryPayloadTable, EmbeddingOwnerType>> = {
+			memory_timeline_events: "timeline_event", memory_timeline_sessions: "timeline_session",
+			memory_activity_blocks: "activity_block", memory_agent_memories: "agent_memory", memory_working_tasks: "task",
+		};
+		const type = owners[table];
+		if (!type) return this.writeMemoryPayload(table, id, value, indexed, updatedAt);
+		this.db.transaction(() => {
+			this.syncEmbeddingGeneration(type, id);
+			this.writeMemoryPayload(table, id, value, indexed, updatedAt);
+			this.syncEmbeddingGeneration(type, id);
+		})();
+	}
+
+	private writeMemoryPayload(
 		table: MemoryPayloadTable,
 		id: string,
 		value: unknown,

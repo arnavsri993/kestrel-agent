@@ -63,16 +63,17 @@ function fixture(type: Owner) {
 		createdAt: timestamp, updatedAt: timestamp,
 	}));
 	writeOwner(database, type, "Generated first text");
+	const desired = database.getMemoryEmbeddingInput(type, "generated-owner")!;
 	database.queueMemoryJob(Contracts.MemoryJobSchema.parse({
 		id: "generated-job", dedupeKey: "generated-job", kind: "embed", status: "pending",
-		payload: { ownerType: type, ownerId: "generated-owner" }, attempts: 0, maxAttempts: 3,
+		payload: { ownerType: type, ownerId: "generated-owner", generation: desired.generation }, attempts: 0, maxAttempts: 3,
 		runAfter: timestamp, createdAt: timestamp, updatedAt: timestamp,
 	}));
 	const job = database.claimMemoryJob(timestamp)!;
 	const input = database.snapshotMemoryEmbeddingJob(job, timestamp)!;
 	const embedding = Contracts.EmbeddingRecordSchema.parse({
 		id: "generated-embedding", ownerType: type, ownerId: "generated-owner",
-		provider: "fixture", model: "fixture", dimension: 1, contentHash: "a".repeat(64),
+		provider: "fixture", model: "fixture", dimension: 1, contentHash: desired.contentHash, generation: desired.generation,
 		vector: [1], status: "ready", createdAt: timestamp, updatedAt: timestamp,
 	});
 	return { database, job, input, embedding };
@@ -99,6 +100,16 @@ describe("atomic embedding result commits", () => {
 		expect(database.getMemoryJob(job.id)?.status).toBe("running");
 	});
 
+	it.each(ownerTypes)("allows a fresh ciphertext for unchanged %s input while its provider is running", (type) => {
+		const { database, job, input, embedding } = fixture(type);
+		writeOwner(database, type, "Generated first text");
+		const current = database.getMemoryEmbeddingInput(type, "generated-owner")!;
+		expect(current.revision).not.toBe(input.revision);
+		expect(current.generation).toBe(input.generation);
+		expect(database.commitMemoryEmbeddingJob(job, input, embedding, timestamp)).toBe(true);
+		expect(database.getMemoryJob(job.id)?.status).toBe("completed");
+	});
+
 	it.each(ownerTypes)("rejects deletion and identical ID recreation for %s", (type) => {
 		const { database, job, input, embedding } = fixture(type);
 		// Retain the generated job deliberately, exercising the owner guard itself.
@@ -110,6 +121,91 @@ describe("atomic embedding result commits", () => {
 		writeOwner(database, type, "Generated first text");
 		expect(database.commitMemoryEmbeddingJob(job, input, embedding, timestamp)).toBe(false);
 		expect(database.listMemoryEmbeddings()).toEqual([]);
+	});
+
+	it.each(ownerTypes)("invalidates completed %s embedding on A -> B -> A and preserves metadata-only generations", (type) => {
+		const { database, job, input, embedding } = fixture(type);
+		expect(database.commitMemoryEmbeddingJob(job, input, embedding, timestamp)).toBe(true);
+		expect(database.isMemoryEmbeddingCurrent(embedding)).toBe(true);
+		writeOwner(database, type, "Generated first text");
+		expect(database.getMemoryEmbeddingInput(type, "generated-owner")?.generation).toBe(input.generation);
+		writeOwner(database, type, "Generated second text");
+		expect(database.isMemoryEmbeddingCurrent(embedding)).toBe(false);
+		writeOwner(database, type, "Generated first text");
+		const fresh = database.getMemoryEmbeddingInput(type, "generated-owner")!;
+		expect(fresh.generation).not.toBe(input.generation);
+		expect(fresh.contentHash).toBe(input.contentHash);
+		expect(database.isMemoryEmbeddingCurrent(embedding)).toBe(false);
+	});
+
+	it("rotates on source authority changes and eligibility revoke and regrant", () => {
+		const { database, input, embedding } = fixture("timeline_event");
+		const original = database.getTimelineEvent("generated-owner")!;
+		database.upsertTimelineEvent({ ...original, sourceId: "new-source" });
+		const changed = database.getMemoryEmbeddingInput("timeline_event", original.id)!;
+		expect(changed.generation).not.toBe(input.generation);
+		database.upsertTimelineEvent({ ...original, source: "connected-source" });
+		expect(database.getMemoryEmbeddingInput("timeline_event", original.id)).toBeUndefined();
+		database.upsertTimelineEvent(original);
+		expect(database.getMemoryEmbeddingInput("timeline_event", original.id)?.generation).not.toBe(input.generation);
+		expect(database.isMemoryEmbeddingCurrent(embedding)).toBe(false);
+	});
+
+	it("leaves generation state lazy until an owner write", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		databases.push(database);
+		expect(database.getMemoryEmbeddingInput("memory", "missing")).toBeUndefined();
+		expect(database.db.prepare("SELECT count(*) AS count FROM private_runtime_state WHERE key LIKE 'kestrel.embedding-generation.v1.%'").get()).toEqual({ count: 0 });
+	});
+
+	it("queues current generations for surviving aggregates after deleting a timeline event", () => {
+		const { database } = fixture("timeline_event");
+		const event = database.getTimelineEvent("generated-owner")!;
+		database.upsertTimelineEvent({ ...event, id: "generated-surviving-event", textSummary: "Retained generated event" });
+		const eventIds = [event.id, "generated-surviving-event"];
+		const common = { projectIds: [], personIds: [], entityIds: [], importance: 0.5, confidence: 0.8, status: "active" };
+		database.upsertTimelineSession(Contracts.TimelineSessionSchema.parse({
+			...common,
+			id: "generated-session", startedAt: timestamp, title: "Generated session", summary: "Generated session summary",
+			eventIds, activityBlockIds: ["generated-block"], sourceSessionIds: [], createdAt: timestamp, updatedAt: timestamp,
+		}));
+		database.upsertActivityBlock(Contracts.ActivityBlockSchema.parse({
+			...common,
+			id: "generated-block", sessionId: "generated-session", startedAt: timestamp,
+			title: "Generated block", summary: "Generated block summary", eventIds, createdAt: timestamp, updatedAt: timestamp,
+		}));
+		database.upsertDailySummary(Contracts.DailySummarySchema.parse({
+			...common,
+			id: "generated-summary", day: "2026-11-02", title: "Generated day", summary: "Generated day summary",
+			activityBlockIds: ["generated-block"], eventIds, createdAt: timestamp, updatedAt: timestamp,
+		}));
+		const owners = [["timeline_session", "generated-session"], ["activity_block", "generated-block"], ["daily_summary", "generated-summary"]] as const;
+		const before = new Map(owners.map(([type, id]) => [type, database.getMemoryEmbeddingInput(type, id)!.generation]));
+		expect(database.deleteTimelineEvent(event.id)).toBeDefined();
+		const now = new Date(Date.now() + 1_000).toISOString();
+		for (let count = 0; count < owners.length; count++) {
+			const job = database.claimMemoryJob(now)!;
+			expect(job.kind).toBe("embed");
+			const input = database.snapshotMemoryEmbeddingJob(job, now)!;
+			expect(input).toBeDefined();
+			expect(input.generation).toBe(job.payload.generation);
+			expect(input.generation).not.toBe(before.get(input.ownerType as typeof owners[number][0]));
+			expect(input.text).toContain("Retained generated event");
+			expect(database.completeMemoryJob(job.id, now, job.leaseToken)).toBe(true);
+		}
+		expect(database.claimMemoryJob(now)).toBeUndefined();
+	});
+
+	it("rejects missing or mismatched generation and fails closed on malformed reserved state", () => {
+		const { database, job, input, embedding } = fixture("memory");
+		expect(database.isMemoryEmbeddingCurrent({ ...embedding, generation: undefined })).toBe(false);
+		expect(database.commitMemoryEmbeddingJob(job, input, { ...embedding, generation: undefined }, timestamp)).toBe(false);
+		expect(database.commitMemoryEmbeddingJob(job, input, { ...embedding, contentHash: "0".repeat(64) }, timestamp)).toBe(false);
+		database.queueMemoryJob({ ...job, payload: { ownerType: "memory", ownerId: "generated-owner" } });
+		expect(database.snapshotMemoryEmbeddingJob(job, timestamp)).toBeUndefined();
+		const owner = database.db.prepare("SELECT key FROM private_runtime_state WHERE key LIKE 'kestrel.embedding-generation.v1.owner.memory.%'").get() as { key: string };
+		database.setPrivateState(owner.key, { version: 1, generation: "bad" });
+		expect(() => database.getMemoryEmbeddingInput("memory", "generated-owner")).toThrow("Invalid embedding owner generation state");
 	});
 
 	it("rejects stale claims and unavailable results without writing either state", () => {

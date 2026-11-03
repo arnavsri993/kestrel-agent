@@ -483,6 +483,7 @@ export const EmbeddingRecordSchema = z.object({
 	model: z.string().min(1).max(200),
 	dimension: z.number().int().positive().max(16_384),
 	contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+	generation: z.string().uuid().optional(),
 	vector: z.array(z.number().finite()).max(16_384),
 	status: EmbeddingStatusSchema,
 	createdAt: z.string().datetime(),

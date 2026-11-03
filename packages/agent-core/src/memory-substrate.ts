@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
 	KestrelDatabase,
 	MemoryDeleteResult,
@@ -700,10 +700,7 @@ export class MemorySubstrate {
 		);
 		this.enqueue("extract", `extract:${event.id}`, { eventId: event.id });
 		this.enqueue("sessionize", `sessionize:${event.id}`, { eventId: event.id });
-		this.enqueue("embed", `embed:timeline_event:${event.id}`, {
-			ownerType: "timeline_event",
-			ownerId: event.id,
-		});
+		this.enqueueEmbedding("timeline_event", event.id);
 		return event;
 	}
 
@@ -858,6 +855,7 @@ export class MemorySubstrate {
 			? new Map(
 					this.database
 						.listMemoryEmbeddings({ status: "ready", limit: 5_000 })
+						.filter(embedding => this.database.isMemoryEmbeddingCurrent(embedding))
 						.map((embedding) => [`${embedding.ownerType}:${embedding.ownerId}`, embedding] as const),
 				  )
 			: undefined;
@@ -1197,10 +1195,7 @@ export class MemorySubstrate {
 				updatedAt: memory.updatedAt,
 			}),
 		);
-		this.enqueue("embed", `embed:memory:${memory.id}:${createHash("sha256").update(memory.content).digest("hex").slice(0, 16)}`, {
-			ownerType: "memory",
-			ownerId: memory.id,
-		});
+		this.enqueueEmbedding("memory", memory.id);
 		return memory;
 	}
 
@@ -1237,10 +1232,7 @@ export class MemorySubstrate {
 				updatedAt: timestamp,
 			}),
 		);
-		this.enqueue("embed", `embed:memory:${id}:${createHash("sha256").update(corrected.content).digest("hex").slice(0, 16)}`, {
-			ownerType: "memory",
-			ownerId: id,
-		});
+		this.enqueueEmbedding("memory", id);
 		return corrected;
 	}
 
@@ -1283,11 +1275,7 @@ export class MemorySubstrate {
 		this.database.deleteMemoryEmbeddingsForOwner("agent_memory", id);
 		this.database.upsertAgentMemory(corrected);
 		this.recordAgentMemoryCorrection(corrected);
-		this.enqueue(
-			"embed",
-			`embed:agent_memory:${corrected.id}:${createHash("sha256").update(corrected.content).digest("hex").slice(0, 16)}`,
-			{ ownerType: "agent_memory", ownerId: corrected.id },
-		);
+		this.enqueueEmbedding("agent_memory", corrected.id);
 		return corrected;
 	}
 
@@ -1544,11 +1532,7 @@ export class MemorySubstrate {
 				updatedAt: timestamp,
 			}),
 		);
-		this.enqueue(
-			"embed",
-			`embed:agent_memory:${agentMemory.id}:${createHash("sha256").update(content).digest("hex").slice(0, 16)}`,
-			{ ownerType: "agent_memory", ownerId: agentMemory.id },
-		);
+		this.enqueueEmbedding("agent_memory", agentMemory.id);
 		return agentMemory;
 	}
 
@@ -1590,10 +1574,7 @@ export class MemorySubstrate {
 		if (task.agentId)
 			this.ensureAgentIdentityForId(task.agentId, task.agentId === "agent-main" ? "main" : "subagent");
 		this.database.upsertWorkingTask(task);
-		this.enqueue("embed", `embed:task:${task.id}:${createHash("sha256").update(`${task.goal}\n${task.outcomeSummary ?? ""}`).digest("hex").slice(0, 16)}`, {
-			ownerType: "task",
-			ownerId: task.id,
-		});
+		this.enqueueEmbedding("task", task.id);
 		if (task.sourceIds[0])
 			this.database.upsertMemoryProvenance(ProvenanceRecordSchema.parse({
 				id: `provenance-task-${task.id}`,
@@ -1634,10 +1615,7 @@ export class MemorySubstrate {
 				: {}),
 		});
 		this.database.upsertWorkingTask(reconciled);
-		this.enqueue("embed", `embed:task:${reconciled.id}:${createHash("sha256").update(`${reconciled.goal}\n${reconciled.outcomeSummary ?? ""}`).digest("hex").slice(0, 16)}`, {
-			ownerType: "task",
-			ownerId: reconciled.id,
-		});
+		this.enqueueEmbedding("task", reconciled.id);
 		if (reconciled.outcomeSummary && reconciled.status === "completed") {
 			const timestamp = this.now().toISOString();
 			const memory = AgentMemoryRecordSchema.parse({
@@ -1675,10 +1653,7 @@ export class MemorySubstrate {
 				createdAt: timestamp,
 				updatedAt: timestamp,
 			}));
-			this.enqueue("embed", `embed:agent_memory:${memory.id}:${createHash("sha256").update(memory.content).digest("hex").slice(0, 16)}`, {
-				ownerType: "agent_memory",
-				ownerId: memory.id,
-			});
+			this.enqueueEmbedding("agent_memory", memory.id);
 		}
 		if (reconciled.status !== "running")
 			this.activeTaskIds.delete(reconciled.sessionId ?? reconciled.agentId ?? "");
@@ -1786,6 +1761,16 @@ export class MemorySubstrate {
 		this.enqueue("cleanup", `cleanup:${bucket}`, {});
 	}
 
+	private enqueueEmbedding(ownerType: EmbeddingRecord["ownerType"], ownerId: string): void {
+		const input = this.database.getMemoryEmbeddingInput(ownerType, ownerId);
+		if (!input) return;
+		// Desired generations are durable, random and independent of the text.
+		// Returning to prior text still creates a distinct completed-job identity.
+		this.enqueue("embed", `embed:${ownerType}:${ownerId}:${input.generation}`, {
+			ownerType, ownerId, generation: input.generation,
+		});
+	}
+
 	private enqueue(kind: MemoryJob["kind"], dedupeKey: string, payload: Record<string, unknown>): void {
 		const existing = this.database.getMemoryJobByDedupeKey(dedupeKey);
 		if (existing && ["pending", "running", "completed"].includes(existing.status)) return;
@@ -1793,7 +1778,7 @@ export class MemorySubstrate {
 		const timestamp = this.now().toISOString();
 		this.database.queueMemoryJob(
 			MemoryJobSchema.parse({
-				id: `memory-job-${createHash("sha256").update(dedupeKey).digest("hex").slice(0, 40)}`,
+				id: existing?.id ?? `memory-job-${randomUUID()}`,
 				kind,
 				dedupeKey,
 				status: "pending",
@@ -1902,10 +1887,7 @@ export class MemorySubstrate {
 			createdAt: agentMemory.createdAt,
 			updatedAt: agentMemory.updatedAt,
 		}));
-		this.enqueue("embed", `embed:agent_memory:${agentMemory.id}:${createHash("sha256").update(agentMemory.content).digest("hex").slice(0, 16)}`, {
-			ownerType: "agent_memory",
-			ownerId: agentMemory.id,
-		});
+		this.enqueueEmbedding("agent_memory", agentMemory.id);
 		return agentMemory;
 	}
 
@@ -2090,10 +2072,7 @@ export class MemorySubstrate {
 				createdAt: timestamp,
 				updatedAt: timestamp,
 			}));
-			this.enqueue("embed", `embed:${ownerType}:${memory.id}:${createHash("sha256").update(memory.content).digest("hex").slice(0, 16)}`, {
-				ownerType,
-				ownerId: memory.id,
-			});
+			this.enqueueEmbedding(ownerType, memory.id);
 		}
 		this.database.upsertTimelineEvent({
 			...event,
@@ -2238,6 +2217,7 @@ export class MemorySubstrate {
 			for (const event of group) {
 				if (event.sessionId === sessionId) continue;
 				this.database.upsertTimelineEvent({ ...event, sessionId, updatedAt: timestamp });
+				this.enqueueEmbedding("timeline_event", event.id);
 				changed += 1;
 			}
 			const session = TimelineSessionSchema.parse({
@@ -2327,20 +2307,14 @@ export class MemorySubstrate {
 					previous.startedAt !== block.startedAt ||
 					previous.endedAt !== block.endedAt;
 				this.database.upsertActivityBlock(block);
+				this.enqueueEmbedding("activity_block", id);
 				if (changed) {
 					blocksBuilt += 1;
-					this.enqueue("embed", `embed:activity_block:${id}:${createHash("sha256").update(block.summary).digest("hex").slice(0, 16)}`, {
-						ownerType: "activity_block",
-						ownerId: id,
-					});
 				}
 				blockIds.push(id);
 			}
 			sessionBlocks.set(session.id, blockIds);
-			this.enqueue("embed", `embed:timeline_session:${session.id}:${createHash("sha256").update(session.summary).digest("hex").slice(0, 16)}`, {
-				ownerType: "timeline_session",
-				ownerId: session.id,
-			});
+			this.enqueueEmbedding("timeline_session", session.id);
 			const day = session.startedAt.slice(0, 10);
 			const current = daily.get(day) ?? { sessions: [], events: [], blockIds: [] };
 			current.sessions.push(session);
@@ -2383,10 +2357,7 @@ export class MemorySubstrate {
 				prior.activityBlockIds.join("\u0000") !== summary.activityBlockIds.join("\u0000");
 			this.database.upsertDailySummary(summary);
 			if (changed)
-				this.enqueue("embed", `embed:daily_summary:${summary.id}:${createHash("sha256").update(summary.summary).digest("hex").slice(0, 16)}`, {
-					ownerType: "daily_summary",
-					ownerId: summary.id,
-				});
+				this.enqueueEmbedding("daily_summary", summary.id);
 			for (const session of aggregate.sessions) {
 				const blockIds = sessionBlocks.get(session.id) ?? [];
 				this.database.upsertTimelineSession({
@@ -2402,9 +2373,8 @@ export class MemorySubstrate {
 	private async processEmbeddingJob(job: MemoryJob): Promise<boolean> {
 		const input = this.database.snapshotMemoryEmbeddingJob(job, this.now().toISOString());
 		if (!input) return false;
-		const { ownerType, ownerId, text } = input;
+		const { ownerType, ownerId, text, generation, contentHash } = input;
 		const timestamp = this.now().toISOString();
-		const contentHash = createHash("sha256").update(text).digest("hex");
 		let provider = this.embeddingProvider;
 		let vector: number[] | undefined;
 		try {
@@ -2430,7 +2400,7 @@ export class MemorySubstrate {
 		const completedAt = this.now().toISOString();
 		const embedding = EmbeddingRecordSchema.parse({
 			id: vector ? `embedding-${ownerType}-${ownerId}-${provider.model}` : `embedding-${ownerType}-${ownerId}-unavailable`,
-			ownerType, ownerId, provider: provider.provider, model: provider.model,
+			ownerType, ownerId, generation, provider: provider.provider, model: provider.model,
 			dimension: vector?.length ?? 1, contentHash, vector: vector ?? [0],
 			status: vector ? "ready" : "unavailable", createdAt: timestamp, updatedAt: completedAt,
 		});
@@ -2518,7 +2488,8 @@ export class MemorySubstrate {
 		readyEmbeddings?: Map<string, EmbeddingRecord>,
 	): number {
 		const stored = readyEmbeddings?.get(`${ownerType}:${ownerId}`);
-		if (stored && stored.dimension === queryEmbedding.length && stored.vector.length === stored.dimension)
+		if (stored && this.database.isMemoryEmbeddingCurrent(stored) &&
+			stored.dimension === queryEmbedding.length && stored.vector.length === stored.dimension)
 			return semanticSimilarity(queryEmbedding, new Float32Array(stored.vector));
 		return semanticSimilarity(queryEmbedding, localSemanticEmbedding(text));
 	}

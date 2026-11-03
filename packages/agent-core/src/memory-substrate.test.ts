@@ -13,6 +13,7 @@ import {
 	localMemoryEmbeddingProvider,
 } from "./memory-substrate";
 import { AgentRuntime } from "./runtime";
+import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
 
 const temporaryDirectories: string[] = [];
 
@@ -93,6 +94,101 @@ afterEach(() => {
 });
 
 describe("memory substrate", () => {
+	it("embeds the current event generation after session assignment changes its authority", async () => {
+		const state = fixture();
+		try {
+			const event = state.substrate.captureActivity({ id: "generated-session-assignment", eventType: "note",
+				source: "fixture", textSummary: "Generated session assignment evidence" })!;
+			const initial = state.database.getMemoryEmbeddingInput("timeline_event", event.id)!;
+			await state.substrate.runMaintenance(200);
+			const current = state.database.getMemoryEmbeddingInput("timeline_event", event.id)!;
+			expect(state.database.getTimelineEvent(event.id)?.sessionId).toMatch(/^timeline-session-/);
+			expect(current.generation).not.toBe(initial.generation);
+			expect(state.database.listMemoryEmbeddings({ ownerType: "timeline_event", ownerId: event.id, status: "ready" })
+				.some(embedding => state.database.isMemoryEmbeddingCurrent(embedding))).toBe(true);
+		} finally { await state.close(); }
+	});
+
+	it("refreshes a reactivated block even when its summary and events are unchanged", async () => {
+		const state = fixture();
+		try {
+			state.substrate.captureActivity({ id: "generated-block-event", eventType: "note", source: "fixture",
+				textSummary: "Generated retained activity block" });
+			await state.substrate.runMaintenance(200);
+			const block = state.database.listActivityBlocks()[0]!;
+			const first = state.database.getMemoryEmbeddingInput("activity_block", block.id)!;
+			state.database.upsertActivityBlock({ ...block, status: "deleted" });
+			const timestamp = "2026-07-22T12:00:00.000Z";
+			state.database.queueMemoryJob(MemoryJobSchema.parse({ id: "generated-block-reactivation",
+				kind: "consolidate", dedupeKey: "generated-block-reactivation", payload: {}, status: "pending",
+				attempts: 0, maxAttempts: 4, runAfter: timestamp, createdAt: timestamp, updatedAt: timestamp,
+			}));
+			await state.substrate.runMaintenance(200);
+			const current = state.database.getMemoryEmbeddingInput("activity_block", block.id)!;
+			expect(state.database.getActivityBlock(block.id)?.status).toBe("active");
+			expect(current.generation).not.toBe(first.generation);
+			expect(state.database.listMemoryEmbeddings({ ownerType: "activity_block", ownerId: block.id, status: "ready" })
+				.some(embedding => state.database.isMemoryEmbeddingCurrent(embedding))).toBe(true);
+		} finally { await state.close(); }
+	});
+
+	it("queues a fresh opaque generation after a completed A -> B -> A correction", async () => {
+		const embedded: string[] = [];
+		const state = fixture({ embeddingProvider: {
+			provider: "generated", model: "generated", async embed(text) { embedded.push(text); return [1]; },
+		} });
+		try {
+			const text = "Generated alpha release advice";
+			const memory = state.substrate.remember(memoryInput(text));
+			await state.substrate.runMaintenance(200);
+			const first = state.database.getMemoryEmbeddingInput("memory", memory.id)!;
+			const original = state.database.listMemoryJobs({ kind: "embed", limit: 2_000 })
+				.find(job => job.payload.ownerType === "memory" && job.payload.ownerId === memory.id)!;
+			expect(original.status).toBe("completed");
+			expect(original.payload.generation).toBe(first.generation);
+			const before = embedded.filter(value => value === text).length;
+			state.substrate.correct(memory.id, { content: "Generated beta release advice" });
+			state.substrate.correct(memory.id, { content: text });
+			const returned = state.database.getMemoryEmbeddingInput("memory", memory.id)!;
+			expect(returned.generation).not.toBe(first.generation);
+			expect(returned.contentHash).toBe(first.contentHash);
+			const queued = state.database.listMemoryJobs({ kind: "embed", limit: 2_000 })
+				.find(job => job.payload.ownerType === "memory" && job.payload.ownerId === memory.id && job.payload.generation === returned.generation)!;
+			expect(queued.status).toBe("pending");
+			expect(queued.id).not.toBe(original.id);
+			expect(queued.dedupeKey).toBe(`embed:memory:${memory.id}:${returned.generation}`);
+			await state.substrate.runMaintenance(200);
+			expect(embedded.filter(value => value === text).length).toBeGreaterThan(before);
+			expect(state.database.getMemoryJob(queued.id)?.status).toBe("completed");
+			expect(state.database.listMemoryEmbeddings({ ownerType: "memory", ownerId: memory.id })
+				.some(value => state.database.isMemoryEmbeddingCurrent(value))).toBe(true);
+		} finally { await state.close(); }
+	});
+
+	it.each(["changed-owner", "legacy-vector"] as const)("ignores a ready %s when scoring current timeline text", async mode => {
+		const state = fixture();
+		try {
+			const query = "orchid pearl";
+			const event = state.substrate.captureActivity({ id: "generated-vector-owner", eventType: "note",
+				source: "fixture", textSummary: "Generated fruit basket", startedAt: "2026-07-22T12:00:00.000Z" })!;
+			const input = state.database.getMemoryEmbeddingInput("timeline_event", event.id)!;
+			const vector = [...localSemanticEmbedding(query)];
+			state.database.upsertMemoryEmbedding({ id: "generated-ready-vector", ownerType: "timeline_event", ownerId: event.id,
+				generation: mode === "legacy-vector" ? undefined : input.generation, contentHash: input.contentHash,
+				provider: "local-hash", model: "kestrel-local-256-v1", dimension: vector.length, vector,
+				status: "ready", createdAt: event.createdAt, updatedAt: event.updatedAt,
+			});
+			if (mode === "changed-owner") state.database.upsertTimelineEvent({ ...state.database.getTimelineEvent(event.id)!, textSummary: "Generated garden tools" });
+			const current = state.database.getTimelineEvent(event.id)!;
+			const result = state.substrate.queryTimeline(queryInput({ query, startAt: "2026-07-22T00:00:00.000Z" }));
+			const match = result.results.find(value => value.kind === "timeline_event" && value.id === event.id)!;
+			expect(match).toBeDefined();
+			expect(match.semanticScore).toBeCloseTo(semanticSimilarity(localSemanticEmbedding(query), localSemanticEmbedding(current.textSummary)), 6);
+			expect(match.semanticScore).toBeLessThan(0.99);
+			expect(state.database.listMemoryEmbeddings({ ownerType: "timeline_event", ownerId: event.id })).toHaveLength(1);
+		} finally { await state.close(); }
+	});
+
 	it.each([
 		["rewrite", false], ["rewrite", true],
 		["delete-and-recreate", false], ["delete-and-recreate", true],
@@ -117,7 +213,7 @@ describe("memory substrate", () => {
 			const timestamp = "2026-07-22T12:00:00.000Z";
 			state.database.queueMemoryJob(MemoryJobSchema.parse({
 				id: "generated-deferred-job", dedupeKey: "generated-deferred-job", kind: "embed",
-				status: "pending", payload: { ownerType: "memory", ownerId: memory.id },
+				status: "pending", payload: { ownerType: "memory", ownerId: memory.id, generation: state.database.getMemoryEmbeddingInput("memory", memory.id)!.generation },
 				attempts: 0, maxAttempts: 3, runAfter: timestamp, createdAt: timestamp, updatedAt: timestamp,
 			}));
 			maintenance = state.substrate.runMaintenance(1);

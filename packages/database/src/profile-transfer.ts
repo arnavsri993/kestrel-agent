@@ -5,6 +5,12 @@ import { ActionReceiptSchema, AgentRunSchema, MemoryJobSchema, RuntimeToolExecut
 import * as Contracts from "@kestrel/shared-types";
 import { listMigrationVersions, loadMigrationSql } from "./migrations.js";
 import { redactDeletedSourceToolResult, SOURCE_EVIDENCE_REMOVED_TEXT, SOURCE_RECEIPT_DELETION_PREFIX, sourceReceiptDeletionKey } from "./source-evidence-redaction.js";
+import {
+	EMBEDDING_STATE_OWNER_PREFIX,
+	EMBEDDING_STATE_SECRET_KEY,
+	parseReservedEmbeddingState,
+	type EmbeddingStateSecret,
+} from "./memory-embedding-state.js";
 
 export const HOST_PROFILE_TRANSFER_VERSION = 1 as const;
 export const HOST_PROFILE_TRANSFER_POLICY = "kestrel-host-profile-transfer-in-flight-v2" as const;
@@ -177,9 +183,50 @@ const PAYLOAD_SCHEMAS: Record<string, { parse(value: unknown): unknown }> = {
 	memory_workspace_documents: Contracts.MemoryDocumentSchema,
 	memory_workspace_day_summaries: Contracts.MemoryWorkspaceDaySummarySchema,
 };
+const EMBEDDING_STATE_NAMESPACE_PREFIX = "kestrel.embedding-generation.";
+function isReservedEmbeddingStateKey(key: string): boolean {
+	return key.startsWith(EMBEDDING_STATE_NAMESPACE_PREFIX);
+}
+
+/** Validate all reserved embedding state together so owner-key MACs bind to the copied secret. */
+function validateReservedEmbeddingStateRows(rows: TransferTables): void {
+	const reserved: Array<{ key: string; value: unknown }> = [];
+	let secret: EmbeddingStateSecret | undefined;
+	let secretCount = 0;
+	for (const row of rows.private_runtime_state ?? []) {
+		const key = row.values.key;
+		if (typeof key !== "string" || !isReservedEmbeddingStateKey(key)) continue;
+		const plaintext = row.cleartext?.value_ciphertext;
+		if (typeof plaintext !== "string") fail("Profile transfer found malformed embedding generation state.");
+		let value: unknown;
+		try { value = JSON.parse(plaintext); }
+		catch { return fail("Profile transfer found malformed embedding generation state."); }
+		const parsed = parseReservedEmbeddingState(key, value);
+		if (!parsed) fail("Profile transfer found an unknown embedding generation state key.");
+		reserved.push({ key, value });
+		if (key === EMBEDDING_STATE_SECRET_KEY) {
+			secretCount++;
+			if (secretCount > 1) fail("Profile transfer found duplicate embedding generation secrets.");
+			secret = parsed as EmbeddingStateSecret;
+		}
+	}
+	const ownerRows = reserved.filter(({ key }) => key.startsWith(EMBEDDING_STATE_OWNER_PREFIX));
+	if (ownerRows.length && !secret) fail("Profile transfer found embedding owner state without its secret.");
+	for (const { key, value } of ownerRows) {
+		if (!parseReservedEmbeddingState(key, value, secret))
+			fail("Profile transfer found invalid embedding owner state.");
+	}
+}
+
 function validateProtectedPayload(table: string, values: Record<string, SqlValue>, plaintext: string): void {
 	const payload: unknown = JSON.parse(plaintext);
-	if (table === "private_runtime_state") return; // This API accepts any JSON value.
+	if (table === "private_runtime_state") {
+		const key = values.key;
+		if (typeof key !== "string") fail("Profile transfer found a malformed private runtime state key.");
+		if (isReservedEmbeddingStateKey(key) && !parseReservedEmbeddingState(key, payload))
+			fail("Profile transfer found an unknown embedding generation state key.");
+		return; // Unrelated private runtime state accepts any JSON value.
+	}
 	const object = objectJson(plaintext, `${table} payload`);
 	PAYLOAD_SCHEMAS[table]?.parse(payload);
 	assertPayloadBindings(table, values, object);
@@ -537,6 +584,7 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 		if (result.length !== expectedCount) fail(`Profile transfer source changed while reading ${table}.`);
 		rows[table] = result;
 	}
+	validateReservedEmbeddingStateRows(rows);
 	projectDeletedSourceEvidence(rows);
 	const scheduledJobsCancelled = retireScheduledJobs(rows);
 	const snapshot: HostProfileTransferSnapshot = {
@@ -594,6 +642,7 @@ function validateSnapshot(snapshot: HostProfileTransferSnapshot): void {
 			}
 		}
 	}
+	validateReservedEmbeddingStateRows(snapshot.rows);
 	if (computeHostProfileTransferSemanticHash(snapshot.rows) !== snapshot.semanticSha256) fail("Profile transfer snapshot semantic checksum does not match.");
 	if (jsonByteLength(snapshot) > HOST_PROFILE_TRANSFER_MAX_BYTES) fail("Profile transfer snapshot exceeds the byte limit.");
 }
