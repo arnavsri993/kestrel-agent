@@ -67,6 +67,7 @@
     "test:native-core-durability": "node scripts/smoke-native-core-durability.mjs",
     "test:native-embedding-generations": "node scripts/smoke-native-embedding-generations.mjs",
     "test:native-memory-authority": "node scripts/smoke-native-memory-authority.mjs",
+    "test:native-embedding-legacy-migration": "node scripts/smoke-native-embedding-legacy-migration.mjs",
 		"test:native-core-file-transfer": "node scripts/smoke-native-core-file-transfer.mjs",
 		"test:native-core-transfer-recovery": "node scripts/smoke-native-core-transfer-recovery.mjs",
 		"test:native-profile-transfer-ui": "node scripts/smoke-native-profile-transfer-ui.mjs",
