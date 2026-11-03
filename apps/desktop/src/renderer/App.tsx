@@ -11613,6 +11613,7 @@ export function App() {
 						<CommunicationCodeAssistant
 							browser={browser}
 							enabled={!currentAppPage}
+							manual={nativeChromiumSurface}
 							onOpenConnections={() => navigate("connections")}
 						/>
 					}
