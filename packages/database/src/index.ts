@@ -3133,6 +3133,31 @@ export class KestrelDatabase {
 			.changes === 1;
 	}
 
+	/**
+	 * Legacy transitions changed SQL metadata without re-encrypting the payload.
+	 * Validate unchanged fields against the authenticated payload, then project
+	 * schema-validated transition metadata without modifying the row on read.
+	 */
+	private decodeMemoryJob(row: MemorySubstrateRow): MemoryJob {
+		const payload = MemoryJobSchema.parse(this.decryptPayload(row));
+		if (
+			payload.id !== row.id || payload.kind !== row.kind ||
+			payload.dedupeKey !== row.dedupe_key ||
+			payload.maxAttempts !== row.max_attempts || payload.createdAt !== row.created_at
+		)
+			throw new Error("Memory job identity does not match its encrypted payload.");
+		return MemoryJobSchema.parse({
+			...payload,
+			status: row.status,
+			attempts: row.attempts,
+			runAfter: row.run_after,
+			lockedAt: row.locked_at === null ? undefined : row.locked_at,
+			leaseUntil: row.lease_until === null ? undefined : row.lease_until,
+			lastError: row.last_error === null ? undefined : row.last_error,
+			updatedAt: row.updated_at,
+		});
+	}
+
 	queueMemoryJob(job: MemoryJob): MemoryJob {
 		const parsed = MemoryJobSchema.parse(job);
 		this.upsertMemoryPayload(
@@ -3160,14 +3185,14 @@ export class KestrelDatabase {
 		const row = this.db
 			.prepare("SELECT * FROM memory_jobs WHERE id = ?")
 			.get(id) as MemorySubstrateRow | undefined;
-		return row ? MemoryJobSchema.parse(this.decryptPayload(row)) : undefined;
+		return row ? this.decodeMemoryJob(row) : undefined;
 	}
 
 	getMemoryJobByDedupeKey(dedupeKey: string): MemoryJob | undefined {
 		const row = this.db
 			.prepare("SELECT * FROM memory_jobs WHERE dedupe_key = ?")
 			.get(dedupeKey) as MemorySubstrateRow | undefined;
-		return row ? MemoryJobSchema.parse(this.decryptPayload(row)) : undefined;
+		return row ? this.decodeMemoryJob(row) : undefined;
 	}
 
 	listMemoryJobs(options: {
@@ -3194,78 +3219,69 @@ export class KestrelDatabase {
 				 ORDER BY run_after ASC, created_at ASC, id ASC LIMIT ?`,
 			)
 			.all(...parameters, limit) as MemorySubstrateRow[];
-		return rows.map((row) => MemoryJobSchema.parse(this.decryptPayload(row)));
+		return rows.map((row) => this.decodeMemoryJob(row));
 	}
 
 	claimMemoryJob(now = new Date().toISOString(), leaseMs = 60_000): MemoryJob | undefined {
-		if (!Number.isFinite(Date.parse(now))) throw new Error("Memory job timestamp is invalid.");
+		MemoryJobSchema.shape.updatedAt.parse(now);
+		if (!Number.isFinite(leaseMs)) throw new Error("Memory job lease is invalid.");
 		const boundedLease = Math.max(5_000, Math.min(15 * 60_000, Math.trunc(leaseMs)));
+		const leaseUntil = new Date(Date.parse(now) + boundedLease).toISOString();
 		return this.db.transaction(() => {
-			this.db
-				.prepare(
-					`UPDATE memory_jobs SET status='pending', locked_at=NULL, lease_until=NULL, updated_at=?
-					 WHERE status='running' AND lease_until IS NOT NULL AND lease_until <= ?`,
-				)
-				.run(now, now);
-			this.db
-				.prepare(
-					`UPDATE memory_jobs SET status='failed', last_error='Maximum retry attempts exceeded', updated_at=?
-					 WHERE status='pending' AND attempts >= max_attempts`,
-				)
-				.run(now);
-			const row = this.db
-				.prepare(
-					`SELECT * FROM memory_jobs WHERE status='pending' AND run_after <= ?
-					 ORDER BY run_after ASC, created_at ASC, id ASC LIMIT 1`,
-				)
-				.get(now) as MemorySubstrateRow | undefined;
+			// Each transition removes its row from the predicate. Re-select bounded
+			// pages so a large legacy backlog does not need to fit in memory.
+			for (;;) {
+				const expired = this.db.prepare(
+					`SELECT * FROM memory_jobs WHERE status='running'
+					 AND lease_until IS NOT NULL AND lease_until <= ? ORDER BY id LIMIT 100`,
+				).all(now) as MemorySubstrateRow[];
+				if (!expired.length) break;
+				for (const row of expired) this.queueMemoryJob({
+					...this.decodeMemoryJob(row), status: "pending",
+					lockedAt: undefined, leaseUntil: undefined, updatedAt: now,
+				});
+			}
+			for (;;) {
+				const exhausted = this.db.prepare(
+					`SELECT * FROM memory_jobs WHERE status='pending'
+					 AND attempts >= max_attempts ORDER BY id LIMIT 100`,
+				).all() as MemorySubstrateRow[];
+				if (!exhausted.length) break;
+				for (const row of exhausted) this.queueMemoryJob({
+					...this.decodeMemoryJob(row), status: "failed",
+					lastError: "Maximum retry attempts exceeded", updatedAt: now,
+				});
+			}
+			const row = this.db.prepare(`SELECT * FROM memory_jobs WHERE status='pending' AND run_after <= ?
+				ORDER BY run_after ASC, created_at ASC, id ASC LIMIT 1`).get(now) as MemorySubstrateRow | undefined;
 			if (!row) return undefined;
-			const leaseUntil = new Date(Date.parse(now) + boundedLease).toISOString();
-			const updated = this.db
-				.prepare(
-					`UPDATE memory_jobs SET status='running', attempts=attempts+1, locked_at=?, lease_until=?, updated_at=?
-					 WHERE id=? AND status='pending'`,
-				)
-				.run(now, leaseUntil, now, row.id);
-			if (updated.changes !== 1) return undefined;
-			const claimed = this.db
-				.prepare("SELECT * FROM memory_jobs WHERE id = ?")
-				.get(row.id) as MemorySubstrateRow;
-			return MemoryJobSchema.parse(this.decryptPayload(claimed));
+			const current = this.decodeMemoryJob(row);
+			return this.queueMemoryJob({ ...current, status: "running", attempts: current.attempts + 1,
+				lockedAt: now, leaseUntil, updatedAt: now });
 		})();
 	}
 
 	completeMemoryJob(id: string, now = new Date().toISOString()): boolean {
-		return this.db
-			.prepare(
-				`UPDATE memory_jobs SET status='completed', locked_at=NULL, lease_until=NULL, last_error=NULL, updated_at=?
-				 WHERE id=? AND status='running'`,
-			)
-			.run(now, id).changes === 1;
+		return this.db.transaction(() => {
+			const current = this.getMemoryJob(id);
+			if (!current || current.status !== "running") return false;
+			this.queueMemoryJob({ ...current, status: "completed", lockedAt: undefined, leaseUntil: undefined, lastError: undefined, updatedAt: now });
+			return true;
+		})();
 	}
 
-	failMemoryJob(
-		id: string,
-		error: string,
-		now = new Date().toISOString(),
-		retryAfterMs = 30_000,
-	): MemoryJob | undefined {
-		const current = this.getMemoryJob(id);
-		if (!current || current.status !== "running") return undefined;
-		const retry = current.attempts < current.maxAttempts;
-		const next = MemoryJobSchema.parse({
-			...current,
-			status: retry ? "pending" : "failed",
-			...(retry
-				? { runAfter: new Date(Date.parse(now) + Math.max(1_000, retryAfterMs)).toISOString() }
-				: {}),
-			lockedAt: undefined,
-			leaseUntil: undefined,
-			lastError: error.slice(0, 10_000),
-			updatedAt: now,
-		});
-		this.queueMemoryJob(next);
-		return next;
+	failMemoryJob(id: string, error: string, now = new Date().toISOString(), retryAfterMs = 30_000): MemoryJob | undefined {
+		MemoryJobSchema.shape.updatedAt.parse(now);
+		if (!Number.isFinite(retryAfterMs)) throw new Error("Memory job retry delay is invalid.");
+		return this.db.transaction(() => {
+			const current = this.getMemoryJob(id);
+			if (!current || current.status !== "running") return undefined;
+			const retry = current.attempts < current.maxAttempts;
+			const next = MemoryJobSchema.parse({ ...current, status: retry ? "pending" : "failed",
+				...(retry ? { runAfter: new Date(Date.parse(now) + Math.max(1_000, retryAfterMs)).toISOString() } : {}),
+				lockedAt: undefined, leaseUntil: undefined, lastError: error.slice(0, 10_000), updatedAt: now });
+			return this.queueMemoryJob(next);
+		})();
 	}
 
 	upsertMemoryEmbedding(embedding: EmbeddingRecord): void {
@@ -4159,7 +4175,7 @@ export class KestrelDatabase {
 
 	private listAllMemoryJobsForDeletion(): MemoryJob[] {
 		const rows = this.db.prepare("SELECT * FROM memory_jobs").all() as MemorySubstrateRow[];
-		return rows.map((row) => MemoryJobSchema.parse(this.decryptPayload(row)));
+		return rows.map((row) => this.decodeMemoryJob(row));
 	}
 
 	listAllAgentMemories(): AgentMemoryRecord[] {

@@ -1928,7 +1928,7 @@ randomness fails closed. This does not claim that all crypto-library memory is
 erased or repair the separate persisted embedding fingerprints.
 
 Validation passed 2,331 tests in 289 files, workspace typechecking and a full
-native build. Candidate executable SHA-256:
+native build. Candidate bundle SHA-256:
 `1662b3e36098c611f2d10b66fcebf423e57dbd08e16d7b4a4ea5b1f20b780d6e`.
 The same bundle passed 23 native workflow phases in
 `.tmp/native-redaction-hmac-workflow-evidence/receipt.json`, and six bundled
@@ -1946,3 +1946,40 @@ passed 49 of 50 browser benchmark workflows, failing session continuity on an
 aborted navigation (`-3`). CodeQL still reported the five fingerprint findings
 on that preceding commit. Neither current-head CI nor complete release
 readiness is implied by these local passes.
+
+## Coherent memory-job transitions (2026-11-02)
+
+Claiming or completing a memory job previously updated SQL fields while leaving
+the encrypted payload unchanged. Callers could receive `pending` and attempt
+zero after acquiring a lease, and failure handling could skip a running job.
+Claims, completion and retry/failure now persist both representations inside
+their transaction. Expired leases and exhausted jobs are repaired in bounded
+pages. Legacy reads validate unchanged identity fields and project validated
+SQL transition metadata without rewriting source bytes; the next transition
+repairs the payload. Explicit queue updates, including retry-policy changes,
+retain their existing behavior.
+
+Eleven new tests cover acquired state, reopen persistence, retry limits/due
+times, more than two pages of expired leases, legacy read-only projection,
+identity mismatch, malformed metadata and transaction rollback. All 2,342
+tests in 290 files and workspace typechecking passed. The native rebuild passed
+23 workflow phases with unchanged bundle digest
+`16709dfc9493e7b87f877e0da6173e05f0787e33f3b121dd87edbe79c784754c`.
+Receipt: `.tmp/native-memory-job-workflow-evidence/receipt.json`. The generated
+provider companion conversation was visually inspected.
+
+Seven actual bundled-Core probe phases passed in
+`.tmp/native-memory-job-bundled-evidence/receipt.json`. The new phase runs real
+maintenance, inspects all 12 generated jobs after Core stops, decrypts their
+payloads using the fixture key and verifies SQL agreement, then verifies the
+12 completed jobs retain their status and attempt counts after restart. Fetch
+is simulated only for the preceding synthetic transcription phases; no real
+microphone, external network, Keychain or user profile is involved. An initial
+probe import failed before execution because the workspace root does not
+directly depend on SQLite; resolving it through the database package corrected
+the harness. All owned Core processes stopped and generated profile files were
+removed. A final source-only cleanup restored unchanged queue/getter formatting.
+
+This repairs job-state coherence, not stale-worker fencing or legacy profile
+transfer projection. Those remain part of the embedding/privacy and versioned
+transfer work; current transfer checksums and recovery policy were not changed.
