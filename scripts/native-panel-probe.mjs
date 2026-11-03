@@ -26,6 +26,14 @@ export async function nativePanelProbe(endpoint, extensionOrigin) {
 	return {
 		id: target.id,
 		async text() { const result = await send("Runtime.evaluate", { expression: "document.body.innerText", returnByValue: true }); return result.result.value; },
+		async taskState() {
+			const result = await send("Runtime.evaluate", { expression: `(() => ({
+				text: document.body.innerText,
+				busy: Boolean(document.querySelector('button[aria-label="Send steering update"]')) || [...document.querySelectorAll('button')].some(button => /^(?:Stop|Stopping…)$/u.test(button.innerText.trim())),
+				idleComposer: Boolean(document.querySelector('button[aria-label="Send message"]'))
+			}))()`, returnByValue: true });
+			return result.result.value;
+		},
 		async screenshot() { const result = await send("Page.captureScreenshot", { format: "png" }); return Buffer.from(result.data, "base64"); },
 		close() { socket.close(); },
 	};

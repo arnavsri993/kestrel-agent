@@ -133,8 +133,20 @@ export async function nativeProviderCanary({ settings, home, profile, evidence, 
 			await home.locator("#new-tab-chat-input").fill("Complete the native companion canary.");
 			await home.getByRole("button", { name: /^Send message to / }).click();
 			let rendered = false;
+			let idleObservations = 0;
 			for (const deadline = Date.now() + 30_000; Date.now() < deadline;) {
-				if (completions > before && (await panel.text()).includes(answer)) { rendered = true; break; }
+				const state = await panel.taskState();
+				const sessions = await home.evaluate(() => window.kestrel.request({ type: "runtime-list-sessions" }));
+				assert(sessions.ok, sessions.error);
+				const task = sessions.sessions?.find(session => session.title === "Complete the native companion canary");
+				const runs = task ? await home.evaluate(sessionId => window.kestrel.request({ type: "runtime-list-runs", sessionId }), task.id) : undefined;
+				const finished = runs?.ok && runs.runs?.some(run => run.status === "completed");
+				// Streamed answer text can precede persisted completion and the
+				// panel's busy-state cleanup. Start the next task only after both
+				// are observably ready across consecutive UI observations.
+				if (completions > before && finished && state.text.includes(answer) && state.text.includes("Task complete") && state.idleComposer && !state.busy) idleObservations++;
+				else idleObservations = 0;
+				if (idleObservations >= 2) { rendered = true; break; }
 				await delay(100);
 			}
 			assert(rendered, "The Home task must reach and render in Chromium's actual native companion.");
