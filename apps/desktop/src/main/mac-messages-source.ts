@@ -2,14 +2,12 @@ import { execFile } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import {
 	type CommunicationCodeMatch,
 	type CommunicationSourceStatus,
 	extractLoginCodes,
 } from "@kestrel/shared-types";
 
-const execFileAsync = promisify(execFile);
 const SQLITE_PATH = "/usr/bin/sqlite3";
 const DEFAULT_DATABASE_PATH = join(homedir(), "Library/Messages/chat.db");
 const APPLE_EPOCH_MS = 978_307_200_000;
@@ -59,6 +57,7 @@ export interface MacMessagesSourceOptions {
 	runQuery?: (
 		file: string,
 		args: readonly string[],
+		signal?: AbortSignal,
 	) => Promise<CommandResult>;
 }
 
@@ -74,14 +73,28 @@ export class MacMessagesSource {
 		this.now = options.now ?? (() => new Date());
 		this.runQuery =
 			options.runQuery ??
-			(async (file, args) => {
-				const result = await execFileAsync(file, [...args], {
+			((file, args, signal) => new Promise((resolve, reject) => {
+				if (signal?.aborted) { reject(new Error("Messages lookup cancelled.")); return; }
+				const child = execFile(file, [...args], {
 					maxBuffer: MAX_OUTPUT_BYTES,
 					timeout: QUERY_TIMEOUT_MS,
 					encoding: "utf8",
-				});
-				return { stdout: result.stdout, stderr: result.stderr };
-			});
+					...(signal ? { signal } : {}),
+				}, (error, stdout, stderr) => error ? reject(error) : resolve({ stdout, stderr }));
+				let escalation: ReturnType<typeof setTimeout> | undefined;
+				const abort = () => {
+					// The execFile signal first asks sqlite3 to terminate; bound a
+					// non-cooperative helper without affecting any other process.
+					escalation = setTimeout(() => {
+						if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+					}, 500);
+					escalation.unref?.();
+				};
+				const cleanup = () => { if (escalation) clearTimeout(escalation); signal?.removeEventListener("abort", abort); };
+				child.once("exit", cleanup); child.once("close", cleanup);
+				signal?.addEventListener("abort", abort, { once: true });
+				if (signal?.aborted) abort();
+			}));
 	}
 
 	status(): CommunicationSourceStatus {
@@ -121,11 +134,12 @@ export class MacMessagesSource {
 		}
 	}
 
-	async searchLoginCodes(): Promise<{
+	async searchLoginCodes(signal?: AbortSignal): Promise<{
 		matches: CommunicationCodeMatch[];
 		status: CommunicationSourceStatus;
 	}> {
 		const before = this.status();
+		if (signal?.aborted) return { matches: [], status: { ...before, state: "unavailable", detail: "Messages lookup was cancelled." } };
 		if (before.state !== "connected") return { matches: [], status: before };
 		try {
 			const lookupAt = this.now();
@@ -134,7 +148,8 @@ export class MacMessagesSource {
 				"-json",
 				this.databasePath,
 				messageQuery(lookupAt),
-			]);
+			], signal);
+			if (signal?.aborted) throw new Error("Messages lookup cancelled.");
 			if (Buffer.byteLength(result.stdout, "utf8") > MAX_OUTPUT_BYTES) throw new Error("Messages output exceeded its limit.");
 			const raw = result.stdout.trim() ? JSON.parse(result.stdout) as unknown : [];
 			if (!Array.isArray(raw)) throw new Error("Messages returned invalid data.");
@@ -171,6 +186,7 @@ export class MacMessagesSource {
 				},
 			};
 		} catch (error) {
+			if (signal?.aborted) return { matches: [], status: { ...before, state: "unavailable", detail: "Messages lookup was cancelled." } };
 			const message = error instanceof Error ? error.message : String(error);
 			const permissionDenied = /permission|operation not permitted|denied/i.test(
 				message,

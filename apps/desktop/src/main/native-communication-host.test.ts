@@ -4,7 +4,7 @@ import { NativeCommunicationHost, type NativeCommunicationHostOptions } from "./
 const tabId = "tab-ad7d9896-b7ad-47ca-8fd4-e082b3dd653b";
 const authority = { tabId, chromeTabId: 5, windowId: 6, documentId: "generated-document", origin: "https://example.test", fieldId: "ad7d9896-b7ad-47ca-8fd4-e082b3dd653b" };
 const localStatus = { id: "mac-messages" as const, kind: "local" as const, label: "Messages", state: "connected" as const, detail: "ready" };
-const gmailStatus = { id: "gmail" as const, kind: "email" as const, label: "Gmail", state: "connected" as const, detail: "ready" };
+const gmailStatus = { id: "gmail" as const, kind: "email" as const, label: "Gmail", state: "connected" as const, detail: "ready", account: "fixture@example.test" };
 const match = { sourceId: "mac-messages" as const, sourceLabel: "Messages", code: "481902", receivedAt: "2026-11-03T12:00:00.000Z" };
 function fixture(overrides: Partial<NativeCommunicationHostOptions> = {}) {
  let time = Date.parse("2026-11-03T12:00:30.000Z");
@@ -101,11 +101,23 @@ describe("native communication host", () => {
   expect(await next.host.handle({ type: "communication-code-use", scanId: s.scanId, candidateId: s.candidates[0]!.id })).toMatchObject({ ok: false });
   await next.host.close();
  });
- it("expires earlier scans after the bounded registry fills", async () => {
-  const f = fixture(); const first = await scan(f.host);
-  for (let i = 0; i < 50; i++) await scan(f.host);
+ it("invalidates the prior scan for the same tab before searching again", async () => {
+  const f = fixture(); const first = await scan(f.host); const second = await scan(f.host);
   expect(await f.host.handle({ type: "communication-code-use", scanId: first.scanId, candidateId: first.candidates[0]!.id })).toMatchObject({ ok: false });
-  expect(f.options.insert).not.toHaveBeenCalled(); await f.host.close();
+  expect(await f.host.handle({ type: "communication-code-use", scanId: second.scanId, candidateId: second.candidates[0]!.id })).toMatchObject({ ok: true, communicationCodeInserted: true });
+  await f.host.close();
+ });
+ it("evicts the oldest scan after 50 distinct tabs", async () => {
+  const f = fixture({ inspect: async requested => ({ ...authority, tabId: requested }) });
+  let first: Awaited<ReturnType<typeof scan>> | undefined;
+  for (let i = 0; i < 51; i++) {
+   const requested = `tab-ad7d9896-b7ad-47ca-8fd4-${i.toString(16).padStart(12, "0")}`;
+   const result = await f.host.handle({ type: "communication-code-scan", tabId: requested });
+   if (!result.ok || !("communicationScan" in result)) throw new Error("fixture scan failed");
+   first ??= result.communicationScan;
+  }
+  expect(await f.host.handle({ type: "communication-code-use", scanId: first!.scanId, candidateId: first!.candidates[0]!.id })).toMatchObject({ ok: false });
+  await f.host.close();
  });
  it("rejects a backwards clock and returns a static error on an expired deadline", async () => {
   const f = fixture(); const s = await scan(f.host); f.advance(-1);
@@ -144,6 +156,46 @@ describe("native communication host", () => {
   else live = { ...live, fieldId: "bd7d9896-b7ad-47ca-8fd4-e082b3dd653b" };
   expect(await f.host.handle({ type: "communication-code-use", scanId: s.scanId, candidateId: s.candidates[0]!.id })).toMatchObject({ ok: false });
   expect(f.options.insert).not.toHaveBeenCalled(); expect(f.options.inspect).toHaveBeenCalledTimes(1); await f.host.close();
+ });
+
+ it.each(["account", "disconnect", "missing-account"] as const)("rejects Gmail %s before insertion and consumes the scan", async change => {
+  let current: typeof gmailStatus | { id: "gmail"; kind: "email"; label: string; state: "not_connected"; detail: string } | Omit<typeof gmailStatus, "account"> = gmailStatus;
+  const f = fixture({ localMessages: { status: () => ({ ...localStatus, state: "not_connected" }), search: vi.fn() },
+   gmailStatus: async () => current, searchGmail: async () => [{ ...match, sourceId: "gmail", sourceLabel: "Gmail", account: gmailStatus.account }] });
+  const s = await scan(f.host); expect(s.sources.find(value => value.id === "gmail")?.account).toBe(gmailStatus.account);
+  if (change === "account") current = { ...gmailStatus, account: "other@example.test" };
+  else if (change === "disconnect") current = { id: "gmail", kind: "email", label: "Gmail", state: "not_connected", detail: "changed" };
+  else { const { account: _account, ...without } = gmailStatus; current = without; }
+  const input = { type: "communication-code-use", scanId: s.scanId, candidateId: s.candidates[0]!.id };
+  expect(await f.host.handle(input)).toMatchObject({ ok: false }); current = gmailStatus;
+  expect(await f.host.handle(input)).toMatchObject({ ok: false }); expect(f.options.insert).not.toHaveBeenCalled(); await f.host.close();
+ });
+ it("rejects a Gmail account switch while search is in flight", async () => {
+  let current = gmailStatus;
+  const f = fixture({ gmailStatus: async () => current, searchGmail: async () => {
+   current = { ...gmailStatus, account: "other@example.test" }; return [{ ...match, sourceId: "gmail", sourceLabel: "Gmail" }];
+  } });
+  expect(await f.host.handle({ type: "communication-code-scan", tabId })).toMatchObject({ ok: false });
+  expect(f.options.insert).not.toHaveBeenCalled(); await f.host.close();
+ });
+ it("refuses a now-denied Messages source before insertion", async () => {
+  let status: typeof localStatus | { id: "mac-messages"; kind: "local"; label: string; state: "needs_permission"; detail: string } = localStatus;
+  const f = fixture({ localMessages: { status: () => status, search: async () => ({ status: localStatus, matches: [match] }) } });
+  const s = await scan(f.host); status = { ...localStatus, state: "needs_permission" };
+  expect(await f.host.handle({ type: "communication-code-use", scanId: s.scanId, candidateId: s.candidates[0]!.id })).toMatchObject({ ok: false });
+  expect(f.options.insert).not.toHaveBeenCalled(); await f.host.close();
+ });
+
+ it("invalidates active and retained scans without permanently closing", async () => {
+  let finish!: () => void, entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const f = fixture({ localMessages: { status: () => localStatus, search: async () => { entered(); await new Promise<void>(resolve => { finish = resolve; }); return { status: localStatus, matches: [match] }; } } });
+  const pending = f.host.handle({ type: "communication-code-scan", tabId }); await started;
+  f.host.invalidate(); expect(await pending).toMatchObject({ ok: false }); finish();
+  expect(await f.host.handle({ type: "communication-sources" })).toMatchObject({ ok: true }); await f.host.close();
+  const next = fixture(), scanResult = await scan(next.host); next.host.invalidate();
+  expect(await next.host.handle({ type: "communication-code-use", scanId: scanResult.scanId, candidateId: scanResult.candidates[0]!.id })).toMatchObject({ ok: false });
+  await next.host.close();
  });
 
 });

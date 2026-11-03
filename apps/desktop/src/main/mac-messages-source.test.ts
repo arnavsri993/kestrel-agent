@@ -129,4 +129,24 @@ describe("Mac Messages source", () => {
 		}
 	});
 
+	it.skipIf(process.platform !== "darwin")("cancels an actual sqlite3 lookup on a generated database", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-messages-cancel-")); roots.push(root);
+		const databasePath = join(root, "generated-chat.db");
+		execFileSync("/usr/bin/sqlite3", [databasePath, "CREATE TABLE handle(id TEXT); CREATE TABLE message(text TEXT,subject TEXT,handle_id INTEGER,date INTEGER);"], { timeout: 5_000, stdio: "pipe" });
+		const source = new MacMessagesSource({ platform: "darwin", databasePath, now: () => new Date("2026-08-17T12:00:00.000Z") });
+		const controller = new AbortController(); const pending = source.searchLoginCodes(controller.signal); controller.abort();
+		expect(await pending).toMatchObject({ matches: [], status: { state: "unavailable", detail: "Messages lookup was cancelled." } });
+	});
+	it("propagates cancellation and drops results from a late query", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-messages-cancel-late-")); roots.push(root);
+		const databasePath = join(root, "generated-chat.db"); writeFileSync(databasePath, "fixture");
+		let finish!: (result: { stdout: string; stderr: string }) => void;
+		const controller = new AbortController();
+		const source = new MacMessagesSource({ platform: "darwin", databasePath, now: () => new Date("2026-08-17T12:00:00.000Z"),
+			runQuery: async (_file, _args, signal) => { expect(signal).toBe(controller.signal); return new Promise(resolve => { finish = resolve; }); } });
+		const pending = source.searchLoginCodes(controller.signal); controller.abort();
+		finish({ stdout: JSON.stringify([{ text: "Your login code is 481902", date: (Date.parse("2026-08-17T11:59:00.000Z") - 978_307_200_000) * 1_000_000 }]), stderr: "" });
+		expect(await pending).toMatchObject({ matches: [], status: { state: "unavailable", detail: "Messages lookup was cancelled." } });
+	});
+
 });

@@ -15,7 +15,7 @@ const UNCERTAIN = "Code insertion may have completed. Check the page before tryi
 const CLOSED = "Communication lookup is unavailable.";
 type SourceId = "mac-messages" | "gmail";
 type SourceResult = { matches: CommunicationCodeMatch[]; status: CommunicationSourceStatus };
-type Scan = { authority: NativeLoginCodeAuthority; issuedAt: number; expiresAt: number; candidates: CommunicationCodeCandidate[] };
+type Scan = { authority: NativeLoginCodeAuthority; issuedAt: number; expiresAt: number; candidates: CommunicationCodeCandidate[]; sources: CommunicationSourceStatus[] };
 export interface NativeCommunicationHostOptions {
  localMessages: { status(): CommunicationSourceStatus | Promise<CommunicationSourceStatus>; search(signal: AbortSignal): Promise<SourceResult> };
  gmailStatus(signal: AbortSignal): Promise<CommunicationSourceStatus>;
@@ -30,14 +30,19 @@ export interface NativeCommunicationHostOptions {
 }
 function safeStatus(id: SourceId, value: unknown): CommunicationSourceStatus {
  const parsed = CommunicationSourceStatusSchema.safeParse(value);
- const state = parsed.success && parsed.data.id === id && parsed.data.kind === (id === "gmail" ? "email" : "local") ? parsed.data.state : "unavailable";
+ const valid = parsed.success && parsed.data.id === id && parsed.data.kind === (id === "gmail" ? "email" : "local");
+ const account = valid && id === "gmail" ? parsed.data.account?.toLowerCase() : undefined;
+ const state = valid ? (id === "gmail" && parsed.data.state === "connected" && !account ? "needs_reconnect" : parsed.data.state) : "unavailable";
  const details: Record<CommunicationSourceStatus["state"], string> = {
   connected: "Available for a user-requested lookup.", not_connected: "This source is not connected.",
   needs_permission: "This source needs permission.", needs_reconnect: "Reconnect this source to search.", unavailable: "This source is unavailable.",
  };
- return { id, label: id === "gmail" ? "Connected Gmail" : "Messages on this Mac", kind: id === "gmail" ? "email" : "local", state, detail: details[state] };
+ return { id, label: id === "gmail" ? "Connected Gmail" : "Messages on this Mac", kind: id === "gmail" ? "email" : "local", state, detail: details[state], ...(account ? { account } : {}) };
 }
 function unavailable(id: SourceId): CommunicationSourceStatus { return safeStatus(id, undefined); }
+function sameSource(a: CommunicationSourceStatus, b: CommunicationSourceStatus): boolean {
+ return a.id === b.id && a.state === "connected" && b.state === "connected" && (a.id !== "gmail" || Boolean(a.account && a.account === b.account));
+}
 function awaitSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
  if (signal.aborted) return Promise.reject(new Error("cancelled"));
  return new Promise((resolve, reject) => {
@@ -60,7 +65,8 @@ export class NativeCommunicationHost {
   this.now = options.now ?? (() => new Date());
   this.timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1, Math.min(30_000, Math.trunc(options.timeoutMs!))) : 15_000;
  }
- close(): Promise<void> { this.closed = true; this.scans.clear(); this.active?.abort(); return Promise.resolve(); }
+ invalidate(): void { this.scans.clear(); this.active?.abort(); }
+ close(): Promise<void> { this.closed = true; this.invalidate(); return Promise.resolve(); }
  private clock(): number { const value = this.now().getTime(); if (!Number.isFinite(value)) throw new Error("invalid clock"); return value; }
  private trim(now: number) { for (const [id, scan] of this.scans) if (scan.expiresAt <= now) this.scans.delete(id); }
  private async check(authority: NativeLoginCodeAuthority, signal: AbortSignal): Promise<void> {
@@ -79,6 +85,9 @@ export class NativeCommunicationHost {
   if (this.active) return { ok: false, error: "Another communication lookup is in progress." };
   const controller = new AbortController(); this.active = controller;
   this.activeTabId = parsed.data.type === "communication-code-scan" || parsed.data.type === "communication-code-notify" ? parsed.data.tabId : undefined;
+  if (parsed.data.type === "communication-code-scan") {
+   for (const [id, scan] of this.scans) if (scan.authority.tabId === parsed.data.tabId) this.scans.delete(id);
+  }
   const abort = () => controller.abort(); externalSignal?.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(abort, this.timeoutMs); timer.unref?.();
   let inserting = false;
@@ -96,6 +105,10 @@ export class NativeCommunicationHost {
     this.scans.delete(request.scanId);
     const candidate = scan?.candidates.find(value => value.id === request.candidateId);
     if (!scan || !candidate) throw new Error("expired");
+    await this.check(scan.authority, signal);
+    const previous = scan.sources.find(source => source.id === candidate.sourceId);
+    const current = await this.sourceStatus(candidate.sourceId, signal);
+    if (!previous || !sameSource(previous, current)) throw new Error("source changed");
     await this.check(scan.authority, signal);
     if (this.clock() >= scan.expiresAt || this.clock() < scan.issuedAt) throw new Error("expired");
     inserting = true;
@@ -123,9 +136,13 @@ export class NativeCommunicationHost {
       if (statuses[i]!.state === "connected") all.push(...this.matches("mac-messages", result.matches, at));
      } else {
       const matches = await call(signal, () => this.options.searchGmail({ domain, after: new Date(at - LOOKBACK_MS).toISOString(), maxResults: 5 }, signal));
-      all.push(...this.matches("gmail", matches, at));
+      all.push(...this.matches("gmail", matches, at).filter(match => !match.account || match.account.toLowerCase() === status.account));
      }
     } catch (error) { if (signal.aborted) throw error; statuses[i] = unavailable(status.id); }
+   }
+   const afterStatuses = await this.statuses(signal);
+   for (const status of statuses) {
+    if (status.state === "connected" && !sameSource(status, afterStatuses.find(value => value.id === status.id)!)) throw new Error("source changed");
    }
    await this.check(authority, signal);
    if (this.clock() - at >= TTL_MS || this.clock() < at) throw new Error("expired");
@@ -135,17 +152,18 @@ export class NativeCommunicationHost {
    const scanId = `scan-${randomUUID()}`;
    const communicationScan = CommunicationCodeScanSchema.parse({ scanId, domain, siteLabel: domain, scannedAt: new Date(at).toISOString(), candidates, sources: statuses });
    this.trim(this.clock()); while (this.scans.size >= MAX_SCANS) this.scans.delete(this.scans.keys().next().value!);
-   this.scans.set(scanId, { authority, candidates, issuedAt: at, expiresAt: at + TTL_MS });
+   this.scans.set(scanId, { authority, candidates, sources: statuses, issuedAt: at, expiresAt: at + TTL_MS });
    return { ok: true, communicationScan };
   } catch { return { ok: false, error: inserting ? UNCERTAIN : UNAVAILABLE }; }
   finally { clearTimeout(timer); externalSignal?.removeEventListener("abort", abort); if (this.active === controller) { this.active = undefined; this.activeTabId = undefined; } }
  }
+ private async sourceStatus(id: SourceId, signal: AbortSignal): Promise<CommunicationSourceStatus> {
+  try {
+   return safeStatus(id, await call(signal, () => id === "gmail" ? this.options.gmailStatus(signal) : this.options.localMessages.status()));
+  } catch (error) { if (signal.aborted) throw error; return unavailable(id); }
+ }
  private async statuses(signal: AbortSignal): Promise<CommunicationSourceStatus[]> {
-  const get = async (id: SourceId, callback: () => Promise<unknown>) => {
-   try { return safeStatus(id, await call(signal, callback)); }
-   catch (error) { if (signal.aborted) throw error; return unavailable(id); }
-  };
-  return Promise.all([get("mac-messages", () => Promise.resolve(this.options.localMessages.status())), get("gmail", () => this.options.gmailStatus(signal))]);
+  return Promise.all([this.sourceStatus("mac-messages", signal), this.sourceStatus("gmail", signal)]);
  }
  private matches(id: SourceId, values: unknown, at: number): CommunicationCodeMatch[] {
   if (!Array.isArray(values)) return [];
