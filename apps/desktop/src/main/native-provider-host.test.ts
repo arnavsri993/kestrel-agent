@@ -431,7 +431,12 @@ describe("native provider host", () => {
 		else expect(await host.handle({ type: "local-runtime-cancel" })).toEqual({ ok: true });
 		await rejected;
 		expect(core.start).toHaveBeenCalledTimes(action === "close" ? 1 : 2); expect(configuration.changing).toBe(false);
-		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
+		if (action === "close") {
+			await expect(host.runtimeConfiguration()).rejects.toThrow("shutting down");
+			const reopened = new NativeProviderHost(options);
+			expect((await reopened.runtimeConfiguration()).providerAccounts).toEqual([]);
+			await reopened.close();
+		} else expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
 	});
 
 	it("saves protected API accounts and reloads routes without exposing or inheriting credentials", async () => {
@@ -624,7 +629,12 @@ describe("native provider host", () => {
 		expect(manager.cancel).toHaveBeenCalled(); expect(openAuthUrl).not.toHaveBeenCalled();
 		expect(core.start).toHaveBeenLastCalledWith(config); expect(core.start).toHaveBeenCalledTimes(2);
 		expect(configuration.changing).toBe(false);
-		expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
+		if (action === "close") {
+			await expect(host.runtimeConfiguration()).rejects.toThrow("shutting down");
+			const reopened = new NativeProviderHost(options);
+			expect((await reopened.runtimeConfiguration()).providerAccounts).toEqual([]);
+			await reopened.close();
+		} else expect((await host.runtimeConfiguration()).providerAccounts).toEqual([]);
 		if (action === "close") expect((await host.handle({ type: "oauth-chatgpt-connect" })).ok).toBe(false);
 	});
 });

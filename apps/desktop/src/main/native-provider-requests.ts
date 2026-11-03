@@ -1,4 +1,9 @@
+import { NATIVE_EXTERNAL_SECRET_REQUEST_TYPES } from "./native-external-secret-requests";
+import { NATIVE_GOOGLE_WORKSPACE_REQUEST_TYPES } from "./native-google-workspace-requests";
+
 export const NATIVE_PROVIDER_REQUEST_TYPES = new Set([
+	...NATIVE_EXTERNAL_SECRET_REQUEST_TYPES,
+	...NATIVE_GOOGLE_WORKSPACE_REQUEST_TYPES,
 	"credential-list", "credential-set", "credential-remove",
 	"provider-account-list", "provider-account-create", "provider-account-update", "provider-account-remove", "provider-account-connect",
 	"subscription-cli-status", "subscription-cli-set",

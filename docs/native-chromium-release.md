@@ -2248,3 +2248,106 @@ disposable candidate and run `pnpm test:native-local-backup`. The optional
 `KESTREL_NATIVE_LOCAL_BACKUP_EVIDENCE` selects a fresh evidence directory.
 `pnpm test:native-local-backup-ui` exercises the real Cocoa panels with an
 operator; its `live-state.json` describes each observed action and acknowledgement.
+
+## Native Google Workspace and external secret services (2026-11-03)
+
+The existing Connections and protected secret-source Settings screens now route
+through native hosts. Google consent leaves Core running; only the validated,
+profile-local opaque secret write or removal uses the idle Core restart barrier.
+The native host validates callback origin, host, state and duplicate parameters,
+uses PKCE, bounds response streams and network time, and cancels provider work
+when its requesting renderer closes. A failed write/restart restores the earlier
+opaque record. Disconnect first removes the secret from Core, then attempts a
+bounded vendor revocation. An unconfirmed revocation is reported separately from
+the completed local disconnect. Quit stops the owned Core promptly and aborts
+remaining sign-in/revocation work; no replacement Core may start during shutdown.
+
+External secret configuration saves use an idle settings mutation without
+executing a helper or restarting Core. Explicit sync resolves supported names
+once and carries those values through that operation's private configuration
+context into the restarted Core. It never returns provider values or bootstrap
+tokens to the renderer. Source removal restores the ordinary protected-field
+precedence. Owned helper processes use argv-only execution, bounded output/time
+and cancellation; shutdown also kills a helper that ignores normal termination.
+Settings transactions restore earlier opaque configuration and bootstrap records
+on failure, and clear stale verification after edits. Cancellation after a
+completed transaction preserves its successful outcome instead of claiming that
+nothing changed.
+
+Verification metadata is private, bounded, shape-checked and reconstructed with
+static public messages. Empty or unknown-only helper output cannot be marked
+verified. The native host permits Bitwarden download only through the explicit
+install action. Managed publication uses exclusive private files, independent
+binary hash/size checks and a readiness marker written last. Existing and
+incomplete content is retained. Explicit repair can preserve an incomplete owned
+private installation in a new private sibling recovery folder before retrying;
+ordinary resolution does not perform that repair. The preservation move uses
+ordinary filesystem rename with identity rechecks, not an exclusive native
+rename guarantee against another process running as the same user.
+
+Independent read-only review identified an unconfirmed-stop admission gap,
+interrupted-install retry failure and misleading late-cancellation responses;
+all three have regression coverage. A further close-at-revocation-boundary test
+prevents fresh network work after shutdown. An initial aggregate run failed the
+native Chrome tab ownership observation. The probe now waits for both real
+unfiltered and URL-filtered Chrome queries to agree on the exact tab identity;
+strict ownership checks remain in force, with deterministic delayed-registration
+and disagreement tests. The failed aggregate log remains preserved at
+`.tmp/native-connections-aggregate-verify.log`.
+
+The initial package passed nine actual bundled provider/Core phases and four
+native UI phases on bundle
+`76bbf5cbb47902480547b663c5ddd8ed766d7bec36361cf15071424fdcab1deb`:
+`.tmp/native-connections-bundled-evidence/receipt.json` and
+`.tmp/native-connections-ui-evidence/receipt.json`. The UI test ran a generated
+local executable, observed no execution on Save and one on Sync, verified
+restart persistence and removal, and validated an invalid Google client ID.
+Both Settings captures were visually inspected. The bundled test uses the real
+standalone Core and profile encryption with simulated Google endpoints and a
+loopback callback. No real Google account, external vault, microphone, desktop
+permission, Keychain item or existing profile was used. Those receipts precede
+the final review fixes; current-artifact verification is recorded separately.
+Apple Messages and native login-code insertion remain unavailable; Google tool
+support and simulated OAuth do not establish real-account acceptance.
+
+
+The frozen reviewed source passed 2,491 tests in 298 files, workspace types,
+audits, builds, both Chrome tab ownership queries, the browser benchmark and
+50 website E2E cases. The second full `pnpm verify` stopped at
+`test:desktop-tab-interactions` because its hover preview did not open while the
+Mac was locked. The first remaining command, `test:desktop-browser`, met the
+same hover boundary. Both failing logs and receipts are retained; this is not
+an aggregate verification pass. Subsequent independent commands are recorded
+separately. Generated tracked screenshots are preserved and restored byte for
+byte, without resetting unrelated changes.
+
+The current artifact is
+`796064594207c622bd3f7d86fc870bfac3bc571723e52435d5c66524c9a4fd73`.
+All current native receipts retain that same digest before and after:
+
+- `.tmp/native-connections-current-bundled-evidence/receipt.json`: nine provider
+  and real standalone-Core phases, using generated keys, simulated provider
+  endpoints and an injected helper executor.
+- `.tmp/native-connections-current-ui-evidence/receipt.json`: four actual bundled
+  Settings phases, with a real generated local executable; Save executes zero
+  times, Sync executes once, restart resolves once and removal prevents replay.
+  Both captures were visually inspected. These CDP-driven checks do not prove
+  physical interaction with the locked Mac or real-account acceptance.
+- `.tmp/native-connections-current-backup-evidence/receipt.json`: sixteen bundled
+  app-data backup and generated-profile offline recovery phases.
+- `.tmp/native-connections-current-workflow-evidence/receipt.json`: twenty-six
+  full native desktop phases, including provider and companion tasks, workspace
+  access, attachments, isolated browsing and downloads, approval and restart.
+- `.tmp/native-connections-current-store-compatibility-evidence/receipt.json`:
+  five retained official Store compatibility phases. Both normal extensions,
+  formatting, extension-created same-window tabs, versions and Core sessions
+  survived restart. No update query, reinstall or published version upgrade
+  occurred; the receipt deliberately remains incomplete for upgrade acceptance.
+
+The full verification log is `.tmp/native-connections-reviewed-aggregate.log`;
+the focused final review log is `.tmp/native-connections-reviewed-final.log`.
+The preceding published `1ca4c4f0` revision passed its Core and desktop/package
+CI jobs. Its separate CodeQL check still reports five fingerprint findings;
+none has been dismissed or suppressed. Jules advisory review is unavailable
+because its API key is not configured. Canonical installation and the remaining
+profile, account, signing, privacy and Store-upgrade gates remain outstanding.

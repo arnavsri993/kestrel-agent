@@ -1,8 +1,16 @@
 import {
 	chmodSync,
+	existsSync,
+	linkSync,
+	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	readdirSync,
+	renameSync,
 	rmSync,
+	statSync,
+	symlinkSync,
+	unlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +20,8 @@ import { CredentialBroker } from "./credential-broker";
 import {
 	DEFAULT_EXTERNAL_SECRET_CONFIGURATION,
 	ExternalSecretManager,
+	preservePrivateManagedBitwardenDirectoryIfIncomplete,
+	publishPrivateManagedBitwardenDirectory,
 	safeExternalSecretArchiveEntries,
 } from "./external-secret-manager";
 
@@ -45,6 +55,339 @@ function fixture() {
 }
 
 describe("external secret manager", () => {
+	it("publishes a private managed CLI directory with the readiness manifest written last", async () => {
+		const root = mkdtempSync(join(tmpdir(), "workstrand-bws-publish-"));
+		roots.push(root);
+		const parent = join(root, "managed-tools", "bws");
+		const stage = join(root, "private-stage");
+		mkdirSync(parent, { recursive: true, mode: 0o700 });
+		mkdirSync(stage, { mode: 0o700 });
+		const sourceBinary = join(stage, "bws");
+		writeFileSync(sourceBinary, "fixture-binary", { mode: 0o700 });
+		chmodSync(sourceBinary, 0o700);
+		const finalDirectory = join(parent, "2.0.0");
+
+		await publishPrivateManagedBitwardenDirectory({
+			sourceBinary,
+			finalDirectory,
+			marker: { tool: "bws", version: "2.0.0", sha256: "archive-hash" },
+		});
+
+		expect(readdirSync(finalDirectory).sort()).toEqual(["bws", "workstrand-install.json"]);
+		expect(statSync(finalDirectory).mode & 0o777).toBe(0o700);
+		expect(statSync(join(finalDirectory, "bws")).mode & 0o777).toBe(0o700);
+		expect(statSync(join(finalDirectory, "workstrand-install.json")).mode & 0o777).toBe(0o600);
+		expect(JSON.parse(readFileSync(join(finalDirectory, "workstrand-install.json"), "utf8"))).toMatchObject({
+			tool: "bws", version: "2.0.0", sha256: "archive-hash", binaryBytes: Buffer.byteLength("fixture-binary"),
+		});
+	});
+
+	it("refuses existing empty or populated managed directories without changing their contents", async () => {
+		for (const populated of [false, true]) {
+			const root = mkdtempSync(join(tmpdir(), "workstrand-bws-existing-"));
+			roots.push(root);
+			const parent = join(root, "managed-tools", "bws");
+			const stage = join(root, "private-stage");
+			mkdirSync(parent, { recursive: true, mode: 0o700 });
+			mkdirSync(stage, { mode: 0o700 });
+			const sourceBinary = join(stage, "bws");
+			writeFileSync(sourceBinary, "fixture-binary", { mode: 0o700 });
+			const finalDirectory = join(parent, "2.0.0");
+			mkdirSync(finalDirectory, { mode: 0o700 });
+			const sentinel = join(finalDirectory, "user-file");
+			if (populated) writeFileSync(sentinel, "preserve-me", { mode: 0o600 });
+			await expect(publishPrivateManagedBitwardenDirectory({
+				sourceBinary, finalDirectory, marker: { version: "2.0.0" },
+			})).rejects.toThrow();
+			expect(existsSync(finalDirectory)).toBe(true);
+			expect(readdirSync(finalDirectory)).toEqual(populated ? ["user-file"] : []);
+			if (populated) expect(readFileSync(sentinel, "utf8")).toBe("preserve-me");
+		}
+	});
+
+	it("explicit repair preserves an incomplete private install before publishing a new verified one", async () => {
+		const root = mkdtempSync(join(tmpdir(), "workstrand-bws-repair-"));
+		roots.push(root);
+		const parent = join(root, "managed-tools", "bws");
+		const stage = join(root, "private-stage");
+		mkdirSync(parent, { recursive: true, mode: 0o700 });
+		mkdirSync(stage, { mode: 0o700 });
+		const sourceBinary = join(stage, "bws");
+		writeFileSync(sourceBinary, "replacement-binary", { mode: 0o700 });
+		chmodSync(sourceBinary, 0o700);
+		const finalDirectory = join(parent, "2.0.0");
+		mkdirSync(finalDirectory, { mode: 0o700 });
+		const staleBytes = "incomplete prior install";
+		writeFileSync(join(finalDirectory, "partial-download"), staleBytes, { mode: 0o600 });
+		const marker = { tool: "bws", version: "2.0.0", sha256: "pinned-archive-hash" };
+
+		await publishPrivateManagedBitwardenDirectory({
+			sourceBinary, finalDirectory, marker, preserveExisting: true,
+		});
+
+		const preservedNames = readdirSync(parent).filter((name) => name.startsWith(".bws-preserved-"));
+		expect(preservedNames).toHaveLength(1);
+		const previous = join(parent, preservedNames[0]!, "previous");
+		expect(readFileSync(join(previous, "partial-download"), "utf8")).toBe(staleBytes);
+		expect(readFileSync(join(finalDirectory, "bws"), "utf8")).toBe("replacement-binary");
+		expect(JSON.parse(readFileSync(join(finalDirectory, "workstrand-install.json"), "utf8"))).toMatchObject({
+			...marker,
+			binaryBytes: Buffer.byteLength("replacement-binary"),
+		});
+	});
+
+	it("keeps a preserved install recoverable across a publication failure gap", async () => {
+		const root = mkdtempSync(join(tmpdir(), "workstrand-bws-repair-gap-"));
+		roots.push(root);
+		const parent = join(root, "managed-tools", "bws");
+		const stage = join(root, "private-stage");
+		mkdirSync(parent, { recursive: true, mode: 0o700 });
+		mkdirSync(stage, { mode: 0o700 });
+		const sourceBinary = join(stage, "bws");
+		writeFileSync(sourceBinary, "replacement-binary", { mode: 0o700 });
+		chmodSync(sourceBinary, 0o700);
+		const finalDirectory = join(parent, "2.0.0");
+		mkdirSync(finalDirectory, { mode: 0o700 });
+		writeFileSync(join(finalDirectory, "partial"), "keep this", { mode: 0o600 });
+		const marker = { version: "2.0.0", sha256: "pinned-archive-hash" };
+
+		const reservation = await preservePrivateManagedBitwardenDirectoryIfIncomplete({
+			finalDirectory, expectedMarker: marker,
+		});
+		expect(reservation).toBeDefined();
+		// The final directory is now absent, as if a crash interrupted repair.
+		await publishPrivateManagedBitwardenDirectory({ sourceBinary, finalDirectory, marker });
+		expect(readFileSync(join(reservation!, "previous", "partial"), "utf8")).toBe("keep this");
+		expect(readFileSync(join(finalDirectory, "bws"), "utf8")).toBe("replacement-binary");
+	});
+
+	it("refuses to preserve symlinked or non-private existing paths without touching targets", async () => {
+		for (const kind of ["symlink", "non-private"] as const) {
+			const root = mkdtempSync(join(tmpdir(), "workstrand-bws-repair-unsafe-"));
+			roots.push(root);
+			const parent = join(root, "managed-tools", "bws");
+			mkdirSync(parent, { recursive: true, mode: 0o700 });
+			const finalDirectory = join(parent, "2.0.0");
+			const target = join(root, "untouched-target");
+			if (kind === "symlink") {
+				writeFileSync(target, "preserve target", { mode: 0o600 });
+				symlinkSync(target, finalDirectory);
+			} else {
+				mkdirSync(finalDirectory, { mode: 0o755 });
+				chmodSync(finalDirectory, 0o755);
+				writeFileSync(join(finalDirectory, "sentinel"), "preserve content", { mode: 0o600 });
+			}
+			await expect(preservePrivateManagedBitwardenDirectoryIfIncomplete({
+				finalDirectory, expectedMarker: { version: "2.0.0", sha256: "pinned" },
+			})).rejects.toThrow();
+			if (kind === "symlink") expect(readFileSync(target, "utf8")).toBe("preserve target");
+			else expect(readFileSync(join(finalDirectory, "sentinel"), "utf8")).toBe("preserve content");
+			expect(readdirSync(parent).filter((name) => name.startsWith(".bws-preserved-"))).toEqual([]);
+		}
+	});
+
+	it("refuses a replaced destination parent and leaves its target untouched", async () => {
+		const root = mkdtempSync(join(tmpdir(), "workstrand-bws-parent-change-"));
+		roots.push(root);
+		const realParent = join(root, "real-managed-tools", "bws");
+		mkdirSync(realParent, { recursive: true, mode: 0o700 });
+		const finalDirectory = join(realParent, "2.0.0");
+		mkdirSync(finalDirectory, { mode: 0o700 });
+		writeFileSync(join(finalDirectory, "sentinel"), "preserve", { mode: 0o600 });
+		const linkParent = join(root, "managed-tools", "bws");
+		mkdirSync(join(root, "managed-tools"), { mode: 0o700 });
+		symlinkSync(realParent, linkParent);
+
+		await expect(preservePrivateManagedBitwardenDirectoryIfIncomplete({
+			finalDirectory: join(linkParent, "2.0.0"),
+			expectedMarker: { version: "2.0.0", sha256: "pinned" },
+		})).rejects.toThrow();
+		expect(readFileSync(join(finalDirectory, "sentinel"), "utf8")).toBe("preserve");
+		expect(readdirSync(realParent)).toEqual(["2.0.0"]);
+	});
+
+	it("preserves linked staged binaries and leaves failed publication without a readiness marker", async () => {
+		for (const linkType of ["symlink", "hardlink"] as const) {
+			const root = mkdtempSync(join(tmpdir(), "workstrand-bws-linked-"));
+			roots.push(root);
+			const parent = join(root, "managed-tools", "bws");
+			const stage = join(root, "private-stage");
+			mkdirSync(parent, { recursive: true, mode: 0o700 });
+			mkdirSync(stage, { mode: 0o700 });
+			const target = join(root, "preserved-binary");
+			const sourceBinary = join(stage, "bws");
+			writeFileSync(target, "user-binary", { mode: 0o700 });
+			if (linkType === "symlink") symlinkSync(target, sourceBinary);
+			else linkSync(target, sourceBinary);
+			const finalDirectory = join(parent, "2.0.0");
+			await expect(publishPrivateManagedBitwardenDirectory({
+				sourceBinary, finalDirectory, marker: { version: "2.0.0" },
+			})).rejects.toThrow();
+			expect(readFileSync(target, "utf8")).toBe("user-binary");
+			expect(existsSync(join(finalDirectory, "workstrand-install.json"))).toBe(false);
+		}
+	});
+
+	it("treats malformed, oversized, linked, and symlinked verification files as unverified without touching their targets", async () => {
+		const cases = ["malformed", "oversized", "symlink", "hardlink"] as const;
+		for (const kind of cases) {
+			const item = fixture();
+			const configuration = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
+			configuration.command = {
+				enabled: true,
+				executablePath: item.paths.helper,
+				arguments: [],
+				timeoutMs: 1_500,
+				overrideStored: false,
+			};
+			const manager = new ExternalSecretManager(item.root, item.broker);
+			await manager.save(configuration);
+			const secure = join(item.root, "secure");
+			const statusPath = join(secure, "external-secret-status.json");
+			const target = join(item.root, `verification-${kind}-target.json`);
+			const targetBytes = Buffer.from('{"command":{"state":"verified"}}');
+			writeFileSync(target, targetBytes, { mode: 0o600 });
+			unlinkSync(statusPath);
+			switch (kind) {
+				case "malformed":
+					writeFileSync(statusPath, '{"command":{"detail":"sk-provider-secret"}', { mode: 0o600 });
+					break;
+				case "oversized":
+					writeFileSync(statusPath, Buffer.alloc(65 * 1024, 0x20), { mode: 0o600 });
+					break;
+				case "symlink":
+					symlinkSync(target, statusPath);
+					break;
+				case "hardlink":
+					linkSync(target, statusPath);
+					break;
+			}
+			const status = await manager.status();
+			expect(status.sources.find((source) => source.id === "command")?.state).toBe("ready");
+			expect(JSON.stringify(status)).not.toContain("sk-provider-secret");
+			expect(readFileSync(target)).toEqual(targetBytes);
+			if (kind === "symlink") expect(existsSync(statusPath)).toBe(true);
+			if (kind === "hardlink") expect(readFileSync(statusPath)).toEqual(targetBytes);
+		}
+	});
+
+	it("does not overwrite a predictable temporary path and writes only a private status file", async () => {
+		const item = fixture();
+		const configuration = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
+		configuration.command = {
+			enabled: true,
+			executablePath: item.paths.helper,
+			arguments: [],
+			timeoutMs: 1_500,
+			overrideStored: false,
+		};
+		const manager = new ExternalSecretManager(item.root, item.broker, {
+			execute: async () => ({ stdout: "GITHUB_TOKEN=generated-github-token\n" }),
+		});
+		await manager.save(configuration);
+		const temporaryPath = join(item.root, "secure", "external-secret-status.json.new");
+		writeFileSync(temporaryPath, "preserve-this-user-file", { mode: 0o600 });
+		await manager.resolveEnabled();
+		expect(readFileSync(temporaryPath, "utf8")).toBe("preserve-this-user-file");
+		const statusPath = join(item.root, "secure", "external-secret-status.json");
+		expect(statSync(statusPath).mode & 0o777).toBe(0o600);
+	});
+
+	it("refuses to write through a replaced secure parent directory", async () => {
+		const item = fixture();
+		const configuration = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
+		configuration.command = {
+			enabled: true,
+			executablePath: item.paths.helper,
+			arguments: [],
+			timeoutMs: 1_500,
+			overrideStored: false,
+		};
+		const manager = new ExternalSecretManager(item.root, item.broker, {
+			execute: async () => ({ stdout: "GITHUB_TOKEN=generated-github-token\n" }),
+		});
+		await manager.save(configuration);
+		const secure = join(item.root, "secure");
+		const preservedSecure = join(item.root, "secure-preserved");
+		const replacement = join(item.root, "replacement-secure");
+		const marker = join(replacement, "marker");
+		renameSync(secure, preservedSecure);
+		mkdirSync(replacement, { mode: 0o700 });
+		renameSync(join(preservedSecure, "credentials"), join(replacement, "credentials"));
+		writeFileSync(marker, "preserve-replacement", { mode: 0o600 });
+		symlinkSync(replacement, secure);
+
+		await expect(manager.resolveEnabled()).rejects.toThrow("verification storage is unsafe");
+		expect(readFileSync(marker, "utf8")).toBe("preserve-replacement");
+		expect(existsSync(join(replacement, "external-secret-status.json"))).toBe(false);
+	});
+
+	it("never persists provider diagnostics and does not mark empty or unknown-only helper output verified", async () => {
+		const item = fixture();
+		const configuration = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
+		configuration.command = {
+			enabled: true,
+			executablePath: item.paths.helper,
+			arguments: [],
+			timeoutMs: 1_500,
+			overrideStored: false,
+		};
+		let output = "UNRELATED_SECRET=not-a-provider-credential\n";
+		const manager = new ExternalSecretManager(item.root, item.broker, {
+			execute: async () => ({ stdout: output }),
+		});
+		await manager.save(configuration);
+		await manager.resolveEnabled();
+		let commandStatus = (await manager.status()).sources.find((source) => source.id === "command");
+		expect(commandStatus).toMatchObject({ state: "error", resolvedCredentialIds: [] });
+		output = "GITHUB_TOKEN=\n";
+		await manager.resolveEnabled();
+		commandStatus = (await manager.status()).sources.find((source) => source.id === "command");
+		expect(commandStatus).toMatchObject({ state: "error", resolvedCredentialIds: [] });
+
+		const rawFailure = new ExternalSecretManager(item.root, item.broker, {
+			execute: async () => { throw new Error("fake-provider-secret-do-not-persist"); },
+		});
+		await rawFailure.resolveEnabled();
+		const status = await rawFailure.status();
+		const stored = readFileSync(join(item.root, "secure", "external-secret-status.json"), "utf8");
+		expect(JSON.stringify(status)).not.toContain("fake-provider-secret-do-not-persist");
+		expect(stored).not.toContain("fake-provider-secret-do-not-persist");
+		expect(status.sources.find((source) => source.id === "command")?.detail).toBe(
+			"Secret source could not be verified.",
+		);
+	});
+
+	it("invalidates provider verification after source configuration or bootstrap-token changes", async () => {
+		const item = fixture();
+		const configuration = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
+		configuration.onepassword = {
+			enabled: true,
+			binaryPath: item.paths.op,
+			account: "team.1password.com",
+			mappings: { openai: "op://Private/OpenAI/api-key" },
+			overrideStored: true,
+		};
+		const manager = new ExternalSecretManager(item.root, item.broker, {
+			execute: async () => ({ stdout: "onepassword-openai-secret" }),
+		});
+		await manager.save(configuration, { onePasswordToken: "first-service-token" });
+		await manager.sync("onepassword");
+		expect((await manager.status()).sources.find((source) => source.id === "onepassword")?.state).toBe("verified");
+
+		const changedConfiguration = structuredClone(configuration);
+		changedConfiguration.onepassword.account = "other.1password.com";
+		await manager.save(changedConfiguration);
+		expect((await manager.status()).sources.find((source) => source.id === "onepassword")?.state).toBe("ready");
+		await manager.sync("onepassword");
+		expect((await manager.status()).sources.find((source) => source.id === "onepassword")?.state).toBe("verified");
+
+		await manager.save(changedConfiguration, { onePasswordToken: "second-service-token" });
+		expect((await manager.status()).sources.find((source) => source.id === "onepassword")?.state).toBe("ready");
+		await manager.sync("onepassword");
+		expect((await manager.status()).sources.find((source) => source.id === "onepassword")?.state).toBe("verified");
+	});
+
 	it("resolves all three sources through an allowlist and applies explicit precedence without persisting values", async () => {
 		const item = fixture();
 		await item.broker.setCredential("openai", "stored-openai-secret");
@@ -201,7 +544,7 @@ describe("external secret manager", () => {
 		);
 		expect(source).toMatchObject({
 			state: "error",
-			detail: "1Password failed, timed out, or requires authentication.",
+			detail: "Secret source could not be verified.",
 		});
 		expect(JSON.stringify(source)).not.toContain("sk-live-do-not-log");
 	});
@@ -244,7 +587,7 @@ describe("external secret manager", () => {
 		});
 
 		await expect(manager.installBitwarden()).rejects.toThrow(
-			"redirected to an untrusted host",
+			"could not be installed safely",
 		);
 	});
 

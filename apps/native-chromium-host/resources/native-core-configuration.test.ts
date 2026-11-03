@@ -4,6 +4,7 @@ import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 
 function fixture() {
 	let running = false;
+	let ownerCanRestore = true;
 	const core = {
 		get isReady() { return running; }, get hasProcess() { return running; },
 		start: vi.fn(async (_config: unknown) => { running = true; }),
@@ -12,9 +13,29 @@ function fixture() {
 	const isBusy = vi.fn(() => false); let version = 1;
 	const configuration = vi.fn(async () => ({ version: version++ }));
 	const changed = vi.fn(async () => {});
-	return { core, isBusy, configuration, changed, setRunning: (value: boolean) => { running = value; }, controller: createNativeCoreConfiguration({ core, isBusy, configuration, changed }) };
+	return { core, isBusy, configuration, changed, setRunning: (value: boolean) => { running = value; }, setOwnerCanRestore: (value: boolean) => { ownerCanRestore = value; }, controller: createNativeCoreConfiguration({ core, isBusy, configuration, changed, canRestoreCore: () => ownerCanRestore }) };
 }
 describe("native provider Core reconfiguration", () => {
+	it("reserves an idle settings write without stopping Core or resolving new runtime credentials", async () => {
+		const { controller, core, configuration } = fixture(); await controller.start();
+		let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+		const writing = controller.withIdleMutation(async () => { await gate; return "saved"; });
+		expect(controller.changing).toBe(true);
+		await expect(controller.reconfigure(vi.fn())).rejects.toThrow("active task");
+		expect(core.stop).not.toHaveBeenCalled();
+		release(); expect(await writing).toBe("saved");
+		expect(core.start).toHaveBeenCalledOnce(); expect(configuration).toHaveBeenCalledOnce();
+	});
+	it("refuses an active task and rolls back a cancelled settings write while retaining the same Core", async () => {
+		const { controller, core, isBusy } = fixture(); await controller.start();
+		isBusy.mockReturnValue(true); const write = vi.fn();
+		await expect(controller.withIdleMutation(write)).rejects.toThrow("active task");
+		expect(write).not.toHaveBeenCalled(); isBusy.mockReturnValue(false);
+		const rollback = vi.fn(); let saved = false;
+		await expect(controller.withIdleMutation(async () => { saved = true; }, rollback, () => { if (saved) throw new Error("cancelled"); })).rejects.toThrow("cancelled");
+		expect(rollback).toHaveBeenCalledOnce(); expect(core.stop).not.toHaveBeenCalled();
+		expect(controller.changing).toBe(false);
+	});
 	it("rejects a busy Core before stopping or persisting anything", async () => {
 		const { controller, isBusy, core } = fixture(); const mutation = vi.fn(); isBusy.mockReturnValue(true);
 		await expect(controller.reconfigure(mutation)).rejects.toThrow("active task");
@@ -53,6 +74,55 @@ describe("native provider Core reconfiguration", () => {
 		const rollback = vi.fn(async () => {});
 		await expect(controller.reconfigure(async () => { throw new Error("cancelled"); }, rollback, () => {}, () => false)).rejects.toThrow("cancelled");
 		expect(rollback).toHaveBeenCalledOnce(); expect(core.start).toHaveBeenCalledOnce();
+	});
+	it("does not restart Core after shutdown begins during a simple pending mutation failure", async () => {
+		const { controller, core, setOwnerCanRestore } = fixture(); await controller.start();
+		let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+		const pending = controller.reconfigure(async () => { await gate; setOwnerCanRestore(false); throw new Error("mutation failed"); });
+		release();
+		await expect(pending).rejects.toThrow("Restart Kestrel");
+		expect(core.start).toHaveBeenCalledOnce();
+		expect(controller.requiresRestart).toBe(true);
+	});
+	it("rolls back settings but does not restart Core if shutdown begins during configuration preparation", async () => {
+		const { controller, core, configuration, setOwnerCanRestore } = fixture(); await controller.start();
+		let configCalls = 0;
+		configuration.mockImplementation(async () => {
+			configCalls++;
+			if (configCalls > 0) {
+				setOwnerCanRestore(false);
+				return { version: 2 };
+			}
+			return { version: 1 };
+		});
+		const rollback = vi.fn(async () => {});
+		await expect(controller.reconfigure(async () => "saved", rollback, undefined, () => true)).rejects.toThrow("Restart Kestrel");
+		expect(rollback).toHaveBeenCalledOnce();
+		expect(core.start).toHaveBeenCalledOnce();
+		expect(controller.requiresRestart).toBe(true);
+	});
+	it.each([
+		["simple reconfiguration", false],
+		["transactional reconfiguration", true],
+	] as const)("blocks all admission after an uncertain Core stop in %s", async (_label, transactional) => {
+		const { controller, core, setRunning } = fixture(); await controller.start();
+		core.stop.mockImplementationOnce(async () => {
+			throw Object.assign(new Error("exit still pending"), { exitConfirmed: false });
+		});
+		const mutation = vi.fn(async () => "must-not-run");
+		if (transactional)
+			await expect(controller.reconfigure(mutation, vi.fn(async () => {}))).rejects.toThrow("Restart Kestrel");
+		else
+			await expect(controller.reconfigure(mutation)).rejects.toThrow("Restart Kestrel");
+		setRunning(false); // Late old-process exit does not clear the fault.
+		expect(mutation).not.toHaveBeenCalled();
+		expect(controller.requiresRestart).toBe(true);
+		await expect(controller.start()).rejects.toThrow("Restart Kestrel");
+		await expect(controller.reconfigure(vi.fn())).rejects.toThrow("Restart Kestrel");
+		await expect(controller.withIdleMutation(vi.fn())).rejects.toThrow("Restart Kestrel");
+		await expect(controller.withStoppedCore(vi.fn())).rejects.toThrow("Restart Kestrel");
+		expect(core.start).toHaveBeenCalledOnce();
+		expect(core.stop).toHaveBeenCalledOnce();
 	});
 
 });

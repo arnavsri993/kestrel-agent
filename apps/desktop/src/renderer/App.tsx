@@ -5836,7 +5836,7 @@ function Readiness() {
 						{backup && (
 							<div className="backup-result">
 								<strong>
-									{backup.files} files ·{" "}
+									{backup.files} {backup.files === 1 ? "file" : "files"} ·{" "}
 									{(backup.bytes / 1024 / 1024).toFixed(1)} MB
 								</strong>
 								<small>
@@ -6925,6 +6925,13 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 				setGoogleStatus(response.googleWorkspaceOAuth);
 			await refreshCommunicationSources();
 		} catch (error) {
+			// A local disconnect can finish even when vendor revocation fails.
+			// Refresh the actual profile state before presenting the bounded error.
+			try {
+				const status = await window.kestrel.request({ type: "oauth-google-status" });
+				if (status.ok && "googleWorkspaceOAuth" in status) setGoogleStatus(status.googleWorkspaceOAuth);
+				await refreshCommunicationSources();
+			} catch { /* Preserve the explicit operation error if status is unavailable. */ }
 			setGoogleError(
 				error instanceof Error ? error.message : "Google disconnect failed.",
 			);

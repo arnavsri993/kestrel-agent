@@ -10,6 +10,10 @@ import { ProviderAccountStore } from "./provider-account-store";
 import { NATIVE_PROVIDER_REQUEST_TYPES } from "./native-provider-requests";
 import type { ManagerDependencies } from "./local-runtime-manager";
 import { NativeLocalRuntime, nativeSystemProfile, type NativeLocalSelection } from "./native-setup-status";
+import { NativeExternalSecretHost } from "./native-external-secret-host";
+import { NativeGoogleWorkspaceHost } from "./native-google-workspace-host";
+import { NATIVE_EXTERNAL_SECRET_REQUEST_TYPES } from "./native-external-secret-requests";
+import { NATIVE_GOOGLE_WORKSPACE_REQUEST_TYPES } from "./native-google-workspace-requests";
 
 const CLI = {
 	codex: { name: "Codex", label: "ChatGPT plan through Codex", adapter: "codex-app-server", providerId: "codex", env: "KESTREL_CODEX_PATH" },
@@ -36,6 +40,7 @@ interface Options {
 	homeDirectory: string;
 	environment: NodeJS.ProcessEnv;
 	reconfigure<T>(mutation: () => Promise<T>, rollback?: () => Promise<void>, validate?: () => void, shouldRestoreCore?: () => boolean): Promise<T>;
+	mutateSettings?<T>(mutation: () => Promise<T>, rollback?: () => Promise<void>, validate?: () => void): Promise<T>;
 	/** Account metadata only; injectable for deterministic tests. */
 	accountStatus?: (executable: string, environment: NodeJS.ProcessEnv) => Promise<ChatGptOAuthStatus>;
 	/** Open a provider-owned sign-in page in this Kestrel Chromium window. */
@@ -49,6 +54,11 @@ interface Options {
 	localSetupTimeoutMs?: number;
 	/** Optional transaction barrier for deterministic tests. */
 	beforeLocalPreferenceCommit?: () => Promise<void>;
+	externalSecretDependencies?: NonNullable<ConstructorParameters<typeof NativeExternalSecretHost>[0]["dependencies"]>;
+	googleOAuthFetch?: typeof fetch;
+	googleOAuthTimeoutMs?: number;
+	isBusy?: () => boolean;
+	shouldRestoreCore?: () => boolean;
 }
 
 function authUrl(raw: string): string {
@@ -89,6 +99,8 @@ export class NativeProviderHost {
 	private readonly store: ProviderAccountStore;
 	private readonly preferencesPath: string;
 	private readonly localRuntime: NativeLocalRuntime;
+	private readonly externalSecrets: NativeExternalSecretHost;
+	private readonly googleWorkspace: NativeGoogleWorkspaceHost;
 	private statusCache: { path: string; until: number; value: ChatGptOAuthStatus } | undefined;
 	private statusPending: { path: string; promise: Promise<ChatGptOAuthStatus> } | undefined;
 	private statusGeneration = 0;
@@ -105,6 +117,29 @@ export class NativeProviderHost {
 		this.store = new ProviderAccountStore(join(options.root, "provider-accounts.json"), this.broker, options.root);
 		this.preferencesPath = join(options.root, "native-runtime-preferences.json");
 		this.localRuntime = new NativeLocalRuntime(options.root, options.localFetch, event => options.onLocalRuntimeProgress?.(event), options.localRuntimeDependencies);
+		const shouldRestoreCore = () => !this.closing && options.shouldRestoreCore?.() !== false;
+		this.externalSecrets = new NativeExternalSecretHost({
+			root: options.root, broker: this.broker,
+			reconfigure: (mutation, rollback, validate, restore) => options.reconfigure(mutation, rollback, validate, restore),
+			mutateSettings: (mutation, rollback, validate) => {
+				if (!options.mutateSettings) return Promise.reject(new Error("Native settings admission is unavailable."));
+				return options.mutateSettings(mutation, rollback, validate);
+			},
+			shouldRestoreCore,
+			...(options.externalSecretDependencies ? { dependencies: options.externalSecretDependencies } : {}),
+		});
+		this.googleWorkspace = new NativeGoogleWorkspaceHost({
+			broker: this.broker,
+			reconfigure: (mutation, rollback, validate, restore) => options.reconfigure(mutation, rollback, validate, restore),
+			shouldRestoreCore,
+			...(options.isBusy ? { isBusy: options.isBusy } : {}),
+			...(options.googleOAuthFetch ? { fetcher: options.googleOAuthFetch } : {}),
+			...(options.googleOAuthTimeoutMs ? { timeoutMs: options.googleOAuthTimeoutMs } : {}),
+			openAuthUrl: async (url, signal) => {
+				if (!options.openAuthUrl) throw new Error("The native sign-in browser is unavailable.");
+				await options.openAuthUrl(url, signal);
+			},
+		});
 	}
 
 	private async preferences(): Promise<Preferences> {
@@ -265,7 +300,7 @@ export class NativeProviderHost {
 	async close(): Promise<void> {
 		this.closing = true;
 		this.localStartup?.controller.abort();
-		await Promise.all([this.localStartup?.done.catch(() => undefined), this.cancelLogin(), this.cancelLocalSetup(), ...[...this.statusManagers].map(manager => manager.cancel().catch(() => undefined))]);
+		await Promise.all([this.localStartup?.done.catch(() => undefined), this.cancelLogin(), this.cancelLocalSetup(), this.externalSecrets.close(), this.googleWorkspace.close(), ...[...this.statusManagers].map(manager => manager.cancel().catch(() => undefined))]);
 		await this.localRuntime.stop();
 	}
 
@@ -368,8 +403,9 @@ export class NativeProviderHost {
 	}
 
 	async runtimeConfiguration(): Promise<{ secureEnvironment: NodeJS.ProcessEnv; providerAccounts: ProviderAccountRuntimeConfig[] }> {
+		if (this.closing) throw new Error("The native provider host is shutting down.");
 		// Never inherit ambient API keys or copy vendor-owned login stores.
-		const secureEnvironment = await this.broker.providerEnvironment({});
+		const secureEnvironment = await this.broker.providerEnvironment({}, await this.externalSecrets.runtimeCredentials());
 		await this.store.ensureLegacyAccounts(secureEnvironment);
 		const providerAccounts = await this.store.runtimeAccounts(secureEnvironment);
 		const allPreferences = await this.preferences();
@@ -400,11 +436,16 @@ export class NativeProviderHost {
 		return { secureEnvironment, providerAccounts };
 	}
 
-	async handle(raw: unknown): Promise<RendererResponse> {
+	async handle(raw: unknown, signal?: AbortSignal): Promise<RendererResponse> {
 		if (this.closing) return { ok: false, error: "The native provider host is shutting down." };
 		const parsed = RendererRequestSchema.safeParse(raw);
 		if (!parsed.success || !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type)) return { ok: false, error: "Invalid native provider request." };
 		const request = parsed.data;
+		if (NATIVE_EXTERNAL_SECRET_REQUEST_TYPES.has(request.type)) return this.externalSecrets.handle(request, signal);
+		if (NATIVE_GOOGLE_WORKSPACE_REQUEST_TYPES.has(request.type)) {
+			try { return await this.googleWorkspace.handle(request, signal); }
+			catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Google Workspace could not be updated." }; }
+		}
 		switch (request.type) {
 			case "local-model-status": {
 				// A concurrent status read must not publish ready while guarded

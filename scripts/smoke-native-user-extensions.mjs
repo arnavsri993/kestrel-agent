@@ -11,6 +11,7 @@ import { chromium } from "@playwright/test";
 import { tsImport } from "tsx/esm/api";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 import { markDisposableNativeTestProfile } from "./native-test-profile.mjs";
+import { observeNativeTabOwnership } from "./native-tab-ownership-observation.mjs";
 
 /**
  * Proves the product-shell lane can keep the privileged Kestrel bridge while
@@ -168,9 +169,19 @@ async function probeTabOwnership(context, shellPage, sourcePage, worker) {
 		(payload) => window.kestrel.request(payload), payload,
 	);
 	const query = () => worker.evaluate(() => chrome.tabs.query({}));
-	const sourceTabs = await query();
-	const source = sourceTabs.find((tab) => tab.url === sourcePage.url());
-	assert(source, "The initial user page must belong to a real Chrome tab");
+	const queryExact = (url) => worker.evaluate((url) => chrome.tabs.query({ url }), url);
+	const sourceUrl = sourcePage.url();
+	// The page-load marker comes from the renderer, while CEF may publish its
+	// initial target into Chrome's tabs registry on a later UI-thread turn. Both
+	// the ordinary all-tabs query and the exact URL query must discover the same
+	// real page within a bounded window; one query form cannot stand in for the
+	// other or satisfy full tabs API ownership.
+	const { tab: source } = await observeNativeTabOwnership({
+		url: sourceUrl,
+		queryUnfiltered: query,
+		queryFiltered: queryExact,
+		delay,
+	});
 	const result = { sourceWindowId: source.windowId, kestrelCreated: {}, extensionCreated: [] };
 	let kestrelTabId;
 	const createdIds = [];

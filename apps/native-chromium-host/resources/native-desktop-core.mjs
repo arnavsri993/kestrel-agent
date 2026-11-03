@@ -5,7 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NATIVE_CORE_BACKUP_BUSY_MESSAGE, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NativeLocalBackupHost, NATIVE_LOCAL_BACKUP_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
+import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NATIVE_CORE_BACKUP_BUSY_MESSAGE, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PROVIDER_OPERATION_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NativeLocalBackupHost, NATIVE_LOCAL_BACKUP_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 import { dispatchNativeComputerHostRequest } from "./native-computer-host-routing.mjs";
 
@@ -216,7 +216,11 @@ const publishSnapshot = async () => {
 	if (response.ok && response.snapshot) write({ type: "event", channel: "snapshot", event: response.snapshot });
 };
 const providers = new NativeProviderHost({ root: profile.root, encryptionKeyBase64: profile.encryptionKeyBase64,
-	homeDirectory: homedir(), environment: process.env, reconfigure: (mutation, rollback, validate, shouldRestoreCore) => configuration.reconfigure(mutation, rollback, validate, shouldRestoreCore),
+	homeDirectory: homedir(), environment: process.env,
+	isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning || configuration.changing,
+	shouldRestoreCore: () => !stopping,
+	mutateSettings: (mutation, rollback, validate) => configuration.withIdleMutation(mutation, rollback, validate),
+	reconfigure: (mutation, rollback, validate, shouldRestoreCore) => configuration.reconfigure(mutation, rollback, validate, shouldRestoreCore),
 	onLocalRuntimeProgress: event => write({ type: "event", channel: "local-runtime-progress", event }),
 	openAuthUrl: async (url, signal) => {
 		await browserRequest({ operation: "visible-create", input: url }, signal);
@@ -262,11 +266,15 @@ const plugins = new NativePluginHost({ root: profile.root,
 	listPlugins: async () => { const response = await core.request({ type: "plugin-list" }); if (!response.ok) throw new Error("Plugin discovery failed."); return response.plugins ?? []; },
 });
 const configuration = createNativeCoreConfiguration({ core,
+	canRestoreCore: () => !stopping,
 	isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning,
-	configuration: async () => ({ databasePath: profile.databasePath, encryptionKeyBase64: profile.encryptionKeyBase64,
-		...await workspaces.runtimeConfiguration(), ...await plugins.runtimeConfiguration(),
-		learnedSkillRoot: join(profile.root, "learned-skills"), ...await providers.runtimeConfiguration(),
-	}),
+	configuration: async () => {
+		const next = { databasePath: profile.databasePath, encryptionKeyBase64: profile.encryptionKeyBase64,
+			...await workspaces.runtimeConfiguration(), ...await plugins.runtimeConfiguration(),
+			learnedSkillRoot: join(profile.root, "learned-skills"), ...await providers.runtimeConfiguration() };
+		if (stopping) throw new Error("The native profile owner is shutting down.");
+		return next;
+	},
 	changed: publishSnapshot,
 });
 async function nativeAppVersion() {
@@ -304,14 +312,16 @@ core.on("recovered", () => {
 
 async function shutdown(code = 0) {
 	if (stopping) return; stopping = true;
+	for (const controller of hostRequests.values()) controller.abort(new Error("The native profile owner is shutting down."));
 	cancelFolderDialog();
 	if (browserReset) { clearTimeout(browserReset.timer); browserReset.reject(new Error("The browser owner is shutting down.")); browserReset = undefined; }
 	cancelBrowsers();
 	const backupClosing = backups.close();
+	const providerClosing = providers.close();
 	// Interrupt a long maintenance stop on Quit. Cancellation closes the copy
 	// first; the same Core stop confirms exit and cannot resurrect a new owner.
-	const coreStopping = backupReservation && configuration.changing ? core.stop({ gracefulTimeoutMs: 0 }) : undefined;
-	const backupOutcomes = await Promise.allSettled([backupClosing, coreStopping]);
+	const coreStopping = core.stop({ gracefulTimeoutMs: backupReservation && configuration.changing ? 0 : 2_000 });
+	const backupOutcomes = await Promise.allSettled([backupClosing, providerClosing, coreStopping]);
 	if (backupOutcomes.some(result => result.status === "rejected")) {
 		process.stderr.write("KESTREL_NATIVE_BACKUP_SHUTDOWN_INCOMPLETE\n"); code = code || 1;
 	}
@@ -319,7 +329,6 @@ async function shutdown(code = 0) {
 	await diagnostics.close();
 	await workspaces.close();
 	await plugins.close();
-	await providers.close();
 	try { await core.stop(); }
 	catch { process.stderr.write("KESTREL_NATIVE_CORE_SHUTDOWN_INCOMPLETE\n"); code = code || 1; }
 	// Core may still be reading a just-approved paste when Quit arrives. Stop
@@ -379,6 +388,11 @@ input.on("line", line => {
 		else request.reject(new Error(typeof message.error === "string" ? message.error.slice(0, 500) : "The native desktop request failed."));
 		return;
 	}
+	if (stopping) {
+		if (["request", "host-request"].includes(message?.type) && typeof message.id === "string" && message.id.length <= 100)
+			write({ type: "response", id: message.id, response: { ok: false, error: "The native profile owner is shutting down." } });
+		return;
+	}
 	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
 	const isHost = message.type === "host-request";
 	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
@@ -395,7 +409,7 @@ input.on("line", line => {
 	}
 	if (creatingBackup) backupReservation = true;
 	pending.add(message.id);
-	const hostController = isHost && (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
+	const hostController = isHost && (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
 	const hostBudget = creatingBackup ? 14 * 60_000 : 9 * 60_000 + 50_000;
 	const hostTimer = hostController ? setTimeout(() => hostController.abort(new Error("The native host request timed out.")), hostBudget) : undefined;
 	if (hostController) hostRequests.set(message.id, hostController);
@@ -414,7 +428,7 @@ input.on("line", line => {
 			if (NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type)) return memoryRecovery.handle(parsed.data, hostController.signal);
 			if (NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) return diagnostics.handle(parsed.data, hostController.signal);
 			if (NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type)) return backups.handle(parsed.data, hostController.signal);
-			return providers.handle(parsed.data);
+			return providers.handle(parsed.data, hostController?.signal);
 		}
 		if (parsed.data.type === "runtime-run-agent") await attachments.assertRequestAttachments(parsed.data);
 		return core.request(parsed.data);

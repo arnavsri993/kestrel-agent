@@ -23,7 +23,7 @@ if (!coreProfileInfo.isDirectory() || coreProfileInfo.isSymbolicLink() || corePr
 const browserPid = Number(argument("--browser-pid"));
 if (!Number.isSafeInteger(browserPid) || browserPid !== process.ppid) throw new Error("Native broker requires its owning browser.");
 const peerInspector = createRequire(import.meta.url)(join(resources, "native-peer.node"));
-const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_READINESS_REQUEST_TYPES, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PLUGIN_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NATIVE_LOCAL_BACKUP_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest } = await import("./native-ui-contracts.mjs");
+const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_READINESS_REQUEST_TYPES, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PROVIDER_OPERATION_REQUEST_TYPES, NATIVE_PLUGIN_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NATIVE_LOCAL_BACKUP_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest } = await import("./native-ui-contracts.mjs");
 const MAX_FRAME = 1024 * 1024;
 const MAX_PENDING = 64;
 const key = randomBytes(32);
@@ -261,10 +261,10 @@ const server = createServer((socket) => {
           const entry = pending.get(id); if (!entry) return;
           if (entry.cancellable) {
             cancelNativeHostOnClientLoss(id, entry, writeCore);
-            entry.timeout = setTimeout(() => { if (!pending.delete(id)) return; send(socket, { kind: "response", id: message.id, response: { ok: false, error: entry.fileRequest ? "The file request timed out. Check whether the file was saved before retrying." : "The plugin operation timed out and its outcome is uncertain. Check installed plugins before retrying." } }); }, 8_000);
+            entry.timeout = setTimeout(() => { if (!pending.delete(id)) return; send(socket, { kind: "response", id: message.id, response: { ok: false, error: entry.providerOperation ? "The provider operation timed out. Check its connection status before retrying." : entry.fileRequest ? "The file request timed out. Check whether the file was saved before retrying." : "The plugin operation timed out and its outcome is uncertain. Check installed plugins before retrying." } }); }, 8_000);
           } else { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Kestrel Core response timed out. Check the task before retrying." } }); }
         }, ["select-workspace-folder", "select-context-files"].includes(parsed.data.type) ? 10 * 60_000 + 30_000 : nativeRequestTimeoutMs(parsed.data, "broker"));
-				pending.set(id, { socket, uiId: message.id, timeout, cancellable: NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type), fileRequest: NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) });
+				pending.set(id, { socket, uiId: message.id, timeout, cancellable: NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type), providerOperation: NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type), fileRequest: NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) });
 				core.stdin.write(JSON.stringify({ type: hostRequest ? "host-request" : "request", id, request: parsed.data }) + "\n");
 			}
 		}

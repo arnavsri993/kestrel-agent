@@ -1,6 +1,6 @@
 // Core must be idle before changing providers. Acquire the guard synchronously
 // before the first await; no credential mutation may run after a failed guard.
-export function createNativeCoreConfiguration({ core, configuration, isBusy, changed }) {
+export function createNativeCoreConfiguration({ core, configuration, isBusy, changed, canRestoreCore = () => true }) {
 	let changing = false;
 	let starting = false;
 	let current;
@@ -11,12 +11,22 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 	const abortError = () => Object.assign(new Error("Operation was cancelled."), { name: "AbortError" });
 	const isAborted = signal => signal?.aborted === true;
 	const mayRestore = callback => { try { return callback?.() !== false; } catch { return false; } };
+	const mayStartCore = callback => mayRestore(canRestoreCore) && mayRestore(callback);
 	const confirmedExited = error => error?.exitConfirmed === true || core.hasProcess === false;
 	const markRestartRequired = () => { requiresRestart = true; };
-	async function restore(config) {
+	async function stopForReconfigure() {
+		try {
+			await core.stop();
+			if (core.hasProcess === true) throw new Error("Agent Core exit is unconfirmed.");
+		} catch {
+			markRestartRequired();
+			throw new Error(RESTART_REQUIRED);
+		}
+	}
+	async function restore(config, callback) {
 		// Starting a replacement while an old Core process may still own the
 		// profile can corrupt its state. Keep the gate closed until app restart.
-		if (core.hasProcess === true) { markRestartRequired(); return false; }
+		if (core.hasProcess === true || !mayStartCore(callback)) { markRestartRequired(); return false; }
 		try {
 			await core.start(config);
 			current = config;
@@ -31,13 +41,34 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 	return {
 		get changing() { return changing; },
 		get requiresRestart() { return requiresRestart; },
+		async withIdleMutation(mutation, rollback, validate) {
+			if (changing || starting || isBusy()) throw new Error(ACTIVE_CHANGE);
+			if (requiresRestart) throw new Error(RESTART_REQUIRED);
+			changing = true;
+			let mutated = false;
+			try {
+				validate?.();
+				mutated = true;
+				const result = await mutation();
+				validate?.();
+				return result;
+			} catch (error) {
+				if (mutated) {
+					try { await rollback?.(); }
+					catch { markRestartRequired(); throw new Error("Provider settings could not be restored. Restart Kestrel before running another task."); }
+				}
+				throw error;
+			} finally { changing = false; }
+		},
 		async start() {
 			if (changing || starting) throw new Error(ACTIVE_CHANGE);
 			if (requiresRestart) throw new Error(RESTART_REQUIRED);
+			if (!mayStartCore()) { markRestartRequired(); throw new Error(RESTART_REQUIRED); }
 			starting = true;
 			try {
 				const next = await configuration();
 				if (changing) throw new Error(ACTIVE_CHANGE);
+				if (!mayStartCore()) { markRestartRequired(); throw new Error(RESTART_REQUIRED); }
 				await core.start(next);
 				current = next;
 				started = true;
@@ -65,9 +96,9 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 						markRestartRequired();
 						return { completed: false, error: stopError, coreStatus: "restart-required" };
 					}
-					const restoreCore = mayRestore(shouldRestoreCore);
-					const restored = restoreCore ? await restore(current) : false;
-					if (!restoreCore) started = false;
+					const restoreCore = mayStartCore(shouldRestoreCore);
+					const restored = restoreCore ? await restore(current, shouldRestoreCore) : false;
+					if (!restoreCore) { started = false; markRestartRequired(); }
 					return { completed: false, error: stopError, coreStatus: restored ? "ready" : "restart-required" };
 				}
 
@@ -82,8 +113,9 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 					catch (error) { operationError = error; }
 				}
 
-				if (!mayRestore(shouldRestoreCore)) {
+				if (!mayStartCore(shouldRestoreCore)) {
 					started = false;
+					markRestartRequired();
 					return operationError
 						? { completed: false, error: operationError, coreStatus: "restart-required" }
 						: { completed: true, value, coreStatus: "restart-required" };
@@ -93,7 +125,11 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 				let restartError;
 				try {
 					next = await configuration();
-					if (core.hasProcess === true) {
+					if (!mayStartCore(shouldRestoreCore)) {
+						started = false;
+						markRestartRequired();
+						restartError = new Error(RESTART_REQUIRED);
+					} else if (core.hasProcess === true) {
 						markRestartRequired();
 						restartError = new Error(RESTART_REQUIRED);
 					} else {
@@ -125,26 +161,35 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 			if (!rollback && !validate && !shouldRestoreCore) {
 				let stopped = false;
 				try {
-					await core.stop(); stopped = true;
+					await stopForReconfigure(); stopped = true;
 					let result;
 					try { result = await mutation(); }
-					catch (error) { await core.start(current); stopped = false; throw error; }
-					current = await configuration();
+					catch (error) {
+						if (!mayStartCore()) { markRestartRequired(); throw new Error(RESTART_REQUIRED); }
+						try { await core.start(current); stopped = false; }
+						catch { markRestartRequired(); throw new Error("Provider settings were preserved, but Agent Core could not restart. Restart Kestrel before running another task."); }
+						throw error;
+					}
+					const next = await configuration();
+					if (!mayStartCore()) { markRestartRequired(); throw new Error(RESTART_REQUIRED); }
+					current = next;
 					await core.start(current); stopped = false;
 					await changed?.();
 					return result;
 				} catch (error) {
-					if (stopped) throw new Error("Provider settings were preserved, but Agent Core could not restart. Restart Kestrel before running another task.");
+					if (stopped) { markRestartRequired(); throw new Error("Provider settings were preserved, but Agent Core could not restart. Restart Kestrel before running another task."); }
 					throw error;
 				} finally { changing = false; }
 			}
 			const previous = current;
 			let stopped = false, mutationStarted = false;
+			const restoreAllowed = () => mayStartCore(shouldRestoreCore);
 			try {
-				await core.stop(); stopped = true;
+				await stopForReconfigure(); stopped = true;
 				mutationStarted = true;
 				const result = await mutation();
 				const next = await configuration();
+				if (!restoreAllowed()) { markRestartRequired(); throw new Error(RESTART_REQUIRED); }
 				await core.start(next); stopped = false;
 				await validate?.();
 				await changed?.();
@@ -155,8 +200,10 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 				try {
 					if (!stopped && mutationStarted) { await core.stop(); stopped = true; }
 					if (mutationStarted) await rollback?.();
-					if (stopped && (shouldRestoreCore?.() ?? true)) { await core.start(previous); stopped = false; }
+					if (stopped && restoreAllowed()) { await core.start(previous); stopped = false; }
+					else if (stopped) { markRestartRequired(); }
 				} catch {
+					markRestartRequired();
 					throw new Error("Provider settings could not be restored. Restart Kestrel before running another task.");
 				}
 				throw error;

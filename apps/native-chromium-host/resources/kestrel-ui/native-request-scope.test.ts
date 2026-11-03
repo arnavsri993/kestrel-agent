@@ -10,6 +10,8 @@ describe("renderer native request scopes", () => {
 		const firstDiagnostic = firstPort.begin({ type: "export-diagnostic-report" });
 		const firstBackup = firstPort.begin({ type: "create-local-backup" });
 		const firstReveal = firstPort.begin({ type: "reveal-created-local-backup" });
+		const firstGoogle = firstPort.begin({ type: "oauth-google-connect" });
+		const firstSecrets = firstPort.begin({ type: "external-secret-sync" });
 		const firstAgent = firstPort.begin({ type: "runtime-run-agent" });
 		const secondPlugin = secondPort.begin({ type: "plugin-remove-installed" });
 
@@ -25,6 +27,8 @@ describe("renderer native request scopes", () => {
 		expect(firstDiagnostic.signal?.aborted).toBe(true);
 		expect(firstBackup.signal?.aborted).toBe(true);
 		expect(firstReveal.signal?.aborted).toBe(true);
+		expect(firstGoogle.signal?.aborted).toBe(true);
+		expect(firstSecrets.signal?.aborted).toBe(true);
 		expect(firstAgent.signal).toBeUndefined();
 		expect(secondPlugin.signal?.aborted).toBe(false);
 		secondPort.close();
