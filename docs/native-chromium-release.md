@@ -2371,3 +2371,86 @@ A separate current-artifact official Store update query succeeded with
 published version was observed, so upgrade acceptance remains incomplete/exit 2.
 The retained generated profile, original checkpoint and bundle digest are
 unchanged. No real profile or credential was used.
+
+
+## Durable embedding owner generations (2026-11-03)
+
+Embedding jobs now identify a durable, random owner generation rather than a
+prefix of the owner's text hash. Encrypted profile-local metadata retains a
+random MAC key and per-owner generations; new vector content hashes are keyed.
+The seven canonical owner writes and deletion/cascade paths rotate generations
+on text or direct authority changes, including same-clock A to B to A and
+identical-ID recreation. Access scores, unrelated metadata and fresh encryption
+IVs retain the generation. A harmless metadata write during provider execution
+therefore no longer exhausts the current job's retries. Job lease, canonical
+text, keyed hash and current generation still gate atomic result publication.
+
+Core scheduling and scoring use that same generation. Session assignment,
+reactivated activity blocks and surviving aggregates after deletion enqueue the
+current generation. Ready vectors from a prior generation or legacy vectors
+without a generation are excluded from scoring; current local text remains the
+fallback. This slice covers direct owner authority, not transitive source/policy
+revocation or the remaining legacy fingerprint migration.
+
+Reserved generation metadata is strictly validated on profile export, snapshot
+validation and import, including version/shape and owner-key MAC binding to the
+copied secret. It is re-encrypted without changing logical values under an
+independent destination database key. Constructors and missing-owner reads do
+not create records in an empty staging database. Older unchanged snapshots
+without the new metadata remain valid. Source writes after a reviewed plan
+still require a fresh review; no checksum checks were weakened or projected away.
+
+The isolated implementation passed 2,519 tests in 299 files and all workspace
+typechecks. Independent review identified and reproduced three producer and
+in-flight lifecycle gaps; each has a regression test. Two full `pnpm verify`
+attempts passed audits, types, units, builds, extension helpers, browser benchmark,
+50 website cases and the preceding desktop flows, then failed an Electron
+hover-preview assertion. Fresh CUA showed an unlocked Mac for these failures.
+The preview depends on actual native focus and macOS pointer position; a
+browser-level pointer-setup experiment did not resolve it and was removed.
+No aggregate pass is claimed. Logs/receipts are retained in
+`.tmp/native-generation-aggregate/` and `.tmp/native-generation-aggregate2/`.
+All 19 commands after desktop-browser passed individually: the first setup run
+completed its assertions but hit ENOTEMPTY during generated-directory cleanup;
+its isolated retry passed. Receipts are `.tmp/native-generation-tail/receipt.json`
+and `.tmp/native-generation-setup-retry/receipt.json`. Generated tracked images
+were preserved and restored to their exact original hashes after every run.
+
+Final artifact
+`fbcdd3387e3d41cd96ab9d3fa99b53d90833a3a4861f185422d6f78a5dffc646`
+passed these current receipts, each with matching before/after bundle hashes:
+
+- `.tmp/native-generation-final-bundled-evidence/receipt.json`: four real bundled
+  Node/Core phases prove completed A to B to A produces a distinct job and new
+  current vector, keyed hashes and coherent encrypted/SQL job state, then retains
+  the current completed generation across restart and real memory retrieval.
+- `.tmp/native-generation-final-workflow-evidence/receipt.json`: all 26 native
+  product phases, including providers, companion task completion, workspace,
+  attachments, trusted form/link actions, isolated storage and downloads,
+  approval enforcement, crash recovery and full restart.
+- `.tmp/native-generation-final-transfer-evidence/receipt.json`: seven independent
+  key/transfer phases; `.tmp/native-generation-final-recovery-evidence/receipt.json`:
+  five process-death/recovery phases.
+- `.tmp/native-generation-final-backup-evidence/receipt.json`: sixteen app-data
+  backup and generated same-profile offline recovery phases.
+- `.tmp/native-generation-final-providers-evidence/receipt.json`: nine bundled
+  provider/Connections process phases.
+
+The preceding `79961d37...` artifact separately passed a real Cocoa folder grant
+and 20 native phases. Its operator selected only the generated workspace folder;
+fresh AX state and the inspected screenshot showed that project and Settings
+access entry. The current 26-phase run uses the pre-granted generated fixture;
+it does not reuse the earlier Cocoa interaction as current-hash physical proof.
+The repeatable packaged Core command is `pnpm test:native-embedding-generations`
+with `KESTREL_NATIVE_TEST_APP` selecting the candidate and optional
+`KESTREL_NATIVE_GENERATION_EVIDENCE` selecting a fresh evidence folder.
+
+The previously retained Store fixture is no longer present at its OS temporary
+path after the Mac restarted. Its old receipts/checkpoint remain preserved;
+a current compatibility resume failed before launch with ENOENT and proves no
+current Store behavior. The earlier official update query returned no_update,
+but neither a current retained-profile check nor a published upgrade is claimed
+on this final artifact. Durable test-profile retention and a fresh official
+Store baseline are required next. The canonical app remains the existing
+Electron installation (currently PID 1028); no real profile, credential,
+Keychain item, microphone or desktop-control permission was changed.

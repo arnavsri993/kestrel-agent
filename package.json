@@ -65,6 +65,7 @@
     "test:native-provider-connections-ui": "node scripts/smoke-native-provider-connections-ui.mjs",
     "test:native-chromium-core-relay": "node scripts/smoke-native-chromium-core-relay.mjs",
     "test:native-core-durability": "node scripts/smoke-native-core-durability.mjs",
+    "test:native-embedding-generations": "node scripts/smoke-native-embedding-generations.mjs",
 		"test:native-core-file-transfer": "node scripts/smoke-native-core-file-transfer.mjs",
 		"test:native-core-transfer-recovery": "node scripts/smoke-native-core-transfer-recovery.mjs",
 		"test:native-profile-transfer-ui": "node scripts/smoke-native-profile-transfer-ui.mjs",
