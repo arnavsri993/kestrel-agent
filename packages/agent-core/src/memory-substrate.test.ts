@@ -94,6 +94,18 @@ afterEach(() => {
 });
 
 describe("memory substrate", () => {
+	it.each(["domain", "file"] as const)("denies capture when a %s pattern exhausts its match budget", async scope => {
+		const state = fixture();
+		try {
+			state.substrate.upsertCapturePolicy({ id: "generated-complex-pattern", scope,
+				pattern: `*${"a".repeat(1_000)}b`, enabled: false });
+			const input = { eventType: "note" as const, source: "fixture", textSummary: "Generated bounded capture",
+				...(scope === "domain" ? { url: `https://${"a".repeat(4_000)}.invalid/` } : { filePath: "a".repeat(4_000) }) };
+			expect(state.substrate.captureActivity(input)).toBeUndefined();
+			expect(state.database.listTimelineEvents()).toEqual([]);
+		} finally { await state.close(); }
+	});
+
 	it.each(["connected-source", "private-session"] as const)("keeps transitive %s content out of local fallback and agent context", async restriction => {
 		const state = fixture();
 		try {
@@ -113,6 +125,8 @@ describe("memory substrate", () => {
 			else state.database.saveRuntimeSession({ ...sourceSession, privacyMode: "private" });
 			const result = state.substrate.queryTimeline(queryInput({ query: "authority", agentId: identity.id, includeSensitive: true, includeRestricted: true }));
 			expect(JSON.stringify(result)).not.toContain(text);
+			expect(JSON.stringify(state.substrate.listForSession(state.main.id))).not.toContain(text);
+			expect(JSON.stringify(state.substrate.searchForSession(state.main.id, "authority"))).not.toContain(text);
 			const context = state.substrate.getRelevantContext({ query: "authority", agentId: identity.id, includeSensitive: true, includeRestricted: true });
 			expect(JSON.stringify(context)).not.toContain(text);
 		} finally { await state.close(); }

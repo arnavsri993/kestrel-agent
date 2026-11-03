@@ -43,6 +43,8 @@ import {
 	type CapturePolicy,
 	CapturePolicySchema,
 	CaptureConfigurationSchema,
+	capturePatternMatches,
+	CapturePatternLimitError,
 	type DailySummary,
 	DailySummarySchema,
 	type EmbeddingRecord,
@@ -3521,13 +3523,12 @@ export class KestrelDatabase {
 			const pattern = policy.pattern.toLocaleLowerCase();
 			const glob = (value: unknown): boolean => {
 				if (typeof value !== "string" || !value) return false;
-				const escaped = pattern.replace(/[.+^${}()|[\]\\]/gu, "\\$&").replaceAll("*", ".*");
-				return new RegExp(`^${escaped}$`, "iu").test(value);
+				return capturePatternMatches(pattern, value);
 			};
 			switch (policy.scope) {
 				case "domain": {
 					try { const host = new URL(String(event.url)).hostname.toLocaleLowerCase(); return host === pattern || host.endsWith(`.${pattern}`) || glob(host); }
-					catch { return false; }
+					catch (error) { if (error instanceof CapturePatternLimitError) throw error; return false; }
 				}
 				case "tab": return glob(event.browserTabId);
 				case "file": return typeof event.filePath === "string" && (glob(event.filePath) || event.filePath.startsWith(policy.pattern));
@@ -3726,7 +3727,7 @@ export class KestrelDatabase {
 			}, ownerType, ownerId, { enforceCapture });
 			return { ...direct, authority: JSON.stringify([direct.authority, authority]) };
 		} catch (error) {
-			if (error instanceof EmbeddingAuthorityDenied) return undefined;
+			if (error instanceof EmbeddingAuthorityDenied || error instanceof CapturePatternLimitError) return undefined;
 			throw error;
 		}
 	}

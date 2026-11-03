@@ -10,6 +10,8 @@ import {
 	AgentMemoryRecordSchema,
 	CaptureConfigurationSchema,
 	CaptureStatusSchema,
+	capturePatternMatches,
+	CapturePatternLimitError,
 	DailySummarySchema,
 	EmbeddingRecordSchema,
 	EntityRecordSchema,
@@ -1418,7 +1420,8 @@ export class MemorySubstrate {
 	private memoriesVisibleTo(
 		identity: AgentIdentity,
 	): Array<MemoryRecord | AgentMemoryRecord> {
-		const owned = this.database.listAgentMemories(identity.id, { limit: 1_000 });
+		const owned = this.database.listAgentMemories(identity.id, { limit: 1_000 })
+			.filter(memory => this.database.hasMemoryOwnerSourceAuthority("agent_memory", memory.id));
 		if (this.isPrivateAgent(identity)) return owned;
 
 		// Keep the legacy records in the public/main compatibility surface, but
@@ -1430,7 +1433,10 @@ export class MemorySubstrate {
 			if (!memory.id.startsWith("agent-memory-")) return true;
 			return !legacyIds.has(memory.id.slice("agent-memory-".length));
 		});
-		return [...this.activeMemories(), ...supplemental];
+		return [
+			...this.activeMemories().filter(memory => this.database.hasMemoryOwnerSourceAuthority("memory", memory.id)),
+			...supplemental,
+		];
 	}
 
 	/**
@@ -1795,25 +1801,30 @@ export class MemorySubstrate {
 			const session = this.runtime?.listSessions().find((candidate) => candidate.id === input.sessionId);
 			if (session && !this.sessionAllowsMemory(session)) return false;
 		}
-		const matching = [...configuration.policies]
-			.sort((left, right) => timestampValue(right.updatedAt) - timestampValue(left.updatedAt))
-			.find((policy) => this.policyMatches(policy, input));
-		return matching ? matching.enabled : true;
+		try {
+			const matching = [...configuration.policies]
+				.sort((left, right) => timestampValue(right.updatedAt) - timestampValue(left.updatedAt))
+				.find((policy) => this.policyMatches(policy, input));
+			return matching ? matching.enabled : true;
+		} catch (error) {
+			if (error instanceof CapturePatternLimitError) return false;
+			throw error;
+		}
 	}
 
 	private policyMatches(policy: CapturePolicy, input: CaptureActivityInput): boolean {
 		const pattern = policy.pattern.toLocaleLowerCase();
 		const glob = (value: string | undefined) => {
 			if (!value) return false;
-			const escaped = pattern.replace(/[.+^${}()|[\]\\]/gu, "\\$&").replaceAll("*", ".*");
-			return new RegExp(`^${escaped}$`, "iu").test(value);
+			return capturePatternMatches(pattern, value);
 		};
 		switch (policy.scope) {
 			case "domain":
 				try {
 					const hostname = input.url ? new URL(input.url).hostname.toLocaleLowerCase() : "";
 					return hostname === pattern || hostname.endsWith(`.${pattern}`) || glob(hostname);
-				} catch {
+				} catch (error) {
+					if (error instanceof CapturePatternLimitError) throw error;
 					return false;
 				}
 			case "tab": return glob(input.browserTabId);

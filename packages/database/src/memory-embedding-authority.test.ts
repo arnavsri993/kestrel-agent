@@ -47,6 +47,17 @@ function claim(db: KestrelDatabase, type: C.EmbeddingRecord["ownerType"], id: st
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
 
 describe("transitive embedding authority", () => {
+	it.each(["domain", "file"] as const)("denies provider embedding when a %s policy cannot be matched within its budget", scope => {
+		const db = database();
+		const source = event(db, "generated-budget-source", scope === "domain"
+			? { url: `https://${"a".repeat(4_000)}.invalid/` } : { filePath: "a".repeat(4_000) });
+		expect(db.getMemoryEmbeddingInput("timeline_event", source.id)).toBeDefined();
+		db.upsertCapturePolicy(C.CapturePolicySchema.parse({ id: "generated-complex-pattern", scope,
+			pattern: `*${"a".repeat(1_000)}b`, enabled: false, createdAt: time, updatedAt: time }));
+		expect(db.getMemoryEmbeddingInput("timeline_event", source.id)).toBeUndefined();
+		expect(db.hasMemoryOwnerSourceAuthority("timeline_event", source.id)).toBe(true);
+	});
+
 	it("keeps constructors and missing-owner reads lazy", () => {
 		const db = database();
 		expect(db.getMemoryEmbeddingInput("memory", "missing")).toBeUndefined();
