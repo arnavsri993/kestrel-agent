@@ -2480,3 +2480,105 @@ that hook 45 seconds for the bounded discovery/compiler budgets plus setup.
 The compiler and per-case subprocess limits and all 23 assertions are unchanged.
 The exact fixture suite passed locally after the correction; this does not
 retroactively make the failed CI run green. A new CI run is required.
+
+
+### Transitive memory authority and native refresh recovery (2026-11-03)
+
+Embedding jobs, commits, cached vectors, timeline/context retrieval, scoped
+memory tools and the legacy workspace projection now resolve the same source
+authority graph. Runtime session/message ownership, agent ownership, provenance
+membership, source aliases, capture policy and source tombstones contribute
+versioned encrypted authority epochs. A same-clock revoke/regrant, removed and
+restored provenance edge, or deleted and recreated source cannot revive an old
+cached vector. Unknown opaque source labels do not become origin grants.
+The resolver fails closed on missing or forbidden edges, cycles, malformed
+reserved state, depth, node and byte budgets. Capture pause preserves permitted
+local history while denying new embedding work.
+
+Reserved generation and authority records retain strict version/shape/key-MAC
+validation during profile transfer. Constructors remain lazy; a source that
+changes after a reviewed plan requires a fresh plan. Snapshot checksums and
+source revalidation are unchanged. These checks cover represented source
+relationships; arbitrary artifact/structured-data strings and provider-specific
+network grants are not inferred into graph edges. Persisted legacy fingerprint
+migration remains separate work.
+
+Native packaged testing exposed a refresh scheduling gap after transitive
+invalidation. Maintenance now alternates bounded primary-key pages of cached
+vectors and retained jobs. Each slice considers at most eight records, resolves
+one authority graph per record, and yields cooperatively after 25 ms; one
+bounded graph may exceed that time slice. Retained jobs let a source restored
+before its first vector be rediscovered. Stale dispatch and rejected in-flight
+completion also queue the currently permitted generation. Existing dedupe,
+lease checks and exhausted-generation retry limits remain authoritative. No
+unretained owner is discovered through this scan, and denied/deleted owners
+remain ineligible. The database's direct refresh producer now honors the same
+exhausted-attempt guard.
+
+The capture-policy glob matcher treats only `*` as a wildcard and rejects an
+operation-budget overrun. Both capture ingress and embedding policy use that
+bounded matcher. The forget-command punctuation classifier is now a linear
+scan, including adversarial matching/nonmatching punctuation tests. Fresh
+CodeQL analysis is still required; no findings were suppressed or dismissed.
+
+Final source validation passed **2,573 tests in 302 files** and workspace
+typechecks. The preceding `c1787f00` source passed the complete `pnpm verify`
+command, including native helpers, browser/desktop workflows, audits, package
+CLI and security checks; this is a separate source boundary. A later simultaneous
+build/unit run exceeded the depth-fixture timeout and a regression's four-slice
+assumption. The regression now allows bounded maintenance progress independent
+of machine load; the final complete unit run passed without a native build
+competing for CPU. All privacy/budget assertions remain in place.
+
+The ad-hoc native candidate is
+`80fe38b16c7d0b7490e2adb86cb3337c8efffe7225b3f6207a3abe45d2c5a8b6`.
+Every following receipt has matching before/after candidate digests:
+
+- `native-authority-repaired-workflow-evidence/receipt.json`: **26** native
+  product phases, including real Core tasks, companion, workspace fixture,
+  attachments, trusted browser/form actions, isolated downloads, recovery and
+  full restart. The running Chromium window and existing Kestrel UI were
+  inspected through CUA; the completed companion conversation PNG was inspected.
+- `native-authority-repaired-bundled-evidence/receipt.json`: **4** real bundled
+  Node/Core source-authority phases. Generated records and one valid pending job
+  are seeded through source database APIs only while Core is stopped. The real
+  Core proves permitted retrieval/embedding, same-clock revoke/regrant replacing
+  completed work, private-source exclusion from timeline/tool/workspace, retained
+  encrypted user records, and capture-pause history. The sensitive memory tool
+  first proves its unapproved call blocked; protected-host approval is then
+  explicitly simulated for this generated fixture. This is not proof of a real
+  user approval interaction.
+- `native-authority-repaired-generations-evidence/receipt.json`: **4** completed
+  A/B/A generation, keyed-hash, restart and retrieval phases.
+- `native-authority-repaired-transfer-evidence/receipt.json`: **7** independent
+  key file-transfer phases; `native-authority-repaired-recovery-evidence/receipt.json`:
+  **5** actual process-death/reviewed-recovery phases.
+- `native-authority-repaired-backup-evidence/receipt.json`: **16** bundled Core
+  app-data backup and generated offline recovery phases.
+- `native-authority-repaired-connections-evidence/receipt.json`: **9** bundled
+  provider/Connections phases with generated helper/loopback fixtures.
+- `native-authority-repaired-store-compatibility-evidence/receipt.json`: **5**
+  retained normal official Store extension/function/tab-isolation/restart phases.
+  No update query, reinstall, forced version or version-upgrade claim is involved.
+  The fresh official Store baseline and native permission prompts were separately
+  proven on `fbcdd3387e3d41cd96ab9d3fa99b53d90833a3a4861f185422d6f78a5dffc646`
+  by `native-generation-store-reseed2-evidence/receipt.json`. Its private generated
+  profile archive was extracted and compared file-for-file, mode-for-mode;
+  application restoration from that archive remains untested.
+
+Receipt paths above are under `.tmp/`; commands are
+`test:native-memory-authority`, `test:native-embedding-generations`,
+`smoke-chromium-desktop.mjs`, `smoke-native-core-file-transfer.mjs`,
+`smoke-native-core-transfer-recovery.mjs`, `smoke-native-local-backup.mjs`,
+`smoke-native-provider-connections.mjs` and compatibility-only
+`resume-native-store-update.mjs`, each with an exact candidate and fresh evidence
+directory. Earlier failed fixture attempts are preserved separately.
+
+The canonical `/Applications/Kestrel.app` remains the existing Electron app.
+No real profile, credentials, vendor login, Keychain item, microphone or desktop
+control permission changed in this verification. Whole Chromium-profile backup,
+legacy identifier migration, older/large/interrupted-profile acceptance,
+real-profile/browser/credential acceptance, native Messages/login-code insertion,
+a published Store version upgrade, production identity/signing/notarization and
+canonical cutover remain release work. The absence of an Apple Developer account
+is unchanged. This candidate is not a signed/notarized release.
