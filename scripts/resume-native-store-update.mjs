@@ -10,6 +10,7 @@ import { loadRetainedStoreUpdateFixture } from "./native-store-update-profile.mj
 
 assert(process.env.KESTREL_NATIVE_TEST_APP, "Select the exact native candidate.");
 assert(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT, "Select an existing generated Store checkpoint.");
+const compatibilityOnly = process.env.KESTREL_NATIVE_STORE_COMPATIBILITY_ONLY === "1";
 const app = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
 assert.notEqual(app, await realpath("/Applications/Kestrel.app").catch(() => "/Applications/Kestrel.app"));
 const evidence = resolve(process.env.KESTREL_NATIVE_STORE_RESUME_EVIDENCE || `.tmp/native-store-resume-${Date.now()}`);
@@ -24,6 +25,7 @@ const ids = [formatter, action];
 const extensionId = [...createHash("sha256").update(join(profile, "kestrel-ui-bundle")).digest("hex").slice(0, 32)].map(digit => "abcdefghijklmnop"[parseInt(digit, 16)]).join("");
 const homeUrl = `chrome-extension://${extensionId}/index.html`;
 const receipt = { kind: "native-store-update-resume", version: 1, startedAt: new Date().toISOString(), candidate: app,
+  mode: compatibilityOnly ? "compatibility-only" : "update-acceptance", updateQueryRequested: false,
   candidateSha256: await candidateDigest(app), fixture: { checkpoint: resolve(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT), receiptSha256: fixture.receiptSha256, originalCandidateSha256: fixture.candidateSha256 },
   scope: "Retained generated normal Store installations and test keys only. No new installation, forced version edits, real profile, Keychain, credentials or desktop capture/input.", phases: [] };
 let running, browser, home, actionDocumentId, actionDocumentUrl, interrupted = false, stage = "read-prelaunch-versions";
@@ -182,20 +184,24 @@ try {
   const sessions = await start(); receipt.initialSessionCount = sessions.length; receipt.initial = await provenance();
   phase("current-candidate-opens-retained-normal-Store-profile-and-Core");
   await functionalProbe("retained-formatter-function-and-extension-owned-tab-isolation");
-  stage = "official-update-check";
-  const extension = await actionContext();
-  receipt.updateCheck = await extension.evaluate(() => new Promise(resolveCheck => {
-    const timer = setTimeout(() => resolveCheck({ status: "timeout" }), 30000);
-    chrome.runtime.requestUpdateCheck((status, details) => { clearTimeout(timer); resolveCheck({ status, reportedVersion: details?.version ?? null }); });
-  }));
-  receipt.updateCheck.checkSucceeded = ["no_update", "update_available"].includes(receipt.updateCheck.status);
-  if (receipt.updateCheck.status === "update_available") {
-    assert(typeof receipt.updateCheck.reportedVersion === "string" && /^\d+(?:\.\d+){0,3}$/.test(receipt.updateCheck.reportedVersion));
-    await eventually(async () => (await provenance())[action].version === receipt.updateCheck.reportedVersion, "Reported Store update did not become active.", 180000);
+  receipt.updateCheck = { status: "not_requested", reportedVersion: null, checkSucceeded: false };
+  if (!compatibilityOnly) {
+    stage = "official-update-check";
+    const extension = await actionContext();
+    receipt.updateQueryRequested = true;
+    receipt.updateCheck = await extension.evaluate(() => new Promise(resolveCheck => {
+      const timer = setTimeout(() => resolveCheck({ status: "timeout" }), 30000);
+      chrome.runtime.requestUpdateCheck((status, details) => { clearTimeout(timer); resolveCheck({ status, reportedVersion: details?.version ?? null }); });
+    }));
+    receipt.updateCheck.checkSucceeded = ["no_update", "update_available"].includes(receipt.updateCheck.status);
+    if (receipt.updateCheck.status === "update_available") {
+      assert(typeof receipt.updateCheck.reportedVersion === "string" && /^\d+(?:\.\d+){0,3}$/.test(receipt.updateCheck.reportedVersion));
+      await eventually(async () => (await provenance())[action].version === receipt.updateCheck.reportedVersion, "Reported Store update did not become active.", 180000);
+    }
   }
   receipt.afterCheck = await provenance();
   receipt.observedVersionUpgrade = ids.some(id => newer(receipt.afterCheck[id].version, receipt.diskVersionsBefore[id]));
-  phase("existing-normal-Store-installations-preserved-after-update-request");
+  phase(compatibilityOnly ? "existing-normal-Store-installations-preserved-without-update-query" : "existing-normal-Store-installations-preserved-after-update-request");
   await stop();
   const restartedSessions = await start();
   receipt.restartedSessionCount = restartedSessions.length;
@@ -206,9 +212,15 @@ try {
   await functionalProbe("retained-formatter-function-after-clean-restart", false);
   await stop(); phase("retained-Core-and-normal-Store-versions-survive-clean-restart");
   stage = "official-update-check-result";
-  assert(receipt.updateCheck.checkSucceeded, "The official extension update query did not succeed.");
-  receipt.result = receipt.observedVersionUpgrade ? "passed" : "incomplete";
-  if (receipt.result === "incomplete") { receipt.missing = ["actual-published-Store-version-upgrade"]; process.exitCode = 2; }
+  if (!compatibilityOnly) assert(receipt.updateCheck.checkSucceeded, "The official extension update query did not succeed.");
+  // A compatibility-only run cannot certify upgrade acceptance, even if an
+  // automatic version change happens while the retained profile is open.
+  receipt.result = !compatibilityOnly && receipt.observedVersionUpgrade ? "passed" : "incomplete";
+  if (receipt.result === "incomplete") {
+    receipt.missing = [...(compatibilityOnly ? ["official-Store-update-query-not-requested"] : []),
+      ...(receipt.observedVersionUpgrade ? [] : ["actual-published-Store-version-upgrade"])];
+    process.exitCode = 2;
+  }
 } catch (error) {
   receipt.result = "failed"; receipt.failedStage = stage; receipt.error = interrupted ? "UI_CANARY_INTERRUPTED" : "Retained Store check failed at its recorded phase."; process.exitCode = 1;
   if (running) receipt.nativeState = { exitCode: running.child.exitCode, signal: running.child.signalCode,

@@ -1541,6 +1541,13 @@ KESTREL_NATIVE_STORE_RESUME_EVIDENCE=/absolute/path/to/new-evidence \
 pnpm_config_verify_deps_before_run=false corepack pnpm test:native-store-update-resume
 ```
 
+Set `KESTREL_NATIVE_STORE_COMPATIBILITY_ONLY=1` to exercise retained official
+installations without issuing another Store update query. This still checks
+extension functionality, native same-window tab adoption, bridge isolation and
+restart persistence. Its receipt records the skipped query and always remains
+`incomplete` with exit code 2, even if a version change happens automatically.
+It cannot certify upgrade acceptance. Omit the flag for the normal update flow.
+
 Bundle `1533c596a3564b0d70893f29b96245edaf5d5f4f49f15b58c866cc441c8a16e1`
 passed all five compatibility phases against the retained Store profile from
 bundle `06e3babd66a2d540ca8527ce7ea4e8a4ca67ec304fc1b9d24a1b25761bc1fae4`.
@@ -2096,3 +2103,53 @@ transitive source-policy revocation/regrant, legacy fingerprint migration and
 versioned transfer/recovery remain unfinished. The five remote CodeQL findings
 are not declared cleared. Current native close/reopen acceptance still awaits
 unlock, and the canonical Electron installation remains preserved.
+
+## Current bundle verification and retained Store compatibility (2026-11-03)
+
+Full `pnpm verify` passed against the published `cab99a65` application changes:
+audits, production dependencies, types, all 2,370 tests, builds, native extension
+compatibility helpers, browser benchmark, 50 website E2E cases, desktop flows,
+packaged CLI, editor integration and production secret scanning. Strict
+extension-retirement criteria remain separate from the compatibility helpers.
+Log: `.tmp/native-embedding-result-aggregate-verify.log`. Eight generated tracked
+screenshots were preserved under
+`.tmp/native-embedding-result-aggregate-images-after/`, then restored to their
+exact pre-run baselines from
+`.tmp/native-embedding-result-aggregate-images-before/`.
+
+The aggregate rebuilds the native host. Its resulting bundle digest differs
+from the earlier `0268e294…` artifact:
+`69dd83ca7e4bb5d9775fe5e92e921877a5d0257acc8dc45839f3439a4e3bf246`.
+That exact resulting bundle was checked again:
+
+- 23 complete native workflow phases:
+  `.tmp/native-embedding-result-post-verify-workflow-evidence/receipt.json`.
+- Eight actual bundled-Core phases, including 12 retained completed maintenance
+  jobs and seven owner-bound local vectors:
+  `.tmp/native-embedding-result-post-verify-bundled-evidence/receipt.json`.
+- 24 native workflow phases including an actual last-window close/reopen:
+  `.tmp/native-current-window-lifecycle-evidence/receipt.json`. The Mac became
+  accessible, the native close control was exercised and Home reopened with the
+  same three Core processes. The earlier locked attempt remains a failed run.
+- Five retained official Store compatibility phases:
+  `.tmp/native-store-current-compatibility-evidence/receipt.json`. Official
+  JSON Formatter `0.10.2` and uBO Lite `2026.1026.1812` remained enabled normal
+  installations. The official extension created a tab in Kestrel's native
+  window, formatted JSON had no privileged bridge, and formatting, both versions
+  and every original Core session survived restart. The formatted JSON capture
+  was visually inspected.
+
+All four receipts retain the same before/after bundle digest. The Store run used
+the new compatibility-only mode: no update query or reinstall, no observed
+version upgrade, deliberately `incomplete`/exit 2. Original checkpoint and
+receipt were preserved; the generated Store profile remains available for a
+future published upgrade. Syntax and all 23 retained-profile/retirement tests
+passed for the harness change. Default update behavior and strict retirement
+validation are unchanged.
+
+The canonical `/Applications/Kestrel.app` remains the existing Electron app.
+Current source/application verification and current Store compatibility are
+proven separately from canonical cutover, existing-profile/vendor-login
+acceptance, privacy migration, production signing and the still-unobserved
+published Store upgrade. No new microphone capture, desktop-control permission,
+real Keychain access or real-profile mutation was performed.
