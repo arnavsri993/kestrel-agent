@@ -22,6 +22,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "kestrel_profile_reservation.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
@@ -635,6 +636,15 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   char resolved[PATH_MAX]{};
   if (!realpath(requested.fileSystemRepresentation, resolved)) return 1;
   NSString* profile = [NSString stringWithUTF8String:resolved];
+  // Reserve the canonical path outside the profile tree before any Core,
+  // Keychain or Chromium owner starts. Keep the existing in-tree lock too:
+  // older native builds do not know about the external reservation.
+  kestrel::ProfileReservationError reservation_error;
+  auto profile_reservation = kestrel::ProfileReservation::Acquire(resolved, &reservation_error);
+  if (!profile_reservation) {
+    std::cerr << "This native Kestrel profile is already in use or unavailable." << std::endl;
+    return 1;
+  }
   const std::string lock_path = std::string(resolved) + "/.kestrel-desktop.lock";
   const int lock_fd = open(lock_path.c_str(), O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC, 0600);
   struct stat lock_stat{};
