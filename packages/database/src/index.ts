@@ -3302,7 +3302,20 @@ export class KestrelDatabase {
 				parseReservedEmbeddingState(EMBEDDING_LEGACY_MIGRATION_KEY, stored) as EmbeddingLegacyMigration;
 			if (checkpoint.phase === "complete") return { phase: checkpoint.phase, processed: 0, blocked: false, done: true };
 			const table = checkpoint.phase === "jobs" ? "memory_jobs" : "memory_embeddings";
-			const rows = this.db.prepare(`SELECT * FROM ${table} WHERE id > ? ORDER BY id LIMIT ?`).all(checkpoint.afterId, limit) as MemorySubstrateRow[];
+			// Inspect only byte lengths before loading or decrypting any page payload.
+			const sizes = this.db.prepare(`SELECT id, length(CAST(payload_ciphertext AS BLOB)) AS bytes,
+				length(CAST(payload_iv AS BLOB)) AS iv_bytes, length(CAST(payload_auth_tag AS BLOB)) AS tag_bytes
+				FROM ${table} WHERE id > ? ORDER BY id LIMIT ?`).all(checkpoint.afterId, limit) as Array<{ id: string; bytes: number; iv_bytes: number; tag_bytes: number }>;
+			let pageBytes = 0;
+			for (const size of sizes) {
+				const fields = [size.bytes, size.iv_bytes, size.tag_bytes];
+				if (fields.some(value => !Number.isSafeInteger(value) || value < 0)) throw new Error("Invalid legacy embedding payload size.");
+				const bytes = fields.reduce((sum, value) => sum + value, 0);
+				pageBytes += bytes;
+				if (bytes > 4_000_000 || pageBytes > 8_000_000) throw new Error("Legacy embedding migration page exceeds its byte limit.");
+			}
+			const fetchRow = this.db.prepare(`SELECT * FROM ${table} WHERE id = ?`);
+			const rows = sizes.map(({ id }) => fetchRow.get(id) as MemorySubstrateRow);
 			let afterId = checkpoint.afterId;
 			let processed = 0;
 			let blocked = false;
@@ -3312,6 +3325,7 @@ export class KestrelDatabase {
 					const job = this.decodeMemoryJob(row);
 					if (job.kind === "embed" && job.payload.generation === undefined && !(job.payload.legacyIdentifierMigration !== undefined &&
 						/^legacy-retired-job-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(job.id) && /^legacy-embedding-opaque:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(job.dedupeKey))) {
+						// A missing lease expiry is ambiguous and requires manual recovery.
 						if (job.status === "running" && (!job.leaseUntil || Date.parse(job.leaseUntil) > Date.parse(now))) { blocked = true; break; }
 						const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
 						const ownerId = job.payload.ownerId;

@@ -62,6 +62,39 @@ describe("explicit legacy embedding identifier migration", () => {
    expect(() => applyHostProfileFileTransfer({ plan, sourceKey, destinationKey, acceptedPlanSha256: plan.planSha256 })).toThrow(/changed after review/i);
   } finally { try { db.close(); } catch {} rmSync(dir, { recursive: true, force: true }); }
  });
+ it.each(["memory_jobs", "memory_embeddings"] as const)("rejects oversized %s ciphertext before loading the page and leaves its checkpoint unchanged", table => {
+  const db = new KestrelDatabase(":memory:", createEncryptionKey());
+  try {
+   if (table === "memory_jobs") legacy(db, "a", "x");
+   else {
+    db.upsertMemoryEmbedding({ id: "a", ownerType: "memory", ownerId: "x", provider: "fixture", model: "fixture", dimension: 1, contentHash: "a".repeat(64), vector: [1], status: "ready", createdAt: now, updatedAt: now });
+    db.migrateLegacyMemoryEmbeddingIdentifiers(now, 8);
+   }
+   const before = db.getPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY);
+   db.db.prepare(`UPDATE ${table} SET payload_ciphertext=zeroblob(4000001) WHERE id='a'`).run();
+   expect(() => db.migrateLegacyMemoryEmbeddingIdentifiers(now, 8)).toThrow(/byte limit/);
+   expect(db.getPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY)).toEqual(before);
+  } finally { db.close(); }
+ });
+ it("rejects a page whose combined ciphertext exceeds the total byte budget", () => {
+  const db = new KestrelDatabase(":memory:", createEncryptionKey());
+  try {
+   for (const id of ["a", "b", "c"]) legacy(db, id, id);
+   db.db.prepare("UPDATE memory_jobs SET payload_ciphertext=zeroblob(2700000)").run();
+   expect(() => db.migrateLegacyMemoryEmbeddingIdentifiers(now, 8)).toThrow(/byte limit/);
+   expect(db.getPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY)).toBeUndefined();
+  } finally { db.close(); }
+ });
+ it("blocks an active legacy job with no expiry for manual recovery", () => {
+  const db = new KestrelDatabase(":memory:", createEncryptionKey());
+  try {
+   legacy(db, "a", "x", "running");
+   const job = db.getMemoryJob("a")!;
+   db.queueMemoryJob({ ...job, leaseUntil: undefined });
+   expect(db.migrateLegacyMemoryEmbeddingIdentifiers(now, 8)).toMatchObject({ blocked: true, processed: 0 });
+   expect(db.getMemoryJob("a")?.status).toBe("running");
+  } finally { db.close(); }
+ });
  it("blocks at an active lease without moving past it", () => {
   const db = new KestrelDatabase(":memory:", createEncryptionKey());
   try { owner(db, "x"); legacy(db, "a", "x", "running");
