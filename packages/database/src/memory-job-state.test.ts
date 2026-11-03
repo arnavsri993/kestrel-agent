@@ -77,10 +77,12 @@ describe("memory job transition persistence", () => {
 		});
 		expectCoherent(database, key, claimed);
 		expect(database.claimMemoryJob(timestamp)).toBeUndefined();
-		expect(database.completeMemoryJob(claimed.id, later)).toBe(true);
+		const completedAt = "2026-11-02T12:00:05.000Z";
+		expect(database.completeMemoryJob(claimed.id, completedAt, claimed.leaseToken)).toBe(true);
 		const completed = database.getMemoryJob(claimed.id)!;
-		expect(completed).toMatchObject({ status: "completed", attempts: 1, updatedAt: later });
+		expect(completed).toMatchObject({ status: "completed", attempts: 1, updatedAt: completedAt });
 		expect(completed.lockedAt).toBeUndefined();
+		expect(completed.leaseToken).toBeUndefined();
 		expectCoherent(database, key, completed);
 		const reopened = new KestrelDatabase(path, key);
 		opened.push(reopened);
@@ -92,13 +94,17 @@ describe("memory job transition persistence", () => {
 	it("retries only when due and stops at the actual attempt limit", () => {
 		const { database, key } = fixture();
 		database.queueMemoryJob(job());
-		expect(database.claimMemoryJob(timestamp)?.attempts).toBe(1);
-		const retry = database.failMemoryJob("generated-job", "generated failure", timestamp, 10_000)!;
+		const firstClaim = database.claimMemoryJob(timestamp)!;
+		expect(firstClaim.attempts).toBe(1);
+		const retry = database.failMemoryJob("generated-job", "generated failure", timestamp, 10_000, firstClaim.leaseToken)!;
 		expect(retry).toMatchObject({ status: "pending", attempts: 1, runAfter: "2026-11-02T12:00:10.000Z" });
 		expectCoherent(database, key, retry);
+		expect(retry.leaseToken).toBeUndefined();
 		expect(database.claimMemoryJob(timestamp)).toBeUndefined();
-		expect(database.claimMemoryJob(retry.runAfter)?.attempts).toBe(2);
-		const failed = database.failMemoryJob(retry.id, "x".repeat(10_001), later)!;
+		const secondClaim = database.claimMemoryJob(retry.runAfter)!;
+		expect(secondClaim.attempts).toBe(2);
+		expect(secondClaim.leaseToken).not.toBe(firstClaim.leaseToken);
+		const failed = database.failMemoryJob(retry.id, "x".repeat(10_001), later, 30_000, secondClaim.leaseToken)!;
 		expect(failed.status).toBe("failed");
 		expect(failed.lastError).toHaveLength(10_000);
 		expectCoherent(database, key, failed);
@@ -137,8 +143,31 @@ describe("memory job transition persistence", () => {
 		expect(database.getMemoryJobByDedupeKey(legacy.dedupeKey)).toEqual(legacy);
 		expect(database.listMemoryJobs({ status: "running" })).toEqual([legacy]);
 		expect(row(database)).toEqual(before);
-		expect(database.completeMemoryJob(legacy.id, later)).toBe(true);
+		expect(database.completeMemoryJob(legacy.id, "2026-11-02T12:00:30.000Z")).toBe(true);
 		expectCoherent(database, key, database.getMemoryJob(legacy.id)!);
+	});
+
+	it("fences an expired worker from completing or failing a newer claim through another connection", () => {
+		const { database, key, path } = fixture(true);
+		const second = new KestrelDatabase(path, key);
+		opened.push(second);
+		database.queueMemoryJob(job({ maxAttempts: 3 }));
+		const firstClaim = database.claimMemoryJob(timestamp, 5_000)!;
+		expect(firstClaim.leaseToken).toMatch(/^[a-f0-9-]{36}$/);
+		const expiredAt = firstClaim.leaseUntil!;
+		expect(database.completeMemoryJob(firstClaim.id, expiredAt, firstClaim.leaseToken)).toBe(false);
+		expect(database.failMemoryJob(firstClaim.id, "expired", expiredAt, 1_000, firstClaim.leaseToken)).toBeUndefined();
+		const secondClaim = second.claimMemoryJob(expiredAt, 5_000)!;
+		expect(secondClaim.leaseToken).not.toBe(firstClaim.leaseToken);
+		expect(secondClaim.attempts).toBe(2);
+		const before = row(database);
+		for (const staleToken of [undefined, firstClaim.leaseToken, "00000000-0000-4000-8000-000000000000"]) {
+			expect(database.completeMemoryJob(firstClaim.id, expiredAt, staleToken)).toBe(false);
+			expect(database.failMemoryJob(firstClaim.id, "stale worker", expiredAt, 1_000, staleToken)).toBeUndefined();
+			expect(row(database)).toEqual(before);
+		}
+		expect(second.completeMemoryJob(secondClaim.id, expiredAt, secondClaim.leaseToken)).toBe(true);
+		expectCoherent(database, key, database.getMemoryJob(secondClaim.id)!);
 	});
 
 	it("retains explicit queue updates, including retry policy changes", () => {

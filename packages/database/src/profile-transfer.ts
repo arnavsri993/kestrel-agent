@@ -507,9 +507,9 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 				const job = MemoryJobSchema.parse(rawJob);
 				if (job.id !== values.id || job.status !== values.status) fail("Profile transfer found inconsistent memory job metadata.");
 				if (values.status === "running") {
-				job.status = "cancelled"; delete job.lockedAt; delete job.leaseUntil;
+				job.status = "cancelled"; delete job.lockedAt; delete job.leaseUntil; delete job.leaseToken;
 				job.lastError ??= "Cancelled by explicit profile transfer; job will not be resumed automatically.";
-				delete rawJob.lockedAt; delete rawJob.leaseUntil;
+				delete rawJob.lockedAt; delete rawJob.leaseUntil; delete rawJob.leaseToken;
 				cleartext.payload_ciphertext = JSON.stringify({ ...rawJob, ...MemoryJobSchema.parse(job) });
 				values.status = "cancelled"; values.locked_at = null; values.lease_until = null;
 				values.last_error = job.lastError as string;

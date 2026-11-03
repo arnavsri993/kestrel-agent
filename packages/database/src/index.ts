@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { decryptText, encryptText } from "@kestrel/encryption";
@@ -3238,7 +3238,7 @@ export class KestrelDatabase {
 				if (!expired.length) break;
 				for (const row of expired) this.queueMemoryJob({
 					...this.decodeMemoryJob(row), status: "pending",
-					lockedAt: undefined, leaseUntil: undefined, updatedAt: now,
+					lockedAt: undefined, leaseUntil: undefined, leaseToken: undefined, updatedAt: now,
 				});
 			}
 			for (;;) {
@@ -3249,7 +3249,7 @@ export class KestrelDatabase {
 				if (!exhausted.length) break;
 				for (const row of exhausted) this.queueMemoryJob({
 					...this.decodeMemoryJob(row), status: "failed",
-					lastError: "Maximum retry attempts exceeded", updatedAt: now,
+					leaseToken: undefined, lastError: "Maximum retry attempts exceeded", updatedAt: now,
 				});
 			}
 			const row = this.db.prepare(`SELECT * FROM memory_jobs WHERE status='pending' AND run_after <= ?
@@ -3257,31 +3257,37 @@ export class KestrelDatabase {
 			if (!row) return undefined;
 			const current = this.decodeMemoryJob(row);
 			return this.queueMemoryJob({ ...current, status: "running", attempts: current.attempts + 1,
-				lockedAt: now, leaseUntil, updatedAt: now });
+				lockedAt: now, leaseUntil, leaseToken: randomUUID(), updatedAt: now });
 		})();
 	}
 
-	completeMemoryJob(id: string, now = new Date().toISOString()): boolean {
+	completeMemoryJob(id: string, now = new Date().toISOString(), leaseToken?: string): boolean {
+		MemoryJobSchema.shape.updatedAt.parse(now);
 		return this.db.transaction(() => {
 			const current = this.getMemoryJob(id);
-			if (!current || current.status !== "running") return false;
-			this.queueMemoryJob({ ...current, status: "completed", lockedAt: undefined, leaseUntil: undefined, lastError: undefined, updatedAt: now });
+			if (!current || !this.memoryJobLeaseIsCurrent(current, now, leaseToken)) return false;
+			this.queueMemoryJob({ ...current, status: "completed", lockedAt: undefined, leaseUntil: undefined, leaseToken: undefined, lastError: undefined, updatedAt: now });
 			return true;
 		})();
 	}
 
-	failMemoryJob(id: string, error: string, now = new Date().toISOString(), retryAfterMs = 30_000): MemoryJob | undefined {
+	failMemoryJob(id: string, error: string, now = new Date().toISOString(), retryAfterMs = 30_000, leaseToken?: string): MemoryJob | undefined {
 		MemoryJobSchema.shape.updatedAt.parse(now);
 		if (!Number.isFinite(retryAfterMs)) throw new Error("Memory job retry delay is invalid.");
 		return this.db.transaction(() => {
 			const current = this.getMemoryJob(id);
-			if (!current || current.status !== "running") return undefined;
+			if (!current || !this.memoryJobLeaseIsCurrent(current, now, leaseToken)) return undefined;
 			const retry = current.attempts < current.maxAttempts;
 			const next = MemoryJobSchema.parse({ ...current, status: retry ? "pending" : "failed",
 				...(retry ? { runAfter: new Date(Date.parse(now) + Math.max(1_000, retryAfterMs)).toISOString() } : {}),
-				lockedAt: undefined, leaseUntil: undefined, lastError: error.slice(0, 10_000), updatedAt: now });
+				lockedAt: undefined, leaseUntil: undefined, leaseToken: undefined, lastError: error.slice(0, 10_000), updatedAt: now });
 			return this.queueMemoryJob(next);
 		})();
+	}
+
+	private memoryJobLeaseIsCurrent(job: MemoryJob, now: string, leaseToken?: string): boolean {
+		return job.status === "running" && job.leaseToken === leaseToken &&
+			(job.leaseUntil === undefined || Date.parse(job.leaseUntil) > Date.parse(now));
 	}
 
 	upsertMemoryEmbedding(embedding: EmbeddingRecord): void {

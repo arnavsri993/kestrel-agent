@@ -450,6 +450,7 @@ export const MemoryJobSchema = z.object({
 	runAfter: z.string().datetime(),
 	lockedAt: z.string().datetime().optional(),
 	leaseUntil: z.string().datetime().optional(),
+	leaseToken: z.string().uuid().optional(),
 	lastError: z.string().max(10_000).optional(),
 	createdAt: z.string().datetime(),
 	updatedAt: z.string().datetime(),

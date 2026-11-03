@@ -288,7 +288,8 @@ it("retires live runs, input journals, linked receipts, working tasks and job le
    outcome: status === "running" ? "in_progress" : "waiting_approval", approval: { required: true, result: "pending" } });
  }
  source.saveAgentRun(Contracts.AgentRunSchema.parse({ id: "live-run", sessionId: "session-transfer", model: "fixture", providerIds: ["fixture"], status: "waiting_approval", turn: 1, error: "Generated previous run diagnostic", pendingToolExecutionId: "live-blocked", pendingProviderToolCallId: "pending-call", pendingToolName: "test.generated-action", createdAt: timestamp, updatedAt: timestamp }));
- source.queueMemoryJob({ ...source.getMemoryJob("job-transfer")!, status: "running", lastError: "Generated previous job diagnostic", lockedAt: timestamp, leaseUntil: "2026-10-01T13:00:00.000Z" });
+ const sourceLeaseToken = "00000000-0000-4000-8000-000000000001";
+ source.queueMemoryJob({ ...source.getMemoryJob("job-transfer")!, status: "running", lastError: "Generated previous job diagnostic", lockedAt: timestamp, leaseUntil: "2026-10-01T13:00:00.000Z", leaseToken: sourceLeaseToken });
  source.upsertWorkingTask({ ...source.getWorkingTask("task-transfer")!, status: "running", outcomeSummary: "Generated partial task progress" });
  const snapshot = source.exportHostProfileTransferSnapshot();
  expect(snapshot.excluded).toMatchObject({ idempotencyClaims: 1, activeAgentRunsCancelled: 1, activeToolExecutionsRetired: 2, runningMemoryJobsCancelled: 1, activeWorkingTasksCancelled: 1 });
@@ -302,6 +303,7 @@ it("retires live runs, input journals, linked receipts, working tasks and job le
  expect(target.listAgentRuns("session-transfer")[0]?.pendingToolExecutionId).toBeUndefined();
  expect(target.getMemoryJob("job-transfer")).toMatchObject({ status: "cancelled" });
  expect(target.getMemoryJob("job-transfer")?.leaseUntil).toBeUndefined();
+ expect(target.getMemoryJob("job-transfer")?.leaseToken).toBeUndefined();
  expect(target.getMemoryJob("job-transfer")?.lastError).toBe("Generated previous job diagnostic");
  expect(target.listAgentRuns("session-transfer")[0]?.error).toContain("Generated previous run diagnostic");
  expect(target.getToolExecution("live-running")?.error).toContain("Generated previous tool diagnostic");
@@ -309,6 +311,7 @@ it("retires live runs, input journals, linked receipts, working tasks and job le
  expect(target.getWorkingTask("task-transfer")).toMatchObject({ status: "cancelled" });
  expect(source.getToolExecution("live-running")?.status).toBe("running");
  expect(source.getMemoryJob("job-transfer")?.status).toBe("running");
+ expect(source.getMemoryJob("job-transfer")?.leaseToken).toBe(sourceLeaseToken);
  expect(target.exportHostProfileTransferSnapshot().semanticSha256).toBe(snapshot.semanticSha256);
 });
 

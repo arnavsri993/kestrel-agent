@@ -1717,17 +1717,18 @@ export class MemorySubstrate {
 				else if (job.kind === "embed") await this.processEmbeddingJob(job);
 				else if (job.kind === "decay") memoriesChanged += this.decay();
 				else if (job.kind === "cleanup") deletedArtifacts += this.cleanupExpired();
-				this.database.completeMemoryJob(job.id, this.now().toISOString());
-				jobsCompleted += 1;
+				if (this.database.completeMemoryJob(job.id, this.now().toISOString(), job.leaseToken))
+					jobsCompleted += 1;
 			} catch (error) {
 				const retried = this.database.failMemoryJob(
 					job.id,
 					error instanceof Error ? error.message : "Memory job failed.",
 					this.now().toISOString(),
 					Math.min(5 * 60_000, 2 ** job.attempts * 5_000),
+					job.leaseToken,
 				);
 				if (retried?.status === "pending") jobsRetried += 1;
-				else jobsFailed += 1;
+				else if (retried) jobsFailed += 1;
 			}
 		}
 		return MemoryMaintenanceResultSchema.parse({

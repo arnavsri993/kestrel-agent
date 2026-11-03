@@ -2003,3 +2003,51 @@ passed. Reports: `.tmp/native-ci-delayed-login-before.json`,
 `.tmp/native-ci-login-full-benchmark.json`. This change affects benchmark data,
 not app runtime code; the native bundle remains `16709dfc…`. Exact new-head
 remote CI is still required.
+
+## Memory-job lease authority (2026-11-02)
+
+Every new claim now receives a fresh UUID stored only in its encrypted job
+payload. Completion and failure require that exact claim token and an unexpired
+lease. Reclaim, retry, exhaustion and completion clear retired authority. A
+second connection can reclaim an expired job without allowing the previous
+worker to complete or fail its replacement. Maintenance counts only successful
+state transitions, and profile transfer clears the token while cancelling a
+running job; the source remains unchanged. Legacy jobs without tokens retain
+their read compatibility until a new claim supplies one.
+
+All 2,343 tests in 290 files, workspace typechecking and the native rebuild
+passed. New coverage exercises expiration, missing/wrong/old tokens and two
+database connections; the transfer case checks source authority is preserved
+and destination authority retired. Current bundle digest:
+`214f83092cc0a765cb9a02436d4354cdc88b65b7f4636bbad3d58fe951807810`.
+It passed 23 native workflow phases, seven actual bundled-Core phases
+(including 12 completed maintenance jobs retained after restart), seven
+packaged transfer phases and five process-death/recovery phases. Receipts:
+
+- `.tmp/native-memory-job-fencing-workflow-complete-evidence/receipt.json`
+- `.tmp/native-memory-job-fencing-bundled-evidence/receipt.json`
+- `.tmp/native-memory-job-fencing-transfer-evidence/receipt.json`
+- `.tmp/native-memory-job-fencing-transfer-recovery-evidence/receipt.json`
+
+All four receipts retain the same before/after digest. The generated provider
+conversation screenshot matches the previously inspected complete conversation.
+A separate lifecycle attempt reached 20 passing phases but could not perform
+the native last-window close because macOS was locked. It timed out and cleaned
+up; its failed receipt remains under
+`.tmp/native-memory-job-fencing-workflow-evidence/`. The complete 23-phase run
+above did not request that lifecycle step. Unlock is pending; current-bundle
+window-close/reopen proof is not claimed. The full aggregate pass remains the
+earlier diagnostic checkpoint, and the canonical Electron app remains intact.
+
+Job-status fencing does not yet guard the embedding write performed before
+completion. Atomic owner-generation, eligibility and result-commit checks,
+persisted fingerprint migration and versioned transfer recovery remain required.
+
+Remote CodeQL still reported all five fingerprint findings on `e1e44fe0`,
+including the HMAC site. Its
+[sensitive-call heuristic](https://github.com/github/codeql/blob/main/javascript/ql/lib/semmle/javascript/security/SensitiveActions.qll#L25-L35)
+classifies calls with password-like string arguments as producing password
+data; these calls format public numbered redaction placeholders. This explains
+the reported source, but does not declare the findings cleared or resolve the
+separate persisted-content fingerprint issue. No query suppression or security
+gate change has been added.
