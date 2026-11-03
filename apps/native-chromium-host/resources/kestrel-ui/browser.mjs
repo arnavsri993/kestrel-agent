@@ -94,6 +94,17 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	let changeQueue = Promise.resolve();
 	let idMapQueue = Promise.resolve();
 	let focusedWindowId;
+	const loginCodeCaptures = new Map();
+	let loginCodeRevision = 0;
+	// Chrome reports same-document history changes even when a URL later returns
+	// to its original value. Captures are deliberately lost on worker restart.
+	const invalidateLoginCodeTab = details => {
+		if (details?.frameId !== 0) return;
+		loginCodeRevision += 1;
+		for (const [id, capture] of loginCodeCaptures) if (capture.tabId === details.tabId) loginCodeCaptures.delete(id);
+	};
+	for (const event of [chromeApi.webNavigation?.onHistoryStateUpdated, chromeApi.webNavigation?.onReferenceFragmentUpdated, chromeApi.webNavigation?.onCommitted])
+		event?.addListener(invalidateLoginCodeTab);
 
 	async function stored(key, fallback) {
 		const area = key === TAB_IDS_KEY ? chromeApi.storage.session : chromeApi.storage.local;
@@ -447,6 +458,10 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			const request = NativeLoginCodeBrowserRequestSchema.parse(input);
 			signal?.throwIfAborted();
 			const authority = request.authority;
+			const capture = authority && loginCodeCaptures.get(authority.fieldId);
+			if (request.operation === "fill") loginCodeCaptures.delete(authority.fieldId);
+			if (authority && (!capture || capture.expires <= Date.now() || capture.tabId !== authority.chromeTabId ||
+				JSON.stringify(capture.authority) !== JSON.stringify(authority))) throw new Error();
 			const tab = await nativeId(request.operation === "inspect" ? request.tabId : authority.tabId);
 			const check = async () => {
 				const window = await invoke(chromeApi.windows, "getLastFocused", { windowTypes: ["normal"] });
@@ -461,9 +476,12 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 				if (!frame?.documentId || frame.documentLifecycle !== "active" || frame.url !== current.url) throw new Error();
 				return { frame, origin: url.origin };
 			};
+			const revision = loginCodeRevision;
 			const before = await check();
+			if ((loginCodeRevision) !== revision || (authority && capture.revision !== revision)) throw new Error();
 			if (authority && (authority.chromeTabId !== tab.id || authority.windowId !== tab.windowId ||
 				authority.documentId !== before.frame.documentId || authority.origin !== before.origin)) throw new Error();
+			if ((loginCodeRevision) !== revision) throw new Error();
 			const results = await invoke(chromeApi.scripting, "executeScript", {
 				target: { tabId: tab.id, documentIds: [before.frame.documentId] }, world: "ISOLATED",
 				func: loginCodeField, args: [request.operation, authority?.fieldId, request.code],
@@ -472,11 +490,16 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			const after = await check();
 			const result = results?.[0];
 			if (results?.length !== 1 || result.frameId !== 0 || result.documentId !== before.frame.documentId ||
-				after.frame.documentId !== before.frame.documentId || after.frame.url !== before.frame.url || result.result?.ok !== true) throw new Error();
+				after.frame.documentId !== before.frame.documentId || after.frame.url !== before.frame.url ||
+				(loginCodeRevision) !== revision || result.result?.ok !== true) throw new Error();
 			if (request.operation === "inspect") {
 				const value = { tabId: request.tabId, chromeTabId: tab.id, windowId: tab.windowId,
 					documentId: before.frame.documentId, origin: before.origin, fieldId: result.result.fieldId };
-				return NativeLoginCodeBrowserRequestSchema.parse({ operation: "validate", authority: value }).authority;
+				const parsed = NativeLoginCodeBrowserRequestSchema.parse({ operation: "validate", authority: value }).authority;
+				for (const [id, item] of loginCodeCaptures) if (item.expires <= Date.now()) loginCodeCaptures.delete(id);
+				while (loginCodeCaptures.size >= 32) loginCodeCaptures.delete(loginCodeCaptures.keys().next().value);
+				loginCodeCaptures.set(parsed.fieldId, { authority: parsed, tabId: tab.id, revision, expires: Date.now() + 120000 });
+				return parsed;
 			}
 			return request.operation === "validate" ? { valid: true } : { filled: true };
 		} catch { throw new Error("The verification code field is unavailable or has changed."); }
