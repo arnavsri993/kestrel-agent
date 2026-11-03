@@ -5,11 +5,18 @@ import {
 	type EmbeddingStateSecret, type EmbeddingOwnerState, type EmbeddingOwnerType,
 } from "./memory-embedding-state.js";
 export { parseReservedEmbeddingState, EMBEDDING_STATE_SECRET_KEY, EMBEDDING_STATE_OWNER_PREFIX } from "./memory-embedding-state.js";
+import {
+	EMBEDDING_AUTHORITY_STATE_PREFIX, EmbeddingAuthorityBudget, EmbeddingAuthorityDenied,
+	embeddingAuthorityStateKey, embeddingOwnerAuthorityFields, newEmbeddingAuthorityState,
+	parseReservedEmbeddingAuthorityState, resolveEmbeddingAuthority,
+	type EmbeddingAuthorityScope, type EmbeddingAuthorityReference,
+} from "./memory-embedding-authority.js";
+export { EMBEDDING_AUTHORITY_STATE_PREFIX, parseReservedEmbeddingAuthorityState } from "./memory-embedding-authority.js";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { decryptText, encryptText } from "@kestrel/encryption";
-import { redactDeletedSourceToolResult, sourceReceiptDeletionKey } from "./source-evidence-redaction.js";
+import { redactDeletedSourceToolResult, sourceReceiptDeletionKey, SOURCE_RECEIPT_DELETION_PREFIX } from "./source-evidence-redaction.js";
 import {
 	type ActionReceipt,
 	ActionReceiptSchema,
@@ -35,6 +42,7 @@ import {
 	BrowserActivityEventSchema,
 	type CapturePolicy,
 	CapturePolicySchema,
+	CaptureConfigurationSchema,
 	type DailySummary,
 	DailySummarySchema,
 	type EmbeddingRecord,
@@ -810,10 +818,15 @@ export class KestrelDatabase {
 
 	saveRuntimeSession(session: RuntimeSession): void {
 		const parsed = RuntimeSessionSchema.parse(session);
-		this.db
-			.prepare(`INSERT INTO runtime_sessions (id, payload, status, updated_at) VALUES (?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, status=excluded.status, updated_at=excluded.updated_at`)
-			.run(parsed.id, JSON.stringify(parsed), parsed.status, parsed.updatedAt);
+		this.db.transaction(() => {
+			const track = this.embeddingAuthorityTracked("runtime_session", parsed.id);
+			if (track) this.syncRuntimeSessionEmbeddingAuthority(parsed.id);
+			this.db
+				.prepare(`INSERT INTO runtime_sessions (id, payload, status, updated_at) VALUES (?, ?, ?, ?)
+	      ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, status=excluded.status, updated_at=excluded.updated_at`)
+				.run(parsed.id, JSON.stringify(parsed), parsed.status, parsed.updatedAt);
+			if (track) this.syncRuntimeSessionEmbeddingAuthority(parsed.id);
+		})();
 	}
 
 	getRuntimeSession(id: string): RuntimeSession | undefined {
@@ -858,6 +871,8 @@ export class KestrelDatabase {
 		);
 		const terms = this.searchTerms(parsed.content);
 		return this.db.transaction(() => {
+			const track = this.embeddingAuthorityTracked("runtime_message", parsed.id);
+			if (track) this.syncEmbeddingMessageAuthority(parsed.id);
 			this.db
 				.prepare(`INSERT INTO runtime_messages (
         id, session_id, role, content_ciphertext, content_iv, content_auth_tag,
@@ -910,6 +925,7 @@ export class KestrelDatabase {
 				);
 			if (touched.changes !== 1)
 				throw new Error("Runtime message session could not be updated.");
+			if (track) this.syncEmbeddingMessageAuthority(parsed.id);
 			return updatedOwner;
 		})();
 	}
@@ -3129,17 +3145,22 @@ export class KestrelDatabase {
 
 	upsertCapturePolicy(policy: CapturePolicy): void {
 		const parsed = CapturePolicySchema.parse(policy);
-		this.upsertMemoryPayload(
-			"memory_capture_policies",
-			parsed.id,
-			parsed,
-			{
-				scope: parsed.scope,
-				enabled: parsed.enabled ? 1 : 0,
-				created_at: parsed.createdAt,
-			},
-			parsed.updatedAt,
-		);
+		this.db.transaction(() => {
+			const track = this.embeddingAuthorityTracked("capture", "configuration");
+			if (track) this.syncCaptureEmbeddingAuthority();
+			this.upsertMemoryPayload(
+				"memory_capture_policies",
+				parsed.id,
+				parsed,
+				{
+					scope: parsed.scope,
+					enabled: parsed.enabled ? 1 : 0,
+					created_at: parsed.createdAt,
+				},
+				parsed.updatedAt,
+			);
+			if (track) this.syncCaptureEmbeddingAuthority();
+		})();
 	}
 
 	getCapturePolicy(id: string): CapturePolicy | undefined {
@@ -3157,8 +3178,13 @@ export class KestrelDatabase {
 	}
 
 	deleteCapturePolicy(id: string): boolean {
-		return this.db.prepare("DELETE FROM memory_capture_policies WHERE id = ?").run(id)
-			.changes === 1;
+		return this.db.transaction(() => {
+			const track = this.embeddingAuthorityTracked("capture", "configuration");
+			if (track) this.syncCaptureEmbeddingAuthority();
+			const deleted = this.db.prepare("DELETE FROM memory_capture_policies WHERE id = ?").run(id).changes === 1;
+			if (track) this.syncCaptureEmbeddingAuthority();
+			return deleted;
+		})();
 	}
 
 	/**
@@ -3367,34 +3393,392 @@ export class KestrelDatabase {
 	private embeddingStateSecret(): EmbeddingStateSecret {
 		const value = this.getPrivateState<unknown>(EMBEDDING_STATE_SECRET_KEY);
 		if (value !== undefined) return parseReservedEmbeddingState(EMBEDDING_STATE_SECRET_KEY, value) as EmbeddingStateSecret;
-		const existing = this.db.prepare("SELECT 1 FROM private_runtime_state WHERE key LIKE ? LIMIT 1").get(`${EMBEDDING_STATE_OWNER_PREFIX}%`);
+		const existing = this.db.prepare("SELECT 1 FROM private_runtime_state WHERE key LIKE ? OR key LIKE ? LIMIT 1")
+			.get(`${EMBEDDING_STATE_OWNER_PREFIX}%`, `${EMBEDDING_AUTHORITY_STATE_PREFIX}%`);
 		if (existing) throw new Error("Embedding generation secret is missing.");
 		const secret = newEmbeddingStateSecret();
 		this.setPrivateState(EMBEDDING_STATE_SECRET_KEY, secret);
 		return secret;
 	}
 
-	private syncEmbeddingGeneration(ownerType: EmbeddingOwnerType, ownerId: string): EmbeddingOwnerState {
+	private syncEmbeddingAuthorityEpoch(scope: EmbeddingAuthorityScope, identity: string, semanticValue: unknown): string {
+		const secret = this.embeddingStateSecret();
+		const key = embeddingAuthorityStateKey(secret, scope, identity);
+		const fingerprint = embeddingMac(secret, "authority-value", JSON.stringify(semanticValue));
+		const stored = this.getPrivateState<unknown>(key);
+		const previous = stored === undefined ? undefined : parseReservedEmbeddingAuthorityState(key, stored, secret);
+		if (previous?.fingerprint === fingerprint) return previous.epoch;
+		const next = newEmbeddingAuthorityState(scope, identity, fingerprint);
+		parseReservedEmbeddingAuthorityState(key, next, secret);
+		this.setPrivateState(key, next);
+		return next.epoch;
+	}
+
+	/** Mutators only maintain epochs already observed by an embedding dependency. */
+	private embeddingAuthorityTracked(scope: EmbeddingAuthorityScope, identity: string): boolean {
+		const stored = this.getPrivateState<unknown>(EMBEDDING_STATE_SECRET_KEY);
+		if (stored === undefined) return false;
+		const secret = parseReservedEmbeddingState(EMBEDDING_STATE_SECRET_KEY, stored) as EmbeddingStateSecret;
+		const key = embeddingAuthorityStateKey(secret, scope, identity);
+		const value = this.getPrivateState<unknown>(key);
+		if (value === undefined) return false;
+		parseReservedEmbeddingAuthorityState(key, value, secret);
+		return true;
+	}
+
+	private hasEmbeddingAuthorityHistory(scope: EmbeddingAuthorityScope, identity: string): boolean {
+		const secret = this.embeddingStateSecret();
+		const key = embeddingAuthorityStateKey(secret, scope, identity);
+		const value = this.getPrivateState<unknown>(key);
+		if (value === undefined) return false;
+		parseReservedEmbeddingAuthorityState(key, value, secret);
+		return true;
+	}
+
+	private syncRuntimeSessionEmbeddingAuthority(id: string): string {
+		const session = this.getRuntimeSession(id);
+		if (session && session.id !== id) throw new EmbeddingAuthorityDenied();
+		return this.syncEmbeddingAuthorityEpoch("runtime_session", id,
+			session ? [session.privacyMode ?? "standard", Boolean(session.forgottenAt)] : null);
+	}
+
+	private embeddingCaptureAuthority(budget = new EmbeddingAuthorityBudget()): {
+		enabled: boolean; policies: CapturePolicy[]; token: string;
+	} {
+		const configurationSize = this.db.prepare("SELECT length(value_ciphertext) AS bytes FROM private_runtime_state WHERE key=?")
+			.get("memory.capture.configuration") as { bytes: number } | undefined;
+		if (configurationSize) budget.readBytes(configurationSize.bytes);
+		const stored = this.getPrivateState<unknown>("memory.capture.configuration");
+		const parsed = stored === undefined ? undefined : CaptureConfigurationSchema.safeParse(stored);
+		const enabled = stored === undefined || Boolean(parsed?.success && parsed.data.enabled);
+		const policies: CapturePolicy[] = [];
+		let after = "";
+		for (;;) {
+			const rows = this.db.prepare("SELECT id, length(payload_ciphertext) AS bytes FROM memory_capture_policies WHERE id > ? ORDER BY id LIMIT 100").all(after) as Array<{ id: string; bytes: number }>;
+			if (!rows.length) break;
+			for (const entry of rows) {
+				budget.readBytes(entry.bytes);
+				const row = this.db.prepare("SELECT * FROM memory_capture_policies WHERE id=?").get(entry.id) as MemorySubstrateRow & { scope: string; enabled: number };
+				const policy = CapturePolicySchema.parse(this.decryptPayload(row));
+				if (policy.id !== row.id || policy.scope !== row.scope || Number(policy.enabled) !== row.enabled || policy.updatedAt !== row.updated_at) throw new EmbeddingAuthorityDenied();
+				budget.consume(policy);
+				policies.push(policy);
+			}
+			after = rows.at(-1)!.id;
+		}
+		policies.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
+			Buffer.compare(Buffer.from(right.updatedAt), Buffer.from(left.updatedAt)) || Buffer.compare(Buffer.from(left.id), Buffer.from(right.id)));
+		const semantic = [enabled, policies.map(policy => [policy.id, policy.scope, policy.pattern, policy.enabled, policy.retentionDays ?? null])];
+		const token = this.syncEmbeddingAuthorityEpoch("capture", "configuration", semantic);
+		return { enabled, policies, token };
+	}
+
+	private syncCaptureEmbeddingAuthority(): void { this.embeddingCaptureAuthority(); }
+
+	private invalidateEmbeddingSourceAlias(id: string | null | undefined): void {
+		if (id && this.embeddingAuthorityTracked("source_alias", id))
+			this.syncEmbeddingAuthorityEpoch("source_alias", id, ["membership-change", randomUUID()]);
+	}
+
+	private embeddingProvenanceSetToken(ownerType: EmbeddingOwnerType, ownerId: string): string {
+		const identity = JSON.stringify([ownerType, ownerId]);
+		const secret = this.embeddingStateSecret();
+		const key = embeddingAuthorityStateKey(secret, "provenance_set", identity);
+		const value = this.getPrivateState<unknown>(key);
+		const epoch = value === undefined ? this.syncEmbeddingAuthorityEpoch("provenance_set", identity, "observed")
+			: parseReservedEmbeddingAuthorityState(key, value, secret)!.epoch;
+		return `provenance-set:${epoch}`;
+	}
+
+	private invalidateEmbeddingProvenanceSet(ownerType: string, ownerId: string): void {
+		const identity = JSON.stringify([ownerType, ownerId]);
+		if (this.embeddingAuthorityTracked("provenance_set", identity))
+			this.syncEmbeddingAuthorityEpoch("provenance_set", identity, ["membership-change", randomUUID()]);
+	}
+
+	private invalidateEmbeddingProvenanceSets(where: string, parameters: readonly string[]): void {
+		let afterType = "", afterId = "";
+		for (;;) {
+			const owners = this.db.prepare(
+				`SELECT DISTINCT owner_type, owner_id FROM memory_provenance WHERE (${where})
+				 AND (owner_type > ? OR (owner_type = ? AND owner_id > ?))
+				 ORDER BY owner_type, owner_id LIMIT 100`,
+			).all(...parameters, afterType, afterType, afterId) as Array<{ owner_type: string; owner_id: string }>;
+			if (!owners.length) break;
+			// Finish each read before writing: better-sqlite3 rejects mutations
+			// while an iterator on this connection is still executing.
+			for (const owner of owners) this.invalidateEmbeddingProvenanceSet(owner.owner_type, owner.owner_id);
+			const last = owners.at(-1)!; afterType = last.owner_type; afterId = last.owner_id;
+		}
+	}
+
+	private embeddingEventCaptureToken(
+		event: Record<string, unknown>, budget: EmbeddingAuthorityBudget,
+		configuration = this.embeddingCaptureAuthority(budget),
+	): string {
+		if (!configuration.enabled) throw new EmbeddingAuthorityDenied();
+		const matching = configuration.policies.find(policy => {
+			const pattern = policy.pattern.toLocaleLowerCase();
+			const glob = (value: unknown): boolean => {
+				if (typeof value !== "string" || !value) return false;
+				const escaped = pattern.replace(/[.+^${}()|[\]\\]/gu, "\\$&").replaceAll("*", ".*");
+				return new RegExp(`^${escaped}$`, "iu").test(value);
+			};
+			switch (policy.scope) {
+				case "domain": {
+					try { const host = new URL(String(event.url)).hostname.toLocaleLowerCase(); return host === pattern || host.endsWith(`.${pattern}`) || glob(host); }
+					catch { return false; }
+				}
+				case "tab": return glob(event.browserTabId);
+				case "file": return typeof event.filePath === "string" && (glob(event.filePath) || event.filePath.startsWith(policy.pattern));
+				case "application": return glob(event.applicationContext);
+				case "session": return glob(event.sourceSessionId ?? event.sessionId);
+				case "conversation": return glob(event.sourceId);
+			}
+		});
+		if (matching && !matching.enabled) throw new EmbeddingAuthorityDenied();
+		return `capture:${configuration.token}`;
+	}
+
+	private syncEmbeddingProvenanceAuthority(id: string): string {
+		const row = this.db.prepare("SELECT * FROM memory_provenance WHERE id=?").get(id) as (MemorySubstrateRow & { timeline_event_id: string | null; source_type: string }) | undefined;
+		const record = row ? this.parseMemoryProvenanceRow(row) : undefined;
+		if (record && (record.id !== row!.id || record.ownerType !== row!.owner_type || record.ownerId !== row!.owner_id ||
+			record.sourceId !== row!.source_id || record.sourceType !== row!.source_type || (record.timelineEventId ?? null) !== row!.timeline_event_id)) throw new EmbeddingAuthorityDenied();
+		return this.syncEmbeddingAuthorityEpoch("provenance", id, record ? [record.ownerType, record.ownerId, record.sourceType,
+			record.sourceId, record.timelineEventId ?? null, record.originalContentRef ?? null, record.actor, record.extractionMethod] : null);
+	}
+
+	private syncEmbeddingAgentAuthority(id: string): string {
+		const agent = this.embeddingAuthorityAgentRecord(id);
+		return this.syncEmbeddingAuthorityEpoch("agent_identity", id, agent ? [agent.sessionId ?? null, agent.status, agent.memoryScope, agent.kind] : null);
+	}
+
+	private embeddingAuthorityAgentRecord(id: string): AgentIdentity | undefined {
+		const row = this.db.prepare("SELECT * FROM memory_agent_identities WHERE id=?").get(id) as MemorySubstrateRow | undefined;
+		if (!row) return undefined;
+		if (row.payload_ciphertext.length > 4_000_000) throw new EmbeddingAuthorityDenied();
+		const agent = AgentIdentitySchema.parse(this.decryptPayload(row));
+		if (agent.id !== id || agent.status !== row.status || agent.kind !== row.kind || (agent.sessionId ?? null) !== row.session_id) throw new EmbeddingAuthorityDenied();
+		return agent;
+	}
+
+	private syncEmbeddingMessageAuthority(id: string): string {
+		const row = this.db.prepare("SELECT * FROM runtime_messages WHERE id=?").get(id) as RuntimeMessageRow | undefined;
+		const message = row ? this.parseRuntimeMessage(row) : undefined;
+		return this.syncEmbeddingAuthorityEpoch("runtime_message", id, message ? [message.sessionId, message.role, message.content,
+			message.sourceToolExecutionIds ?? [], message.toolExecutionId ?? null] : null);
+	}
+
+	private *embeddingAuthorityProvenance(type: EmbeddingOwnerType, id: string, budget: EmbeddingAuthorityBudget) {
+		let after = "";
+		for (;;) {
+			const rows = this.db.prepare("SELECT id, length(payload_ciphertext) AS bytes FROM memory_provenance WHERE owner_type=? AND owner_id=? AND id>? ORDER BY id LIMIT 100")
+				.all(type, id, after) as Array<{ id: string; bytes: number }>;
+			if (!rows.length) break;
+			for (const entry of rows) {
+				budget.readBytes(entry.bytes);
+				const row = this.db.prepare("SELECT * FROM memory_provenance WHERE id=?").get(entry.id) as MemorySubstrateRow;
+				const record = this.parseMemoryProvenanceRow(row);
+				if (record.ownerType !== type || record.ownerId !== id || record.id !== row.id) throw new EmbeddingAuthorityDenied();
+				budget.readBytes(entry.bytes); // Epoch validation independently authenticates the same source bindings.
+				yield { record: record as unknown as Record<string, unknown>, epoch: this.syncEmbeddingProvenanceAuthority(row.id) };
+			}
+			after = rows.at(-1)!.id;
+		}
+	}
+
+	private embeddingRuntimeSessionToken(id: string, required: boolean, budget: EmbeddingAuthorityBudget): string | undefined {
+		budget.consume(["session", id]);
+		const size = this.db.prepare("SELECT length(CAST(payload AS BLOB)) AS bytes FROM runtime_sessions WHERE id=?").get(id) as { bytes: number } | undefined;
+		if (size) budget.readBytes(size.bytes);
+		const session = this.getRuntimeSession(id);
+		if (!session) {
+			if (required || this.hasEmbeddingAuthorityHistory("runtime_session", id)) throw new EmbeddingAuthorityDenied();
+			return undefined;
+		}
+		if (session.id !== id || session.privacyMode === "private" || session.privacyMode === "incognito" || session.forgottenAt) throw new EmbeddingAuthorityDenied();
+		return `session:${id}:${this.syncRuntimeSessionEmbeddingAuthority(id)}`;
+	}
+
+	private embeddingAuthorityTombstoneExists(key: string): boolean {
+		return this.db.prepare("SELECT 1 FROM private_runtime_state WHERE key=?").get(key) !== undefined;
+	}
+
+	private embeddingAuthorityTombstoneToken(key: string): string {
+		const exists = this.embeddingAuthorityTombstoneExists(key);
+		const epoch = this.syncEmbeddingAuthorityEpoch("source_tombstone", key, exists);
+		if (exists) throw new EmbeddingAuthorityDenied();
+		return `tombstone:${epoch}`;
+	}
+
+	private isEmbeddingSourceTombstoneKey(key: string): boolean {
+		return key.startsWith(SOURCE_RECEIPT_DELETION_PREFIX) || key.startsWith("source-derived-deleted.");
+	}
+
+	private *embeddingAuthoritySources(id: string, scanEvents: boolean, budget: EmbeddingAuthorityBudget): Generator<EmbeddingAuthorityReference | { token: string }> {
+		budget.consume(["source", id]);
+		if (id.startsWith("observation-")) throw new EmbeddingAuthorityDenied();
+		yield { token: this.embeddingAuthorityTombstoneToken(this.sourceReceiptDeletionKey(id)) };
+		for (const kind of ["task", "memory"] as const)
+			yield { token: this.embeddingAuthorityTombstoneToken(this.sourceDerivedTombstoneKey(kind, id)) };
+		const typed = /^(timeline_event|timeline_session|activity_block|daily_summary|memory|agent_memory|task):(.+)$/.exec(id);
+		if (typed) {
+			yield { type: typed[1] as EmbeddingOwnerType, id: typed[2]! };
+			return;
+		}
+		if (id.startsWith("session:")) {
+			yield { token: this.embeddingRuntimeSessionToken(id.slice(8), true, budget)! };
+			return;
+		}
+		const receiptSize = this.db.prepare("SELECT length(CAST(payload AS BLOB)) AS bytes FROM tool_executions WHERE id=?").get(id) as { bytes: number } | undefined;
+		if (receiptSize) budget.readBytes(receiptSize.bytes);
+		const receipt = receiptSize ? this.db.prepare("SELECT payload FROM tool_executions WHERE id=?").get(id) as { payload: string } : undefined;
+		if (receipt && this.decodeToolExecution(receipt.payload).toolName === "sources.read") throw new EmbeddingAuthorityDenied();
+		const messageSize = this.db.prepare("SELECT length(content_ciphertext) AS bytes FROM runtime_messages WHERE id=?").get(id) as { bytes: number } | undefined;
+		if (messageSize) budget.readBytes(messageSize.bytes);
+		const message = messageSize ? this.db.prepare("SELECT * FROM runtime_messages WHERE id=?").get(id) as RuntimeMessageRow : undefined;
+		if (!message && this.hasEmbeddingAuthorityHistory("runtime_message", id)) throw new EmbeddingAuthorityDenied();
+		if (message) {
+			const parsed = this.parseRuntimeMessage(message);
+			budget.consume(parsed);
+			yield { token: `message:${id}:${this.syncEmbeddingMessageAuthority(id)}` };
+			yield { token: this.embeddingRuntimeSessionToken(parsed.sessionId, true, budget)! };
+			for (const receiptId of [...(parsed.sourceToolExecutionIds ?? []), ...(parsed.toolExecutionId ? [parsed.toolExecutionId] : [])]) {
+				const toolSize = this.db.prepare("SELECT length(CAST(payload AS BLOB)) AS bytes FROM tool_executions WHERE id=?").get(receiptId) as { bytes: number } | undefined;
+				if (toolSize) budget.readBytes(toolSize.bytes);
+				const tool = toolSize ? this.db.prepare("SELECT payload FROM tool_executions WHERE id=?").get(receiptId) as { payload: string } : undefined;
+				yield { token: this.embeddingAuthorityTombstoneToken(this.sourceReceiptDeletionKey(receiptId)) };
+				if (tool && this.decodeToolExecution(tool.payload).toolName === "sources.read") throw new EmbeddingAuthorityDenied();
+			}
+		}
+		const runtime = this.embeddingRuntimeSessionToken(id, false, budget);
+		if (runtime) yield { token: runtime };
+		let concreteSource = Boolean(message || runtime);
+		const tables: Record<EmbeddingOwnerType, string> = { timeline_event: "memory_timeline_events", timeline_session: "memory_timeline_sessions",
+			activity_block: "memory_activity_blocks", daily_summary: "memory_daily_summaries", memory: "memories", agent_memory: "memory_agent_memories", task: "memory_working_tasks" };
+		for (const [type, table] of Object.entries(tables)) {
+			if (this.db.prepare(`SELECT 1 FROM ${table} WHERE id=?`).get(id)) { concreteSource = true; yield { type: type as EmbeddingOwnerType, id }; }
+			else if (this.hasEmbeddingAuthorityHistory("owner", `${type}:${id}`)) throw new EmbeddingAuthorityDenied();
+		}
+		if (scanEvents) {
+			let after = "";
+			const aliases: string[] = [];
+			for (;;) {
+				const rows = this.db.prepare("SELECT id FROM memory_timeline_events WHERE source_id=? AND id>? ORDER BY id LIMIT 100").all(id, after) as Array<{ id: string }>;
+				if (!rows.length) break;
+				for (const row of rows) { budget.consume(row); aliases.push(row.id); yield { type: "timeline_event", id: row.id }; }
+				after = rows.at(-1)!.id;
+			}
+			const knownAlias = this.hasEmbeddingAuthorityHistory("source_alias", id);
+			if (knownAlias && aliases.length === 0 && !concreteSource) throw new EmbeddingAuthorityDenied();
+			if (knownAlias || aliases.length) yield { token: `source-alias:${this.syncEmbeddingAuthorityEpoch("source_alias", id, aliases)}` };
+		}
+	}
+
+	private embeddingAuthorityOwnerBytes(type: EmbeddingOwnerType, id: string): number {
+		if (type === "memory") {
+			const row = this.db.prepare(`SELECT length(content_ciphertext) + length(CAST(structured_data AS BLOB)) +
+				length(CAST(source_ids AS BLOB)) + length(CAST(source_type AS BLOB)) + length(CAST(entity_ids AS BLOB)) +
+				COALESCE((SELECT length(payload_ciphertext) FROM memory_metadata WHERE memory_id=memories.id), 0) AS bytes
+				FROM memories WHERE id=?`).get(id) as { bytes: number } | undefined;
+			return row?.bytes ?? 0;
+		}
+		const tables = { timeline_event: "memory_timeline_events", timeline_session: "memory_timeline_sessions", activity_block: "memory_activity_blocks",
+			daily_summary: "memory_daily_summaries", agent_memory: "memory_agent_memories", task: "memory_working_tasks" } as const;
+		const row = this.db.prepare(`SELECT length(payload_ciphertext) AS bytes FROM ${tables[type]} WHERE id=?`).get(id) as { bytes: number } | undefined;
+		return row?.bytes ?? 0;
+	}
+
+	private rawMemoryEmbeddingOwner(ownerType: EmbeddingOwnerType, ownerId: string, enforceCapture = true) {
+		try {
+			const direct = this.directMemoryEmbeddingOwner(ownerType, ownerId);
+			if (!direct) return undefined;
+			this.syncEmbeddingAuthorityEpoch("owner", `${ownerType}:${ownerId}`, [direct.text, direct.authority]);
+			let captureConfiguration: ReturnType<KestrelDatabase["embeddingCaptureAuthority"]> | undefined;
+			const authority = resolveEmbeddingAuthority({
+				owner: (type, id, budget) => {
+					budget.readBytes(this.embeddingAuthorityOwnerBytes(type, id));
+					const value = this.directMemoryEmbeddingOwner(type, id);
+					if (!value) return undefined;
+					const tombstone = (type === "agent_memory" || type === "task")
+						? this.embeddingAuthorityTombstoneToken(this.sourceDerivedTombstoneKey(type === "task" ? "task" : "memory", id)) : "";
+					return { record: value.ownerRecord, epoch: `${this.syncEmbeddingAuthorityEpoch("owner", `${type}:${id}`, [value.text, value.authority])}:${tombstone}` };
+				},
+				provenance: (type, id, budget) => this.embeddingAuthorityProvenance(type, id, budget),
+				provenanceSet: (type, id) => this.embeddingProvenanceSetToken(type, id),
+				source: (id, scanEvents, budget) => this.embeddingAuthoritySources(id, scanEvents, budget),
+				session: (id, required, budget) => this.embeddingRuntimeSessionToken(id, required, budget),
+				agent: (id, budget) => {
+					const agent = this.embeddingAuthorityAgentRecord(id);
+					if (!agent) {
+						if (this.hasEmbeddingAuthorityHistory("agent_identity", id)) throw new EmbeddingAuthorityDenied();
+						return undefined;
+					}
+					budget.consume(agent);
+					if (agent.id !== id || agent.status === "deleted" || agent.status === "archived") throw new EmbeddingAuthorityDenied();
+					return { token: `agent:${id}:${this.syncEmbeddingAgentAuthority(id)}`, ...(agent.sessionId ? { sessionId: agent.sessionId } : {}) };
+				},
+				capture: (event, budget) => {
+					captureConfiguration ??= this.embeddingCaptureAuthority(budget);
+					return this.embeddingEventCaptureToken(event, budget, captureConfiguration);
+				},
+			}, ownerType, ownerId, { enforceCapture });
+			return { ...direct, authority: JSON.stringify([direct.authority, authority]) };
+		} catch (error) {
+			if (error instanceof EmbeddingAuthorityDenied) return undefined;
+			throw error;
+		}
+	}
+
+	/** Local source boundary only. Callers must still enforce their agent, session and sensitivity access rules.
+	 * Pausing capture blocks new/provider embeddings, while retained local history remains available.
+	 */
+	hasMemoryOwnerSourceAuthority(ownerType: EmbeddingRecord["ownerType"], ownerId: string): boolean {
+		try { return this.db.transaction(() => Boolean(this.rawMemoryEmbeddingOwner(ownerType, ownerId, false)))(); }
+		catch { return false; }
+	}
+
+	private syncEmbeddingGeneration(
+		ownerType: EmbeddingOwnerType, ownerId: string,
+		resolved?: NonNullable<ReturnType<KestrelDatabase["rawMemoryEmbeddingOwner"]>>,
+	): EmbeddingOwnerState {
 		const secret = this.embeddingStateSecret();
 		const key = embeddingOwnerKey(secret, ownerType, ownerId);
-		const raw = this.rawMemoryEmbeddingOwner(ownerType, ownerId);
-		const fingerprint = embeddingMac(secret, "authority", raw ? JSON.stringify(["eligible", raw.text, raw.authority]) : "ineligible");
 		const stored = this.getPrivateState<unknown>(key);
 		const previous = stored === undefined ? undefined : parseReservedEmbeddingState(key, stored, secret) as EmbeddingOwnerState;
+		let fingerprint: string;
+		if (resolved) {
+			fingerprint = embeddingMac(secret, "authority", JSON.stringify(["eligible", resolved.text, resolved.authority]));
+		} else {
+			// Mutations fence their own semantic transition immediately. Descendant
+			// authority is resolved once when work is queued, claimed or consumed;
+			// rebuilding that graph around every write makes a chain quadratic.
+			const identity = `${ownerType}:${ownerId}`;
+			const authorityKey = embeddingAuthorityStateKey(secret, "owner", identity);
+			const authority = this.getPrivateState<unknown>(authorityKey);
+			const prior = authority === undefined ? undefined : parseReservedEmbeddingAuthorityState(authorityKey, authority, secret);
+			let direct: ReturnType<KestrelDatabase["directMemoryEmbeddingOwner"]>;
+			try { direct = this.directMemoryEmbeddingOwner(ownerType, ownerId); }
+			catch (error) { if (!(error instanceof EmbeddingAuthorityDenied)) throw error; }
+			const epoch = this.syncEmbeddingAuthorityEpoch("owner", identity, direct ? [direct.text, direct.authority] : null);
+			if (previous && prior?.epoch === epoch) return previous;
+			fingerprint = embeddingMac(secret, "direct-owner-authority", epoch);
+		}
 		if (previous && previous.fingerprint === fingerprint) return previous;
 		const next = newEmbeddingOwnerState(ownerType, ownerId, fingerprint);
 		this.setPrivateState(key, next);
 		return next;
 	}
 
-	/** Direct owner text and eligibility only; transitive source revocation needs separate invalidation. */
+	/** One authority resolver guards queueing, claims, commits and cached-vector use. */
 	getMemoryEmbeddingInput(ownerType: EmbeddingRecord["ownerType"], ownerId: string): MemoryEmbeddingInputSnapshot | undefined {
 		return this.db.transaction(() => {
 			const raw = this.rawMemoryEmbeddingOwner(ownerType, ownerId);
 			if (!raw) return undefined;
-			const state = this.syncEmbeddingGeneration(ownerType, ownerId);
+			const state = this.syncEmbeddingGeneration(ownerType, ownerId, raw);
 			const contentHash = embeddingMac(this.embeddingStateSecret(), "content", raw.text);
-			const { authority: _authority, ...input } = raw;
+			const { authority: _authority, ownerRecord: _ownerRecord, ...input } = raw;
 			return { ...input, generation: state.generation, contentHash };
 		})();
 	}
@@ -3405,21 +3789,23 @@ export class KestrelDatabase {
 		return Boolean(current && current.generation === embedding.generation && current.contentHash === embedding.contentHash);
 	}
 
-	private rawMemoryEmbeddingOwner(
+	private directMemoryEmbeddingOwner(
 		ownerType: EmbeddingRecord["ownerType"], ownerId: string,
-	): (Omit<MemoryEmbeddingInputSnapshot, "generation" | "contentHash"> & { authority: string }) | undefined {
+	): (Omit<MemoryEmbeddingInputSnapshot, "generation" | "contentHash"> & { authority: string; ownerRecord: Record<string, unknown> }) | undefined {
+		if (this.embeddingAuthorityOwnerBytes(ownerType, ownerId) > 4_000_000) throw new EmbeddingAuthorityDenied();
 		const tables = {
 			timeline_event: "memory_timeline_events", timeline_session: "memory_timeline_sessions",
 			activity_block: "memory_activity_blocks", daily_summary: "memory_daily_summaries",
 			memory: "memories", agent_memory: "memory_agent_memories", task: "memory_working_tasks",
 		} as const;
-		const row = this.db.prepare(`SELECT * FROM ${tables[ownerType]} WHERE id = ?`).get(ownerId);
+		const row = this.db.prepare(`SELECT * FROM ${tables[ownerType]} WHERE id = ?`).get(ownerId) as Record<string, unknown> | undefined;
 		if (!row) return undefined;
+		if (typeof row.payload_ciphertext === "string" && row.payload_ciphertext.length > 4_000_000) throw new EmbeddingAuthorityDenied();
+		if (typeof row.content_ciphertext === "string" && row.content_ciphertext.length > 4_000_000) throw new EmbeddingAuthorityDenied();
 		let owner: { id: string } | undefined;
 		let text: string | undefined;
 		if (ownerType === "timeline_event") {
 			const event = this.getTimelineEvent(ownerId);
-			if (event?.source === "connected-source") return undefined;
 			owner = event; text = event?.textSummary;
 		} else if (ownerType === "timeline_session") {
 			const session = this.getTimelineSession(ownerId);
@@ -3438,8 +3824,6 @@ export class KestrelDatabase {
 			owner = memory; text = memory?.content;
 		} else {
 			const task = this.getWorkingTask(ownerId);
-			if (task?.sourceIds.some(id => id.startsWith("observation-") ||
-				this.getTimelineEvent(id)?.source === "connected-source")) return undefined;
 			owner = task; text = task ? `${task.goal}\n${task.outcomeSummary ?? ""}` : undefined;
 		}
 		if (!owner || !text) return undefined;
@@ -3448,17 +3832,14 @@ export class KestrelDatabase {
 		// the durable generation, so a fresh IV on a metadata-only write cannot
 		// exhaust an otherwise valid job's retries.
 		const record = owner as unknown as Record<string, unknown>;
-		const authorityFields: Record<EmbeddingOwnerType, string[]> = {
-			timeline_event: ["source", "sourceId", "sourceSessionId", "sessionId", "agentId", "sensitivity", "status"],
-			timeline_session: ["eventIds", "sourceSessionIds", "status"],
-			activity_block: ["sessionId", "eventIds", "status"],
-			daily_summary: ["eventIds", "activityBlockIds"],
-			memory: ["sourceIds", "sourceType", "sensitivity", "status"],
-			agent_memory: ["agentId", "sourceIds", "sensitivity", "status"],
-			task: ["agentId", "sessionId", "sourceIds"],
-		};
-		const authority = JSON.stringify(authorityFields[ownerType].map(field => record[field] ?? null));
-		return { ownerType, ownerId, text, revision: JSON.stringify(row), authority };
+		if (ownerType !== "memory") {
+			const columns: Record<string, string> = { status: "status", agent_id: "agentId", source: "source", source_id: "sourceId", source_session_id: "sourceSessionId", session_id: "sessionId", day: "day" };
+			for (const [column, field] of Object.entries(columns)) {
+				if (Object.hasOwn(row, column) && (row[column] ?? null) !== (record[field] ?? null)) throw new EmbeddingAuthorityDenied();
+			}
+		}
+		const authority = JSON.stringify(embeddingOwnerAuthorityFields(ownerType, record));
+		return { ownerType, ownerId, text, revision: JSON.stringify(row), authority, ownerRecord: record };
 	}
 
 	upsertMemoryEmbedding(embedding: EmbeddingRecord): void {
@@ -3552,9 +3933,12 @@ export class KestrelDatabase {
 	}
 
 	deleteMemoryProvenance(ownerType: ProvenanceRecord["ownerType"], ownerId: string): number {
-		return this.db
-			.prepare("DELETE FROM memory_provenance WHERE owner_type = ? AND owner_id = ?")
-			.run(ownerType, ownerId).changes;
+		return this.db.transaction(() => {
+			const deleted = this.db.prepare("DELETE FROM memory_provenance WHERE owner_type = ? AND owner_id = ?")
+				.run(ownerType, ownerId).changes;
+			if (deleted) this.invalidateEmbeddingProvenanceSet(ownerType, ownerId);
+			return deleted;
+		})();
 	}
 
 	deleteMemoryVersions(memoryId: string): number {
@@ -3917,6 +4301,10 @@ export class KestrelDatabase {
 				.map(() => "?")
 				.join(", ");
 			const eventPlaceholders = [...eventIds].map(() => "?").join(", ");
+			this.invalidateEmbeddingProvenanceSets(
+				`source_id IN (${sourcePlaceholders || "NULL"}) OR timeline_event_id IN (${eventPlaceholders || "NULL"})`,
+				[...provenanceSourceIds, ...eventIds],
+			);
 			const sourceProvenanceDeleted = this.db
 				.prepare(
 					`DELETE FROM memory_provenance
@@ -4059,6 +4447,7 @@ export class KestrelDatabase {
 		}));
 		let embeddings = 0;
 		let jobs = 0;
+		this.invalidateEmbeddingProvenanceSets("(owner_type = 'timeline_event' AND owner_id = ?) OR timeline_event_id = ?", [id, id]);
 		let provenance = this.db
 			.prepare(
 				`DELETE FROM memory_provenance
@@ -4204,6 +4593,7 @@ export class KestrelDatabase {
 				this.queueMemoryEmbeddingRefresh("daily_summary", plan.summary.id, timestamp);
 		}
 		this.db.prepare("DELETE FROM memory_timeline_events WHERE id = ?").run(id);
+		this.invalidateEmbeddingSourceAlias(event.sourceId);
 		this.syncEmbeddingGeneration("timeline_event", id);
 		return {
 			event,
@@ -4629,6 +5019,28 @@ export class KestrelDatabase {
 	}
 
 	setPrivateState(key: string, value: unknown): void {
+		if (this.isEmbeddingSourceTombstoneKey(key)) {
+			this.db.transaction(() => {
+				const track = this.embeddingAuthorityTracked("source_tombstone", key);
+				if (track) this.syncEmbeddingAuthorityEpoch("source_tombstone", key, this.embeddingAuthorityTombstoneExists(key));
+				this.writePrivateState(key, value);
+				if (track) this.syncEmbeddingAuthorityEpoch("source_tombstone", key, true);
+			})();
+			return;
+		}
+		if (key === "memory.capture.configuration") {
+			this.db.transaction(() => {
+				const track = this.embeddingAuthorityTracked("capture", "configuration");
+				if (track) this.syncCaptureEmbeddingAuthority();
+				this.writePrivateState(key, value);
+				if (track) this.syncCaptureEmbeddingAuthority();
+			})();
+			return;
+		}
+		this.writePrivateState(key, value);
+	}
+
+	private writePrivateState(key: string, value: unknown): void {
 		const encrypted = encryptText(JSON.stringify(value), this.encryptionKey);
 		this.db
 			.prepare(`INSERT INTO private_runtime_state (key, value_ciphertext, value_iv, value_auth_tag, updated_at) VALUES (?, ?, ?, ?, ?)
@@ -4664,6 +5076,24 @@ export class KestrelDatabase {
 	}
 
 	deletePrivateState(key: string): void {
+		if (this.isEmbeddingSourceTombstoneKey(key)) {
+			this.db.transaction(() => {
+				const track = this.embeddingAuthorityTracked("source_tombstone", key);
+				if (track) this.syncEmbeddingAuthorityEpoch("source_tombstone", key, this.embeddingAuthorityTombstoneExists(key));
+				this.db.prepare("DELETE FROM private_runtime_state WHERE key=?").run(key);
+				if (track) this.syncEmbeddingAuthorityEpoch("source_tombstone", key, false);
+			})();
+			return;
+		}
+		if (key === "memory.capture.configuration") {
+			this.db.transaction(() => {
+				const track = this.embeddingAuthorityTracked("capture", "configuration");
+				if (track) this.syncCaptureEmbeddingAuthority();
+				this.db.prepare("DELETE FROM private_runtime_state WHERE key = ?").run(key);
+				if (track) this.syncCaptureEmbeddingAuthority();
+			})();
+			return;
+		}
 		this.db.prepare("DELETE FROM private_runtime_state WHERE key = ?").run(key);
 	}
 
@@ -5118,11 +5548,37 @@ export class KestrelDatabase {
 			memory_activity_blocks: "activity_block", memory_agent_memories: "agent_memory", memory_working_tasks: "task",
 		};
 		const type = owners[table];
+		if (table === "memory_provenance" || table === "memory_agent_identities") {
+			const sync = table === "memory_provenance" ? () => this.syncEmbeddingProvenanceAuthority(id) : () => this.syncEmbeddingAgentAuthority(id);
+			const scope = table === "memory_provenance" ? "provenance" : "agent_identity";
+			this.db.transaction(() => {
+				const previous = table === "memory_provenance"
+					? this.db.prepare("SELECT owner_type, owner_id FROM memory_provenance WHERE id=?").get(id) as { owner_type: string; owner_id: string } | undefined
+					: undefined;
+				const track = this.embeddingAuthorityTracked(scope, id);
+				if (track) sync();
+				if (table === "memory_provenance" && (previous?.owner_type !== indexed.owner_type || previous?.owner_id !== indexed.owner_id)) {
+					if (previous) this.invalidateEmbeddingProvenanceSet(previous.owner_type, previous.owner_id);
+					if (typeof indexed.owner_type === "string" && typeof indexed.owner_id === "string")
+						this.invalidateEmbeddingProvenanceSet(indexed.owner_type, indexed.owner_id);
+				}
+				this.writeMemoryPayload(table, id, value, indexed, updatedAt);
+				if (track) sync();
+			})();
+			return;
+		}
 		if (!type) return this.writeMemoryPayload(table, id, value, indexed, updatedAt);
 		this.db.transaction(() => {
+			const previous = type === "timeline_event"
+				? this.db.prepare("SELECT source_id FROM memory_timeline_events WHERE id=?").get(id) as { source_id: string | null } | undefined
+				: undefined;
 			this.syncEmbeddingGeneration(type, id);
 			this.writeMemoryPayload(table, id, value, indexed, updatedAt);
 			this.syncEmbeddingGeneration(type, id);
+			if (type === "timeline_event" && previous?.source_id !== indexed.source_id) {
+				this.invalidateEmbeddingSourceAlias(previous?.source_id);
+				if (typeof indexed.source_id === "string") this.invalidateEmbeddingSourceAlias(indexed.source_id);
+			}
 		})();
 	}
 

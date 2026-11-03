@@ -11,6 +11,10 @@ import {
 	parseReservedEmbeddingState,
 	type EmbeddingStateSecret,
 } from "./memory-embedding-state.js";
+import {
+	EMBEDDING_AUTHORITY_STATE_PREFIX,
+	parseReservedEmbeddingAuthorityState,
+} from "./memory-embedding-authority.js";
 
 export const HOST_PROFILE_TRANSFER_VERSION = 1 as const;
 export const HOST_PROFILE_TRANSFER_POLICY = "kestrel-host-profile-transfer-in-flight-v2" as const;
@@ -184,8 +188,12 @@ const PAYLOAD_SCHEMAS: Record<string, { parse(value: unknown): unknown }> = {
 	memory_workspace_day_summaries: Contracts.MemoryWorkspaceDaySummarySchema,
 };
 const EMBEDDING_STATE_NAMESPACE_PREFIX = "kestrel.embedding-generation.";
+const EMBEDDING_AUTHORITY_NAMESPACE_PREFIX = "kestrel.embedding-authority.";
 function isReservedEmbeddingStateKey(key: string): boolean {
-	return key.startsWith(EMBEDDING_STATE_NAMESPACE_PREFIX);
+	return key.startsWith(EMBEDDING_STATE_NAMESPACE_PREFIX) || key.startsWith(EMBEDDING_AUTHORITY_NAMESPACE_PREFIX);
+}
+function parseReservedEmbeddingMetadata(key: string, value: unknown, secret?: EmbeddingStateSecret) {
+	return parseReservedEmbeddingState(key, value, secret) ?? parseReservedEmbeddingAuthorityState(key, value, secret);
 }
 
 /** Validate all reserved embedding state together so owner-key MACs bind to the copied secret. */
@@ -193,6 +201,7 @@ function validateReservedEmbeddingStateRows(rows: TransferTables): void {
 	const reserved: Array<{ key: string; value: unknown }> = [];
 	let secret: EmbeddingStateSecret | undefined;
 	let secretCount = 0;
+	const seen = new Set<string>();
 	for (const row of rows.private_runtime_state ?? []) {
 		const key = row.values.key;
 		if (typeof key !== "string" || !isReservedEmbeddingStateKey(key)) continue;
@@ -201,8 +210,10 @@ function validateReservedEmbeddingStateRows(rows: TransferTables): void {
 		let value: unknown;
 		try { value = JSON.parse(plaintext); }
 		catch { return fail("Profile transfer found malformed embedding generation state."); }
-		const parsed = parseReservedEmbeddingState(key, value);
+		const parsed = parseReservedEmbeddingMetadata(key, value);
 		if (!parsed) fail("Profile transfer found an unknown embedding generation state key.");
+		if (seen.has(key)) fail("Profile transfer found duplicate embedding metadata keys.");
+		seen.add(key);
 		reserved.push({ key, value });
 		if (key === EMBEDDING_STATE_SECRET_KEY) {
 			secretCount++;
@@ -210,10 +221,10 @@ function validateReservedEmbeddingStateRows(rows: TransferTables): void {
 			secret = parsed as EmbeddingStateSecret;
 		}
 	}
-	const ownerRows = reserved.filter(({ key }) => key.startsWith(EMBEDDING_STATE_OWNER_PREFIX));
+	const ownerRows = reserved.filter(({ key }) => key.startsWith(EMBEDDING_STATE_OWNER_PREFIX) || key.startsWith(EMBEDDING_AUTHORITY_STATE_PREFIX));
 	if (ownerRows.length && !secret) fail("Profile transfer found embedding owner state without its secret.");
 	for (const { key, value } of ownerRows) {
-		if (!parseReservedEmbeddingState(key, value, secret))
+		if (!parseReservedEmbeddingMetadata(key, value, secret))
 			fail("Profile transfer found invalid embedding owner state.");
 	}
 }
@@ -223,7 +234,7 @@ function validateProtectedPayload(table: string, values: Record<string, SqlValue
 	if (table === "private_runtime_state") {
 		const key = values.key;
 		if (typeof key !== "string") fail("Profile transfer found a malformed private runtime state key.");
-		if (isReservedEmbeddingStateKey(key) && !parseReservedEmbeddingState(key, payload))
+		if (isReservedEmbeddingStateKey(key) && !parseReservedEmbeddingMetadata(key, payload))
 			fail("Profile transfer found an unknown embedding generation state key.");
 		return; // Unrelated private runtime state accepts any JSON value.
 	}

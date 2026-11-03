@@ -853,7 +853,8 @@ export class MemorySubstrate {
 		// fell outside the page's ORDER BY/LIMIT window.
 		const eventById = new Map(timelineEvents.map((event) => [event.id, event]));
 		for (const match of timelineMatches) eventById.set(match.event.id, match.event);
-		const eventCandidates = [...eventById.values()].filter(event => event.source !== "connected-source").flatMap((event) => {
+		const eventCandidates = [...eventById.values()].filter(event => event.source !== "connected-source" &&
+			this.database.hasMemoryOwnerSourceAuthority("timeline_event", event.id)).flatMap((event) => {
 			const lexical = lexicalById.get(event.id) ?? this.lexicalScore(query.query, event.textSummary);
 			const semantic = queryEmbedding
 				? this.semanticScore(queryEmbedding, "timeline_event", event.id, event.textSummary, readyEmbeddings)
@@ -870,6 +871,7 @@ export class MemorySubstrate {
 							limit: 500,
 						})
 						.filter((session) =>
+							this.database.hasMemoryOwnerSourceAuthority("timeline_session", session.id) &&
 							(!query.sessionId || session.id === query.sessionId || session.sourceSessionIds.includes(query.sessionId)) &&
 							(!query.sourceSessionId || session.sourceSessionIds.includes(query.sourceSessionId)) &&
 							this.aggregateVisible(session.eventIds, query) &&
@@ -884,6 +886,7 @@ export class MemorySubstrate {
 					limit: 1_000,
 				})
 				.filter((block) =>
+					this.database.hasMemoryOwnerSourceAuthority("activity_block", block.id) &&
 					(!query.sessionId || block.sessionId === query.sessionId || block.eventIds.some((id) => this.database.getTimelineEvent(id)?.sourceSessionId === query.sessionId)) &&
 					(!query.sourceSessionId || block.eventIds.some((id) => this.database.getTimelineEvent(id)?.sourceSessionId === query.sourceSessionId)) &&
 					this.aggregateVisible(block.eventIds, query) &&
@@ -892,6 +895,7 @@ export class MemorySubstrate {
 			: [];
 		const summaries = query.includeTimeline
 			? this.database.listDailySummaries(500).filter((summary) =>
+				this.database.hasMemoryOwnerSourceAuthority("daily_summary", summary.id) &&
 				this.aggregateVisible(summary.eventIds, query) &&
 				(!options.startAt || Date.parse(`${summary.day}T23:59:59.999Z`) >= Date.parse(options.startAt)) &&
 				(!options.endAt || Date.parse(`${summary.day}T00:00:00.000Z`) < Date.parse(options.endAt)) &&
@@ -940,6 +944,7 @@ export class MemorySubstrate {
 		}
 		if (query.includeMemories) {
 			for (const memory of this.legacyMemory.list().filter((item) => item.status === "active")) {
+				if (!this.database.hasMemoryOwnerSourceAuthority("memory", memory.id)) continue;
 				if (!this.sensitivityAllowed(memory.sensitivity, query)) continue;
 				if (query.horizons.length && !query.horizons.includes(horizonForLegacyMemory(memory))) continue;
 				if (query.projectIds.length && !query.projectIds.some((id) => (memory.relatedProjectIds ?? []).includes(id))) continue;
@@ -986,6 +991,7 @@ export class MemorySubstrate {
 		}
 		if (query.includeAgents && query.agentId) {
 			for (const memory of this.database.listAgentMemories(query.agentId, { limit: 100 })) {
+				if (!this.database.hasMemoryOwnerSourceAuthority("agent_memory", memory.id)) continue;
 				if (!this.sensitivityAllowed(memory.sensitivity, query)) continue;
 				if (query.horizons.length && !query.horizons.includes(memory.horizon)) continue;
 				if (query.projectIds.length && !query.projectIds.some((id) => memory.projectIds.includes(id))) continue;
@@ -1009,7 +1015,7 @@ export class MemorySubstrate {
 					includeCompleted: true,
 					limit: 500,
 				})) {
-				if (!this.taskVisibleToQuery(task, query)) continue;
+				if (!this.database.hasMemoryOwnerSourceAuthority("task", task.id) || !this.taskVisibleToQuery(task, query)) continue;
 				if (query.projectIds.length && !query.projectIds.some((id) => task.projectIds.includes(id))) continue;
 				if (query.personIds.length && !query.personIds.some((id) => task.personIds.includes(id))) continue;
 				if (query.entityIds.length && !query.entityIds.some((id) => task.entityIds.includes(id))) continue;
@@ -1059,7 +1065,7 @@ export class MemorySubstrate {
 		const detailEventIds = new Set([...selectedIds, ...selectedAggregateEventIds]);
 		const detailEvents = [...detailEventIds].flatMap((id) => {
 			const event = this.database.getTimelineEvent(id);
-			return event && this.eventMatchesQuery(event, query) ? [event] : [];
+			return event && this.database.hasMemoryOwnerSourceAuthority("timeline_event", event.id) && this.eventMatchesQuery(event, query) ? [event] : [];
 		});
 		return MemoryTimelineQueryResultSchema.parse({
 			results: selected,
@@ -1121,7 +1127,7 @@ export class MemorySubstrate {
 			...(input.sessionId ? { sessionId: input.sessionId } : {}),
 			...(input.agentId ? { agentId: input.agentId } : {}),
 			limit: 20,
-		});
+		}).filter(task => this.database.hasMemoryOwnerSourceAuthority("task", task.id));
 		const evidence = [...new Map(
 			[...durable, ...current, ...retrieved]
 				.flatMap((result) => result.provenanceIds)

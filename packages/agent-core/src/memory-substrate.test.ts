@@ -94,6 +94,41 @@ afterEach(() => {
 });
 
 describe("memory substrate", () => {
+	it.each(["connected-source", "private-session"] as const)("keeps transitive %s content out of local fallback and agent context", async restriction => {
+		const state = fixture();
+		try {
+			const text = "Generated source authority context sentinel";
+			const identity = state.substrate.ensureAgentIdentity(state.main);
+			const sourceSession = state.runtime.createSession({ title: "Generated source owner" });
+			const event = state.substrate.captureActivity({ id: "generated-context-source", eventType: "note", source: "fixture",
+				sourceSessionId: sourceSession.id, textSummary: text })!;
+			const memory = state.substrate.remember(memoryInput(text, event.id));
+			state.substrate.createWorkingTask({ id: "generated-context-task", sessionId: state.main.id, agentId: identity.id,
+				sourceIds: [memory.id], projectIds: [], personIds: [], entityIds: [], goal: text, status: "planned", plan: [],
+				evidence: [], artifacts: [], failures: [], unresolvedQuestions: [], subtaskIds: [], dependencyTaskIds: [], startedAt: event.startedAt,
+			});
+			expect(state.substrate.queryTimeline(queryInput({ query: "authority", agentId: identity.id })).results
+				.some(value => value.id === memory.id)).toBe(true);
+			if (restriction === "connected-source") state.database.upsertTimelineEvent({ ...event, source: "connected-source" });
+			else state.database.saveRuntimeSession({ ...sourceSession, privacyMode: "private" });
+			const result = state.substrate.queryTimeline(queryInput({ query: "authority", agentId: identity.id, includeSensitive: true, includeRestricted: true }));
+			expect(JSON.stringify(result)).not.toContain(text);
+			const context = state.substrate.getRelevantContext({ query: "authority", agentId: identity.id, includeSensitive: true, includeRestricted: true });
+			expect(JSON.stringify(context)).not.toContain(text);
+		} finally { await state.close(); }
+	});
+
+	it("preserves existing local timeline history when automatic capture is paused", async () => {
+		const state = fixture();
+		try {
+			const text = "Generated retained history while capture is paused";
+			const event = state.substrate.captureActivity({ eventType: "note", source: "fixture", textSummary: text })!;
+			state.substrate.setCaptureEnabled(false);
+			expect(state.database.getMemoryEmbeddingInput("timeline_event", event.id)).toBeUndefined();
+			expect(state.substrate.queryTimeline(queryInput({ query: text })).results.some(value => value.id === event.id)).toBe(true);
+		} finally { await state.close(); }
+	});
+
 	it("embeds the current event generation after session assignment changes its authority", async () => {
 		const state = fixture();
 		try {
