@@ -57,6 +57,7 @@ import {
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
 import type { AgentRuntime } from "./runtime";
 import { MemoryManager, type MemoryInput } from "./memory";
+import { isForgetConversationCommand } from "./memory-command-classifier";
 import { redactSensitiveContent } from "./tool-result-guardrails";
 
 const DAY_MS = 86_400_000;
@@ -313,18 +314,6 @@ function actorForRole(role: RuntimeMessage["role"]): TimelineActor {
 	return role === "user" ? "user" : role === "assistant" ? "assistant" : "system";
 }
 
-function isForgetConversationCommand(text: string): boolean {
-	const normalized = text
-		.normalize("NFKC")
-		.toLocaleLowerCase()
-		.replace(/[\u2018\u2019]/gu, "'")
-		.replace(/\s+/gu, " ")
-		.trim()
-		.replace(/[.!?]+$/u, "");
-	return /^(?:forget|delete|remove)(?:\s+everything)?\s+(?:you\s+)?(?:remember(?:ed)?|know)\s+(?:from|about)\s+(?:this|the current)\s+conversation$/.test(normalized)
-		|| /^(?:don't|do not)\s+(?:remember|use)\s+(?:this|the current)\s+conversation\s+for\s+memory$/.test(normalized)
-		|| /^(?:forget|delete|remove)\s+(?:this|the current)\s+conversation(?:\s+from\s+memory)?$/.test(normalized);
-}
 
 export class MemorySubstrate {
 	private readonly database: KestrelDatabase;
