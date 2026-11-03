@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { MemoryQuerySchema, type RuntimeMessage } from "@kestrel/shared-types";
-import { afterEach, describe, expect, it } from "vitest";
+import { MemoryJobSchema, MemoryQuerySchema, type RuntimeMessage } from "@kestrel/shared-types";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LifeContextService } from "./life-context";
 import { MemoryManager } from "./memory";
 import {
 	MemorySubstrate,
 	type MemoryEmbeddingProvider,
+	localMemoryEmbeddingProvider,
 } from "./memory-substrate";
 import { AgentRuntime } from "./runtime";
 
@@ -92,6 +93,57 @@ afterEach(() => {
 });
 
 describe("memory substrate", () => {
+	it.each([
+		["rewrite", false], ["rewrite", true],
+		["delete-and-recreate", false], ["delete-and-recreate", true],
+	] as const)("discards a pending result after %s, provider failure=%s", async (mutation, failProvider) => {
+		let release!: () => void;
+		let entered!: () => void;
+		const pending = new Promise<void>(resolve => { release = resolve; });
+		const started = new Promise<void>(resolve => { entered = resolve; });
+		const fallback = vi.spyOn(localMemoryEmbeddingProvider, "embed");
+		const state = fixture({ embeddingProvider: {
+			provider: "generated-deferred", model: "generated-deferred",
+			async embed() {
+				entered(); await pending;
+				if (failProvider) throw new Error("Generated provider failure");
+				return [1];
+			},
+		} });
+		let maintenance: ReturnType<MemorySubstrate["runMaintenance"]> | undefined;
+		try {
+			const memory = state.substrate.remember(memoryInput("Generated original memory"));
+			state.database.db.prepare("DELETE FROM memory_jobs").run();
+			const timestamp = "2026-07-22T12:00:00.000Z";
+			state.database.queueMemoryJob(MemoryJobSchema.parse({
+				id: "generated-deferred-job", dedupeKey: "generated-deferred-job", kind: "embed",
+				status: "pending", payload: { ownerType: "memory", ownerId: memory.id },
+				attempts: 0, maxAttempts: 3, runAfter: timestamp, createdAt: timestamp, updatedAt: timestamp,
+			}));
+			maintenance = state.substrate.runMaintenance(1);
+			await Promise.race([started, maintenance.then(() => {
+				throw new Error("Generated embedding provider was not dispatched.");
+			})]);
+			if (mutation === "rewrite") state.database.upsertMemory({ ...memory, content: "Generated replacement memory" });
+			else {
+				state.database.purgeMemory(memory.id);
+				state.database.upsertMemory(memory);
+			}
+			release();
+			const result = await maintenance;
+			expect(result.jobsCompleted).toBe(0);
+			expect(state.database.listMemoryEmbeddings()).toEqual([]);
+			expect(fallback).not.toHaveBeenCalled();
+			if (mutation === "rewrite") {
+				expect(result.jobsRetried).toBe(1);
+				expect(state.database.getMemoryJob("generated-deferred-job")?.status).toBe("pending");
+			} else expect(state.database.getMemoryJob("generated-deferred-job")).toBeUndefined();
+		} finally {
+			try { release(); await maintenance; }
+			finally { fallback.mockRestore(); await state.close(); }
+		}
+	});
+
 	it("captures redacted runtime activity and builds searchable aggregates", async () => {
 		const state = fixture();
 		try {

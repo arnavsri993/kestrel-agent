@@ -1701,6 +1701,7 @@ export class MemorySubstrate {
 			if (!job) break;
 			jobsProcessed += 1;
 			try {
+				let embeddingCompleted = false;
 				if (job.kind === "extract") memoriesExtracted += this.processExtractionJob(job);
 				else if (job.kind === "sessionize") {
 					eventsSessionized += this.sessionize();
@@ -1714,10 +1715,10 @@ export class MemorySubstrate {
 					const result = this.consolidateTimeline();
 					blocksBuilt += result.blocksBuilt;
 				}
-				else if (job.kind === "embed") await this.processEmbeddingJob(job);
+				else if (job.kind === "embed") embeddingCompleted = await this.processEmbeddingJob(job);
 				else if (job.kind === "decay") memoriesChanged += this.decay();
 				else if (job.kind === "cleanup") deletedArtifacts += this.cleanupExpired();
-				if (this.database.completeMemoryJob(job.id, this.now().toISOString(), job.leaseToken))
+				if (embeddingCompleted || this.database.completeMemoryJob(job.id, this.now().toISOString(), job.leaseToken))
 					jobsCompleted += 1;
 			} catch (error) {
 				const retried = this.database.failMemoryJob(
@@ -2398,29 +2399,10 @@ export class MemorySubstrate {
 		return { blocksBuilt };
 	}
 
-	private async processEmbeddingJob(job: MemoryJob): Promise<void> {
-		const ownerType = typeof job.payload.ownerType === "string" ? job.payload.ownerType : undefined;
-		const ownerId = typeof job.payload.ownerId === "string" ? job.payload.ownerId : undefined;
-		if (!ownerType || !ownerId) return;
-		let text = "";
-		if (ownerType === "timeline_event") {
-            const event = this.database.getTimelineEvent(ownerId);
-            if (event?.source === "connected-source") return;
-            text = event?.textSummary ?? "";
-        }
-		else if (ownerType === "timeline_session") text = this.database.getTimelineSession(ownerId)?.summary ?? "";
-		else if (ownerType === "memory") text = this.legacyMemory.list().find((memory) => memory.id === ownerId)?.content ?? "";
-		else if (ownerType === "agent_memory") text = this.database.getAgentMemory(ownerId)?.content ?? "";
-		else if (ownerType === "activity_block") text = this.database.getActivityBlock(ownerId)?.summary ?? "";
-		else if (ownerType === "daily_summary") text = this.database.getDailySummary(ownerId)?.summary ?? "";
-		else if (ownerType === "task") {
-			const task = this.database.getWorkingTask(ownerId);
-            // Source analysis uses consent-gated retrieval, never the general embed queue.
-            // Opaque observation IDs retain this boundary even after evidence deletion.
-            if (task?.sourceIds.some(id => id.startsWith("observation-") || this.database.getTimelineEvent(id)?.source === "connected-source")) return;
-			text = task ? `${task.goal}\n${task.outcomeSummary ?? ""}` : "";
-		}
-		if (!text) return;
+	private async processEmbeddingJob(job: MemoryJob): Promise<boolean> {
+		const input = this.database.snapshotMemoryEmbeddingJob(job, this.now().toISOString());
+		if (!input) return false;
+		const { ownerType, ownerId, text } = input;
 		const timestamp = this.now().toISOString();
 		const contentHash = createHash("sha256").update(text).digest("hex");
 		let provider = this.embeddingProvider;
@@ -2433,6 +2415,8 @@ export class MemorySubstrate {
 			// A configured remote/custom provider is optional.  Retrieval remains
 			// local and usable if that provider is unavailable.
 			if (provider.provider !== localMemoryEmbeddingProvider.provider) {
+				if (!this.database.isCurrentMemoryEmbeddingJob(job, input, this.now().toISOString()))
+					throw new Error("Memory embedding input or job authority changed.");
 				provider = localMemoryEmbeddingProvider;
 				try {
 					vector = [...await provider.embed(text)];
@@ -2443,49 +2427,16 @@ export class MemorySubstrate {
 				}
 			}
 		}
-		if (!vector) {
-			this.database.upsertMemoryEmbedding(EmbeddingRecordSchema.parse({
-				id: `embedding-${ownerType}-${ownerId}-unavailable`,
-				ownerType,
-				ownerId,
-				provider: provider.provider,
-				model: provider.model,
-				dimension: 1,
-				contentHash,
-				vector: [0],
-				status: "unavailable",
-				createdAt: timestamp,
-				updatedAt: timestamp,
-			}));
-			this.updateTimelineEmbeddingStatus(ownerType, ownerId, "unavailable", timestamp);
-			return;
-		}
-		this.database.upsertMemoryEmbedding(EmbeddingRecordSchema.parse({
-			id: `embedding-${ownerType}-${ownerId}-${provider.model}`,
-			ownerType,
-			ownerId,
-			provider: provider.provider,
-			model: provider.model,
-			dimension: vector.length,
-			contentHash,
-			vector,
-			status: "ready",
-			createdAt: timestamp,
-			updatedAt: timestamp,
-		}));
-		this.updateTimelineEmbeddingStatus(ownerType, ownerId, "ready", timestamp);
-	}
-
-	private updateTimelineEmbeddingStatus(
-		ownerType: string,
-		ownerId: string,
-		status: TimelineEvent["embeddingStatus"],
-		updatedAt: string,
-	): void {
-		if (ownerType !== "timeline_event") return;
-		const event = this.database.getTimelineEvent(ownerId);
-		if (!event || event.embeddingStatus === status) return;
-		this.database.upsertTimelineEvent({ ...event, embeddingStatus: status, updatedAt });
+		const completedAt = this.now().toISOString();
+		const embedding = EmbeddingRecordSchema.parse({
+			id: vector ? `embedding-${ownerType}-${ownerId}-${provider.model}` : `embedding-${ownerType}-${ownerId}-unavailable`,
+			ownerType, ownerId, provider: provider.provider, model: provider.model,
+			dimension: vector?.length ?? 1, contentHash, vector: vector ?? [0],
+			status: vector ? "ready" : "unavailable", createdAt: timestamp, updatedAt: completedAt,
+		});
+		if (!this.database.commitMemoryEmbeddingJob(job, input, embedding, completedAt))
+			throw new Error("Memory embedding input or job authority changed.");
+		return true;
 	}
 
 	private decay(): number {

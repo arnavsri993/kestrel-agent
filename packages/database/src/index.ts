@@ -373,6 +373,14 @@ export interface TimelineEventMatch {
 	lexicalScore: number;
 }
 
+/** Private Core input; the revision contains encrypted row state, never persist or publish it. */
+export interface MemoryEmbeddingInputSnapshot {
+	readonly ownerType: EmbeddingRecord["ownerType"];
+	readonly ownerId: string;
+	readonly text: string;
+	readonly revision: string;
+}
+
 type MemoryPayloadTable =
 	| "memory_timeline_events"
 	| "memory_timeline_sessions"
@@ -3288,6 +3296,94 @@ export class KestrelDatabase {
 	private memoryJobLeaseIsCurrent(job: MemoryJob, now: string, leaseToken?: string): boolean {
 		return job.status === "running" && job.leaseToken === leaseToken &&
 			(job.leaseUntil === undefined || Date.parse(job.leaseUntil) > Date.parse(now));
+	}
+
+	snapshotMemoryEmbeddingJob(job: MemoryJob, now: string): MemoryEmbeddingInputSnapshot | undefined {
+		MemoryJobSchema.shape.updatedAt.parse(now);
+		return this.db.transaction(() => {
+			const current = this.getMemoryJob(job.id);
+			if (!current || current.kind !== "embed" || !job.leaseToken ||
+				!this.memoryJobLeaseIsCurrent(current, now, job.leaseToken)) return undefined;
+			const type = EmbeddingRecordSchema.shape.ownerType.safeParse(current.payload.ownerType);
+			const id = current.payload.ownerId;
+			if (!type.success || typeof id !== "string") return undefined;
+			return this.snapshotMemoryEmbeddingOwner(type.data, id);
+		})();
+	}
+
+	isCurrentMemoryEmbeddingJob(job: MemoryJob, input: MemoryEmbeddingInputSnapshot, now: string): boolean {
+		const current = this.snapshotMemoryEmbeddingJob(job, now);
+		return current !== undefined && current.ownerType === input.ownerType &&
+			current.ownerId === input.ownerId && current.revision === input.revision && current.text === input.text;
+	}
+
+	commitMemoryEmbeddingJob(
+		job: MemoryJob,
+		input: MemoryEmbeddingInputSnapshot,
+		embedding: EmbeddingRecord,
+		now: string,
+	): boolean {
+		const parsed = EmbeddingRecordSchema.parse(embedding);
+		if (parsed.ownerType !== input.ownerType || parsed.ownerId !== input.ownerId ||
+			(parsed.status !== "ready" && parsed.status !== "unavailable"))
+			throw new Error("Embedding result does not match its input owner.");
+		return this.db.transaction(() => {
+			if (!this.isCurrentMemoryEmbeddingJob(job, input, now)) return false;
+			this.upsertMemoryEmbedding(parsed);
+			if (input.ownerType === "timeline_event") {
+				const event = this.getTimelineEvent(input.ownerId)!;
+				if (event.embeddingStatus !== parsed.status) this.upsertTimelineEvent({
+					...event, embeddingStatus: parsed.status as "ready" | "unavailable", updatedAt: now,
+				});
+			}
+			if (!this.completeMemoryJob(job.id, now, job.leaseToken))
+				throw new Error("Embedding job authority changed before completion.");
+			return true;
+		})();
+	}
+
+	private snapshotMemoryEmbeddingOwner(
+		ownerType: EmbeddingRecord["ownerType"], ownerId: string,
+	): MemoryEmbeddingInputSnapshot | undefined {
+		const tables = {
+			timeline_event: "memory_timeline_events", timeline_session: "memory_timeline_sessions",
+			activity_block: "memory_activity_blocks", daily_summary: "memory_daily_summaries",
+			memory: "memories", agent_memory: "memory_agent_memories", task: "memory_working_tasks",
+		} as const;
+		const row = this.db.prepare(`SELECT * FROM ${tables[ownerType]} WHERE id = ?`).get(ownerId);
+		if (!row) return undefined;
+		let owner: { id: string } | undefined;
+		let text: string | undefined;
+		if (ownerType === "timeline_event") {
+			const event = this.getTimelineEvent(ownerId);
+			if (event?.source === "connected-source") return undefined;
+			owner = event; text = event?.textSummary;
+		} else if (ownerType === "timeline_session") {
+			const session = this.getTimelineSession(ownerId);
+			owner = session; text = session?.summary;
+		} else if (ownerType === "activity_block") {
+			const block = this.getActivityBlock(ownerId);
+			owner = block; text = block?.summary;
+		} else if (ownerType === "daily_summary") {
+			const summary = this.getDailySummary(ownerId);
+			owner = summary; text = summary?.summary;
+		} else if (ownerType === "memory") {
+			const memory = this.getMemory(ownerId);
+			owner = memory; text = memory?.content;
+		} else if (ownerType === "agent_memory") {
+			const memory = this.getAgentMemory(ownerId);
+			owner = memory; text = memory?.content;
+		} else {
+			const task = this.getWorkingTask(ownerId);
+			if (task?.sourceIds.some(id => id.startsWith("observation-") ||
+				this.getTimelineEvent(id)?.source === "connected-source")) return undefined;
+			owner = task; text = task ? `${task.goal}\n${task.outcomeSummary ?? ""}` : undefined;
+		}
+		if (!owner || !text) return undefined;
+		if (owner.id !== ownerId) throw new Error("Embedding owner identity is inconsistent.");
+		// Normal owner writes use fresh encryption IVs, so this also detects
+		// same-clock A -> B -> A and delete/recreate without a new schema or cache.
+		return { ownerType, ownerId, text, revision: JSON.stringify(row) };
 	}
 
 	upsertMemoryEmbedding(embedding: EmbeddingRecord): void {

@@ -2051,3 +2051,48 @@ data; these calls format public numbered redaction placeholders. This explains
 the reported source, but does not declare the findings cleared or resolve the
 separate persisted-content fingerprint issue. No query suppression or security
 gate change has been added.
+
+## Atomic embedding result guards (2026-11-02)
+
+An embedding result previously wrote its vector before job completion checked
+lease authority. Core now takes a private snapshot of the claimed job and its
+owner before dispatch. The snapshot contains the canonical input text and the
+encrypted owner row identity; it is neither persisted nor returned to the
+renderer. Within one SQLite transaction, result application rechecks the job
+token, lease, owner identity and input, then writes the vector, timeline owner
+status and job completion together. Failure rolls back the transaction. A stale
+input also prevents fallback-provider dispatch.
+
+Fresh encryption IVs on normal owner writes distinguish same-clock edits,
+A-to-B-to-A changes during a pending request, and deletion/recreation of the
+same ID. This is deliberately conservative: even a metadata-only owner rewrite
+can discard a pending result and require retry. It introduces no SQL migration,
+new persistent owner state or transfer-checksum reinterpretation.
+
+All 2,370 tests in 291 files, workspace typechecking and a native rebuild passed.
+The new database cases cover all seven owner types, stale/expired claims,
+unavailable results and rollback after an owner-write failure. Four actual Core
+tests hold a provider request across an edit or delete/recreate and verify that
+neither a result nor a fallback dispatch survives the changed input. Initial
+fixture failures used an invalid timeline status and omitted foreign-key parent
+records; correcting those fixtures left implementation assertions intact.
+
+Current bundle digest:
+`0268e2944d8206e4ab8351c04f92aa65cbc75d89d4dd2333ce0fab1caf6ed7f0`.
+It passed 23 native workflow phases in
+`.tmp/native-embedding-result-workflow-evidence/receipt.json`. The generated
+completed provider conversation was visually inspected. Eight actual
+bundled-Core phases passed in
+`.tmp/native-embedding-result-validated-bundled-evidence/receipt.json`: all 12
+generated maintenance jobs matched SQL/encrypted state and retained completion
+after restart, and seven actual local vectors matched current owner text,
+dimension and owner status. Only the separate synthetic transcription fetch
+replies were simulated. Both receipts retain the same before/after digest; all
+owned processes stopped and generated Core data was removed.
+
+This guards result application during a request. Completed-job cache identity,
+stable owner generations, invalidation of existing vectors after later writes,
+transitive source-policy revocation/regrant, legacy fingerprint migration and
+versioned transfer/recovery remain unfinished. The five remote CodeQL findings
+are not declared cleared. Current native close/reopen acceptance still awaits
+unlock, and the canonical Electron installation remains preserved.
