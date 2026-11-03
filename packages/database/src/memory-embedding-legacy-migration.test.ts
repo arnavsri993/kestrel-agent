@@ -76,14 +76,21 @@ describe("explicit legacy embedding identifier migration", () => {
    expect(db.getPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY)).toEqual(before);
   } finally { db.close(); }
  });
- it("rejects a page whose combined ciphertext exceeds the total byte budget", () => {
-  const db = new KestrelDatabase(":memory:", createEncryptionKey());
+ it("advances through a valid page over the combined byte budget and resumes after reopen", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kestrel-legacy-budget-")), path = join(dir, "db.sqlite"), key = createEncryptionKey();
+  let db = new KestrelDatabase(path, key);
   try {
-   for (const id of ["a", "b", "c"]) legacy(db, id, id);
-   db.db.prepare("UPDATE memory_jobs SET payload_ciphertext=zeroblob(2700000)").run();
-   expect(() => db.migrateLegacyMemoryEmbeddingIdentifiers(now, 8)).toThrow(/byte limit/);
-   expect(db.getPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY)).toBeUndefined();
-  } finally { db.close(); }
+   for (const id of ["a", "b", "c"]) {
+    legacy(db, id, id);
+    const job = db.getMemoryJob(id)!;
+    db.queueMemoryJob({ ...job, payload: { ...job.payload, fixtureData: "x".repeat(2_100_000) } });
+   }
+   expect(db.migrateLegacyMemoryEmbeddingIdentifiers(now, 8)).toMatchObject({ phase: "jobs", processed: 2, done: false });
+   expect(db.getPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY)).toMatchObject({ phase: "jobs", afterId: "b" });
+   db.close(); db = new KestrelDatabase(path, key);
+   finish(db);
+   expect(db.listMemoryJobs({ kind: "embed" }).filter(job => job.id.startsWith("legacy-retired-job-"))).toHaveLength(3);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
  });
  it("blocks an active legacy job with no expiry for manual recovery", () => {
   const db = new KestrelDatabase(":memory:", createEncryptionKey());

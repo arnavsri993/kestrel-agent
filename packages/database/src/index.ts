@@ -3306,16 +3306,20 @@ export class KestrelDatabase {
 			const sizes = this.db.prepare(`SELECT id, length(CAST(payload_ciphertext AS BLOB)) AS bytes,
 				length(CAST(payload_iv AS BLOB)) AS iv_bytes, length(CAST(payload_auth_tag AS BLOB)) AS tag_bytes
 				FROM ${table} WHERE id > ? ORDER BY id LIMIT ?`).all(checkpoint.afterId, limit) as Array<{ id: string; bytes: number; iv_bytes: number; tag_bytes: number }>;
-			let pageBytes = 0;
-			for (const size of sizes) {
+			const rowBytes = sizes.map(size => {
 				const fields = [size.bytes, size.iv_bytes, size.tag_bytes];
 				if (fields.some(value => !Number.isSafeInteger(value) || value < 0)) throw new Error("Invalid legacy embedding payload size.");
 				const bytes = fields.reduce((sum, value) => sum + value, 0);
-				pageBytes += bytes;
-				if (bytes > 4_000_000 || pageBytes > 8_000_000) throw new Error("Legacy embedding migration page exceeds its byte limit.");
+				if (bytes > 4_000_000) throw new Error("Legacy embedding migration page exceeds its byte limit.");
+				return bytes;
+			});
+			let pageBytes = 0, selected = 0;
+			for (const bytes of rowBytes) {
+				if (pageBytes + bytes > 8_000_000) break;
+				pageBytes += bytes; selected++;
 			}
 			const fetchRow = this.db.prepare(`SELECT * FROM ${table} WHERE id = ?`);
-			const rows = sizes.map(({ id }) => fetchRow.get(id) as MemorySubstrateRow);
+			const rows = sizes.slice(0, selected).map(({ id }) => fetchRow.get(id) as MemorySubstrateRow);
 			let afterId = checkpoint.afterId;
 			let processed = 0;
 			let blocked = false;
@@ -3346,7 +3350,7 @@ export class KestrelDatabase {
 				}
 				afterId = id; processed++;
 			}
-			const phase: EmbeddingLegacyMigration["phase"] = !blocked && rows.length < limit ? (checkpoint.phase === "jobs" ? "embeddings" : "complete") : checkpoint.phase;
+			const phase: EmbeddingLegacyMigration["phase"] = !blocked && selected === sizes.length && sizes.length < limit ? (checkpoint.phase === "jobs" ? "embeddings" : "complete") : checkpoint.phase;
 			const next: EmbeddingLegacyMigration = { version: 1, phase, afterId: phase === checkpoint.phase ? afterId : "" };
 			this.setPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY, next);
 			return { phase, processed, blocked, done: phase === "complete" };
