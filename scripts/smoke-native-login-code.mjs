@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from '@playwright/test';
 import { candidateDigest } from './native-retirement-evidence.mjs';
 import { markDisposableNativeTestProfile } from './native-test-profile.mjs';
+import { selectSettingsSection } from './desktop-browser-test-helpers.mjs';
 
 // Only the native protected test-profile response can select this generated
 // Messages database. Never consult or alter the real macOS Messages database.
@@ -129,10 +130,24 @@ try {
  assert.equal(await page.locator('#otp').inputValue(), '');
  phase('generic-visible-automation-rejects-code-field');
  stage = 'open-real-companion';
- // This first-party user-gesture path opens the native panel without network.
- const cdp = await home.context().newCDPSession(home);
- await cdp.send('Runtime.evaluate', { expression: `window.kestrel.request({type:'browser-create-tab',input:'chrome://settings/',active:false})`, userGesture: true, awaitPromise: true });
- await cdp.detach();
+ // Exercise the real settings button: its first-party gesture opens both the
+ // native Extensions page and the companion without contacting the Store.
+ const settingsResult = await request({ type: 'browser-create-tab', input: 'kestrel://settings', active: true });
+ assert(settingsResult.ok, settingsResult.error);
+ let settings;
+ await eventually(async () => {
+  settings = browser.contexts().flatMap(context => context.pages()).find(item => /index\.html\?app=settings(?:&|$)/.test(item.url()));
+  if (settings) return true;
+  const session = await browser.newBrowserCDPSession(); const targets = await session.send('Target.getTargets'); await session.detach();
+  if (targets.targetInfos.some(target => /index\.html\?app=settings(?:&|$)/.test(target.url))) {
+   await browser.close(); browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
+   home = browser.contexts().flatMap(context => context.pages()).find(item => /chrome-extension:\/\/[^/]+\/index.html$/.test(item.url()));
+  }
+  return false;
+ }, 'Native settings unavailable.');
+ await settings.locator('[data-app-page="settings"]').waitFor();
+ await selectSettingsSection(settings, 'browser-extensions', 'Extensions');
+ await settings.getByRole('button', { name: 'Open Manage extensions', exact: true }).click();
  await eventually(async () => { try { panel = await connectPanel(); return true; } catch { return false; } }, 'Actual native companion did not open.');
  const selected = await request({ type: 'browser-select-tab', tabId }); assert(selected.ok, selected.error);
  await eventually(async () => (await panel.text()).includes('Find verification code'), 'Collapsed code helper missing.');

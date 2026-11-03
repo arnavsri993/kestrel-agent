@@ -1,4 +1,4 @@
-import { test, beforeEach } from 'node:test';
+import { test, beforeEach, afterEach, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import { loginCodeField } from '../apps/native-chromium-host/resources/kestrel-ui/login-code-fields.mjs';
 import { createBrowserAdapter } from '../apps/native-chromium-host/resources/kestrel-ui/browser.mjs';
@@ -14,20 +14,27 @@ class Input {
 let fields;
 let windowEvents;
 let navigationEvents;
+let registryDescriptor;
 beforeEach(() => {
+ registryDescriptor = Object.getOwnPropertyDescriptor(globalThis, '__kestrelLoginCodeFieldsV1');
  delete globalThis.__kestrelLoginCodeFieldsV1;
  windowEvents = new EventTarget();
  navigationEvents = new EventTarget();
- globalThis.addEventListener = windowEvents.addEventListener.bind(windowEvents);
- globalThis.navigation = navigationEvents;
+ vi.stubGlobal('addEventListener', windowEvents.addEventListener.bind(windowEvents));
+ vi.stubGlobal('navigation', navigationEvents);
  navigation.currentEntry = { key: 'first', id: 'entry1' };
- globalThis.HTMLInputElement = Input;
- globalThis.getComputedStyle = () => ({ display: 'block', visibility: 'visible', opacity: '1' });
- globalThis.location = { href: 'https://example.com/login' };
+ vi.stubGlobal('HTMLInputElement', Input);
+ vi.stubGlobal('getComputedStyle', () => ({ display: 'block', visibility: 'visible', opacity: '1' }));
+ vi.stubGlobal('location', { href: 'https://example.com/login' });
  fields = [new Input({ autocomplete: 'one-time-code' })];
  const documentEvents = new EventTarget();
- globalThis.document = { querySelectorAll: () => fields, activeElement: null, getElementById: () => null,
-  addEventListener: documentEvents.addEventListener.bind(documentEvents), visibilityState: 'visible', hasFocus: () => true };
+ vi.stubGlobal('document', { querySelectorAll: () => fields, activeElement: null, getElementById: () => null,
+  addEventListener: documentEvents.addEventListener.bind(documentEvents), visibilityState: 'visible', hasFocus: () => true });
+});
+afterEach(() => {
+ vi.unstubAllGlobals();
+ if (registryDescriptor) Object.defineProperty(globalThis, '__kestrelLoginCodeFieldsV1', registryDescriptor);
+ else delete globalThis.__kestrelLoginCodeFieldsV1;
 });
 test('selects only unambiguous eligible fields, and rejects sensitive and hidden fields', () => {
  fields.push(new Input({ 'aria-label': 'Verification code' }));
