@@ -35,6 +35,34 @@ function harness(options: Record<string, any> = {}) {
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 describe("native worker connection", () => {
+	it("dispatches private code fields only after authentication and sanitizes failures", async () => {
+		const handle = vi.fn(async () => { throw new Error("123456 private message"); });
+		const { ports, authenticate } = harness({ handleLoginCodeRequest: handle });
+		const message = { kind: "native-login-code-request", id: "login-code-1", request: { operation: "inspect", tabId: "generated" } };
+		await ports[0].onMessage.emit(message);
+		expect(handle).not.toHaveBeenCalled();
+		await authenticate();
+		await ports[0].onMessage.emit(message);
+		expect(handle).toHaveBeenCalledOnce();
+		const result = ports[0].postMessage.mock.calls.at(-1)![0];
+		expect(result).toMatchObject({ kind: "native-login-code-response", id: "login-code-1", ok: false });
+		expect(JSON.stringify(result)).not.toContain("123456");
+	});
+	it("aborts private code work on cancellation or disconnect and never returns a late result", async () => {
+		let resolve!: (value: unknown) => void;
+		const handle = vi.fn((_request: unknown, _signal: AbortSignal) => new Promise(done => { resolve = done; }));
+		const { ports, authenticate } = harness({ handleLoginCodeRequest: handle });
+		await authenticate();
+		const first = ports[0].onMessage.emit({ kind: "native-login-code-request", id: "login-code-1", request: { operation: "inspect" } });
+		await ports[0].onMessage.emit({ kind: "native-login-code-cancel", id: "login-code-1" });
+		expect(handle.mock.calls[0][1].aborted).toBe(true);
+		resolve({ fieldId: "late" }); await first;
+		const second = ports[0].onMessage.emit({ kind: "native-login-code-request", id: "login-code-2", request: { operation: "inspect" } });
+		ports[0].disconnect();
+		expect(handle.mock.calls[1][1].aborted).toBe(true);
+		resolve({ fieldId: "late" }); await second;
+		expect(ports[0].postMessage.mock.calls.some(([message]: any[]) => message.kind === "native-login-code-response")).toBe(false);
+	});
 	it("opens an external URL only on the authenticated connection and acknowledges the created tab", async () => {
 		const open = vi.fn(async () => ({ tabId: 17, windowId: 5 }));
 		const { ports, authenticate } = harness({ handleExternalOpenUrl: open });

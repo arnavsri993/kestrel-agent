@@ -4628,6 +4628,10 @@ export const RendererRequestSchema = z.union([
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	}),
 	z.object({
+		type: z.literal("communication-code-cancel"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}).strict(),
+	z.object({
 		type: z.literal("communication-code-use"),
 		scanId: z.string().regex(/^scan-[a-f0-9-]{36}$/),
 		candidateId: z.string().regex(/^candidate-[a-f0-9-]{36}$/),

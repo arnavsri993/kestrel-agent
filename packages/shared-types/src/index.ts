@@ -1,5 +1,6 @@
 export * from "./configuration";
 export * from "./communication";
+export * from "./native-login-code";
 export * from "./chrome-web-store";
 export * from "./native-browser-settings";
 export * from "./native-request-frame";

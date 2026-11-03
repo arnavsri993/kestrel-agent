@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { createNativeBrowserRelay } from "./native-browser-relay.mjs";
+import { createNativeLoginCodeRelay } from "./native-login-code-relay.mjs";
 import { createNativeAutomationRelay } from "./native-automation-relay.mjs";
 import { createNativeComputerRelay } from "./native-computer-relay.mjs";
 import { createNativeDialogRelay } from "./native-dialog-relay.mjs";
@@ -23,7 +24,7 @@ if (!coreProfileInfo.isDirectory() || coreProfileInfo.isSymbolicLink() || corePr
 const browserPid = Number(argument("--browser-pid"));
 if (!Number.isSafeInteger(browserPid) || browserPid !== process.ppid) throw new Error("Native broker requires its owning browser.");
 const peerInspector = createRequire(import.meta.url)(join(resources, "native-peer.node"));
-const { RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_READINESS_REQUEST_TYPES, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PROVIDER_OPERATION_REQUEST_TYPES, NATIVE_PLUGIN_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NATIVE_LOCAL_BACKUP_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest } = await import("./native-ui-contracts.mjs");
+const { NativeLoginCodeBrowserRequestSchema, parseNativeLoginCodeResult, NATIVE_COMMUNICATION_REQUEST_TYPES, RendererRequestSchema, CoreRequestSchema, BrowserBackendWireRequestSchema, isUserBrowserBackendWireRequest, nativeRequestTimeoutMs, NATIVE_READINESS_REQUEST_TYPES, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PROVIDER_OPERATION_REQUEST_TYPES, NATIVE_PLUGIN_REQUEST_TYPES, NATIVE_WORKSPACE_REQUEST_TYPES, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NATIVE_LOCAL_BACKUP_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest } = await import("./native-ui-contracts.mjs");
 const MAX_FRAME = 1024 * 1024;
 const MAX_PENDING = 64;
 const key = randomBytes(32);
@@ -105,6 +106,8 @@ function send(socket, message) {
 function failPending(socket) {
 	for (const [id, request] of pending) if (request.socket === socket) { clearTimeout(request.timeout); pending.delete(id); cancelNativeHostOnClientLoss(id, request, writeCore); }
 	browserRelay.disconnect(socket);
+	loginCodeRelay.disconnect(socket);
+	if (socket === active) writeCore({ type: "native-login-code-disconnected" });
 }
 function writeCore(message) {
 	if (stopping) return;
@@ -117,6 +120,11 @@ const browserRelay = createNativeBrowserRelay({
 		const parsed = BrowserBackendWireRequestSchema.safeParse(request);
 		return parsed.success && isUserBrowserBackendWireRequest(parsed.data) ? parsed : { success: false };
 	},
+	writeCore, send, currentOwner: () => active && !active.destroyed ? active : undefined,
+});
+const loginCodeRelay = createNativeLoginCodeRelay({
+	validate: request => NativeLoginCodeBrowserRequestSchema.safeParse(request),
+	validateResult: parseNativeLoginCodeResult,
 	writeCore, send, currentOwner: () => active && !active.destroyed ? active : undefined,
 });
 function writeOwner(line) {
@@ -153,6 +161,8 @@ createInterface({ input: core.stdout }).on("line", (line) => {
 		pending.delete(message.id); clearTimeout(request.timeout);
 		send(request.socket, { kind: "response", id: request.uiId, response: message.response });
 	} else if (message.type === "event" && active) send(active, { kind: "event", channel: message.channel, event: message.event });
+	else if (message.type === "native-login-code-request") loginCodeRelay.request(message);
+	else if (message.type === "native-login-code-cancel") loginCodeRelay.cancel(message.requestId);
 	else if (message.type === "browser-backend-request") {
 		const parsed = BrowserBackendWireRequestSchema.safeParse(message.request);
 		if (parsed.success && isUserBrowserBackendWireRequest(parsed.data)) browserRelay.request(message);
@@ -235,6 +245,7 @@ const server = createServer((socket) => {
           }
           continue;
         }
+        if (message.kind === "native-login-code-response") { loginCodeRelay.response(socket, message); continue; }
         if (message.kind === "browser-backend-response") { browserRelay.response(socket, message); continue; }
 				if (message.kind === "cancel-request") { cancelNativeHostByUiRequest(pending, socket, message.id, writeCore); continue; }
 				if (message.kind !== "request" || typeof message.id !== "string" || message.id.length > 100 || pending.size >= MAX_PENDING) { socket.destroy(); return; }
@@ -247,7 +258,7 @@ const server = createServer((socket) => {
 					pending.set(id, { socket, uiId: message.id, timeout });
 					process.stdout.write(JSON.stringify({ kind: "host-request", id, request: parsed.data }) + "\n"); continue;
 				}
-				const hostRequest = NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) || NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type);
+				const hostRequest = NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) || NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) || NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type);
 				if (!hostRequest && !CoreRequestSchema.safeParse(parsed.data).success) {
 					if (!reportedUnsupported.has(parsed.data.type)) {
 						reportedUnsupported.add(parsed.data.type);
@@ -264,7 +275,7 @@ const server = createServer((socket) => {
             entry.timeout = setTimeout(() => { if (!pending.delete(id)) return; send(socket, { kind: "response", id: message.id, response: { ok: false, error: entry.providerOperation ? "The provider operation timed out. Check its connection status before retrying." : entry.fileRequest ? "The file request timed out. Check whether the file was saved before retrying." : "The plugin operation timed out and its outcome is uncertain. Check installed plugins before retrying." } }); }, 8_000);
           } else { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Kestrel Core response timed out. Check the task before retrying." } }); }
         }, ["select-workspace-folder", "select-context-files"].includes(parsed.data.type) ? 10 * 60_000 + 30_000 : nativeRequestTimeoutMs(parsed.data, "broker"));
-				pending.set(id, { socket, uiId: message.id, timeout, cancellable: NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type), providerOperation: NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type), fileRequest: NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) });
+				pending.set(id, { socket, uiId: message.id, timeout, cancellable: NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type), providerOperation: NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type), fileRequest: NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) });
 				core.stdin.write(JSON.stringify({ type: hostRequest ? "host-request" : "request", id, request: parsed.data }) + "\n");
 			}
 		}
@@ -309,7 +320,7 @@ ownerInput.on("line", (line) => {
 		const key = typeof message.keyBase64 === "string" ? Buffer.from(message.keyBase64, "base64") : Buffer.alloc(0);
 		const ok = message.ok === true && key.length === 32 && key.toString("base64") === message.keyBase64;
 		writeCore({ kind: "native-core-profile-key-response", requestId,
-			ok, ...(ok ? { keyBase64: message.keyBase64 } : { error: "Protected native profile key is unavailable." }) });
+			ok, ...(ok ? { keyBase64: message.keyBase64, testProfile: message.testProfile === true } : { error: "Protected native profile key is unavailable." }) });
 		key.fill(0);
 		return;
 	}

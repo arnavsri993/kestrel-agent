@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readFile, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
@@ -5,7 +7,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NATIVE_CORE_BACKUP_BUSY_MESSAGE, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PROVIDER_OPERATION_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NativeLocalBackupHost, NATIVE_LOCAL_BACKUP_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
+import { NativeCommunicationHost, NATIVE_COMMUNICATION_REQUEST_TYPES, MacMessagesSource, NativeLoginCodeBrowserRequestSchema, parseNativeLoginCodeResult, CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NATIVE_CORE_BACKUP_BUSY_MESSAGE, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PROVIDER_OPERATION_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NativeLocalBackupHost, NATIVE_LOCAL_BACKUP_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 import { dispatchNativeComputerHostRequest } from "./native-computer-host-routing.mjs";
 
@@ -36,7 +38,7 @@ async function requestProtectedProfileKey() {
 			try { message = JSON.parse(line); } catch { return finish(new Error("Trusted host key response was invalid.")); }
 			if (message?.kind !== "native-core-profile-key-response" || message.requestId !== requestId || message.ok !== true || typeof message.keyBase64 !== "string")
 				return finish(new Error("Trusted host could not unlock the native profile key."));
-			finish(undefined, message.keyBase64);
+			finish(undefined, { keyBase64: message.keyBase64, testProfile: message.testProfile === true });
 		};
 		// Keychain authorization can require a human security prompt. Keep the
 		// private request alive long enough for that prompt while bounding hangs.
@@ -46,13 +48,15 @@ async function requestProtectedProfileKey() {
 		process.stdout.write(JSON.stringify({ kind: "native-core-profile-key-request", requestId }) + "\n");
 	});
 }
-const protectedKeyBase64 = await requestProtectedProfileKey();
+const protectedProfile = await requestProtectedProfileKey();
+const protectedKeyBase64 = protectedProfile?.keyBase64;
 const profile = await openNativeCoreProfile(resolve(process.argv[index + 1]), {
 	durable,
 	protectedKeyBase64,
 });
 const MAX_FRAME = 1024 * 1024;
 const pendingBrowser = new Map();
+const pendingLoginCode = new Map();
 const pendingNativeComputer = new Map();
 const pending = new Set();
 const hostRequests = new Map();
@@ -97,6 +101,26 @@ function nativeComputerHostRequest(request, signal) {
 	});
 }
 
+function loginCodeBrowserRequest(input, signal) {
+ const request = NativeLoginCodeBrowserRequestSchema.parse(input);
+ if (stopping || pendingLoginCode.size >= 16 || signal.aborted) return Promise.reject(new Error("Verification field unavailable."));
+ const requestId = `native-login-code-${++sequence}`;
+ return new Promise((resolveRequest, rejectRequest) => {
+  const fail = () => {
+   if (!pendingLoginCode.delete(requestId)) return;
+   clearTimeout(timer); signal.removeEventListener("abort", abort);
+   write({ type: "native-login-code-cancel", requestId });
+   rejectRequest(new Error("Verification field unavailable. Check the page before retrying."));
+  };
+  const abort = fail;
+  const timer = setTimeout(fail, 15_000); timer.unref?.();
+  pendingLoginCode.set(requestId, { resolve: resolveRequest, reject: rejectRequest, signal, abort, timer, operation: request.operation });
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) { fail(); return; }
+  write({ type: "native-login-code-request", requestId, request });
+ });
+}
+
 function nativeHostBackendRequest(request, signal) {
 	if (stopping || pendingBrowser.size >= 16 || signal.aborted) return Promise.reject(new Error("The native browser connection is unavailable."));
 	const requestId = `native-browser-${++sequence}`;
@@ -137,6 +161,7 @@ async function browserRequest(request, signal) {
 
 function cancelBrowsers() {
 	computerUse.invalidate();
+	for (const request of pendingLoginCode.values()) request.abort();
 	for (const [requestId, request] of pendingBrowser) {
 		clearTimeout(request.timer); request.signal.removeEventListener("abort", request.abort);
 		write({ type: "browser-backend-cancel", requestId });
@@ -226,6 +251,36 @@ const providers = new NativeProviderHost({ root: profile.root, encryptionKeyBase
 		await browserRequest({ operation: "visible-create", input: url }, signal);
 	},
 });
+// The native host alone selects this path. A renderer cannot supply a Messages
+// database path or enable the disposable fixture lane.
+const localMessages = new MacMessagesSource(protectedProfile?.testProfile ? {
+ databasePath: join(browserProfileRoot, "fixtures", "messages.sqlite"),
+} : {});
+const communications = new NativeCommunicationHost({
+ localMessages: { status: () => localMessages.status(), search: signal => localMessages.searchLoginCodes(signal) },
+ gmailStatus: async signal => {
+  signal.throwIfAborted();
+  const response = await providers.handle({ type: "communication-sources" }, signal);
+  signal.throwIfAborted();
+  return response.ok && response.communicationSources?.find(source => source.id === "gmail");
+ },
+ searchGmail: async (request, signal) => {
+  signal.throwIfAborted();
+  // The existing Core Gmail lookup has its own 30-second network bound. Host
+  // cancellation discards late content; it does not abort that child request.
+  const response = await core.request({ type: "communication-code-search", ...request });
+  signal.throwIfAborted();
+  if (!response.ok) throw new Error("Mail lookup unavailable.");
+  return response.communicationMatches ?? [];
+ },
+ inspect: (tabId, signal) => loginCodeBrowserRequest({ operation: "inspect", tabId }, signal),
+ validate: async (authority, signal) => (await loginCodeBrowserRequest({ operation: "validate", authority }, signal)).valid === true,
+ insert: async (authority, code, signal) => (await loginCodeBrowserRequest({ operation: "fill", authority, code }, signal)).filled === true,
+ openMessagesSettings: async signal => {
+  signal.throwIfAborted();
+  await promisify(execFile)("/usr/bin/open", ["x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"], { signal, timeout: 5_000, maxBuffer: 4096 });
+ },
+});
 const workspaces = new NativeWorkspaceHost({ root: profile.root, selectFolder: selectWorkspaceFolder,
 	reconfigure: mutation => configuration.reconfigure(mutation),
 });
@@ -303,7 +358,7 @@ const backups = new NativeLocalBackupHost({
 	isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning || configuration.changing || core.isReady !== true,
 	shouldRestoreCore: () => !stopping,
 });
-core.on("crash", () => { computerUse.invalidate(); process.stderr.write("KESTREL_NATIVE_CORE_INTERRUPTED\n"); });
+core.on("crash", () => { communications.invalidate(); computerUse.invalidate(); process.stderr.write("KESTREL_NATIVE_CORE_INTERRUPTED\n"); });
 core.on("recovery-failed", () => process.stderr.write("KESTREL_NATIVE_CORE_RECOVERY_FAILED\n"));
 core.on("recovered", () => {
 	process.stderr.write("KESTREL_NATIVE_CORE_RECOVERED\n");
@@ -318,6 +373,7 @@ async function shutdown(code = 0) {
 	cancelBrowsers();
 	const backupClosing = backups.close();
 	const providerClosing = providers.close();
+	await communications.close();
 	// Interrupt a long maintenance stop on Quit. Cancellation closes the copy
 	// first; the same Core stop confirms exit and cannot resurrect a new owner.
 	const coreStopping = core.stop({ gracefulTimeoutMs: backupReservation && configuration.changing ? 0 : 2_000 });
@@ -374,6 +430,14 @@ input.on("line", line => {
 		else reset.reject(new Error("Isolated browser cleanup failed. Restart Kestrel before creating another session."));
 		return;
 	}
+ if (message?.type === "native-login-code-disconnected") { communications.invalidate(); return; }
+ if (message?.type === "native-login-code-response") {
+  const request = pendingLoginCode.get(message.requestId); if (!request) return;
+  pendingLoginCode.delete(message.requestId); clearTimeout(request.timer); request.signal.removeEventListener("abort", request.abort);
+  const result = message.ok === true ? parseNativeLoginCodeResult(request.operation, message.result) : { success: false };
+  if (result.success) request.resolve(result.data); else request.reject(new Error("Verification field unavailable. Check the page before retrying."));
+  return;
+ }
 	if (message?.type === "browser-backend-response") {
 		const request = pendingBrowser.get(message.requestId); if (!request) return;
 		pendingBrowser.delete(message.requestId); clearTimeout(request.timer); request.signal.removeEventListener("abort", request.abort);
@@ -396,8 +460,8 @@ input.on("line", line => {
 	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
 	const isHost = message.type === "host-request";
 	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
-	if (!parsed.success || (isHost && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
-	if (!isHost && isNativeMemoryRecoveryInternalRequest(parsed.data.type)) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
+	if (!parsed.success || (isHost && !NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
+	if (!isHost && (isNativeMemoryRecoveryInternalRequest(parsed.data.type) || NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
 	if ((!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Settings are being applied. Wait for Agent Core to restart." } }); return; }
 	const creatingBackup = isHost && parsed.data.type === "create-local-backup";
 	if (backupReservation) { write({ type: "response", id: message.id, response: { ok: false, error: NATIVE_CORE_BACKUP_BUSY_MESSAGE } }); return; }
@@ -409,13 +473,14 @@ input.on("line", line => {
 	}
 	if (creatingBackup) backupReservation = true;
 	pending.add(message.id);
-	const hostController = isHost && (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
+	const hostController = isHost && (NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
 	const hostBudget = creatingBackup ? 14 * 60_000 : 9 * 60_000 + 50_000;
 	const hostTimer = hostController ? setTimeout(() => hostController.abort(new Error("The native host request timed out.")), hostBudget) : undefined;
 	if (hostController) hostRequests.set(message.id, hostController);
 	if (!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) activeCoreRequests.add(message.id);
 	void Promise.resolve().then(async () => {
 		if (isHost) {
+			if (NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type)) return communications.handle(parsed.data, hostController.signal);
 			if (parsed.data.type === "system-readiness") return { ok: true, systemReadiness: await nativeSystemReadiness({
 				coreRequest: request => core.request(request), workspaceConfiguration: () => workspaces.runtimeConfiguration(),
 				localStatus: () => providers.handle({ type: "local-model-status" }), computerUseStatus: () => computerUse.status(),

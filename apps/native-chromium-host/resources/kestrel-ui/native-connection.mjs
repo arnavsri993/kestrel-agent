@@ -1,7 +1,7 @@
 // Sent actions fail when their connection closes. They are never replayed.
 import { isNativeCancellableRequest, isNativeFileRequest } from "./native-request-scope.mjs";
 import { nativeRequestTimeoutMs } from "../../../../packages/shared-types/src/request-timeouts.ts";
-export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = crypto, handleBrowserRequest, handleExternalOpenUrl, handleOpenNativeWindow,
+export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = crypto, handleBrowserRequest, handleLoginCodeRequest, handleExternalOpenUrl, handleOpenNativeWindow,
 	loadConfiguration = async (nonce) => {
 		const response = await fetch(runtime.getURL("launch-config.json") + "?challenge=" + nonce, { cache: "no-store", redirect: "error" });
 		if (!response.ok) throw new Error("Native launch configuration is unavailable.");
@@ -10,6 +10,7 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 }) {
 	const pending = new Map();
 	const browserRequests = new Map();
+	const loginCodeRequests = new Map();
 	let native, retry;
 	let ready = false, sequence = 0, delay = 250;
 	function arm(id, request, waiting = false) {
@@ -36,6 +37,9 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 		for (const [id, request] of browserRequests) if (request.connection === connection) {
 			browserRequests.delete(id);
 			request.controller.abort();
+		}
+		for (const [id, request] of loginCodeRequests) if (request.connection === connection) {
+			loginCodeRequests.delete(id); request.controller.abort();
 		}
 		clearTimeout(retry);
 		retry = setTimeout(connect, delay);
@@ -107,7 +111,23 @@ export function createNativeConnection({ runtime, emit = () => {}, cryptoApi = c
 				} catch {
 					if (native === connection) post(connection, { kind: "open-native-window-result", id: message.id, ok: false });
 				}
-				} else if (phase === "ready" && message?.kind === "browser-backend-cancel") {
+				} else if (phase === "ready" && message?.kind === "native-login-code-cancel") {
+				const request = loginCodeRequests.get(message.id);
+				if (request?.connection === connection) { loginCodeRequests.delete(message.id); request.controller.abort(); }
+			} else if (phase === "ready" && message?.kind === "native-login-code-request") {
+				if (typeof message.id !== "string" || !/^login-code-[1-9][0-9]{0,15}$/.test(message.id) || loginCodeRequests.has(message.id) || loginCodeRequests.size >= 16) { abort(connection); return; }
+				const request = { connection, controller: new AbortController() };
+				loginCodeRequests.set(message.id, request);
+				let response;
+				try {
+					if (!handleLoginCodeRequest) throw new Error("unavailable");
+					response = { ok: true, result: await handleLoginCodeRequest(message.request, request.controller.signal) };
+				} catch { response = { ok: false, error: "The verification field is unavailable. Check the page before retrying." }; }
+				if (native === connection && loginCodeRequests.get(message.id) === request) {
+					loginCodeRequests.delete(message.id);
+					post(connection, { kind: "native-login-code-response", id: message.id, ...response });
+				}
+			} else if (phase === "ready" && message?.kind === "browser-backend-cancel") {
 				const request = browserRequests.get(message.id);
 				if (request?.connection === connection) { browserRequests.delete(message.id); request.controller.abort(); }
 			} else if (phase === "ready" && message?.kind === "browser-backend-request") {

@@ -780,7 +780,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
               : native_core_profile_key_store.GetOrCreate(
                     std::string(core_profile.fileSystemRepresentation), &key_base64, &error);
           std::string response = ok
-              ? std::string("{\"kind\":\"native-core-profile-key-response\",\"requestId\":\"native-core-profile-key-v1\",\"ok\":true,\"keyBase64\":\"") + key_base64 + "\"}"
+              ? std::string("{\"kind\":\"native-core-profile-key-response\",\"requestId\":\"native-core-profile-key-v1\",\"ok\":true,\"keyBase64\":\"") + key_base64 + (disposable_test_key ? "\",\"testProfile\":true}" : "\"}")
               : "{\"kind\":\"native-core-profile-key-response\",\"requestId\":\"native-core-profile-key-v1\",\"ok\":false,\"error\":\"Protected native profile key is unavailable.\"}";
           NSMutableData* line = [NSMutableData dataWithBytes:response.data()
                                                       length:response.size()];

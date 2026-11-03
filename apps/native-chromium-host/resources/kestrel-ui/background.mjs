@@ -3,6 +3,7 @@ import { createBrowserAdapter } from "./browser.mjs";
 import { createNativeConnection } from "./native-connection.mjs";
 import { trackNativePanels } from "./panel-state.mjs";
 import { RendererRequestSchema } from "../../../../packages/shared-types/src/contracts.ts";
+import { NativeLoginCodeBrowserRequestSchema } from "../../../../packages/shared-types/src/native-login-code.ts";
 import { BrowserBackendWireRequestSchema } from "../../../core-service/src/browser-backend-wire.ts";
 import { nativeRendererFrameFits } from "../../../../packages/shared-types/src/native-request-frame.ts";
 
@@ -14,6 +15,7 @@ const core = createNativeConnection({ runtime: chrome.runtime, emit,
 	handleExternalOpenUrl: (url) => browser.openExternalUrl(url),
 	handleOpenNativeWindow: () => browser.openNativeWindow(),
 	handleBrowserRequest: (request, signal) => browser.backend(BrowserBackendWireRequestSchema.parse(request), signal),
+	handleLoginCodeRequest: (request, signal) => browser.loginCode(NativeLoginCodeBrowserRequestSchema.parse(request), signal),
 });
 trackNativePanels(chrome);
 // Register synchronously so a cold startup wakes Chromium's existing worker.
