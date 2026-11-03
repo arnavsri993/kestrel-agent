@@ -2582,3 +2582,93 @@ real-profile/browser/credential acceptance, native Messages/login-code insertion
 a published Store version upgrade, production identity/signing/notarization and
 canonical cutover remain release work. The absence of an Apple Developer account
 is unchanged. This candidate is not a signed/notarized release.
+
+
+### Legacy identifier preparation and companion test readiness (2026-11-03)
+
+Active Core startup now prepares legacy generation-less embedding rows before
+background claims run. This is an explicit activation operation, not a database
+constructor, source reader, transfer-plan, import or staging side effect. Each
+transaction walks at most eight primary-key records and atomically commits its
+strictly versioned encrypted cursor with the converted records. Metadata size
+checks run before payload loading: at most 4,000,000 encoded bytes per row and
+an 8,000,000-byte selected page. Valid larger aggregate pages advance through a
+fitting prefix. The scheduler yields between pages; errors and live leases use
+the normal retry interval, avoiding both a busy failure loop and a 15-second
+pause for every small page. An unexpired running lease is preserved; a running
+legacy job without an expiry remains blocked for explicit recovery.
+
+Legacy job IDs and dedupe values become independent opaque UUID identities;
+SQL and authenticated payload bindings are validated before rewriting. Legacy
+vector hashes become domain-separated keyed values, while the absent generation
+remains absent: no old vector is declared current. Current-generation rows stay
+unchanged. Strict retirement markers validate version, opaque identity and owner
+binding in database readers and profile transfer.
+
+Cancelled and exhausted legacy work receives a same-status, same-budget guard
+for its first eligible current generation, without replacing an existing current
+job. Denied owners remain retained and cannot dispatch. If permission returns,
+repair binds the terminal guard without reviving work. A subsequent real
+correction may create new work for a distinct generation; the previous terminal
+guard stays intact. Current cancelled generations also remain terminal in both
+refresh producers. No provider runs as part of the conversion itself.
+
+Reader/export snapshots remain unchanged before explicit activation. The exact
+transfer checksum and source-revalidation rules are unchanged, and a source
+activated after a reviewed plan requires review again. Tests cover interrupted
+pages/reopen, indexed/encrypted mismatch rollback, strict forged metadata,
+preload byte limits, cumulative page progress, lease preservation, terminal
+regrant and later correction. Historical SQLite pages, WAL files and backups
+can still retain old hashes; this operation does not claim retroactive erasure.
+
+Final source tests passed **2,595 tests in 303 files**, plus all workspace
+typechecks. Full `pnpm verify` for source `5fd495e2` **passed**, exit 0, at
+2026-11-03T22:30:47.747Z. The receipt is
+`.tmp/native-legacy-aggregate/receipt.json`; the exact native candidate was pinned
+throughout and its before/after digest matched. All eight tracked screenshots
+were preserved and restored byte for byte. The run includes audits, builds,
+native helpers, website checks, all desktop workflows, packaged CLI, editor
+integrations and the production secret scan.
+
+Native candidate
+`d2b9a39afb02963bff89d15167258f2f48c42487201e51809f6290b4f537efd6`
+has matching before/after hashes for:
+
+- **26** full product phases in `native-legacy-final-workflow2-evidence`;
+- **4** source-authority and **4** generation phases in
+  `native-legacy-final-authority-evidence` and
+  `native-legacy-final-generation-evidence`;
+- **7** transfer, **5** process-death recovery, **16** Core app-data backup and
+  **9** provider phases in the corresponding `native-legacy-final-*-evidence`;
+- **5** retained official Store compatibility phases in
+  `native-legacy-final-store-compatibility-evidence`, with no update query or
+  version-upgrade claim;
+- **4** real bundled Node/Core migration phases in
+  `native-legacy-formal-bundled-evidence`: stable pre-activation reader/export,
+  public legacy identifier neutralization, permission regrant preserving terminal
+  budgets, and a genuine later correction followed by restart. Generated source
+  fixtures are seeded/edited only while Core is confirmed stopped. The reviewed
+  file-transfer plan rejection is covered by database unit tests, not this probe.
+
+All paths above are under `.tmp/` and contain `receipt.json`. The new command is
+`test:native-embedding-legacy-migration`. The actual running native window was
+observed through CUA with Home, native tabs, Store tab and completed companion;
+this remains a generated profile, not the canonical installed app.
+
+Published predecessor `246ef377` passed desktop/package CI, but its Core job
+failed when the fixture launched a second companion task after streamed answer
+text and before the panel finished returning to idle. The fixture now requires
+a persisted completed run and consecutive idle-composer observations before the
+next task; the original busy rejection/draft-preservation checks are unchanged.
+The first local retry used an unnormalized title with punctuation and failed;
+that fixture match was corrected, and all 26 phases then passed. Fresh remote
+CI remains required. That predecessor's CodeQL slow-punctuation finding cleared;
+one transient HMAC redaction-fingerprint finding remains unresolved and
+unsuppressed.
+
+Large/older-profile acceptance beyond these fixtures, missing-expiry recovery,
+whole Chromium-profile backup, real profiles/credentials/accounts, an observed
+published Store upgrade, native Messages/login-code insertion, production
+identity/signing/notarization and canonical cutover remain release work. The
+existing `/Applications/Kestrel.app`, user profiles, Keychain and credentials
+remain untouched. No new microphone or desktop-control access was used.
