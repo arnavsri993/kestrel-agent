@@ -35,7 +35,7 @@ async function fixture(point) {
 	if (point === "hold-before-link") await owner.ready(); else assert.deepEqual(await owner.exited, { code: null, signal: "SIGKILL" });
 	const journal = await readFile(target + ".kestrel-transfer-journal", "utf8");
 	for (const value of [secret, sourceKey.toString("base64"), destinationKey.toString("base64")]) assert(!journal.includes(value));
-	return { root, source, target, sourceKey, destinationKey, secret, before, owner };
+	return { root, source, target, sourceKey, destinationKey, secret, before, owner, journal };
 }
 function safeOutput(client, fixture) {
 	assert.equal(client.errors(), "");
@@ -53,10 +53,28 @@ try {
 		const recovered = await restarted.request("recover-interrupted", { ...request, approved: true }); assert.equal(recovered.ok, true); assert.equal(recovered.receipt.activationPerformed, false);
 		const verified = await restarted.request("verify-recovery", { recoveryId: recovered.recoveryId }); assert.equal(verified.ok, true); assert.equal(verified.recovery.originalReadable, true); assert.equal(verified.recovery.destinationReadable, true);
 		const replay = await restarted.request("recover-interrupted", { ...request, approved: true }); assert.equal(replay.error.code, "RECOVERY_EXPIRED");
-		assert.equal((await stat(value.target)).nlink, 1); assert.deepEqual(await readdir(dirname(value.target)), ["kestrel.sqlite"]);
-		const db = new KestrelDatabase(value.target, value.destinationKey); try { assert.deepEqual(db.getPrivateState("generated-core-recovery"), { secret: value.secret }); } finally { db.close(); }
+		assert.equal((await stat(value.target)).nlink, 1);
+		assert.deepEqual((await readdir(dirname(value.target))).sort(), ["kestrel.sqlite", "kestrel.sqlite.kestrel-transfer-journal"]);
+		assert.equal(await readFile(value.target + ".kestrel-transfer-journal", "utf8"), value.journal);
 		assert.deepEqual(await readFile(value.source), value.before);
 		assert.deepEqual(await restarted.stop(), { code: 0, signal: null }); safeOutput(restarted, value); safeOutput(value.owner, value);
+		// A completed journal remains available for Keep Current / restart. Its
+		// presence alone is never adoption: a new worker requires a fresh review,
+		// both existing keys and another verification before host selection.
+		const fresh = launch(value.root);
+		const nextReview = await fresh.request("inspect-interrupted", { destinationDatabasePath: value.target });
+		assert.equal(nextReview.ok, true); assert.equal(nextReview.preview.state, "published");
+		const nextRecovery = await fresh.request("recover-interrupted", { reviewId: nextReview.reviewId,
+			acceptedRecoverySha256: nextReview.preview.recoverySha256, approved: true,
+			sourceKeyBase64: value.sourceKey.toString("base64"), destinationKeyBase64: value.destinationKey.toString("base64") });
+		assert.equal(nextRecovery.ok, true); assert.equal(nextRecovery.receipt.activationPerformed, false);
+		const nextVerified = await fresh.request("verify-recovery", { recoveryId: nextRecovery.recoveryId });
+		assert.equal(nextVerified.ok, true); assert.equal(nextVerified.recovery.originalReadable, true); assert.equal(nextVerified.recovery.destinationReadable, true);
+		assert.equal(await readFile(value.target + ".kestrel-transfer-journal", "utf8"), value.journal);
+		assert.deepEqual(await readFile(value.source), value.before);
+		assert.deepEqual(await fresh.stop(), { code: 0, signal: null }); safeOutput(fresh, value);
+		phase(`completed-journal-${point}-fresh-authentication-after-worker-exit`);
+		const db = new KestrelDatabase(value.target, value.destinationKey); try { assert.deepEqual(db.getPrivateState("generated-core-recovery"), { secret: value.secret }); } finally { db.close(); }
 		phase(`bundled-process-death-${point}-reviewed-recovery-and-original-preserved`);
 	}
 	const live = await fixture("hold-before-link"), inspector = launch(live.root);
@@ -73,7 +91,13 @@ try {
 	assert.deepEqual(await second.stop(), { code: 0, signal: null }); safeOutput(second, incomplete); safeOutput(incomplete.owner, incomplete);
 	phase("incomplete-stage-is-retained-for-separate-review-with-original-unchanged");
 	receipt.result = "passed";
-} catch (error) { receipt.result = "failed"; receipt.error = error?.code || "Protected Core recovery canary failed at the next phase."; process.exitCode = 1; }
+} catch (error) {
+	receipt.result = "failed"; receipt.error = error?.code || "Protected Core recovery canary failed at the next phase.";
+	// Locations identify a failed assertion without serializing assertion values,
+	// generated database bytes, or key-bearing worker requests into the receipt.
+	receipt.failureLocations = String(error?.stack || "").split("\n").filter(line => /^\s+at /.test(line) && line.includes("smoke-native-core-transfer-recovery.mjs:")).slice(0, 2).map(line => line.trim());
+	process.exitCode = 1;
+}
 finally {
 	for (const client of clients) { if (client.child.exitCode === null && client.child.signalCode === null) client.child.kill("SIGKILL"); await client.exited; }
 	for (const key of keys) key.fill(0); for (const root of roots) await rm(root, { recursive: true, force: true });
