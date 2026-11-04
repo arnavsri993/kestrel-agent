@@ -1,4 +1,4 @@
-import { UserBrowserSettingsSchema, UserBrowserPageContextSchema } from "../../../../packages/shared-types/src/contracts.ts";
+import { UserBrowserSettingsSchema, UserBrowserPageContextSchema, RendererRequestSchema } from "../../../../packages/shared-types/src/contracts.ts";
 import { NativeLoginCodeBrowserRequestSchema } from "../../../../packages/shared-types/src/native-login-code.ts";
 import { loginCodeField } from "./login-code-fields.mjs";
 import { capturePageContext } from "./page-context.mjs";
@@ -7,7 +7,11 @@ import { isNativeBrowserSettingsUrl } from "../../../../packages/shared-types/sr
 
 const TAB_IDS_KEY = "kestrel.native.browser.tabIds.v1";
 const SETTINGS_KEY = "kestrel.native.browser.settings.v1";
+const BOOKMARK_IDS_KEY = "kestrel.native.browser.bookmarkIds.v1";
+const BOOKMARK_MODES_KEY = "kestrel.native.browser.bookmarkModes.v1";
+const BOOKMARK_REQUESTS = new Set(["browser-toggle-bookmark", "browser-save-bookmark", "browser-update-bookmark", "browser-remove-bookmark", "browser-create-bookmark-folder", "browser-rename-bookmark-folder", "browser-remove-bookmark-folder"]);
 const INSTALL_DATES_KEY = "kestrel.native.browser.extensionInstallDates.v1";
+class BookmarkLimitError extends Error {}
 
 const HOME_SETTINGS_KEYS = ["newTabBackground", "newTabBackgroundCustomDataUrl", "newTabShortcuts", "newTabGreetingActivity", "newTabWidgets"];
 
@@ -34,7 +38,7 @@ const SUPPORTED = new Set([
 	"browser-get-state", "browser-create-tab", "browser-close-tab", "browser-select-tab",
 	"browser-navigate", "browser-back", "browser-forward", "browser-reload",
 	"browser-pin-tab", "browser-mute-tab", "browser-duplicate-tab", "browser-move-tab",
-	"browser-toggle-bookmark", "browser-remove-bookmark", "browser-clear-history",
+	...BOOKMARK_REQUESTS, "browser-clear-history",
 	"browser-list-extensions", "browser-cancel-download",
 	"browser-update-settings",
 	"browser-get-context",
@@ -93,6 +97,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	if (ui.protocol !== "chrome-extension:" || !ui.hostname) throw new TypeError("Kestrel UI must use its private extension origin.");
 	let changeQueue = Promise.resolve();
 	let idMapQueue = Promise.resolve();
+	let bookmarkQueue = Promise.resolve();
 	let focusedWindowId;
 	const loginCodeCaptures = new Map();
 	const loginCodeRevisions = new Map();
@@ -246,6 +251,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	}
 	function scheduleEmit() {
 		changeQueue = changeQueue.then(emitState, emitState);
+		return changeQueue;
 	}
 	for (const event of [chromeApi.tabs.onCreated, chromeApi.tabs.onActivated, chromeApi.tabs.onUpdated, chromeApi.tabs.onMoved, chromeApi.tabs.onAttached, chromeApi.tabs.onDetached])
 		event?.addListener?.(scheduleEmit);
@@ -263,9 +269,13 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		if (windowId >= 0) focusedWindowId = windowId;
 		scheduleEmit();
 	});
+	chromeApi.storage.onChanged?.addListener?.((changes, area) => {
+		if (area === "local" && Object.hasOwn(changes || {}, BOOKMARK_MODES_KEY)) scheduleEmit();
+	});
 	chromeApi.bookmarks?.onChanged?.addListener?.(scheduleEmit);
 	chromeApi.bookmarks?.onCreated?.addListener?.(scheduleEmit);
 	chromeApi.bookmarks?.onRemoved?.addListener?.(scheduleEmit);
+	chromeApi.bookmarks?.onMoved?.addListener?.(scheduleEmit);
 	chromeApi.history?.onVisited?.addListener?.(scheduleEmit);
 	chromeApi.downloads?.onChanged?.addListener?.(scheduleEmit);
 
@@ -274,8 +284,14 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		const tree = await invoke(chromeApi.bookmarks, "getTree");
 		const output = [];
 		const folders = [];
-		return mutateStoredMap("kestrel.native.browser.bookmarkIds.v1", (ids) => {
+		const storedModes = await stored(BOOKMARK_MODES_KEY, {});
+		const modes = storedModes && typeof storedModes === "object" && !Array.isArray(storedModes) ? storedModes : {};
+		return mutateStoredMap(BOOKMARK_IDS_KEY, (ids) => {
 			let idsChanged = false;
+			const liveKeys = new Set();
+			const collect = nodes => { for (const node of asArray(nodes)) { liveKeys.add(String(node.id)); liveKeys.add(`folder:${node.id}`); collect(node.children); } };
+			collect(tree);
+			for (const key of Object.keys(ids)) if (!liveKeys.has(key)) { delete ids[key]; idsChanged = true; }
 			const stableId = (key, prefix) => {
 				if (!new RegExp(`^${prefix}[a-f0-9-]{36}$`).test(ids[key] || "")) {
 					ids[key] = `${prefix}${crypto.randomUUID()}`;
@@ -283,21 +299,131 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 				}
 				return ids[key];
 			};
-			const walk = (nodes) => { for (const node of asArray(nodes)) {
+			const rootIds = new Set(asArray(tree?.[0]?.children).map(node => node.id));
+			const walk = (nodes, depth = 0, locked = false) => { for (const node of asArray(nodes)) {
+				const immutable = locked || Boolean(node.unmodifiable);
+				if (immutable) continue;
 				if (node.url && node.url.length <= 8192 && /^https?:/i.test(node.url)) output.push({
 					id: stableId(node.id, "bookmark-"), url: node.url, title: (node.title || node.url).slice(0, 500),
-					...(node.parentId ? { folderId: stableId(`folder:${node.parentId}`, "bookmark-folder-") } : {}), createdAt: node.dateAdded ? new Date(node.dateAdded).toISOString() : now(),
+					...(!rootIds.has(node.parentId) && node.parentId ? { folderId: stableId(`folder:${node.parentId}`, "bookmark-folder-") } : {}), displayMode: ["full", "title", "icon"].includes(modes[node.id]) ? modes[node.id] : "full", createdAt: node.dateAdded ? new Date(node.dateAdded).toISOString() : now(),
 				});
-				else if (node.children && node.id !== "0") folders.push({
+				else if (node.children && depth > 1 && !node.folderType) folders.push({
 					id: stableId(`folder:${node.id}`, "bookmark-folder-"), name: (node.title || "Bookmarks").slice(0, 80) || "Bookmarks",
 					createdAt: node.dateAdded ? new Date(node.dateAdded).toISOString() : now(),
 				});
-				walk(node.children);
+				walk(node.children, depth + 1, immutable);
 			} };
 			walk(tree);
 			return { value: { bookmarks: output.slice(0, 2000), folders: folders.slice(0, 100) }, changed: idsChanged };
 		});
 	}
+	function safeBookmarkUrl(value) {
+		if (typeof value !== "string" || value.length > 8192 || !/^https?:\/\//i.test(value) || /[\u0000-\u001f\u007f]/.test(value)) throw new Error();
+		const url = new URL(value);
+		if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error();
+		return url.href;
+	}
+	function bookmarkText(value, max, fallback = "") {
+		if (typeof value !== "string" || value.length > max || /[\u0000-\u001f\u007f]/.test(value)) throw new Error();
+		return value.trim() || fallback;
+	}
+	async function changeBookmark(input) {
+		const tree = await invoke(chromeApi.bookmarks, "getTree");
+		const root = tree?.[0];
+		if (!root || root.url || !Array.isArray(root.children)) throw new Error();
+		const roots = root.children.filter(node => !node.url && !node.unmodifiable);
+		const defaultRoot = roots.find(node => node.folderType === "bookmarks-bar") || roots[0];
+		if (!defaultRoot) throw new Error();
+		const nodes = new Map();
+		const walk = (node, depth, locked) => {
+			const immutable = locked || Boolean(node.unmodifiable) || depth <= 1 || Boolean(node.folderType);
+			nodes.set(String(node.id), { node, immutable, locked: locked || Boolean(node.unmodifiable), depth });
+			for (const child of asArray(node.children)) walk(child, depth + 1, locked || Boolean(node.unmodifiable));
+		};
+		walk(root, 0, false);
+		await readBookmarks();
+		const ids = await stored(BOOKMARK_IDS_KEY, {});
+		const lookup = (stable, folder) => {
+			const key = Object.keys(ids).find(key => key.startsWith("folder:") === folder && ids[key] === stable);
+			const entry = key && nodes.get(folder ? key.slice(7) : key);
+			if (!entry || Boolean(entry.node.url) === folder) throw new Error();
+			return entry;
+		};
+		const targetFolder = id => {
+			if (id == null) return defaultRoot;
+			const entry = lookup(id, true);
+			if (entry.locked || entry.depth === 0) throw new Error();
+			return entry.node;
+		};
+		const modes = await stored(BOOKMARK_MODES_KEY, {});
+		if (!modes || typeof modes !== "object" || Array.isArray(modes) || Object.keys(modes).length > 4000) throw new Error();
+		for (const id of Object.keys(modes)) if (!nodes.has(id)) delete modes[id];
+		const saveMode = async (id, mode) => { modes[id] = mode; await persist(BOOKMARK_MODES_KEY, modes); };
+		if (input.type === "browser-create-bookmark-folder") {
+			const name = bookmarkText(input.name, 80); if (!name) throw new Error();
+			const folderCount = [...nodes.values()].filter(({ node, depth, locked }) => !locked && depth > 1 && !node.url && Array.isArray(node.children) && !node.folderType).length;
+			if (folderCount >= 100) throw new BookmarkLimitError("Kestrel supports up to 100 bookmark folders.");
+			const created = await invoke(chromeApi.bookmarks, "create", { parentId: defaultRoot.id, title: name });
+			const stateResult = await response();
+			const idMap = await stored(BOOKMARK_IDS_KEY, {});
+			const folder = stateResult.browserState?.bookmarkFolders.find(item => item.id === idMap[`folder:${created.id}`]);
+			if (!folder) throw new Error();
+			return { ...stateResult, bookmarkFolderId: folder.id };
+		}
+		if (input.type === "browser-rename-bookmark-folder" || input.type === "browser-remove-bookmark-folder") {
+			const entry = lookup(input.folderId, true); if (entry.immutable) throw new Error();
+			if (input.type === "browser-rename-bookmark-folder") {
+				const name = bookmarkText(input.name, 80); if (!name) throw new Error();
+				await invoke(chromeApi.bookmarks, "update", entry.node.id, { title: name });
+			} else {
+				const currentFolder = async () => {
+					const current = await invoke(chromeApi.bookmarks, "get", entry.node.id);
+					const folder = asArray(current)[0];
+					if (current?.length !== 1 || !folder || folder.url || folder.unmodifiable || folder.folderType || folder.parentId !== entry.node.parentId) throw new Error();
+				};
+				await currentFolder();
+				for (const child of asArray(entry.node.children)) {
+					const result = await invoke(chromeApi.bookmarks, "get", child.id);
+					const current = asArray(result)[0];
+					if (result?.length !== 1 || !current || current.parentId !== entry.node.id || current.unmodifiable || current.folderType) throw new Error();
+					await invoke(chromeApi.bookmarks, "move", current.id, { parentId: defaultRoot.id });
+				}
+				await currentFolder();
+				await invoke(chromeApi.bookmarks, "remove", entry.node.id);
+			}
+			return response();
+		}
+		if (input.type === "browser-remove-bookmark") {
+			const entry = lookup(input.bookmarkId, false); if (entry.immutable) throw new Error();
+			await invoke(chromeApi.bookmarks, "remove", entry.node.id); delete modes[entry.node.id]; await persist(BOOKMARK_MODES_KEY, modes); return response();
+		}
+		if (input.type === "browser-update-bookmark") {
+			const entry = lookup(input.bookmarkId, false); if (entry.immutable) throw new Error();
+			const folder = input.folderId === undefined ? undefined : targetFolder(input.folderId);
+			const title = bookmarkText(input.title, 500, entry.node.url);
+			await invoke(chromeApi.bookmarks, "update", entry.node.id, { title });
+			if (folder && folder.id !== entry.node.parentId) await invoke(chromeApi.bookmarks, "move", entry.node.id, { parentId: folder.id });
+			await saveMode(entry.node.id, input.displayMode); return response();
+		}
+		const current = (await visibleTabs()).find(tab => tab.active);
+		const url = safeBookmarkUrl(input.type === "browser-toggle-bookmark" ? input.url || current?.url : current?.url);
+		const matches = await invoke(chromeApi.bookmarks, "search", { url });
+		const match = asArray(matches).find(item => nodes.has(String(item.id)) && !nodes.get(String(item.id)).immutable);
+		if (input.type === "browser-toggle-bookmark" && match) { await invoke(chromeApi.bookmarks, "remove", match.id); delete modes[match.id]; await persist(BOOKMARK_MODES_KEY, modes); return response(); }
+		const folder = targetFolder(input.type === "browser-save-bookmark" ? input.folderId : null);
+		const fallback = typeof current?.title === "string" ? current.title.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 500) : "";
+		const title = bookmarkText(input.title || "", 500, fallback || url);
+		let item;
+		if (match) { item = match; await invoke(chromeApi.bookmarks, "update", item.id, { title }); if (item.parentId !== folder.id) await invoke(chromeApi.bookmarks, "move", item.id, { parentId: folder.id }); }
+		else {
+			const bookmarkCount = [...nodes.values()].filter(({ node, locked }) => !locked && typeof node.url === "string" && node.url.length <= 8192 && /^https?:/i.test(node.url)).length;
+			if (bookmarkCount >= 2000) throw new BookmarkLimitError("Kestrel supports up to 2,000 bookmarks.");
+			item = await invoke(chromeApi.bookmarks, "create", { parentId: folder.id, title, url });
+		}
+		await saveMode(item.id, input.type === "browser-save-bookmark" ? input.displayMode : "full");
+		return response();
+	}
+
 	async function readHistory() {
 		if (!chromeApi.history?.search) return [];
 		const entries = await invoke(chromeApi.history, "search", { text: "", startTime: 0, maxResults: 5000 });
@@ -372,16 +498,18 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 				await invoke(chromeApi.history, "deleteAll");
 				return response();
 			}
-			if (input.type === "browser-toggle-bookmark") {
-				const windowId = await focusedWindow();
-				const currentTabs = await invoke(chromeApi.tabs, "query", { active: true, ...(windowId === undefined ? { currentWindow: true } : { windowId }) });
-				const current = currentTabs[0];
-				const url = input.url || current?.url;
-				if (!url || !/^https?:/i.test(url)) throw new Error("Only HTTP(S) pages can be bookmarked.");
-				const matches = await invoke(chromeApi.bookmarks, "search", { url });
-				if (matches.length) await invoke(chromeApi.bookmarks, "remove", matches[0].id);
-				else await invoke(chromeApi.bookmarks, "create", { title: input.title || current?.title || url, url });
-				return response();
+			if (BOOKMARK_REQUESTS.has(input.type)) {
+				const parsed = RendererRequestSchema.safeParse(input);
+				if (!parsed.success) return { ok: false, error: "Invalid bookmark request." };
+				const work = bookmarkQueue.then(async () => {
+					const result = await changeBookmark(parsed.data);
+					// Drain earlier Chrome events before publishing a final post-write state.
+					await scheduleEmit();
+					const fresh = await response();
+					return { ...fresh, ...("bookmarkFolderId" in result ? { bookmarkFolderId: result.bookmarkFolderId } : {}) };
+				});
+				bookmarkQueue = work.catch(() => undefined);
+				try { return await work; } catch (error) { return { ok: false, error: error instanceof BookmarkLimitError ? error.message : "Bookmark changes could not be completed. The result may be incomplete; check bookmarks before trying again." }; }
 			}
 			if (input.type === "browser-create-tab") {
 				await createAddress(input.input ? normalizeAddress(input.input) : { url: "" }, input.active !== false);
@@ -396,13 +524,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 				await invoke(chromeApi.downloads, "cancel", item.id);
 				return response();
 			}
-			if (input.type === "browser-remove-bookmark") {
-				const ids = await stored("kestrel.native.browser.bookmarkIds.v1", {});
-				const nativeBookmarkId = Object.keys(ids).find((key) => !key.startsWith("folder:") && ids[key] === input.bookmarkId);
-				if (!nativeBookmarkId) throw new Error("That bookmark is no longer available.");
-				await invoke(chromeApi.bookmarks, "remove", nativeBookmarkId);
-				return response();
-			}
+
 			const tab = await nativeId(input.tabId);
 			switch (input.type) {
 				case "browser-close-tab": await invoke(chromeApi.tabs, "remove", tab.id); break;
