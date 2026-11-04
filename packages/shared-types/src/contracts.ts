@@ -1,6 +1,7 @@
 import { MemoryWorkspaceQuerySchema, MemoryWorkspaceSchema, MemoryDocumentSchema, MemoryDocumentSaveSchema } from "./memory-workspace";
 import { SourceSelectionSchema, SourceObservationSchema } from "./source-observations";
 import { MemoryRecoveryPreviewSchema } from "./memory-recovery";
+import { NativeEmbeddingRecoveryRequestSchema, type NativeEmbeddingRecoveryPreview, type NativeEmbeddingRecoveryApplied } from "./native-embedding-recovery";
 import { ResourceScopeSchema } from "./resource-access";
 import { AgentTemplateSchema, SpecialistDefinitionSchema } from "./agent-templates";
 import { z } from "zod";
@@ -4611,6 +4612,7 @@ export const KestrelDeepLinkSchema = z
 export type KestrelDeepLink = z.infer<typeof KestrelDeepLinkSchema>;
 
 export const RendererRequestSchema = z.union([
+	NativeEmbeddingRecoveryRequestSchema,
 	z.object({ type: z.literal("memory-recovery-save-file"), sessionId: z.string().min(1) }),
 	z.object({ type: z.literal("memory-recovery-open-file"), sessionId: z.string().min(1) }),
  z.object({ type: z.literal("whatsapp-open") }),
@@ -5365,6 +5367,8 @@ export type RendererResponse =
 	| { ok: true; diagnosticReportSaved: true }
 	| { ok: true; localBackup: LocalBackupResult; cancelled?: boolean }
 	| { ok: true; localBackupCreated: NativeLocalBackupResult }
+	| { ok: true; nativeEmbeddingRecoveryPreview: NativeEmbeddingRecoveryPreview }
+	| { ok: true; nativeEmbeddingRecoveryApplied: NativeEmbeddingRecoveryApplied }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }
 	| { ok: true; providerAccounts: ProviderAccountSummary[] }
 	| { ok: true; googleWorkspaceOAuth: GoogleWorkspaceOAuthStatus }

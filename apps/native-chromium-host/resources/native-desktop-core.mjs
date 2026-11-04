@@ -7,7 +7,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
-import { NativeCommunicationHost, NATIVE_COMMUNICATION_REQUEST_TYPES, MacMessagesSource, NativeLoginCodeBrowserRequestSchema, parseNativeLoginCodeResult, CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NATIVE_CORE_BACKUP_BUSY_MESSAGE, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PROVIDER_OPERATION_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NativeLocalBackupHost, NATIVE_LOCAL_BACKUP_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
+import { NativeEmbeddingRecoveryHost, NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES, NativeCommunicationHost, NATIVE_COMMUNICATION_REQUEST_TYPES, MacMessagesSource, NativeLoginCodeBrowserRequestSchema, parseNativeLoginCodeResult, CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NATIVE_CORE_BACKUP_BUSY_MESSAGE, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PROVIDER_OPERATION_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NativeLocalBackupHost, NATIVE_LOCAL_BACKUP_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
 import { dispatchNativeComputerHostRequest } from "./native-computer-host-routing.mjs";
 
@@ -69,6 +69,7 @@ let browserReset;
 let folderDialog;
 let dialogSequence = 0;
 let backupReservation = false;
+let embeddingRecoveryReservation = false;
 
 function write(message) {
 	if (outputClosed) return;
@@ -358,6 +359,12 @@ const backups = new NativeLocalBackupHost({
 	isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning || configuration.changing || core.isReady !== true,
 	shouldRestoreCore: () => !stopping,
 });
+const embeddingRecovery = new NativeEmbeddingRecoveryHost({
+ root: profile.root, encryptionKeyBase64: profile.encryptionKeyBase64,
+ withStoppedCore: (operation, options) => configuration.withStoppedCore(operation, options),
+ isBusy: () => activeCoreRequests.size > 0 || backgroundJobsRunning || configuration.changing || core.isReady !== true,
+ shouldRestoreCore: () => !stopping,
+});
 core.on("crash", () => { communications.invalidate(); computerUse.invalidate(); process.stderr.write("KESTREL_NATIVE_CORE_INTERRUPTED\n"); });
 core.on("recovery-failed", () => process.stderr.write("KESTREL_NATIVE_CORE_RECOVERY_FAILED\n"));
 core.on("recovered", () => {
@@ -373,11 +380,12 @@ async function shutdown(code = 0) {
 	cancelBrowsers();
 	const backupClosing = backups.close();
 	const providerClosing = providers.close();
+	const embeddingRecoveryClosing = embeddingRecovery.close();
 	await communications.close();
 	// Interrupt a long maintenance stop on Quit. Cancellation closes the copy
 	// first; the same Core stop confirms exit and cannot resurrect a new owner.
-	const coreStopping = core.stop({ gracefulTimeoutMs: backupReservation && configuration.changing ? 0 : 2_000 });
-	const backupOutcomes = await Promise.allSettled([backupClosing, providerClosing, coreStopping]);
+	const coreStopping = core.stop({ gracefulTimeoutMs: (backupReservation || embeddingRecoveryReservation) && configuration.changing ? 0 : 2_000 });
+	const backupOutcomes = await Promise.allSettled([backupClosing, providerClosing, embeddingRecoveryClosing, coreStopping]);
 	if (backupOutcomes.some(result => result.status === "rejected")) {
 		process.stderr.write("KESTREL_NATIVE_BACKUP_SHUTDOWN_INCOMPLETE\n"); code = code || 1;
 	}
@@ -460,26 +468,29 @@ input.on("line", line => {
 	if (!["request", "host-request"].includes(message?.type) || typeof message.id !== "string" || !message.id || message.id.length > 100 || pending.has(message.id) || pending.size >= 64) { void shutdown(1); return; }
 	const isHost = message.type === "host-request";
 	const parsed = (isHost ? RendererRequestSchema : CoreRequestSchema).safeParse(message.request);
-	if (!parsed.success || (isHost && !NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
+	if (!parsed.success || (isHost && !NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PROVIDER_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) && !NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
 	if (!isHost && (isNativeMemoryRecoveryInternalRequest(parsed.data.type) || NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type))) { write({ type: "response", id: message.id, response: { ok: false, error: "Invalid native Core request." } }); return; }
 	if ((!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Settings are being applied. Wait for Agent Core to restart." } }); return; }
 	const creatingBackup = isHost && parsed.data.type === "create-local-backup";
-	if (backupReservation) { write({ type: "response", id: message.id, response: { ok: false, error: NATIVE_CORE_BACKUP_BUSY_MESSAGE } }); return; }
-	if (configuration.requiresRestart && !(isHost && (parsed.data.type === "system-readiness" || parsed.data.type === "computer-use-status" || parsed.data.type === "reveal-created-local-backup"))) {
+	const repairingEmbedding = isHost && ["native-embedding-recovery-review", "native-embedding-recovery-apply"].includes(parsed.data.type);
+	if (backupReservation || embeddingRecoveryReservation) { write({ type: "response", id: message.id, response: { ok: false, error: embeddingRecoveryReservation ? "Memory repair is in progress. Try again after it finishes." : NATIVE_CORE_BACKUP_BUSY_MESSAGE } }); return; }
+	if (configuration.requiresRestart && !(isHost && (parsed.data.type === "system-readiness" || parsed.data.type === "computer-use-status" || parsed.data.type === "reveal-created-local-backup" || parsed.data.type === "native-embedding-recovery-discard"))) {
 		write({ type: "response", id: message.id, response: { ok: false, error: "Core restart is required. Restart Kestrel before changing or starting work." } }); return;
 	}
-	if (creatingBackup && (pending.size > 0 || backgroundJobsRunning || configuration.changing || core.isReady !== true)) {
+	if ((creatingBackup || repairingEmbedding) && (pending.size > 0 || backgroundJobsRunning || configuration.changing || core.isReady !== true)) {
 		write({ type: "response", id: message.id, response: { ok: false, error: "Core is busy. Try again when its current operation is complete." } }); return;
 	}
 	if (creatingBackup) backupReservation = true;
+	if (repairingEmbedding) { embeddingRecoveryReservation = true; communications.invalidate(); }
 	pending.add(message.id);
-	const hostController = isHost && (NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
-	const hostBudget = creatingBackup ? 14 * 60_000 : 9 * 60_000 + 50_000;
+	const hostController = isHost && (NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
+	const hostBudget = creatingBackup ? 14 * 60_000 : repairingEmbedding ? 3 * 60_000 : 9 * 60_000 + 50_000;
 	const hostTimer = hostController ? setTimeout(() => hostController.abort(new Error("The native host request timed out.")), hostBudget) : undefined;
 	if (hostController) hostRequests.set(message.id, hostController);
 	if (!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) activeCoreRequests.add(message.id);
 	void Promise.resolve().then(async () => {
 		if (isHost) {
+			if (NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES.has(parsed.data.type)) return embeddingRecovery.handle(parsed.data, hostController.signal);
 			if (NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type)) return communications.handle(parsed.data, hostController.signal);
 			if (parsed.data.type === "system-readiness") return { ok: true, systemReadiness: await nativeSystemReadiness({
 				coreRequest: request => core.request(request), workspaceConfiguration: () => workspaces.runtimeConfiguration(),
@@ -505,7 +516,7 @@ input.on("line", line => {
 				write({ type: "event", channel: "workspace-projects", event: response.projects });
 		})
 		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? ["local-runtime-bootstrap", "local-model-pull"].includes(parsed.data.type) && error instanceof Error && [OLLAMA_REMOTE_MODEL_ERROR, "Choose an installed model with confirmed tool support for Kestrel tasks.", "Start Ollama or use guided local setup before downloading a model.", "The local runtime checksum did not match the pinned release manifest.", "Local model setup was cancelled. Partial downloads may remain in Ollama.", "Local model setup timed out. Partial downloads may remain in Ollama."].includes(error.message) ? error.message : "Kestrel settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
-		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); hostRequests.delete(message.id); if (hostTimer) clearTimeout(hostTimer); if (creatingBackup) { backupReservation = false; if (!stopping && core.isReady) void publishSnapshot().catch(() => {}); } });
+		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); hostRequests.delete(message.id); if (hostTimer) clearTimeout(hostTimer); if (repairingEmbedding) { embeddingRecoveryReservation = false; if (!stopping && core.isReady) void publishSnapshot().catch(() => {}); } if (creatingBackup) { backupReservation = false; if (!stopping && core.isReady) void publishSnapshot().catch(() => {}); } });
 });
 try {
 	try { await providers.startManagedIfInstalled(); }

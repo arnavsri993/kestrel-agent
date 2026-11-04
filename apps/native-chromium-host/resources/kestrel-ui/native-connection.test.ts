@@ -35,6 +35,13 @@ function harness(options: Record<string, any> = {}) {
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 describe("native worker connection", () => {
+	it("cancels each owned memory-repair request when its renderer scope closes", () => {
+		const scope = createNativeRequestScope();
+		const requests = ["native-embedding-recovery-review", "native-embedding-recovery-apply", "native-embedding-recovery-discard"].map(type => scope.begin({ type }));
+		for (const request of requests) expect(request.signal?.aborted).toBe(false);
+		scope.close();
+		for (const request of requests) expect(request.signal?.aborted).toBe(true);
+	});
 	it("dispatches private code fields only after authentication and sanitizes failures", async () => {
 		const handle = vi.fn(async () => { throw new Error("123456 private message"); });
 		const { ports, authenticate } = harness({ handleLoginCodeRequest: handle });
