@@ -2975,3 +2975,94 @@ and existing-profile acceptance, a published Store upgrade, production signing
 and canonical cutover remain release work. The installed `/Applications/Kestrel.app`
 is still the existing Electron app. Earlier receipts belong to their exact
 recorded artifacts and are not relabeled as this bundle's proof.
+
+## Reviewed interrupted Core profile recovery (2026-11-03)
+
+The native **Review Interrupted Transfers…** action now discovers prepared Core
+profiles after restart. Inspection is metadata-only, bounded to 128 directory
+entries, and excludes the active and previous selections. It checks private
+ownership, canonical paths, links and root/parent/child directory identities.
+Unknown folders and unsafe or incomplete preparations remain preserved; a UUID
+and a database filename never authorize adoption.
+
+An intact staged or published transfer requires a fresh native review, an
+explicit source-closed confirmation, both existing keys, authenticated source
+and destination data, and a confirmed stopped private worker. Development
+plaintext source keys are disclosed before consent. Destination lookup cannot
+create, rotate or replace a key. Source inputs are bound before review and
+unlocking, and source/destination/journal/key/sidecar metadata is checked again
+through verification and the separate activation choice. Selection compares
+both the expected active and previous values. **Keep Current Profile** does not
+activate the recovered data. Closing a review never retries it automatically.
+
+The protected worker retains the immutable completed transfer journal. A crash
+after verification, or keeping the current profile and restarting, therefore
+leaves review metadata available. This metadata contains no keys and is neither
+consent nor authentication: another review must authenticate both databases
+again. Once selected, the destination is excluded from recovery discovery.
+Dead recovery-worker reservations remain blocked for separate review; missing
+stages, unknown orphans and changed original sources are not silently repaired.
+
+Transfer reads now open SQLite only on a private encrypted DB/WAL copy, with a
+256 MB limit on each source DB/WAL/SHM file. Original descriptors and named
+files are checked before and after copying and reading, including size,
+identity, modification/change timestamps and missing sidecars. Unsettled
+rollback journals are refused. This fixes an actual packaged probe where a
+read-only SQLite open created source WAL/SHM files before an injected worker
+crash. Source preservation is now verified without relaxing the tree digest.
+The filesystem boundary remains cooperating owners, not arbitrary hostile
+same-user writers. Key-envelope reads reject FIFOs without blocking and clear
+host-owned temporary key buffers.
+
+Runtime source `d622c63a` passed full `pnpm verify` in
+`.tmp/native-interrupted-transfer-aggregate/receipt.json`: **2,729 tests in
+312 files**, two existing ownership-mutation skips without root, workspace
+types, audits, builds, native helpers, 50 website checks, all desktop workflows,
+packaged CLI, editors and production-secret scanning. All eight tracked PNGs
+were restored byte for byte. The keychain fixture is now included in Vitest and
+uses only its in-memory backend; no real Keychain was accessed by these tests.
+
+Exact ad-hoc native candidate
+`c8a670d893f7b695be1f79e828f95278c7e70e52c76a8e905d09ca25c869934e`
+has matching before/after hashes for:
+
+- `.tmp/native-interrupted-transfer-ui2-evidence/receipt.json`: **11** actual
+  packaged recovery phases. The bundled worker crashes before publication;
+  actual native menu/dialog actions review and recover it without selection.
+  Keep Current survives full app restart, the published journal is rediscovered
+  and reauthenticated, and a separate native acceptance selects the destination.
+  The recovered conversation/message is visible after restart; native rollback
+  and another restart restore the original conversation. Source tree bytes and
+  modes, destination key and unknown orphan are unchanged; no orphan key is
+  created. Generated data is removed only after confirmed owned app exit.
+- `.tmp/native-interrupted-transfer-final-workflow-evidence/receipt.json`:
+  **26** native product phases, including project search and grant refusal,
+  large-paste attachments, provider work, isolated trusted form navigation,
+  downloads, recovery and restart.
+- `.tmp/native-interrupted-transfer-code-evidence/receipt.json`: **6** generated
+  companion/Messages code lookup, fill, refusal and restart phases.
+- `.tmp/native-interrupted-transfer-store-evidence/receipt.json`: **5** retained
+  normal Store installation/function/tab-isolation/restart checks. This is
+  compatibility-only, with expected incomplete/exit 2: no update query or
+  observed published-version upgrade.
+
+The failed source-preservation receipt is retained in
+`.tmp/native-interrupted-transfer-ui-evidence/receipt.json`. The actual native
+dialogs and recovered conversation were inspected through CUA accessibility;
+the saved recovered-conversation screenshot was also inspected. The native
+modal screenshot API returned a blank image, so modal screenshot appearance is
+not claimed. These runs use generated profiles and keys only, with no real
+Messages, microphone, user-profile, provider-account or privacy-setting access.
+
+Both CI jobs passed on published predecessor `07cadc8c`. Its completed CodeQL
+check retained only the existing per-operation HMAC equality-fingerprint
+finding at `tool-result-guardrails.ts:45`; no warning was suppressed or dismissed.
+New-head CI and scanning are separate from local evidence. Jules remains
+unconfigured.
+
+This closes discovery/recovery for intact prepared transfers, including the
+verification-to-selection restart gap. Broader browser/settings/workspace asset
+migration, unsupported interrupted states, real existing-profile and account
+acceptance, a published Store upgrade, Developer ID signing/notarization and
+canonical cutover remain release work. `/Applications/Kestrel.app` is still the
+existing Electron app; no canonical installation or public release is claimed.
