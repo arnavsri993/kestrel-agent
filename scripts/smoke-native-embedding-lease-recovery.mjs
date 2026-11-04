@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -66,6 +67,33 @@ function offline(operation) {
 function snapshotJob(id = jobId) {
  const db = KestrelDatabase.openForHostLegacyEmbeddingRecovery(databasePath, key, { readonly: true });
  try { return db.getMemoryJob(id); } finally { db.close(); }
+}
+function generatedAuthorityDiagnostic() {
+ const db = KestrelDatabase.openForHostLegacyEmbeddingRecovery(databasePath, key, { readonly: true });
+ try {
+  const output = {};
+  for (const table of ["memories", "memory_metadata", "memory_timeline_events", "memory_timeline_sessions", "memory_activity_blocks", "memory_daily_summaries", "memory_agent_identities", "memory_agent_memories", "memory_working_tasks", "memory_provenance", "memory_capture_policies", "runtime_sessions", "runtime_messages", "tool_executions", "private_runtime_state"]) {
+   output[table] = {};
+   for (const row of db.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()) {
+    const id = String(row.id ?? row.key);
+    if (table === "private_runtime_state") {
+     if (id === EMBEDDING_LEGACY_MIGRATION_KEY || id === "presence.core-instance-id") continue;
+     const value = db.getPrivateState(id);
+     output[table][id] = { semantic: createHash("sha256").update(JSON.stringify(value)).digest("hex") };
+    } else output[table][id] = Object.fromEntries(Object.entries(row).map(([name, value]) => [name, createHash("sha256").update(JSON.stringify(value)).digest("hex")]));
+   }
+  }
+  return output;
+ } finally { db.close(); }
+}
+function changedDiagnostic(left, right) {
+ const changes = [];
+ for (const table of Object.keys(left)) for (const id of new Set([...Object.keys(left[table]), ...Object.keys(right[table])])) {
+  const a = left[table][id], b = right[table][id];
+  if (!a || !b) changes.push({ table, id, state: a ? "removed" : "added" });
+  else { const fields = Object.keys(a).filter(name => a[name] !== b[name]); if (fields.length) changes.push({ table, id, fields }); }
+ }
+ return changes;
 }
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { interrupted = true; running?.child.kill("SIGTERM"); });
 async function start() {
@@ -215,9 +243,11 @@ try {
  await start(); await request({ type: "memory-run-maintenance" });
  const deniedInitial = snapshotJob(deniedJobId); assert.equal(deniedInitial.status, "running"); assert.equal(deniedInitial.leaseUntil, undefined); assert.equal(deniedInitial.payload.generation, undefined);
  stage = "denied-source-review-apply"; previous = await corePid();
+ const diagnosticBefore = generatedAuthorityDiagnostic();
  const deniedReview = await reviewWhenIdle();
  assert.equal(deniedReview.nativeEmbeddingRecoveryPreview?.state, "review"); assert.equal(deniedReview.nativeEmbeddingRecoveryPreview.cancelledJobs, 1); assert.equal(deniedReview.nativeEmbeddingRecoveryPreview.coreStatus, "ready");
  await changedCore(previous); assert.deepEqual(snapshotJob(deniedJobId), deniedInitial);
+ await writeFile(join(evidence, "generated-authority-changes.json"), JSON.stringify(changedDiagnostic(diagnosticBefore, generatedAuthorityDiagnostic()), null, 2), { mode: 0o600 });
  previous = await corePid();
  const deniedApplied = await request({ type: "native-embedding-recovery-apply", planId: deniedReview.nativeEmbeddingRecoveryPreview.planId });
  assert.deepEqual(deniedApplied.nativeEmbeddingRecoveryApplied, { cancelledJobs: 1, coreStatus: "ready" });
