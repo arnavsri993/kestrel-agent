@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createEncryptionKey } from '@kestrel/encryption';
-import { MemoryRecordSchema } from '@kestrel/shared-types';
+import { MemoryRecordSchema, TimelineEventSchema } from '@kestrel/shared-types';
 import { describe, it, expect } from 'vitest';
 import { KestrelDatabase } from './index.js';
 import { EMBEDDING_LEGACY_MIGRATION_KEY, EMBEDDING_STATE_SECRET_KEY } from './memory-embedding-state.js';
@@ -115,6 +115,55 @@ describe('host-only legacy missing-lease recovery', () => {
    mutate(f, db => { for (let i=0;i<20;i++) if (db.migrateLegacyMemoryEmbeddingIdentifiers(later).done) break;
     expect(db.listMemoryJobs({ kind:'embed' }).find(job => job.id.startsWith('legacy-retired-job-'))?.status).toBe('cancelled');
     expect(db.getMemoryEmbeddingInput('memory', 'owner')).toBeUndefined(); });
+  } finally { f.cleanup(); }
+ });
+ it('reviews marked nonretired blockers but ignores actual retired identifiers', () => {
+  const f = fixture(); try {
+   mutate(f, db => { const job = db.getMemoryJob('a')!; db.queueMemoryJob({ ...job, payload: { ...job.payload, legacyIdentifierMigration: { version: 1 } } });
+    expect(db.migrateLegacyMemoryEmbeddingIdentifiers(now)).toMatchObject({ blocked: true }); });
+   expect(apply(f, plan(f))).toEqual({ cancelled: true });
+   mutate(f, db => { db.db.prepare("DELETE FROM memory_jobs WHERE id='a'").run();
+    db.queueMemoryJob({ id: `legacy-retired-job-${leaseToken}`, kind: 'embed', dedupeKey: `legacy-embedding-opaque:${leaseToken}`,
+     status: 'running', payload: { ownerType: 'memory', ownerId: 'owner', legacyIdentifierMigration: { version: 1 } },
+     attempts: 2, maxAttempts: 3, runAfter: now, createdAt: now, updatedAt: now });
+    expect(db.migrateLegacyMemoryEmbeddingIdentifiers(now)).toMatchObject({ blocked: false });
+    db.setPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY, { version: 1, phase: 'jobs', afterId: '' }); });
+   expect(plan(f)).toBeUndefined();
+  } finally { f.cleanup(); }
+ });
+ it.each(['database', 'wal', 'symlink-wal'] as const)('rejects %s before either SQLite opener', kind => {
+  const f = fixture(); try {
+   const snapshot = plan(f);
+   if (kind === 'database') truncateSync(f.path, 256_000_001);
+   if (kind === 'wal') { writeFileSync(`${f.path}-wal`, ''); truncateSync(`${f.path}-wal`, 256_000_001); }
+   if (kind === 'symlink-wal') { writeFileSync(join(f.root, 'target'), 'sentinel'); symlinkSync(join(f.root, 'target'), `${f.path}-wal`); }
+   for (const readonly of [true, false]) expect(() => f.open(readonly)).toThrow(/file/);
+   if (kind === 'symlink-wal') expect(readFileSync(join(f.root, 'target'), 'utf8')).toBe('sentinel');
+   expect(snapshot).toBeDefined();
+  } finally { f.cleanup(); }
+ });
+ it.each(['malformed descendant', 'graph depth'] as const)('cancellation for %s never creates authority or a runnable job', kind => {
+  const f = fixture(); try {
+   mutate(f, db => {
+    if (kind === 'malformed descendant') {
+     const event = TimelineEventSchema.parse({ id:'bad', startedAt:now, eventType:'note', source:'fixture', actor:'user', textSummary:'generated', structuredData:{}, projectIds:[], personIds:[], entityIds:[], importance:.5, sensitivity:'personal', retentionPolicy:'durable', embeddingStatus:'queued', status:'active', createdAt:now, updatedAt:now });
+     db.upsertTimelineEvent(event); db.upsertMemory({ ...f.record, sourceIds:['timeline_event:bad'] });
+     db.db.prepare("UPDATE memory_timeline_events SET status='deleted' WHERE id='bad'").run();
+    } else {
+     for (let i=70;i>=0;i--) db.upsertMemory({ ...f.record, id:`depth-${i}`, sourceIds: i === 70 ? [] : [`memory:depth-${i+1}`] });
+     db.upsertMemory({ ...f.record, sourceIds:['memory:depth-0'] });
+    }
+    expect(db.getMemoryEmbeddingInput('memory','owner')).toBeUndefined();
+   });
+   expect(apply(f, plan(f))).toEqual({ cancelled: true });
+   mutate(f, db => {
+    expect(db.completeMemoryJob('a', later, leaseToken)).toBe(false);
+    expect(db.failMemoryJob('a', 'late', later, 30000, leaseToken)).toBeUndefined();
+    for(let i=0;i<20;i++) if(db.migrateLegacyMemoryEmbeddingIdentifiers(later).done) break;
+    expect(db.getMemoryEmbeddingInput('memory','owner')).toBeUndefined();
+    expect(db.listMemoryEmbeddings({ownerType:'memory',ownerId:'owner'})).toEqual([]);
+    expect(db.listMemoryJobs({kind:'embed'}).every(job => job.status === 'cancelled')).toBe(true);
+   });
   } finally { f.cleanup(); }
  });
  it('refuses finite lease and current generation, even if expired', () => {

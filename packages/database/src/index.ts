@@ -472,6 +472,31 @@ function timelineSummary(events: readonly TimelineEvent[], maximum: number): str
 	return value.length > maximum ? `${value.slice(0, maximum - 1)}…` : value;
 }
 
+const RETIRED_EMBEDDING_JOB_ID = /^legacy-retired-job-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const RETIRED_EMBEDDING_DEDUPE = /^legacy-embedding-opaque:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function isRetiredEmbeddingJob(job: MemoryJob): boolean {
+	return job.payload.legacyIdentifierMigration !== undefined && RETIRED_EMBEDDING_JOB_ID.test(job.id) && RETIRED_EMBEDDING_DEDUPE.test(job.dedupeKey);
+}
+function validateHostRecoveryFiles(filename: string): void {
+	const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+	if (uid === undefined) throw new Error("Host recovery file ownership is unavailable.");
+	for (const suffix of ["", "-wal", "-shm"]) {
+		const path = filename + suffix;
+		let stat: ReturnType<typeof lstatSync>;
+		try { stat = lstatSync(path); }
+		catch (error) { if (suffix && (error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+		if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.uid !== uid || stat.size > 256_000_000)
+			throw new Error("Host recovery file is unavailable.");
+		const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+		try {
+			const held = fstatSync(fd);
+			if (!held.isFile() || held.nlink !== 1 || held.uid !== uid || held.size > 256_000_000 ||
+				held.dev !== stat.dev || held.ino !== stat.ino || held.size !== stat.size || held.mtimeMs !== stat.mtimeMs || held.ctimeMs !== stat.ctimeMs)
+				throw new Error("Host recovery file changed.");
+		} finally { closeSync(fd); }
+	}
+}
+
 function hostRecoveryPreviewCopy(filename: string): { directory: string; filename: string } {
 	const directory = mkdtempSync(join(tmpdir(), "kestrel-host-lease-review-"));
 	const destination = join(directory, "profile.sqlite");
@@ -524,8 +549,7 @@ export class KestrelDatabase {
 		this.hostRecoveryMode = internal?.marker === HOST_LEGACY_RECOVERY ? (internal.readonly ? "readonly" : "apply") : undefined;
 		if (this.hostRecoveryMode) {
 			if (filename === ":memory:" || !Buffer.isBuffer(encryptionKey) || encryptionKey.length !== 32) throw new Error("Invalid host recovery database.");
-			const stat = lstatSync(filename);
-			if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error("Invalid host recovery database.");
+			validateHostRecoveryFiles(filename);
 		}
 		if (!this.hostRecoveryMode && filename !== ":memory:")
 			mkdirSync(dirname(filename), { recursive: true, mode: 0o700 });
@@ -540,6 +564,9 @@ export class KestrelDatabase {
 			database = this.hostRecoveryMode ? new Database(openPath, { readonly: this.hostRecoveryMode === "readonly", fileMustExist: true }) : new Database(filename);
 			this.db = database;
 			if (this.hostRecoveryMode) {
+				// SQLite can inspect a WAL while opening; check both before opening and
+				// again before integrity_check, including any newly created sidecars.
+				validateHostRecoveryFiles(filename);
 				if (this.hostRecoveryMode === "readonly") this.db.pragma("query_only = ON");
 				this.assertDatabaseIntegrity();
 				const rows = this.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all() as Array<{ version: number }>;
@@ -3277,8 +3304,7 @@ export class KestrelDatabase {
 			parseLegacyEmbeddingRetirement(payload.payload.legacyIdentifierMigration);
 			if (payload.kind !== "embed" || payload.payload.generation !== undefined ||
 				!EmbeddingRecordSchema.shape.ownerType.safeParse(payload.payload.ownerType).success ||
-				!EmbeddingRecordSchema.shape.ownerId.safeParse(payload.payload.ownerId).success ||
-				!/^legacy-retired-job-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(payload.id) || !/^legacy-embedding-opaque:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(payload.dedupeKey))
+				!EmbeddingRecordSchema.shape.ownerId.safeParse(payload.payload.ownerId).success)
 				throw new Error("Invalid legacy embedding retirement binding.");
 		}
 		if (
@@ -3389,7 +3415,7 @@ export class KestrelDatabase {
 		const row = this.db.prepare("SELECT * FROM memory_jobs WHERE id=?").get(size.id) as MemorySubstrateRow;
 		const job = this.decodeMemoryJob(row);
 		if (job.kind !== "embed" || job.status !== "running" || job.leaseUntil !== undefined ||
-			job.payload.generation !== undefined || job.payload.legacyIdentifierMigration !== undefined) return undefined;
+			job.payload.generation !== undefined || isRetiredEmbeddingJob(job)) return undefined;
 		const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
 		const ownerId = job.payload.ownerId;
 		if (!type.success || typeof ownerId !== "string" || !ownerId || ownerId.length > 200) throw new Error("Host recovery authority is unavailable.");
@@ -3486,8 +3512,7 @@ export class KestrelDatabase {
 				const id = String(row.id);
 				if (checkpoint.phase === "jobs") {
 					const job = this.decodeMemoryJob(row);
-					if (job.kind === "embed" && job.payload.generation === undefined && !(job.payload.legacyIdentifierMigration !== undefined &&
-						/^legacy-retired-job-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(job.id) && /^legacy-embedding-opaque:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(job.dedupeKey))) {
+					if (job.kind === "embed" && job.payload.generation === undefined && !isRetiredEmbeddingJob(job)) {
 						// A missing lease expiry is ambiguous and requires manual recovery.
 						if (job.status === "running" && (!job.leaseUntil || Date.parse(job.leaseUntil) > Date.parse(now))) { blocked = true; break; }
 						const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
@@ -3521,7 +3546,7 @@ export class KestrelDatabase {
 		MemoryJobSchema.shape.updatedAt.parse(now);
 		return this.db.transaction(() => {
 			const job = this.getMemoryJob(jobId);
-			if (!job || job.payload.legacyIdentifierMigration === undefined ||
+			if (!job || !isRetiredEmbeddingJob(job) ||
 				!(job.status === "cancelled" || (job.status === "failed" && job.attempts >= job.maxAttempts))) return { terminal: false };
 			const marker = parseLegacyEmbeddingRetirement(job.payload.legacyIdentifierMigration);
 			const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
