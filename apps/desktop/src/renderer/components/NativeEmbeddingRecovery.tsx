@@ -1,6 +1,12 @@
 import { NativeEmbeddingRecoveryAppliedSchema, NativeEmbeddingRecoveryPreviewSchema, type NativeEmbeddingRecoveryPreview } from "@kestrel/shared-types";
 import { useEffect, useRef, useState } from "react";
 
+class RecoveryFailure extends Error {}
+
+function failureMessage(message: string) {
+	return message.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 500) || "The repair could not be completed.";
+}
+
 type Review = Extract<NativeEmbeddingRecoveryPreview, { state: "review" }>;
 
 function discard(planId: string) {
@@ -54,7 +60,8 @@ export function NativeEmbeddingRecovery() {
 		setBusy(true); setError(""); setNotice("");
 		try {
 			const response = await window.kestrel.request({ type: "native-embedding-recovery-review" });
-			if (!response.ok || !("nativeEmbeddingRecoveryPreview" in response)) throw new Error();
+			if (!response.ok) throw new RecoveryFailure(failureMessage(response.error));
+			if (!("nativeEmbeddingRecoveryPreview" in response)) throw new Error();
 			const result = NativeEmbeddingRecoveryPreviewSchema.parse(response.nativeEmbeddingRecoveryPreview);
 			if (current !== generation.current) {
 				if (result.state === "review") discard(result.planId);
@@ -62,8 +69,8 @@ export function NativeEmbeddingRecovery() {
 			}
 			if (result.state === "not-needed") setNotice("No stranded indexing task needs repair.");
 			else { plan.current = result.planId; setPreview(result); }
-		} catch {
-			if (current === generation.current) setError("Could not review memory processing. Try again.");
+		} catch (cause) {
+			if (current === generation.current) setError(cause instanceof RecoveryFailure ? cause.message : "Could not review memory processing. Try again.");
 		} finally {
 			if (current === generation.current) setBusy(false);
 		}
@@ -75,16 +82,17 @@ export function NativeEmbeddingRecovery() {
 		setBusy(true); setError(""); setNotice("");
 		try {
 			const response = await window.kestrel.request({ type: "native-embedding-recovery-apply", planId: preview.planId });
-			if (!response.ok || !("nativeEmbeddingRecoveryApplied" in response)) throw new Error();
+			if (!response.ok) throw new RecoveryFailure(failureMessage(response.error));
+			if (!("nativeEmbeddingRecoveryApplied" in response)) throw new Error();
 			const result = NativeEmbeddingRecoveryAppliedSchema.parse(response.nativeEmbeddingRecoveryApplied);
 			if (current !== generation.current) return;
 			plan.current = undefined; setPreview(undefined);
-			setNotice(result.coreStatus === "restart-required" ? "Repair saved. Restart Kestrel to continue." : "The old indexing task was cancelled. Memory processing is ready.");
-		} catch {
+			setNotice(result.coreStatus === "restart-required" ? "Repair saved. Restart Kestrel to continue." : "The old indexing task was cancelled.");
+		} catch (cause) {
 			if (current === generation.current) {
 				if (plan.current) discard(plan.current);
 				plan.current = undefined; setPreview(undefined);
-				setError("Could not complete the repair. Review again to continue.");
+				setError(cause instanceof RecoveryFailure ? cause.message : "Could not complete the repair. Review again to continue.");
 			}
 		} finally {
 			if (current === generation.current) setBusy(false);
@@ -93,7 +101,7 @@ export function NativeEmbeddingRecovery() {
 
 	return <details className="memory-agent-knowledge" onToggle={(event) => { if (!event.currentTarget.open) clear(); }}>
 		<summary>Repair memory processing</summary>
-		<p>Review a repair that pauses Kestrel’s memory processing and cancels one stranded old indexing task. Retry history is preserved; the task will not be retried and permissions will not change.</p>
+		<p>This repair applies to the current Kestrel profile, regardless of the selected viewer or domain. Review a repair that pauses Kestrel’s memory processing and cancels one stranded old indexing task. Retry history is preserved; the task will not be retried and permissions will not change.</p>
 		{!preview && <button type="button" disabled={busy} onClick={() => void review()}>{busy ? "Preparing review…" : "Review"}</button>}
 		{busy && !preview && <button type="button" onClick={clear}>Cancel</button>}
 		{preview && <section aria-label="Memory processing repair review">
