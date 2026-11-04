@@ -382,6 +382,7 @@ bool EnqueueKestrelExternalURL(NSURL* url) {
 - (void)chromeCommand:(NSMenuItem*)item;
 - (void)settings:(id)sender;
 - (void)transferCore:(id)sender;
+- (void)recoverCore:(id)sender;
 - (void)previousCore:(id)sender;
 @end
 static KestrelNativeProfileTransferController* desktop_profile_transfer;
@@ -396,9 +397,10 @@ static KestrelNativeProfileTransferController* desktop_profile_transfer;
 }
 - (void)settings:(id)sender { if (desktop_client) desktop_client->OpenSettings(); }
 - (void)transferCore:(id)sender { [desktop_profile_transfer beginTransfer]; }
+- (void)recoverCore:(id)sender { [desktop_profile_transfer reviewInterruptedTransfers]; }
 - (void)previousCore:(id)sender { [desktop_profile_transfer restorePrevious]; }
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
-  if (item.action == @selector(transferCore:) || item.action == @selector(previousCore:)) return [desktop_profile_transfer canBegin];
+  if (item.action == @selector(transferCore:) || item.action == @selector(recoverCore:) || item.action == @selector(previousCore:)) return [desktop_profile_transfer canBegin];
   const auto browser = desktop_client ? desktop_client->Active() : nullptr;
   if (item.action != @selector(chromeCommand:)) return desktop_client != nullptr;
   if (!browser && desktop_client && ([item.representedObject isEqualToString:@"IDC_NEW_WINDOW"] || [item.representedObject isEqualToString:@"IDC_NEW_TAB"])) return YES;
@@ -424,6 +426,7 @@ static void InstallDesktopMenu() {
   [app_menu addItemWithTitle:@"About Kestrel" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
   NSMenuItem* settings = [app_menu addItemWithTitle:@"Settings…" action:@selector(settings:) keyEquivalent:@","]; settings.target = desktop_menu_target;
   NSMenuItem* transfer = [app_menu addItemWithTitle:@"Transfer Conversations & Memory…" action:@selector(transferCore:) keyEquivalent:@""]; transfer.target = desktop_menu_target;
+  NSMenuItem* recovery = [app_menu addItemWithTitle:@"Review Interrupted Transfers…" action:@selector(recoverCore:) keyEquivalent:@""]; recovery.target = desktop_menu_target;
   NSMenuItem* previous = [app_menu addItemWithTitle:@"Use Previous Data Profile…" action:@selector(previousCore:) keyEquivalent:@""]; previous.target = desktop_menu_target;
   [app_menu addItem:NSMenuItem.separatorItem];
   [app_menu addItemWithTitle:@"Hide Kestrel" action:@selector(hide:) keyEquivalent:@"h"];

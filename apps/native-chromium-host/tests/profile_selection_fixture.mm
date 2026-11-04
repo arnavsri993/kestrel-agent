@@ -26,7 +26,38 @@ int main(int argc, char** argv) {
       signal(SIGTERM,SIG_IGN); write(STDOUT_FILENO,"fixture-ready\n",14);
       for (;;) pause();
     }
-    if (argc != 2 && argc != 3 && argc != 5) return 2;
+    if (argc == 3 && !strcmp(argv[2], "--read-private")) {
+      const auto started = std::chrono::steady_clock::now();
+      NSData* data = ReadPrivateFile([NSString stringWithUTF8String:argv[1]], 256);
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
+      NSData* result = [NSJSONSerialization dataWithJSONObject:@{ @"ok":@(data != nil), @"milliseconds":@(elapsed) } options:0 error:nil];
+      return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+    }
+    if ((argc == 5 || argc == 6) && !strcmp(argv[2], "--witness")) {
+      NSString* source = [NSString stringWithUTF8String:argv[1]], *destination = [NSString stringWithUTF8String:argv[3]], *changed = [NSString stringWithUTF8String:argv[4]];
+      NSDictionary* before = RecoveryWitness(source,destination);
+      if (before && changed.length) {
+        if (argc == 6 && !strcmp(argv[5], "replace") && unlink(changed.fileSystemRepresentation)) return 2;
+        int fd = open(changed.fileSystemRepresentation,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0600);
+        if (fd < 0 || write(fd,"changed fixture",15) != 15) return 2;
+        close(fd);
+      }
+      NSDictionary* after = RecoveryWitness(source,destination);
+      NSData* result = [NSJSONSerialization dataWithJSONObject:@{ @"before":@(before != nil), @"after":@(after != nil), @"same":@(before && after && [before isEqualToDictionary:after]) } options:0 error:nil];
+      return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+    }
+    if (argc == 3 && !strcmp(argv[2], "--review-validation")) {
+      NSString* destination = @"/tmp/destination";
+      NSMutableDictionary* preview = [@{ @"state":@"staged", @"destinationDatabasePath":destination, @"sourceDatabasePath":@"/tmp/source", @"recoverySha256":[@"a" stringByPaddingToLength:64 withString:@"a" startingAtIndex:0], @"counts":@{@"memories":@1}, @"excluded":@{} } mutableCopy];
+      NSMutableDictionary* response = [@{ @"ok":@YES, @"reviewId":NSUUID.UUID.UUIDString, @"preview":preview } mutableCopy];
+      BOOL valid = ValidInterruptedReview(response,destination);
+      preview[@"counts"] = @{@"memories":@YES}; BOOL badCount = !ValidInterruptedReview(response,destination);
+      preview[@"counts"] = @{}; preview[@"sourceDatabasePath"] = @"relative"; BOOL badPath = !ValidInterruptedReview(response,destination);
+      preview[@"sourceDatabasePath"] = @"/tmp/source"; preview[@"recoverySha256"] = [@"g" stringByPaddingToLength:64 withString:@"g" startingAtIndex:0]; BOOL badDigest = !ValidInterruptedReview(response,destination);
+      NSData* result = [NSJSONSerialization dataWithJSONObject:@{ @"valid":@(valid), @"badCount":@(badCount), @"badPath":@(badPath), @"badDigest":@(badDigest) } options:0 error:nil];
+      return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+    }
+    if (argc != 2 && argc != 3 && argc != 5 && argc != 6) return 2;
     if (argc == 3 && !strncmp(argv[2],"--stop-",7)) {
       const bool paused = strcmp(argv[2],"--stop-worker") != 0;
       const bool mismatched = !strcmp(argv[2],"--stop-mismatched-worker");
@@ -61,12 +92,12 @@ int main(int argc, char** argv) {
     }
     NSString* root = [NSString stringWithUTF8String:argv[1]];
     KestrelNativeProfileSelectionResult result = KestrelNativeProfileSelectionResult::Unchanged;
-    if (argc == 5) result = KestrelSaveNativeCoreProfileSelection(root,[NSString stringWithUTF8String:argv[2]],[NSString stringWithUTF8String:argv[3]],[NSString stringWithUTF8String:argv[4]]);
+    if (argc == 5 || argc == 6) result = KestrelSaveNativeCoreProfileSelection(root,[NSString stringWithUTF8String:argv[2]],[NSString stringWithUTF8String:argv[3]],[NSString stringWithUTF8String:argv[4]], argc == 6 ? [NSString stringWithUTF8String:argv[5]] : nil);
     NSError* error = nil;
     if (argc == 3 && strcmp(argv[2],"--source")) return 2;
     NSString* selected = argc == 3 ? KestrelCanonicalNativeCoreTransferSource(root) : KestrelResolveNativeCoreProfile(root,&error);
     NSMutableDictionary* response = [@{@"ok":@(selected != nil),@"profile":selected ?: NSNull.null,@"error":@(error != nil)} mutableCopy];
-    if (argc == 5) response[@"saved"] = result == KestrelNativeProfileSelectionResult::Selected ? @"selected" : result == KestrelNativeProfileSelectionResult::SelectedDurabilityUnconfirmed ? @"selected-durability-unconfirmed" : @"unchanged";
+    if (argc == 5 || argc == 6) response[@"saved"] = result == KestrelNativeProfileSelectionResult::Selected ? @"selected" : result == KestrelNativeProfileSelectionResult::SelectedDurabilityUnconfirmed ? @"selected-durability-unconfirmed" : @"unchanged";
     NSData* bytes = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
     return bytes && fwrite(bytes.bytes,1,bytes.length,stdout) == bytes.length ? 0 : 2;
   }

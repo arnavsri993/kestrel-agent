@@ -62,7 +62,7 @@ export class HostProfileTransferWorkerState {
 				try {
 					sourceKey = key(request.sourceKeyBase64); destinationKey = key(request.destinationKeyBase64);
 					delete request.sourceKeyBase64; delete request.destinationKeyBase64;
-					const receipt = recoverInterruptedHostProfileFileTransfer({ destinationDatabasePath: review.destinationDatabasePath, sourceKey, destinationKey, acceptedRecoverySha256: review.recoverySha256 });
+					const receipt = recoverInterruptedHostProfileFileTransfer({ destinationDatabasePath: review.destinationDatabasePath, sourceKey, destinationKey, acceptedRecoverySha256: review.recoverySha256, retainRecoveryJournal: true });
 					this.recovery = { id: randomUUID(), receipt, sourceKey, destinationKey, expiresAt: this.now() + RECOVERY_TTL };
 					return { requestId, ok: true, recoveryId: this.recovery.id, expiresAt: this.recovery.expiresAt, receipt };
 				} catch (error) { sourceKey?.fill(0); destinationKey?.fill(0); throw error; }
@@ -87,7 +87,7 @@ export class HostProfileTransferWorkerState {
 				let destinationKey: Buffer | undefined;
 				try {
 					destinationKey = key(request.destinationKeyBase64); delete request.destinationKeyBase64;
-					const receipt = applyHostProfileFileTransfer({ plan: pending.plan, sourceKey: pending.sourceKey, destinationKey, acceptedPlanSha256: pending.plan.planSha256 });
+					const receipt = applyHostProfileFileTransfer({ plan: pending.plan, sourceKey: pending.sourceKey, destinationKey, acceptedPlanSha256: pending.plan.planSha256, retainRecoveryJournal: true });
 					this.recovery = { id: randomUUID(), receipt, sourceKey: pending.sourceKey, destinationKey, expiresAt: this.now() + RECOVERY_TTL };
 					return { requestId, ok: true, recoveryId: this.recovery.id, expiresAt: this.recovery.expiresAt, receipt };
 				} catch (error) { pending.sourceKey.fill(0); destinationKey?.fill(0); throw error; }

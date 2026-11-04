@@ -145,16 +145,50 @@ try {
  for (const marker of ['KESTREL_NATIVE_INTERRUPTED_TRANSFER_WORKER_STOPPED', 'KESTREL_NATIVE_INTERRUPTED_TRANSFER_RECOVERED', 'KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTION_READY'])
   assert(second.state.output.includes(marker), `Native recovery did not confirm ${marker}.`);
  assert.deepEqual(await selection(), beforeSelection, 'Recovery alone must not activate the profile.');
- assert.equal(await exists(`${database}.kestrel-transfer-journal`), false, 'Recovery must remove the completed journal.');
+ assert.equal(await exists(`${database}.kestrel-transfer-journal`), true, 'The published recovery journal must remain available for review.');
+ const journalHash = await hashFile(`${database}.kestrel-transfer-journal`);
  assert(await exists(database)); assert.equal(await hashFile(destinationKeyPath), destinationKeyHash);
  // The recovery controller must have reaped its actual bundled transfer worker
  // before offering profile activation. Inspect only this candidate's worker.
  await eventually(() => !execFileSync('/bin/ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n').some(row => row.includes(workerOptions.executable) && row.includes(workerOptions.entry)), 'Native recovery worker did not stop.');
  assert.equal(await treeDigest(source), sourceDigest); assert.equal(await treeDigest(orphan), orphanDigest);
  phase('native-recovery-preserves-selection-source-and-destination-key');
+ stage = 'keep-current';
+ await waitOperator('keep-current', 'Choose Keep Current Profile at the recovered transfer choice, then dismiss any notice.');
+ assert.deepEqual(await selection(), beforeSelection, 'Keep Current Profile must not change the selection.');
+ assert.equal(await hashFile(`${database}.kestrel-transfer-journal`), journalHash);
+ assert.equal(await hashFile(destinationKeyPath), destinationKeyHash); assert.equal(await treeDigest(source), sourceDigest); assert.equal(await treeDigest(orphan), orphanDigest);
+ await stop();
+ stage = 'restart-keep-current';
+ const afterKeep = await start();
+ assert.deepEqual(await selection(), beforeSelection);
+ const currentSessions = await afterKeep.home.evaluate(() => window.kestrel.request({ type: 'runtime-list-sessions' }));
+ assert(currentSessions.ok && currentSessions.sessions.some(item => item.id === originalId) && !currentSessions.sessions.some(item => item.id === sourceSessionId));
+ const expandOriginal = afterKeep.home.getByRole('button', { name: 'Expand sidebar', exact: true });
+ if (await expandOriginal.isVisible()) await expandOriginal.click();
+ await afterKeep.home.locator('.kestrel-sidebar').getByText('Generated original conversation', { exact: true }).first().click();
+ await afterKeep.home.screenshot({ path: join(evidence, 'kept-current-conversation.png') });
+ assert.equal(await hashFile(`${database}.kestrel-transfer-journal`), journalHash);
+ assert.equal(await hashFile(destinationKeyPath), destinationKeyHash); assert.equal(await treeDigest(source), sourceDigest); assert.equal(await treeDigest(orphan), orphanDigest);
+ phase('keep-current-survives-restart-with-published-review-preserved');
+ stage = 'review-published';
+ await waitOperator('review-published', 'Open Review Interrupted Transfers again and display the published transfer review; do not accept it yet.');
+ assert(afterKeep.state.output.includes('KESTREL_NATIVE_INTERRUPTED_TRANSFER_REVIEW_READY'), 'Published transfer review was not confirmed after restart.');
+ assert.deepEqual(await selection(), beforeSelection); assert.equal(await hashFile(`${database}.kestrel-transfer-journal`), journalHash);
+ assert.equal(await hashFile(destinationKeyPath), destinationKeyHash); assert.equal(await treeDigest(source), sourceDigest); assert.equal(await treeDigest(orphan), orphanDigest);
+ phase('published-transfer-rediscovered-after-restart');
+ stage = 'recover-published';
+ await waitOperator('recover-published', 'Confirm the source is closed and recover the published transfer again; stop at Use Recovered Data Profile.');
+ for (const marker of ['KESTREL_NATIVE_INTERRUPTED_TRANSFER_WORKER_STOPPED', 'KESTREL_NATIVE_INTERRUPTED_TRANSFER_RECOVERED', 'KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTION_READY'])
+  assert(afterKeep.state.output.includes(marker), `Published recovery did not confirm ${marker}.`);
+ assert.deepEqual(await selection(), beforeSelection);
+ assert.equal(await hashFile(`${database}.kestrel-transfer-journal`), journalHash);
+ assert.equal(await hashFile(destinationKeyPath), destinationKeyHash); assert.equal(await treeDigest(source), sourceDigest); assert.equal(await treeDigest(orphan), orphanDigest);
+ await eventually(() => !execFileSync('/bin/ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n').some(row => row.includes(workerOptions.executable) && row.includes(workerOptions.entry)), 'Published recovery worker did not stop.');
+ phase('published-transfer-reverified-before-activation');
  stage = 'explicit-activation';
  await waitOperator('activate', 'Choose Use Recovered Data Profile, then dismiss the restart notice.');
- assert(second.state.output.includes('KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTED'), 'Explicit native selection was not confirmed.');
+ assert(afterKeep.state.output.includes('KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTED'), 'Explicit native selection was not confirmed.');
  const activated = await selection(); assert.equal(activated.active, relative); assert.equal(activated.previous, beforeSelection.active);
  assert.equal(await hashFile(destinationKeyPath), destinationKeyHash); phase('separate-native-acceptance-selects-recovered-profile');
  await stop(); stage = 'restart-recovered'; const third = await start();

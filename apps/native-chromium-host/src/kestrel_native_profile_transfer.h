@@ -10,13 +10,15 @@ NSString* KestrelCanonicalNativeCoreTransferSource(NSString* selected_path);
 
 enum class KestrelNativeProfileSelectionResult { Unchanged, Selected, SelectedDurabilityUnconfirmed };
 KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(
-    NSString* browser_profile, NSString* active, NSString* previous, NSString* expected_active);
+    NSString* browser_profile, NSString* active, NSString* previous, NSString* expected_active,
+    NSString* expected_previous = nil);
 
 @interface KestrelNativeProfileTransferController : NSObject
 - (instancetype)initWithBrowserProfile:(NSString*)browserProfile
                     currentCoreProfile:(NSString*)currentCoreProfile
                               testKeys:(BOOL)testKeys;
 - (void)beginTransfer;
+- (void)reviewInterruptedTransfers;
 - (void)restorePrevious;
 - (BOOL)canBegin;
 - (void)shutdown;

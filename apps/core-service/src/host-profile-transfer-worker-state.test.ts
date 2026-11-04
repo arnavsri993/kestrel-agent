@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { HostProfileTransferWorkerState } from "./host-profile-transfer-worker-state";
 
 const roots: string[] = [], keys: Buffer[] = [], workers: HostProfileTransferWorkerState[] = [];
@@ -72,4 +72,54 @@ it.each([null, { method: "plan", requestId: "PRIVATE_WORKER_FIXTURE_ONLY" }, req
 	const result = worker().handle(input);
 	expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", published: false } });
 	expect(JSON.stringify(result)).not.toContain("PRIVATE_WORKER_FIXTURE_ONLY");
+});
+
+it("retains published journal across worker restart, fresh review, recovery, and another restart", () => {
+ const first = worker(), value = fixture(), planned = value.plan(first), applied = value.apply(first, planned);
+ expect(applied.ok).toBe(true);
+ expect(stateVerify(first, applied)).toMatchObject({ ok: true, recovery: { activationPerformed: false } });
+ const journal = `${value.destinationDatabasePath}.kestrel-transfer-journal`;
+ const saved = readFileSync(journal); first.close();
+ // The real worker is a separate process and must have exited; simulate that
+ // ownership check here while exercising the actual worker state transitions.
+ const check = vi.spyOn(process, "kill").mockImplementation(((pid: number) => {
+  if (pid === process.pid) throw Object.assign(new Error("generated stopped owner"), { code: "ESRCH" });
+  throw new Error("unexpected process");
+ }) as typeof process.kill);
+ try {
+  const second = worker();
+  const review = second.handle(request("inspect-interrupted", { destinationDatabasePath: value.destinationDatabasePath }));
+  expect(review).toMatchObject({ ok: true, preview: { state: "published" } });
+  const recovery = second.handle(request("recover-interrupted", { reviewId: review.reviewId,
+   acceptedRecoverySha256: (review.preview as { recoverySha256: string }).recoverySha256,
+   approved: true, sourceKeyBase64: value.sourceKey.toString("base64"), destinationKeyBase64: value.destinationKey.toString("base64") }));
+  expect(recovery).toMatchObject({ ok: true, receipt: { activationPerformed: false } });
+  expect(stateVerify(second, recovery)).toMatchObject({ ok: true, recovery: { originalReadable: true, destinationReadable: true, activationPerformed: false } });
+  expect(readFileSync(journal)).toEqual(saved);
+  expect(readdirSync(dirname(value.destinationDatabasePath)).sort()).toEqual(["kestrel.sqlite", "kestrel.sqlite.kestrel-transfer-journal"]);
+  second.close();
+  expect(worker().handle(request("inspect-interrupted", { destinationDatabasePath: value.destinationDatabasePath }))).toMatchObject({ ok: true, preview: { state: "published" } });
+ } finally { check.mockRestore(); }
+});
+function stateVerify(state: HostProfileTransferWorkerState, value: Record<string, unknown>) {
+ return state.handle(request("verify-recovery", { recoveryId: value.recoveryId }));
+}
+it("preserves retained journal after wrong keys and a changed review", () => {
+ const first = worker(), value = fixture(), planned = value.plan(first); expect(value.apply(first, planned).ok).toBe(true); first.close();
+ const journal = `${value.destinationDatabasePath}.kestrel-transfer-journal`, original = readFileSync(journal);
+ const check = vi.spyOn(process, "kill").mockImplementation((() => { throw Object.assign(new Error("generated stopped owner"), { code: "ESRCH" }); }) as typeof process.kill);
+ try {
+  const next = worker(), review = next.handle(request("inspect-interrupted", { destinationDatabasePath: value.destinationDatabasePath }));
+  const recovery = (input: Record<string, unknown>) => next.handle(request("recover-interrupted", { reviewId: review.reviewId,
+   acceptedRecoverySha256: (review.preview as { recoverySha256: string }).recoverySha256, approved: true,
+   sourceKeyBase64: value.sourceKey.toString("base64"), destinationKeyBase64: value.destinationKey.toString("base64"), ...input }));
+  expect(recovery({ destinationKeyBase64: randomBytes(32).toString("base64") })).toMatchObject({ ok: false });
+  expect(readFileSync(journal)).toEqual(original);
+  const retry = next.handle(request("inspect-interrupted", { destinationDatabasePath: value.destinationDatabasePath }));
+  const db = new KestrelDatabase(value.sourceDatabasePath, value.sourceKey); db.setPrivateState("changed-generated-source", { value: true }); db.close();
+  expect(next.handle(request("recover-interrupted", { reviewId: retry.reviewId,
+   acceptedRecoverySha256: (retry.preview as { recoverySha256: string }).recoverySha256, approved: true,
+   sourceKeyBase64: value.sourceKey.toString("base64"), destinationKeyBase64: value.destinationKey.toString("base64") }))).toMatchObject({ ok: false });
+  expect(readFileSync(journal)).toEqual(original);
+ } finally { check.mockRestore(); }
 });

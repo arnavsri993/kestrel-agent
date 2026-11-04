@@ -270,9 +270,12 @@ export function inspectInterruptedHostProfileFileTransfer(destinationDatabasePat
 
 // Explicit offline recovery for a fully verified staged/published import.
 // Preserve incomplete/corrupt stages and later work for a separate review.
+// A native host can retain the immutable journal until a separate profile
+// selection. It remains review metadata, never consent or authentication;
+// later recovery still requires fresh review and both existing keys.
 // The dedicated reservation serializes recovery; a crashed recovery reservation
 // stays blocked pending its own review, rather than stealing a live lease.
-export function recoverInterruptedHostProfileFileTransfer(options: { destinationDatabasePath: string; sourceKey: Buffer; destinationKey: Buffer; acceptedRecoverySha256: string }): HostProfileFileTransferReceipt {
+export function recoverInterruptedHostProfileFileTransfer(options: { destinationDatabasePath: string; sourceKey: Buffer; destinationKey: Buffer; acceptedRecoverySha256: string; retainRecoveryJournal?: boolean }): HostProfileFileTransferReceipt {
 	verifyKey(options.sourceKey); verifyKey(options.destinationKey);
 	if (timingSafeEqual(options.sourceKey, options.destinationKey)) fail("KEY_REUSE", "Core transfer requires an independent destination key.");
 	let lease: number | undefined, leaseIdentity: Identity | undefined, published = false, finalizing = false;
@@ -300,7 +303,8 @@ export function recoverInterruptedHostProfileFileTransfer(options: { destination
 		if (!missing(reviewed.stage)) rmdirSync(reviewed.stage);
 		if (reviewed.lock && !missing(lockPath(path)) && same(ownedFile(lockPath(path)), reviewed.lock.file)) unlinkSync(lockPath(path));
 		if (!same(ownedFile(journalPath(path)), reviewed.saved.file)) fail("RECOVERY_REVIEW_CHANGED", "The Core recovery journal changed during finalization.");
-		unlinkSync(journalPath(path));
+		if (!options.retainRecoveryJournal) unlinkSync(journalPath(path));
+		syncPath(dirname(path));
 		return { format: "kestrel-host-core-file-transfer-receipt", version: 1, planSha256: plan.planSha256, source: plan.source, destination: { ...plan.destination, file },
 			summary: plan.summary, authenticatedEnvelopes: plan.authenticatedEnvelopes, activationPerformed: false };
 	} catch (error) {
@@ -310,7 +314,12 @@ export function recoverInterruptedHostProfileFileTransfer(options: { destination
 	} finally {
 		let cleanupFailed = false;
 		try { if (lease !== undefined) closeSync(lease); } catch { cleanupFailed = true; }
-		try { if (leaseIdentity && !missing(recoveryLockPath(path)) && same(ownedFile(recoveryLockPath(path)), leaseIdentity)) unlinkSync(recoveryLockPath(path)); } catch { cleanupFailed = true; }
+		try {
+			if (leaseIdentity && !missing(recoveryLockPath(path)) && same(ownedFile(recoveryLockPath(path)), leaseIdentity)) {
+				unlinkSync(recoveryLockPath(path));
+				syncPath(dirname(path));
+			}
+		} catch { cleanupFailed = true; }
 		if (cleanupFailed) throw new HostProfileFileTransferError("RECOVERY_RESERVATION_RETAINED", "The Core recovery reservation needs review. All data files were preserved.", published);
 	}
 }
@@ -321,7 +330,9 @@ export function recoverInterruptedHostProfileFileTransfer(options: { destination
 // then hard-linked into the final filename atomically without replacement.
 // Crashes can leave encrypted staging/lock files for explicit recovery. Once
 // publication occurs, an error never deletes the published database.
-export function applyHostProfileFileTransfer(options: { plan: HostProfileFileTransferPlan; sourceKey: Buffer; destinationKey: Buffer; acceptedPlanSha256: string }): HostProfileFileTransferReceipt {
+// Retaining a completed journal closes the host's verify-to-selection crash
+// window without persisting keys or implicitly activating the imported data.
+export function applyHostProfileFileTransfer(options: { plan: HostProfileFileTransferPlan; sourceKey: Buffer; destinationKey: Buffer; acceptedPlanSha256: string; retainRecoveryJournal?: boolean }): HostProfileFileTransferReceipt {
 	verifyKey(options.sourceKey); verifyKey(options.destinationKey); validatePlan(options.plan);
 	if (options.acceptedPlanSha256 !== options.plan.planSha256) fail("PLAN_NOT_ACCEPTED", "Apply requires the exact reviewed Core transfer plan.");
 	if (timingSafeEqual(options.sourceKey, options.destinationKey)) fail("KEY_REUSE", "Core transfer requires an independent destination key.");
@@ -378,7 +389,8 @@ export function applyHostProfileFileTransfer(options: { plan: HostProfileFileTra
 		if (!cleanupFailed && (completed || !published)) {
 			try {
 				if (lockIdentity && !missing(lockPath(plan.destination.path)) && same(identity(lstatSync(lockPath(plan.destination.path))), lockIdentity)) unlinkSync(lockPath(plan.destination.path));
-				if (journalIdentity && !missing(journalPath(plan.destination.path)) && same(identity(lstatSync(journalPath(plan.destination.path))), journalIdentity)) unlinkSync(journalPath(plan.destination.path));
+				if ((!completed || !options.retainRecoveryJournal) && journalIdentity && !missing(journalPath(plan.destination.path)) && same(identity(lstatSync(journalPath(plan.destination.path))), journalIdentity)) unlinkSync(journalPath(plan.destination.path));
+				if (completed && options.retainRecoveryJournal) syncPath(dirname(plan.destination.path));
 			} catch { cleanupFailed = true; }
 		}
 		if (cleanupFailed) throw new HostProfileFileTransferError(published ? "PUBLISHED_RECOVERY_REQUIRED" : "STAGING_RECOVERY_REQUIRED",

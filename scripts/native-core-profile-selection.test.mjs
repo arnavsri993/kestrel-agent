@@ -14,7 +14,7 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 		const sdk = execFileSync("/usr/bin/xcrun", ["--show-sdk-path"], { encoding: "utf8", timeout: 5000 }).trim();
 		execFileSync("/usr/bin/xcrun", ["clang++", "-std=c++20", "-fobjc-arc", "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=13.0", "-isysroot", sdk,
 			"-I", join(repository, "apps/native-chromium-host/src"),
-			... ["kestrel_native_core_keychain.mm", "kestrel_legacy_core_key.cc", "kestrel_legacy_keychain.mm"].map(file => join(repository, "apps/native-chromium-host/src", file)),
+			... ["kestrel_native_core_keychain.mm", "kestrel_native_prepared_profiles.mm", "kestrel_legacy_core_key.cc", "kestrel_legacy_keychain.mm"].map(file => join(repository, "apps/native-chromium-host/src", file)),
 			join(repository, "apps/native-chromium-host/tests/profile_selection_fixture.mm"), "-framework", "Foundation", "-framework", "AppKit", "-framework", "Security", "-framework", "LocalAuthentication", "-o", executable], { timeout: 30000, stdio: "pipe" });
 	// A cold CI SDK/compiler may exceed Vitest's default ten-second hook.
 	// Keep the hook outside the bounded SDK and compiler subprocess budgets.
@@ -36,6 +36,46 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 		const result = spawnSync(executable, [temporary, `--stop-${mode}`], { encoding: "utf8", timeout: 10000 });
 		expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout);
 	}
+	function fixture(...args) {
+		const result = spawnSync(executable, args, { encoding: "utf8", timeout: 2000 });
+		expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout);
+	}
+	it("refuses a FIFO key envelope without blocking", () => {
+		const path = join(temporary, randomUUID());
+		execFileSync("/usr/bin/mkfifo", [path]);
+		expect(fixture(path, "--read-private")).toMatchObject({ ok: false });
+	});
+	it("rejects malformed interrupted review data", () => {
+		expect(fixture(temporary, "--review-validation")).toEqual({ valid: true, badCount: true, badPath: true, badDigest: true });
+	});
+	it.each(["source", "destination", "key", "journal", "sidecar"])("invalidates a recovery witness when %s changes", target => {
+		const sourceRoot = sourceProfile().root, destinationRoot = sourceProfile().root;
+		const sourceDb = join(sourceRoot, "database/kestrel.sqlite"), destinationDb = join(destinationRoot, "database/kestrel.sqlite");
+		const paths = { source: sourceDb, destination: destinationDb, key: join(sourceRoot, "secure/database-key.bin"), journal: `${destinationDb}.kestrel-transfer-journal`, sidecar: `${sourceDb}-wal` };
+		for (const path of [paths.source, paths.destination, paths.key, paths.journal]) writeFileSync(path, "fixture", { mode: 0o600 });
+		expect(fixture(sourceDb, "--witness", destinationDb, paths[target])).toEqual({ before: true, after: true, same: false });
+	});
+	it.each(["source", "destination", "key", "journal"])("invalidates a recovery witness when %s is replaced", target => {
+		const sourceRoot = sourceProfile().root, destinationRoot = sourceProfile().root;
+		const sourceDb = join(sourceRoot, "database/kestrel.sqlite"), destinationDb = join(destinationRoot, "database/kestrel.sqlite");
+		const paths = { source: sourceDb, destination: destinationDb, key: join(sourceRoot, "secure/database-key.bin"), journal: `${destinationDb}.kestrel-transfer-journal` };
+		for (const path of Object.values(paths)) writeFileSync(path, "fixture", { mode: 0o600 });
+		expect(fixture(sourceDb, "--witness", destinationDb, paths[target], "replace")).toEqual({ before: true, after: true, same: false });
+	});
+	it("rejects missing required and linked recovery witness files", () => {
+		const sourceRoot = sourceProfile().root, destinationRoot = sourceProfile().root;
+		const sourceDb = join(sourceRoot, "database/kestrel.sqlite"), destinationDb = join(destinationRoot, "database/kestrel.sqlite");
+		for (const path of [sourceDb, destinationDb, join(sourceRoot, "secure/database-key.bin")]) writeFileSync(path, "fixture", { mode: 0o600 });
+		expect(fixture(sourceDb, "--witness", destinationDb, "").before).toBe(false);
+		symlinkSync(sourceDb, `${destinationDb}.kestrel-transfer-journal`);
+		expect(fixture(sourceDb, "--witness", destinationDb, "").before).toBe(false);
+	});
+	it("does not overwrite a changed previous selection", () => {
+		const value = profile(), child = value.child();
+		value.select({ version: 1, active: child, previous: "" });
+		const result = fixture(value.root, "", child, child, child);
+		expect(result).toMatchObject({ saved: "unchanged", profile: join(value.root, child) });
+	});
 	it("confirms a private child has stopped before releasing its task", () => {
 		const result = stopWorker("worker"); expect(result).toMatchObject({ stopped: true, identity: true, preservedBeforeFixtureCleanup: false }); expect(result.milliseconds).toBeLessThan(3500);
 	});
