@@ -1,5 +1,6 @@
-import { NativeEmbeddingRecoveryAppliedSchema, NativeEmbeddingRecoveryPreviewSchema, type NativeEmbeddingRecoveryPreview } from "@kestrel/shared-types";
-import { useEffect, useRef, useState } from "react";
+import { NativeEmbeddingRecoveryAppliedSchema, NativeEmbeddingRecoveryPreviewSchema, NativeEmbeddingRecoveryStatusSchema, type NativeEmbeddingRecoveryPreview } from "@kestrel/shared-types";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { repairOutcome } from "./native-embedding-recovery-outcome";
 
 class RecoveryFailure extends Error {}
 
@@ -14,6 +15,7 @@ function discard(planId: string) {
 }
 
 export function NativeEmbeddingRecovery() {
+	const outcome = useSyncExternalStore(repairOutcome.subscribe, repairOutcome.get);
 	const [preview, setPreview] = useState<Review>();
 	const [busy, setBusy] = useState(false);
 	const [notice, setNotice] = useState("");
@@ -31,6 +33,24 @@ export function NativeEmbeddingRecovery() {
 		setError("");
 	}
 
+	async function refreshStatus() {
+		const before = repairOutcome.get();
+		try {
+			const response = await window.kestrel.request({ type: "native-embedding-recovery-status" });
+			if (repairOutcome.get() !== before) return;
+			if (!response.ok || !("nativeEmbeddingRecoveryStatus" in response)) return;
+			const status = NativeEmbeddingRecoveryStatusSchema.parse(response.nativeEmbeddingRecoveryStatus);
+			if (status.state === "applied") repairOutcome.reconcile(status.coreStatus === "restart-required" ? "restart-required" : "applied");
+			else if (status.state === "idle" || status.state === "in-progress" || status.state === "unconfirmed") repairOutcome.reconcile(status.state);
+		} catch { /* Retain the local outcome when the host is unavailable. */ }
+	}
+
+	useEffect(() => { void refreshStatus(); }, []);
+	useEffect(() => {
+		if (outcome !== "in-progress") return;
+		const timer = window.setInterval(() => void refreshStatus(), 2_000);
+		return () => window.clearInterval(timer);
+	}, [outcome]);
 	useEffect(() => () => {
 		generation.current += 1;
 		if (plan.current) discard(plan.current);
@@ -79,37 +99,34 @@ export function NativeEmbeddingRecovery() {
 	async function apply() {
 		if (busy || !preview || plan.current !== preview.planId || Date.parse(preview.expiresAt) <= Date.now()) return;
 		const current = ++generation.current;
-		setBusy(true); setError(""); setNotice("");
-		try {
-			const response = await window.kestrel.request({ type: "native-embedding-recovery-apply", planId: preview.planId });
-			if (!response.ok) throw new RecoveryFailure(failureMessage(response.error));
-			if (!("nativeEmbeddingRecoveryApplied" in response)) throw new Error();
+		const planId = preview.planId;
+		plan.current = undefined;
+		setBusy(true); setError(""); setNotice(""); setPreview(undefined);
+		await repairOutcome.apply(async () => {
+			const response = await window.kestrel.request({ type: "native-embedding-recovery-apply", planId });
+			if (!response.ok || !("nativeEmbeddingRecoveryApplied" in response)) throw new Error();
 			const result = NativeEmbeddingRecoveryAppliedSchema.parse(response.nativeEmbeddingRecoveryApplied);
-			if (current !== generation.current) return;
-			plan.current = undefined; setPreview(undefined);
-			setNotice(result.coreStatus === "restart-required" ? "Repair saved. Restart Kestrel to continue." : "The old indexing task was cancelled.");
-		} catch (cause) {
-			if (current === generation.current) {
-				if (plan.current) discard(plan.current);
-				plan.current = undefined; setPreview(undefined);
-				setError(cause instanceof RecoveryFailure ? cause.message : "Could not complete the repair. Review again to continue.");
-			}
-		} finally {
-			if (current === generation.current) setBusy(false);
-		}
+			return result.coreStatus === "restart-required" ? "restart-required" : "applied";
+		});
+		window.dispatchEvent(new Event("kestrel-memory-repair-settled"));
+		if (current === generation.current) setBusy(false);
 	}
 
-	return <details className="memory-agent-knowledge" onToggle={(event) => { if (!event.currentTarget.open) clear(); }}>
+	return <details className="memory-agent-knowledge" onToggle={(event) => { if (!event.currentTarget.open) clear(); else void refreshStatus(); }}>
 		<summary>Repair memory processing</summary>
 		<p>This repair applies to the current Kestrel profile, regardless of the selected viewer or domain. Review a repair that pauses Kestrel’s memory processing and cancels one stranded old indexing task. Retry history is preserved; the task will not be retried and permissions will not change.</p>
-		{!preview && <button type="button" disabled={busy} onClick={() => void review()}>{busy ? "Preparing review…" : "Review"}</button>}
-		{busy && !preview && <button type="button" onClick={clear}>Cancel</button>}
+		{!preview && <button type="button" disabled={busy || outcome === "in-progress" || outcome === "unconfirmed" || outcome === "restart-required"} onClick={() => void review()}>{busy ? "Preparing review…" : "Review"}</button>}
+		{busy && !preview && outcome !== "in-progress" && <button type="button" onClick={clear}>Cancel</button>}
 		{preview && <section aria-label="Memory processing repair review">
 			<p>This will cancel one stranded old indexing task and preserve its retry history. It will not retry the task or change permissions.</p>
 			<p>Review expires {new Date(preview.expiresAt).toLocaleString()}.</p>
 			<button type="button" disabled={busy} onClick={() => void apply()}>{busy ? "Saving repair…" : "Cancel old indexing task"}</button>
 			<button type="button" disabled={busy} onClick={clear}>Cancel review</button>
 		</section>}
+		{outcome === "in-progress" && <p role="status">Memory repair is in progress.</p>}
+		{outcome === "applied" && <p role="status">The old indexing task was cancelled.</p>}
+		{outcome === "restart-required" && <p role="status">Repair saved. Restart Kestrel to continue.</p>}
+		{outcome === "unconfirmed" && <p role="alert">The repair outcome could not be confirmed. Restart Kestrel and check memory processing before trying again.</p>}
 		{notice && <p role="status">{notice}</p>}
 		{error && <p role="alert">{error}</p>}
 	</details>;

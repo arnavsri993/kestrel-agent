@@ -241,7 +241,8 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 		const refresh = () => void load(true);
 		const timer = window.setInterval(refresh, 30_000);
 		window.addEventListener("focus", refresh);
-		return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+		window.addEventListener("kestrel-memory-repair-settled", refresh);
+		return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); window.removeEventListener("kestrel-memory-repair-settled", refresh); };
 	}, [viewerId, domainId, weekOffset]);
 
 	const knowledgeSessionId = workspace?.viewers.find(viewer => viewer.id === viewerId)?.sessionId;
