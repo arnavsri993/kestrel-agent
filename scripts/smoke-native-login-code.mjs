@@ -101,8 +101,19 @@ async function connectPanel() {
  const evaluate = async expression => { const result = await send('Runtime.evaluate', { expression, returnByValue: true }); if (result.exceptionDetails) throw Error('Companion evaluation failed.'); return result.result.value; };
  return { text: () => evaluate('document.body.innerText'),
   async click(label) {
-   const expression = `(() => {const buttons=[...document.querySelectorAll('button')].filter(b=>b.innerText.trim()===${JSON.stringify(label)}&&!b.disabled); if(buttons.length!==1)return null; buttons[0].scrollIntoView({block:'nearest'}); const r=buttons[0].getBoundingClientRect();return r.width&&r.height?{x:r.left+r.width/2,y:r.top+r.height/2}:null})()`;
-   const point = await evaluate(expression); assert(point, `Visible companion control missing: ${label}`);
+   const global = await send('Runtime.evaluate', { expression: 'globalThis', returnByValue: false });
+   const objectId = global.result?.objectId; assert(objectId, 'Companion context unavailable.');
+   let point;
+   try {
+    const result = await send('Runtime.callFunctionOn', {
+     objectId,
+     functionDeclaration: `function(label) { const buttons=[...document.querySelectorAll('button')].filter(b=>b.innerText.trim()===label&&!b.disabled); if(buttons.length!==1)return null; buttons[0].scrollIntoView({block:'nearest'}); const r=buttons[0].getBoundingClientRect();return r.width&&r.height?{x:r.left+r.width/2,y:r.top+r.height/2}:null; }`,
+     arguments: [{ value: label }], returnByValue: true,
+    });
+    if (result.exceptionDetails) throw Error('Companion control lookup failed.');
+    point = result.result?.value;
+   } finally { await send('Runtime.releaseObject', { objectId }).catch(() => {}); }
+   assert(point && Number.isFinite(point.x) && Number.isFinite(point.y), 'Visible companion control missing.');
    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
   }, async screenshot(path) { const result = await send('Page.captureScreenshot', { format: 'png' }); await writeFile(path, Buffer.from(result.data, 'base64'), { mode: 0o600 }); }, close() { socket.close(); } };

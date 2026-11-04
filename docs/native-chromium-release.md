@@ -2800,8 +2800,9 @@ nulls rather than undefined arguments; a refreshed CDP connection needed fresh
 page handles; and navigation authority initially used a global revision. A
 45-second inspection probe subsequently lost foreground authority before its
 next scan. The final probe explicitly focuses its owned page before testing
-stale-document rejection; foreground checks remain enforced. The latest full
-`pnpm verify` pass is still the separate `5fd495e2` source boundary.
+stale-document rejection; foreground checks remain enforced. At first publication,
+the full `pnpm verify` pass was the separate `5fd495e2` source boundary. The
+subsequent aggregate results below supersede that checkpoint.
 
 These generated-data checks do not prove real Messages/Full Disk Access or
 authenticated Gmail acceptance. Gmail uses the existing Core lookup's 30-second
@@ -2833,3 +2834,22 @@ The production preview's background-owner refusal and timeout assertions are
 unchanged. This diagnoses a test precondition; it does not establish the exact
 cause of every earlier hover failure. A fresh aggregate run is required for the
 revised fixture.
+
+The revised full aggregate **passed** on source
+`42e974a91adf14ea1ea5efbc19eb48cae7e8d541`:
+`.tmp/native-login-code-aggregate2/receipt.json` records exit 0, the same
+`b606fd35...` candidate before/after, and byte-exact restoration of all eight
+tracked PNGs. It includes audits, workspace types/units, builds, native helpers,
+50 website checks, all desktop workflows, packaged CLI, editor integration and
+production-secret scanning. The legacy Alloy helper's expected extension-parity
+block remains separate from the actual ChromiumDesktop receipts above.
+
+Both CI jobs also passed on published `c3910ac7`, run `41744176945`. Its CodeQL
+check retained the HMAC-equality finding and additionally warned about label
+interpolation in the new test's CDP expression. The helper now uses a static
+`Runtime.callFunctionOn` declaration with a structured argument, replacing
+dynamic code construction. The actual six-phase packaged code flow passed
+again in `.tmp/native-login-code-structured-cdp-evidence/receipt.json`, with the
+same native bundle hash. Fresh remote scanning must verify that warning is
+cleared; no finding was suppressed or dismissed. This last change affects only
+the canary, and is covered by syntax checking and its complete native flow.
