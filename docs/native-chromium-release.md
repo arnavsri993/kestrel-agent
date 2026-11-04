@@ -3066,3 +3066,62 @@ migration, unsupported interrupted states, real existing-profile and account
 acceptance, a published Store upgrade, Developer ID signing/notarization and
 canonical cutover remain release work. `/Applications/Kestrel.app` is still the
 existing Electron app; no canonical installation or public release is claimed.
+
+## Native Saved pages and deferred Store updates (2026-11-04)
+
+The active ChromiumDesktop MV3 adapter now implements saved-page creation,
+editing, removal, folder creation/rename, and folder removal that preserves its
+children. Permanent and managed roots are protected. Folder removal rechecks
+the actual folder and each child's parent before moving it; it never uses
+recursive deletion. Capacity is checked before creation. Bookmark snapshot
+reads are serialized through identity-map updates so an older overlapping read
+cannot prune identities assigned by a newer read.
+
+Full-link, title, and icon choices now affect the actual Chromium bookmark bar.
+Chrome exposes its bookmark title as the native label, so full-link uses the
+URL and icon uses an empty label. The friendly title is retained separately in
+Kestrel's bounded local presentation record, bound to the native creation time
+and expected label. External native title edits invalidate that override.
+This record is required to restore the friendly title after choosing an empty
+or URL label; another Chrome client without it sees the native label. These
+are native label changes, not an independent synced bookmark-title field.
+
+Source `7f0dd67a` passed full `pnpm verify`: **2,742 tests in 312 files**, two
+existing ownership-mutation skips, types, audits, builds, native helpers,
+website checks, desktop workflows, packaged CLI, editors and secret scanning.
+All eight tracked PNGs were restored byte for byte. Exact bundle
+`bf72e2521502c67b320fd489151d2051ed6f0ce95c526b5b4268dea94e82f66e`
+passed ten actual Saved pages phases, 26 product phases and six generated
+companion/Messages code phases. CUA inspected the actual native window and
+Saved pages controls; the saved edited-bookmark screenshot was also inspected.
+
+After the snapshot race fix, runtime source `9ebf78b2` rebuilt as exact bundle
+`c2f08960f5b2aefe11c0199bd782057db6142801abf5a19e6c06f2cd7f6311cf`.
+It passed ten actual bookmark UI phases in
+`.tmp/native-bookmarks-current-evidence/receipt.json`, 23 product phases in
+`.tmp/native-bookmarks-current-workflow2-evidence/receipt.json` (providers,
+workspace and isolated navigation/downloads enabled), and six generated code
+phases in `.tmp/native-bookmarks-current-code-evidence/receipt.json`. All have
+matching before/after candidate hashes. The focused bookmark, retained-profile
+and continuation tests passed **95/95**. Full aggregate verification above is
+for `7f0dd67a`, not a claim about later uncommitted transfer work.
+
+The retained official uBlock Origin Lite installation at `2026.1026.1812`
+received an actual successful `update_available` response for
+`2026.1103.1743`. The failed receipt remains
+`.tmp/native-bookmarks-store-update-evidence/receipt.json`: the probe kept its
+own extension options view open while waiting for hot activation. Chrome can
+defer updates while an extension context is active. The probe now closes that
+view and uses an ordinary clean browser restart; it never edits a manifest,
+reloads/reinstalls the extension, or forces a version. A narrow continuation
+validator binds a prior failed query to the exact candidate/checkpoint and
+private immutable receipt while keeping current disk versions separate from
+the original upgrade baseline. It cannot turn a compatibility run into an
+upgrade claim or query again implicitly.
+
+On resuming, the generated macOS temporary profile no longer existed. The
+continuation correctly refused before launching an app; its failure log is
+`.tmp/native-published-store-upgrade.log`. Consequently an active new version
+and its restart persistence are **not verified**, and the published Store
+upgrade gate remains open. The 48 continuation tests are synthetic validation
+tests, not upgrade evidence. Original receipts/checkpoints were not changed.
