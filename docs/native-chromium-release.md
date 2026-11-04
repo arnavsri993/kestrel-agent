@@ -2853,3 +2853,125 @@ again in `.tmp/native-login-code-structured-cdp-evidence/receipt.json`, with the
 same native bundle hash. Fresh remote scanning must verify that warning is
 cleared; no finding was suppressed or dismissed. This last change affects only
 the canary, and is covered by syntax checking and its complete native flow.
+
+### Reviewed native repair for stranded embedding leases (2026-11-03)
+
+Native Memory now has an explicit **Repair memory processing** review and
+confirmation flow. It addresses a specific upgrade blocker: the current legacy
+identifier-migration cursor points at a generation-less, running embedding job
+with no lease expiry. The existing migration correctly refuses to assume that
+such a job is abandoned; maintenance cannot proceed past it automatically.
+
+The trusted host reserves maintenance admission before stopping Core. Existing
+agent work, provider/plugin mutations, pending requests and concurrent repairs
+prevent entry; while reserved, new Core and host work is refused. The existing
+`withStoppedCore` gate requires the supervised child to exit cleanly before
+inspection or mutation, and restores Core afterward. A forced or unconfirmed
+stop cannot authorize the repair. This proves quiescence of that supervised Core,
+not arbitrary noncooperating processes running as the same macOS user.
+
+Review opens only the host-selected existing profile with its protected key and
+current schema. It does not create a database, apply schema migrations or perform
+normal startup rewrites. Since SQLite's read-only WAL opening can create sidecar
+files, inspection uses an owned private temporary copy of the existing database
+and WAL. Apply opens the existing database after another clean Core stop. Files
+and containing directories are checked for type, links, ownership, modes and
+identities. The preview/apply path caps each DB/WAL/SHM file at 256 MB. It does not
+claim resistance to arbitrary hostile same-user pathname replacement.
+
+A host-held random, two-minute, single-use review binds the profile/directory/DB
+identities, exact encrypted job and authenticated metadata, logical migration
+cursor, and source authority. Neither row IDs, paths, source content nor lease
+metadata crosses into the renderer. Apply consumes the review before its
+consequential work, rechecks all bindings in an immediate transaction, changes
+only that legacy job to cancelled, clears its lease/token/lock and preserves its
+attempts and maximum attempts. It does not grant source access, retry the job,
+reset a terminal budget or replay approvals. The ordinary migration then retires
+its identifiers and, only when authority permits, preserves a cancelled guard for
+the eligible generation without overwriting an existing current-generation job.
+Old completions and failures are fenced. A later explicit correction can create
+new work.
+
+Denied or deleted sources remain repairable without becoming authorized. The
+bounded conservative denial fingerprint includes authority-bearing tables and
+validated semantic private authority state: secret/owner/authority epochs,
+source aliases, receipt/derived tombstones and capture configuration. It excludes
+unrelated startup presence state. Agent identities are authenticated against SQL
+identity columns and bound semantically, excluding only their refreshed
+bookkeeping timestamp. Permission, source and epoch changes still stale the
+review. The conservative table snapshot is limited to 100,000 rows/64 MB and can
+stale after an unrelated change in those tables; over-budget or malformed direct
+state fails closed. This is not unrestricted large-profile recovery.
+
+The native-only control remains mounted when the Memory workspace cannot load
+while Core pauses. Close, navigation and expiry discard unused plans; late
+reviews are ignored. Applying retains a nonsecret outcome across navigation and
+renderer reload, and a read-only host status can recover the committed result.
+No plan or source data is persisted in the UI. A committed cancellation followed
+by restart failure is reported as saved/restart-required. Unconfirmed outcomes
+are never retried automatically. Successful repair refreshes Memory rather than
+leaving a transient busy error on screen. Review, cancellation and known outcome
+messages were inspected in generated screenshots.
+
+Current source passed **2,696 tests in 310 files**, with the two existing
+ownership-mutation cases skipped without root, and workspace typechecks. Focused
+coverage includes wrong keys/schema, preview without startup writes, file/WAL
+limits and links, stale row/cursor/source/epoch, changed profile identities,
+missing expiry eligibility, one-use/expiry/close, clean-stop refusal, committed
+restart failure, retained UI outcomes, old completion fencing, terminal budgets,
+and denied-source regrant. No assertion or timeout was relaxed.
+
+Exact ad-hoc native candidate
+`de30b081769e5f597147fd9f6fef90da5fee54092c48d97815d6cb1d41287902`
+has matching before/after hashes for:
+
+- `.tmp/native-lease-recovery-denied2-evidence/receipt.json`: **11** actual
+  packaged phases. Generated source/job fixtures are seeded only while the
+  entire owned app is stopped. The real Memory UI reviews and cancels the job;
+  the probe observes supervised Core PID turnover, stale-source and restart
+  refusal, outcome after renderer reload, preserved cancelled generation/attempts
+  with no vector, and new corrected work completing afterward. A separate private
+  source is cancelled while denied, stays inert, and retains its cancelled guard
+  after an explicitly simulated offline regrant of only the generated session.
+- `.tmp/native-lease-recovery-current-workflow-evidence/receipt.json`: **26**
+  existing native product phases, including Home/companion/provider work,
+  attachments, workspace, trusted browser actions, isolated form navigation and
+  downloads, recovery and restart.
+- `.tmp/native-lease-recovery-current-code-evidence/receipt.json`: **6** actual
+  generated Messages/companion code lookup/fill/refusal/restart phases.
+- `.tmp/native-lease-recovery-current-store-evidence/receipt.json`: **5** retained
+  official Store extension/function/tab-isolation/restart phases, compatibility
+  only. Expected incomplete/exit 2: no update query or published-version upgrade.
+
+`test:native-embedding-lease-recovery` requires an exact disposable candidate and
+an empty `KESTREL_NATIVE_LEASE_EVIDENCE` directory. No real profile, Keychain,
+Messages, microphone, external provider or desktop-input permission was used.
+
+Failed receipts are preserved. The first generated probe hit startup busy
+admission; the next fixture lacked the represented source required by correction.
+The probe now waits only on known no-effect busy rejection and includes a real
+generated source event. A permitted-source flow passed, but the added private
+source revealed two normal-restart fingerprint changes: unrelated encrypted
+presence and agent-identity timestamp/encryption refresh. Diagnostic receipts
+record only generated changed-table/row/column metadata. The fingerprint fixes
+retain authority checks; the final private-source test passes without bypasses.
+
+The earlier `e43ba01f` full `pnpm verify` pass is recorded separately in
+`.tmp/native-lease-recovery-aggregate/receipt.json`, with the `aafd6951...` bundle
+unchanged and all eight tracked PNGs restored byte for byte. The subsequent
+private-state/identity binding fixes have their current tests and actual native
+receipts above; the corrected source `20f1fb8bdc630cf2b3d4d5a841a572c29442c75e` also passed full
+`pnpm verify` in `.tmp/native-lease-recovery-final-aggregate/receipt.json`. That
+run includes audits, types/units, builds, native helpers, 50 website checks, all
+desktop workflows, packaged CLI, editor integration and secret scanning. The
+`de30b081...` candidate stayed unchanged and all eight tracked PNGs were restored
+byte for byte. The expected legacy Alloy-helper parity block remains separate
+from actual ChromiumDesktop acceptance.
+
+This implements the narrow missing-expiry legacy-job repair. Interrupted prepared
+profile discovery/recovery, broader browser/credential/provider/workspace asset
+migration and rollback, unrestricted older/large-profile acceptance, real account
+and existing-profile acceptance, a published Store upgrade, production signing
+and canonical cutover remain release work. The installed `/Applications/Kestrel.app`
+is still the existing Electron app. Earlier receipts belong to their exact
+recorded artifacts and are not relabeled as this bundle's proof.
