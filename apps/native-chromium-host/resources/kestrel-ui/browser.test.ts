@@ -236,6 +236,95 @@ describe("native bookmark-only transfer", () => {
 		expect(fixture.bookmarks[0].children[0].title).toBe("External edit");
 		expect(fixture.chrome.bookmarks.create).toHaveBeenCalledTimes(1);
 	});
+	it("coalesces bulk bookmark/presentation bursts, keeps tab events timely, and publishes the latest final state", async () => {
+		const fixture = makeChrome(), emitted: any[] = [];
+		const adapter = createBrowserAdapter(fixture.chrome, { uiUrl, emit: (_channel: string, event: any) => emitted.push(event) });
+		const value: any = data(); value.folders = [];
+		value.bookmarks = Array.from({ length: 12 }, (_, i) => ({ url: `https://bulk.example/${i}`, title: `Friendly ${i}`, displayMode: "icon" }));
+		const planned = await preview(adapter, value);
+		const getTree = vi.spyOn(fixture.chrome.bookmarks, "getTree");
+		const originalSet = fixture.chrome.storage.local.set;
+		const storageSet = vi.spyOn(fixture.chrome.storage.local, "set").mockImplementation((...args: any[]) => {
+			const result = originalSet(...args);
+			if ("kestrel.native.browser.bookmarkModes.v1" in args[0]) for (let i = 0; i < 100; i++) fixture.handlers.get("storage-changed")?.({ "kestrel.native.browser.bookmarkModes.v1": {} }, "local");
+			return result;
+		});
+		const originalCreate = fixture.chrome.bookmarks.create;
+		let createCalls = 0, release: (() => void) | undefined;
+		fixture.chrome.bookmarks.create = vi.fn((...args: any[]) => {
+			const create = () => {
+				const result = originalCreate(...args);
+				for (let i = 0; i < 100; i++) fixture.handlers.get("bookmark-created")?.();
+				return result;
+			};
+			if (++createCalls === 2) return new Promise(resolve => { release = () => resolve(create()); });
+			return create();
+		});
+		const originalUpdate = fixture.chrome.bookmarks.update;
+		fixture.chrome.bookmarks.update = (...args: any[]) => {
+			const result = originalUpdate(...args);
+			for (let i = 0; i < 100; i++) fixture.handlers.get("bookmark-changed")?.();
+			return result;
+		};
+		const applying = apply(adapter, planned);
+		await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+		expect(emitted).toHaveLength(0);
+		fixture.tabs[0].title = "Tab updated during import";
+		fixture.handlers.get("tab-updated")?.();
+		await vi.waitFor(() => expect(emitted.some(event => event.state.tabs[0].title === "Tab updated during import")).toBe(true));
+		release!();
+		const result = await applying;
+		expect(result.bookmarkImportResult).toMatchObject({ complete: true, bookmarksAdded: 12 });
+		expect(emitted).toHaveLength(2); // Unrelated tab event, then the final import snapshot.
+		expect(emitted.at(-1).state.bookmarks).toHaveLength(13);
+		expect(emitted.at(-1).state.bookmarks.at(-1)).toMatchObject({ title: "Friendly 11", displayMode: "icon" });
+		expect(storageSet.mock.calls.filter(([values]) => "kestrel.native.browser.bookmarkIds.v1" in values)).toHaveLength(2);
+		expect(getTree.mock.calls.length).toBeLessThanOrEqual(20);
+	});
+	it("still detects external edits under suppressed event bursts and restores notifications after a partial import", async () => {
+		const fixture = makeChrome(), emitted: any[] = [];
+		const adapter = createBrowserAdapter(fixture.chrome, { uiUrl, emit: (_channel: string, event: any) => emitted.push(event) });
+		const planned = await preview(adapter);
+		const originalCreate = fixture.chrome.bookmarks.create;
+		fixture.chrome.bookmarks.create = vi.fn((...args: any[]) => {
+			const result = originalCreate(...args);
+			fixture.bookmarks[0].children[0].title = "External edit during import";
+			for (let i = 0; i < 100; i++) fixture.handlers.get("bookmark-changed")?.();
+			return result;
+		});
+		const result = await apply(adapter, planned);
+		expect(result.bookmarkImportResult).toMatchObject({ complete: false, bookmarksAdded: 0, foldersAdded: 1 });
+		expect(emitted).toHaveLength(1);
+		expect(emitted[0].state.bookmarks[0].title).toBe("External edit during import");
+		expect(emitted[0].state.bookmarkFolders).toHaveLength(1);
+		fixture.bookmarks[0].children[0].title = "Edited after import";
+		fixture.handlers.get("bookmark-changed")?.();
+		await vi.waitFor(() => expect(emitted.at(-1).state.bookmarks[0].title).toBe("Edited after import"));
+		expect(emitted).toHaveLength(2);
+	});
+	it("publishes one follow-up when an external edit arrives after the final response snapshot was acquired", async () => {
+		const fixture = makeChrome(), emitted: any[] = [];
+		let finalPublicationStarted = false, injectedLateEdit = false;
+		const adapter = createBrowserAdapter(fixture.chrome, { uiUrl, emit: (_channel: string, event: any) => {
+			emitted.push(event); finalPublicationStarted = true;
+		} });
+		const planned = await preview(adapter);
+		fixture.chrome.bookmarks.getTree = (callback: (tree: any[]) => void) => {
+			const tree = structuredClone([{ id: "0", children: fixture.bookmarks }]);
+			callback(tree);
+			if (finalPublicationStarted && !injectedLateEdit) {
+				injectedLateEdit = true;
+				fixture.bookmarks[0].children[0].title = "External edit after final snapshot";
+				for (let i = 0; i < 100; i++) fixture.handlers.get("bookmark-changed")?.();
+			}
+			return Promise.resolve(tree);
+		};
+		const result = await apply(adapter, planned);
+		expect(result.bookmarkImportResult.complete).toBe(true);
+		expect(result.browserState.bookmarks[0].title).toBe("Example");
+		await vi.waitFor(() => expect(emitted.at(-1).state.bookmarks[0].title).toBe("External edit after final snapshot"));
+		expect(emitted).toHaveLength(2); // One final publication and one coalesced late refresh.
+	});
 	it("returns accurate counts even if the fresh post-import state becomes unavailable", async () => {
 		const { fixture, adapter } = setup(), planned = await preview(adapter);
 		const create = fixture.chrome.bookmarks.create;

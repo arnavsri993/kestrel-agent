@@ -25,14 +25,17 @@ const canonicalJson = value => JSON.stringify(canonical(value));
 
 // Plans live only in this browser worker, contain no persistent browser IDs in
 // exported data, and are consumed before the first native mutation.
-export function createNativeBookmarkTransfer({ chromeApi, invoke, stored, readBookmarks, presentation, savePresentation, response, emitState }) {
+export function createNativeBookmarkTransfer({ chromeApi, invoke, stored, readBookmarks, presentation, savePresentation, response, emitState, setImportActive = () => {} }) {
   let plan;
-  async function snapshot(destinationFolderId) {
-    await readBookmarks();
+  async function snapshot(destinationFolderId, boundDestinationId) {
+    // Only preview/apply preflight need to resolve presentation identities.
+    // During apply the native destination is already bound; fresh tree/mode
+    // witnesses must not mutate and persist the entire identity map per item.
+    if (boundDestinationId === undefined) await readBookmarks();
     const tree = await invoke(chromeApi.bookmarks, "getTree");
     const root = tree?.[0];
     if (!root || root.url || !Array.isArray(root.children)) throw new Error("Native bookmarks are unavailable.");
-    const modes = await stored(MODES, {}), ids = await stored(IDS, {});
+    const modes = await stored(MODES, {});
     if (!modes || typeof modes !== "object" || Array.isArray(modes) || Object.keys(modes).length > 4000) throw new Error("Bookmark presentation is unavailable.");
     const nodes = new Map(), witness = [];
     function walk(node, depth, locked) {
@@ -45,7 +48,12 @@ export function createNativeBookmarkTransfer({ chromeApi, invoke, stored, readBo
     walk(root, 0, false);
     let destination = root.children.find(node => !node.url && !node.unmodifiable && node.folderType === "bookmarks-bar")
       ?? root.children.find(node => !node.url && !node.unmodifiable);
-    if (destinationFolderId !== undefined) {
+    if (boundDestinationId !== undefined) {
+      const entry = nodes.get(String(boundDestinationId));
+      if (!entry || entry.locked || entry.depth === 0 || entry.node.url || !Array.isArray(entry.node.children)) throw new Error("Choose an existing writable bookmark folder.");
+      destination = entry.node;
+    } else if (destinationFolderId !== undefined) {
+      const ids = await stored(IDS, {});
       const key = Object.keys(ids).find(key => key.startsWith("folder:") && ids[key] === destinationFolderId);
       const entry = key && nodes.get(key.slice(7));
       if (!entry || entry.locked || entry.depth === 0 || entry.node.url || !Array.isArray(entry.node.children)) throw new Error("Choose an existing writable bookmark folder.");
@@ -130,45 +138,48 @@ export function createNativeBookmarkTransfer({ chromeApi, invoke, stored, readBo
     const expectedRecords = new Map(state.records.map(node => [String(node.id), canonicalJson(node)]));
     const expectedModes = JSON.parse(JSON.stringify(state.modes));
     async function recheckProgress() {
-      const fresh = await snapshot(selected.destinationFolderId);
+      const fresh = await snapshot(selected.destinationFolderId, state.destination.id);
       if (fresh.destination.id !== state.destination.id || fresh.records.length !== expectedRecords.size ||
         fresh.records.some(node => expectedRecords.get(String(node.id)) !== canonicalJson(node)) ||
         canonicalJson(fresh.modes) !== canonicalJson(expectedModes)) throw new Error("Bookmarks changed during import.");
     }
+    setImportActive(true);
     try {
-      const pending = [...selected.data.folders];
-      while (pending.length) {
-        const index = pending.findIndex(folder => !folder.parentId || createdFolders.has(folder.parentId));
-        if (index < 0) throw new Error();
-        const [folder] = pending.splice(index, 1);
+      try {
+        const pending = [...selected.data.folders];
+        while (pending.length) {
+          const index = pending.findIndex(folder => !folder.parentId || createdFolders.has(folder.parentId));
+          if (index < 0) throw new Error();
+          const [folder] = pending.splice(index, 1);
+          await recheckProgress();
+          const created = await invoke(chromeApi.bookmarks, "create", { parentId: folder.parentId ? createdFolders.get(folder.parentId) : state.destination.id, title: folder.name });
+          result.foldersAdded++;
+          expectedRecords.set(String(created.id), canonicalJson(record(created)));
+          createdFolders.set(folder.id, created.id);
+        }
+        for (const bookmark of selected.bookmarks) {
+          await recheckProgress();
+          const created = await invoke(chromeApi.bookmarks, "create", { parentId: bookmark.folderId ? createdFolders.get(bookmark.folderId) : state.destination.id, title: bookmark.title, url: bookmark.url });
+          result.bookmarksAdded++;
+          expectedRecords.set(String(created.id), canonicalJson(record(created)));
+          await savePresentation(created, bookmark.displayMode, bookmark.title, state.modes);
+          expectedModes[created.id] = { mode: bookmark.displayMode, title: bookmark.title, dateAdded: created.dateAdded };
+          expectedRecords.set(String(created.id), canonicalJson(record({ ...created, title: bookmark.displayMode === "icon" ? "" : bookmark.displayMode === "full" ? bookmark.url : bookmark.title })));
+        }
         await recheckProgress();
-        const created = await invoke(chromeApi.bookmarks, "create", { parentId: folder.parentId ? createdFolders.get(folder.parentId) : state.destination.id, title: folder.name });
-        result.foldersAdded++;
-        expectedRecords.set(String(created.id), canonicalJson(record(created)));
-        createdFolders.set(folder.id, created.id);
+      } catch {
+        result.complete = false;
+        result.error = "Import stopped before completion. Added bookmarks were kept; check bookmarks before importing again.";
       }
-      for (const bookmark of selected.bookmarks) {
-        await recheckProgress();
-        const created = await invoke(chromeApi.bookmarks, "create", { parentId: bookmark.folderId ? createdFolders.get(bookmark.folderId) : state.destination.id, title: bookmark.title, url: bookmark.url });
-        result.bookmarksAdded++;
-        expectedRecords.set(String(created.id), canonicalJson(record(created)));
-        await savePresentation(created, bookmark.displayMode, bookmark.title, state.modes);
-        expectedModes[created.id] = { mode: bookmark.displayMode, title: bookmark.title, dateAdded: created.dateAdded };
-        expectedRecords.set(String(created.id), canonicalJson(record({ ...created, title: bookmark.displayMode === "icon" ? "" : bookmark.displayMode === "full" ? bookmark.url : bookmark.title })));
+      try {
+        await emitState();
+        return { ...await response(), bookmarkImportResult: result };
+      } catch {
+        result.complete = false;
+        result.error = "Added bookmarks were kept, but their latest state could not be read. Check bookmarks before importing again.";
+        return { ok: true, bookmarkImportResult: result };
       }
-      await recheckProgress();
-    } catch {
-      result.complete = false;
-      result.error = "Import stopped before completion. Added bookmarks were kept; check bookmarks before importing again.";
-    }
-    try {
-      await emitState();
-      return { ...await response(), bookmarkImportResult: result };
-    } catch {
-      result.complete = false;
-      result.error = "Added bookmarks were kept, but their latest state could not be read. Check bookmarks before importing again.";
-      return { ok: true, bookmarkImportResult: result };
-    }
+    } finally { setImportActive(false); }
   }
   return { request };
 }

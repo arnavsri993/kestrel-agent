@@ -101,8 +101,18 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	let idMapQueue = Promise.resolve();
 	let bookmarkQueue = Promise.resolve();
 	let bookmarkReadQueue = Promise.resolve();
-	const bookmarkTransfer = createNativeBookmarkTransfer({ chromeApi, invoke, stored, persist, readBookmarks,
-		presentation: bookmarkPresentation, savePresentation: saveBookmarkPresentation, response, emitState: scheduleEmit });
+	let bookmarkImportActive = false;
+	let bookmarkImportDirty = false;
+	const bookmarkTransfer = createNativeBookmarkTransfer({ chromeApi, invoke, stored, readBookmarks,
+		presentation: bookmarkPresentation, savePresentation: saveBookmarkPresentation, response,
+		emitState: () => { bookmarkImportDirty = false; return scheduleEmit(); },
+		setImportActive: active => {
+			bookmarkImportActive = active;
+			if (!active && bookmarkImportDirty) {
+				bookmarkImportDirty = false;
+				scheduleBookmarkEmit();
+			}
+		} });
 	let focusedWindowId;
 	const loginCodeCaptures = new Map();
 	const loginCodeRevisions = new Map();
@@ -258,6 +268,18 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		changeQueue = changeQueue.then(emitState, emitState);
 		return changeQueue;
 	}
+	function scheduleBookmarkEmit() {
+		// Bulk import checks fresh native state between writes and publishes one
+		// final snapshot. Bookmark/presentation events must not enqueue a full
+		// state read for every item; unrelated browser events remain immediate.
+		if (bookmarkImportActive) { bookmarkImportDirty = true; return; }
+		const refresh = () => {
+			if (bookmarkImportActive) bookmarkImportDirty = true;
+			else return emitState();
+		};
+		changeQueue = changeQueue.then(refresh, refresh);
+		return changeQueue;
+	}
 	for (const event of [chromeApi.tabs.onCreated, chromeApi.tabs.onActivated, chromeApi.tabs.onUpdated, chromeApi.tabs.onMoved, chromeApi.tabs.onAttached, chromeApi.tabs.onDetached])
 		event?.addListener?.(scheduleEmit);
 	chromeApi.tabs.onRemoved?.addListener?.((tabId) => {
@@ -275,12 +297,12 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		scheduleEmit();
 	});
 	chromeApi.storage.onChanged?.addListener?.((changes, area) => {
-		if (area === "local" && Object.hasOwn(changes || {}, BOOKMARK_MODES_KEY)) scheduleEmit();
+		if (area === "local" && Object.hasOwn(changes || {}, BOOKMARK_MODES_KEY)) scheduleBookmarkEmit();
 	});
-	chromeApi.bookmarks?.onChanged?.addListener?.(scheduleEmit);
-	chromeApi.bookmarks?.onCreated?.addListener?.(scheduleEmit);
-	chromeApi.bookmarks?.onRemoved?.addListener?.(scheduleEmit);
-	chromeApi.bookmarks?.onMoved?.addListener?.(scheduleEmit);
+	chromeApi.bookmarks?.onChanged?.addListener?.(scheduleBookmarkEmit);
+	chromeApi.bookmarks?.onCreated?.addListener?.(scheduleBookmarkEmit);
+	chromeApi.bookmarks?.onRemoved?.addListener?.(scheduleBookmarkEmit);
+	chromeApi.bookmarks?.onMoved?.addListener?.(scheduleBookmarkEmit);
 	chromeApi.history?.onVisited?.addListener?.(scheduleEmit);
 	chromeApi.downloads?.onChanged?.addListener?.(scheduleEmit);
 
