@@ -9,20 +9,34 @@ Electron process in this path.
 
 ## Current checkpoint — 2026-11-04
 
-Source `69eddc32` passes full `pnpm verify` with **2,854 tests in 314 files**
-and two existing ownership-mutation skips. Exact ad-hoc candidate
-`42d44c4632eb133aa0111368bef50ac270c678616f5f286a00e2ae1b44f898fe`
-passes nine reviewed bookmark-transfer/capacity phases, 26 native product
-phases and six generated verification-code phases. Five retained Store checks
-pass in compatibility-only mode; they do not certify an actual version upgrade.
-See [the detailed checkpoint below](#reviewed-native-bookmark-transfer-and-independent-redactions-2026-11-04).
+The candidate now uses checksum-pinned **CEF 156 / Chromium 156.0.8078.80**.
+Runtime source `2e9afdf6` builds the ad-hoc native bundle
+`6733e785477c0e29a855759a0e2a0f1194a7834a76029f68ec56cfb9f7a2ba4c`.
+The current artifact passes ten Home settings transfer phases, 27 native product
+phases (including last-window close/reopen), six generated verification-code
+phases, eight bundled Core recovery phases and five retained Store compatibility checks. The Store checks remain
+incomplete for an actual published version upgrade. Candidate hashes match
+before and after each run.
 
-The canonical installed app remains Electron. Broader browser/settings/assets
-migration, existing-profile and real account acceptance, a published Store
-version upgrade, Developer ID signing/notarization and canonical cutover remain
-open. This artifact still pins CEF 152; the official stable CEF 156 archive has
-been downloaded and checksum-verified for the next runtime update, not installed
-or validated as a replacement yet. This checkpoint is not a release-ready claim.
+Home settings import is now a separate reviewed flow in native Data & reset.
+It accepts a selected Kestrel export, offers only source-present categories,
+checks current settings before applying, and supports a guarded short-lived
+undo. Images stay inside the first-party worker; no Core frame limit increased.
+See [the detailed checkpoint](#cef-156-and-reviewed-home-settings-transfer-2026-11-04).
+
+At source `e2d574a0`, types and **2,875 unit tests in 316 files** pass, with two
+existing ownership-mutation skips. The full `pnpm verify` attempt passes audits,
+builds, native helpers, the 50 website checks and initial retained desktop flows,
+but fails in the retained Electron browser sidebar-resize smoke when its target
+closes. An earlier attempt timed out at the same resize check; a focused rerun
+passed that point and failed later in physics dragging. The aggregate is **not
+green**. All eight tracked screenshots were restored byte for byte.
+
+The canonical installed app remains Electron. Broader browser/assets migration,
+existing-profile and real account acceptance, a published Store version upgrade,
+Developer ID signing/notarization and canonical cutover remain open. The signing
+readiness probe still finds no Developer ID identity or notarization credentials.
+This checkpoint is not a release-ready claim.
 
 ## Run and verify
 
@@ -3246,3 +3260,100 @@ Its archive is cached with matching vendor SHA-1 and locally pinned SHA-256
 `938081b5bb552b4990b9667662d9909429d2c113d862c83826322310835666f9`.
 This checkpoint still runs CEF 152. Runtime updating and the other open release
 boundaries above remain work; no canonical cutover or public release occurred.
+
+## CEF 156 and reviewed Home settings transfer — 2026-11-04
+
+The native runtime pin is `156.0.15+gcf671c0+chromium-156.0.8078.80`, from the
+[official CEF build index](https://cef-builds.spotifycdn.com/index.json).
+The macOS arm64 archive SHA-256 is
+`938081b5bb552b4990b9667662d9909429d2c113d862c83826322310835666f9`;
+the vendor SHA-1 was checked before pinning the independently computed SHA-256.
+Native smoke receipts now record and assert the running Chromium version.
+The official headers compile without a host ABI change; Keychain override
+fields remain unset. Generated-profile evidence does not establish continuity
+of a person's existing credentials.
+
+Native Settings now imports only Kestrel-owned Home background/image, shortcuts,
+greeting activity and widgets. A dedicated `kestrel-home-settings` version 1
+file or strict legacy browser export is accepted through the file picker, with
+a 10 MiB source bound. Absent keys stay absent; malformed caught/defaulted values,
+unknown fields, future versions and incomplete custom backgrounds are rejected.
+The source file, Chromium preferences, history, bookmarks, permissions and
+credentials are outside this operation. The existing bookmark transfer remains
+separate.
+
+The preview contains category names, never image or activity values. It requires
+explicit category selection, expires after two minutes and binds the raw current
+settings. Apply consumes the one-use token before writing, shares the same worker
+queue as ordinary Home edits, preserves unknown destination metadata and verifies
+one local-storage write. Chrome storage has no cross-worker compare-and-swap;
+this is not an atomic guarantee against independent external writers. Failure or
+an unknown result does not trigger an automatic retry.
+
+Undo lasts two minutes in worker memory and requires the complete selected
+categories still to match their applied values. It restores only fields the
+import actually wrote, including prior absence, while preserving newer changes
+to other categories. Changing the saved image blocks background undo even if the
+source only changed the preset. Restart discards both tokens; closing Settings
+loses the UI's undo choice. This limited undo is not a full profile rollback or
+crash-recovery journal.
+
+Validation for exact native bundle `6733e785...`:
+
+| Evidence | Observed result |
+| --- | --- |
+| `.tmp/native-home-settings-evidence7/receipt.json` | 10 phases: selected-file review/cancel; invalid and stale refusal; 1,639,866-byte image and selected shortcuts in actual Home; undo preserving a later widget edit; stale undo refusal; 200% zoom; restart; token invalidation; unchanged source, real generated bookmark and HTTP history |
+| `.tmp/native-home-settings-workflow-evidence/receipt.json` | 27 phases including providers, workspace grants/search/uploads, attachments, trusted isolated navigation/forms/downloads, crash recovery, last-window close/reopen with the same Core processes and durable restart |
+| `.tmp/native-home-settings-code-evidence/receipt.json` | Six generated companion/Messages code lookup, fill, refusal and restart phases |
+| `.tmp/native-home-settings-core-recovery-evidence/receipt.json` | Eight actual bundled worker death/recovery, fresh authentication, live-owner refusal and source preservation phases |
+| `.tmp/native-home-settings-store-restored-evidence/receipt.json` | Five compatibility-only phases; no update query, no published version upgrade; expected incomplete/exit 2 |
+| `.tmp/native-home-settings-aggregate/receipt.json` | Full verify failed at retained Electron sidebar resize; types, 2,875 units/316 files, builds, native helpers and 50 website checks passed beforehand; eight tracked PNGs restored |
+
+The UI refinement replaced unstyled controls with existing Kestrel buttons,
+removed repeated review copy and shortened expiry text. The actual native window
+was inspected at 200% zoom: file selection, undo and status reflowed without
+horizontal clipping. CDP's zoomed screenshot had a cropped raster, so that image
+alone is not offered as visual proof; native window observation and geometry were
+checked separately. Native AX did not expose the HTML subtree on that run;
+complete screen-reader acceptance is not claimed. Normal-size screenshots and
+all diagnostic files remain local.
+
+Opening Home records a normal local greeting visit. The restart test permits
+that intended activity change while checking every other stored key exactly.
+Chromium root metadata can change at startup; the test instead preserves an
+actual generated web bookmark's identity, URL, title, hierarchy and date, plus
+an unchanged generated HTTP history record. Extension-page history is excluded
+from the HTTP-history assertion.
+
+The earlier exact CEF 156 bundle `789e8d1d...` separately passed nine native
+bookmark transfer/capacity phases, 19 fresh official Store installation/function/
+toggle/restart phases, 11 memory recovery phases, eight bundled Core process-death
+recovery phases and 11 real native interrupted transfer/activation/rollback
+phases. These remain prior-bundle evidence, not relabeled as new-bundle checks.
+
+The generated Store fixture's temporary directory disappeared. Current
+compatibility used the byte-exact private checkpoint of the older genuine
+normal-Store fixture: 1,836 entries, 200,872,758 bytes, restored only into its
+missing original test directory. Source checkpoint, original Store receipt,
+copy inventory and unchanged backup were verified, and a separate restoration
+receipt was saved. No existing profile was overwritten, extension version edited
+or new installation represented as an upgrade. The failed missing-directory
+preflight remains preserved. This test-only copy is not a product backup feature
+or an additional retirement gate.
+
+The dependency audit initially failed because the
+[minimatch advisory](https://github.com/advisories/GHSA-g3hv-75wg-m249) changed its
+scanner ID and narrowed the affected range to versions 7 through 10. The existing
+9/10 backports match the upstream fix. The policy now accepts only the revised
+exact advisory and four affected development paths, while still verifying all
+23 installed paths, all four patched versions, source hashes, expiry and
+adversarial behavior. No package, lock, patch or audit-ignore entry changed.
+The focused policy/compatibility checks pass 39/39; the raw scanner still reports
+the reviewed backports, and the production audit reports no known findings.
+
+Published predecessor `45cfc1b6` has successful CodeQL checks. Both macOS CI jobs
+ran zero steps and were cancelled because GitHub could not acquire hosted
+runners. New-head CI remains separate from local evidence. No finding was
+suppressed or dismissed. Jules remains unconfigured; worker usage/network limits
+ended the delegated implementation turns, and the primary completed and reviewed
+the partial edits locally. The PR remains draft and unmerged.
