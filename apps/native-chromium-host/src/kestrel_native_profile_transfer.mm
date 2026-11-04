@@ -142,14 +142,24 @@ NSDictionary* RecoveryFileWitness(NSString* path, bool required) {
   return @{@"device":@((unsigned long long)info.st_dev),@"inode":@((unsigned long long)info.st_ino),@"size":@(info.st_size),@"mode":@(info.st_mode),
       @"modifiedSeconds":@(info.st_mtimespec.tv_sec),@"modifiedNanos":@(info.st_mtimespec.tv_nsec),@"changedSeconds":@(info.st_ctimespec.tv_sec),@"changedNanos":@(info.st_ctimespec.tv_nsec)};
 }
-NSDictionary* RecoveryWitness(NSString* source, NSString* destination) {
+NSDictionary* RecoveryInputWitness(NSString* source, NSString* destination) {
   NSMutableDictionary* result = [NSMutableDictionary dictionary];
-  for (NSString* path in @[source,destination,[destination stringByAppendingString:@".kestrel-transfer-journal"],
+  for (NSString* path in @[source,[destination stringByAppendingString:@".kestrel-transfer-journal"],
       [[source.stringByDeletingLastPathComponent stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"secure/database-key.bin"]]) {
     NSDictionary* file = RecoveryFileWitness(path,true); if (!file) return nil; result[path] = file;
   }
-  for (NSString* database in @[source,destination]) for (NSString* suffix in @[@"-wal",@"-shm",@"-journal"]) {
-    NSString* path = [database stringByAppendingString:suffix];
+  for (NSString* suffix in @[@"-wal",@"-shm",@"-journal"]) {
+    NSString* path = [source stringByAppendingString:suffix];
+    NSDictionary* file = RecoveryFileWitness(path,false); if (!file) return nil; result[path] = file;
+  }
+  return result;
+}
+NSDictionary* RecoveryWitness(NSString* source, NSString* destination) {
+  NSMutableDictionary* result = [RecoveryInputWitness(source,destination) mutableCopy];
+  if (!result) return nil;
+  NSDictionary* target = RecoveryFileWitness(destination,true); if (!target) return nil; result[destination] = target;
+  for (NSString* suffix in @[@"-wal",@"-shm",@"-journal"]) {
+    NSString* path = [destination stringByAppendingString:suffix];
     NSDictionary* file = RecoveryFileWitness(path,false); if (!file) return nil; result[path] = file;
   }
   return result;
@@ -573,10 +583,11 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   }
   // Inspect the bounded key envelope's format without unlocking it or asking
   // Keychain. Clear this host-owned copy immediately, including development keys.
+  NSDictionary* inputWitness = RecoveryInputWitness(sourceDatabase,destination);
   NSMutableData* inspectedEnvelope = (NSMutableData*)ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
   const auto reviewedFormat = inspectedEnvelope ? InspectLegacyKestrelCoreKey(std::span<const uint8_t>(static_cast<const uint8_t*>(inspectedEnvelope.bytes),static_cast<size_t>(inspectedEnvelope.length))) : NativeLegacyCoreKeyFormat::Unsupported;
   if (inspectedEnvelope) Clear(inspectedEnvelope.mutableBytes,inspectedEnvelope.length);
-  if (reviewedFormat == NativeLegacyCoreKeyFormat::Unsupported || (self.testKeys && reviewedFormat != NativeLegacyCoreKeyFormat::DevelopmentPlaintext)) {
+  if (!inputWitness || ![RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness] || reviewedFormat == NativeLegacyCoreKeyFormat::Unsupported || (self.testKeys && reviewedFormat != NativeLegacyCoreKeyFormat::DevelopmentPlaintext)) {
     [self finishInterruptedWithTitle:@"Source key unavailable" message:@"The original source key is missing, unsafe or unsupported. All files and existing keys were preserved."]; return;
   }
   NSAlert* review = [[NSAlert alloc] init]; review.messageText = @"Recover this interrupted transfer?";
@@ -592,7 +603,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   dispatch_async(self.queue, ^{ @autoreleasepool {
     NSDictionary* recovered = nil; NSDictionary* verified = nil;
     std::array<uint8_t,32> sourceKey{}; std::string destinationKey, failure;
-    if ([self interruptedRowIsCurrent:row selection:selection] && [KestrelCanonicalNativeCoreTransferSource(source) isEqualToString:source]) {
+    if ([self interruptedRowIsCurrent:row selection:selection] && [KestrelCanonicalNativeCoreTransferSource(source) isEqualToString:source] && [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness]) {
       NSMutableData* envelope = (NSMutableData*)ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
       if (envelope) {
         const auto bytes = std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length));
@@ -604,7 +615,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
             const bool existing = self.testKeys
                 ? store.GetExistingDisposableTestKey(std::string([row[@"path"] fileSystemRepresentation]),std::string(NSBundle.mainBundle.bundleIdentifier.UTF8String ?: ""),std::string(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: ""),&destinationKey,&failure)
                 : store.GetExisting(std::string([row[@"path"] fileSystemRepresentation]),&destinationKey,&failure);
-            if (existing && [self interruptedRowIsCurrent:row selection:selection] && [KestrelCanonicalNativeCoreTransferSource(source) isEqualToString:source]) {
+            if (existing && [self interruptedRowIsCurrent:row selection:selection] && [KestrelCanonicalNativeCoreTransferSource(source) isEqualToString:source] && [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness]) {
               NSString* encodedSource = [[NSData dataWithBytes:sourceKey.data() length:sourceKey.size()] base64EncodedStringWithOptions:0];
               NSString* encodedDestination = [NSString stringWithUTF8String:destinationKey.c_str()];
               recovered = [self.pipe request:@{@"method":@"recover-interrupted",@"reviewId":reviewed[@"reviewId"],@"acceptedRecoverySha256":reviewed[@"preview"][@"recoverySha256"],@"approved":@YES,@"sourceKeyBase64":encodedSource,@"destinationKeyBase64":encodedDestination}];
@@ -615,7 +626,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
       }
     }
     Clear(sourceKey.data(),sourceKey.size()); Clear(destinationKey.data(),destinationKey.size()); destinationKey.clear();
-    NSDictionary* witness = [recovered[@"ok"] boolValue] ? RecoveryWitness(sourceDatabase,destination) : nil;
+    NSDictionary* witness = [recovered[@"ok"] boolValue] && [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness] ? RecoveryWitness(sourceDatabase,destination) : nil;
     if (witness && [recovered[@"recoveryId"] isKindOfClass:NSString.class] && !self.stopped)
       verified = [self.pipe request:@{@"method":@"verify-recovery",@"recoveryId":recovered[@"recoveryId"]}];
     const BOOL confirmed = !self.pipe || [self.pipe stop]; if (confirmed) self.pipe = nil;

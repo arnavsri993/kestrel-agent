@@ -33,16 +33,17 @@ int main(int argc, char** argv) {
       NSData* result = [NSJSONSerialization dataWithJSONObject:@{ @"ok":@(data != nil), @"milliseconds":@(elapsed) } options:0 error:nil];
       return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
     }
-    if ((argc == 5 || argc == 6) && !strcmp(argv[2], "--witness")) {
+    if ((argc == 5 || argc == 6) && (!strcmp(argv[2], "--witness") || !strcmp(argv[2], "--input-witness"))) {
       NSString* source = [NSString stringWithUTF8String:argv[1]], *destination = [NSString stringWithUTF8String:argv[3]], *changed = [NSString stringWithUTF8String:argv[4]];
-      NSDictionary* before = RecoveryWitness(source,destination);
+      const bool inputs = !strcmp(argv[2], "--input-witness");
+      NSDictionary* before = inputs ? RecoveryInputWitness(source,destination) : RecoveryWitness(source,destination);
       if (before && changed.length) {
         if (argc == 6 && !strcmp(argv[5], "replace") && unlink(changed.fileSystemRepresentation)) return 2;
         int fd = open(changed.fileSystemRepresentation,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0600);
         if (fd < 0 || write(fd,"changed fixture",15) != 15) return 2;
         close(fd);
       }
-      NSDictionary* after = RecoveryWitness(source,destination);
+      NSDictionary* after = inputs ? RecoveryInputWitness(source,destination) : RecoveryWitness(source,destination);
       NSData* result = [NSJSONSerialization dataWithJSONObject:@{ @"before":@(before != nil), @"after":@(after != nil), @"same":@(before && after && [before isEqualToDictionary:after]) } options:0 error:nil];
       return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
     }

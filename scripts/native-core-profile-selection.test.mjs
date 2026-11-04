@@ -70,6 +70,14 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 		symlinkSync(sourceDb, `${destinationDb}.kestrel-transfer-journal`);
 		expect(fixture(sourceDb, "--witness", destinationDb, "").before).toBe(false);
 	});
+	it("binds source inputs before recovery publishes a staged destination", () => {
+		const sourceRoot = sourceProfile().root, destinationRoot = sourceProfile().root;
+		const sourceDb = join(sourceRoot, "database/kestrel.sqlite"), destinationDb = join(destinationRoot, "database/kestrel.sqlite"), key = join(sourceRoot, "secure/database-key.bin");
+		for (const path of [sourceDb, key, `${destinationDb}.kestrel-transfer-journal`]) writeFileSync(path, "fixture", { mode: 0o600 });
+		expect(fixture(sourceDb, "--input-witness", destinationDb, "")).toEqual({ before: true, after: true, same: true });
+		expect(fixture(sourceDb, "--input-witness", destinationDb, key)).toEqual({ before: true, after: true, same: false });
+		expect(existsSync(destinationDb)).toBe(false);
+	});
 	it("does not overwrite a changed previous selection", () => {
 		const value = profile(), child = value.child();
 		value.select({ version: 1, active: child, previous: "" });
