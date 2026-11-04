@@ -31,6 +31,11 @@ export const ALLOWED_PATHS = Object.freeze(Object.fromEntries([
   ...Object.entries(tails).flatMap(([version, paths]) => parents.flatMap(parent => paths.map(path => [`${desktop}${parent}${path}minimatch`, version]))),
   ["apps__website>serve>serve-handler>minimatch", "3.1.5"],
 ]));
+// The November 4 advisory revision excludes minimatch 3 and 5. Keep their
+// installed-source checks above; only versions 9 and 10 belong in its report.
+export const AFFECTED_PATHS = Object.freeze(Object.fromEntries(
+  Object.entries(ALLOWED_PATHS).filter(([, version]) => version === "9.0.9" || version === "10.2.5"),
+));
 // Do not inherit npm/pnpm configuration, registry overrides, ignore lists or
 // NODE_OPTIONS from the caller. The lockfile-only workspace has no config.
 export function auditEnvironment(environment, temporary, corepackHome) {
@@ -61,18 +66,18 @@ export function assessAudit(report, now) {
   for (const [key, advisory] of findings) {
     if (!advisory || !Object.hasOwn(counts, advisory.severity)) fail("Audit severity is missing or unrecognized.");
     counts[advisory.severity]++;
-    if (key !== "1244012" || advisory.id !== 1244012 || advisory.github_advisory_id !== ADVISORY || advisory.module_name !== "minimatch" || advisory.severity !== "moderate" || advisory.vulnerable_versions !== "<11.0.1" || advisory.patched_versions !== ">=11.0.1") fail(`Unapproved audit finding: ${advisory.github_advisory_id || key}.`);
+    if (key !== "1244623" || advisory.id !== 1244623 || advisory.github_advisory_id !== ADVISORY || advisory.module_name !== "minimatch" || advisory.severity !== "moderate" || advisory.vulnerable_versions !== ">=7.0.0 <11.0.1" || advisory.patched_versions !== ">=11.0.1") fail(`Unapproved audit finding: ${advisory.github_advisory_id || key}.`);
     if (!Array.isArray(advisory.findings) || !advisory.findings.length) fail("Advisory has no findings.");
     const seenPaths = new Set();
     for (const finding of advisory.findings) {
       if (!finding || !Object.hasOwn(PATCHES, finding.version) || finding.dev !== true || finding.optional !== false || finding.bundled !== false || !Array.isArray(finding.paths) || !finding.paths.length) fail("Unapproved version or audit dependency flags.");
       for (const path of finding.paths) {
-        if (typeof path !== "string" || ALLOWED_PATHS[path] !== finding.version || seenPaths.has(path)) fail(`Unapproved or duplicate dependency path: ${path}.`);
+        if (typeof path !== "string" || AFFECTED_PATHS[path] !== finding.version || seenPaths.has(path)) fail(`Unapproved or duplicate dependency path: ${path}.`);
         seenPaths.add(path);
         accepted.push({ path, version: finding.version });
       }
     }
-    if (seenPaths.size !== Object.keys(ALLOWED_PATHS).length) fail("Audit dependency paths are incomplete or changed; re-review the dependency graph.");
+    if (seenPaths.size !== Object.keys(AFFECTED_PATHS).length) fail("Audit dependency paths are incomplete or changed; re-review the dependency graph.");
   }
   const actual = report.metadata?.vulnerabilities;
   if (!actual || Object.keys(actual).length !== Object.keys(counts).length || Object.entries(counts).some(([key, count]) => actual[key] !== count)) fail("Audit vulnerability counts are inconsistent.");

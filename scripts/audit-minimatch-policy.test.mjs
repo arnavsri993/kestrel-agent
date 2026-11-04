@@ -3,11 +3,11 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { ADVISORY, ALLOWED_PATHS, BRACE, EXPIRES, PATCHES, SOURCES, applyAuditPolicy, assessAudit, auditEnvironment, parseAuditResult, verifyManifest, verifySourceHashes } from "./audit-minimatch-policy.mjs";
+import { ADVISORY, AFFECTED_PATHS, ALLOWED_PATHS, BRACE, EXPIRES, PATCHES, SOURCES, applyAuditPolicy, assessAudit, auditEnvironment, parseAuditResult, verifyManifest, verifySourceHashes } from "./audit-minimatch-policy.mjs";
 const now = new Date("2026-11-01T12:00:00Z");
 const knownPath = "apps__desktop>electron-builder>app-builder-lib>minimatch";
 const report = () => ({
-  advisories: { "1244012": { id: 1244012, github_advisory_id: ADVISORY, module_name: "minimatch", severity: "moderate", vulnerable_versions: "<11.0.1", patched_versions: ">=11.0.1", findings: ["10.2.5", "3.1.5", "5.1.9", "9.0.9"].map(version => ({ version, paths: Object.entries(ALLOWED_PATHS).filter(([, value]) => value === version).map(([path]) => path), dev: true, optional: false, bundled: false })) } },
+  advisories: { "1244623": { id: 1244623, github_advisory_id: ADVISORY, module_name: "minimatch", severity: "moderate", vulnerable_versions: ">=7.0.0 <11.0.1", patched_versions: ">=11.0.1", findings: ["10.2.5", "9.0.9"].map(version => ({ version, paths: Object.entries(AFFECTED_PATHS).filter(([, value]) => value === version).map(([path]) => path), dev: true, optional: false, bundled: false })) } },
   metadata: { vulnerabilities: { info: 0, low: 0, moderate: 1, high: 0, critical: 0 } },
 });
 function manifest() {
@@ -18,24 +18,28 @@ function manifest() {
 }
 describe("temporary minimatch audit policy", () => {
   it("accepts only the reviewed dev-only path before expiry", () => {
-    expect(assessAudit(report(), now)).toHaveLength(23);
+    expect(assessAudit(report(), now)).toHaveLength(4);
+    expect(Object.keys(AFFECTED_PATHS)).toHaveLength(4);
     expect(assessAudit(report(), now)).toContainEqual({ path: knownPath, version: "10.2.5" });
     expect(Object.keys(ALLOWED_PATHS)).toHaveLength(23);
     expect(() => assessAudit(report(), new Date(EXPIRES))).toThrow(/expired/);
     expect(() => assessAudit(report(), new Date("invalid"))).toThrow(/time/);
   });
   it.each([
-    ["production", r => { r.advisories["1244012"].findings[0].dev = false; }],
-    ["optional", r => { r.advisories["1244012"].findings[0].optional = true; }],
-    ["bundled", r => { r.advisories["1244012"].findings[0].bundled = true; }],
-    ["new version", r => { r.advisories["1244012"].findings[0].version = "10.2.6"; }],
-    ["new dependency path", r => { r.advisories["1244012"].findings[0].paths = [knownPath.replace("app-builder-lib", "other")]; }],
-    ["missing flags", r => { delete r.advisories["1244012"].findings[0].bundled; }],
+    ["old scanner ID", r => { const a = r.advisories["1244623"]; delete r.advisories["1244623"]; a.id = 1244012; r.advisories["1244012"] = a; }],
+    ["old broader range", r => { r.advisories["1244623"].vulnerable_versions = "<11.0.1"; }],
+    ["now unaffected legacy version", r => { r.advisories["1244623"].findings.push({ version: "3.1.5", paths: Object.entries(ALLOWED_PATHS).filter(([, v]) => v === "3.1.5").map(([p]) => p), dev: true, optional: false, bundled: false }); }],
+    ["production", r => { r.advisories["1244623"].findings[0].dev = false; }],
+    ["optional", r => { r.advisories["1244623"].findings[0].optional = true; }],
+    ["bundled", r => { r.advisories["1244623"].findings[0].bundled = true; }],
+    ["new version", r => { r.advisories["1244623"].findings[0].version = "10.2.6"; }],
+    ["new dependency path", r => { r.advisories["1244623"].findings[0].paths = [knownPath.replace("app-builder-lib", "other")]; }],
+    ["missing flags", r => { delete r.advisories["1244623"].findings[0].bundled; }],
     ["unexpected metadata", r => { r.metadata.vulnerabilities.high = 1; }],
     ["new advisory", r => { r.advisories["99"] = { github_advisory_id: "GHSA-unknown", severity: "high" }; r.metadata.vulnerabilities.high = 1; }],
-    ["changed range", r => { r.advisories["1244012"].vulnerable_versions = "<12"; }],
-    ["duplicate path", r => { r.advisories["1244012"].findings[0].paths.push(knownPath); }],
-    ["missing dependency path", r => { r.advisories["1244012"].findings[0].paths.pop(); }],
+    ["changed range", r => { r.advisories["1244623"].vulnerable_versions = "<12"; }],
+    ["duplicate path", r => { r.advisories["1244623"].findings[0].paths.push(knownPath); }],
+    ["missing dependency path", r => { r.advisories["1244623"].findings[0].paths.pop(); }],
   ])("rejects %s", (_, mutate) => { const r = report(); mutate(r); expect(() => assessAudit(r, now)).toThrow(); });
   it("fails closed on audit transport, malformed JSON and exit status inconsistencies", () => {
     expect(parseAuditResult({ status: 1, stdout: JSON.stringify(report()) })).toEqual(report());

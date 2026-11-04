@@ -61,8 +61,9 @@ function verifyInstalled(accepted) {
     verifySourceHashes(finding.version, sourceHashes, braceHashes, braceVersion);
     verified.add(finding.version);
   }
-  // Exercise every reviewed version even if audit output lists only a subset.
-  if (verified.size !== Object.keys(PATCHES).length) throw new Error("Audit did not report all four reviewed minimatch versions; re-review the changed dependency graph.");
+  // Exercise every reviewed installed version, including versions outside the
+  // advisory's current range, regardless of the scanner's reported subset.
+  if (verified.size !== Object.keys(PATCHES).length) throw new Error("Installed evidence does not cover all four reviewed minimatch versions; re-review the changed dependency graph.");
   const check = pnpm(["exec", "vitest", "run", "scripts/minimatch-compat.test.mjs"]);
   process.stdout.write(check.stdout || "");
   process.stderr.write(check.stderr || "");
