@@ -260,7 +260,7 @@ export function MemoryWorkspace({ initialSessionId, legacyTools }: { initialSess
 				</div>
 			</header>
 			<nav className="memory-workspace-tabs" aria-label="Memory views">{([ ["overview", "Overview"], ["timeline", "Timeline"], ["memory", "Memory"], ["people", "People"], ["tools", "Tools"] ] as const).map(([id, label]) => <button key={id} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>{label}</button>)}</nav>
-			{nativeChromiumSurface && view === "memory" && <NativeEmbeddingRecovery />}
+			{nativeChromiumSurface && view === "memory" && <div className="memory-workspace-content memory-repair-container"><NativeEmbeddingRecovery /></div>}
 			{error && <div className="memory-state" role="alert"><h2>Memory is unavailable</h2><p>{error}</p><button onClick={() => void load()}>Try again</button></div>}
 			{busy && !workspace && <div className="memory-state" aria-live="polite"><h2>Reading memory…</h2><p>Gathering the notes visible to this viewer.</p></div>}
 			{workspace && !error && <div className="memory-workspace-content">

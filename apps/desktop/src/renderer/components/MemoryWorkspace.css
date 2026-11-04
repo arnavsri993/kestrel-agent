@@ -89,6 +89,8 @@
 .memory-agent-knowledge h2 { font-size: 18px; }
 .memory-agent-knowledge button { margin: 4px 8px 4px 0; padding: 7px 12px; border: 1px solid var(--border, rgba(255,255,255,.14)); border-radius: 8px; background: var(--surface-raised, #292929); color: inherit; }
 .memory-agent-knowledge button:disabled { opacity: .5; }
+.memory-workspace-content.memory-repair-container { padding-bottom: 0; }
+.memory-repair-container > .memory-agent-knowledge { margin-bottom: 0; }
 .memory-agent-knowledge input, .memory-agent-knowledge textarea { width: 100%; max-width: 760px; box-sizing: border-box; }
 .memory-agent-knowledge .scoped-memory-search { display: grid; gap: 6px; margin-block: 18px; }
 .memory-agent-knowledge .life-switcher { display: flex; flex-wrap: wrap; }

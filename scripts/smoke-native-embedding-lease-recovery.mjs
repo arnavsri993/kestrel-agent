@@ -171,6 +171,13 @@ try {
  await memory.getByRole("status").filter({ hasText: "The old indexing task was cancelled." }).waitFor();
  await changedCore(previous); await memory.screenshot({ path: join(evidence, "repair-applied.png") });
  phase("actual-memory-ui-review-and-cancellation-each-restart-supervised-core");
+ const status = await request({ type: "native-embedding-recovery-status" });
+ assert.deepEqual(status.nativeEmbeddingRecoveryStatus, { state: "applied", cancelledJobs: 1, coreStatus: "ready" });
+ await memory.reload();
+ await memory.getByRole("navigation", { name: "Memory views" }).getByRole("button", { name: "Memory", exact: true }).click();
+ await memory.locator("summary").filter({ hasText: /^Repair memory processing$/ }).click();
+ await memory.getByRole("status").filter({ hasText: "The old indexing task was cancelled." }).waitFor();
+ phase("committed-repair-status-survives-renderer-reload");
  stage = "migration";
  for (let i = 0; i < 16; i++) await request({ type: "memory-run-maintenance" });
  await stop();
