@@ -1,5 +1,7 @@
 import {
 	NativeBookmarkTransferSchema,
+	MAX_NATIVE_BOOKMARK_TRANSFER_BYTES,
+	MAX_NATIVE_BOOKMARK_SOURCE_BYTES,
 	parseNativeBookmarkTransferFile,
 	type NativeBookmarkTransfer,
 	type UserBrowserBookmarkFolder,
@@ -8,8 +10,8 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import "./NativeBookmarkTransfer.css";
 
-const MAX_TRANSFER_BYTES = 512 * 1024;
-const MAX_SELECTED_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_TRANSFER_BYTES = MAX_NATIVE_BOOKMARK_TRANSFER_BYTES;
+const MAX_SELECTED_FILE_BYTES = MAX_NATIVE_BOOKMARK_SOURCE_BYTES;
 const DEFAULT_DESTINATION = "Bookmarks bar";
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 
@@ -236,10 +238,10 @@ export function NativeBookmarkTransfer({ browser }: { browser: UserBrowserContro
 	const folders: UserBrowserBookmarkFolder[] = browser.state?.bookmarkFolders ?? [];
 
 	return <section className="native-bookmark-transfer" aria-labelledby="native-bookmark-transfer-title" data-settings-panel="browser-bookmarks-transfer">
-		<header className="native-bookmark-transfer-header"><h3 id="native-bookmark-transfer-title">Bookmarks and transfer</h3></header>
-		<p>Move writable HTTP(S) saved pages between Kestrel profiles with a small JSON file. User bookmark titles, links, display modes, and folders are included; managed bookmarks and history, browser settings, site permissions, and sign-ins stay with this profile.</p>
+		<header className="native-bookmark-transfer-header"><h3 id="native-bookmark-transfer-title">Transfer bookmarks</h3></header>
+		<p>Transfer web bookmarks and folders with a JSON file. History, settings, permissions, and sign-ins stay in this profile.</p>
 		<div className="setting-row browser-setting-row native-bookmark-transfer-row">
-			<div className="browser-setting-copy"><strong>Export bookmarks</strong><small>Choose where to save a portable copy of your bookmarks.</small></div>
+			<div className="browser-setting-copy"><strong>Export bookmarks</strong><small>Save a copy of your user bookmarks.</small></div>
 			<div className="native-bookmark-actions">
 				<button type="button" className="button secondary" data-testid="native-bookmark-export-prepare" onClick={() => void prepareExport()} disabled={Boolean(busy)}>{busy === "export-prepare" ? "Preparing…" : "Prepare bookmark export"}</button>
 				{exportData && <button type="button" className="button secondary" data-testid="native-bookmark-export-save" onClick={() => void saveExport()} disabled={Boolean(busy)}>{busy === "export-save" ? "Saving…" : "Save JSON file"}</button>}
@@ -254,8 +256,8 @@ export function NativeBookmarkTransfer({ browser }: { browser: UserBrowserContro
 			</p>}
 			<small>Original bookmark dates do not transfer; Chromium dates imported bookmarks when they are added.</small>
 		</div>}
-		<div className="setting-row browser-setting-row native-bookmark-transfer-row">
-			<div className="browser-setting-copy"><strong>Import bookmarks</strong><small>Review the changes before adding anything to this profile.</small></div>
+		<div className="setting-row browser-setting-row native-bookmark-transfer-row native-bookmark-import-row">
+			<div className="browser-setting-copy"><strong>Import bookmarks</strong><small>Review changes before adding bookmarks to this profile.</small></div>
 			<div className="native-bookmark-actions">
 				<label className="native-bookmark-destination">Save in
 					<select data-testid="native-bookmark-import-destination" value={destination} disabled={Boolean(busy)} onChange={(event) => { clearPlan(); setDestination(event.target.value); setError(""); setStatus("Destination changed. Review the import again before applying it."); }}>

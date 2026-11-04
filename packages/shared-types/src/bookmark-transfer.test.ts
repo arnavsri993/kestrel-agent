@@ -69,6 +69,20 @@ describe("bookmark-only extraction from prior Electron browser exports", () => {
 		const value: any = legacy(); delete value.bookmarks[0].displayMode;
 		expect(parseNativeBookmarkTransferFile(value).data.bookmarks[0]!.displayMode).toBe("title");
 	});
+	it("extracts a small bookmark payload from a larger valid legacy history export", () => {
+		const value = legacy();
+		value.history = Array.from({ length: 80 }, (_, index) => ({ ...value.history[0]!, url: `https://history.example/${index}/${"x".repeat(7_800)}` }));
+		expect(new TextEncoder().encode(JSON.stringify(value)).byteLength).toBeGreaterThan(512 * 1024);
+		const parsed = parseNativeBookmarkTransferFile(value);
+		expect(parsed.data.bookmarks).toHaveLength(1);
+		expect(parsed.excluded.history).toBe(80);
+		expect(JSON.stringify(parsed.data)).not.toContain("history.example");
+	});
+	it("rejects an oversized source before extracting its small bookmark subset", () => {
+		const value = legacy();
+		value.history = Array.from({ length: 1_500 }, () => ({ ...value.history[0]!, url: `https://history.example/${"x".repeat(7_800)}` }));
+		expect(() => parseNativeBookmarkTransferFile(value)).toThrow("10 MiB");
+	});
 	it.each([
 		["wrong legacy version", (v: any) => { v.version = 2; }],
 		["invalid required settings", (v: any) => { v.settings.startupBehavior = "unknown"; }],

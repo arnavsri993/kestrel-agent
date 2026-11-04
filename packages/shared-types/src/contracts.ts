@@ -4122,6 +4122,8 @@ export type UserBrowserBookmarkFolder = z.infer<
 >;
 
 const NativeBookmarkTransferIdSchema = z.string().regex(/^f(?:0|[1-9]\d{0,8})$/);
+export const MAX_NATIVE_BOOKMARK_TRANSFER_BYTES = 512 * 1024;
+export const MAX_NATIVE_BOOKMARK_SOURCE_BYTES = 10 * 1024 * 1024;
 const nativeBookmarkTransferText = (max: number) => z.string().min(1).max(max)
 	.refine(value => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value), "Use trimmed text without control characters.");
 export const NativeBookmarkTransferSchema = z.object({
@@ -4144,7 +4146,7 @@ export const NativeBookmarkTransferSchema = z.object({
 	}).strict()).max(2_000),
 }).strict().superRefine((value, context) => {
 	const fail = (message: string) => context.addIssue({ code: z.ZodIssueCode.custom, message });
-	if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 512 * 1024) fail("Bookmark transfer exceeds 512 KiB.");
+	if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_NATIVE_BOOKMARK_TRANSFER_BYTES) fail("Bookmark transfer exceeds 512 KiB.");
 	const folders = new Map(value.folders.map(folder => [folder.id, folder]));
 	if (folders.size !== value.folders.length) fail("Bookmark folder IDs must be unique.");
 	for (const folder of value.folders) {
@@ -4460,7 +4462,7 @@ export type NativeBookmarkTransferFile = {
 /** Explicit bookmark-only extraction from a portable file; never imports old
  * timestamps, browser identities, history, settings, or site permissions. */
 export function parseNativeBookmarkTransferFile(value: unknown): NativeBookmarkTransferFile {
-	if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 512 * 1024) throw new Error("Bookmark file exceeds 512 KiB.");
+	if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_NATIVE_BOOKMARK_SOURCE_BYTES) throw new Error("Bookmark source file exceeds 10 MiB.");
 	if (value && typeof value === "object" && "format" in value && value.format === "kestrel-bookmarks") {
 		return { data: NativeBookmarkTransferSchema.parse(value), source: "native",
 			excluded: { history: 0, sitePermissions: 0, settings: false, bookmarkDates: false } };

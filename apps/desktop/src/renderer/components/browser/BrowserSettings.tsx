@@ -385,7 +385,9 @@ function NativeBrowserSettings({ browser, contextEnabled, onToggleContext, secti
     {NATIVE_SETTINGS_PANELS.filter((panel) => sectionIs(section, panel.section)).map((panel) => (
       <section key={panel.section} className="settings-stack browser-settings-panel" data-settings-panel={panel.section}>
         <header className="settings-panel-header"><h2>{panel.title}</h2></header>
-        <p>Open browser settings to view and change these preferences.</p>
+        {panel.section === "browser-reset"
+          ? <p>Manage saved pages and browsing data.</p>
+          : <p>Open browser settings to view and change these preferences.</p>}
         {panel.section === "browser-reset" && <NativeBookmarkTransfer browser={browser} />}
         {panel.section === "browser-extensions" && <p><a href="https://chromewebstore.google.com/" onClick={(event) => { event.preventDefault(); void open("https://chromewebstore.google.com/"); }}>Browse Chrome Web Store</a></p>}
         {panel.section === "browser-privacy" && <div className="setting-row browser-setting-row" id="setting-browser-page-context">

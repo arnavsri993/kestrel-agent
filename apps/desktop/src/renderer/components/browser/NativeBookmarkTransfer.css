@@ -20,12 +20,22 @@
 	align-items: start;
 }
 
+.native-bookmark-import-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	row-gap: 12px;
+}
+
 .native-bookmark-actions {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
 	justify-content: flex-end;
 	gap: 8px;
+}
+
+.native-bookmark-import-row .native-bookmark-actions {
+	justify-content: flex-start;
 }
 
 .native-bookmark-file-input {
