@@ -73,7 +73,7 @@ const server=createServer((req,res)=>{
  <script>window.getSelection=()=>({rangeCount:1,toString:()=>"canary_page_world_spoof_secret"});</script>`);
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-let child,browser,output='',profileRetained=false;
+let child,browser,output='',profileRetained=false,uiActionPage;
 let savedSession,providerEvidence,workspaceEvidence;
 function ownedNodeProcesses(){
  const rows=execFileSync('/bin/ps',['-axo','pid=,ppid=,comm='],{encoding:'utf8'}).trim().split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).filter(Boolean);
@@ -124,6 +124,41 @@ async function close(){
  assert.deepEqual(result,{code:0,signal:null},output);
  await browser.close().catch(()=>{});browser=undefined;
  await writeFile(join(evidence,'runtime.log'),output);
+}
+async function ownedUiDiagnostics(page) {
+ return Promise.race([page.evaluate(async () => {
+  const button=document.querySelector('button[aria-label="Open settings"]');
+  const bounds=button?.getBoundingClientRect(),style=button&&getComputedStyle(button);
+  const hit=bounds&&document.elementFromPoint(bounds.x+bounds.width/2,bounds.y+bounds.height/2);
+  const current=await chrome.tabs.getCurrent();
+  const active=current&&await chrome.tabs.query({active:true,windowId:current.windowId});
+  const window=current&&await chrome.windows.get(current.windowId);
+  const rafTicks=await new Promise(resolveTicks=>{
+   let ticks=0;const timer=setTimeout(()=>resolveTicks(ticks),750);
+   const tick=()=>{if(++ticks===2){clearTimeout(timer);resolveTicks(ticks);}else requestAnimationFrame(tick);};requestAnimationFrame(tick);
+  });
+  return {visibility:document.visibilityState,hasFocus:document.hasFocus(),rafTicks,
+   tabId:current?.id,windowId:current?.windowId,ownTabActive:active?.length===1&&active[0].id===current.id,windowFocused:window?.focused,
+   button:button?{disabled:button.disabled,width:bounds.width,height:bounds.height,x:bounds.x,y:bounds.y,
+    display:style.display,visibility:style.visibility,opacity:style.opacity,centerHitsButton:hit===button||button.contains(hit)}:null};
+ }).catch(()=>({unavailable:true})),delay(2000,{diagnosticTimeout:true},{ref:false})]);
+}
+async function activateOwnedUi(page) {
+ const tab=await page.evaluate(async()=>{
+  const current=await chrome.tabs.getCurrent();
+  if(!Number.isInteger(current?.id)||!Number.isInteger(current?.windowId))throw Error('Owned UI has no native tab.');
+  await chrome.tabs.update(current.id,{active:true});
+  await chrome.windows.update(current.windowId,{focused:true});
+  return{id:current.id,windowId:current.windowId};
+ });
+ await page.bringToFront();
+ await page.waitForFunction(async({id,windowId})=>{
+  const active=await chrome.tabs.query({active:true,windowId});
+  const response=await window.kestrel.request({type:'browser-get-state'});
+  const stored=await chrome.storage.session.get('kestrel.native.browser.tabIds.v1');
+  return active.length===1&&active[0].id===id&&response.ok&&response.browserState.activeTabId===stored['kestrel.native.browser.tabIds.v1']?.[String(id)];
+ },tab,{polling:100,timeout:10000});
+ return tab;
 }
 async function inspectActionPopup(endpoint, expectedUrl){
  const socket=new WebSocket(endpoint),pending=new Map();let nextId=0;
@@ -284,8 +319,14 @@ try{
  receipt.phases.push({phase:'native-core-tab-tools-and-approval',passed:true});
  // A native-created target may have required a CDP reconnect above. Close
  // through a fresh handle rather than a disconnected Playwright object.
- await (await createdPage(url=>url===fixtureUrl)).close();await home.bringToFront();
+ await (await createdPage(url=>url===fixtureUrl)).close();
+ home=await createdPage(url=>/^chrome-extension:\/\/[^/]+\/index\.html$/.test(url));
+ uiActionPage=home;
+ receipt.settingsActivationBefore=await ownedUiDiagnostics(home);
+ receipt.settingsActivation=await activateOwnedUi(home);
+ receipt.settingsActivationAfter=await ownedUiDiagnostics(home);
  await home.getByRole('button',{name:'Open settings',exact:true}).click();
+ uiActionPage=undefined;
  const settings=await createdPage(url=>url.includes('index.html?app=settings'));await settings.waitForURL(/index.html\?app=settings/);
  await settings.locator('[data-app-page="settings"]').waitFor();
  if(process.env.KESTREL_TEST_NATIVE_WORKSPACE==='1'||workspaceFixture)workspaceEvidence=await nativeWorkspaceCanary({settings,getHome:()=>home,profile,evidence,receipt,origin:`http://127.0.0.1:${server.address().port}`,fixtures:isolationFixtures,fixtureGranted:workspaceFixture});
@@ -568,7 +609,10 @@ try{
  await writeFile(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2),{mode:0o600});
  if(retainUpdateProfile){await retainStoreUpdateFixture({profile,receiptPath:join(evidence,'receipt.json'),checkpointPath:receipt.storeUpdateFixture.checkpointPath});profileRetained=true;console.log('STORE_UPDATE_FIXTURE_RETAINED: '+receipt.storeUpdateFixture.checkpointPath+'; a real published-version upgrade remains a separate acceptance check.');}
  console.log('Native Chromium desktop passed: real Kestrel Home/Settings, Core tab tools and approval enforcement, native tabs, web bridge isolation, durable restart, and clean shutdown'+(store?', plus native Store install and functional extension restart.':'.'));
-}catch(error){await writeFile(join(evidence,'failure.log'),output+'\n'+String(error));await writeFile(join(evidence,'receipt.json'),JSON.stringify({...receipt,failed:String(error)},null,2));throw error;}
+}catch(error){
+ if(uiActionPage){receipt.failedUiState=await ownedUiDiagnostics(uiActionPage);await uiActionPage.screenshot({path:join(evidence,'failed-ui.png'),timeout:5000}).catch(()=>{});}
+ await writeFile(join(evidence,'failure.log'),output+'\n'+String(error));await writeFile(join(evidence,'receipt.json'),JSON.stringify({...receipt,failed:String(error)},null,2));throw error;
+}
 finally{
  await browser?.close().catch(()=>{});
  if(child&&child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await new Promise(resolve=>child.once('exit',resolve));}
