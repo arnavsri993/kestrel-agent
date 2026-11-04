@@ -108,8 +108,12 @@ try {
  await update({ newTabBackground: 'graphite', newTabShortcuts: [{ title: 'Keep original shortcut', url: pageUrl }], newTabWidgets: { version: 1, enabled: [], layouts: {}, routeUsageVisible: [] } });
  await home.evaluate(async () => { const key='kestrel.native.browser.settings.v1'; const raw=(await chrome.storage.local.get(key))[key]; await chrome.storage.local.set({[key]:{...raw, compatibility:{generated:true}}}); });
  const baseline = await rawSettings();
- const bookmarks = await home.evaluate(() => chrome.bookmarks.getTree());
- const history = (await state()).history;
+ await home.evaluate(async url=>{const root=(await chrome.bookmarks.getTree())[0].children.find(item=>item.folderType==='bookmarks-bar'); await chrome.bookmarks.create({parentId:root.id,title:'Generated preserved bookmark',url});},pageUrl);
+ const bookmarkContents = nodes => nodes.flatMap(({id,parentId,title,url,dateAdded,children}) => [{id,parentId,title,url,...(url?{dateAdded}:{})},...bookmarkContents(children||[])]);
+ const bookmarks = bookmarkContents(await home.evaluate(() => chrome.bookmarks.getTree()));
+ await home.evaluate(url=>chrome.history.addUrl({url:url+'/preserved-history'}),pageUrl);
+ const history = await home.evaluate(async () => (await chrome.history.search({text:'',startTime:0,maxResults:5000})).filter(item=>/^https?:/.test(item.url)));
+ assert.equal(history.length,1);
  const image = imageFixture().toString('base64'), dataUrl = 'data:image/png;base64,' + image;
  assert(dataUrl.length > 768 * 1024); receipt.imageBytes = Buffer.byteLength(dataUrl);
  const sourceData = { format:'kestrel-browser-data',version:1,exportedAt:new Date().toISOString(),bookmarks:[],bookmarkFolders:[],history:[],sitePermissions:[],settings:{ newTabBackground:'custom',newTabBackgroundCustomDataUrl:dataUrl,newTabShortcuts:[{title:'Imported generated shortcut',url:pageUrl+'/imported'}],newTabWidgets:{version:1,enabled:['frequent-tabs'],layouts:{},routeUsageVisible:[]} } };
@@ -148,9 +152,17 @@ try {
  stage='final-import'; await planFile(); await apply().click(); await undo().waitFor();
  await settings.screenshot({path:join(evidence,'home-import-complete.png')});
  await settings.evaluate(async()=>{const tab=await chrome.tabs.getCurrent();await chrome.tabs.setZoom(tab.id,2);});
+ await settings.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done))));
  await panel.scrollIntoViewIfNeeded();
- const geometry=await panel.evaluate(element=>({overflow:element.scrollWidth-element.clientWidth,width:element.getBoundingClientRect().width})); assert(geometry.width>0&&geometry.overflow<=1,'Home transfer overflows at 200% zoom');
- await settings.screenshot({path:join(evidence,'home-import-zoom200.png')}); await settings.evaluate(async()=>{const tab=await chrome.tabs.getCurrent();await chrome.tabs.setZoom(tab.id,1);}); phase('native-transfer-reflows-at-200-percent-zoom');
+ const geometry=await panel.evaluate(element=>{const ancestors=[];for(let node=element;node&&ancestors.length<12;node=node.parentElement){const r=node.getBoundingClientRect(),s=getComputedStyle(node);ancestors.push({class:node.className,left:r.left,right:r.right,width:r.width,minWidth:s.minWidth,display:s.display,overflowX:s.overflowX});}return {overflow:element.scrollWidth-element.clientWidth,width:element.getBoundingClientRect().width,right:element.getBoundingClientRect().right,viewport:innerWidth,ancestors};}); receipt.zoomLayout=geometry; await settings.screenshot({path:join(evidence,'home-import-zoom200.png')}); assert(geometry.width>0&&geometry.overflow<=1&&geometry.right<=geometry.viewport+1,'Home transfer overflows at 200% zoom');
+ await settings.screenshot({path:join(evidence,'home-import-zoom200.png')});
+ if(process.env.KESTREL_NATIVE_HOME_SETTINGS_REVIEW_ZOOM==='1') {
+  const acknowledgement=join(evidence,'continue-zoom');
+  await writeFile(join(evidence,'live-state.json'),JSON.stringify({stage:'zoom-review',pid:running.child.pid,candidate:app,acknowledgement},null,2),{mode:0o600});
+  console.log('NATIVE_HOME_SETTINGS_ZOOM_REVIEW_READY');
+  await eventually(async()=>{try{await access(acknowledgement);return true;}catch(error){if(error.code==='ENOENT')return false;throw error;}},'Native zoom review not acknowledged.',10*60_000);
+ }
+ await settings.evaluate(async()=>{const tab=await chrome.tabs.getCurrent();await chrome.tabs.setZoom(tab.id,1);}); phase('native-transfer-reflows-at-200-percent-zoom');
  const expected=await rawSettings(); const pending=await request({type:'browser-plan-home-settings-import',settings:{newTabBackground:'paper'},categories:['background']}); assert(pending.ok); const oldPlan=pending.homeSettingsImportPlan.planId;
  await stop(); stage='restart'; await start();
  const afterRestart=await rawSettings();
@@ -160,7 +172,7 @@ try {
  for(const key of new Set([...Object.keys(expected),...Object.keys(afterRestart)])) if(key!=='newTabGreetingActivity') assert.deepEqual(afterRestart[key],expected[key]);
  assert.equal((await state()).settings.newTabGreetingActivity.version,1); await activate(home); await home.locator('.new-tab-page-custom').waitFor(); await home.locator('.home-site-shortcuts button').filter({hasText:'Imported generated shortcut'}).waitFor(); await home.screenshot({path:join(evidence,'home-import-after-restart.png')}); phase('selected-Home-settings-and-actual-Home-survive-full-native-restart');
  assert.equal((await request({type:'browser-apply-home-settings-import',planId:oldPlan})).ok,false); phase('worker-restart-invalidates-unapplied-review');
- assert.deepEqual(await home.evaluate(()=>chrome.bookmarks.getTree()),bookmarks); assert.deepEqual((await state()).history,history); assert.deepEqual(await readFile(sourcePath),sourceBytes); assert.deepEqual((await rawSettings()).compatibility,baseline.compatibility); phase('source-bookmarks-history-and-unrelated-storage-preserved');
+ stage='preserve-bookmarks'; const finalBookmarks=bookmarkContents(await home.evaluate(()=>chrome.bookmarks.getTree())); receipt.bookmarkIdentityPreserved=JSON.stringify(finalBookmarks)===JSON.stringify(bookmarks); assert.deepEqual(finalBookmarks,bookmarks); stage='preserve-history'; assert.deepEqual(await home.evaluate(async ()=>(await chrome.history.search({text:'',startTime:0,maxResults:5000})).filter(item=>/^https?:/.test(item.url))),history); assert.deepEqual(await readFile(sourcePath),sourceBytes); assert.deepEqual((await rawSettings()).compatibility,baseline.compatibility); phase('source-bookmarks-history-and-unrelated-storage-preserved');
  await stop(); receipt.result='passed';
 } catch(error) {
  receipt.result='failed'; receipt.failedStage=stage; receipt.error={name:error?.name||'Error',code:error?.code,locations:String(error?.stack||'').split('\n').filter(line=>line.trim().startsWith('at ')).map(line=>line.trim()).slice(0,6)}; process.exitCode=1;
