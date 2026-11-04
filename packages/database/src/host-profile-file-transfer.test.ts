@@ -1,6 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, linkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, linkSync, writeFileSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { afterEach, expect, it } from "vitest";
 import { KestrelDatabase } from "./index";
@@ -114,4 +117,55 @@ it("preserves later native work when recovery no longer matches the original tra
 	expect(code(() => verifyHostProfileFileTransferRecovery(receipt, value))).toBe("RECOVERY_CHANGED");
 	expect(readFileSync(value.sourceDatabasePath)).toEqual(sourceBefore);
 	expect(readFileSync(value.destinationDatabasePath)).toEqual(targetBefore);
+});
+
+it("reads committed WAL data from a private copy without touching any source bytes or sidecars", () => {
+ const value = fixture();
+ const anchor = new Database(value.sourceDatabasePath);
+ try {
+  anchor.pragma("journal_mode = WAL"); anchor.pragma("wal_autocheckpoint = 0");
+  const writer = new KestrelDatabase(value.sourceDatabasePath, value.sourceKey);
+  writer.setPrivateState("generated-wal-only", { value: "generated" }); writer.close();
+  const directory = dirname(value.sourceDatabasePath);
+  const before = readdirSync(directory).sort().map(name => [name, readFileSync(join(directory, name))] as const);
+  expect(before.some(([name, bytes]) => name.endsWith("-wal") && bytes.length > 0)).toBe(true);
+  const plan = value.plan(), receipt = apply(value, plan);
+  expect(verifyHostProfileFileTransferRecovery(receipt, value)).toMatchObject({ originalReadable: true, destinationReadable: true });
+  expect(readdirSync(directory).sort()).toEqual(before.map(([name]) => name));
+  for (const [name, bytes] of before) expect(readFileSync(join(directory, name))).toEqual(bytes);
+  const copied = new KestrelDatabase(value.destinationDatabasePath, value.destinationKey);
+  try { expect(copied.getPrivateState("generated-wal-only")).toEqual({ value: "generated" }); } finally { copied.close(); }
+ } finally { anchor.close(); }
+});
+it.each(["-wal", "-shm"])('refuses linked source sidecar %s without altering it', suffix => {
+ const value = fixture(), target = join(dirname(value.sourceDatabasePath), 'outside');
+ writeFileSync(target, 'generated-owned-sidecar'); symlinkSync(target, value.sourceDatabasePath + suffix);
+ expect(code(value.plan)).toBe('UNSAFE_PATH'); expect(readFileSync(target, 'utf8')).toBe('generated-owned-sidecar');
+ expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
+});
+it.each(["", "-wal", "-shm"])('rejects oversized source file %s without altering it', suffix => {
+ const value = fixture();
+ if (suffix) writeFileSync(value.sourceDatabasePath + suffix, '');
+ truncateSync(value.sourceDatabasePath + suffix, 256_000_001);
+ expect(code(value.plan)).toBe('UNSAFE_PATH');
+ expect(statSync(value.sourceDatabasePath + suffix).size).toBe(256_000_001);
+ expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
+});
+it('refuses even an apparently empty rollback journal without opening the source', () => {
+ const value = fixture(); writeFileSync(value.sourceDatabasePath + '-journal', '');
+ const before = readFileSync(value.sourceDatabasePath);
+ expect(code(value.plan)).toBe('SOURCE_UNREADABLE');
+ expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
+ expect(statSync(value.sourceDatabasePath + '-journal').size).toBe(0);
+});
+
+it('rejects a source WAL changed while its original descriptor is held', async () => {
+ const value = fixture(), wal = `${value.sourceDatabasePath}-wal`;
+ writeFileSync(wal, ''); truncateSync(wal, 64_000_000);
+ const child = spawn(process.execPath, ['-e', `const fs=require('fs');const fd=fs.openSync(process.argv[1],'r+');process.stdout.write('ready');let n=0;for(;;){const b=Buffer.from([n++%256]);fs.writeSync(fd,b,0,1,0)}`, wal], { stdio: ['ignore', 'pipe', 'pipe'] });
+ try {
+  await Promise.race([once(child.stdout!, 'data'), once(child, 'exit').then(() => { throw Error('Generated mutation worker exited early.'); })]);
+  expect(code(value.plan)).toBe('SOURCE_CHANGED');
+  expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
+ } finally { if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited; } }
 });

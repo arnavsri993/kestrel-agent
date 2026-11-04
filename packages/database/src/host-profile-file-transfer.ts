@@ -1,6 +1,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, readSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, readSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync, writeSync, type Stats } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { createHostProfileTransferSnapshot, HOST_PROFILE_TRANSFER_POLICY, importHostProfileTransferSnapshot, type HostProfileTransferSnapshot } from "./profile-transfer.js";
 import { listMigrationVersions, loadMigrationSql } from "./migrations.js";
@@ -93,11 +94,79 @@ function destinationAt(path: string, ignoreOwnedReservation = false): Destinatio
 function summary(snapshot: HostProfileTransferSnapshot): Summary {
 	return { schemaVersion: snapshot.schemaVersion, policy: snapshot.policy, counts: snapshot.counts, excluded: snapshot.excluded, semanticSha256: snapshot.semanticSha256 };
 }
+const MAX_SOURCE_FILE_BYTES = 256_000_000;
+type HeldSourceFile = { path: string; fd?: number; stat?: Stats };
+function sameSourceStat(left: Stats, right: Stats): boolean {
+	return left.isFile() && right.isFile() && left.dev === right.dev && left.ino === right.ino &&
+		left.uid === right.uid && left.mode === right.mode && left.nlink === right.nlink && left.size === right.size &&
+		left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
+}
+/** Copy only encrypted bytes to a private temporary directory; never open source in SQLite. */
+function copySourceForRead(source: Source, recoveryLink?: Identity): { path: string; verify(): void; close(): void } {
+	const held: HeldSourceFile[] = [];
+	const root = mkdtempSync(join(tmpdir(), "kestrel-core-transfer-read-"));
+	const clone = join(root, "kestrel.sqlite");
+	const verify = () => {
+		if (!same(sourceAt(source.path, recoveryLink), source)) fail("SOURCE_CHANGED", "The Core source changed during inspection.");
+		for (const file of held) {
+			if (file.fd === undefined || file.stat === undefined) {
+				if (!missing(file.path)) fail("SOURCE_CHANGED", "The Core source changed during inspection.");
+				continue;
+			}
+			let current: Stats;
+			try { current = lstatSync(file.path); } catch { return fail("SOURCE_CHANGED", "The Core source changed during inspection."); }
+			if (!sameSourceStat(file.stat, fstatSync(file.fd)) || !sameSourceStat(file.stat, current))
+				fail("SOURCE_CHANGED", "The Core source changed during inspection.");
+		}
+	};
+	const close = () => {
+		let failure: unknown;
+		for (const file of held) if (file.fd !== undefined) {
+			try { closeSync(file.fd); } catch (error) { failure ??= error; }
+			delete file.fd;
+		}
+		try { rmSync(root, { recursive: true, force: true }); } catch (error) { failure ??= error; }
+		if (failure) throw failure;
+	};
+	try {
+		if (!same(sourceAt(source.path, recoveryLink), source)) fail("SOURCE_CHANGED", "The Core source changed before inspection.");
+		// An existing rollback journal may contain uncommitted changes; copying it
+		// is not a safe snapshot and recovery must not mutate the original.
+		if (!missing(`${source.path}-journal`)) fail("SOURCE_UNREADABLE", "The Core source has an unsettled SQLite journal.");
+		for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+			const path = source.path + suffix;
+			if (suffix && missing(path)) { held.push({ path }); continue; }
+			if (suffix === "-journal") fail("SOURCE_UNREADABLE", "The Core source has an unsettled SQLite journal.");
+			const named = lstatSync(path);
+			const permittedLinks = suffix === "" && recoveryLink && same(identity(named), recoveryLink) ? [1, 2] : [1];
+			if (!named.isFile() || named.isSymbolicLink() || named.uid !== process.getuid?.() || !permittedLinks.includes(named.nlink) || named.size > MAX_SOURCE_FILE_BYTES)
+				fail("UNSAFE_PATH", "The Core source file is unavailable or exceeds its size limit.");
+			const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+			held.push({ path, fd, stat: named });
+			if (!sameSourceStat(named, fstatSync(fd))) fail("SOURCE_CHANGED", "The Core source changed before inspection.");
+			if (suffix === "-shm") continue;
+			const out = openSync(clone + suffix, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+			try {
+				const buffer = Buffer.allocUnsafe(64 * 1024); let position = 0;
+				while (position < named.size) {
+					const count = readSync(fd, buffer, 0, Math.min(buffer.length, named.size - position), position);
+					if (!count) fail("SOURCE_CHANGED", "The Core source changed during inspection.");
+					let offset = 0;
+					while (offset < count) { const written = writeSync(out, buffer, offset, count - offset); if (!written) fail("SOURCE_UNREADABLE", "The Core snapshot could not be copied."); offset += written; }
+					position += count;
+				}
+			} finally { closeSync(out); }
+		}
+		verify();
+		return { path: clone, verify, close };
+	} catch (error) { close(); throw error; }
+}
 function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { snapshot: HostProfileTransferSnapshot; authenticatedEnvelopes: number } {
 	let db: Database.Database | undefined;
+	let copy: ReturnType<typeof copySourceForRead> | undefined;
 	try {
-		if (!same(sourceAt(source.path, recoveryLink), source)) fail("SOURCE_CHANGED", "The selected Core source was replaced. Review it again.");
-		db = new Database(source.path, { readonly: true, fileMustExist: true });
+		copy = copySourceForRead(source, recoveryLink);
+		db = new Database(copy.path, { readonly: true, fileMustExist: true });
 		const reader = db;
 		const result = reader.transaction(() => {
 			// Validate canonical schema and aggregate limits before integrity scans
@@ -113,14 +182,14 @@ function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { sna
 			if (!authenticatedEnvelopes) fail("NO_AUTHENTICATED_RECORDS", "This Core source has no authenticated encrypted records. Use the separate empty-profile choice; no data was changed.");
 			return { snapshot, authenticatedEnvelopes };
 		}).deferred();
-		if (!same(sourceAt(source.path, recoveryLink), source)) fail("SOURCE_CHANGED", "The selected Core source was replaced. Review it again.");
+		copy.verify();
 		return result;
 	} catch (error) {
 		if (error instanceof HostProfileFileTransferError) throw error;
 		// Contract/SQLite errors can contain stored values. Do not forward those
 		// details, error causes or decrypted content across the host boundary.
 		return fail("SOURCE_UNREADABLE", "The selected Core source could not be authenticated or its schema is unsupported; it was preserved.");
-	} finally { db?.close(); }
+	} finally { try { db?.close(); } finally { copy?.close(); } }
 }
 function planFor(source: Source, destination: Destination, snapshot: HostProfileTransferSnapshot, authenticatedEnvelopes: number): HostProfileFileTransferPlan {
 	const value = { format: "kestrel-host-core-file-transfer" as const, version: 1 as const, source, destination, summary: summary(snapshot), authenticatedEnvelopes };
