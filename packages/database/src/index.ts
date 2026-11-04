@@ -3476,12 +3476,18 @@ export class KestrelDatabase {
 				throw new Error("Host recovery authority limit exceeded.");
 			privateKeys.push(row.key);
 		}
+		const secretValue = this.getPrivateState<unknown>(EMBEDDING_STATE_SECRET_KEY);
+		const secret = secretValue === undefined ? undefined : parseReservedEmbeddingState(EMBEDDING_STATE_SECRET_KEY, secretValue) as EmbeddingStateSecret;
+		if (!secret && privateKeys.some(key => key.startsWith(EMBEDDING_STATE_OWNER_PREFIX) || key.startsWith(EMBEDDING_AUTHORITY_STATE_PREFIX)))
+			throw new Error("Embedding generation secret is missing.");
 		mac.update("private-authority").update("\0");
 		for (const key of privateKeys) {
 			const value = this.getPrivateState<unknown>(key);
-			// Reserved authority entries are authenticated and structurally valid.
-			if (key === EMBEDDING_STATE_SECRET_KEY || key.startsWith(EMBEDDING_STATE_OWNER_PREFIX)) parseReservedEmbeddingState(key, value);
-			if (key.startsWith(EMBEDDING_AUTHORITY_STATE_PREFIX)) parseReservedEmbeddingAuthorityState(key, value);
+			// Authenticate reserved identities against the persisted secret. A key
+			// with a syntactically valid but unrelated digest is not authoritative.
+			if (key === EMBEDDING_STATE_SECRET_KEY || key.startsWith(EMBEDDING_STATE_OWNER_PREFIX)) parseReservedEmbeddingState(key, value, secret);
+			if (key.startsWith(EMBEDDING_AUTHORITY_STATE_PREFIX)) parseReservedEmbeddingAuthorityState(key, value, secret);
+			if (key === "memory.capture.configuration") CaptureConfigurationSchema.parse(value);
 			mac.update(JSON.stringify([key, value])).update("\0");
 		}
 		return mac.digest("hex");

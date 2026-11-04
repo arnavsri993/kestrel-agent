@@ -6,8 +6,8 @@ import { createEncryptionKey } from '@kestrel/encryption';
 import { MemoryRecordSchema, TimelineEventSchema } from '@kestrel/shared-types';
 import { describe, it, expect } from 'vitest';
 import { KestrelDatabase } from './index.js';
-import { EMBEDDING_LEGACY_MIGRATION_KEY, EMBEDDING_STATE_SECRET_KEY, newEmbeddingStateSecret } from './memory-embedding-state.js';
-import { embeddingAuthorityStateKey, newEmbeddingAuthorityState } from './memory-embedding-authority.js';
+import { EMBEDDING_LEGACY_MIGRATION_KEY, EMBEDDING_STATE_SECRET_KEY, EMBEDDING_STATE_OWNER_PREFIX, newEmbeddingStateSecret } from './memory-embedding-state.js';
+import { EMBEDDING_AUTHORITY_STATE_PREFIX, embeddingAuthorityStateKey, newEmbeddingAuthorityState } from './memory-embedding-authority.js';
 
 const now = '2026-11-02T12:00:00.000Z';
 const later = '2026-11-02T12:01:00.000Z';
@@ -117,6 +117,28 @@ describe('host-only legacy missing-lease recovery', () => {
    mutate(f, db => db.setPrivateState(authorityKey, newEmbeddingAuthorityState('owner', 'memory:owner', 'a'.repeat(64))));
    expect(() => apply(f, first)).toThrow();
    expect(apply(f, plan(f))).toEqual({ cancelled: true });
+  } finally { f.cleanup(); }
+ });
+ it.each(['authority', 'owner'] as const)('rejects mismatched %s reserved key and missing secret', type => {
+  const f = fixture(false); try {
+   let validKey = '';
+   mutate(f, db => {
+    const secret = newEmbeddingStateSecret(); db.setPrivateState(EMBEDDING_STATE_SECRET_KEY, secret);
+    if (type === 'authority') {
+     validKey = embeddingAuthorityStateKey(secret, 'owner', 'memory:owner');
+     db.setPrivateState(validKey, newEmbeddingAuthorityState('owner', 'memory:owner', 'a'.repeat(64)));
+    } else {
+     validKey = `${EMBEDDING_STATE_OWNER_PREFIX}memory.${'a'.repeat(64)}`;
+     db.setPrivateState(validKey, { version: 1, ownerType: 'memory', ownerId: 'owner', generation: leaseToken, fingerprint: 'b'.repeat(64) });
+    }
+   });
+   if (type === 'authority') {
+    mutate(f, db => { const fakeKey = `${EMBEDDING_AUTHORITY_STATE_PREFIX}owner.${'f'.repeat(64)}`;
+     db.db.prepare('UPDATE private_runtime_state SET key=? WHERE key=?').run(fakeKey, validKey); validKey = fakeKey; });
+   }
+   expect(() => plan(f)).toThrow(/binding/);
+   mutate(f, db => db.db.prepare('DELETE FROM private_runtime_state WHERE key=?').run(EMBEDDING_STATE_SECRET_KEY));
+   expect(() => plan(f)).toThrow(/secret is missing/);
   } finally { f.cleanup(); }
  });
  it('binds capture policy and deletion tombstones', () => {
