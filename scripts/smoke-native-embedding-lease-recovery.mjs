@@ -26,6 +26,7 @@ const key = await readFile(join(profile, ".kestrel-native-test-core-key-v1"));
 const databasePath = join(coreRoot, "database/kestrel.sqlite");
 const { KestrelDatabase } = await tsImport("../packages/database/src/index.ts", import.meta.url);
 const C = await tsImport("../packages/shared-types/src/index.ts", import.meta.url);
+const { EMBEDDING_LEGACY_MIGRATION_KEY } = await tsImport("../packages/database/src/memory-embedding-state.ts", import.meta.url);
 const receipt = { version: 1, startedAt: new Date().toISOString(), candidate: app, candidateSha256: await candidateDigest(app), scope: "Generated private profile and key; actual native Memory UI and supervised Core. Offline fixture writes only. No real profile, Keychain, messages, microphone or remote provider.", phases: [] };
 let running, browser, home, memory, endpoint, interrupted = false, stage = "seed";
 const jobId = "generated-lease-blocker", memoryId = "generated-lease-owner";
@@ -62,9 +63,9 @@ function offline(operation) {
 }
 // Read from the database's bounded private copy, never opening live source WAL
 // through SQLite. This check never mutates the running Core's database.
-function snapshotJob() {
+function snapshotJob(id = jobId) {
  const db = KestrelDatabase.openForHostLegacyEmbeddingRecovery(databasePath, key, { readonly: true });
- try { return db.getMemoryJob(jobId); } finally { db.close(); }
+ try { return db.getMemoryJob(id); } finally { db.close(); }
 }
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { interrupted = true; running?.child.kill("SIGTERM"); });
 async function start() {
@@ -199,6 +200,55 @@ try {
   assert(db.listMemoryEmbeddings({ ownerType: "memory", ownerId: memoryId }).some(vector => vector.generation === input.generation && vector.status === "ready"));
  });
  phase("new-explicit-memory-work-completes-after-repair");
+ stage = "denied-source-seed";
+ const deniedId = "generated-private-lease-owner", deniedJobId = "generated-private-lease-blocker";
+ const deniedSessionId = "generated-private-lease-session", deniedEventId = "generated-private-lease-event";
+ const deniedSession = C.RuntimeSessionSchema.parse({ id: deniedSessionId, title: "Generated private recovery source", privacyMode: "private", allowedTools: [], status: "active", checkpoints: [], createdAt: stamp, updatedAt: stamp });
+ offline(db => {
+  db.saveRuntimeSession(deniedSession);
+  db.upsertTimelineEvent(C.TimelineEventSchema.parse({ id: deniedEventId, source: "fixture", sourceSessionId: deniedSessionId, startedAt: stamp, eventType: "note", actor: "user", textSummary: "Generated private repair source event", structuredData: {}, sensitivity: "personal", retentionPolicy: "durable", embeddingStatus: "queued", importance: 0.5, confidence: 1, status: "active", projectIds: [], personIds: [], entityIds: [], createdAt: stamp, updatedAt: stamp }));
+  db.upsertMemory(C.MemoryRecordSchema.parse({ id: deniedId, type: "semantic", content: "Generated private recovery fixture", sourceIds: [deniedEventId], sourceType: "fixture", structuredData: {}, confidence: 1, importance: 0.75, sensitivity: "personal", status: "active", entityIds: [], userConfirmed: true, inferred: false, createdAt: stamp, updatedAt: stamp }));
+  db.queueMemoryJob(C.MemoryJobSchema.parse({ id: deniedJobId, kind: "embed", dedupeKey: "generated-private-legacy-dedupe", status: "running", payload: { ownerType: "memory", ownerId: deniedId }, attempts: 2, maxAttempts: 3, runAfter: stamp, lockedAt: stamp, createdAt: stamp, updatedAt: stamp }));
+  db.setPrivateState(EMBEDDING_LEGACY_MIGRATION_KEY, { version: 1, phase: "jobs", afterId: "" });
+  assert.equal(db.getMemoryEmbeddingInput("memory", deniedId), undefined, "Generated private source must be denied.");
+ });
+ await start(); await request({ type: "memory-run-maintenance" });
+ const deniedInitial = snapshotJob(deniedJobId); assert.equal(deniedInitial.status, "running"); assert.equal(deniedInitial.leaseUntil, undefined); assert.equal(deniedInitial.payload.generation, undefined);
+ stage = "denied-source-review-apply"; previous = await corePid();
+ const deniedReview = await reviewWhenIdle();
+ assert.equal(deniedReview.nativeEmbeddingRecoveryPreview?.state, "review"); assert.equal(deniedReview.nativeEmbeddingRecoveryPreview.cancelledJobs, 1); assert.equal(deniedReview.nativeEmbeddingRecoveryPreview.coreStatus, "ready");
+ await changedCore(previous); assert.deepEqual(snapshotJob(deniedJobId), deniedInitial);
+ previous = await corePid();
+ const deniedApplied = await request({ type: "native-embedding-recovery-apply", planId: deniedReview.nativeEmbeddingRecoveryPreview.planId });
+ assert.deepEqual(deniedApplied.nativeEmbeddingRecoveryApplied, { cancelledJobs: 1, coreStatus: "ready" });
+ await changedCore(previous);
+ assert.equal((await rawRequest({ type: "native-embedding-recovery-apply", planId: deniedReview.nativeEmbeddingRecoveryPreview.planId })).ok, false);
+ phase("private-source-review-and-apply-restart-core-and-consume-plan");
+ stage = "denied-source-migration";
+ for (let i = 0; i < 16; i++) await request({ type: "memory-run-maintenance" });
+ await stop();
+ offline(db => {
+  assert.equal(db.getMemoryEmbeddingInput("memory", deniedId), undefined);
+  const jobs = db.listMemoryJobs({ kind: "embed", limit: 500 }).filter(job => job.payload.ownerId === deniedId);
+  assert(jobs.some(job => job.status === "cancelled" && job.attempts === 2 && job.maxAttempts === 3 && job.payload.legacyIdentifierMigration));
+  assert(!jobs.some(job => job.payload.generation || ["pending", "running"].includes(job.status)));
+  assert.equal(db.listMemoryEmbeddings({ ownerType: "memory", ownerId: deniedId }).length, 0);
+  // There is no runtime privacy-update request; explicitly regrant only the
+  // generated session while the entire owned app and Core are stopped.
+  db.saveRuntimeSession({ ...deniedSession, privacyMode: "standard" });
+ });
+ phase("denied-source-migration-preserves-terminal-history-without-authority-or-vector");
+ stage = "denied-source-regrant"; await start();
+ for (let i = 0; i < 16; i++) await request({ type: "memory-run-maintenance" });
+ await stop();
+ offline(db => {
+  const input = db.getMemoryEmbeddingInput("memory", deniedId); assert(input, "Explicit generated source regrant must allow authority.");
+  const jobs = db.listMemoryJobs({ kind: "embed", limit: 500 }).filter(job => job.payload.ownerId === deniedId);
+  assert(jobs.some(job => job.status === "cancelled" && job.attempts === 2 && job.maxAttempts === 3 && job.payload.generation === input.generation));
+  assert(!jobs.some(job => ["pending", "running"].includes(job.status)));
+  assert.equal(db.listMemoryEmbeddings({ ownerType: "memory", ownerId: deniedId }).length, 0);
+ });
+ phase("explicit-source-regrant-keeps-cancelled-generation-guard-and-no-vector");
  receipt.result = "passed";
 } catch (error) {
  if (memory && !memory.isClosed()) await memory.screenshot({ path: join(evidence, "failed-memory.png") }).catch(() => {});
