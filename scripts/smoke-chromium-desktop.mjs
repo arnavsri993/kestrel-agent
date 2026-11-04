@@ -16,6 +16,7 @@ import {candidateDigest} from './native-retirement-evidence.mjs';
 import {createIsolatedDownloadFixtures,nativeIsolatedDownloadsCanary} from './native-isolated-downloads-canary.mjs';
 import {markDisposableNativeTestProfile,validateDisposableNativeTestProfile} from './native-test-profile.mjs';
 import {retainStoreUpdateFixture} from './native-store-update-profile.mjs';
+import {CEF_VERSION} from './prepare-native-chromium-runtime.mjs';
 
 const store=process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE==='1';
 const requireExtensionParity=process.env.KESTREL_TEST_REQUIRE_CHROMIUM_EXTENSION_PARITY==='1';
@@ -24,6 +25,7 @@ assert(!requireExtensionParity||store,'Strict Chromium extension parity requires
 assert(!retainUpdateProfile||(store&&!requireExtensionParity),'Store-update fixture retention requires a real Store preparation run, separate from strict extension acceptance.');
 const app=resolve(process.env.KESTREL_NATIVE_TEST_APP||'.tmp/native-chromium-host/Kestrel.app');
 const executable=join(app,'Contents/MacOS/Kestrel');
+const expectedChromium=CEF_VERSION.split('+chromium-')[1];
 const evidence=resolve(process.env.KESTREL_NATIVE_DESKTOP_EVIDENCE||(retainUpdateProfile?`.tmp/chromium-store-update-evidence-${Date.now()}`:'.tmp/chromium-desktop-evidence'));
 await mkdir(evidence,{recursive:true,mode:0o700});
 if(retainUpdateProfile)assert.equal((await readdir(evidence)).length,0,'Store-update preparation requires a new empty evidence directory; preserve the previous checkpoint and receipt.');
@@ -91,6 +93,9 @@ async function start(){
  }
  assert(endpoint,'Owned native endpoint missing: '+output);
  browser=await chromium.connectOverCDP(endpoint,{noDefaults:true});
+ const observedVersion=browser.version();
+ assert.equal(observedVersion,expectedChromium,'The running Chromium version must match the verified runtime pin.');
+ (receipt.observedChromiumVersions??=[]).push(observedVersion);
  let context=browser.contexts()[0];
  let home;
  for(let i=0;i<200;i++){

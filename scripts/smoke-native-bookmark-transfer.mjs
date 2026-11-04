@@ -10,11 +10,13 @@ import { chromium } from '@playwright/test';
 import { candidateDigest } from './native-retirement-evidence.mjs';
 import { markDisposableNativeTestProfile } from './native-test-profile.mjs';
 import { selectSettingsSection } from './desktop-browser-test-helpers.mjs';
+import { CEF_VERSION } from './prepare-native-chromium-runtime.mjs';
 
 assert(process.env.KESTREL_NATIVE_TEST_APP, 'Select the exact disposable native candidate.');
 const app = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
 assert(app.endsWith('.app') && !app.startsWith('/Applications/'), 'Use a disposable candidate.');
 const executable = await realpath(join(app, 'Contents/MacOS/Kestrel'));
+const expectedChromium = CEF_VERSION.split('+chromium-')[1];
 async function assertStopped() {
  for (const row of execFileSync('/bin/ps', ['-axo', 'pid=,comm='], { encoding: 'utf8' }).split('\n')) {
   const match = row.trim().match(/^(\d+)\s+(.+)$/);
@@ -51,6 +53,9 @@ async function start() {
  for (const stream of [state.child.stdout, state.child.stderr]) stream.on('data', bytes => { state.output = (state.output + bytes).slice(-200000); });
  await eventually(() => { assert.equal(state.child.exitCode, null, 'Owned app exited.'); endpoint = state.output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1]; return endpoint; }, 'Owned native endpoint missing.');
  browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
+ const observedVersion = browser.version();
+ assert.equal(observedVersion, expectedChromium, 'The running Chromium version must match the verified runtime pin.');
+ (receipt.observedChromiumVersions ??= []).push(observedVersion);
  await eventually(async () => {
   home = browser.contexts().flatMap(context => context.pages()).find(item => /chrome-extension:\/\/[^/]+\/index.html$/.test(item.url()));
   if (home) return true;
