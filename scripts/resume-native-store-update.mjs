@@ -226,7 +226,8 @@ try {
     await eventually(async () => (await provenance())[action].version === receipt.updateCheck.reportedVersion, "Reported Store update did not become active after clean restart.");
   }
   receipt.afterCheck = await provenance();
-  for (const id of ids) assert(!newer(receipt.upgradeBaselineVersions[id], receipt.afterCheck[id].version), "A normal Store installation was downgraded.");
+  for (const id of ids) for (const baseline of [receipt.upgradeBaselineVersions[id], receipt.diskVersionsBefore[id], receipt.initial[id].version])
+    assert(!newer(baseline, receipt.afterCheck[id].version), "A normal Store installation was downgraded.");
   receipt.observedVersionUpgrade = ids.some(id => newer(receipt.afterCheck[id].version, receipt.upgradeBaselineVersions[id]));
   phase(compatibilityOnly ? "existing-normal-Store-installations-preserved-without-update-query" : "existing-normal-Store-installations-preserved-after-update-request");
   if (!compatibilityOnly && receipt.observedVersionUpgrade) await functionalProbe("updated-formatter-function-and-extension-owned-tab-isolation");
