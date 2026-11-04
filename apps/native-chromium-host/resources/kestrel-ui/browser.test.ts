@@ -163,9 +163,11 @@ describe("native first-party browser adapter", () => {
 		expect((await adapter.request({ type: "browser-save-bookmark", title: "Edited", displayMode: "icon", folderId }, sender)).ok).toBe(true);
 		let state = (await adapter.request({ type: "browser-get-state" }, sender)).browserState;
 		expect(state.bookmarks).toHaveLength(1); expect(state.bookmarks[0]).toMatchObject({ id: bookmarkId, title: "Edited", displayMode: "icon", folderId });
+		expect(bookmarks[0].children.find((node: any) => node.title === "Work").children[0].title).toBe("");
 		expect((await adapter.request({ type: "browser-update-bookmark", bookmarkId, title: "Again", displayMode: "title" }, sender)).ok).toBe(true);
 		adapter = createBrowserAdapter(chrome, { uiUrl }); state = (await adapter.request({ type: "browser-get-state" }, sender)).browserState;
-		expect(state.bookmarks[0]).toMatchObject({ id: bookmarkId, folderId, displayMode: "title" });
+		expect(state.bookmarks[0]).toMatchObject({ id: bookmarkId, title: "Again", folderId, displayMode: "title" });
+		expect(bookmarks[0].children.find((node: any) => node.title === "Work").children[0].title).toBe("Again");
 		expect((await adapter.request({ type: "browser-update-bookmark", bookmarkId, title: "Again", displayMode: "title", folderId: null }, sender)).ok).toBe(true);
 		expect((await adapter.request({ type: "browser-get-state" }, sender)).browserState.bookmarks[0].folderId).toBeUndefined();
 		expect((await adapter.request({ type: "browser-update-bookmark", bookmarkId, title: "Again", displayMode: "title", folderId }, sender)).ok).toBe(true);
@@ -175,6 +177,12 @@ describe("native first-party browser adapter", () => {
 		expect(state.bookmarks[0]).toMatchObject({ id: bookmarkId, displayMode: "title" }); expect(state.bookmarks[0].folderId).toBeUndefined();
 		expect(bookmarks[0].children.some((node: any) => node.id === "2")).toBe(true);
 		expect((await adapter.request({ type: "browser-update-bookmark", bookmarkId, title: "Root", displayMode: "full", folderId: null }, sender)).ok).toBe(true);
+		expect(bookmarks[0].children.find((node: any) => node.id === "2").title).toBe("https://example.com/");
+		state = (await createBrowserAdapter(chrome, { uiUrl }).request({ type: "browser-get-state" }, sender)).browserState;
+		expect(state.bookmarks[0]).toMatchObject({ title: "Root", displayMode: "full" });
+		bookmarks[0].children.find((node: any) => node.id === "2").title = "External edit";
+		state = (await adapter.request({ type: "browser-get-state" }, sender)).browserState;
+		expect(state.bookmarks[0]).toMatchObject({ title: "External edit", displayMode: "title" });
 		expect((await adapter.request({ type: "browser-rename-bookmark-folder", folderId, name: "Stale" }, sender)).ok).toBe(false);
 	});
 	it("refuses permanent roots and preserves children when a folder move fails", async () => {
@@ -213,16 +221,16 @@ describe("native first-party browser adapter", () => {
 		fixture.tabs[0].url = "https://second.example/"; await adapter.request({ type: "browser-save-bookmark", title: "Second", displayMode: "full", folderId }, sender);
 		const folder = fixture.bookmarks[0].children.find((item: any) => item.title === "Work");
 		const outside = { id: "outside", parentId: "1", title: "Outside", children: [] as any[] }; fixture.bookmarks[0].children.push(outside);
-		fixture.afterMove(() => { const child = folder.children.find((item: any) => item.title === "Second"); if (child) { folder.children = folder.children.filter((item: any) => item !== child); child.parentId = outside.id; outside.children.push(child); } });
+		fixture.afterMove(() => { const child = folder.children.find((item: any) => item.url === "https://second.example/"); if (child) { folder.children = folder.children.filter((item: any) => item !== child); child.parentId = outside.id; outside.children.push(child); } });
 		const result = await adapter.request({ type: "browser-remove-bookmark-folder", folderId }, sender);
 		expect(result).toMatchObject({ ok: false, error: expect.stringContaining("incomplete") });
-		expect(outside.children.map(item => item.title)).toEqual(["Second"]);
+		expect(outside.children.map(item => item.url)).toEqual(["https://second.example/"]);
 		expect(fixture.bookmarks[0].children).toContain(folder);
 	});
 	it.each([null, []])("ignores malformed display metadata during state reads", async value => {
 		const fixture = makeChrome(); fixture.storage["kestrel.native.browser.bookmarkModes.v1"] = value;
 		const result = await createBrowserAdapter(fixture.chrome, { uiUrl }).request({ type: "browser-get-state" }, sender);
-		expect(result.ok).toBe(true); expect(result.browserState.bookmarks[0].displayMode).toBe("full");
+		expect(result.ok).toBe(true); expect(result.browserState.bookmarks[0].displayMode).toBe("title");
 	});
 	it("broadcasts the persisted display mode before completing a bookmark edit", async () => {
 		const fixture = makeChrome(); fixture.tabs[0].url = "https://example.com/";
@@ -234,7 +242,8 @@ describe("native first-party browser adapter", () => {
 		expect(result.ok).toBe(true);
 		expect(result.browserState.bookmarks[0].displayMode).toBe("icon");
 		expect(emitted.at(-1).state.bookmarks[0].displayMode).toBe("icon");
-		fixture.storage["kestrel.native.browser.bookmarkModes.v1"] = { "2": "title" };
+		fixture.bookmarks[0].children[0].title = "External";
+		fixture.storage["kestrel.native.browser.bookmarkModes.v1"] = { "2": { mode: "title", title: "External", dateAdded: fixture.bookmarks[0].children[0].dateAdded } };
 		fixture.handlers.get("storage-changed")?.({ "kestrel.native.browser.bookmarkModes.v1": {} }, "local");
 		await vi.waitFor(() => expect(emitted.at(-1).state.bookmarks[0].displayMode).toBe("title"));
 	});
@@ -243,7 +252,14 @@ describe("native first-party browser adapter", () => {
 		fixture.tabs[0].url = "https://example.com/"; fixture.failStorage();
 		const result = await adapter.request({ type: "browser-save-bookmark", title: "Changed", displayMode: "icon" }, sender);
 		expect(result).toMatchObject({ ok: false, error: expect.stringContaining("incomplete") });
-		expect(fixture.bookmarks[0].children[0].title).toBe("Changed");
+		expect(fixture.bookmarks[0].children[0].title).toBe("Example");
+	});
+	it("keeps a new bookmark friendly title when presentation storage fails", async () => {
+		const fixture = makeChrome(), adapter = createBrowserAdapter(fixture.chrome, { uiUrl });
+		fixture.tabs[0].url = "https://new.example/"; fixture.failStorage();
+		const result = await adapter.request({ type: "browser-save-bookmark", title: "Friendly", displayMode: "icon" }, sender);
+		expect(result).toMatchObject({ ok: false, error: expect.stringContaining("result may be incomplete") });
+		expect(fixture.bookmarks[0].children.find((item: any) => item.url === "https://new.example/").title).toBe("Friendly");
 	});
 	it("refuses a new folder before creating at capacity, while allowing rename and removal", async () => {
 		const fixture = makeChrome();

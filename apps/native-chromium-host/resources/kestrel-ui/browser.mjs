@@ -279,6 +279,13 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	chromeApi.history?.onVisited?.addListener?.(scheduleEmit);
 	chromeApi.downloads?.onChanged?.addListener?.(scheduleEmit);
 
+	function bookmarkPresentation(node, record) {
+		if (!record || typeof record !== "object" || Array.isArray(record) || Object.keys(record).sort().join(",") !== "dateAdded,mode,title" ||
+			!["full", "title", "icon"].includes(record.mode) || typeof record.title !== "string" || !record.title.trim() || record.title.length > 500 ||
+			/[\u0000-\u001f\u007f]/.test(record.title) || !Number.isFinite(record.dateAdded) || record.dateAdded !== node.dateAdded) return undefined;
+		const label = record.mode === "icon" ? "" : record.mode === "full" ? node.url : record.title;
+		return node.title === label ? record : undefined;
+	}
 	async function readBookmarks() {
 		if (!chromeApi.bookmarks?.getTree) return { bookmarks: [], folders: [] };
 		const tree = await invoke(chromeApi.bookmarks, "getTree");
@@ -303,10 +310,13 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			const walk = (nodes, depth = 0, locked = false) => { for (const node of asArray(nodes)) {
 				const immutable = locked || Boolean(node.unmodifiable);
 				if (immutable) continue;
-				if (node.url && node.url.length <= 8192 && /^https?:/i.test(node.url)) output.push({
-					id: stableId(node.id, "bookmark-"), url: node.url, title: (node.title || node.url).slice(0, 500),
-					...(!rootIds.has(node.parentId) && node.parentId ? { folderId: stableId(`folder:${node.parentId}`, "bookmark-folder-") } : {}), displayMode: ["full", "title", "icon"].includes(modes[node.id]) ? modes[node.id] : "full", createdAt: node.dateAdded ? new Date(node.dateAdded).toISOString() : now(),
-				});
+				if (node.url && node.url.length <= 8192 && /^https?:/i.test(node.url)) {
+					const presentation = bookmarkPresentation(node, modes[node.id]);
+					output.push({
+						id: stableId(node.id, "bookmark-"), url: node.url, title: (presentation?.title || node.title || node.url).slice(0, 500),
+						...(!rootIds.has(node.parentId) && node.parentId ? { folderId: stableId(`folder:${node.parentId}`, "bookmark-folder-") } : {}), displayMode: presentation?.mode ?? "title", createdAt: node.dateAdded ? new Date(node.dateAdded).toISOString() : now(),
+					});
+				}
 				else if (node.children && depth > 1 && !node.folderType) folders.push({
 					id: stableId(`folder:${node.id}`, "bookmark-folder-"), name: (node.title || "Bookmarks").slice(0, 80) || "Bookmarks",
 					createdAt: node.dateAdded ? new Date(node.dateAdded).toISOString() : now(),
@@ -355,10 +365,17 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			if (entry.locked || entry.depth === 0) throw new Error();
 			return entry.node;
 		};
-		const modes = await stored(BOOKMARK_MODES_KEY, {});
-		if (!modes || typeof modes !== "object" || Array.isArray(modes) || Object.keys(modes).length > 4000) throw new Error();
+		const savedModes = await stored(BOOKMARK_MODES_KEY, {});
+		if (!savedModes || typeof savedModes !== "object" || Array.isArray(savedModes) || Object.keys(savedModes).length > 4000) throw new Error();
+		const modes = { ...savedModes };
 		for (const id of Object.keys(modes)) if (!nodes.has(id)) delete modes[id];
-		const saveMode = async (id, mode) => { modes[id] = mode; await persist(BOOKMARK_MODES_KEY, modes); };
+		const savePresentation = async (item, mode, title) => {
+			if (!Number.isFinite(item.dateAdded) || !title || title.length > 500) throw new Error();
+			modes[item.id] = { mode, title, dateAdded: item.dateAdded };
+			await persist(BOOKMARK_MODES_KEY, modes);
+			const label = mode === "icon" ? "" : mode === "full" ? item.url : title;
+			await invoke(chromeApi.bookmarks, "update", item.id, { title: label });
+		};
 		if (input.type === "browser-create-bookmark-folder") {
 			const name = bookmarkText(input.name, 80); if (!name) throw new Error();
 			const folderCount = [...nodes.values()].filter(({ node, depth, locked }) => !locked && depth > 1 && !node.url && Array.isArray(node.children) && !node.folderType).length;
@@ -400,10 +417,10 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		if (input.type === "browser-update-bookmark") {
 			const entry = lookup(input.bookmarkId, false); if (entry.immutable) throw new Error();
 			const folder = input.folderId === undefined ? undefined : targetFolder(input.folderId);
-			const title = bookmarkText(input.title, 500, entry.node.url);
-			await invoke(chromeApi.bookmarks, "update", entry.node.id, { title });
+			const title = bookmarkText(input.title, 500, entry.node.url.slice(0, 500));
+			await savePresentation(entry.node, input.displayMode, title);
 			if (folder && folder.id !== entry.node.parentId) await invoke(chromeApi.bookmarks, "move", entry.node.id, { parentId: folder.id });
-			await saveMode(entry.node.id, input.displayMode); return response();
+			return response();
 		}
 		const current = (await visibleTabs()).find(tab => tab.active);
 		const url = safeBookmarkUrl(input.type === "browser-toggle-bookmark" ? input.url || current?.url : current?.url);
@@ -412,15 +429,16 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		if (input.type === "browser-toggle-bookmark" && match) { await invoke(chromeApi.bookmarks, "remove", match.id); delete modes[match.id]; await persist(BOOKMARK_MODES_KEY, modes); return response(); }
 		const folder = targetFolder(input.type === "browser-save-bookmark" ? input.folderId : null);
 		const fallback = typeof current?.title === "string" ? current.title.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 500) : "";
-		const title = bookmarkText(input.title || "", 500, fallback || url);
+		const title = bookmarkText(input.title || "", 500, fallback || url.slice(0, 500));
 		let item;
-		if (match) { item = match; await invoke(chromeApi.bookmarks, "update", item.id, { title }); if (item.parentId !== folder.id) await invoke(chromeApi.bookmarks, "move", item.id, { parentId: folder.id }); }
+		if (match) { item = match; }
 		else {
 			const bookmarkCount = [...nodes.values()].filter(({ node, locked }) => !locked && typeof node.url === "string" && node.url.length <= 8192 && /^https?:/i.test(node.url)).length;
 			if (bookmarkCount >= 2000) throw new BookmarkLimitError("Kestrel supports up to 2,000 bookmarks.");
 			item = await invoke(chromeApi.bookmarks, "create", { parentId: folder.id, title, url });
 		}
-		await saveMode(item.id, input.type === "browser-save-bookmark" ? input.displayMode : "full");
+		await savePresentation(item, input.type === "browser-save-bookmark" ? input.displayMode : "full", title);
+		if (item.parentId !== folder.id) await invoke(chromeApi.bookmarks, "move", item.id, { parentId: folder.id });
 		return response();
 	}
 
