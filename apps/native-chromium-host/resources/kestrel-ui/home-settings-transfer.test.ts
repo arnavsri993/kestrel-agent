@@ -48,6 +48,13 @@ describe("native Home settings reviewed writes", () => {
   f.set({ newTabBackground: "meadow" }); await expect(f.request({ type: "browser-undo-home-settings-import", undoId: r.homeSettingsImportResult.undoId })).rejects.toThrow(/changed/);
   expect(f.get().newTabBackground).toBe("meadow"); expect(f.writes()).toBe(1);
  });
+ it("undo binds the whole background category even when the source omitted its image", async () => {
+  const f = fixture({ newTabBackground: "custom", newTabBackgroundCustomDataUrl: "data:image/png;base64,AAAA" });
+  const p = await plan(f, { newTabBackground: "paper" }); const r = await apply(f, p.planId);
+  f.set({ newTabBackground: "paper" });
+  await expect(f.request({ type: "browser-undo-home-settings-import", undoId: r.homeSettingsImportResult.undoId })).rejects.toThrow(/changed/);
+  expect(f.get()).toEqual({ newTabBackground: "paper" }); expect(f.writes()).toBe(1);
+ });
  it.each(["fail", "mismatch"] as const)("returns uncertainty without a retry or undo token on %s", async mode => {
   const f = fixture(); const p = await plan(f, { newTabBackground: "paper" }); f[mode]();
   await expect(apply(f, p.planId)).rejects.toThrow(/uncertain/); await expect(apply(f, p.planId)).rejects.toThrow(/expired/); expect(f.writes()).toBe(1);

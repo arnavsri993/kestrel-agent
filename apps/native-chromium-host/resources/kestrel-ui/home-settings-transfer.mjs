@@ -43,7 +43,8 @@ export function createNativeHomeSettingsTransfer({ read, write, response, emit }
    if (!same(await snapshot(), p.before)) throw Error('Home settings changed after review. Review the import again.');
    await verifiedWrite(p.next);
    const id = crypto.randomUUID(), expires = Date.now() + ttl;
-   undo = { id, expires, keys: p.keys, before: selected(p.before, p.keys), applied: selected(p.next, p.keys), categories: p.categories };
+   const witnessKeys = p.categories.flatMap(category => categories[category]);
+   undo = { id, expires, keys: p.keys, witnessKeys, before: selected(p.before, p.keys), applied: selected(p.next, witnessKeys), categories: p.categories };
    await emit();
    return { ...(await response()), homeSettingsImportResult: { changedCategories: p.changedCategories, undoId: id, undoExpiresAt: new Date(expires).toISOString() } };
   }
@@ -51,7 +52,7 @@ export function createNativeHomeSettingsTransfer({ read, write, response, emit }
    const u = undo; undo = undefined;
    if (!u || u.id !== input.undoId || Date.now() >= u.expires) throw Error('Undo has expired.');
    const current = await snapshot();
-   if (!same(selected(current, u.keys), u.applied)) throw Error('Imported settings changed. Undo was not applied.');
+   if (!same(selected(current, u.witnessKeys), u.applied)) throw Error('Imported settings changed. Undo was not applied.');
    const next = { ...current }; for (const key of u.keys) delete next[key]; Object.assign(next, u.before);
    await verifiedWrite(next); await emit();
    return { ...(await response()), homeSettingsUndoResult: { restoredCategories: u.categories } };
