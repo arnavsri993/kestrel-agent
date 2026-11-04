@@ -37,6 +37,7 @@ bool MakePrivateDirectory(NSString* path) {
   if (mkdir(path.fileSystemRepresentation, 0700) && errno != EEXIST) return false;
   return PrivateDirectory(path);
 }
+void Clear(void* pointer, size_t size) { volatile uint8_t* bytes = static_cast<volatile uint8_t*>(pointer); while (size--) *bytes++ = 0; }
 NSData* ReadPrivateFile(NSString* path, size_t maximum) {
   const int fd = open(path.fileSystemRepresentation, O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC);
   if (fd < 0) return nil;
@@ -48,9 +49,10 @@ NSData* ReadPrivateFile(NSString* path, size_t maximum) {
   while (offset < data.length) {
     const ssize_t count = read(fd, static_cast<uint8_t*>(data.mutableBytes) + offset, data.length - offset);
     if (count < 0 && errno == EINTR) continue;
-    if (count <= 0) { close(fd); return nil; } offset += static_cast<size_t>(count);
+    if (count <= 0) { Clear(data.mutableBytes,data.length); close(fd); return nil; } offset += static_cast<size_t>(count);
   }
   uint8_t extra{}; const bool complete = read(fd, &extra, 1) == 0; close(fd);
+  if (!complete) Clear(data.mutableBytes,data.length);
   return complete ? data : nil;
 }
 bool WritePrivateFile(NSString* path, NSData* bytes, bool replace, bool* committed = nullptr) {
@@ -95,7 +97,6 @@ NSString* Profile(NSString* root, NSString* relative) {
   if (relative.length && !PrivateDirectory([root stringByAppendingPathComponent:@"native-core-profiles"])) return nil;
   return path;
 }
-void Clear(void* pointer, size_t size) { volatile uint8_t* bytes = static_cast<volatile uint8_t*>(pointer); while (size--) *bytes++ = 0; }
 void Alert(NSString* title, NSString* message) { NSAlert* alert = [[NSAlert alloc] init]; alert.messageText = title; alert.informativeText = message; [alert addButtonWithTitle:@"OK"]; [alert runModal]; }
 NSString* CountSummary(NSDictionary* preview) {
   NSDictionary* counts = preview[@"counts"], *excluded = preview[@"excluded"];
@@ -592,7 +593,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     NSDictionary* recovered = nil; NSDictionary* verified = nil;
     std::array<uint8_t,32> sourceKey{}; std::string destinationKey, failure;
     if ([self interruptedRowIsCurrent:row selection:selection] && [KestrelCanonicalNativeCoreTransferSource(source) isEqualToString:source]) {
-      NSData* envelope = ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
+      NSMutableData* envelope = (NSMutableData*)ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
       if (envelope) {
         const auto bytes = std::span<const uint8_t>(static_cast<const uint8_t*>(envelope.bytes),static_cast<size_t>(envelope.length));
         const auto format = InspectLegacyKestrelCoreKey(bytes);
@@ -610,6 +611,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
             }
           }
         }
+        Clear(envelope.mutableBytes,envelope.length);
       }
     }
     Clear(sourceKey.data(),sourceKey.size()); Clear(destinationKey.data(),destinationKey.size()); destinationKey.clear();
