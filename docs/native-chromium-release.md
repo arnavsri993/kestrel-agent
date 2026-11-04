@@ -7,6 +7,23 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
+## Current checkpoint — 2026-11-04
+
+Source `69eddc32` passes full `pnpm verify` with **2,854 tests in 314 files**
+and two existing ownership-mutation skips. Exact ad-hoc candidate
+`42d44c4632eb133aa0111368bef50ac270c678616f5f286a00e2ae1b44f898fe`
+passes nine reviewed bookmark-transfer/capacity phases, 26 native product
+phases and six generated verification-code phases. Five retained Store checks
+pass in compatibility-only mode; they do not certify an actual version upgrade.
+See [the detailed checkpoint below](#reviewed-native-bookmark-transfer-and-independent-redactions-2026-11-04).
+
+The canonical installed app remains Electron. Broader browser/settings/assets
+migration, existing-profile and real account acceptance, a published Store
+version upgrade, Developer ID signing/notarization and canonical cutover remain
+open. This artifact still pins CEF 152; the official stable CEF 156 archive has
+been downloaded and checksum-verified for the next runtime update, not installed
+or validated as a replacement yet. This checkpoint is not a release-ready claim.
+
 ## Run and verify
 
 ```sh
@@ -3125,3 +3142,107 @@ continuation correctly refused before launching an app; its failure log is
 and its restart persistence are **not verified**, and the published Store
 upgrade gate remains open. The 48 continuation tests are synthetic validation
 tests, not upgrade evidence. Original receipts/checkpoints were not changed.
+
+## Reviewed native bookmark transfer and independent redactions (2026-11-04)
+
+Native **Settings → Browser → Data & reset → Transfer bookmarks** now exports
+portable bookmark JSON and imports either that format or an existing Kestrel
+browser-data export. The browser reads only the file selected by the person;
+there is no arbitrary native file-path read bridge. A selected source may be
+up to 10 MiB, while the normalized bookmark request stays within 512 KiB.
+Shared validation rejects unknown fields, unsafe URLs, missing/cyclic folder
+references and excessive depth/count/bytes. Transfer-local folder IDs expose
+neither Chromium IDs nor local paths. Native exports preserve representable
+labels exactly and report omitted managed/unsupported entries before saving;
+unrepresentable labels fail explicitly rather than being silently truncated.
+
+Import requires a preview and a separate apply action. The worker holds a
+two-minute, one-use plan bound to the native tree, presentation metadata and
+chosen destination. It rechecks state before and between writes, skips existing
+and incoming duplicate URLs, and creates new nodes without overwriting existing
+bookmarks. Folder hierarchy and friendly titles/display modes survive export
+and restart. Partial failures retain added data and report actual counts;
+there is no automatic retry or cleanup deletion. Chrome APIs are not atomic
+against an arbitrary cooperating external writer between check and create.
+
+Legacy file previews explicitly disclose omitted history, permissions,
+preferences and original bookmark dates. Those values are neither applied nor
+silently claimed as migrated. Chromium creates new bookmark dates. The native
+save panel chooses the export path; success appears only after Chrome reports
+a completed download, with cancellation and uncertainty handled separately.
+The controls use the existing Settings hierarchy and native save panel. Actual
+window inspection led to shorter copy and a stacked import row that remains
+readable beside the companion panel.
+
+Bulk import coalesces bookmark/presentation notifications and avoids repeated
+identity-map persistence while retaining fresh tree/metadata witnesses. Other
+browser events remain timely. A dirty flag delivers a follow-up snapshot for
+edits arriving after final state acquisition. Unit regressions exercise a
+3,600-event burst, late external edits, stale/forged/expired plans, limits,
+partial failures and source preservation. In the generated packaged fixture,
+the 1,996-bookmark batch improved from **52,718 ms** to **21,647 ms**; the final
+privacy build completed it in **20,467 ms**. These are individual local runs.
+
+The redaction review also reproduced a separate privacy issue: equal hidden
+values reused a placeholder, allowing known candidates in the same result to
+reveal a match. Model-facing output now marks each occurrence independently,
+including across key kinds, output/errors and PEM blocks. It keeps no
+secret-derived fingerprint or equality map. Synthetic matching/wrong-candidate
+variants now produce identical visible receipts; original execution records,
+redaction counts and truncation/screenshot handling retain their contracts.
+This removes the HMAC operation flagged by CodeQL without suppression or
+dismissal. It does not claim all original execution records are encrypted.
+
+Source `69eddc329acb6404f6fd0e2812dc10bd169a2ade` passed full `pnpm verify` in
+`.tmp/native-bookmark-transfer-final-aggregate/receipt.json`: **2,854 passed,
+two skipped, 314 files**, types, audits, builds, native helpers, 50 website
+checks, retained desktop workflows, packaged CLI, editors and secret scanning.
+All eight tracked PNGs were restored byte for byte. Focused guardrail,
+screenshot and agent-loop checks passed 57/57; agent-core types passed.
+
+Exact final candidate
+`42d44c4632eb133aa0111368bef50ac270c678616f5f286a00e2ae1b44f898fe`
+has matching before/after hashes for:
+
+- `.tmp/native-redaction-bookmark-ui-evidence/receipt.json`: **nine** packaged
+  transfer phases, including a **649,523-byte** legacy file with 80 explicitly
+  excluded history entries, actual preview/cancel/stale refusal, explicit
+  native and legacy imports, unchanged source bytes/settings/history, real
+  save-panel output and restart. The fixture reaches exactly **2,000** native
+  bookmarks, refuses an extra entry, permits an edit at capacity, preserves the
+  earlier export and confirms another full restart. Generated data is removed
+  only after confirmed owned app exit. CUA observed the actual saved-file state.
+- `.tmp/native-redaction-final-workflow-evidence/receipt.json`: **26** product
+  phases, including provider work, grants/search, attachments, trusted isolated
+  link/form navigation, downloads, crash recovery and restart.
+- `.tmp/native-redaction-final-code-evidence/receipt.json`: **six** generated
+  companion/Messages lookup/fill/refusal/restart phases.
+- `.tmp/native-redaction-final-store-evidence/receipt.json`: **five** retained
+  normal-install/function/tab-isolation/restart checks. Expected incomplete,
+  exit 2: compatibility only, no update query or published-version upgrade.
+
+A fresh official Store run separately passed **19** phases on predecessor
+`8346c8de6651a724c59a9a6c50e52ebf3564027aa26246c884249b87e84a25b0`
+in `.tmp/native-bookmark-transfer-store-reseed-evidence/receipt.json`: normal
+JSON Formatter `0.10.2` and uBlock Origin Lite `2026.1103.1743` installations,
+function, extension-created tabs, action popup, native-manager toggle and
+restart. The current-candidate compatibility run reuses that generated fixture.
+An owned, private, ignored byte-verified copy preserves this generated fixture
+against temporary-directory cleanup; it is not a product backup or upgrade
+acceptance claim. No real user profile, Messages, microphone or account data was
+used by these runs.
+
+Published predecessor `069241f9` passed its desktop/package CI job. The Core,
+website and security job ran no steps: GitHub could not acquire a hosted macOS
+runner after repeated attempts. Its four CodeQL language scans succeeded, but
+the separate required check retained the branch's HMAC fingerprint finding.
+New-head CI and CodeQL must verify the occurrence-only fix. Jules has no key;
+one implementation worker exhausted credits after returning its changes, and
+the primary agent independently reviewed and verified the delivered code.
+
+The official [CEF build index](https://cef-builds.spotifycdn.com/index.json)
+lists stable macOS arm64 CEF `156.0.15+gcf671c0+chromium-156.0.8078.80`.
+Its archive is cached with matching vendor SHA-1 and locally pinned SHA-256
+`938081b5bb552b4990b9667662d9909429d2c113d862c83826322310835666f9`.
+This checkpoint still runs CEF 152. Runtime updating and the other open release
+boundaries above remain work; no canonical cutover or public release occurred.
