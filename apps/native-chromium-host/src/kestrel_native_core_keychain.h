@@ -35,6 +35,11 @@ class NativeCoreProfileKeyStore {
                    std::string* key_base64,
                    std::string* error);
 
+  // Lookup only: never generates, adds, migrates, rotates, or removes a key.
+  bool GetExisting(const std::string& canonical_profile_root,
+                   std::string* key_base64,
+                   std::string* error);
+
   // Explicit test-only durable key lane. It is restricted to owned private
   // temporary profiles and development bundle identities, and stores a
   // separate mode-0600 test key. Production callers must use GetOrCreate.
@@ -45,6 +50,20 @@ class NativeCoreProfileKeyStore {
       std::string* key_base64,
       std::string* error);
 
+  // Lookup-only counterpart for an already marked disposable test profile.
+  bool GetExistingDisposableTestKey(
+      const std::string& canonical_profile_root,
+      const std::string& bundle_identifier,
+      const std::string& bundle_path,
+      std::string* key_base64,
+      std::string* error);
+
  private:
+  bool GetProductionKey(const std::string& profile_root, bool allow_create,
+                        std::string* key_base64, std::string* error);
+  bool GetDisposableTestKey(const std::string& profile_root,
+                            const std::string& bundle_identifier,
+                            const std::string& bundle_path, bool allow_create,
+                            std::string* key_base64, std::string* error);
   std::shared_ptr<NativeCoreKeychainBackend> backend_;
 };

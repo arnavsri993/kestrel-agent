@@ -17,11 +17,14 @@ class InMemoryNativeCoreKeychain final : public NativeCoreKeychainBackend {
  public:
   NativeCoreKeychainResult read_result = NativeCoreKeychainResult::NotFound;
   NativeCoreKeychainResult add_result = NativeCoreKeychainResult::Success;
+  int read_count = 0;
+  int add_count = 0;
   std::map<std::string, std::vector<unsigned char>> items;
 
   NativeCoreKeychainResult Read(
       const std::string& account,
       std::vector<unsigned char>* value) override {
+    ++read_count;
     if (read_result != NativeCoreKeychainResult::NotFound) return read_result;
     const auto found = items.find(account);
     if (found == items.end()) return NativeCoreKeychainResult::NotFound;
@@ -32,6 +35,7 @@ class InMemoryNativeCoreKeychain final : public NativeCoreKeychainBackend {
   NativeCoreKeychainResult Add(
       const std::string& account,
       const std::vector<unsigned char>& value) override {
+    ++add_count;
     if (add_result != NativeCoreKeychainResult::Success) return add_result;
     if (items.contains(account)) return NativeCoreKeychainResult::Duplicate;
     items.emplace(account, value);
@@ -75,6 +79,22 @@ int main() {
     std::string reopened_key;
     assert(restarted.GetOrCreate(first_profile, &reopened_key, &error));
     assert(reopened_key == first_key);
+    const int prior_adds = backend->add_count;
+    std::string lookup = "old-sensitive-value";
+    assert(store.GetExisting(first_profile, &lookup, &error));
+    assert(lookup == first_key && backend->add_count == prior_adds);
+    const std::string missing_profile = PrivateProfile("kestrel-core-key-missing-lookup");
+    lookup = "old-sensitive-value";
+    assert(!store.GetExisting(missing_profile, &lookup, &error));
+    assert(lookup.empty() && backend->add_count == prior_adds);
+    assert(access((missing_profile + "/native-core").c_str(), F_OK) != 0);
+    const auto first_item = backend->items.begin();
+    const auto saved_bytes = first_item->second;
+    first_item->second.resize(3);
+    lookup = "old-sensitive-value";
+    assert(!store.GetExisting(first_profile, &lookup, &error));
+    assert(lookup.empty() && backend->add_count == prior_adds);
+    first_item->second = saved_bytes;
 
     const std::string second_profile = PrivateProfile("kestrel-core-key-test");
     std::string second_key;
@@ -93,6 +113,23 @@ int main() {
         test_profile, "com.kestrel.desktop.dev", test_bundle_path,
         &restarted_test_key, &error));
     assert(restarted_test_key == test_key);
+    lookup = "old-sensitive-value";
+    assert(store.GetExistingDisposableTestKey(test_profile, "com.kestrel.desktop.dev", test_bundle_path, &lookup, &error));
+    assert(lookup == test_key);
+    const std::string missing_test_profile = PrivateProfile("kestrel-core-test-missing-lookup");
+    lookup = "old-sensitive-value";
+    assert(!store.GetExistingDisposableTestKey(missing_test_profile, "com.kestrel.desktop.dev", test_bundle_path, &lookup, &error));
+    assert(lookup.empty() && access((missing_test_profile + "/.kestrel-native-test-core-key-v1").c_str(), F_OK) != 0);
+    lookup = "old-sensitive-value";
+    assert(!store.GetExistingDisposableTestKey(test_profile, "com.kestrel.desktop", test_bundle_path, &lookup, &error) && lookup.empty());
+    assert(!store.GetExistingDisposableTestKey(test_profile, "com.kestrel.desktop.dev", "/Applications/Kestrel.app", &lookup, &error));
+    const std::string bad_key_profile = PrivateProfile("kestrel-core-test-malformed-lookup");
+    const std::string bad_test_key = bad_key_profile + "/.kestrel-native-test-core-key-v1";
+    FILE* bad_key_file = fopen(bad_test_key.c_str(), "wb"); assert(bad_key_file);
+    assert(fwrite("bad", 1, 3, bad_key_file) == 3); fclose(bad_key_file); assert(chmod(bad_test_key.c_str(), 0600) == 0);
+    lookup = "old-sensitive-value";
+    assert(!store.GetExistingDisposableTestKey(bad_key_profile, "com.kestrel.desktop.dev", test_bundle_path, &lookup, &error));
+    struct stat bad_info {}; assert(stat(bad_test_key.c_str(), &bad_info) == 0 && bad_info.st_size == 3 && lookup.empty());
     assert(!store.GetOrCreateDisposableTestKey(
         test_profile, "com.kestrel.desktop", test_bundle_path,
         &refused_key, &error));
@@ -106,6 +143,8 @@ int main() {
     assert(!store.GetOrCreateDisposableTestKey(
         unmarked_profile, "com.kestrel.desktop.dev", test_bundle_path,
         &refused_key, &error));
+    lookup = "old-sensitive-value";
+    assert(!store.GetExistingDisposableTestKey(unmarked_profile, "com.kestrel.desktop.dev", test_bundle_path, &lookup, &error) && lookup.empty());
 
     const std::string fifo_marker_profile = PrivateProfile("kestrel-core-test-fifo-marker");
     const std::string fifo_marker = fifo_marker_profile + "/.kestrel-native-test-profile-v1";
@@ -120,6 +159,8 @@ int main() {
     assert(!store.GetOrCreateDisposableTestKey(
         fifo_key_profile, "com.kestrel.desktop.dev", test_bundle_path,
         &refused_key, &error));
+    lookup = "old-sensitive-value";
+    assert(!store.GetExistingDisposableTestKey(fifo_key_profile, "com.kestrel.desktop.dev", test_bundle_path, &lookup, &error) && lookup.empty());
 
     // Existing Keychain values do not authorize following linked native Core
     // paths. Validate filesystem ownership before returning the stable key.
@@ -129,6 +170,8 @@ int main() {
     assert(symlink(linked_core_target.c_str(),
                    (linked_core_profile + "/native-core").c_str()) == 0);
     assert(!store.GetOrCreate(linked_core_profile, &refused_key, &error));
+    lookup = "old-sensitive-value";
+    assert(!store.GetExisting(linked_core_profile, &lookup, &error) && lookup.empty());
 
     const std::string linked_database_profile = PrivateProfile("kestrel-core-key-linked-db");
     assert(store.GetOrCreate(linked_database_profile, &refused_key, &error));
@@ -159,12 +202,18 @@ int main() {
     assert(fwrite(marker, 1, sizeof(marker) - 1, legacy) == sizeof(marker) - 1);
     fclose(legacy);
     assert(!store.GetOrCreate(legacy_profile, &refused_key, &error));
+    lookup = "old-sensitive-value";
+    const int adds_before_legacy = backend->add_count;
+    assert(!store.GetExisting(legacy_profile, &lookup, &error) && lookup.empty());
+    assert(backend->add_count == adds_before_legacy);
     struct stat legacy_info {};
     assert(stat(legacy_path.c_str(), &legacy_info) == 0 && legacy_info.st_size == sizeof(marker) - 1);
 
     backend->read_result = NativeCoreKeychainResult::Failure;
     const std::string denied_profile = PrivateProfile("kestrel-core-key-denied");
     assert(!store.GetOrCreate(denied_profile, &refused_key, &error));
+    lookup = "old-sensitive-value";
+    assert(!store.GetExisting(denied_profile, &lookup, &error) && lookup.empty());
     assert(access((denied_profile + "/native-core").c_str(), F_OK) != 0);
 
     const std::string linked_profile_parent = PrivateProfile("kestrel-core-key-link");
@@ -172,9 +221,11 @@ int main() {
     const std::string linked_profile = linked_profile_parent + "/linked";
     assert(symlink(outside_profile.c_str(), linked_profile.c_str()) == 0);
     assert(!store.GetOrCreate(linked_profile, &refused_key, &error));
+    lookup = "old-sensitive-value";
+    assert(!store.GetExisting(linked_profile, &lookup, &error) && lookup.empty());
 
-    for (const std::string& root : {first_profile, second_profile, existing_profile,
-                                    test_profile, unmarked_profile,
+    for (const std::string& root : {first_profile, second_profile, existing_profile, missing_profile, missing_test_profile,
+                                    test_profile, bad_key_profile, unmarked_profile,
                                     linked_core_profile, linked_core_target,
                                     linked_database_profile,
                                     legacy_profile, denied_profile,

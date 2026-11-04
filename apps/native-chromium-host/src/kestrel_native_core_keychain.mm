@@ -19,6 +19,12 @@
 
 namespace {
 
+// Volatile writes prevent the compiler eliding erasure of transient key bytes.
+void SecureClear(void* data, size_t length) {
+  volatile unsigned char* bytes = static_cast<volatile unsigned char*>(data);
+  while (length--) *bytes++ = 0;
+}
+
 constexpr char kCoreKeyService[] = "com.kestrel.native-core.database-key.v1";
 constexpr size_t kCoreKeyBytes = 32;
 constexpr char kBase64Alphabet[] =
@@ -138,7 +144,7 @@ bool IsOwnedPrivateTemporaryProfile(const std::string& canonical_profile) {
 }
 
 bool ReadOrCreateDisposableTestKey(const std::string& path,
-                                   bool core_root_exists,
+                                   bool core_root_exists, bool allow_create,
                                    std::vector<unsigned char>* key,
                                    std::string* error) {
   if (!key) return false;
@@ -155,20 +161,20 @@ bool ReadOrCreateDisposableTestKey(const std::string& path,
         count == static_cast<ssize_t>(bytes.size()) && extra_count == 0;
     close(fd);
     if (!valid) {
-      std::fill(bytes.begin(), bytes.end(), 0);
+      SecureClear(bytes.data(), bytes.size());
       if (error) *error = "Disposable Native Core test key is malformed; profile data was preserved.";
       return false;
     }
     key->assign(bytes.begin(), bytes.end());
-    std::fill(bytes.begin(), bytes.end(), 0);
+    SecureClear(bytes.data(), bytes.size());
     return true;
   }
   if (errno != ENOENT) {
     if (error) *error = "Disposable Native Core test key is unavailable.";
     return false;
   }
-  if (core_root_exists) {
-    if (error) *error = "Disposable Native Core data exists without its test key; profile data was preserved.";
+  if (!allow_create || core_root_exists) {
+    if (error) *error = "Disposable Native Core test key is unavailable; profile data was preserved.";
     return false;
   }
   std::array<unsigned char, kCoreKeyBytes> generated{};
@@ -178,7 +184,7 @@ bool ReadOrCreateDisposableTestKey(const std::string& path,
   }
   fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
   if (fd < 0) {
-    std::fill(generated.begin(), generated.end(), 0);
+    SecureClear(generated.data(), generated.size());
     if (error) *error = "Could not safely create the disposable Native Core test key.";
     return false;
   }
@@ -197,12 +203,12 @@ bool ReadOrCreateDisposableTestKey(const std::string& path,
   const bool directory_saved = parent_fd >= 0 && fsync(parent_fd) == 0;
   if (parent_fd >= 0) close(parent_fd);
   if (!saved || !secure || !directory_saved) {
-    std::fill(generated.begin(), generated.end(), 0);
+    SecureClear(generated.data(), generated.size());
     if (error) *error = "Could not safely persist the disposable Native Core test key.";
     return false;
   }
   key->assign(generated.begin(), generated.end());
-  std::fill(generated.begin(), generated.end(), 0);
+  SecureClear(generated.data(), generated.size());
   return true;
 }
 
@@ -286,6 +292,19 @@ NativeCoreProfileKeyStore::NativeCoreProfileKeyStore(
 bool NativeCoreProfileKeyStore::GetOrCreate(
     const std::string& profile_root, std::string* key_base64,
     std::string* error) {
+  return GetProductionKey(profile_root, true, key_base64, error);
+}
+
+bool NativeCoreProfileKeyStore::GetExisting(
+    const std::string& profile_root, std::string* key_base64,
+    std::string* error) {
+  return GetProductionKey(profile_root, false, key_base64, error);
+}
+
+bool NativeCoreProfileKeyStore::GetProductionKey(
+    const std::string& profile_root, bool allow_create,
+    std::string* key_base64, std::string* error) {
+  if (key_base64) { SecureClear(key_base64->data(), key_base64->size()); key_base64->clear(); }
   if (!key_base64 || !backend_) {
     if (error) *error = "Native Core Keychain is unavailable.";
     return false;
@@ -356,63 +375,76 @@ bool NativeCoreProfileKeyStore::GetOrCreate(
   NativeCoreKeychainResult result = backend_->Read(account, &key);
   if (result == NativeCoreKeychainResult::Success) {
     if (key.size() != kCoreKeyBytes) {
-      std::fill(key.begin(), key.end(), 0);
+      if (!key.empty()) SecureClear(key.data(), key.size());
       if (error) *error = "Native Core Keychain key is malformed; profile data was preserved.";
       return false;
     }
     *key_base64 = Base64(key);
-    std::fill(key.begin(), key.end(), 0);
+    if (!key.empty()) SecureClear(key.data(), key.size());
     return true;
   }
+  if (!key.empty()) SecureClear(key.data(), key.size());
+  key.clear();
   if (result != NativeCoreKeychainResult::NotFound) {
     if (error) *error = "Native Core Keychain could not unlock the profile key.";
     return false;
   }
 
-  if (core_root_exists) {
-    if (error) *error = "Native Core data exists without its Keychain key; restore the key or explicitly migrate the profile.";
+  if (!allow_create || core_root_exists) {
+    if (error) *error = "Native Core profile key is unavailable; profile data was preserved.";
     return false;
   }
 
   key.resize(kCoreKeyBytes);
   if (CCRandomGenerateBytes(key.data(), key.size()) != kCCSuccess) {
-    std::fill(key.begin(), key.end(), 0);
+    if (!key.empty()) SecureClear(key.data(), key.size());
     if (error) *error = "Native Core could not create a protected profile key.";
     return false;
   }
   std::vector<unsigned char> generated_key = key;
   const NativeCoreKeychainResult add_result = backend_->Add(account, key);
-  std::fill(key.begin(), key.end(), 0);
+  if (!key.empty()) SecureClear(key.data(), key.size());
   result = add_result == NativeCoreKeychainResult::Success ||
                    add_result == NativeCoreKeychainResult::Duplicate
                ? backend_->Read(account, &key)
                : add_result;
   if (result != NativeCoreKeychainResult::Success || key.size() != kCoreKeyBytes) {
-    std::fill(key.begin(), key.end(), 0);
-    std::fill(generated_key.begin(), generated_key.end(), 0);
+    if (!key.empty()) SecureClear(key.data(), key.size());
+    if (!generated_key.empty()) SecureClear(generated_key.data(), generated_key.size());
     if (error) *error = "Native Core could not save or verify its Keychain key.";
     return false;
   }
   if (add_result == NativeCoreKeychainResult::Success && key != generated_key) {
-    std::fill(key.begin(), key.end(), 0);
-    std::fill(generated_key.begin(), generated_key.end(), 0);
+    if (!key.empty()) SecureClear(key.data(), key.size());
+    if (!generated_key.empty()) SecureClear(generated_key.data(), generated_key.size());
     if (error) *error = "Native Core Keychain key did not match the saved key.";
     return false;
   }
   // For a concurrent add, the Keychain item is already the stable profile key.
   // This profile is still empty, so adopting it cannot rotate existing data.
   *key_base64 = Base64(key);
-  std::fill(key.begin(), key.end(), 0);
-  std::fill(generated_key.begin(), generated_key.end(), 0);
+  if (!key.empty()) SecureClear(key.data(), key.size());
+  if (!generated_key.empty()) SecureClear(generated_key.data(), generated_key.size());
   return true;
 }
 
 bool NativeCoreProfileKeyStore::GetOrCreateDisposableTestKey(
-    const std::string& profile_root,
-    const std::string& bundle_identifier,
-    const std::string& bundle_path,
-    std::string* key_base64,
-    std::string* error) {
+    const std::string& profile_root, const std::string& bundle_identifier,
+    const std::string& bundle_path, std::string* key_base64, std::string* error) {
+  return GetDisposableTestKey(profile_root, bundle_identifier, bundle_path, true, key_base64, error);
+}
+
+bool NativeCoreProfileKeyStore::GetExistingDisposableTestKey(
+    const std::string& profile_root, const std::string& bundle_identifier,
+    const std::string& bundle_path, std::string* key_base64, std::string* error) {
+  return GetDisposableTestKey(profile_root, bundle_identifier, bundle_path, false, key_base64, error);
+}
+
+bool NativeCoreProfileKeyStore::GetDisposableTestKey(
+    const std::string& profile_root, const std::string& bundle_identifier,
+    const std::string& bundle_path, bool allow_create,
+    std::string* key_base64, std::string* error) {
+  if (key_base64) { SecureClear(key_base64->data(), key_base64->size()); key_base64->clear(); }
   if (!key_base64 || !ValidDisposableTestIdentity(bundle_identifier, bundle_path)) {
     if (error) *error = "Disposable Native Core test keys require a development app identity.";
     return false;
@@ -473,10 +505,10 @@ bool NativeCoreProfileKeyStore::GetOrCreateDisposableTestKey(
   std::vector<unsigned char> key;
   if (!ReadOrCreateDisposableTestKey(
           canonical + "/.kestrel-native-test-core-key-v1", core_root_exists,
-          &key, error)) {
+          allow_create, &key, error)) {
     return false;
   }
   *key_base64 = Base64(key);
-  std::fill(key.begin(), key.end(), 0);
+  if (!key.empty()) SecureClear(key.data(), key.size());
   return true;
 }
