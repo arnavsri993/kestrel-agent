@@ -2558,6 +2558,26 @@ try {
 		`.browser-tab[data-tab-id="${detachableTabId}"]`,
 	);
 	await detachableTab.waitFor();
+	// Native previews intentionally refuse background owners. CDP pointer moves
+	// do not establish macOS application focus, so make the foreground gesture
+	// precondition explicit before asserting that the preview opens.
+	const previewFocus = await application.evaluate(({ app, BrowserWindow }, url) => {
+		const owner = BrowserWindow.getAllWindows().find(candidate => candidate.webContents.getURL() === url);
+		if (!owner) throw new Error("The tab-preview owner is missing.");
+		const wasFocused = owner.isFocused();
+		app.focus({ steal: true });
+		owner.focus();
+		return { wasFocused, visible: owner.isVisible(), minimized: owner.isMinimized() };
+	}, page.url());
+	const focusDeadline = Date.now() + 5_000;
+	let ownerFocused = false;
+	while (Date.now() < focusDeadline && !ownerFocused) {
+		ownerFocused = await application.evaluate(({ BrowserWindow }, url) =>
+			BrowserWindow.getAllWindows().some(candidate => candidate.webContents.getURL() === url && candidate.isFocused()), page.url());
+		if (!ownerFocused) await page.waitForTimeout(75);
+	}
+	console.log("Tab-preview foreground precondition:", previewFocus);
+	assert(ownerFocused, "Tab hover preview requires its foreground owner");
 	await detachableTab.hover();
 	// Real gestures often start after the hover preview opens. That native
 	// popup must not intercept the pointer on its way out of the tab rail.

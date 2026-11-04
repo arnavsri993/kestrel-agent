@@ -2819,3 +2819,17 @@ Store upgrade, production signing/notarization and canonical cutover remain
 release work. Whole Chromium-profile backup is a separate unfinished feature;
 it is not an additional named retirement gate. No real Messages database,
 credentials, microphone or desktop-input permission was accessed for this batch.
+
+The first current-source aggregate run on `c3910ac7` subsequently failed at
+`test-desktop-browser.mjs`'s inactive-tab hover preview assertion. Its receipt is
+`.tmp/native-login-code-aggregate/receipt.json`; the candidate hash stayed
+unchanged and all eight tracked PNGs were restored byte for byte. A focused
+retry reproduced the local failure, while the corresponding CI step passed.
+The fixture now explicitly focuses its owned application/window and waits for
+the foreground condition that native previews require. The immediate focus
+check was itself too early for macOS; the bounded focus wait passed the entire
+browser suite, including the unchanged preview, tear-off and restart checks.
+The production preview's background-owner refusal and timeout assertions are
+unchanged. This diagnoses a test precondition; it does not establish the exact
+cause of every earlier hover failure. A fresh aggregate run is required for the
+revised fixture.
