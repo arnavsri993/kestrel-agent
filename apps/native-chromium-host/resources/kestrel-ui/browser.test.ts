@@ -26,6 +26,8 @@ function makeChrome() {
 	let failMoveAfter = Infinity;
 	let afterMove: (() => void) | undefined;
 	let failBookmarkStorage = false;
+	let failCreateAfter = Infinity;
+	let failBookmarkUpdate = false;
 	const allBookmarks = (): any[] => { const walk = (nodes: any[]): any[] => nodes.flatMap(node => [node, ...walk(node.children ?? [])]); return walk(bookmarks); };
 	const findBookmark = (id: string) => { const node = allBookmarks().find(item => item.id === id); if (!node) throw new Error("missing"); return node; };
 	const downloads = [{ id: 5, url: "https://example.com/file.zip", filename: "/Users/test/Downloads/file.zip", state: "in_progress", bytesReceived: 4, totalBytes: 10, startTime: "2026-01-02T00:00:00Z" }];
@@ -88,8 +90,8 @@ function makeChrome() {
 			getTree: invoke(() => [{ id: "0", children: bookmarks }]),
 			get: invoke((id: string) => [{ ...findBookmark(id) }]),
 			search: invoke((query: { url: string }) => allBookmarks().filter(item => item.url === query.url)),
-			create: vi.fn(invoke((item: Record<string, any>) => { const parent = findBookmark(item.parentId ?? "1"); const entry = { ...item, id: String(bookmarkId++), parentId: parent.id, dateAdded: Date.now(), ...(!item.url ? { children: [] } : {}) }; parent.children.push(entry); return entry; })),
-			update: invoke((id: string, value: any) => Object.assign(findBookmark(id), value)),
+			create: vi.fn(invoke((item: Record<string, any>) => { if (failCreateAfter-- <= 0) throw new Error("fixture failure"); const parent = findBookmark(item.parentId ?? "1"); const entry = { ...item, id: String(bookmarkId++), parentId: parent.id, dateAdded: Date.now(), ...(!item.url ? { children: [] } : {}) }; parent.children.push(entry); return entry; })),
+			update: invoke((id: string, value: any) => { if (failBookmarkUpdate) throw new Error("fixture failure"); return Object.assign(findBookmark(id), value); }),
 			move: invoke((id: string, value: any) => { if (failBookmarkMove || failMoveAfter-- <= 0) throw new Error("fixture failure"); const item = findBookmark(id), parent = findBookmark(item.parentId), target = findBookmark(value.parentId); parent.children = parent.children.filter((child: any) => child.id !== id); item.parentId = target.id; target.children.push(item); afterMove?.(); return item; }),
 			remove: invoke((id: string) => { const item = findBookmark(id); if (item.children?.length) throw new Error("nonempty"); const parent = findBookmark(item.parentId); parent.children = parent.children.filter((child: any) => child.id !== id); }),
 			onChanged: event("bookmark-changed"), onCreated: event("bookmark-created"), onRemoved: event("bookmark-removed"), onMoved: event("bookmark-moved"),
@@ -98,8 +100,199 @@ function makeChrome() {
 		downloads: { search: invoke(() => downloads), cancel: invoke(() => undefined), onChanged: event("download-changed") },
 		management: { getAll: invoke(() => [{ id: "b".repeat(32), type: "extension", name: "Fixture", version: "1.0", enabled: true, installType: "normal" }]) },
 	};
-	return { chrome, tabs, storage, session, bookmarks, handlers, failMove: () => { failBookmarkMove = true; }, failStorage: () => { failBookmarkStorage = true; }, failAfterMoves: (count: number) => { failMoveAfter = count; }, afterMove: (callback: () => void) => { afterMove = callback; } };
+	return { chrome, tabs, storage, session, bookmarks, handlers, failMove: () => { failBookmarkMove = true; }, failStorage: () => { failBookmarkStorage = true; }, failAfterCreates: (count: number) => { failCreateAfter = count; }, failUpdate: () => { failBookmarkUpdate = true; }, failAfterMoves: (count: number) => { failMoveAfter = count; }, afterMove: (callback: () => void) => { afterMove = callback; } };
 }
+
+describe("native bookmark-only transfer", () => {
+	const data = () => ({ format: "kestrel-bookmarks", version: 1,
+		folders: [{ id: "f1", parentId: "f0", name: "Nested" }, { id: "f0", name: "Work" }],
+		bookmarks: [{ url: "https://new.example/", title: "Friendly", folderId: "f1", displayMode: "icon" }] });
+	const setup = () => { const fixture = makeChrome(); return { fixture, adapter: createBrowserAdapter(fixture.chrome, { uiUrl }) }; };
+	async function preview(adapter: any, value: any = data(), extra: any = {}) {
+		return adapter.request({ type: "browser-plan-bookmark-import", data: value, ...extra }, sender);
+	}
+	async function apply(adapter: any, planned: any) {
+		return adapter.request({ type: "browser-apply-bookmark-import", planId: planned.bookmarkImportPlan.planId }, sender);
+	}
+	it("previews without native mutation, preserves hierarchy, and exports friendly labels without native metadata", async () => {
+		const { fixture, adapter } = setup();
+		const planned = await preview(adapter);
+		expect(planned).toMatchObject({ ok: true, bookmarkImportPlan: { summary: { bookmarksToAdd: 1, duplicateBookmarks: 0, foldersToAdd: 2 } } });
+		expect(fixture.chrome.bookmarks.create).not.toHaveBeenCalled();
+		const result = await apply(adapter, planned);
+		expect(result.bookmarkImportResult).toEqual({ bookmarksAdded: 1, duplicateBookmarks: 0, foldersAdded: 2, complete: true });
+		const work = fixture.bookmarks[0].children.find((node: any) => node.title === "Work");
+		expect(work.children[0]).toMatchObject({ title: "Nested", children: [{ title: "", url: "https://new.example/" }] });
+		expect(result.browserState.bookmarks.find((item: any) => item.url === "https://new.example/")).toMatchObject({ title: "Friendly", displayMode: "icon" });
+		const exported = await adapter.request({ type: "browser-export-bookmarks" }, sender);
+		expect(exported.bookmarkTransfer).toMatchObject({ format: "kestrel-bookmarks", version: 1, folders: [
+			{ id: "f0", name: "Work" }, { id: "f1", parentId: "f0", name: "Nested" }], bookmarks: [
+			{ title: "Example", url: "https://example.com/", displayMode: "title" },
+			{ title: "Friendly", url: "https://new.example/", folderId: "f1", displayMode: "icon" }] });
+		const serialized = JSON.stringify(exported.bookmarkTransfer);
+		for (const forbidden of ["createdAt", "dateAdded", "parentId\":\"1", "bookmark-folder-", "settings", "history", "permissions"]) expect(serialized).not.toContain(forbidden);
+		expect((await apply(adapter, planned)).ok).toBe(false);
+	});
+	it("recovers full-mode friendly titles and rejects forged stored presentation on export", async () => {
+		const { fixture, adapter } = setup(); fixture.tabs[0].url = "https://example.com/";
+		await adapter.request({ type: "browser-save-bookmark", title: "Personal label", displayMode: "full" }, sender);
+		expect(fixture.bookmarks[0].children[0].title).toBe("https://example.com/");
+		expect((await adapter.request({ type: "browser-export-bookmarks" }, sender)).bookmarkTransfer.bookmarks[0]).toMatchObject({ title: "Personal label", displayMode: "full" });
+		fixture.bookmarks[0].children[0].title = "External label";
+		expect((await adapter.request({ type: "browser-export-bookmarks" }, sender)).bookmarkTransfer.bookmarks[0]).toMatchObject({ title: "External label", displayMode: "title" });
+	});
+	it("deduplicates normalized URLs across native and incoming records without overwriting labels or merging folders", async () => {
+		const { fixture, adapter } = setup();
+		fixture.bookmarks[0].children.push({ id: "same-name", parentId: "1", title: "Work", children: [] });
+		const value: any = data();
+		value.bookmarks.unshift({ url: "HTTPS://EXAMPLE.COM:443", title: "Overwrite attempt", displayMode: "icon" });
+		value.bookmarks.push({ ...value.bookmarks[1], url: "https://NEW.example:443/", title: "Duplicate" });
+		const planned = await preview(adapter, value);
+		expect(planned.bookmarkImportPlan.summary).toEqual({ bookmarksToAdd: 1, duplicateBookmarks: 2, foldersToAdd: 2 });
+		const result = await apply(adapter, planned);
+		expect(result.bookmarkImportResult).toMatchObject({ bookmarksAdded: 1, duplicateBookmarks: 2, foldersAdded: 2, complete: true });
+		expect(fixture.bookmarks[0].children.find((node: any) => node.id === "2").title).toBe("Example");
+		expect(fixture.bookmarks[0].children.filter((node: any) => node.title === "Work")).toHaveLength(2);
+		expect(fixture.bookmarks[0].children.find((node: any) => node.id === "same-name").children).toEqual([]);
+	});
+	it("creates folders only beneath the selected writable destination", async () => {
+		const { fixture, adapter } = setup();
+		const folder = await adapter.request({ type: "browser-create-bookmark-folder", name: "Destination" }, sender);
+		const result = await apply(adapter, await preview(adapter, data(), { destinationFolderId: folder.bookmarkFolderId }));
+		expect(result.bookmarkImportResult.complete).toBe(true);
+		expect(fixture.bookmarks[0].children.find((node: any) => node.title === "Destination").children[0].title).toBe("Work");
+	});
+	it("refuses a destination that would make the resulting hierarchy exceed eight levels", async () => {
+		const { fixture, adapter } = setup();
+		const destination = await adapter.request({ type: "browser-create-bookmark-folder", name: "Destination" }, sender);
+		const value: any = data(); value.bookmarks = [];
+		value.folders = Array.from({ length: 8 }, (_, i) => ({ id: `f${i}`, name: `Level ${i}`, ...(i ? { parentId: `f${i - 1}` } : {}) }));
+		fixture.chrome.bookmarks.create.mockClear();
+		expect(await preview(adapter, value, { destinationFolderId: destination.bookmarkFolderId })).toMatchObject({ ok: false, error: expect.stringContaining("eight folder levels") });
+		expect(fixture.chrome.bookmarks.create).not.toHaveBeenCalled();
+	});
+	it.each(["native", "presentation", "destination"])("refuses stale %s snapshots without mutations and consumes the plan", async kind => {
+		const { fixture, adapter } = setup();
+		const folder = await adapter.request({ type: "browser-create-bookmark-folder", name: "Destination" }, sender);
+		const planned = await preview(adapter, data(), { destinationFolderId: folder.bookmarkFolderId });
+		fixture.chrome.bookmarks.create.mockClear();
+		if (kind === "native") fixture.bookmarks[0].children[0].title = "External edit";
+		if (kind === "presentation") fixture.storage["kestrel.native.browser.bookmarkModes.v1"] = { changed: { title: "External" } };
+		if (kind === "destination") fixture.bookmarks[0].children.find((node: any) => node.title === "Destination").unmodifiable = "managed";
+		expect((await apply(adapter, planned)).ok).toBe(false);
+		expect(fixture.chrome.bookmarks.create).not.toHaveBeenCalled();
+		expect((await apply(adapter, planned)).ok).toBe(false);
+	});
+	it("invalidates plans on new preview, discard, forged apply, expiry, and worker restart", async () => {
+		const { fixture, adapter } = setup();
+		const first = await preview(adapter), second = await preview(adapter);
+		expect((await apply(adapter, first)).ok).toBe(false);
+		expect((await apply(adapter, second)).ok).toBe(false); // Forged/stale apply consumed it.
+		const discarded = await preview(adapter);
+		expect(await adapter.request({ type: "browser-discard-bookmark-import", planId: discarded.bookmarkImportPlan.planId }, sender)).toEqual({ ok: true });
+		expect((await apply(adapter, discarded)).ok).toBe(false);
+		const expired = await preview(adapter);
+		const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(expired.bookmarkImportPlan.expiresAt));
+		try { expect(await apply(adapter, expired)).toMatchObject({ ok: false, error: expect.stringContaining("expired") }); } finally { clock.mockRestore(); }
+		const restarted = await preview(adapter);
+		expect((await apply(createBrowserAdapter(fixture.chrome, { uiUrl }), restarted)).ok).toBe(false);
+		expect(fixture.chrome.bookmarks.create).not.toHaveBeenCalled();
+	});
+	it.each(["bookmarks", "folders"])("checks combined %s capacity before creating anything", async kind => {
+		const { fixture, adapter } = setup();
+		if (kind === "bookmarks") for (let i = 0; i < 1999; i++) fixture.bookmarks[0].children.push({ id: `b${i}`, parentId: "1", url: `https://capacity.example/${i}`, title: "Existing" });
+		else for (let i = 0; i < 99; i++) fixture.bookmarks[0].children.push({ id: `d${i}`, parentId: "1", title: "Existing", children: [] });
+		expect(await preview(adapter)).toMatchObject({ ok: false, error: expect.stringContaining("exceed") });
+		expect(fixture.chrome.bookmarks.create).not.toHaveBeenCalled();
+	});
+	it.each(["storage", "label"])("counts a native bookmark as added when its presentation %s fails", async kind => {
+		const { fixture, adapter } = setup();
+		const value: any = data(); value.folders = []; delete value.bookmarks[0].folderId;
+		value.bookmarks.push({ url: "https://never-created.example/", title: "Never created", displayMode: "title" });
+		const planned = await preview(adapter, value);
+		if (kind === "storage") fixture.failStorage(); else fixture.failUpdate();
+		const result = await apply(adapter, planned);
+		expect(result).toMatchObject({ ok: true, bookmarkImportResult: { bookmarksAdded: 1, foldersAdded: 0, duplicateBookmarks: 0, complete: false } });
+		expect(fixture.bookmarks[0].children.find((node: any) => node.url === "https://new.example/").title).toBe("Friendly");
+		expect(fixture.bookmarks[0].children.some((node: any) => node.url === "https://never-created.example/")).toBe(false);
+		expect((await apply(adapter, planned)).ok).toBe(false);
+	});
+	it("stops at a folder creation failure, preserves created folders, and performs no retry/removal", async () => {
+		const { fixture, adapter } = setup(), planned = await preview(adapter);
+		fixture.failAfterCreates(1);
+		expect(await apply(adapter, planned)).toMatchObject({ ok: true, bookmarkImportResult: { bookmarksAdded: 0, foldersAdded: 1, complete: false } });
+		expect(fixture.bookmarks[0].children.find((node: any) => node.title === "Work").children).toEqual([]);
+		expect(fixture.chrome.bookmarks.create).toHaveBeenCalledTimes(2);
+	});
+	it("stops with accurate partial counts when an external edit appears during import", async () => {
+		const { fixture, adapter } = setup(), planned = await preview(adapter);
+		const create = fixture.chrome.bookmarks.create;
+		fixture.chrome.bookmarks.create = vi.fn((...args: any[]) => {
+			const result = create(...args);
+			if (create.mock.calls.length === 1) fixture.bookmarks[0].children[0].title = "External edit";
+			return result;
+		});
+		expect(await apply(adapter, planned)).toMatchObject({ ok: true, bookmarkImportResult: { bookmarksAdded: 0, foldersAdded: 1, complete: false } });
+		expect(fixture.bookmarks[0].children[0].title).toBe("External edit");
+		expect(fixture.chrome.bookmarks.create).toHaveBeenCalledTimes(1);
+	});
+	it("returns accurate counts even if the fresh post-import state becomes unavailable", async () => {
+		const { fixture, adapter } = setup(), planned = await preview(adapter);
+		const create = fixture.chrome.bookmarks.create;
+		fixture.chrome.bookmarks.create = vi.fn((...args: any[]) => {
+			const result = create(...args);
+			if (create.mock.calls.length === 3) fixture.chrome.bookmarks.getTree = () => { throw Error("unavailable"); };
+			return result;
+		});
+		const result = await apply(adapter, planned);
+		expect(result).toMatchObject({ ok: true, bookmarkImportResult: { bookmarksAdded: 1, foldersAdded: 2, complete: false } });
+		expect(result.browserState).toBeUndefined();
+	});
+	it("copies the validated preview payload rather than retaining mutable caller data", async () => {
+		const { adapter } = setup(), value = data(), planned = await preview(adapter, value);
+		value.bookmarks[0].title = "Altered after preview";
+		const result = await apply(adapter, planned);
+		expect(result.browserState.bookmarks.some((item: any) => item.title === "Friendly")).toBe(true);
+	});
+	it("serializes CRUD with apply so an intervening edit invalidates the preview", async () => {
+		const { fixture, adapter } = setup(), planned = await preview(adapter);
+		const changed = adapter.request({ type: "browser-create-bookmark-folder", name: "Concurrent" }, sender);
+		const applied = apply(adapter, planned);
+		expect((await changed).ok).toBe(true); expect((await applied).ok).toBe(false);
+		expect(fixture.chrome.bookmarks.create).toHaveBeenCalledTimes(1);
+	});
+	it("rejects malformed data and untrusted callers for every transfer request", async () => {
+		const { fixture, adapter } = setup();
+		const value: any = data(); value.folders[0].parentId = "f1";
+		expect((await preview(adapter, value)).ok).toBe(false);
+		for (const input of [{ type: "browser-export-bookmarks" }, { type: "browser-plan-bookmark-import", data: data() },
+			{ type: "browser-apply-bookmark-import", planId: crypto.randomUUID() }, { type: "browser-discard-bookmark-import", planId: crypto.randomUUID() }]) {
+			expect((await adapter.request(input, { ...sender, id: "untrusted" })).ok).toBe(false);
+		}
+		expect(fixture.chrome.bookmarks.create).not.toHaveBeenCalled();
+	});
+	it("excludes managed branches and unsafe/non-HTTP URLs from the bookmark-only export", async () => {
+		const { fixture, adapter } = setup();
+		fixture.bookmarks[0].children.push({ id: "managed", parentId: "1", title: "Policy", unmodifiable: "managed", children: [{ id: "child", parentId: "managed", title: "Private", url: "https://policy.example/" }] },
+			{ id: "file", parentId: "1", title: "Local", url: "file:///private/file" }, { id: "credential", parentId: "1", title: "Secret", url: "https://name:secret@example.com/" });
+		const exported = await adapter.request({ type: "browser-export-bookmarks" }, sender);
+		expect(exported.bookmarkTransfer.bookmarks).toHaveLength(1); expect(exported.bookmarkTransfer.folders).toEqual([]);
+		expect(exported.bookmarkExportExcluded).toEqual({ bookmarks: 3, folders: 1 });
+	});
+	it.each(["overlong title", "untrimmed title", "control title", "overlong folder"])("fails the whole export rather than silently changing an %s", async kind => {
+		const { fixture, adapter } = setup();
+		if (kind === "overlong title") fixture.bookmarks[0].children[0].title = "a".repeat(501);
+		if (kind === "untrimmed title") fixture.bookmarks[0].children[0].title = " Example ";
+		if (kind === "control title") fixture.bookmarks[0].children[0].title = "Example\nlabel";
+		if (kind === "overlong folder") fixture.bookmarks[0].children.push({ id: "folder", parentId: "1", title: "a".repeat(81), children: [] });
+		expect(await adapter.request({ type: "browser-export-bookmarks" }, sender)).toMatchObject({ ok: false, error: expect.stringContaining("cannot be preserved") });
+	});
+	it("fails a deep native export with a precise representation limit", async () => {
+		const { fixture, adapter } = setup(); let parent = fixture.bookmarks[0];
+		for (let i = 0; i < 9; i++) { const node: any = { id: `depth${i}`, parentId: parent.id, title: "Level", children: [] }; parent.children.push(node); parent = node; }
+		expect(await adapter.request({ type: "browser-export-bookmarks" }, sender)).toMatchObject({ ok: false, error: expect.stringContaining("eight folder levels") });
+	});
+});
 
 describe("native first-party browser adapter", () => {
 	it("returns shared-schema state with stable tab IDs, internal routes, and native collections", async () => {

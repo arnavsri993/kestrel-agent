@@ -4121,6 +4121,48 @@ export type UserBrowserBookmarkFolder = z.infer<
 	typeof UserBrowserBookmarkFolderSchema
 >;
 
+const NativeBookmarkTransferIdSchema = z.string().regex(/^f(?:0|[1-9]\d{0,8})$/);
+const nativeBookmarkTransferText = (max: number) => z.string().min(1).max(max)
+	.refine(value => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value), "Use trimmed text without control characters.");
+export const NativeBookmarkTransferSchema = z.object({
+	format: z.literal("kestrel-bookmarks"),
+	version: z.literal(1),
+	folders: z.array(z.object({
+		id: NativeBookmarkTransferIdSchema,
+		parentId: NativeBookmarkTransferIdSchema.optional(),
+		name: nativeBookmarkTransferText(80),
+	}).strict()).max(100),
+	bookmarks: z.array(z.object({
+		url: z.string().min(1).max(8_192).refine(value => {
+			if (value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value) || !/^https?:\/\//i.test(value)) return false;
+			try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password; }
+			catch { return false; }
+		}, "Use an HTTP(S) bookmark without credentials."),
+		title: nativeBookmarkTransferText(500),
+		folderId: NativeBookmarkTransferIdSchema.optional(),
+		displayMode: UserBrowserBookmarkDisplayModeSchema,
+	}).strict()).max(2_000),
+}).strict().superRefine((value, context) => {
+	const fail = (message: string) => context.addIssue({ code: z.ZodIssueCode.custom, message });
+	if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 512 * 1024) fail("Bookmark transfer exceeds 512 KiB.");
+	const folders = new Map(value.folders.map(folder => [folder.id, folder]));
+	if (folders.size !== value.folders.length) fail("Bookmark folder IDs must be unique.");
+	for (const folder of value.folders) {
+		const seen = new Set<string>();
+		let current: typeof folder | undefined = folder;
+		while (current) {
+			if (seen.has(current.id) || seen.size >= 8) { fail("Bookmark folders must be acyclic and at most eight levels deep."); break; }
+			seen.add(current.id);
+			if (current.parentId && !folders.has(current.parentId)) { fail("Bookmark folder parent is missing."); break; }
+			current = current.parentId ? folders.get(current.parentId) : undefined;
+		}
+	}
+	for (const bookmark of value.bookmarks) if (bookmark.folderId && !folders.has(bookmark.folderId)) fail("Bookmark folder is missing.");
+});
+export type NativeBookmarkTransfer = z.infer<typeof NativeBookmarkTransferSchema>;
+export type NativeBookmarkImportSummary = { bookmarksToAdd: number; duplicateBookmarks: number; foldersToAdd: number };
+export type NativeBookmarkImportResult = { bookmarksAdded: number; duplicateBookmarks: number; foldersAdded: number; complete: boolean; error?: string };
+
 export const UserBrowserSitePermissionSchema = z.object({
 	origin: z.string().min(1).max(8_192),
 	permission: z.string().min(1).max(80),
@@ -4408,6 +4450,44 @@ export const BrowserDataTransferSchema = z.object({
 	settings: UserBrowserSettingsSchema,
 });
 export type BrowserDataTransfer = z.infer<typeof BrowserDataTransferSchema>;
+
+export type NativeBookmarkTransferFile = {
+	data: NativeBookmarkTransfer;
+	source: "native" | "browser-data";
+	excluded: { history: number; sitePermissions: number; settings: boolean; bookmarkDates: boolean };
+};
+
+/** Explicit bookmark-only extraction from a portable file; never imports old
+ * timestamps, browser identities, history, settings, or site permissions. */
+export function parseNativeBookmarkTransferFile(value: unknown): NativeBookmarkTransferFile {
+	if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 512 * 1024) throw new Error("Bookmark file exceeds 512 KiB.");
+	if (value && typeof value === "object" && "format" in value && value.format === "kestrel-bookmarks") {
+		return { data: NativeBookmarkTransferSchema.parse(value), source: "native",
+			excluded: { history: 0, sitePermissions: 0, settings: false, bookmarkDates: false } };
+	}
+	const legacy = BrowserDataTransferSchema.strict().parse(value);
+	// Existing settings contain nested records and defaults. Reject stripped
+	// unknown fields at every level while allowing legitimate schema defaults.
+	function rejectUnknown(raw: unknown, parsed: unknown): void {
+		if (!raw || typeof raw !== "object") return;
+		if (!parsed || typeof parsed !== "object") throw new Error("Unknown browser-data fields.");
+		for (const key of Object.keys(raw)) {
+			if (!Object.hasOwn(parsed, key)) throw new Error("Unknown browser-data fields.");
+			rejectUnknown((raw as Record<string, unknown>)[key], (parsed as Record<string, unknown>)[key]);
+		}
+	}
+	rejectUnknown(value, legacy);
+	const folders = new Map(legacy.bookmarkFolders.map((folder, index) => [folder.id, `f${index}`]));
+	if (folders.size !== legacy.bookmarkFolders.length) throw new Error("Duplicate legacy bookmark folder identities.");
+	const bookmarks = legacy.bookmarks.map(bookmark => {
+		const folderId = bookmark.folderId ? folders.get(bookmark.folderId) : undefined;
+		if (bookmark.folderId && !folderId) throw new Error("Legacy bookmark folder is missing.");
+		return { url: bookmark.url, title: bookmark.title, displayMode: bookmark.displayMode ?? "title", ...(folderId ? { folderId } : {}) };
+	});
+	return { data: NativeBookmarkTransferSchema.parse({ format: "kestrel-bookmarks", version: 1,
+		folders: legacy.bookmarkFolders.map(folder => ({ id: folders.get(folder.id), name: folder.name })), bookmarks }),
+		source: "browser-data", excluded: { history: legacy.history.length, sitePermissions: legacy.sitePermissions.length, settings: true, bookmarkDates: true } };
+}
 
 export const InstalledExtensionSchema = z.object({
 	id: z.string().min(1).max(100),
@@ -4729,6 +4809,11 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("browser-reset-download-directory") }),
 	z.object({ type: z.literal("browser-export-data") }),
 	z.object({ type: z.literal("browser-import-data") }),
+	z.object({ type: z.literal("browser-export-bookmarks") }).strict(),
+	z.object({ type: z.literal("browser-plan-bookmark-import"), data: NativeBookmarkTransferSchema,
+		destinationFolderId: UserBrowserBookmarkFolderIdSchema.optional() }).strict(),
+	z.object({ type: z.literal("browser-apply-bookmark-import"), planId: z.string().uuid() }).strict(),
+	z.object({ type: z.literal("browser-discard-bookmark-import"), planId: z.string().uuid() }).strict(),
 	z.object({ type: z.literal("browser-clear-history") }),
 	z.object({
 		type: z.literal("browser-clear-data"),
@@ -5294,7 +5379,11 @@ export type RendererResponse =
 			browserConnectionMode?: "whatsapp";
 			cancelled?: boolean;
 			bookmarkFolderId?: UserBrowserBookmarkFolderId;
+			bookmarkImportResult?: NativeBookmarkImportResult;
 	  }
+	| { ok: true; bookmarkTransfer: NativeBookmarkTransfer; bookmarkExportExcluded: { bookmarks: number; folders: number } }
+	| { ok: true; bookmarkImportPlan: { planId: string; summary: NativeBookmarkImportSummary; expiresAt: string } }
+	| { ok: true; bookmarkImportResult: NativeBookmarkImportResult; browserState?: UserBrowserState }
 	| { ok: true; browserDataPath?: string; cancelled?: boolean }
 	| {
 			ok: true;

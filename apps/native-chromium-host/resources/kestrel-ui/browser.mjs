@@ -3,6 +3,7 @@ import { NativeLoginCodeBrowserRequestSchema } from "../../../../packages/shared
 import { loginCodeField } from "./login-code-fields.mjs";
 import { capturePageContext } from "./page-context.mjs";
 import { createNativeAutomation } from "./native-automation.mjs";
+import { createNativeBookmarkTransfer } from "./bookmark-transfer.mjs";
 import { isNativeBrowserSettingsUrl } from "../../../../packages/shared-types/src/native-browser-settings.ts";
 
 const TAB_IDS_KEY = "kestrel.native.browser.tabIds.v1";
@@ -10,6 +11,7 @@ const SETTINGS_KEY = "kestrel.native.browser.settings.v1";
 const BOOKMARK_IDS_KEY = "kestrel.native.browser.bookmarkIds.v1";
 const BOOKMARK_MODES_KEY = "kestrel.native.browser.bookmarkModes.v1";
 const BOOKMARK_REQUESTS = new Set(["browser-toggle-bookmark", "browser-save-bookmark", "browser-update-bookmark", "browser-remove-bookmark", "browser-create-bookmark-folder", "browser-rename-bookmark-folder", "browser-remove-bookmark-folder"]);
+const BOOKMARK_TRANSFER_REQUESTS = new Set(["browser-export-bookmarks", "browser-plan-bookmark-import", "browser-apply-bookmark-import", "browser-discard-bookmark-import"]);
 const INSTALL_DATES_KEY = "kestrel.native.browser.extensionInstallDates.v1";
 class BookmarkLimitError extends Error {}
 
@@ -38,7 +40,7 @@ const SUPPORTED = new Set([
 	"browser-get-state", "browser-create-tab", "browser-close-tab", "browser-select-tab",
 	"browser-navigate", "browser-back", "browser-forward", "browser-reload",
 	"browser-pin-tab", "browser-mute-tab", "browser-duplicate-tab", "browser-move-tab",
-	...BOOKMARK_REQUESTS, "browser-clear-history",
+	...BOOKMARK_REQUESTS, ...BOOKMARK_TRANSFER_REQUESTS, "browser-clear-history",
 	"browser-list-extensions", "browser-cancel-download",
 	"browser-update-settings",
 	"browser-get-context",
@@ -99,6 +101,8 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	let idMapQueue = Promise.resolve();
 	let bookmarkQueue = Promise.resolve();
 	let bookmarkReadQueue = Promise.resolve();
+	const bookmarkTransfer = createNativeBookmarkTransfer({ chromeApi, invoke, stored, persist, readBookmarks,
+		presentation: bookmarkPresentation, savePresentation: saveBookmarkPresentation, response, emitState: scheduleEmit });
 	let focusedWindowId;
 	const loginCodeCaptures = new Map();
 	const loginCodeRevisions = new Map();
@@ -345,6 +349,13 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		if (typeof value !== "string" || value.length > max || /[\u0000-\u001f\u007f]/.test(value)) throw new Error();
 		return value.trim() || fallback;
 	}
+	async function saveBookmarkPresentation(item, mode, title, modes) {
+		if (!Number.isFinite(item.dateAdded) || !title || title.length > 500) throw new Error();
+		modes[item.id] = { mode, title, dateAdded: item.dateAdded };
+		await persist(BOOKMARK_MODES_KEY, modes);
+		const label = mode === "icon" ? "" : mode === "full" ? item.url : title;
+		await invoke(chromeApi.bookmarks, "update", item.id, { title: label });
+	}
 	async function changeBookmark(input) {
 		const tree = await invoke(chromeApi.bookmarks, "getTree");
 		const root = tree?.[0];
@@ -377,13 +388,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		if (!savedModes || typeof savedModes !== "object" || Array.isArray(savedModes) || Object.keys(savedModes).length > 4000) throw new Error();
 		const modes = { ...savedModes };
 		for (const id of Object.keys(modes)) if (!nodes.has(id)) delete modes[id];
-		const savePresentation = async (item, mode, title) => {
-			if (!Number.isFinite(item.dateAdded) || !title || title.length > 500) throw new Error();
-			modes[item.id] = { mode, title, dateAdded: item.dateAdded };
-			await persist(BOOKMARK_MODES_KEY, modes);
-			const label = mode === "icon" ? "" : mode === "full" ? item.url : title;
-			await invoke(chromeApi.bookmarks, "update", item.id, { title: label });
-		};
+		const savePresentation = (item, mode, title) => saveBookmarkPresentation(item, mode, title, modes);
 		if (input.type === "browser-create-bookmark-folder") {
 			const name = bookmarkText(input.name, 80); if (!name) throw new Error();
 			const folderCount = [...nodes.values()].filter(({ node, depth, locked }) => !locked && depth > 1 && !node.url && Array.isArray(node.children) && !node.folderType).length;
@@ -523,6 +528,13 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			if (input.type === "browser-clear-history") {
 				await invoke(chromeApi.history, "deleteAll");
 				return response();
+			}
+			if (BOOKMARK_TRANSFER_REQUESTS.has(input.type)) {
+				const parsed = RendererRequestSchema.safeParse(input);
+				if (!parsed.success) return { ok: false, error: "Invalid bookmark transfer. Use a Kestrel bookmark file up to 512 KiB." };
+				const work = bookmarkQueue.then(() => bookmarkTransfer.request(parsed.data));
+				bookmarkQueue = work.catch(() => undefined);
+				try { return await work; } catch (error) { return { ok: false, error: error instanceof Error && !error.name.startsWith("Zod") ? error.message : "Bookmark transfer could not be completed." }; }
 			}
 			if (BOOKMARK_REQUESTS.has(input.type)) {
 				const parsed = RendererRequestSchema.safeParse(input);

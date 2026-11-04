@@ -25,6 +25,7 @@ import { PaymentSettings } from "./PaymentSettings";
 import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
 import { browserExtensionOperationErrorMessage } from "../../../browser-extension-error";
 import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
+import { NativeBookmarkTransfer } from "./NativeBookmarkTransfer";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
   NEW_TAB_BACKGROUND_OPTIONS,
@@ -219,7 +220,7 @@ const NATIVE_SETTINGS_PANELS: Array<{
     { id: "setting-browser-hardware-acceleration", label: "System settings", url: "chrome://settings/system" },
   ] },
   { section: "browser-reset", title: "Reset and data", links: [
-    { id: "setting-browser-data-transfer", label: "Import browser data", url: "chrome://settings/importData" },
+    { id: "setting-browser-data-transfer", label: "Import from another browser", url: "chrome://settings/importData" },
     { id: "setting-browser-clear-history", label: "Clear browsing data", url: "chrome://settings/clearBrowserData" },
     { id: "setting-browser-clear-site-data", label: "Clear site data", url: "chrome://settings/clearBrowserData" },
     { id: "setting-browser-reset-settings", label: "Reset settings", url: "chrome://settings/reset" },
@@ -385,6 +386,7 @@ function NativeBrowserSettings({ browser, contextEnabled, onToggleContext, secti
       <section key={panel.section} className="settings-stack browser-settings-panel" data-settings-panel={panel.section}>
         <header className="settings-panel-header"><h2>{panel.title}</h2></header>
         <p>Open browser settings to view and change these preferences.</p>
+        {panel.section === "browser-reset" && <NativeBookmarkTransfer browser={browser} />}
         {panel.section === "browser-extensions" && <p><a href="https://chromewebstore.google.com/" onClick={(event) => { event.preventDefault(); void open("https://chromewebstore.google.com/"); }}>Browse Chrome Web Store</a></p>}
         {panel.section === "browser-privacy" && <div className="setting-row browser-setting-row" id="setting-browser-page-context">
           <div className="browser-setting-copy"><strong>Use current page context with agent</strong><p>Kestrel uses the page only when you ask.</p></div>
