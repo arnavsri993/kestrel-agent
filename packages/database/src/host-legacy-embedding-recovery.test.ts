@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, truncateSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createEncryptionKey } from '@kestrel/encryption';
-import { MemoryRecordSchema, TimelineEventSchema } from '@kestrel/shared-types';
+import { AgentIdentitySchema, MemoryRecordSchema, TimelineEventSchema } from '@kestrel/shared-types';
 import { describe, it, expect } from 'vitest';
 import { KestrelDatabase } from './index.js';
 import { EMBEDDING_LEGACY_MIGRATION_KEY, EMBEDDING_STATE_SECRET_KEY, EMBEDDING_STATE_OWNER_PREFIX, newEmbeddingStateSecret } from './memory-embedding-state.js';
@@ -100,6 +100,31 @@ describe('host-only legacy missing-lease recovery', () => {
    const snapshot = plan(f);
    mutate(f, db => db.setPrivateState('presence.core-instance-id', 'generated-instance'));
    expect(apply(f, snapshot)).toEqual({ cancelled: true });
+  } finally { f.cleanup(); }
+ });
+ it.each(['missing', 'deleted'] as const)('retains %s review when agent identity only refreshes updatedAt', which => {
+  const f = fixture(which !== 'missing'); try {
+   const identity = AgentIdentitySchema.parse({ id: 'agent-fixture', kind: 'main', sessionId: 'generated', name: 'Fixture', purpose: 'Generated', specialization: 'Fixture', memoryScope: 'private', status: 'active', createdAt: now, updatedAt: now });
+   mutate(f, db => { if (which === 'deleted') db.upsertMemory({ ...f.record, status: 'deleted' }); db.upsertAgentIdentity(identity); });
+   const snapshot = plan(f);
+   mutate(f, db => db.upsertAgentIdentity({ ...identity, updatedAt: later }));
+   expect(apply(f, snapshot)).toEqual({ cancelled: true });
+  } finally { f.cleanup(); }
+ });
+ it.each(['parent', 'privacy', 'status', 'name'] as const)('invalidates review when agent %s changes', field => {
+  const f = fixture(false); try {
+   const identity = AgentIdentitySchema.parse({ id: 'agent-fixture', kind: 'main', sessionId: 'generated', name: 'Fixture', purpose: 'Generated', specialization: 'Fixture', memoryScope: 'private', status: 'active', createdAt: now, updatedAt: now });
+   mutate(f, db => { db.upsertAgentIdentity({ ...identity, id: 'another-agent' }); db.upsertAgentIdentity(identity); }); const snapshot = plan(f);
+   const change = field === 'parent' ? { parentAgentId: 'another-agent' } : field === 'privacy' ? { memoryScope: 'project_shared' as const } : field === 'status' ? { status: 'archived' as const } : { name: 'Changed' };
+   mutate(f, db => db.upsertAgentIdentity({ ...identity, ...change, updatedAt: later }));
+   expect(() => apply(f, snapshot)).toThrow();
+  } finally { f.cleanup(); }
+ });
+ it('rejects inconsistent indexed identity fields', () => {
+  const f = fixture(false); try {
+   const identity = AgentIdentitySchema.parse({ id:'agent-fixture',kind:'main',name:'Fixture',purpose:'Generated',specialization:'Fixture',memoryScope:'private',status:'active',createdAt:now,updatedAt:now });
+   mutate(f, db => { db.upsertAgentIdentity({ ...identity, id:'other' }); db.upsertAgentIdentity(identity); db.db.prepare("UPDATE memory_agent_identities SET parent_agent_id='other' WHERE id=?").run(identity.id); });
+   expect(() => plan(f)).toThrow(/identity/);
   } finally { f.cleanup(); }
  });
  it('binds reserved authority semantics and ignores their randomized re-encryption', () => {

@@ -3454,8 +3454,25 @@ export class KestrelDatabase {
 			count += sizes.count; bytes += sizes.bytes;
 			if (!Number.isSafeInteger(count) || !Number.isSafeInteger(bytes) || count > 100_000 || bytes > 64_000_000) throw new Error("Host recovery authority limit exceeded.");
 			mac.update(table).update("\0");
-			for (const row of this.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).iterate())
-				mac.update(JSON.stringify(row)).update("\0");
+			if (table === "memory_agent_identities") {
+				// Startup refreshes updatedAt and re-encrypts these identities even
+				// when their authority has not changed. Authenticate each payload and
+				// indexed identity columns, then bind every semantic field except that
+				// bookkeeping timestamp. Include deleted rows as well.
+				const identities = this.db.prepare("SELECT * FROM memory_agent_identities ORDER BY id").all() as Array<MemorySubstrateRow & { parent_agent_id: string | null }>;
+				for (const row of identities) {
+					if (typeof row.payload_ciphertext !== "string" || row.payload_ciphertext.length > 4_000_000) throw new Error("Host recovery authority limit exceeded.");
+					const agent = AgentIdentitySchema.parse(this.decryptPayload(row));
+					if (agent.id !== row.id || agent.status !== row.status || agent.kind !== row.kind ||
+						(agent.sessionId ?? null) !== row.session_id || (agent.parentAgentId ?? null) !== row.parent_agent_id ||
+						agent.createdAt !== row.created_at || agent.updatedAt !== row.updated_at) throw new Error("Invalid host recovery identity.");
+					const { updatedAt: _bookkeeping, ...semantic } = agent;
+					mac.update(JSON.stringify(semantic)).update("\0");
+				}
+			} else {
+				for (const row of this.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).iterate())
+					mac.update(JSON.stringify(row)).update("\0");
+			}
 		}
 		// Only these keys participate in embedding authority. Bind decrypted
 		// semantics rather than IVs or timestamps; Core rewrites unrelated
