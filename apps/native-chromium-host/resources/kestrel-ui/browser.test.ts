@@ -300,6 +300,41 @@ describe("native first-party browser adapter", () => {
 		expect(ids["2"]).toBeUndefined(); expect(ids["folder:1"]).toBeDefined();
 		expect((fixture.storage["kestrel.native.browser.bookmarkModes.v1"] as Record<string, string>)["2"]).toBeUndefined();
 	});
+	it("serializes overlapping bookmark snapshots before pruning stable identities", async () => {
+		const fixture = makeChrome();
+		const getTree = vi.fn((callback: (value: unknown) => void) => {
+			const snapshot = structuredClone([{ id: "0", children: fixture.bookmarks }]);
+			callback(snapshot);
+			return Promise.resolve(snapshot);
+		});
+		fixture.chrome.bookmarks.getTree = getTree;
+		const originalGet = fixture.chrome.storage.local.get;
+		let release: (() => void) | undefined;
+		let delayed = false;
+		fixture.chrome.storage.local.get = (key: string, callback: (value: unknown) => void) => {
+			if (key === "kestrel.native.browser.bookmarkModes.v1" && !delayed) {
+				delayed = true;
+				return new Promise(resolve => { release = () => { const value = { [key]: fixture.storage[key] }; callback(value); resolve(value); }; });
+			}
+			return originalGet(key, callback);
+		};
+		const historySearch = vi.fn(fixture.chrome.history.search);
+		fixture.chrome.history.search = historySearch;
+		const adapter = createBrowserAdapter(fixture.chrome, { uiUrl });
+		const older = adapter.request({ type: "browser-get-state" }, sender);
+		await vi.waitFor(() => expect(release).toBeDefined());
+		fixture.bookmarks[0].children.push({ id: "new", parentId: "1", title: "New", url: "https://new.example/", dateAdded: Date.now() });
+		const newer = adapter.request({ type: "browser-get-state" }, sender);
+		try {
+			await vi.waitFor(() => expect(historySearch).toHaveBeenCalledTimes(2));
+			expect(getTree).toHaveBeenCalledTimes(1);
+		} finally { release?.(); }
+		await older;
+		const newState = (await newer).browserState;
+		const id = newState.bookmarks.find((item: any) => item.url === "https://new.example/").id;
+		const later = (await adapter.request({ type: "browser-get-state" }, sender)).browserState;
+		expect(later.bookmarks.find((item: any) => item.url === "https://new.example/").id).toBe(id);
+	});
 	it("rejects unsafe bookmark URLs and invalid names", async () => {
 		const { chrome, tabs } = makeChrome(), adapter = createBrowserAdapter(chrome, { uiUrl });
 		for (const url of ["https://user:secret@example.com/", "https:garbage", "javascript:alert(1)"]) {

@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { loadRetainedStoreUpdateFixture } from "./native-store-update-profile.mjs";
+import { loadStoreUpdateContinuation } from "./native-store-update-continuation.mjs";
 
 assert(process.env.KESTREL_NATIVE_TEST_APP, "Select the exact native candidate.");
 assert(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT, "Select an existing generated Store checkpoint.");
@@ -28,6 +29,15 @@ const receipt = { kind: "native-store-update-resume", version: 1, startedAt: new
   mode: compatibilityOnly ? "compatibility-only" : "update-acceptance", updateQueryRequested: false,
   candidateSha256: await candidateDigest(app), fixture: { checkpoint: resolve(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT), receiptSha256: fixture.receiptSha256, originalCandidateSha256: fixture.candidateSha256 },
   scope: "Retained generated normal Store installations and test keys only. No new installation, forced version edits, real profile, Keychain, credentials or desktop capture/input.", phases: [] };
+const continuation = process.env.KESTREL_NATIVE_STORE_PRIOR_ATTEMPT
+  ? await loadStoreUpdateContinuation(process.env.KESTREL_NATIVE_STORE_PRIOR_ATTEMPT, {
+    candidate: app, candidateSha256: receipt.candidateSha256,
+    checkpoint: receipt.fixture.checkpoint, fixtureReceiptSha256: fixture.receiptSha256,
+    actionExtensionId: action,
+  }) : undefined;
+assert(!continuation || !compatibilityOnly, "A prior update query cannot turn a compatibility run into update acceptance.");
+if (continuation) receipt.continuation = { path: continuation.path, sha256: continuation.sha256,
+  originalSessionCount: continuation.initialSessionCount };
 let running, browser, home, actionDocumentId, actionDocumentUrl, interrupted = false, stage = "read-prelaunch-versions";
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { interrupted = true; });
 function phase(name, details = {}) { receipt.phases.push({ phase: name, passed: true, ...details }); console.log(`PASS ${name}`); }
@@ -121,12 +131,15 @@ async function start() {
 }
 async function stop() {
   if (!running) return;
-  if (actionDocumentId !== undefined && home) await home.evaluate(async id => chrome.tabs.remove(id), actionDocumentId).catch(() => {});
-  actionDocumentId = undefined; actionDocumentUrl = undefined;
+  await closeActionDocument();
   const state = running; running = undefined;
   if (state.child.exitCode === null && state.child.signalCode === null) state.child.kill("SIGTERM");
   assert.deepEqual(await Promise.race([state.exited, delay(15000, undefined, { ref: false }).then(() => { state.child.kill("SIGKILL"); throw Error("Owned native shutdown timed out."); })]), { code: 0, signal: null });
   browser?.close(); browser = undefined; home = undefined;
+}
+async function closeActionDocument() {
+  if (actionDocumentId !== undefined && home) await home.evaluate(async id => chrome.tabs.remove(id), actionDocumentId).catch(() => {});
+  actionDocumentId = undefined; actionDocumentUrl = undefined;
 }
 async function provenance() {
   const entries = await home.evaluate(ids => Promise.all(ids.map(id => new Promise((resolveItem, rejectItem) => chrome.management.get(id, item => {
@@ -180,12 +193,16 @@ async function functionalProbe(name, userExtensionCreates = true) {
 }
 try {
   receipt.diskVersionsBefore = await prelaunchVersions();
+  receipt.upgradeBaselineVersions = continuation?.baselineVersions ?? receipt.diskVersionsBefore;
   await new Promise(done => server.listen(0, "127.0.0.1", done));
   const sessions = await start(); receipt.initialSessionCount = sessions.length; receipt.initial = await provenance();
+  receipt.initialSessionDigest = createHash("sha256").update(JSON.stringify(sessions)).digest("hex");
+  if (continuation) assert(sessions.length >= continuation.initialSessionCount, "Retained Core session count fell below the prior attempt.");
   phase("current-candidate-opens-retained-normal-Store-profile-and-Core");
   await functionalProbe("retained-formatter-function-and-extension-owned-tab-isolation");
-  receipt.updateCheck = { status: "not_requested", reportedVersion: null, checkSucceeded: false };
-  if (!compatibilityOnly) {
+  receipt.updateCheck = continuation?.updateCheck ?? { status: "not_requested", reportedVersion: null, checkSucceeded: false };
+  receipt.updateCheckSource = continuation ? "validated-prior-attempt" : "current-invocation";
+  if (!compatibilityOnly && !continuation) {
     stage = "official-update-check";
     const extension = await actionContext();
     receipt.updateQueryRequested = true;
@@ -194,14 +211,25 @@ try {
       chrome.runtime.requestUpdateCheck((status, details) => { clearTimeout(timer); resolveCheck({ status, reportedVersion: details?.version ?? null }); });
     }));
     receipt.updateCheck.checkSucceeded = ["no_update", "update_available"].includes(receipt.updateCheck.status);
-    if (receipt.updateCheck.status === "update_available") {
-      assert(typeof receipt.updateCheck.reportedVersion === "string" && /^\d+(?:\.\d+){0,3}$/.test(receipt.updateCheck.reportedVersion));
-      await eventually(async () => (await provenance())[action].version === receipt.updateCheck.reportedVersion, "Reported Store update did not become active.", 180000);
-    }
+  }
+  if (!compatibilityOnly && receipt.updateCheck.status === "update_available") {
+    stage = "activate-published-update-after-clean-restart";
+    assert(typeof receipt.updateCheck.reportedVersion === "string" && /^\d+(?:\.\d+){0,3}$/.test(receipt.updateCheck.reportedVersion));
+    assert(newer(receipt.updateCheck.reportedVersion, receipt.upgradeBaselineVersions[action]), "The reported version must be newer than the immutable upgrade baseline.");
+    // An open extension view can defer an ordinary Chrome update. Release the
+    // view we opened and restart normally; do not reload, edit or reinstall it.
+    await closeActionDocument();
+    await stop();
+    const activatedSessions = await start();
+    assert(sessions.every(id => activatedSessions.includes(id)), "An original Core session was lost during update activation.");
+    receipt.updateActivation = { method: "clean-browser-restart", missingOriginalSessions: 0 };
+    await eventually(async () => (await provenance())[action].version === receipt.updateCheck.reportedVersion, "Reported Store update did not become active after clean restart.");
   }
   receipt.afterCheck = await provenance();
-  receipt.observedVersionUpgrade = ids.some(id => newer(receipt.afterCheck[id].version, receipt.diskVersionsBefore[id]));
+  for (const id of ids) assert(!newer(receipt.upgradeBaselineVersions[id], receipt.afterCheck[id].version), "A normal Store installation was downgraded.");
+  receipt.observedVersionUpgrade = ids.some(id => newer(receipt.afterCheck[id].version, receipt.upgradeBaselineVersions[id]));
   phase(compatibilityOnly ? "existing-normal-Store-installations-preserved-without-update-query" : "existing-normal-Store-installations-preserved-after-update-request");
+  if (!compatibilityOnly && receipt.observedVersionUpgrade) await functionalProbe("updated-formatter-function-and-extension-owned-tab-isolation");
   await stop();
   const restartedSessions = await start();
   receipt.restartedSessionCount = restartedSessions.length;

@@ -98,6 +98,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	let changeQueue = Promise.resolve();
 	let idMapQueue = Promise.resolve();
 	let bookmarkQueue = Promise.resolve();
+	let bookmarkReadQueue = Promise.resolve();
 	let focusedWindowId;
 	const loginCodeCaptures = new Map();
 	const loginCodeRevisions = new Map();
@@ -286,7 +287,14 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		const label = record.mode === "icon" ? "" : record.mode === "full" ? node.url : record.title;
 		return node.title === label ? record : undefined;
 	}
-	async function readBookmarks() {
+	function readBookmarks() {
+		// A snapshot must not prune IDs assigned by a newer snapshot that
+		// completed first. Keep snapshot acquisition and map mutation together.
+		const work = bookmarkReadQueue.then(readBookmarksSnapshot);
+		bookmarkReadQueue = work.catch(() => undefined);
+		return work;
+	}
+	async function readBookmarksSnapshot() {
 		if (!chromeApi.bookmarks?.getTree) return { bookmarks: [], folders: [] };
 		const tree = await invoke(chromeApi.bookmarks, "getTree");
 		const output = [];
