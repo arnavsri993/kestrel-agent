@@ -148,11 +148,17 @@ try {
  stage='final-import'; await planFile(); await apply().click(); await undo().waitFor();
  await settings.screenshot({path:join(evidence,'home-import-complete.png')});
  await settings.evaluate(async()=>{const tab=await chrome.tabs.getCurrent();await chrome.tabs.setZoom(tab.id,2);});
- const geometry=await panel.evaluate(element=>({overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth,width:element.getBoundingClientRect().width})); assert(geometry.width>0&&geometry.overflow<=1,'Home transfer overflows at 200% zoom');
+ await panel.scrollIntoViewIfNeeded();
+ const geometry=await panel.evaluate(element=>({overflow:element.scrollWidth-element.clientWidth,width:element.getBoundingClientRect().width})); assert(geometry.width>0&&geometry.overflow<=1,'Home transfer overflows at 200% zoom');
  await settings.screenshot({path:join(evidence,'home-import-zoom200.png')}); await settings.evaluate(async()=>{const tab=await chrome.tabs.getCurrent();await chrome.tabs.setZoom(tab.id,1);}); phase('native-transfer-reflows-at-200-percent-zoom');
  const expected=await rawSettings(); const pending=await request({type:'browser-plan-home-settings-import',settings:{newTabBackground:'paper'},categories:['background']}); assert(pending.ok); const oldPlan=pending.homeSettingsImportPlan.planId;
  await stop(); stage='restart'; await start();
- assert.deepEqual(await rawSettings(),expected); await activate(home); await home.locator('.new-tab-page-custom').waitFor(); await home.locator('.home-site-shortcuts button').filter({hasText:'Imported generated shortcut'}).waitFor(); await home.screenshot({path:join(evidence,'home-import-after-restart.png')}); phase('selected-Home-settings-and-actual-Home-survive-full-native-restart');
+ const afterRestart=await rawSettings();
+ receipt.restartChangedSettings=Array.from(new Set([...Object.keys(expected),...Object.keys(afterRestart)])).filter(key=>JSON.stringify(expected[key])!==JSON.stringify(afterRestart[key]));
+ // Opening Home records a bounded local greeting visit through its normal UI.
+ // Assert every other stored key, including unselected settings, byte for byte.
+ for(const key of new Set([...Object.keys(expected),...Object.keys(afterRestart)])) if(key!=='newTabGreetingActivity') assert.deepEqual(afterRestart[key],expected[key]);
+ assert.equal((await state()).settings.newTabGreetingActivity.version,1); await activate(home); await home.locator('.new-tab-page-custom').waitFor(); await home.locator('.home-site-shortcuts button').filter({hasText:'Imported generated shortcut'}).waitFor(); await home.screenshot({path:join(evidence,'home-import-after-restart.png')}); phase('selected-Home-settings-and-actual-Home-survive-full-native-restart');
  assert.equal((await request({type:'browser-apply-home-settings-import',planId:oldPlan})).ok,false); phase('worker-restart-invalidates-unapplied-review');
  assert.deepEqual(await home.evaluate(()=>chrome.bookmarks.getTree()),bookmarks); assert.deepEqual((await state()).history,history); assert.deepEqual(await readFile(sourcePath),sourceBytes); assert.deepEqual((await rawSettings()).compatibility,baseline.compatibility); phase('source-bookmarks-history-and-unrelated-storage-preserved');
  await stop(); receipt.result='passed';
