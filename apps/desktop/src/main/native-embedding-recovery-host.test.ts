@@ -16,7 +16,7 @@ async function harness() {
 	await writeFile(path, "generated fixture", { mode: 0o600 });
 	cleanup.push(() => rm(root, { recursive: true, force: true }));
 	const state = { now: Date.parse("2026-11-03T12:00:00Z"), stopped: false, busy: false, rejectStop: false,
-		restart: false, beforeGate: undefined as (() => void) | undefined, snapshot: true };
+		restart: false, beforeGate: undefined as (() => void | Promise<void>) | undefined, snapshot: true };
 	const keys: Buffer[] = [];
 	const review = vi.fn((bindingKey: Buffer) => { keys.push(bindingKey); return state.snapshot ? { jobId: "private-generated-job", binding: "a".repeat(64) } : undefined; });
 	const cancel = vi.fn(() => ({ cancelled: true as const }));
@@ -26,7 +26,7 @@ async function harness() {
 		return { reviewLegacyEmbeddingLeaseRecovery: review, cancelLegacyEmbeddingLeaseRecovery: cancel, close };
 	});
 	const gate: NativeEmbeddingRecoveryHostOptions["withStoppedCore"] = async operation => {
-		state.beforeGate?.();
+		await state.beforeGate?.();
 		if (state.rejectStop) return { completed: false, error: Error("private provider detail"), coreStatus: "restart-required" };
 		state.stopped = true;
 		try { return { completed: true, value: await operation(), coreStatus: state.restart ? "restart-required" : "ready" }; }
@@ -69,6 +69,18 @@ it("refuses busy or unconfirmed shutdown without opening the database", async ()
 	expect(response.ok).toBe(false); expect(h.openDatabase).not.toHaveBeenCalled();
 	expect(JSON.stringify(response)).not.toContain("private provider detail");
 });
+it("holds one operation slot while stopping Core and cancels before any effect on close", async () => {
+	const h = await harness();
+	let release!: () => void;
+	h.state.beforeGate = () => new Promise<void>(done => { release = done; });
+	const pending = h.host.handle({ type: "native-embedding-recovery-review" });
+	await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+	expect(await h.host.handle({ type: "native-embedding-recovery-status" })).toEqual({ ok: true, nativeEmbeddingRecoveryStatus: { state: "in-progress" } });
+	expect((await h.host.handle({ type: "native-embedding-recovery-review" })).ok).toBe(false);
+	const closing = h.host.close(); release();
+	expect((await pending).ok).toBe(false); await closing;
+	expect(h.openDatabase).not.toHaveBeenCalled(); expect(h.cancel).not.toHaveBeenCalled();
+});
 it("does not issue a usable plan if Core could not be restored after preview", async () => {
 	const h = await harness(); h.state.restart = true;
 	expect((await h.host.handle({ type: "native-embedding-recovery-review" })).ok).toBe(false);
@@ -80,6 +92,7 @@ it("preserves committed success when restart fails or cancellation arrives after
 	const abort = new AbortController();
 	h.cancel.mockImplementationOnce(() => { abort.abort(); return { cancelled: true }; });
 	expect(await h.host.handle({ type: "native-embedding-recovery-apply", planId }, abort.signal)).toEqual({ ok: true, nativeEmbeddingRecoveryApplied: { cancelledJobs: 1, coreStatus: "restart-required" } });
+	expect(await h.host.handle({ type: "native-embedding-recovery-status" })).toEqual({ ok: true, nativeEmbeddingRecoveryStatus: { state: "applied", cancelledJobs: 1, coreStatus: "restart-required" } });
 });
 it("expires plans before effect, including time spent waiting for shutdown", async () => {
 	const h = await harness(), planId = await h.planId();

@@ -473,8 +473,9 @@ input.on("line", line => {
 	if ((!isHost || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type)) && configuration.changing) { write({ type: "response", id: message.id, response: { ok: false, error: "Settings are being applied. Wait for Agent Core to restart." } }); return; }
 	const creatingBackup = isHost && parsed.data.type === "create-local-backup";
 	const repairingEmbedding = isHost && ["native-embedding-recovery-review", "native-embedding-recovery-apply"].includes(parsed.data.type);
-	if (backupReservation || embeddingRecoveryReservation) { write({ type: "response", id: message.id, response: { ok: false, error: embeddingRecoveryReservation ? "Memory repair is in progress. Try again after it finishes." : NATIVE_CORE_BACKUP_BUSY_MESSAGE } }); return; }
-	if (configuration.requiresRestart && !(isHost && (parsed.data.type === "system-readiness" || parsed.data.type === "computer-use-status" || parsed.data.type === "reveal-created-local-backup" || parsed.data.type === "native-embedding-recovery-discard"))) {
+	const repairStatus = isHost && parsed.data.type === "native-embedding-recovery-status";
+	if ((backupReservation || embeddingRecoveryReservation) && !repairStatus) { write({ type: "response", id: message.id, response: { ok: false, error: embeddingRecoveryReservation ? "Memory repair is in progress. Try again after it finishes." : NATIVE_CORE_BACKUP_BUSY_MESSAGE } }); return; }
+	if (configuration.requiresRestart && !repairStatus && !(isHost && (parsed.data.type === "system-readiness" || parsed.data.type === "computer-use-status" || parsed.data.type === "reveal-created-local-backup" || parsed.data.type === "native-embedding-recovery-discard"))) {
 		write({ type: "response", id: message.id, response: { ok: false, error: "Core restart is required. Restart Kestrel before changing or starting work." } }); return;
 	}
 	if ((creatingBackup || repairingEmbedding) && (pending.size > 0 || backgroundJobsRunning || configuration.changing || core.isReady !== true)) {

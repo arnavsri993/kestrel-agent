@@ -1,7 +1,7 @@
 import { MemoryWorkspaceQuerySchema, MemoryWorkspaceSchema, MemoryDocumentSchema, MemoryDocumentSaveSchema } from "./memory-workspace";
 import { SourceSelectionSchema, SourceObservationSchema } from "./source-observations";
 import { MemoryRecoveryPreviewSchema } from "./memory-recovery";
-import { NativeEmbeddingRecoveryRequestSchema, type NativeEmbeddingRecoveryPreview, type NativeEmbeddingRecoveryApplied } from "./native-embedding-recovery";
+import { NativeEmbeddingRecoveryRequestSchema, type NativeEmbeddingRecoveryPreview, type NativeEmbeddingRecoveryApplied, type NativeEmbeddingRecoveryStatus } from "./native-embedding-recovery";
 import { ResourceScopeSchema } from "./resource-access";
 import { AgentTemplateSchema, SpecialistDefinitionSchema } from "./agent-templates";
 import { z } from "zod";
@@ -5369,6 +5369,7 @@ export type RendererResponse =
 	| { ok: true; localBackupCreated: NativeLocalBackupResult }
 	| { ok: true; nativeEmbeddingRecoveryPreview: NativeEmbeddingRecoveryPreview }
 	| { ok: true; nativeEmbeddingRecoveryApplied: NativeEmbeddingRecoveryApplied }
+	| { ok: true; nativeEmbeddingRecoveryStatus: NativeEmbeddingRecoveryStatus }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }
 	| { ok: true; providerAccounts: ProviderAccountSummary[] }
 	| { ok: true; googleWorkspaceOAuth: GoogleWorkspaceOAuthStatus }

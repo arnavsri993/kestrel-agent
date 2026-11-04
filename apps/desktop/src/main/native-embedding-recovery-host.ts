@@ -3,7 +3,7 @@ import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { KestrelDatabase, type LegacyEmbeddingLeaseRecoverySnapshot } from "@kestrel/database";
-import { NativeEmbeddingRecoveryRequestSchema, type RendererResponse } from "@kestrel/shared-types";
+import { NativeEmbeddingRecoveryRequestSchema, type RendererResponse, type NativeEmbeddingRecoveryStatus } from "@kestrel/shared-types";
 export { NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES } from "./native-embedding-recovery-requests";
 
 type CoreStatus = "ready" | "restart-required";
@@ -50,6 +50,7 @@ export class NativeEmbeddingRecoveryHost {
 	private plan: Plan | undefined;
 	private expiry: ReturnType<typeof setTimeout> | undefined;
 	private closed = false;
+	private outcome: NativeEmbeddingRecoveryStatus = { state: "idle" };
 	private closing: Promise<void> | undefined;
 	constructor(options: NativeEmbeddingRecoveryHostOptions) {
 		this.rootInput = options.root;
@@ -72,6 +73,7 @@ export class NativeEmbeddingRecoveryHost {
 		if (!parsed.success) return Promise.resolve({ ok: false, error: INVALID });
 		const request = parsed.data;
 		if (this.closed || this.key.length !== 32) return Promise.resolve({ ok: false, error: UNAVAILABLE });
+		if (request.type === "native-embedding-recovery-status") return Promise.resolve({ ok: true, nativeEmbeddingRecoveryStatus: this.active ? { state: "in-progress" } : this.outcome });
 		if (request.type === "native-embedding-recovery-discard") {
 			if (this.plan?.id === request.planId) this.clearPlan();
 			return Promise.resolve({ ok: true });
@@ -148,6 +150,7 @@ export class NativeEmbeddingRecoveryHost {
 		const plan = this.plan;
 		if (!plan || plan.id !== request.planId) return { ok: false, error: STALE };
 		this.plan = undefined; if (this.expiry) clearTimeout(this.expiry); this.expiry = undefined;
+		this.outcome = { state: "unconfirmed" };
 		let committed = false;
 		try {
 			const validTime = () => { const now = this.clock(); if (now < plan.issuedAt || now >= plan.expiresAt) throw new Error("expired"); return new Date(now).toISOString(); };
@@ -160,9 +163,14 @@ export class NativeEmbeddingRecoveryHost {
 				return true;
 			}, plan.identity), this.gateOptions(signal));
 			// A late cancellation/teardown cannot undo a transaction already committed.
-			if (committed) return { ok: true, nativeEmbeddingRecoveryApplied: { cancelledJobs: 1, coreStatus: result.coreStatus } };
+			if (committed) {
+				this.outcome = { state: "applied", cancelledJobs: 1, coreStatus: result.coreStatus };
+				return { ok: true, nativeEmbeddingRecoveryApplied: { cancelledJobs: 1, coreStatus: result.coreStatus } };
+			}
+			this.outcome = { state: "idle" };
 			return { ok: false, error: result.coreStatus === "restart-required" ? RESTART : APPLY_FAILED };
 		} catch {
+			this.outcome = committed ? { state: "applied", cancelledJobs: 1, coreStatus: "restart-required" } : { state: "idle" };
 			return committed ? { ok: true, nativeEmbeddingRecoveryApplied: { cancelledJobs: 1, coreStatus: "restart-required" } } : { ok: false, error: APPLY_FAILED };
 		} finally { plan.bindingKey.fill(0); }
 	}
