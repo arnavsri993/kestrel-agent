@@ -3,6 +3,7 @@ import { NativeLoginCodeBrowserRequestSchema } from "../../../../packages/shared
 import { loginCodeField } from "./login-code-fields.mjs";
 import { capturePageContext } from "./page-context.mjs";
 import { createNativeAutomation } from "./native-automation.mjs";
+import { createNativeHomeSettingsTransfer } from "./home-settings-transfer.mjs";
 import { createNativeBookmarkTransfer } from "./bookmark-transfer.mjs";
 import { isNativeBrowserSettingsUrl } from "../../../../packages/shared-types/src/native-browser-settings.ts";
 
@@ -15,6 +16,7 @@ const BOOKMARK_TRANSFER_REQUESTS = new Set(["browser-export-bookmarks", "browser
 const INSTALL_DATES_KEY = "kestrel.native.browser.extensionInstallDates.v1";
 class BookmarkLimitError extends Error {}
 
+const HOME_TRANSFER_REQUESTS = new Set(["browser-plan-home-settings-import", "browser-apply-home-settings-import", "browser-discard-home-settings-import", "browser-undo-home-settings-import"]);
 const HOME_SETTINGS_KEYS = ["newTabBackground", "newTabBackgroundCustomDataUrl", "newTabShortcuts", "newTabGreetingActivity", "newTabWidgets"];
 
 // Normalize the Kestrel UI's complete settings shape. Chromium-owned
@@ -42,7 +44,7 @@ const SUPPORTED = new Set([
 	"browser-pin-tab", "browser-mute-tab", "browser-duplicate-tab", "browser-move-tab",
 	...BOOKMARK_REQUESTS, ...BOOKMARK_TRANSFER_REQUESTS, "browser-clear-history",
 	"browser-list-extensions", "browser-cancel-download",
-	"browser-update-settings",
+	"browser-update-settings", ...HOME_TRANSFER_REQUESTS,
 	"browser-get-context",
 ]);
 const APP_ROUTES = new Set([
@@ -100,6 +102,8 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	let changeQueue = Promise.resolve();
 	let idMapQueue = Promise.resolve();
 	let bookmarkQueue = Promise.resolve();
+	let homeSettingsQueue = Promise.resolve();
+	const homeTransfer = createNativeHomeSettingsTransfer({ read: () => stored(SETTINGS_KEY, {}), write: value => persist(SETTINGS_KEY, value), response, emit: () => emitState() });
 	let bookmarkReadQueue = Promise.resolve();
 	let bookmarkImportActive = false;
 	let bookmarkImportDirty = false;
@@ -534,17 +538,29 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 			return { ok: false, error: "Only the Kestrel UI can control native browser tabs." };
 		try {
 			if (input.type === "browser-get-context") return { ok: true, browserContext: await pageContext(input.tabId) };
-			if (input.type === "browser-update-settings") {
-				const allowed = new Set(HOME_SETTINGS_KEYS);
-				const current = await homeSettings();
-				const next = UserBrowserSettingsSchema.parse(input.settings);
-				const changed = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(current[key]));
-				if (changed.some(key => !allowed.has(key)))
-					throw new Error("Use the native browser settings to change this preference.");
-				await persist(SETTINGS_KEY, Object.fromEntries(HOME_SETTINGS_KEYS.filter(key => next[key] !== undefined).map(key => [key, next[key]])));
-				await emitState();
-				return response();
-			}
+			if (input.type === "browser-update-settings" || HOME_TRANSFER_REQUESTS.has(input.type)) {
+    // All first-party Home writes and transfer operations share one worker queue.
+    const work = homeSettingsQueue.then(async () => {
+     if (input.type !== "browser-update-settings") {
+      const parsed = RendererRequestSchema.safeParse(input);
+      if (!parsed.success) return { ok: false, error: "Invalid Home settings transfer." };
+      // Revalidate unnormalized source so schema stripping cannot hide fields.
+      return homeTransfer({ ...parsed.data, ...(input.type === "browser-plan-home-settings-import" ? { settings: input.settings } : {}) });
+     }
+     const allowed = new Set(HOME_SETTINGS_KEYS);
+     const current = await homeSettings();
+     const next = UserBrowserSettingsSchema.parse(input.settings);
+     const changed = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(current[key]));
+     if (changed.some(key => !allowed.has(key))) throw new Error("Use the native browser settings to change this preference.");
+     const raw = await stored(SETTINGS_KEY, {});
+     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Home settings are unavailable.");
+     const updated = { ...raw };
+     for (const key of HOME_SETTINGS_KEYS) { if (next[key] === undefined) delete updated[key]; else updated[key] = next[key]; }
+     await persist(SETTINGS_KEY, updated); await emitState(); return response();
+    });
+    homeSettingsQueue = work.catch(() => undefined);
+    try { return await work; } catch (error) { return { ok: false, error: error instanceof Error && !error.name.startsWith("Zod") ? error.message : "Invalid Home settings transfer." }; }
+   }
 			if (input.type === "browser-get-state") return response();
 			if (input.type === "browser-list-extensions") return listExtensions();
 			if (input.type === "browser-clear-history") {

@@ -645,6 +645,24 @@ describe("native first-party browser adapter", () => {
 		expect((await restored.request({ type: "browser-update-settings", settings: { ...saved, newTabBackground: "graphite", newTabBackgroundCustomDataUrl: undefined } }, sender)).ok).toBe(true);
 		expect((await restored.request({ type: "browser-get-state" }, sender)).browserState.settings).not.toHaveProperty("newTabBackgroundCustomDataUrl");
 	});
+	it("serializes Home imports with ordinary settings writes and refuses stale approval", async () => {
+		const { chrome, storage } = makeChrome(), adapter = createBrowserAdapter(chrome, { uiUrl });
+		const key = "kestrel.native.browser.settings.v1";
+		storage[key] = { compatibility: "preserve", newTabBackground: "graphite" };
+		const original = (await adapter.request({ type: "browser-get-state" }, sender)).browserState.settings;
+		const p = await adapter.request({ type: "browser-plan-home-settings-import", settings: { newTabBackground: "paper" }, categories: ["background"] }, sender);
+		const update = adapter.request({ type: "browser-update-settings", settings: { ...original, newTabBackground: "meadow" } }, sender);
+		const apply = adapter.request({ type: "browser-apply-home-settings-import", planId: p.homeSettingsImportPlan.planId }, sender);
+		expect((await update).ok).toBe(true); expect((await apply).ok).toBe(false);
+		expect(storage[key]).toMatchObject({ compatibility: "preserve", newTabBackground: "meadow" });
+	});
+	it("allows only the first-party UI to plan/apply Home settings and rejects nested unknown data", async () => {
+		const { chrome, storage } = makeChrome(), adapter = createBrowserAdapter(chrome, { uiUrl });
+		const request = { type: "browser-plan-home-settings-import", settings: { newTabBackground: "paper" }, categories: ["background"] };
+		expect((await adapter.request(request, { ...sender, url: "https://example.com" })).ok).toBe(false);
+		expect((await adapter.request({ ...request, settings: { newTabWidgets: { version: 1, layouts: { compact: { items: [], secret: "private" } } } }, categories: ["widgets"] }, sender)).ok).toBe(false);
+		expect(storage["kestrel.native.browser.settings.v1"]).toBeUndefined();
+	});
 
 	it("limits privileged navigation to native settings pages", async () => {
 		const { chrome, tabs } = makeChrome();

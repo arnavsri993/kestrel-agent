@@ -4453,6 +4453,70 @@ export const BrowserDataTransferSchema = z.object({
 });
 export type BrowserDataTransfer = z.infer<typeof BrowserDataTransferSchema>;
 
+export const NATIVE_HOME_SETTINGS_CATEGORIES = ["background", "shortcuts", "greeting", "widgets"] as const;
+export const NativeHomeSettingsCategorySchema = z.enum(NATIVE_HOME_SETTINGS_CATEGORIES);
+export type NativeHomeSettingsCategory = z.infer<typeof NativeHomeSettingsCategorySchema>;
+const NativeHomeWidgetLayoutSchema = NewTabWidgetLayoutSchema.extend({
+ items: z.array(NewTabWidgetLayoutItemSchema.strict()).max(12),
+}).strict();
+const NativeHomeWidgetsSchema = NewTabWidgetSettingsSchema.unwrap().unwrap().extend({
+ layouts: z.object({ compact: NativeHomeWidgetLayoutSchema.optional(), standard: NativeHomeWidgetLayoutSchema.optional(), wide: NativeHomeWidgetLayoutSchema.optional(), ultrawide: NativeHomeWidgetLayoutSchema.optional() }).strict().default({}),
+}).strict();
+export const NativeHomeSettingsSchema = z.object({
+ newTabBackground: UserBrowserSettingsSchema.shape.newTabBackground.unwrap().optional(),
+ newTabBackgroundCustomDataUrl: UserBrowserSettingsSchema.shape.newTabBackgroundCustomDataUrl,
+ newTabShortcuts: UserBrowserSettingsSchema.shape.newTabShortcuts.unwrap().element.strict().array().max(12).optional(),
+ newTabGreetingActivity: NewTabGreetingActivitySchema.unwrap().unwrap().strict().optional(),
+ newTabWidgets: NativeHomeWidgetsSchema.optional(),
+}).strict().superRefine((value, context) => {
+ if (value.newTabBackground === "custom" && !value.newTabBackgroundCustomDataUrl)
+  context.addIssue({ code: "custom", path: ["newTabBackground"], message: "A custom background requires its image in the file." });
+});
+export type NativeHomeSettings = z.infer<typeof NativeHomeSettingsSchema>;
+const homeKeysByCategory = {
+ background: ["newTabBackground", "newTabBackgroundCustomDataUrl"], shortcuts: ["newTabShortcuts"],
+ greeting: ["newTabGreetingActivity"], widgets: ["newTabWidgets"],
+} as const;
+function rejectUnknownTransferFields(raw: unknown, parsed: unknown): void {
+ if (!raw || typeof raw !== "object") return;
+ if (!parsed || typeof parsed !== "object") throw new Error("Unknown browser-data fields.");
+ for (const key of Object.keys(raw)) {
+  if (!Object.hasOwn(parsed, key)) throw new Error("Unknown browser-data fields.");
+  rejectUnknownTransferFields((raw as Record<string, unknown>)[key], (parsed as Record<string, unknown>)[key]);
+ }
+}
+export function parseNativeHomeSettingsTransferFile(value: unknown): { source: "home-settings" | "browser-data"; settings: NativeHomeSettings; availableCategories: NativeHomeSettingsCategory[] } {
+ const serialized = JSON.stringify(value);
+ if (!serialized || new TextEncoder().encode(serialized).byteLength > MAX_NATIVE_BOOKMARK_SOURCE_BYTES) throw new Error("Home settings source exceeds 10 MiB or is invalid.");
+ const raw = value as Record<string, unknown>;
+ let rawSettings: unknown;
+ let source: "home-settings" | "browser-data";
+ if (raw?.format === "kestrel-home-settings") {
+  const file = z.object({ format: z.literal("kestrel-home-settings"), version: z.literal(1), settings: z.unknown() }).strict().parse(value);
+  rawSettings = file.settings; source = "home-settings";
+ } else {
+  const parsed = BrowserDataTransferSchema.strict().parse(value);
+  rejectUnknownTransferFields(value, parsed);
+  rawSettings = (value as { settings: unknown }).settings; source = "browser-data";
+ }
+ if (!rawSettings || typeof rawSettings !== "object" || Array.isArray(rawSettings)) throw new Error("Invalid Home settings.");
+ const obj = rawSettings as Record<string, unknown>;
+ const keys = Object.values(homeKeysByCategory).flat() as string[];
+ const selected = Object.fromEntries(Object.entries(obj).filter(([key]) => keys.includes(key)));
+ if (source === "home-settings" && Object.keys(selected).length !== Object.keys(obj).length) throw new Error("Unknown Home settings fields.");
+ // The base schemas normalize defaults and trim text, but a caught malformed
+ // greeting/widget payload must never be converted into a default for import.
+ for (const key of Object.keys(selected)) if (selected[key] === undefined) throw new Error("Invalid Home settings.");
+ if (Object.hasOwn(selected, "newTabGreetingActivity")) NewTabGreetingActivitySchema.unwrap().parse(selected.newTabGreetingActivity);
+ if (Object.hasOwn(selected, "newTabWidgets")) NewTabWidgetSettingsSchema.unwrap().parse(selected.newTabWidgets);
+ if (selected.newTabBackground === "custom" && !Object.hasOwn(selected, "newTabBackgroundCustomDataUrl")) throw new Error("A custom background requires its image in the file.");
+ const settings = NativeHomeSettingsSchema.parse(selected);
+ rejectUnknownTransferFields(selected, settings);
+ const availableCategories = NATIVE_HOME_SETTINGS_CATEGORIES.filter(category => homeKeysByCategory[category].some(key => Object.hasOwn(selected, key)));
+ if (!availableCategories.length) throw new Error("This file contains no Home settings.");
+ return { source, settings, availableCategories };
+}
+
 export type NativeBookmarkTransferFile = {
 	data: NativeBookmarkTransfer;
 	source: "native" | "browser-data";
@@ -4811,7 +4875,11 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("browser-reset-download-directory") }),
 	z.object({ type: z.literal("browser-export-data") }),
 	z.object({ type: z.literal("browser-import-data") }),
-	z.object({ type: z.literal("browser-export-bookmarks") }).strict(),
+	z.object({ type: z.literal("browser-plan-home-settings-import"), settings: NativeHomeSettingsSchema, categories: z.array(NativeHomeSettingsCategorySchema).min(1).max(4).refine(v => new Set(v).size === v.length) }).strict(),
+ z.object({ type: z.literal("browser-apply-home-settings-import"), planId: z.string().uuid() }).strict(),
+ z.object({ type: z.literal("browser-discard-home-settings-import"), planId: z.string().uuid() }).strict(),
+ z.object({ type: z.literal("browser-undo-home-settings-import"), undoId: z.string().uuid() }).strict(),
+ z.object({ type: z.literal("browser-export-bookmarks") }).strict(),
 	z.object({ type: z.literal("browser-plan-bookmark-import"), data: NativeBookmarkTransferSchema,
 		destinationFolderId: UserBrowserBookmarkFolderIdSchema.optional() }).strict(),
 	z.object({ type: z.literal("browser-apply-bookmark-import"), planId: z.string().uuid() }).strict(),
@@ -5383,7 +5451,10 @@ export type RendererResponse =
 			bookmarkFolderId?: UserBrowserBookmarkFolderId;
 			bookmarkImportResult?: NativeBookmarkImportResult;
 	  }
-	| { ok: true; bookmarkTransfer: NativeBookmarkTransfer; bookmarkExportExcluded: { bookmarks: number; folders: number } }
+	| { ok: true; homeSettingsImportPlan: { planId: string; expiresAt: string; categories: NativeHomeSettingsCategory[]; changedCategories: NativeHomeSettingsCategory[] } }
+ | { ok: true; homeSettingsImportResult: { changedCategories: NativeHomeSettingsCategory[]; undoId: string; undoExpiresAt: string }; browserState: UserBrowserState }
+ | { ok: true; homeSettingsUndoResult: { restoredCategories: NativeHomeSettingsCategory[] }; browserState: UserBrowserState }
+ | { ok: true; bookmarkTransfer: NativeBookmarkTransfer; bookmarkExportExcluded: { bookmarks: number; folders: number } }
 	| { ok: true; bookmarkImportPlan: { planId: string; summary: NativeBookmarkImportSummary; expiresAt: string } }
 	| { ok: true; bookmarkImportResult: NativeBookmarkImportResult; browserState?: UserBrowserState }
 	| { ok: true; browserDataPath?: string; cancelled?: boolean }
