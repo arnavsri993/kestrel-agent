@@ -99,6 +99,16 @@ async function stop() {
 }
 async function rawRequest(input) { return home.evaluate(value => window.kestrel.request(value), input); }
 async function request(input) { const result = await rawRequest(input); assert.equal(result.ok, true, result.error); return result; }
+async function reviewWhenIdle() {
+ let result;
+ await eventually(async () => {
+  result = await rawRequest({ type: "native-embedding-recovery-review" });
+  if (result.ok) return true;
+  assert(["Core is busy. Try again when its current operation is complete.", "Finish or cancel active work before reviewing memory processing."].includes(result.error), result.error);
+  return false;
+ }, "The generated profile never became idle for review.");
+ return result;
+}
 async function openMemory() {
  await request({ type: "browser-create-tab", input: "kestrel://memory" });
  await eventually(async () => {
@@ -117,7 +127,10 @@ async function openMemory() {
 try {
  assertCandidateStopped(); await mkdir(join(coreRoot, "database"), { recursive: true, mode: 0o700 });
  offline(db => {
-  db.upsertMemory(C.MemoryRecordSchema.parse({ id: memoryId, type: "semantic", content: "Generated permitted recovery fixture", sourceIds: [], sourceType: "fixture", structuredData: {}, confidence: 1, importance: 0.75, sensitivity: "personal", status: "active", entityIds: [], userConfirmed: true, inferred: false, createdAt: stamp, updatedAt: stamp }));
+  const sessionId = "generated-lease-source-session", eventId = "generated-lease-source-event";
+  db.saveRuntimeSession(C.RuntimeSessionSchema.parse({ id: sessionId, title: "Generated repair source", privacyMode: "standard", allowedTools: [], status: "active", checkpoints: [], createdAt: stamp, updatedAt: stamp }));
+  db.upsertTimelineEvent(C.TimelineEventSchema.parse({ id: eventId, source: "fixture", sourceSessionId: sessionId, startedAt: stamp, eventType: "note", actor: "user", textSummary: "Generated repair source event", structuredData: {}, sensitivity: "personal", retentionPolicy: "durable", embeddingStatus: "queued", importance: 0.5, confidence: 1, status: "active", projectIds: [], personIds: [], entityIds: [], createdAt: stamp, updatedAt: stamp }));
+  db.upsertMemory(C.MemoryRecordSchema.parse({ id: memoryId, type: "semantic", content: "Generated permitted recovery fixture", sourceIds: [eventId], sourceType: "fixture", structuredData: {}, confidence: 1, importance: 0.75, sensitivity: "personal", status: "active", entityIds: [], userConfirmed: true, inferred: false, createdAt: stamp, updatedAt: stamp }));
   db.queueMemoryJob(C.MemoryJobSchema.parse({ id: jobId, kind: "embed", dedupeKey: "generated-legacy-dedupe", status: "running", payload: { ownerType: "memory", ownerId: memoryId }, attempts: 2, maxAttempts: 3, runAfter: stamp, lockedAt: stamp, createdAt: stamp, updatedAt: stamp }));
   const blocked = db.migrateLegacyMemoryEmbeddingIdentifiers(stamp); assert.equal(blocked.blocked, true); assert.equal(db.getMemoryJob(jobId).status, "running");
  });
@@ -127,7 +140,7 @@ try {
  phase("actual-core-maintenance-leaves-legacy-blocker-running");
  stage = "stale-review";
  let previous = await corePid();
- const review = await request({ type: "native-embedding-recovery-review" });
+ const review = await reviewWhenIdle();
  assert.equal(review.nativeEmbeddingRecoveryPreview?.state, "review"); assert.equal(review.nativeEmbeddingRecoveryPreview.cancelledJobs, 1); assert.equal(review.nativeEmbeddingRecoveryPreview.coreStatus, "ready");
  await changedCore(previous); assert.deepEqual(snapshotJob(), initial);
  await request({ type: "memory-correct", id: memoryId, content: "Generated source correction invalidates review" });
@@ -136,7 +149,7 @@ try {
  assert.equal(snapshotJob().status, "running");
  phase("review-stops-and-restarts-core-without-mutation-source-change-stales-and-consumes-plan");
  stage = "restart-invalidation";
- const old = await request({ type: "native-embedding-recovery-review" }); assert.equal(old.nativeEmbeddingRecoveryPreview.state, "review");
+ const old = await reviewWhenIdle(); assert.equal(old.nativeEmbeddingRecoveryPreview.state, "review");
  await stop();
  // The deliberate product correction above may queue a fresh-generation job.
  // Remove only this generated fixture's new jobs while every owned process is
@@ -180,7 +193,10 @@ try {
  });
  phase("new-explicit-memory-work-completes-after-repair");
  receipt.result = "passed";
-} catch (error) { receipt.result = "failed"; receipt.failedStage = stage; receipt.error = String(error?.message || error).replaceAll(key.toString("base64"), "[generated-key]").slice(0, 1000); process.exitCode = 1; }
+} catch (error) {
+ if (memory && !memory.isClosed()) await memory.screenshot({ path: join(evidence, "failed-memory.png") }).catch(() => {});
+ receipt.result = "failed"; receipt.failedStage = stage; receipt.error = String(error?.message || error).replaceAll(key.toString("base64"), "[generated-key]").slice(0, 1000); console.error(`Native lease recovery failed at ${stage}: ${receipt.error}`); process.exitCode = 1;
+}
 finally {
  await stop().catch(error => { receipt.result = "failed"; receipt.shutdownError = error.message; process.exitCode = 1; });
  receipt.candidateSha256After = await candidateDigest(app);
