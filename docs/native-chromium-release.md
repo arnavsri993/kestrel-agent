@@ -9,10 +9,26 @@ Electron process in this path.
 
 ## Current checkpoint — 2026-11-04
 
+The latest diagnostic follow-up is source `48d576d5`, exact ad-hoc bundle
+`c7015edb844ed9b8295956005a96fbe1790578d458a8f099932aeb660239bac0`.
+It passes 30 focused transfer tests, database types and eight actual bundled
+worker recovery phases. A real read-only profile review found declared schema
+19 and additional schema objects; the native transfer format supports schema 18.
+That profile remains unsupported and was preserved without apply or activation.
+The error now identifies a declared newer schema using bounded format metadata;
+it does not claim authentication or bypass strict validation.
+
+Reusing an earlier protected generated destination across the ad-hoc rebuild
+also failed to unlock its native profile key. The cause is not established and
+Keychain continuity remains unverified. A fresh protected destination starts;
+the native dialog rerun was interrupted by manual browser activity and is not
+claimed as observed. The broader Home/workflow proof below belongs to the
+preceding bundle, not this diagnostic rebuild.
+
 The candidate now uses checksum-pinned **CEF 156 / Chromium 156.0.8078.80**.
-Runtime source `2e9afdf6` builds the ad-hoc native bundle
+The Home settings validation batch at source `2e9afdf6` builds the ad-hoc native bundle
 `6733e785477c0e29a855759a0e2a0f1194a7834a76029f68ec56cfb9f7a2ba4c`.
-The current artifact passes ten Home settings transfer phases, 27 native product
+That artifact passes ten Home settings transfer phases, 27 native product
 phases (including last-window close/reopen), six generated verification-code
 phases, eight bundled Core recovery phases and five retained Store compatibility checks. The Store checks remain
 incomplete for an actual published version upgrade. Candidate hashes match
@@ -3357,3 +3373,39 @@ runners. New-head CI remains separate from local evidence. No finding was
 suppressed or dismissed. Jules remains unconfigured; worker usage/network limits
 ended the delegated implementation turns, and the primary completed and reviewed
 the partial edits locally. The PR remains draft and unmerged.
+
+## Real-profile schema refusal follow-up — 2026-11-04
+
+The native source picker and read-only consent were exercised against the
+existing Kestrel profile using an isolated, normally protected destination,
+without the disposable test-key mode. The source declared schema 19 plus schema
+objects not in canonical migrations 1–18. The original generic refusal was
+observed; no transfer plan counts, apply or activation were accepted. Source and
+prepared files were preserved and the preview app quit cleanly.
+
+A separate schema-only diagnostic used the production guarded encrypted-byte
+copy helper, opened only the private copy, inspected no row values or keys and
+verified unchanged source metadata through its read. It confirmed the format
+mismatch. Historical source contains a private-memory-index migration 19, but
+this does not explain every additional object in the actual source. Supporting
+this profile requires a reviewed compatibility/migration path; unknown tables
+will not be dropped or admitted automatically.
+
+The worker now returns `SOURCE_SCHEMA_NEWER` for a bounded integer migration
+version above its supported version. It reads only an ordinary migration table
+with an INTEGER primary key, excludes views/virtual tables, does not expose
+arbitrary values and leaves all strict snapshot checks intact. The version is
+explicitly described as declared metadata, not authenticated data. Tests cover
+future-version detection even with the wrong decryption key, unchanged source,
+empty destination, arbitrary values and migration views. Thirty focused tests
+and database types pass; `.tmp/native-newer-schema-core-recovery-evidence/receipt.json`
+records eight actual bundled process recovery phases with matching `c7015edb...`
+before/after hashes. The real dialog verification was interrupted by manual
+browser use, so that rerun is not credited as native UI proof.
+
+The protected destination created by the previous ad-hoc artifact could not
+unlock its profile key after the rebuild. It was kept without reset, ACL changes
+or security bypasses. The fresh protected destination starts normally, but this
+does not prove protected-profile continuity. The current app/profile in manual
+use is left running and preserved. Canonical `/Applications/Kestrel.app` remains
+the existing Electron app.
