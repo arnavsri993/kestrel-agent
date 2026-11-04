@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -102,32 +102,48 @@ try {
  await waitState(value => value.bookmarkFolders.some(item => item.name === 'Generated research'), 'Native folder creation failed.');
  let folder = (await state()).bookmarkFolders.find(item => item.name === 'Generated research'); assert(folder);
  phase('actual-Saved-pages-folder-create');
- stage = 'edit-bookmark'; await library.getByLabel('Show', { exact: true }).selectOption('all');
+ stage = 'edit-bookmark'; await library.locator('.bookmark-library-controls select').selectOption('all');
  let row = library.locator('.bookmark-library-list > li').filter({ hasText: 'Generated saved page' });
  await row.getByRole('button', { name: 'Edit', exact: true }).click();
  const editor = row.locator('.bookmark-library-edit');
  await editor.getByLabel('Title', { exact: true }).fill('Edited native bookmark');
- await editor.getByLabel('Show on bar as', { exact: true }).selectOption('icon');
- await editor.getByLabel('Folder', { exact: true }).selectOption(folder.id);
+ await editor.getByRole('combobox', { name: /^Show on bar as/ }).selectOption('full');
+ await editor.getByRole('combobox', { name: /^Folder/ }).selectOption(folder.id);
  await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
- await waitState(value => value.bookmarks.some(item => item.id === seeded.id && item.title === 'Edited native bookmark' && item.folderId === folder.id && item.displayMode === 'icon'), 'Native bookmark edit did not persist.');
+ await waitState(value => value.bookmarks.some(item => item.id === seeded.id && item.title === 'Edited native bookmark' && item.folderId === folder.id && item.displayMode === 'full'), 'Native bookmark edit did not persist.');
  let tree = flatten(await nativeTree()), nativeBookmark = tree.find(item => item.id === nativeBefore.id), nativeFolder = tree.find(item => item.id === nativeBookmark?.parentId);
- assert.equal(nativeBookmark?.title, 'Edited native bookmark'); assert.equal(nativeFolder?.title, 'Generated research');
+ assert.equal(nativeBookmark?.title, pageUrl); assert.equal(nativeFolder?.title, 'Generated research');
  phase('actual-Saved-pages-edit-move-and-native-Chrome-readback');
+ for (const [mode, nativeTitle] of [['title', 'Edited native bookmark'], ['icon', '']]) {
+  row = library.locator('.bookmark-library-list > li').filter({ hasText: 'Edited native bookmark' });
+  await row.getByRole('button', { name: 'Edit', exact: true }).click();
+  const form = row.locator('.bookmark-library-edit');
+  await form.getByRole('combobox', { name: /^Show on bar as/ }).selectOption(mode);
+  await form.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await waitState(value => value.bookmarks.some(item => item.id === seeded.id && item.title === 'Edited native bookmark' && item.displayMode === mode), 'Native bookmark display choice did not persist.');
+  assert.equal(flatten(await nativeTree()).find(item => item.id === nativeBefore.id)?.title, nativeTitle);
+  phase(`actual-native-bookmark-label-${mode}`);
+ }
  stage = 'rename-folder';
  let folderRow = library.locator('.bookmark-library-folders li').filter({ hasText: 'Generated research' });
  await folderRow.getByRole('button', { name: 'Rename', exact: true }).click();
- await folderRow.getByRole('textbox', { name: 'Rename Generated research', exact: true }).fill('Renamed research');
- await folderRow.getByRole('button', { name: 'Save', exact: true }).click();
+ await library.getByRole('textbox', { name: 'Rename Generated research', exact: true }).fill('Renamed research');
+ await library.locator('.bookmark-library-folder-rename').getByRole('button', { name: 'Save', exact: true }).click();
  await waitState(value => value.bookmarkFolders.some(item => item.id === folder.id && item.name === 'Renamed research'), 'Native folder rename failed.');
  assert.equal(flatten(await nativeTree()).find(item => item.id === nativeFolder.id)?.title, 'Renamed research');
  await library.screenshot({ path: join(evidence, 'native-bookmark-edited.png') });
  phase('actual-Saved-pages-folder-rename');
+ if (process.env.KESTREL_NATIVE_BOOKMARK_INSPECT === '1') {
+  const acknowledgement = join(evidence, 'continue-inspection');
+  await writeFile(join(evidence, 'live-state.json'), JSON.stringify({ stage: 'inspect-edited', candidate: app, pid: running.child.pid, acknowledgement }, null, 2), { mode: 0o600 });
+  console.log(`NATIVE_BOOKMARK_INSPECTION_READY ${acknowledgement}`);
+  await eventually(async () => { try { await access(acknowledgement); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; } }, 'Live inspection was not acknowledged.', 10 * 60_000);
+ }
  stage = 'restart-edited'; await stop(); await start();
  let restored = (await state()).bookmarks.find(item => item.id === seeded.id);
  assert(restored && restored.title === 'Edited native bookmark' && restored.displayMode === 'icon' && restored.folderId === folder.id);
  assert((await state()).bookmarkFolders.some(item => item.id === folder.id && item.name === 'Renamed research'));
- assert.equal(flatten(await nativeTree()).find(item => item.id === nativeBefore.id)?.title, 'Edited native bookmark');
+ assert.equal(flatten(await nativeTree()).find(item => item.id === nativeBefore.id)?.title, '');
  phase('bookmark-identity-folder-and-display-mode-survive-app-restart');
  stage = 'remove-folder-keep-bookmark'; await openLibrary();
  folderRow = library.locator('.bookmark-library-folders li').filter({ hasText: 'Renamed research' });
@@ -151,10 +167,11 @@ try {
  await stop();
  const file = JSON.parse(await readFile(join(profile, 'Default/Bookmarks'), 'utf8'));
  const persisted = flatten(Object.values(file.roots)).find(item => item.url === pageUrl);
- assert.equal(persisted?.name, 'Edited native bookmark'); assert.equal(persisted.id, nativeBefore.id);
+ assert.equal(persisted?.name, ''); assert.equal(persisted.id, nativeBefore.id);
  phase('Chromium-bookmarks-file-confirms-final-data-after-clean-exit'); receipt.result = 'passed';
 } catch (error) {
  receipt.result = 'failed'; receipt.failedStage = stage; receipt.error = String(error?.message || error).slice(0, 500); process.exitCode = 1;
+ await library?.screenshot({ path: join(evidence, 'failed-saved-pages.png') }).catch(() => {});
  console.error(`Native bookmark canary failed at ${stage}: ${receipt.error}`);
 } finally {
  await stop().catch(() => { receipt.result = 'failed'; receipt.shutdownUnconfirmed = true; process.exitCode = 1; });
