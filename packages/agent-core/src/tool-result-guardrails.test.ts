@@ -2,30 +2,12 @@ import {
 	RuntimeMessageSchema,
 	type RuntimeToolExecution,
 } from "@kestrel/shared-types";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
 	MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
 	modelVisibleToolResult,
 	redactSensitiveContent,
 } from "./tool-result-guardrails";
-
-const cryptoProbe = vi.hoisted(() => ({ keys: [] as Buffer[], fail: false, fingerprints: [] as string[] }));
-vi.mock("node:crypto", async (importOriginal) => {
- const actual = await importOriginal<typeof import("node:crypto")>();
- return { ...actual,
-  randomBytes: (size: number) => {
-   if (cryptoProbe.fail) throw new Error("RNG unavailable");
-   const key = actual.randomBytes(size); cryptoProbe.keys.push(key); return key;
-  },
-  createHmac: (algorithm: string, key: Buffer) => {
-   const hmac = actual.createHmac(algorithm, key);
-   const digest = hmac.digest.bind(hmac);
-   hmac.digest = ((encoding: "hex") => { const value = digest(encoding); cryptoProbe.fingerprints.push(value); return value; }) as typeof hmac.digest;
-   return hmac;
-  },
- };
-});
-beforeEach(() => { cryptoProbe.keys.length = 0; cryptoProbe.fingerprints.length = 0; cryptoProbe.fail = false; });
 
 function execution(output: Record<string, unknown>): RuntimeToolExecution {
 	return {
@@ -43,57 +25,54 @@ function execution(output: Record<string, unknown>): RuntimeToolExecution {
 
 describe("model-facing tool result guardrails", () => {
 
-	it("uses one transient key across nested values, errors, and cross-kind matches", () => {
+	it("marks occurrences independently across nested values, kinds, and errors", () => {
 		const same = "generated-fixture-123456";
 		const result = modelVisibleToolResult({ ...execution({ password: same, nested: { apiKey: same, password: "different-fixture-123" }, list: [{ secret: same }] }), error: `password=${same}` });
 		const parsed = JSON.parse(result);
-		expect(parsed.output).toEqual({ password: "[PASSWORD_1]", nested: { apiKey: "[PASSWORD_1]", password: "[PASSWORD_2]" }, list: [{ secret: "[PASSWORD_1]" }] });
-		expect(parsed.error).toBe("password=[PASSWORD_1]");
+		expect(parsed.output).toEqual({ password: "[PASSWORD_1]", nested: { apiKey: "[API_KEY_1]", password: "[PASSWORD_2]" }, list: [{ secret: "[SECRET_1]" }] });
+		expect(parsed.error).toBe("password=[PASSWORD_3]");
 		expect(parsed.safety.redactionCount).toBe(5);
-		expect(cryptoProbe.keys).toHaveLength(1);
-		expect(cryptoProbe.keys[0]).toEqual(Buffer.alloc(32));
-		expect(cryptoProbe.fingerprints[0]).toBe(cryptoProbe.fingerprints[1]);
-		expect(cryptoProbe.fingerprints[0]).not.toBe(cryptoProbe.fingerprints[2]);
-		for (const fingerprint of cryptoProbe.fingerprints) expect(result).not.toContain(fingerprint);
 		expect(result).not.toContain(same);
 	});
 
-	it("scopes fingerprints to each operation while retaining placeholder semantics", () => {
-		const text = "password=generated-fixture-123456";
-		expect(redactSensitiveContent(text)).toBe("password=[PASSWORD_1]");
-		expect(redactSensitiveContent(text)).toBe("password=[PASSWORD_1]");
-		expect(cryptoProbe.keys).toHaveLength(2);
-		expect(cryptoProbe.fingerprints).toHaveLength(2);
-		expect(cryptoProbe.fingerprints[0]).not.toBe(cryptoProbe.fingerprints[1]);
-		for (const key of cryptoProbe.keys) expect(key).toEqual(Buffer.alloc(32));
+	it("does not reveal which known candidate equals an unknown synthetic password", () => {
+		const candidates = ["synthetic-wrong-guess-5920", "synthetic-matching-guess-7421"];
+		const visible = (password: string) => modelVisibleToolResult(execution({ password,
+			candidates: candidates.map((candidate, index) => ({ label: `candidate-${index}`, password: candidate })) }));
+		const first = visible(candidates[0]!), second = visible(candidates[1]!);
+		expect(first).toBe(second);
+		expect(JSON.parse(first).output).toEqual({ password: "[PASSWORD_1]", candidates: [
+			{ label: "candidate-0", password: "[PASSWORD_2]" }, { label: "candidate-1", password: "[PASSWORD_3]" }] });
+		for (const candidate of candidates) expect(first).not.toContain(candidate);
 	});
 
-	it("clears keys when truncating or when an input getter throws", () => {
+	it("resets occurrence counters for separate results without exposing secret identity", () => {
+		const repeated = "generated-fixture-123456";
+		expect(redactSensitiveContent(`password=${repeated} password=${repeated}`)).toBe("password=[PASSWORD_1] password=[PASSWORD_2]");
+		expect(redactSensitiveContent(`password=${repeated} password=different-fixture-123`)).toBe("password=[PASSWORD_1] password=[PASSWORD_2]");
+		expect(redactSensitiveContent("password=another-fixture-456")).toBe("password=[PASSWORD_1]");
+	});
+
+	it("preserves truncation and propagates input errors without changing the execution record", () => {
 		const truncated = modelVisibleToolResult(execution({ password: "generated-fixture-123", content: "x".repeat(250_100) }));
 		expect(JSON.parse(truncated).output.truncated).toBe(true);
-		expect(cryptoProbe.keys[0]).toEqual(Buffer.alloc(32));
+		expect(truncated).not.toContain("generated-fixture-123");
 		const bad = execution({ get password() { throw new Error("fixture failure"); } });
 		expect(() => modelVisibleToolResult(bad)).toThrow("fixture failure");
-		expect(cryptoProbe.keys[1]).toEqual(Buffer.alloc(32));
+		expect(Object.getOwnPropertyDescriptor(bad.output, "password")?.get).toBeTypeOf("function");
 		const invalid = { replace() { throw new Error("fixture failure"); } } as unknown as string;
 		expect(() => redactSensitiveContent(invalid)).toThrow();
-		expect(cryptoProbe.keys[2]).toEqual(Buffer.alloc(32));
 	});
 
-	it("fails closed if secure randomness is unavailable", () => {
-		cryptoProbe.fail = true;
-		expect(() => redactSensitiveContent("password=generated-fixture-123")).toThrow("RNG unavailable");
-		expect(() => modelVisibleToolResult(execution({ password: "generated-fixture-123" }))).toThrow("RNG unavailable");
-		expect(cryptoProbe.fingerprints).toEqual([]);
-	});
-
-	it("deduplicates identical PEM blocks using the same redaction state", () => {
+	it("does not correlate repeated PEM material within text or across output and error", () => {
 		const pem = "-----BEGIN PRIVATE KEY-----\nfixture-material\n-----END PRIVATE KEY-----";
-		expect(redactSensitiveContent(`${pem} ${pem}`)).toBe("[PRIVATE_KEY_1] [PRIVATE_KEY_1]");
-		expect(cryptoProbe.fingerprints[0]).toBe(cryptoProbe.fingerprints[1]);
-		expect(cryptoProbe.keys[0]).toEqual(Buffer.alloc(32));
+		expect(redactSensitiveContent(`${pem} ${pem}`)).toBe("[PRIVATE_KEY_1] [PRIVATE_KEY_2]");
+		const result = JSON.parse(modelVisibleToolResult({ ...execution({ privateKey: pem }), error: pem }));
+		expect(result.output.privateKey).toBe("[PRIVATE_KEY_1]");
+		expect(result.error).toBe("[PRIVATE_KEY_2]");
+		expect(result.safety.redactionCount).toBe(2);
 	});
-	it("redacts structured secrets with stable indexed placeholders", () => {
+	it("redacts structured secrets with occurrence markers independent of matching text", () => {
 		const openAiKey = `sk-proj-${"a".repeat(32)}`;
 		const bearerToken = "b".repeat(32);
 		const result = modelVisibleToolResult(
@@ -109,9 +88,10 @@ describe("model-facing tool result guardrails", () => {
 
 		expect(parsed.output.apiKey).toBe("[API_KEY_1]");
 		expect(parsed.output.pageText).not.toContain(openAiKey);
-		expect(parsed.output.pageText).toContain("[API_KEY_1]");
+		expect(parsed.output.pageText).toContain("[OPENAI_API_KEY_1]");
+		expect(parsed.output.pageText).toContain("[OPENAI_API_KEY_2]");
 		expect(parsed.output.pageText).toContain("[BEARER_TOKEN_1]");
-		expect(parsed.output.pageText.match(/\[API_KEY_1\]/g)).toHaveLength(2);
+		expect(parsed.output.pageText).not.toContain("[API_KEY_1]");
 		expect(parsed.safety).toMatchObject({
 			redactedSensitiveData: true,
 			redactionCount: 4,

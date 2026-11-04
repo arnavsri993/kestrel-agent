@@ -1,11 +1,8 @@
-import { createHmac, randomBytes } from "node:crypto";
 import type { RuntimeToolExecution } from "@kestrel/shared-types";
 import { screenshotTextOutput } from "./screenshot-model-context";
 
 interface RedactionState {
-	key: Buffer;
 	redactions: number;
-	tokens: Map<string, string>;
 	nextTokenByKind: Map<string, number>;
 }
 
@@ -34,24 +31,17 @@ export const MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS = 250_000;
 
 function createRedactionState(): RedactionState {
 	return {
-		key: randomBytes(32),
 		redactions: 0,
-		tokens: new Map(),
 		nextTokenByKind: new Map(),
 	};
 }
 
-function tokenFor(kind: string, value: string, state: RedactionState): string {
-	const fingerprint = createHmac("sha256", state.key).update(value).digest("hex");
-	const existing = state.tokens.get(fingerprint);
-	if (existing) {
-		state.redactions += 1;
-		return existing;
-	}
+// Mark occurrences, never secret identities. Reusing a marker for equal values
+// lets known candidate values reveal an unknown secret in the same receipt.
+function tokenFor(kind: string, state: RedactionState): string {
 	const next = (state.nextTokenByKind.get(kind) ?? 0) + 1;
 	state.nextTokenByKind.set(kind, next);
 	const token = `[${kind}_${next}]`;
-	state.tokens.set(fingerprint, token);
 	state.redactions += 1;
 	return token;
 }
@@ -101,7 +91,7 @@ function redactPrivateKeys(value: string, state: RedactionState): string {
 			value.startsWith("-----", PRIVATE_KEY_MARKER.lastIndex);
 		const blockEnd = matches ? PRIVATE_KEY_MARKER.lastIndex + 5 : value.length;
 		if (matches) PRIVATE_KEY_MARKER.lastIndex = blockEnd;
-		parts.push(value.slice(cursor, begin.index), tokenFor("PRIVATE_KEY", value.slice(begin.index, blockEnd), state));
+		parts.push(value.slice(cursor, begin.index), tokenFor("PRIVATE_KEY", state));
 		cursor = blockEnd;
 		if (!matches) break;
 	}
@@ -114,45 +104,43 @@ function redactText(value: string, state: RedactionState): string {
 	let redacted = redactPrivateKeys(value, state);
 	redacted = redacted.replace(
 		SENSITIVE_ASSIGNMENT_PATTERN,
-		(_match, key: string, separator: string, quote: string, secret: string) =>
-			`${key}${separator}${quote}${tokenFor(assignmentKind(key), secret, state)}${quote}`,
+		(_match, key: string, separator: string, quote: string) =>
+			`${key}${separator}${quote}${tokenFor(assignmentKind(key), state)}${quote}`,
 	);
 	redacted = redacted.replace(
 		ANTHROPIC_KEY_PATTERN,
-		(match) => tokenFor("ANTHROPIC_API_KEY", match, state),
+		() => tokenFor("ANTHROPIC_API_KEY", state),
 	);
 	redacted = redacted.replace(
 		OPENAI_KEY_PATTERN,
-		(match) => tokenFor("OPENAI_API_KEY", match, state),
+		() => tokenFor("OPENAI_API_KEY", state),
 	);
 	redacted = redacted.replace(
 		GITHUB_TOKEN_PATTERN,
-		(match) => tokenFor("GITHUB_TOKEN", match, state),
+		() => tokenFor("GITHUB_TOKEN", state),
 	);
 	redacted = redacted.replace(
 		GOOGLE_API_KEY_PATTERN,
-		(match) => tokenFor("GOOGLE_API_KEY", match, state),
+		() => tokenFor("GOOGLE_API_KEY", state),
 	);
 	redacted = redacted.replace(
 		AWS_ACCESS_KEY_PATTERN,
-		(match) => tokenFor("AWS_ACCESS_KEY", match, state),
+		() => tokenFor("AWS_ACCESS_KEY", state),
 	);
 	redacted = redacted.replace(
 		SLACK_TOKEN_PATTERN,
-		(match) => tokenFor("SLACK_TOKEN", match, state),
+		() => tokenFor("SLACK_TOKEN", state),
 	);
 	return redacted.replace(
 		BEARER_TOKEN_PATTERN,
-		(_match, prefix: string, token: string) =>
-			`${prefix}${tokenFor("BEARER_TOKEN", token, state)}`,
+		(_match, prefix: string) =>
+			`${prefix}${tokenFor("BEARER_TOKEN", state)}`,
 	);
 }
 
 /** Redact a previously persisted tool-message payload before replaying it. */
 export function redactSensitiveContent(value: string): string {
-	const state = createRedactionState();
-	try { return redactText(value, state); }
-	finally { state.key.fill(0); }
+	return redactText(value, createRedactionState());
 }
 
 function redactValue(
@@ -162,11 +150,11 @@ function redactValue(
 ): unknown {
 	if (typeof value === "string")
 		return key && isSensitiveKey(key)
-			? tokenFor(assignmentKind(key), value, state)
+			? tokenFor(assignmentKind(key), state)
 			: redactText(value, state);
 	if (typeof value === "number" || typeof value === "boolean")
 		return key && isSensitiveKey(key)
-			? tokenFor(assignmentKind(key), String(value), state)
+			? tokenFor(assignmentKind(key), state)
 			: value;
 	if (Array.isArray(value)) return value.map((item) => redactValue(item, state));
 	if (value && typeof value === "object") {
@@ -183,58 +171,54 @@ function redactValue(
 /**
  * Format a tool result for conversation history and model context.
  *
- * The encrypted execution record remains unchanged; only the model-facing
+ * The original execution record remains unchanged; only the model-facing
  * copy is redacted so a local read of a secret-bearing file or external page
  * cannot replay that secret into a hosted model on a later turn.
  */
 export function modelVisibleToolResult(execution: RuntimeToolExecution): string {
 	const state = createRedactionState();
-	try {
-		const output =
-			execution.output === undefined
-				? undefined
-				: redactValue(screenshotTextOutput(execution), state);
-		const error = execution.error
-			? redactText(execution.error, state)
-			: undefined;
-		const result = {
-			status: execution.status,
-			...(output === undefined ? {} : { output }),
-			...(error === undefined ? {} : { error }),
-			...(state.redactions > 0
-				? {
-						safety: {
-							redactedSensitiveData: true,
-							redactionCount: state.redactions,
-							note: "Sensitive-looking values were replaced locally before this result reached the model. Never reconstruct or request a redacted value.",
-						},
-					}
-				: {}),
-		};
-		const serialized = JSON.stringify(result);
-		if (serialized.length <= MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS)
-			return serialized;
+	const output =
+		execution.output === undefined
+			? undefined
+			: redactValue(screenshotTextOutput(execution), state);
+	const error = execution.error
+		? redactText(execution.error, state)
+		: undefined;
+	const result = {
+		status: execution.status,
+		...(output === undefined ? {} : { output }),
+		...(error === undefined ? {} : { error }),
+		...(state.redactions > 0
+			? {
+					safety: {
+						redactedSensitiveData: true,
+						redactionCount: state.redactions,
+						note: "Sensitive-looking values were replaced locally before this result reached the model. Never reconstruct or request a redacted value.",
+					},
+				}
+			: {}),
+	};
+	const serialized = JSON.stringify(result);
+	if (serialized.length <= MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS)
+		return serialized;
 
-		return JSON.stringify({
-			status: execution.status,
-			output: {
-				truncated: true,
-				originalCharacterCount: serialized.length,
-				limitCharacterCount: MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
-				message:
-					"The tool result was too large to add to model context. Do not assume omitted details were read; use a narrower request or a scoped tool.",
-			},
-			...(state.redactions > 0
-				? {
-						safety: {
-							redactedSensitiveData: true,
-							redactionCount: state.redactions,
-							note: "Sensitive-looking values were handled locally before this result reached the model.",
-						},
-					}
-				: {}),
-		});
-	} finally {
-		state.key.fill(0);
-	}
+	return JSON.stringify({
+		status: execution.status,
+		output: {
+			truncated: true,
+			originalCharacterCount: serialized.length,
+			limitCharacterCount: MAX_MODEL_VISIBLE_TOOL_RESULT_CHARACTERS,
+			message:
+				"The tool result was too large to add to model context. Do not assume omitted details were read; use a narrower request or a scoped tool.",
+		},
+		...(state.redactions > 0
+			? {
+					safety: {
+						redactedSensitiveData: true,
+						redactionCount: state.redactions,
+						note: "Sensitive-looking values were handled locally before this result reached the model.",
+					},
+				}
+			: {}),
+	});
 }
