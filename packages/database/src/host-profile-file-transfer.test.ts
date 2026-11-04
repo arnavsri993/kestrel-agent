@@ -7,6 +7,7 @@ import { once } from "node:events";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { afterEach, expect, it } from "vitest";
 import { KestrelDatabase } from "./index";
+import { LATEST_SCHEMA_VERSION } from "./migrations";
 import { applyHostProfileFileTransfer, HostProfileFileTransferError, planHostProfileFileTransfer, verifyHostProfileFileTransferRecovery } from "./host-profile-file-transfer";
 
 const timestamp = "2026-11-02T15:30:00.000Z", privateText = "GENERATED_CORE_FILE_TRANSFER_PRIVATE_TEXT";
@@ -70,6 +71,28 @@ it("requires the exact accepted plan and an independent destination key", () => 
 	const tampered = structuredClone(plan); tampered.summary.counts.runtime_messages = 0;
 	expect(code(() => apply(value, tampered))).toBe("PLAN_CHANGED");
 	expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
+});
+
+it("identifies a declared newer schema without decrypting, changing the source or preparing a destination", () => {
+	const value = fixture(), db = new Database(value.sourceDatabasePath);
+	db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(LATEST_SCHEMA_VERSION + 1, timestamp); db.close();
+	const before = readFileSync(value.sourceDatabasePath);
+	expect(code(() => planHostProfileFileTransfer({ ...value, sourceKey: key() }))).toBe("SOURCE_SCHEMA_NEWER");
+	expect(() => value.plan()).toThrow(`declares schema ${LATEST_SCHEMA_VERSION + 1}; this build supports up to ${LATEST_SCHEMA_VERSION}`);
+	expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
+	expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
+});
+
+it("does not disclose arbitrary migration values or treat a migration view as version evidence", () => {
+	for (const schema of ["CREATE TABLE schema_migrations (version TEXT)", "CREATE VIEW schema_migrations AS SELECT 'GENERATED_CORE_FILE_TRANSFER_PRIVATE_TEXT' AS version"]) {
+		const value = fixture(), db = new Database(value.sourceDatabasePath);
+		db.exec("DROP TABLE schema_migrations"); db.exec(schema);
+		if (schema.startsWith("CREATE TABLE")) db.prepare("INSERT INTO schema_migrations VALUES (?)").run(privateText);
+		db.close(); const before = readFileSync(value.sourceDatabasePath);
+		expect(code(value.plan)).toBe("SOURCE_UNREADABLE");
+		expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
+		expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
+	}
 });
 
 it("refuses changed source data and source replacement after review", () => {

@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { createHostProfileTransferSnapshot, HOST_PROFILE_TRANSFER_POLICY, importHostProfileTransferSnapshot, type HostProfileTransferSnapshot } from "./profile-transfer.js";
-import { listMigrationVersions, loadMigrationSql } from "./migrations.js";
+import { LATEST_SCHEMA_VERSION, listMigrationVersions, loadMigrationSql } from "./migrations.js";
 
 type Identity = { device: string; inode: string };
 type Source = { path: string; file: Identity; directory: Identity };
@@ -161,6 +161,18 @@ function copySourceForRead(source: Source, recoveryLink?: Identity): { path: str
 		return { path: clone, verify, close };
 	} catch (error) { close(); throw error; }
 }
+function rejectDeclaredNewerSchema(db: Database.Database): void {
+	// This is unauthenticated format metadata, not proof that any row or key is
+	// valid. Read a bounded integer only from an ordinary migration table. Views,
+	// virtual tables and changed column types still reach the strict validator.
+	const table = db.prepare("SELECT type, sql FROM sqlite_master WHERE name = ?").get("schema_migrations") as { type?: string; sql?: string } | undefined;
+	if (table?.type !== "table" || !/^CREATE TABLE\s/iu.test(table.sql ?? "")) return;
+	const columns = db.pragma("table_info(schema_migrations)") as Array<{ name: string; type: string; pk: number }>;
+	if (!columns.some(column => column.name === "version" && column.type.toUpperCase() === "INTEGER" && column.pk === 1)) return;
+	const row = db.prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").get() as { version?: unknown } | undefined;
+	if (typeof row?.version === "number" && Number.isSafeInteger(row.version) && row.version > LATEST_SCHEMA_VERSION && row.version <= 1_000_000)
+		fail("SOURCE_SCHEMA_NEWER", `The selected profile declares schema ${row.version}; this build supports up to ${LATEST_SCHEMA_VERSION}. Review it with a compatible Kestrel build. Existing data was preserved.`);
+}
 function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { snapshot: HostProfileTransferSnapshot; authenticatedEnvelopes: number } {
 	let db: Database.Database | undefined;
 	let copy: ReturnType<typeof copySourceForRead> | undefined;
@@ -169,6 +181,7 @@ function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { sna
 		db = new Database(copy.path, { readonly: true, fileMustExist: true });
 		const reader = db;
 		const result = reader.transaction(() => {
+			rejectDeclaredNewerSchema(reader);
 			// Validate canonical schema and aggregate limits before integrity scans
 			// or decrypted rows can grow with an unsupported source. Check only the
 			// first foreign-key violation instead of materializing an error list.
