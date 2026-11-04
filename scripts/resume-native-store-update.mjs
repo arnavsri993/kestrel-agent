@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { loadRetainedStoreUpdateFixture } from "./native-store-update-profile.mjs";
 import { loadStoreUpdateContinuation } from "./native-store-update-continuation.mjs";
+import { CEF_VERSION } from "./prepare-native-chromium-runtime.mjs";
 
 assert(process.env.KESTREL_NATIVE_TEST_APP, "Select the exact native candidate.");
 assert(process.env.KESTREL_NATIVE_STORE_UPDATE_CHECKPOINT, "Select an existing generated Store checkpoint.");
@@ -23,6 +24,7 @@ const processRows = execFileSync("/bin/ps", ["-axo", "pid=,command="], { encodin
 assert(!processRows.some(row => row.includes(`--kestrel-cache-path ${profile}`)), "The retained profile is already in use.");
 const formatter = "bcjindcccaagfpapjjmafapmmgkkhgoa", action = "ddkjiahejlhfcafbddmgiahcphecmpfh";
 const ids = [formatter, action];
+const expectedChromium = CEF_VERSION.split("+chromium-")[1];
 const extensionId = [...createHash("sha256").update(join(profile, "kestrel-ui-bundle")).digest("hex").slice(0, 32)].map(digit => "abcdefghijklmnop"[parseInt(digit, 16)]).join("");
 const homeUrl = `chrome-extension://${extensionId}/index.html`;
 const receipt = { kind: "native-store-update-resume", version: 1, startedAt: new Date().toISOString(), candidate: app,
@@ -120,6 +122,10 @@ async function start() {
   state.endpoint = await eventually(() => state.output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+)/)?.[1], "Retained native profile did not start.");
   stage = "start-retained-profile:connect";
   browser = await connectOwnedTargetTransport(state.endpoint);
+  const version = await browser.send("Browser.getVersion");
+  const observedVersion = version.product?.split("/").at(-1);
+  assert.equal(observedVersion, expectedChromium, "The running Chromium version must match the verified runtime pin.");
+  (receipt.observedChromiumVersions ??= []).push(observedVersion);
   stage = "start-retained-profile:home-target";
   home = await pageFor(homeUrl);
   stage = "start-retained-profile:bridge";
