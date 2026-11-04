@@ -167,13 +167,19 @@ try {
  await panel.click('Use code');
  await eventually(async () => (await page.locator('#otp').inputValue()) === '481902', 'Native companion did not fill the captured field.');
  const effect = await page.evaluate(() => window.fixture); assert.deepEqual(effect.events, ['input', 'change']); assert.equal(effect.submits, 0);
+ await page.screenshot({ path: join(evidence, 'native-code-filled.png') });
  phase('actual-companion-code-fill-input-change-without-submit');
+ const inspectionMs = Number(process.env.KESTREL_NATIVE_LOGIN_CODE_INSPECTION_MS || 0);
+ assert(Number.isSafeInteger(inspectionMs) && inspectionMs >= 0 && inspectionMs <= 60_000, 'Inspection window must be at most one minute.');
+ if (inspectionMs) { console.log(`Inspection window: owned native PID ${running.child.pid}`); await delay(inspectionMs); }
  stage = 'stale-navigation';
  // Capture a real scan through the same authenticated first-party protocol and
  // prove a replaced document cannot receive its opaque candidate.
+ await page.bringToFront();
  const scan = await request({ type: 'communication-code-scan', tabId }); assert(scan.ok, scan.error);
  const candidate = scan.communicationScan?.candidates.find(item => item.code === '481902'); assert(candidate);
  await page.goto(`${url}?revision=2`); await page.locator('#otp').waitFor();
+ await page.bringToFront();
  const stale = await request({ type: 'communication-code-use', scanId: scan.communicationScan.scanId, candidateId: candidate.id }); assert.equal(stale.ok, false);
  assert.equal(await page.locator('#otp').inputValue(), '');
  await eventually(async () => !(await panel.text()).includes('481902'), 'Navigating must discard visible stale candidates.');

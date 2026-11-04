@@ -2728,3 +2728,94 @@ Whole Chromium-profile backup/restore, same-Mac identity verification, reviewed
 replacement, no-replay recovery policy and durable recovery journaling are still
 required before claiming that backup feature. The formal profile-transfer and
 rollback retirement gate and the other outstanding release gates remain open.
+
+### Native verification-code handoff (2026-11-03)
+
+The existing companion now offers an explicit **Find verification code** control
+for a loaded HTTP(S) user tab. Find performs a private field inspection before
+searching recent Messages text or the connected read-only Gmail source. The
+shared Messages query now correctly subtracts the Apple 2001 epoch, bounds both
+ends of the last 30 minutes, excludes future/malformed dates, and limits rows,
+output bytes, query time and returned codes. Its sqlite3 child is cancellable.
+Attributed-body-only Messages rows are still unsupported.
+
+The selected code travels through a distinct authenticated native host/worker
+channel. Generic renderer/browser-tool requests cannot supply an arbitrary code
+for this channel. Generic page contexts and browser automation continue to redact
+and refuse code fields. The host binds a scan to the active window, native tab,
+top-level document, canonical origin and opaque field identity. The isolated
+field registry additionally binds the full URL, observable navigation entry,
+invalidation generation and field/form semantics. Ambiguous, hidden, disabled,
+password and payment fields are rejected. An unrelated tab's navigation does
+not revoke this tab's scan.
+
+Use consumes the scan before asynchronous work, rechecks source/account status
+and the captured field, and focuses only that field in the already selected
+visible document. It checks focus and authority again after synchronous focus
+handlers, then emits input/change without a submit click or Enter. A site can
+continue from its own event handlers. Blur, observable navigation, cancellation,
+known provider mutations, worker loss and restart invalidate retained authority.
+Candidates are valid for at most two minutes and are not written to history or
+agent messages. Unknown insertion outcomes are not retried automatically.
+
+The manual UI clears codes and rejects late results on close, tab/navigation
+change or unmount. Messages settings opens only the fixed native Full Disk
+Access pane after an explicit request. No permission is granted automatically.
+The protected disposable-key lane alone selects a generated Messages fixture;
+the renderer cannot choose a database path or enable that lane.
+
+Current source passed **2,648 tests in 307 files**, with two ownership-mutation
+tests skipped without root, and workspace typechecks. The successful full unit
+run used `--maxWorkers=4`. Earlier unrestricted runs hit different five-second
+database-test timeouts under concurrent build/app load; both affected suites
+passed independently, and the complete bounded-concurrency run passed. The new
+field test was also converted from node:test to the repository's Vitest runner.
+No assertion or timeout threshold was relaxed.
+
+Exact ad-hoc native candidate
+`b606fd359ee558240a0c479b0f602262863f231605c280c431125095d377336f`
+has matching before/after bundle hashes for:
+
+- `.tmp/native-login-code-final2-evidence/receipt.json`: **6** actual packaged
+  phases: public-page bridge/raw-search refusal; generic automation refusal;
+  the real companion finding only the recent generated SQLite message; actual
+  field fill with input/change and zero submit events; stale navigation refusal;
+  restart refusal of an unconsumed candidate. The generated profile was removed
+  after clean shutdown. The current native window and visibly filled field were
+  also inspected through computer use during the preceding inspection probe.
+- `.tmp/native-login-code-workflow2-evidence/receipt.json`: **26** full product
+  phases, including existing Home/companion/provider tasks, attachments,
+  workspace, trusted browser actions, isolated Enter navigation/downloads,
+  recovery and restart. The preceding 25-phase run omitted the opt-in Enter
+  navigation flag; this run explicitly includes it.
+- `.tmp/native-login-code-store-evidence/receipt.json`: **5** retained official
+  Store extension/function/tab-isolation/restart phases, compatibility only.
+  The expected result is incomplete/exit 2 because no published-version upgrade
+  was queried or observed. This is not fresh-install or update-acceptance proof.
+
+Run `test:native-login-code` with an exact disposable candidate and an empty
+`KESTREL_NATIVE_LOGIN_CODE_EVIDENCE` directory. Failed receipts are retained:
+the first probe needed to wait for the tab model; private scripting needed JSON
+nulls rather than undefined arguments; a refreshed CDP connection needed fresh
+page handles; and navigation authority initially used a global revision. A
+45-second inspection probe subsequently lost foreground authority before its
+next scan. The final probe explicitly focuses its owned page before testing
+stale-document rejection; foreground checks remain enforced. The latest full
+`pnpm verify` pass is still the separate `5fd495e2` source boundary.
+
+These generated-data checks do not prove real Messages/Full Disk Access or
+authenticated Gmail acceptance. Gmail uses the existing Core lookup's 30-second
+network bound; host cancellation discards late content but does not abort that
+individual child request. Known account changes are rechecked; sources without
+an authorization epoch cannot prove an unobserved revoke/regrant race. Navigation
+changes with neither a browser event nor a Navigation API entry change are not
+claimed detectable. Earlier authority/transfer/backup receipts belong to their
+documented older artifacts.
+
+The canonical `/Applications/Kestrel.app` is still the existing Electron app.
+Broader existing-profile asset migration/rollback, interrupted preparation and
+missing-expiry lease recovery, real account/profile acceptance, a published
+Store upgrade, production signing/notarization and canonical cutover remain
+release work. Whole Chromium-profile backup is a separate unfinished feature;
+it is not an additional named retirement gate. No real Messages database,
+credentials, microphone or desktop-input permission was accessed for this batch.
