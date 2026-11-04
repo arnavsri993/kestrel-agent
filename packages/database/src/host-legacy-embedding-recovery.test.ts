@@ -6,7 +6,8 @@ import { createEncryptionKey } from '@kestrel/encryption';
 import { MemoryRecordSchema, TimelineEventSchema } from '@kestrel/shared-types';
 import { describe, it, expect } from 'vitest';
 import { KestrelDatabase } from './index.js';
-import { EMBEDDING_LEGACY_MIGRATION_KEY, EMBEDDING_STATE_SECRET_KEY } from './memory-embedding-state.js';
+import { EMBEDDING_LEGACY_MIGRATION_KEY, EMBEDDING_STATE_SECRET_KEY, newEmbeddingStateSecret } from './memory-embedding-state.js';
+import { embeddingAuthorityStateKey, newEmbeddingAuthorityState } from './memory-embedding-authority.js';
 
 const now = '2026-11-02T12:00:00.000Z';
 const later = '2026-11-02T12:01:00.000Z';
@@ -90,6 +91,43 @@ describe('host-only legacy missing-lease recovery', () => {
    const snapshot = plan(f);
    mutate(f, db => { db.upsertMemory({ ...f.record, status: 'deleted' }); db.upsertMemory(f.record); });
    expect(() => apply(f, snapshot)).toThrow();
+  } finally { f.cleanup(); }
+ });
+ it.each(['missing', 'deleted'] as const)('preserves %s-source review across unrelated presence rewrite', which => {
+  const f = fixture(which !== 'missing'); try {
+   if (which === 'deleted') mutate(f, db => db.upsertMemory({ ...f.record, status: 'deleted' }));
+   mutate(f, db => db.setPrivateState('presence.core-instance-id', 'generated-instance'));
+   const snapshot = plan(f);
+   mutate(f, db => db.setPrivateState('presence.core-instance-id', 'generated-instance'));
+   expect(apply(f, snapshot)).toEqual({ cancelled: true });
+  } finally { f.cleanup(); }
+ });
+ it('binds reserved authority semantics and ignores their randomized re-encryption', () => {
+  const f = fixture(false); try {
+   let authorityKey = '';
+   mutate(f, db => {
+    const secret = db.getPrivateState<{version: 1; key: string}>(EMBEDDING_STATE_SECRET_KEY) ?? newEmbeddingStateSecret();
+    db.setPrivateState(EMBEDDING_STATE_SECRET_KEY, secret);
+    authorityKey = embeddingAuthorityStateKey(secret, 'owner', 'memory:owner');
+    db.setPrivateState(authorityKey, newEmbeddingAuthorityState('owner', 'memory:owner', 'a'.repeat(64)));
+   });
+   const first = plan(f);
+   mutate(f, db => { const state = db.getPrivateState(authorityKey); db.setPrivateState(authorityKey, state); });
+   const same = plan(f); expect(same).toEqual(first);
+   mutate(f, db => db.setPrivateState(authorityKey, newEmbeddingAuthorityState('owner', 'memory:owner', 'a'.repeat(64))));
+   expect(() => apply(f, first)).toThrow();
+   expect(apply(f, plan(f))).toEqual({ cancelled: true });
+  } finally { f.cleanup(); }
+ });
+ it('binds capture policy and deletion tombstones', () => {
+  const f = fixture(false); try {
+   const first = plan(f);
+   mutate(f, db => db.setPrivateState('memory.capture.configuration', { version: 1, enabled: false, defaultRetentionDays: 90, policies: [], updatedAt: now }));
+   expect(() => apply(f, first)).toThrow();
+   const second = plan(f);
+   mutate(f, db => db.setPrivateState(`source-derived-deleted.${'a'.repeat(64)}`, { deleted: true }));
+   expect(() => apply(f, second)).toThrow();
+   expect(apply(f, plan(f))).toEqual({ cancelled: true });
   } finally { f.cleanup(); }
  });
  it('invalidates denied authority after revoke and regrant', () => {

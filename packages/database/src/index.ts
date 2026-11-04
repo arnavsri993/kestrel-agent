@@ -3443,21 +3443,46 @@ export class KestrelDatabase {
 		// unseen dependency. This is bounded and never returns the row contents.
 		const tables = ["memories", "memory_metadata", "memory_timeline_events", "memory_timeline_sessions",
 			"memory_activity_blocks", "memory_daily_summaries", "memory_agent_identities", "memory_agent_memories",
-			"memory_working_tasks", "memory_provenance", "memory_capture_policies", "runtime_sessions", "runtime_messages", "tool_executions", "private_runtime_state"];
+			"memory_working_tasks", "memory_provenance", "memory_capture_policies", "runtime_sessions", "runtime_messages", "tool_executions"];
 		const mac = createHmac("sha256", bindingKey32).update("kestrel-host-denied-authority-v1\0");
 		let count = 0, bytes = 0;
 		for (const table of tables) {
 			const columns = this.db.pragma(`table_info(${table})`) as Array<{ name: string }>;
 			if (!columns.length || columns.some(column => !/^[a-z_][a-z0-9_]*$/i.test(column.name))) throw new Error("Invalid host recovery schema.");
 			const size = columns.map(column => `COALESCE(length(CAST("${column.name}" AS BLOB)),0)`).join("+");
-			const where = table === "private_runtime_state" ? " WHERE key <> ?" : "";
-			const arguments_ = where ? [EMBEDDING_LEGACY_MIGRATION_KEY] : [];
-			const sizes = this.db.prepare(`SELECT count(*) AS count, COALESCE(sum(${size}),0) AS bytes FROM ${table}${where}`).get(...arguments_) as { count: number; bytes: number };
+			const sizes = this.db.prepare(`SELECT count(*) AS count, COALESCE(sum(${size}),0) AS bytes FROM ${table}`).get() as { count: number; bytes: number };
 			count += sizes.count; bytes += sizes.bytes;
 			if (!Number.isSafeInteger(count) || !Number.isSafeInteger(bytes) || count > 100_000 || bytes > 64_000_000) throw new Error("Host recovery authority limit exceeded.");
 			mac.update(table).update("\0");
-			for (const row of this.db.prepare(`SELECT * FROM ${table}${where} ORDER BY rowid`).iterate(...arguments_))
+			for (const row of this.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).iterate())
 				mac.update(JSON.stringify(row)).update("\0");
+		}
+		// Only these keys participate in embedding authority. Bind decrypted
+		// semantics rather than IVs or timestamps; Core rewrites unrelated
+		// private state (such as presence) on every restart.
+		const selectKeys = this.db.prepare(`SELECT key, length(value_ciphertext) AS bytes FROM private_runtime_state
+			WHERE key = ? OR key = ? OR substr(key, 1, ?) = ? OR substr(key, 1, ?) = ?
+			OR substr(key, 1, ?) = ? OR substr(key, 1, ?) = ? ORDER BY key`);
+		const keys = selectKeys.iterate(EMBEDDING_STATE_SECRET_KEY, "memory.capture.configuration",
+			EMBEDDING_STATE_OWNER_PREFIX.length, EMBEDDING_STATE_OWNER_PREFIX,
+			EMBEDDING_AUTHORITY_STATE_PREFIX.length, EMBEDDING_AUTHORITY_STATE_PREFIX,
+			SOURCE_RECEIPT_DELETION_PREFIX.length, SOURCE_RECEIPT_DELETION_PREFIX,
+			"source-derived-deleted.".length, "source-derived-deleted.") as Iterable<{ key: string; bytes: number }>;
+		// Exhaust the statement before decrypting using a separate statement.
+		const privateKeys: string[] = [];
+		for (const row of keys) {
+			count++; bytes += row.bytes;
+			if (!Number.isSafeInteger(count) || !Number.isSafeInteger(bytes) || row.bytes < 0 || row.bytes > 4_000_000 || count > 100_000 || bytes > 64_000_000)
+				throw new Error("Host recovery authority limit exceeded.");
+			privateKeys.push(row.key);
+		}
+		mac.update("private-authority").update("\0");
+		for (const key of privateKeys) {
+			const value = this.getPrivateState<unknown>(key);
+			// Reserved authority entries are authenticated and structurally valid.
+			if (key === EMBEDDING_STATE_SECRET_KEY || key.startsWith(EMBEDDING_STATE_OWNER_PREFIX)) parseReservedEmbeddingState(key, value);
+			if (key.startsWith(EMBEDDING_AUTHORITY_STATE_PREFIX)) parseReservedEmbeddingAuthorityState(key, value);
+			mac.update(JSON.stringify([key, value])).update("\0");
 		}
 		return mac.digest("hex");
 	}
