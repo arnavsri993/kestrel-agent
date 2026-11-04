@@ -182,18 +182,21 @@ try {
   format: 'kestrel-browser-data', version: 1, exportedAt: new Date().toISOString(),
   bookmarkFolders: [{ id: legacyFolderId, name: 'Legacy generated folder', createdAt: oldDate }],
   bookmarks: [{ id: `bookmark-${crypto.randomUUID()}`, folderId: legacyFolderId, url: 'https://generated.example/legacy', title: 'Legacy friendly title', displayMode: 'icon', createdAt: oldDate }],
-  history: [{ id: `visit-${crypto.randomUUID()}`, tabId: `tab-${crypto.randomUUID()}`, url: 'https://generated.example/excluded-history', title: 'Excluded generated history', visitedAt: oldDate }],
+  history: Array.from({ length: 80 }, (_, index) => ({ id: `visit-${crypto.randomUUID()}`, tabId: `tab-${crypto.randomUUID()}`, url: `https://generated.example/excluded-history/${index}/${'x'.repeat(7800)}`, title: 'Excluded generated history', visitedAt: oldDate })),
   sitePermissions: [], settings: { ...beforeLegacy.settings, newTabBackground: alternateBackground },
  };
  const legacyPath = join(evidence, 'generated-legacy-browser-data.json');
  const legacyBytes = Buffer.from(JSON.stringify(legacy, null, 2));
+ assert(legacyBytes.length > 512 * 1024 && legacyBytes.length <= 10 * 1024 * 1024, 'Exercise the larger selected-source boundary without sending its excluded history.');
+ receipt.legacySourceBytes = legacyBytes.length;
+ receipt.excludedLegacyHistoryEntries = legacy.history.length;
  await writeFile(legacyPath, legacyBytes, { mode: 0o600 });
  await destination.selectOption(destinationId);
  await input.setInputFiles(legacyPath);
  const scope = panel.getByTestId('native-bookmark-import-scope');
  await scope.waitFor();
  const scopeText = await scope.innerText();
- assert.match(scopeText, /1 history entries will not be imported/i);
+ assert.match(scopeText, /80 history entries will not be imported/i);
  assert.match(scopeText, /browser settings will not be imported/i);
  assert.match(scopeText, /original bookmark dates do not transfer/i);
  const beforeLegacyTree = comparable(await nativeTree());
@@ -208,7 +211,7 @@ try {
  await eventually(async () => (await state()).bookmarks.some(item => item.url === 'https://generated.example/legacy' && item.title === 'Legacy friendly title' && item.displayMode === 'icon'), 'Legacy bookmark import did not complete.');
  const legacyAfter = await state();
  assert.equal(legacyAfter.settings.newTabBackground, beforeLegacy.settings.newTabBackground);
- assert(!legacyAfter.history.some(item => item.url === 'https://generated.example/excluded-history'));
+ assert(!legacyAfter.history.some(item => item.url.startsWith('https://generated.example/excluded-history')));
  assert.deepEqual(await readFile(legacyPath), legacyBytes, 'Legacy source file changed.');
  const legacyTree = flatten(await nativeTree());
  const legacyFolder = legacyTree.find(item => item.title === 'Legacy generated folder' && item.parentId === destinationNative.id);
