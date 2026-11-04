@@ -137,7 +137,7 @@ try {
  phase('ordinary-Home-edit-invalidates-stale-review');
  stage='explicit-import-and-undo'; await planFile(); await apply().click(); await undo().waitFor();
  const imported=await rawSettings(); assert.equal(imported.newTabBackground,'custom'); assert.equal(imported.newTabBackgroundCustomDataUrl,dataUrl); assert.deepEqual(imported.newTabShortcuts,sourceData.settings.newTabShortcuts); assert.deepEqual(imported.newTabWidgets,baseline.newTabWidgets); assert.deepEqual(imported.compatibility,baseline.compatibility);
- await activate(home); await home.locator('.new-tab-page-custom').waitFor(); await home.getByRole('button',{name:'Imported generated shortcut',exact:true}).waitFor(); await home.screenshot({path:join(evidence,'home-import-applied.png')});
+ await activate(home); await home.locator('.new-tab-page-custom').waitFor(); await home.locator('.home-site-shortcuts button').filter({hasText:'Imported generated shortcut'}).waitFor(); await home.screenshot({path:join(evidence,'home-import-applied.png')});
  phase('actual-Home-updates-with-large-image-and-selected-shortcuts-only');
  await update({newTabWidgets:{version:1,enabled:['recent-work'],layouts:{},routeUsageVisible:[]}}); const newerWidgets=(await rawSettings()).newTabWidgets;
  await activate(settings); await undo().click(); await eventually(async()=>/Previous Home settings restored/.test(await status().innerText()),'Undo completion missing');
@@ -152,12 +152,12 @@ try {
  await settings.screenshot({path:join(evidence,'home-import-zoom200.png')}); await settings.evaluate(async()=>{const tab=await chrome.tabs.getCurrent();await chrome.tabs.setZoom(tab.id,1);}); phase('native-transfer-reflows-at-200-percent-zoom');
  const expected=await rawSettings(); const pending=await request({type:'browser-plan-home-settings-import',settings:{newTabBackground:'paper'},categories:['background']}); assert(pending.ok); const oldPlan=pending.homeSettingsImportPlan.planId;
  await stop(); stage='restart'; await start();
- assert.deepEqual(await rawSettings(),expected); await activate(home); await home.locator('.new-tab-page-custom').waitFor(); await home.getByRole('button',{name:'Imported generated shortcut',exact:true}).waitFor(); await home.screenshot({path:join(evidence,'home-import-after-restart.png')}); phase('selected-Home-settings-and-actual-Home-survive-full-native-restart');
+ assert.deepEqual(await rawSettings(),expected); await activate(home); await home.locator('.new-tab-page-custom').waitFor(); await home.locator('.home-site-shortcuts button').filter({hasText:'Imported generated shortcut'}).waitFor(); await home.screenshot({path:join(evidence,'home-import-after-restart.png')}); phase('selected-Home-settings-and-actual-Home-survive-full-native-restart');
  assert.equal((await request({type:'browser-apply-home-settings-import',planId:oldPlan})).ok,false); phase('worker-restart-invalidates-unapplied-review');
  assert.deepEqual(await home.evaluate(()=>chrome.bookmarks.getTree()),bookmarks); assert.deepEqual((await state()).history,history); assert.deepEqual(await readFile(sourcePath),sourceBytes); assert.deepEqual((await rawSettings()).compatibility,baseline.compatibility); phase('source-bookmarks-history-and-unrelated-storage-preserved');
  await stop(); receipt.result='passed';
 } catch(error) {
- receipt.result='failed'; receipt.failedStage=stage; receipt.error={name:error?.name||'Error',code:error?.code}; process.exitCode=1;
+ receipt.result='failed'; receipt.failedStage=stage; receipt.error={name:error?.name||'Error',code:error?.code,locations:String(error?.stack||'').split('\n').filter(line=>line.trim().startsWith('at ')).map(line=>line.trim()).slice(0,6)}; process.exitCode=1;
  if(settings) await settings.screenshot({path:join(evidence,'failure.png')}).catch(()=>{}); console.error('FAIL',stage,error?.name||'Error');
 } finally {
  await stop().catch(()=>{receipt.shutdownUnconfirmed=true;receipt.result='failed';process.exitCode=1;}); await new Promise(done=>server.close(done));

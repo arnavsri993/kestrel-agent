@@ -88,22 +88,22 @@ export function NativeHomeSettingsTransfer({ browser }: { browser: UserBrowserCo
  }
  return <section className="native-home-transfer" data-settings-panel="browser-home-settings-transfer" aria-labelledby="native-home-transfer-heading" aria-busy={busy}>
   <h3 id="native-home-transfer-heading">Bring your Home settings</h3>
-  <p>Choose a Kestrel JSON export, then review which Home settings to replace.</p>
-  <p id="native-home-transfer-scope" className="native-home-transfer-hint">Bookmarks, history, browser preferences, permissions and saved credentials are excluded.</p>
+  <p>Choose a Kestrel export and review the Home settings to replace.</p>
+  <p id="native-home-transfer-scope" className="native-home-transfer-hint">Home settings only. Bookmarks, history, browser preferences, permissions and credentials are excluded.</p>
   <input ref={input} className="native-home-transfer-file" type="file" accept="application/json,.json" aria-label="Choose Home settings JSON file" aria-describedby="native-home-transfer-scope" data-testid="native-home-settings-import-file" tabIndex={-1} disabled={busy} onChange={event => void chooseFile(event)} />
-  <div className="native-home-transfer-actions"><button type="button" disabled={busy} onClick={() => input.current?.click()}>Choose JSON file…</button><span className="native-home-transfer-filename">{fileName || "No file chosen"}</span></div>
+  <div className="native-home-transfer-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => input.current?.click()}>Choose JSON file…</button><span className="native-home-transfer-filename">{fileName || "No file chosen"}</span></div>
   {source && <>
    <fieldset disabled={busy || !!plan}><legend>Settings to replace</legend>{source.availableCategories.map(category => <label key={category}><input type="checkbox" checked={categories.includes(category)} onChange={event => { clearPlan(); setCategories(previous => event.target.checked ? [...previous, category] : previous.filter(item => item !== category)); }} />{labels[category]}</label>)}</fieldset>
-   {!plan && <button type="button" ref={reviewButton} disabled={busy || !categories.length} data-testid="native-home-settings-import-plan" onClick={() => void review()}>{busy ? "Working…" : "Review import"}</button>}
+   {!plan && <button type="button" className="button secondary" ref={reviewButton} disabled={busy || !categories.length} data-testid="native-home-settings-import-plan" onClick={() => void review()}>{busy ? "Working…" : "Review import"}</button>}
    {plan && <div ref={preview} tabIndex={-1} className="native-home-transfer-preview" data-testid="native-home-settings-import-preview">
     <p><strong>Replace: {names(plan.categories)}</strong></p>
-    <p>{plan.changedCategories.length ? `Changes: ${names(plan.changedCategories)}.` : "The selected settings already match."} Other settings stay as they are.</p>
-    <p className="native-home-transfer-hint">Review expires in two minutes. Undo is available for two minutes while this Settings page stays open; restarting the app ends undo.</p>
-    <button type="button" disabled={busy} data-testid="native-home-settings-import-apply" onClick={() => void apply()}>Import Home settings</button>
+    <p>{plan.changedCategories.length ? "Only selected settings present in the file will change." : "The selected settings already match."}</p>
+    <p className="native-home-transfer-hint">Review and undo expire after two minutes. Closing this Settings page or restarting ends undo.</p>
+    <button type="button" className="button secondary" disabled={busy} data-testid="native-home-settings-import-apply" onClick={() => void apply()}>Import Home settings</button>
    </div>}
-   <button type="button" disabled={busy} onClick={() => { generation.current++; clearPlan(); setSource(null); setFileName(""); setCategories([]); setError(""); setStatus("Import review cancelled."); }}>Cancel import</button>
+   <button type="button" className="button secondary" disabled={busy} onClick={() => { generation.current++; clearPlan(); setSource(null); setFileName(""); setCategories([]); setError(""); setStatus("Import review cancelled."); }}>Cancel import</button>
   </>}
-  {undo && <button type="button" disabled={busy} data-testid="native-home-settings-import-undo" onClick={() => void undoImport()}>Undo Home settings import</button>}
+  {undo && <button type="button" className="button secondary" disabled={busy} data-testid="native-home-settings-import-undo" onClick={() => void undoImport()}>Undo Home settings import</button>}
   <p ref={statusElement} tabIndex={-1} role="status" data-testid="native-home-settings-transfer-status">{status}</p>
   {error && <p role="alert" className="native-home-transfer-error" data-testid="native-home-settings-transfer-error">{error}</p>}
  </section>;
