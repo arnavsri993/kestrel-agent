@@ -13,8 +13,9 @@ import {
 } from "./memory-embedding-authority.js";
 export { EMBEDDING_AUTHORITY_STATE_PREFIX, parseReservedEmbeddingAuthorityState } from "./memory-embedding-authority.js";
 import { createHash, createHmac, randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { constants, closeSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { decryptText, encryptText } from "@kestrel/encryption";
 import { redactDeletedSourceToolResult, sourceReceiptDeletionKey, SOURCE_RECEIPT_DELETION_PREFIX } from "./source-evidence-redaction.js";
 import {
@@ -125,6 +126,9 @@ const ENCRYPTED_TOOL_EXECUTION_NAMES = new Set([
 ]);
 const ENCRYPTED_IDEMPOTENCY_PREFIX = "kestrel-encrypted-idempotency-v1:";
 const SENSITIVE_ROW_PAGE_SIZE = 8;
+const HOST_LEGACY_RECOVERY = Symbol("host legacy embedding recovery");
+/** Private host-held binding; never return to renderer or Core. */
+export type LegacyEmbeddingLeaseRecoverySnapshot = { jobId: string; binding: string };
 
 export const PROTECTED_DATABASE_ERROR_CODE = "kestrel-protected-database";
 
@@ -468,20 +472,92 @@ function timelineSummary(events: readonly TimelineEvent[], maximum: number): str
 	return value.length > maximum ? `${value.slice(0, maximum - 1)}…` : value;
 }
 
+function hostRecoveryPreviewCopy(filename: string): { directory: string; filename: string } {
+	const directory = mkdtempSync(join(tmpdir(), "kestrel-host-lease-review-"));
+	const destination = join(directory, "profile.sqlite");
+	const saved: Array<{ path: string; stat?: ReturnType<typeof lstatSync> }> = [];
+	try {
+		for (const suffix of ["", "-wal"]) {
+			const path = filename + suffix;
+			let stat: ReturnType<typeof lstatSync> | undefined;
+			try { stat = lstatSync(path); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT" || !suffix) throw error; }
+			saved.push({ path, stat });
+			if (!stat) continue;
+			if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 256_000_000) throw new Error("Host recovery file is unavailable.");
+			const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+			try {
+				const initial = fstatSync(fd);
+				if (initial.dev !== stat.dev || initial.ino !== stat.ino || initial.size !== stat.size || initial.mtimeMs !== stat.mtimeMs || initial.ctimeMs !== stat.ctimeMs) throw new Error("Host recovery file changed.");
+				const bytes = readFileSync(fd);
+				const final = fstatSync(fd);
+				if (bytes.length !== initial.size || final.size !== initial.size || final.mtimeMs !== initial.mtimeMs || final.ctimeMs !== initial.ctimeMs) throw new Error("Host recovery file changed.");
+				writeFileSync(destination + suffix, bytes, { mode: 0o600, flag: "wx" });
+			} finally { closeSync(fd); }
+		}
+		for (const entry of saved) {
+			let current: ReturnType<typeof lstatSync> | undefined;
+			try { current = lstatSync(entry.path); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+			const old = entry.stat;
+			if ((!old) !== (!current) || old && current && (old.dev !== current.dev || old.ino !== current.ino || old.size !== current.size || old.mtimeMs !== current.mtimeMs || old.ctimeMs !== current.ctimeMs)) throw new Error("Host recovery file changed.");
+		}
+		return { directory, filename: destination };
+	} catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }
+}
+
 export class KestrelDatabase {
 	readonly db: Database.Database;
 	readonly lastMigrationBackupPath: string | undefined;
+	private readonly hostRecoveryMode: "readonly" | "apply" | undefined;
+	private hostRecoveryPreviewDirectory: string | undefined;
+	private hostRecoveryAuthoritySecret: EmbeddingStateSecret | undefined;
+
+	/** Open only an existing, current-schema profile; this does not initialize or migrate it. */
+	static openForHostLegacyEmbeddingRecovery(filename: string, key: Buffer, options: { readonly: boolean }): KestrelDatabase {
+		return new KestrelDatabase(filename, key, { marker: HOST_LEGACY_RECOVERY, readonly: options.readonly });
+	}
 
 	constructor(
 		private readonly filename: string,
 		private readonly encryptionKey: Buffer,
+		internal?: { marker: typeof HOST_LEGACY_RECOVERY; readonly: boolean },
 	) {
-		if (filename !== ":memory:")
+		this.hostRecoveryMode = internal?.marker === HOST_LEGACY_RECOVERY ? (internal.readonly ? "readonly" : "apply") : undefined;
+		if (this.hostRecoveryMode) {
+			if (filename === ":memory:" || !Buffer.isBuffer(encryptionKey) || encryptionKey.length !== 32) throw new Error("Invalid host recovery database.");
+			const stat = lstatSync(filename);
+			if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error("Invalid host recovery database.");
+		}
+		if (!this.hostRecoveryMode && filename !== ":memory:")
 			mkdirSync(dirname(filename), { recursive: true, mode: 0o700 });
 		let database: Database.Database | undefined;
 		try {
-			database = new Database(filename);
+			let openPath = filename;
+			if (this.hostRecoveryMode === "readonly") {
+				const copy = hostRecoveryPreviewCopy(filename);
+				this.hostRecoveryPreviewDirectory = copy.directory;
+				openPath = copy.filename;
+			}
+			database = this.hostRecoveryMode ? new Database(openPath, { readonly: this.hostRecoveryMode === "readonly", fileMustExist: true }) : new Database(filename);
 			this.db = database;
+			if (this.hostRecoveryMode) {
+				if (this.hostRecoveryMode === "readonly") this.db.pragma("query_only = ON");
+				this.assertDatabaseIntegrity();
+				const rows = this.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all() as Array<{ version: number }>;
+				if (JSON.stringify(rows.map(row => row.version)) !== JSON.stringify(listMigrationVersions())) throw new Error("Unsupported host recovery schema.");
+				// Authenticate a bounded existing encrypted payload, including when there
+				// is no blocker. Empty profiles have no key proof and fail closed.
+				const state = this.db.prepare("SELECT key, length(value_ciphertext) AS bytes FROM private_runtime_state ORDER BY key LIMIT 1").get() as { key: string; bytes: number } | undefined;
+				if (state) {
+					if (!Number.isSafeInteger(state.bytes) || state.bytes > 4_000_000) throw new Error("Host recovery key probe is unavailable.");
+					this.getPrivateState(state.key);
+				} else {
+					const job = this.db.prepare("SELECT id, length(payload_ciphertext) AS bytes FROM memory_jobs ORDER BY id LIMIT 1").get() as { id: string; bytes: number } | undefined;
+					if (!job || !Number.isSafeInteger(job.bytes) || job.bytes > 4_000_000) throw new Error("Host recovery key probe is unavailable.");
+					this.getMemoryJob(job.id);
+				}
+				this.lastMigrationBackupPath = undefined;
+				return;
+			}
 			this.db.pragma("journal_mode = WAL");
 			this.db.pragma("foreign_keys = ON");
 			this.db.pragma("secure_delete = ON");
@@ -494,6 +570,7 @@ export class KestrelDatabase {
 			} catch {
 				// Preserve the original startup error if cleanup also fails.
 			}
+			if (this.hostRecoveryPreviewDirectory) rmSync(this.hostRecoveryPreviewDirectory, { recursive: true, force: true });
 			if (error instanceof DatabaseIntegrityError) throw error;
 			if (error instanceof DatabaseMigrationError) throw error;
 			if (isSqliteDatabaseIntegrityFailure(error)) {
@@ -3294,6 +3371,86 @@ export class KestrelDatabase {
 		return rows.map(row => this.decodeMemoryJob(row));
 	}
 
+	/** Internal host preview. The caller must establish Core quiescence and keep this binding private. */
+	reviewLegacyEmbeddingLeaseRecovery(bindingKey32: Buffer): LegacyEmbeddingLeaseRecoverySnapshot | undefined {
+		if (!this.hostRecoveryMode || !Buffer.isBuffer(bindingKey32) || bindingKey32.length !== 32) throw new Error("Host recovery is unavailable.");
+		return this.db.transaction(() => this.reviewLegacyEmbeddingLeaseRecoveryInTransaction(bindingKey32))();
+	}
+
+	private reviewLegacyEmbeddingLeaseRecoveryInTransaction(bindingKey32: Buffer): LegacyEmbeddingLeaseRecoverySnapshot | undefined {
+		const stored = this.getPrivateState<unknown>(EMBEDDING_LEGACY_MIGRATION_KEY);
+		if (stored === undefined) return undefined;
+		const checkpoint = parseReservedEmbeddingState(EMBEDDING_LEGACY_MIGRATION_KEY, stored) as EmbeddingLegacyMigration;
+		if (checkpoint.phase !== "jobs") return undefined;
+		const size = this.db.prepare(`SELECT id, length(CAST(payload_ciphertext AS BLOB)) + length(CAST(payload_iv AS BLOB)) +
+			length(CAST(payload_auth_tag AS BLOB)) AS bytes FROM memory_jobs WHERE id > ? ORDER BY id LIMIT 1`).get(checkpoint.afterId) as { id: string; bytes: number } | undefined;
+		if (!size) return undefined;
+		if (!Number.isSafeInteger(size.bytes) || size.bytes < 0 || size.bytes > 4_000_000) throw new Error("Host recovery limit exceeded.");
+		const row = this.db.prepare("SELECT * FROM memory_jobs WHERE id=?").get(size.id) as MemorySubstrateRow;
+		const job = this.decodeMemoryJob(row);
+		if (job.kind !== "embed" || job.status !== "running" || job.leaseUntil !== undefined ||
+			job.payload.generation !== undefined || job.payload.legacyIdentifierMigration !== undefined) return undefined;
+		const type = EmbeddingRecordSchema.shape.ownerType.safeParse(job.payload.ownerType);
+		const ownerId = job.payload.ownerId;
+		if (!type.success || typeof ownerId !== "string" || !ownerId || ownerId.length > 200) throw new Error("Host recovery authority is unavailable.");
+		// Resolve the same bounded source graph without initializing or updating
+		// durable generation/authority state, including on a brand-new secret.
+		// Validate the direct owner separately: the normal graph resolver folds
+		// denial and malformed direct rows into the same unavailable result.
+		this.directMemoryEmbeddingOwner(type.data, ownerId);
+		this.hostRecoveryAuthoritySecret = { version: 1, key: bindingKey32.toString("hex") };
+		let source: ReturnType<KestrelDatabase["rawMemoryEmbeddingOwner"]>;
+		try { source = this.rawMemoryEmbeddingOwner(type.data, ownerId); }
+		finally { this.hostRecoveryAuthoritySecret = undefined; }
+		// A denied or deleted source is still a legitimate blocker. Bind a
+		// conservative, bounded opaque snapshot of authority-bearing tables in
+		// that case, rather than granting authority or creating epoch state.
+		const authority = source ? ["eligible", source.text, source.authority] : ["denied", this.hostDeniedAuthorityDigest(bindingKey32)];
+		const binding = createHmac("sha256", bindingKey32).update("kestrel-host-legacy-lease-recovery-v1\0")
+			.update(JSON.stringify([checkpoint, row, authority])).digest("hex");
+		return { jobId: job.id, binding };
+	}
+
+	private hostDeniedAuthorityDigest(bindingKey32: Buffer): string {
+		// Denial can occur before the resolver reaches the whole dependency graph.
+		// Conservatively include every authority-bearing row rather than omit an
+		// unseen dependency. This is bounded and never returns the row contents.
+		const tables = ["memories", "memory_metadata", "memory_timeline_events", "memory_timeline_sessions",
+			"memory_activity_blocks", "memory_daily_summaries", "memory_agent_identities", "memory_agent_memories",
+			"memory_working_tasks", "memory_provenance", "memory_capture_policies", "runtime_sessions", "runtime_messages", "tool_executions", "private_runtime_state"];
+		const mac = createHmac("sha256", bindingKey32).update("kestrel-host-denied-authority-v1\0");
+		let count = 0, bytes = 0;
+		for (const table of tables) {
+			const columns = this.db.pragma(`table_info(${table})`) as Array<{ name: string }>;
+			if (!columns.length || columns.some(column => !/^[a-z_][a-z0-9_]*$/i.test(column.name))) throw new Error("Invalid host recovery schema.");
+			const size = columns.map(column => `COALESCE(length(CAST("${column.name}" AS BLOB)),0)`).join("+");
+			const where = table === "private_runtime_state" ? " WHERE key <> ?" : "";
+			const arguments_ = where ? [EMBEDDING_LEGACY_MIGRATION_KEY] : [];
+			const sizes = this.db.prepare(`SELECT count(*) AS count, COALESCE(sum(${size}),0) AS bytes FROM ${table}${where}`).get(...arguments_) as { count: number; bytes: number };
+			count += sizes.count; bytes += sizes.bytes;
+			if (!Number.isSafeInteger(count) || !Number.isSafeInteger(bytes) || count > 100_000 || bytes > 64_000_000) throw new Error("Host recovery authority limit exceeded.");
+			mac.update(table).update("\0");
+			for (const row of this.db.prepare(`SELECT * FROM ${table}${where} ORDER BY rowid`).iterate(...arguments_))
+				mac.update(JSON.stringify(row)).update("\0");
+		}
+		return mac.digest("hex");
+	}
+
+	/** The host must stop its supervised Core before invoking this atomic write. */
+	cancelLegacyEmbeddingLeaseRecovery(snapshot: LegacyEmbeddingLeaseRecoverySnapshot, bindingKey32: Buffer, now: string): { cancelled: true } {
+		if (this.hostRecoveryMode !== "apply" || !Buffer.isBuffer(bindingKey32) || bindingKey32.length !== 32 ||
+			!snapshot || typeof snapshot.jobId !== "string" || typeof snapshot.binding !== "string" || !/^[a-f0-9]{64}$/.test(snapshot.binding)) throw new Error("Host recovery is unavailable.");
+		MemoryJobSchema.shape.updatedAt.parse(now);
+		return this.db.transaction(() => {
+			const current = this.reviewLegacyEmbeddingLeaseRecoveryInTransaction(bindingKey32);
+			if (!current || current.jobId !== snapshot.jobId || current.binding !== snapshot.binding) throw new Error("Host recovery review is stale.");
+			const job = this.getMemoryJob(current.jobId);
+			if (!job) throw new Error("Host recovery review is stale.");
+			this.queueMemoryJob({ ...job, status: "cancelled", lockedAt: undefined, leaseUntil: undefined, leaseToken: undefined, updatedAt: now });
+			return { cancelled: true as const };
+		}).immediate();
+	}
+
 	/** Explicit, resumable migration; never called by database opening or profile transfer. */
 	migrateLegacyMemoryEmbeddingIdentifiers(now: string, batchLimit = 8): { phase: EmbeddingLegacyMigration["phase"]; processed: number; blocked: boolean; done: boolean } {
 		MemoryJobSchema.shape.updatedAt.parse(now);
@@ -3501,6 +3658,7 @@ export class KestrelDatabase {
 		const existing = this.db.prepare("SELECT 1 FROM private_runtime_state WHERE key LIKE ? OR key LIKE ? LIMIT 1")
 			.get(`${EMBEDDING_STATE_OWNER_PREFIX}%`, `${EMBEDDING_AUTHORITY_STATE_PREFIX}%`);
 		if (existing) throw new Error("Embedding generation secret is missing.");
+		if (this.hostRecoveryAuthoritySecret) return this.hostRecoveryAuthoritySecret;
 		const secret = newEmbeddingStateSecret();
 		this.setPrivateState(EMBEDDING_STATE_SECRET_KEY, secret);
 		return secret;
@@ -3512,6 +3670,7 @@ export class KestrelDatabase {
 		const fingerprint = embeddingMac(secret, "authority-value", JSON.stringify(semanticValue));
 		const stored = this.getPrivateState<unknown>(key);
 		const previous = stored === undefined ? undefined : parseReservedEmbeddingAuthorityState(key, stored, secret);
+		if (this.hostRecoveryAuthoritySecret) return `${fingerprint}:${previous?.epoch ?? "unobserved"}`;
 		if (previous?.fingerprint === fingerprint) return previous.epoch;
 		const next = newEmbeddingAuthorityState(scope, identity, fingerprint);
 		parseReservedEmbeddingAuthorityState(key, next, secret);
@@ -5859,6 +6018,7 @@ export class KestrelDatabase {
 	}
 
 	close(): void {
-		this.db.close();
+		try { this.db.close(); }
+		finally { if (this.hostRecoveryPreviewDirectory) rmSync(this.hostRecoveryPreviewDirectory, { recursive: true, force: true }); }
 	}
 }
