@@ -9,40 +9,52 @@ Electron process in this path.
 
 ## Current checkpoint — 2026-11-04
 
-The latest runtime follow-up is source `214ab34d`, exact ad-hoc bundle
-`0f631a241a9e00e7a44a3bf5beb0394abdb6cd37879ee8137951bf13eeb97530`.
-Workspace types and **2,884 unit tests in 317 files** pass, with two existing
-ownership-mutation skips. It also passes 133 focused database/transfer checks,
-the full headless Chromium conversation/approval workflow, eleven actual
-bundled Core recovery phases and bundled encrypted provider-storage checks.
-The recovery canary now verifies independent destination index keys and retained
-terminal retry budgets, in addition to process death and source preservation.
+The latest runtime follow-up is source `2473e50e`, exact ad-hoc bundle
+`c6891a100a15053362b24bfff0945f25998dfdc5bf4a4e22d3f07c884f02b45b`.
+Workspace types and **2,900 unit tests in 318 files** pass, with two existing
+ownership-mutation skips. The exact bundle passes **29** real bundled-worker
+recovery phases across canonical schema 18, recognized historical schema 19 and
+schema-18 journals created by the previous `0f631a24...` binary. These checks
+cover fresh authentication after process death, independent destination indexes,
+terminal retry budgets, legacy alias lookup, encrypted diagnostic preservation,
+live-owner refusal, incomplete-stage retention and unchanged sources. Both
+artifact hashes match before and after the test.
 
-New job and embedding writes use keyed SQL fingerprint indexes; legacy rows
-remain readable with authenticated payload bindings. Transfers validate source
-indexes, hold logical values only in their private snapshot and rekey on insert.
-This is a prerequisite for the old schema-19 profile, which remains unsupported;
-no original database was opened for writing or migrated. Alias and encrypted
-diagnostic transfer are still required. No startup backfill was added.
+A source-only adapter now recognizes the exact historical alias-table format,
+with its optional encrypted error table and five known compact bootstrap DDLs.
+It authenticates old alias hashes against their recoverable preimages, preserves
+references as encrypted private state under a separate archive secret and keeps
+references inert after target deletion or identity reuse. Diagnostic text is
+retained in encrypted archive records. Counts appear in the native review and
+survive worker/journal recovery. The destination remains canonical schema 18;
+no original schema is rewritten and no startup backfill runs. Generation,
+authority, deletion fences, terminal budgets and one-use consent remain covered.
+Transfer parsing also requires the full source GCM authentication tag, rejects
+ambiguous normalized fingerprints and bounds schema enumeration.
 
-The Chromium test shell now holds its composer while conversations switch. Its
-smoke test deliberately holds a switch before checking the existing approval,
-rejection, stale-document, replay, cancellation and reload flow. A separate native
-host change explains a production profile-key failure without resetting data.
-That notice compiles, but its actual failure UI has not been exercised. The
-normal native browser in use was left on the unchanged preceding bundle.
+A guarded metadata-only review of the real profile recognizes this format, but
+its aggregate row and byte sizes exceed the current transfer limits. The source
+key was not read, records were not decrypted, and no transfer or activation was
+performed. Larger-profile support is still required before real-data acceptance;
+the generated fixtures above do not prove that acceptance. Existing profiles and
+the user-used native window remain unchanged. The new artifact was neither
+launched as a desktop window nor installed; the updated review UI has not yet
+been observed live.
 
-A custom-output native build exposed shared CLI argument handling between the
-runtime and renderer builders. Their intermediate paths are now explicit; the
-separate artifact above builds successfully. It was not installed or opened.
-Store, real-profile, account and native-window proof from older artifacts below
-must not be attributed to this bundle.
+The predecessor privacy batch at `214ab34d`, bundle
+`0f631a241a9e00e7a44a3bf5beb0394abdb6cd37879ee8137951bf13eeb97530`,
+passed 2,884 unit tests, 133 focused checks, the full headless Chromium approval
+workflow, eleven bundled recovery phases and encrypted provider-storage checks.
+It fixes conversation switching, independently rekeys job/embedding indexes and
+keeps custom app output paths separate from build intermediates. Its native
+profile-key failure notice compiles; the actual failure UI and protected-profile
+continuity remain unverified.
 
-On published predecessor `047d2bf8`, the desktop CI job and all CodeQL analyses
-passed; the Core CI job failed in the Chromium test shell while waiting for an
-approval after switching conversations. The source fix and deterministic switch
-check above pass locally. New-head CI is pending. The older full `pnpm verify`
-failure described below remains separate; no new aggregate-green claim is made.
+Published predecessor `ccdd9735` passed both macOS CI jobs, required CodeQL and
+all four language analyses. New-head CI is pending. The older full `pnpm verify`
+Electron sidebar failure below remains separate; no current aggregate-green
+claim is made. Current-bundle Store, real-account, native-window and canonical
+cutover proof is still missing.
 
 ### Preceding diagnostic and Home bundles
 
