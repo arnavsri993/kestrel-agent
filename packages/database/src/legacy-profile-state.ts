@@ -9,6 +9,9 @@ export const LEGACY_PROFILE_STATE_PREFIX = `${LEGACY_PROFILE_STATE_ROOT}v1.`;
 export const LEGACY_PROFILE_SECRET_KEY = `${LEGACY_PROFILE_STATE_PREFIX}secret`;
 export const LEGACY_JOB_ALIAS_PREFIX = `${LEGACY_PROFILE_STATE_PREFIX}alias.`;
 export const LEGACY_DIAGNOSTIC_PREFIX = `${LEGACY_PROFILE_STATE_PREFIX}diagnostic.`;
+export const LEGACY_JOB_CONFLICT_PREFIX = `${LEGACY_PROFILE_STATE_PREFIX}job-conflict.`;
+export const LEGACY_CONFLICTED_JOB_PREFIX = `${LEGACY_PROFILE_STATE_PREFIX}conflicted-job.`;
+export const LEGACY_JOB_CONFLICT_MANIFEST_KEY = `${LEGACY_PROFILE_STATE_PREFIX}job-conflict-manifest`;
 export type LegacyJobAlias = { version: 1; alias: string; jobId: string; jobKind: MemoryJob["kind"]; jobCreatedAt: string };
 export type LegacyDiagnostic = { version: 1; id: string; severity: "error" | "warning"; source: string; createdAt: string; payloadUtf8Base64: string };
 function fail(): never { throw new Error("Invalid preserved legacy profile state."); }
@@ -29,11 +32,12 @@ export function parseLegacyProfileSecret(value: unknown): Buffer {
 	if (key.length !== 32 || key.toString("base64") !== value.keyBase64) { key.fill(0); fail(); }
 	return key;
 }
-export function legacyProfileStateKey(secret: Buffer, kind: "alias" | "diagnostic", identity: string): string {
+export function legacyProfileStateKey(secret: Buffer, kind: "alias" | "diagnostic" | "job-conflict" | "conflicted-job", identity: string): string {
 	if (secret.length !== 32) fail();
-	return `${kind === "alias" ? LEGACY_JOB_ALIAS_PREFIX : LEGACY_DIAGNOSTIC_PREFIX}${createHmac("sha256", secret).update(`kestrel-legacy-profile19-state-v1:${kind}:`).update(identity).digest("hex")}`;
+	const prefix = { alias: LEGACY_JOB_ALIAS_PREFIX, diagnostic: LEGACY_DIAGNOSTIC_PREFIX, "job-conflict": LEGACY_JOB_CONFLICT_PREFIX, "conflicted-job": LEGACY_CONFLICTED_JOB_PREFIX }[kind];
+	return `${prefix}${createHmac("sha256", secret).update(`kestrel-legacy-profile19-state-v1:${kind}:`).update(identity).digest("hex")}`;
 }
-function keyMatches(key: string, expected: string): boolean {
+export function legacyProfileStateKeyMatches(key: string, expected: string): boolean {
 	return key.length === expected.length && key.slice(0, -64) === expected.slice(0, -64) && /^[a-f0-9]{64}$/.test(key.slice(-64)) &&
 		timingSafeEqual(Buffer.from(key.slice(-64), "hex"), Buffer.from(expected.slice(-64), "hex"));
 }
@@ -42,7 +46,7 @@ export function parseLegacyJobAlias(key: string, value: unknown, secret: Buffer)
 		typeof value.alias !== "string" || !/^memory-job-[a-f0-9]{40}$/.test(value.alias) ||
 		!MemoryJobSchema.shape.id.safeParse(value.jobId).success || !MemoryJobSchema.shape.kind.safeParse(value.jobKind).success ||
 		!MemoryJobSchema.shape.createdAt.safeParse(value.jobCreatedAt).success ||
-		!keyMatches(key, legacyProfileStateKey(secret, "alias", value.alias))) fail();
+		!legacyProfileStateKeyMatches(key, legacyProfileStateKey(secret, "alias", value.alias))) fail();
 	return value as LegacyJobAlias;
 }
 export function legacyAliasMatchesJob(alias: LegacyJobAlias, job: MemoryJob): boolean {
@@ -54,6 +58,6 @@ export function parseLegacyDiagnostic(key: string, value: unknown, secret: Buffe
 		!MemoryJobSchema.shape.createdAt.safeParse(value.createdAt).success || typeof value.payloadUtf8Base64 !== "string" ||
 		value.payloadUtf8Base64.length > 64 * 1024 * 1024 ||
 		Buffer.from(value.payloadUtf8Base64, "base64").toString("base64") !== value.payloadUtf8Base64 ||
-		!keyMatches(key, legacyProfileStateKey(secret, "diagnostic", value.id))) fail();
+		!legacyProfileStateKeyMatches(key, legacyProfileStateKey(secret, "diagnostic", value.id))) fail();
 	return value as LegacyDiagnostic;
 }

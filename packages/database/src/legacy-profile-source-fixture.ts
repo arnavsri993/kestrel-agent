@@ -4,12 +4,12 @@ import { encryptText } from "@kestrel/encryption";
 import { KestrelDatabase } from "./index.js";
 
 // Generated-only historical format fixture. No existing profile or key lookup.
-export function seedNativeLegacy19Source(path: string, key: Buffer, options: { diagnostics?: boolean; mutableJobMetadata?: boolean; compactDdl?: boolean; configurationAudit?: boolean;
+export function seedNativeLegacy19Source(path: string, key: Buffer, options: { diagnostics?: boolean; mutableJobMetadata?: boolean; compactDdl?: boolean; configurationAudit?: boolean; conflictingJobs?: boolean;
 	largePrivateRecords?: { count: number; bytes: number }; idempotencyClaims?: number } = {}) {
 	const time = "2026-11-04T12:00:00.000Z", dedupeKey = "GENERATED_LEGACY19_PRIVATE_DEDUPE";
 	const oldMac = (purpose: string, value: string) => createHmac("sha256", key).update(`kestrel-memory-index-v1:${purpose}:`).update(value).digest("hex");
 	const job = { id: `memory-job-${oldMac("job-id", dedupeKey).slice(0, 40)}`, kind: "cleanup" as const, dedupeKey,
-		status: options.mutableJobMetadata ? "pending" as const : "failed" as const, payload: { generated: true }, attempts: options.mutableJobMetadata ? 0 : 3, maxAttempts: 3, runAfter: time, createdAt: time, updatedAt: time };
+		status: options.mutableJobMetadata ? "pending" as const : "failed" as const, payload: { generated: true, ...(options.conflictingJobs ? { ownerId: "generated-conflict-owner", sourceId: "generated-conflict-source" } : {}) }, attempts: options.mutableJobMetadata ? 0 : 3, maxAttempts: 3, runAfter: time, createdAt: time, updatedAt: time };
 	const embedding = { id: "generated-legacy19-vector", ownerType: "memory" as const, ownerId: "generated-legacy19-owner", provider: "fixture", model: "fixture", dimension: 2, contentHash: "c".repeat(64), vector: [0.1, 0.2], status: "ready" as const, createdAt: time, updatedAt: time };
 	const alias = `memory-job-${createHash("sha256").update(dedupeKey).digest("hex").slice(0, 40)}`;
 	const privateMessage = "GENERATED_LEGACY19_PRIVATE_CONVERSATION", diagnostic = "GENERATED_LEGACY19_PRIVATE_ERROR\nquoted:\" unicode:☃";
@@ -44,6 +44,11 @@ export function seedNativeLegacy19Source(path: string, key: Buffer, options: { d
 		target.exec("CREATE TABLE memory_job_id_aliases ( alias_hash TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES memory_jobs(id) ON DELETE CASCADE ON UPDATE CASCADE )");
 		target.prepare("INSERT INTO memory_job_id_aliases VALUES (?,?)").run(oldMac("job-alias", alias), job.id);
 		target.prepare("INSERT INTO schema_migrations VALUES (19,?)").run(time);
+		if (options.conflictingJobs) {
+			const duplicate = { ...job, id: alias, status: "pending", attempts: 0 }, encrypted = encryptText(JSON.stringify(duplicate), key);
+			target.prepare("INSERT INTO memory_jobs SELECT ?,kind,?,?,?,max_attempts,run_after,locked_at,lease_until,last_error,created_at,updated_at,?,?,? FROM memory_jobs WHERE id=?")
+				.run(duplicate.id, duplicate.dedupeKey, duplicate.status, duplicate.attempts, encrypted.ciphertext, encrypted.iv, encrypted.authTag, job.id);
+		}
 		if (options.mutableJobMetadata) target.prepare("UPDATE memory_jobs SET status='running',attempts=2,locked_at=?,lease_until=NULL,updated_at=?").run(time, time);
 		if (options.diagnostics !== false) {
 			target.exec("CREATE TABLE internal_error_events ( id TEXT PRIMARY KEY, severity TEXT NOT NULL CHECK(severity IN ('error', 'warning')), source TEXT NOT NULL, created_at TEXT NOT NULL, payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL, payload_auth_tag TEXT NOT NULL )");

@@ -5,8 +5,9 @@ import { ActionReceiptSchema, AgentRunSchema, MemoryJobSchema, RuntimeToolExecut
 import * as Contracts from "@kestrel/shared-types";
 import { listMigrationVersions, loadMigrationSql } from "./migrations.js";
 import { memoryFingerprintIndex, matchesMemoryFingerprintIndex } from "./memory-fingerprint-index.js";
-import { LEGACY_PROFILE_STATE_ROOT, LEGACY_PROFILE_SECRET_KEY, LEGACY_JOB_ALIAS_PREFIX, LEGACY_DIAGNOSTIC_PREFIX,
+import { LEGACY_PROFILE_STATE_ROOT, LEGACY_PROFILE_SECRET_KEY, LEGACY_JOB_ALIAS_PREFIX, LEGACY_DIAGNOSTIC_PREFIX, LEGACY_JOB_CONFLICT_PREFIX, LEGACY_CONFLICTED_JOB_PREFIX, LEGACY_JOB_CONFLICT_MANIFEST_KEY,
 	deriveLegacyProfileSecret, legacyJobAlias, legacyProfileStateKey, parseLegacyProfileSecret, parseLegacyJobAlias, parseLegacyDiagnostic } from "./legacy-profile-state.js";
+import { parseLegacyConflictedMemoryJob, parseLegacyMemoryJobConflict, parseLegacyPurgedConflictedMemoryJob, parseLegacyPurgedMemoryJobConflict, isLegacyJobConflictPurged, readLegacyMemoryJobConflictByKey, type LegacyMemoryJobSourceState } from "./legacy-memory-job-conflicts.js";
 import { redactDeletedSourceToolResult, SOURCE_EVIDENCE_REMOVED_TEXT, SOURCE_RECEIPT_DELETION_PREFIX, sourceReceiptDeletionKey } from "./source-evidence-redaction.js";
 import {
 	EMBEDDING_STATE_OWNER_PREFIX,
@@ -53,7 +54,8 @@ export type HostProfileTransferSnapshot = {
 	excluded: { idempotencyClaims: number; runningMemoryJobsCancelled: number; activeAgentRunsCancelled: number; activeToolExecutionsRetired: number; activeWorkingTasksCancelled: number; unexecutedApprovalsRetired: number; unsettledActionReceiptsRetired: number; scheduledJobsCancelled: number };
 	semanticSha256: string;
 };
-export type HostProfileLegacyPreservation = { sourceSchemaVersion: 18 | 19; jobAliases: number; archivedDiagnosticEvents: number };
+export type HostProfileLegacyPreservation = { sourceSchemaVersion: 18 | 19; jobAliases: number; archivedDiagnosticEvents: number;
+	archivedMemoryJobs?: number; pausedMemoryJobIdentities?: number; purgedMemoryJobArchives?: number };
 
 // Frozen table-and-column inventory for migrations 001-018. Derived keyed
 // indexes are validated as schema, then regenerated from logical payloads.
@@ -262,7 +264,7 @@ function validateReservedEmbeddingStateRows(rows: TransferTables): void {
 	}
 }
 
-function preservedLegacyState(rows: TransferTables): { jobAliases: number; archivedDiagnosticEvents: number } {
+function preservedLegacyState(rows: TransferTables): Omit<HostProfileLegacyPreservation, "sourceSchemaVersion"> {
 	const values = new Map<string, { row: TransferRow; value: unknown }>();
 	for (const row of rows.private_runtime_state ?? []) {
 		const key = row.values.key;
@@ -270,14 +272,15 @@ function preservedLegacyState(rows: TransferTables): { jobAliases: number; archi
 		if (values.has(key) || typeof row.cleartext?.value_ciphertext !== "string") fail("Invalid preserved legacy profile state.");
 		values.set(key, { row, value: JSON.parse(row.cleartext.value_ciphertext) });
 	}
-	const counts = { jobAliases: 0, archivedDiagnosticEvents: 0 };
+	const counts: Omit<HostProfileLegacyPreservation, "sourceSchemaVersion"> = { jobAliases: 0, archivedDiagnosticEvents: 0 };
 	if (!values.size) return counts;
 	const secretValue = values.get(LEGACY_PROFILE_SECRET_KEY);
 	if (!secretValue) fail("Preserved legacy profile state is missing its secret.");
 	const secret = parseLegacyProfileSecret(secretValue.value);
 	try {
+		const groups = new Set<string>(), archived = new Set<string>();
 		for (const [key, { row, value }] of values) {
-			if (key === LEGACY_PROFILE_SECRET_KEY) continue;
+			if (key === LEGACY_PROFILE_SECRET_KEY || key === LEGACY_JOB_CONFLICT_MANIFEST_KEY) continue;
 			if (key.startsWith(LEGACY_JOB_ALIAS_PREFIX)) {
 				const alias = parseLegacyJobAlias(key, value, secret);
 				if (row.values.updated_at !== alias.jobCreatedAt) fail("Invalid preserved legacy job reference metadata.");
@@ -286,10 +289,87 @@ function preservedLegacyState(rows: TransferTables): { jobAliases: number; archi
 				const diagnostic = parseLegacyDiagnostic(key, value, secret);
 				if (row.values.updated_at !== diagnostic.createdAt) fail("Invalid preserved legacy diagnostic metadata.");
 				counts.archivedDiagnosticEvents++;
+			} else if (key.startsWith(LEGACY_JOB_CONFLICT_PREFIX)) {
+				if (isLegacyJobConflictPurged(value)) parseLegacyPurgedMemoryJobConflict(key, value);
+				else parseLegacyMemoryJobConflict(key, value, secret);
+				groups.add(key);
+			} else if (key.startsWith(LEGACY_CONFLICTED_JOB_PREFIX)) {
+				if (isLegacyJobConflictPurged(value)) {
+					parseLegacyPurgedConflictedMemoryJob(key, value);
+					if (!MemoryJobSchema.shape.updatedAt.safeParse(row.values.updated_at).success) fail("Invalid purged memory job conflict metadata.");
+				}
+				else {
+					const job = parseLegacyConflictedMemoryJob(key, value, secret);
+					if (row.values.updated_at !== MemoryJobSchema.parse(JSON.parse(job.observedPayloadJson)).updatedAt) fail("Invalid preserved memory job conflict metadata.");
+				}
+				archived.add(key);
 			} else fail("Unknown preserved legacy profile state.");
 		}
+		const linked = new Set<string>(), operativeIds = new Set((rows.memory_jobs ?? []).map(row => legacyProfileStateKey(secret, "conflicted-job", String(row.values.id))));
+		const operativeDedupe = new Set((rows.memory_jobs ?? []).map(row => legacyProfileStateKey(secret, "job-conflict", String(row.values.dedupe_key))));
+		let retainedCount = 0, purgedCount = 0;
+		for (const groupKey of groups) {
+			const conflict = readLegacyMemoryJobConflictByKey(secret, groupKey, key => values.get(key)?.value)!;
+			const jobKeys = conflict.purged ? conflict.group.jobKeys : conflict.group.jobIds.map(id => legacyProfileStateKey(secret, "conflicted-job", id));
+			if (operativeDedupe.has(groupKey) || jobKeys.some(key => operativeIds.has(key) || linked.has(key))) fail("A preserved memory job conflict overlaps active work.");
+			for (const key of jobKeys) linked.add(key);
+			const updatedAt = jobKeys.map(key => String(values.get(key)?.row.values.updated_at)).sort().at(-1);
+			if (!MemoryJobSchema.shape.updatedAt.safeParse(updatedAt).success || values.get(groupKey)?.row.values.updated_at !== updatedAt) fail("Invalid preserved memory job conflict metadata.");
+			for (const job of conflict.jobs) { if (isLegacyJobConflictPurged(job)) purgedCount++; else retainedCount++; }
+		}
+		if (archived.size !== linked.size || [...archived].some(id => !linked.has(id))) fail("A preserved memory job conflict is missing its identity fence.");
+		const manifest = values.get(LEGACY_JOB_CONFLICT_MANIFEST_KEY);
+		if (groups.size || manifest) {
+			const inventory = [...groups, ...archived].sort(), value = manifest?.value as Record<string, unknown> | undefined;
+			if (!groups.size || !value || typeof value !== "object" || Array.isArray(value) ||
+				canonical(Object.keys(value).sort()) !== canonical(["version", "groups", "jobs", "inventorySha256"].sort()) || value.version !== 1 ||
+				value.groups !== groups.size || value.jobs !== archived.size ||
+				value.inventorySha256 !== createHash("sha256").update(canonical(inventory)).digest("hex") ||
+				!MemoryJobSchema.shape.updatedAt.safeParse(manifest?.row.values.updated_at).success) fail("Invalid preserved memory job conflict manifest.");
+		}
+		if (groups.size) { counts.archivedMemoryJobs = retainedCount; counts.pausedMemoryJobIdentities = groups.size; if (purgedCount) counts.purgedMemoryJobArchives = purgedCount; }
 		return counts;
 	} finally { secret.fill(0); }
+}
+
+/** Startup/external-write check for non-operative archives; no source migration or backfill. */
+export function validatePreservedLegacyProfileRuntimeState(db: Database.Database, key: Buffer): boolean {
+	return db.transaction(() => {
+		// Aliases/diagnostics predate the conflict format. Any other reserved
+		// record, including an unknown future version, requires a complete check.
+		const conflictExists = db.prepare("SELECT 1 FROM private_runtime_state WHERE key>=? AND key<? AND key<>? AND NOT(key>=? AND key<?) AND NOT(key>=? AND key<?) LIMIT 1")
+			.get(LEGACY_PROFILE_STATE_ROOT, `${LEGACY_PROFILE_STATE_ROOT}\uffff`, LEGACY_PROFILE_SECRET_KEY,
+				LEGACY_JOB_ALIAS_PREFIX, `${LEGACY_JOB_ALIAS_PREFIX}\uffff`, LEGACY_DIAGNOSTIC_PREFIX, `${LEGACY_DIAGNOSTIC_PREFIX}\uffff`);
+		if (!conflictExists) return false;
+		const sum = (columns: string[]) => columns.map(column => `COALESCE(LENGTH(CAST(${column} AS BLOB)),0)`).join("+");
+		const archiveBytes = sum(["key", "value_ciphertext", "value_iv", "value_auth_tag", "updated_at"]);
+		const aggregate = db.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(${archiveBytes}),0) AS bytes, COALESCE(MAX(${archiveBytes}),0) AS largest FROM private_runtime_state WHERE key>=? AND key<?`)
+			.get(LEGACY_PROFILE_STATE_ROOT, `${LEGACY_PROFILE_STATE_ROOT}\uffff`) as { count: number; bytes: number; largest: number };
+		if (aggregate.count > HOST_PROFILE_FILE_TRANSFER_LIMITS.maxRows || aggregate.bytes > HOST_PROFILE_FILE_TRANSFER_LIMITS.maxRawBytes || aggregate.largest > HOST_PROFILE_FILE_TRANSFER_LIMITS.maxRawRowBytes)
+			limit("Preserved runtime archive exceeds byte limits.");
+		const jobBytes = sum(["id", "dedupe_key", "payload_ciphertext", "payload_iv", "payload_auth_tag"]);
+		const maximum = db.prepare(`SELECT COALESCE(MAX(${jobBytes}),0) AS largest FROM memory_jobs`).get() as { largest: number };
+		if (maximum.largest > HOST_PROFILE_FILE_TRANSFER_LIMITS.maxRawRowBytes) limit("Preserved runtime job exceeds the row limit.");
+		const rows: TransferTables = { private_runtime_state: [], memory_jobs: [] };
+		for (const row of db.prepare("SELECT key,value_ciphertext,value_iv,value_auth_tag,updated_at FROM private_runtime_state WHERE key>=? AND key<? ORDER BY key")
+			.iterate(LEGACY_PROFILE_STATE_ROOT, `${LEGACY_PROFILE_STATE_ROOT}\uffff`) as Iterable<{ key: string; value_ciphertext: string; value_iv: string; value_auth_tag: string; updated_at: string }>) {
+			if (rows.private_runtime_state!.length >= HOST_PROFILE_FILE_TRANSFER_LIMITS.maxRows) limit("Preserved runtime archive exceeds the row limit.");
+			rows.private_runtime_state!.push({ values: { key: row.key, updated_at: row.updated_at }, cleartext: { value_ciphertext: decryptText({ ciphertext: row.value_ciphertext, iv: row.value_iv, authTag: row.value_auth_tag }, key) } });
+		}
+		preservedLegacyState(rows);
+		const storedSecret = rows.private_runtime_state!.find(row => row.values.key === LEGACY_PROFILE_SECRET_KEY)!;
+		const secret = parseLegacyProfileSecret(JSON.parse(String(storedSecret.cleartext!.value_ciphertext)));
+		const keys = new Set(rows.private_runtime_state!.map(row => String(row.values.key)));
+		try {
+			// Stream operative jobs; do not build another whole-job or identity array.
+			for (const row of db.prepare("SELECT id,dedupe_key,payload_ciphertext,payload_iv,payload_auth_tag FROM memory_jobs").iterate() as Iterable<Record<string, string>>) {
+				const job = MemoryJobSchema.parse(JSON.parse(decryptText({ ciphertext: row.payload_ciphertext!, iv: row.payload_iv!, authTag: row.payload_auth_tag! }, key)));
+				if (job.id !== row.id || !matchesMemoryFingerprintIndex(key, "job-dedupe", row.dedupe_key, job.dedupeKey) ||
+					keys.has(legacyProfileStateKey(secret, "conflicted-job", job.id)) || keys.has(legacyProfileStateKey(secret, "job-conflict", job.dedupeKey))) fail("Invalid active memory job alongside preserved conflicts.");
+			}
+		} finally { secret.fill(0); }
+		return true;
+	}).deferred();
 }
 
 function validateLogicalFingerprintUniqueness(rows: TransferTables): void {
@@ -305,7 +385,7 @@ function validateLogicalFingerprintUniqueness(rows: TransferTables): void {
 	}
 }
 
-function preserveLegacy19Extras(db: Database.Database, key: Buffer, rows: TransferTables, counts: Record<string, number>, withDiagnostics: boolean, account: (row: TransferRow) => void): void {
+function preserveLegacy19Extras(db: Database.Database, key: Buffer, rows: TransferTables, counts: Record<string, number>, withDiagnostics: boolean, jobStates: Map<string, LegacyMemoryJobSourceState>, account: (row: TransferRow) => void): number {
 	if ((rows.private_runtime_state ?? []).some(row => String(row.values.key).startsWith(LEGACY_PROFILE_STATE_ROOT))) fail("Legacy profile state namespace is already in use.");
 	const privateRows = rows.private_runtime_state!;
 	const jobs = new Map((rows.memory_jobs ?? []).map(row => {
@@ -314,6 +394,7 @@ function preserveLegacy19Extras(db: Database.Database, key: Buffer, rows: Transf
 	}));
 	const secret = deriveLegacyProfileSecret(key);
 	let secretAdded = false;
+	let archivedRunning = 0;
 	const add = (stateKey: string, value: unknown, updatedAt: string) => {
 		if (!secretAdded) {
 			const row = { values: { key: LEGACY_PROFILE_SECRET_KEY, updated_at: updatedAt }, cleartext: { value_ciphertext: JSON.stringify({ version: 1, keyBase64: secret.toString("base64") }) } };
@@ -340,8 +421,38 @@ function preserveLegacy19Extras(db: Database.Database, key: Buffer, rows: Transf
 			const value = parseLegacyDiagnostic(stateKey, { version: 1, id: row.id, severity: row.severity, source: row.source, createdAt: row.created_at, payloadUtf8Base64: Buffer.from(plaintext, "utf8").toString("base64") }, secret);
 			add(stateKey, value, row.created_at);
 		}
+		const byDedupe = new Map<string, string[]>();
+		for (const job of jobs.values()) { const ids = byDedupe.get(job.dedupeKey) ?? []; ids.push(job.id); byDedupe.set(job.dedupeKey, ids); }
+		const archivedIds = new Set<string>();
+		for (const [dedupeKey, ids] of byDedupe) {
+			if (ids.length < 2) continue;
+			// The unique SQL index admits only the legacy and keyed encodings.
+			// Preserve both records; no surviving runnable representative is chosen.
+			if (ids.length !== 2) throw new HostProfileTransferConflictError();
+			ids.sort();
+			const updated: string[] = [];
+			for (const id of ids) {
+				const state = jobStates.get(id); if (!state) fail("Missing authenticated legacy memory job state.");
+				const stateKey = legacyProfileStateKey(secret, "conflicted-job", id);
+				const value = parseLegacyConflictedMemoryJob(stateKey, { version: 1, jobId: id, dedupeKey, ...state }, secret);
+				const observed = MemoryJobSchema.parse(JSON.parse(state.observedPayloadJson)), updatedAt = observed.updatedAt;
+				if (observed.status === "running") archivedRunning++;
+				add(stateKey, value, updatedAt); updated.push(updatedAt); archivedIds.add(id);
+			}
+			const stateKey = legacyProfileStateKey(secret, "job-conflict", dedupeKey);
+			add(stateKey, parseLegacyMemoryJobConflict(stateKey, { version: 1, dedupeKey, jobIds: ids }, secret), updated.sort().at(-1)!);
+		}
+		rows.memory_jobs = rows.memory_jobs!.filter(row => !archivedIds.has(String(row.values.id)));
+		counts.memory_jobs = rows.memory_jobs.length;
+		if (archivedIds.size) {
+			const records = privateRows.filter(row => String(row.values.key).startsWith(LEGACY_JOB_CONFLICT_PREFIX) || String(row.values.key).startsWith(LEGACY_CONFLICTED_JOB_PREFIX));
+			add(LEGACY_JOB_CONFLICT_MANIFEST_KEY, { version: 1, groups: archivedIds.size / 2, jobs: archivedIds.size,
+				inventorySha256: createHash("sha256").update(canonical(records.map(row => row.values.key).sort())).digest("hex") },
+				records.map(row => String(row.values.updated_at)).sort().at(-1)!);
+		}
 	} finally { secret.fill(0); }
 	counts.private_runtime_state = privateRows.length;
+	return archivedRunning;
 }
 
 function validateProtectedPayload(table: string, values: Record<string, SqlValue>, plaintext: string): void {
@@ -550,9 +661,10 @@ function readSourceSnapshot(db: Database.Database, key: Buffer, maxBytes: number
 		const sourceSchema = validateSchema(db, true);
 		const snapshot = createHostProfileTransferSnapshotInReadTransaction(db, key, maxBytes, true, limits);
 		const preserved = preservedLegacyState(snapshot.rows);
-		const hasLegacy = sourceSchema !== "canonical18" || preserved.jobAliases > 0 || preserved.archivedDiagnosticEvents > 0;
+		const hasLegacy = sourceSchema !== "canonical18" || preserved.jobAliases > 0 || preserved.archivedDiagnosticEvents > 0 || Boolean(preserved.pausedMemoryJobIdentities);
 		return { snapshot, ...(hasLegacy ? { legacy: { sourceSchemaVersion: sourceSchema === "canonical18" ? 18 as const : 19 as const, ...preserved } } : {}),
-			syntheticEnvelopeCount: sourceSchema === "canonical18" ? 0 : preserved.jobAliases + (preserved.jobAliases + preserved.archivedDiagnosticEvents > 0 ? 1 : 0) };
+			syntheticEnvelopeCount: sourceSchema === "canonical18" ? 0 : preserved.jobAliases + (preserved.pausedMemoryJobIdentities ?? 0) + (preserved.pausedMemoryJobIdentities ? 1 : 0) +
+				(preserved.jobAliases + preserved.archivedDiagnosticEvents + (preserved.archivedMemoryJobs ?? 0) > 0 ? 1 : 0) };
 	}).deferred();
 }
 
@@ -607,6 +719,7 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 	let unexecutedApprovalsRetired = 0;
 	let unsettledActionReceiptsRetired = 0;
 	const retiredToolExecutionStatuses = new Map<string, "failed" | "cancelled">();
+	const legacyJobStates = new Map<string, LegacyMemoryJobSourceState>();
 	const tableCounts = new Map<string, number>();
 	for (const [table, spec] of Object.entries(TABLES)) {
 		const byteTerms = spec.columns.map((column, index) => `COALESCE(SUM(LENGTH(CAST(${column} AS BLOB))), 0) AS bytes_${index}`).join(", ");
@@ -674,12 +787,13 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 				values[column] = logical;
 			}
 			if (sourceSchema !== "canonical18" && table === "memory_jobs") {
-				const raw = objectJson(String(cleartext.payload_ciphertext), "legacy memory job");
+				const originalPayloadJson = String(cleartext.payload_ciphertext), raw = objectJson(originalPayloadJson, "legacy memory job");
 				const job = MemoryJobSchema.parse(raw);
 				if (job.id !== values.id || job.kind !== values.kind || job.dedupeKey !== values.dedupe_key || job.maxAttempts !== values.max_attempts || job.createdAt !== values.created_at) fail("Legacy memory job identity does not match its encrypted payload.");
 				const projected = MemoryJobSchema.parse({ ...raw, status: values.status, attempts: values.attempts, runAfter: values.run_after,
 					lockedAt: values.locked_at ?? undefined, leaseUntil: values.lease_until ?? undefined, lastError: values.last_error ?? undefined, updatedAt: values.updated_at });
 				cleartext.payload_ciphertext = JSON.stringify({ ...raw, ...projected });
+				legacyJobStates.set(job.id, { originalPayloadJson, observedPayloadJson: String(cleartext.payload_ciphertext) });
 			}
 			if (spec.special === "tool-executions") {
 				const payload = values.payload;
@@ -834,7 +948,8 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 		if (result.length !== expectedCount) fail(`Profile transfer source changed while reading ${table}.`);
 		rows[table] = result;
 	}
-	if (sourceSchema !== "canonical18") preserveLegacy19Extras(db, key, rows, counts, sourceSchema === "legacy19-diagnostics", account);
+	if (sourceSchema !== "canonical18") runningMemoryJobsCancelled -= preserveLegacy19Extras(db, key, rows, counts, sourceSchema === "legacy19-diagnostics", legacyJobStates, account);
+	if (Object.values(counts).reduce((sum, count) => sum + count, 0) > limits.maxRows) limit("Preserved profile state exceeds the row limit.");
 	validateLogicalFingerprintUniqueness(rows);
 	preservedLegacyState(rows);
 	validateReservedEmbeddingStateRows(rows);

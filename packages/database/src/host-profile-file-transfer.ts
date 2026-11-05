@@ -295,10 +295,16 @@ function validateJournal(value: unknown): asserts value is TransferJournal {
 		!Number.isSafeInteger(plan.authenticatedEnvelopes) || plan.authenticatedEnvelopes < 1 ||
 		![plan.summary.counts, plan.summary.excluded].every(record => record && typeof record === "object" && !Array.isArray(record) && Object.keys(record).length <= 100 && Object.entries(record).every(([name, count]) => /^[a-zA-Z_]{1,64}$/.test(name) && Number.isSafeInteger(count) && Number(count) >= 0)))
 		fail("RECOVERY_METADATA_INVALID", "The interrupted Core transfer plan metadata is invalid.");
-	if (plan.summary.legacy && (!exactFields(plan.summary.legacy, ["sourceSchemaVersion", "jobAliases", "archivedDiagnosticEvents"]) ||
-		![18, 19].includes(plan.summary.legacy.sourceSchemaVersion) ||
-		![plan.summary.legacy.jobAliases, plan.summary.legacy.archivedDiagnosticEvents].every(count => Number.isSafeInteger(count) && count >= 0 && count <= HOST_PROFILE_FILE_TRANSFER_LIMITS.maxRows)))
-		fail("RECOVERY_METADATA_INVALID", "The preserved legacy profile counts are invalid.");
+	if (plan.summary.legacy) {
+		const legacy = plan.summary.legacy, conflicts = legacy.archivedMemoryJobs !== undefined || legacy.pausedMemoryJobIdentities !== undefined || legacy.purgedMemoryJobArchives !== undefined;
+		const purged = legacy.purgedMemoryJobArchives !== undefined;
+		if (!exactFields(legacy, ["sourceSchemaVersion", "jobAliases", "archivedDiagnosticEvents", ...(conflicts ? ["archivedMemoryJobs", "pausedMemoryJobIdentities"] : []), ...(purged ? ["purgedMemoryJobArchives"] : [])]) ||
+			![18, 19].includes(legacy.sourceSchemaVersion) ||
+			![legacy.jobAliases, legacy.archivedDiagnosticEvents, ...(conflicts ? [legacy.archivedMemoryJobs, legacy.pausedMemoryJobIdentities] : []), ...(purged ? [legacy.purgedMemoryJobArchives] : [])].every(count => Number.isSafeInteger(count) && Number(count) >= 0 && Number(count) <= HOST_PROFILE_FILE_TRANSFER_LIMITS.maxRows) ||
+			(purged && !(Number(legacy.purgedMemoryJobArchives) > 0)) ||
+			(conflicts && (!(Number(legacy.pausedMemoryJobIdentities) > 0) || Number(legacy.archivedMemoryJobs) + Number(legacy.purgedMemoryJobArchives ?? 0) !== Number(legacy.pausedMemoryJobIdentities) * 2)))
+			fail("RECOVERY_METADATA_INVALID", "The preserved legacy profile counts are invalid.");
+	}
 	if (!exactFields(value.staging, ["path", "directory", "file"]) || typeof value.staging.path !== "string" || !validIdentity(value.staging.directory) || !validIdentity(value.staging.file))
 		fail("RECOVERY_METADATA_INVALID", "The interrupted Core staging identity is invalid.");
 }

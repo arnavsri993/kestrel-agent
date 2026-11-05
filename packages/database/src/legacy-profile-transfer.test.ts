@@ -9,6 +9,8 @@ import { KestrelDatabase } from "./index.js";
 import { planHostProfileFileTransfer, applyHostProfileFileTransfer, verifyHostProfileFileTransferRecovery, HostProfileFileTransferError } from "./host-profile-file-transfer.js";
 import { LEGACY_PROFILE_SECRET_KEY, LEGACY_JOB_ALIAS_PREFIX, LEGACY_DIAGNOSTIC_PREFIX } from "./legacy-profile-state.js";
 import { memoryFingerprintIndex } from "./memory-fingerprint-index.js";
+import { parseLegacyProfileSecret } from "./legacy-profile-state.js";
+import { readLegacyMemoryJobConflict } from "./legacy-memory-job-conflicts.js";
 import { computeHostProfileTransferSemanticHash, readHostProfileTransferSourceSnapshot } from "./profile-transfer.js";
 
 const roots: string[] = [], keys: Buffer[] = [];
@@ -88,22 +90,36 @@ it.each([["unknown_historical_action", "unknown_historical_action"], ["default_m
 	expect(readdirSync(join(value.destinationDatabasePath, ".."))).toEqual([]);
 });
 
-it("reports an authenticated mixed-index job conflict without leaking identities or choosing a retry budget", () => {
-	const value = fixture(), raw = new Database(value.sourceDatabasePath);
-	const duplicate = { ...value.job, id: "generated-ambiguous-job", status: "pending", attempts: 0 }, encrypted = encryptText(JSON.stringify(duplicate), value.sourceKey);
+it("preserves both legacy job versions and fences their identities without choosing a retry budget", () => {
+	const value = fixture({ conflictingJobs: true }), before = readFileSync(value.sourceDatabasePath), { plan, receipt } = apply(value);
+	expect(plan.summary.legacy).toEqual({ sourceSchemaVersion: 19, jobAliases: 1, archivedDiagnosticEvents: 1, archivedMemoryJobs: 2, pausedMemoryJobIdentities: 1 });
+	expect(plan.authenticatedEnvelopes).toBe(5);
+	for (const secret of [value.job.dedupeKey, value.job.id, value.alias, value.privateMessage, value.sourceKey.toString("base64")]) expect(JSON.stringify(plan)).not.toContain(secret);
+	expect(verifyHostProfileFileTransferRecovery(receipt, value)).toEqual({ originalReadable: true, destinationReadable: true, activationPerformed: false });
+	const db = new KestrelDatabase(value.destinationDatabasePath, value.destinationKey);
 	try {
-		raw.prepare("INSERT INTO memory_jobs SELECT ?,kind,?,?,?,max_attempts,run_after,locked_at,lease_until,last_error,created_at,updated_at,?,?,? FROM memory_jobs WHERE id=?")
-			.run(duplicate.id, duplicate.dedupeKey, duplicate.status, duplicate.attempts, encrypted.ciphertext, encrypted.iv, encrypted.authTag, value.job.id);
-	} finally { raw.close(); }
-	const before = readFileSync(value.sourceDatabasePath);
-	try { planHostProfileFileTransfer(value); expect.fail("Conflicting source must be refused."); }
-	catch (error) {
-		expect(error).toBeInstanceOf(HostProfileFileTransferError);
-		expect((error as HostProfileFileTransferError).code).toBe("SOURCE_MEMORY_CONFLICT");
-		for (const secret of [value.job.dedupeKey, value.job.id, duplicate.id, value.privateMessage, value.sourceKey.toString("base64")]) expect(String(error)).not.toContain(secret);
-	}
+		const secret = parseLegacyProfileSecret(db.getPrivateState(LEGACY_PROFILE_SECRET_KEY)); keys.push(secret);
+		const conflict = readLegacyMemoryJobConflict(secret, value.job.dedupeKey, key => db.getPrivateState(key))!;
+		if (conflict.purged) throw new Error("Generated conflict history was unexpectedly purged.");
+		expect(conflict.jobs.map(job => JSON.parse(job.originalPayloadJson)).sort((a,b) => a.id.localeCompare(b.id)))
+			.toEqual([value.job, { ...value.job, id: value.alias, status: "pending", attempts: 0 }].sort((a,b) => a.id.localeCompare(b.id)));
+		expect(db.listMemoryJobs()).toEqual([]); expect(db.claimMemoryJob(value.time)).toBeUndefined();
+		for (const id of [value.job.id, value.alias]) {
+			expect(db.getMemoryJob(id)).toBeUndefined(); expect(db.completeMemoryJob(id, value.time, "stale-lease")).toBe(false);
+			expect(db.failMemoryJob(id, "stale failure", value.time, 1000, "stale-lease")).toBeUndefined();
+			expect(() => db.queueMemoryJob({ ...value.job, id, dedupeKey: "different-identity", status: "pending", attempts: 0 })).toThrow(/remain paused/);
+		}
+		expect(() => db.getMemoryJobByDedupeKey(value.job.dedupeKey)).toThrow(/remain paused/);
+		expect(() => db.queueMemoryJob({ ...value.job, id: "replacement-id", status: "pending", attempts: 0 })).toThrow(/remain paused/);
+		expect(db.exportHostProfileTransferSnapshot().semanticSha256).toBe(plan.summary.semanticSha256);
+		db.queueMemoryJob({ ...value.job, id: "unrelated-job", dedupeKey: "unrelated-dedupe", status: "pending", attempts: 0 });
+		expect(db.claimMemoryJob(value.time)?.id).toBe("unrelated-job");
+		expect(db.listRuntimeMessages("generated-legacy19-session")[0]?.content).toBe(value.privateMessage);
+	} finally { db.close(); }
+	const reopened = new KestrelDatabase(value.destinationDatabasePath, value.destinationKey);
+	try { expect(() => reopened.queueMemoryJob({ ...value.job, id: "replacement-after-restart" })).toThrow(/remain paused/); }
+	finally { reopened.close(); }
 	expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
-	expect(readdirSync(join(value.destinationDatabasePath, ".."))).toEqual([]);
 });
 
 it("keeps stale aliases inert when the referenced id is deleted or reused", () => {

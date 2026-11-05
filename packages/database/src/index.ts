@@ -14,7 +14,8 @@ import {
 export { EMBEDDING_AUTHORITY_STATE_PREFIX, parseReservedEmbeddingAuthorityState } from "./memory-embedding-authority.js";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { memoryFingerprintIndex, matchesMemoryFingerprintIndex } from "./memory-fingerprint-index.js";
-import { LEGACY_PROFILE_SECRET_KEY, legacyProfileStateKey, parseLegacyProfileSecret, parseLegacyJobAlias, legacyAliasMatchesJob } from "./legacy-profile-state.js";
+import { LEGACY_PROFILE_STATE_ROOT, LEGACY_PROFILE_SECRET_KEY, LEGACY_JOB_ALIAS_PREFIX, LEGACY_DIAGNOSTIC_PREFIX, LEGACY_JOB_CONFLICT_PREFIX, LEGACY_CONFLICTED_JOB_PREFIX, LEGACY_JOB_CONFLICT_MANIFEST_KEY, legacyProfileStateKey, parseLegacyProfileSecret, parseLegacyJobAlias, legacyAliasMatchesJob } from "./legacy-profile-state.js";
+import { parseLegacyConflictedMemoryJob, parseLegacyPurgedConflictedMemoryJob, isLegacyJobConflictPurged, readLegacyMemoryJobConflict, readLegacyMemoryJobConflictByKey } from "./legacy-memory-job-conflicts.js";
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -115,6 +116,7 @@ import {
 import {
 	createHostProfileTransferSnapshot,
 	importHostProfileTransferSnapshot,
+	validatePreservedLegacyProfileRuntimeState,
 	type HostProfileTransferSnapshot,
 } from "./profile-transfer.js";
 
@@ -538,6 +540,8 @@ export class KestrelDatabase {
 	private readonly hostRecoveryMode: "readonly" | "apply" | undefined;
 	private hostRecoveryPreviewDirectory: string | undefined;
 	private hostRecoveryAuthoritySecret: EmbeddingStateSecret | undefined;
+	private legacyConflictDataVersion: number | undefined;
+	private hasPreservedJobConflicts = false;
 
 	/** Open only an existing, current-schema profile; this does not initialize or migrate it. */
 	static openForHostLegacyEmbeddingRecovery(filename: string, key: Buffer, options: { readonly: boolean }): KestrelDatabase {
@@ -586,6 +590,7 @@ export class KestrelDatabase {
 					this.getMemoryJob(job.id);
 				}
 				this.lastMigrationBackupPath = undefined;
+				this.ensurePreservedMemoryJobConflictIntegrity();
 				return;
 			}
 			this.db.pragma("journal_mode = WAL");
@@ -593,6 +598,7 @@ export class KestrelDatabase {
 			this.db.pragma("secure_delete = ON");
 			this.assertDatabaseIntegrity();
 			this.lastMigrationBackupPath = this.migrate();
+			this.ensurePreservedMemoryJobConflictIntegrity();
 			this.protectLegacySensitiveToolExecutions();
 		} catch (error) {
 			try {
@@ -634,7 +640,10 @@ export class KestrelDatabase {
 		snapshot: HostProfileTransferSnapshot,
 		options: { maxBytes?: number } = {},
 	): { semanticSha256: string; importedRows: Record<string, number>; excluded: HostProfileTransferSnapshot["excluded"] } {
-		return importHostProfileTransferSnapshot(this.db, this.encryptionKey, snapshot, options.maxBytes);
+		const imported = importHostProfileTransferSnapshot(this.db, this.encryptionKey, snapshot, options.maxBytes);
+		this.legacyConflictDataVersion = undefined;
+		this.ensurePreservedMemoryJobConflictIntegrity();
+		return imported;
 	}
 
 	private getAppliedSchemaVersion(): number {
@@ -3331,6 +3340,7 @@ export class KestrelDatabase {
 	queueMemoryJob(job: MemoryJob): MemoryJob {
 		const parsed = MemoryJobSchema.parse(job);
 		return this.db.transaction(() => {
+			this.assertNoPreservedMemoryJobConflict({ dedupeKey: parsed.dedupeKey, jobId: parsed.id });
 			const existing = this.getMemoryJobByDedupeKey(parsed.dedupeKey);
 			if (existing && existing.id !== parsed.id) throw new Error("Memory job dedupe identity already exists.");
 			this.upsertMemoryPayload(
@@ -3359,7 +3369,7 @@ export class KestrelDatabase {
 		const row = this.db
 			.prepare("SELECT * FROM memory_jobs WHERE id = ?")
 			.get(id) as MemorySubstrateRow | undefined;
-		if (row) return this.decodeMemoryJob(row);
+		if (row) { this.assertNoPreservedMemoryJobConflict({ jobId: id }); return this.decodeMemoryJob(row); }
 		if (!/^memory-job-[a-f0-9]{40}$/.test(id)) return undefined;
 		const storedSecret = this.getPrivateState<unknown>(LEGACY_PROFILE_SECRET_KEY);
 		if (storedSecret === undefined) return undefined;
@@ -3371,18 +3381,102 @@ export class KestrelDatabase {
 			const target = this.db.prepare("SELECT * FROM memory_jobs WHERE id=?").get(alias.jobId) as MemorySubstrateRow | undefined;
 			if (!target) return undefined;
 			const job = this.decodeMemoryJob(target);
+			this.assertNoPreservedMemoryJobConflict({ jobId: job.id, dedupeKey: job.dedupeKey });
 			// A stale archive must never redirect a reused id to another job.
 			return legacyAliasMatchesJob(alias, job) ? job : undefined;
 		} finally { secret.fill(0); }
 	}
 
 	getMemoryJobByDedupeKey(dedupeKey: string): MemoryJob | undefined {
+		this.assertNoPreservedMemoryJobConflict({ dedupeKey });
 		const rows = this.db.prepare("SELECT * FROM memory_jobs WHERE dedupe_key IN (?, ?) LIMIT 2")
 			.all(memoryFingerprintIndex(this.encryptionKey, "job-dedupe", dedupeKey), dedupeKey) as MemorySubstrateRow[];
 		if (rows.length > 1) throw new Error("Memory job dedupe identity is ambiguous.");
 		const job = rows[0] ? this.decodeMemoryJob(rows[0]) : undefined;
 		if (job && job.dedupeKey !== dedupeKey) throw new Error("Memory job dedupe identity does not match its encrypted payload.");
 		return job;
+	}
+
+	private assertNoPreservedMemoryJobConflict(identity: { dedupeKey?: string; jobId?: string }): void {
+		this.ensurePreservedMemoryJobConflictIntegrity();
+		if (!this.hasPreservedJobConflicts) return;
+		const stored = this.getPrivateState<unknown>(LEGACY_PROFILE_SECRET_KEY);
+		if (stored === undefined) {
+			if (this.db.prepare("SELECT 1 FROM private_runtime_state WHERE (key>=? AND key<?) OR (key>=? AND key<?) LIMIT 1")
+				.get(LEGACY_JOB_CONFLICT_PREFIX, `${LEGACY_JOB_CONFLICT_PREFIX}\uffff`, LEGACY_CONFLICTED_JOB_PREFIX, `${LEGACY_CONFLICTED_JOB_PREFIX}\uffff`)) throw new Error("Preserved memory job conflicts need their archive secret.");
+			return;
+		}
+		const secret = parseLegacyProfileSecret(stored), read = (key: string) => this.getPrivateState<unknown>(key);
+		try {
+			if (identity.dedupeKey !== undefined && readLegacyMemoryJobConflict(secret, identity.dedupeKey, read))
+				throw new Error("Imported memory jobs with conflicting identities remain paused.");
+			if (identity.jobId !== undefined) {
+				const key = legacyProfileStateKey(secret, "conflicted-job", identity.jobId), value = read(key);
+				if (value !== undefined) {
+					const groupKey = isLegacyJobConflictPurged(value) ? parseLegacyPurgedConflictedMemoryJob(key, value).groupKey
+						: legacyProfileStateKey(secret, "job-conflict", parseLegacyConflictedMemoryJob(key, value, secret).dedupeKey);
+					const conflict = readLegacyMemoryJobConflictByKey(secret, groupKey, read);
+					const members = conflict && (conflict.purged ? conflict.group.jobKeys : conflict.group.jobIds.map(id => legacyProfileStateKey(secret, "conflicted-job", id)));
+					if (!members?.includes(key)) throw new Error("Invalid preserved memory job conflict.");
+					throw new Error("Imported memory jobs with conflicting identities remain paused.");
+				}
+			}
+		} finally { secret.fill(0); }
+	}
+
+	private ensurePreservedMemoryJobConflictIntegrity(): void {
+		const version = Number(this.db.pragma("data_version", { simple: true }));
+		if (this.legacyConflictDataVersion === version) return;
+		const present = validatePreservedLegacyProfileRuntimeState(this.db, this.encryptionKey);
+		if (this.hasPreservedJobConflicts && !present) throw new Error("Preserved memory job conflict fences are missing.");
+		this.hasPreservedJobConflicts = present;
+		this.legacyConflictDataVersion = version;
+	}
+
+	private assertPrivateStateMutationAllowed(key: string): void {
+		if (!key.startsWith(LEGACY_PROFILE_STATE_ROOT)) return;
+		if (key !== LEGACY_PROFILE_SECRET_KEY && !key.startsWith(LEGACY_JOB_ALIAS_PREFIX) && !key.startsWith(LEGACY_DIAGNOSTIC_PREFIX))
+			throw new Error("Preserved memory job conflict state is managed by profile transfer and explicit deletion.");
+		this.ensurePreservedMemoryJobConflictIntegrity();
+		if (this.hasPreservedJobConflicts || key === LEGACY_JOB_CONFLICT_MANIFEST_KEY || key.startsWith(LEGACY_JOB_CONFLICT_PREFIX) || key.startsWith(LEGACY_CONFLICTED_JOB_PREFIX))
+			throw new Error("Preserved memory job conflict state is managed by profile transfer and explicit deletion.");
+	}
+
+	private purgePreservedMemoryJobs(matches: (job: MemoryJob) => boolean): number {
+		this.ensurePreservedMemoryJobConflictIntegrity();
+		if (!this.hasPreservedJobConflicts) return 0;
+		const secret = parseLegacyProfileSecret(this.getPrivateState(LEGACY_PROFILE_SECRET_KEY)), read = (key: string) => this.getPrivateState<unknown>(key);
+		try {
+			let purged = 0;
+			const removedIds = new Set<string>();
+			const groups = this.db.prepare("SELECT key FROM private_runtime_state WHERE key>=? AND key<? ORDER BY key")
+				.all(LEGACY_JOB_CONFLICT_PREFIX, `${LEGACY_JOB_CONFLICT_PREFIX}\uffff`) as Array<{ key: string }>;
+			for (const { key: groupKey } of groups) {
+				const conflict = readLegacyMemoryJobConflictByKey(secret, groupKey, read)!;
+				const jobKeys = conflict.purged ? conflict.group.jobKeys : conflict.group.jobIds.map(id => legacyProfileStateKey(secret, "conflicted-job", id));
+				let changed = false;
+				for (let index = 0; index < conflict.jobs.length; index++) {
+					const job = conflict.jobs[index]!;
+					if (isLegacyJobConflictPurged(job)) continue;
+					const original = MemoryJobSchema.parse(JSON.parse(job.originalPayloadJson)), observed = MemoryJobSchema.parse(JSON.parse(job.observedPayloadJson));
+					if (!matches(original) && !matches(observed)) continue;
+					this.writePrivateState(jobKeys[index]!, { version: 1, purged: true, groupKey });
+					removedIds.add(job.jobId); purged++; changed = true;
+				}
+				if (changed) {
+					const latest = this.db.prepare("SELECT updated_at FROM private_runtime_state WHERE key IN (?,?) ORDER BY updated_at DESC LIMIT 1").get(...jobKeys) as { updated_at: string };
+					this.writePrivateState(groupKey, { version: 1, purged: true, jobKeys: [...jobKeys].sort() }, latest.updated_at);
+				}
+			}
+			if (removedIds.size) {
+				for (const { key } of this.db.prepare("SELECT key FROM private_runtime_state WHERE key>=? AND key<?").all(LEGACY_JOB_ALIAS_PREFIX, `${LEGACY_JOB_ALIAS_PREFIX}\uffff`) as Array<{ key: string }>) {
+					const alias = parseLegacyJobAlias(key, read(key), secret);
+					if (removedIds.has(alias.jobId)) this.db.prepare("DELETE FROM private_runtime_state WHERE key=?").run(key);
+				}
+				this.legacyConflictDataVersion = undefined;
+			}
+			return purged;
+		} finally { secret.fill(0); }
 	}
 
 	listMemoryJobs(options: {
@@ -4708,6 +4802,7 @@ export class KestrelDatabase {
 			for (const job of jobCandidates) {
 				jobs += this.db.prepare("DELETE FROM memory_jobs WHERE id = ?").run(job.id).changes;
 			}
+			jobs += this.purgePreservedMemoryJobs(job => [...jobSourceIds].some(id => this.memoryJobReferencesSource(job, id, eventIds)));
 			return MemoryDeleteResultSchema.parse({
 				timelineEvents: events.length,
 				sessions,
@@ -5048,12 +5143,14 @@ export class KestrelDatabase {
 		ownerId: string,
 		ownerType?: EmbeddingRecord["ownerType"],
 	): number {
-		let deleted = 0;
-		for (const job of this.listAllMemoryJobsForDeletion()) {
-			if (!this.memoryJobReferencesOwner(job, new Set([ownerId]), ownerType)) continue;
-			deleted += this.db.prepare("DELETE FROM memory_jobs WHERE id = ?").run(job.id).changes;
-		}
-		return deleted;
+		return this.db.transaction(() => {
+			const matches = (job: MemoryJob) => this.memoryJobReferencesOwner(job, new Set([ownerId]), ownerType);
+			let deleted = this.purgePreservedMemoryJobs(matches);
+			for (const job of this.listAllMemoryJobsForDeletion()) {
+				if (matches(job)) deleted += this.db.prepare("DELETE FROM memory_jobs WHERE id = ?").run(job.id).changes;
+			}
+			return deleted;
+		})();
 	}
 
 	private memoryJobReferencesOwner(
@@ -5403,6 +5500,7 @@ export class KestrelDatabase {
 	}
 
 	setPrivateState(key: string, value: unknown): void {
+		this.assertPrivateStateMutationAllowed(key);
 		if (this.isEmbeddingSourceTombstoneKey(key)) {
 			this.db.transaction(() => {
 				const track = this.embeddingAuthorityTracked("source_tombstone", key);
@@ -5424,7 +5522,7 @@ export class KestrelDatabase {
 		this.writePrivateState(key, value);
 	}
 
-	private writePrivateState(key: string, value: unknown): void {
+	private writePrivateState(key: string, value: unknown, updatedAt = new Date().toISOString()): void {
 		const encrypted = encryptText(JSON.stringify(value), this.encryptionKey);
 		this.db
 			.prepare(`INSERT INTO private_runtime_state (key, value_ciphertext, value_iv, value_auth_tag, updated_at) VALUES (?, ?, ?, ?, ?)
@@ -5435,7 +5533,7 @@ export class KestrelDatabase {
 				encrypted.ciphertext,
 				encrypted.iv,
 				encrypted.authTag,
-				new Date().toISOString(),
+				updatedAt,
 			);
 	}
 
@@ -5460,6 +5558,7 @@ export class KestrelDatabase {
 	}
 
 	deletePrivateState(key: string): void {
+		this.assertPrivateStateMutationAllowed(key);
 		if (this.isEmbeddingSourceTombstoneKey(key)) {
 			this.db.transaction(() => {
 				const track = this.embeddingAuthorityTracked("source_tombstone", key);

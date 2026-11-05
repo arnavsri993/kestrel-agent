@@ -21,6 +21,8 @@ const { KestrelDatabase } = await tsImport("../packages/database/src/index.ts", 
 const { seedNativeLegacy19Source } = await tsImport("../packages/database/src/legacy-profile-source-fixture.ts", import.meta.url);
 const { readHostProfileTransferSourceSnapshot } = await tsImport("../packages/database/src/profile-transfer.ts", import.meta.url);
 const { encryptText } = await tsImport("../packages/encryption/src/index.ts", import.meta.url);
+const { LEGACY_PROFILE_SECRET_KEY, parseLegacyProfileSecret } = await tsImport("../packages/database/src/legacy-profile-state.ts", import.meta.url);
+const { readLegacyMemoryJobConflict } = await tsImport("../packages/database/src/legacy-memory-job-conflicts.ts", import.meta.url);
 const { launchCoreTransferFixture } = await tsImport("./native-core-transfer-crash-fixture.ts", import.meta.url);
 const Database = createRequire(new URL("../packages/database/package.json", import.meta.url))("better-sqlite3");
 const roots = [], keys = [];
@@ -98,6 +100,59 @@ try {
 	assert(!worker.output().includes("GENERATED_PRIVATE_CONFLICT_DEDUPE"));
 	assert.deepEqual(await readdir(dirname(conflict.target)), []); assert.equal(await fileHash(conflict.source), conflictBefore);
 	phase("ambiguous-job-identities-refused-without-losing-or-reviving-either-job");
+	await stop();
+	const historical = await fixture(), historicalData = seedNativeLegacy19Source(historical.source, historical.sourceKey, { conflictingJobs: true });
+	const historicalBefore = await fileHash(historical.source); start(historical.root);
+	const paused = await worker.request("plan", { sourceDatabasePath: historical.source, destinationDatabasePath: historical.target, sourceKeyBase64: historical.sourceKey.toString("base64") });
+	assert.equal(paused.ok, true); assert.equal(paused.preview.authenticatedEnvelopes, 5);
+	assert.deepEqual(paused.preview.legacy, { sourceSchemaVersion: 19, jobAliases: 1, archivedDiagnosticEvents: 1, archivedMemoryJobs: 2, pausedMemoryJobIdentities: 1 });
+	for (const secret of [historicalData.job.dedupeKey, historicalData.job.id, historicalData.alias]) assert(!worker.output().includes(secret));
+	const preserved = await worker.request("apply", { planId: paused.planId, acceptedPlanSha256: paused.preview.planSha256, approved: true, destinationKeyBase64: historical.destinationKey.toString("base64") });
+	assert.equal(preserved.ok, true); assert.equal(preserved.receipt.activationPerformed, false);
+	const preservedVerified = await worker.request("verify-recovery", { recoveryId: preserved.recoveryId }); assert.equal(preservedVerified.ok, true);
+	assert.equal(await fileHash(historical.source), historicalBefore);
+	phase("recognized-legacy-conflicts-reviewed-and-preserved-with-no-runnable-representative");
+	await stop();
+	const retained = new KestrelDatabase(historical.target, historical.destinationKey);
+	try {
+		const secret = parseLegacyProfileSecret(retained.getPrivateState(LEGACY_PROFILE_SECRET_KEY)); keys.push(secret);
+		const archive = readLegacyMemoryJobConflict(secret, historicalData.job.dedupeKey, key => retained.getPrivateState(key));
+		assert(archive && !archive.purged);
+		const states = archive.jobs.map(job => JSON.parse(job.observedPayloadJson));
+		assert(states.some(job => job.status === "failed" && job.attempts === 3 && job.maxAttempts === 3));
+		assert(states.some(job => job.status === "pending" && job.attempts === 0));
+		assert.equal(retained.listMemoryJobs().length, 0); assert.equal(retained.claimMemoryJob(historicalData.time), undefined);
+		for (const id of [historicalData.job.id, historicalData.alias]) {
+			assert.equal(retained.completeMemoryJob(id, historicalData.time, "stale-lease"), false);
+			assert.throws(() => retained.queueMemoryJob({ ...historicalData.job, id, dedupeKey: "changed-dedupe", status: "pending", attempts: 0 }), /remain paused/);
+		}
+		retained.queueMemoryJob({ ...historicalData.job, id: "generated-unrelated-job", dedupeKey: "generated-unrelated-dedupe", payload: { ownerId: "generated-other-owner" }, status: "pending", attempts: 0 });
+		assert.equal(retained.getMemoryJob("generated-unrelated-job").status, "pending");
+	} finally { retained.close(); }
+	const reopened = new KestrelDatabase(historical.target, historical.destinationKey);
+	try {
+		assert.throws(() => reopened.queueMemoryJob({ ...historicalData.job, id: "changed-id" }), /remain paused/);
+		assert.equal(reopened.getMemoryJob("generated-unrelated-job").status, "pending");
+		phase("archived-job-budgets-and-identities-stay-paused-after-restart-while-unrelated-work-runs");
+		assert.equal(reopened.deleteMemoryJobsForOwner("generated-conflict-owner"), 2);
+		const snapshot = JSON.stringify(reopened.exportHostProfileTransferSnapshot());
+		for (const preimage of [historicalData.job.id, historicalData.alias, historicalData.job.dedupeKey, "generated-conflict-owner", "generated-conflict-source"]) assert(!snapshot.includes(preimage));
+		for (const id of [historicalData.job.id, historicalData.alias]) assert.throws(() => reopened.queueMemoryJob({ ...historicalData.job, id, dedupeKey: "changed-dedupe" }), /remain paused/);
+		assert.equal(reopened.getMemoryJob("generated-unrelated-job").status, "pending");
+		phase("explicit-owner-purge-removes-job-history-and-references-without-lifting-fences");
+	} finally { reopened.close(); }
+	const thirdTarget = join(historical.root, "third/kestrel.sqlite"), thirdKey = randomBytes(32); keys.push(thirdKey); await mkdir(dirname(thirdTarget), { mode: 0o700 });
+	start(historical.root);
+	const replanned = await worker.request("plan", { sourceDatabasePath: historical.target, destinationDatabasePath: thirdTarget, sourceKeyBase64: historical.destinationKey.toString("base64") });
+	assert.equal(replanned.ok, true);
+	assert.deepEqual(replanned.preview.legacy, { sourceSchemaVersion: 18, jobAliases: 0, archivedDiagnosticEvents: 1, archivedMemoryJobs: 0, pausedMemoryJobIdentities: 1, purgedMemoryJobArchives: 2 });
+	const rekeyed = await worker.request("apply", { planId: replanned.planId, acceptedPlanSha256: replanned.preview.planSha256, approved: true, destinationKeyBase64: thirdKey.toString("base64") }); assert.equal(rekeyed.ok, true);
+	assert.equal((await worker.request("verify-recovery", { recoveryId: rekeyed.recoveryId })).ok, true);
+	const third = new KestrelDatabase(thirdTarget, thirdKey);
+	try { assert.throws(() => third.queueMemoryJob({ ...historicalData.job, id: "after-rekey" }), /remain paused/); assert.equal(third.getMemoryJob("generated-unrelated-job").status, "pending"); }
+	finally { third.close(); }
+	assert.equal(await fileHash(historical.source), historicalBefore);
+	phase("purged-private-fences-survive-second-independent-key-bundled-transfer");
 	await stop();
 	const expansion = await fixture(), db = new KestrelDatabase(expansion.source, expansion.sourceKey), time = "2026-11-04T12:00:00.000Z";
 	try {

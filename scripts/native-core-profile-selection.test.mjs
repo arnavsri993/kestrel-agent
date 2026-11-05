@@ -51,6 +51,9 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 	it("bounds the optional legacy preservation review counts", () => {
 		expect(fixture(temporary, "--legacy-review-validation")).toEqual({ valid: true, badBool: true, badLimit: true, badVersion: true, badFields: true });
 	});
+	it("discloses paused conflict preservation and validates both optional counts", () => {
+		expect(fixture(temporary, "--conflict-review-validation")).toEqual({ valid: true, disclosed: true, badBool: true, badPair: true, badZero: true, badMissing: true, partialPurge: true, completePurge: true, purgeDisclosed: true, badPurgeCount: true });
+	});
 	it.each(["source", "destination", "key", "journal", "sidecar"])("invalidates a recovery witness when %s changes", target => {
 		const sourceRoot = sourceProfile().root, destinationRoot = sourceProfile().root;
 		const sourceDb = join(sourceRoot, "database/kestrel.sqlite"), destinationDb = join(destinationRoot, "database/kestrel.sqlite");

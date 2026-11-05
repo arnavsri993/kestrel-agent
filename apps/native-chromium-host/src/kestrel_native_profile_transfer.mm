@@ -102,6 +102,10 @@ NSString* CountSummary(NSDictionary* preview) {
   NSDictionary* counts = preview[@"counts"], *excluded = preview[@"excluded"];
   NSString* legacy = @"";
   if ([preview[@"legacy"] isKindOfClass:NSDictionary.class]) legacy = [NSString stringWithFormat:@"\n\nOlder job references preserved: %@\nEncrypted error records archived: %@",preview[@"legacy"][@"jobAliases"] ?: @0,preview[@"legacy"][@"archivedDiagnosticEvents"] ?: @0];
+  if ([preview[@"legacy"] isKindOfClass:NSDictionary.class] && preview[@"legacy"][@"pausedMemoryJobIdentities"]) {
+    legacy = [legacy stringByAppendingFormat:@"\nConflicting job histories kept encrypted: %@\nJob identities kept paused: %@\nThese jobs will not restart automatically.",preview[@"legacy"][@"archivedMemoryJobs"],preview[@"legacy"][@"pausedMemoryJobIdentities"]];
+    if (preview[@"legacy"][@"purgedMemoryJobArchives"]) legacy = [legacy stringByAppendingFormat:@"\nPreviously deleted job histories: %@",preview[@"legacy"][@"purgedMemoryJobArchives"]];
+  }
   return [NSString stringWithFormat:@"Conversations: %@\nMessages: %@\nMemory records: %@\nTimeline entries: %@\n\nActive tasks to cancel: %@\nApprovals to clear: %@\nScheduled jobs to cancel: %@%@\n\nThis step transfers conversations, memory and task history. Browser data and saved credentials are not included. Connect providers again if needed after restart. Your existing profiles stay available.",
       counts[@"runtime_sessions"] ?: @0, counts[@"runtime_messages"] ?: @0, counts[@"memories"] ?: @0, counts[@"memory_timeline_events"] ?: @0,
       excluded[@"activeAgentRunsCancelled"] ?: @0, excluded[@"unexecutedApprovalsRetired"] ?: @0, excluded[@"scheduledJobsCancelled"] ?: @0,legacy];
@@ -126,10 +130,17 @@ bool SafeRecoveryCounts(id value) {
 }
 bool SafeLegacyCounts(id value) {
   if (!value) return true;
-  return SafeRecoveryCounts(value) && [value count] == 3 &&
+  if (!SafeRecoveryCounts(value)) return false;
+  const bool purged = value[@"purgedMemoryJobArchives"];
+  const bool conflicts = value[@"archivedMemoryJobs"] || value[@"pausedMemoryJobIdentities"] || purged;
+  return [value count] == (conflicts ? (purged ? 6 : 5) : 3) &&
       ([value[@"sourceSchemaVersion"] isEqual:@18] || [value[@"sourceSchemaVersion"] isEqual:@19]) &&
       value[@"jobAliases"] && value[@"archivedDiagnosticEvents"] &&
-      [value[@"jobAliases"] unsignedLongLongValue] <= 250000 && [value[@"archivedDiagnosticEvents"] unsignedLongLongValue] <= 250000;
+      [value[@"jobAliases"] unsignedLongLongValue] <= 250000 && [value[@"archivedDiagnosticEvents"] unsignedLongLongValue] <= 250000 &&
+      (!conflicts || (value[@"archivedMemoryJobs"] && value[@"pausedMemoryJobIdentities"] &&
+          [value[@"pausedMemoryJobIdentities"] unsignedLongLongValue] > 0 && [value[@"archivedMemoryJobs"] unsignedLongLongValue] <= 250000 &&
+          (!purged || ([value[@"purgedMemoryJobArchives"] unsignedLongLongValue] > 0 && [value[@"purgedMemoryJobArchives"] unsignedLongLongValue] <= 250000)) &&
+          [value[@"archivedMemoryJobs"] unsignedLongLongValue] + [value[@"purgedMemoryJobArchives"] unsignedLongLongValue] == 2 * [value[@"pausedMemoryJobIdentities"] unsignedLongLongValue]));
 }
 bool ValidInterruptedReview(NSDictionary* response, NSString* destination) {
   if (![response isKindOfClass:NSDictionary.class] || ![response[@"ok"] isEqual:@YES] ||
