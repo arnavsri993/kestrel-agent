@@ -6,6 +6,56 @@ import { setTimeout as delay } from "node:timers/promises";
 import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 import { nativePanelProbe } from "./native-panel-probe.mjs";
 
+// The Home account can receive independent welcome/background traffic. Give
+// the refusal its own endpoint and prove that route works before asserting
+// that the rejected request never creates a Core run or reaches HTTP.
+export async function nativeUnselectedAttachmentCanary({ request, profile, receipt }) {
+	const model = "native-attachment-refusal";
+	const promptMarker = "NATIVE_UNSELECTED_ATTACHMENT_REQUEST_MUST_NOT_DISPATCH";
+	const fileMarker = "NATIVE_UNSELECTED_ATTACHMENT_CONTENT_MUST_NOT_LEAK";
+	const controlMarker = "NATIVE_ATTACHMENT_ROUTE_POSITIVE_CONTROL";
+	const completions = [];
+	const server = createServer(async (incoming, response) => {
+		if (incoming.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ data: [{ id: model, context_window: 32768 }] })); return; }
+		if (incoming.url !== "/v1/chat/completions") { response.writeHead(404); response.end(); return; }
+		let input = "";
+		for await (const chunk of incoming) { input += chunk; if (input.length > 2_000_000) { response.destroy(); return; } }
+		const body = JSON.parse(input);
+		completions.push({ model: body.model, positiveControl: input.includes(controlMarker), rejectedPrompt: input.includes(promptMarker), rejectedFile: input.includes(fileMarker) });
+		response.writeHead(200, { "content-type": "text/event-stream" });
+		response.end(`data: ${JSON.stringify({ id: "native-attachment-control", model, choices: [{ delta: { content: controlMarker }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+	});
+	await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+	let account;
+	try {
+		const added = await request({ type: "provider-account-create", account: { providerId: model, adapter: "openai-compatible", displayName: "Generated attachment refusal route", authTransport: "local", enabled: true, baseUrl: `http://127.0.0.1:${server.address().port}/v1`, defaultModel: model, headers: [] } });
+		assert(added.ok, added.error);
+		account = added.providerAccounts?.find(item => item.providerId === model); assert(account, "The dedicated refusal account was not created.");
+		const control = await request({ type: "runtime-create-session", title: "Attachment route positive control", kind: "conversation" }); assert(control.ok, control.error);
+		const completed = await request({ type: "runtime-run-agent", sessionId: control.session.id, message: `Reply only ${controlMarker}. Do not use tools.`, model, providerIds: [account.id], maximumTurns: 1 });
+		assert(completed.ok, completed.error); assert.equal(completed.run?.status, "completed");
+		assert(completions.some(item => item.model === model && item.positiveControl), "The dedicated refusal route must first complete a real provider request.");
+		const path = join(profile, "unselected-attachment-fixture.txt");
+		const content = `${fileMarker}\n`; await writeFile(path, content, { mode: 0o600 });
+		const created = await request({ type: "runtime-create-session", title: "Unselected attachment refusal fixture", kind: "conversation" }); assert(created.ok, created.error);
+		const before = completions.length;
+		const refused = await request({ type: "runtime-run-agent", sessionId: created.session.id, message: promptMarker, model, providerIds: [account.id], maximumTurns: 1, streamId: "native-unselected-file-refusal", attachments: [{ path, name: "unselected-attachment-fixture.txt", mediaType: "text/plain", size: Buffer.byteLength(content), source: "external" }] });
+		assert.equal(refused.ok, false, JSON.stringify(refused));
+		assert.match(refused.error, /external files created by this native attachment host/);
+		const runs = await request({ type: "runtime-list-runs", sessionId: created.session.id });
+		const messages = await request({ type: "runtime-list-messages", sessionId: created.session.id });
+		assert(runs.ok, runs.error); assert(messages.ok, messages.error);
+		assert.deepEqual(runs.runs, [], "The rejected attachment request must never create a Core run.");
+		assert.deepEqual(messages.messages, [], "The rejected attachment request must never persist a Core message.");
+		assert.equal(completions.length, before, "An unselected external file must be rejected before reaching its dedicated provider.");
+		assert(!completions.some(item => item.rejectedPrompt || item.rejectedFile), "Neither the rejected prompt nor its file contents may reach the provider.");
+		receipt.phases.push({ phase: "native-unselected-external-file-refusal-before-Core-and-provider", passed: true, accountId: account.id, sessionId: created.session.id, positiveControlCompletions: before, rejectedCompletions: completions.length - before, persistedRuns: runs.runs.length, persistedMessages: messages.messages.length, requests: completions });
+	} finally {
+		try { if (account) { const removed = await request({ type: "provider-account-remove", accountId: account.id }); assert(removed.ok, removed.error); } }
+		finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+	}
+}
+
 // A real native Settings -> provider discovery -> Home prompt -> Core ->
 // streaming HTTP response flow. No API purchase, account token or user data.
 export async function nativeProviderCanary({ settings, home, profile, evidence, receipt, endpoint }) {
@@ -67,17 +117,7 @@ export async function nativeProviderCanary({ settings, home, profile, evidence, 
 			});
 			assert.equal(oversized.ok, false); assert.match(oversized.error, /too large for Kestrel's native connection/);
 			assert((await home.evaluate(() => window.kestrel.request({ type: "snapshot" }))).ok, "An oversized request must leave the authenticated connection usable.");
-			const unselected = join(profile, "unselected-attachment-fixture.txt");
-			await writeFile(unselected, "Owned test file that was never selected or pasted.\n", { mode: 0o600 });
-			const before = completions;
-			const refused = await home.evaluate(async ({ accountId, path }) => {
-				const created = await window.kestrel.request({ type: "runtime-create-session", title: "Unselected attachment refusal fixture", kind: "conversation" });
-				if (!created.ok) return created;
-				return window.kestrel.request({ type: "runtime-run-agent", sessionId: created.session.id, message: "This unselected attachment must never be sent.", model: "native-canary", providerIds: [accountId], maximumTurns: 1, streamId: "native-unselected-file-refusal", attachments: [{ path, name: "unselected-attachment-fixture.txt", mediaType: "text/plain", size: 50, source: "external" }] });
-			}, { accountId: account.id, path: unselected });
-			assert.equal(refused.ok, false, JSON.stringify(refused));
-			assert.match(refused.error, /external files created by this native attachment host/);
-			assert.equal(completions, before, "An unselected external file must be rejected before reaching the provider.");
+			await nativeUnselectedAttachmentCanary({ request: input => home.evaluate(input => window.kestrel.request(input), input), profile, receipt });
 			await home.locator("#new-tab-chat-input").evaluate((node, text) => {
 				const clipboardData = new DataTransfer(); clipboardData.setData("text/plain", text);
 				node.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));

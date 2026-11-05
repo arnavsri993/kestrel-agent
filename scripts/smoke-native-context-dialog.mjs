@@ -2,6 +2,7 @@
 // are simulated here; only the separate on-screen test proves a Cocoa panel.
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, realpath, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,6 +10,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
+import { nativeUnselectedAttachmentCanary } from "./native-provider-canary.mjs";
 
 assert(process.env.KESTREL_NATIVE_TEST_APP, "Supply an explicit disposable native candidate.");
 const candidate = await realpath(resolve(process.env.KESTREL_NATIVE_TEST_APP));
@@ -26,6 +28,7 @@ const protectedKeyBase64 = randomBytes(32).toString("base64");
 const child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--browser-profile-root", profile, "--durable-profile"], { env: { ...process.env, KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1" }, stdio: ["pipe", "pipe", "pipe"] });
 let output = "", ready = false, mode = "select", sequence = 0, held, cancelled = false;
 const pending = new Map(), dialogs = [];
+let unrelatedServer;
 const receipt = { at: new Date().toISOString(), candidateSha256: fingerprint, simulatedPickerReplies: true, phases: [] };
 const exit = new Promise(resolve => child.once("exit", (code, signal) => resolve({ code, signal })));
 child.stderr.on("data", chunk => { output += chunk; });
@@ -74,6 +77,34 @@ try {
 	const refused = await request({ type: "runtime-run-agent", sessionId: created.session.id, message: "Never read an unselected external file.", model: "auto", providerIds: ["auto"], attachments: [{ path: join(profile, "outside.txt"), name: "outside.txt", size: 16, mediaType: "text/plain", source: "external" }] });
 	assert.equal(refused.ok, false); assert.match(refused.error, /external files created by this native attachment host/);
 	receipt.phases.push({ phase: "private-Core-unselected-external-attachment-refusal", passed: true });
+	// Reproduce the canary's original race with real independent HTTP traffic:
+	// another account finishes while the unselected attachment is refused.
+	let unrelatedCompletions = 0;
+	unrelatedServer = createServer(async (incoming, response) => {
+		if (incoming.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ data: [{ id: "native-unrelated-fixture" }] })); return; }
+		if (incoming.url !== "/v1/chat/completions") { response.writeHead(404); response.end(); return; }
+		let input = ""; for await (const chunk of incoming) input += chunk;
+		assert(input.includes("NATIVE_INDEPENDENT_COMPLETION")); unrelatedCompletions++;
+		response.writeHead(200, { "content-type": "text/event-stream" });
+		response.end(`data: ${JSON.stringify({ id: "independent", choices: [{ delta: { content: "Independent fixture completed." }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+	});
+	await new Promise(resolve => unrelatedServer.listen(0, "127.0.0.1", resolve));
+	const unrelatedAdded = await request({ type: "provider-account-create", account: { providerId: "native-unrelated-fixture", adapter: "openai-compatible", displayName: "Independent generated traffic", authTransport: "local", enabled: true, baseUrl: `http://127.0.0.1:${unrelatedServer.address().port}/v1`, defaultModel: "native-unrelated-fixture", headers: [] } }, true); assert(unrelatedAdded.ok, unrelatedAdded.error);
+	const unrelatedAccount = unrelatedAdded.providerAccounts.find(item => item.providerId === "native-unrelated-fixture"); assert(unrelatedAccount);
+	const unrelatedSession = await request({ type: "runtime-create-session", title: "Independent provider traffic", kind: "conversation" }); assert(unrelatedSession.ok, unrelatedSession.error);
+	await nativeUnselectedAttachmentCanary({ request: async input => {
+		if (input.type === "runtime-run-agent" && input.attachments?.length) {
+			const [refused, independent] = await Promise.all([
+				request(input),
+				request({ type: "runtime-run-agent", sessionId: unrelatedSession.session.id, message: "Reply only NATIVE_INDEPENDENT_COMPLETION. Do not use tools.", model: "native-unrelated-fixture", providerIds: [unrelatedAccount.id], maximumTurns: 1 }),
+			]);
+			assert(independent.ok, independent.error); assert.equal(independent.run?.status, "completed"); return refused;
+		}
+		return request(input, input.type.startsWith("provider-account-"));
+	}, profile, receipt });
+	assert.equal(unrelatedCompletions, 1, "An independent provider completion must occur during the refusal check.");
+	const removedUnrelated = await request({ type: "provider-account-remove", accountId: unrelatedAccount.id }, true); assert(removedUnrelated.ok, removedUnrelated.error);
+	receipt.phases.push({ phase: "private-Core-attachment-refusal-isolated-from-independent-provider-completion", passed: true, unrelatedCompletions });
 	mode = "hold"; const waiting = request({ type: "select-context-files", workspaceRoot: root }, true).catch(() => undefined);
 	await wait(() => held, "The owned pending picker did not start.");
 	write({ type: "shutdown" });
@@ -87,6 +118,7 @@ try {
 	await writeFile(".tmp/native-context-dialog-evidence/receipt.json", JSON.stringify(receipt, null, 2));
 	console.log("Native private context picker protocol, cancellation, file ownership and shutdown passed. Cocoa UI was not exercised.");
 } finally {
+	if (unrelatedServer) { unrelatedServer.closeAllConnections(); await new Promise(resolve => unrelatedServer.close(resolve)); }
 	if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); await exit; }
 	for (const item of pending.values()) clearTimeout(item.timer);
 	await rm(profile, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });

@@ -83,13 +83,25 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: native-extension-compatibility-${{ github.run_attempt }}
+          # .tmp is hidden; allow only generated evidence, never profile trees.
+          include-hidden-files: true
           path: |
-            .tmp/native-user-extension-evidence/
-            .tmp/chromium-desktop-evidence/
-            .tmp/native-voice-*/
-            .tmp/native-context-dialog-evidence/
-            .tmp/native-browser-settings-evidence/
-            .tmp/native-large-core-transfer-evidence/
+            .tmp/native-user-extension-evidence/compatibility.json
+            .tmp/native-user-extension-evidence/action-popup.json
+            .tmp/native-user-extension-evidence/tab-ownership.json
+            .tmp/native-user-extension-evidence/*.png
+            .tmp/chromium-desktop-evidence/receipt.json
+            .tmp/chromium-desktop-evidence/native-download-diagnostics.json
+            .tmp/chromium-desktop-evidence/*.png
+            .tmp/chromium-desktop-evidence/runtime.log
+            .tmp/chromium-desktop-evidence/failure.log
+            .tmp/native-voice-*/receipt.json
+            .tmp/native-voice-*/*.png
+            .tmp/native-context-dialog-evidence/receipt.json
+            .tmp/native-browser-settings-evidence/receipt.json
+            .tmp/native-browser-settings-evidence/*.png
+            .tmp/native-browser-settings-evidence/runtime.log
+            .tmp/native-large-core-transfer-evidence/receipt.json
           if-no-files-found: warn
           retention-days: 14
       - run: corepack pnpm test:e2e
