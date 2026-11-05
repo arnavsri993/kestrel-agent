@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
+import { tsImport } from "tsx/esm/api";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
 import { nativeUnselectedAttachmentCanary } from "./native-provider-canary.mjs";
 
@@ -25,11 +26,15 @@ const root = await realpath(workspace), file = join(root, "README.md");
 await writeFile(join(profile, "native-core/workspace-grants.json"), JSON.stringify([{ path: root, name: "Native picker fixture" }]), { mode: 0o600 });
 const resources = join(candidate, "Contents/Resources");
 const protectedKeyBase64 = randomBytes(32).toString("base64");
+const receipt = { at: new Date().toISOString(), candidateSha256: fingerprint, simulatedPickerReplies: true, phases: [] };
+const evidence = resolve(process.env.KESTREL_NATIVE_CONTEXT_DIALOG_EVIDENCE || ".tmp/native-context-dialog-evidence");
+const imported = process.env.KESTREL_TEST_NATIVE_LEGACY_CONFLICTS === "1"
+	? await prepareLegacyConflictProfile().catch(async error => { await rm(profile, { recursive: true, force: true }); throw error; })
+	: undefined;
 const child = spawn(join(resources, "agent-core/node/bin/node"), [join(resources, "native-desktop-core.mjs"), "--profile-root", profile, "--browser-profile-root", profile, "--durable-profile"], { env: { ...process.env, KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1", KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1" }, stdio: ["pipe", "pipe", "pipe"] });
 let output = "", ready = false, mode = "select", sequence = 0, held, cancelled = false;
 const pending = new Map(), dialogs = [];
 let unrelatedServer;
-const receipt = { at: new Date().toISOString(), candidateSha256: fingerprint, simulatedPickerReplies: true, phases: [] };
 const exit = new Promise(resolve => child.once("exit", (code, signal) => resolve({ code, signal })));
 child.stderr.on("data", chunk => { output += chunk; });
 function write(value) { child.stdin.write(JSON.stringify(value) + "\n"); }
@@ -58,8 +63,80 @@ function request(request, host = false) {
 	});
 }
 async function wait(check, label) { for (const end = Date.now() + 20_000; Date.now() < end;) { assert.equal(child.exitCode, null, output); if (check()) return; await delay(25); } assert.fail(label + " " + output); }
+
+async function prepareLegacyConflictProfile() {
+	const { seedNativeLegacy19Source } = await tsImport("../packages/database/src/legacy-profile-source-fixture.ts", import.meta.url);
+	const { launchCoreTransferFixture } = await tsImport("./native-core-transfer-crash-fixture.ts", import.meta.url);
+	const sourceRoot = join(profile, "generated-legacy-source"), transferHome = join(profile, "generated-transfer-home");
+	await mkdir(sourceRoot, { mode: 0o700 }); await mkdir(transferHome, { mode: 0o700 });
+	// openNativeCoreProfile(durable:true) opens this exact canonical database.
+	const destinationRoot = join(profile, "native-core/database"); await mkdir(destinationRoot, { mode: 0o700 });
+	const sourceDatabasePath = join(sourceRoot, "kestrel.sqlite"), destinationDatabasePath = join(destinationRoot, "kestrel.sqlite");
+	const sourceKey = randomBytes(32);
+	let worker;
+	try {
+		const generated = seedNativeLegacy19Source(sourceDatabasePath, sourceKey, { conflictingJobs: true });
+		const sourceBytes = await readFile(sourceDatabasePath);
+		worker = launchCoreTransferFixture({ executable: join(resources, "agent-core/node/bin/node"), entry: join(resources, "agent-core/service/host-profile-file-transfer.js"), home: transferHome });
+		const planned = await worker.request("plan", { sourceDatabasePath, destinationDatabasePath, sourceKeyBase64: sourceKey.toString("base64") });
+		assert.equal(planned.ok, true, "The bundled worker must recognize the generated legacy conflict profile.");
+		assert.deepEqual(planned.preview.legacy, { sourceSchemaVersion: 19, jobAliases: 1, archivedDiagnosticEvents: 1, archivedMemoryJobs: 2, pausedMemoryJobIdentities: 1 });
+		const applied = await worker.request("apply", { planId: planned.planId, acceptedPlanSha256: planned.preview.planSha256, approved: true, destinationKeyBase64: protectedKeyBase64 });
+		assert.equal(applied.ok, true, "The bundled worker must apply the reviewed generated transfer.");
+		assert.equal(applied.receipt.activationPerformed, false);
+		const verified = await worker.request("verify-recovery", { recoveryId: applied.recoveryId });
+		assert.equal(verified.ok, true); assert.equal(verified.recovery.originalReadable, true); assert.equal(verified.recovery.destinationReadable, true);
+		assert((await readFile(sourceDatabasePath)).equals(sourceBytes), "Transfer must preserve every generated source byte.");
+		for (const secret of [sourceKey.toString("base64"), protectedKeyBase64, generated.privateMessage, generated.diagnostic])
+			assert(!worker.output().includes(secret) && !worker.errors().includes(secret), "The private transfer pipe must not log keys or private fixture contents.");
+		receipt.phases.push({ phase: "bundled-worker-legacy-conflict-plan-apply-and-independent-key-recovery", passed: true, ...planned.preview.legacy, activationPerformed: false, sourceBytesUnchanged: true });
+		return { generated, sourceDatabasePath, destinationDatabasePath, sourceBytes };
+	} finally {
+		try { if (worker) { assert.deepEqual(await worker.stop(), { code: 0, signal: null }); assert.equal(worker.errors(), ""); } }
+		finally { sourceKey.fill(0); }
+	}
+}
+
+async function verifyLegacyConflictArchives() {
+	const { KestrelDatabase } = await tsImport("../packages/database/src/index.ts", import.meta.url);
+	const { LEGACY_PROFILE_SECRET_KEY, parseLegacyProfileSecret } = await tsImport("../packages/database/src/legacy-profile-state.ts", import.meta.url);
+	const { readLegacyMemoryJobConflict } = await tsImport("../packages/database/src/legacy-memory-job-conflicts.ts", import.meta.url);
+	const key = Buffer.from(protectedKeyBase64, "base64");
+	let database, archiveSecret;
+	try {
+		database = new KestrelDatabase(imported.destinationDatabasePath, key);
+		// Inspect only this generated database after its actual bundled owner
+		// stops. Guard probes must fail before any database mutation is possible.
+		database.db.pragma("query_only=ON");
+		archiveSecret = parseLegacyProfileSecret(database.getPrivateState(LEGACY_PROFILE_SECRET_KEY));
+		const archive = readLegacyMemoryJobConflict(archiveSecret, imported.generated.job.dedupeKey, name => database.getPrivateState(name));
+		assert(archive && !archive.purged, "Both generated conflict archives must survive actual Core startup and work.");
+		assert.deepEqual(archive.group.jobIds, [imported.generated.job.id, imported.generated.alias].sort());
+		const expectedBudgets = [{ status: "failed", attempts: 3, maxAttempts: 3 }, { status: "pending", attempts: 0, maxAttempts: 3 }];
+		for (const field of ["originalPayloadJson", "observedPayloadJson"]) {
+			const budgets = archive.jobs.map(item => { const job = JSON.parse(item[field]); return { status: job.status, attempts: job.attempts, maxAttempts: job.maxAttempts }; }).sort((left, right) => left.status.localeCompare(right.status));
+			assert.deepEqual(budgets, expectedBudgets, "Core must preserve both archived retry budgets.");
+		}
+		assert.equal(database.db.prepare("SELECT COUNT(*) AS count FROM memory_jobs WHERE id IN (?, ?)").get(imported.generated.job.id, imported.generated.alias).count, 0, "Neither archived identity may become a physical runnable job.");
+		let guardedIdentities = 0;
+		for (const id of [imported.generated.job.id, imported.generated.alias]) {
+			assert.equal(database.getMemoryJob(id), undefined);
+			assert.throws(() => database.queueMemoryJob({ ...imported.generated.job, id, dedupeKey: "generated-changed-dedupe", status: "pending", attempts: 0 }), /remain paused/); guardedIdentities++;
+		}
+		assert.throws(() => database.getMemoryJobByDedupeKey(imported.generated.job.dedupeKey), /remain paused/); guardedIdentities++;
+		assert((await readFile(imported.sourceDatabasePath)).equals(imported.sourceBytes), "Core and provider work must leave every generated source byte unchanged.");
+		receipt.phases.push({ phase: "imported-conflict-archives-and-identity-guards-survive-real-Core-and-unrelated-provider-work", passed: true, archivedMemoryJobs: archive.jobs.length, guardedIdentities, physicalArchivedJobs: 0, originalAndObservedBudgetsPreserved: true, sourceBytesUnchanged: true });
+	} finally { database?.close(); archiveSecret?.fill(0); key.fill(0); }
+}
 try {
 	await wait(() => ready, "Native Core did not become ready.");
+	if (imported) {
+		const sessions = await request({ type: "runtime-list-sessions" }); assert(sessions.ok, sessions.error);
+		assert(sessions.sessions?.some(session => session.id === "generated-legacy19-session"), "The real native owner must expose the imported generated conversation.");
+		const messages = await request({ type: "runtime-list-messages", sessionId: "generated-legacy19-session" }); assert(messages.ok, messages.error);
+		assert(messages.messages?.some(message => message.id === "generated-legacy19-message" && message.content === imported.generated.privateMessage), "The actual owner must decrypt the imported generated message.");
+		receipt.phases.push({ phase: "actual-bundled-native-Core-boots-imported-conflict-profile-and-decrypts-conversation", passed: true, importedConversations: 1, importedMessages: 1 });
+	}
 	const selected = await request({ type: "select-context-files", workspaceRoot: root }, true);
 	assert(selected.ok && selected.selectedAttachments?.length === 1, JSON.stringify(selected));
 	assert.equal(selected.selectedAttachments[0].path, file);
@@ -112,10 +189,12 @@ try {
 	assert.deepEqual(result, { code: 0, signal: null }, output); assert(cancelled, "Shutdown must cancel the private picker.");
 	for (const item of pending.values()) { clearTimeout(item.timer); item.resolve({ ok: false, error: "Fixture owner stopped." }); } pending.clear(); await waiting;
 	assert(!(await readdir(join(profile, "native-core"))).some(name => name.startsWith("composer-attachments-")));
+	if (imported) await verifyLegacyConflictArchives();
 	assert.equal(await candidateDigest(candidate), fingerprint);
+	receipt.candidateSha256After = fingerprint;
 	receipt.phases.push({ phase: "private-Core-pending-picker-cancellation-and-generated-context-cleanup", passed: true });
-	await mkdir(".tmp/native-context-dialog-evidence", { recursive: true });
-	await writeFile(".tmp/native-context-dialog-evidence/receipt.json", JSON.stringify(receipt, null, 2));
+	await mkdir(evidence, { recursive: true });
+	await writeFile(join(evidence, "receipt.json"), JSON.stringify(receipt, null, 2), { mode: 0o600 });
 	console.log("Native private context picker protocol, cancellation, file ownership and shutdown passed. Cocoa UI was not exercised.");
 } finally {
 	if (unrelatedServer) { unrelatedServer.closeAllConnections(); await new Promise(resolve => unrelatedServer.close(resolve)); }
