@@ -9,7 +9,44 @@ Electron process in this path.
 
 ## Current checkpoint — 2026-11-04
 
-The latest diagnostic follow-up is source `48d576d5`, exact ad-hoc bundle
+The latest runtime follow-up is source `214ab34d`, exact ad-hoc bundle
+`0f631a241a9e00e7a44a3bf5beb0394abdb6cd37879ee8137951bf13eeb97530`.
+Workspace types and **2,884 unit tests in 317 files** pass, with two existing
+ownership-mutation skips. It also passes 133 focused database/transfer checks,
+the full headless Chromium conversation/approval workflow, eleven actual
+bundled Core recovery phases and bundled encrypted provider-storage checks.
+The recovery canary now verifies independent destination index keys and retained
+terminal retry budgets, in addition to process death and source preservation.
+
+New job and embedding writes use keyed SQL fingerprint indexes; legacy rows
+remain readable with authenticated payload bindings. Transfers validate source
+indexes, hold logical values only in their private snapshot and rekey on insert.
+This is a prerequisite for the old schema-19 profile, which remains unsupported;
+no original database was opened for writing or migrated. Alias and encrypted
+diagnostic transfer are still required. No startup backfill was added.
+
+The Chromium test shell now holds its composer while conversations switch. Its
+smoke test deliberately holds a switch before checking the existing approval,
+rejection, stale-document, replay, cancellation and reload flow. A separate native
+host change explains a production profile-key failure without resetting data.
+That notice compiles, but its actual failure UI has not been exercised. The
+normal native browser in use was left on the unchanged preceding bundle.
+
+A custom-output native build exposed shared CLI argument handling between the
+runtime and renderer builders. Their intermediate paths are now explicit; the
+separate artifact above builds successfully. It was not installed or opened.
+Store, real-profile, account and native-window proof from older artifacts below
+must not be attributed to this bundle.
+
+On published predecessor `047d2bf8`, the desktop CI job and all CodeQL analyses
+passed; the Core CI job failed in the Chromium test shell while waiting for an
+approval after switching conversations. The source fix and deterministic switch
+check above pass locally. New-head CI is pending. The older full `pnpm verify`
+failure described below remains separate; no new aggregate-green claim is made.
+
+### Preceding diagnostic and Home bundles
+
+The preceding diagnostic follow-up is source `48d576d5`, exact ad-hoc bundle
 `c7015edb844ed9b8295956005a96fbe1790578d458a8f099932aeb660239bac0`.
 It passes 30 focused transfer tests, database types and eight actual bundled
 worker recovery phases. A real read-only profile review found declared schema
