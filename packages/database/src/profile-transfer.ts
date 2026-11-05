@@ -4,6 +4,7 @@ import { decryptText, encryptText } from "@kestrel/encryption";
 import { ActionReceiptSchema, AgentRunSchema, MemoryJobSchema, RuntimeToolExecutionSchema } from "@kestrel/shared-types";
 import * as Contracts from "@kestrel/shared-types";
 import { listMigrationVersions, loadMigrationSql } from "./migrations.js";
+import { memoryFingerprintIndex, matchesMemoryFingerprintIndex } from "./memory-fingerprint-index.js";
 import { redactDeletedSourceToolResult, SOURCE_EVIDENCE_REMOVED_TEXT, SOURCE_RECEIPT_DELETION_PREFIX, sourceReceiptDeletionKey } from "./source-evidence-redaction.js";
 import {
 	EMBEDDING_STATE_OWNER_PREFIX,
@@ -454,6 +455,18 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 				}
 				delete values[group.ciphertext]; delete values[group.iv]; delete values[group.tag];
 			}
+			// Logical values exist only in this private in-memory snapshot. Bind
+			// either legacy or keyed SQL metadata to the authenticated payload;
+			// never copy a source-key index into an independently keyed database.
+			if (table === "memory_jobs" || table === "memory_embeddings") {
+				const payload = objectJson(String(cleartext.payload_ciphertext), table);
+				const job = table === "memory_jobs";
+				const field = job ? "dedupeKey" : "contentHash", column = job ? "dedupe_key" : "content_hash";
+				const logical = payload[field];
+				if (typeof logical !== "string" || !matchesMemoryFingerprintIndex(key, job ? "job-dedupe" : "embedding-content", values[column], logical))
+					fail(`Profile transfer found inconsistent ${table} private index metadata.`);
+				values[column] = logical;
+			}
 			if (spec.special === "tool-executions") {
 				const payload = values.payload;
 				if (typeof payload !== "string") fail("Profile transfer found a malformed tool execution payload.");
@@ -693,6 +706,11 @@ function insertSnapshotRows(db: Database.Database, key: Buffer, snapshot: HostPr
 		const insert = db.prepare(`INSERT INTO ${table} (${insertColumns.join(",")}) VALUES (${insertColumns.map(() => "?").join(",")})`);
 		for (const record of records) {
 			const values: Record<string, SqlValue> = { ...record.values };
+			if (table === "memory_jobs" || table === "memory_embeddings") {
+				const job = table === "memory_jobs", column = job ? "dedupe_key" : "content_hash";
+				if (typeof values[column] !== "string") fail(`Profile transfer is missing ${table} private index metadata.`);
+				values[column] = memoryFingerprintIndex(key, job ? "job-dedupe" : "embedding-content", values[column]);
+			}
 			for (const group of spec.cipher ?? []) {
 				const plaintext = record.cleartext?.[group.ciphertext];
 				if (plaintext === null && group.nullable) {

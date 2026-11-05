@@ -13,6 +13,7 @@ import {
 } from "./memory-embedding-authority.js";
 export { EMBEDDING_AUTHORITY_STATE_PREFIX, parseReservedEmbeddingAuthorityState } from "./memory-embedding-authority.js";
 import { createHash, createHmac, randomUUID } from "node:crypto";
+import { memoryFingerprintIndex, matchesMemoryFingerprintIndex } from "./memory-fingerprint-index.js";
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -442,6 +443,7 @@ interface MemorySubstrateRow extends EncryptedPayloadRow {
 	importance?: number;
 	confidence?: number;
 	content_hash?: string;
+	dimension?: number;
 	provider?: string;
 	model?: string;
 	locked_at?: string | null;
@@ -3309,7 +3311,7 @@ export class KestrelDatabase {
 		}
 		if (
 			payload.id !== row.id || payload.kind !== row.kind ||
-			payload.dedupeKey !== row.dedupe_key ||
+			!matchesMemoryFingerprintIndex(this.encryptionKey, "job-dedupe", row.dedupe_key, payload.dedupeKey) ||
 			payload.maxAttempts !== row.max_attempts || payload.createdAt !== row.created_at
 		)
 			throw new Error("Memory job identity does not match its encrypted payload.");
@@ -3327,25 +3329,29 @@ export class KestrelDatabase {
 
 	queueMemoryJob(job: MemoryJob): MemoryJob {
 		const parsed = MemoryJobSchema.parse(job);
-		this.upsertMemoryPayload(
-			"memory_jobs",
-			parsed.id,
-			parsed,
-			{
-				kind: parsed.kind,
-				dedupe_key: parsed.dedupeKey,
-				status: parsed.status,
-				attempts: parsed.attempts,
-				max_attempts: parsed.maxAttempts,
-				run_after: parsed.runAfter,
-				locked_at: parsed.lockedAt ?? null,
-				lease_until: parsed.leaseUntil ?? null,
-				last_error: parsed.lastError ?? null,
-				created_at: parsed.createdAt,
-			},
-			parsed.updatedAt,
-		);
-		return parsed;
+		return this.db.transaction(() => {
+			const existing = this.getMemoryJobByDedupeKey(parsed.dedupeKey);
+			if (existing && existing.id !== parsed.id) throw new Error("Memory job dedupe identity already exists.");
+			this.upsertMemoryPayload(
+				"memory_jobs",
+				parsed.id,
+				parsed,
+				{
+					kind: parsed.kind,
+					dedupe_key: memoryFingerprintIndex(this.encryptionKey, "job-dedupe", parsed.dedupeKey),
+					status: parsed.status,
+					attempts: parsed.attempts,
+					max_attempts: parsed.maxAttempts,
+					run_after: parsed.runAfter,
+					locked_at: parsed.lockedAt ?? null,
+					lease_until: parsed.leaseUntil ?? null,
+					last_error: parsed.lastError ?? null,
+					created_at: parsed.createdAt,
+				},
+				parsed.updatedAt,
+			);
+			return parsed;
+		})();
 	}
 
 	getMemoryJob(id: string): MemoryJob | undefined {
@@ -3356,10 +3362,12 @@ export class KestrelDatabase {
 	}
 
 	getMemoryJobByDedupeKey(dedupeKey: string): MemoryJob | undefined {
-		const row = this.db
-			.prepare("SELECT * FROM memory_jobs WHERE dedupe_key = ?")
-			.get(dedupeKey) as MemorySubstrateRow | undefined;
-		return row ? this.decodeMemoryJob(row) : undefined;
+		const rows = this.db.prepare("SELECT * FROM memory_jobs WHERE dedupe_key IN (?, ?) LIMIT 2")
+			.all(memoryFingerprintIndex(this.encryptionKey, "job-dedupe", dedupeKey), dedupeKey) as MemorySubstrateRow[];
+		if (rows.length > 1) throw new Error("Memory job dedupe identity is ambiguous.");
+		const job = rows[0] ? this.decodeMemoryJob(rows[0]) : undefined;
+		if (job && job.dedupeKey !== dedupeKey) throw new Error("Memory job dedupe identity does not match its encrypted payload.");
+		return job;
 	}
 
 	listMemoryJobs(options: {
@@ -3575,7 +3583,7 @@ export class KestrelDatabase {
 					const embedding = EmbeddingRecordSchema.parse(this.decryptPayload(row));
 					if (embedding.id !== row.id || embedding.ownerType !== row.owner_type || embedding.ownerId !== row.owner_id ||
 						embedding.provider !== row.provider || embedding.model !== row.model || embedding.dimension !== (row as unknown as { dimension: number }).dimension ||
-						embedding.contentHash !== row.content_hash || embedding.status !== row.status || embedding.createdAt !== row.created_at || embedding.updatedAt !== row.updated_at)
+						!matchesMemoryFingerprintIndex(this.encryptionKey, "embedding-content", row.content_hash, embedding.contentHash) || embedding.status !== row.status || embedding.createdAt !== row.created_at || embedding.updatedAt !== row.updated_at)
 						throw new Error("Memory embedding identity does not match its encrypted payload.");
 					if (!embedding.generation) this.upsertMemoryEmbedding({ ...embedding,
 						contentHash: embeddingMac(this.embeddingStateSecret(), "legacy-embedding-hash", embedding.contentHash) });
@@ -4178,48 +4186,64 @@ export class KestrelDatabase {
 		return { ownerType, ownerId, text, revision: JSON.stringify(row), authority, ownerRecord: record };
 	}
 
+	private decodeMemoryEmbedding(row: MemorySubstrateRow): EmbeddingRecord {
+		const value = EmbeddingRecordSchema.parse(this.decryptPayload(row));
+		if (value.id !== row.id || value.ownerType !== row.owner_type || value.ownerId !== row.owner_id ||
+			value.provider !== row.provider || value.model !== row.model || value.dimension !== row.dimension ||
+			!matchesMemoryFingerprintIndex(this.encryptionKey, "embedding-content", row.content_hash, value.contentHash) ||
+			value.status !== row.status || value.createdAt !== row.created_at || value.updatedAt !== row.updated_at || value.vector.length !== value.dimension)
+			throw new Error("Memory embedding identity does not match its encrypted payload.");
+		return value;
+	}
+
 	upsertMemoryEmbedding(embedding: EmbeddingRecord): void {
 		const parsed = EmbeddingRecordSchema.parse(embedding);
 		if (parsed.vector.length !== parsed.dimension)
 			throw new Error("Embedding vector dimension does not match its metadata.");
-		const existing = this.db
-			.prepare(
-				`SELECT id FROM memory_embeddings
-				 WHERE owner_type=? AND owner_id=? AND provider=? AND model=? AND content_hash=?
-				 LIMIT 1`,
-			)
-			.get(
-				parsed.ownerType,
-				parsed.ownerId,
-				parsed.provider,
-				parsed.model,
-				parsed.contentHash,
-			) as { id: string } | undefined;
-		const id = existing?.id ?? parsed.id;
-		const stored = id === parsed.id ? parsed : { ...parsed, id };
-		this.upsertMemoryPayload(
-			"memory_embeddings",
-			stored.id,
-			stored,
-			{
-				owner_type: stored.ownerType,
-				owner_id: stored.ownerId,
-				provider: stored.provider,
-				model: stored.model,
-				dimension: stored.dimension,
-				content_hash: stored.contentHash,
-				status: stored.status,
-				created_at: stored.createdAt,
-			},
-			stored.updatedAt,
-		);
+		this.db.transaction(() => {
+			const matches = this.db
+				.prepare(
+					`SELECT * FROM memory_embeddings
+					 WHERE owner_type=? AND owner_id=? AND provider=? AND model=? AND content_hash IN (?, ?)
+					 LIMIT 2`,
+				)
+				.all(
+					parsed.ownerType,
+					parsed.ownerId,
+					parsed.provider,
+					parsed.model,
+					parsed.contentHash,
+					memoryFingerprintIndex(this.encryptionKey, "embedding-content", parsed.contentHash),
+				) as MemorySubstrateRow[];
+			if (matches.length > 1) throw new Error("Memory embedding identity is ambiguous.");
+			const existing = matches[0] ? this.decodeMemoryEmbedding(matches[0]) : undefined;
+			if (existing && existing.contentHash !== parsed.contentHash) throw new Error("Memory embedding index does not match its encrypted payload.");
+			const id = existing?.id ?? parsed.id;
+			const stored = id === parsed.id ? parsed : { ...parsed, id };
+			this.upsertMemoryPayload(
+				"memory_embeddings",
+				stored.id,
+				stored,
+				{
+					owner_type: stored.ownerType,
+					owner_id: stored.ownerId,
+					provider: stored.provider,
+					model: stored.model,
+					dimension: stored.dimension,
+					content_hash: memoryFingerprintIndex(this.encryptionKey, "embedding-content", stored.contentHash),
+					status: stored.status,
+					created_at: stored.createdAt,
+				},
+				stored.updatedAt,
+			);
+		})();
 	}
 
 	getMemoryEmbedding(id: string): EmbeddingRecord | undefined {
 		const row = this.db
 			.prepare("SELECT * FROM memory_embeddings WHERE id = ?")
 			.get(id) as MemorySubstrateRow | undefined;
-		return row ? EmbeddingRecordSchema.parse(this.decryptPayload(row)) : undefined;
+		return row ? this.decodeMemoryEmbedding(row) : undefined;
 	}
 
 	listMemoryEmbeddings(input: {
@@ -4249,7 +4273,7 @@ export class KestrelDatabase {
 				 ORDER BY updated_at DESC, id ASC LIMIT ?`,
 			)
 			.all(...parameters, limit) as MemorySubstrateRow[];
-		return rows.map((row) => EmbeddingRecordSchema.parse(this.decryptPayload(row)));
+		return rows.map((row) => this.decodeMemoryEmbedding(row));
 	}
 
 	deleteMemoryEmbedding(id: string): EmbeddingRecord | undefined {
@@ -4264,7 +4288,7 @@ export class KestrelDatabase {
 		const bounded = Number.isFinite(limit) ? Math.max(1, Math.min(8, Math.trunc(limit))) : 8;
 		const rows = this.db.prepare("SELECT * FROM memory_embeddings WHERE id > ? ORDER BY id LIMIT ?")
 			.all(afterId, bounded) as MemorySubstrateRow[];
-		return rows.map(row => EmbeddingRecordSchema.parse(this.decryptPayload(row)));
+		return rows.map(row => this.decodeMemoryEmbedding(row));
 	}
 
 	deleteMemoryEmbeddingsForOwner(
