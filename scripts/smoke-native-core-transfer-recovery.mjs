@@ -83,7 +83,7 @@ try {
 		const db = new KestrelDatabase(value.target, value.destinationKey);
 		try {
 			assert.deepEqual(db.getPrivateState("generated-core-recovery"), { secret: value.secret });
-			assert.deepEqual(db.getMemoryJobByDedupeKey(privateJob.dedupeKey), privateJob);
+			assert.deepEqual(db.getMemoryJobByDedupeKey(privateJob.dedupeKey), { ...privateJob, lockedAt: undefined, leaseUntil: undefined, lastError: undefined });
 			assert.deepEqual(db.getMemoryEmbedding(privateEmbedding.id), privateEmbedding);
 			const jobRow = db.db.prepare("SELECT dedupe_key FROM memory_jobs WHERE id=?").get(privateJob.id);
 			const embeddingRow = db.db.prepare("SELECT content_hash FROM memory_embeddings WHERE id=?").get(privateEmbedding.id);
