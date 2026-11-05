@@ -304,6 +304,15 @@ std::set<std::string> native_window_dispatched;
 std::vector<std::string> native_window_waiting;
 std::string dock_window_pending;
 NativeCoreProfileKeyStore native_core_profile_key_store;
+bool native_core_key_failure_notified = false;
+void ShowNativeDataUnlockFailure() {
+  NSAlert* alert = [[NSAlert alloc] init];
+  alert.messageText = @"Kestrel data couldn’t be unlocked";
+  alert.informativeText = @"Chats, memory and saved connections are unavailable. Your existing data has been kept. Reopen Kestrel and respond to any macOS Keychain prompt.";
+  [alert addButtonWithTitle:@"OK"];
+  [alert addButtonWithTitle:@"Quit Kestrel"];
+  if ([alert runModal] == NSAlertSecondButtonReturn) [NSApp terminate:nil];
+}
 void DispatchNativeWindow(const std::string& id) {
   if (desktop_window_closing || !desktop_broker_input || !desktop_bridge_ready || !native_window_pending.count(id)) return;
   NSString* ns_id = [NSString stringWithUTF8String:id.c_str()];
@@ -794,6 +803,13 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
             @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) {}
           }
           if (line.length) std::memset(line.mutableBytes, 0, line.length);
+          if (!ok && !disposable_test_key && !native_core_key_failure_notified) {
+            native_core_key_failure_notified = true;
+            // Settle the private request and clear its bytes before presenting
+            // recovery guidance. Never replace the key, reset the profile or
+            // leave the person to mistake unavailable data for an empty profile.
+            dispatch_async(dispatch_get_main_queue(), ^{ ShowNativeDataUnlockFailure(); });
+          }
         });
         continue;
       }
