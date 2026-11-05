@@ -129,7 +129,7 @@ bool SafeLegacyCounts(id value) {
   return SafeRecoveryCounts(value) && [value count] == 3 &&
       ([value[@"sourceSchemaVersion"] isEqual:@18] || [value[@"sourceSchemaVersion"] isEqual:@19]) &&
       value[@"jobAliases"] && value[@"archivedDiagnosticEvents"] &&
-      [value[@"jobAliases"] unsignedLongLongValue] <= 100000 && [value[@"archivedDiagnosticEvents"] unsignedLongLongValue] <= 100000;
+      [value[@"jobAliases"] unsignedLongLongValue] <= 250000 && [value[@"archivedDiagnosticEvents"] unsignedLongLongValue] <= 250000;
 }
 bool ValidInterruptedReview(NSDictionary* response, NSString* destination) {
   if (![response isKindOfClass:NSDictionary.class] || ![response[@"ok"] isEqual:@YES] ||
@@ -218,7 +218,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 - (BOOL)start {
   NSString* root = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"agent-core"];
   self.task = [[NSTask alloc] init]; self.task.executableURL = [NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"node/bin/node"]];
-  self.task.arguments = @[[root stringByAppendingPathComponent:@"service/host-profile-file-transfer.js"], @"--protected-host-pipe"];
+  self.task.arguments = @[@"--max-old-space-size=1536", [root stringByAppendingPathComponent:@"service/host-profile-file-transfer.js"], @"--protected-host-pipe"];
   NSMutableDictionary* environment = [NSMutableDictionary dictionary]; NSDictionary* inherited = NSProcessInfo.processInfo.environment;
   for (NSString* name in @[@"HOME",@"PATH",@"LANG",@"TMPDIR"]) if (inherited[name]) environment[name] = inherited[name];
   self.task.environment = environment;

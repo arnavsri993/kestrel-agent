@@ -34,8 +34,8 @@ syncBuiltinESMExports();
 `, { mode: 0o600, flag: "wx" });
 }
 
-export function launchCoreTransferFixture(options: { executable: string; entry: string; home: string; preload?: string }) {
-	const child = spawn(options.executable, [...(options.preload ? ["--import", pathToFileURL(options.preload).href] : []), options.entry, "--protected-host-pipe"], {
+export function launchCoreTransferFixture(options: { executable: string; entry: string; home: string; preload?: string; requestTimeoutMs?: number }) {
+	const child = spawn(options.executable, ["--max-old-space-size=1536", ...(options.preload ? ["--import", pathToFileURL(options.preload).href] : []), options.entry, "--protected-host-pipe"], {
 		env: { HOME: options.home, TMPDIR: tmpdir(), PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8" }, stdio: ["pipe", "pipe", "pipe", "pipe"],
 	});
 	let output = "", errors = "", readyOutput = "";
@@ -60,7 +60,7 @@ export function launchCoreTransferFixture(options: { executable: string; entry: 
 		return { response, settled: Promise.race([response, exited.then(() => ({ exited: true as const }))]) };
 	}
 	async function request(method: string, values: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-		const result = await Promise.race([send(method, values).settled, delay(30_000, undefined, { ref: false }).then(() => { throw new Error("Generated protected transfer request timed out."); })]);
+		const result = await Promise.race([send(method, values).settled, delay(options.requestTimeoutMs ?? 30_000, undefined, { ref: false }).then(() => { throw new Error("Generated protected transfer request timed out."); })]);
 		if ("exited" in result) throw new Error("Generated protected transfer worker stopped before responding.");
 		return result;
 	}

@@ -3,7 +3,7 @@ import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtem
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { readHostProfileTransferSourceSnapshot, isKnownLegacy19HostProfileSource, HOST_PROFILE_TRANSFER_POLICY, importHostProfileTransferSnapshot, type HostProfileTransferSnapshot, type HostProfileLegacyPreservation } from "./profile-transfer.js";
+import { readHostProfileFileTransferSourceSnapshot, isKnownLegacy19HostProfileSource, HOST_PROFILE_FILE_TRANSFER_LIMITS, HostProfileTransferLimitError, HOST_PROFILE_TRANSFER_POLICY, importHostProfileFileTransferSnapshot, type HostProfileTransferSnapshot, type HostProfileLegacyPreservation } from "./profile-transfer.js";
 import { LATEST_SCHEMA_VERSION, listMigrationVersions, loadMigrationSql } from "./migrations.js";
 
 type Identity = { device: string; inode: string };
@@ -186,7 +186,7 @@ function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { sna
 			// Validate canonical schema and aggregate limits before integrity scans
 			// or decrypted rows can grow with an unsupported source. Check only the
 			// first foreign-key violation instead of materializing an error list.
-			const sourceSnapshot = readHostProfileTransferSourceSnapshot(reader, key);
+			const sourceSnapshot = readHostProfileFileTransferSourceSnapshot(reader, key);
 			const { snapshot } = sourceSnapshot;
 			const integrity = reader.pragma("integrity_check") as Array<{ integrity_check: string }>;
 			if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok" || reader.prepare("PRAGMA foreign_key_check").get())
@@ -201,6 +201,7 @@ function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { sna
 		return result;
 	} catch (error) {
 		if (error instanceof HostProfileFileTransferError) throw error;
+		if (error instanceof HostProfileTransferLimitError) fail("SOURCE_LIMIT_EXCEEDED", "The selected Core profile exceeds the supported transfer size or record limits. Existing data was preserved.");
 		// Contract/SQLite errors can contain stored values. Do not forward those
 		// details, error causes or decrypted content across the host boundary.
 		return fail("SOURCE_UNREADABLE", "The selected Core source could not be authenticated or its schema is unsupported; it was preserved.");
@@ -295,7 +296,7 @@ function validateJournal(value: unknown): asserts value is TransferJournal {
 		fail("RECOVERY_METADATA_INVALID", "The interrupted Core transfer plan metadata is invalid.");
 	if (plan.summary.legacy && (!exactFields(plan.summary.legacy, ["sourceSchemaVersion", "jobAliases", "archivedDiagnosticEvents"]) ||
 		![18, 19].includes(plan.summary.legacy.sourceSchemaVersion) ||
-		![plan.summary.legacy.jobAliases, plan.summary.legacy.archivedDiagnosticEvents].every(count => Number.isSafeInteger(count) && count >= 0 && count <= 100_000)))
+		![plan.summary.legacy.jobAliases, plan.summary.legacy.archivedDiagnosticEvents].every(count => Number.isSafeInteger(count) && count >= 0 && count <= HOST_PROFILE_FILE_TRANSFER_LIMITS.maxRows)))
 		fail("RECOVERY_METADATA_INVALID", "The preserved legacy profile counts are invalid.");
 	if (!exactFields(value.staging, ["path", "directory", "file"]) || typeof value.staging.path !== "string" || !validIdentity(value.staging.directory) || !validIdentity(value.staging.file))
 		fail("RECOVERY_METADATA_INVALID", "The interrupted Core staging identity is invalid.");
@@ -449,7 +450,7 @@ export function applyHostProfileFileTransfer(options: { plan: HostProfileFileTra
 		syncPath(dirname(plan.destination.path));
 		if (!same(destinationAt(plan.destination.path, true), plan.destination)) fail("DESTINATION_CHANGED", "The Core destination changed after review.");
 		db = new Database(stagedDatabase, { fileMustExist: true }); initializeEmpty(db);
-		importHostProfileTransferSnapshot(db, destinationKey, source.snapshot);
+		importHostProfileFileTransferSnapshot(db, destinationKey, source.snapshot);
 		db.close(); db = undefined; syncPath(stagedDatabase); syncPath(staging);
 		// Refuse source changes during verification; source remains preserved even
 		// if another writer changes it after this point. Activation is separate.

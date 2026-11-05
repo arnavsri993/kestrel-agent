@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
       NSMutableDictionary* value = [@{@"sourceSchemaVersion":@19,@"jobAliases":@1,@"archivedDiagnosticEvents":@2} mutableCopy];
       BOOL valid = SafeLegacyCounts(value);
       value[@"jobAliases"] = @YES; BOOL badBool = !SafeLegacyCounts(value);
-      value[@"jobAliases"] = @100001; BOOL badLimit = !SafeLegacyCounts(value);
+      value[@"jobAliases"] = @250001; BOOL badLimit = !SafeLegacyCounts(value);
       value[@"jobAliases"] = @1; value[@"sourceSchemaVersion"] = @20; BOOL badVersion = !SafeLegacyCounts(value);
       value[@"sourceSchemaVersion"] = @19; value[@"unknown"] = @0; BOOL badFields = !SafeLegacyCounts(value);
       NSData* result = [NSJSONSerialization dataWithJSONObject:@{@"valid":@(valid),@"badBool":@(badBool),@"badLimit":@(badLimit),@"badVersion":@(badVersion),@"badFields":@(badFields)} options:0 error:nil];

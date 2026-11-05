@@ -4,7 +4,8 @@ import { encryptText } from "@kestrel/encryption";
 import { KestrelDatabase } from "./index.js";
 
 // Generated-only historical format fixture. No existing profile or key lookup.
-export function seedNativeLegacy19Source(path: string, key: Buffer, options: { diagnostics?: boolean; mutableJobMetadata?: boolean; compactDdl?: boolean } = {}) {
+export function seedNativeLegacy19Source(path: string, key: Buffer, options: { diagnostics?: boolean; mutableJobMetadata?: boolean; compactDdl?: boolean;
+	largePrivateRecords?: { count: number; bytes: number }; idempotencyClaims?: number } = {}) {
 	const time = "2026-11-04T12:00:00.000Z", dedupeKey = "GENERATED_LEGACY19_PRIVATE_DEDUPE";
 	const oldMac = (purpose: string, value: string) => createHmac("sha256", key).update(`kestrel-memory-index-v1:${purpose}:`).update(value).digest("hex");
 	const job = { id: `memory-job-${oldMac("job-id", dedupeKey).slice(0, 40)}`, kind: "cleanup" as const, dedupeKey,
@@ -18,6 +19,17 @@ export function seedNativeLegacy19Source(path: string, key: Buffer, options: { d
 		canonical.saveRuntimeSession({ id: "generated-legacy19-session", title: "Generated legacy conversation", allowedTools: [], status: "active", checkpoints: [], createdAt: time, updatedAt: time });
 		canonical.saveRuntimeMessage({ id: "generated-legacy19-message", sessionId: "generated-legacy19-session", role: "user", content: privateMessage, createdAt: time });
 		canonical.queueMemoryJob(job); canonical.upsertMemoryEmbedding(embedding);
+		if (options.largePrivateRecords) {
+			const { count, bytes } = options.largePrivateRecords;
+			if (!Number.isSafeInteger(count) || count < 1 || count > 30 || !Number.isSafeInteger(bytes) || bytes < 1 || bytes > 4 * 1024 * 1024) throw new Error("Invalid generated large fixture.");
+			const text = "GENERATED_PRIVATE_LARGE_TRANSFER_TEXT_".slice(0, bytes).padEnd(bytes, "x");
+			for (let index = 0; index < count; index++) canonical.setPrivateState(`generated-large-${index}`, { index, text });
+		}
+		if (options.idempotencyClaims) {
+			if (!Number.isSafeInteger(options.idempotencyClaims) || options.idempotencyClaims < 1 || options.idempotencyClaims > 250_001) throw new Error("Invalid generated claims fixture.");
+			canonical.db.prepare(`WITH RECURSIVE generated(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM generated WHERE n<?)
+				INSERT INTO idempotency_claims SELECT 'generated-'||n,'generated-owner',1,'{}',? FROM generated`).run(options.idempotencyClaims, time);
+		}
 		const definitions = canonical.db.prepare("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index') AND name NOT LIKE 'sqlite_%' ORDER BY type DESC,name").all() as Array<{ type: string; name: string; sql: string | null }>;
 		const compact = new Set(["approvals", "audit_events", "idempotency_keys", "runtime_state", "schema_migrations"]);
 		for (const row of definitions) if (row.sql) target.exec(options.compactDdl && row.type === "table" && compact.has(row.name) ? row.sql.replace(/\(\s+/gu, "(").replace(/\s+\)/gu, ")") : row.sql);

@@ -23,7 +23,16 @@ export const HOST_PROFILE_TRANSFER_VERSION = 1 as const;
 export const HOST_PROFILE_TRANSFER_POLICY = "kestrel-host-profile-transfer-in-flight-v2" as const;
 export const HOST_PROFILE_TRANSFER_MAX_BYTES = 64 * 1024 * 1024;
 export const HOST_PROFILE_TRANSFER_MAX_ROWS = 100_000;
+type TransferLimits = { maxBytes: number; maxRows: number; maxRawBytes?: number; maxRawRowBytes?: number; maxSerializedRowBytes?: number };
+const SNAPSHOT_LIMITS: TransferLimits = { maxBytes: HOST_PROFILE_TRANSFER_MAX_BYTES, maxRows: HOST_PROFILE_TRANSFER_MAX_ROWS };
+// Only the host's selected-file worker uses this budget. No renderer/Core RPC
+// or in-memory snapshot API receives a larger frame or a configurable limit.
+export const HOST_PROFILE_FILE_TRANSFER_LIMITS = Object.freeze({ maxBytes: 256 * 1024 * 1024, maxRows: 250_000,
+	maxRawBytes: 128 * 1024 * 1024, maxRawRowBytes: 8 * 1024 * 1024, maxSerializedRowBytes: 32 * 1024 * 1024 });
 const SCHEMA_VERSION = 18;
+export class HostProfileTransferLimitError extends Error {
+	constructor(message: string) { super(message); this.name = "HostProfileTransferLimitError"; }
+}
 
 type SqlValue = null | string | number | Buffer;
 type CipherGroup = { ciphertext: string; iv: string; tag: string; nullable?: boolean };
@@ -99,6 +108,7 @@ const ENCRYPTED_IDEMPOTENCY_PREFIX = "kestrel-encrypted-idempotency-v1:";
 const PROTECTED_TOOL_NAMES = new Set(["sources.read", "computer.screenshot", "browser.screenshot", "browser.visible-screenshot"]);
 
 function fail(message: string): never { throw new Error(message); }
+function limit(message: string): never { throw new HostProfileTransferLimitError(message); }
 function decryptText(payload: EncryptedPayload, key: Buffer): string {
 	// The source format writes a 96-bit nonce and full 128-bit GCM tag. Node
 	// also accepts shortened tags; do not silently weaken this transfer format.
@@ -116,16 +126,22 @@ function objectJson(value: string, label: string): Record<string, unknown> {
 }
 function canonical(value: unknown): string { return JSON.stringify(value); }
 export function computeHostProfileTransferSemanticHash(rows: HostProfileTransferSnapshot["rows"]): string {
-	const logical: Record<string, unknown> = {};
+	// Preserve the exact v1 JSON digest while avoiding a second whole-profile
+	// object graph and JSON string during large file transfer and readback.
+	const hash = createHash("sha256"); hash.update("{"); let firstTable = true;
 	for (const table of Object.keys(rows).sort()) {
 		if (DERIVED_TABLES.has(table)) continue;
-		logical[table] = rows[table]!.map(row => {
+		if (!firstTable) hash.update(","); firstTable = false;
+		hash.update(JSON.stringify(table)); hash.update(":"); hash.update("["); let firstRow = true;
+		for (const row of rows[table]!) {
+			if (!firstRow) hash.update(","); firstRow = false;
 			const values = { ...row.values };
 			delete values.canonical_name_hash;
-			return { values, cleartext: row.cleartext ?? {} };
-		});
+			hash.update(JSON.stringify({ values, cleartext: row.cleartext ?? {} }));
+		}
+		hash.update("]");
 	}
-	return createHash("sha256").update(canonical(logical)).digest("hex");
+	return hash.update("}").digest("hex");
 }
 function hmac(key: Buffer, domain: string, term: string): string {
 	return createHmac("sha256", key).update(`${domain}:${term}`).digest("hex");
@@ -286,7 +302,7 @@ function validateLogicalFingerprintUniqueness(rows: TransferTables): void {
 	}
 }
 
-function preserveLegacy19Extras(db: Database.Database, key: Buffer, rows: TransferTables, counts: Record<string, number>, withDiagnostics: boolean): void {
+function preserveLegacy19Extras(db: Database.Database, key: Buffer, rows: TransferTables, counts: Record<string, number>, withDiagnostics: boolean, account: (row: TransferRow) => void): void {
 	if ((rows.private_runtime_state ?? []).some(row => String(row.values.key).startsWith(LEGACY_PROFILE_STATE_ROOT))) fail("Legacy profile state namespace is already in use.");
 	const privateRows = rows.private_runtime_state!;
 	const jobs = new Map((rows.memory_jobs ?? []).map(row => {
@@ -297,10 +313,12 @@ function preserveLegacy19Extras(db: Database.Database, key: Buffer, rows: Transf
 	let secretAdded = false;
 	const add = (stateKey: string, value: unknown, updatedAt: string) => {
 		if (!secretAdded) {
-			privateRows.push({ values: { key: LEGACY_PROFILE_SECRET_KEY, updated_at: updatedAt }, cleartext: { value_ciphertext: JSON.stringify({ version: 1, keyBase64: secret.toString("base64") }) } });
+			const row = { values: { key: LEGACY_PROFILE_SECRET_KEY, updated_at: updatedAt }, cleartext: { value_ciphertext: JSON.stringify({ version: 1, keyBase64: secret.toString("base64") }) } };
+			account(row); privateRows.push(row);
 			secretAdded = true;
 		}
-		privateRows.push({ values: { key: stateKey, updated_at: updatedAt }, cleartext: { value_ciphertext: JSON.stringify(value) } });
+		const row = { values: { key: stateKey, updated_at: updatedAt }, cleartext: { value_ciphertext: JSON.stringify(value) } };
+		account(row); privateRows.push(row);
 	};
 	try {
 		for (const row of db.prepare("SELECT alias_hash,job_id FROM memory_job_id_aliases ORDER BY rowid").iterate() as Iterable<{ alias_hash: unknown; job_id: unknown }>) {
@@ -444,6 +462,21 @@ export function isKnownLegacy19HostProfileSource(db: Database.Database): boolean
 
 function jsonByteLength(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8"); }
 
+function snapshotByteLength(snapshot: HostProfileTransferSnapshot, limits: TransferLimits): number {
+	let rowBytes = 2; // JSON object braces; all other fields are a small fixed inventory.
+	let firstTable = true;
+	for (const [table, rows] of Object.entries(snapshot.rows)) {
+		rowBytes += (firstTable ? 0 : 1) + jsonByteLength(table) + 3; firstTable = false;
+		for (let index = 0; index < rows.length; index++) {
+			const bytes = jsonByteLength(rows[index]);
+			if (limits.maxSerializedRowBytes && bytes > limits.maxSerializedRowBytes) limit("Profile transfer exceeds the serialized row limit.");
+			rowBytes += bytes + (index ? 1 : 0);
+			if (rowBytes > limits.maxBytes) limit("Profile transfer exceeds the byte limit.");
+		}
+	}
+	return jsonByteLength({ ...snapshot, rows: {} }) + rowBytes - 2;
+}
+
 // Older profiles can have a deletion fence alongside stale source receipts or
 // journals. Apply the same fence in memory, after validating the original rows
 // and retained index bindings. Never open the source with a writable constructor
@@ -501,9 +534,18 @@ export function createHostProfileTransferSnapshot(db: Database.Database, key: Bu
 
 /** Source-only adapter. The caller owns a guarded read-only copy, never a writable profile constructor. */
 export function readHostProfileTransferSourceSnapshot(db: Database.Database, key: Buffer, maxBytes = HOST_PROFILE_TRANSFER_MAX_BYTES): { snapshot: HostProfileTransferSnapshot; legacy?: HostProfileLegacyPreservation; syntheticEnvelopeCount: number } {
+	return readSourceSnapshot(db, key, maxBytes, SNAPSHOT_LIMITS);
+}
+
+/** Fixed-budget host-only file path, never a renderer or agent snapshot endpoint. */
+export function readHostProfileFileTransferSourceSnapshot(db: Database.Database, key: Buffer): ReturnType<typeof readHostProfileTransferSourceSnapshot> {
+	return readSourceSnapshot(db, key, HOST_PROFILE_FILE_TRANSFER_LIMITS.maxBytes, HOST_PROFILE_FILE_TRANSFER_LIMITS);
+}
+
+function readSourceSnapshot(db: Database.Database, key: Buffer, maxBytes: number, limits: TransferLimits): ReturnType<typeof readHostProfileTransferSourceSnapshot> {
 	return db.transaction(() => {
 		const sourceSchema = validateSchema(db, true);
-		const snapshot = createHostProfileTransferSnapshotInReadTransaction(db, key, maxBytes, true);
+		const snapshot = createHostProfileTransferSnapshotInReadTransaction(db, key, maxBytes, true, limits);
 		const preserved = preservedLegacyState(snapshot.rows);
 		const hasLegacy = sourceSchema !== "canonical18" || preserved.jobAliases > 0 || preserved.archivedDiagnosticEvents > 0;
 		return { snapshot, ...(hasLegacy ? { legacy: { sourceSchemaVersion: sourceSchema === "canonical18" ? 18 as const : 19 as const, ...preserved } } : {}),
@@ -530,14 +572,30 @@ function retireScheduledJobs(rows: TransferTables): number {
 	return retired;
 }
 
-function createHostProfileTransferSnapshotInReadTransaction(db: Database.Database, key: Buffer, maxBytes: number, allowLegacy19 = false): HostProfileTransferSnapshot {
+function createHostProfileTransferSnapshotInReadTransaction(db: Database.Database, key: Buffer, maxBytes: number, allowLegacy19 = false, limits: TransferLimits = SNAPSHOT_LIMITS): HostProfileTransferSnapshot {
 	verifyKey(key);
-	if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > HOST_PROFILE_TRANSFER_MAX_BYTES) fail("Profile transfer byte limit is invalid.");
+	if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > limits.maxBytes) fail("Profile transfer byte limit is invalid.");
 	const sourceSchema = validateSchema(db, allowLegacy19);
 	const rows: TransferTables = {};
 	const counts: Record<string, number> = {};
 	let totalRows = 0;
 	let conservativeBytes = 0;
+	let rawBytesRead = 0;
+	let materializedBytes = 16 * 1024; // Header, table names, counts and policy fields.
+	const account = (row: TransferRow) => {
+		if (!limits.maxRawBytes) return; // The small snapshot path retains its old conservative preflight.
+		const bytes = jsonByteLength(row);
+		if (bytes > limits.maxSerializedRowBytes!) limit("Profile transfer exceeds the serialized row limit.");
+		materializedBytes += bytes + 1;
+		if (materializedBytes > maxBytes) limit("Profile transfer exceeds the byte limit; no records were truncated.");
+	};
+	const aggregateRowMaximum = (columns: readonly string[]) => limits.maxRawRowBytes
+		? `, COALESCE(MAX(${columns.map(column => `COALESCE(LENGTH(CAST(${column} AS BLOB)),0)`).join("+")}),0) AS maximum_row_bytes` : "";
+	const checkRaw = (aggregate: Record<string, number>, rawBytes: number) => {
+		rawBytesRead += rawBytes;
+		if (limits.maxRawBytes && rawBytesRead > limits.maxRawBytes) limit("Profile transfer exceeds the raw byte limit; no records were read into the snapshot.");
+		if (limits.maxRawRowBytes && aggregate.maximum_row_bytes! > limits.maxRawRowBytes) limit("Profile transfer exceeds the raw row limit; no records were read into the snapshot.");
+	};
 	let idempotencyClaims = 0;
 	let runningMemoryJobsCancelled = 0;
 	let activeAgentRunsCancelled = 0;
@@ -549,29 +607,32 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 	const tableCounts = new Map<string, number>();
 	for (const [table, spec] of Object.entries(TABLES)) {
 		const byteTerms = spec.columns.map((column, index) => `COALESCE(SUM(LENGTH(CAST(${column} AS BLOB))), 0) AS bytes_${index}`).join(", ");
-		const aggregate = db.prepare(`SELECT COUNT(*) AS count, ${byteTerms} FROM ${table}`).get() as Record<string, number>;
+		const aggregate = db.prepare(`SELECT COUNT(*) AS count, ${byteTerms}${aggregateRowMaximum(spec.columns)} FROM ${table}`).get() as Record<string, number>;
 		const count = aggregate.count!;
 		counts[table] = count;
 		tableCounts.set(table, count);
 		totalRows += count;
-		if (totalRows > HOST_PROFILE_TRANSFER_MAX_ROWS) fail("Profile transfer exceeds the row limit.");
+		if (totalRows > limits.maxRows) limit("Profile transfer exceeds the row limit.");
 		const rawBytes = spec.columns.reduce((sum, _column, index) => sum + aggregate[`bytes_${index}`]!, 0);
+		checkRaw(aggregate, rawBytes);
 		// JSON can expand control bytes sixfold; this also bounds per-row object,
 		// envelope, and array overhead before any row content is materialized.
 		conservativeBytes += rawBytes * 6 + count * 1_024;
-		if (conservativeBytes > maxBytes) fail("Profile transfer exceeds the byte limit; no records were read into the snapshot.");
+		if (!limits.maxRawBytes && conservativeBytes > maxBytes) limit("Profile transfer exceeds the byte limit; no records were read into the snapshot.");
 	}
 	if (sourceSchema !== "canonical18") {
 		const extras = [{ table: "memory_job_id_aliases", columns: ["alias_hash", "job_id"] },
 			...(sourceSchema === "legacy19-diagnostics" ? [{ table: "internal_error_events", columns: ["id", "severity", "source", "created_at", "payload_ciphertext", "payload_iv", "payload_auth_tag"] }] : [])];
 		for (const { table, columns } of extras) {
 			const fields = columns.map((column, index) => `COALESCE(SUM(LENGTH(CAST(${column} AS BLOB))),0) AS bytes_${index}`).join(",");
-			const aggregate = db.prepare(`SELECT COUNT(*) AS count,${fields} FROM ${table}`).get() as Record<string, number>;
+			const aggregate = db.prepare(`SELECT COUNT(*) AS count,${fields}${aggregateRowMaximum(columns)} FROM ${table}`).get() as Record<string, number>;
 			totalRows += aggregate.count!;
-			conservativeBytes += columns.reduce((sum, _, index) => sum + aggregate[`bytes_${index}`]!, 0) * 6 + aggregate.count! * 1024;
+			const rawBytes = columns.reduce((sum, _, index) => sum + aggregate[`bytes_${index}`]!, 0);
+			checkRaw(aggregate, rawBytes);
+			conservativeBytes += rawBytes * 6 + aggregate.count! * 1024;
 		}
 		// One extra encrypted namespace secret may be created in the snapshot.
-		if (++totalRows > HOST_PROFILE_TRANSFER_MAX_ROWS || conservativeBytes + 1024 > maxBytes) fail("Legacy profile transfer exceeds its row or byte limit; no records were read into the snapshot.");
+		if (++totalRows > limits.maxRows || (!limits.maxRawBytes && conservativeBytes + 1024 > maxBytes)) limit("Legacy profile transfer exceeds its row or byte limit; no records were read into the snapshot.");
 		counts.schema_migrations = SCHEMA_VERSION;
 	}
 	for (const [table, spec] of Object.entries(TABLES)) {
@@ -764,12 +825,13 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 				cleartext.indexedTerms = retained;
 			}
 			const row: TransferRow = { values, ...(Object.keys(cleartext).length ? { cleartext } : {}) };
+			account(row);
 			result.push(row);
 		}
 		if (result.length !== expectedCount) fail(`Profile transfer source changed while reading ${table}.`);
 		rows[table] = result;
 	}
-	if (sourceSchema !== "canonical18") preserveLegacy19Extras(db, key, rows, counts, sourceSchema === "legacy19-diagnostics");
+	if (sourceSchema !== "canonical18") preserveLegacy19Extras(db, key, rows, counts, sourceSchema === "legacy19-diagnostics", account);
 	validateLogicalFingerprintUniqueness(rows);
 	preservedLegacyState(rows);
 	validateReservedEmbeddingStateRows(rows);
@@ -786,11 +848,11 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 		semanticSha256: "",
 	};
 	snapshot.semanticSha256 = computeHostProfileTransferSemanticHash(rows);
-	if (jsonByteLength(snapshot) > maxBytes) fail("Profile transfer exceeds the byte limit; no records were truncated.");
+	if (snapshotByteLength(snapshot, limits) > maxBytes) limit("Profile transfer exceeds the byte limit; no records were truncated.");
 	return snapshot;
 }
 
-function validateSnapshot(snapshot: HostProfileTransferSnapshot): void {
+function validateSnapshot(snapshot: HostProfileTransferSnapshot, limits: TransferLimits): void {
 	if (!snapshot || snapshot.format !== "kestrel-host-profile-transfer" || snapshot.version !== HOST_PROFILE_TRANSFER_VERSION || snapshot.schemaVersion !== SCHEMA_VERSION || snapshot.policy !== HOST_PROFILE_TRANSFER_POLICY) fail("Profile transfer snapshot format, schema, or policy is unsupported.");
 	if (canonical(Object.keys(snapshot).sort()) !== canonical(["format", "version", "schemaVersion", "policy", "rows", "counts", "excluded", "semanticSha256"].sort())) fail("Profile transfer snapshot contains unsupported metadata.");
 	if (!snapshot.counts || !snapshot.excluded || canonical(Object.keys(snapshot.counts).sort()) !== canonical(Object.keys(TABLES).sort()) || Object.values(snapshot.counts).some(count => !Number.isSafeInteger(count) || count < 0)) fail("Profile transfer snapshot table counts are malformed.");
@@ -800,7 +862,7 @@ function validateSnapshot(snapshot: HostProfileTransferSnapshot): void {
 	const expectedDataTables = Object.keys(TABLES).filter(table => !OMIT_TABLES.has(table) && !DERIVED_TABLES.has(table)).sort();
 	if (canonical(Object.keys(snapshot.rows).sort()) !== canonical(expectedDataTables)) fail("Profile transfer snapshot has missing or unknown table data.");
 	const rowCount = Object.values(snapshot.rows).reduce((total, rows) => total + rows.length, 0);
-	if (rowCount > HOST_PROFILE_TRANSFER_MAX_ROWS || Object.values(snapshot.counts).reduce((total, count) => total + count, 0) > HOST_PROFILE_TRANSFER_MAX_ROWS) fail("Profile transfer snapshot exceeds the row limit.");
+	if (rowCount > limits.maxRows || Object.values(snapshot.counts).reduce((total, count) => total + count, 0) > limits.maxRows) limit("Profile transfer snapshot exceeds the row limit.");
 	for (const table of expectedDataTables) {
 		const spec = TABLES[table]!;
 		if (!DERIVED_TABLES.has(table) && snapshot.rows[table]!.length !== snapshot.counts[table]) fail(`Profile transfer snapshot row counts disagree for ${table}.`);
@@ -834,7 +896,7 @@ function validateSnapshot(snapshot: HostProfileTransferSnapshot): void {
 	validateLogicalFingerprintUniqueness(snapshot.rows);
 	preservedLegacyState(snapshot.rows);
 	if (computeHostProfileTransferSemanticHash(snapshot.rows) !== snapshot.semanticSha256) fail("Profile transfer snapshot semantic checksum does not match.");
-	if (jsonByteLength(snapshot) > HOST_PROFILE_TRANSFER_MAX_BYTES) fail("Profile transfer snapshot exceeds the byte limit.");
+	if (snapshotByteLength(snapshot, limits) > limits.maxBytes) limit("Profile transfer snapshot exceeds the byte limit.");
 }
 
 function rebuildDerivedIndexes(db: Database.Database, key: Buffer, snapshot: HostProfileTransferSnapshot): void {
@@ -906,11 +968,19 @@ function insertSnapshotRows(db: Database.Database, key: Buffer, snapshot: HostPr
 }
 
 export function importHostProfileTransferSnapshot(db: Database.Database, key: Buffer, snapshot: HostProfileTransferSnapshot, maxBytes = HOST_PROFILE_TRANSFER_MAX_BYTES): { semanticSha256: string; importedRows: Record<string, number>; excluded: HostProfileTransferSnapshot["excluded"] } {
+	return importSnapshot(db, key, snapshot, maxBytes, SNAPSHOT_LIMITS);
+}
+
+export function importHostProfileFileTransferSnapshot(db: Database.Database, key: Buffer, snapshot: HostProfileTransferSnapshot): ReturnType<typeof importHostProfileTransferSnapshot> {
+	return importSnapshot(db, key, snapshot, HOST_PROFILE_FILE_TRANSFER_LIMITS.maxBytes, HOST_PROFILE_FILE_TRANSFER_LIMITS);
+}
+
+function importSnapshot(db: Database.Database, key: Buffer, snapshot: HostProfileTransferSnapshot, maxBytes: number, limits: TransferLimits): ReturnType<typeof importHostProfileTransferSnapshot> {
 	verifyKey(key);
-	if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > HOST_PROFILE_TRANSFER_MAX_BYTES) fail("Profile transfer byte limit is invalid.");
+	if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > limits.maxBytes) fail("Profile transfer byte limit is invalid.");
 	validateSchema(db);
-	validateSnapshot(snapshot);
-	if (jsonByteLength(snapshot) > maxBytes) fail("Profile transfer snapshot exceeds the requested byte limit.");
+	validateSnapshot(snapshot, limits);
+	if (snapshotByteLength(snapshot, limits) > maxBytes) limit("Profile transfer snapshot exceeds the requested byte limit.");
 	const importedRows = Object.fromEntries(Object.entries(snapshot.rows).map(([table, rows]) => [table, rows.length]));
 	const apply = db.transaction(() => {
 		for (const table of Object.keys(TABLES)) {
@@ -924,7 +994,7 @@ export function importHostProfileTransferSnapshot(db: Database.Database, key: Bu
 		if (foreignKeys.length) fail("Profile transfer failed destination foreign-key validation.");
 		const integrity = db.pragma("integrity_check") as Array<{ integrity_check: string }>;
 		if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok") fail("Profile transfer failed destination integrity validation.");
-		const readback = createHostProfileTransferSnapshot(db, key, maxBytes);
+		const readback = createHostProfileTransferSnapshotInReadTransaction(db, key, maxBytes, false, limits);
 		if (readback.semanticSha256 !== snapshot.semanticSha256) fail("Profile transfer destination semantic readback did not match.");
 	});
 	try { apply(); } catch (error) { throw new Error("Profile transfer failed atomically; destination remains empty.", { cause: error }); }
