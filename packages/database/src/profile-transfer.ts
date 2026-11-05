@@ -1,10 +1,12 @@
 import { createHash, createHmac } from "node:crypto";
 import Database from "better-sqlite3";
-import { decryptText, encryptText } from "@kestrel/encryption";
+import { decryptText as decryptEncryptedText, encryptText, type EncryptedPayload } from "@kestrel/encryption";
 import { ActionReceiptSchema, AgentRunSchema, MemoryJobSchema, RuntimeToolExecutionSchema } from "@kestrel/shared-types";
 import * as Contracts from "@kestrel/shared-types";
 import { listMigrationVersions, loadMigrationSql } from "./migrations.js";
 import { memoryFingerprintIndex, matchesMemoryFingerprintIndex } from "./memory-fingerprint-index.js";
+import { LEGACY_PROFILE_STATE_ROOT, LEGACY_PROFILE_SECRET_KEY, LEGACY_JOB_ALIAS_PREFIX, LEGACY_DIAGNOSTIC_PREFIX,
+	deriveLegacyProfileSecret, legacyJobAlias, legacyProfileStateKey, parseLegacyProfileSecret, parseLegacyJobAlias, parseLegacyDiagnostic } from "./legacy-profile-state.js";
 import { redactDeletedSourceToolResult, SOURCE_EVIDENCE_REMOVED_TEXT, SOURCE_RECEIPT_DELETION_PREFIX, sourceReceiptDeletionKey } from "./source-evidence-redaction.js";
 import {
 	EMBEDDING_STATE_OWNER_PREFIX,
@@ -39,6 +41,7 @@ export type HostProfileTransferSnapshot = {
 	excluded: { idempotencyClaims: number; runningMemoryJobsCancelled: number; activeAgentRunsCancelled: number; activeToolExecutionsRetired: number; activeWorkingTasksCancelled: number; unexecutedApprovalsRetired: number; unsettledActionReceiptsRetired: number; scheduledJobsCancelled: number };
 	semanticSha256: string;
 };
+export type HostProfileLegacyPreservation = { sourceSchemaVersion: 18 | 19; jobAliases: number; archivedDiagnosticEvents: number };
 
 // Frozen table-and-column inventory for migrations 001-018. Derived keyed
 // indexes are validated as schema, then regenerated from logical payloads.
@@ -96,6 +99,16 @@ const ENCRYPTED_IDEMPOTENCY_PREFIX = "kestrel-encrypted-idempotency-v1:";
 const PROTECTED_TOOL_NAMES = new Set(["sources.read", "computer.screenshot", "browser.screenshot", "browser.visible-screenshot"]);
 
 function fail(message: string): never { throw new Error(message); }
+function decryptText(payload: EncryptedPayload, key: Buffer): string {
+	// The source format writes a 96-bit nonce and full 128-bit GCM tag. Node
+	// also accepts shortened tags; do not silently weaken this transfer format.
+	for (const [value, length] of [[payload.iv, 12], [payload.authTag, 16]] as const) {
+		const bytes = Buffer.from(value, "base64");
+		if (bytes.length !== length || bytes.toString("base64") !== value) fail("Profile transfer found an invalid encrypted envelope.");
+	}
+	if (Buffer.from(payload.ciphertext, "base64").toString("base64") !== payload.ciphertext) fail("Profile transfer found an invalid encrypted envelope.");
+	return decryptEncryptedText(payload, key);
+}
 function objectJson(value: string, label: string): Record<string, unknown> {
 	const parsed: unknown = JSON.parse(value);
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) fail(`Profile transfer rejected malformed ${label}.`);
@@ -230,6 +243,86 @@ function validateReservedEmbeddingStateRows(rows: TransferTables): void {
 	}
 }
 
+function preservedLegacyState(rows: TransferTables): { jobAliases: number; archivedDiagnosticEvents: number } {
+	const values = new Map<string, { row: TransferRow; value: unknown }>();
+	for (const row of rows.private_runtime_state ?? []) {
+		const key = row.values.key;
+		if (typeof key !== "string" || !key.startsWith(LEGACY_PROFILE_STATE_ROOT)) continue;
+		if (values.has(key) || typeof row.cleartext?.value_ciphertext !== "string") fail("Invalid preserved legacy profile state.");
+		values.set(key, { row, value: JSON.parse(row.cleartext.value_ciphertext) });
+	}
+	const counts = { jobAliases: 0, archivedDiagnosticEvents: 0 };
+	if (!values.size) return counts;
+	const secretValue = values.get(LEGACY_PROFILE_SECRET_KEY);
+	if (!secretValue) fail("Preserved legacy profile state is missing its secret.");
+	const secret = parseLegacyProfileSecret(secretValue.value);
+	try {
+		for (const [key, { row, value }] of values) {
+			if (key === LEGACY_PROFILE_SECRET_KEY) continue;
+			if (key.startsWith(LEGACY_JOB_ALIAS_PREFIX)) {
+				const alias = parseLegacyJobAlias(key, value, secret);
+				if (row.values.updated_at !== alias.jobCreatedAt) fail("Invalid preserved legacy job reference metadata.");
+				counts.jobAliases++;
+			} else if (key.startsWith(LEGACY_DIAGNOSTIC_PREFIX)) {
+				const diagnostic = parseLegacyDiagnostic(key, value, secret);
+				if (row.values.updated_at !== diagnostic.createdAt) fail("Invalid preserved legacy diagnostic metadata.");
+				counts.archivedDiagnosticEvents++;
+			} else fail("Unknown preserved legacy profile state.");
+		}
+		return counts;
+	} finally { secret.fill(0); }
+}
+
+function validateLogicalFingerprintUniqueness(rows: TransferTables): void {
+	for (const table of ["memory_jobs", "memory_embeddings"] as const) {
+		const identities = new Set<string>();
+		for (const row of rows[table] ?? []) {
+			const fields = table === "memory_jobs" ? [row.values.dedupe_key] :
+				[row.values.owner_type, row.values.owner_id, row.values.provider, row.values.model, row.values.content_hash];
+			const identity = JSON.stringify(fields);
+			if (identities.has(identity)) fail("Profile transfer found ambiguous logical fingerprint identities.");
+			identities.add(identity);
+		}
+	}
+}
+
+function preserveLegacy19Extras(db: Database.Database, key: Buffer, rows: TransferTables, counts: Record<string, number>, withDiagnostics: boolean): void {
+	if ((rows.private_runtime_state ?? []).some(row => String(row.values.key).startsWith(LEGACY_PROFILE_STATE_ROOT))) fail("Legacy profile state namespace is already in use.");
+	const privateRows = rows.private_runtime_state!;
+	const jobs = new Map((rows.memory_jobs ?? []).map(row => {
+		const job = MemoryJobSchema.parse(JSON.parse(String(row.cleartext!.payload_ciphertext)));
+		return [job.id, job] as const;
+	}));
+	const secret = deriveLegacyProfileSecret(key);
+	let secretAdded = false;
+	const add = (stateKey: string, value: unknown, updatedAt: string) => {
+		if (!secretAdded) {
+			privateRows.push({ values: { key: LEGACY_PROFILE_SECRET_KEY, updated_at: updatedAt }, cleartext: { value_ciphertext: JSON.stringify({ version: 1, keyBase64: secret.toString("base64") }) } });
+			secretAdded = true;
+		}
+		privateRows.push({ values: { key: stateKey, updated_at: updatedAt }, cleartext: { value_ciphertext: JSON.stringify(value) } });
+	};
+	try {
+		for (const row of db.prepare("SELECT alias_hash,job_id FROM memory_job_id_aliases ORDER BY rowid").iterate() as Iterable<{ alias_hash: unknown; job_id: unknown }>) {
+			const job = typeof row.job_id === "string" ? jobs.get(row.job_id) : undefined;
+			if (!job) fail("Legacy job reference target is missing.");
+			const alias = legacyJobAlias(job.dedupeKey);
+			if (!matchesMemoryFingerprintIndex(key, "job-alias", row.alias_hash, alias)) fail("Legacy job reference could not be authenticated.");
+			const stateKey = legacyProfileStateKey(secret, "alias", alias);
+			const value = parseLegacyJobAlias(stateKey, { version: 1, alias, jobId: job.id, jobKind: job.kind, jobCreatedAt: job.createdAt }, secret);
+			add(stateKey, value, job.createdAt);
+		}
+		if (withDiagnostics) for (const row of db.prepare("SELECT id,severity,source,created_at,payload_ciphertext,payload_iv,payload_auth_tag FROM internal_error_events ORDER BY rowid").iterate() as Iterable<Record<string, unknown>>) {
+			if (typeof row.id !== "string" || typeof row.created_at !== "string" || typeof row.payload_ciphertext !== "string" || typeof row.payload_iv !== "string" || typeof row.payload_auth_tag !== "string") fail("Malformed legacy diagnostic record.");
+			const plaintext = decryptText({ ciphertext: row.payload_ciphertext, iv: row.payload_iv, authTag: row.payload_auth_tag }, key);
+			const stateKey = legacyProfileStateKey(secret, "diagnostic", row.id);
+			const value = parseLegacyDiagnostic(stateKey, { version: 1, id: row.id, severity: row.severity, source: row.source, createdAt: row.created_at, payloadUtf8Base64: Buffer.from(plaintext, "utf8").toString("base64") }, secret);
+			add(stateKey, value, row.created_at);
+		}
+	} finally { secret.fill(0); }
+	counts.private_runtime_state = privateRows.length;
+}
+
 function validateProtectedPayload(table: string, values: Record<string, SqlValue>, plaintext: string): void {
 	const payload: unknown = JSON.parse(plaintext);
 	if (table === "private_runtime_state") {
@@ -296,13 +389,23 @@ function validateMemoryRow(values: Record<string, SqlValue>, cleartext: Record<s
 		userConfirmed: values.user_confirmed === 1, inferred: values.inferred === 1 });
 }
 
-function validateSchema(db: Database.Database): void {
-	const tableRows = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>;
+type SourceSchema = "canonical18" | "legacy19" | "legacy19-diagnostics";
+const LEGACY_ALIAS_SQL = "CREATE TABLE memory_job_id_aliases ( alias_hash TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES memory_jobs(id) ON DELETE CASCADE ON UPDATE CASCADE )";
+const LEGACY_DIAGNOSTIC_SQL = "CREATE TABLE internal_error_events ( id TEXT PRIMARY KEY, severity TEXT NOT NULL CHECK(severity IN ('error', 'warning')), source TEXT NOT NULL, created_at TEXT NOT NULL, payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL, payload_auth_tag TEXT NOT NULL )";
+const LEGACY_DIAGNOSTIC_INDEX_SQL = "CREATE INDEX idx_internal_error_created ON internal_error_events(created_at)";
+const LEGACY_COMPACT_DDL = new Set(["approvals", "audit_events", "idempotency_keys", "runtime_state", "schema_migrations"]);
+function validateSchema(db: Database.Database, allowLegacy19 = false): SourceSchema {
+	const tableRows = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT ?").all(Object.keys(TABLES).length + 3) as Array<{ name: string }>;
 	const actualTables = tableRows.map(row => row.name).sort();
 	const expectedTables = Object.keys(TABLES).sort();
-	if (canonical(actualTables) !== canonical(expectedTables)) fail("Profile transfer rejected unknown or missing database tables.");
-	const unexpectedObjects = db.prepare("SELECT type, name FROM sqlite_master WHERE type IN ('view','trigger')").all();
-	if (unexpectedObjects.length) fail("Profile transfer rejected an unsupported schema object.");
+	let sourceSchema: SourceSchema = "canonical18";
+	if (canonical(actualTables) !== canonical(expectedTables)) {
+		if (allowLegacy19 && canonical(actualTables) === canonical([...expectedTables, "memory_job_id_aliases"].sort())) sourceSchema = "legacy19";
+		else if (allowLegacy19 && canonical(actualTables) === canonical([...expectedTables, "memory_job_id_aliases", "internal_error_events"].sort())) sourceSchema = "legacy19-diagnostics";
+		else fail("Profile transfer rejected unknown or missing database tables.");
+	}
+	const unexpectedObject = db.prepare("SELECT type, name FROM sqlite_master WHERE type IN ('view','trigger') LIMIT 1").get();
+	if (unexpectedObject) fail("Profile transfer rejected an unsupported schema object.");
 	for (const [table, spec] of Object.entries(TABLES)) {
 		const columns = db.pragma(`table_info(${table})`) as Array<{ name: string }>;
 		if (canonical(columns.map(column => column.name)) !== canonical(spec.columns)) fail(`Profile transfer rejected an unsupported ${table} schema.`);
@@ -310,19 +413,33 @@ function validateSchema(db: Database.Database): void {
 	const expected = new Database(":memory:");
 	try {
 		for (const version of listMigrationVersions()) expected.exec(loadMigrationSql(version));
+		if (sourceSchema !== "canonical18") expected.exec(LEGACY_ALIAS_SQL);
+		if (sourceSchema === "legacy19-diagnostics") { expected.exec(LEGACY_DIAGNOSTIC_SQL); expected.exec(LEGACY_DIAGNOSTIC_INDEX_SQL); }
 		const schemaRows = (database: Database.Database) => database.prepare(`
 			SELECT type, name, tbl_name, sql FROM sqlite_master
 			WHERE type IN ('table','index','view','trigger')
 			AND name NOT LIKE 'sqlite_%'
 			ORDER BY type, name
+			LIMIT 256
 		`).all() as Array<{ type: string; name: string; tbl_name: string; sql: string | null }>;
-		const normalized = (items: ReturnType<typeof schemaRows>) => items.map(item => ({ ...item, sql: item.sql?.replace(/\s+/gu, " ").trim() ?? null }));
+		const normalized = (items: ReturnType<typeof schemaRows>) => items.map(item => {
+			let sql = item.sql?.replace(/\s+/gu, " ").trim() ?? null;
+			// The historical bootstrap wrote five literal DDLs with compact
+			// parentheses. These tables contain no quoted SQL expressions.
+			if (sourceSchema !== "canonical18" && item.type === "table" && LEGACY_COMPACT_DDL.has(item.name)) sql = sql?.replace(/\(\s*/gu, "(").replace(/\s*\)/gu, ")") ?? null;
+			return { ...item, sql };
+		});
 		if (canonical(normalized(schemaRows(db))) !== canonical(normalized(schemaRows(expected)))) fail("Profile transfer rejected a database schema that differs from canonical migrations 001-018.");
 	} finally { expected.close(); }
-	const versions = (db.prepare("SELECT version FROM schema_migrations ORDER BY version").all() as Array<{ version: number }>).map(row => row.version);
-	if (canonical(versions) !== canonical(REQUIRED_SCHEMA_VERSIONS)) fail("Profile transfer requires exact schema migration versions 1 through 18.");
-	const version = db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number };
-	if (version.version !== SCHEMA_VERSION) fail("Profile transfer rejected an unsupported schema version.");
+	const versions = (db.prepare("SELECT version FROM schema_migrations ORDER BY version LIMIT 20").all() as Array<{ version: number }>).map(row => row.version);
+	const expectedVersions = sourceSchema === "canonical18" ? REQUIRED_SCHEMA_VERSIONS : [...REQUIRED_SCHEMA_VERSIONS, 19];
+	if (canonical(versions) !== canonical(expectedVersions)) fail("Profile transfer rejected an unsupported schema migration vector.");
+	return sourceSchema;
+}
+
+/** Format metadata only; it does not authenticate any source row or key. */
+export function isKnownLegacy19HostProfileSource(db: Database.Database): boolean {
+	try { return validateSchema(db, true) !== "canonical18"; } catch { return false; }
 }
 
 function jsonByteLength(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8"); }
@@ -382,6 +499,18 @@ export function createHostProfileTransferSnapshot(db: Database.Database, key: Bu
 	return db.transaction(() => createHostProfileTransferSnapshotInReadTransaction(db, key, maxBytes)).deferred();
 }
 
+/** Source-only adapter. The caller owns a guarded read-only copy, never a writable profile constructor. */
+export function readHostProfileTransferSourceSnapshot(db: Database.Database, key: Buffer, maxBytes = HOST_PROFILE_TRANSFER_MAX_BYTES): { snapshot: HostProfileTransferSnapshot; legacy?: HostProfileLegacyPreservation; syntheticEnvelopeCount: number } {
+	return db.transaction(() => {
+		const sourceSchema = validateSchema(db, true);
+		const snapshot = createHostProfileTransferSnapshotInReadTransaction(db, key, maxBytes, true);
+		const preserved = preservedLegacyState(snapshot.rows);
+		const hasLegacy = sourceSchema !== "canonical18" || preserved.jobAliases > 0 || preserved.archivedDiagnosticEvents > 0;
+		return { snapshot, ...(hasLegacy ? { legacy: { sourceSchemaVersion: sourceSchema === "canonical18" ? 18 as const : 19 as const, ...preserved } } : {}),
+			syntheticEnvelopeCount: sourceSchema === "canonical18" ? 0 : preserved.jobAliases + (preserved.jobAliases + preserved.archivedDiagnosticEvents > 0 ? 1 : 0) };
+	}).deferred();
+}
+
 function retireScheduledJobs(rows: TransferTables): number {
 	let retired = 0;
 	for (const row of rows.private_runtime_state ?? []) {
@@ -401,10 +530,10 @@ function retireScheduledJobs(rows: TransferTables): number {
 	return retired;
 }
 
-function createHostProfileTransferSnapshotInReadTransaction(db: Database.Database, key: Buffer, maxBytes: number): HostProfileTransferSnapshot {
+function createHostProfileTransferSnapshotInReadTransaction(db: Database.Database, key: Buffer, maxBytes: number, allowLegacy19 = false): HostProfileTransferSnapshot {
 	verifyKey(key);
 	if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > HOST_PROFILE_TRANSFER_MAX_BYTES) fail("Profile transfer byte limit is invalid.");
-	validateSchema(db);
+	const sourceSchema = validateSchema(db, allowLegacy19);
 	const rows: TransferTables = {};
 	const counts: Record<string, number> = {};
 	let totalRows = 0;
@@ -431,6 +560,19 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 		// envelope, and array overhead before any row content is materialized.
 		conservativeBytes += rawBytes * 6 + count * 1_024;
 		if (conservativeBytes > maxBytes) fail("Profile transfer exceeds the byte limit; no records were read into the snapshot.");
+	}
+	if (sourceSchema !== "canonical18") {
+		const extras = [{ table: "memory_job_id_aliases", columns: ["alias_hash", "job_id"] },
+			...(sourceSchema === "legacy19-diagnostics" ? [{ table: "internal_error_events", columns: ["id", "severity", "source", "created_at", "payload_ciphertext", "payload_iv", "payload_auth_tag"] }] : [])];
+		for (const { table, columns } of extras) {
+			const fields = columns.map((column, index) => `COALESCE(SUM(LENGTH(CAST(${column} AS BLOB))),0) AS bytes_${index}`).join(",");
+			const aggregate = db.prepare(`SELECT COUNT(*) AS count,${fields} FROM ${table}`).get() as Record<string, number>;
+			totalRows += aggregate.count!;
+			conservativeBytes += columns.reduce((sum, _, index) => sum + aggregate[`bytes_${index}`]!, 0) * 6 + aggregate.count! * 1024;
+		}
+		// One extra encrypted namespace secret may be created in the snapshot.
+		if (++totalRows > HOST_PROFILE_TRANSFER_MAX_ROWS || conservativeBytes + 1024 > maxBytes) fail("Legacy profile transfer exceeds its row or byte limit; no records were read into the snapshot.");
+		counts.schema_migrations = SCHEMA_VERSION;
 	}
 	for (const [table, spec] of Object.entries(TABLES)) {
 		const expectedCount = tableCounts.get(table)!;
@@ -466,6 +608,14 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 				if (typeof logical !== "string" || !matchesMemoryFingerprintIndex(key, job ? "job-dedupe" : "embedding-content", values[column], logical))
 					fail(`Profile transfer found inconsistent ${table} private index metadata.`);
 				values[column] = logical;
+			}
+			if (sourceSchema !== "canonical18" && table === "memory_jobs") {
+				const raw = objectJson(String(cleartext.payload_ciphertext), "legacy memory job");
+				const job = MemoryJobSchema.parse(raw);
+				if (job.id !== values.id || job.kind !== values.kind || job.dedupeKey !== values.dedupe_key || job.maxAttempts !== values.max_attempts || job.createdAt !== values.created_at) fail("Legacy memory job identity does not match its encrypted payload.");
+				const projected = MemoryJobSchema.parse({ ...raw, status: values.status, attempts: values.attempts, runAfter: values.run_after,
+					lockedAt: values.locked_at ?? undefined, leaseUntil: values.lease_until ?? undefined, lastError: values.last_error ?? undefined, updatedAt: values.updated_at });
+				cleartext.payload_ciphertext = JSON.stringify({ ...raw, ...projected });
 			}
 			if (spec.special === "tool-executions") {
 				const payload = values.payload;
@@ -619,6 +769,9 @@ function createHostProfileTransferSnapshotInReadTransaction(db: Database.Databas
 		if (result.length !== expectedCount) fail(`Profile transfer source changed while reading ${table}.`);
 		rows[table] = result;
 	}
+	if (sourceSchema !== "canonical18") preserveLegacy19Extras(db, key, rows, counts, sourceSchema === "legacy19-diagnostics");
+	validateLogicalFingerprintUniqueness(rows);
+	preservedLegacyState(rows);
 	validateReservedEmbeddingStateRows(rows);
 	projectDeletedSourceEvidence(rows);
 	const scheduledJobsCancelled = retireScheduledJobs(rows);
@@ -678,6 +831,8 @@ function validateSnapshot(snapshot: HostProfileTransferSnapshot): void {
 		}
 	}
 	validateReservedEmbeddingStateRows(snapshot.rows);
+	validateLogicalFingerprintUniqueness(snapshot.rows);
+	preservedLegacyState(snapshot.rows);
 	if (computeHostProfileTransferSemanticHash(snapshot.rows) !== snapshot.semanticSha256) fail("Profile transfer snapshot semantic checksum does not match.");
 	if (jsonByteLength(snapshot) > HOST_PROFILE_TRANSFER_MAX_BYTES) fail("Profile transfer snapshot exceeds the byte limit.");
 }

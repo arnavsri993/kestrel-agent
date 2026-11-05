@@ -3,13 +3,13 @@ import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtem
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { createHostProfileTransferSnapshot, HOST_PROFILE_TRANSFER_POLICY, importHostProfileTransferSnapshot, type HostProfileTransferSnapshot } from "./profile-transfer.js";
+import { readHostProfileTransferSourceSnapshot, isKnownLegacy19HostProfileSource, HOST_PROFILE_TRANSFER_POLICY, importHostProfileTransferSnapshot, type HostProfileTransferSnapshot, type HostProfileLegacyPreservation } from "./profile-transfer.js";
 import { LATEST_SCHEMA_VERSION, listMigrationVersions, loadMigrationSql } from "./migrations.js";
 
 type Identity = { device: string; inode: string };
 type Source = { path: string; file: Identity; directory: Identity };
 type Destination = { path: string; directory: Identity };
-type Summary = Pick<HostProfileTransferSnapshot, "schemaVersion" | "policy" | "counts" | "excluded" | "semanticSha256">;
+type Summary = Pick<HostProfileTransferSnapshot, "schemaVersion" | "policy" | "counts" | "excluded" | "semanticSha256"> & { legacy?: HostProfileLegacyPreservation };
 
 export type HostProfileFileTransferPlan = {
 	format: "kestrel-host-core-file-transfer";
@@ -91,8 +91,8 @@ function destinationAt(path: string, ignoreOwnedReservation = false): Destinatio
 	}
 	return { path, directory: parent };
 }
-function summary(snapshot: HostProfileTransferSnapshot): Summary {
-	return { schemaVersion: snapshot.schemaVersion, policy: snapshot.policy, counts: snapshot.counts, excluded: snapshot.excluded, semanticSha256: snapshot.semanticSha256 };
+function summary(snapshot: HostProfileTransferSnapshot, legacy?: HostProfileLegacyPreservation): Summary {
+	return { schemaVersion: snapshot.schemaVersion, policy: snapshot.policy, counts: snapshot.counts, excluded: snapshot.excluded, semanticSha256: snapshot.semanticSha256, ...(legacy ? { legacy } : {}) };
 }
 const MAX_SOURCE_FILE_BYTES = 256_000_000;
 type HeldSourceFile = { path: string; fd?: number; stat?: Stats };
@@ -170,10 +170,11 @@ function rejectDeclaredNewerSchema(db: Database.Database): void {
 	const columns = db.pragma("table_info(schema_migrations)") as Array<{ name: string; type: string; pk: number }>;
 	if (!columns.some(column => column.name === "version" && column.type.toUpperCase() === "INTEGER" && column.pk === 1)) return;
 	const row = db.prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").get() as { version?: unknown } | undefined;
+	if (row?.version === 19 && isKnownLegacy19HostProfileSource(db)) return;
 	if (typeof row?.version === "number" && Number.isSafeInteger(row.version) && row.version > LATEST_SCHEMA_VERSION && row.version <= 1_000_000)
-		fail("SOURCE_SCHEMA_NEWER", `The selected profile declares schema ${row.version}; this build supports up to ${LATEST_SCHEMA_VERSION}. Review it with a compatible Kestrel build. Existing data was preserved.`);
+		fail("SOURCE_SCHEMA_NEWER", `The selected profile declares schema ${row.version}; it does not match a supported schema-${LATEST_SCHEMA_VERSION} transfer format or the recognized legacy-19 format. Review it with a compatible Kestrel build. Existing data was preserved.`);
 }
-function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { snapshot: HostProfileTransferSnapshot; authenticatedEnvelopes: number } {
+function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { snapshot: HostProfileTransferSnapshot; authenticatedEnvelopes: number; legacy?: HostProfileLegacyPreservation } {
 	let db: Database.Database | undefined;
 	let copy: ReturnType<typeof copySourceForRead> | undefined;
 	try {
@@ -185,15 +186,16 @@ function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { sna
 			// Validate canonical schema and aggregate limits before integrity scans
 			// or decrypted rows can grow with an unsupported source. Check only the
 			// first foreign-key violation instead of materializing an error list.
-			const snapshot = createHostProfileTransferSnapshot(reader, key);
+			const sourceSnapshot = readHostProfileTransferSourceSnapshot(reader, key);
+			const { snapshot } = sourceSnapshot;
 			const integrity = reader.pragma("integrity_check") as Array<{ integrity_check: string }>;
 			if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok" || reader.prepare("PRAGMA foreign_key_check").get())
 				fail("SOURCE_UNREADABLE", "The selected Core source failed integrity validation; it was preserved.");
-			let authenticatedEnvelopes = Object.values(snapshot.rows).reduce((count, rows) => count + rows.reduce((total, row) => total + Object.values(row.cleartext ?? {}).filter(value => typeof value === "string").length, 0), 0);
+			let authenticatedEnvelopes = Object.values(snapshot.rows).reduce((count, rows) => count + rows.reduce((total, row) => total + Object.values(row.cleartext ?? {}).filter(value => typeof value === "string").length, 0), 0) - sourceSnapshot.syntheticEnvelopeCount;
 			for (const row of reader.prepare("SELECT payload FROM tool_executions").iterate() as Iterable<{ payload: string }>) if (JSON.parse(row.payload)?.kestrelEncryptedTool === 1) authenticatedEnvelopes++;
 			for (const row of reader.prepare("SELECT result FROM idempotency_keys").iterate() as Iterable<{ result: string }>) if (row.result.startsWith("kestrel-encrypted-idempotency-v1:")) authenticatedEnvelopes++;
 			if (!authenticatedEnvelopes) fail("NO_AUTHENTICATED_RECORDS", "This Core source has no authenticated encrypted records. Use the separate empty-profile choice; no data was changed.");
-			return { snapshot, authenticatedEnvelopes };
+			return { snapshot, authenticatedEnvelopes, ...(sourceSnapshot.legacy ? { legacy: sourceSnapshot.legacy } : {}) };
 		}).deferred();
 		copy.verify();
 		return result;
@@ -204,8 +206,8 @@ function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { sna
 		return fail("SOURCE_UNREADABLE", "The selected Core source could not be authenticated or its schema is unsupported; it was preserved.");
 	} finally { try { db?.close(); } finally { copy?.close(); } }
 }
-function planFor(source: Source, destination: Destination, snapshot: HostProfileTransferSnapshot, authenticatedEnvelopes: number): HostProfileFileTransferPlan {
-	const value = { format: "kestrel-host-core-file-transfer" as const, version: 1 as const, source, destination, summary: summary(snapshot), authenticatedEnvelopes };
+function planFor(source: Source, destination: Destination, snapshot: HostProfileTransferSnapshot, authenticatedEnvelopes: number, legacy?: HostProfileLegacyPreservation): HostProfileFileTransferPlan {
+	const value = { format: "kestrel-host-core-file-transfer" as const, version: 1 as const, source, destination, summary: summary(snapshot, legacy), authenticatedEnvelopes };
 	return { ...value, planSha256: hash(value) };
 }
 
@@ -219,7 +221,7 @@ export function planHostProfileFileTransfer(options: { sourceDatabasePath: strin
 		const source = sourceAt(options.sourceDatabasePath), destination = destinationAt(options.destinationDatabasePath);
 		if (source.path === destination.path) fail("UNSAFE_PATH", "Core source and destination must be different.");
 		const result = readSource(source, options.sourceKey);
-		return planFor(source, destination, result.snapshot, result.authenticatedEnvelopes);
+		return planFor(source, destination, result.snapshot, result.authenticatedEnvelopes, result.legacy);
 	} catch (error) {
 		if (error instanceof HostProfileFileTransferError) throw error;
 		fail("UNSAFE_PATH", "Core transfer paths could not be inspected safely; nothing was changed.");
@@ -286,11 +288,15 @@ function validateJournal(value: unknown): asserts value is TransferJournal {
 	const plan = value.plan as HostProfileFileTransferPlan;
 	if (!exactFields(plan.source, ["path", "file", "directory"]) || typeof plan.source.path !== "string" || !validIdentity(plan.source.file) || !validIdentity(plan.source.directory) ||
 		!exactFields(plan.destination, ["path", "directory"]) || typeof plan.destination.path !== "string" || !validIdentity(plan.destination.directory) ||
-		!exactFields(plan.summary, ["schemaVersion", "policy", "counts", "excluded", "semanticSha256"]) ||
+		!exactFields(plan.summary, ["schemaVersion", "policy", "counts", "excluded", "semanticSha256", ...(plan.summary?.legacy ? ["legacy"] : [])]) ||
 		plan.summary.schemaVersion !== 18 || plan.summary.policy !== HOST_PROFILE_TRANSFER_POLICY || !/^[a-f0-9]{64}$/.test(plan.summary.semanticSha256) ||
 		!Number.isSafeInteger(plan.authenticatedEnvelopes) || plan.authenticatedEnvelopes < 1 ||
 		![plan.summary.counts, plan.summary.excluded].every(record => record && typeof record === "object" && !Array.isArray(record) && Object.keys(record).length <= 100 && Object.entries(record).every(([name, count]) => /^[a-zA-Z_]{1,64}$/.test(name) && Number.isSafeInteger(count) && Number(count) >= 0)))
 		fail("RECOVERY_METADATA_INVALID", "The interrupted Core transfer plan metadata is invalid.");
+	if (plan.summary.legacy && (!exactFields(plan.summary.legacy, ["sourceSchemaVersion", "jobAliases", "archivedDiagnosticEvents"]) ||
+		![18, 19].includes(plan.summary.legacy.sourceSchemaVersion) ||
+		![plan.summary.legacy.jobAliases, plan.summary.legacy.archivedDiagnosticEvents].every(count => Number.isSafeInteger(count) && count >= 0 && count <= 100_000)))
+		fail("RECOVERY_METADATA_INVALID", "The preserved legacy profile counts are invalid.");
 	if (!exactFields(value.staging, ["path", "directory", "file"]) || typeof value.staging.path !== "string" || !validIdentity(value.staging.directory) || !validIdentity(value.staging.file))
 		fail("RECOVERY_METADATA_INVALID", "The interrupted Core staging identity is invalid.");
 }
@@ -372,7 +378,7 @@ export function recoverInterruptedHostProfileFileTransfer(options: { destination
 		writeFileSync(lease, canonical({ format: "kestrel-core-transfer-recovery-lock", version: 1, ownerPid: process.pid, recoverySha256: reviewed.recoverySha256 })); fsyncSync(lease); syncPath(dirname(path));
 		const plan = reviewed.journal.plan;
 		const original = readSource(plan.source, options.sourceKey);
-		if (!same(planFor(plan.source, plan.destination, original.snapshot, original.authenticatedEnvelopes), plan)) fail("RECOVERY_CHANGED", "Original Core data changed after transfer review. Preserve both profiles for a new review.");
+		if (!same(planFor(plan.source, plan.destination, original.snapshot, original.authenticatedEnvelopes, original.legacy), plan)) fail("RECOVERY_CHANGED", "Original Core data changed after transfer review. Preserve both profiles for a new review.");
 		const databasePath = reviewed.target ? path : reviewed.stagedPath;
 		const imported = readSource({ path: databasePath, file: reviewed.journal.staging.file, directory: reviewed.target ? plan.destination.directory : reviewed.journal.staging.directory }, options.destinationKey, reviewed.journal.staging.file);
 		if (imported.snapshot.semanticSha256 !== plan.summary.semanticSha256) fail("RECOVERY_CHANGED", "Native Core data changed after transfer. Preserve all work for a new review.");
@@ -425,7 +431,7 @@ export function applyHostProfileFileTransfer(options: { plan: HostProfileFileTra
 		const fresh = planHostProfileFileTransfer({ sourceDatabasePath: plan.source.path, sourceKey, destinationDatabasePath: plan.destination.path });
 		if (!same(fresh, plan)) fail("SOURCE_CHANGED", "The Core source or destination changed after review. Review it again.");
 		const source = readSource(plan.source, sourceKey);
-		if (!same(planFor(plan.source, plan.destination, source.snapshot, source.authenticatedEnvelopes), plan)) fail("SOURCE_CHANGED", "The Core source changed after review. Review it again.");
+		if (!same(planFor(plan.source, plan.destination, source.snapshot, source.authenticatedEnvelopes, source.legacy), plan)) fail("SOURCE_CHANGED", "The Core source changed after review. Review it again.");
 		staging = mkdtempSync(join(dirname(plan.destination.path), ".kestrel-core-transfer-"));
 		const stagedDatabase = join(staging, "kestrel.sqlite");
 		const fd = openSync(stagedDatabase, "wx", 0o600); closeSync(fd);
@@ -448,7 +454,7 @@ export function applyHostProfileFileTransfer(options: { plan: HostProfileFileTra
 		// Refuse source changes during verification; source remains preserved even
 		// if another writer changes it after this point. Activation is separate.
 		const finalSource = readSource(plan.source, sourceKey);
-		if (!same(planFor(plan.source, plan.destination, finalSource.snapshot, finalSource.authenticatedEnvelopes), plan)) fail("SOURCE_CHANGED", "The Core source changed during transfer. Review it again.");
+		if (!same(planFor(plan.source, plan.destination, finalSource.snapshot, finalSource.authenticatedEnvelopes, finalSource.legacy), plan)) fail("SOURCE_CHANGED", "The Core source changed during transfer. Review it again.");
 		if (!same(destinationAt(plan.destination.path, true), plan.destination)) fail("DESTINATION_CHANGED", "The Core destination changed during transfer.");
 		linkSync(stagedDatabase, plan.destination.path); published = true;
 		unlinkSync(stagedDatabase); syncPath(dirname(plan.destination.path));

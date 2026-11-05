@@ -48,6 +48,9 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 	it("rejects malformed interrupted review data", () => {
 		expect(fixture(temporary, "--review-validation")).toEqual({ valid: true, badCount: true, badPath: true, badDigest: true });
 	});
+	it("bounds the optional legacy preservation review counts", () => {
+		expect(fixture(temporary, "--legacy-review-validation")).toEqual({ valid: true, badBool: true, badLimit: true, badVersion: true, badFields: true });
+	});
 	it.each(["source", "destination", "key", "journal", "sidecar"])("invalidates a recovery witness when %s changes", target => {
 		const sourceRoot = sourceProfile().root, destinationRoot = sourceProfile().root;
 		const sourceDb = join(sourceRoot, "database/kestrel.sqlite"), destinationDb = join(destinationRoot, "database/kestrel.sqlite");

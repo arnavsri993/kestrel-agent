@@ -78,7 +78,7 @@ it("identifies a declared newer schema without decrypting, changing the source o
 	db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(LATEST_SCHEMA_VERSION + 1, timestamp); db.close();
 	const before = readFileSync(value.sourceDatabasePath);
 	expect(code(() => planHostProfileFileTransfer({ ...value, sourceKey: key() }))).toBe("SOURCE_SCHEMA_NEWER");
-	expect(() => value.plan()).toThrow(`declares schema ${LATEST_SCHEMA_VERSION + 1}; this build supports up to ${LATEST_SCHEMA_VERSION}`);
+	expect(() => value.plan()).toThrow(`declares schema ${LATEST_SCHEMA_VERSION + 1}; it does not match a supported schema-${LATEST_SCHEMA_VERSION} transfer format`);
 	expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
 	expect(readdirSync(dirname(value.destinationDatabasePath))).toEqual([]);
 });

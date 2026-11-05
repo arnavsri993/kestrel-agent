@@ -14,6 +14,7 @@ import {
 export { EMBEDDING_AUTHORITY_STATE_PREFIX, parseReservedEmbeddingAuthorityState } from "./memory-embedding-authority.js";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { memoryFingerprintIndex, matchesMemoryFingerprintIndex } from "./memory-fingerprint-index.js";
+import { LEGACY_PROFILE_SECRET_KEY, legacyProfileStateKey, parseLegacyProfileSecret, parseLegacyJobAlias, legacyAliasMatchesJob } from "./legacy-profile-state.js";
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -3358,7 +3359,21 @@ export class KestrelDatabase {
 		const row = this.db
 			.prepare("SELECT * FROM memory_jobs WHERE id = ?")
 			.get(id) as MemorySubstrateRow | undefined;
-		return row ? this.decodeMemoryJob(row) : undefined;
+		if (row) return this.decodeMemoryJob(row);
+		if (!/^memory-job-[a-f0-9]{40}$/.test(id)) return undefined;
+		const storedSecret = this.getPrivateState<unknown>(LEGACY_PROFILE_SECRET_KEY);
+		if (storedSecret === undefined) return undefined;
+		const secret = parseLegacyProfileSecret(storedSecret);
+		try {
+			const key = legacyProfileStateKey(secret, "alias", id), value = this.getPrivateState<unknown>(key);
+			if (value === undefined) return undefined;
+			const alias = parseLegacyJobAlias(key, value, secret);
+			const target = this.db.prepare("SELECT * FROM memory_jobs WHERE id=?").get(alias.jobId) as MemorySubstrateRow | undefined;
+			if (!target) return undefined;
+			const job = this.decodeMemoryJob(target);
+			// A stale archive must never redirect a reused id to another job.
+			return legacyAliasMatchesJob(alias, job) ? job : undefined;
+		} finally { secret.fill(0); }
 	}
 
 	getMemoryJobByDedupeKey(dedupeKey: string): MemoryJob | undefined {

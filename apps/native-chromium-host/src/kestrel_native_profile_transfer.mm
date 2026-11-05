@@ -100,9 +100,11 @@ NSString* Profile(NSString* root, NSString* relative) {
 void Alert(NSString* title, NSString* message) { NSAlert* alert = [[NSAlert alloc] init]; alert.messageText = title; alert.informativeText = message; [alert addButtonWithTitle:@"OK"]; [alert runModal]; }
 NSString* CountSummary(NSDictionary* preview) {
   NSDictionary* counts = preview[@"counts"], *excluded = preview[@"excluded"];
-  return [NSString stringWithFormat:@"Conversations: %@\nMessages: %@\nMemory records: %@\nTimeline entries: %@\n\nActive tasks to cancel: %@\nApprovals to clear: %@\nScheduled jobs to cancel: %@\n\nThis step transfers conversations, memory and task history. Browser data and saved credentials are not included. Connect providers again if needed after restart. Your existing profiles stay available.",
+  NSString* legacy = @"";
+  if ([preview[@"legacy"] isKindOfClass:NSDictionary.class]) legacy = [NSString stringWithFormat:@"\n\nOlder job references preserved: %@\nEncrypted error records archived: %@",preview[@"legacy"][@"jobAliases"] ?: @0,preview[@"legacy"][@"archivedDiagnosticEvents"] ?: @0];
+  return [NSString stringWithFormat:@"Conversations: %@\nMessages: %@\nMemory records: %@\nTimeline entries: %@\n\nActive tasks to cancel: %@\nApprovals to clear: %@\nScheduled jobs to cancel: %@%@\n\nThis step transfers conversations, memory and task history. Browser data and saved credentials are not included. Connect providers again if needed after restart. Your existing profiles stay available.",
       counts[@"runtime_sessions"] ?: @0, counts[@"runtime_messages"] ?: @0, counts[@"memories"] ?: @0, counts[@"memory_timeline_events"] ?: @0,
-      excluded[@"activeAgentRunsCancelled"] ?: @0, excluded[@"unexecutedApprovalsRetired"] ?: @0, excluded[@"scheduledJobsCancelled"] ?: @0];
+      excluded[@"activeAgentRunsCancelled"] ?: @0, excluded[@"unexecutedApprovalsRetired"] ?: @0, excluded[@"scheduledJobsCancelled"] ?: @0,legacy];
 }
 bool SafeRecoveryPath(id value) {
   if (![value isKindOfClass:NSString.class]) return false;
@@ -122,6 +124,13 @@ bool SafeRecoveryCounts(id value) {
   }
   return true;
 }
+bool SafeLegacyCounts(id value) {
+  if (!value) return true;
+  return SafeRecoveryCounts(value) && [value count] == 3 &&
+      ([value[@"sourceSchemaVersion"] isEqual:@18] || [value[@"sourceSchemaVersion"] isEqual:@19]) &&
+      value[@"jobAliases"] && value[@"archivedDiagnosticEvents"] &&
+      [value[@"jobAliases"] unsignedLongLongValue] <= 100000 && [value[@"archivedDiagnosticEvents"] unsignedLongLongValue] <= 100000;
+}
 bool ValidInterruptedReview(NSDictionary* response, NSString* destination) {
   if (![response isKindOfClass:NSDictionary.class] || ![response[@"ok"] isEqual:@YES] ||
       ![response[@"reviewId"] isKindOfClass:NSString.class] || ![[NSUUID alloc] initWithUUIDString:response[@"reviewId"]] ||
@@ -132,7 +141,7 @@ bool ValidInterruptedReview(NSDictionary* response, NSString* destination) {
       [preview[@"destinationDatabasePath"] isEqual:destination] && SafeRecoveryPath(preview[@"sourceDatabasePath"]) &&
       [digest isKindOfClass:NSString.class] && digest.length == 64 &&
       [digest rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location == NSNotFound &&
-      SafeRecoveryCounts(preview[@"counts"]) && SafeRecoveryCounts(preview[@"excluded"]);
+      SafeRecoveryCounts(preview[@"counts"]) && SafeRecoveryCounts(preview[@"excluded"]) && SafeLegacyCounts(preview[@"legacy"]);
 }
 NSDictionary* RecoveryFileWitness(NSString* path, bool required) {
   if (!SafeRecoveryPath(path) || !PrivateDirectory(path.stringByDeletingLastPathComponent)) return nil;
@@ -417,7 +426,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 - (void)showPlan:(NSDictionary*)planned {
   if (![planned[@"ok"] boolValue] || ![planned[@"planId"] isKindOfClass:NSString.class] || ![planned[@"preview"] isKindOfClass:NSDictionary.class] ||
       ![planned[@"preview"][@"counts"] isKindOfClass:NSDictionary.class] || ![planned[@"preview"][@"excluded"] isKindOfClass:NSDictionary.class] ||
-      ![planned[@"preview"][@"planSha256"] isKindOfClass:NSString.class]) {
+      ![planned[@"preview"][@"planSha256"] isKindOfClass:NSString.class] || !SafeLegacyCounts(planned[@"preview"][@"legacy"])) {
     if ([self.pipe stop]) self.pipe = nil;
     self.busy = NO;
     NSString* detail = [planned[@"error"][@"message"] isKindOfClass:NSString.class] ? planned[@"error"][@"message"] : @"The selected profile could not be unlocked or reviewed. Existing data was preserved.";

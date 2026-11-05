@@ -5,19 +5,21 @@ import { dirname, join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
 import { afterEach, expect, it, vi } from "vitest";
 import { HostProfileTransferWorkerState } from "./host-profile-transfer-worker-state";
+import { seedNativeLegacy19Source } from "../../../packages/database/src/legacy-profile-source-fixture.js";
 
 const roots: string[] = [], keys: Buffer[] = [], workers: HostProfileTransferWorkerState[] = [];
 afterEach(() => { for (const worker of workers.splice(0)) worker.close(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); for (const key of keys.splice(0)) key.fill(0); });
 function worker(now?: () => number) { const value = new HostProfileTransferWorkerState(now); workers.push(value); return value; }
 const request = (method: string, fields = {}) => ({ requestId: randomUUID(), method, ...fields });
-function fixture() {
+function fixture(legacy19 = false) {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "kestrel-core-worker-state-"))); roots.push(root);
 	const sourceDatabasePath = join(root, "source", "kestrel.sqlite"), destinationDatabasePath = join(root, "target", "kestrel.sqlite");
 	mkdirSync(dirname(sourceDatabasePath), { mode: 0o700 }); mkdirSync(dirname(destinationDatabasePath), { mode: 0o700 });
 	const sourceKey = randomBytes(32), destinationKey = randomBytes(32); keys.push(sourceKey, destinationKey);
-	const db = new KestrelDatabase(sourceDatabasePath, sourceKey); db.setPrivateState("generated-proof", { value: "PRIVATE_WORKER_FIXTURE_ONLY" }); db.close();
+	const generated = legacy19 ? seedNativeLegacy19Source(sourceDatabasePath, sourceKey, { compactDdl: true }) : undefined;
+	if (!legacy19) { const db = new KestrelDatabase(sourceDatabasePath, sourceKey); db.setPrivateState("generated-proof", { value: "PRIVATE_WORKER_FIXTURE_ONLY" }); db.close(); }
 	const plan = (state: HostProfileTransferWorkerState) => state.handle(request("plan", { sourceDatabasePath, destinationDatabasePath, sourceKeyBase64: sourceKey.toString("base64") }));
-	return { sourceDatabasePath, destinationDatabasePath, sourceKey, destinationKey, plan,
+	return { sourceDatabasePath, destinationDatabasePath, sourceKey, destinationKey, generated, plan,
 		apply: (state: HostProfileTransferWorkerState, preview: Record<string, unknown>, approved = true) => state.handle(request("apply", { planId: preview.planId, acceptedPlanSha256: (preview.preview as { planSha256: string }).planSha256, approved, destinationKeyBase64: destinationKey.toString("base64") })) };
 }
 
@@ -31,6 +33,24 @@ it("keeps preview content-free and applies once before read-only recovery", () =
 	expect(state.handle(request("verify-recovery", { recoveryId: applied.recoveryId }))).toMatchObject({ ok: true, recovery: { originalReadable: true, destinationReadable: true } });
 	expect(state.handle(request("discard-recovery", { recoveryId: applied.recoveryId }))).toMatchObject({ ok: true });
 	expect(state.handle(request("verify-recovery", { recoveryId: applied.recoveryId }))).toMatchObject({ ok: false, error: { code: "RECOVERY_EXPIRED" } });
+	expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
+});
+
+it("reviews legacy preservation counts and retains them across protected worker recovery", () => {
+	const first = worker(), value = fixture(true), before = readFileSync(value.sourceDatabasePath), planned = value.plan(first);
+	expect(planned).toMatchObject({ ok: true, preview: { legacy: { sourceSchemaVersion: 19, jobAliases: 1, archivedDiagnosticEvents: 1 } } });
+	for (const secret of [value.generated!.diagnostic, value.generated!.alias, value.generated!.job.dedupeKey, value.sourceKey.toString("base64")]) expect(JSON.stringify(planned)).not.toContain(secret);
+	const applied = value.apply(first, planned); expect(applied.ok).toBe(true);
+	expect(stateVerify(first, applied)).toMatchObject({ ok: true }); first.close();
+	const check = vi.spyOn(process, "kill").mockImplementation((() => { throw Object.assign(new Error("generated stopped owner"), { code: "ESRCH" }); }) as typeof process.kill);
+	try {
+		const second = worker(), reviewed = second.handle(request("inspect-interrupted", { destinationDatabasePath: value.destinationDatabasePath }));
+		expect(reviewed).toMatchObject({ ok: true, preview: { legacy: { sourceSchemaVersion: 19, jobAliases: 1, archivedDiagnosticEvents: 1 } } });
+		const recovered = second.handle(request("recover-interrupted", { reviewId: reviewed.reviewId,
+			acceptedRecoverySha256: (reviewed.preview as { recoverySha256: string }).recoverySha256, approved: true,
+			sourceKeyBase64: value.sourceKey.toString("base64"), destinationKeyBase64: value.destinationKey.toString("base64") }));
+		expect(recovered.ok).toBe(true); expect(stateVerify(second, recovered)).toMatchObject({ ok: true });
+	} finally { check.mockRestore(); }
 	expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
 });
 

@@ -75,5 +75,6 @@ it("refuses ambiguous mixed job identities without replacing either retry budget
 	const before = db.db.serialize();
 	expect(() => db.getMemoryJobByDedupeKey(job().dedupeKey)).toThrow(/ambiguous/);
 	expect(() => db.queueMemoryJob(job())).toThrow(/ambiguous/);
+	expect(() => db.exportHostProfileTransferSnapshot()).toThrow(/ambiguous logical fingerprint/);
 	expect(db.db.serialize()).toEqual(before);
 });

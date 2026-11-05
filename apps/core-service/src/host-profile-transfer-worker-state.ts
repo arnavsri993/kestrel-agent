@@ -51,7 +51,7 @@ export class HostProfileTransferWorkerState {
 				this.interrupted = { id: randomUUID(), review, expiresAt: this.now() + PLAN_TTL };
 				return { requestId, ok: true, reviewId: this.interrupted.id, expiresAt: this.interrupted.expiresAt,
 					preview: { state: review.state, sourceDatabasePath: review.plan.source.path, destinationDatabasePath: review.destinationDatabasePath,
-						counts: review.plan.summary.counts, excluded: review.plan.summary.excluded, recoverySha256: review.recoverySha256 } };
+						counts: review.plan.summary.counts, excluded: review.plan.summary.excluded, ...(review.plan.summary.legacy ? { legacy: review.plan.summary.legacy } : {}), recoverySha256: review.recoverySha256 } };
 			}
 			if (request.method === "recover-interrupted") {
 				fields(request, ["reviewId", "acceptedRecoverySha256", "approved", "sourceKeyBase64", "destinationKeyBase64"]);
@@ -76,7 +76,7 @@ export class HostProfileTransferWorkerState {
 					this.pending = { id: randomUUID(), plan, sourceKey, expiresAt: this.now() + PLAN_TTL };
 					return { requestId, ok: true, planId: this.pending.id, expiresAt: this.pending.expiresAt,
 						preview: { sourceDatabasePath: plan.source.path, destinationDatabasePath: plan.destination.path, counts: plan.summary.counts,
-							excluded: plan.summary.excluded, authenticatedEnvelopes: plan.authenticatedEnvelopes, planSha256: plan.planSha256 } };
+							excluded: plan.summary.excluded, ...(plan.summary.legacy ? { legacy: plan.summary.legacy } : {}), authenticatedEnvelopes: plan.authenticatedEnvelopes, planSha256: plan.planSha256 } };
 				} catch (error) { sourceKey.fill(0); throw error; }
 			}
 			if (request.method === "apply") {
