@@ -139,13 +139,14 @@ export async function launchChromiumHost(options: {
     });
     tabs = browserTabsManager;
     const state = async () => {
-      const messages = await request({ type: "runtime-list-messages", sessionId });
+      const selectedSessionId = sessionId;
+      const messages = await request({ type: "runtime-list-messages", sessionId: selectedSessionId });
       const providers = await request({ type: "runtime-list-providers" });
       const browserTabs = await browserTabsManager.snapshot();
       return {
-        sessionId, sessions, messages: messages.messages ?? [],
+        sessionId: selectedSessionId, sessions: sessions.map(session => ({ ...session })), messages: messages.messages ?? [],
         providers: providers.providers?.filter((provider) => provider.id !== "auto").map((provider) => provider.id) ?? [],
-        approval: approvals.get(sessionId) ?? null,
+        approval: approvals.get(selectedSessionId) ?? null,
         model: options.model ?? "auto", busy: !!activeStream, tabs: browserTabs,
       };
     };
