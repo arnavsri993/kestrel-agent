@@ -4,10 +4,14 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { launchCoreTransferFixture, writeCoreTransferCrashPreload, type TransferCrashPoint } from "../../../scripts/native-core-transfer-crash-fixture.js";
 import { KestrelDatabase } from "./index";
 import { HostProfileFileTransferError, inspectInterruptedHostProfileFileTransfer, recoverInterruptedHostProfileFileTransfer, verifyHostProfileFileTransferRecovery } from "./host-profile-file-transfer";
+
+// Each case starts an actual worker and crosses durable filesystem boundaries.
+// Hosted macOS startup/IO exceeded the ordinary five-second unit-test budget.
+vi.setConfig({ testTimeout: 20_000 });
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const corePackage = join(repository, "apps/core-service/package.json");

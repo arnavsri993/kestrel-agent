@@ -6,6 +6,10 @@ import { createEncryptionKey } from "@kestrel/encryption";
 import { KestrelDatabase } from "./index";
 import { applyHostProfileFileTransfer, HostProfileFileTransferError, planHostProfileFileTransfer, verifyHostProfileFileTransferRecovery } from "./host-profile-file-transfer";
 
+// These cases perform durable SQLite copies and fsyncs. The hosted macOS run
+// exceeded Vitest's five-second default; keep this IO budget local to the file.
+vi.setConfig({ testTimeout: 20_000 });
+
 const fault = vi.hoisted(() => ({ mode: "", syncs: 0, linked: false, afterStageSync: undefined as (() => void) | undefined }));
 vi.mock("node:fs", async importOriginal => {
 	const fs = await importOriginal<typeof import("node:fs")>();
