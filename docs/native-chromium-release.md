@@ -7,91 +7,99 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
-## Current checkpoint — 2026-11-04
+## Current checkpoint — 2026-11-05
 
-The latest runtime follow-up is source `9726ab19`, exact ad-hoc bundle
-`0a896c09680ce4c16a6a7375b3aa75180975846018d8f4bde844c80a64a18eaf`.
-Workspace types and **2,910 unit tests in 319 files** pass, with two existing
-ownership-mutation skips. The exact bundle passes **six** large-profile phases
-and **29** real bundled-worker
-recovery phases across canonical schema 18, recognized historical schema 19 and
-schema-18 journals created by the previous `0f631a24...` binary. These checks
-cover fresh authentication after process death, independent destination indexes,
-terminal retry budgets, legacy alias lookup, encrypted diagnostic preservation,
-live-owner refusal, incomplete-stage retention and unchanged sources. Both
-artifact hashes match before and after the tests.
+Runtime source `e4eb51bf`, with test-only follow-up `173e4d9f`, builds the ad-hoc
+native candidate
+`752af684ffaafbb6a5ce697ae8c07b33bcd04179071ffee46de62466cb3d3e37`.
+Workspace types and **2,938 unit tests in 321 files** pass, with two existing
+ownership-mutation skips. The full controlled run used `--maxWorkers=2` and took
+91.32 seconds. The preceding concurrent build/types/unit attempt had 17 timeouts,
+including independent compiler and process-spawn timeouts; its failed log remains
+preserved. No assertion, global timeout, subprocess budget or skip was relaxed.
 
-Selected-file transfer has a separate fixed budget: 256 MiB serialized content,
-250,000 source rows, 128 MiB raw SQL values, 8 MiB per raw row and 32 MiB per
-serialized row. Raw aggregate bounds run before decryption; serialized accounting
-runs before appending each record. The semantic hash streams the same v1 JSON
-bytes, and import plus destination readback use the same file budget. Ordinary
-in-memory snapshots retain their 64 MiB/100,000-row limit, and no renderer/Core
-frame increases. Native transfer workers use a 1,536 MiB V8 heap limit.
+The exact bundle passes **ten** large-profile phases, **29** bundled-worker
+crash/recovery phases and **eight** imported-profile Core/context/provider phases.
+Current and previous-binary candidate digests match before and after. The eight
+Core phases use the real bundled Node owner with simulated picker responses;
+they do not prove an on-screen Cocoa dialog.
 
-The generated large case preserves all 20 independently verified 4 MiB private
-records, historical configuration audits, aliases, diagnostics and terminal
-retry budgets while discarding 116,500 inherited idempotency claims. Transfer
-and independent-key recovery took 6,962 ms; peak sampled worker RSS across the
-run was 499.84 MiB. Negative cases refuse ambiguous job identities and JSON
-expansion beyond the file budget, leaving source hashes unchanged and destination
-directories empty. This bounded stress test is now included in macOS CI.
+Recognized historical schema-19 sources can now preserve conflicting legacy and
+keyed job identities. Both authenticated original JSON and the observed SQL state
+are retained separately in encrypted, non-operative records. Validation permits
+only the known SQL mutable fields to differ and preserves unknown fields,
+payloads and lease tokens. No runnable representative or retry budget is chosen.
+The native transfer review reports encrypted histories and paused identities;
+normal canonical-18 ambiguous snapshots still refuse transfer. Neither old
+completion callbacks nor attempts to reuse either ID or logical identity can
+restart that work. Unrelated jobs remain usable after restart and rekey.
 
-A source-only adapter now recognizes the exact historical alias-table format,
-with its optional encrypted error table and five known compact bootstrap DDLs.
-It authenticates old alias hashes against their recoverable preimages, preserves
-references as encrypted private state under a separate archive secret and keeps
-references inert after target deletion or identity reuse. Diagnostic text is
-retained in encrypted archive records. Counts appear in the native review and
-survive worker/journal recovery. The destination remains canonical schema 18;
-no original schema is rewritten and no startup backfill runs. Generation,
-authority, deletion fences, terminal budgets and one-use consent remain covered.
-Transfer parsing also requires the full source GCM authentication tag, rejects
-ambiguous normalized fingerprints and bounds schema enumeration. The known
-historical `default_migrated` configuration audit action is accepted without
-changing its content or enabling a configuration. Unsupported actions and
-mismatched SQL metadata remain rejected.
+The archive graph has an encrypted inventory manifest, strict bidirectional
+references and source-separated opaque keys. Startup and external SQLite changes
+validate the complete graph; normal writes use a validated cache. Public private-
+state setters cannot replace the conflict records, manifest or secret. Missing
+nodes, or removal of all fence rows while the manifest remains, refuse startup.
+Archive byte/row aggregates are bounded before decryption, and operative jobs
+are checked as a stream with a per-row bound.
 
-The authorized real-profile read-only preview now fits the raw file budgets.
-A source-specific native helper accepted only the already-reviewed development
-key envelope and passed its key through anonymous local pipes to the exact
-bundled worker. It made no Keychain lookup and exposed no key or record content
-to logs, argv, environment, files or tool output. The production guarded copy
-path opened only a private encrypted-byte copy in SQLite. All source/key metadata
-witnesses and the candidate digest remained unchanged; temporary copies and
-review state were removed. No apply, activation or destination database occurred.
+Explicit owner/source deletion removes the matching archived payloads, identity
+preimages and stale aliases while retaining opaque pause markers. A partial
+purge preserves an unrelated member of the same conflict. The review distinguishes
+retained histories from previously deleted histories. Tests cover reexport,
+independent rekey, malformed graph/import refusal, external changes, identity
+reuse, stale completions, source/owner purge, partial purge and oversized records.
+The native count validation and disclosure text are compiled and exercised;
+that updated dialog has not been observed in a desktop window.
 
-That preview still refuses the real source because saved memory jobs have
-ambiguous logical identities. The worker now returns the static
-`SOURCE_MEMORY_CONFLICT` result without identifying jobs or choosing a retry
-budget. No record is dropped, merged or revived. Full source validation and
-real-data acceptance remain incomplete; a separately reviewed conflict recovery
-path is needed. The new artifact was neither launched as a desktop window nor
-installed. The user-used `c7015edb...` native window remains unchanged, and the
-updated review UI has not been observed live.
+Selected-file transfer retains its fixed 256 MiB serialized/250,000-row budget,
+128 MiB raw aggregate, 8 MiB raw-row and 32 MiB serialized-row bounds. Ordinary
+snapshots remain limited to 64 MiB/100,000 rows, with unchanged renderer/Core
+frames. File workers have a 1,536 MiB V8 heap limit. The generated large case
+preserves every 4 MiB record in an 80 MiB logical dataset, historical audits,
+aliases, diagnostics and terminal budgets while excluding inherited claims.
+Transfer plus independent-key recovery took 6,827 ms; peak sampled worker RSS
+was 496.14 MiB. Refusal cases preserve source bytes and leave no destination.
+The same worker also transfers purged pause markers under a third database key.
 
-Current receipts are `.tmp/native-large-profile-compat-bulk-evidence/receipt.json`
-and `.tmp/native-large-profile-compat-recovery-evidence/receipt.json`; the private
-read-only result is `.tmp/native-real-large-profile-compat-readonly-result.json`.
+The real-profile read-only preview now **authenticates successfully**. It used the
+already-selected source, the reviewed development envelope and the production
+native decoder through anonymous local key pipes. Only a guarded private
+copy was opened in SQLite; there was no Keychain lookup, key/content output,
+apply, activation or destination database. Source/key metadata and candidate
+hashes remained unchanged, the plan was cancelled, and temporary review files
+were removed. The preview took 2,156 ms and sampled 410.13 MiB peak worker RSS.
+Actual private counts remain in the local permission-600 receipt. This proves
+read-only compatibility, not real-profile transfer, activation or rollback.
 
-The predecessor privacy batch at `214ab34d`, bundle
-`0f631a241a9e00e7a44a3bf5beb0394abdb6cd37879ee8137951bf13eeb97530`,
-passed 2,884 unit tests, 133 focused checks, the full headless Chromium approval
-workflow, eleven bundled recovery phases and encrypted provider-storage checks.
-It fixes conversation switching, independently rekeys job/embedding indexes and
-keeps custom app output paths separate from build intermediates. Its native
-profile-key failure notice compiles; the actual failure UI and protected-profile
-continuity remain unverified.
+Current receipts:
 
-Published predecessor `eaf4370a` passed desktop/package CI; Core CI failed five
-tests at the default five-second timeout. The two affected recovery test files
-now have a local 20-second budget; assertions, worker timeouts and global test
-settings are unchanged. The full local suite above passes. Older `ccdd9735`
-passed both macOS CI jobs, required CodeQL and all four language analyses.
-New-head CI remains separate. The older full `pnpm verify`
-Electron sidebar failure below remains separate; no current aggregate-green
-claim is made. Current-bundle Store, real-account, native-window and canonical
-cutover proof is still missing.
+| Evidence | Observed result |
+| --- | --- |
+| `.tmp/native-job-conflict-bulk-evidence/receipt.json` | Ten large transfer, conflict preservation, purge/rekey and refusal phases |
+| `.tmp/native-job-conflict-recovery-evidence/receipt.json` | 29 phases across current canonical/legacy sources and journals created by the genuine previous `0f631a24...` binary |
+| `.tmp/native-job-conflict-runtime-evidence/receipt.json` | Eight actual bundled Core phases: imported conversation decryption, normal provider/context work, both budgets retained and three identity guards |
+| `.tmp/native-real-job-conflict-readonly-result.json` | Private real-source preview authenticated; source preserved; no apply/activation |
+
+Published predecessor `8e812bc0` passed desktop/package CI, both unit-suite steps,
+required CodeQL and all four language analyses. Core CI later failed the native
+provider canary's shared completion counter. The refused attachment request did
+return its expected ownership error, but the counter could also include other
+provider work. The canary now uses a separate temporary route, proves that route
+with a positive control and checks zero HTTP dispatch plus zero persisted runs
+or messages for the refused request. A real independent completion during the
+refusal is covered separately. Production attachment admission was unchanged.
+The generated CI evidence upload now enables hidden paths with a bounded receipt,
+image and diagnostic allowlist, excluding profile trees and keys. New-head CI
+remains separate from these local results.
+
+The user-used native window remains on unchanged `c7015edb...`; the new candidate
+was not launched as a desktop window or installed. `/Applications/Kestrel.app`
+remains Electron. Real-source apply/activation/rollback, broader browser/assets
+and real-account acceptance, an observed published Store version upgrade,
+protected-profile continuity, Developer ID signing/notarization and canonical
+cutover remain unfinished. The user has no Apple Developer account yet, and the
+repository has no configured secret names for a remote signing path. Jules is
+still unconfigured. This is not a release-ready claim.
 
 ### Preceding diagnostic and Home bundles
 
@@ -146,7 +154,7 @@ This checkpoint is not a release-ready claim.
 corepack pnpm dev:desktop:chromium
 corepack pnpm build:native-chromium-host
 corepack pnpm test:chromium-ui
-KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-large-profile-compat-host/Kestrel.app" \
+KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-job-conflict-host/Kestrel.app" \
   corepack pnpm test:native-large-core-transfer
 KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
   corepack pnpm test:chromium-native-auth
