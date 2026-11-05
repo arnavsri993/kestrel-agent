@@ -92,9 +92,12 @@ export async function buildNativeChromiumHost({ output } = {}) {
 		"build",
 		releaseBuild ? "entitlements.mac.release.plist" : "entitlements.mac.dev.plist",
 	);
-	const runtime = await prepareNativeChromiumRuntime();
+	// --output selects the final app only. These imported builders also have
+	// standalone CLIs; pass their own paths so they cannot consume the host's
+	// flag and overwrite one another's runtime and renderer artifacts.
+	const runtime = await prepareNativeChromiumRuntime({ output: join(temporaryRoot, "native-chromium-runtime") });
 	const wrapper = await buildNativeChromiumWrapper({ runtime });
-	const renderer = await buildNativeChromiumRenderer();
+	const renderer = await buildNativeChromiumRenderer({ output: join(temporaryRoot, "native-chromium-renderer") });
 	const extensions = await buildNativeExtensionService();
 	// This is the same Electron-free Node Core runtime packaged in the current
 	// desktop app. The native host never executes Electron's utility process.
