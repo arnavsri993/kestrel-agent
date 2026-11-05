@@ -4,7 +4,7 @@ import { encryptText } from "@kestrel/encryption";
 import { KestrelDatabase } from "./index.js";
 
 // Generated-only historical format fixture. No existing profile or key lookup.
-export function seedNativeLegacy19Source(path: string, key: Buffer, options: { diagnostics?: boolean; mutableJobMetadata?: boolean; compactDdl?: boolean;
+export function seedNativeLegacy19Source(path: string, key: Buffer, options: { diagnostics?: boolean; mutableJobMetadata?: boolean; compactDdl?: boolean; configurationAudit?: boolean;
 	largePrivateRecords?: { count: number; bytes: number }; idempotencyClaims?: number } = {}) {
 	const time = "2026-11-04T12:00:00.000Z", dedupeKey = "GENERATED_LEGACY19_PRIVATE_DEDUPE";
 	const oldMac = (purpose: string, value: string) => createHmac("sha256", key).update(`kestrel-memory-index-v1:${purpose}:`).update(value).digest("hex");
@@ -19,6 +19,7 @@ export function seedNativeLegacy19Source(path: string, key: Buffer, options: { d
 		canonical.saveRuntimeSession({ id: "generated-legacy19-session", title: "Generated legacy conversation", allowedTools: [], status: "active", checkpoints: [], createdAt: time, updatedAt: time });
 		canonical.saveRuntimeMessage({ id: "generated-legacy19-message", sessionId: "generated-legacy19-session", role: "user", content: privateMessage, createdAt: time });
 		canonical.queueMemoryJob(job); canonical.upsertMemoryEmbedding(embedding);
+		if (options.configurationAudit) canonical.saveAgentConfigurationAuditEvent({ id: "config-audit-00000000-0000-4000-8000-000000000019", action: "default_migrated", actor: "system", detail: "Generated historical default migration audit", evidence: [], createdAt: time });
 		if (options.largePrivateRecords) {
 			const { count, bytes } = options.largePrivateRecords;
 			if (!Number.isSafeInteger(count) || count < 1 || count > 30 || !Number.isSafeInteger(bytes) || bytes < 1 || bytes > 4 * 1024 * 1024) throw new Error("Invalid generated large fixture.");

@@ -53,7 +53,7 @@ async function stop() {
 }
 try {
 	const value = await fixture(), recordCount = 20, recordBytes = 4 * 1024 * 1024, claims = 116_500;
-	const generated = seedNativeLegacy19Source(value.source, value.sourceKey, { compactDdl: true, largePrivateRecords: { count: recordCount, bytes: recordBytes }, idempotencyClaims: claims });
+	const generated = seedNativeLegacy19Source(value.source, value.sourceKey, { compactDdl: true, configurationAudit: true, largePrivateRecords: { count: recordCount, bytes: recordBytes }, idempotencyClaims: claims });
 	const expectedTextHash = hash("GENERATED_PRIVATE_LARGE_TRANSFER_TEXT_".padEnd(recordBytes, "x")), sourceBefore = await fileHash(value.source);
 	// The ordinary snapshot API keeps its original 64 MiB / 100k budget.
 	// Open the generated historical file with SQLite only, never a writable constructor.
@@ -80,8 +80,24 @@ try {
 		for (let index = 0; index < recordCount; index++) { const record = target.getPrivateState(`generated-large-${index}`); assert.equal(record.index, index); assert.equal(hash(record.text), expectedTextHash); }
 		assert.equal(target.getMemoryJob(generated.alias).attempts, 3); assert.equal(target.getMemoryJob(generated.alias).maxAttempts, 3);
 		assert.equal(target.db.prepare("SELECT COUNT(*) AS count FROM idempotency_claims").get().count, 0);
+		assert.equal(target.listAgentConfigurationAuditEvents()[0]?.action, "default_migrated");
 	} finally { target.close(); }
 	phase("all-large-private-records-and-terminal-budget-preserved-without-inherited-claims");
+	await stop();
+	const conflict = await fixture(), conflictSource = new KestrelDatabase(conflict.source, conflict.sourceKey), conflictTime = "2026-11-04T12:00:00.000Z";
+	try {
+		const original = { id: "generated-conflict-original", kind: "cleanup", dedupeKey: "GENERATED_PRIVATE_CONFLICT_DEDUPE", status: "failed", payload: {}, attempts: 3, maxAttempts: 3, runAfter: conflictTime, createdAt: conflictTime, updatedAt: conflictTime };
+		conflictSource.queueMemoryJob(original);
+		const duplicate = { ...original, id: "generated-conflict-duplicate", status: "pending", attempts: 0 }, encrypted = encryptText(JSON.stringify(duplicate), conflict.sourceKey);
+		conflictSource.db.prepare("INSERT INTO memory_jobs SELECT ?,kind,?,?,?,max_attempts,run_after,locked_at,lease_until,last_error,created_at,updated_at,?,?,? FROM memory_jobs WHERE id=?")
+			.run(duplicate.id, duplicate.dedupeKey, duplicate.status, duplicate.attempts, encrypted.ciphertext, encrypted.iv, encrypted.authTag, original.id);
+	} finally { conflictSource.close(); }
+	const conflictBefore = await fileHash(conflict.source); start(conflict.root);
+	const conflictResult = await worker.request("plan", { sourceDatabasePath: conflict.source, destinationDatabasePath: conflict.target, sourceKeyBase64: conflict.sourceKey.toString("base64") });
+	assert.equal(conflictResult.ok, false); assert.equal(conflictResult.error.code, "SOURCE_MEMORY_CONFLICT");
+	assert(!worker.output().includes("GENERATED_PRIVATE_CONFLICT_DEDUPE"));
+	assert.deepEqual(await readdir(dirname(conflict.target)), []); assert.equal(await fileHash(conflict.source), conflictBefore);
+	phase("ambiguous-job-identities-refused-without-losing-or-reviving-either-job");
 	await stop();
 	const expansion = await fixture(), db = new KestrelDatabase(expansion.source, expansion.sourceKey), time = "2026-11-04T12:00:00.000Z";
 	try {

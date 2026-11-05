@@ -3,7 +3,7 @@ import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtem
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { readHostProfileFileTransferSourceSnapshot, isKnownLegacy19HostProfileSource, HOST_PROFILE_FILE_TRANSFER_LIMITS, HostProfileTransferLimitError, HOST_PROFILE_TRANSFER_POLICY, importHostProfileFileTransferSnapshot, type HostProfileTransferSnapshot, type HostProfileLegacyPreservation } from "./profile-transfer.js";
+import { readHostProfileFileTransferSourceSnapshot, isKnownLegacy19HostProfileSource, HOST_PROFILE_FILE_TRANSFER_LIMITS, HostProfileTransferLimitError, HostProfileTransferConflictError, HOST_PROFILE_TRANSFER_POLICY, importHostProfileFileTransferSnapshot, type HostProfileTransferSnapshot, type HostProfileLegacyPreservation } from "./profile-transfer.js";
 import { LATEST_SCHEMA_VERSION, listMigrationVersions, loadMigrationSql } from "./migrations.js";
 
 type Identity = { device: string; inode: string };
@@ -202,6 +202,7 @@ function readSource(source: Source, key: Buffer, recoveryLink?: Identity): { sna
 	} catch (error) {
 		if (error instanceof HostProfileFileTransferError) throw error;
 		if (error instanceof HostProfileTransferLimitError) fail("SOURCE_LIMIT_EXCEEDED", "The selected Core profile exceeds the supported transfer size or record limits. Existing data was preserved.");
+		if (error instanceof HostProfileTransferConflictError) fail("SOURCE_MEMORY_CONFLICT", "The selected profile has conflicting memory job or embedding identities. Transfer stopped to preserve saved work and retry history. Keep both profiles for separate review.");
 		// Contract/SQLite errors can contain stored values. Do not forward those
 		// details, error causes or decrypted content across the host boundary.
 		return fail("SOURCE_UNREADABLE", "The selected Core source could not be authenticated or its schema is unsupported; it was preserved.");

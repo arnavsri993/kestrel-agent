@@ -33,6 +33,9 @@ const SCHEMA_VERSION = 18;
 export class HostProfileTransferLimitError extends Error {
 	constructor(message: string) { super(message); this.name = "HostProfileTransferLimitError"; }
 }
+export class HostProfileTransferConflictError extends Error {
+	constructor() { super("Profile transfer found ambiguous logical fingerprint identities."); this.name = "HostProfileTransferConflictError"; }
+}
 
 type SqlValue = null | string | number | Buffer;
 type CipherGroup = { ciphertext: string; iv: string; tag: string; nullable?: boolean };
@@ -296,7 +299,7 @@ function validateLogicalFingerprintUniqueness(rows: TransferTables): void {
 			const fields = table === "memory_jobs" ? [row.values.dedupe_key] :
 				[row.values.owner_type, row.values.owner_id, row.values.provider, row.values.model, row.values.content_hash];
 			const identity = JSON.stringify(fields);
-			if (identities.has(identity)) fail("Profile transfer found ambiguous logical fingerprint identities.");
+			if (identities.has(identity)) throw new HostProfileTransferConflictError();
 			identities.add(identity);
 		}
 	}

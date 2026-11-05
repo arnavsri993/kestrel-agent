@@ -206,6 +206,7 @@ export const AgentConfigurationAuditEventSchema = z.strictObject({
 	id: z.string().regex(/^config-audit-[a-f0-9-]{36}$/),
 	action: z.enum([
 		"initialized",
+		"default_migrated",
 		"staged",
 		"applied",
 		"rejected",

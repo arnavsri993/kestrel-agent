@@ -63,6 +63,49 @@ it("uses authoritative legacy transition columns, cancels a running job and pres
 	finally { db.close(); }
 });
 
+function addHistoricalConfigurationAudit(value: ReturnType<typeof fixture>, action = "default_migrated", status = action) {
+	const audit = { id: "config-audit-00000000-0000-4000-8000-000000000019", action, actor: "system", detail: "Generated historical default migration audit", evidence: ["Generated audit evidence"], createdAt: value.time };
+	const encrypted = encryptText(JSON.stringify(audit), value.sourceKey), raw = new Database(value.sourceDatabasePath);
+	try { raw.prepare("INSERT INTO agent_configuration_records VALUES (?,?,?,?,?,?,?,?)").run(audit.id, "audit", status, encrypted.ciphertext, encrypted.iv, encrypted.authTag, value.time, value.time); }
+	finally { raw.close(); }
+	return audit;
+}
+
+it("preserves historical default-migration audit records for the normal configuration reader", () => {
+	const value = fixture(), audit = addHistoricalConfigurationAudit(value), before = readFileSync(value.sourceDatabasePath);
+	apply(value);
+	const db = new KestrelDatabase(value.destinationDatabasePath, value.destinationKey);
+	try { expect(db.listAgentConfigurationAuditEvents()).toEqual([audit]); }
+	finally { db.close(); }
+	expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
+});
+
+it.each([["unknown_historical_action", "unknown_historical_action"], ["default_migrated", "applied"]])("refuses unsupported or mismatched configuration audits (%s, %s)", (action, status) => {
+	const value = fixture(); addHistoricalConfigurationAudit(value, action, status);
+	const before = readFileSync(value.sourceDatabasePath);
+	expect(() => planHostProfileFileTransfer(value)).toThrow(HostProfileFileTransferError);
+	expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
+	expect(readdirSync(join(value.destinationDatabasePath, ".."))).toEqual([]);
+});
+
+it("reports an authenticated mixed-index job conflict without leaking identities or choosing a retry budget", () => {
+	const value = fixture(), raw = new Database(value.sourceDatabasePath);
+	const duplicate = { ...value.job, id: "generated-ambiguous-job", status: "pending", attempts: 0 }, encrypted = encryptText(JSON.stringify(duplicate), value.sourceKey);
+	try {
+		raw.prepare("INSERT INTO memory_jobs SELECT ?,kind,?,?,?,max_attempts,run_after,locked_at,lease_until,last_error,created_at,updated_at,?,?,? FROM memory_jobs WHERE id=?")
+			.run(duplicate.id, duplicate.dedupeKey, duplicate.status, duplicate.attempts, encrypted.ciphertext, encrypted.iv, encrypted.authTag, value.job.id);
+	} finally { raw.close(); }
+	const before = readFileSync(value.sourceDatabasePath);
+	try { planHostProfileFileTransfer(value); expect.fail("Conflicting source must be refused."); }
+	catch (error) {
+		expect(error).toBeInstanceOf(HostProfileFileTransferError);
+		expect((error as HostProfileFileTransferError).code).toBe("SOURCE_MEMORY_CONFLICT");
+		for (const secret of [value.job.dedupeKey, value.job.id, duplicate.id, value.privateMessage, value.sourceKey.toString("base64")]) expect(String(error)).not.toContain(secret);
+	}
+	expect(readFileSync(value.sourceDatabasePath)).toEqual(before);
+	expect(readdirSync(join(value.destinationDatabasePath, ".."))).toEqual([]);
+});
+
 it("keeps stale aliases inert when the referenced id is deleted or reused", () => {
 	const value = fixture(); apply(value);
 	const db = new KestrelDatabase(value.destinationDatabasePath, value.destinationKey);
