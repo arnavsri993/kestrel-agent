@@ -9,16 +9,33 @@ Electron process in this path.
 
 ## Current checkpoint — 2026-11-04
 
-The latest runtime follow-up is source `2473e50e`, exact ad-hoc bundle
-`c6891a100a15053362b24bfff0945f25998dfdc5bf4a4e22d3f07c884f02b45b`.
-Workspace types and **2,900 unit tests in 318 files** pass, with two existing
-ownership-mutation skips. The exact bundle passes **29** real bundled-worker
+The latest runtime follow-up is source `9726ab19`, exact ad-hoc bundle
+`0a896c09680ce4c16a6a7375b3aa75180975846018d8f4bde844c80a64a18eaf`.
+Workspace types and **2,910 unit tests in 319 files** pass, with two existing
+ownership-mutation skips. The exact bundle passes **six** large-profile phases
+and **29** real bundled-worker
 recovery phases across canonical schema 18, recognized historical schema 19 and
 schema-18 journals created by the previous `0f631a24...` binary. These checks
 cover fresh authentication after process death, independent destination indexes,
 terminal retry budgets, legacy alias lookup, encrypted diagnostic preservation,
 live-owner refusal, incomplete-stage retention and unchanged sources. Both
-artifact hashes match before and after the test.
+artifact hashes match before and after the tests.
+
+Selected-file transfer has a separate fixed budget: 256 MiB serialized content,
+250,000 source rows, 128 MiB raw SQL values, 8 MiB per raw row and 32 MiB per
+serialized row. Raw aggregate bounds run before decryption; serialized accounting
+runs before appending each record. The semantic hash streams the same v1 JSON
+bytes, and import plus destination readback use the same file budget. Ordinary
+in-memory snapshots retain their 64 MiB/100,000-row limit, and no renderer/Core
+frame increases. Native transfer workers use a 1,536 MiB V8 heap limit.
+
+The generated large case preserves all 20 independently verified 4 MiB private
+records, historical configuration audits, aliases, diagnostics and terminal
+retry budgets while discarding 116,500 inherited idempotency claims. Transfer
+and independent-key recovery took 6,962 ms; peak sampled worker RSS across the
+run was 499.84 MiB. Negative cases refuse ambiguous job identities and JSON
+expansion beyond the file budget, leaving source hashes unchanged and destination
+directories empty. This bounded stress test is now included in macOS CI.
 
 A source-only adapter now recognizes the exact historical alias-table format,
 with its optional encrypted error table and five known compact bootstrap DDLs.
@@ -30,16 +47,32 @@ survive worker/journal recovery. The destination remains canonical schema 18;
 no original schema is rewritten and no startup backfill runs. Generation,
 authority, deletion fences, terminal budgets and one-use consent remain covered.
 Transfer parsing also requires the full source GCM authentication tag, rejects
-ambiguous normalized fingerprints and bounds schema enumeration.
+ambiguous normalized fingerprints and bounds schema enumeration. The known
+historical `default_migrated` configuration audit action is accepted without
+changing its content or enabling a configuration. Unsupported actions and
+mismatched SQL metadata remain rejected.
 
-A guarded metadata-only review of the real profile recognizes this format, but
-its aggregate row and byte sizes exceed the current transfer limits. The source
-key was not read, records were not decrypted, and no transfer or activation was
-performed. Larger-profile support is still required before real-data acceptance;
-the generated fixtures above do not prove that acceptance. Existing profiles and
-the user-used native window remain unchanged. The new artifact was neither
-launched as a desktop window nor installed; the updated review UI has not yet
-been observed live.
+The authorized real-profile read-only preview now fits the raw file budgets.
+A source-specific native helper accepted only the already-reviewed development
+key envelope and passed its key through anonymous local pipes to the exact
+bundled worker. It made no Keychain lookup and exposed no key or record content
+to logs, argv, environment, files or tool output. The production guarded copy
+path opened only a private encrypted-byte copy in SQLite. All source/key metadata
+witnesses and the candidate digest remained unchanged; temporary copies and
+review state were removed. No apply, activation or destination database occurred.
+
+That preview still refuses the real source because saved memory jobs have
+ambiguous logical identities. The worker now returns the static
+`SOURCE_MEMORY_CONFLICT` result without identifying jobs or choosing a retry
+budget. No record is dropped, merged or revived. Full source validation and
+real-data acceptance remain incomplete; a separately reviewed conflict recovery
+path is needed. The new artifact was neither launched as a desktop window nor
+installed. The user-used `c7015edb...` native window remains unchanged, and the
+updated review UI has not been observed live.
+
+Current receipts are `.tmp/native-large-profile-compat-bulk-evidence/receipt.json`
+and `.tmp/native-large-profile-compat-recovery-evidence/receipt.json`; the private
+read-only result is `.tmp/native-real-large-profile-compat-readonly-result.json`.
 
 The predecessor privacy batch at `214ab34d`, bundle
 `0f631a241a9e00e7a44a3bf5beb0394abdb6cd37879ee8137951bf13eeb97530`,
@@ -50,8 +83,12 @@ keeps custom app output paths separate from build intermediates. Its native
 profile-key failure notice compiles; the actual failure UI and protected-profile
 continuity remain unverified.
 
-Published predecessor `ccdd9735` passed both macOS CI jobs, required CodeQL and
-all four language analyses. New-head CI is pending. The older full `pnpm verify`
+Published predecessor `eaf4370a` passed desktop/package CI; Core CI failed five
+tests at the default five-second timeout. The two affected recovery test files
+now have a local 20-second budget; assertions, worker timeouts and global test
+settings are unchanged. The full local suite above passes. Older `ccdd9735`
+passed both macOS CI jobs, required CodeQL and all four language analyses.
+New-head CI remains separate. The older full `pnpm verify`
 Electron sidebar failure below remains separate; no current aggregate-green
 claim is made. Current-bundle Store, real-account, native-window and canonical
 cutover proof is still missing.
@@ -109,6 +146,8 @@ This checkpoint is not a release-ready claim.
 corepack pnpm dev:desktop:chromium
 corepack pnpm build:native-chromium-host
 corepack pnpm test:chromium-ui
+KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-large-profile-compat-host/Kestrel.app" \
+  corepack pnpm test:native-large-core-transfer
 KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
   corepack pnpm test:chromium-native-auth
 KESTREL_NATIVE_TEST_APP="$PWD/.tmp/native-chromium-host/Kestrel.app" \
