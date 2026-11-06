@@ -77,6 +77,33 @@ checks pass. Supporting logs are
 `.tmp/native-project-metadata-build.log`. These workflow receipts are not a complete
 26-gate retirement manifest.
 
+The same bundle also received fresh official Store installations in a new
+generated profile. JSON Formatter `0.10.2` and uBlock Origin Lite
+`2026.1103.1743` installed through the real native confirmation sheets. Home,
+Settings and Store shared one native window. Content transformation,
+extension-created tab create/update/close, the isolated toolbar popup,
+Chrome-manager disable/re-enable and a full restart passed. Of 19 recorded
+phases, **17 pass**; the two full-parity aggregate entries remain incomplete
+solely because the official update callback returned `no_update`. No published
+version upgrade occurred. Normal-install provenance, unchanged candidate hashes
+and the retained generated update checkpoint are recorded in
+`.tmp/native-project-metadata-store-evidence/receipt.json`. Store, popup and
+post-restart function screenshots were inspected; the cropped Settings image
+does not establish that page's visual layout. The owned app exited cleanly.
+
+Published `98d4a38c` passed all four CodeQL analyses. Both its CI unit steps
+passed 3,122 tests and skipped the same two ownership cases, but one test
+exceeded its five-second budget while running three independent encrypted
+transfer fixtures in a loop. Those unchanged scenarios now use separate
+`it.each` cases, each retaining the standard budget and cleanup. The focused
+file passes all seven tests. The final full local suite passes **3,125 tests /
+337 files**, with the same two ownership-mutation skips, in 114.56 seconds;
+Core type checks pass. Logs are
+`.tmp/native-project-case-isolation-full-unit.log` and
+`.tmp/native-project-case-isolation-core-types.log`. Production source and the
+`dc36b35d...` bundle are unchanged. Neither failed CI job reached native
+Settings verification. New-head CI remains separate evidence.
+
 Published predecessor `45a76364` passed both full CI unit steps, all four CodeQL
 analyses and the Desktop/packaged-arm64 job. Its
 [Core job](https://github.com/arnavsri993/kestrel-agent/actions/runs/42268138730)
@@ -86,9 +113,11 @@ wait now passes the entire local Settings flow above. Earlier `0faf643a` unit
 timeouts and the separate fixture fix remain recorded below. New-head CI is not
 credited in advance.
 
-The user-used `c7015edb...` app/window/profile stayed untouched. All native GUI
+The user-used `c7015edb...` app/window/profile stayed untouched. Transfer GUI
 actions targeted the owned candidate after checking its PID and unique generated
-conversation label. No canonical app was replaced. Real-profile acceptance,
+conversation label. Store approvals targeted the exact candidate path while its
+runner awaited the corresponding extension, then verified the installation in
+its generated profile. No canonical app was replaced. Real-profile acceptance,
 protected-key continuity, Store upgrade, signing/notarization and cutover remain
 open.
 

@@ -64,15 +64,13 @@ it("retains logical references when the source registry is absent", async () => 
 	try { expect(parseNativeProjectHandoffState((await file.read(f.handoffId)).value, f.handoffId)).toMatchObject({ pendingProjectIds: [record.id], projects: [] }); } finally { file.close(); }
 });
 
-it("refuses changed registry presence/content and source rows before destination publication", async () => {
-	for (const change of ["content", "appears", "database"] as const) {
-		const f = await fixture(change !== "appears"), plan = planned(await f.plan());
-		if (change === "database") { const db = new KestrelDatabase(f.source, f.sourceKey); db.setPrivateState("changed-fixture", { generated: true }); db.close(); }
-		else await writeFile(join(f.sourceProfileRoot, "workspace-grants.json"), JSON.stringify(change === "appears" ? [] : [{ ...record, name: "Changed" }]), { mode: 0o600 });
-		const before = await readFile(f.source);
-		const applied = await f.request("apply-profile", { planId: plan.planId, acceptedPlanSha256: plan.preview.planSha256, approved: true, destinationKeyBase64: f.destinationKey.toString("base64") });
-		expect(applied.ok).toBe(false); expect(await readdir(f.destinationCoreRoot)).toEqual(["database"]); expect(await readFile(f.source)).toEqual(before);
-	}
+it.each(["content", "appears", "database"] as const)("refuses changed registry presence/content and source rows before destination publication (%s)", async (change) => {
+	const f = await fixture(change !== "appears"), plan = planned(await f.plan());
+	if (change === "database") { const db = new KestrelDatabase(f.source, f.sourceKey); db.setPrivateState("changed-fixture", { generated: true }); db.close(); }
+	else await writeFile(join(f.sourceProfileRoot, "workspace-grants.json"), JSON.stringify(change === "appears" ? [] : [{ ...record, name: "Changed" }]), { mode: 0o600 });
+	const before = await readFile(f.source);
+	const applied = await f.request("apply-profile", { planId: plan.planId, acceptedPlanSha256: plan.preview.planSha256, approved: true, destinationKeyBase64: f.destinationKey.toString("base64") });
+	expect(applied.ok).toBe(false); expect(await readdir(f.destinationCoreRoot)).toEqual(["database"]); expect(await readFile(f.source)).toEqual(before);
 });
 
 it("refuses reused/malformed keys, expired reviews, wrong hashes and unknown fields", async () => {
