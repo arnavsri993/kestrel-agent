@@ -298,6 +298,7 @@ try {
  const secondSettingsId = ids.find(id => id !== firstSettingsId); assert(Number.isInteger(secondSettingsId));
  await reconnect();
  home = await pageByNativeTabId(homeId);
+ await home.waitForFunction(() => typeof window.kestrel?.request === 'function');
  settings = await pageByNativeTabId(firstSettingsId);
  const duplicateSettings = await pageByNativeTabId(secondSettingsId);
  const warmNativeId = await home.evaluate(async target => (await chrome.tabs.query({})).find(tab => tab.url === target)?.id, warm);
@@ -408,6 +409,7 @@ try {
  assert.equal((await cdpTargets()).filter(target => target.type === 'page' && target.url === reopenedUrl).length, 1, 'Reopen URL did not open exactly once');
  await reconnect();
  home = await pageFor(url => /^chrome-extension:\/\/[^/]+\/index\.html$/.test(url));
+ await home.waitForFunction(() => typeof window.kestrel?.request === 'function');
  const reopenedHomeTarget = await targetFor(home.url());
  assert.equal(await windowId(reopenedHomeTarget.targetId), reopenedWindow, 'Reopened Home and URL must share Chromium window');
  assert.equal((await cdpTargets()).filter(target => target.type === 'page' && /^chrome-extension:\/\/[^/]+\/index\.html$/.test(target.url)).length, 1, 'Expected exactly one reopened Home');

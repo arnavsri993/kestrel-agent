@@ -6,7 +6,7 @@ import { applyHostProfileFileTransfer, planHostProfileFileTransfer, reviewHostPr
 	HostProfileFileTransferError, type HostProfileFileTransferPlan, type HostProfileFileTransferReceipt, type HostProfileInterruptedTransferReview } from "@kestrel/database";
 import { NativeProjectHandoffFile, ProjectHandoffFileError, type ProjectHandoffFileWitness } from "../../desktop/src/main/native-project-handoff-file";
 import { parseNativeProjectHandoffState, PROJECT_HANDOFF_ID, type NativeProjectHandoffState } from "../../desktop/src/main/native-project-handoff-state";
-import { readProjectHandoffSource } from "./project-handoff-source";
+import { readProjectHandoffSource, sameProjectHandoffSourceWitness } from "./project-handoff-source";
 
 type Source = Awaited<ReturnType<typeof readProjectHandoffSource>>;
 type Pending = { id: string; handoffId: string; coreRoot: string; sourceRoot: string; reader: Source; plan: HostProfileFileTransferPlan; sourceKey: Buffer;
@@ -158,7 +158,7 @@ export class NativeProfileProjectTransfer {
 					if (await manifestPresent(inspection.coreRoot)) {
 						const stored = await file.read(inspection.handoffId);
 						const state = parseNativeProjectHandoffState(stored.value, inspection.handoffId);
-						if (state.revision !== 0 || state.settledProjectIds.length || !equal(state.corePlan, review.plan) || !equal(state.sourceWitness, reader.witness) ||
+						if (state.revision !== 0 || state.settledProjectIds.length || !equal(state.corePlan, review.plan) || !sameProjectHandoffSourceWitness(state.sourceWitness, reader.witness) ||
 							!equal(state.reviewedProjectIds, projectIds) || !equal(state.pendingProjectIds, projectIds) || !equal(state.projects, reader.projects)) throw new Error();
 						manifest = { value: state, witness: stored.witness };
 					}

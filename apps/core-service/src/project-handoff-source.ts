@@ -3,6 +3,7 @@ import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, parse, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { ProjectSchema } from "@kestrel/shared-types";
 
 export const MAX_PROJECT_HANDOFF_BYTES = 1024 * 1024;
@@ -43,6 +44,25 @@ function snapshot(s: BigIntStats): Snapshot {
  return Object.freeze({ dev: String(s.dev), ino: String(s.ino), mode: String(s.mode), uid: String(s.uid), size: String(s.size), mtimeNs: String(s.mtimeNs), ctimeNs: String(s.ctimeNs) });
 }
 const same = (a: Snapshot, b: Snapshot) => JSON.stringify(a) === JSON.stringify(b);
+const directoryWitness = ({ ctimeNs: _ctime, ...witness }: Snapshot) => witness;
+function stableSourceWitness(value: unknown) {
+ if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+ const witness = value as Record<string, unknown>, profile = witness.profile;
+ if (witness.presence !== "present" && witness.presence !== "missing") return undefined;
+ if (!profile || typeof profile !== "object" || Array.isArray(profile)) return undefined;
+ const root = profile as Record<string, unknown>;
+ if (!["dev", "ino", "mode", "uid", "size", "mtimeNs", "ctimeNs"].every(field => typeof root[field] === "string" && /^-?\d+$/.test(root[field] as string))) return undefined;
+ const { ctimeNs: _ctime, ...directory } = root;
+ return { ...witness, profile: directory };
+}
+
+/** Cocoa may update folder access metadata after a picker closes. Retain the
+ * original witness format while ignoring only the folder's change timestamp;
+ * every registry-file field, digest and presence observation still must match. */
+export function sameProjectHandoffSourceWitness(a: unknown, b: unknown): boolean {
+ const left = stableSourceWitness(a), right = stableSourceWitness(b);
+ return left !== undefined && right !== undefined && isDeepStrictEqual(left, right);
+}
 function safeStat(s: BigIntStats, directory: boolean) {
  if (!(directory ? s.isDirectory() : s.isFile()) || s.uid !== BigInt(process.getuid!()) || (s.mode & 0o077n) !== 0n || (!directory && (s.nlink !== 1n || s.size > BigInt(MAX_PROJECT_HANDOFF_BYTES)))) fail();
 }
@@ -79,7 +99,10 @@ export async function readProjectHandoffSource(sourceProfileRoot: string) {
     if (closed || !root) return fail();
     const heldRoot = await root.stat({ bigint: true }); safeStat(heldRoot, true);
     const pathRoot = await lstat(sourceProfileRoot, { bigint: true }); safeStat(pathRoot, true);
-    if (await realpath(sourceProfileRoot) !== sourceProfileRoot || !same(rootSnapshot, snapshot(heldRoot)) || !same(rootSnapshot, snapshot(pathRoot))) return fail();
+    // macOS may update access metadata after the native picker returns, changing
+    // only folder ctime. Keep size/mtime, identity, ownership and mode pinned;
+    // the selected file's complete snapshot stays pinned, including its ctime.
+    if (await realpath(sourceProfileRoot) !== sourceProfileRoot || !isDeepStrictEqual(directoryWitness(rootSnapshot), directoryWitness(snapshot(heldRoot))) || !isDeepStrictEqual(directoryWitness(rootSnapshot), directoryWitness(snapshot(pathRoot)))) return fail();
     if (file && fileSnapshot) {
      const held = await file.stat({ bigint: true }); const pathStat = await lstat(filename, { bigint: true });
      safeStat(held, false); safeStat(pathStat, false);

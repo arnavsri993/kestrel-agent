@@ -7,7 +7,92 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
-## Current checkpoint — authenticated native project handoff, 2026-11-06
+## Current checkpoint — native picker metadata and on-screen handoff, 2026-11-06
+
+The first actual native handoff acceptance test exposed a failure after a valid
+review: choosing a profile in Cocoa added `com.apple.macl` access metadata to the
+source folder. Its change timestamp moved while its identity, permissions, size,
+mtime, database and project registry stayed unchanged. The worker treated that
+folder ctime as a data change and refused apply before creating a destination
+manifest or database. The current selection stayed intact. A lookup-only generated
+key probe succeeded, separating this failure from a missing destination test key.
+
+The source witness now tolerates **only the source folder's ctime** changing.
+Canonical spelling, held/named directory identity, ownership, private mode, size
+and mtime remain pinned. Registry presence and its complete file snapshot,
+including file ctime, are unchanged. Recovery compares existing witness formats
+with the same narrow normalization, preserving prepared-manifest compatibility.
+No security attributes are removed or modified. Regression tests exercise a
+ctime-only metadata change after review and during prepared/published recovery;
+changed root identity/mode/size/mtime and file replacement still refuse. An
+independent bounded source review found no actionable issue.
+
+A fresh ad-hoc candidate,
+`dc36b35d724164578807475f23332df0b7121078bb62b9f72330be87292cdb58`,
+built at `.tmp/native-project-metadata-host/Kestrel.app`. The actual native
+transfer menu, Cocoa source picker, count review and explicit apply passed after
+a controlled ctime-only source-folder change. A real app restart showed the
+imported conversation with its project ID retained and no folder authority.
+Settings then showed the project awaiting reconnection; the operator used its
+Choose folder action and the real Cocoa panel to select a new generated folder.
+The ID, name, instructions and timestamps survived. The previous-profile native
+action and a second restart restored the original conversation. New work in the
+imported profile remained present, inherited scheduling authority stayed cancelled,
+and source database/key/registry bytes stayed unchanged. All **six** phases pass
+with matching candidate hashes in
+`.tmp/native-project-metadata-ui-acceptance2/receipt.json`. Reconnected-project
+and rollback screenshots were inspected. Data, keys and profiles were generated
+for this test; this is not real-profile activation or real Keychain evidence.
+
+The expanded checked-in UI canary waits for that actual operator flow and follows
+the owned Settings document when it opens in another Chromium tab. It records
+sanitized failure stages and exercises ctime drift after native review. Earlier
+failure receipts remain: the first `54863116...` run found the production ctime
+bug; the first `dc36b35d...` run transferred and connected successfully but the
+harness looked for the Settings heading in its original Home tab. No success is
+credited for either failed receipt. The generated diagnostic fixture from the
+first failure was retained privately before its owned app was stopped.
+
+The same `dc36b35d...` candidate separately passed **16 actual native Settings
+phases**, including two independent Settings documents, guard refusal for system
+changes, computer-use opt-out, custom Home image/search restart persistence and
+last-window close/reopen with the same Core process. The smoke now waits for the
+new document's bridge after both CDP reattachments, before its direct API call.
+This uses the existing startup condition and budget; requests/assertions were not
+made optional or retried. Evidence is
+`.tmp/native-project-metadata-settings-evidence/receipt.json`.
+
+The generated protected-worker handoff canary also passes nine phases, and the
+imported legacy-conflict/context/provider canary passes eight on this same bundle.
+Their before/after hashes match. Evidence is
+`.tmp/native-project-metadata-handoff-evidence/receipt.json` and
+`.tmp/native-project-metadata-context-evidence/receipt.json`; the picker replies in
+those two separate Node/Core canaries are simulated. No test-owned candidate
+process remains after all four workflows.
+
+The full local suite passes **3,123 tests / 337 files**, with two existing
+ownership-mutation skips, in 109.08 seconds using two workers. All workspace type
+checks pass. Supporting logs are
+`.tmp/native-project-metadata-full-unit.log` and
+`.tmp/native-project-metadata-build.log`. These workflow receipts are not a complete
+26-gate retirement manifest.
+
+Published predecessor `45a76364` passed both full CI unit steps, all four CodeQL
+analyses and the Desktop/packaged-arm64 job. Its
+[Core job](https://github.com/arnavsri993/kestrel-agent/actions/runs/42268138730)
+failed in the Settings smoke after last-window reopening: it immediately called
+`window.kestrel.request` on the new document before bridge readiness. The explicit
+wait now passes the entire local Settings flow above. Earlier `0faf643a` unit
+timeouts and the separate fixture fix remain recorded below. New-head CI is not
+credited in advance.
+
+The user-used `c7015edb...` app/window/profile stayed untouched. All native GUI
+actions targeted the owned candidate after checking its PID and unique generated
+conversation label. No canonical app was replaced. Real-profile acceptance,
+protected-key continuity, Store upgrade, signing/notarization and cutover remain
+open.
+
+## Previous checkpoint — authenticated native project handoff, 2026-11-06
 
 The native transfer path now reviews project links with conversations and memory.
 The private worker reads the source project registry without probing its folder
@@ -67,8 +152,8 @@ metadata and a valid prepared-state manifest; none changes database bytes. The
 candidate hash matches before/after, and no owned process remains. The existing
 legacy-conflict/context/provider canary separately passes eight bundled Core
 phases on the same candidate, with matching hashes. Picker replies are simulated
-over the real private pipe. The candidate was not launched as a native window or
-installed.
+over the real private pipe. This earlier canary set did not launch it as a native
+window or install it; the later UI failure on that candidate is recorded above.
 
 The actual AST-extracted Settings function and current source CSS pass seven
 headless Chromium phases with no page errors; desktop and compact screenshots

@@ -3,7 +3,7 @@ import { chmod, link, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, utime
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_PROJECT_HANDOFF_BYTES, parseProjectHandoffSource, readProjectHandoffSource } from "./project-handoff-source";
+import { MAX_PROJECT_HANDOFF_BYTES, parseProjectHandoffSource, readProjectHandoffSource, sameProjectHandoffSourceWitness } from "./project-handoff-source";
 
 const encode = (v: unknown) => Buffer.from(JSON.stringify(v));
 const modern = { id: "  id  ", path: "/unavailable/project", name: " Name ", instructions: " Keep ", createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-02-01T00:00:00Z", order: 7 };
@@ -44,6 +44,34 @@ describe("project handoff witness", () => {
   await writeFile(join(root, "workspace-grants.json"), "[]", { mode: 0o600 }); await expect(missing.verify()).rejects.toThrow(); await missing.close();
   const source = await readProjectHandoffSource(root); await rename(root, `${root}-old`); await mkdir(root, { mode: 0o700 }); await expect(source.verify()).rejects.toThrow(); await source.close();
  }));
+ it("accepts root ctime-only drift while comparing strict mtime, size and child-file evidence", async () => fixture(async root => {
+  const path = join(root, "workspace-grants.json"); await writeFile(path, "[]", { mode: 0o600 });
+  const source = await readProjectHandoffSource(root), rootBefore = await stat(root);
+  await chmod(root, 0o500);
+  await expect(source.verify()).rejects.toThrow();
+  await chmod(root, 0o700);
+  const rootAfter = await stat(root);
+  const fresh = await readProjectHandoffSource(root);
+  expect(rootAfter.size).toBe(rootBefore.size);
+  expect(rootAfter.mtimeMs).toBe(rootBefore.mtimeMs);
+  expect(source.witness.profile.size).toBe(fresh.witness.profile.size);
+  expect(source.witness.profile.mtimeNs).toBe(fresh.witness.profile.mtimeNs);
+  expect(source.witness.profile.ctimeNs).not.toBe(fresh.witness.profile.ctimeNs);
+  expect(sameProjectHandoffSourceWitness(source.witness, fresh.witness)).toBe(true);
+  await source.verify(); await fresh.verify();
+  if (fresh.witness.presence !== "present") throw new Error("Expected a generated workspace-grants file.");
+  const differentRoot = { ...fresh.witness, profile: { ...fresh.witness.profile, ino: (BigInt(fresh.witness.profile.ino) + 1n).toString() } };
+  const differentMode = { ...fresh.witness, profile: { ...fresh.witness.profile, mode: (BigInt(fresh.witness.profile.mode) + 1n).toString() } };
+  const differentSize = { ...fresh.witness, profile: { ...fresh.witness.profile, size: (BigInt(fresh.witness.profile.size) + 1n).toString() } };
+  const differentMtime = { ...fresh.witness, profile: { ...fresh.witness.profile, mtimeNs: (BigInt(fresh.witness.profile.mtimeNs) + 1n).toString() } };
+  const differentFile = { ...fresh.witness, file: { ...fresh.witness.file, ino: (BigInt(fresh.witness.file.ino) + 1n).toString() } };
+  expect(sameProjectHandoffSourceWitness(fresh.witness, differentRoot)).toBe(false);
+  expect(sameProjectHandoffSourceWitness(fresh.witness, differentMode)).toBe(false);
+  expect(sameProjectHandoffSourceWitness(fresh.witness, differentSize)).toBe(false);
+  expect(sameProjectHandoffSourceWitness(fresh.witness, differentMtime)).toBe(false);
+  expect(sameProjectHandoffSourceWitness(fresh.witness, differentFile)).toBe(false);
+  await source.close(); await fresh.close();
+ }));
  it("rejects symlinks, FIFOs, and nonprivate permissions", async () => fixture(async root => {
   const path = join(root, "workspace-grants.json"); await symlink("/dev/null", path); await expect(readProjectHandoffSource(root)).rejects.toThrow(); await rm(path);
   execFileSync("mkfifo", [path]); await expect(readProjectHandoffSource(root)).rejects.toThrow(); await rm(path);
@@ -77,6 +105,9 @@ describe("handoff compatibility and integrity boundaries", () => {
   expect(Object.isFrozen(source.witness)).toBe(true); expect(Object.isFrozen(source.witness.profile)).toBe(true);
   expect(() => { (source.witness.profile as { ino: string }).ino = "0"; }).toThrow();
   await rename(path, join(root, "old")); await writeFile(path, "[]", { mode: 0o600 });
+  const replacement = await readProjectHandoffSource(root);
+  expect(sameProjectHandoffSourceWitness(source.witness, replacement.witness)).toBe(false);
+  await replacement.close();
   await expect(source.verify()).rejects.toThrow(); await source.close(); await expect(source.verify()).rejects.toThrow();
  }));
  it("detects in-place writes even when mtime is restored", async () => fixture(async root => {

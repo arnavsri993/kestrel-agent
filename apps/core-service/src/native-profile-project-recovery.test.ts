@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,6 +88,15 @@ async function snapshot(f: Awaited<ReturnType<typeof fixture>>) {
 	const files = await Promise.all(paths.map(async path => { try { return [path, await readFile(path)] as const; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return [path, null] as const; throw error; } }));
 	return files;
 }
+async function touchRootCtime(root: string) {
+	const before = await stat(root);
+	await chmod(root, 0o500);
+	await chmod(root, 0o700);
+	const after = await stat(root);
+	expect(after.size).toBe(before.size);
+	expect(after.mtimeMs).toBe(before.mtimeMs);
+	expect(after.ctimeMs).not.toBe(before.ctimeMs);
+}
 async function preparedRecovery(f: Awaited<ReturnType<typeof fixture>>, state: "staged" | "published", manifestPresent: boolean) {
 	const worker = newWorker();
 	const inspected = await request(worker, "inspect-profile", { destinationCoreRoot: f.destinationCoreRoot, handoffId: f.handoffId });
@@ -129,6 +138,7 @@ it("recovers a completed project transfer after its owning worker exits", async 
 	const applied = await owner.request("apply-profile", { planId: plan.planId, acceptedPlanSha256: plan.preview.planSha256, approved: true, destinationKeyBase64: f.destinationKey.toString("base64") });
 	expect(applied.ok).toBe(true); assertNoSecrets(applied, f);
 	expect(await owner.stop()).toEqual({ code: 0, signal: null }); expect(owner.errors()).toBe(""); assertNoSecrets(owner.output(), f);
+	await touchRootCtime(f.sourceProfileRoot);
 	const { worker, planned } = await preparedRecovery(f, "published", true);
 	const beforeRejectedRecovery = await snapshot(f);
 	expect(await request(worker, "recover-profile", { planId: planned.planId, acceptedPlanSha256: planned.preview.planSha256, approved: false })).toMatchObject({ ok: false, error: { code: "PLAN_NOT_ACCEPTED" } });
@@ -152,6 +162,7 @@ it("recovers a real SIGKILL before publication with the prepared project manifes
 	expect(plan.ok).toBe(true);
 	owner.send("apply-profile", { planId: plan.planId, acceptedPlanSha256: plan.preview.planSha256, approved: true, destinationKeyBase64: f.destinationKey.toString("base64") });
 	expect(await owner.exited).toEqual({ code: null, signal: "SIGKILL" }); expect(owner.errors()).toBe(""); assertNoSecrets(owner.output(), f);
+	await touchRootCtime(f.sourceProfileRoot);
 	const { worker, planned } = await preparedRecovery(f, "staged", true);
 	const recovered = await request(worker, "recover-profile", { planId: planned.planId, acceptedPlanSha256: planned.preview.planSha256, approved: true });
 	expect(recovered.ok).toBe(true); expect(await request(worker, "verify-profile", { recoveryId: recovered.recoveryId })).toMatchObject({ ok: true, recovery: { originalReadable: true, destinationReadable: true } });
@@ -257,4 +268,17 @@ it("retains the prepared manifest when journal creation fails before any databas
 	expect(await readFile(f.source)).toEqual(sourceBefore);
 	const file = new NativeProjectHandoffFile({ root: f.destinationCoreRoot, key: f.destinationKey });
 	try { expect(parseNativeProjectHandoffState((await file.read(f.handoffId)).value, f.handoffId)).toMatchObject({ state: "prepared", pendingProjectIds: [project.id], projects: [{ id: project.id, instructions: privateText }] }); } finally { file.close(); }
+});
+
+it("allows a source-root ctime-only change between reviewed plan and apply", async () => {
+	const f = await fixture(), sourceBefore = await readFile(f.source), registryBefore = await readFile(join(f.sourceProfileRoot, "workspace-grants.json")), worker = newWorker();
+	const plan = await request(worker, "plan-profile", { sourceProfileRoot: f.sourceProfileRoot, destinationCoreRoot: f.destinationCoreRoot, handoffId: f.handoffId, sourceKeyBase64: f.sourceKey.toString("base64") });
+	assertTransferPlan(plan);
+	await touchRootCtime(f.sourceProfileRoot);
+	const applied = await request(worker, "apply-profile", { planId: plan.planId, acceptedPlanSha256: plan.preview.planSha256, approved: true, destinationKeyBase64: f.destinationKey.toString("base64") });
+	expect(applied.ok).toBe(true);
+	expect(await request(worker, "verify-profile", { recoveryId: applied.recoveryId })).toMatchObject({ ok: true, recovery: { originalReadable: true, destinationReadable: true, activationPerformed: false } });
+	const handoffFile = new NativeProjectHandoffFile({ root: f.destinationCoreRoot, key: f.destinationKey });
+	try { expect(parseNativeProjectHandoffState((await handoffFile.read(f.handoffId)).value, f.handoffId)).toMatchObject({ state: "ready", pendingProjectIds: [project.id] }); } finally { handoffFile.close(); }
+	expect(await readFile(f.source)).toEqual(sourceBefore); expect(await readFile(join(f.sourceProfileRoot, "workspace-grants.json"))).toEqual(registryBefore);
 });
