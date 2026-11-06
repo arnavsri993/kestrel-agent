@@ -97,6 +97,12 @@ export function ComputerUseSettings() {
 			);
 		} catch (cause) {
 			setError(errorMessage(cause, "Computer-use preference could not be saved."));
+			// A failed opt-out still disables this run; refresh the authoritative
+			// in-memory status so the switch reflects the enforced state.
+			try {
+				const response = await window.kestrel.request({ type: "computer-use-status" });
+				if (response.ok && "computerUseStatus" in response) setStatus(ComputerUseStatusSchema.parse(response.computerUseStatus));
+			} catch { /* Keep the persistence error visible if status is unavailable. */ }
 		} finally {
 			setBusy("");
 		}
@@ -143,6 +149,10 @@ export function ComputerUseSettings() {
 					Let Kestrel inspect and control Mac apps after you approve each action.
 					It is off by default and separate from the Kestrel browser.
 				</p>
+				<p>
+					Computer control needs a model that can read images. Captures go to the
+					model used for the task; choose a local model to keep them on this Mac.
+				</p>
 				{status ? (
 					<div className="computer-use-permissions" aria-label="macOS permission status">
 						<PermissionStatus
@@ -164,9 +174,9 @@ export function ComputerUseSettings() {
 					</p>
 				)}
 				<p className="computer-use-boundary">
-					This check never requests permission. Even when enabled, approvals still
-					pause consequential actions; Kestrel cannot purchase, create accounts, or
-					bypass a CAPTCHA.
+					This status check does not request macOS access. Turning on desktop control
+					keeps your task's approval policy. Review the target and effect before
+					approving an input.
 				</p>
 				{error && <small className="computer-use-error" role="alert">{error}</small>}
 			</div>

@@ -1,3 +1,4 @@
+import { nativeChromiumSurface } from "./native-extension-transport";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
@@ -19,6 +20,7 @@ import "./materials.css";
 import "./instrument-workbench.css";
 import "./action-motion.css";
 import "./glass-menus.css";
+import "./native-chromium.css";
 import { ActionMotion } from "./components/ActionMotion";
 import { App } from "./App";
 import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";
@@ -66,7 +68,7 @@ ReactDOM.createRoot(root).render(
 		) : (
 			<>
 				<ActionMotion />
-				<WindowControls />
+				{!nativeChromiumSurface && <WindowControls />}
 				<App />
 			</>
 		)}

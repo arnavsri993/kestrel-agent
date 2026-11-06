@@ -1,4 +1,4 @@
-export const BROWSER_AGENT_BENCHMARK_CORPUS_VERSION = "1.1.0";
+export const BROWSER_AGENT_BENCHMARK_CORPUS_VERSION = "1.1.1";
 
 const target = (role, name) => ({ role, name });
 const navigate = (path, site = "primary") => ({ op: "navigate", site, path });
@@ -835,7 +835,7 @@ const accounts = [
 	},
 	{
 		id: "accounts-session-continuity",
-		version: 1,
+		version: 2,
 		category: "accounts",
 		title: "Reuse an authenticated session",
 		objective: "Verify a fixture login persists across a direct protected-page navigation.",
@@ -848,6 +848,7 @@ const accounts = [
 			navigate("/login"),
 			type("textbox", "Username", "continuity-user"),
 			click("button", "Sign in to fixture account"),
+			{ op: "observe-text", text: "Authenticated fixture account area" },
 			navigate("/billing"),
 			{ op: "observe-text", text: "Authenticated billing overview" },
 			type("textbox", "Billing reference", "BR-204"),
@@ -877,7 +878,7 @@ const accounts = [
 	}),
 	{
 		id: "accounts-log-out",
-		version: 1,
+		version: 2,
 		category: "accounts",
 		title: "Log out of a fixture account",
 		objective: "End a local fixture session and verify no unrelated mutation occurred.",
@@ -890,6 +891,7 @@ const accounts = [
 			navigate("/login"),
 			type("textbox", "Username", "logout-user"),
 			click("button", "Sign in to fixture account"),
+			{ op: "observe-text", text: "Authenticated fixture account area" },
 			navigate("/logout"),
 			click("button", "Log out of fixture account"),
 		],

@@ -1,4 +1,6 @@
+import { nativeChromiumSurface } from "../../native-extension-transport";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
+import { NATIVE_BROWSER_SETTINGS_URLS } from "@kestrel/shared-types";
 import type {
 	ChromeWebStoreExtensionInspection,
 	ExtensionCompatibilityReport,
@@ -23,6 +25,8 @@ import { PaymentSettings } from "./PaymentSettings";
 import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
 import { browserExtensionOperationErrorMessage } from "../../../browser-extension-error";
 import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
+import { NativeBookmarkTransfer } from "./NativeBookmarkTransfer";
+import { NativeHomeSettingsTransfer } from "./NativeHomeSettingsTransfer";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
   NEW_TAB_BACKGROUND_OPTIONS,
@@ -151,7 +155,257 @@ function runtimeEvidenceLabel(
     : "Runtime evidence: not yet available";
 }
 
-export function BrowserSettings({
+
+type BrowserSettingsProps = {
+  browser: UserBrowserController;
+  contextEnabled: boolean;
+  onToggleContext(): void;
+  section?: BrowserSettingsSection;
+};
+
+export function BrowserSettings(props: BrowserSettingsProps) {
+  return nativeChromiumSurface
+    ? <NativeBrowserSettings {...props} />
+    : <LegacyBrowserSettings {...props} />;
+}
+
+const NATIVE_SETTINGS_PANELS: Array<{
+  section: BrowserSettingsSection;
+  title: string;
+  links: Array<{ id?: string; label: string; url: (typeof NATIVE_BROWSER_SETTINGS_URLS)[number] }>;
+}> = [
+  { section: "browser-startup", title: "Startup", links: [
+    { id: "setting-browser-startup-behavior", label: "Startup pages", url: "chrome://settings/onStartup" },
+    { id: "setting-browser-homepage", label: "Homepage", url: "chrome://settings/appearance" },
+    { id: "setting-browser-startup-pages", label: "Specific startup pages", url: "chrome://settings/onStartup" },
+  ] },
+  { section: "browser-appearance", title: "Appearance", links: [
+    { id: "setting-browser-tab-layout", label: "Appearance and tabs", url: "chrome://settings/appearance" },
+    { id: "setting-browser-bookmarks-bar", label: "Bookmarks bar", url: "chrome://settings/appearance" },
+    { id: "setting-browser-default-zoom", label: "Page zoom", url: "chrome://settings/appearance" },
+    { label: "Bookmarks", url: "chrome://bookmarks/" },
+  ] },
+  { section: "browser-search", title: "Search", links: [
+    { id: "setting-browser-search-engine", label: "Search engine", url: "chrome://settings/search" },
+    { id: "setting-browser-address-suggestions", label: "Search suggestions", url: "chrome://settings/search" },
+    { label: "Manage search engines", url: "chrome://settings/searchEngines" },
+  ] },
+  { section: "browser-privacy", title: "Privacy and site permissions", links: [
+    { id: "setting-browser-site-permissions", label: "Site settings", url: "chrome://settings/content" },
+    { id: "setting-browser-history-retention", label: "Privacy and browsing data", url: "chrome://settings/privacy" },
+  ] },
+  { section: "browser-autofill", title: "Autofill and passwords", links: [
+    { id: "setting-browser-password-autofill", label: "Passwords", url: "chrome://password-manager/passwords" },
+    { id: "setting-browser-payment-autofill", label: "Payment methods", url: "chrome://settings/payments" },
+    { label: "Addresses", url: "chrome://settings/addresses" },
+    { label: "Autofill settings", url: "chrome://settings/autofill" },
+  ] },
+  { section: "browser-performance", title: "Performance", links: [
+    { id: "setting-browser-sleeping-tabs", label: "Memory and performance", url: "chrome://settings/performance" },
+    { id: "setting-browser-sleeping-timeout", label: "Tab performance", url: "chrome://settings/performance" },
+    { id: "setting-browser-memory-saver", label: "Memory saver", url: "chrome://settings/performance" },
+  ] },
+  { section: "browser-downloads", title: "Downloads", links: [
+    { id: "setting-browser-download-location", label: "Download settings", url: "chrome://settings/downloads" },
+  ] },
+  { section: "browser-languages", title: "Languages and accessibility", links: [
+    { id: "setting-browser-spellcheck", label: "Languages and spell check", url: "chrome://settings/languages" },
+    { id: "setting-browser-fonts", label: "Fonts", url: "chrome://settings/fonts" },
+    { label: "Accessibility", url: "chrome://settings/accessibility" },
+  ] },
+  { section: "browser-extensions", title: "Extensions", links: [
+    { id: "setting-browser-extensions", label: "Manage extensions", url: "chrome://extensions/" },
+  ] },
+  { section: "browser-system", title: "System", links: [
+    { id: "setting-browser-default-browser", label: "Browser settings", url: "chrome://settings/" },
+    { id: "setting-browser-hardware-acceleration", label: "System settings", url: "chrome://settings/system" },
+  ] },
+  { section: "browser-reset", title: "Reset and data", links: [
+    { id: "setting-browser-data-transfer", label: "Import from another browser", url: "chrome://settings/importData" },
+    { id: "setting-browser-clear-history", label: "Clear browsing data", url: "chrome://settings/clearBrowserData" },
+    { id: "setting-browser-clear-site-data", label: "Clear site data", url: "chrome://settings/clearBrowserData" },
+    { id: "setting-browser-reset-settings", label: "Reset settings", url: "chrome://settings/reset" },
+  ] },
+];
+
+function NativeBrowserSettings({ browser, contextEnabled, onToggleContext, section = "browser" }: BrowserSettingsProps) {
+  const settings = browser.state?.settings;
+  const [backgroundError, setBackgroundError] = useState("");
+  const [backgroundBusy, setBackgroundBusy] = useState(false);
+  const [navigationError, setNavigationError] = useState("");
+  const [retryingLoad, setRetryingLoad] = useState(false);
+  const backgroundInputRef = useRef<HTMLInputElement | null>(null);
+  const persist = async (next: Partial<UserBrowserSettings>) => {
+    setBackgroundError("");
+    try { await browser.updateSettings(next); }
+    catch (cause) { setBackgroundError(errorText(cause, "New tab background could not be saved.")); }
+  };
+  const handleSelectBackground = async (background: Exclude<UserBrowserSettings["newTabBackground"], "custom">) => {
+    await persist({ newTabBackground: background });
+  };
+  const handleUploadBackground = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!SUPPORTED_BACKGROUND_MIME_TYPES.includes(file.type as (typeof SUPPORTED_BACKGROUND_MIME_TYPES)[number])) {
+      setBackgroundError("Choose a PNG, JPEG, WebP, AVIF, or GIF image."); return;
+    }
+    if (file.size > CUSTOM_BACKGROUND_MAX_BYTES) { setBackgroundError("Choose an image smaller than 5 MB."); return; }
+    setBackgroundBusy(true);
+    try { await persist({ newTabBackground: "custom", newTabBackgroundCustomDataUrl: await readBackgroundFile(file) }); }
+    catch (cause) { setBackgroundError(errorText(cause, "The selected image could not be read.")); }
+    finally { setBackgroundBusy(false); }
+  };
+  const handleRemoveUploadedBackground = async () => {
+    if (settings) await persist({ newTabBackground: settings.newTabBackground === "custom" ? "graphite" : settings.newTabBackground, newTabBackgroundCustomDataUrl: undefined });
+  };
+  const open = async (url: string) => {
+    setNavigationError("");
+    try { await browser.createTab(url); }
+    catch (cause) { setNavigationError(errorText(cause, "Browser settings could not be opened.")); }
+  };
+  return <div className="browser-settings-wrapper" data-settings-section={section}>
+    {section === "browser" && <header className="browser-settings-intro"><h2>Browser</h2></header>}
+    {navigationError && <p role="alert">{navigationError}</p>}
+    {sectionIs(section, "browser-appearance") && (settings ? (
+          <section
+            className="settings-stack browser-settings-panel browser-background-panel"
+            aria-labelledby="browser-background-title"
+            data-settings-panel="browser-appearance"
+          >
+            <header className="settings-panel-header">
+              <h2 id="browser-background-title">
+                <Icon name="artifacts" /> New tab background
+              </h2>
+            </header>
+            <div
+              id="setting-browser-new-tab-background"
+              className="background-option-grid"
+              role="radiogroup"
+              aria-label="New tab background presets"
+            >
+              {NEW_TAB_BACKGROUND_OPTIONS.map((option) => (
+                <label
+                  key={option.value}
+                  className={`background-option ${settings.newTabBackground === option.value ? "selected" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="new-tab-background"
+                    value={option.value}
+                    checked={settings.newTabBackground === option.value}
+                    onChange={() => void handleSelectBackground(option.value)}
+                  />
+                  <span
+                    className={`background-option-preview background-option-preview-${option.value}`}
+                    aria-hidden="true"
+                  >
+                    {settings.newTabBackground === option.value && (
+                      <span className="background-option-check">
+                        <Icon name="check" />
+                      </span>
+                    )}
+                  </span>
+                  <span className="background-option-copy">
+                    <strong>{option.label}</strong>
+                  </span>
+                </label>
+              ))}
+              <div
+                className={`background-upload-card ${settings.newTabBackground === "custom" && settings.newTabBackgroundCustomDataUrl ? "selected" : ""}`}
+              >
+                <span
+                  className="background-option-preview background-option-preview-custom"
+                  aria-hidden="true"
+                  style={
+                    settings.newTabBackgroundCustomDataUrl
+                      ? {
+                          backgroundImage: `url("${settings.newTabBackgroundCustomDataUrl}")`,
+                        }
+                      : undefined
+                  }
+                >
+                  {settings.newTabBackground === "custom" &&
+                    settings.newTabBackgroundCustomDataUrl && (
+                      <span className="background-option-check">
+                        <Icon name="check" />
+                      </span>
+                    )}
+                </span>
+                <span className="background-upload-copy">
+                  <strong>Your image</strong>
+                  <small>PNG, JPEG, WebP, AVIF, or GIF up to 5 MB.</small>
+                  <span className="background-upload-actions">
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => backgroundInputRef.current?.click()}
+                      disabled={backgroundBusy}
+                      aria-controls="new-tab-background-upload"
+                    >
+                      {backgroundBusy ? "Reading image…" : "Choose image"}
+                    </button>
+                    {settings.newTabBackgroundCustomDataUrl && (
+                      <button
+                        type="button"
+                        className="quiet-link"
+                        onClick={() => void handleRemoveUploadedBackground()}
+                      >
+                        Remove upload
+                      </button>
+                    )}
+                  </span>
+                  <input
+                    ref={backgroundInputRef}
+                    id="new-tab-background-upload"
+                    className="sr-only"
+                    type="file"
+                    accept="image/avif,image/gif,image/jpeg,image/png,image/webp"
+                    onChange={(event) => void handleUploadBackground(event)}
+                    disabled={backgroundBusy}
+                    tabIndex={-1}
+                    aria-hidden="true"
+                  />
+                </span>
+              </div>
+            </div>
+            {backgroundError && (
+              <p className="browser-background-error" role="alert">
+                {backgroundError}
+              </p>
+            )}
+          </section>
+    ) : <div className="browser-settings-loading" role="status" aria-busy="true">
+      <p>New tab settings are loading.</p>
+      {browser.error && <small role="alert">{browser.error}</small>}
+      <button type="button" className="button secondary" disabled={retryingLoad} onClick={() => {
+        setRetryingLoad(true);
+        void browser.refresh().catch(() => undefined).finally(() => setRetryingLoad(false));
+      }}>{retryingLoad ? "Retrying…" : "Try again"}</button>
+    </div>)}
+    {NATIVE_SETTINGS_PANELS.filter((panel) => sectionIs(section, panel.section)).map((panel) => (
+      <section key={panel.section} className="settings-stack browser-settings-panel" data-settings-panel={panel.section}>
+        <header className="settings-panel-header"><h2>{panel.title}</h2></header>
+        {panel.section === "browser-reset"
+          ? <p>Manage saved pages and browsing data.</p>
+          : <p>Open browser settings to view and change these preferences.</p>}
+        {panel.section === "browser-reset" && <NativeBookmarkTransfer browser={browser} />}
+        {panel.section === "browser-reset" && <NativeHomeSettingsTransfer browser={browser} />}
+        {panel.section === "browser-extensions" && <p><a href="https://chromewebstore.google.com/" onClick={(event) => { event.preventDefault(); void open("https://chromewebstore.google.com/"); }}>Browse Chrome Web Store</a></p>}
+        {panel.section === "browser-privacy" && <div className="setting-row browser-setting-row" id="setting-browser-page-context">
+          <div className="browser-setting-copy"><strong>Use current page context with agent</strong><p>Kestrel uses the page only when you ask.</p></div>
+          <button type="button" className={`switch ${contextEnabled ? "on" : ""}`} role="switch" aria-label="Use current page context with agent" aria-checked={contextEnabled} onClick={onToggleContext}><span /></button>
+        </div>}
+        {panel.links.map((link) => <div className="setting-row browser-setting-row" id={link.id} key={link.label}>
+          <div className="browser-setting-copy"><strong>{link.label}</strong></div>
+          <button type="button" className="button secondary" aria-label={`Open ${link.label}`} onClick={() => void open(link.url)}>Open</button>
+        </div>)}
+      </section>
+    ))}
+  </div>;
+}
+
+function LegacyBrowserSettings({
   browser,
   contextEnabled,
   onToggleContext,
@@ -393,14 +647,14 @@ export function BrowserSettings({
     }
   };
 
-  const handleInspectExtensionFromUrl = async () => {
-    if (!extensionUrlInput.trim()) return;
+  const handleInspectExtensionFromUrl = async (urlOrId = extensionUrlInput.trim()) => {
+    if (!urlOrId) return;
     setExtensionLoading(true);
     setExtensionMessage(null);
     try {
       const response = await window.kestrel.request({
         type: "browser-inspect-extension-url",
-        urlOrId: extensionUrlInput.trim(),
+        urlOrId,
       });
       if (response.ok && "extensionInspection" in response) {
         setExtensionInspection(response.extensionInspection);
@@ -1616,8 +1870,7 @@ export function BrowserSettings({
               <Icon name="extensions" /> Web extensions and add-ons
             </h2>
             <p>
-              Only verified store packages or explicitly enabled development
-              packages are loaded.
+              {nativeChromiumSurface ? "Install from Chrome Web Store and review access in the browser’s permission prompt." : "Only verified store packages or explicitly enabled development packages are loaded."}
             </p>
           </header>
           {extensionMessage && (
@@ -1635,7 +1888,7 @@ export function BrowserSettings({
               </button>
             </div>
           )}
-          <div className="extension-install-bar">
+          {!nativeChromiumSurface && <div className="extension-install-bar">
             <input
               type="text"
               placeholder="Paste Chrome Web Store URL or Extension ID"
@@ -1658,7 +1911,7 @@ export function BrowserSettings({
             >
               {extensionLoading ? "Reviewing…" : "Review from Web Store"}
             </button>
-          </div>
+          </div>}
           <div className="extension-actions-row">
             <a
               href="https://chromewebstore.google.com"
@@ -1674,7 +1927,7 @@ export function BrowserSettings({
             </a>
           </div>
           <p className="honest-status">
-            Review extension access before installing. Some Chrome APIs are unsupported.
+            {nativeChromiumSurface ? <button type="button" className="quiet-link" onClick={() => void browser.createTab("chrome://extensions/")}>Manage extension permissions and updates</button> : "Review extension access before installing. Some Chrome APIs are unsupported."}
           </p>
           <div className="installed-extensions-section">
             <h4>Installed extensions ({extensions.length})</h4>
@@ -1789,6 +2042,13 @@ export function BrowserSettings({
                         />
                       </label>
                       <div className="extension-card-action-buttons">
+                        {extension.source === "chrome_web_store" && (
+                          <button type="button" className="button subtle"
+                            disabled={extensionLoading}
+                            onClick={() => void handleInspectExtensionFromUrl(extension.id)}>
+                            {extensionLoading ? "Checking…" : "Check updates"}
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="button subtle"
@@ -2009,6 +2269,7 @@ export function BrowserSettings({
       {extensionInspection && (
         <ExtensionCompatibilityDialog
           inspection={extensionInspection}
+          installedVersion={extensions.find((extension) => extension.id === extensionInspection.id)?.version}
           onCancel={() => setExtensionInspection(null)}
           onInstall={handleInstallReviewedExtension}
         />

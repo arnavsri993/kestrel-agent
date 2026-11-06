@@ -1,6 +1,7 @@
 import { MemoryWorkspaceQuerySchema, MemoryWorkspaceSchema, MemoryDocumentSchema, MemoryDocumentSaveSchema } from "./memory-workspace";
 import { SourceSelectionSchema, SourceObservationSchema } from "./source-observations";
 import { MemoryRecoveryPreviewSchema } from "./memory-recovery";
+import { NativeEmbeddingRecoveryRequestSchema, type NativeEmbeddingRecoveryPreview, type NativeEmbeddingRecoveryApplied, type NativeEmbeddingRecoveryStatus } from "./native-embedding-recovery";
 import { ResourceScopeSchema } from "./resource-access";
 import { AgentTemplateSchema, SpecialistDefinitionSchema } from "./agent-templates";
 import { z } from "zod";
@@ -509,7 +510,24 @@ const ROUTING_KNOWN_SECRET_PATTERN =
 	/^(?:gh[pousr]_|github_pat_|xox[a-z]-|xapp-|gsk_|akia[0-9a-z]{16}|asia[0-9a-z]{16}|aiza[0-9a-z_-]{20,}|glpat-|glrt-|npm_|pypi-)/i;
 const ROUTING_JWT_PATTERN = /^eyj[a-z0-9_-]{8,}\.[a-z0-9_-]+\.[a-z0-9_-]+$/i;
 const ROUTING_EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
-const ROUTING_URL_PATTERN = /(?:^|[^A-Z0-9_])[A-Z][A-Z0-9+.-]*:\/\//i;
+// The widest routing field is a 300-character profile ID or display name.
+const ROUTING_METADATA_MAX_LENGTH = 300;
+
+// Scan once instead of trying a scheme at every position in a long string.
+function hasRoutingUrlScheme(value: string): boolean {
+	let inScheme = false;
+	for (let i = 0; i < value.length; i++) {
+		const char = value[i]!;
+		if (char === ":" && inScheme && value[i + 1] === "/" && value[i + 2] === "/") {
+			return true;
+		}
+		const isLetter = /[A-Za-z]/.test(char);
+		const isSchemeChar = isLetter || /[0-9+.-]/.test(char);
+		const startsScheme = isLetter && (i === 0 || !/[A-Za-z0-9_]/.test(value[i - 1]!));
+		inScheme = isSchemeChar && (inScheme || startsScheme);
+	}
+	return false;
+}
 
 export function isRoutingSecretLikeValue(value: string): boolean {
 	return (
@@ -521,9 +539,10 @@ export function isRoutingSecretLikeValue(value: string): boolean {
 
 export function isRoutingUnsafeMetadataValue(value: string): boolean {
 	return (
+		value.length > ROUTING_METADATA_MAX_LENGTH ||
 		isRoutingSecretLikeValue(value) ||
 		ROUTING_EMAIL_PATTERN.test(value) ||
-		ROUTING_URL_PATTERN.test(value) ||
+		hasRoutingUrlScheme(value) ||
 		/^www\./i.test(value)
 	);
 }
@@ -3411,6 +3430,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("runtime-run-agent"),
 		sessionId: z.string().min(1),
 		message: z.string().min(1).max(1_000_000),
+		purpose: z.literal("first-run-read-only-check").optional(),
 		model: z.string().min(1).max(200),
 		providerIds: z.array(z.string().min(1).max(100)).min(1),
 		providerModels: z.record(z.string(), z.string().min(1).max(200)).optional(),
@@ -4101,6 +4121,50 @@ export type UserBrowserBookmarkFolder = z.infer<
 	typeof UserBrowserBookmarkFolderSchema
 >;
 
+const NativeBookmarkTransferIdSchema = z.string().regex(/^f(?:0|[1-9]\d{0,8})$/);
+export const MAX_NATIVE_BOOKMARK_TRANSFER_BYTES = 512 * 1024;
+export const MAX_NATIVE_BOOKMARK_SOURCE_BYTES = 10 * 1024 * 1024;
+const nativeBookmarkTransferText = (max: number) => z.string().min(1).max(max)
+	.refine(value => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value), "Use trimmed text without control characters.");
+export const NativeBookmarkTransferSchema = z.object({
+	format: z.literal("kestrel-bookmarks"),
+	version: z.literal(1),
+	folders: z.array(z.object({
+		id: NativeBookmarkTransferIdSchema,
+		parentId: NativeBookmarkTransferIdSchema.optional(),
+		name: nativeBookmarkTransferText(80),
+	}).strict()).max(100),
+	bookmarks: z.array(z.object({
+		url: z.string().min(1).max(8_192).refine(value => {
+			if (value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value) || !/^https?:\/\//i.test(value)) return false;
+			try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password; }
+			catch { return false; }
+		}, "Use an HTTP(S) bookmark without credentials."),
+		title: nativeBookmarkTransferText(500),
+		folderId: NativeBookmarkTransferIdSchema.optional(),
+		displayMode: UserBrowserBookmarkDisplayModeSchema,
+	}).strict()).max(2_000),
+}).strict().superRefine((value, context) => {
+	const fail = (message: string) => context.addIssue({ code: z.ZodIssueCode.custom, message });
+	if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_NATIVE_BOOKMARK_TRANSFER_BYTES) fail("Bookmark transfer exceeds 512 KiB.");
+	const folders = new Map(value.folders.map(folder => [folder.id, folder]));
+	if (folders.size !== value.folders.length) fail("Bookmark folder IDs must be unique.");
+	for (const folder of value.folders) {
+		const seen = new Set<string>();
+		let current: typeof folder | undefined = folder;
+		while (current) {
+			if (seen.has(current.id) || seen.size >= 8) { fail("Bookmark folders must be acyclic and at most eight levels deep."); break; }
+			seen.add(current.id);
+			if (current.parentId && !folders.has(current.parentId)) { fail("Bookmark folder parent is missing."); break; }
+			current = current.parentId ? folders.get(current.parentId) : undefined;
+		}
+	}
+	for (const bookmark of value.bookmarks) if (bookmark.folderId && !folders.has(bookmark.folderId)) fail("Bookmark folder is missing.");
+});
+export type NativeBookmarkTransfer = z.infer<typeof NativeBookmarkTransferSchema>;
+export type NativeBookmarkImportSummary = { bookmarksToAdd: number; duplicateBookmarks: number; foldersToAdd: number };
+export type NativeBookmarkImportResult = { bookmarksAdded: number; duplicateBookmarks: number; foldersAdded: number; complete: boolean; error?: string };
+
 export const UserBrowserSitePermissionSchema = z.object({
 	origin: z.string().min(1).max(8_192),
 	permission: z.string().min(1).max(80),
@@ -4389,6 +4453,108 @@ export const BrowserDataTransferSchema = z.object({
 });
 export type BrowserDataTransfer = z.infer<typeof BrowserDataTransferSchema>;
 
+export const NATIVE_HOME_SETTINGS_CATEGORIES = ["background", "shortcuts", "greeting", "widgets"] as const;
+export const NativeHomeSettingsCategorySchema = z.enum(NATIVE_HOME_SETTINGS_CATEGORIES);
+export type NativeHomeSettingsCategory = z.infer<typeof NativeHomeSettingsCategorySchema>;
+const NativeHomeWidgetLayoutSchema = NewTabWidgetLayoutSchema.extend({
+ items: z.array(NewTabWidgetLayoutItemSchema.strict()).max(12),
+}).strict();
+const NativeHomeWidgetsSchema = NewTabWidgetSettingsSchema.unwrap().unwrap().extend({
+ layouts: z.object({ compact: NativeHomeWidgetLayoutSchema.optional(), standard: NativeHomeWidgetLayoutSchema.optional(), wide: NativeHomeWidgetLayoutSchema.optional(), ultrawide: NativeHomeWidgetLayoutSchema.optional() }).strict().default({}),
+}).strict();
+export const NativeHomeSettingsSchema = z.object({
+ newTabBackground: UserBrowserSettingsSchema.shape.newTabBackground.unwrap().optional(),
+ newTabBackgroundCustomDataUrl: UserBrowserSettingsSchema.shape.newTabBackgroundCustomDataUrl,
+ newTabShortcuts: UserBrowserSettingsSchema.shape.newTabShortcuts.unwrap().element.strict().array().max(12).optional(),
+ newTabGreetingActivity: NewTabGreetingActivitySchema.unwrap().unwrap().strict().optional(),
+ newTabWidgets: NativeHomeWidgetsSchema.optional(),
+}).strict().superRefine((value, context) => {
+ if (value.newTabBackground === "custom" && !value.newTabBackgroundCustomDataUrl)
+  context.addIssue({ code: "custom", path: ["newTabBackground"], message: "A custom background requires its image in the file." });
+});
+export type NativeHomeSettings = z.infer<typeof NativeHomeSettingsSchema>;
+const homeKeysByCategory = {
+ background: ["newTabBackground", "newTabBackgroundCustomDataUrl"], shortcuts: ["newTabShortcuts"],
+ greeting: ["newTabGreetingActivity"], widgets: ["newTabWidgets"],
+} as const;
+function rejectUnknownTransferFields(raw: unknown, parsed: unknown): void {
+ if (!raw || typeof raw !== "object") return;
+ if (!parsed || typeof parsed !== "object") throw new Error("Unknown browser-data fields.");
+ for (const key of Object.keys(raw)) {
+  if (!Object.hasOwn(parsed, key)) throw new Error("Unknown browser-data fields.");
+  rejectUnknownTransferFields((raw as Record<string, unknown>)[key], (parsed as Record<string, unknown>)[key]);
+ }
+}
+export function parseNativeHomeSettingsTransferFile(value: unknown): { source: "home-settings" | "browser-data"; settings: NativeHomeSettings; availableCategories: NativeHomeSettingsCategory[] } {
+ const serialized = JSON.stringify(value);
+ if (!serialized || new TextEncoder().encode(serialized).byteLength > MAX_NATIVE_BOOKMARK_SOURCE_BYTES) throw new Error("Home settings source exceeds 10 MiB or is invalid.");
+ const raw = value as Record<string, unknown>;
+ let rawSettings: unknown;
+ let source: "home-settings" | "browser-data";
+ if (raw?.format === "kestrel-home-settings") {
+  const file = z.object({ format: z.literal("kestrel-home-settings"), version: z.literal(1), settings: z.unknown() }).strict().parse(value);
+  rawSettings = file.settings; source = "home-settings";
+ } else {
+  const parsed = BrowserDataTransferSchema.strict().parse(value);
+  rejectUnknownTransferFields(value, parsed);
+  rawSettings = (value as { settings: unknown }).settings; source = "browser-data";
+ }
+ if (!rawSettings || typeof rawSettings !== "object" || Array.isArray(rawSettings)) throw new Error("Invalid Home settings.");
+ const obj = rawSettings as Record<string, unknown>;
+ const keys = Object.values(homeKeysByCategory).flat() as string[];
+ const selected = Object.fromEntries(Object.entries(obj).filter(([key]) => keys.includes(key)));
+ if (source === "home-settings" && Object.keys(selected).length !== Object.keys(obj).length) throw new Error("Unknown Home settings fields.");
+ // The base schemas normalize defaults and trim text, but a caught malformed
+ // greeting/widget payload must never be converted into a default for import.
+ for (const key of Object.keys(selected)) if (selected[key] === undefined) throw new Error("Invalid Home settings.");
+ if (Object.hasOwn(selected, "newTabGreetingActivity")) NewTabGreetingActivitySchema.unwrap().parse(selected.newTabGreetingActivity);
+ if (Object.hasOwn(selected, "newTabWidgets")) NewTabWidgetSettingsSchema.unwrap().parse(selected.newTabWidgets);
+ if (selected.newTabBackground === "custom" && !Object.hasOwn(selected, "newTabBackgroundCustomDataUrl")) throw new Error("A custom background requires its image in the file.");
+ const settings = NativeHomeSettingsSchema.parse(selected);
+ rejectUnknownTransferFields(selected, settings);
+ const availableCategories = NATIVE_HOME_SETTINGS_CATEGORIES.filter(category => homeKeysByCategory[category].some(key => Object.hasOwn(selected, key)));
+ if (!availableCategories.length) throw new Error("This file contains no Home settings.");
+ return { source, settings, availableCategories };
+}
+
+export type NativeBookmarkTransferFile = {
+	data: NativeBookmarkTransfer;
+	source: "native" | "browser-data";
+	excluded: { history: number; sitePermissions: number; settings: boolean; bookmarkDates: boolean };
+};
+
+/** Explicit bookmark-only extraction from a portable file; never imports old
+ * timestamps, browser identities, history, settings, or site permissions. */
+export function parseNativeBookmarkTransferFile(value: unknown): NativeBookmarkTransferFile {
+	if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_NATIVE_BOOKMARK_SOURCE_BYTES) throw new Error("Bookmark source file exceeds 10 MiB.");
+	if (value && typeof value === "object" && "format" in value && value.format === "kestrel-bookmarks") {
+		return { data: NativeBookmarkTransferSchema.parse(value), source: "native",
+			excluded: { history: 0, sitePermissions: 0, settings: false, bookmarkDates: false } };
+	}
+	const legacy = BrowserDataTransferSchema.strict().parse(value);
+	// Existing settings contain nested records and defaults. Reject stripped
+	// unknown fields at every level while allowing legitimate schema defaults.
+	function rejectUnknown(raw: unknown, parsed: unknown): void {
+		if (!raw || typeof raw !== "object") return;
+		if (!parsed || typeof parsed !== "object") throw new Error("Unknown browser-data fields.");
+		for (const key of Object.keys(raw)) {
+			if (!Object.hasOwn(parsed, key)) throw new Error("Unknown browser-data fields.");
+			rejectUnknown((raw as Record<string, unknown>)[key], (parsed as Record<string, unknown>)[key]);
+		}
+	}
+	rejectUnknown(value, legacy);
+	const folders = new Map(legacy.bookmarkFolders.map((folder, index) => [folder.id, `f${index}`]));
+	if (folders.size !== legacy.bookmarkFolders.length) throw new Error("Duplicate legacy bookmark folder identities.");
+	const bookmarks = legacy.bookmarks.map(bookmark => {
+		const folderId = bookmark.folderId ? folders.get(bookmark.folderId) : undefined;
+		if (bookmark.folderId && !folderId) throw new Error("Legacy bookmark folder is missing.");
+		return { url: bookmark.url, title: bookmark.title, displayMode: bookmark.displayMode ?? "title", ...(folderId ? { folderId } : {}) };
+	});
+	return { data: NativeBookmarkTransferSchema.parse({ format: "kestrel-bookmarks", version: 1,
+		folders: legacy.bookmarkFolders.map(folder => ({ id: folders.get(folder.id), name: folder.name })), bookmarks }),
+		source: "browser-data", excluded: { history: legacy.history.length, sitePermissions: legacy.sitePermissions.length, settings: true, bookmarkDates: true } };
+}
+
 export const InstalledExtensionSchema = z.object({
 	id: z.string().min(1).max(100),
 	name: z.string().min(1).max(200),
@@ -4430,6 +4596,10 @@ export const UserBrowserStateSchema = z.object({
 		.max(500)
 		.default([]),
 	settings: UserBrowserSettingsSchema,
+	// With Chromium ownership, only Kestrel Home fields in `settings` are
+	// authoritative. The remaining fields provide legacy shape compatibility;
+	// actual browser preferences must be read/changed in Chromium's settings UI.
+	settingsOwnership: z.enum(["kestrel", "chromium"]).optional(),
 });
 export type UserBrowserState = z.infer<typeof UserBrowserStateSchema>;
 
@@ -4588,6 +4758,7 @@ export const KestrelDeepLinkSchema = z
 export type KestrelDeepLink = z.infer<typeof KestrelDeepLinkSchema>;
 
 export const RendererRequestSchema = z.union([
+	NativeEmbeddingRecoveryRequestSchema,
 	z.object({ type: z.literal("memory-recovery-save-file"), sessionId: z.string().min(1) }),
 	z.object({ type: z.literal("memory-recovery-open-file"), sessionId: z.string().min(1) }),
  z.object({ type: z.literal("whatsapp-open") }),
@@ -4604,6 +4775,10 @@ export const RendererRequestSchema = z.union([
 		type: z.literal("communication-code-scan"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	}),
+	z.object({
+		type: z.literal("communication-code-cancel"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}).strict(),
 	z.object({
 		type: z.literal("communication-code-use"),
 		scanId: z.string().regex(/^scan-[a-f0-9-]{36}$/),
@@ -4700,6 +4875,15 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("browser-reset-download-directory") }),
 	z.object({ type: z.literal("browser-export-data") }),
 	z.object({ type: z.literal("browser-import-data") }),
+	z.object({ type: z.literal("browser-plan-home-settings-import"), settings: NativeHomeSettingsSchema, categories: z.array(NativeHomeSettingsCategorySchema).min(1).max(4).refine(v => new Set(v).size === v.length) }).strict(),
+ z.object({ type: z.literal("browser-apply-home-settings-import"), planId: z.string().uuid() }).strict(),
+ z.object({ type: z.literal("browser-discard-home-settings-import"), planId: z.string().uuid() }).strict(),
+ z.object({ type: z.literal("browser-undo-home-settings-import"), undoId: z.string().uuid() }).strict(),
+ z.object({ type: z.literal("browser-export-bookmarks") }).strict(),
+	z.object({ type: z.literal("browser-plan-bookmark-import"), data: NativeBookmarkTransferSchema,
+		destinationFolderId: UserBrowserBookmarkFolderIdSchema.optional() }).strict(),
+	z.object({ type: z.literal("browser-apply-bookmark-import"), planId: z.string().uuid() }).strict(),
+	z.object({ type: z.literal("browser-discard-bookmark-import"), planId: z.string().uuid() }).strict(),
 	z.object({ type: z.literal("browser-clear-history") }),
 	z.object({
 		type: z.literal("browser-clear-data"),
@@ -4892,6 +5076,8 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("set-default-browser") }),
 	z.object({ type: z.literal("set-launch-at-login"), enabled: z.boolean() }),
 	z.object({ type: z.literal("get-workspace-grants") }),
+	z.object({ type: z.literal("reconnect-workspace-project"), projectId: z.string().min(1).max(200) }).strict(),
+	z.object({ type: z.literal("remove-pending-workspace-project"), projectId: z.string().min(1).max(200) }).strict(),
 	z.object({
 		type: z.literal("project-update"),
 		projectId: z.string().min(1).max(200),
@@ -4940,6 +5126,7 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("system-readiness") }),
 	z.object({ type: z.literal("export-diagnostic-report") }),
 	z.object({ type: z.literal("create-local-backup") }),
+	z.object({ type: z.literal("reveal-created-local-backup"), backupId: z.string().uuid() }),
 	z.object({ type: z.literal("reveal-local-backup"), path: z.string().min(1) }),
 	z.object({ type: z.literal("subscription-cli-status") }),
 	z.object({ type: z.literal("provider-account-list") }),
@@ -5182,6 +5369,8 @@ export const LocalRuntimeStatusSchema = z.object({
 	runtimeVersion: z.string().min(1).max(100).optional(),
 	runtimeDownloadBytes: z.number().int().positive(),
 	localModels: z.array(LocalModelSummarySchema),
+	/** Discovered models are choices, not configured or live-verified routes. */
+	detectedModels: z.array(LocalModelSummarySchema).max(200).optional(),
 	verifiedModel: z.string().min(1).max(200).optional(),
 	verifiedAt: z.string().datetime().optional(),
 	/** A host can explicitly defer local-runtime ownership without pretending it is a device limitation. */
@@ -5201,6 +5390,7 @@ export const SystemReadinessSchema = z.object({
 	checkedAt: z.string().datetime(),
 	readyForLiveWork: z.boolean(),
 	checks: z.array(SystemReadinessCheckSchema),
+	backupScope: z.literal("native-core-data").optional(),
 });
 export type SystemReadiness = z.infer<typeof SystemReadinessSchema>;
 
@@ -5212,6 +5402,18 @@ export const LocalBackupResultSchema = z.object({
 	verified: z.boolean(),
 });
 export type LocalBackupResult = z.infer<typeof LocalBackupResultSchema>;
+
+export const NATIVE_CORE_BACKUP_BUSY_MESSAGE = "A native Core backup is in progress. Try again after it finishes.";
+export const NativeLocalBackupResultSchema = z.object({
+	backupId: z.string().uuid(),
+	createdAt: z.string().datetime(),
+	files: z.number().int().nonnegative(),
+	bytes: z.number().int().nonnegative(),
+	verified: z.literal(true),
+	scope: z.literal("native-core-data"),
+	coreStatus: z.enum(["ready", "restart-required"]),
+});
+export type NativeLocalBackupResult = z.infer<typeof NativeLocalBackupResultSchema>;
 
 export const SubscriptionCliStatusSchema = z.object({
 	id: z.enum(["codex", "claude", "opencode", "cursor"]),
@@ -5249,7 +5451,14 @@ export type RendererResponse =
 			browserConnectionMode?: "whatsapp";
 			cancelled?: boolean;
 			bookmarkFolderId?: UserBrowserBookmarkFolderId;
+			bookmarkImportResult?: NativeBookmarkImportResult;
 	  }
+	| { ok: true; homeSettingsImportPlan: { planId: string; expiresAt: string; categories: NativeHomeSettingsCategory[]; changedCategories: NativeHomeSettingsCategory[] } }
+ | { ok: true; homeSettingsImportResult: { changedCategories: NativeHomeSettingsCategory[]; undoId: string; undoExpiresAt: string }; browserState: UserBrowserState }
+ | { ok: true; homeSettingsUndoResult: { restoredCategories: NativeHomeSettingsCategory[] }; browserState: UserBrowserState }
+ | { ok: true; bookmarkTransfer: NativeBookmarkTransfer; bookmarkExportExcluded: { bookmarks: number; folders: number } }
+	| { ok: true; bookmarkImportPlan: { planId: string; summary: NativeBookmarkImportSummary; expiresAt: string } }
+	| { ok: true; bookmarkImportResult: NativeBookmarkImportResult; browserState?: UserBrowserState }
 	| { ok: true; browserDataPath?: string; cancelled?: boolean }
 	| {
 			ok: true;
@@ -5291,6 +5500,8 @@ export type RendererResponse =
 			workspaceGrants: WorkspaceGrant[];
 			/** Enriched project records for project-aware renderer consumers. */
 			projects?: Project[];
+			/** Non-authorizing project identities awaiting a native folder choice. */
+			pendingWorkspaceProjects?: Array<{ id: string; name: string }>;
 			cancelled?: boolean;
 			selectedWorkspacePath?: string;
 			snapshot?: WorkspaceSnapshot;
@@ -5319,7 +5530,12 @@ export type RendererResponse =
 	| { ok: true; systemReadiness: SystemReadiness }
 	| { ok: true; computerUseStatus: ComputerUseStatus }
 	| { ok: true; diagnosticReportPath: string; cancelled?: boolean }
+	| { ok: true; diagnosticReportSaved: true }
 	| { ok: true; localBackup: LocalBackupResult; cancelled?: boolean }
+	| { ok: true; localBackupCreated: NativeLocalBackupResult }
+	| { ok: true; nativeEmbeddingRecoveryPreview: NativeEmbeddingRecoveryPreview }
+	| { ok: true; nativeEmbeddingRecoveryApplied: NativeEmbeddingRecoveryApplied }
+	| { ok: true; nativeEmbeddingRecoveryStatus: NativeEmbeddingRecoveryStatus }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }
 	| { ok: true; providerAccounts: ProviderAccountSummary[] }
 	| { ok: true; googleWorkspaceOAuth: GoogleWorkspaceOAuthStatus }
@@ -5356,6 +5572,7 @@ export interface RendererBridge {
 	onDeepLink(callback: (deepLink: KestrelDeepLink) => void): () => void;
 	onExternalIntake(callback: (intake: ExternalIntake) => void): () => void;
 	onSnapshot(callback: (snapshot: WorkspaceSnapshot) => void): () => void;
+	onWorkspaceProjectsChanged?(callback: (projects: Project[]) => void): () => void;
 	onPetStatus(callback: (status: PetStatus) => void): () => void;
 	onPetActivity(callback: (activity: PetActivityState) => void): () => void;
 	onRuntimeEvent(callback: (event: RuntimeEvent) => void): () => void;

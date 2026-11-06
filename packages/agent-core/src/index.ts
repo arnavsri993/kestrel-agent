@@ -3,7 +3,7 @@ import { OnshapeClient, installOnshapeTools, parseOnshapeDocument } from "./onsh
 export { OnshapeClient } from "./onshape";
 import { AgentMemoryRecovery } from "./memory-recovery";
 import { randomUUID } from "node:crypto";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
 import { mayExecute } from "@kestrel/policy-engine";
@@ -70,6 +70,7 @@ import {
 	installEventApplicationTools,
 } from "./event-applications";
 import { PluginMcpManager } from "./extensions/plugin-mcp";
+import { PluginInstaller } from "./extensions/plugin-installer";
 import { PluginRegistry } from "./extensions/plugins";
 import {
 	installSkillLearningTools,
@@ -96,6 +97,7 @@ import {
 	type MediaGenerationProvider,
 } from "./media-artifacts";
 import type { VoiceTranscriptionProvider } from "./media-providers";
+import { decodeVoiceRecording } from "./voice-recording";
 import { installMemoryTools, MemoryManager } from "./memory";
 import { MemorySubstrate } from "./memory-substrate";
 import { MemoryConsolidator, type MemoryModelRequest } from "./memory-consolidation";
@@ -154,7 +156,7 @@ import {
 	RemoteControl,
 	type RemoteExecutionConfiguration,
 } from "./remote";
-import { AgentRuntime } from "./runtime";
+import { AgentRuntime, validatePendingProjectIds } from "./runtime";
 import { SkinManager } from "./skins";
 import { UsageGovernor } from "./usage-governor";
 import type { UserModelStore } from "./user-model";
@@ -184,6 +186,12 @@ import {
 	fallbackBrowserTabFolderNames,
 	parseBrowserTabFolderNames,
 } from "./browser-tab-folder-naming";
+
+const FIRST_RUN_READ_ONLY_TOOLS = new Set([
+	"tools.search",
+	"workspace.list",
+	"workspace.read",
+]);
 
 function persistedCompactionCount(value: unknown): number {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
@@ -227,6 +235,7 @@ export interface AgentCoreDependencies {
 	workspaceRoots?: string[];
 	configuredWorkspaceRoots?: string[];
 	projects?: Project[];
+	pendingProjectIds?: readonly string[];
 	modelProviders?: ModelProvider[];
 	modelProfiles?: ModelProfile[];
 	routingPolicy?: RoutingPolicy;
@@ -234,6 +243,9 @@ export interface AgentCoreDependencies {
 	learnedSkillRoot?: string;
 	pluginRoots?: string[];
 	managedPluginRoots?: string[];
+	/** When present, managed plugins must verify against these publisher keys. */
+	pluginTrustKeys?: Array<{ keyId: string; publicKey: string }>;
+	pluginActivationIds?: Record<string, string>;
 	honchoApiKey?: string;
 	customPersonalities?: Array<Omit<AgentPersonality, "builtin">>;
 	onAgentTextDelta?: (event: {
@@ -314,8 +326,10 @@ export class AgentCore {
 		{ controller: AbortController; sessionId: string; steering: string[] }
 	>();
 	private readonly coreInstanceId: string;
+	private readonly verifiedManagedPluginIdentities: Record<string, string> = {};
 
 	constructor(private readonly deps: AgentCoreDependencies) {
+		const pendingProjectIds = validatePendingProjectIds(deps.pendingProjectIds === undefined ? [] : deps.pendingProjectIds, deps.projects ?? []);
 		const seedDevelopmentFixtures = deps.seedDevelopmentFixtures === true;
 		this.email = deps.email ?? (seedDevelopmentFixtures
 			? new DevelopmentEmailConnector()
@@ -376,6 +390,7 @@ export class AgentCore {
 			this.deps.configuredWorkspaceRoots ?? this.deps.workspaceRoots ?? [],
 			this.deps.projects ?? [],
 			this.deps.hostToolNames,
+			pendingProjectIds,
 		);
 		this.observability = new ObservabilityManager(
 			this.deps.database,
@@ -406,6 +421,7 @@ export class AgentCore {
 			legacyMemory: this.memory,
 			now: () => new Date(this.now()),
 			projects: deps.projects ?? [],
+			pendingProjectIds,
 			explicitCaptureEnabled: () =>
 				this.configuration.current().memory.captureExplicit,
 		});
@@ -512,11 +528,29 @@ export class AgentCore {
 		);
 		if (deps.channels?.adapters.length)
 			installChannelTools(this.runtime, this.channelGateway, mainSession.id);
+		const verifiedPluginIdentities = this.verifiedManagedPluginIdentities;
+		if (this.deps.pluginTrustKeys !== undefined) {
+			for (const root of this.deps.managedPluginRoots ?? []) {
+				if (!existsSync(root)) continue;
+				if (!lstatSync(root).isDirectory() || lstatSync(root).isSymbolicLink()) throw new Error("Managed plugin root is invalid.");
+				const installer = new PluginInstaller({ managedRoot: root, trustKeys: this.deps.pluginTrustKeys });
+				for (const entry of readdirSync(root, { withFileTypes: true })) {
+					if (entry.name === ".trash") continue;
+					if (entry.name.startsWith(".")) throw new Error("Unexpected hidden managed plugin entry.");
+					if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("Managed plugin entry is invalid.");
+					const bundle = installer.inspect(join(root, entry.name));
+					if (bundle.name !== entry.name) throw new Error("Managed plugin directory does not match its signed name.");
+					verifiedPluginIdentities[bundle.name] = `${bundle.keyId}:${bundle.digest}`;
+				}
+			}
+		}
 		const pluginRegistry = this.deps.pluginRoots?.length
 			? new PluginRegistry(
 					this.deps.pluginRoots,
 					this.deps.database,
 					this.deps.managedPluginRoots,
+					this.deps.pluginActivationIds,
+					verifiedPluginIdentities,
 				)
 			: undefined;
 		if (pluginRegistry) {
@@ -533,7 +567,10 @@ export class AgentCore {
 			...(pluginRegistry?.skillRoots() ?? []),
 		];
 		if (skillRoots.length || pluginRegistry) {
-			this.skillRegistry = new SkillRegistry(skillRoots);
+			this.skillRegistry = new SkillRegistry(skillRoots, skillRoot => {
+				const owner = this.pluginRegistry?.list().find(plugin => plugin.managed && (skillRoot === plugin.root || skillRoot.startsWith(`${plugin.root}${sep}`)));
+				if (owner) this.verifyManagedPlugin(owner.name);
+			});
 			installSkillTools(this.runtime, this.skillRegistry, mainSession.id);
 			if (this.deps.learnedSkillRoot) {
 				this.skillLearning = new SkillLearningManager(
@@ -632,6 +669,7 @@ export class AgentCore {
 				const session = this.runtime.getSession(message.sessionId);
 				if (
 					!this.isStandardSession(session) ||
+					this.runtime.isPendingProjectSession(session.id) ||
 					!this.sharedMemoryCaptureEnabled() ||
 					!this.memorySubstrate.getCaptureConfiguration().enabled
 				)
@@ -2139,6 +2177,21 @@ export class AgentCore {
 		);
 	}
 
+	private verifyManagedPlugin(name: string): void {
+		if (this.deps.pluginTrustKeys === undefined || !this.pluginRegistry) return;
+		const plugin = this.pluginRegistry.get(name);
+		if (!plugin.managed) return;
+		const root = (this.deps.managedPluginRoots ?? []).find(candidate => {
+			const canonical = realpathSync(candidate);
+			return plugin.root.startsWith(`${canonical}${sep}`);
+		});
+		if (!root) throw new Error("Managed plugin is outside its configured root.");
+		const bundle = new PluginInstaller({ managedRoot: root, trustKeys: this.deps.pluginTrustKeys }).inspect(plugin.root);
+		if (bundle.name !== plugin.name || bundle.version !== plugin.version ||
+			`${bundle.keyId}:${bundle.digest}` !== this.verifiedManagedPluginIdentities[name])
+			throw new Error("Managed plugin identity changed; restart Kestrel and review its activation.");
+	}
+
 	private pluginSummaries() {
 		const connected = new Set(
 			this.pluginMcpManager
@@ -2156,15 +2209,12 @@ export class AgentCore {
 		attachments: SelectedAttachment[] = [],
 	): ModelContentPart[] {
 		if (attachments.length === 0) return [];
-		const session = this.runtime.getSession(sessionId);
+		const root = this.runtime.activeWorkspaceRoot(sessionId);
 		const workspaceAttachments = attachments.filter(
 			(attachment) => attachment.source !== "external",
 		);
-		if (workspaceAttachments.length > 0 && !session.workspaceRoot)
+		if (workspaceAttachments.length > 0 && !root)
 			throw new Error("Workspace attachments require a task workspace.");
-		const root = session.workspaceRoot
-			? realpathSync(session.workspaceRoot)
-			: undefined;
 		const parts: ModelContentPart[] = [];
 		let totalBytes = 0;
 		for (const attachment of attachments) {
@@ -2306,6 +2356,7 @@ export class AgentCore {
 				case "plugin-list":
 					return { ok: true, plugins: this.pluginSummaries() };
 				case "plugin-set-enabled": {
+					if (request.enabled) this.verifyManagedPlugin(request.name);
 					if (!this.pluginRegistry || !this.skillRegistry)
 						throw new Error("Plugin discovery is not configured.");
 					if (!request.enabled)
@@ -2334,6 +2385,7 @@ export class AgentCore {
 					return { ok: true, plugins: this.pluginSummaries() };
 				}
 				case "plugin-connect-mcp": {
+					this.verifyManagedPlugin(request.name);
 					if (!this.pluginMcpManager)
 						throw new Error("Plugin MCP is not configured.");
 					await this.pluginMcpManager.connect(
@@ -2571,7 +2623,7 @@ export class AgentCore {
 							runtimeSession,
 							personality.id,
 						);
-						const honchoContext = sharedMemoryEnabled
+						const honchoContext = sharedMemoryEnabled && !this.runtime.isPendingProjectSession(request.sessionId)
 							? await this.honchoMemory.contextFor({
 									sessionId: request.sessionId,
 									...(runtimeSession.workspaceRoot
@@ -3757,13 +3809,7 @@ export class AgentCore {
 						throw new Error(
 							"Voice transcription is not configured. Add an OpenAI credential in Connections.",
 						);
-					const data = Buffer.from(request.dataBase64, "base64");
-					if (
-						data.byteLength === 0 ||
-						data.toString("base64").replace(/=+$/, "") !==
-							request.dataBase64.replace(/=+$/, "")
-					)
-						throw new Error("Voice recording contains invalid base64 data.");
+					const data = decodeVoiceRecording(request.dataBase64);
 					const result = await this.deps.transcriptionProvider.transcribe({
 						data,
 						mediaType: request.mediaType,
@@ -4025,7 +4071,7 @@ export class AgentCore {
 							runtimeSession,
 							personality.id,
 						);
-						const honchoContext = sharedMemoryEnabled
+						const honchoContext = sharedMemoryEnabled && !this.runtime.isPendingProjectSession(request.sessionId)
 							? await this.honchoMemory.contextFor({
 									sessionId: request.sessionId,
 									...(runtimeSession.workspaceRoot
@@ -4051,6 +4097,33 @@ export class AgentCore {
 							userModelContext,
 							honchoContext,
 						});
+						const policyAllowedTools = personality.toolNames
+							? this.configuration.filterToolNames(
+									this.runtime
+										.discoverTools(request.sessionId)
+										.map((tool) => tool.name),
+									personality.toolNames,
+									{
+										includeProtectedRecovery:
+											personality.toolNames.length > 0 &&
+											this.configuration.isConfigurationRequest(
+												request.message,
+											),
+									},
+								)
+							: this.configuration.filterToolNames(
+									this.runtime
+										.discoverTools(request.sessionId)
+										.map((tool) => tool.name),
+								);
+						// Apply this fixed host purpose after normal policy/personality
+						// filtering so protected recovery tools cannot widen its scope.
+						const allowedTools =
+							request.purpose === "first-run-read-only-check"
+								? policyAllowedTools.filter((name) =>
+										FIRST_RUN_READ_ONLY_TOOLS.has(name),
+									)
+								: policyAllowedTools;
 						const result = await this.agentLoop.run({
 							...(workingTask ? { workingTaskId: workingTask.id } : {}),
 							sessionId: request.sessionId,
@@ -4078,30 +4151,7 @@ export class AgentCore {
 								: request.reasoningEffort
 									? { reasoningEffort: request.reasoningEffort }
 									: {}),
-							...(personality.toolNames
-								? {
-										allowedTools: this.configuration.filterToolNames(
-											this.runtime
-												.discoverTools(request.sessionId)
-												.map((tool) => tool.name),
-											personality.toolNames,
-											{
-												includeProtectedRecovery:
-													personality.toolNames !== undefined &&
-													personality.toolNames.length > 0 &&
-													this.configuration.isConfigurationRequest(
-														request.message,
-													),
-											},
-										),
-									}
-								: {
-										allowedTools: this.configuration.filterToolNames(
-											this.runtime
-												.discoverTools(request.sessionId)
-												.map((tool) => tool.name),
-										),
-									}),
+							allowedTools,
 							userContent: [
 								...textContent(request.message),
 								...this.attachmentParts(request.sessionId, request.attachments),
@@ -4134,6 +4184,9 @@ export class AgentCore {
 								.filter(Boolean)
 								.join("\n\n"),
 							maximumTurns: Math.min(
+								request.purpose === "first-run-read-only-check"
+									? 4
+									: Number.MAX_SAFE_INTEGER,
 								request.maximumTurns ?? configuration.workflows.maximumTurns,
 								configuration.workflows.maximumTurns,
 							),
@@ -4537,6 +4590,7 @@ export {
 } from "./ui-presentation";
 export {
 	annotateAccessibilityTree,
+	isSensitiveBrowserInteractiveRef,
 	ELEMENT_REF_PATTERN,
 	isBrowserElementRef,
 	normalizeBrowserElementRef,

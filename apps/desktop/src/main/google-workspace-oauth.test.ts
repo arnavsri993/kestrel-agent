@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialBroker } from "./credential-broker";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
 
@@ -177,8 +177,96 @@ describe("Google Workspace desktop OAuth", () => {
 			manager.connect(
 				"1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com",
 			),
-		).rejects.toThrow("did not complete");
+		).rejects.toThrow("was not completed");
 		expect(malformedStatus).toBe(400);
+	});
+
+	it("rejects duplicate callback parameters, then accepts the exact loopback callback", async () => {
+		const { broker } = fixture();
+		let duplicateStatus = 0;
+		let hostSpoofStatus = 0;
+		let validStatus = 0;
+		const manager = new GoogleWorkspaceOAuthManager({
+			broker,
+			fetcher: async (input, init) => {
+				const url = String(input);
+				if (url.endsWith("/token")) return new Response(JSON.stringify({ access_token: "access-token-value-that-is-long-enough", refresh_token: "refresh-token-value-that-is-long-enough", scope: "openid email https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.events" }));
+				if (url.endsWith("/userinfo")) return new Response(JSON.stringify({ email: "person@example.test" }));
+				if (url.includes("/calendars/primary/events")) return new Response(JSON.stringify({ items: [] }));
+				return fetch(input, init);
+			},
+			openExternal: async (raw) => {
+				const authorization = new URL(raw);
+				const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+				callback.searchParams.set("state", authorization.searchParams.get("state")!);
+				callback.searchParams.set("state", "duplicate");
+				callback.searchParams.set("code", "one-time-code");
+				hostSpoofStatus = await new Promise<number>((resolve, reject) => {
+					const req = httpRequest({ hostname: callback.hostname, port: Number(callback.port), path: `${callback.pathname}${callback.search}`, headers: { host: "attacker.invalid" } }, response => {
+						response.resume(); response.once("end", () => resolve(response.statusCode ?? 0));
+					});
+					req.once("error", reject); req.end();
+				});
+				duplicateStatus = await fetch(callback).then(response => response.status);
+				callback.searchParams.delete("state");
+				callback.searchParams.set("state", authorization.searchParams.get("state")!);
+				validStatus = await fetch(callback).then(response => response.status);
+			},
+		});
+		await manager.connect("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com");
+		expect(duplicateStatus).toBe(400);
+		expect(hostSpoofStatus).toBe(403);
+		expect(validStatus).toBe(200);
+	});
+
+	it("bounds streamed token responses before parsing", async () => {
+		const { broker } = fixture();
+		const manager = new GoogleWorkspaceOAuthManager({
+			broker,
+			fetcher: async (input, init) => String(input).endsWith("/token")
+				? new Response("x".repeat(64_001))
+				: fetch(input, init),
+			openExternal: async (raw) => {
+				const authorization = new URL(raw);
+				const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+				callback.searchParams.set("state", authorization.searchParams.get("state")!);
+				callback.searchParams.set("code", "one-time-code");
+				await fetch(callback);
+			},
+		});
+		await expect(manager.connect("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com"))
+			.rejects.toThrow("size limit");
+	});
+
+	it("aborts token exchange on owner cancellation without persisting a secret", async () => {
+		const { broker } = fixture();
+		let authUrl = "";
+		const controller = new AbortController();
+		let tokenSignal: AbortSignal | null | undefined;
+		const manager = new GoogleWorkspaceOAuthManager({
+			broker,
+			fetcher: async (input, init) => {
+				if (String(input).endsWith("/token")) {
+					tokenSignal = init?.signal;
+					return await new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true }));
+				}
+				throw new Error("Unexpected fetch.");
+			},
+			openExternal: async (raw) => {
+				authUrl = raw;
+				const authorization = new URL(raw);
+				const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+				callback.searchParams.set("state", authorization.searchParams.get("state")!);
+				callback.searchParams.set("code", "one-time-code");
+				await fetch(callback);
+			},
+		});
+		const connecting = manager.connect("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com", controller.signal);
+		await vi.waitFor(() => expect(authUrl).toContain("accounts.google.com"));
+		await vi.waitFor(() => expect(tokenSignal).toBeInstanceOf(AbortSignal));
+		controller.abort(new Error("Google sign-in was cancelled."));
+		await expect(connecting).rejects.toThrow("Google sign-in was cancelled.");
+		expect(await broker.getOpaqueSecret("google-workspace-oauth")).toBeUndefined();
 	});
 
 	it("uses a bundled Desktop client ID when configured", async () => {

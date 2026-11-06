@@ -15,7 +15,12 @@ function runtimeExtension(extension: Extension): ExtensionRuntimeExtension {
 	};
 }
 
-/** The only adapter that knows Electron's extension and service-worker APIs. */
+/**
+ * Electron Session-backed adapter. Shipping desktop still defaults here.
+ * Prefer ChromiumExtensionRuntime when KESTREL_DESKTOP_RUNTIME=chromium / the
+ * native CEF host owns the browser profile. Do not delete this class until
+ * `scripts/check-electron-retirement-gates.mjs` is accepted with evidence.
+ */
 export class ElectronExtensionRuntime implements ExtensionRuntime {
 	constructor(private readonly session: Session) {}
 

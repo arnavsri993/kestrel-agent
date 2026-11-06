@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createEncryptionKey, encryptText } from "@kestrel/encryption";
+import { createEncryptionKey, decryptText, encryptText } from "@kestrel/encryption";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -196,6 +196,28 @@ describe("schema migrations", () => {
 });
 
 describe("idempotency claims", () => {
+	const protectedToolNames = [
+		"sources.read",
+		"computer.screenshot",
+		"browser.screenshot",
+		"browser.visible-screenshot",
+	];
+	const protectedIdempotencyPrefix = "kestrel-encrypted-idempotency-v1:";
+	function protectedExecution(toolName: string, id: string, marker: string, status: "running" | "verified" = "verified") {
+		return {
+			id,
+			sessionId: "session-idempotency-encryption",
+			toolName,
+			status,
+			riskLevel: "low" as const,
+			input: {},
+			output: { pngBase64: marker, trust: "untrusted_desktop" },
+			privateExtensionMetadata: { generated: "preserve-idempotency-value" },
+			startedAt: "2026-10-31T12:00:00.000Z",
+			...(status === "verified" ? { completedAt: "2026-10-31T12:00:01.000Z" } : {}),
+		};
+	}
+
 	it("coordinates one owner across database connections and preserves the first terminal result", () => {
 		const { first, second } = sharedDatabases();
 		try {
@@ -372,6 +394,115 @@ describe("idempotency claims", () => {
 			second.close();
 		}
 	});
+
+	it("encrypts protected tool results and pending claims across write, update, completion, and replay", () => {
+		const { first, second } = sharedDatabases();
+		try {
+			for (const [index, toolName] of protectedToolNames.entries()) {
+				const marker = `IDEMPOTENCY_SCREENSHOT_FIXTURE_${index}_SECRET`;
+				const saved = protectedExecution(toolName, `saved-${index}`, marker);
+				const resultKey = `protected-result-${index}`;
+				first.saveIdempotentResult(resultKey, saved);
+				let raw = first.db.prepare("SELECT result FROM idempotency_keys WHERE key = ?").get(resultKey) as { result: string };
+				expect(raw.result.startsWith(protectedIdempotencyPrefix)).toBe(true);
+				expect(raw.result).not.toContain(marker);
+				const updated = { ...saved, output: { pngBase64: `${marker}_updated`, trust: "untrusted_desktop" } };
+				first.updateIdempotentResult(resultKey, updated);
+				raw = first.db.prepare("SELECT result FROM idempotency_keys WHERE key = ?").get(resultKey) as { result: string };
+				expect(raw.result.startsWith(protectedIdempotencyPrefix)).toBe(true);
+				expect(raw.result).not.toContain(marker);
+				expect(first.getIdempotentResult(resultKey)).toEqual(updated);
+
+				const claimKey = `runtime-tool:session-idempotency-encryption:${toolName}:claim-${index}`;
+				const pending = protectedExecution(toolName, `pending-${index}`, `${marker}_pending`, "running");
+				expect(first.claimIdempotentResult(claimKey, `owner-${index}`, 101, pending).state).toBe("claimed");
+				const pendingRaw = first.db.prepare("SELECT pending_result FROM idempotency_claims WHERE key = ?").get(claimKey) as { pending_result: string };
+				expect(pendingRaw.pending_result.startsWith(protectedIdempotencyPrefix)).toBe(true);
+				expect(pendingRaw.pending_result).not.toContain(marker);
+				expect(second.getIdempotentClaim(claimKey)?.pendingResult).toEqual(pending);
+				expect(second.claimIdempotentResult(claimKey, `other-${index}`, 202, pending)).toMatchObject({ state: "active", claim: { pendingResult: pending } });
+				const completed = protectedExecution(toolName, `completed-${index}`, `${marker}_complete`);
+				expect(first.completeIdempotentResult(claimKey, `owner-${index}`, completed)).toEqual({ completed: true, result: completed });
+				raw = first.db.prepare("SELECT result FROM idempotency_keys WHERE key = ?").get(claimKey) as { result: string };
+				expect(raw.result.startsWith(protectedIdempotencyPrefix)).toBe(true);
+				expect(raw.result).not.toContain(marker);
+				expect(second.getIdempotentResult(claimKey)).toEqual(completed);
+				expect(second.claimIdempotentResult(claimKey, `replay-${index}`, 303, pending)).toEqual({ state: "completed", result: completed });
+			}
+		} finally {
+			first.close();
+			second.close();
+		}
+	});
+
+	it("converts legacy protected idempotency rows while preserving generic marker values", () => {
+		const { path, encryptionKey, first, second } = sharedDatabases();
+		const marker = "LEGACY_IDEMPOTENCY_SCREENSHOT_SECRET";
+		const completedKey = "runtime-tool:session-idempotency-encryption:computer.screenshot:legacy-result";
+		const claimKey = "runtime-tool:session-idempotency-encryption:browser.screenshot:legacy-pending";
+		const completed = protectedExecution("computer.screenshot", "legacy-completed", marker);
+		const pending = protectedExecution("browser.screenshot", "legacy-pending", `${marker}_pending`, "running");
+		const paged = Array.from({ length: 17 }, (_, index) => ({
+			key: `legacy-page-${String(index).padStart(2, "0")}`,
+			value: protectedExecution("computer.screenshot", `legacy-page-${index}`, `${marker}_${index}`),
+		}));
+		for (const { key, value } of paged) {
+			first.db.prepare("INSERT INTO idempotency_keys (key, result, created_at) VALUES (?, ?, ?)").run(key, JSON.stringify(value), new Date().toISOString());
+			first.db.prepare("INSERT INTO idempotency_claims (key, owner_token, owner_pid, pending_result, created_at) VALUES (?, ?, ?, ?, ?)").run(key, "fixture-owner", 101, JSON.stringify(value), new Date().toISOString());
+		}
+		const genericKey = "generic-idempotency-marker";
+		const generic = {
+			kestrelEncryptedTool: 1,
+			ciphertext: "user-json-ciphertext",
+			iv: "user-json-iv",
+			authTag: "user-json-tag",
+			prefix: protectedIdempotencyPrefix,
+		};
+		const genericStringKey = "generic-idempotency-prefix-string";
+		const genericString = `${protectedIdempotencyPrefix}{"ciphertext":"literal user value"}`;
+		first.saveIdempotentResult(genericKey, generic);
+		first.saveIdempotentResult(genericStringKey, genericString);
+		first.db.prepare("INSERT INTO idempotency_keys (key, result, created_at) VALUES (?, ?, ?)").run(completedKey, JSON.stringify(completed), new Date().toISOString());
+		first.claimIdempotentResult(claimKey, "legacy-owner", 101, pending);
+		first.db.prepare("UPDATE idempotency_claims SET pending_result = ? WHERE key = ?").run(JSON.stringify(pending), claimKey);
+		first.db.prepare("INSERT INTO idempotency_keys (key, result, created_at) VALUES (?, ?, ?)").run("generic-corrupt-json", "{not-json", new Date().toISOString());
+		second.close();
+		first.close();
+
+		const reopened = new KestrelDatabase(path, encryptionKey);
+		try {
+			for (const [table, column, key] of [["idempotency_keys", "result", completedKey], ["idempotency_claims", "pending_result", claimKey]] as const) {
+				const row = reopened.db.prepare(`SELECT ${column} AS payload FROM ${table} WHERE key = ?`).get(key) as { payload: string };
+				expect(row.payload.startsWith(protectedIdempotencyPrefix)).toBe(true);
+				expect(row.payload).not.toContain(marker);
+			}
+			expect(reopened.getIdempotentResult(completedKey)).toEqual(completed);
+			expect(reopened.getIdempotentClaim(claimKey)?.pendingResult).toEqual(pending);
+			for (const { key, value } of paged) {
+				expect(reopened.getIdempotentResult(key)).toEqual(value);
+				expect(reopened.getIdempotentClaim(key)?.pendingResult).toEqual(value);
+				for (const [table, column] of [["idempotency_keys", "result"], ["idempotency_claims", "pending_result"]] as const) {
+					const row = reopened.db.prepare(`SELECT ${column} AS payload FROM ${table} WHERE key = ?`).get(key) as { payload: string };
+					expect(row.payload.startsWith(protectedIdempotencyPrefix)).toBe(true);
+					expect(row.payload).not.toContain(marker);
+				}
+			}
+			expect(reopened.getIdempotentResult(genericKey)).toEqual(generic);
+			expect(reopened.getIdempotentResult(genericStringKey)).toEqual(genericString);
+			expect(reopened.db.prepare("SELECT result FROM idempotency_keys WHERE key = 'generic-corrupt-json'").get()).toEqual({ result: "{not-json" });
+		} finally {
+			reopened.close();
+		}
+	});
+
+	it("fails startup only for a corrupt legacy row keyed to a protected tool", () => {
+		const { path, encryptionKey, first, second } = sharedDatabases();
+		first.db.prepare("INSERT INTO idempotency_keys (key, result, created_at) VALUES (?, ?, ?)").run("runtime-tool:session:computer.screenshot:corrupt", "{broken-json", new Date().toISOString());
+		first.db.prepare("INSERT INTO idempotency_keys (key, result, created_at) VALUES (?, ?, ?)").run("unrelated-corrupt", "{broken-json", new Date().toISOString());
+		second.close();
+		first.close();
+		expect(() => new KestrelDatabase(path, encryptionKey)).toThrow(/protected tool idempotency record is corrupt/i);
+	});
 });
 
 describe("context usage", () => {
@@ -531,6 +662,100 @@ describe("configuration history recovery", () => {
 });
 
 describe("tool execution history queries", () => {
+	it("aggregates encrypted and plaintext tool executions by stored name and outcome", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const fixtures = [
+			{ toolName: "computer.screenshot", status: "verified" as const, outcome: "success" },
+			{ toolName: "plain.success", status: "verified" as const, outcome: "success" },
+			{ toolName: "browser.screenshot", status: "blocked" as const, outcome: "blocked" },
+			{ toolName: "plain.blocked", status: "blocked" as const, outcome: "blocked" },
+			{ toolName: "browser.visible-screenshot", status: "failed" as const, outcome: "error" },
+			{ toolName: "plain.error", status: "failed" as const, outcome: "error" },
+			{ toolName: "sources.read", status: "running" as const, outcome: "pending" },
+			{ toolName: "plain.pending", status: "running" as const, outcome: "pending" },
+		];
+		try {
+			database.saveRuntimeSession({
+				id: "session-aggregate-tools",
+				title: "Tool metrics fixture",
+				allowedTools: fixtures.map(fixture => fixture.toolName),
+				status: "active",
+				checkpoints: [],
+				createdAt: "2026-10-31T12:00:00.000Z",
+				updatedAt: "2026-10-31T12:00:00.000Z",
+			});
+			for (const [index, fixture] of fixtures.entries()) {
+				database.saveToolExecution({
+					id: `aggregate-tool-${index}`,
+					sessionId: "session-aggregate-tools",
+					toolName: fixture.toolName,
+					status: fixture.status,
+					riskLevel: "low",
+					input: {},
+					output: { marker: `aggregate-${index}` },
+					startedAt: `2026-10-31T12:00:0${index}.000Z`,
+					...(fixture.status === "running" ? {} : { completedAt: `2026-10-31T12:00:1${index}.000Z` }),
+				});
+			}
+
+			const stats = database.aggregateToolExecutionStats();
+			expect(stats).toHaveLength(fixtures.length);
+			expect(stats).toEqual(expect.arrayContaining(fixtures.map(({ toolName, outcome }) => ({
+				tool: toolName,
+				outcome,
+				count: 1,
+			}))));
+		} finally {
+			database.close();
+		}
+	});
+
+	it("encrypts screenshot outputs and upgrades legacy plaintext screenshot executions", () => {
+		const { path, encryptionKey, first, second } = sharedDatabases();
+		const sessionId = "session-screenshot-encryption";
+		const sentinel = "GENERATED_PNG_SENTINEL_9c830c";
+		first.saveRuntimeSession({
+			id: sessionId,
+			title: "Screenshot encryption fixture",
+			allowedTools: ["computer.screenshot", "browser.screenshot", "browser.visible-screenshot"],
+			status: "active",
+			checkpoints: [],
+			createdAt: "2026-10-31T10:00:00.000Z",
+			updatedAt: "2026-10-31T10:00:00.000Z",
+		});
+		const fixtures = ["computer.screenshot", "browser.screenshot", "browser.visible-screenshot"].map((toolName, index) => ({
+			id: `legacy-screenshot-${index}`,
+			sessionId,
+			toolName,
+			status: "verified" as const,
+			riskLevel: "low" as const,
+			input: {},
+			output: { width: 1, height: 1, pngBase64: `${sentinel}_${index}`, trust: "untrusted_desktop" },
+			startedAt: `2026-10-31T10:00:0${index + 1}.000Z`,
+			completedAt: `2026-10-31T10:00:0${index + 2}.000Z`,
+		}));
+		for (const fixture of fixtures) first.saveToolExecution(fixture);
+		for (const fixture of fixtures) {
+			const row = first.db.prepare("SELECT payload FROM tool_executions WHERE id = ?").get(fixture.id) as { payload: string };
+			expect(JSON.parse(row.payload).kestrelEncryptedTool).toBe(1);
+			first.db.prepare("UPDATE tool_executions SET payload = ? WHERE id = ?").run(JSON.stringify(fixture), fixture.id);
+		}
+		second.close();
+		first.close();
+
+		const reopened = new KestrelDatabase(path, encryptionKey);
+		try {
+			for (const fixture of fixtures) {
+				const row = reopened.db.prepare("SELECT payload FROM tool_executions WHERE id = ?").get(fixture.id) as { payload: string };
+				expect(row.payload).not.toContain(`${sentinel}_${fixtures.indexOf(fixture)}`);
+				expect(JSON.parse(row.payload).kestrelEncryptedTool).toBe(1);
+			}
+			expect(reopened.listToolExecutions(sessionId)).toEqual(fixtures);
+		} finally {
+			reopened.close();
+		}
+	});
+
 	it("filters tool executions at the database boundary", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const sessionId = "session-tool-history";
@@ -1148,5 +1373,48 @@ it("encrypts source tool receipts and upgrades legacy payloads on reopen", () =>
   const rawAfter = new Database(path, { readonly: true });
   try { expect(JSON.stringify(rawAfter.prepare("SELECT payload FROM tool_executions").all())).not.toContain("PRIVATE SOURCE RECEIPT"); }
   finally { rawAfter.close(); }
+ } finally { database.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+it("does not replay deleted source evidence from completed or pending idempotency journals", () => {
+ const root = mkdtempSync(join(tmpdir(), "kestrel-deleted-source-journal-"));
+ const path = join(root, "fixture.sqlite"); const key = createEncryptionKey();
+ const timestamp = "2026-10-01T12:00:00.000Z";
+ const receipt = { id: "source-cache-receipt", sessionId: "source-cache-session", toolName: "sources.read", status: "verified" as const, riskLevel: "low" as const, input: {}, output: { events: [{ id: "source-event", text: "GENERATED DELETED SOURCE CONTENT" }] }, startedAt: timestamp, unknownMetadata: { preserved: true } };
+ let database = new KestrelDatabase(path, key);
+ try {
+  database.saveRuntimeSession({ id: receipt.sessionId, title: "Fixture", allowedTools: [], status: "active", checkpoints: [], createdAt: timestamp, updatedAt: timestamp });
+  database.upsertTimelineEvent({ id: "source-event", startedAt: timestamp, eventType: "note", source: "connected-source", actor: "user", projectIds: [], personIds: [], entityIds: [], textSummary: "Generated source fixture", structuredData: {}, importance: 0.5, sensitivity: "personal", retentionPolicy: "durable", embeddingStatus: "not_requested", status: "active", createdAt: timestamp, updatedAt: timestamp });
+  database.saveToolExecution(receipt);
+  database.saveIdempotentResult("source-completed", receipt);
+  database.claimIdempotentResult("source-pending", "fixture-owner", process.pid, receipt);
+  expect(database.getIdempotentResult("source-completed")).toEqual(receipt);
+  database.deleteTimelineEvent("source-event");
+  const redacted = { ...receipt, status: "failed", output: { sourceEvidenceRemoved: true }, error: "Source evidence was deleted or expired." };
+  const journalValues = () => database.db.prepare("SELECT result AS payload FROM idempotency_keys UNION ALL SELECT pending_result AS payload FROM idempotency_claims").all() as Array<{ payload: string }>;
+  const assertLogicalRowsRedacted = () => {
+   for (const row of journalValues()) {
+    const envelope = JSON.parse(row.payload.slice("kestrel-encrypted-idempotency-v1:".length));
+    expect(JSON.parse(decryptText(envelope, key))).toEqual(redacted);
+   }
+  };
+  assertLogicalRowsRedacted();
+  expect(database.getIdempotentResult("source-completed")).toEqual(redacted);
+  expect(database.getIdempotentClaim("source-pending")?.pendingResult).toEqual(redacted);
+  expect(database.claimIdempotentResult("source-completed", "replay-owner", process.pid, receipt)).toEqual({ state: "completed", result: redacted });
+  // A late producer cannot restore a deleted source through a journal write.
+  database.updateIdempotentResult("source-completed", receipt);
+  database.saveIdempotentResult("source-late", receipt);
+  expect(database.getIdempotentResult("source-late")).toEqual(redacted);
+  // Simulate caches produced by an older version after the tombstone exists.
+  const insertOld = database.db.prepare("INSERT INTO idempotency_keys (key, result, created_at) VALUES (?, ?, ?)");
+  insertOld.run("source-old-plaintext", JSON.stringify(receipt), timestamp);
+  insertOld.run("source-old-encrypted", "kestrel-encrypted-idempotency-v1:" + JSON.stringify(encryptText(JSON.stringify(receipt), key)), timestamp);
+  database.close(); database = new KestrelDatabase(path, key);
+  expect(database.getIdempotentResult("source-completed")).toEqual(redacted);
+  expect(database.getIdempotentClaim("source-pending")?.pendingResult).toEqual(redacted);
+  expect(database.getIdempotentResult("source-old-plaintext")).toEqual(redacted);
+  expect(database.getIdempotentResult("source-old-encrypted")).toEqual(redacted);
+  assertLogicalRowsRedacted();
  } finally { database.close(); rmSync(root, { recursive: true, force: true }); }
 });

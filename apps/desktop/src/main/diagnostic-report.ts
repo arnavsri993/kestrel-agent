@@ -1,25 +1,8 @@
 import { app } from "electron";
 import { writeFile } from "node:fs/promises";
 
-export interface ContentFreeDiagnosticEnvelope {
-	version: 1;
-	generatedAt: string;
-	appVersion: string;
-	platform: string;
-	arch: string;
-	electron: string;
-	packaged: boolean;
-	distribution: "developer" | "signed" | "unknown";
-	readinessSummary?: {
-		readyForLiveWork: boolean;
-		pass: number;
-		warning: number;
-		fail: number;
-	};
-	lastFailureClass?: string;
-	lastFailureAt?: string;
-	note: string;
-}
+import { buildDiagnosticEnvelope, type ContentFreeDiagnosticEnvelope } from "./diagnostic-envelope";
+export type { ContentFreeDiagnosticEnvelope } from "./diagnostic-envelope";
 
 let lastFailureClass: string | undefined;
 let lastFailureAt: string | undefined;
@@ -77,34 +60,11 @@ export async function buildContentFreeDiagnosticEnvelope(input?: {
 	readyForLiveWork?: boolean;
 	checks?: Array<{ status: "pass" | "warning" | "fail" }>;
 }): Promise<ContentFreeDiagnosticEnvelope> {
-	const checks = input?.checks ?? [];
 	const packaged = readPackagedState();
-	return {
-		version: 1,
-		generatedAt: new Date().toISOString(),
-		appVersion: readAppVersion(),
-		platform: process.platform,
-		arch: process.arch,
-		electron: process.versions.electron,
-		packaged,
-		distribution: packaged ? "unknown" : "developer",
-		...(input
-			? {
-					readinessSummary: {
-						readyForLiveWork: Boolean(input.readyForLiveWork),
-						pass: checks.filter((check) => check.status === "pass").length,
-						warning: checks.filter((check) => check.status === "warning")
-							.length,
-						fail: checks.filter((check) => check.status === "fail").length,
-					},
-				}
-			: {}),
-		...(lastFailureClass
-			? { lastFailureClass, ...(lastFailureAt ? { lastFailureAt } : {}) }
-			: {}),
-		note:
-			"Content-free local diagnostic envelope. No prompts, page content, credentials, file paths, or personal memory are included. Share only after review.",
-	};
+	return buildDiagnosticEnvelope({ appVersion: readAppVersion(), platform: process.platform, arch: process.arch,
+		runtime: "electron", node: process.versions.node, electron: process.versions.electron, packaged,
+		distribution: packaged ? "unknown" : "developer", ...(input ? { readiness: input } : {}),
+		lastFailureClass, lastFailureAt });
 }
 
 export async function exportDiagnosticReport(

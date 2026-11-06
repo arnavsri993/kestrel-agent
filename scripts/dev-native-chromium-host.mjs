@@ -1,17 +1,25 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 
-// This launcher deliberately owns a unique disposable profile. It must never
-// fall back to the Electron profile, a home-directory default, or a persistent
-// native profile while credential/profile migration is still deferred.
+// This launcher deliberately owns a unique disposable profile by default. It
+// must never fall back to the Electron profile. Opt into a durable isolated
+// profile with --durable (still never the Electron Application Support path).
 const extensionWorkbench = process.argv.includes("--extensions");
+const durableProfile = process.argv.includes("--durable");
 if (extensionWorkbench) {
 	console.log("Opening the native Chromium extension workbench. Its temporary profile is deleted on exit; Kestrel data and accounts are not connected.");
 }
-const profile = await mkdtemp(join(tmpdir(), "kestrel-native-chromium-dev-"));
+const profile = durableProfile
+	? join(homedir(), "Library", "Application Support", "Kestrel Native", "Development")
+	: await mkdtemp(join(tmpdir(), "kestrel-native-chromium-dev-"));
+if (durableProfile) {
+	const { mkdir } = await import("node:fs/promises");
+	await mkdir(profile, { recursive: true, mode: 0o700 });
+	console.log(`Using durable isolated native profile at ${profile}`);
+}
 let child;
 
 async function stopChild() {
@@ -34,7 +42,10 @@ try {
 			profile,
 			...(extensionWorkbench
 				? ["--kestrel-extension-workbench"]
-				: ["--kestrel-ephemeral-core", "--kestrel-renderer"]),
+				: [
+						"--kestrel-chromium-desktop",
+						...(durableProfile ? ["--kestrel-durable-profile"] : []),
+					]),
 		],
 		{ stdio: "inherit" },
 	);
@@ -53,5 +64,5 @@ try {
 	process.off("SIGINT", forwardSignal);
 	process.off("SIGTERM", forwardSignal);
 	await stopChild();
-	await rm(profile, { recursive: true, force: true });
+	if (!durableProfile) await rm(profile, { recursive: true, force: true });
 }

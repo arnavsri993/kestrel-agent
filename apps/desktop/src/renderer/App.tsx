@@ -1,3 +1,4 @@
+import { closeNativeAgentPanel, nativeChromiumPanel, nativeChromiumSurface, useNativeCompanionOpen, useNativeDocumentStatus, retryNativeDocumentTab, sendNativeAgentAction, subscribeNativeAgentActions } from "./native-extension-transport";
 import { WhatsAppConnection } from "./components/WhatsAppConnection";
 import { AgentResourceAccess } from "./components/AgentResourceAccess";
 import { OnshapeConnection } from "./components/OnshapeConnection";
@@ -26,6 +27,7 @@ import type {
 	MigrationPlanPreviewContract,
 	MigrationResultContract,
 	ModelProfile,
+	NativeLocalBackupResult,
 	ProviderAccountSummary,
 	ModelRoutingDecision,
 	OrganizationMemberContract,
@@ -64,7 +66,7 @@ import type {
 	WorkspaceGrant,
 	WorkspaceSnapshot,
 } from "@kestrel/shared-types";
-import { parseExplicitMemoryCapture } from "@kestrel/shared-types";
+import { NATIVE_CORE_BACKUP_BUSY_MESSAGE, parseExplicitMemoryCapture } from "@kestrel/shared-types";
 import {
 	AnimatePresence,
 	LayoutGroup,
@@ -141,6 +143,7 @@ import {
 } from "./components/browser/CommandCenter";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
 import { ComputerUseSettings } from "./components/ComputerUseSettings";
+import { RunAtLoginSettings } from "./components/RunAtLoginSettings";
 import {
 	parseUIPresentationMessage,
 	PresentationCard,
@@ -149,6 +152,7 @@ import { DashboardExtensions } from "./components/DashboardExtensions";
 import { EventApplications } from "./components/EventApplications";
 import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
 import { GoalKanban } from "./components/GoalKanban";
+import { BrowserAppPage } from "./components/browser/BrowserAppPage";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
 import { MemoryRecallReceiptLine } from "./components/MemoryRecallReceiptLine";
 import { MemoryRecallStatus } from "./components/MemoryRecallStatus";
@@ -187,9 +191,12 @@ import {
 } from "./runtime-session-state";
 import {
 	FIRST_TASK_PROMPT,
+	FIRST_TASK_PURPOSE,
 	FIRST_TASK_SLOW_MODEL_NOTICE,
+	isFirstTaskPrompt,
 } from "./first-task";
-import { canCompleteOnboarding } from "./setup-onboarding";
+import { canCompleteOnboarding, setupVerificationCopy } from "./setup-onboarding";
+import { VoiceCaptureOwner, type VoiceCapture } from "./voice-capture";
 import {
 	loadInitialDesktopState,
 	startupFailureMessage,
@@ -1194,6 +1201,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 		}
 		setDownloading(clean);
 		setLocalError("");
+		setLocalProgress(null);
 		try {
 			const response = await window.kestrel.request({
 				type: "local-model-pull",
@@ -1204,8 +1212,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 					"error" in response ? response.error : "Model download failed.",
 				);
 			if ("localModels" in response) {
-				setLocalModels(response.localModels);
-				setOllamaAvailable(true);
+				await loadLocalModels();
 				setCustomModel("");
 			}
 		} catch (cause) {
@@ -1366,7 +1373,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const localRuntimeUnavailableReason = localRuntime?.unavailableReason ?? "";
 	const recommendedModel = localRuntimeUnavailableReason
 		? null
-		: recommendedLocalModel(systemProfile);
+		: localRuntime?.automaticSupported === false ? null : recommendedLocalModel(systemProfile);
 	const recommendedModelInstalled = Boolean(
 		recommendedModel &&
 		localModels.some(
@@ -1380,7 +1387,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 		(ollamaAvailable || localRuntime?.automaticSupported === true);
 	const recommendedTiers = localRuntimeUnavailableReason
 		? []
-		: recommendedLocalModelTiers(systemProfile);
+		: localRuntime?.automaticSupported === false ? [] : recommendedLocalModelTiers(systemProfile);
 	const compatibleLocalModels = localRuntimeUnavailableReason
 		? []
 		: supportedLocalModels(systemProfile);
@@ -1413,8 +1420,12 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const finishHeading = verifiedModelReady
 		? "Ready for a first task"
 		: "You're set.";
+	const verificationCopy = setupVerificationCopy(
+		providerChecks.filter((check) => check.ok).length,
+		localRuntime?.verifiedModel,
+	);
 	const finishDescription = verifiedModelReady
-		? "A real model route responded. Try one guided task now, or open Kestrel and explore."
+		? verificationCopy.description
 		: modelReady
 			? "The route is saved but not live-verified yet."
 			: "Explore now. Connect a model when you need live work.";
@@ -1608,6 +1619,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												: modelView === "local"
 													? localRuntimeUnavailableReason
 														? localRuntimeUnavailableReason
+														: localRuntime?.automaticSupported === false
+															? "Verify an installed model to run tasks on this Mac."
 														: recommendedModel
 															? `Kestrel recommends ${recommendedModel.title} for this Mac.`
 															: "Checking this Mac's hardware…"
@@ -1968,6 +1981,22 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											</p>
 										) : (
 											<>
+										{Boolean(localRuntime?.detectedModels?.length) && (
+											<section className="recommended-model-tiers" aria-label="Installed local models">
+												<p>Choose an installed model to verify a local response and enable it.</p>
+												<div className="model-tier-grid">
+											{(localRuntime?.detectedModels ?? []).map(model => (
+														<article key={model.name}>
+															<code>{model.name}</code>
+															<button className="button secondary" aria-label={`Verify ${model.name}`}
+																disabled={automaticBusy || Boolean(downloading)} onClick={() => void bootstrapLocal(model.name)}>
+																{automaticBusy && automaticModel === model.name ? "Verifying…" : "Verify and use"}
+															</button>
+														</article>
+													))}
+												</div>
+											</section>
+										)}
 										{recommendedModel && (
 											<section
 												className="local-auto-setup"
@@ -2068,7 +2097,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																	<button
 																		className={`button ${isRecommended ? "primary" : "secondary"}`}
 																		disabled={
-																			automaticBusy ||
+																		automaticBusy ||
 																			Boolean(downloading) ||
 																			!localSetupAvailable
 																		}
@@ -2088,7 +2117,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												</div>
 											</section>
 										)}
-										{localProgress && automaticBusy && (
+										{localProgress && (automaticBusy || (nativeChromiumSurface && Boolean(downloading))) && (
 											<div
 												className="local-bootstrap-progress"
 												role="status"
@@ -2236,6 +2265,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 															className="button secondary"
 															disabled={
 																!ollamaAvailable ||
+																automaticBusy ||
 																Boolean(downloading) ||
 																!customModel.trim()
 															}
@@ -2404,15 +2434,12 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										<span>
 											<strong>
 												{verifiedModelReady
-													? "Live model route"
+													? verificationCopy.label
 													: "Model route"}
 											</strong>
 											<small>
 												{verifiedModelReady
-													? providerChecks.filter((check) => check.ok).length >
-														0
-														? `${providerChecks.filter((check) => check.ok).length} route${providerChecks.filter((check) => check.ok).length === 1 ? "" : "s"} responded to an account check`
-														: `${localRuntime?.verifiedModel ?? "A local model"} returned a real response during setup`
+													? verificationCopy.detail
 													: providerCheckBusy
 														? "Checking the configured route now…"
 														: modelReady
@@ -3080,6 +3107,7 @@ function RuntimeConversation({
 	newAgentProjectId,
 	newAgentFocusTarget,
 	newAgentDraft,
+	onNewAgentHandled,
 	projects,
 	onProjectsChange,
 	refreshRevision,
@@ -3108,6 +3136,7 @@ function RuntimeConversation({
 	newAgentProjectId: string | null;
 	newAgentFocusTarget: "prompt" | "task-settings";
 	newAgentDraft: NewTabComposerDraft | null;
+	onNewAgentHandled?(accepted: boolean): void;
 	projects: Project[];
 	onProjectsChange(projects: Project[]): void;
 	refreshRevision: number;
@@ -3198,7 +3227,7 @@ function RuntimeConversation({
 	const sessionLoadSequenceRef = useRef(0);
 	const transcriptLoadKeyRef = useRef<string | null>(null);
 	const recorderRef = useRef<MediaRecorder | null>(null);
-	const microphoneStreamRef = useRef<MediaStream | null>(null);
+	const voiceCaptureOwnerRef = useRef(new VoiceCaptureOwner());
 	const reduced = useReducedMotion();
 
 	useEffect(() => {
@@ -3207,7 +3236,7 @@ function RuntimeConversation({
 	}, [busy, onRuntimeAgentState, pending]);
 	const promptRef = useRef<HTMLTextAreaElement | null>(null);
 	const [voiceState, setVoiceState] = useState<
-		"idle" | "recording" | "transcribing"
+		"idle" | "requesting" | "recording" | "transcribing"
 	>("idle");
 	const activeSession = sessions.find(
 		(session) => session.id === activeSessionId,
@@ -3288,6 +3317,7 @@ function RuntimeConversation({
 		previousNewAgentRequestIdRef.current = newAgentRequestId;
 		if (busy) {
 			setError("Finish or cancel the active task before starting a new one.");
+			onNewAgentHandled?.(false);
 			window.setTimeout(() => promptRef.current?.focus(), 0);
 			return;
 		}
@@ -3311,6 +3341,7 @@ function RuntimeConversation({
 			promptRef.current?.focus();
 		}, 0);
 		if (newAgentPrompt.trim()) void submit(newAgentPrompt, newAgentDraft ?? undefined);
+		onNewAgentHandled?.(true);
 	}, [
 		busy,
 		newAgentFocusTarget,
@@ -3319,6 +3350,7 @@ function RuntimeConversation({
 		newAgentRequestId,
 		newAgentWorkspace,
 		newAgentDraft,
+		onNewAgentHandled,
 		onActiveSession,
 	]);
 
@@ -3627,7 +3659,8 @@ function RuntimeConversation({
 			sessionId ? loadSession(sessionId) : Promise.resolve(false),
 		])
 			.then(([, loaded]) => {
-				if (loaded && activeSessionIdRef.current === sessionId) setError("");
+				if (activeSessionIdRef.current === sessionId)
+					setError(current => loaded || current === NATIVE_CORE_BACKUP_BUSY_MESSAGE ? "" : current);
 			})
 			.catch((cause) => {
 				if (activeSessionIdRef.current === sessionId)
@@ -3701,62 +3734,66 @@ function RuntimeConversation({
 		[activeSessionId],
 	);
 
-	useEffect(
-		() => () => {
-			if (recorderRef.current?.state === "recording")
-				recorderRef.current.stop();
-			microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
-		},
-		[],
-	);
+	useEffect(() => {
+		setVoiceState("idle");
+		return () => {
+			const recorder = recorderRef.current;
+			recorderRef.current = null;
+			if (recorder) {
+				recorder.ondataavailable = null;
+				recorder.onstop = null;
+				recorder.onerror = null;
+				if (recorder.state !== "inactive") recorder.stop();
+			}
+			voiceCaptureOwnerRef.current.cancel();
+		};
+	}, [activeSessionId]);
 
 	async function startVoice() {
-		if (busy || voiceState !== "idle") return;
+		const owner = voiceCaptureOwnerRef.current;
+		if (busy || voiceState !== "idle" || owner.busy) return;
+		const sessionId = activeSessionId;
+		let capture: VoiceCapture<MediaStream> | undefined;
 		setError("");
+		setVoiceState("requesting");
 		try {
-			if (
-				!navigator.mediaDevices?.getUserMedia ||
-				typeof MediaRecorder === "undefined"
-			)
+			if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined")
 				throw new Error("Voice capture is unavailable on this device.");
-			const permission = await window.kestrel.request({
-				type: "request-microphone-access",
+			capture = await owner.acquire(async () => {
+				const permission = await window.kestrel.request({ type: "request-microphone-access" });
+				if (!("microphoneAccess" in permission) || !permission.microphoneAccess)
+					throw new Error("Microphone access was not granted. You can enable it in System Settings → Privacy & Security → Microphone.");
+			}, () => {
+				if (activeSessionIdRef.current !== sessionId)
+					throw new Error("Voice capture was cancelled.");
+				return navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 			});
-			if (!("microphoneAccess" in permission) || !permission.microphoneAccess)
-				throw new Error(
-					"Microphone access was not granted. You can enable it in System Settings → Privacy & Security → Microphone.",
-				);
-			const stream = await navigator.mediaDevices.getUserMedia({
-				audio: true,
-				video: false,
-			});
-			microphoneStreamRef.current = stream;
-			const preferred = [
-				"audio/webm;codecs=opus",
-				"audio/webm",
-				"audio/mp4",
-			].find((kind) => MediaRecorder.isTypeSupported(kind));
-			const recorder = new MediaRecorder(
-				stream,
-				preferred ? { mimeType: preferred } : undefined,
-			);
+			if (!capture) return;
+			const owned = capture;
+			const isCurrent = () => owned.isCurrent() && activeSessionIdRef.current === sessionId;
+			if (!isCurrent()) { owned.release(); return; }
+			const stream = owned.stream;
+			const preferred = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+				.find((kind) => MediaRecorder.isTypeSupported(kind));
+			const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
 			const chunks: Blob[] = [];
 			recorder.ondataavailable = (event) => {
-				if (event.data.size) chunks.push(event.data);
+				if (isCurrent() && event.data.size) chunks.push(event.data);
 			};
 			recorder.onerror = () => {
+				if (!isCurrent()) return;
+				recorderRef.current = null;
+				owned.release();
 				setError("Voice recording failed.");
 				setVoiceState("idle");
-				stream.getTracks().forEach((track) => track.stop());
 			};
 			recorder.onstop = () => {
 				stream.getTracks().forEach((track) => track.stop());
-				microphoneStreamRef.current = null;
+				if (!isCurrent()) return;
 				recorderRef.current = null;
-				const blob = new Blob(chunks, {
-					type: recorder.mimeType || "audio/webm",
-				});
+				const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
 				if (blob.size === 0 || blob.size > 25 * 1024 * 1024) {
+					owned.release();
 					setError("Voice recording is empty or exceeds 25 MB.");
 					setVoiceState("idle");
 					return;
@@ -3764,35 +3801,32 @@ function RuntimeConversation({
 				setVoiceState("transcribing");
 				const reader = new FileReader();
 				reader.onerror = () => {
+					if (!isCurrent()) return;
+					owned.release();
 					setError("Could not read the voice recording.");
 					setVoiceState("idle");
 				};
 				reader.onload = () => {
+					if (!isCurrent()) return;
 					const encoded = String(reader.result).split(",")[1] ?? "";
-					void window.kestrel
-						.request({
-							type: "media-transcribe",
-							dataBase64: encoded,
-							mediaType: blob.type.split(";")[0] || "audio/webm",
-						})
-						.then((response) => {
-							if (!response.ok) throw new Error(response.error);
-							if (!("transcription" in response) || !response.transcription)
-								throw new Error("Transcription returned no text.");
-							setInput((current) =>
-								current
-									? `${current.trimEnd()} ${response.transcription!.text}`
-									: response.transcription!.text,
-							);
-						})
-						.catch((cause) =>
-							setError(
-								cause instanceof Error
-									? cause.message
-									: "Voice transcription failed.",
-							),
-						)
-						.finally(() => setVoiceState("idle"));
+					void window.kestrel.request({
+						type: "media-transcribe", dataBase64: encoded,
+						mediaType: blob.type.split(";")[0] || "audio/webm",
+					}).then((response) => {
+						if (!isCurrent()) return;
+						if (!response.ok) throw new Error(response.error);
+						if (!("transcription" in response) || !response.transcription)
+							throw new Error("Transcription returned no text.");
+						setInput((current) => current
+							? `${current.trimEnd()} ${response.transcription!.text}`
+							: response.transcription!.text);
+					}).catch((cause) => {
+						if (isCurrent()) setError(cause instanceof Error ? cause.message : "Voice transcription failed.");
+					}).finally(() => {
+						if (!isCurrent()) return;
+						owned.release();
+						setVoiceState("idle");
+					});
 				};
 				reader.readAsDataURL(blob);
 			};
@@ -3800,15 +3834,12 @@ function RuntimeConversation({
 			recorder.start(1_000);
 			setVoiceState("recording");
 		} catch (cause) {
-			microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
-			microphoneStreamRef.current = null;
+			if (capture && (!capture.isCurrent() || activeSessionIdRef.current !== sessionId)) return;
+			if (!capture && activeSessionIdRef.current !== sessionId) return;
+			capture?.release();
 			recorderRef.current = null;
 			setVoiceState("idle");
-			setError(
-				cause instanceof Error
-					? cause.message
-					: "Could not start voice capture.",
-			);
+			setError(cause instanceof Error ? cause.message : "Could not start voice capture.");
 		}
 	}
 
@@ -3924,7 +3955,11 @@ function RuntimeConversation({
 		}
 	}
 
-	async function submit(promptOverride?: string, draft?: NewTabComposerDraft) {
+	async function submit(
+		promptOverride?: string,
+		draft?: NewTabComposerDraft,
+		purpose?: typeof FIRST_TASK_PURPOSE,
+	) {
 		const prompt = (promptOverride ?? input).trim();
 		if (!prompt) return;
 		const runChoice = draft?.modelChoice ?? modelChoice;
@@ -4024,6 +4059,9 @@ function RuntimeConversation({
 				type: "runtime-run-agent",
 				sessionId,
 				message: prompt,
+				...(purpose === FIRST_TASK_PURPOSE && isFirstTaskPrompt(prompt)
+					? { purpose: FIRST_TASK_PURPOSE }
+					: {}),
 				model: runChoice.executionMode === "automatic" ? "auto" : runChoice.model.trim(),
 				providerIds: runChoice.executionMode === "automatic" ? ["auto"] : [runChoice.providerId],
 				streamId,
@@ -4066,7 +4104,7 @@ function RuntimeConversation({
 		if (!shouldAutoSubmitFirstTaskRef.current) return;
 		shouldAutoSubmitFirstTaskRef.current = false;
 		setGuidedFirstTaskActive(true);
-		void submit(FIRST_TASK_PROMPT);
+		void submit(FIRST_TASK_PROMPT, undefined, FIRST_TASK_PURPOSE);
 	}, []);
 
 	useEffect(() => {
@@ -4304,7 +4342,7 @@ function RuntimeConversation({
 					? "Stop and transcribe voice"
 					: "Record voice"
 			}
-			disabled={busy || voiceState === "transcribing"}
+			disabled={busy || voiceState === "requesting" || voiceState === "transcribing"}
 			onClick={() =>
 				voiceState === "recording" ? stopVoice() : void startVoice()
 			}
@@ -4314,10 +4352,10 @@ function RuntimeConversation({
 					<Icon name="pause" />
 					<span className="sr-only">Stop recording</span>
 				</>
-			) : voiceState === "transcribing" ? (
+			) : voiceState === "requesting" || voiceState === "transcribing" ? (
 				<>
 					<Icon name="loader" />
-					<span className="sr-only">Transcribing</span>
+					<span className="sr-only">{voiceState === "requesting" ? "Requesting microphone" : "Transcribing"}</span>
 				</>
 			) : (
 				<Icon name="voice" />
@@ -5069,7 +5107,9 @@ function RuntimeConversation({
 							</details>
 						</div>
 						<span className="composer-status">
-							{voiceState === "recording"
+							{voiceState === "requesting"
+								? "Requesting microphone access…"
+								: voiceState === "recording"
 								? "Microphone live · tap Stop to transcribe"
 								: activeSessionBusy
 									? "Send an update at the next safe turn boundary"
@@ -5479,11 +5519,15 @@ function Readiness() {
 	const [providerChecks, setProviderChecks] = useState<ProviderVerification[]>(
 		[],
 	);
-	const [backup, setBackup] = useState<LocalBackupResult | null>(null);
+	const [backup, setBackup] = useState<
+		LocalBackupResult | NativeLocalBackupResult | null
+	>(null);
 	const [busy, setBusy] = useState<
 		"refresh" | "models" | "backup" | "workspace" | "diagnostic" | ""
-	>("");
+	>("refresh");
 	const [error, setError] = useState("");
+	const [diagnosticNotice, setDiagnosticNotice] = useState("");
+	const [backupNotice, setBackupNotice] = useState("");
 
 	async function refresh() {
 		setBusy("refresh");
@@ -5543,6 +5587,7 @@ function Readiness() {
 	async function createBackup() {
 		setBusy("backup");
 		setError("");
+		setBackupNotice("");
 		try {
 			const response = await window.kestrel.request({
 				type: "create-local-backup",
@@ -5551,10 +5596,16 @@ function Readiness() {
 				throw new Error(
 					"error" in response ? response.error : "Backup failed.",
 				);
-			if ("localBackup" in response && response.localBackup) {
+			if ("cancelled" in response && response.cancelled) return;
+			if ("localBackupCreated" in response && response.localBackupCreated) {
+				setBackup(response.localBackupCreated);
+				if (response.localBackupCreated.coreStatus === "restart-required")
+					setBackupNotice("Backup verified. The local agent could not restart. Restart Kestrel before starting another task.");
+				else await refresh();
+			} else if ("localBackup" in response && response.localBackup) {
 				setBackup(response.localBackup);
 				await refresh();
-			}
+			} else throw new Error("Backup completed without a verified backup receipt.");
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : "Backup failed.");
 		} finally {
@@ -5562,9 +5613,24 @@ function Readiness() {
 		}
 	}
 
+	async function revealBackup() {
+		if (!backup) return;
+		setBusy("backup");
+		setError("");
+		try {
+			const response = await window.kestrel.request("backupId" in backup
+				? { type: "reveal-created-local-backup", backupId: backup.backupId }
+				: { type: "reveal-local-backup", path: backup.path });
+			if (!response.ok) throw new Error(response.error);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Could not reveal the backup.");
+		} finally { setBusy(""); }
+	}
+
 	async function exportDiagnostic() {
 		setBusy("diagnostic");
 		setError("");
+		setDiagnosticNotice("");
 		try {
 			const response = await window.kestrel.request({
 				type: "export-diagnostic-report",
@@ -5573,12 +5639,15 @@ function Readiness() {
 				throw new Error(
 					"error" in response ? response.error : "Diagnostic export failed.",
 				);
-			if ("diagnosticReportPath" in response && response.diagnosticReportPath) {
+			if ("cancelled" in response && response.cancelled) return;
+			if ("diagnosticReportSaved" in response && response.diagnosticReportSaved) {
+				setDiagnosticNotice("Diagnostic report saved to the file you chose.");
+			} else if ("diagnosticReportPath" in response && response.diagnosticReportPath) {
 				await window.kestrel.request({
 					type: "reveal-local-backup",
 					path: response.diagnosticReportPath,
 				});
-			}
+			} else throw new Error("Diagnostic report export failed.");
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : "Diagnostic export failed.",
@@ -5752,14 +5821,23 @@ function Readiness() {
 							</div>
 						</header>
 						<p>
-						Backs up encrypted conversations, settings, credentials, plugins, and
-						artifacts. Project folders are not copied. Treat the snapshot like a
-						password.
+							{readiness?.backupScope === "native-core-data" ? (
+								<>
+									Saves encrypted conversations, task records, Kestrel credentials,
+									settings, plugins, and learned skills from this profile.{" "}
+									Requires this Mac’s original profile and Keychain.{" "}
+									Excludes Chromium history, cookies and site logins, other Core
+									profiles, provider app logins, model downloads, and project folders.
+									Keep this backup private. Restoring it requires a separate recovery step.
+								</>
+							) : (
+								<>Backs up encrypted conversations, settings, credentials, plugins, and artifacts. Project folders are not copied. Treat the snapshot like a password.</>
+							)}
 						</p>
 						{backup && (
 							<div className="backup-result">
 								<strong>
-									{backup.files} files ·{" "}
+									{backup.files} {backup.files === 1 ? "file" : "files"} ·{" "}
 									{(backup.bytes / 1024 / 1024).toFixed(1)} MB
 								</strong>
 								<small>
@@ -5770,24 +5848,21 @@ function Readiness() {
 								</small>
 								<button
 									className="quiet-link"
-									onClick={() =>
-										void window.kestrel.request({
-											type: "reveal-local-backup",
-											path: backup.path,
-										})
-									}
+									disabled={Boolean(busy)}
+									onClick={() => void revealBackup()}
 								>
 									Reveal in Finder
 								</button>
 							</div>
 						)}
+						{backupNotice && <p role="status">{backupNotice}</p>}
 						<button
 							className="button secondary"
 							disabled={Boolean(busy)}
 							onClick={() => void createBackup()}
 						>
 							{busy === "backup"
-								? "Stopping core and verifying…"
+								? "Working…"
 								: "Choose backup folder"}
 						</button>
 					</section>
@@ -5810,6 +5885,7 @@ function Readiness() {
 						>
 							{busy === "diagnostic" ? "Saving…" : "Save diagnostic report"}
 						</button>
+						{diagnosticNotice && <p role="status">{diagnosticNotice}</p>}
 					</section>
 				</aside>
 			</div>
@@ -6850,6 +6926,13 @@ function Connections({ snapshot, standalone = false, scopeSession }: { snapshot:
 				setGoogleStatus(response.googleWorkspaceOAuth);
 			await refreshCommunicationSources();
 		} catch (error) {
+			// A local disconnect can finish even when vendor revocation fails.
+			// Refresh the actual profile state before presenting the bounded error.
+			try {
+				const status = await window.kestrel.request({ type: "oauth-google-status" });
+				if (status.ok && "googleWorkspaceOAuth" in status) setGoogleStatus(status.googleWorkspaceOAuth);
+				await refreshCommunicationSources();
+			} catch { /* Preserve the explicit operation error if status is unavailable. */ }
 			setGoogleError(
 				error instanceof Error ? error.message : "Google disconnect failed.",
 			);
@@ -8893,6 +8976,12 @@ function ApprovalRulesSettings() {
 
 function AgentWorkspaceSettings() {
 	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
+	const [pendingProjects, setPendingProjects] = useState<Array<{ id: string; name: string }>>([]);
+	const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
+	const [workspaceLoading, setWorkspaceLoading] = useState(true);
+	const workspaceRequest = useRef(0);
+	const pendingActionBusy = useRef(false);
+	const workspaceHeading = useRef<HTMLElement>(null);
 	const [sessions, setSessions] = useState<RuntimeSession[]>([]);
 	const [busy, setBusy] = useState(false);
 	const [planetBusySessionId, setPlanetBusySessionId] = useState<string | null>(
@@ -8901,37 +8990,55 @@ function AgentWorkspaceSettings() {
 	const [planetError, setPlanetError] = useState("");
 	const [error, setError] = useState("");
 
+	const loadWorkspaces = useCallback(async () => {
+		const requestId = ++workspaceRequest.current;
+		try {
+			const response = await window.kestrel.request({ type: "get-workspace-grants" });
+			if (requestId !== workspaceRequest.current) return;
+			if (!response.ok) throw new Error("error" in response ? response.error : "Workspace access could not be loaded.");
+			if ("workspaceGrants" in response) {
+				setGrants(response.workspaceGrants);
+				setPendingProjects(response.pendingWorkspaceProjects ?? []);
+			}
+			setWorkspaceLoading(false);
+		} catch (cause) { if (requestId === workspaceRequest.current) throw cause; }
+	}, []);
 	const load = useCallback(async () => {
-		const [grantResponse, sessionResponse] = await Promise.all([
-			window.kestrel.request({ type: "get-workspace-grants" }),
+		const [, sessionResponse] = await Promise.all([
+			loadWorkspaces(),
 			window.kestrel.request({ type: "runtime-list-sessions" }),
 		]);
-		if (!grantResponse.ok)
-			throw new Error(
-				"error" in grantResponse
-					? grantResponse.error
-					: "Workspace access could not be loaded.",
-			);
-		if (!sessionResponse.ok)
-			throw new Error(
-				"error" in sessionResponse
-					? sessionResponse.error
-					: "Agent sessions could not be loaded.",
-			);
-		if ("workspaceGrants" in grantResponse)
-			setGrants(grantResponse.workspaceGrants);
+		if (!sessionResponse.ok) throw new Error("error" in sessionResponse ? sessionResponse.error : "Agent sessions could not be loaded.");
 		if ("sessions" in sessionResponse) setSessions(sessionResponse.sessions ?? []);
-	}, []);
+	}, [loadWorkspaces]);
 
 	useEffect(() => {
-		void load().catch((cause) =>
-			setError(
-				cause instanceof Error
-					? cause.message
-					: "Workspace and session settings could not be loaded.",
-			),
-		);
+		void load().catch((cause) => { setWorkspaceLoading(false); setError(cause instanceof Error ? cause.message : "Workspace and session settings could not be loaded."); });
 	}, [load]);
+	useEffect(() => window.kestrel.onWorkspaceProjectsChanged?.((next) => {
+		setGrants(next);
+		void loadWorkspaces().catch(() => setError("Workspace access could not be refreshed."));
+	}), [loadWorkspaces]);
+
+	async function pendingAction(projectId: string, action: "reconnect-workspace-project" | "remove-pending-workspace-project") {
+		if (pendingActionBusy.current || busy) return;
+		pendingActionBusy.current = true;
+		setBusy(true);
+		setError("");
+		let completed = false;
+		try {
+			const response = await window.kestrel.request({ type: action, projectId });
+			if (!response.ok) throw new Error("error" in response ? response.error : "The project could not be updated.");
+			setPendingRemoval(null);
+			completed = !("cancelled" in response && response.cancelled);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "The project could not be updated.");
+		} finally {
+			try { await loadWorkspaces(); if (completed) workspaceHeading.current?.focus(); } catch { setError("Workspace access could not be refreshed. Try again."); }
+			pendingActionBusy.current = false;
+			setBusy(false);
+		}
+	}
 
 	async function addFolder() {
 		setBusy(true);
@@ -9031,7 +9138,7 @@ function AgentWorkspaceSettings() {
 			<section className="settings-stack" aria-label="Workspace and session settings">
 				<article className="setting-row" id="setting-agent-workspace-grants">
 					<div>
-						<strong>Project folder access</strong>
+						<strong ref={workspaceHeading} tabIndex={-1}>Project folder access</strong>
 						<p>
 							Only approved folders are available to workspace tools. Remove access
 							anytime; unavailable folders stay listed so you can reconnect them.
@@ -9057,6 +9164,31 @@ function AgentWorkspaceSettings() {
 									</li>
 								))}
 							</ul>
+						)}
+						{workspaceLoading && <small role="status">Loading workspace access…</small>}
+						{pendingProjects.length > 0 && (
+							<section aria-labelledby="pending-projects-title" aria-busy={busy}>
+								<strong id="pending-projects-title">Reconnect projects</strong>
+								<p>Choose a folder for each project to give it access again. Removing a project keeps its conversations.</p>
+								<ul className="workspace-grants">
+									{pendingProjects.map((project) => (
+										<li key={project.id} style={{ flexWrap: "wrap" }}>
+											<span title={project.name}>{project.name || "Project to reconnect"}{pendingProjects.filter((entry) => entry.name === project.name).length > 1 ? ` · ${project.id.slice(-8)}` : ""}</span>
+											{pendingRemoval === project.id ? (
+												<>
+													<button type="button" className="quiet-link" disabled={busy} onClick={() => void pendingAction(project.id, "remove-pending-workspace-project")} aria-label={`Confirm removing ${project.name}`}>Confirm remove</button>
+													<button type="button" className="quiet-link" disabled={busy} autoFocus onClick={() => setPendingRemoval(null)}>Cancel</button>
+												</>
+											) : (
+												<>
+													<button type="button" className="quiet-link" disabled={busy} onClick={() => void pendingAction(project.id, "reconnect-workspace-project")} aria-label={`Choose folder for ${project.name}`}>Choose folder</button>
+													<button type="button" className="quiet-link" disabled={busy} onClick={() => setPendingRemoval(project.id)} aria-label={`Remove ${project.name}`}>Remove</button>
+												</>
+											)}
+										</li>
+									))}
+								</ul>
+							</section>
 						)}
 						{error && <small role="alert">{error}</small>}
 					</div>
@@ -9306,11 +9438,13 @@ function AgentDiagnosticsSettings() {
 		setNotice("");
 		try {
 			const response = await window.kestrel.request({ type: "export-diagnostic-report" });
-			if (!response.ok || !("diagnosticReportPath" in response))
-				throw new Error(
-					"error" in response ? response.error : "Diagnostic report export failed.",
-				);
-			setNotice(`Diagnostic report exported to ${response.diagnosticReportPath}.`);
+			if (!response.ok) throw new Error(response.error);
+			if ("cancelled" in response && response.cancelled) return;
+			if ("diagnosticReportSaved" in response && response.diagnosticReportSaved)
+				setNotice("Diagnostic report saved to the file you chose.");
+			else if ("diagnosticReportPath" in response)
+				setNotice(`Diagnostic report exported to ${response.diagnosticReportPath}.`);
+			else throw new Error("Diagnostic report export failed.");
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : "Diagnostic report export failed.",
@@ -9388,10 +9522,6 @@ function Settings({
 	onBack?(): void;
 }) {
 	const reduced = useReducedMotion();
-	const [login, setLogin] = useState<{
-		enabled: boolean;
-		status: string;
-	} | null>(null);
 	const [confirmation, setConfirmation] = useState("");
 	const [resetError, setResetError] = useState("");
 	const [section, setSection] = useState<SettingsSection>(
@@ -9449,28 +9579,6 @@ function Settings({
 		});
 		return () => window.cancelAnimationFrame(frame);
 	}, [focusAnchor, reduced]);
-	useEffect(() => {
-		void window.kestrel
-			.request({ type: "get-system-state" })
-			.then((response) => {
-				if ("launchAtLogin" in response)
-					setLogin({
-						enabled: response.launchAtLogin,
-						status: response.launchStatus,
-					});
-			});
-	}, []);
-	async function toggleLogin() {
-		const response = await window.kestrel.request({
-			type: "set-launch-at-login",
-			enabled: !login?.enabled,
-		});
-		if ("launchAtLogin" in response)
-			setLogin({
-				enabled: response.launchAtLogin,
-				status: response.launchStatus,
-			});
-	}
 	async function togglePause() {
 		const response = (await window.kestrel.request({
 			type: "set-paused",
@@ -9848,21 +9956,7 @@ function Settings({
 									))}
 								</div>
 							</article>
-							<article className="setting-row">
-								<div>
-									<strong>Run at login</strong>
-									{login && <small>System status: {login.status}</small>}
-								</div>
-								<button
-									className={`switch ${login?.enabled ? "on" : ""}`}
-									role="switch"
-									aria-label="Run Kestrel at login"
-									aria-checked={login?.enabled ?? false}
-									onClick={() => void toggleLogin()}
-								>
-									<span />
-								</button>
-							</article>
+							<RunAtLoginSettings />
 						</section>
 					</section>
 				)}
@@ -10239,6 +10333,33 @@ function Empty({ title, text }: { title: string; text?: string }) {
 
 export function App() {
 	const browser = useUserBrowser();
+	const nativeCompanionOpen = useNativeCompanionOpen();
+	const nativeDocumentStatus = useNativeDocumentStatus();
+	const nativeDocumentTabId = nativeDocumentStatus.state === "ready" ? nativeDocumentStatus.id : undefined;
+	const presentationTabId = nativeChromiumSurface && !nativeChromiumPanel
+		? nativeDocumentTabId : browser.state?.activeTabId;
+	const [nativeViewRetry, setNativeViewRetry] = useState(0);
+	const [nativeViewTimedOut, setNativeViewTimedOut] = useState(false);
+	const nativeViewRefreshKey = useRef("");
+	const nativeViewPresent = !!nativeDocumentTabId && !!browser.state?.tabs.some(tab => tab.id === nativeDocumentTabId);
+	const refreshNativeBrowser = browser.refresh;
+	useEffect(() => {
+		setNativeViewTimedOut(false);
+		if (!nativeChromiumSurface || nativeChromiumPanel || nativeDocumentStatus.state !== "ready" || nativeViewPresent) return;
+		const key = `${nativeDocumentStatus.id}:${nativeViewRetry}`;
+		if (nativeViewRefreshKey.current !== key) {
+			nativeViewRefreshKey.current = key;
+			void refreshNativeBrowser().catch(() => undefined);
+		}
+		const timeout = window.setTimeout(() => setNativeViewTimedOut(true), 10_000);
+		return () => window.clearTimeout(timeout);
+	}, [nativeDocumentStatus.state, nativeDocumentTabId, nativeViewPresent, nativeViewRetry, refreshNativeBrowser]);
+	const retryNativeView = () => {
+		setNativeViewTimedOut(false);
+		setNativeViewRetry(value => value + 1);
+		retryNativeDocumentTab();
+		void refreshNativeBrowser().catch(() => undefined);
+	};
 	const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
 	const [runtimeRefreshRevision, setRuntimeRefreshRevision] = useState(0);
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
@@ -10290,6 +10411,13 @@ export function App() {
 		() => localStorage.getItem("kestrel:active-project-id"),
 	);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
+	const nativeAgentIntakeRef = useRef<{ resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> } | null>(null);
+	const nativeAgentHandled = useCallback((accepted: boolean) => {
+		const intake = nativeAgentIntakeRef.current; if (!intake) return;
+		nativeAgentIntakeRef.current = null; clearTimeout(intake.timer);
+		if (accepted) intake.resolve(); else intake.reject(new Error("Finish or cancel the active task before starting a new one."));
+	}, []);
+	useEffect(() => () => nativeAgentHandled(false), [nativeAgentHandled]);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
 	const [newAgentDraft, setNewAgentDraft] = useState<NewTabComposerDraft | null>(null);
 	const [newAgentFocusTarget, setNewAgentFocusTarget] = useState<
@@ -10344,6 +10472,13 @@ export function App() {
 		setProjectsLoaded(true);
 		return next;
 	}, []);
+	useEffect(
+		() => window.kestrel.onWorkspaceProjectsChanged?.((next) => {
+			setProjects(next);
+			setProjectsLoaded(true);
+		}),
+		[],
+	);
 
 	useEffect(() => {
 		// Setup links keep their provider-owned/system-browser handoff. A managed
@@ -10453,6 +10588,10 @@ export function App() {
 	}, [projects, projectsLoaded]);
 	const selectionRequestRef = useRef(0);
 	const openRuntimeSession = useCallback((sessionId: string | null) => {
+		if (nativeCompanionOpen) {
+			void sendNativeAgentAction({ type: "open-session", sessionId }).catch(() => setDeepLinkNotice("The agent panel could not open this conversation. Check the current task before trying again."));
+			return;
+		}
 		setActiveRuntimeSessionId(sessionId);
 		const requestId = ++selectionRequestRef.current;
 		void window.kestrel
@@ -10469,7 +10608,7 @@ export function App() {
 						: "Could not persist the selected conversation.",
 				);
 			});
-	}, []);
+	}, [nativeCompanionOpen]);
 	const selectProject = useCallback((projectId: string | null) => {
 		setActiveProjectId(projectId);
 		if (projectId) localStorage.setItem("kestrel:active-project-id", projectId);
@@ -10480,13 +10619,13 @@ export function App() {
 		setAgentSidebarOpen(true);
 		localStorage.setItem("kestrel:agent-sidebar", "open");
 		const activeTab = browser.state?.tabs.find(
-			(tab) => tab.id === browser.state?.activeTabId,
+			(tab) => tab.id === presentationTabId,
 		);
 		if (parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent") {
 			setAgentUniverseRailOpen(true);
 			localStorage.setItem("kestrel:agent-universe-rail", "open");
 		}
-	}, [browser]);
+	}, [browser, presentationTabId]);
 	const acceptExternalIntake = useCallback(
 		(intake: ExternalIntake) => {
 			setExternalIntake(intake);
@@ -10525,12 +10664,18 @@ export function App() {
 					? projects.find((project) => project.id === projectId)
 					: undefined;
 		const trimmed = prompt.trim();
+		if (nativeCompanionOpen) {
+			return sendNativeAgentAction({ type: "new-agent", prompt, focusTarget,
+				...(workspaceRoot ?? selectedProject?.path ? { workspaceRoot: workspaceRoot ?? selectedProject!.path } : {}),
+				...(selectedProject?.id ? { projectId: selectedProject.id } : { projectId: null }), ...(draft ? { draft } : {}),
+			}).then(() => true, () => { setDeepLinkNotice("The agent panel did not accept the task. Check the current task before trying again."); return false; });
+		}
 		if (
 			focusTarget === "prompt" &&
 			!trimmed &&
 			Date.now() - lastPromptedNewAgentAtRef.current < 500
 		) {
-			return;
+			return false;
 		}
 		if (trimmed) lastPromptedNewAgentAtRef.current = Date.now();
 		setNewAgentPrompt(prompt);
@@ -10540,11 +10685,23 @@ export function App() {
 		setNewAgentFocusTarget(focusTarget);
 		setNewAgentRequestId((current) => current + 1);
 		revealAgentSidebar();
-	}, [activeProjectId, projects, revealAgentSidebar]);
+		return true;
+	}, [activeProjectId, projects, revealAgentSidebar, nativeCompanionOpen]);
+	useEffect(() => {
+		if (!nativeChromiumPanel) return;
+		return subscribeNativeAgentActions(action => {
+			if (action.type === "open-session") { openRuntimeSession(action.sessionId); return; }
+			if (nativeAgentIntakeRef.current || runtimeAgentState !== null) throw new Error("Finish or cancel the active task before starting a new one.");
+			return new Promise<void>((resolve, reject) => {
+				const timer = setTimeout(() => nativeAgentHandled(false), 8_000);
+				nativeAgentIntakeRef.current = { resolve, reject, timer };
+				startNewAgent(action.prompt, action.workspaceRoot, action.focusTarget, action.projectId, action.draft);
+			});
+		});
+	}, [startNewAgent, openRuntimeSession, runtimeAgentState, nativeAgentHandled]);
 	const submitNewTabDraft = useCallback((draft: NewTabComposerDraft) => {
 		if (runtimeAgentState !== null) return false;
-		startNewAgent(draft.prompt, draft.workspaceRoot, "prompt", draft.projectId ?? null, draft);
-		return true;
+		return startNewAgent(draft.prompt, draft.workspaceRoot, "prompt", draft.projectId ?? null, draft);
 	}, [runtimeAgentState, startNewAgent]);
 	const createPersistentAgent = useCallback(
 		async (title: string, agentTemplate?: AgentTemplate) => {
@@ -10822,8 +10979,12 @@ export function App() {
 		void openAppPage("approvals");
 	}, [focusRuntimeApproval, openAppPage, runtimeWaiting, snapshotPendingCount]);
 	const toggleAgentSidebar = useCallback(() => {
+		if (nativeChromiumPanel) {
+			void closeNativeAgentPanel().catch(() => {});
+			return;
+		}
 		const activeTab = browser.state?.tabs.find(
-			(tab) => tab.id === browser.state?.activeTabId,
+			(tab) => tab.id === presentationTabId,
 		);
 		const onAgentUniverse = parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent";
 		if (onAgentUniverse) {
@@ -10855,7 +11016,7 @@ export function App() {
 			});
 			return next;
 		});
-	}, [browser]);
+	}, [browser, presentationTabId]);
 	const openBrowser = useCallback(() => {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
@@ -10895,14 +11056,14 @@ export function App() {
 	);
 	const closeCommandCenter = useCallback(() => {
 		const active = browser.state?.tabs.find(
-			(tab) => tab.id === browser.state?.activeTabId,
+			(tab) => tab.id === presentationTabId,
 		);
 		if (active && parseKestrelAppPage(active.url)?.id === "commands") {
 			void browser.closeTab(active.id);
 			return;
 		}
 		void openBrowserWorkspace();
-	}, [browser, openBrowserWorkspace]);
+	}, [browser, openBrowserWorkspace, presentationTabId]);
 	useEffect(
 		() =>
 			window.kestrel.onDeepLink((deepLink) => {
@@ -11000,7 +11161,7 @@ export function App() {
 				(typeof browserConfig.historyRetentionDays === "number" &&
 					current.historyRetentionDays !==
 						browserConfig.historyRetentionDays);
-			if (isDiff) {
+			if (isDiff && browser.state.settingsOwnership !== "chromium") {
 				void browser.updateSettings({
 					...(browserConfig.searchEngine
 						? { searchEngine: browserConfig.searchEngine }
@@ -11172,8 +11333,18 @@ export function App() {
 			</ProductShellTransition>
 		);
 	const activeBrowserTab = browser.state?.tabs.find(
-		(tab) => tab.id === browser.state?.activeTabId,
+		(tab) => tab.id === presentationTabId,
 	);
+	if (nativeChromiumSurface && !nativeChromiumPanel && !activeBrowserTab) {
+		if (nativeDocumentStatus.state === "error" || nativeViewTimedOut) return (
+			<ProductShellTransition><main className="loading-screen error-screen" role="alert">
+				<h1>Could not open this tab.</h1>
+				<p>Kestrel could not identify this browser tab. Try again.</p>
+				<button type="button" className="button secondary" onClick={retryNativeView}>Try again</button>
+			</main></ProductShellTransition>
+		);
+		return <ProductShellTransition><Loading key="loading" /></ProductShellTransition>;
+	}
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
 	const showKestrelSidebar =
 		(!activeBrowserTab?.url || isKestrelAppPageUrl(activeBrowserTab.url));
@@ -11223,9 +11394,9 @@ export function App() {
 		(project) => project.id === projectSettingsProjectId,
 	);
 	const presentedAgentSidebarOpen =
-		appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen;
+		nativeChromiumPanel || (!nativeCompanionOpen && (appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen));
 	const appPage = appPageId ? (
-		<motion.div
+		<BrowserAppPage
 			key={appPageId}
 			ref={focusToolRoute}
 			className={`browser-app-page${
@@ -11246,15 +11417,8 @@ export function App() {
 					? " browser-secondary-surface"
 					: ""
 			}${appPageId === "memory" ? " life-product-surface" : ""}`}
-			data-app-page={appPageId}
-			initial={reduced ? false : { opacity: 0, y: 3 }}
-			animate={{ opacity: 1, y: 0, pointerEvents: "auto" }}
-			exit={
-				reduced
-					? { opacity: 1, y: 0, pointerEvents: "none" }
-					: { opacity: 0, y: -3, pointerEvents: "none" }
-			}
-			transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+			pageId={appPageId}
+			reduced={Boolean(reduced)}
 		>
 			{appPageId === "history" && (
 				<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
@@ -11311,7 +11475,7 @@ export function App() {
 				<PageFrame title="Connections" text="Manage connected accounts and access.">
 					<label className="memory-scope-selector">Access for
       <select aria-label="Connection scope" value={currentAppPage?.scopeSessionId ?? ""} onChange={event => {
-       const tabId = browser.state?.activeTabId;
+       const tabId = presentationTabId;
        if (tabId) void browser.navigate(tabId, kestrelAppPageUrl("connections", event.target.value || undefined));
       }}>
        <option value="">Personal / global accounts</option>
@@ -11375,7 +11539,7 @@ export function App() {
 					onNavigate={navigate}
 				/>
 			)}
-		</motion.div>
+		</BrowserAppPage>
 	) : undefined;
 	const kestrelNavigation = showKestrelSidebar ? (
 		<KestrelSidebar
@@ -11426,7 +11590,7 @@ export function App() {
 				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
-					<section className="browser-main-plane">
+					{!nativeChromiumPanel && <section className="browser-main-plane">
 						<AnimatePresence initial={false}>
 							{deepLinkNotice && (
 								<motion.small
@@ -11485,19 +11649,20 @@ export function App() {
 						onOpenLifeMemory={() => void openAppPage("memory")}
 						{...(appPage ? { appPage } : {})}
 					/>
-				</section>
-				<AgentSidebar
+				</section>}
+				{!nativeCompanionOpen && <AgentSidebar
 					communicationAssistant={
 						<CommunicationCodeAssistant
 							browser={browser}
 							enabled={!currentAppPage}
+							manual={nativeChromiumSurface}
 							onOpenConnections={() => navigate("connections")}
 						/>
 					}
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
-					collapsed={!presentedAgentSidebarOpen}
+					collapsed={!nativeChromiumPanel && !presentedAgentSidebarOpen}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}
@@ -11517,6 +11682,7 @@ export function App() {
 						externalIntake={externalIntake}
 						externalIntakeRequestId={externalIntakeRequestId}
 						newAgentRequestId={newAgentRequestId}
+						onNewAgentHandled={nativeAgentHandled}
 						newAgentPrompt={newAgentPrompt}
 						newAgentWorkspace={newAgentWorkspace}
 						newAgentProjectId={newAgentProjectId}
@@ -11538,7 +11704,7 @@ export function App() {
 						}}
 						onReviewLearnedSkill={reviewLearnedSkill}
 					/>
-				</AgentSidebar>
+				</AgentSidebar>}
 				<DefaultBrowserPrompt
 					isOpen={showDefaultBrowserPrompt}
 					onClose={() => {

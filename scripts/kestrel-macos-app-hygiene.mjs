@@ -3,6 +3,7 @@ import {
 	existsSync,
 	mkdirSync,
 	readdirSync,
+	realpathSync,
 	renameSync,
 	rmSync,
 	statSync,
@@ -26,6 +27,7 @@ export const supportedBundleIdentifiers = new Set([
 	"com.kestrel.desktop",
 	"com.kestrel.desktop.dev",
 	"com.kestrel.desktop.dev.launcher",
+	"com.kestrel.native-chromium-host.dev",
 ]);
 
 export function uniquePaths(paths) {
@@ -34,6 +36,16 @@ export function uniquePaths(paths) {
 
 export function samePath(left, right) {
 	return resolve(left) === resolve(right);
+}
+
+// Cutover journals refer to these exact paths. Never move a retained bundle,
+// even if Spotlight returns it through a symlinked alias.
+function isCutoverBackup(path) {
+	const reserved = ".Kestrel-cutover-backups";
+	const containsReserved = (candidate) => resolve(candidate).split(/[\\/]+/).includes(reserved);
+	if (containsReserved(path)) return true;
+	try { return containsReserved(realpathSync(path)); }
+	catch { return false; }
 }
 
 export function isInside(path, root) {
@@ -70,6 +82,7 @@ export function isKestrelBundle(bundlePath) {
 	const name = plistValue(bundlePath, "CFBundleName");
 	const displayName = plistValue(bundlePath, "CFBundleDisplayName");
 	const isKestrelIdentifier =
+		supportedBundleIdentifiers.has(identifier) ||
 		identifier === kestrelBundleIdentifier ||
 		identifier.startsWith(`${kestrelBundleIdentifier}.`);
 	const isKestrelName = [name, displayName].some(
@@ -177,7 +190,7 @@ export function worktreeReleaseCandidates(documentsRoot = resolveDocumentsRoot()
 	const candidates = [];
 	for (const root of agentRepositoryRoots(documentsRoot)) {
 		const bundle = repositoryReleaseBundle(root);
-		if (isKestrelBundle(bundle)) candidates.push(bundle);
+		if (!isCutoverBackup(bundle) && isKestrelBundle(bundle)) candidates.push(bundle);
 	}
 	return candidates;
 }
@@ -194,6 +207,7 @@ export function appCandidates(root) {
 	return entries
 		.filter((entry) => entry.isDirectory() && entry.name.toLowerCase().endsWith(".app"))
 		.map((entry) => join(root, entry.name))
+		.filter((path) => !isCutoverBackup(path))
 		.filter(isKestrelBundle);
 }
 
@@ -221,6 +235,7 @@ export function spotlightCandidates({
 		.map((path) => path.trim())
 		.filter(Boolean)
 		.filter((path) => !isInside(path, trashRoot))
+		.filter((path) => !isCutoverBackup(path))
 		.filter(isKestrelBundle);
 }
 
@@ -237,7 +252,7 @@ export function allAppCandidates({
 		...worktreeReleaseCandidates(documentsRoot),
 	].filter(
 		(candidate, index, candidates) =>
-			candidates.findIndex((other) => samePath(candidate, other)) === index,
+			!isCutoverBackup(candidate) && candidates.findIndex((other) => samePath(candidate, other)) === index,
 	);
 }
 
@@ -287,6 +302,7 @@ function uniqueTrashPath(originalPath, trashRoot, reason) {
 }
 
 export function moveToTrash(appPath, { trashRoot, reason }) {
+	if (isCutoverBackup(appPath)) throw new Error(`Refusing to move a retained cutover bundle: ${appPath}`);
 	mkdirSync(trashRoot, { recursive: true });
 	const trashPath = uniqueTrashPath(appPath, trashRoot, reason);
 	unregister(appPath);
@@ -317,6 +333,7 @@ export function moveDuplicateKestrelAppsToTrash({
 		skipSpotlight,
 		documentsRoot,
 	})) {
+		if (isCutoverBackup(candidate)) continue;
 		if (excludedPaths.some((excludedPath) => samePath(candidate, excludedPath))) {
 			continue;
 		}

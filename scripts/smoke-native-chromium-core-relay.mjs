@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
 
-const app = await buildNativeChromiumHost();
+const app = process.env.KESTREL_NATIVE_TEST_APP
+	? resolve(process.env.KESTREL_NATIVE_TEST_APP)
+	: await buildNativeChromiumHost();
 const resources = join(app, "Contents", "Resources");
 const node = join(resources, "agent-core", "node", "bin", "node");
 const relay = join(resources, "native-core-relay.mjs");
-const profile = await mkdtemp(join(tmpdir(), "kestrel-native-core-relay-"));
+const profile = await realpath(await mkdtemp(join(tmpdir(), "kestrel-native-core-relay-")));
 let child;
 let output = "";
 

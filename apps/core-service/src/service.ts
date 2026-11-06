@@ -9,7 +9,6 @@ import {
 	BrowserController,
 	type BrowserDiagnostic,
 	type BrowserDownload,
-	type BrowserSnapshot,
 	type BrowserViewport,
 	createEnvironmentMediaProviders,
 	createEnvironmentModelProviders,
@@ -38,6 +37,11 @@ import {
 } from "@kestrel/database";
 import { CoreRequestSchema } from "@kestrel/shared-types";
 import type { CoreParentPort } from "./transport";
+import { validateBootstrapPendingProjects } from "./core-supervisor";
+import { normalizeBrowserPageContext } from "./browser-page-context";
+import { normalizeBrowserAccessibilitySnapshot } from "./browser-accessibility-snapshot";
+import { decodeNativeBrowserScreenshot, decodeNativeDesktopScreenshot } from "./browser-screenshot";
+import { normalizeBrowserVisibleTabs, normalizeBrowserHistory, normalizeBrowserDownloads } from "./browser-observation-metadata";
 
 export function startCoreService(port: CoreParentPort): void {
 	let core: AgentCore | undefined;
@@ -108,16 +112,17 @@ export function startCoreService(port: CoreParentPort): void {
 		act: async (sessionId, action: BrowserAction, signal) => {
 			await browserRequest({ operation: "act", sessionId, action }, signal);
 		},
-		snapshot: (sessionId, signal) =>
-			browserRequest<BrowserSnapshot>(
+		snapshot: async (sessionId, signal) =>
+			normalizeBrowserAccessibilitySnapshot(await browserRequest(
 				{ operation: "snapshot", sessionId },
 				signal,
-			),
+			)),
 		screenshot: async (sessionId, signal) => {
-			const result = await browserRequest<ScreenshotFrame>(
+			const result = await browserRequest<ScreenshotFrame & { encoding?: unknown }>(
 				{ operation: "screenshot", sessionId },
 				signal,
 			);
+			if (result.encoding !== undefined) return decodeNativeBrowserScreenshot(result, signal);
 			return {
 				...result,
 				rgba: new Uint8Array(result.rgba),
@@ -153,10 +158,11 @@ export function startCoreService(port: CoreParentPort): void {
 				signal,
 			),
 		desktopScreenshot: async (signal) => {
-			const result = await browserRequest<ScreenshotFrame>(
+			const result = await browserRequest<ScreenshotFrame & { encoding?: unknown }>(
 				{ operation: "desktop-screenshot" },
 				signal,
 			);
+			if (result.encoding !== undefined) return decodeNativeDesktopScreenshot(result, signal);
 			return {
 				...result,
 				rgba: new Uint8Array(result.rgba),
@@ -166,22 +172,23 @@ export function startCoreService(port: CoreParentPort): void {
 		desktopAct: async (action: DesktopAction, signal) => {
 			await browserRequest({ operation: "desktop-act", action }, signal);
 		},
-		visibleTabs: (signal) =>
-			browserRequest({ operation: "visible-tabs" }, signal),
-		visibleContext: (tabId, signal) =>
-			browserRequest(
+		visibleTabs: async (signal) =>
+			normalizeBrowserVisibleTabs(await browserRequest({ operation: "visible-tabs" }, signal)),
+		visibleContext: async (tabId, signal) =>
+			normalizeBrowserPageContext(await browserRequest(
 				{ operation: "visible-context", ...(tabId ? { tabId } : {}) },
 				signal,
-			),
-		visibleSnapshot: (tabId, signal) =>
-			browserRequest(
+			)),
+		visibleSnapshot: async (tabId, signal) =>
+			normalizeBrowserAccessibilitySnapshot(await browserRequest(
 				{ operation: "visible-snapshot", ...(tabId ? { tabId } : {}) },
 				signal,
-			),
+			)),
 		visibleScreenshot: async (tabId, signal) => {
 			const result = await browserRequest<
-				ScreenshotFrame & { trust: "untrusted_browser" }
+				ScreenshotFrame & { trust: "untrusted_browser"; encoding?: unknown }
 			>({ operation: "visible-screenshot", ...(tabId ? { tabId } : {}) }, signal);
+			if (result.encoding !== undefined) return decodeNativeBrowserScreenshot(result, signal);
 			return {
 				...result,
 				rgba: new Uint8Array(result.rgba),
@@ -189,17 +196,17 @@ export function startCoreService(port: CoreParentPort): void {
 				trust: "untrusted_browser",
 			};
 		},
-		visibleHistory: (query, limit, signal) =>
-			browserRequest(
+		visibleHistory: async (query, limit, signal) =>
+			normalizeBrowserHistory(await browserRequest(
 				{
 					operation: "visible-history",
 					...(query ? { query } : {}),
 					...(limit !== undefined ? { limit } : {}),
 				},
 				signal,
-			),
-		visibleDownloads: (signal) =>
-			browserRequest({ operation: "visible-downloads" }, signal),
+			)),
+		visibleDownloads: async (signal) =>
+			normalizeBrowserDownloads(await browserRequest({ operation: "visible-downloads" }, signal)),
 		visibleAutofill: (tabId, signal) =>
 			browserRequest({ operation: "visible-autofill", tabId }, signal),
 		visibleAct: async (tabId, action, signal) => {
@@ -237,8 +244,11 @@ export function startCoreService(port: CoreParentPort): void {
 				workspaceRoots: string[];
 				configuredWorkspaceRoots: string[];
 				projects?: import("@kestrel/shared-types").Project[];
+				pendingProjectIds?: string[];
 				pluginRoots: string[];
 				managedPluginRoots: string[];
+				pluginTrustKeys?: Array<{ keyId: string; publicKey: string }>;
+				pluginActivationIds?: Record<string, string>;
 				learnedSkillRoot: string;
 				secureEnvironment: NodeJS.ProcessEnv;
 				providerAccounts?: ProviderAccountRuntimeConfig[];
@@ -261,6 +271,7 @@ export function startCoreService(port: CoreParentPort): void {
 		}
 		if (message.type === "bootstrap" && message.config) {
 			try {
+				validateBootstrapPendingProjects(message.config.pendingProjectIds === undefined ? [] : message.config.pendingProjectIds, message.config.projects === undefined ? [] : message.config.projects);
 				const database = new KestrelDatabase(
 					message.config.databasePath,
 					Buffer.from(message.config.encryptionKeyBase64, "base64"),
@@ -337,9 +348,12 @@ export function startCoreService(port: CoreParentPort): void {
 					workspaceRoots: message.config.workspaceRoots,
 					configuredWorkspaceRoots: message.config.configuredWorkspaceRoots,
 					projects: message.config.projects ?? [],
+					...(message.config.pendingProjectIds !== undefined ? { pendingProjectIds: message.config.pendingProjectIds } : {}),
 					learnedSkillRoot: message.config.learnedSkillRoot,
 					pluginRoots: message.config.pluginRoots,
 					managedPluginRoots: message.config.managedPluginRoots,
+					...(message.config.pluginActivationIds !== undefined ? { pluginActivationIds: message.config.pluginActivationIds } : {}),
+					...(message.config.pluginTrustKeys !== undefined ? { pluginTrustKeys: message.config.pluginTrustKeys } : {}),
 					artifactRoot,
 					petRoot: join(dirname(message.config.databasePath), "pets"),
 					onAgentTextDelta: (event) =>

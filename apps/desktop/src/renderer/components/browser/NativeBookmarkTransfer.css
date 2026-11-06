@@ -1,0 +1,101 @@
+.native-bookmark-transfer {
+	margin-top: 20px;
+	padding-top: 18px;
+	border-top: 1px solid var(--line);
+}
+
+.native-bookmark-transfer-header h3 {
+	margin: 0 0 10px;
+	font-size: 16px;
+	font-weight: 620;
+}
+
+.native-bookmark-transfer > p {
+	max-width: 68ch;
+	color: var(--ink-secondary);
+	line-height: 1.5;
+}
+
+.native-bookmark-transfer-row {
+	align-items: start;
+}
+
+.native-bookmark-import-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	row-gap: 12px;
+}
+
+.native-bookmark-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.native-bookmark-import-row .native-bookmark-actions {
+	justify-content: flex-start;
+}
+
+.native-bookmark-file-input {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	clip-path: inset(50%);
+}
+
+.native-bookmark-destination {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--ink-secondary);
+	font-size: 13px;
+}
+
+.native-bookmark-destination select {
+	max-width: 220px;
+}
+
+.native-bookmark-plan {
+	margin: 4px 0 8px;
+	padding: 14px 16px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--surface);
+}
+
+.native-bookmark-plan p {
+	margin: 6px 0;
+	color: var(--ink-primary);
+}
+
+.native-bookmark-plan small,
+.native-bookmark-transfer-status,
+.native-bookmark-transfer-error {
+	color: var(--ink-secondary);
+	line-height: 1.5;
+}
+
+.native-bookmark-transfer-error {
+	color: var(--danger);
+}
+
+@media (max-width: 720px) {
+	.native-bookmark-actions {
+		justify-content: flex-start;
+	}
+	.native-bookmark-destination {
+		width: 100%;
+		justify-content: space-between;
+	}
+	.native-bookmark-destination select {
+		flex: 1;
+		min-width: 0;
+	}
+}

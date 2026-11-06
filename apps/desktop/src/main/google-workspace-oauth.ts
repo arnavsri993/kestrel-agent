@@ -40,22 +40,68 @@ export interface GoogleWorkspaceOAuthStatus {
 }
 
 interface GoogleWorkspaceOAuthManagerOptions {
-	broker: CredentialBroker;
-	openExternal(url: string): Promise<unknown>;
+	broker: Pick<CredentialBroker, "getOpaqueSecret" | "setOpaqueSecret" | "removeOpaqueSecret">;
+	openExternal(url: string, signal?: AbortSignal): Promise<unknown>;
+	/** Guard only the durable secret write, after consent and token verification. */
+	persistSecret?: (write: () => Promise<void>, signal: AbortSignal) => Promise<void>;
+	/** Native hosts can remove transactionally before revoking the old token. */
+	disconnectSecret?: (remove: () => Promise<void>, revoke: (signal?: AbortSignal) => Promise<void>) => Promise<void>;
 	fetcher?: typeof fetch;
 	now?: () => Date;
 	timeoutMs?: number;
+	/** Injectable for deterministic deadline tests; production uses 30 seconds. */
+	requestTimeoutMs?: number;
 }
 
-function boundedJson(
-	bytes: Uint8Array,
+function abortError(signal: AbortSignal, label: string): Error {
+	if (signal.reason instanceof Error) return signal.reason;
+	return new Error(`${label} was cancelled.`);
+}
+
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal, label: string): Promise<T> {
+	if (signal.aborted) return Promise.reject(abortError(signal, label));
+	return new Promise<T>((resolve, reject) => {
+		const abort = () => reject(abortError(signal, label));
+		signal.addEventListener("abort", abort, { once: true });
+		promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+	});
+}
+
+async function boundedJson(
+	response: Response,
 	limit: number,
 	label: string,
-): Record<string, unknown> {
-	if (bytes.byteLength > limit)
-		throw new Error(
-			`${label} response exceeds ${Math.round(limit / 1024)} KB.`,
-		);
+	signal: AbortSignal,
+	): Promise<Record<string, unknown>> {
+	if (signal.aborted) throw abortError(signal, label);
+	const contentLength = Number(response.headers.get("content-length"));
+	if (Number.isFinite(contentLength) && contentLength > limit)
+		throw new Error(`${label} response exceeds its size limit.`);
+	const reader = response.body?.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	if (reader) {
+		const cancel = () => { void reader.cancel().catch(() => undefined); };
+		signal.addEventListener("abort", cancel, { once: true });
+		try {
+			while (true) {
+				const { done, value } = await raceAbort(reader.read(), signal, label);
+				if (done) break;
+				size += value.byteLength;
+				if (size > limit) {
+					await reader.cancel().catch(() => undefined);
+					throw new Error(`${label} response exceeds its size limit.`);
+				}
+				chunks.push(value);
+			}
+		} catch (error) {
+			if (error instanceof Error && error.message === `${label} response exceeds its size limit.`) throw error;
+			throw new Error(`${label} response could not be read.`);
+		} finally { signal.removeEventListener("abort", cancel); try { reader.releaseLock(); } catch { /* A cancelled read may still be unwinding. */ } }
+	}
+	const bytes = new Uint8Array(size);
+	let offset = 0;
+	for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
 	try {
 		const value = JSON.parse(Buffer.from(bytes).toString("utf8"));
 		if (!value || typeof value !== "object" || Array.isArray(value))
@@ -107,6 +153,8 @@ async function listen(server: Server): Promise<number> {
 
 async function close(server: Server): Promise<void> {
 	if (!server.listening) return;
+	// An incomplete local HTTP request must not keep a cancelled sign-in alive.
+	server.closeAllConnections();
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
@@ -114,6 +162,7 @@ export class GoogleWorkspaceOAuthManager {
 	private readonly fetcher: typeof fetch;
 	private readonly now: () => Date;
 	private readonly timeoutMs: number;
+	private readonly requestTimeoutMs: number;
 
 	constructor(private readonly options: GoogleWorkspaceOAuthManagerOptions) {
 		this.fetcher = options.fetcher ?? fetch;
@@ -122,6 +171,37 @@ export class GoogleWorkspaceOAuthManager {
 			30_000,
 			Math.min(10 * 60_000, options.timeoutMs ?? 5 * 60_000),
 		);
+		this.requestTimeoutMs = Math.max(1, Math.min(60_000, options.requestTimeoutMs ?? 30_000));
+	}
+
+	static get secretId(): string { return GOOGLE_WORKSPACE_SECRET_ID; }
+
+	private async request(url: URL | string, init: RequestInit, label: string, responseLimit?: number): Promise<{ response: Response; body?: Record<string, unknown> }> {
+		const parentSignal = init.signal ?? undefined;
+		const controller = new AbortController();
+		const abortFromParent = () => controller.abort(parentSignal?.reason ?? new Error(`${label} was cancelled.`));
+		if (parentSignal?.aborted) abortFromParent();
+		else parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+		const timeout = setTimeout(() => controller.abort(new Error(`${label} timed out.`)), this.requestTimeoutMs);
+		timeout.unref();
+		const requestInit: RequestInit = { ...init, signal: controller.signal };
+		try {
+			controller.signal.throwIfAborted();
+			const response = await raceAbort(Promise.resolve().then(() => this.fetcher(url, requestInit)), controller.signal, label);
+			if (responseLimit !== undefined) {
+				const body = await boundedJson(response, responseLimit, label, controller.signal);
+				return { response, body };
+			}
+			if (response.body) await raceAbort(response.body.cancel(), controller.signal, label);
+			return { response };
+		} catch (error) {
+			if (controller.signal.aborted) throw abortError(controller.signal, label);
+			if (error instanceof Error && /response exceeds its size limit|returned an invalid JSON response|response could not be read/.test(error.message)) throw error;
+			throw new Error(`${label} could not be completed.`);
+		} finally {
+			clearTimeout(timeout);
+			parentSignal?.removeEventListener("abort", abortFromParent);
+		}
 	}
 
 	async status(): Promise<GoogleWorkspaceOAuthStatus> {
@@ -173,11 +253,15 @@ export class GoogleWorkspaceOAuthManager {
 			settled = true;
 			settleCallback?.(result);
 		};
+		let expectedHost = "";
 		const server = createServer((request, response) => {
 			if (
 				!isLoopback(request.socket.remoteAddress) ||
 				request.method !== "GET" ||
-				!request.url
+				!request.url ||
+				Buffer.byteLength(request.url) > 8_192 ||
+				request.headers.host !== expectedHost ||
+				settled
 			) {
 				response.writeHead(403, {
 					"content-type": "text/plain; charset=utf-8",
@@ -188,7 +272,7 @@ export class GoogleWorkspaceOAuthManager {
 			}
 			let url: URL;
 			try {
-				url = new URL(request.url, "http://127.0.0.1");
+				url = new URL(request.url, `http://${expectedHost}`);
 			} catch {
 				response.writeHead(400, {
 					"content-type": "text/plain; charset=utf-8",
@@ -199,10 +283,12 @@ export class GoogleWorkspaceOAuthManager {
 				);
 				return;
 			}
-			if (
-				url.pathname !== "/oauth/google/callback" ||
-				url.searchParams.get("state") !== state
-			) {
+			const states = url.searchParams.getAll("state");
+			const codes = url.searchParams.getAll("code");
+			const errors = url.searchParams.getAll("error");
+			if (url.origin !== `http://${expectedHost}` || url.pathname !== "/oauth/google/callback" ||
+				states.length !== 1 || states[0] !== state || codes.length + errors.length !== 1 ||
+				(codes.length === 1 && (!codes[0] || codes[0].length > 4_096)) || (errors.length === 1 && (!errors[0] || errors[0].length > 200))) {
 				response.writeHead(400, {
 					"content-type": "text/plain; charset=utf-8",
 					"cache-control": "no-store",
@@ -212,8 +298,8 @@ export class GoogleWorkspaceOAuthManager {
 				);
 				return;
 			}
-			const error = url.searchParams.get("error");
-			const code = url.searchParams.get("code");
+			const error = errors[0];
+			const code = codes[0];
 			response.writeHead(error || !code ? 400 : 200, {
 				"content-type": "text/html; charset=utf-8",
 				"cache-control": "no-store",
@@ -230,6 +316,7 @@ export class GoogleWorkspaceOAuthManager {
 		});
 
 		const port = await listen(server);
+		expectedHost = `127.0.0.1:${port}`;
 		const redirectUri = `http://127.0.0.1:${port}/oauth/google/callback`;
 		const authorization = new URL(GOOGLE_AUTHORIZATION_ENDPOINT);
 		authorization.search = new URLSearchParams({
@@ -245,13 +332,22 @@ export class GoogleWorkspaceOAuthManager {
 		}).toString();
 
 		let timeout: NodeJS.Timeout | undefined;
-		const abort = () => settle({ error: "cancelled" });
+		const requestController = new AbortController();
+		const abort = () => {
+			requestController.abort(signal?.reason ?? new Error("Google sign-in was cancelled."));
+			settle({ error: "cancelled" });
+		};
 		signal?.addEventListener("abort", abort, { once: true });
+		if (signal?.aborted) abort();
 		try {
-			timeout = setTimeout(() => settle({ error: "timeout" }), this.timeoutMs);
+			timeout = setTimeout(() => {
+				requestController.abort(new Error("Google sign-in timed out."));
+				settle({ error: "timeout" });
+			}, this.timeoutMs);
 			timeout.unref();
-			await this.options.openExternal(authorization.toString());
+			await this.options.openExternal(authorization.toString(), requestController.signal);
 			const result = await callback;
+			requestController.signal.throwIfAborted();
 			if (!result.code) {
 				if (result.error === "cancelled")
 					throw signal?.reason instanceof Error
@@ -261,16 +357,15 @@ export class GoogleWorkspaceOAuthManager {
 					throw new Error(
 						"Google sign-in timed out. Try again when you can finish the browser consent flow.",
 					);
-				throw new Error(
-					`Google sign-in did not complete (${result.error ?? "unknown_error"}).`,
-				);
+				throw new Error("Google sign-in was not completed.");
 			}
 			const token = await this.exchangeCode({
 				clientId,
 				code: result.code,
 				codeVerifier,
 				redirectUri,
-			});
+			}, requestController.signal);
+			requestController.signal.throwIfAborted();
 			const grantedScopes = String(token.scope ?? "")
 				.split(/\s+/)
 				.filter(Boolean);
@@ -286,7 +381,8 @@ export class GoogleWorkspaceOAuthManager {
 				throw new Error(
 					"Google did not return usable access and refresh tokens.",
 				);
-			const email = await this.verifyIdentityAndCalendar(accessToken);
+			const email = await this.verifyIdentityAndCalendar(accessToken, requestController.signal);
+			requestController.signal.throwIfAborted();
 			const record: GoogleWorkspaceOAuthRecord = {
 				version: 1,
 				clientId,
@@ -295,10 +391,13 @@ export class GoogleWorkspaceOAuthManager {
 				scopes: grantedScopes.sort(),
 				connectedAt: this.now().toISOString(),
 			};
-			await this.options.broker.setOpaqueSecret(
+			const write = () => this.options.broker.setOpaqueSecret(
 				GOOGLE_WORKSPACE_SECRET_ID,
 				JSON.stringify(record),
 			);
+			requestController.signal.throwIfAborted();
+			if (this.options.persistSecret) await this.options.persistSecret(write, requestController.signal);
+			else await write();
 			return this.status();
 		} finally {
 			if (timeout) clearTimeout(timeout);
@@ -307,21 +406,23 @@ export class GoogleWorkspaceOAuthManager {
 		}
 	}
 
-	async disconnect(): Promise<GoogleWorkspaceOAuthStatus> {
+	async disconnect(signal?: AbortSignal): Promise<GoogleWorkspaceOAuthStatus> {
+		signal?.throwIfAborted();
 		const record = await this.readRecord();
 		if (record) {
-			try {
-				await this.fetcher(GOOGLE_REVOCATION_ENDPOINT, {
+			const revoke = async (revokeSignal = signal) => {
+				const { response } = await this.request(GOOGLE_REVOCATION_ENDPOINT, {
 					method: "POST",
 					redirect: "error",
 					headers: { "content-type": "application/x-www-form-urlencoded" },
 					body: new URLSearchParams({ token: record.refreshToken }),
-				});
-			} finally {
-				await this.options.broker.removeOpaqueSecret(
-					GOOGLE_WORKSPACE_SECRET_ID,
-				);
-			}
+					...(revokeSignal ? { signal: revokeSignal } : {}),
+				}, "Google revocation");
+				if (!response.ok) throw new Error("Google revocation was not confirmed.");
+			};
+			const remove = () => this.options.broker.removeOpaqueSecret(GOOGLE_WORKSPACE_SECRET_ID);
+			if (this.options.disconnectSecret) await this.options.disconnectSecret(remove, revoke);
+			else { try { await revoke(); } finally { await remove(); } }
 		}
 		return withBundledAvailability({ connected: false, scopes: [] });
 	}
@@ -331,8 +432,8 @@ export class GoogleWorkspaceOAuthManager {
 		code: string;
 		codeVerifier: string;
 		redirectUri: string;
-	}): Promise<Record<string, unknown>> {
-		const response = await this.fetcher(GOOGLE_TOKEN_ENDPOINT, {
+	}, signal?: AbortSignal): Promise<Record<string, unknown>> {
+		const { response, body } = await this.request(GOOGLE_TOKEN_ENDPOINT, {
 			method: "POST",
 			redirect: "error",
 			headers: {
@@ -346,38 +447,29 @@ export class GoogleWorkspaceOAuthManager {
 				redirect_uri: input.redirectUri,
 				grant_type: "authorization_code",
 			}),
-		});
-		const body = boundedJson(
-			new Uint8Array(await response.arrayBuffer()),
-			64_000,
-			"Google token exchange",
-		);
+			...(signal ? { signal } : {}),
+		}, "Google token exchange", 64_000);
 		if (!response.ok)
-			throw new Error(
-				`Google token exchange failed (${String(body.error ?? response.status).slice(0, 200)}).`,
-			);
-		return body;
+			throw new Error("Google token exchange failed.");
+		return body!;
 	}
 
 	private async verifyIdentityAndCalendar(
 		accessToken: string,
+		signal?: AbortSignal,
 	): Promise<string> {
 		const headers = {
 			accept: "application/json",
 			authorization: `Bearer ${accessToken}`,
 		};
-		const identityResponse = await this.fetcher(GOOGLE_USERINFO_ENDPOINT, {
+		const { response: identityResponse, body: identity } = await this.request(GOOGLE_USERINFO_ENDPOINT, {
 			redirect: "error",
 			headers,
-		});
-		const identity = boundedJson(
-			new Uint8Array(await identityResponse.arrayBuffer()),
-			64_000,
-			"Google identity verification",
-		);
+			...(signal ? { signal } : {}),
+		}, "Google identity verification", 64_000);
 		if (
 			!identityResponse.ok ||
-			typeof identity.email !== "string" ||
+			typeof identity?.email !== "string" ||
 			!identity.email.includes("@")
 		)
 			throw new Error("Google identity verification failed.");
@@ -387,18 +479,14 @@ export class GoogleWorkspaceOAuthManager {
 			singleEvents: "true",
 			timeMin: this.now().toISOString(),
 		}).toString();
-		const calendarResponse = await this.fetcher(calendarUrl, {
+		const { response: calendarResponse, body: calendar } = await this.request(calendarUrl, {
 			redirect: "error",
 			headers,
-		});
-		const calendar = boundedJson(
-			new Uint8Array(await calendarResponse.arrayBuffer()),
-			256_000,
-			"Google Calendar verification",
-		);
-		if (!calendarResponse.ok || !Array.isArray(calendar.items))
+			...(signal ? { signal } : {}),
+		}, "Google Calendar verification", 256_000);
+		if (!calendarResponse.ok || !Array.isArray(calendar?.items))
 			throw new Error("Google Calendar verification failed.");
-		return identity.email;
+		return identity!.email as string;
 	}
 
 	private async readRecord(): Promise<GoogleWorkspaceOAuthRecord | undefined> {

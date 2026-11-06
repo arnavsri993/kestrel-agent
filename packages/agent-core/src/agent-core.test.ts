@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { AgentRuntime } from "./runtime";
 import {
 	AgentCore,
 	DevelopmentCalendarConnector,
@@ -30,6 +31,83 @@ function createCore() {
 }
 
 describe("fresh application state", () => {
+	it("preserves stored Honcho namespaces for unavailable and symlinked non-pending roots", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-honcho-root-"));
+		const alias = join(root, "alias");
+		symlinkSync(root, alias);
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const provider: ModelProvider = {
+			id: "honcho-root-fixture", capabilities: { streaming: true, tools: false, images: false, audio: false, documents: false, local: true },
+			complete: async request => ({ providerId: "honcho-root-fixture", model: request.model, text: "Response", toolCalls: [], usage: { inputTokens: 2, outputTokens: 2 }, finishReason: "stop" }),
+		};
+		const core = new AgentCore({ database, workspaceRoots: [root], modelProviders: [provider] });
+		try {
+			const recall = vi.spyOn(core.honchoMemory, "contextFor").mockResolvedValue("");
+			const capture = vi.spyOn(core.honchoMemory, "captureMessage").mockImplementation(() => {});
+			for (const storedRoot of [join(root, "unavailable"), alias]) {
+				const session = core.runtime.createSession({ title: "Existing conversation" });
+				database.saveRuntimeSession({ ...session, workspaceRoot: storedRoot });
+				recall.mockClear(); capture.mockClear();
+				expect(await core.handle({ type: "runtime-run-agent", sessionId: session.id, message: "Original", model: "fixture", providerIds: [provider.id] })).toMatchObject({ ok: true });
+				expect(await core.handle({ type: "runtime-retry-agent", sessionId: session.id, model: "fixture", providerIds: [provider.id] })).toMatchObject({ ok: true });
+				expect(recall).toHaveBeenCalledTimes(2);
+				for (const [input] of recall.mock.calls) expect(input.workspaceRoot).toBe(storedRoot);
+				expect(capture).toHaveBeenCalled();
+				for (const [, workspaceRoot] of capture.mock.calls) expect(workspaceRoot).toBe(storedRoot);
+			}
+		} finally { await core.close(); rmSync(root, { recursive: true, force: true }); }
+	});
+	it("does not use global or stale-root Honcho recall or capture for pending projects", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-pending-honcho-"));
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const provider: ModelProvider = {
+			id: "pending-honcho-fixture", capabilities: { streaming: true, tools: false, images: false, audio: false, documents: false, local: true },
+			complete: async request => ({ providerId: "pending-honcho-fixture", model: request.model, text: "Response", toolCalls: [], usage: { inputTokens: 2, outputTokens: 2 }, finishReason: "stop" }),
+		};
+		const core = new AgentCore({ database, workspaceRoots: [root], pendingProjectIds: ["pending"], modelProviders: [provider] });
+		try {
+			const recall = vi.spyOn(core.honchoMemory, "contextFor").mockResolvedValue("remote context");
+			const capture = vi.spyOn(core.honchoMemory, "captureMessage").mockImplementation(() => {});
+			const normal = core.runtime.ensureMainSession();
+			expect(await core.handle({ type: "runtime-run-agent", sessionId: normal.id, message: "Normal", model: "fixture", providerIds: [provider.id] })).toMatchObject({ ok: true });
+			expect(recall).toHaveBeenCalled();
+			recall.mockClear(); capture.mockClear();
+			const pending = core.runtime.createSession({ title: "Pending", projectId: "pending" });
+			database.saveRuntimeSession({ ...pending, workspaceRoot: root });
+			expect(await core.handle({ type: "runtime-run-agent", sessionId: pending.id, message: "Pending", model: "fixture", providerIds: [provider.id] })).toMatchObject({ ok: true });
+			expect(await core.handle({ type: "runtime-retry-agent", sessionId: pending.id, model: "fixture", providerIds: [provider.id] })).toMatchObject({ ok: true });
+			expect(recall).not.toHaveBeenCalled();
+			expect(capture).not.toHaveBeenCalled();
+		} finally { await core.close(); rmSync(root, { recursive: true, force: true }); }
+	});
+	it("rejects overlapping pending IDs before Core changes a persisted session", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Existing" });
+		runtime.close();
+		const project = { id: "pending", name: "Project", path: "/fixture", order: 0, createdAt: "2026-07-22T15:00:00.000Z", updatedAt: "2026-07-22T15:00:00.000Z" };
+		expect(() => new AgentCore({ database, projects: [project], pendingProjectIds: [project.id] })).toThrow();
+		expect(database.getRuntimeSession(session.id)).toEqual(session);
+		database.close();
+	});
+
+	it("denies workspace attachments for a pending session even with a stale stored root", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-pending-attachment-"));
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database, [root]);
+		const session = runtime.createSession({ title: "Existing", workspaceRoot: root });
+		database.saveRuntimeSession({ ...session, projectId: "pending" });
+		runtime.close();
+		const core = new AgentCore({ database, workspaceRoots: [root], pendingProjectIds: ["pending"] });
+		try {
+			database.saveRuntimeSession({ ...core.runtime.getSession(session.id), workspaceRoot: root });
+			const access = core as unknown as { attachmentParts(id: string, attachments: Array<{ path: string; name: string; mediaType: string; size: number; source: "workspace" }>): unknown };
+			expect(() => access.attachmentParts(session.id, [{ path: join(root, "file.txt"), name: "file.txt", mediaType: "text/plain", size: 0, source: "workspace" }])).toThrow("Workspace attachments require a task workspace");
+		} finally {
+			await core.close();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 	it("recovers to idle when persisted agent state is malformed", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		database.setState("agentState", { corrupted: true });
@@ -68,6 +146,153 @@ describe("fresh application state", () => {
 			requiredApprovalLevel: 0,
 		});
 		core.close();
+	});
+});
+
+describe("first-run read-only purpose", () => {
+	const purpose = "first-run-read-only-check" as const;
+	const safeTools = new Set([
+		"tools.search",
+		"workspace.list",
+		"workspace.read",
+	]);
+
+	it("keeps the policy intersection and four-turn cap scoped to the guided run", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const requests: Array<{
+			tools?: Array<{ name: string }>;
+		}> = [];
+		const provider: ModelProvider = {
+			id: "first-run-fixture",
+			defaultModel: "first-run-model",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			profileHints: { features: { reasoningLevels: true } },
+			complete: async (request) => {
+				requests.push(request);
+				if (requests.length === 1)
+					return {
+						providerId: provider.id,
+						model: request.model,
+						text: "",
+						toolCalls: [
+							{
+								id: "first-run-search",
+								name: "tools.search",
+								arguments: { query: "read_only" },
+							},
+						],
+						usage: { inputTokens: 2, outputTokens: 1 },
+						finishReason: "tool_calls",
+					};
+				return {
+					providerId: provider.id,
+					model: request.model,
+					text: "One local read-only check is complete.",
+					toolCalls: [],
+					usage: { inputTokens: 2, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const core = new AgentCore({ database, modelProviders: [provider] });
+		const session = core.runtime.ensureMainSession();
+		const guided = await core.handle({
+			type: "runtime-run-agent",
+			sessionId: session.id,
+			message: "Complete the guided read-only check.",
+			model: "auto",
+			providerIds: ["auto"],
+			maximumTurns: 12,
+			purpose,
+		});
+		expect(guided).toMatchObject({
+			ok: true,
+			run: { status: "completed", maximumTurns: 4 },
+		});
+		const guidedTools = requests[0]?.tools?.map((tool) => tool.name) ?? [];
+		expect(guidedTools).toContain("tools.search");
+		expect(guidedTools.every((name) => safeTools.has(name))).toBe(true);
+		expect(
+			core.runtime
+				.listMessages(session.id)
+				.some((message) => message.role === "tool" && message.toolName === "tools.search"),
+		).toBe(true);
+
+		const ordinary = await core.handle({
+			type: "runtime-run-agent",
+			sessionId: session.id,
+			message: "Answer this normal question.",
+			model: "auto",
+			providerIds: ["auto"],
+		});
+		expect(ordinary).toMatchObject({ ok: true, run: { status: "completed" } });
+		const ordinaryTools = requests[2]?.tools?.map((tool) => tool.name) ?? [];
+		expect(ordinaryTools).toContain("tools.activate");
+		expect(ordinaryTools.length).toBeGreaterThan(guidedTools.length);
+		await core.close();
+	});
+
+	it("rejects a forged out-of-scope model tool call without invoking it", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let requestedTools: string[] = [];
+		let callCount = 0;
+		const provider: ModelProvider = {
+			id: "first-run-forgery-fixture",
+			defaultModel: "first-run-forgery-model",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			profileHints: { features: { reasoningLevels: true } },
+			complete: async (request) => {
+				callCount += 1;
+				requestedTools = request.tools?.map((tool) => tool.name) ?? [];
+				return {
+					providerId: provider.id,
+					model: request.model,
+					text: callCount === 1 ? "" : "The unavailable request was rejected.",
+					toolCalls:
+						callCount === 1
+							? [{ id: "forged-events-list", name: "events.list", arguments: {} }]
+							: [],
+					usage: { inputTokens: 2, outputTokens: 1 },
+					finishReason: callCount === 1 ? "tool_calls" : "stop",
+				};
+			},
+		};
+		const core = new AgentCore({ database, modelProviders: [provider] });
+		const session = core.runtime.ensureMainSession();
+		const response = await core.handle({
+			type: "runtime-run-agent",
+			sessionId: session.id,
+			message: "Complete the guided read-only check.",
+			model: "auto",
+			providerIds: ["auto"],
+			purpose,
+		});
+		expect(response).toMatchObject({ ok: true, run: { status: "completed" } });
+		expect(requestedTools).not.toContain("events.list");
+		expect(database.listToolExecutions(session.id)).toEqual([]);
+		expect(
+			core.runtime.listMessages(session.id).some(
+				(message) =>
+					message.role === "tool" &&
+					message.toolName === "events.list" &&
+					message.content.includes("unavailable"),
+			),
+		).toBe(true);
+		await core.close();
 	});
 });
 
@@ -1609,42 +1834,70 @@ describe("core agent request path", () => {
 
 	it("transcribes bounded voice data without exposing provider credentials to the request surface", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const received: Buffer[] = [];
 		const core = new AgentCore({
 			database,
 			transcriptionProvider: {
 				id: "voice-test",
-				transcribe: async ({ data, mediaType }) => ({
-					text: `${mediaType}:${data.byteLength}`,
-					model: "voice-model",
-					providerRequestId: "voice-1",
-				}),
+				transcribe: async ({ data, mediaType }) => {
+					received.push(Buffer.from(data));
+					return {
+						text: `${mediaType}:${data.byteLength}`,
+						model: "voice-model",
+						providerRequestId: "voice-1",
+					};
+				},
 			},
 		});
 		const encoded = Buffer.from([1, 2, 3, 4]).toString("base64");
+		for (const dataBase64 of [encoded, encoded.slice(0, -2)]) {
+			expect(
+				await core.handle({
+					type: "media-transcribe",
+					dataBase64,
+					mediaType: "audio/webm",
+				}),
+			).toEqual({
+				ok: true,
+				transcription: {
+					text: "audio/webm:4",
+					model: "voice-model",
+					providerRequestId: "voice-1",
+				},
+			});
+		}
+		for (const dataBase64 of [
+			"",
+			"not base64",
+			"AA===",
+			"AB==",
+			`AA${"=".repeat(1_000_000)}!`,
+		]) {
+			expect(
+				await core.handle({
+					type: "media-transcribe",
+					dataBase64,
+					mediaType: "audio/webm",
+				}),
+			).toMatchObject({
+				ok: false,
+				error: "Voice recording contains invalid base64 data.",
+			});
+		}
 		expect(
 			await core.handle({
 				type: "media-transcribe",
-				dataBase64: encoded,
-				mediaType: "audio/webm",
-			}),
-		).toEqual({
-			ok: true,
-			transcription: {
-				text: "audio/webm:4",
-				model: "voice-model",
-				providerRequestId: "voice-1",
-			},
-		});
-		expect(
-			await core.handle({
-				type: "media-transcribe",
-				dataBase64: "not base64",
+				dataBase64: Buffer.alloc(25 * 1024 * 1024 + 1).toString("base64"),
 				mediaType: "audio/webm",
 			}),
 		).toMatchObject({
 			ok: false,
-			error: "Voice recording contains invalid base64 data.",
+			error: "Voice recording must be between 1 byte and 25 MB.",
 		});
+		expect(received).toEqual([
+			Buffer.from([1, 2, 3, 4]),
+			Buffer.from([1, 2, 3, 4]),
+		]);
 		await core.close();
 	});
 

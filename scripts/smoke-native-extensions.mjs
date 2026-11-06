@@ -59,6 +59,8 @@ try {
   const first = await page.evaluate(() => JSON.parse(document.documentElement.dataset.kestrelExtensionProbe));
   assert.equal(first.manifest, 3);
   assert.equal(first.runs, 1);
+  assert.equal(first.tabFound, true, "Chrome-style extension tabs.query must see the actual page");
+  assert.deepEqual(first.scripting, { bridge: "undefined", nativeQuery: "undefined" });
   assert.match(first.id, /^[a-p]{32}$/);
   assert.equal(await page.evaluate(() => typeof window.kestrel), "undefined");
   await page.reload();
@@ -66,6 +68,7 @@ try {
   assert.equal(await page.evaluate(() => JSON.parse(document.documentElement.dataset.kestrelExtensionProbe).runs), 2);
   await page.goto(`chrome-extension://${first.id}/popup.html`);
   await page.getByText("Manifest V3 running in native Chromium.").waitFor();
+  await page.getByLabel("Extension storage").filter({ hasText: "Stored runs: 2" }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.kestrel), "undefined");
   // Even a file with the privileged shell's real path gets no bridge in this
   // mode. This checks that the mode reaches renderer helpers, not just main.

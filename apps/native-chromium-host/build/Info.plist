@@ -12,14 +12,24 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>Kestrel</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon.icns</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>CFBundleURLTypes</key>
+	<array><dict>
+		<key>CFBundleURLName</key><string>Web links</string>
+		<key>CFBundleURLSchemes</key><array><string>http</string><string>https</string></array>
+		<key>CFBundleTypeRole</key><string>Viewer</string>
+	</dict></array>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Kestrel uses your microphone when you choose to record a voice message.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

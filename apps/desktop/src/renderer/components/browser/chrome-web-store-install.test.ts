@@ -5,7 +5,9 @@ describe("Chrome Web Store install errors", () => {
 	it("turns installer failures into actionable compatibility messages", () => {
 		expect(
 			chromeWebStoreInstallErrorMessage(
-				new Error("Electron could not start this extension's background service worker."),
+				new Error(
+					"Kestrel could not start this extension's background service worker. The extension may rely on Chrome APIs that Kestrel does not support.",
+				),
 			),
 		).toMatch(/Chrome features/i);
 		expect(

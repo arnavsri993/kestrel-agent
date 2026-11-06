@@ -59,6 +59,7 @@ import {
 import { CoreSupervisor } from "./core-supervisor";
 import { desktopCoreProcess } from "./electron-core-process";
 import { CredentialBroker } from "./credential-broker";
+import { createElectronSecretProtection } from "./electron-secret-protection";
 import {
   BrokerCredentialStore,
   MacOSKeychainCredentialStore,
@@ -942,7 +943,7 @@ function localRuntimeManager(): LocalRuntimeManager {
 }
 
 function credentialBroker(): CredentialBroker {
-	appCredentialBroker ??= new CredentialBroker(app.getPath("userData"));
+	appCredentialBroker ??= new CredentialBroker(app.getPath("userData"), createElectronSecretProtection());
 	return appCredentialBroker;
 }
 

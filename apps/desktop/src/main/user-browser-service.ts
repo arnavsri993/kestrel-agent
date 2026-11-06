@@ -112,6 +112,7 @@ import {
 	chromeWebStoreInstallErrorMessage,
 } from "../browser-extension-error";
 import { ElectronExtensionRuntime } from "./electron-extension-runtime";
+import type { ExtensionRuntime } from "./extension-runtime";
 import {
 	isUserBrowserBackendWireRequest,
 	type UserBrowserBackendWireRequest,
@@ -381,6 +382,14 @@ export interface UserBrowserServiceOptions {
 	allowDevTools?: boolean;
 	/** Explicitly enables unpacked and local archive extensions for development only. */
 	allowLocalExtensions?: boolean;
+	/**
+	 * Optional extension runtime adapter. Defaults to Electron's Session-backed
+	 * runtime so production behavior is unchanged; tests and the native
+	 * Chromium host can inject ChromiumExtensionRuntime instead.
+	 */
+	extensionRuntime?: ExtensionRuntime;
+	/** Compatibility evidence backend. Defaults to Electron-documented reasons. */
+	extensionRuntimeBackend?: "electron" | "chromium";
 	statePath: string;
 	downloadDirectory: string;
 	legacyDownloadDirectory?: string;
@@ -1157,7 +1166,7 @@ export class UserBrowserService {
 	private readonly store: BrowserTabStore;
 	private readonly partition: Session;
 	private readonly extensionManager: BrowserExtensionManager;
-	private readonly extensionRuntime: ElectronExtensionRuntime;
+	private readonly extensionRuntime: ExtensionRuntime;
 	private readonly extensionStartup: Promise<void> = Promise.resolve();
 	private readonly views = new Map<string, ViewRecord>();
 	private readonly findRequests = new Map<string, ActiveFindRequest>();
@@ -1329,6 +1338,7 @@ export class UserBrowserService {
 		mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
 		this.extensionManager = new BrowserExtensionManager(dirname(options.statePath), {
 			allowLocalExtensions: options.allowLocalExtensions === true,
+			runtimeBackend: options.extensionRuntimeBackend ?? "electron",
 		});
 		this.connectionMode = options.connectionMode;
 		this.partitionName = options.partitionName ?? USER_BROWSER_PARTITION;
@@ -1339,7 +1349,8 @@ export class UserBrowserService {
 		this.partition = electronSession.fromPartition(this.partitionName, {
 			cache: true,
 		});
-		this.extensionRuntime = new ElectronExtensionRuntime(this.partition);
+		this.extensionRuntime =
+			options.extensionRuntime ?? new ElectronExtensionRuntime(this.partition);
 		this.applySessionBrowserPreferences();
 		if (!this.connectionMode) this.extensionStartup = this.extensionManager
 			.loadAll(this.extensionRuntime)

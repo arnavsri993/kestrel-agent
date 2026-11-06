@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { assertLocalOllamaMetadata } from "@kestrel/shared-types";
 import { providerFetch, readNdjson } from "./http";
+import { readBoundedResponseBytes } from "../bounded-http";
 import {
 	contentText,
 	type DiscoveredModel,
@@ -9,6 +12,159 @@ import {
 	type ModelResult,
 	type ModelToolCall,
 } from "./types";
+
+const MAX_OLLAMA_TAGS_BYTES = 1024 * 1024;
+const MAX_OLLAMA_SHOW_BYTES = 256 * 1024;
+const MAX_OLLAMA_MODELS = 64;
+const OLLAMA_SHOW_CONCURRENCY = 4;
+const OLLAMA_SHOW_TIMEOUT_MS = 1_000;
+const OLLAMA_CHAT_CONNECT_TIMEOUT_MS = 120_000;
+const OLLAMA_MODEL_CAPABILITIES = new Set([
+	"completion",
+	"tools",
+	"insert",
+	"vision",
+	"embedding",
+	"thinking",
+]);
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+	return value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
+
+function hasControlCharacters(value: string): boolean {
+	for (const character of value) {
+		const code = character.charCodeAt(0);
+		if (code <= 0x1f || code === 0x7f) return true;
+	}
+	return false;
+}
+
+function modelContextWindow(
+	modelInfo: Record<string, unknown> | undefined,
+	fallback: number,
+): number {
+	const architecture = modelInfo?.["general.architecture"];
+	if (
+		!modelInfo ||
+		typeof architecture !== "string" ||
+		!/^[a-zA-Z0-9_-]{1,64}$/.test(architecture)
+	)
+		return fallback;
+	const contextLength = modelInfo[`${architecture}.context_length`];
+	return typeof contextLength === "number" &&
+		Number.isSafeInteger(contextLength) &&
+		contextLength > 0
+		? Math.min(contextLength, 131_072)
+		: fallback;
+}
+
+function parsedOllamaCapabilities(value: unknown): Set<string> | undefined {
+	if (
+		!Array.isArray(value) ||
+		value.length === 0 ||
+		value.length > OLLAMA_MODEL_CAPABILITIES.size ||
+		value.some(
+			(item) =>
+				typeof item !== "string" ||
+				!OLLAMA_MODEL_CAPABILITIES.has(item),
+		)
+	)
+		return undefined;
+	const capabilities = new Set(value as string[]);
+	return capabilities.size === value.length ? capabilities : undefined;
+}
+
+function unknownModel(
+	name: string,
+	contextWindow: number,
+	availability: "available" | "unsupported" = "available",
+): DiscoveredModel {
+	return {
+		id: name,
+		displayName: name,
+		availability,
+		source: "provider_api",
+		capabilities: {
+			capabilityProvenance: "unknown",
+			contextWindow,
+		},
+	};
+}
+
+function modelFromShow(
+	name: string,
+	show: Record<string, unknown> | undefined,
+	fallbackContextWindow: number,
+): DiscoveredModel {
+	if (show) {
+		try { assertLocalOllamaMetadata(show); } catch { return unknownModel(name, fallbackContextWindow, "unsupported"); }
+	}
+	const modelInfo = objectRecord(show?.model_info);
+	const contextWindow = modelContextWindow(modelInfo, fallbackContextWindow);
+	const capabilities = parsedOllamaCapabilities(show?.capabilities);
+	if (!capabilities) return unknownModel(name, contextWindow);
+	if (!capabilities.has("completion"))
+		return unknownModel(name, contextWindow, "unsupported");
+	return {
+		id: name,
+		displayName: name,
+		availability: "available",
+		source: "provider_api",
+		capabilities: {
+			capabilityProvenance: "confirmed",
+			streaming: true,
+			tools: capabilities.has("tools"),
+			images: capabilities.has("vision"),
+			reasoningEfforts: capabilities.has("thinking")
+				? ["none", "medium"]
+				: [],
+			contextWindow,
+		},
+	};
+}
+
+async function discoverOllamaModel(
+	providerId: string,
+	baseUrl: string,
+	headers: Record<string, string>,
+	name: string,
+	signal: AbortSignal | undefined,
+	fallbackContextWindow: number,
+): Promise<DiscoveredModel> {
+	let show: Record<string, unknown> | undefined;
+	const timeout = AbortSignal.timeout(OLLAMA_SHOW_TIMEOUT_MS);
+	const showSignal = signal
+		? AbortSignal.any([signal, timeout])
+		: timeout;
+	try {
+		const response = await providerFetch(
+			providerId,
+			`${baseUrl}/api/show`,
+			{
+				method: "POST",
+				headers: { "content-type": "application/json", ...headers },
+				body: JSON.stringify({ model: name }),
+				signal: showSignal,
+			},
+		);
+		const bytes = await readBoundedResponseBytes(
+			response,
+			MAX_OLLAMA_SHOW_BYTES,
+			"Ollama model descriptor exceeded the size limit.",
+		);
+		const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+		show = objectRecord(parsed);
+	} catch (error) {
+		if (signal?.aborted) throw signal.reason ?? error;
+		// Model details are optional: keep the installed tag visible, but do not
+		// infer or persist any capabilities from its name or failed descriptor.
+	}
+	if (signal?.aborted) throw signal.reason;
+	return modelFromShow(name, show, fallbackContextWindow);
+}
 
 export interface OllamaChatProviderOptions {
 	id?: string;
@@ -95,37 +251,97 @@ export class OllamaChatProvider implements ModelProvider {
 			headers: this.options.headers ?? {},
 			...(signal ? { signal } : {}),
 		});
-		let payload: Record<string, unknown>;
+		const bytes = await readBoundedResponseBytes(
+			response,
+			MAX_OLLAMA_TAGS_BYTES,
+			"Ollama model list exceeded the size limit.",
+		);
+		let payload: Record<string, unknown> | undefined;
 		try {
-			payload = (await response.json()) as Record<string, unknown>;
+			payload = objectRecord(JSON.parse(new TextDecoder().decode(bytes)));
 		} catch {
 			throw new Error("Ollama returned malformed model discovery JSON.");
 		}
-		return (Array.isArray(payload.models) ? payload.models : []).flatMap((raw) => {
-			if (!raw || typeof raw !== "object") return [];
-			const item = raw as Record<string, unknown>;
-			if (typeof item.name !== "string" || !item.name.trim()) return [];
-			return [
-				{
-					id: item.name,
-					displayName: item.name,
-					availability: "available" as const,
-					source: "provider_api" as const,
-					capabilities: {
-						// /api/tags lists installed names only. It cannot promise
-						// tools or modalities for every tag.
-						capabilityProvenance: "unknown" as const,
-						contextWindow: this.contextWindow,
-					},
-				},
-			];
-		});
+		if (!payload || !Array.isArray(payload.models))
+			throw new Error("Ollama returned malformed model discovery JSON.");
+		const remoteNames = new Set<string>();
+		for (const raw of payload.models) {
+			const item = objectRecord(raw);
+			if (!item || typeof item.name !== "string") continue;
+			try { assertLocalOllamaMetadata(item); } catch { remoteNames.add(item.name); }
+		}
+		const names = [
+			...new Set(
+				payload.models.flatMap((raw) => {
+					const name = objectRecord(raw)?.name;
+					return typeof name === "string" &&
+						name.trim() === name &&
+						name.length > 0 &&
+						name.length <= 200 &&
+						!hasControlCharacters(name)
+						? [name]
+						: [];
+				}),
+			),
+		].slice(0, MAX_OLLAMA_MODELS);
+		const discovered = new Array<DiscoveredModel>(names.length);
+		let next = 0;
+		const workers = Array.from(
+			{ length: Math.min(OLLAMA_SHOW_CONCURRENCY, names.length) },
+			async () => {
+				while (true) {
+					signal?.throwIfAborted();
+					const index = next++;
+					const name = names[index];
+					if (name === undefined) return;
+					if (remoteNames.has(name)) { discovered[index] = unknownModel(name, this.contextWindow, "unsupported"); continue; }
+				discovered[index] = await discoverOllamaModel(
+						this.id,
+						this.baseUrl,
+						this.options.headers ?? {},
+						name,
+						signal,
+						this.contextWindow,
+					);
+				}
+			},
+		);
+		await Promise.all(workers);
+		return discovered;
 	}
 
 	async complete(
 		request: ModelRequest,
 		options: ModelCallOptions = {},
 	): Promise<ModelResult> {
+		const tags = await providerFetch(this.id, `${this.baseUrl}/api/tags`, { method: "GET", headers: this.options.headers ?? {}, ...(options.signal ? { signal: options.signal } : {}) });
+		const tagBytes = await readBoundedResponseBytes(tags, MAX_OLLAMA_TAGS_BYTES, "Ollama model list exceeded the size limit.");
+		let tagPayload: unknown;
+		try { tagPayload = JSON.parse(new TextDecoder().decode(tagBytes)); }
+		catch { throw new Error("Ollama could not confirm whether the selected model is local."); }
+		const tagList = objectRecord(tagPayload)?.models;
+		if (!Array.isArray(tagList)) throw new Error("Ollama could not confirm whether the selected model is local.");
+		const matches = tagList.filter((value) => {
+			const item = objectRecord(value);
+			return item && (item.name === request.model || item.name === `${request.model}:latest` || item.model === request.model || item.model === `${request.model}:latest`);
+		});
+		if (!matches.length) throw new Error("Ollama could not confirm whether the selected model is local.");
+		for (const item of matches) assertLocalOllamaMetadata(item);
+		// Re-read before every prompt: aliases can be repointed after discovery.
+		// Fail closed when the daemon cannot establish the model's locality.
+		const show = await providerFetch(this.id, `${this.baseUrl}/api/show`, {
+			method: "POST", headers: { "content-type": "application/json", ...this.options.headers },
+			body: JSON.stringify({ model: request.model }), ...(options.signal ? { signal: options.signal } : {}),
+		});
+		const showBytes = await readBoundedResponseBytes(show, MAX_OLLAMA_SHOW_BYTES, "Ollama model descriptor exceeded the size limit.");
+		let descriptor: unknown;
+		try { descriptor = JSON.parse(new TextDecoder().decode(showBytes)); }
+		catch { throw new Error("Ollama could not confirm whether the selected model is local."); }
+		assertLocalOllamaMetadata(descriptor);
+		if (request.messages.some(message => message.content.some(part => part.type === "image")) &&
+			!parsedOllamaCapabilities(objectRecord(descriptor)?.capabilities)?.has("vision")) {
+			throw new Error("The selected local model has not confirmed image support. Choose a vision-capable model before sending a screenshot.");
+		}
 		const response = await providerFetch(this.id, `${this.baseUrl}/api/chat`, {
 			method: "POST",
 			headers: { "content-type": "application/json", ...this.options.headers },
@@ -133,7 +349,12 @@ export class OllamaChatProvider implements ModelProvider {
 				model: request.model,
 				messages: ollamaMessages(request.messages),
 				stream: true,
-				think: this.options.thinking ?? false,
+				think:
+					request.reasoningEffort === "medium"
+						? true
+						: request.reasoningEffort === "none"
+							? false
+							: this.options.thinking ?? false,
 				...(request.tools?.length
 					? {
 							tools: request.tools.map((tool) => ({
@@ -161,13 +382,19 @@ export class OllamaChatProvider implements ModelProvider {
 					: { options: { num_ctx: this.contextWindow } }),
 			}),
 			...(options.signal ? { signal: options.signal } : {}),
-		});
+		},
+		{ connectTimeoutMs: OLLAMA_CHAT_CONNECT_TIMEOUT_MS },
+	);
 		let text = "";
 		let inputTokens = 0;
 		let outputTokens = 0;
 		let doneReason = "";
 		const toolCalls: ModelToolCall[] = [];
+		// Ollama has no stable call IDs. Scope generated IDs to this completion,
+		// otherwise a later turn can replay an earlier tool's idempotency result.
+		const completionId = randomUUID();
 		await readNdjson(response, this.id, (raw) => {
+			assertLocalOllamaMetadata(raw);
 			const chunk = raw as Record<string, unknown>;
 			const message =
 				(chunk.message as Record<string, unknown> | undefined) ?? {};
@@ -176,13 +403,13 @@ export class OllamaChatProvider implements ModelProvider {
 				options.onEvent?.({ type: "text_delta", delta: message.content });
 			}
 			const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-			for (const [index, rawCall] of calls.entries()) {
+			for (const rawCall of calls) {
 				const fn =
 					((rawCall as Record<string, unknown>).function as
 						| Record<string, unknown>
 						| undefined) ?? {};
 				const call: ModelToolCall = {
-					id: `ollama-call-${toolCalls.length + index + 1}`,
+					id: `ollama-call-${completionId}-${toolCalls.length + 1}`,
 					name: String(fn.name ?? "unknown_tool"),
 					arguments:
 						fn.arguments !== null && typeof fn.arguments === "object"
