@@ -153,7 +153,11 @@ try {
   const denied = await bounded(supervisor.request({ type: "runtime-call-tool", sessionId: revoked.id, toolName: "workspace.read", input: { path: "README.md" } }));
   assert.equal(denied.ok, false);
   await stop();
-  inspect(database => assert.equal(database.getMemoryEntity(`memory-project-${pendingId}`).status, "deleted"));
+  inspect(database => {
+    const id = `memory-project-${pendingId}`;
+    assert.equal(database.getMemoryEntity(id), undefined, "Deleted projects must be absent from ordinary retrieval.");
+    assert.equal(database.db.prepare("SELECT status FROM memory_entities WHERE id = ?").get(id)?.status, "deleted", "Revocation must retain a deleted project tombstone.");
+  });
   assert.deepEqual(await readFile(source), sourceBytes);
   phase("ordinary-revocation-still-detaches-and-denies-access-with-original-source-intact");
   receipt.result = "passed";

@@ -7,7 +7,79 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
-## Current checkpoint — route input and native admission, 2026-11-05
+## Current checkpoint — pending project identities, 2026-11-06
+
+Core now accepts an explicit host-owned `pendingProjectIds` inventory separately
+from folder-backed projects. The optional inventory defaults to empty. IDs are
+bounded to 500, validated using the existing literal project-ID contract, unique
+and disjoint from configured projects. The supervisor validates the original
+value before cloning or spawning, and the worker validates before opening SQLite.
+Strings and sparse arrays are refused rather than normalized into valid input.
+
+A pending session keeps its project ID while losing its workspace root, including
+when another grant covers that old folder. Forks and child agents preserve the
+identity and inherited private/incognito mode without acquiring a root. Workspace
+tools, attachments and undo also refuse subsequently stored stale roots. Pending
+sessions send neither Honcho recall nor capture requests, including global-memory
+fallbacks. Ordinary sessions retain their existing Honcho namespace behavior for
+stored unavailable or symlinked roots. Memory sync leaves existing explicit
+pending project entities unchanged and creates or revives no missing/deleted ones.
+
+**This is Core support, not a completed native transfer handoff.** The native
+transfer controller does not yet publish a durable, reviewed pending-project
+inventory or provide it before first startup. Starting a transferred destination
+without that integration still detaches unknown project IDs/roots and soft-deletes
+unmatched project memory entities. Source profiles remain preserved. The next
+integration must bind encrypted project metadata and pending IDs to the reviewed
+transfer, handle interrupted publication/recovery before activation, and reconnect
+folders through the trusted picker. Imported path hints must never enter either
+workspace-root list or create grants. Custom names, instructions, stable IDs,
+deletions and backup inventory need to survive that complete flow.
+
+Runtime source `fbbb0cd8` built separate ad-hoc candidate
+`389d0ff80056ab44eadeb7600490fd14e1385482626ebbc5a20e0355aae0c40d`
+at `.tmp/native-pending-project-host/Kestrel.app`. The final full suite passed
+**3,054 tests in 329 files**, with two existing ownership-mutation skips, in
+91.15 seconds using two workers. Workspace type checks and final agent-core and
+Core-service type checks passed. The candidate was not opened as a desktop window
+or installed. The user-used `c7015edb...` bundle was rehashed unchanged afterward.
+
+The checked-in `test:native-pending-projects` generated-fixture canary passed
+**six actual bundled Node/Core phases**: independent-key encrypted transfer,
+invalid bootstrap refusal before child/database mutation, first startup and
+private forks, restart and unchanged entity/tombstone preservation, an explicit
+host grant to a new folder under the same ID, and ordinary revocation. The
+bootstrap inventory and reconnect grant are supplied by the test; it does not
+exercise a persisted manifest, native transfer UI or Cocoa reconnection picker.
+The existing imported legacy-conflict/context/provider canary separately passed
+**eight** bundled Core phases with simulated picker replies on this same candidate.
+Both receipts retain its exact before/after digest and no owned Core remains.
+
+The first new-canary attempt passed its first five phases but used the ordinary
+entity getter, which intentionally excludes deleted rows, to inspect the final
+tombstone. Its failure receipt is retained. The harness now checks both ordinary
+retrieval absence and the stored deleted-row status; a fresh fixture passed all
+six phases without a Core change. Evidence is in
+`.tmp/native-pending-project-final-evidence/receipt.json`,
+`.tmp/native-pending-project-context-evidence/receipt.json`, and
+`.tmp/native-pending-project-final-unit.log`.
+
+Published predecessor `9bf2f937846e1060f4326fb77549cd17475914f7` passed both full
+[CI jobs](https://github.com/arnavsri993/kestrel-agent/actions/runs/42164275211),
+required CodeQL and all four language analyses. The downloaded native artifact
+matches GitHub SHA-256
+`dc4489a4989840ab48f2f7ca310a66013ed5aebdcce9f811bcd98b79caf19109`.
+Five native receipts contain **67 passing phases**, all retaining candidate
+`8ae5d40d9edc5bb7e651896f64a479163a5b987f30a050c91f57e55af37d2143`.
+Its native Home and companion screenshots were inspected. The separately
+checksummed desktop artifact's full-app Kanban desktop/compact screenshots were
+also inspected. The headless component receipt is separate and has no native
+candidate binding. The native product run did not request Store installation or
+full extension parity. The separate compatibility fixture records 11/16 checks;
+it is not full desktop Store parity evidence. These predecessor results do not
+establish CI success or on-screen acceptance for the newer pending-ID candidate.
+
+## Previous checkpoint — route input and native admission, 2026-11-05
 
 Runtime source `55eefea9` builds separate ad-hoc native candidate
 `b2f08d827f5ffb92899175cbab3aafca3d2c9022b1b0bfb5405b9cc54c8ab634`
