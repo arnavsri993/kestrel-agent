@@ -3,7 +3,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { candidateDigest, validateRetirementEvidence } from "./native-retirement-evidence.mjs";
+import { candidateDigest, validateNativeExtensionParityEvidence, validateRetirementEvidence } from "./native-retirement-evidence.mjs";
 
 const POST_GATE = "canonical-dock-app-on-screen";
 
@@ -20,19 +20,25 @@ export async function createNativeCutoverPlan({ candidate, target, manifestPath 
     candidateDigest(candidatePath), candidateDigest(targetPath), validateRetirementEvidence(candidatePath, manifestPath),
   ]);
   if (candidateSha256 !== evidence.candidateSha256) throw new Error("Candidate changed while preparing the plan.");
-  const postPrefix = `${POST_GATE}:`;
-  const preCutoverProblems = evidence.problems.filter(problem => !problem.startsWith(postPrefix));
-  const postCutoverEvidenceProblems = evidence.problems.filter(problem => problem.startsWith(postPrefix));
-  const backup = join(dirname(target), ".Kestrel-cutover-backups", `${previousSha256}-${candidateSha256}`, "Kestrel.app");
+  const parity = await validateNativeExtensionParityEvidence(candidatePath, manifestPath, candidateSha256);
+  const preCutoverProblems = [...evidence.problems, ...parity.problems];
+  const postCutoverEvidenceProblems = evidence.problems.filter(problem => problem.startsWith(`${POST_GATE}:`));
+  const backup = join(dirname(targetPath), ".Kestrel-cutover-backups");
   let backupExists = false;
-  try { await lstat(backup); backupExists = true; }
+  try {
+    const info = await lstat(backup); backupExists = true;
+    if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid() || (info.mode & 0o777) !== 0o700)
+      preCutoverProblems.push("Retained-bundle recovery directory is not an owned private directory.");
+  }
   catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (await candidateDigest(candidatePath) !== candidateSha256 || await candidateDigest(targetPath) !== previousSha256)
+    throw new Error("Candidate or installed app changed while preparing the plan.");
   return {
-    version: 1,
+    version: 2,
     kind: "read-only-native-cutover-plan",
     candidate: { path: candidatePath, sha256: candidateSha256 },
     target: { path: targetPath, sha256: previousSha256 },
-    backup: { path: backup, mustNotExist: true, alreadyExists: backupExists },
+    backup: { root: backup, alreadyExists: backupExists, pathTemplate: join(backup, "<transaction UUID>", "previous", "Kestrel.app"), allocatedExclusivelyDuringApply: true },
     preCutover: {
       evidenceComplete: preCutoverProblems.length === 0,
       evidenceProblems: preCutoverProblems,
@@ -40,7 +46,8 @@ export async function createNativeCutoverPlan({ candidate, target, manifestPath 
         "Review every pre-cutover receipt and supporting artifact; hashes and status fields are attestations, not proof of behavior.",
         "Pass live signing and notarization checks and exact-candidate extension parity; confirm explicit retirement and cutover acceptance.",
         "Complete an explicitly approved, tested profile transfer and rollback; preserve existing profiles, credentials, and provider logins.",
-        "Recheck candidate, installed target, and the absence of the reserved backup immediately before any mutation.",
+        "Pass every existing retirement gate, including candidate-bound canonical on-screen evidence; the installer does not waive a gate during staging.",
+        "Recheck candidate and installed target, then allocate a new private recovery transaction without overwriting an existing backup.",
         "Use an owned, private backup directory on the target volume; never overwrite an existing backup, unrelated app, or profile.",
         "Stage and validate the signed candidate, preserve the exact previous app in that backup, then atomically replace the canonical app with recoverable failure handling.",
       ],
@@ -57,7 +64,10 @@ export async function createNativeCutoverPlan({ candidate, target, manifestPath 
     },
     limitations: [
       "This plan performs no mutation and does not certify evidence, signing, live tests, free space, permissions, or rollback readiness.",
-      "The current installer requires post-cutover evidence before replacement and moves the previous app to Trash; it does not implement this staged recovery protocol.",
+      "The installer still requires the complete retirement manifest before replacement. Local canonical workflow acceptance after installation is separate from directory/signature validation.",
+      "The installer retains the previous bundle and a recovery journal; explicit rollback requires its private transaction.json path and KESTREL_ROLLBACK_NATIVE_CANONICAL=1.",
+      "The shared loopback guard coordinates participating installers only. Process and path checks are snapshots; independent launches or filesystem writers are not atomically excluded.",
+      "Bundle fingerprints cover paths, types, modes, file bytes and link targets; they do not attest ACLs, extended attributes, ownership or timestamps.",
     ],
   };
 }

@@ -9,78 +9,91 @@ Electron process in this path.
 
 ## Current checkpoint — 2026-11-05
 
-Runtime source `7be8043c` packages an ad-hoc native app at
-`release/native-mac-arm64/Kestrel.app`, with whole-bundle digest
-`1a35920338b4bceff965d5c4a54d1f7842951c1350d990853a0ee7eaa43e1d49`.
-The full controlled unit run passes **2,956 tests in 324 files**, with the same
-two existing ownership-mutation skips, in 88.93 seconds using `--maxWorkers=2`.
-The actual packaged Node Core passes eight imported-profile/context/provider
-phases with generated data and simulated picker replies. The native executable
-and new Objective-C++ dispatcher compile in the package build. Workspace types
-last passed on predecessor `c9a3061e`; this batch changes C++, JavaScript and
-workflow/documentation files.
+The native installer now stages a reviewed candidate on the target volume and
+retains the previous bundle under a private recovery transaction. It no longer
+uses the general Electron installer or moves the previous canonical app to Trash.
+Existing signing, notarization, all **26** retirement receipts and semantic native
+Store parity checks remain mandatory before replacement. The same fixed checks
+run on the staged copy and installed candidate. This change does not waive
+canonical on-screen evidence or authorize an actual local cutover.
 
-Native Core profile-key lookup now runs on one bounded serial background queue.
-Apple documents that [SecItemCopyMatching blocks its calling thread](https://developer.apple.com/documentation/security/secitemcopymatching(_:_:)).
-An owner-generation token binds each lookup and reply to its exact profile and
-broker pipe. Replaced or closed owners cannot receive old results. Duplicate
-requests never overwrite the first response; capacity exhaustion promptly sends
-one negative reply without another lookup. Transient key results are cleared on
-failure and stale delivery. Injected backend checks prove that the main run loop
-continues during a held lookup, and denial/retry does not rotate a populated
-profile's key or change its generated database bytes. These checks invoke no
-real Keychain API. Security authorization policy is unchanged; protected-key
-continuity across ad-hoc builds remains unverified. Moving the lookup off main
-does not prove that every existing pipe write is nonblocking.
+The previous app is retained by same-volume rename under
+`.Kestrel-cutover-backups/<UUID>/previous/Kestrel.app`. A private, bounded journal
+is written and synced before replacement; its path is printed before copying.
+Failed adoption, installed validation or registration attempts restore the
+previous known bundle when possible and retain the candidate for inspection.
+Changed or uncertain state is preserved with a recovery path and the primary
+failure. No profile, credential or project data is copied, reset or merged.
 
-Native packaging now uses a unique temporary build and verifies its staged copy
-before adopting it into the native release-artifact directory. It preserves the
-previous release until adoption succeeds, attempts rollback even after failed
-candidate cleanup, and identifies retained backups without hiding the primary
-error. Failure tests cover corrupt copies, adoption failures, cleanup failures,
-unsafe paths and an unexpected builder return. The real package build left the
-live `c7015edb...` bundle digest unchanged. The new artifact was neither launched
-as a desktop window nor installed into `/Applications`.
+Native installation, explicit rollback and the existing development installer
+share a process-lifetime coordination guard. An exclusive loopback listener is
+released by the kernel after process death, including death before a journal
+exists. It accepts no application data; an unrelated local service or target-hash
+port collision causes conservative refusal. [Node documents exclusive listener
+binding and address-in-use errors](https://nodejs.org/api/net.html#serverlistenoptions-callback).
+The development installer refuses an existing native or ambiguous canonical app,
+preventing an ordinary Electron refresh from reverting a completed native cutover.
 
-Notary submission captures tool output and redacts the app-specific password
-from success/failure diagnostics and runner exceptions. It returns only safe
-process fields, excluding the raw `spawnSync.output` array. Four tests use
-synthetic credentials and injected runners; no actual notarization was run.
+Both installers inspect bounded private recovery metadata before starting.
+An unfinished replacement blocks another install until explicit recovery. When
+the original bundle is still present and no previous-bundle backup exists, only
+the journal can reconcile to a terminal state, preserving its prior state and
+reconciliation time. Known bounded private temporary journal files from a crash
+before the first journal are retained. Unknown or unsafe files remain refused.
+The recovery tree has indexing exclusion markers, and app cleanup excludes the
+entire tree and aliases into it, including direct Trash operations.
 
-The separate, manual-only `native-macos-candidate.yml` workflow packages and
-smoke-tests an ad-hoc native app, verifies an archive round trip, and uploads only
-the ZIP and a checksummed, commit-bound manifest for seven days. It explicitly
-marks the artifact unnotarized and non-distributable. It neither publishes a
-release nor changes the public release workflow or canonical installation gates.
-[GitHub requires the workflow on the default branch for manual dispatch](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
-Its remote run is not claimed by this PR. The archive step passed locally on the
-exact package: signature verification, extraction and repeated whole-bundle
-digests matched; the archive SHA-256 and actual runtime source commit matched
-the manifest. This proves the archive step, not a complete remote workflow.
+The installer refuses observed running canonical processes and checks again
+immediately around replacement. The guard coordinates participating installers;
+process/path checks are snapshots and cannot atomically exclude an independent
+launch or filesystem writer. Bundle fingerprints cover paths, types, modes, file
+bytes and link targets. They do not attest ACLs, extended attributes, ownership or
+timestamps; retaining the original by rename normally preserves that metadata.
 
-Published predecessor `c9a3061e` now passes both CI jobs, required CodeQL and all
-four language analyses. Its downloaded native evidence artifact matches GitHub's
-SHA-256 and includes **66 passing phases** across native product, browser
-settings, imported Core, large transfer and voice-cancellation receipts, all
-bound to its separate CI bundle. These are predecessor results. New-head CI is
-reported separately on the pull request.
+Explicit rollback requires the retained journal and a separate acceptance:
 
-Current local receipts/logs:
+```bash
+KESTREL_ROLLBACK_NATIVE_CANONICAL=1 node scripts/install-native-chromium-macos.mjs \
+  --rollback '/Applications/.Kestrel-cutover-backups/<UUID>/transaction.json'
+```
+
+This command validates the known canonical target, private generated transaction
+path, journal and bundle fingerprints; it refuses live canonical processes or
+observed unexpected target contents. It does not restore or change user profiles.
+The read-only cutover plan now reports the actual UUID backup layout, all existing
+pre-install gates and semantic Store parity rather than overstating readiness.
+
+Current local verification:
 
 | Evidence | Observed result |
 | --- | --- |
-| `.tmp/native-key-dispatch-unit-bounded.log` | 2,956 passed; two existing skips |
-| `.tmp/native-key-dispatch-package-build.log` | Native package built; separate staged output adopted |
-| `.tmp/native-key-dispatch-runtime-evidence/receipt.json` | Eight actual packaged Core phases; simulated pickers |
-| `.tmp/native-package-notary-final-focused.log` | 17 package failure-path and notary checks |
-| `.tmp/native-ci-c9-artifact-summary.json` | Verified predecessor CI artifact; 66 passing phases |
-| `.tmp/native-candidate-archive-local-receipt.json` | Actual package archive round trip, checksum and runtime source manifest verified |
+| `.tmp/native-cutover-transaction-unit-final.log` | 3,020 passed in 327 files; two existing skips; 89.30 seconds with `--maxWorkers=2` |
+| `.tmp/native-install-real-bundle-evidence/receipt.json` | Four actual bundle-directory phases: copy/adopt/retain, explicit rollback, installed-check failure recovery and unchanged source/live hashes |
+| `.tmp/native-cutover-plan-focused.log` | Three read-only planning checks, including refusal of synthetic generic receipts as Store parity |
 
-Real-profile apply/activation/rollback, broader browser/account acceptance, an
-observed published Store upgrade, durable protected-key continuity, Developer ID
-signing/notarization and canonical cutover remain open. The user has no Apple
-Developer account yet. `/Applications/Kestrel.app` remains Electron and the user's
-live native window/profile stay preserved. This is not a release-ready claim.
+The real-bundle directory test uses ad-hoc native package
+`1a35920338b4bceff965d5c4a54d1f7842951c1350d990853a0ee7eaa43e1d49`
+and previous package `752af684...`, copied into a private test directory. It uses
+actual `ditto`, development `codesign` verification and process inspection, with
+no app launch or LaunchServices registration. It does not establish Developer ID,
+notarization, retirement acceptance or canonical installed-app behavior. Generated
+copies remain private; both source packages and live `c7015edb...` are unchanged.
+No app-runtime code changed in this installer batch, so those runtime artifacts
+retain their earlier source boundaries.
+
+Published predecessor `be5a8108` passed both CI jobs, required CodeQL and all four
+language analyses. Its verified CI artifact contains 66 passing native phases on
+one CI bundle. Earlier local native package checks passed 2,956 units, eight
+bundled Core phases and a verified ZIP round trip. New installer-head CI is
+reported separately on the pull request; the manual-only ad-hoc candidate
+workflow is not a distributable release or a completed remote workflow run.
+
+Real-profile apply/activation/rollback, workspace registry and broader browser/
+account acceptance, an observed published Store upgrade, durable protected-key
+continuity, Developer ID signing/notarization and canonical cutover remain open.
+The user has no Apple Developer account yet. `/Applications/Kestrel.app` remains
+Electron and the user's live native window/profile stay preserved. This is not
+a release-ready claim.
 
 ### Preceding legacy-conflict checkpoint
 

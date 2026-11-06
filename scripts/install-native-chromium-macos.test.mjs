@@ -8,6 +8,15 @@ import { join, resolve } from "node:path";
 const roots = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
+it("requires separate explicit acceptance for rollback before reading a journal or changing an app", () => {
+	const result = spawnSync(process.execPath, [resolve("scripts/install-native-chromium-macos.mjs"), "--rollback", "/not-selected/transaction.json"], {
+		encoding: "utf8", env: { ...process.env, KESTREL_ROLLBACK_NATIVE_CANONICAL: "" },
+	});
+	expect(result.status).not.toBe(0);
+	expect(`${result.stdout}${result.stderr}`).toContain("Explicit rollback acceptance");
+	expect(`${result.stdout}${result.stderr}`).not.toContain("Native Chromium signing");
+});
+
 it.each([false, true])("preserves the canonical app when native acceptance/signing is missing (accepted=%s)", async (accepted) => {
 	const root = await mkdtemp(join(tmpdir(), "kestrel-native-install-test-"));
 	roots.push(root);
