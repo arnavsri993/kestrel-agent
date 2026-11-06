@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { mkdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildNativeChromiumHost } from "./build-native-chromium-host.mjs";
+import { packageNativeChromiumArtifact } from "./native-package-stage.mjs";
 
 /**
  * Packages the native CEF host into release/native-mac-arm64/Kestrel.app.
@@ -33,17 +33,21 @@ if (releaseBuild) {
 	}
 }
 
-const built = await buildNativeChromiumHost();
-await mkdir(destinationRoot, { recursive: true });
-await rm(destinationApp, { recursive: true, force: true });
-const ditto = spawnSync(
-	"/usr/bin/ditto",
-	["--rsrc", "--extattr", "--acl", built, destinationApp],
-	{ stdio: "inherit" },
-);
-if (ditto.status !== 0)
-	throw new Error("Could not copy the native Chromium package into release/.");
-console.log(`Packaged native Chromium Kestrel at ${destinationApp}.`);
+const packaged = await packageNativeChromiumArtifact({
+	root,
+	destinationRoot,
+	destinationApp,
+	build: (output) => buildNativeChromiumHost({ output }),
+	copy: (built, destination) => {
+		const ditto = spawnSync(
+			"/usr/bin/ditto",
+			["--rsrc", "--extattr", "--acl", built, destination],
+			{ stdio: "inherit" },
+		);
+		if (ditto.status !== 0) throw new Error("Could not copy the native Chromium package into release/.");
+	},
+});
+console.log(`Packaged native Chromium Kestrel at ${packaged}.`);
 if (releaseBuild) {
 	console.log(
 		"Release package is Developer ID–signed but not yet notarized. Run corepack pnpm notarize:mac:native.",

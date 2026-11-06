@@ -225,6 +225,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 			join(nativeHostRoot, "src", "kestrel_live_extension_control.mm"),
 			join(nativeHostRoot, "src", "kestrel_native_credentials.mm"),
 			join(nativeHostRoot, "src", "kestrel_native_core_keychain.mm"),
+			join(nativeHostRoot, "src", "kestrel_native_core_key_dispatch.mm"),
 			join(nativeHostRoot, "src", "kestrel_native_profile_transfer.mm"),
 			join(nativeHostRoot, "src", "kestrel_native_prepared_profiles.mm"),
 			join(nativeHostRoot, "src", "kestrel_legacy_core_key.cc"),

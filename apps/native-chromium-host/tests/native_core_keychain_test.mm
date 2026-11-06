@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <limits.h>
 #include <map>
 #include <string>
@@ -95,6 +96,26 @@ int main() {
     assert(!store.GetExisting(first_profile, &lookup, &error));
     assert(lookup.empty() && backend->add_count == prior_adds);
     first_item->second = saved_bytes;
+
+    // A transient denial for a populated profile is recoverable without
+    // replacing its key or touching its existing bytes. No Security API runs.
+    assert(mkdir((first_profile + "/native-core").c_str(), 0700) == 0);
+    assert(mkdir((first_profile + "/native-core/database").c_str(), 0700) == 0);
+    const std::string populated_file = first_profile + "/native-core/database/kestrel.sqlite";
+    const std::string populated_bytes = "generated-populated-profile-sentinel";
+    { std::ofstream file(populated_file); file << populated_bytes; }
+    assert(chmod(populated_file.c_str(), 0600) == 0);
+    const int adds_before_denial = backend->add_count;
+    backend->read_result = NativeCoreKeychainResult::Failure;
+    lookup = "old-sensitive-value";
+    assert(!store.GetOrCreate(first_profile, &lookup, &error));
+    assert(lookup.empty() && backend->add_count == adds_before_denial);
+    backend->read_result = NativeCoreKeychainResult::NotFound;
+    assert(restarted.GetOrCreate(first_profile, &lookup, &error));
+    assert(lookup == first_key && backend->add_count == adds_before_denial);
+    { std::ifstream file(populated_file); std::string bytes((std::istreambuf_iterator<char>(file)), {}); assert(bytes == populated_bytes); }
+    assert(std::filesystem::directory_iterator(first_profile + "/native-core/database") != std::filesystem::directory_iterator());
+    assert(std::distance(std::filesystem::directory_iterator(first_profile + "/native-core/database"), std::filesystem::directory_iterator()) == 1);
 
     const std::string second_profile = PrivateProfile("kestrel-core-key-test");
     std::string second_key;

@@ -46,6 +46,7 @@
 #include "native_computer_use.h"
 #include "native_microphone_policy.h"
 #include "kestrel_native_core_keychain.h"
+#include "kestrel_native_core_key_dispatch.h"
 #include "kestrel_native_profile_transfer.h"
 
 namespace {
@@ -303,7 +304,9 @@ std::set<std::string> native_window_pending;
 std::set<std::string> native_window_dispatched;
 std::vector<std::string> native_window_waiting;
 std::string dock_window_pending;
-NativeCoreProfileKeyStore native_core_profile_key_store;
+const auto native_core_profile_key_store = std::make_shared<NativeCoreProfileKeyStore>();
+NativeCoreKeyDispatcher native_core_key_dispatcher;
+NativeCoreKeyDispatcher::OwnerToken native_core_key_owner;
 bool native_core_key_failure_notified = false;
 void ShowNativeDataUnlockFailure() {
   NSAlert* alert = [[NSAlert alloc] init];
@@ -477,6 +480,7 @@ static void InstallDesktopMenu() {
 }
 
 bool CloseKestrelChromiumDesktop() {
+  native_core_key_dispatcher.InvalidateOwner(native_core_key_owner);
   if (!desktop_client) return false;
   external_urls.SetReady(false);
   CancelNativeWindowRequests();
@@ -741,6 +745,11 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) { /* Broker shutdown settles its pending requests. */ }
   });
   desktop_broker_input = input.fileHandleForWriting;
+  const std::string key_profile(core_profile.fileSystemRepresentation);
+  const auto key_owner = native_core_key_dispatcher.BeginOwner(
+      key_profile, reinterpret_cast<uintptr_t>((__bridge void*)input.fileHandleForWriting));
+  native_core_key_owner = key_owner;
+  native_core_key_failure_notified = false;
   NSData* parent_ready = [NSJSONSerialization
       dataWithJSONObject:@{@"kind" : @"native-desktop-parent-ready"}
                    options:0
@@ -749,15 +758,20 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     NSMutableData* line = [parent_ready mutableCopy];
     [line appendBytes:"\n" length:1];
     @try { [input.fileHandleForWriting writeData:line]; }
-    @catch (NSException*) { [broker terminate]; return 1; }
+    @catch (NSException*) { native_core_key_dispatcher.InvalidateOwner(key_owner); [broker terminate]; return 1; }
   } else {
+    native_core_key_dispatcher.InvalidateOwner(key_owner);
     [broker terminate];
     return 1;
   }
   NSMutableData* event_buffer = [[NSMutableData alloc] init];
   output.fileHandleForReading.readabilityHandler = ^(NSFileHandle* handle) {
     NSData* data = handle.availableData;
-    if (!data.length) { handle.readabilityHandler = nil; return; }
+    if (!data.length) {
+      handle.readabilityHandler = nil;
+      dispatch_async(dispatch_get_main_queue(), ^{ native_core_key_dispatcher.InvalidateOwner(key_owner); });
+      return;
+    }
     const uint8_t newline = '\n';
     // Bound each newline frame, not a coalesced read containing several valid
     // requests. Large type/upload requests must not disable future dispatch.
@@ -780,17 +794,18 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
       if ([value[@"kind"] isEqualToString:@"native-core-profile-key-request"] &&
           [value[@"requestId"] isKindOfClass:NSString.class] &&
           [value[@"requestId"] isEqualToString:@"native-core-profile-key-v1"]) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-          std::string key_base64;
-          std::string error;
-          const bool ok = disposable_test_key
-              ? native_core_profile_key_store.GetOrCreateDisposableTestKey(
-                    std::string(core_profile.fileSystemRepresentation),
-                    std::string(NSBundle.mainBundle.bundleIdentifier.UTF8String ?: ""),
-                    std::string(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: ""),
-                    &key_base64, &error)
-              : native_core_profile_key_store.GetOrCreate(
-                    std::string(core_profile.fileSystemRepresentation), &key_base64, &error);
+        // Capture the exact owner identity and trusted path. Keychain can wait
+        // for macOS authorization; that work must never occupy AppKit's queue.
+        const auto key_store = native_core_profile_key_store;
+        const std::string bundle_id(NSBundle.mainBundle.bundleIdentifier.UTF8String ?: "");
+        const std::string bundle_path(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: "");
+        const auto disposition = native_core_key_dispatcher.Request(key_owner, "native-core-profile-key-v1",
+            [key_store, key_profile, bundle_id, bundle_path, disposable_test_key](std::string* key, std::string* failure) {
+              return disposable_test_key
+                  ? key_store->GetOrCreateDisposableTestKey(key_profile, bundle_id, bundle_path, key, failure)
+                  : key_store->GetOrCreate(key_profile, key, failure);
+            }, [broker, input, disposable_test_key](bool ok, const std::string& key_base64) {
+          if (!broker.running || desktop_broker_input != input.fileHandleForWriting) return;
           std::string response = ok
               ? std::string("{\"kind\":\"native-core-profile-key-response\",\"requestId\":\"native-core-profile-key-v1\",\"ok\":true,\"keyBase64\":\"") + key_base64 + (disposable_test_key ? "\",\"testProfile\":true}" : "\"}")
               : "{\"kind\":\"native-core-profile-key-response\",\"requestId\":\"native-core-profile-key-v1\",\"ok\":false,\"error\":\"Protected native profile key is unavailable.\"}";
@@ -798,19 +813,20 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
                                                       length:response.size()];
           [line appendBytes:"\n" length:1];
           std::fill(response.begin(), response.end(), '\0');
-          std::fill(key_base64.begin(), key_base64.end(), '\0');
-          if (broker.running) {
-            @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) {}
-          }
+          @try { [input.fileHandleForWriting writeData:line]; } @catch (NSException*) {}
           if (line.length) std::memset(line.mutableBytes, 0, line.length);
           if (!ok && !disposable_test_key && !native_core_key_failure_notified) {
             native_core_key_failure_notified = true;
             // Settle the private request and clear its bytes before presenting
             // recovery guidance. Never replace the key, reset the profile or
             // leave the person to mistake unavailable data for an empty profile.
-            dispatch_async(dispatch_get_main_queue(), ^{ ShowNativeDataUnlockFailure(); });
+            ShowNativeDataUnlockFailure();
           }
         });
+        // CapacityFailure already schedules this exact owner's negative reply.
+        // A duplicate must not race or overwrite its first accepted response.
+        if (disposition == NativeCoreKeyDispatcher::Disposition::Invalid)
+          std::cerr << "Native Core profile key dispatch was invalid." << std::endl;
         continue;
       }
       if ([value[@"kind"] isEqualToString:@"dialog-cancel"] && [value[@"id"] isKindOfClass:NSString.class]) {
@@ -1122,7 +1138,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     if (!CefBrowserHost::CreateBrowserSync(window, desktop_client, "about:blank", browser_settings, nullptr, nullptr)) CefQuitMessageLoop();
   }, false, true, std::string(profile.UTF8String), [] { return desktop_client; }, ui_path);
   id<NSApplicationDelegate> owner_delegate = NSApp.delegate;
-  if (!CefInitialize(args, settings, app, nullptr)) { [broker terminate]; desktop_client = nullptr; desktop_broker_input = nil; return CefGetExitCode(); }
+  if (!CefInitialize(args, settings, app, nullptr)) { native_core_key_dispatcher.InvalidateOwner(key_owner); [broker terminate]; desktop_client = nullptr; desktop_broker_input = nil; return CefGetExitCode(); }
   // CEF initializes Chromium's app controller during startup. Install our
   // embedding delegate and native menus afterwards, just as the CEF sample
   // does, so Quit owns the Core and messaging lifetimes as well as the window.
@@ -1135,6 +1151,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   dispatch_source_set_event_handler(termination, ^{ [NSApp terminate:nil]; });
   dispatch_resume(termination);
   CefRunMessageLoop();
+  native_core_key_dispatcher.InvalidateOwner(key_owner);
   [desktop_profile_transfer shutdown];
   dispatch_source_cancel(termination);
   signal(SIGTERM, previous_sigterm);
