@@ -152,6 +152,7 @@ import { DashboardExtensions } from "./components/DashboardExtensions";
 import { EventApplications } from "./components/EventApplications";
 import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
 import { GoalKanban } from "./components/GoalKanban";
+import { BrowserAppPage } from "./components/browser/BrowserAppPage";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
 import { MemoryRecallReceiptLine } from "./components/MemoryRecallReceiptLine";
 import { MemoryRecallStatus } from "./components/MemoryRecallStatus";
@@ -11347,7 +11348,7 @@ export function App() {
 	const presentedAgentSidebarOpen =
 		nativeChromiumPanel || (!nativeCompanionOpen && (appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen));
 	const appPage = appPageId ? (
-		<motion.div
+		<BrowserAppPage
 			key={appPageId}
 			ref={focusToolRoute}
 			className={`browser-app-page${
@@ -11368,15 +11369,8 @@ export function App() {
 					? " browser-secondary-surface"
 					: ""
 			}${appPageId === "memory" ? " life-product-surface" : ""}`}
-			data-app-page={appPageId}
-			initial={reduced ? false : { opacity: 0, y: 3 }}
-			animate={{ opacity: 1, y: 0, pointerEvents: "auto" }}
-			exit={
-				reduced
-					? { opacity: 1, y: 0, pointerEvents: "none" }
-					: { opacity: 0, y: -3, pointerEvents: "none" }
-			}
-			transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+			pageId={appPageId}
+			reduced={Boolean(reduced)}
 		>
 			{appPageId === "history" && (
 				<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
@@ -11497,7 +11491,7 @@ export function App() {
 					onNavigate={navigate}
 				/>
 			)}
-		</motion.div>
+		</BrowserAppPage>
 	) : undefined;
 	const kestrelNavigation = showKestrelSidebar ? (
 		<KestrelSidebar

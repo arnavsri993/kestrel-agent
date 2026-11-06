@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import { openCommandCenter, openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "workstrand-kanban-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -13,6 +13,42 @@ const screenshotPath = resolve(
 );
 mkdirSync(dirname(screenshotPath), { recursive: true });
 let application;
+let page;
+const diagnosticsRoot = resolve("test-results/desktop-kanban");
+async function recordInteraction(stage) {
+	if (!page || page.isClosed()) return;
+	mkdirSync(diagnosticsRoot, { recursive: true, mode: 0o700 });
+	const evidence = await page.evaluate(() => {
+		const describe = element => {
+			if (!(element instanceof HTMLElement)) return null;
+			const style = getComputedStyle(element), rect = element.getBoundingClientRect();
+			return { tag: element.tagName, id: element.id, className: element.className,
+				role: element.getAttribute("role"), appPage: element.dataset.appPage,
+				ariaHidden: element.getAttribute("aria-hidden"), inert: element.inert,
+				pointerEvents: style.pointerEvents, inlinePointerEvents: element.style.pointerEvents,
+				opacity: style.opacity, display: style.display, visibility: style.visibility,
+				overflow: style.overflow, transform: style.transform, zIndex: style.zIndex,
+				scrollTop: element.scrollTop, scrollLeft: element.scrollLeft,
+				rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
+		};
+		const card = [...document.querySelectorAll(".kanban-card")].find(element =>
+			[...element.querySelectorAll("h1,h2,h3,h4,h5,h6")].some(heading => heading.textContent === "Audit reference coverage"));
+		const buttons = card ? [...card.querySelectorAll("button")] : [];
+		const button = buttons.find(element => element.textContent?.trim() === "In progress →") ??
+			buttons.find(element => element.textContent?.trim() === "← Ready");
+		const rect = button?.getBoundingClientRect();
+		const x = rect ? Math.max(0, Math.min(innerWidth - 1, rect.x + rect.width / 2)) : 0;
+		const y = rect ? Math.max(0, Math.min(innerHeight - 1, rect.y + rect.height / 2)) : 0;
+		const ancestors = []; for (let element = button; element && ancestors.length < 12; element = element.parentElement) ancestors.push(describe(element));
+		return { viewport: { width: innerWidth, height: innerHeight }, visibility: document.visibilityState,
+			hasFocus: document.hasFocus(), reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+			button: describe(button), ancestors,
+			hitPoint: { x, y }, hitStack: document.elementsFromPoint(x, y).slice(0, 12).map(describe),
+			appPages: [...document.querySelectorAll(".browser-app-page")].slice(0, 8).map(describe),
+			browserViewport: describe(document.getElementById("browser-viewport")), activeElement: describe(document.activeElement) };
+	});
+	writeFileSync(join(diagnosticsRoot, `${stage}.json`), `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+}
 
 try {
 	application = await electron.launch({
@@ -23,7 +59,7 @@ try {
 			KESTREL_TEST_USER_DATA: join(temporaryRoot, "user-data"),
 		},
 	});
-	const page = await application.firstWindow();
+	page = await application.firstWindow();
 	page.setDefaultTimeout(30_000);
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.evaluate(() => {
@@ -93,6 +129,7 @@ try {
 		page
 			.locator(".kanban-card")
 			.filter({ has: page.getByRole("heading", { name, exact: true }) });
+	await recordInteraction("before-move");
 	await card("Audit reference coverage")
 		.getByRole("button", { name: "In progress →" })
 		.click();
@@ -112,6 +149,21 @@ try {
 	process.stdout.write(
 		"Verified keyboard-accessible move and focus restoration.\n",
 	);
+	for (const reduced of [false, true]) {
+		await page.emulateMedia({ reducedMotion: reduced ? "reduce" : "no-preference" });
+		for (let index = 0; index < 3; index++) {
+			await openCommandCenter(page);
+			await openWork();
+			await recordInteraction(`route-return-${reduced ? "reduced" : "normal"}-${index}`);
+			await card("Audit reference coverage").getByRole("button", { name: "← Ready", exact: true }).click();
+			await column("Ready").getByRole("heading", { name: "Audit reference coverage", exact: true }).waitFor();
+			await card("Audit reference coverage").getByRole("button", { name: "In progress →", exact: true }).click();
+			await column("In progress").getByRole("heading", { name: "Audit reference coverage", exact: true }).waitFor();
+			assert.equal(await card("Audit reference coverage").evaluate(element => element === document.activeElement), true);
+		}
+	}
+	await page.emulateMedia({ reducedMotion: "no-preference" });
+	process.stdout.write("Verified repeated route returns with normal and reduced motion.\n");
 
 	const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
 	await card("Wire durable state").dispatchEvent("dragstart", { dataTransfer });
@@ -152,6 +204,7 @@ try {
 	process.stdout.write("Verified durable reload.\n");
 
 	await page.screenshot({ path: screenshotPath, fullPage: false });
+	await page.screenshot({ path: join(diagnosticsRoot, "desktop.png"), fullPage: false });
 
 	await page.setViewportSize({ width: 640, height: 860 });
 	const compactLayout = await page
@@ -166,6 +219,7 @@ try {
 		compactLayout.documentWidth <= compactLayout.viewportWidth,
 		`Compact board overflowed: ${JSON.stringify(compactLayout)}`,
 	);
+	await page.screenshot({ path: join(diagnosticsRoot, "compact.png"), fullPage: false });
 
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	const reducedTransition = await page
@@ -176,6 +230,10 @@ try {
 	process.stdout.write(
 		`Accessible durable Kanban interaction passed. Screenshot: ${screenshotPath}\n`,
 	);
+} catch (error) {
+	await recordInteraction("failure").catch(() => undefined);
+	await page?.screenshot({ path: join(diagnosticsRoot, "failure.png"), fullPage: false }).catch(() => undefined);
+	throw error;
 } finally {
 	await application?.close();
 	rmSync(temporaryRoot, { recursive: true, force: true });

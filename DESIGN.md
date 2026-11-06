@@ -1,3 +1,23 @@
+# App page interaction during route transitions — November 5, 2026
+
+Motion refinement for the existing dense macOS application, visual intensity 1.
+The active Kestrel page must stay interactive when a route transition reverses;
+input authority follows current presence, independently of visual interpolation.
+Preserve existing system typography, graphite/light roles, 4px rhythm, surfaces,
+layout, focus indicators and copy. No new library, assets or decorative effects.
+
+- State continuity: retain the existing short opacity/3px page transition.
+  Reduced motion retains the existing immediate visual state without transforms.
+- Feedback: existing native controls and focus behavior. No focal motion role.
+- Exiting pages cannot receive pointer or keyboard input; returning active pages
+  regain it immediately, including rapid same-key re-entry and reduced motion.
+- Keep interaction state out of animation completion or duration-based timers.
+- Verify real headless pointer hit tests, repeated/reversed route changes, focus,
+  exiting-page semantics, narrow layout and reduced motion. Full app/CI evidence
+  remains separate from an isolated harness and canonical installed-app proof.
+- Why this is not generic: the change preserves Kestrel's existing visual system
+  and repairs its observed Work/Command Center route ownership failure.
+
 # Native browser settings and window ownership — October 30, 2026
 
 Existing product integration, with frequent use and a high consequence for
