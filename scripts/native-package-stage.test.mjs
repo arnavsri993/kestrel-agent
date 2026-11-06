@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -83,6 +83,46 @@ describe("native packaging stage safety", () => {
 		const value = await fixture();
 		await expect(packageNativeChromiumArtifact({ ...value, build: async () => value.liveDefault })).rejects.toThrow(/dedicated staged/);
 		expect(await marker(value.liveDefault, "LIVE-DEFAULT")).toBe("keep");
+		expect(await marker(value.destinationApp, "OLD-RELEASE")).toBe("keep-old");
+	});
+
+	it.each([false, true])("attempts rollback even when failed-candidate cleanup throws (removed=%s)", async removed => {
+		const value = await fixture();
+		let failure;
+		try {
+			await packageNativeChromiumArtifact({ ...value, ops: { ...value.ops,
+				rename: async (source, destination) => {
+					await rename(source, destination);
+					if (destination === value.destinationApp && source.endsWith("/package/Kestrel.app"))
+						await writeFile(join(destination, "Contents/MacOS/Kestrel"), "generated-corruption");
+				},
+				rm: async (path, options) => {
+					if (path === value.destinationApp) {
+						if (removed) await rm(path, options);
+						throw new Error("generated candidate removal failure");
+					}
+					return rm(path, options);
+				},
+			} });
+		} catch (error) { failure = error; }
+		expect(failure.message).toContain("digest");
+		if (removed) {
+			expect(await marker(value.destinationApp, "OLD-RELEASE")).toBe("keep-old");
+		} else {
+			const backup = (await readdir(value.destinationRoot)).find(name => name.startsWith(".Kestrel.app.previous-"));
+			expect(backup).toBeDefined();
+			expect(failure.message).toContain(join(value.destinationRoot, backup));
+			expect(await marker(join(value.destinationRoot, backup), "OLD-RELEASE")).toBe("keep-old");
+		}
+		expect(await marker(value.liveDefault, "LIVE-DEFAULT")).toBe("keep");
+	});
+
+	it("preserves the primary failure if temporary stage cleanup also fails", async () => {
+		const value = await fixture();
+		await expect(packageNativeChromiumArtifact({ ...value,
+			build: async () => { throw new Error("generated primary build failure"); },
+			ops: { ...value.ops, rm: async path => { throw new Error(`generated staging cleanup failure at ${path}`); } },
+		})).rejects.toThrow(/generated primary build failure; temporary package staging cleanup also failed/);
 		expect(await marker(value.destinationApp, "OLD-RELEASE")).toBe("keep-old");
 	});
 

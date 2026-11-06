@@ -54,7 +54,7 @@ export async function packageNativeChromiumArtifact({ root, destinationRoot, des
 	const stageRoot = join(repo, ".tmp", `native-package-stage-${process.pid}-${randomUUID()}`);
 	const buildRoot = join(stageRoot, "build"), packageRoot = join(stageRoot, "package"), stagedApp = join(packageRoot, "Kestrel.app");
 	const backupApp = join(outputRoot, `.Kestrel.app.previous-${randomUUID()}`);
-	let movedPrevious = false, movedCandidate = false, createdStage = false;
+	let movedPrevious = false, movedCandidate = false, createdStage = false, primaryError;
 	try {
 		await ops.mkdir(stageRoot, { mode: 0o700 });
 		createdStage = true;
@@ -82,16 +82,35 @@ export async function packageNativeChromiumArtifact({ root, destinationRoot, des
 			await assertSafePath(repo, outputApp, { allowMissing: false });
 			if (await digest(outputApp) !== expectedDigest) throw new Error("Adopted native package digest does not match its verified copy.");
 		} catch (error) {
-			if (movedCandidate) await ops.rm(outputApp, { recursive: true, force: true });
+			let removalError;
+			if (movedCandidate) {
+				try { await ops.rm(outputApp, { recursive: true, force: true }); }
+				catch (cleanupError) { removalError = cleanupError; }
+			}
 			if (movedPrevious) {
 				try { await ops.rename(backupApp, outputApp); movedPrevious = false; }
-				catch (restoreError) { throw new Error(`Native package adoption failed and the prior artifact is retained at ${backupApp}; restore failed: ${restoreError.message}`, { cause: error }); }
+				catch (restoreError) {
+					throw new AggregateError([error, ...(removalError ? [removalError] : []), restoreError],
+						`Native package adoption failed (${error.message}) and the prior artifact is retained at ${backupApp}; restore failed: ${restoreError.message}`);
+				}
 			}
+			if (removalError) throw new AggregateError([error, removalError],
+				`Native package adoption failed (${error.message}); candidate cleanup also failed: ${removalError.message}`);
 			throw error;
 		}
 		if (movedPrevious) { await ops.rm(backupApp, { recursive: true, force: true }); movedPrevious = false; }
 		return outputApp;
+	} catch (error) {
+		primaryError = error;
+		throw error;
 	} finally {
-		if (createdStage) await ops.rm(stageRoot, { recursive: true, force: true });
+		if (createdStage) {
+			try { await ops.rm(stageRoot, { recursive: true, force: true }); }
+			catch (cleanupError) {
+				if (primaryError) throw new AggregateError([primaryError, cleanupError],
+					`${primaryError.message}; temporary package staging cleanup also failed at ${stageRoot}: ${cleanupError.message}`);
+				throw new Error(`Native package was adopted, but temporary staging cleanup failed at ${stageRoot}: ${cleanupError.message}`, { cause: cleanupError });
+			}
+		}
 	}
 }

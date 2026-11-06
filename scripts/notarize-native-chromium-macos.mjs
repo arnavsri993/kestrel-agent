@@ -14,6 +14,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runNotaryCommand } from "./native-notary-command.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appPath = resolve(
@@ -82,7 +83,7 @@ try {
 		submitArgs.push("--apple-id", appleId, "--password", applePassword, "--team-id", teamId);
 	}
 	console.log("Submitting to Apple notary service…");
-	run("/usr/bin/xcrun", submitArgs);
+	runNotaryCommand("/usr/bin/xcrun", submitArgs, { secrets: [applePassword] });
 
 	console.log("Stapling notarization ticket…");
 	run("/usr/bin/xcrun", ["stapler", "staple", appPath]);
