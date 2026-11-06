@@ -9,6 +9,81 @@ Electron process in this path.
 
 ## Current checkpoint — 2026-11-05
 
+Runtime source `7be8043c` packages an ad-hoc native app at
+`release/native-mac-arm64/Kestrel.app`, with whole-bundle digest
+`1a35920338b4bceff965d5c4a54d1f7842951c1350d990853a0ee7eaa43e1d49`.
+The full controlled unit run passes **2,956 tests in 324 files**, with the same
+two existing ownership-mutation skips, in 88.93 seconds using `--maxWorkers=2`.
+The actual packaged Node Core passes eight imported-profile/context/provider
+phases with generated data and simulated picker replies. The native executable
+and new Objective-C++ dispatcher compile in the package build. Workspace types
+last passed on predecessor `c9a3061e`; this batch changes C++, JavaScript and
+workflow/documentation files.
+
+Native Core profile-key lookup now runs on one bounded serial background queue.
+Apple documents that [SecItemCopyMatching blocks its calling thread](https://developer.apple.com/documentation/security/secitemcopymatching(_:_:)).
+An owner-generation token binds each lookup and reply to its exact profile and
+broker pipe. Replaced or closed owners cannot receive old results. Duplicate
+requests never overwrite the first response; capacity exhaustion promptly sends
+one negative reply without another lookup. Transient key results are cleared on
+failure and stale delivery. Injected backend checks prove that the main run loop
+continues during a held lookup, and denial/retry does not rotate a populated
+profile's key or change its generated database bytes. These checks invoke no
+real Keychain API. Security authorization policy is unchanged; protected-key
+continuity across ad-hoc builds remains unverified. Moving the lookup off main
+does not prove that every existing pipe write is nonblocking.
+
+Native packaging now uses a unique temporary build and verifies its staged copy
+before adopting it into the native release-artifact directory. It preserves the
+previous release until adoption succeeds, attempts rollback even after failed
+candidate cleanup, and identifies retained backups without hiding the primary
+error. Failure tests cover corrupt copies, adoption failures, cleanup failures,
+unsafe paths and an unexpected builder return. The real package build left the
+live `c7015edb...` bundle digest unchanged. The new artifact was neither launched
+as a desktop window nor installed into `/Applications`.
+
+Notary submission captures tool output and redacts the app-specific password
+from success/failure diagnostics and runner exceptions. It returns only safe
+process fields, excluding the raw `spawnSync.output` array. Four tests use
+synthetic credentials and injected runners; no actual notarization was run.
+
+The separate, manual-only `native-macos-candidate.yml` workflow packages and
+smoke-tests an ad-hoc native app, verifies an archive round trip, and uploads only
+the ZIP and a checksummed, commit-bound manifest for seven days. It explicitly
+marks the artifact unnotarized and non-distributable. It neither publishes a
+release nor changes the public release workflow or canonical installation gates.
+[GitHub requires the workflow on the default branch for manual dispatch](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
+Its remote run is not claimed by this PR. The archive step passed locally on the
+exact package: signature verification, extraction and repeated whole-bundle
+digests matched; the archive SHA-256 and actual runtime source commit matched
+the manifest. This proves the archive step, not a complete remote workflow.
+
+Published predecessor `c9a3061e` now passes both CI jobs, required CodeQL and all
+four language analyses. Its downloaded native evidence artifact matches GitHub's
+SHA-256 and includes **66 passing phases** across native product, browser
+settings, imported Core, large transfer and voice-cancellation receipts, all
+bound to its separate CI bundle. These are predecessor results. New-head CI is
+reported separately on the pull request.
+
+Current local receipts/logs:
+
+| Evidence | Observed result |
+| --- | --- |
+| `.tmp/native-key-dispatch-unit-bounded.log` | 2,956 passed; two existing skips |
+| `.tmp/native-key-dispatch-package-build.log` | Native package built; separate staged output adopted |
+| `.tmp/native-key-dispatch-runtime-evidence/receipt.json` | Eight actual packaged Core phases; simulated pickers |
+| `.tmp/native-package-notary-final-focused.log` | 17 package failure-path and notary checks |
+| `.tmp/native-ci-c9-artifact-summary.json` | Verified predecessor CI artifact; 66 passing phases |
+| `.tmp/native-candidate-archive-local-receipt.json` | Actual package archive round trip, checksum and runtime source manifest verified |
+
+Real-profile apply/activation/rollback, broader browser/account acceptance, an
+observed published Store upgrade, durable protected-key continuity, Developer ID
+signing/notarization and canonical cutover remain open. The user has no Apple
+Developer account yet. `/Applications/Kestrel.app` remains Electron and the user's
+live native window/profile stay preserved. This is not a release-ready claim.
+
+### Preceding legacy-conflict checkpoint
+
 Runtime source `e4eb51bf`, with test-only follow-up `173e4d9f`, builds the ad-hoc
 native candidate
 `752af684ffaafbb6a5ce697ae8c07b33bcd04179071ffee46de62466cb3d3e37`.
@@ -89,8 +164,8 @@ with a positive control and checks zero HTTP dispatch plus zero persisted runs
 or messages for the refused request. A real independent completion during the
 refusal is covered separately. Production attachment admission was unchanged.
 The generated CI evidence upload now enables hidden paths with a bounded receipt,
-image and diagnostic allowlist, excluding profile trees and keys. New-head CI
-remains separate from these local results.
+image and diagnostic allowlist, excluding profile trees and keys. The published `c9a3061e` head subsequently passed both CI jobs and all CodeQL
+checks; those remote results are distinct from later local changes.
 
 The user-used native window remains on unchanged `c7015edb...`; the new candidate
 was not launched as a desktop window or installed. `/Applications/Kestrel.app`
