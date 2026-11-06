@@ -7,7 +7,69 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
-## Current checkpoint — 2026-11-05
+## Current checkpoint — route input and native admission, 2026-11-05
+
+Runtime source `55eefea9` builds separate ad-hoc native candidate
+`b2f08d827f5ffb92899175cbab3aafca3d2c9022b1b0bfb5405b9cc54c8ab634`
+at `.tmp/native-route-interaction-host/Kestrel.app`. Workspace type checks,
+**3,043 unit tests in 328 files** and 65 focused configuration/workspace/canary
+checks pass. The full run used two workers and took 99.92 seconds, with the same
+two existing ownership-mutation skips. Its actual bundled Core passes eight
+imported-profile/context/provider phases; picker responses remain simulated.
+The user-used `c7015edb...` bundle stayed unchanged. This candidate was not opened
+as a desktop window or installed into `/Applications`.
+
+CI on installer commit `31e90db9` passed both unit suites and all CodeQL checks,
+but failed two interaction checks. In the desktop Kanban flow, the intended
+button was visible and enabled while `#browser-viewport` intercepted the click.
+An isolated React/Motion reproduction showed that interrupted route re-entry
+can leave a present Work page with `pointer-events: none`. That reproduces the
+failure signature; it does not prove every detail of the original CI incident.
+Shared app pages now derive pointer, keyboard inertness and accessibility
+presence from `useIsPresent`, separately from their visual animation. Existing
+opacity/translation timing, layout, typography and forwarded focus ref remain.
+
+The checked-in `test:app-page-interaction` headless regression imports the actual
+component and verifies 200 pointer activations, 200 keyboard activations, 25
+retained-exit checks, normal/reduced motion and reloads. Each activation checks
+its resulting counter. It produced no page errors. The full Kanban smoke also
+repeats Command Center/Work returns with both motion preferences and keeps real
+pointer, focus, drag, persistence and compact-layout assertions. On failure it
+now saves bounded geometry, hit-test, presence and visibility diagnostics plus
+an owned-window screenshot. No force click or timeout relaxation was added.
+
+The native failure occurred while revoking a generated workspace after a full
+restart. The relay masked the original exception, so the exact historical cause
+remains unproven. Startup status reads can hold `activeCoreRequests`, and a
+headless controller reproduction confirms that this rejects reconfiguration
+before Core stop or mutation. A local admission-only error now preserves that
+known static busy result. Spoofed strings/names/codes and arbitrary errors stay
+masked. Errors after admission lose retry authority, including nested errors in
+start, stopped-Core operations, mutation and recovery paths. Admission conditions,
+restart/exit guards and operation timeouts are unchanged.
+
+The workspace canary retries only the exact pre-mutation busy result, at most
+20 times with a 100 ms gap, and records the count. It never retries generic,
+transport or lifecycle failures. Exhausted contention still fails. Source-file
+preservation and denied access after revocation remain required.
+
+Current local evidence:
+
+| Evidence | Observed result |
+| --- | --- |
+| `.tmp/native-route-interaction-unit.log` | 3,043 passed, two existing skips |
+| `.tmp/native-route-interaction-types.log` | Workspace types passed; final main-process check also passed |
+| `.tmp/native-route-busy-final-focused.log` | 65 focused checks passed |
+| `.tmp/browser-app-page-final-evidence/receipt.json` | Actual component: 200 pointer and keyboard activations, 25 exit checks, no page errors |
+| `.tmp/native-route-interaction-build.log` | Separate native build passed; two existing compiler deprecation warnings |
+| `.tmp/native-route-interaction-runtime-evidence/receipt.json` | Eight real bundled Core phases; simulated pickers |
+
+New-head full-app CI remains separate from these local results. The headless
+fixture does not prove the complete Kestrel interface, native on-screen workflow,
+manual assistive-technology use or canonical installation. Release signing,
+real-profile acceptance and the remaining native retirement gates are still open.
+
+### Preceding installer checkpoint
 
 The native installer now stages a reviewed candidate on the target volume and
 retains the previous bundle under a private recovery transaction. It no longer
