@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RendererResponse } from "@kestrel/shared-types";
 import { NativeWorkspaceHost } from "./native-workspace-host";
 // @ts-expect-error Native runtime modules run unchanged under bundled Node.
-import { createNativeCoreConfiguration } from "../../../native-chromium-host/resources/native-core-configuration.mjs";
+import { createNativeCoreConfiguration, NativeCoreConfigurationBusyError } from "../../../native-chromium-host/resources/native-core-configuration.mjs";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -75,7 +75,7 @@ describe("native workspace host", () => {
 
 	it("rejects a busy Core after the native choice and before persisting a grant", async () => {
 		const { host, isBusy, selectFolder, core, file } = await fixture(); isBusy.mockReturnValue(true);
-		await expect(host.handle({ type: "select-workspace-folder" })).rejects.toThrow("active task");
+		await expect(host.handle({ type: "select-workspace-folder" })).rejects.toThrow(NativeCoreConfigurationBusyError);
 		expect(selectFolder).toHaveBeenCalledOnce(); expect(core.stop).not.toHaveBeenCalled();
 		await expect(stat(file)).rejects.toMatchObject({ code: "ENOENT" });
 		isBusy.mockReturnValue(false);
@@ -99,7 +99,7 @@ describe("native workspace host", () => {
 		const [project] = projects(await host.handle({ type: "select-workspace-folder" }));
 		const before = await readFile(file, "utf8"); isBusy.mockReturnValue(true);
 		const request = type === "remove-workspace-folder" ? { type, path: folder } : { type, projectId: project!.id, name: "Must not persist" };
-		await expect(host.handle(request)).rejects.toThrow("active task");
+		await expect(host.handle(request)).rejects.toThrow(NativeCoreConfigurationBusyError);
 		expect(core.stop).toHaveBeenCalledOnce(); expect(await readFile(file, "utf8")).toBe(before);
 	});
 

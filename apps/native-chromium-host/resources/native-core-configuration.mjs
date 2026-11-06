@@ -1,3 +1,20 @@
+export const NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE = "Wait for active work to finish or cancel it before changing settings.";
+
+/** Only this host-owned pre-mutation admission error is safe to retry. */
+export class NativeCoreConfigurationBusyError extends Error {
+	constructor() {
+		super(NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE);
+		this.name = "NativeCoreConfigurationBusyError";
+	}
+}
+
+/** Never expose arbitrary Core/provider errors as settings or retry authority. */
+export function nativeHostSettingsErrorMessage(error, requestType, localModelError) {
+	if (error instanceof NativeCoreConfigurationBusyError) return NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE;
+	if (["local-runtime-bootstrap", "local-model-pull"].includes(requestType) && error instanceof Error && [localModelError, "Choose an installed model with confirmed tool support for Kestrel tasks.", "Start Ollama or use guided local setup before downloading a model.", "The local runtime checksum did not match the pinned release manifest.", "Local model setup was cancelled. Partial downloads may remain in Ollama.", "Local model setup timed out. Partial downloads may remain in Ollama."].includes(error.message)) return error.message;
+	return "Kestrel settings could not be applied. Finish or cancel active tasks and check the native profile before retrying.";
+}
+
 // Core must be idle before changing providers. Acquire the guard synchronously
 // before the first await; no credential mutation may run after a failed guard.
 export function createNativeCoreConfiguration({ core, configuration, isBusy, changed, canRestoreCore = () => true }) {
@@ -7,7 +24,7 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 	let started = false;
 	let requiresRestart = false;
 	const RESTART_REQUIRED = "Agent Core could not be safely stopped or restarted. Restart Kestrel before running another task.";
-	const ACTIVE_CHANGE = "Wait for the active task to finish or cancel it before changing providers.";
+	const afterAdmissionError = error => error instanceof NativeCoreConfigurationBusyError ? new Error("Core configuration failed after admission.", { cause: error }) : error;
 	const abortError = () => Object.assign(new Error("Operation was cancelled."), { name: "AbortError" });
 	const isAborted = signal => signal?.aborted === true;
 	const mayRestore = callback => { try { return callback?.() !== false; } catch { return false; } };
@@ -42,7 +59,7 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 		get changing() { return changing; },
 		get requiresRestart() { return requiresRestart; },
 		async withIdleMutation(mutation, rollback, validate) {
-			if (changing || starting || isBusy()) throw new Error(ACTIVE_CHANGE);
+			if (changing || starting || isBusy()) throw new NativeCoreConfigurationBusyError();
 			if (requiresRestart) throw new Error(RESTART_REQUIRED);
 			changing = true;
 			let mutated = false;
@@ -57,27 +74,28 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 					try { await rollback?.(); }
 					catch { markRestartRequired(); throw new Error("Provider settings could not be restored. Restart Kestrel before running another task."); }
 				}
-				throw error;
+				throw afterAdmissionError(error);
 			} finally { changing = false; }
 		},
 		async start() {
-			if (changing || starting) throw new Error(ACTIVE_CHANGE);
+			if (changing || starting) throw new NativeCoreConfigurationBusyError();
 			if (requiresRestart) throw new Error(RESTART_REQUIRED);
 			if (!mayStartCore()) { markRestartRequired(); throw new Error(RESTART_REQUIRED); }
 			starting = true;
 			try {
 				const next = await configuration();
-				if (changing) throw new Error(ACTIVE_CHANGE);
+				if (changing) throw new NativeCoreConfigurationBusyError();
 				if (!mayStartCore()) { markRestartRequired(); throw new Error(RESTART_REQUIRED); }
 				await core.start(next);
 				current = next;
 				started = true;
-			} finally { starting = false; }
+			} catch (error) { throw afterAdmissionError(error); }
+			finally { starting = false; }
 		},
 		async withStoppedCore(operation, { signal, shouldRestoreCore } = {}) {
 			// Reserve synchronously before any await so a concurrent route cannot
 			// start or mutate Core while maintenance is preparing to stop it.
-			if (changing || starting || isBusy()) throw new Error(ACTIVE_CHANGE);
+			if (changing || starting || isBusy()) throw new NativeCoreConfigurationBusyError();
 			if (requiresRestart) throw new Error(RESTART_REQUIRED);
 			if (core.isReady === false || !started || current === undefined) throw new Error("Agent Core must be running before this operation.");
 			changing = true;
@@ -94,12 +112,12 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 				if (stopError) {
 					if (!confirmedExited(stopError) || stopError.exitConfirmed === false || core.hasProcess === true) {
 						markRestartRequired();
-						return { completed: false, error: stopError, coreStatus: "restart-required" };
+						return { completed: false, error: afterAdmissionError(stopError), coreStatus: "restart-required" };
 					}
 					const restoreCore = mayStartCore(shouldRestoreCore);
 					const restored = restoreCore ? await restore(current, shouldRestoreCore) : false;
 					if (!restoreCore) { started = false; markRestartRequired(); }
-					return { completed: false, error: stopError, coreStatus: restored ? "ready" : "restart-required" };
+					return { completed: false, error: afterAdmissionError(stopError), coreStatus: restored ? "ready" : "restart-required" };
 				}
 
 				// The stop resolved cleanly and confirmed exit. Cancellation before
@@ -117,7 +135,7 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 					started = false;
 					markRestartRequired();
 					return operationError
-						? { completed: false, error: operationError, coreStatus: "restart-required" }
+						? { completed: false, error: afterAdmissionError(operationError), coreStatus: "restart-required" }
 						: { completed: true, value, coreStatus: "restart-required" };
 				}
 
@@ -144,18 +162,19 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 				}
 				if (restartError) {
 					outcome = operationError
-						? { completed: false, error: operationError, coreStatus: "restart-required" }
+						? { completed: false, error: afterAdmissionError(operationError), coreStatus: "restart-required" }
 						: { completed: true, value, coreStatus: "restart-required" };
 				} else {
 					outcome = operationError
-						? { completed: false, error: operationError, coreStatus: "ready" }
+						? { completed: false, error: afterAdmissionError(operationError), coreStatus: "ready" }
 						: { completed: true, value, coreStatus: "ready" };
 				}
 				return outcome;
-			} finally { changing = false; }
+			} catch (error) { throw afterAdmissionError(error); }
+			finally { changing = false; }
 		},
 		async reconfigure(mutation, rollback, validate, shouldRestoreCore) {
-			if (changing || starting || isBusy()) throw new Error("Wait for the active task to finish or cancel it before changing providers.");
+			if (changing || starting || isBusy()) throw new NativeCoreConfigurationBusyError();
 			if (requiresRestart) throw new Error(RESTART_REQUIRED);
 			changing = true;
 			if (!rollback && !validate && !shouldRestoreCore) {
@@ -178,7 +197,7 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 					return result;
 				} catch (error) {
 					if (stopped) { markRestartRequired(); throw new Error("Provider settings were preserved, but Agent Core could not restart. Restart Kestrel before running another task."); }
-					throw error;
+					throw afterAdmissionError(error);
 				} finally { changing = false; }
 			}
 			const previous = current;
@@ -206,7 +225,7 @@ export function createNativeCoreConfiguration({ core, configuration, isBusy, cha
 					markRestartRequired();
 					throw new Error("Provider settings could not be restored. Restart Kestrel before running another task.");
 				}
-				throw error;
+				throw afterAdmissionError(error);
 			} finally { changing = false; }
 		},
 	};

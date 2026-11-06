@@ -8,7 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeCoreProfile } from "./native-core-profile.mjs";
 import { NativeEmbeddingRecoveryHost, NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES, NativeCommunicationHost, NATIVE_COMMUNICATION_REQUEST_TYPES, MacMessagesSource, NativeLoginCodeBrowserRequestSchema, parseNativeLoginCodeResult, CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NATIVE_CORE_BACKUP_BUSY_MESSAGE, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PROVIDER_OPERATION_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NativeLocalBackupHost, NATIVE_LOCAL_BACKUP_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
-import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
+import { createNativeCoreConfiguration, nativeHostSettingsErrorMessage } from "./native-core-configuration.mjs";
 import { dispatchNativeComputerHostRequest } from "./native-computer-host-routing.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
@@ -516,7 +516,7 @@ input.on("line", line => {
 			if (isHost && NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type) && parsed.data.type !== "get-workspace-grants" && response.ok && !response.cancelled && Array.isArray(response.projects))
 				write({ type: "event", channel: "workspace-projects", event: response.projects });
 		})
-		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? ["local-runtime-bootstrap", "local-model-pull"].includes(parsed.data.type) && error instanceof Error && [OLLAMA_REMOTE_MODEL_ERROR, "Choose an installed model with confirmed tool support for Kestrel tasks.", "Start Ollama or use guided local setup before downloading a model.", "The local runtime checksum did not match the pinned release manifest.", "Local model setup was cancelled. Partial downloads may remain in Ollama.", "Local model setup timed out. Partial downloads may remain in Ollama."].includes(error.message) ? error.message : "Kestrel settings could not be applied. Finish or cancel active tasks and check the native profile before retrying." : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
+		.catch(error => write({ type: "response", id: message.id, response: { ok: false, error: isHost ? nativeHostSettingsErrorMessage(error, parsed.data.type, OLLAMA_REMOTE_MODEL_ERROR) : error instanceof Error ? error.message.slice(0, 500) : "Core could not complete the request." } }))
 		.finally(() => { pending.delete(message.id); activeCoreRequests.delete(message.id); hostRequests.delete(message.id); if (hostTimer) clearTimeout(hostTimer); if (repairingEmbedding) { embeddingRecoveryReservation = false; if (!stopping && core.isReady) void publishSnapshot().catch(() => {}); } if (creatingBackup) { backupReservation = false; if (!stopping && core.isReady) void publishSnapshot().catch(() => {}); } });
 });
 try {

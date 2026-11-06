@@ -3,6 +3,7 @@ import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
+import { NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE } from "../apps/native-chromium-host/resources/native-core-configuration.mjs";
 
 const content = "Native Kestrel workspace fixture. This disposable folder contains no user data.\n";
 
@@ -135,11 +136,20 @@ export async function finishNativeWorkspaceCanary({ home, state, receipt }) {
 	assert.equal(persisted.status, "verified", JSON.stringify(persisted));
 	assert.equal(persisted.output?.content, content);
 	await home.locator(".kestrel-sidebar").getByRole("button", { name: /^(Open|Collapse) workspace-fixture project$/ }).waitFor();
-	const removed = await home.evaluate(path => window.kestrel.request({ type: "remove-workspace-folder", path }), state.path);
+	let removed, busyRetryCount = 0;
+	for (;;) {
+		removed = await home.evaluate(path => window.kestrel.request({ type: "remove-workspace-folder", path }), state.path);
+		// Only trusted pre-mutation admission refusal permits another attempt.
+		// Generic settings failures may follow a committed mutation; never replay.
+		if (removed.ok !== false || removed.error !== NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE || busyRetryCount >= 20) break;
+		busyRetryCount++;
+		await delay(100);
+	}
+	receipt.phases.push({ phase: "native-workspace-grant-revocation-admission", passed: removed.ok === true && !removed.projects?.some(project => project.id === state.projectId), busyRetryCount, ...(busyRetryCount ? { busyResponse: NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE } : {}) });
 	assert(removed.ok && !removed.projects?.some(project => project.id === state.projectId), JSON.stringify(removed));
 	await home.locator(".kestrel-sidebar").getByRole("button", { name: /^(Open|Collapse) workspace-fixture project$/ }).waitFor({ state: "hidden" });
 	const denied = await workspaceRead(home, state.sessionId);
 	assert(denied.ok === false || ["failed", "blocked"].includes(denied.status), "Revocation must remove persisted-session file access: " + JSON.stringify(denied));
 	assert.equal(await readFile(join(state.path, "README.md"), "utf8"), content);
-	receipt.phases.push({ phase: "native-workspace-full-restart-and-grant-revocation", passed: true });
+	receipt.phases.push({ phase: "native-workspace-full-restart-and-grant-revocation", passed: true, busyRetryCount });
 }

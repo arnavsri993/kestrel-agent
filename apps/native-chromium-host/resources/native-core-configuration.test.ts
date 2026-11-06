@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error Native runtime modules are executed unchanged by bundled Node.
-import { createNativeCoreConfiguration } from "./native-core-configuration.mjs";
+import { createNativeCoreConfiguration, NativeCoreConfigurationBusyError, NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE, nativeHostSettingsErrorMessage } from "./native-core-configuration.mjs";
 
 function fixture() {
 	let running = false;
@@ -21,7 +21,7 @@ describe("native provider Core reconfiguration", () => {
 		let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
 		const writing = controller.withIdleMutation(async () => { await gate; return "saved"; });
 		expect(controller.changing).toBe(true);
-		await expect(controller.reconfigure(vi.fn())).rejects.toThrow("active task");
+		await expect(controller.reconfigure(vi.fn())).rejects.toThrow(NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE);
 		expect(core.stop).not.toHaveBeenCalled();
 		release(); expect(await writing).toBe("saved");
 		expect(core.start).toHaveBeenCalledOnce(); expect(configuration).toHaveBeenCalledOnce();
@@ -29,7 +29,7 @@ describe("native provider Core reconfiguration", () => {
 	it("refuses an active task and rolls back a cancelled settings write while retaining the same Core", async () => {
 		const { controller, core, isBusy } = fixture(); await controller.start();
 		isBusy.mockReturnValue(true); const write = vi.fn();
-		await expect(controller.withIdleMutation(write)).rejects.toThrow("active task");
+		await expect(controller.withIdleMutation(write)).rejects.toThrow(NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE);
 		expect(write).not.toHaveBeenCalled(); isBusy.mockReturnValue(false);
 		const rollback = vi.fn(); let saved = false;
 		await expect(controller.withIdleMutation(async () => { saved = true; }, rollback, () => { if (saved) throw new Error("cancelled"); })).rejects.toThrow("cancelled");
@@ -38,7 +38,7 @@ describe("native provider Core reconfiguration", () => {
 	});
 	it("rejects a busy Core before stopping or persisting anything", async () => {
 		const { controller, isBusy, core } = fixture(); const mutation = vi.fn(); isBusy.mockReturnValue(true);
-		await expect(controller.reconfigure(mutation)).rejects.toThrow("active task");
+		await expect(controller.reconfigure(mutation)).rejects.toThrow(NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE);
 		expect(core.stop).not.toHaveBeenCalled(); expect(mutation).not.toHaveBeenCalled();
 	});
 	it("locks concurrent changes and stops Core before a single mutation", async () => {
@@ -46,7 +46,7 @@ describe("native provider Core reconfiguration", () => {
 		let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
 		const mutation = vi.fn(async () => { expect(core.stop).toHaveBeenCalledOnce(); await gate; return "saved"; });
 		const pending = controller.reconfigure(mutation); expect(controller.changing).toBe(true);
-		const second = vi.fn(); await expect(controller.reconfigure(second)).rejects.toThrow("active task"); expect(second).not.toHaveBeenCalled();
+		const second = vi.fn(); await expect(controller.reconfigure(second)).rejects.toThrow(NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE); expect(second).not.toHaveBeenCalled();
 		release(); expect(await pending).toBe("saved"); expect(core.start).toHaveBeenLastCalledWith({ version: 2 });
 		expect(changed).toHaveBeenCalledOnce(); expect(controller.changing).toBe(false);
 	});
@@ -134,7 +134,7 @@ describe("native Core stopped maintenance", () => {
 		const operation = vi.fn(async () => { await gate; return "backup"; });
 		const pending = controller.withStoppedCore(operation);
 		expect(controller.changing).toBe(true);
-		await expect(controller.withStoppedCore(vi.fn())).rejects.toThrow("active task");
+		await expect(controller.withStoppedCore(vi.fn())).rejects.toThrow(NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE);
 		release(); expect(await pending).toEqual({ completed: true, value: "backup", coreStatus: "ready" });
 		expect(core.stop).toHaveBeenCalledWith({ requireCleanExit: true, gracefulTimeoutMs: 60000 });
 	});
@@ -142,7 +142,7 @@ describe("native Core stopped maintenance", () => {
 	it("does not stop or mutate for busy or already-aborted admission", async () => {
 		const { controller, core, isBusy } = fixture(); await controller.start();
 		const mutation = vi.fn(); isBusy.mockReturnValue(true);
-		await expect(controller.withStoppedCore(mutation)).rejects.toThrow("active task");
+		await expect(controller.withStoppedCore(mutation)).rejects.toThrow(NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE);
 		isBusy.mockReturnValue(false);
 		const abort = new AbortController(); abort.abort();
 		expect(await controller.withStoppedCore(mutation, { signal: abort.signal })).toMatchObject({ completed: false, coreStatus: "ready" });
@@ -210,5 +210,98 @@ describe("native Core stopped maintenance", () => {
 		expect(await controller.withStoppedCore(async () => "saved", { shouldRestoreCore: () => { throw new Error("owner is closing"); } }))
 			.toEqual({ completed: true, value: "saved", coreStatus: "restart-required" });
 		expect(core.start).toHaveBeenCalledOnce();
+	});
+});
+
+describe("trusted native settings admission errors", () => {
+	it.each(["reconfigure", "withIdleMutation", "withStoppedCore"])("%s reports only host-owned busy admission before stop or mutation", async method => {
+		const { controller, core, isBusy } = fixture(); await controller.start();
+		isBusy.mockReturnValue(true); const mutation = vi.fn();
+		const failed = controller[method](mutation);
+		await expect(failed).rejects.toBeInstanceOf(NativeCoreConfigurationBusyError);
+		await expect(failed).rejects.toThrow(NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE);
+		expect(core.stop).not.toHaveBeenCalled(); expect(mutation).not.toHaveBeenCalled();
+		expect(controller.changing).toBe(false);
+	});
+	it("preserves the starting and concurrent-change guards with trusted admission errors", async () => {
+		const { controller, configuration, core } = fixture();
+		let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+		configuration.mockImplementationOnce(async () => { await gate; return { version: 1 }; });
+		const starting = controller.start(), mutation = vi.fn();
+		await expect(controller.reconfigure(mutation)).rejects.toBeInstanceOf(NativeCoreConfigurationBusyError);
+		expect(core.stop).not.toHaveBeenCalled(); expect(mutation).not.toHaveBeenCalled();
+		release(); await starting;
+		let finish!: () => void; const pending = new Promise<void>(resolve => { finish = resolve; });
+		const changing = controller.withIdleMutation(async () => { await pending; });
+		await expect(controller.reconfigure(mutation)).rejects.toBeInstanceOf(NativeCoreConfigurationBusyError);
+		await expect(controller.start()).rejects.toBeInstanceOf(NativeCoreConfigurationBusyError);
+		expect(core.stop).not.toHaveBeenCalled(); expect(mutation).not.toHaveBeenCalled();
+		finish(); await changing;
+	});
+	it.each(["reconfigure", "withIdleMutation"])("%s does not pass nested busy errors through already-admitted mutation work", async method => {
+		const { controller } = fixture(); await controller.start();
+		const failed = controller[method](async () => { throw new NativeCoreConfigurationBusyError(); });
+		await expect(failed).rejects.not.toBeInstanceOf(NativeCoreConfigurationBusyError);
+		await expect(failed).rejects.toThrow("failed after admission");
+	});
+	const assertAdmittedFailure = (error: unknown, original: Error) => {
+		expect(error).not.toBeInstanceOf(NativeCoreConfigurationBusyError);
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).cause).toBe(original);
+		expect(nativeHostSettingsErrorMessage(error, "remove-workspace-folder", "local static error"))
+			.toBe("Kestrel settings could not be applied. Finish or cancel active tasks and check the native profile before retrying.");
+	};
+	it.each(["configuration", "core.start"])("masks busy raised after start admission by %s", async source => {
+		const { controller, configuration, core } = fixture();
+		const original = new NativeCoreConfigurationBusyError();
+		if (source === "configuration") configuration.mockRejectedValueOnce(original);
+		else core.start.mockRejectedValueOnce(original);
+		const error = await controller.start().catch((failure: unknown) => failure);
+		assertAdmittedFailure(error, original);
+		expect(configuration).toHaveBeenCalledOnce();
+		expect(core.start).toHaveBeenCalledTimes(source === "core.start" ? 1 : 0);
+	});
+	it.each([true, false])("masks a busy stop failure after stop invocation (exit confirmed: %s)", async confirmed => {
+		const { controller, core, setRunning } = fixture(); await controller.start();
+		const original = Object.assign(new NativeCoreConfigurationBusyError(), { exitConfirmed: confirmed });
+		core.stop.mockImplementationOnce(async () => { if (confirmed) setRunning(false); throw original; });
+		const operation = vi.fn(); const outcome = await controller.withStoppedCore(operation);
+		expect(core.stop).toHaveBeenCalledOnce(); expect(operation).not.toHaveBeenCalled();
+		expect(outcome.coreStatus).toBe(confirmed ? "ready" : "restart-required");
+		assertAdmittedFailure(outcome.error, original);
+	});
+	it.each(["ready", "no-restore", "restart-failed"])("masks nested busy after stopped operation (%s)", async mode => {
+		const { controller, core, setOwnerCanRestore, configuration } = fixture(); await controller.start();
+		if (mode === "restart-failed") configuration.mockRejectedValueOnce(new Error("restart failed"));
+		let nested: unknown;
+		const operation = vi.fn(async () => {
+			try { await controller.withIdleMutation(vi.fn()); } catch (error) { nested = error; }
+			if (mode === "no-restore") setOwnerCanRestore(false);
+			throw nested;
+		});
+		const outcome = await controller.withStoppedCore(operation);
+		expect(core.stop).toHaveBeenCalledOnce(); expect(operation).toHaveBeenCalledOnce();
+		expect(nested).toBeInstanceOf(NativeCoreConfigurationBusyError);
+		expect(outcome.coreStatus).toBe(mode === "ready" ? "ready" : "restart-required");
+		assertAdmittedFailure(outcome.error, nested as Error);
+	});
+	it("preserves ordinary error identity after an admitted start", async () => {
+		const { controller, configuration } = fixture(); const original = new Error("nonbusy");
+		configuration.mockRejectedValueOnce(original);
+		await expect(controller.start()).rejects.toBe(original);
+	});
+	it("exposes only static text for the actual local class and masks strings, names, codes and secrets", () => {
+		const generic = "Kestrel settings could not be applied. Finish or cancel active tasks and check the native profile before retrying.";
+		const busy = new NativeCoreConfigurationBusyError(); busy.message = "synthetic-private-value";
+		expect(nativeHostSettingsErrorMessage(busy, "remove-workspace-folder", "local static error")).toBe(NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE);
+		for (const error of [new Error("synthetic-private-value"), new Error(NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE), Object.assign(new Error("synthetic-private-value"), { name: "NativeCoreConfigurationBusyError", code: "NATIVE_CORE_BUSY" }), NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE, { name: "NativeCoreConfigurationBusyError", message: NATIVE_CORE_CONFIGURATION_BUSY_MESSAGE, code: "NATIVE_CORE_BUSY" }])
+			expect(nativeHostSettingsErrorMessage(error, "remove-workspace-folder", "local static error")).toBe(generic);
+	});
+	it("preserves the existing local-model whitelist only for its two intended requests", () => {
+		const local = "Local model setup timed out. Partial downloads may remain in Ollama.";
+		for (const type of ["local-runtime-bootstrap", "local-model-pull"])
+			expect(nativeHostSettingsErrorMessage(new Error(local), type, "local static error")).toBe(local);
+		expect(nativeHostSettingsErrorMessage(new Error(local), "remove-workspace-folder", "local static error")).not.toBe(local);
+		expect(nativeHostSettingsErrorMessage(new Error("synthetic-private-value"), "local-model-pull", "local static error")).not.toContain("synthetic-private-value");
 	});
 });
