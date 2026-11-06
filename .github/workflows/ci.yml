@@ -64,6 +64,7 @@ jobs:
           corepack pnpm test:native-user-extensions
           corepack pnpm test:native-chromium-core-relay
           corepack pnpm test:native-core-durability
+          corepack pnpm test:native-pending-projects
           corepack pnpm test:native-browser-backend
           corepack pnpm test:native-isolated-automation
           corepack pnpm test:chromium-native-auth
@@ -108,6 +109,7 @@ jobs:
             .tmp/native-browser-settings-evidence/*.png
             .tmp/native-browser-settings-evidence/runtime.log
             .tmp/native-large-core-transfer-evidence/receipt.json
+            .tmp/native-pending-project-evidence/receipt.json
           if-no-files-found: warn
           retention-days: 14
       - run: corepack pnpm test:e2e

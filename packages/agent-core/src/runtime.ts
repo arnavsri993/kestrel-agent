@@ -513,6 +513,15 @@ function parsePersistedCheckpointState(
 	};
 }
 
+/** Pending identities carry no path or workspace permission. */
+export function validatePendingProjectIds(ids: readonly string[], projects: readonly { id: string }[]): string[] {
+	if (!Array.isArray(ids) || ids.length > 500) throw new Error("Invalid pending project IDs.");
+	const copy = Array.from(ids, id => ProjectSchema.shape.id.parse(id));
+	if (new Set(copy).size !== copy.length || projects.some(project => copy.includes(project.id)))
+		throw new Error("Pending project IDs must be unique and separate from configured projects.");
+	return copy;
+}
+
 export class AgentRuntime extends EventEmitter {
 	// Typing text must not enter journals, but approval must execute the exact
 	// original input. Keep a bounded, expiring in-process copy only.
@@ -551,6 +560,7 @@ export class AgentRuntime extends EventEmitter {
 	private readonly workspaceRoots: string[];
 	private readonly configuredWorkspaceRoots: string[];
 	private readonly projects = new Map<string, Project>();
+	private readonly pendingProjectIds: ReadonlySet<string>;
 	private readonly activeExecutions = new Map<
 		string,
 		{ controller: AbortController; sessionId: string }
@@ -592,8 +602,10 @@ export class AgentRuntime extends EventEmitter {
 		configuredWorkspaceRoots: string[] = workspaceRoots,
 		projects: Project[] = [],
 		hostToolNames?: readonly string[],
+		pendingProjectIds: readonly string[] = [],
 	) {
 		super();
+		this.pendingProjectIds = new Set(validatePendingProjectIds(pendingProjectIds, projects));
 		this.hostToolNames = hostToolNames === undefined ? undefined : new Set(hostToolNames);
 		this.humanInput = new HumanInputManager(database, {
 			now: () => new Date(this.now()),
@@ -699,12 +711,19 @@ export class AgentRuntime extends EventEmitter {
 			(parent?.privacyMode === "private" || parent?.privacyMode === "incognito"
 				? parent.privacyMode
 				: input.privacyMode);
-		const project = input.projectId
+		const parentPendingId = parent?.projectId && this.pendingProjectIds.has(parent.projectId)
+			? parent.projectId : undefined;
+		if (parentPendingId && input.projectId && input.projectId !== parentPendingId)
+			throw new Error("A child of a pending project cannot use another project.");
+		const pendingId = parentPendingId ?? (input.projectId && this.pendingProjectIds.has(input.projectId) ? input.projectId : undefined);
+		const project = pendingId ? undefined : input.projectId
 			? this.requireProject(input.projectId)
 			: input.workspaceRoot
 				? this.projectForPath(input.workspaceRoot)
 				: undefined;
-		const workspaceRoot = project
+		// A pending ID is logical metadata only; ignore any supplied or inherited
+		// root, including a stale root passed by an existing child caller.
+		const workspaceRoot = pendingId ? undefined : project
 			? project.available === false
 				? undefined
 				: this.resolveGrantedRoot(project.path)
@@ -730,7 +749,7 @@ export class AgentRuntime extends EventEmitter {
 			...(input.planetAssetId
 				? { planetAssetId: input.planetAssetId }
 				: {}),
-			...(project ? { projectId: project.id } : {}),
+			...(pendingId ? { projectId: pendingId } : project ? { projectId: project.id } : {}),
 			...(workspaceRoot ? { workspaceRoot } : {}),
 			...(inheritedPrivacyMode ? { privacyMode: inheritedPrivacyMode } : {}),
 			...(input.approvalPolicy ?? parent?.approvalPolicy
@@ -756,6 +775,7 @@ export class AgentRuntime extends EventEmitter {
 	 */
 	setProjects(projects: Project[]): void {
 		const parsedProjects = projects.map((project) => ProjectSchema.parse(project));
+		validatePendingProjectIds([...this.pendingProjectIds], parsedProjects);
 		const nextById = new Map<string, Project>();
 		for (const project of parsedProjects) {
 			if (nextById.has(project.id))
@@ -787,6 +807,12 @@ export class AgentRuntime extends EventEmitter {
 							projectId: project.id,
 							workspaceRoot: project.path,
 						};
+					}
+				} else if (this.pendingProjectIds.has(session.projectId)) {
+					if (next.workspaceRoot) {
+						const detached = { ...next };
+						delete detached.workspaceRoot;
+						next = detached;
 					}
 				} else {
 					const detached = { ...next };
@@ -1062,6 +1088,11 @@ export class AgentRuntime extends EventEmitter {
 		return this.resolveActiveWorkspaceRoot(this.requireSession(sessionId));
 	}
 
+	isPendingProjectSession(sessionId: string): boolean {
+		const { projectId } = this.requireSession(sessionId);
+		return Boolean(projectId && this.pendingProjectIds.has(projectId));
+	}
+
 	checkpoint(sessionId: string, summary: string): RuntimeSession {
 		const session = this.requireSession(sessionId);
 		const checkpoint = {
@@ -1239,7 +1270,7 @@ export class AgentRuntime extends EventEmitter {
 			...(activeWorkspaceRoot ? { workspaceRoot: activeWorkspaceRoot } : {}),
 			allowedTools: parent.allowedTools,
 		});
-		if (!activeWorkspaceRoot && parent.workspaceRoot) {
+		if (!activeWorkspaceRoot && parent.workspaceRoot && !(parent.projectId && this.pendingProjectIds.has(parent.projectId))) {
 			child = this.saveSession({
 				...child,
 				workspaceRoot: parent.workspaceRoot,
@@ -1550,7 +1581,8 @@ export class AgentRuntime extends EventEmitter {
 		mutationId?: string,
 	): { mutationId: string; path: string; restored: boolean } {
 		const session = this.requireSession(sessionId);
-		if (!session.workspaceRoot)
+		const workspaceRoot = this.resolveActiveWorkspaceRoot(session);
+		if (!workspaceRoot)
 			throw new Error("Workspace root is unavailable.");
 		const mutation = mutationId
 			? this.database.getWorkspaceMutation(mutationId)
@@ -1561,7 +1593,7 @@ export class AgentRuntime extends EventEmitter {
 			throw new Error("Undoable workspace mutation not found in this session.");
 		if (mutation.undoneAt)
 			throw new Error("Workspace mutation has already been undone.");
-		const path = resolveWritablePath(session.workspaceRoot, mutation.path);
+		const path = resolveWritablePath(workspaceRoot, mutation.path);
 		if (mutation.operation === "create") {
 			if (existsSync(path)) {
 				if (mutation.entryKind === "directory") {
@@ -1612,7 +1644,7 @@ export class AgentRuntime extends EventEmitter {
 			if (!mutation.destinationPath)
 				throw new Error("Move mutation is missing its destination path.");
 			const destination = resolveExistingPath(
-				session.workspaceRoot,
+				workspaceRoot,
 				mutation.destinationPath,
 			);
 			if (existsSync(path))
@@ -4826,6 +4858,7 @@ export class AgentRuntime extends EventEmitter {
 	private resolveActiveWorkspaceRoot(
 		session: RuntimeSession,
 	): string | undefined {
+		if (session.projectId && this.pendingProjectIds.has(session.projectId)) return undefined;
 		if (!session.workspaceRoot) return undefined;
 		try {
 			const candidate = realpathSync(session.workspaceRoot);

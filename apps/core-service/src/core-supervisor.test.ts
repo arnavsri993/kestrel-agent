@@ -61,6 +61,36 @@ afterEach(() => {
 });
 
 describe("CoreSupervisor recovery", () => {
+	it("rejects raw invalid pending metadata without spawning a child", async () => {
+		const spawn = vi.fn(() => new FakeCoreProcess());
+		const supervisor = new CoreSupervisor(undefined, undefined, { processFactory: spawn });
+		const project = { id: "project-one", name: "Project", path: "/tmp/project", order: 0, createdAt: "2026-07-22T15:00:00.000Z", updatedAt: "2026-07-22T15:00:00.000Z" };
+		for (const pending of ["abc", ["same", "same"], [""], [project.id], Array(1)]) {
+			await expect(supervisor.start({ ...config, projects: [project], pendingProjectIds: pending as string[] })).rejects.toThrow();
+			expect(spawn).not.toHaveBeenCalled();
+		}
+	});
+	it("copies pending project IDs for bootstrap and recovery", async () => {
+		vi.useFakeTimers();
+		const processes: FakeCoreProcess[] = [];
+		const supervisor = new CoreSupervisor(undefined, undefined, {
+			processFactory: () => { const child = new FakeCoreProcess(); processes.push(child); return child; },
+			restartDelaysMs: [10], startupTimeoutMs: 500,
+		});
+		const pendingProjectIds = ["pending-project"];
+		const started = supervisor.start({ ...config, pendingProjectIds });
+		processes[0]!.ready();
+		await started;
+		pendingProjectIds.push("caller-mutation");
+		const recovered = once(supervisor, "recovered");
+		processes[0]!.crash();
+		await vi.advanceTimersByTimeAsync(10);
+		expect(processes[1]!.messages[0]).toMatchObject({ type: "bootstrap", config: { pendingProjectIds: ["pending-project"] } });
+		processes[1]!.ready();
+		await recovered;
+		processes[1]!.exitOnShutdown = true;
+		await supervisor.stop();
+	});
 	it("retains a non-exiting owner, escalates termination, and blocks a replacement", async () => {
 		vi.useFakeTimers();
 		const child = new FakeCoreProcess();

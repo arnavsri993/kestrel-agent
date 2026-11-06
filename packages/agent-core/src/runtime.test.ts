@@ -59,6 +59,73 @@ afterEach(() => {
 });
 
 describe("agent runtime", () => {
+	it("forks and creates children of pending projects without inheriting stale roots or weakening privacy", async () => {
+		const { root, database, runtime } = fixture();
+		runtime.close();
+		const configured = { ...projectFixture(root, "Other project context"), id: "other-project" };
+		const pending = new AgentRuntime(database, [root], undefined, undefined, [root], [configured], undefined, ["pending"]);
+		for (const privacyMode of ["private", "incognito"] as const) {
+			const parent = pending.createSession({ title: "Pending parent", kind: "agent", projectId: "pending", workspaceRoot: root, privacyMode });
+			expect(parent).toMatchObject({ projectId: "pending", privacyMode });
+			expect(parent).not.toHaveProperty("workspaceRoot");
+			database.saveRuntimeSession({ ...parent, workspaceRoot: root });
+			expect(pending.projectContextForSession(parent.id)).toBe("");
+			const fork = pending.forkSession(parent.id);
+			const child = pending.createSession({ title: "Child", kind: "subagent", parentSessionId: parent.id, workspaceRoot: root, privacyMode: "standard" });
+			for (const created of [fork, child]) {
+				expect(created).toMatchObject({ projectId: "pending", privacyMode });
+				expect(created).not.toHaveProperty("workspaceRoot");
+				expect(pending.projectContextForSession(created.id)).toBe("");
+				expect(pending.discoverTools(created.id).filter(tool => tool.requiresWorkspace)).toEqual([]);
+				await expect(pending.callTool(created.id, "workspace.read", { path: "README.md" })).rejects.toThrow("requires a user-granted workspace root");
+			}
+			const before = database.listRuntimeSessions();
+			expect(() => pending.createSession({ title: "Wrong project", parentSessionId: parent.id, projectId: configured.id })).toThrow("cannot use another project");
+			expect(database.listRuntimeSessions()).toEqual(before);
+		}
+		expect(() => pending.createSession({ title: "Unknown", projectId: "unknown", workspaceRoot: root })).toThrow("Project was not found");
+		pending.close();
+		database.close();
+	});
+	it("keeps pending project identities without workspace authority across reconciliation and restart", async () => {
+		const { root, database, runtime } = fixture();
+		const original = projectFixture(root, "Private project instruction");
+		runtime.setProjects([original]);
+		const session = runtime.createSession({ title: "Imported", projectId: original.id });
+		runtime.close();
+		const other = { ...original, id: "other-project" };
+		const ids = [original.id];
+		for (let i = 0; i < 2; i++) {
+			const restarted = new AgentRuntime(database, [root], undefined, undefined, [root], [other], undefined, ids);
+			ids.push("later-caller-mutation");
+			expect(restarted.getSession(session.id)).toMatchObject({ projectId: original.id });
+			expect(restarted.getSession(session.id)).not.toHaveProperty("workspaceRoot");
+			restarted.setProjects([other]);
+			expect(restarted.projectContextForSession(session.id)).toBe("");
+			expect(restarted.discoverTools(session.id).filter(tool => tool.requiresWorkspace)).toEqual([]);
+			await expect(restarted.callTool(session.id, "workspace.read", { path: "README.md" })).rejects.toThrow("requires a user-granted workspace root");
+			// Even a subsequently persisted stale root cannot restore access.
+			database.saveRuntimeSession({ ...restarted.getSession(session.id), workspaceRoot: root });
+			expect(restarted.activeWorkspaceRoot(session.id)).toBeUndefined();
+			expect(() => restarted.undoWorkspaceMutation(session.id)).toThrow("Workspace root is unavailable");
+			restarted.setProjects([other]);
+			expect(restarted.getSession(session.id)).not.toHaveProperty("workspaceRoot");
+			restarted.close();
+			ids.splice(1);
+		}
+		database.close();
+	});
+
+	it("rejects invalid, duplicate and overlapping pending IDs before changing sessions", () => {
+		const { root, database, runtime, session } = fixture();
+		runtime.close();
+		const before = database.getRuntimeSession(session.id);
+		for (const ids of [[""], ["same", "same"], Array.from({ length: 501 }, (_, i) => `id-${i}`), ["project-fixture"], Array(1)]) {
+			expect(() => new AgentRuntime(database, [root], undefined, undefined, [root], [projectFixture(root)], undefined, ids)).toThrow();
+			expect(database.getRuntimeSession(session.id)).toEqual(before);
+		}
+		database.close();
+	});
 	it("persists the selected conversation and clears stale or forgotten identities", () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-selected-session-"));
 		temporaryDirectories.push(root);

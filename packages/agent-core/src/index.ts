@@ -156,7 +156,7 @@ import {
 	RemoteControl,
 	type RemoteExecutionConfiguration,
 } from "./remote";
-import { AgentRuntime } from "./runtime";
+import { AgentRuntime, validatePendingProjectIds } from "./runtime";
 import { SkinManager } from "./skins";
 import { UsageGovernor } from "./usage-governor";
 import type { UserModelStore } from "./user-model";
@@ -235,6 +235,7 @@ export interface AgentCoreDependencies {
 	workspaceRoots?: string[];
 	configuredWorkspaceRoots?: string[];
 	projects?: Project[];
+	pendingProjectIds?: readonly string[];
 	modelProviders?: ModelProvider[];
 	modelProfiles?: ModelProfile[];
 	routingPolicy?: RoutingPolicy;
@@ -328,6 +329,7 @@ export class AgentCore {
 	private readonly verifiedManagedPluginIdentities: Record<string, string> = {};
 
 	constructor(private readonly deps: AgentCoreDependencies) {
+		const pendingProjectIds = validatePendingProjectIds(deps.pendingProjectIds === undefined ? [] : deps.pendingProjectIds, deps.projects ?? []);
 		const seedDevelopmentFixtures = deps.seedDevelopmentFixtures === true;
 		this.email = deps.email ?? (seedDevelopmentFixtures
 			? new DevelopmentEmailConnector()
@@ -388,6 +390,7 @@ export class AgentCore {
 			this.deps.configuredWorkspaceRoots ?? this.deps.workspaceRoots ?? [],
 			this.deps.projects ?? [],
 			this.deps.hostToolNames,
+			pendingProjectIds,
 		);
 		this.observability = new ObservabilityManager(
 			this.deps.database,
@@ -418,6 +421,7 @@ export class AgentCore {
 			legacyMemory: this.memory,
 			now: () => new Date(this.now()),
 			projects: deps.projects ?? [],
+			pendingProjectIds,
 			explicitCaptureEnabled: () =>
 				this.configuration.current().memory.captureExplicit,
 		});
@@ -665,6 +669,7 @@ export class AgentCore {
 				const session = this.runtime.getSession(message.sessionId);
 				if (
 					!this.isStandardSession(session) ||
+					this.runtime.isPendingProjectSession(session.id) ||
 					!this.sharedMemoryCaptureEnabled() ||
 					!this.memorySubstrate.getCaptureConfiguration().enabled
 				)
@@ -2204,15 +2209,12 @@ export class AgentCore {
 		attachments: SelectedAttachment[] = [],
 	): ModelContentPart[] {
 		if (attachments.length === 0) return [];
-		const session = this.runtime.getSession(sessionId);
+		const root = this.runtime.activeWorkspaceRoot(sessionId);
 		const workspaceAttachments = attachments.filter(
 			(attachment) => attachment.source !== "external",
 		);
-		if (workspaceAttachments.length > 0 && !session.workspaceRoot)
+		if (workspaceAttachments.length > 0 && !root)
 			throw new Error("Workspace attachments require a task workspace.");
-		const root = session.workspaceRoot
-			? realpathSync(session.workspaceRoot)
-			: undefined;
 		const parts: ModelContentPart[] = [];
 		let totalBytes = 0;
 		for (const attachment of attachments) {
@@ -2621,7 +2623,7 @@ export class AgentCore {
 							runtimeSession,
 							personality.id,
 						);
-						const honchoContext = sharedMemoryEnabled
+						const honchoContext = sharedMemoryEnabled && !this.runtime.isPendingProjectSession(request.sessionId)
 							? await this.honchoMemory.contextFor({
 									sessionId: request.sessionId,
 									...(runtimeSession.workspaceRoot
@@ -4069,7 +4071,7 @@ export class AgentCore {
 							runtimeSession,
 							personality.id,
 						);
-						const honchoContext = sharedMemoryEnabled
+						const honchoContext = sharedMemoryEnabled && !this.runtime.isPendingProjectSession(request.sessionId)
 							? await this.honchoMemory.contextFor({
 									sessionId: request.sessionId,
 									...(runtimeSession.workspaceRoot

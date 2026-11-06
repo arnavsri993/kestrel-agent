@@ -6,6 +6,7 @@ import {
 	type CoreResponse,
 	CoreResponseSchema,
 	type Project,
+	ProjectSchema,
 	RuntimeEventSchema,
 } from "@kestrel/shared-types";
 import type { ProviderAccountRuntimeConfig } from "@kestrel/agent-core";
@@ -33,6 +34,7 @@ export interface CoreBootstrapConfig {
 	workspaceRoots: string[];
 	configuredWorkspaceRoots: string[];
 	projects?: Project[];
+	pendingProjectIds?: string[];
 	pluginRoots: string[];
 	managedPluginRoots: string[];
 	/** Native host may require trusted signatures on every managed plugin. */
@@ -67,6 +69,16 @@ const DEFAULT_STABILITY_WINDOW_MS = 60_000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const MAX_TIMER_MS = 2_147_483_647;
 
+/** Validate raw host metadata before cloning it or opening the profile. */
+export function validateBootstrapPendingProjects(ids: unknown, projects: unknown): void {
+	if (!Array.isArray(ids) || ids.length > 500 || !Array.isArray(projects))
+		throw new Error("Invalid pending project IDs.");
+	const parsed = Array.from(ids, id => ProjectSchema.shape.id.parse(id));
+	const unique = new Set(parsed);
+	if (unique.size !== parsed.length || projects.some(project => project && typeof project === "object" && unique.has((project as { id?: string }).id ?? "")))
+		throw new Error("Pending project IDs must be unique and separate from configured projects.");
+}
+
 function boundedTimer(
 	value: number | undefined,
 	fallback: number,
@@ -85,6 +97,7 @@ function cloneBootstrapConfig(
 		workspaceRoots: [...config.workspaceRoots],
 		configuredWorkspaceRoots: [...config.configuredWorkspaceRoots],
 		projects: config.projects?.map((project) => ({ ...project })) ?? [],
+		...(config.pendingProjectIds !== undefined ? { pendingProjectIds: [...config.pendingProjectIds] } : {}),
 		pluginRoots: [...config.pluginRoots],
 		managedPluginRoots: [...config.managedPluginRoots],
 		...(config.pluginActivationIds !== undefined ? { pluginActivationIds: { ...config.pluginActivationIds } } : {}),
@@ -171,6 +184,7 @@ export class CoreSupervisor extends EventEmitter {
 	async start(config: CoreBootstrapConfig): Promise<void> {
 		if (this.child || this.stoppingOperation)
 			throw new Error("Agent Core is already running or still stopping.");
+		validateBootstrapPendingProjects(config.pendingProjectIds === undefined ? [] : config.pendingProjectIds, config.projects === undefined ? [] : config.projects);
 		this.stopping = false;
 		this.clearRecoveryTimers();
 		this.restartAttempts = 0;

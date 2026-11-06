@@ -37,6 +37,7 @@ import {
 } from "@kestrel/database";
 import { CoreRequestSchema } from "@kestrel/shared-types";
 import type { CoreParentPort } from "./transport";
+import { validateBootstrapPendingProjects } from "./core-supervisor";
 import { normalizeBrowserPageContext } from "./browser-page-context";
 import { normalizeBrowserAccessibilitySnapshot } from "./browser-accessibility-snapshot";
 import { decodeNativeBrowserScreenshot, decodeNativeDesktopScreenshot } from "./browser-screenshot";
@@ -243,6 +244,7 @@ export function startCoreService(port: CoreParentPort): void {
 				workspaceRoots: string[];
 				configuredWorkspaceRoots: string[];
 				projects?: import("@kestrel/shared-types").Project[];
+				pendingProjectIds?: string[];
 				pluginRoots: string[];
 				managedPluginRoots: string[];
 				pluginTrustKeys?: Array<{ keyId: string; publicKey: string }>;
@@ -269,6 +271,7 @@ export function startCoreService(port: CoreParentPort): void {
 		}
 		if (message.type === "bootstrap" && message.config) {
 			try {
+				validateBootstrapPendingProjects(message.config.pendingProjectIds === undefined ? [] : message.config.pendingProjectIds, message.config.projects === undefined ? [] : message.config.projects);
 				const database = new KestrelDatabase(
 					message.config.databasePath,
 					Buffer.from(message.config.encryptionKeyBase64, "base64"),
@@ -345,6 +348,7 @@ export function startCoreService(port: CoreParentPort): void {
 					workspaceRoots: message.config.workspaceRoots,
 					configuredWorkspaceRoots: message.config.configuredWorkspaceRoots,
 					projects: message.config.projects ?? [],
+					...(message.config.pendingProjectIds !== undefined ? { pendingProjectIds: message.config.pendingProjectIds } : {}),
 					learnedSkillRoot: message.config.learnedSkillRoot,
 					pluginRoots: message.config.pluginRoots,
 					managedPluginRoots: message.config.managedPluginRoots,

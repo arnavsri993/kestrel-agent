@@ -94,6 +94,31 @@ afterEach(() => {
 });
 
 describe("memory substrate", () => {
+	it("preserves only existing pending project entities without creating or reviving them", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const now = () => new Date("2026-07-22T12:00:00.000Z");
+		const legacyMemory = new MemoryManager(database, now);
+		const project = (id: string) => ({ id, name: id, path: `/fixture/${id}`, createdAt: now().toISOString(), updatedAt: now().toISOString() });
+		const original = new MemorySubstrate({ database, legacyMemory, now, projects: [project("pending"), project("deleted"), project("ordinary")] });
+		await original.close();
+		const deleted = database.getMemoryEntity("memory-project-deleted")!;
+		database.upsertMemoryEntity({ ...deleted, status: "deleted" });
+		const before = database.getMemoryEntity("memory-project-pending");
+		const row = (id: string) => database.db.prepare("SELECT * FROM memory_entities WHERE id = ?").get(`memory-project-${id}`);
+		const tombstone = row("deleted");
+		const pending = ["pending", "deleted", "absent"];
+		const restored = new MemorySubstrate({ database, legacyMemory, now, pendingProjectIds: pending });
+		pending.length = 0;
+		restored.syncProjects([]);
+		expect(database.getMemoryEntity("memory-project-pending")).toEqual(before);
+		expect(row("deleted")).toEqual(tombstone);
+		expect(database.getMemoryEntity("memory-project-absent")).toBeUndefined();
+		expect(row("ordinary")).toMatchObject({ status: "deleted" });
+		expect(() => restored.syncProjects([project("pending")])).toThrow();
+		expect(database.getMemoryEntity("memory-project-pending")).toEqual(before);
+		await restored.close();
+		database.close();
+	});
 	it.each(["domain", "file"] as const)("denies capture when a %s pattern exhausts its match budget", async scope => {
 		const state = fixture();
 		try {

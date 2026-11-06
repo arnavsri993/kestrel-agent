@@ -58,7 +58,7 @@ import {
 	type RuntimeSession,
 } from "@kestrel/shared-types";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
-import type { AgentRuntime } from "./runtime";
+import { validatePendingProjectIds, type AgentRuntime } from "./runtime";
 import { MemoryManager, type MemoryInput } from "./memory";
 import { isForgetConversationCommand } from "./memory-command-classifier";
 import { redactSensitiveContent } from "./tool-result-guardrails";
@@ -136,6 +136,7 @@ export interface MemorySubstrateOptions {
 	now?: () => Date;
 	embeddingProvider?: MemoryEmbeddingProvider;
 	projects?: readonly MemoryProject[];
+	pendingProjectIds?: readonly string[];
 	/** Existing configuration controls explicit user-memory extraction. */
 	explicitCaptureEnabled?: () => boolean;
 }
@@ -340,8 +341,10 @@ export class MemorySubstrate {
 	private legacyMigrationBlocked = false;
 	private legacyMigrationTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly projects = new Map<string, MemoryProject>();
+	private readonly pendingProjectIds: ReadonlySet<string>;
 
 	constructor(options: MemorySubstrateOptions) {
+		this.pendingProjectIds = new Set(validatePendingProjectIds(options.pendingProjectIds === undefined ? [] : options.pendingProjectIds, options.projects ?? []));
 		this.database = options.database;
 		this.legacyMemory = options.legacyMemory;
 		this.now = options.now ?? (() => new Date());
@@ -471,6 +474,7 @@ export class MemorySubstrate {
 	 */
 	syncProjects(projects: readonly MemoryProject[]): MemoryProject[] {
 		const parsedProjects = projects.map((project) => MemoryProjectSchema.parse(project));
+		validatePendingProjectIds([...this.pendingProjectIds], parsedProjects);
 		const nextIds = new Set(parsedProjects.map((project) => project.id));
 		for (const project of parsedProjects) {
 			this.projects.set(project.id, project);
@@ -505,7 +509,7 @@ export class MemorySubstrate {
 		// A removed project must not remain an active entity in future retrievals.
 		for (const entity of this.database.listMemoryEntities({ kind: "project", includeAmbiguous: true, includeSensitive: true, includeRestricted: true, limit: 2_000 })) {
 			const projectId = typeof entity.structuredData.projectId === "string" ? entity.structuredData.projectId : undefined;
-			if (!projectId || nextIds.has(projectId) || entity.status === "deleted") continue;
+			if (!projectId || nextIds.has(projectId) || this.pendingProjectIds.has(projectId) || entity.status === "deleted") continue;
 			this.database.upsertMemoryEntity({ ...entity, status: "deleted", updatedAt: this.now().toISOString() });
 		}
 		this.projects.clear();

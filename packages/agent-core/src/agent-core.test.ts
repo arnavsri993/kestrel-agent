@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { AgentRuntime } from "./runtime";
 import {
 	AgentCore,
 	DevelopmentCalendarConnector,
@@ -30,6 +31,83 @@ function createCore() {
 }
 
 describe("fresh application state", () => {
+	it("preserves stored Honcho namespaces for unavailable and symlinked non-pending roots", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-honcho-root-"));
+		const alias = join(root, "alias");
+		symlinkSync(root, alias);
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const provider: ModelProvider = {
+			id: "honcho-root-fixture", capabilities: { streaming: true, tools: false, images: false, audio: false, documents: false, local: true },
+			complete: async request => ({ providerId: "honcho-root-fixture", model: request.model, text: "Response", toolCalls: [], usage: { inputTokens: 2, outputTokens: 2 }, finishReason: "stop" }),
+		};
+		const core = new AgentCore({ database, workspaceRoots: [root], modelProviders: [provider] });
+		try {
+			const recall = vi.spyOn(core.honchoMemory, "contextFor").mockResolvedValue("");
+			const capture = vi.spyOn(core.honchoMemory, "captureMessage").mockImplementation(() => {});
+			for (const storedRoot of [join(root, "unavailable"), alias]) {
+				const session = core.runtime.createSession({ title: "Existing conversation" });
+				database.saveRuntimeSession({ ...session, workspaceRoot: storedRoot });
+				recall.mockClear(); capture.mockClear();
+				expect(await core.handle({ type: "runtime-run-agent", sessionId: session.id, message: "Original", model: "fixture", providerIds: [provider.id] })).toMatchObject({ ok: true });
+				expect(await core.handle({ type: "runtime-retry-agent", sessionId: session.id, model: "fixture", providerIds: [provider.id] })).toMatchObject({ ok: true });
+				expect(recall).toHaveBeenCalledTimes(2);
+				for (const [input] of recall.mock.calls) expect(input.workspaceRoot).toBe(storedRoot);
+				expect(capture).toHaveBeenCalled();
+				for (const [, workspaceRoot] of capture.mock.calls) expect(workspaceRoot).toBe(storedRoot);
+			}
+		} finally { await core.close(); rmSync(root, { recursive: true, force: true }); }
+	});
+	it("does not use global or stale-root Honcho recall or capture for pending projects", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-pending-honcho-"));
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const provider: ModelProvider = {
+			id: "pending-honcho-fixture", capabilities: { streaming: true, tools: false, images: false, audio: false, documents: false, local: true },
+			complete: async request => ({ providerId: "pending-honcho-fixture", model: request.model, text: "Response", toolCalls: [], usage: { inputTokens: 2, outputTokens: 2 }, finishReason: "stop" }),
+		};
+		const core = new AgentCore({ database, workspaceRoots: [root], pendingProjectIds: ["pending"], modelProviders: [provider] });
+		try {
+			const recall = vi.spyOn(core.honchoMemory, "contextFor").mockResolvedValue("remote context");
+			const capture = vi.spyOn(core.honchoMemory, "captureMessage").mockImplementation(() => {});
+			const normal = core.runtime.ensureMainSession();
+			expect(await core.handle({ type: "runtime-run-agent", sessionId: normal.id, message: "Normal", model: "fixture", providerIds: [provider.id] })).toMatchObject({ ok: true });
+			expect(recall).toHaveBeenCalled();
+			recall.mockClear(); capture.mockClear();
+			const pending = core.runtime.createSession({ title: "Pending", projectId: "pending" });
+			database.saveRuntimeSession({ ...pending, workspaceRoot: root });
+			expect(await core.handle({ type: "runtime-run-agent", sessionId: pending.id, message: "Pending", model: "fixture", providerIds: [provider.id] })).toMatchObject({ ok: true });
+			expect(await core.handle({ type: "runtime-retry-agent", sessionId: pending.id, model: "fixture", providerIds: [provider.id] })).toMatchObject({ ok: true });
+			expect(recall).not.toHaveBeenCalled();
+			expect(capture).not.toHaveBeenCalled();
+		} finally { await core.close(); rmSync(root, { recursive: true, force: true }); }
+	});
+	it("rejects overlapping pending IDs before Core changes a persisted session", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Existing" });
+		runtime.close();
+		const project = { id: "pending", name: "Project", path: "/fixture", order: 0, createdAt: "2026-07-22T15:00:00.000Z", updatedAt: "2026-07-22T15:00:00.000Z" };
+		expect(() => new AgentCore({ database, projects: [project], pendingProjectIds: [project.id] })).toThrow();
+		expect(database.getRuntimeSession(session.id)).toEqual(session);
+		database.close();
+	});
+
+	it("denies workspace attachments for a pending session even with a stale stored root", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-pending-attachment-"));
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database, [root]);
+		const session = runtime.createSession({ title: "Existing", workspaceRoot: root });
+		database.saveRuntimeSession({ ...session, projectId: "pending" });
+		runtime.close();
+		const core = new AgentCore({ database, workspaceRoots: [root], pendingProjectIds: ["pending"] });
+		try {
+			database.saveRuntimeSession({ ...core.runtime.getSession(session.id), workspaceRoot: root });
+			const access = core as unknown as { attachmentParts(id: string, attachments: Array<{ path: string; name: string; mediaType: string; size: number; source: "workspace" }>): unknown };
+			expect(() => access.attachmentParts(session.id, [{ path: join(root, "file.txt"), name: "file.txt", mediaType: "text/plain", size: 0, source: "workspace" }])).toThrow("Workspace attachments require a task workspace");
+		} finally {
+			await core.close();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 	it("recovers to idle when persisted agent state is malformed", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		database.setState("agentState", { corrupted: true });
