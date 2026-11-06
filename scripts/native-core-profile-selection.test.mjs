@@ -1,6 +1,6 @@
 import { describe, beforeAll, afterAll, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,7 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 		const root = join(temporary, randomUUID()); mkdirSync(root, { mode: 0o700 });
 		return { root, file: join(root, "native-core-profile.json"),
 			select(value) { writeFileSync(join(root, "native-core-profile.json"), JSON.stringify(value), { mode: 0o600 }); },
-			child() { const relative = `native-core-profiles/${randomUUID()}`; mkdirSync(join(root, "native-core-profiles"), { mode: 0o700 }); mkdirSync(join(root, relative), { mode: 0o700 }); return relative; },
+			child() { const relative = `native-core-profiles/${randomUUID()}`; mkdirSync(join(root, "native-core-profiles"), { mode: 0o700, recursive: true }); mkdirSync(join(root, relative), { mode: 0o700 }); return relative; },
 			save(active, previous = "", expected = "", fault) { const result = spawnSync(executable, [root, active, previous, expected], { encoding: "utf8", env: { ...process.env, ...(fault ? { KESTREL_SELECTION_FIXTURE_FSYNC_FAULT: fault } : {}) } }); expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout); },
 			resolve() { const result = spawnSync(executable, [root], { encoding: "utf8" }); expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout); } };
 	}
@@ -40,6 +40,84 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 		const result = spawnSync(executable, args, { encoding: "utf8", timeout: 2000 });
 		expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout);
 	}
+	function registry(value, op, first, second, expected, fault) {
+		const args = [value.root, "--registry", ...(op ? [op, first, second, JSON.stringify(expected)] : [])];
+		const result = spawnSync(executable, args, { encoding: "utf8", env: { ...process.env, ...(fault ? { KESTREL_SELECTION_FIXTURE_FSYNC_FAULT: fault } : {}) } });
+		expect(result.status).toBe(0); expect(result.stderr).toBe(""); return JSON.parse(result.stdout);
+	}
+	it("normalizes v1 without writing and resolves its explicit legacy identity", () => {
+		const value = profile(), child = value.child(); value.select({ version: 1, active: child, previous: "" });
+		const before = readFileSync(value.file, "utf8"), result = registry(value);
+		expect(result.selection).toEqual({ version: 2, active: child, previous: "", handoffs: { [child]: null, "": null } });
+		expect(result.resolved).toEqual({ profilePath: join(value.root, child), relativeProfile: child, handoffId: null });
+		expect(readFileSync(value.file, "utf8")).toBe(before);
+	});
+	it("registers, selects and swaps while preserving all handoff identities", () => {
+		const value = profile(), child = value.child(), id = randomUUID(), initial = registry(value).selection;
+		let result = registry(value, "register", child, id, initial); expect(result.saved).toBe("selected");
+		expect(result.selection.handoffs[child]).toBe(id);
+		result = registry(value, "save", child, "", result.selection); expect(result.saved).toBe("selected");
+		expect(result.resolved).toEqual({ profilePath: join(value.root, child), relativeProfile: child, handoffId: id });
+		result = registry(value, "save", "", child, result.selection); expect(result.saved).toBe("selected");
+		expect(result.selection.handoffs[child]).toBe(id); expect(result.resolved.handoffId).toBe(null);
+		expect(value.save(child, "", "").saved).toBe("selected"); expect(registry(value).resolved.handoffId).toBe(id);
+	});
+	it("requires a full reviewed snapshot and never overwrites legacy or registered identities", () => {
+		const value = profile(), a = value.child(), b = value.child(), id = randomUUID(), initial = registry(value).selection;
+		const registered = registry(value, "register", a, id, initial); expect(registered.saved).toBe("selected");
+		expect(registry(value, "register", b, randomUUID(), initial).saved).toBe("unchanged");
+		expect(registry(value, "save", a, "", initial).saved).toBe("unchanged");
+		expect(registry(value, "register", a, randomUUID(), registered.selection).saved).toBe("unchanged");
+		expect(registry(value, "save", b, "", registered.selection).saved).toBe("unchanged");
+		expect(registry(value, "register", a, id, registered.selection).saved).toBe("selected");
+	});
+	it("upgrades a legacy null handoff only for an unselected prepared profile", () => {
+		const value = profile(), active = value.child(), previous = value.child(), prepared = value.child();
+		const id = "123e4567-e89b-42d3-a456-426614174000";
+		const initial = { version: 2, active, previous, handoffs: { "": null, [active]: null, [previous]: null, [prepared]: null } };
+		value.select(initial);
+		const registered = registry(value, "register", prepared, id, initial);
+		expect(registered.saved).toBe("selected");
+		expect(registered.selection.handoffs).toEqual({ "": null, [active]: null, [previous]: null, [prepared]: id });
+		expect(registry(value, "register", active, id, registered.selection).saved).toBe("unchanged");
+		expect(registry(value, "register", previous, id, registered.selection).saved).toBe("unchanged");
+		expect(registry(value).selection).toEqual(registered.selection);
+	});
+	it("accepts only canonical lowercase RFC 4122 UUIDv4 handoff IDs", () => {
+		const value = profile(), prepared = value.child();
+		const initial = { version: 2, active: "", previous: "", handoffs: { "": null, [prepared]: null } };
+		value.select(initial);
+		for (const id of [
+			"123E4567-E89B-42D3-A456-426614174000",
+			"123e4567-e89b-12d3-a456-426614174000",
+			"123e4567-e89b-42d3-7456-426614174000",
+			"123e4567e89b42d3a456426614174000",
+		]) {
+			expect(registry(value, "register", prepared, id, initial).saved).toBe("unchanged");
+			expect(registry(value).selection).toEqual(initial);
+		}
+	});
+	it("rejects corrupt v2 maps, unknown fields, invalid UUIDs and booleans", () => {
+		const value = profile(), child = value.child();
+		for (const selected of [
+			{ version: 2, active: child, previous: "", handoffs: { "": null } },
+			{ version: 2, active: "", previous: "", handoffs: { "": true } },
+			{ version: 2, active: "", previous: "", handoffs: { "": "not-a-uuid" } },
+			{ version: 2, active: "", previous: "", handoffs: { "": null }, extra: 1 },
+			{ version: true, active: "", previous: "", handoffs: { "": null } },
+			{ version: 2, active: "", previous: "", handoffs: { "": null, "native-core-profiles/not-uuid": null } },
+		]) { value.select(selected); expect(registry(value)).toMatchObject({ selection: null, resolved: null, error: true }); }
+	});
+	it("enforces the registry bound before mutation", () => {
+		const value = profile(), child = value.child(), handoffs = { "": null };
+		for (let i = 0; i < 128; i++) handoffs[`native-core-profiles/${randomUUID()}`] = randomUUID();
+		value.select({ version: 2, active: "", previous: "", handoffs }); const initial = registry(value).selection;
+		expect(registry(value, "register", child, randomUUID(), initial).saved).toBe("unchanged"); expect(registry(value).selection).toEqual(initial);
+	});
+	it.each([["file", "unchanged"], ["directory", "selected-durability-unconfirmed"]])("reports %s sync faults during registration", (fault, saved) => {
+		const value = profile(), child = value.child(), initial = registry(value).selection;
+		expect(registry(value, "register", child, randomUUID(), initial, fault).saved).toBe(saved);
+	});
 	it("refuses a FIFO key envelope without blocking", () => {
 		const path = join(temporary, randomUUID());
 		execFileSync("/usr/bin/mkfifo", [path]);
@@ -53,6 +131,13 @@ describe.skipIf(process.platform !== "darwin")("native Core data profile selecti
 	});
 	it("discloses paused conflict preservation and validates both optional counts", () => {
 		expect(fixture(temporary, "--conflict-review-validation")).toEqual({ valid: true, disclosed: true, badBool: true, badPair: true, badZero: true, badMissing: true, partialPurge: true, completePurge: true, purgeDisclosed: true, badPurgeCount: true });
+	});
+	it("validates exact fresh and recovery project handoff preview counts", () => {
+		expect(fixture(temporary, "--project-handoff-validation")).toEqual({
+			validFresh: true, validRecovery: true,
+			badFreshExtra: true, badFreshMissing: true, badFreshType: true, badFreshRange: true, badFreshID: true,
+			badRecoveryExtra: true, badRecoveryMissing: true, badRecoveryType: true, badRecoveryRange: true, badRecoveryID: true,
+		});
 	});
 	it.each(["source", "destination", "key", "journal", "sidecar"])("invalidates a recovery witness when %s changes", target => {
 		const sourceRoot = sourceProfile().root, destinationRoot = sourceProfile().root;

@@ -187,7 +187,7 @@ async function prepare() {
 	const coreDirectory = join(root, "apps", "core-service");
 	run(process.execPath, [join(coreDirectory, "build.mjs")], { cwd: coreDirectory });
 	const coreOutput = join(coreDirectory, "out");
-	if (!existsSync(join(coreOutput, "index.js")) || !existsSync(join(coreOutput, "host-profile-file-transfer.js")))
+	if (!existsSync(join(coreOutput, "index.js")) || !existsSync(join(coreOutput, "host-profile-file-transfer.js")) || !existsSync(join(coreOutput, "host-profile-project-transfer.js")))
 		throw new Error("Standalone Agent Core build did not produce its service and protected transfer worker.");
 
 	const cacheDirectory = join(temporaryRoot, "agent-core-sidecar-cache");
@@ -235,7 +235,7 @@ async function prepare() {
 						sha256: sidecar.NODE_RUNTIME_SHA256,
 						source: sidecar.NODE_RUNTIME_URL,
 					},
-					service: { entry: "service/index.js", protectedCoreTransfer: "service/host-profile-file-transfer.js" },
+					service: { entry: "service/index.js", protectedCoreTransfer: "service/host-profile-file-transfer.js", protectedProjectTransfer: "service/host-profile-project-transfer.js" },
 				},
 				null,
 				2,

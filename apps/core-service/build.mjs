@@ -2,7 +2,7 @@ import { build } from "esbuild";
 import { cp, mkdir, writeFile } from "node:fs/promises";
 
 const result = await build({
-  entryPoints: { index: "src/index.ts", "host-profile-file-transfer": "src/host-profile-file-transfer-worker.ts" },
+  entryPoints: { index: "src/index.ts", "host-profile-file-transfer": "src/host-profile-file-transfer-worker.ts", "host-profile-project-transfer": "src/host-profile-project-transfer-worker.ts" },
   outdir: "out",
   bundle: true,
   platform: "node",

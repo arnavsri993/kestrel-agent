@@ -8976,7 +8976,12 @@ function ApprovalRulesSettings() {
 
 function AgentWorkspaceSettings() {
 	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
-	useEffect(() => window.kestrel.onWorkspaceProjectsChanged?.(setGrants), []);
+	const [pendingProjects, setPendingProjects] = useState<Array<{ id: string; name: string }>>([]);
+	const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
+	const [workspaceLoading, setWorkspaceLoading] = useState(true);
+	const workspaceRequest = useRef(0);
+	const pendingActionBusy = useRef(false);
+	const workspaceHeading = useRef<HTMLElement>(null);
 	const [sessions, setSessions] = useState<RuntimeSession[]>([]);
 	const [busy, setBusy] = useState(false);
 	const [planetBusySessionId, setPlanetBusySessionId] = useState<string | null>(
@@ -8985,37 +8990,55 @@ function AgentWorkspaceSettings() {
 	const [planetError, setPlanetError] = useState("");
 	const [error, setError] = useState("");
 
+	const loadWorkspaces = useCallback(async () => {
+		const requestId = ++workspaceRequest.current;
+		try {
+			const response = await window.kestrel.request({ type: "get-workspace-grants" });
+			if (requestId !== workspaceRequest.current) return;
+			if (!response.ok) throw new Error("error" in response ? response.error : "Workspace access could not be loaded.");
+			if ("workspaceGrants" in response) {
+				setGrants(response.workspaceGrants);
+				setPendingProjects(response.pendingWorkspaceProjects ?? []);
+			}
+			setWorkspaceLoading(false);
+		} catch (cause) { if (requestId === workspaceRequest.current) throw cause; }
+	}, []);
 	const load = useCallback(async () => {
-		const [grantResponse, sessionResponse] = await Promise.all([
-			window.kestrel.request({ type: "get-workspace-grants" }),
+		const [, sessionResponse] = await Promise.all([
+			loadWorkspaces(),
 			window.kestrel.request({ type: "runtime-list-sessions" }),
 		]);
-		if (!grantResponse.ok)
-			throw new Error(
-				"error" in grantResponse
-					? grantResponse.error
-					: "Workspace access could not be loaded.",
-			);
-		if (!sessionResponse.ok)
-			throw new Error(
-				"error" in sessionResponse
-					? sessionResponse.error
-					: "Agent sessions could not be loaded.",
-			);
-		if ("workspaceGrants" in grantResponse)
-			setGrants(grantResponse.workspaceGrants);
+		if (!sessionResponse.ok) throw new Error("error" in sessionResponse ? sessionResponse.error : "Agent sessions could not be loaded.");
 		if ("sessions" in sessionResponse) setSessions(sessionResponse.sessions ?? []);
-	}, []);
+	}, [loadWorkspaces]);
 
 	useEffect(() => {
-		void load().catch((cause) =>
-			setError(
-				cause instanceof Error
-					? cause.message
-					: "Workspace and session settings could not be loaded.",
-			),
-		);
+		void load().catch((cause) => { setWorkspaceLoading(false); setError(cause instanceof Error ? cause.message : "Workspace and session settings could not be loaded."); });
 	}, [load]);
+	useEffect(() => window.kestrel.onWorkspaceProjectsChanged?.((next) => {
+		setGrants(next);
+		void loadWorkspaces().catch(() => setError("Workspace access could not be refreshed."));
+	}), [loadWorkspaces]);
+
+	async function pendingAction(projectId: string, action: "reconnect-workspace-project" | "remove-pending-workspace-project") {
+		if (pendingActionBusy.current || busy) return;
+		pendingActionBusy.current = true;
+		setBusy(true);
+		setError("");
+		let completed = false;
+		try {
+			const response = await window.kestrel.request({ type: action, projectId });
+			if (!response.ok) throw new Error("error" in response ? response.error : "The project could not be updated.");
+			setPendingRemoval(null);
+			completed = !("cancelled" in response && response.cancelled);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "The project could not be updated.");
+		} finally {
+			try { await loadWorkspaces(); if (completed) workspaceHeading.current?.focus(); } catch { setError("Workspace access could not be refreshed. Try again."); }
+			pendingActionBusy.current = false;
+			setBusy(false);
+		}
+	}
 
 	async function addFolder() {
 		setBusy(true);
@@ -9115,7 +9138,7 @@ function AgentWorkspaceSettings() {
 			<section className="settings-stack" aria-label="Workspace and session settings">
 				<article className="setting-row" id="setting-agent-workspace-grants">
 					<div>
-						<strong>Project folder access</strong>
+						<strong ref={workspaceHeading} tabIndex={-1}>Project folder access</strong>
 						<p>
 							Only approved folders are available to workspace tools. Remove access
 							anytime; unavailable folders stay listed so you can reconnect them.
@@ -9141,6 +9164,31 @@ function AgentWorkspaceSettings() {
 									</li>
 								))}
 							</ul>
+						)}
+						{workspaceLoading && <small role="status">Loading workspace access…</small>}
+						{pendingProjects.length > 0 && (
+							<section aria-labelledby="pending-projects-title" aria-busy={busy}>
+								<strong id="pending-projects-title">Reconnect projects</strong>
+								<p>Choose a folder for each project to give it access again. Removing a project keeps its conversations.</p>
+								<ul className="workspace-grants">
+									{pendingProjects.map((project) => (
+										<li key={project.id} style={{ flexWrap: "wrap" }}>
+											<span title={project.name}>{project.name || "Project to reconnect"}{pendingProjects.filter((entry) => entry.name === project.name).length > 1 ? ` · ${project.id.slice(-8)}` : ""}</span>
+											{pendingRemoval === project.id ? (
+												<>
+													<button type="button" className="quiet-link" disabled={busy} onClick={() => void pendingAction(project.id, "remove-pending-workspace-project")} aria-label={`Confirm removing ${project.name}`}>Confirm remove</button>
+													<button type="button" className="quiet-link" disabled={busy} autoFocus onClick={() => setPendingRemoval(null)}>Cancel</button>
+												</>
+											) : (
+												<>
+													<button type="button" className="quiet-link" disabled={busy} onClick={() => void pendingAction(project.id, "reconnect-workspace-project")} aria-label={`Choose folder for ${project.name}`}>Choose folder</button>
+													<button type="button" className="quiet-link" disabled={busy} onClick={() => setPendingRemoval(project.id)} aria-label={`Remove ${project.name}`}>Remove</button>
+												</>
+											)}
+										</li>
+									))}
+								</ul>
+							</section>
 						)}
 						{error && <small role="alert">{error}</small>}
 					</div>

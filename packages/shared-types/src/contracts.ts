@@ -5076,6 +5076,8 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("set-default-browser") }),
 	z.object({ type: z.literal("set-launch-at-login"), enabled: z.boolean() }),
 	z.object({ type: z.literal("get-workspace-grants") }),
+	z.object({ type: z.literal("reconnect-workspace-project"), projectId: z.string().min(1).max(200) }).strict(),
+	z.object({ type: z.literal("remove-pending-workspace-project"), projectId: z.string().min(1).max(200) }).strict(),
 	z.object({
 		type: z.literal("project-update"),
 		projectId: z.string().min(1).max(200),
@@ -5498,6 +5500,8 @@ export type RendererResponse =
 			workspaceGrants: WorkspaceGrant[];
 			/** Enriched project records for project-aware renderer consumers. */
 			projects?: Project[];
+			/** Non-authorizing project identities awaiting a native folder choice. */
+			pendingWorkspaceProjects?: Array<{ id: string; name: string }>;
 			cancelled?: boolean;
 			selectedWorkspacePath?: string;
 			snapshot?: WorkspaceSnapshot;

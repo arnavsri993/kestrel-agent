@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { launchCoreTransferFixture, writeCoreTransferCrashPreload, type TransferCrashPoint } from "../../../scripts/native-core-transfer-crash-fixture.js";
 import { KestrelDatabase } from "./index";
-import { HostProfileFileTransferError, inspectInterruptedHostProfileFileTransfer, recoverInterruptedHostProfileFileTransfer, verifyHostProfileFileTransferRecovery } from "./host-profile-file-transfer";
+import { HostProfileFileTransferError, inspectInterruptedHostProfileFileTransfer, verifyInterruptedHostProfileFileTransfer, recoverInterruptedHostProfileFileTransfer, verifyHostProfileFileTransferRecovery } from "./host-profile-file-transfer";
 
 // Each case starts an actual worker and crosses durable filesystem boundaries.
 // Hosted macOS startup/IO exceeded the ordinary five-second unit-test budget.
@@ -72,6 +72,26 @@ it.each(["before-link", "after-link", "after-unlink"] as const)("recovers a real
 	expect(readdirSync(dirname(value.target))).toEqual(["kestrel.sqlite"]);
 	expect(verifyHostProfileFileTransferRecovery(receipt, value)).toMatchObject({ originalReadable: true, destinationReadable: true });
 	expect(readFileSync(value.source)).toEqual(value.before);
+});
+
+it.each(["before-link", "after-link", "after-unlink"] as const)("authenticates interrupted recovery %s without changing journals, links or data", async point => {
+	const value = await crashed(point), review = inspectInterruptedHostProfileFileTransfer(value.target);
+	const files = [value.source, value.target + ".kestrel-transfer-journal", value.target + ".kestrel-transfer-lock",
+		...(point === "before-link" ? [] : [value.target]), ...(point === "after-unlink" ? [] : [join(value.journal.staging.path, "kestrel.sqlite")])];
+	const before = files.map(path => ({ path, bytes: readFileSync(path), stat: statSync(path) }));
+	const entries = readdirSync(dirname(value.target)).sort();
+	const options = { destinationDatabasePath: value.target, sourceKey: value.sourceKey, destinationKey: value.destinationKey, acceptedRecoverySha256: review.recoverySha256 };
+	expect(verifyInterruptedHostProfileFileTransfer(options)).toEqual({ originalReadable: true, destinationReadable: true, activationPerformed: false });
+	const badKey = randomBytes(32); keys.push(badKey);
+	expect(failure(() => verifyInterruptedHostProfileFileTransfer({ ...options, destinationKey: badKey })).code).toBe("SOURCE_UNREADABLE");
+	expect(failure(() => verifyInterruptedHostProfileFileTransfer({ ...options, sourceKey: badKey })).code).toBe("SOURCE_UNREADABLE");
+	expect(failure(() => verifyInterruptedHostProfileFileTransfer({ ...options, acceptedRecoverySha256: "0".repeat(64) })).code).toBe("RECOVERY_REVIEW_CHANGED");
+	for (const item of before) {
+		expect(readFileSync(item.path)).toEqual(item.bytes);
+		const after = statSync(item.path); expect([after.dev, after.ino, after.nlink, after.size, after.mtimeMs, after.ctimeMs]).toEqual([item.stat.dev, item.stat.ino, item.stat.nlink, item.stat.size, item.stat.mtimeMs, item.stat.ctimeMs]);
+	}
+	expect(readdirSync(dirname(value.target)).sort()).toEqual(entries);
+	expect(inspectInterruptedHostProfileFileTransfer(value.target).recoverySha256).toBe(review.recoverySha256);
 });
 
 it("reviews and recovers through a fresh private worker with single-use acceptance", async () => {

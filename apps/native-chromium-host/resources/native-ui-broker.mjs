@@ -12,8 +12,10 @@ import { createNativeAutomationRelay } from "./native-automation-relay.mjs";
 import { createNativeComputerRelay } from "./native-computer-relay.mjs";
 import { createNativeDialogRelay } from "./native-dialog-relay.mjs";
 import { cancelNativeHostOnClientLoss, cancelNativeHostByUiRequest } from "./native-host-cancellation.mjs";
+import { nativeProjectHandoffArgument } from "./native-project-handoff-argument.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
+const projectHandoffId = nativeProjectHandoffArgument(process.argv);
 const argument = (name) => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
 const profile = await realpath(argument("--profile-root"));
 const coreProfile = await realpath(argument("--core-profile-root") || profile);
@@ -93,6 +95,7 @@ function signalReady() {
 	process.stdout.write(JSON.stringify({ kind: "ui-ready" }) + "\n");
 }
 const core = spawn(process.execPath, [join(resources, "native-desktop-core.mjs"), "--profile-root", coreProfile, "--browser-profile-root", profile,
+	...(projectHandoffId ? ["--project-handoff-id", projectHandoffId] : []),
 	...(process.argv.includes("--durable-profile") ? ["--durable-profile"] : [])], {
 	stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, KESTREL_NATIVE_LIVE_EXTENSIONS: "0" },
 });
@@ -272,10 +275,10 @@ const server = createServer((socket) => {
           const entry = pending.get(id); if (!entry) return;
           if (entry.cancellable) {
             cancelNativeHostOnClientLoss(id, entry, writeCore);
-            entry.timeout = setTimeout(() => { if (!pending.delete(id)) return; send(socket, { kind: "response", id: message.id, response: { ok: false, error: entry.repairOperation ? "The memory repair timed out. Check memory processing before trying again." : entry.providerOperation ? "The provider operation timed out. Check its connection status before retrying." : entry.fileRequest ? "The file request timed out. Check whether the file was saved before retrying." : "The plugin operation timed out and its outcome is uncertain. Check installed plugins before retrying." } }); }, 8_000);
+            entry.timeout = setTimeout(() => { if (!pending.delete(id)) return; send(socket, { kind: "response", id: message.id, response: { ok: false, error: entry.workspaceOperation ? "Project selection timed out. Check projects before trying again." : entry.repairOperation ? "The memory repair timed out. Check memory processing before trying again." : entry.providerOperation ? "The provider operation timed out. Check its connection status before retrying." : entry.fileRequest ? "The file request timed out. Check whether the file was saved before retrying." : "The plugin operation timed out and its outcome is uncertain. Check installed plugins before retrying." } }); }, 8_000);
           } else { pending.delete(id); send(socket, { kind: "response", id: message.id, response: { ok: false, error: "Kestrel Core response timed out. Check the task before retrying." } }); }
-        }, ["select-workspace-folder", "select-context-files"].includes(parsed.data.type) ? 10 * 60_000 + 30_000 : nativeRequestTimeoutMs(parsed.data, "broker"));
-				pending.set(id, { socket, uiId: message.id, timeout, repairOperation: NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES.has(parsed.data.type), cancellable: NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type), providerOperation: NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type), fileRequest: NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) });
+        }, ["select-workspace-folder", "reconnect-workspace-project", "select-context-files"].includes(parsed.data.type) ? 10 * 60_000 + 30_000 : nativeRequestTimeoutMs(parsed.data, "broker"));
+				pending.set(id, { socket, uiId: message.id, timeout, repairOperation: NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES.has(parsed.data.type), workspaceOperation: ["select-workspace-folder", "reconnect-workspace-project"].includes(parsed.data.type), cancellable: ["select-workspace-folder", "reconnect-workspace-project"].includes(parsed.data.type) || NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type), providerOperation: NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type), fileRequest: NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) });
 				core.stdin.write(JSON.stringify({ type: hostRequest ? "host-request" : "request", id, request: parsed.data }) + "\n");
 			}
 		}

@@ -11,6 +11,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <unistd.h>
 #include <vector>
 #include "kestrel_native_profile_transfer.h"
@@ -73,23 +74,46 @@ bool WritePrivateFile(NSString* path, NSData* bytes, bool replace, bool* committ
   const int parent = open(path.stringByDeletingLastPathComponent.fileSystemRepresentation, O_RDONLY|O_DIRECTORY|O_CLOEXEC);
   if (parent < 0) return false; ok = fsync(parent) == 0; close(parent); return ok;
 }
+bool ValidUUID(id value, bool lowercase = false) {
+  if (![value isKindOfClass:NSString.class] || [value length] != 36) return false;
+  NSUUID* uuid = [[NSUUID alloc] initWithUUIDString:value];
+  if (!uuid || [uuid.UUIDString caseInsensitiveCompare:value] != NSOrderedSame) return false;
+  return !lowercase || [value isEqualToString:[value lowercaseString]];
+}
+bool ValidHandoffUUID(id value) {
+  return ValidUUID(value,true) && [value characterAtIndex:14] == '4' &&
+      [@"89ab" rangeOfString:[value substringWithRange:NSMakeRange(19,1)]].location != NSNotFound;
+}
 bool ValidRelative(id value) {
   if (![value isKindOfClass:NSString.class]) return false;
   NSString* text = value;
   if (!text.length) return true;
-  NSArray<NSString*>* parts = text.pathComponents;
-  return parts.count == 2 && [parts[0] isEqualToString:@"native-core-profiles"] && parts[1].length == 36 && [[NSUUID alloc] initWithUUIDString:parts[1]];
+  NSString* prefix = @"native-core-profiles/";
+  return [text hasPrefix:prefix] && ValidUUID([text substringFromIndex:prefix.length]);
 }
 NSDictionary* Selection(NSString* root) {
   if (!PrivateDirectory(root)) return nil;
   NSString* path = [root stringByAppendingPathComponent:kSelectionName]; struct stat info{};
-  if (lstat(path.fileSystemRepresentation, &info)) return errno == ENOENT ? @{ @"version":@1, @"active":@"", @"previous":@"" } : nil;
-  NSData* bytes = ReadPrivateFile(path, 4096);
+  if (lstat(path.fileSystemRepresentation, &info)) return errno == ENOENT ? @{ @"version":@2, @"active":@"", @"previous":@"", @"handoffs":@{@"":NSNull.null} } : nil;
+  NSData* bytes = ReadPrivateFile(path, 32768);
   id value = bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil] : nil;
-  if (![value isKindOfClass:NSDictionary.class] || [value count] != 3 || ![value[@"version"] isKindOfClass:NSNumber.class] ||
-      CFGetTypeID((__bridge CFTypeRef)value[@"version"]) == CFBooleanGetTypeID() || ![value[@"version"] isEqualToNumber:@1] ||
+  if (![value isKindOfClass:NSDictionary.class] || ![value[@"version"] isKindOfClass:NSNumber.class] ||
+      CFGetTypeID((__bridge CFTypeRef)value[@"version"]) == CFBooleanGetTypeID() || CFNumberIsFloatType((__bridge CFNumberRef)value[@"version"]) ||
       !ValidRelative(value[@"active"]) || !ValidRelative(value[@"previous"])) return nil;
-  return value;
+  if ([value[@"version"] isEqualToNumber:@1]) {
+    if ([value count] != 3) return nil;
+    NSMutableDictionary* handoffs = [NSMutableDictionary dictionary];
+    handoffs[value[@"active"]] = NSNull.null; handoffs[value[@"previous"]] = NSNull.null;
+    return @{ @"version":@2, @"active":value[@"active"], @"previous":value[@"previous"], @"handoffs":[handoffs copy] };
+  }
+  if (![value[@"version"] isEqualToNumber:@2] || [value count] != 4 || ![value[@"handoffs"] isKindOfClass:NSDictionary.class]) return nil;
+  NSDictionary* handoffs = value[@"handoffs"];
+  if (handoffs.count > 129 || handoffs.count - (handoffs[@""] ? 1 : 0) > 128 || !handoffs[value[@"active"]] || !handoffs[value[@"previous"]]) return nil;
+  for (id relative in handoffs) {
+    id identifier = handoffs[relative];
+    if (!ValidRelative(relative) || (identifier != NSNull.null && !ValidHandoffUUID(identifier))) return nil;
+  }
+  return @{ @"version":@2, @"active":value[@"active"], @"previous":value[@"previous"], @"handoffs":[handoffs copy] };
 }
 NSString* Profile(NSString* root, NSString* relative) {
   NSString* path = relative.length ? [root stringByAppendingPathComponent:relative] : root;
@@ -98,6 +122,17 @@ NSString* Profile(NSString* root, NSString* relative) {
   return path;
 }
 void Alert(NSString* title, NSString* message) { NSAlert* alert = [[NSAlert alloc] init]; alert.messageText = title; alert.informativeText = message; [alert addButtonWithTitle:@"OK"]; [alert runModal]; }
+bool SafeProjectHandoffPreview(id value, NSString* expected, bool recovery = false) {
+  if (![value isKindOfClass:NSDictionary.class] || [value count] != (recovery ? 6 : 5) || !ValidHandoffUUID(value[@"id"]) || ![value[@"id"] isEqual:expected]) return false;
+  if (recovery && (![value[@"manifestPresent"] isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value[@"manifestPresent"]) != CFBooleanGetTypeID())) return false;
+  for (NSString* key in @[@"projects",@"pendingIdentities",@"instructions"]) {
+    id number = value[key];
+    if (![number isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)number) == CFBooleanGetTypeID() || CFNumberIsFloatType((__bridge CFNumberRef)number) || [number longLongValue] < 0 || [number longLongValue] > 500) return false;
+  }
+  id present = value[@"registryPresent"];
+  return [present isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)present) == CFBooleanGetTypeID() &&
+      [value[@"projects"] integerValue] <= [value[@"pendingIdentities"] integerValue] && [value[@"instructions"] integerValue] <= [value[@"projects"] integerValue];
+}
 NSString* CountSummary(NSDictionary* preview) {
   NSDictionary* counts = preview[@"counts"], *excluded = preview[@"excluded"];
   NSString* legacy = @"";
@@ -106,6 +141,8 @@ NSString* CountSummary(NSDictionary* preview) {
     legacy = [legacy stringByAppendingFormat:@"\nConflicting job histories kept encrypted: %@\nJob identities kept paused: %@\nThese jobs will not restart automatically.",preview[@"legacy"][@"archivedMemoryJobs"],preview[@"legacy"][@"pausedMemoryJobIdentities"]];
     if (preview[@"legacy"][@"purgedMemoryJobArchives"]) legacy = [legacy stringByAppendingFormat:@"\nPreviously deleted job histories: %@",preview[@"legacy"][@"purgedMemoryJobArchives"]];
   }
+  NSDictionary* projects = preview[@"projectHandoff"];
+  if ([projects isKindOfClass:NSDictionary.class]) legacy = [legacy stringByAppendingFormat:@"\n\nProject links: %@\nSaved project details: %@\nProjects with instructions: %@\nFolders stay disconnected until you choose them again in Settings.", projects[@"pendingIdentities"],projects[@"projects"],projects[@"instructions"]];
   return [NSString stringWithFormat:@"Conversations: %@\nMessages: %@\nMemory records: %@\nTimeline entries: %@\n\nActive tasks to cancel: %@\nApprovals to clear: %@\nScheduled jobs to cancel: %@%@\n\nThis step transfers conversations, memory and task history. Browser data and saved credentials are not included. Connect providers again if needed after restart. Your existing profiles stay available.",
       counts[@"runtime_sessions"] ?: @0, counts[@"runtime_messages"] ?: @0, counts[@"memories"] ?: @0, counts[@"memory_timeline_events"] ?: @0,
       excluded[@"activeAgentRunsCancelled"] ?: @0, excluded[@"unexecutedApprovalsRetired"] ?: @0, excluded[@"scheduledJobsCancelled"] ?: @0,legacy];
@@ -186,11 +223,22 @@ NSDictionary* RecoveryWitness(NSString* source, NSString* destination) {
 }
 }
 
+NSDictionary* KestrelReadNativeCoreProfileSelection(NSString* browser_profile, NSError** error) {
+  NSDictionary* selection = Selection(browser_profile);
+  if (!selection && error) *error = Failure(@"Kestrel's data profile selection is unavailable. Existing profiles were preserved.");
+  return selection;
+}
+NSDictionary* KestrelResolveNativeCoreProfileSelection(NSString* browser_profile, NSError** error) {
+  NSDictionary* selection = KestrelReadNativeCoreProfileSelection(browser_profile,error);
+  NSString* path = selection ? Profile(browser_profile,selection[@"active"]) : nil;
+  if (!path) {
+    if (error) *error = Failure(@"Kestrel's data profile selection is unavailable. Existing profiles were preserved.");
+    return nil;
+  }
+  return @{ @"profilePath":path, @"relativeProfile":selection[@"active"], @"handoffId":selection[@"handoffs"][selection[@"active"]] };
+}
 NSString* KestrelResolveNativeCoreProfile(NSString* browser_profile, NSError** error) {
-  NSDictionary* selected = Selection(browser_profile);
-  NSString* result = selected ? Profile(browser_profile, selected[@"active"]) : nil;
-  if (!result && error) *error = Failure(@"Kestrel's data profile selection is unavailable. Existing profiles were preserved.");
-  return result;
+  return KestrelResolveNativeCoreProfileSelection(browser_profile,error)[@"profilePath"];
 }
 
 NSString* KestrelCanonicalNativeCoreTransferSource(NSString* selected_path) {
@@ -201,13 +249,53 @@ NSString* KestrelCanonicalNativeCoreTransferSource(NSString* selected_path) {
       PrivateDirectory([source stringByAppendingPathComponent:@"database"]) ? source : nil;
 }
 
-KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSString* root, NSString* active, NSString* previous, NSString* expected_active, NSString* expected_previous) {
-  NSDictionary* current = Selection(root);
-  if (!current || ![current[@"active"] isEqual:expected_active] || (expected_previous && ![current[@"previous"] isEqual:expected_previous]) || !ValidRelative(active) || !ValidRelative(previous) || !Profile(root, active) || !Profile(root, previous)) return KestrelNativeProfileSelectionResult::Unchanged;
-  NSData* bytes = [NSJSONSerialization dataWithJSONObject:@{@"version":@1,@"active":active,@"previous":previous} options:0 error:nil];
+namespace {
+// Cooperating writers lock the profile directory, keeping read/compare/rename
+// in one critical section without creating a persistent lock file.
+class SelectionLock {
+ public:
+  explicit SelectionLock(NSString* root) {
+    if (PrivateDirectory(root)) fd_ = open(root.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    if (fd_ >= 0 && flock(fd_,LOCK_EX)) { close(fd_); fd_ = -1; }
+  }
+  ~SelectionLock() { if (fd_ >= 0) { flock(fd_,LOCK_UN); close(fd_); } }
+  bool valid() const { return fd_ >= 0; }
+ private: int fd_ = -1;
+};
+KestrelNativeProfileSelectionResult SaveSnapshot(NSString* root, NSDictionary* value) {
+  NSData* bytes = [NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
+  if (!bytes || bytes.length > 32768) return KestrelNativeProfileSelectionResult::Unchanged;
   bool committed = false;
-  if (bytes && WritePrivateFile([root stringByAppendingPathComponent:kSelectionName], bytes, true, &committed)) return KestrelNativeProfileSelectionResult::Selected;
+  if (WritePrivateFile([root stringByAppendingPathComponent:kSelectionName],bytes,true,&committed)) return KestrelNativeProfileSelectionResult::Selected;
   return committed ? KestrelNativeProfileSelectionResult::SelectedDurabilityUnconfirmed : KestrelNativeProfileSelectionResult::Unchanged;
+}
+}
+KestrelNativeProfileSelectionResult KestrelRegisterPreparedNativeCoreHandoff(NSString* root, NSString* relative, NSString* identifier, NSDictionary* expected) {
+  SelectionLock lock(root); if (!lock.valid()) return KestrelNativeProfileSelectionResult::Unchanged;
+  NSDictionary* current = Selection(root);
+  if (!current || ![current isEqualToDictionary:expected] || !ValidRelative(relative) || !relative.length || [relative isEqual:current[@"active"]] || [relative isEqual:current[@"previous"]] || !ValidHandoffUUID(identifier) || !Profile(root,relative)) return KestrelNativeProfileSelectionResult::Unchanged;
+  NSMutableDictionary* handoffs = [current[@"handoffs"] mutableCopy];
+  id prior = handoffs[relative];
+  if (prior && prior != NSNull.null && ![prior isEqual:identifier]) return KestrelNativeProfileSelectionResult::Unchanged;
+  if (!prior && (handoffs.count >= 129 || handoffs.count - (handoffs[@""] ? 1 : 0) >= 128)) return KestrelNativeProfileSelectionResult::Unchanged;
+  handoffs[relative] = identifier;
+  return SaveSnapshot(root,@{@"version":@2,@"active":current[@"active"],@"previous":current[@"previous"],@"handoffs":handoffs});
+}
+KestrelNativeProfileSelectionResult KestrelSaveReviewedNativeCoreProfileSelection(NSString* root, NSString* active, NSString* previous, NSDictionary* expected) {
+  SelectionLock lock(root); if (!lock.valid()) return KestrelNativeProfileSelectionResult::Unchanged;
+  NSDictionary* current = Selection(root);
+  if (!current || ![current isEqualToDictionary:expected] || !ValidRelative(active) || !ValidRelative(previous) || !current[@"handoffs"][active] || !current[@"handoffs"][previous] || !Profile(root,active) || !Profile(root,previous)) return KestrelNativeProfileSelectionResult::Unchanged;
+  return SaveSnapshot(root,@{@"version":@2,@"active":active,@"previous":previous,@"handoffs":current[@"handoffs"]});
+}
+KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSString* root, NSString* active, NSString* previous, NSString* expected_active, NSString* expected_previous) {
+  SelectionLock lock(root); if (!lock.valid()) return KestrelNativeProfileSelectionResult::Unchanged;
+  NSDictionary* current = Selection(root);
+  if (!current || ![current[@"active"] isEqual:expected_active] || (expected_previous && ![current[@"previous"] isEqual:expected_previous]) || !ValidRelative(active) || !ValidRelative(previous) || !Profile(root,active) || !Profile(root,previous)) return KestrelNativeProfileSelectionResult::Unchanged;
+  NSMutableDictionary* handoffs = [current[@"handoffs"] mutableCopy];
+  if (!handoffs[active]) handoffs[active] = NSNull.null;
+  if (!handoffs[previous]) handoffs[previous] = NSNull.null;
+  if (handoffs.count > 129 || handoffs.count - (handoffs[@""] ? 1 : 0) > 128) return KestrelNativeProfileSelectionResult::Unchanged;
+  return SaveSnapshot(root,@{@"version":@2,@"active":active,@"previous":previous,@"handoffs":handoffs});
 }
 
 @interface KestrelCoreTransferPipe : NSObject
@@ -219,6 +307,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 @property(nonatomic) uint64_t launchedSeconds;
 @property(nonatomic) uint64_t launchedMicroseconds;
 @property(nonatomic) BOOL hasProcessIdentity;
+@property(nonatomic) BOOL projectMode;
 - (BOOL)start;
 - (void)recordTaskIdentity;
 - (BOOL)taskMatchesLaunch;
@@ -229,7 +318,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 - (BOOL)start {
   NSString* root = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"agent-core"];
   self.task = [[NSTask alloc] init]; self.task.executableURL = [NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"node/bin/node"]];
-  self.task.arguments = @[@"--max-old-space-size=1536", [root stringByAppendingPathComponent:@"service/host-profile-file-transfer.js"], @"--protected-host-pipe"];
+  self.task.arguments = @[@"--max-old-space-size=1536", [root stringByAppendingPathComponent:self.projectMode ? @"service/host-profile-project-transfer.js" : @"service/host-profile-file-transfer.js"], @"--protected-host-pipe"];
   NSMutableDictionary* environment = [NSMutableDictionary dictionary]; NSDictionary* inherited = NSProcessInfo.processInfo.environment;
   for (NSString* name in @[@"HOME",@"PATH",@"LANG",@"TMPDIR"]) if (inherited[name]) environment[name] = inherited[name];
   self.task.environment = environment;
@@ -316,6 +405,8 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 @property(nonatomic,copy) NSString* browserProfile;
 @property(nonatomic,copy) NSString* currentCoreProfile;
 @property(nonatomic,copy) NSString* preparedProfile;
+@property(nonatomic,copy) NSString* preparedHandoffId;
+@property(nonatomic,copy) NSDictionary* reviewedSelection;
 @property(nonatomic,copy) NSString* selectedSource;
 @property(atomic,strong) KestrelCoreTransferPipe* pipe;
 @property(nonatomic,strong) NSOpenPanel* picker;
@@ -330,6 +421,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 - (BOOL)interruptedRowIsCurrent:(NSDictionary*)row selection:(NSDictionary*)selection;
 - (void)finishInterruptedWithTitle:(NSString*)title message:(NSString*)message;
 - (void)showInterruptedReview:(NSDictionary*)reviewed row:(NSDictionary*)row selection:(NSDictionary*)selection;
+- (void)showProjectRecoveryReview:(NSDictionary*)planned row:(NSDictionary*)row selection:(NSDictionary*)selection witness:(NSDictionary*)witness source:(NSString*)source;
 - (void)showRecoveredSelection:(NSDictionary*)row selection:(NSDictionary*)selection witness:(NSDictionary*)witness source:(NSString*)source;
 @end
 
@@ -341,10 +433,12 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 - (BOOL)canBegin { return !self.busy && !self.stopped; }
 - (void)shutdown { self.stopped = YES; [self.picker cancel:nil]; if (self.reviewAlert) [NSApp abortModal]; dispatch_async(self.queue, ^{ [self.pipe stop]; self.pipe = nil; }); }
 - (NSString*)destinationKey {
+  if (self.stopped) return nil;
   NativeCoreProfileKeyStore store; std::string key, error;
   const auto identity = std::string(NSBundle.mainBundle.bundleIdentifier.UTF8String ?: "");
   const auto bundle = std::string(NSBundle.mainBundle.bundlePath.fileSystemRepresentation ?: "");
   if (!self.preparedProfile) {
+    if (!self.reviewedSelection || [self.reviewedSelection[@"handoffs"] count] >= 129) return nil;
     if (self.testKeys) {
       if (!store.GetOrCreateDisposableTestKey(std::string(self.browserProfile.fileSystemRepresentation),identity,bundle,&key,&error)) return nil;
       Clear(key.data(),key.size()); key.clear();
@@ -354,13 +448,23 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     NSString* fresh = [parent stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     if (mkdir(fresh.fileSystemRepresentation,0700) || !PrivateDirectory(fresh)) return nil;
     self.preparedProfile = fresh;
+    self.preparedHandoffId = NSUUID.UUID.UUIDString.lowercaseString;
     if (self.testKeys && !WritePrivateFile([fresh stringByAppendingPathComponent:@".kestrel-native-test-profile-v1"], [@"native-test-profile-v1\n" dataUsingEncoding:NSUTF8StringEncoding], false)) return nil;
   }
+  NSString* relative = [@"native-core-profiles" stringByAppendingPathComponent:self.preparedProfile.lastPathComponent];
+  if (!self.preparedHandoffId || !self.reviewedSelection ||
+      KestrelRegisterPreparedNativeCoreHandoff(self.browserProfile,relative,self.preparedHandoffId,self.reviewedSelection) != KestrelNativeProfileSelectionResult::Selected) return nil;
+  NSMutableDictionary* expectedHandoffs = [self.reviewedSelection[@"handoffs"] mutableCopy]; expectedHandoffs[relative] = self.preparedHandoffId;
+  NSDictionary* expected = @{@"version":@2,@"active":self.reviewedSelection[@"active"],@"previous":self.reviewedSelection[@"previous"],@"handoffs":expectedHandoffs};
+  NSDictionary* registered = Selection(self.browserProfile);
+  if (![registered isEqualToDictionary:expected]) return nil;
+  self.reviewedSelection = registered;
+  if (self.stopped) return nil;
   const bool ok = self.testKeys ? store.GetOrCreateDisposableTestKey(std::string(self.preparedProfile.fileSystemRepresentation),identity,bundle,&key,&error)
       : store.GetOrCreate(std::string(self.preparedProfile.fileSystemRepresentation),&key,&error);
   NSString* result = ok ? [NSString stringWithUTF8String:key.c_str()] : nil;
   Clear(key.data(),key.size());
-  if (!result) return nil;
+  if (!result || self.stopped) return nil;
   NSString* core = [self.preparedProfile stringByAppendingPathComponent:@"native-core"];
   return MakePrivateDirectory(core) && MakePrivateDirectory([core stringByAppendingPathComponent:@"database"]) ? result : nil;
 }
@@ -380,8 +484,10 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
     });
     return;
   }
-  NSError* error = nil; NSString* selected = KestrelResolveNativeCoreProfile(self.browserProfile,&error);
+  NSError* error = nil; NSDictionary* selection = KestrelReadNativeCoreProfileSelection(self.browserProfile,&error);
+  NSString* selected = selection ? Profile(self.browserProfile,selection[@"active"]) : nil;
   if (![selected isEqualToString:self.currentCoreProfile]) { Alert(@"Restart Kestrel first",@"A different data profile is selected for the next launch. Quit and reopen Kestrel before starting another transfer."); return; }
+  self.reviewedSelection = selection;
   NSOpenPanel* picker = NSOpenPanel.openPanel; self.picker = picker; self.busy = YES;
   picker.title = @"Choose an existing Kestrel profile"; picker.message = @"Choose the Kestrel profile containing the conversations and memory you want to transfer.";
   picker.prompt = @"Review Profile"; picker.canChooseDirectories = YES; picker.canChooseFiles = NO; picker.canCreateDirectories = NO; picker.allowsMultipleSelection = NO;
@@ -421,11 +527,11 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
       if (unlocked && !owner.stopped) {
         NSString* destination_key = [owner destinationKey];
         if (destination_key && !owner.stopped) {
-          owner.pipe = [[KestrelCoreTransferPipe alloc] init];
+          owner.pipe = [[KestrelCoreTransferPipe alloc] init]; owner.pipe.projectMode = YES;
           if ([owner.pipe start]) {
             NSString* encoded = [[NSData dataWithBytes:key.data() length:key.size()] base64EncodedStringWithOptions:0];
-            planned = [owner.pipe request:@{@"method":@"plan", @"sourceDatabasePath":[source stringByAppendingPathComponent:@"database/kestrel.sqlite"],
-              @"destinationDatabasePath":[owner.preparedProfile stringByAppendingPathComponent:@"native-core/database/kestrel.sqlite"], @"sourceKeyBase64":encoded}];
+            planned = [owner.pipe request:@{@"method":@"plan-profile", @"sourceProfileRoot":source,
+              @"destinationCoreRoot":[owner.preparedProfile stringByAppendingPathComponent:@"native-core"], @"handoffId":owner.preparedHandoffId, @"sourceKeyBase64":encoded}];
           }
         }
       }
@@ -437,14 +543,14 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
 - (void)showPlan:(NSDictionary*)planned {
   if (![planned[@"ok"] boolValue] || ![planned[@"planId"] isKindOfClass:NSString.class] || ![planned[@"preview"] isKindOfClass:NSDictionary.class] ||
       ![planned[@"preview"][@"counts"] isKindOfClass:NSDictionary.class] || ![planned[@"preview"][@"excluded"] isKindOfClass:NSDictionary.class] ||
-      ![planned[@"preview"][@"planSha256"] isKindOfClass:NSString.class] || !SafeLegacyCounts(planned[@"preview"][@"legacy"])) {
+      ![planned[@"preview"][@"planSha256"] isKindOfClass:NSString.class] || !SafeLegacyCounts(planned[@"preview"][@"legacy"]) || !SafeProjectHandoffPreview(planned[@"preview"][@"projectHandoff"],self.preparedHandoffId)) {
     if ([self.pipe stop]) self.pipe = nil;
     self.busy = NO;
     NSString* detail = [planned[@"error"][@"message"] isKindOfClass:NSString.class] ? planned[@"error"][@"message"] : @"The selected profile could not be unlocked or reviewed. Existing data was preserved.";
     if (self.preparedProfile) [self showTransferFailure:detail]; else Alert(@"Profile review unavailable",detail);
     return;
   }
-  NSAlert* review = [[NSAlert alloc] init]; review.messageText = @"Transfer conversations and memory?";
+  NSAlert* review = [[NSAlert alloc] init]; review.messageText = @"Transfer conversations, memory and projects?";
   review.informativeText = [NSString stringWithFormat:@"Source: %@\n\n%@",self.selectedSource,CountSummary(planned[@"preview"])];
   [review addButtonWithTitle:@"Apply Transfer"]; [review addButtonWithTitle:@"Cancel"];
   NSButton* closed = [NSButton checkboxWithTitle:@"The Kestrel instance using this source is closed" target:self action:@selector(sourceClosed:)];
@@ -454,21 +560,21 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   if (decision != NSAlertFirstButtonReturn || closed.state != NSControlStateValueOn) { if ([self.pipe stop]) self.pipe = nil; self.busy = NO; return; }
   dispatch_async(self.queue, ^{ @autoreleasepool {
     NSString* destination_key = [self destinationKey];
-    NSDictionary* applied = destination_key && !self.stopped ? [self.pipe request:@{@"method":@"apply",@"planId":planned[@"planId"],@"acceptedPlanSha256":planned[@"preview"][@"planSha256"],@"approved":@YES,@"destinationKeyBase64":destination_key}] : nil;
-    NSDictionary* verified = [applied[@"ok"] boolValue] ? [self.pipe request:@{@"method":@"verify-recovery",@"recoveryId":applied[@"recoveryId"]}] : nil;
+    NSDictionary* applied = destination_key && !self.stopped ? [self.pipe request:@{@"method":@"apply-profile",@"planId":planned[@"planId"],@"acceptedPlanSha256":planned[@"preview"][@"planSha256"],@"approved":@YES,@"destinationKeyBase64":destination_key}] : nil;
+    NSDictionary* verified = [applied[@"ok"] boolValue] && [applied[@"handoffId"] isEqual:self.preparedHandoffId] ? [self.pipe request:@{@"method":@"verify-profile",@"recoveryId":applied[@"recoveryId"]}] : nil;
     const BOOL worker_stopped = !self.pipe || [self.pipe stop];
     if (worker_stopped) self.pipe = nil;
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.stopped) return;
-      if ([verified[@"ok"] boolValue] && worker_stopped) {
+      if ([verified[@"ok"] boolValue] && [verified[@"handoffId"] isEqual:self.preparedHandoffId] && worker_stopped) {
         NSDictionary* current = Selection(self.browserProfile);
         NSString* relative = [@"native-core-profiles" stringByAppendingPathComponent:self.preparedProfile.lastPathComponent];
         NSString* active = current[@"active"];
         NSString* active_path = current ? Profile(self.browserProfile,active) : nil;
-        const auto saved = [active_path isEqualToString:self.currentCoreProfile]
-            ? KestrelSaveNativeCoreProfileSelection(self.browserProfile,relative,active,active) : KestrelNativeProfileSelectionResult::Unchanged;
+        const auto saved = [active_path isEqualToString:self.currentCoreProfile] && [current isEqualToDictionary:self.reviewedSelection] && [current[@"handoffs"][relative] isEqual:self.preparedHandoffId]
+            ? KestrelSaveReviewedNativeCoreProfileSelection(self.browserProfile,relative,active,self.reviewedSelection) : KestrelNativeProfileSelectionResult::Unchanged;
         if (saved != KestrelNativeProfileSelectionResult::Unchanged) {
-          self.preparedProfile = nil; self.busy = NO;
+          self.preparedProfile = nil; self.preparedHandoffId = nil; self.reviewedSelection = nil; self.busy = NO;
           Alert(saved == KestrelNativeProfileSelectionResult::Selected ? @"Transfer complete" : @"Transfer selected; storage needs attention",
               saved == KestrelNativeProfileSelectionResult::Selected
               ? @"The imported conversations and memory were verified. Quit and reopen Kestrel to use them. Your previous data profile and the original source remain available."
@@ -506,7 +612,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
       // This is a fresh reviewed attempt, not an in-place recovery or deletion.
       // Keep the old canonical path and its key identity so later review remains
       // possible, including any interrupted SQLite journal or recovery lease.
-      self.preparedProfile = nil; self.busy = NO;
+      self.preparedProfile = nil; self.preparedHandoffId = nil; self.reviewedSelection = nil; self.busy = NO;
       std::cout << "KESTREL_NATIVE_CORE_TRANSFER_RETRY_READY" << std::endl;
       [self beginTransfer];
     });
@@ -572,11 +678,21 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   if (decision == NSAlertThirdButtonReturn) { self.busy = NO; [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:row[@"path"] isDirectory:YES]]]; return; }
   if (decision != NSAlertFirstButtonReturn) { self.busy = NO; return; }
   if (![row[@"hasJournal"] boolValue]) { self.busy = NO; Alert(@"Prepared files preserved",@"This folder has no safe recovery journal. Kestrel cannot authenticate or select it as a completed transfer. The folder was kept without opening its database or accessing a key."); return; }
+  if (![selection[@"handoffs"][row[@"relative"]] isKindOfClass:NSString.class]) {
+    NSString* identifier = NSUUID.UUID.UUIDString.lowercaseString;
+    if (KestrelRegisterPreparedNativeCoreHandoff(self.browserProfile,row[@"relative"],identifier,selection) != KestrelNativeProfileSelectionResult::Selected) {
+      self.busy = NO; Alert(@"Recovery needs another review",@"The preparation could not be recorded durably. All profiles were kept. Start a new review."); return;
+    }
+    NSMutableDictionary* handoffs = [selection[@"handoffs"] mutableCopy]; handoffs[row[@"relative"]] = identifier;
+    NSDictionary* expected = @{@"version":@2,@"active":selection[@"active"],@"previous":selection[@"previous"],@"handoffs":handoffs};
+    selection = Selection(self.browserProfile);
+    if (![selection isEqualToDictionary:expected] || ![self interruptedRowIsCurrent:row selection:selection]) { self.busy = NO; Alert(@"Recovery needs another review",@"The data selection changed. All profiles were kept. Start a new review."); return; }
+  }
   dispatch_async(self.queue, ^{ @autoreleasepool {
     NSDictionary* reviewed = nil;
     if ([self interruptedRowIsCurrent:row selection:selection]) {
-      self.pipe = [[KestrelCoreTransferPipe alloc] init];
-      if ([self.pipe start]) reviewed = [self.pipe request:@{@"method":@"inspect-interrupted",@"destinationDatabasePath":[row[@"path"] stringByAppendingPathComponent:@"native-core/database/kestrel.sqlite"]}];
+      self.pipe = [[KestrelCoreTransferPipe alloc] init]; self.pipe.projectMode = YES;
+      if ([self.pipe start]) reviewed = [self.pipe request:@{@"method":@"inspect-profile",@"destinationCoreRoot":[row[@"path"] stringByAppendingPathComponent:@"native-core"],@"handoffId":selection[@"handoffs"][row[@"relative"]]}];
     }
     dispatch_async(dispatch_get_main_queue(), ^{ if (!self.stopped) [self showInterruptedReview:reviewed row:row selection:selection]; });
   } });
@@ -621,7 +737,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   if (self.stopped) return;
   if (decision != NSAlertFirstButtonReturn || closed.state != NSControlStateValueOn) { [self finishInterruptedWithTitle:nil message:nil]; return; }
   dispatch_async(self.queue, ^{ @autoreleasepool {
-    NSDictionary* recovered = nil; NSDictionary* verified = nil;
+    NSDictionary* planned = nil;
     std::array<uint8_t,32> sourceKey{}; std::string destinationKey, failure;
     if ([self interruptedRowIsCurrent:row selection:selection] && [KestrelCanonicalNativeCoreTransferSource(source) isEqualToString:source] && [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness]) {
       NSMutableData* envelope = (NSMutableData*)ReadPrivateFile([source stringByAppendingPathComponent:@"secure/database-key.bin"],256);
@@ -638,7 +754,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
             if (existing && [self interruptedRowIsCurrent:row selection:selection] && [KestrelCanonicalNativeCoreTransferSource(source) isEqualToString:source] && [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness]) {
               NSString* encodedSource = [[NSData dataWithBytes:sourceKey.data() length:sourceKey.size()] base64EncodedStringWithOptions:0];
               NSString* encodedDestination = [NSString stringWithUTF8String:destinationKey.c_str()];
-              recovered = [self.pipe request:@{@"method":@"recover-interrupted",@"reviewId":reviewed[@"reviewId"],@"acceptedRecoverySha256":reviewed[@"preview"][@"recoverySha256"],@"approved":@YES,@"sourceKeyBase64":encodedSource,@"destinationKeyBase64":encodedDestination}];
+              planned = [self.pipe request:@{@"method":@"plan-profile-recovery",@"reviewId":reviewed[@"reviewId"],@"acceptedRecoverySha256":reviewed[@"preview"][@"recoverySha256"],@"sourceKeyBase64":encodedSource,@"destinationKeyBase64":encodedDestination}];
             }
           }
         }
@@ -646,20 +762,43 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
       }
     }
     Clear(sourceKey.data(),sourceKey.size()); Clear(destinationKey.data(),destinationKey.size()); destinationKey.clear();
-    NSDictionary* witness = [recovered[@"ok"] boolValue] && [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness] ? RecoveryWitness(sourceDatabase,destination) : nil;
-    if (witness && [recovered[@"recoveryId"] isKindOfClass:NSString.class] && !self.stopped)
-      verified = [self.pipe request:@{@"method":@"verify-recovery",@"recoveryId":recovered[@"recoveryId"]}];
-    const BOOL confirmed = !self.pipe || [self.pipe stop]; if (confirmed) self.pipe = nil;
-    const BOOL unchanged = witness && [RecoveryWitness(sourceDatabase,destination) isEqualToDictionary:witness];
+    const BOOL unchanged = [RecoveryInputWitness(sourceDatabase,destination) isEqualToDictionary:inputWitness];
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.stopped) return;
-      if (!confirmed) { self.busy = NO; Alert(@"Transfer worker still stopping",@"The private worker could not be confirmed stopped. Recovery files were kept, and your current profile is still selected."); return; }
+      if (!unchanged) { [self finishInterruptedWithTitle:@"Recovery needs another review" message:@"The original source or recovery files changed. All profiles were kept. Start a new review."]; return; }
+      [self showProjectRecoveryReview:planned row:row selection:selection witness:inputWitness source:sourceDatabase];
+    });
+  } });
+}
+- (void)showProjectRecoveryReview:(NSDictionary*)planned row:(NSDictionary*)row selection:(NSDictionary*)selection witness:(NSDictionary*)inputWitness source:(NSString*)source {
+  NSString* destination = [row[@"path"] stringByAppendingPathComponent:@"native-core/database/kestrel.sqlite"];
+  NSString* identifier = selection[@"handoffs"][row[@"relative"]];
+  if (![planned[@"ok"] boolValue] || !ValidUUID(planned[@"planId"],true) || ![planned[@"preview"] isKindOfClass:NSDictionary.class] ||
+      !SafeProjectHandoffPreview(planned[@"preview"][@"projectHandoff"],identifier,true) || ![planned[@"preview"][@"planSha256"] isKindOfClass:NSString.class] ||
+      ![self interruptedRowIsCurrent:row selection:selection] || ![RecoveryInputWitness(source,destination) isEqualToDictionary:inputWitness]) {
+    NSString* detail = [planned[@"error"][@"message"] isKindOfClass:NSString.class] ? planned[@"error"][@"message"] : @"The project recovery could not be reviewed safely. All data files were preserved.";
+    [self finishInterruptedWithTitle:@"Recovery needs another review" message:detail]; return;
+  }
+  NSAlert* review = [[NSAlert alloc] init]; review.messageText = @"Recover these project links?";
+  review.informativeText = CountSummary(planned[@"preview"]);
+  if (![planned[@"preview"][@"projectHandoff"][@"manifestPresent"] boolValue]) review.informativeText = [review.informativeText stringByAppendingString:@"\n\nProject details will be rebuilt from the original profile."];
+  [review addButtonWithTitle:@"Recover Transfer"]; [review addButtonWithTitle:@"Cancel"]; self.reviewAlert = review;
+  const NSModalResponse decision = [review runModal]; self.reviewAlert = nil;
+  if (self.stopped) return;
+  if (decision != NSAlertFirstButtonReturn || ![self interruptedRowIsCurrent:row selection:selection] || ![RecoveryInputWitness(source,destination) isEqualToDictionary:inputWitness]) { [self finishInterruptedWithTitle:nil message:nil]; return; }
+  dispatch_async(self.queue, ^{ @autoreleasepool {
+    NSDictionary* recovered = !self.stopped ? [self.pipe request:@{@"method":@"recover-profile",@"planId":planned[@"planId"],@"acceptedPlanSha256":planned[@"preview"][@"planSha256"],@"approved":@YES}] : nil;
+    NSDictionary* witness = [recovered[@"ok"] boolValue] && [recovered[@"handoffId"] isEqual:identifier] && [RecoveryInputWitness(source,destination) isEqualToDictionary:inputWitness] ? RecoveryWitness(source,destination) : nil;
+    NSDictionary* verified = witness && !self.stopped ? [self.pipe request:@{@"method":@"verify-profile",@"recoveryId":recovered[@"recoveryId"]}] : nil;
+    const BOOL confirmed = !self.pipe || [self.pipe stop]; if (confirmed) self.pipe = nil;
+    const BOOL unchanged = witness && [RecoveryWitness(source,destination) isEqualToDictionary:witness];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (self.stopped) return;
+      if (!confirmed) { self.busy = NO; Alert(@"Transfer worker still stopping",@"The private worker could not be confirmed stopped. All profiles and recovery files were kept."); return; }
       std::cout << "KESTREL_NATIVE_INTERRUPTED_TRANSFER_WORKER_STOPPED" << std::endl;
-      if (!unchanged || ![verified[@"ok"] boolValue] || ![verified[@"recovery"][@"originalReadable"] isEqual:@YES] || ![verified[@"recovery"][@"destinationReadable"] isEqual:@YES] || ![verified[@"recovery"][@"activationPerformed"] isEqual:@NO]) {
-        self.busy = NO; Alert(@"Recovery needs another review",@"Kestrel could not authenticate and verify the recovered transfer. Existing keys and all data files were kept. Your current profile is still selected. Review the preparation again before retrying."); return;
-      }
+      if (!unchanged || ![verified[@"ok"] boolValue] || ![verified[@"handoffId"] isEqual:identifier] || ![verified[@"recovery"][@"originalReadable"] isEqual:@YES] || ![verified[@"recovery"][@"destinationReadable"] isEqual:@YES] || ![verified[@"recovery"][@"activationPerformed"] isEqual:@NO]) { self.busy = NO; Alert(@"Recovery needs another review",@"The recovered data and project links could not be verified. All profiles were kept. Your current profile is still selected."); return; }
       std::cout << "KESTREL_NATIVE_INTERRUPTED_TRANSFER_RECOVERED" << std::endl;
-      [self showRecoveredSelection:row selection:selection witness:witness source:sourceDatabase];
+      [self showRecoveredSelection:row selection:selection witness:witness source:source];
     });
   } });
 }
@@ -675,7 +814,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   self.busy = NO;
   if (decision != NSAlertFirstButtonReturn) return;
   const auto saved = [self interruptedRowIsCurrent:row selection:selection] && [RecoveryWitness(source,[row[@"path"] stringByAppendingPathComponent:@"native-core/database/kestrel.sqlite"]) isEqualToDictionary:witness]
-      ? KestrelSaveNativeCoreProfileSelection(self.browserProfile,row[@"relative"],selection[@"active"],selection[@"active"],selection[@"previous"])
+      ? KestrelSaveReviewedNativeCoreProfileSelection(self.browserProfile,row[@"relative"],selection[@"active"],selection)
       : KestrelNativeProfileSelectionResult::Unchanged;
   if (saved == KestrelNativeProfileSelectionResult::Unchanged) { Alert(@"Recovery preserved",@"The data profile selection changed or could not be saved. All files were kept. Start a new review."); return; }
   std::cout << "KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTED" << std::endl;
@@ -693,7 +832,7 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(NSStri
   choice.informativeText = @"This changes the conversations, memory and task history used after restart. Both profiles and any newer work remain on this Mac. Browser data is unchanged.";
   [choice addButtonWithTitle:@"Use Previous Data Profile"]; [choice addButtonWithTitle:@"Cancel"];
   if ([choice runModal] != NSAlertFirstButtonReturn) return;
-  const auto saved = KestrelSaveNativeCoreProfileSelection(self.browserProfile,selected[@"previous"],selected[@"active"],selected[@"active"]);
+  const auto saved = KestrelSaveReviewedNativeCoreProfileSelection(self.browserProfile,selected[@"previous"],selected[@"active"],selected);
   if (saved == KestrelNativeProfileSelectionResult::Unchanged) { Alert(@"Profile selection unavailable",@"The profile selection changed or could not be saved. Existing data was preserved."); return; }
   Alert(saved == KestrelNativeProfileSelectionResult::Selected ? @"Data profile selected" : @"Data profile selected; storage needs attention",
       saved == KestrelNativeProfileSelectionResult::Selected

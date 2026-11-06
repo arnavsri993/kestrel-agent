@@ -131,7 +131,7 @@ describe("native workspace host", () => {
 		expect(selectFolder).not.toHaveBeenCalled(); expect(core.stop).not.toHaveBeenCalled();
 		const result = await host.handle({ type: "select-workspace-folder", path: "/", selectedWorkspacePath: homedir() });
 		expect(projects(result)[0]?.path).toBe(await realpath(folder));
-		expect(selectFolder).toHaveBeenCalledWith();
+		expect(selectFolder).toHaveBeenCalledWith(expect.any(AbortSignal));
 	});
 
 	it.each(["/", homedir(), "relative-project"])("rejects an unsafe native picker result %s and restores Core", async path => {

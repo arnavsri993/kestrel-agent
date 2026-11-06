@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtem
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
+import { ProjectSchema } from "@kestrel/shared-types";
 import { readHostProfileFileTransferSourceSnapshot, isKnownLegacy19HostProfileSource, HOST_PROFILE_FILE_TRANSFER_LIMITS, HostProfileTransferLimitError, HostProfileTransferConflictError, HOST_PROFILE_TRANSFER_POLICY, importHostProfileFileTransferSnapshot, type HostProfileTransferSnapshot, type HostProfileLegacyPreservation } from "./profile-transfer.js";
 import { LATEST_SCHEMA_VERSION, listMigrationVersions, loadMigrationSql } from "./migrations.js";
 
@@ -229,6 +230,44 @@ export function planHostProfileFileTransfer(options: { sourceDatabasePath: strin
 		fail("UNSAFE_PATH", "Core transfer paths could not be inspected safely; nothing was changed.");
 	}
 }
+
+/**
+ * Host-private metadata for a separately reviewed project handoff. Reuse the
+ * authenticated read-only snapshot and require the original plan's exact
+ * semantics. These identities confer no paths, instructions or permissions.
+ * Database plan/receipt/journal formats and hashes remain unchanged.
+ */
+export function reviewHostProfileProjectReferences(options: { plan: HostProfileFileTransferPlan; sourceKey: Buffer }): { projectIds: string[] } {
+	verifyKey(options.sourceKey); validatePlan(options.plan);
+	try {
+		const { plan } = options;
+		const source = readSource(plan.source, options.sourceKey);
+		if (!same(planFor(plan.source, plan.destination, source.snapshot, source.authenticatedEnvelopes, source.legacy), plan))
+			fail("SOURCE_CHANGED", "The Core source changed after review. Review it again.");
+		const ids = new Set<string>();
+		const retain = (value: unknown) => {
+			if (value === undefined || value === "") return;
+			const parsed = ProjectSchema.shape.id.safeParse(value);
+			if (!parsed.success) fail("PROJECT_HANDOFF_UNSUPPORTED", "The Core profile contains unsupported project identities. Existing data was preserved.");
+			ids.add(parsed.data);
+			if (ids.size > 500) fail("PROJECT_HANDOFF_LIMIT", "The Core profile exceeds the supported pending-project limit. Existing data was preserved.");
+		};
+		for (const row of source.snapshot.rows.runtime_sessions ?? []) {
+			const session = JSON.parse(String(row.values.payload)) as { projectId?: unknown };
+			retain(session.projectId);
+		}
+		for (const row of source.snapshot.rows.memory_entities ?? []) {
+			if (row.values.kind !== "project" || row.values.status === "deleted") continue;
+			const entity = JSON.parse(String(row.cleartext?.payload_ciphertext)) as { structuredData?: { projectId?: unknown } };
+			const id = entity.structuredData?.projectId;
+			if (typeof id === "string") retain(id);
+		}
+		return { projectIds: [...ids].sort() };
+	} catch (error) {
+		if (error instanceof HostProfileFileTransferError) throw error;
+		return fail("PROJECT_HANDOFF_UNAVAILABLE", "Project references could not be reviewed safely. Existing data was preserved.");
+	}
+}
 function initializeEmpty(db: Database.Database): void {
 	db.pragma("journal_mode = DELETE"); db.pragma("synchronous = FULL");
 	db.pragma("foreign_keys = ON"); db.pragma("secure_delete = ON");
@@ -361,6 +400,28 @@ export function inspectInterruptedHostProfileFileTransfer(destinationDatabasePat
 	} catch (error) {
 		if (error instanceof HostProfileFileTransferError) throw error;
 		return fail("RECOVERY_METADATA_INVALID", "The interrupted Core transfer could not be inspected safely; all files were preserved.");
+	}
+}
+
+/** Authenticate an inspected recovery using private copies, without a lease or writes. */
+export function verifyInterruptedHostProfileFileTransfer(options: { destinationDatabasePath: string; sourceKey: Buffer; destinationKey: Buffer; acceptedRecoverySha256: string }): { originalReadable: true; destinationReadable: true; activationPerformed: false } {
+	verifyKey(options.sourceKey); verifyKey(options.destinationKey);
+	if (timingSafeEqual(options.sourceKey, options.destinationKey)) fail("KEY_REUSE", "Core recovery requires independent source and destination keys.");
+	try {
+		const reviewed = inspectInterrupted(options.destinationDatabasePath);
+		if (reviewed.recoverySha256 !== options.acceptedRecoverySha256) fail("RECOVERY_REVIEW_CHANGED", "The interrupted Core transfer changed after review. Inspect it again.");
+		if (reviewed.state === "missing-stage" || reviewed.entries.some(name => name !== "kestrel.sqlite")) fail("STAGING_UNAVAILABLE", "The interrupted stage is incomplete or unsettled. Preserve it for review.");
+		const plan = reviewed.journal.plan;
+		const original = readSource(plan.source, options.sourceKey);
+		if (!same(planFor(plan.source, plan.destination, original.snapshot, original.authenticatedEnvelopes, original.legacy), plan)) fail("RECOVERY_CHANGED", "Original Core data changed after transfer review. Preserve both profiles for a new review.");
+		const imported = readSource({ path: reviewed.target ? options.destinationDatabasePath : reviewed.stagedPath, file: reviewed.journal.staging.file,
+			directory: reviewed.target ? plan.destination.directory : reviewed.journal.staging.directory }, options.destinationKey, reviewed.journal.staging.file);
+		if (imported.snapshot.semanticSha256 !== plan.summary.semanticSha256) fail("RECOVERY_CHANGED", "Native Core data changed after transfer. Preserve all work for a new review.");
+		if (inspectInterrupted(options.destinationDatabasePath).recoverySha256 !== options.acceptedRecoverySha256) fail("RECOVERY_REVIEW_CHANGED", "The interrupted Core transfer changed during verification. Inspect it again.");
+		return { originalReadable: true, destinationReadable: true, activationPerformed: false };
+	} catch (error) {
+		if (error instanceof HostProfileFileTransferError) throw error;
+		return fail("RECOVERY_UNAVAILABLE", "Core transfer recovery could not be authenticated safely. All files were preserved.");
 	}
 }
 

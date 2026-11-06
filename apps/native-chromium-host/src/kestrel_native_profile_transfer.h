@@ -13,6 +13,15 @@ KestrelNativeProfileSelectionResult KestrelSaveNativeCoreProfileSelection(
     NSString* browser_profile, NSString* active, NSString* previous, NSString* expected_active,
     NSString* expected_previous = nil);
 
+// Read a validated immutable v2 snapshot; v1 selections normalize to explicit
+// legacy entries without modifying the file. Resolver uses one such snapshot.
+NSDictionary* KestrelReadNativeCoreProfileSelection(NSString* browser_profile, NSError** error);
+NSDictionary* KestrelResolveNativeCoreProfileSelection(NSString* browser_profile, NSError** error);
+KestrelNativeProfileSelectionResult KestrelRegisterPreparedNativeCoreHandoff(
+    NSString* browser_profile, NSString* relative_profile, NSString* handoff_id, NSDictionary* expected_selection);
+KestrelNativeProfileSelectionResult KestrelSaveReviewedNativeCoreProfileSelection(
+    NSString* browser_profile, NSString* active, NSString* previous, NSDictionary* expected_selection);
+
 @interface KestrelNativeProfileTransferController : NSObject
 - (instancetype)initWithBrowserProfile:(NSString*)browserProfile
                     currentCoreProfile:(NSString*)currentCoreProfile

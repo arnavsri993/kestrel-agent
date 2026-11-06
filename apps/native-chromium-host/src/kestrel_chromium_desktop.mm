@@ -669,7 +669,8 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
     std::cerr << "This native Kestrel profile is already in use or unavailable." << std::endl; return 1;
   }
   struct LockOwner { int fd; ~LockOwner() { close(fd); } } lock_owner{lock_fd};
-  NSString* core_profile = KestrelResolveNativeCoreProfile(profile,&error);
+  NSDictionary* core_selection = KestrelResolveNativeCoreProfileSelection(profile,&error);
+  NSString* core_profile = core_selection[@"profilePath"];
   if (!core_profile) { NSAlert* alert = [[NSAlert alloc] init]; alert.messageText = @"Core profile unavailable"; alert.informativeText = error.localizedDescription ?: @"Existing profiles were preserved."; [alert runModal]; return 1; }
   desktop_profile_transfer = [[KestrelNativeProfileTransferController alloc] initWithBrowserProfile:profile currentCoreProfile:core_profile testKeys:disposable_test_key];
   NSString* resources = NSBundle.mainBundle.resourcePath;
@@ -678,7 +679,9 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   NSMutableArray* arguments = [NSMutableArray arrayWithArray:@[
     [resources stringByAppendingPathComponent:@"native-ui-broker.mjs"], @"--profile-root", profile, @"--core-profile-root", core_profile,
     @"--browser-pid", [NSString stringWithFormat:@"%d", getpid()]]];
-  if (default_profile || HasArgument(argc, argv, "--kestrel-durable-profile")) [arguments addObject:@"--durable-profile"];
+  id project_handoff = core_selection[@"handoffId"];
+  if ([project_handoff isKindOfClass:NSString.class]) [arguments addObjectsFromArray:@[@"--project-handoff-id", project_handoff]];
+  if (default_profile || HasArgument(argc, argv, "--kestrel-durable-profile") || [project_handoff isKindOfClass:NSString.class]) [arguments addObject:@"--durable-profile"];
   broker.arguments = arguments;
   NSDictionary* inherited = NSProcessInfo.processInfo.environment;
   NSMutableDictionary* environment = [NSMutableDictionary dictionary];

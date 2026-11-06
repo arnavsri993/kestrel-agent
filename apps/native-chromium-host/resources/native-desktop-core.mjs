@@ -10,8 +10,10 @@ import { openNativeCoreProfile } from "./native-core-profile.mjs";
 import { NativeEmbeddingRecoveryHost, NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES, NativeCommunicationHost, NATIVE_COMMUNICATION_REQUEST_TYPES, MacMessagesSource, NativeLoginCodeBrowserRequestSchema, parseNativeLoginCodeResult, CoreSupervisor, nodeCoreProcess, CoreRequestSchema, RendererRequestSchema, NATIVE_CORE_BACKUP_BUSY_MESSAGE, OLLAMA_REMOTE_MODEL_ERROR, nativeSystemReadiness, NATIVE_READINESS_REQUEST_TYPES, NativeComputerUseManager, NativeProviderHost, NATIVE_WORKSPACE_REQUEST_TYPES, NativeWorkspaceHost, NATIVE_PROVIDER_REQUEST_TYPES, NATIVE_PROVIDER_OPERATION_REQUEST_TYPES, NativePluginHost, NATIVE_PLUGIN_REQUEST_TYPES, NativeContextAttachmentHost, NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES, NativeMemoryRecoveryHost, NATIVE_MEMORY_RECOVERY_REQUEST_TYPES, isNativeMemoryRecoveryInternalRequest, NativeDiagnosticHost, NATIVE_DIAGNOSTIC_REQUEST_TYPES, NativeLocalBackupHost, NATIVE_LOCAL_BACKUP_REQUEST_TYPES } from "./agent-core/service/native-desktop-runtime.mjs";
 import { createNativeCoreConfiguration, nativeHostSettingsErrorMessage } from "./native-core-configuration.mjs";
 import { dispatchNativeComputerHostRequest } from "./native-computer-host-routing.mjs";
+import { nativeProjectHandoffArgument } from "./native-project-handoff-argument.mjs";
 
 const resources = dirname(fileURLToPath(import.meta.url));
+const projectHandoffId = nativeProjectHandoffArgument(process.argv);
 const index = process.argv.indexOf("--profile-root");
 if (index < 0 || !process.argv[index + 1]) throw new Error("Native Core requires its owning browser profile.");
 const browserProfileIndex = process.argv.indexOf("--browser-profile-root");
@@ -20,6 +22,7 @@ const browserProfileRoot = resolve(process.argv[browserProfileIndex + 1]);
 if (await realpath(browserProfileRoot) !== browserProfileRoot) throw new Error("Native Core requires a canonical browser profile path.");
 const nativePeer = createRequire(import.meta.url)(join(dirname(fileURLToPath(import.meta.url)), "native-peer.node"));
 const durable = process.argv.includes("--durable-profile");
+if (projectHandoffId && !durable) throw new Error("A selected project handoff requires its durable native profile.");
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 async function requestProtectedProfileKey() {
 	if (!durable) return undefined;
@@ -222,7 +225,7 @@ function selectNativeDialog(operation, workspaceRoot, signal, backupPath) {
 		...(operation === "reveal-local-backup-folder" ? { backupPath } : {}) });
 	return promise;
 }
-function selectWorkspaceFolder() { return selectNativeDialog("select-workspace-folder"); }
+function selectWorkspaceFolder(signal) { return selectNativeDialog("select-workspace-folder", undefined, signal); }
 
 const core = new CoreSupervisor(browserRequest, resetBrowsers, {
 	processFactory: () => nodeCoreProcess({
@@ -283,6 +286,7 @@ const communications = new NativeCommunicationHost({
  },
 });
 const workspaces = new NativeWorkspaceHost({ root: profile.root, selectFolder: selectWorkspaceFolder,
+	...(projectHandoffId ? { projectHandoff: { id: projectHandoffId, keyBase64: protectedKeyBase64 } } : {}),
 	reconfigure: mutation => configuration.reconfigure(mutation),
 });
 const attachments = new NativeContextAttachmentHost({ root: profile.root,
@@ -484,7 +488,7 @@ input.on("line", line => {
 	if (creatingBackup) backupReservation = true;
 	if (repairingEmbedding) { embeddingRecoveryReservation = true; communications.invalidate(); }
 	pending.add(message.id);
-	const hostController = isHost && (NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
+	const hostController = isHost && (["select-workspace-folder", "reconnect-workspace-project"].includes(parsed.data.type) || NATIVE_EMBEDDING_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_COMMUNICATION_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type) || NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type) || NATIVE_DIAGNOSTIC_REQUEST_TYPES.has(parsed.data.type) || NATIVE_LOCAL_BACKUP_REQUEST_TYPES.has(parsed.data.type) || NATIVE_PROVIDER_OPERATION_REQUEST_TYPES.has(parsed.data.type)) ? new AbortController() : undefined;
 	const hostBudget = creatingBackup ? 14 * 60_000 : repairingEmbedding ? 3 * 60_000 : 9 * 60_000 + 50_000;
 	const hostTimer = hostController ? setTimeout(() => hostController.abort(new Error("The native host request timed out.")), hostBudget) : undefined;
 	if (hostController) hostRequests.set(message.id, hostController);
@@ -499,7 +503,13 @@ input.on("line", line => {
 				backupStatus: () => backups.status(),
 			}) };
 			if (NATIVE_READINESS_REQUEST_TYPES.has(parsed.data.type) && parsed.data.type.startsWith("computer-use-")) return dispatchNativeComputerHostRequest(computerUse, parsed.data);
-			if (NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type)) return workspaces.handle(parsed.data);
+			if (NATIVE_WORKSPACE_REQUEST_TYPES.has(parsed.data.type)) {
+                const signal = hostController?.signal;
+                const cancel = () => workspaces.cancelSelection();
+                signal?.addEventListener("abort", cancel, { once: true });
+                try { signal?.throwIfAborted(); return await workspaces.handle(parsed.data); }
+                finally { signal?.removeEventListener("abort", cancel); }
+            }
 			if (NATIVE_PLUGIN_REQUEST_TYPES.has(parsed.data.type)) return plugins.handle(parsed.data, hostController.signal);
 			if (NATIVE_CONTEXT_ATTACHMENT_REQUEST_TYPES.has(parsed.data.type)) return attachments.handle(parsed.data);
 			if (NATIVE_MEMORY_RECOVERY_REQUEST_TYPES.has(parsed.data.type)) return memoryRecovery.handle(parsed.data, hostController.signal);

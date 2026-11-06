@@ -33,6 +33,7 @@ const OPTIONAL_ENTRIES = [
 	"provider-accounts.json",
 	"native-runtime-preferences.json",
 	"workspace-grants.json",
+	"pending-project-handoff.json",
 	"computer-use.json",
 	"trusted-plugin-publishers.json",
 	"native-plugin-activation-ids.json",

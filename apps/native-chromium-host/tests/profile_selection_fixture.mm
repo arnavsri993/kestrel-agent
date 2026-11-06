@@ -47,6 +47,30 @@ int main(int argc, char** argv) {
       NSData* result = [NSJSONSerialization dataWithJSONObject:@{ @"before":@(before != nil), @"after":@(after != nil), @"same":@(before && after && [before isEqualToDictionary:after]) } options:0 error:nil];
       return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
     }
+    if (argc == 3 && !strcmp(argv[2], "--project-handoff-validation")) {
+      NSString* identifier = @"123e4567-e89b-42d3-a456-426614174000";
+      NSMutableDictionary* fresh = [@{ @"id":identifier, @"projects":@2, @"pendingIdentities":@3,
+        @"instructions":@1, @"registryPresent":@YES } mutableCopy];
+      const BOOL validFresh = SafeProjectHandoffPreview(fresh,identifier,false);
+      NSMutableDictionary* recovery = [fresh mutableCopy]; recovery[@"manifestPresent"] = @NO;
+      const BOOL validRecovery = SafeProjectHandoffPreview(recovery,identifier,true);
+      BOOL badFreshExtra = NO, badFreshMissing = NO, badFreshType = NO, badFreshRange = NO, badFreshID = NO;
+      BOOL badRecoveryExtra = NO, badRecoveryMissing = NO, badRecoveryType = NO, badRecoveryRange = NO, badRecoveryID = NO;
+      fresh[@"unexpected"] = @0; badFreshExtra = !SafeProjectHandoffPreview(fresh,identifier,false); [fresh removeObjectForKey:@"unexpected"];
+      [fresh removeObjectForKey:@"instructions"]; badFreshMissing = !SafeProjectHandoffPreview(fresh,identifier,false); fresh[@"instructions"] = @1;
+      fresh[@"registryPresent"] = @1; badFreshType = !SafeProjectHandoffPreview(fresh,identifier,false); fresh[@"registryPresent"] = @YES;
+      fresh[@"projects"] = @501; badFreshRange = !SafeProjectHandoffPreview(fresh,identifier,false); fresh[@"projects"] = @2;
+      fresh[@"id"] = @"not-a-uuid"; badFreshID = !SafeProjectHandoffPreview(fresh,identifier,false); fresh[@"id"] = identifier;
+      recovery[@"unexpected"] = @0; badRecoveryExtra = !SafeProjectHandoffPreview(recovery,identifier,true); [recovery removeObjectForKey:@"unexpected"];
+      [recovery removeObjectForKey:@"manifestPresent"]; badRecoveryMissing = !SafeProjectHandoffPreview(recovery,identifier,true); recovery[@"manifestPresent"] = @NO;
+      recovery[@"manifestPresent"] = @0; badRecoveryType = !SafeProjectHandoffPreview(recovery,identifier,true); recovery[@"manifestPresent"] = @NO;
+      recovery[@"pendingIdentities"] = @-1; badRecoveryRange = !SafeProjectHandoffPreview(recovery,identifier,true); recovery[@"pendingIdentities"] = @3;
+      recovery[@"id"] = @"123E4567-E89B-42D3-A456-426614174000"; badRecoveryID = !SafeProjectHandoffPreview(recovery,identifier,true);
+      NSData* result = [NSJSONSerialization dataWithJSONObject:@{ @"validFresh":@(validFresh), @"validRecovery":@(validRecovery),
+        @"badFreshExtra":@(badFreshExtra), @"badFreshMissing":@(badFreshMissing), @"badFreshType":@(badFreshType), @"badFreshRange":@(badFreshRange), @"badFreshID":@(badFreshID),
+        @"badRecoveryExtra":@(badRecoveryExtra), @"badRecoveryMissing":@(badRecoveryMissing), @"badRecoveryType":@(badRecoveryType), @"badRecoveryRange":@(badRecoveryRange), @"badRecoveryID":@(badRecoveryID) } options:0 error:nil];
+      return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
+    }
     if (argc == 3 && !strcmp(argv[2], "--review-validation")) {
       NSString* destination = @"/tmp/destination";
       NSMutableDictionary* preview = [@{ @"state":@"staged", @"destinationDatabasePath":destination, @"sourceDatabasePath":@"/tmp/source", @"recoverySha256":[@"a" stringByPaddingToLength:64 withString:@"a" startingAtIndex:0], @"counts":@{@"memories":@1}, @"excluded":@{} } mutableCopy];
@@ -83,7 +107,7 @@ int main(int argc, char** argv) {
       NSData* result = [NSJSONSerialization dataWithJSONObject:@{@"valid":@(valid),@"disclosed":@(disclosed),@"badBool":@(badBool),@"badPair":@(badPair),@"badZero":@(badZero),@"badMissing":@(badMissing),@"partialPurge":@(partialPurge),@"completePurge":@(completePurge),@"purgeDisclosed":@(purgeDisclosed),@"badPurgeCount":@(badPurgeCount)} options:0 error:nil];
       return result && fwrite(result.bytes,1,result.length,stdout) == result.length ? 0 : 2;
     }
-    if (argc != 2 && argc != 3 && argc != 5 && argc != 6) return 2;
+    if (argc != 2 && argc != 3 && argc != 5 && argc != 6 && argc != 7) return 2;
     if (argc == 3 && !strncmp(argv[2],"--stop-",7)) {
       const bool paused = strcmp(argv[2],"--stop-worker") != 0;
       const bool mismatched = !strcmp(argv[2],"--stop-mismatched-worker");
@@ -117,6 +141,25 @@ int main(int argc, char** argv) {
       return bytes && fwrite(bytes.bytes,1,bytes.length,stdout) == bytes.length ? 0 : 2;
     }
     NSString* root = [NSString stringWithUTF8String:argv[1]];
+    if (argc >= 3 && !strcmp(argv[2],"--registry")) {
+      NSError* error = nil;
+      KestrelNativeProfileSelectionResult result = KestrelNativeProfileSelectionResult::Unchanged;
+      if (argc == 7) {
+        NSData* input = [[NSString stringWithUTF8String:argv[6]] dataUsingEncoding:NSUTF8StringEncoding];
+        id expected = [NSJSONSerialization JSONObjectWithData:input options:0 error:nil];
+        if (![expected isKindOfClass:NSDictionary.class]) return 2;
+        NSString* first = [NSString stringWithUTF8String:argv[4]], *second = [NSString stringWithUTF8String:argv[5]];
+        if (!strcmp(argv[3],"register")) result = KestrelRegisterPreparedNativeCoreHandoff(root,first,second,expected);
+        else if (!strcmp(argv[3],"save")) result = KestrelSaveReviewedNativeCoreProfileSelection(root,first,second,expected);
+        else return 2;
+      } else if (argc != 3) return 2;
+      NSDictionary* selection = KestrelReadNativeCoreProfileSelection(root,&error);
+      NSDictionary* resolved = KestrelResolveNativeCoreProfileSelection(root,nil);
+      NSDictionary* response = @{@"selection":selection ?: NSNull.null,@"resolved":resolved ?: NSNull.null,@"error":@(error != nil),
+        @"saved":result == KestrelNativeProfileSelectionResult::Selected ? @"selected" : result == KestrelNativeProfileSelectionResult::SelectedDurabilityUnconfirmed ? @"selected-durability-unconfirmed" : @"unchanged"};
+      NSData* bytes = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
+      return bytes && fwrite(bytes.bytes,1,bytes.length,stdout) == bytes.length ? 0 : 2;
+    }
     KestrelNativeProfileSelectionResult result = KestrelNativeProfileSelectionResult::Unchanged;
     if (argc == 5 || argc == 6) result = KestrelSaveNativeCoreProfileSelection(root,[NSString stringWithUTF8String:argv[2]],[NSString stringWithUTF8String:argv[3]],[NSString stringWithUTF8String:argv[4]], argc == 6 ? [NSString stringWithUTF8String:argv[5]] : nil);
     NSError* error = nil;

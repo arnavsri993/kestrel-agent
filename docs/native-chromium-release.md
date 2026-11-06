@@ -7,7 +7,110 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
-## Current checkpoint — pending project identities, 2026-11-06
+## Current checkpoint — authenticated native project handoff, 2026-11-06
+
+The native transfer path now reviews project links with conversations and memory.
+The private worker reads the source project registry without probing its folder
+hints, preserves literal IDs, names, instructions and timestamps, and binds that
+metadata to the authenticated database plan. A separate encrypted manifest is
+created in `prepared` state before database publication and becomes `ready` only
+after source and destination verification. Existing version-1 database plans,
+receipts and recovery journals remain unchanged.
+
+The native selection registry records an opaque handoff identity before applying
+a transfer. Startup passes the selected identity through the private broker and
+requires its authenticated, root-bound ready manifest before opening Core's
+database. Project identities remain pending with no folder authority, including
+across restart. An unexpected, missing, corrupt or incomplete manifest refuses
+startup rather than silently discarding those identities. Legacy profiles without
+a handoff remain supported; an unexpected handoff file is refused.
+
+Settings lists projects to reconnect. Only a trusted native folder selection can
+connect a pending ID; imported paths confer no access. Reconnection preserves
+saved metadata and records an encrypted intent before writing the folder grant.
+Restart recognizes only an exact already-written grant or the unchanged prior
+file. It never synthesizes a grant from an interrupted intent. Removing a pending
+project records that choice and prevents reappearance while retaining its chats.
+Ordinary Add folder refuses an identity collision and directs the user to the
+existing reconnection action.
+
+Interrupted transfers now receive an authenticated read-only project review before
+a separate recovery approval. An older preparation without a manifest can receive
+one only through a fresh review of its original source and existing independent
+keys. Stale source/registry, changed files, wrong keys/identities, expired approvals,
+and corrupted metadata refuse conservatively. Prepared files are retained on
+failure, including a failure before any database journal exists; those journal-free
+preparations cannot be automatically recovered or activated. Selection/rollback
+retain the full reviewed identity map, and activation waits for confirmed private
+worker shutdown.
+
+The manifest binds to the canonical root path and inode. Raw copies to another
+root are not a tested restore mechanism. Backup inventory includes the encrypted
+file; a verified restore/rebind product flow remains open. Filesystem witnesses
+and private named-path compare-and-replace coordinate this process, not hostile
+same-user writers. Whole-selection rollback/deletion is not detectable without a
+separate monotonic protected authority.
+
+The final full suite passes **3,121 tests in 337 files**, with the same two existing
+ownership-mutation skips, in 106.41 seconds using two workers. All workspace type
+checks pass. Compiled production selection/preview fixtures pass 49 checks. Seven
+recovery checks include actual worker SIGKILL, wrong keys, corrupt manifests,
+source changes, expiry and a failure before journal creation.
+
+Separate ad-hoc native candidate
+`54863116f43141bc020cb456d05544730123be69ef32d994043a24d9e6af77ee`
+at `.tmp/native-project-handoff-host/Kestrel.app` builds successfully and passes
+nine generated-fixture canary phases: source seeding plus eight bundled
+transfer/startup/reconnect/cancellation/restart/removal/refusal phases. Five startup
+refusals cover wrong ID, omitted ID with unexpected manifest, corrupt/missing
+metadata and a valid prepared-state manifest; none changes database bytes. The
+candidate hash matches before/after, and no owned process remains. The existing
+legacy-conflict/context/provider canary separately passes eight bundled Core
+phases on the same candidate, with matching hashes. Picker replies are simulated
+over the real private pipe. The candidate was not launched as a native window or
+installed.
+
+The actual AST-extracted Settings function and current source CSS pass seven
+headless Chromium phases with no page errors; desktop and compact screenshots
+were inspected. That component harness uses a mocked bridge and is not native or
+full-app evidence. An independent bounded source review found no actionable issue.
+CI now runs both new canaries and uploads only their receipts and UI screenshots.
+
+Initial failure receipts remain preserved. The bundled harness initially assumed
+that a tool-level folder denial would set the whole RPC to failure, and that an
+explicitly removed project would remain visible through the ordinary entity
+getter. It now checks blocked/failed execution with no returned file content and
+the retained deleted-row tombstone. The prepared-state probe was also corrected
+to use its own valid inner identity before refusal, then rerun on a fresh fixture.
+A worker EOF test now gates a real asynchronous probe: a synchronously invalid
+same-source/destination request can correctly reply before EOF. These are test
+corrections; production assertions, global timeouts and skips were not relaxed.
+
+Final receipts and logs are
+`.tmp/native-project-handoff-evidence-reviewed/receipt.json`,
+`.tmp/native-project-handoff-context-evidence/receipt.json`,
+`.tmp/project-reconnection-settings-source-css-final/receipt.json`,
+`.tmp/native-project-handoff-full-unit.log`, and
+`.tmp/native-project-handoff-workspace-types.log`.
+
+Published predecessor `6f11d1b2` passed both full
+[CI jobs](https://github.com/arnavsri993/kestrel-agent/actions/runs/42229645819),
+required CodeQL and all four language analyses. Native artifact SHA-256 is
+`f820df68136545e022468c66384dc9ddd3d0bdeba983c7b9edc533c9a900292b`.
+Its six candidate-bound receipts contain 73 passing phases on candidate
+`21ac108b8b5d8726d6bd778f3026a6e883eacd06c0c230e9801ef3469f6d31a0`.
+The two-phase headless component receipt has no candidate binding. The separate
+extension fixture records 11/16 checks and full parity false; the product run did
+not request Store installation/parity. These predecessor results do not establish
+CI success for the new handoff changes, current native UI acceptance, a published
+Store upgrade, signing or canonical cutover.
+
+The user-used `c7015edb...` bundle/window/profile remain untouched, and
+`/Applications/Kestrel.app` remains the existing Electron app. No real source
+apply/activation, native transfer/reconnect dialog, Keychain continuity, signing
+or canonical installation is credited for this checkpoint.
+
+## Previous checkpoint — pending project identities, 2026-11-06
 
 Core now accepts an explicit host-owned `pendingProjectIds` inventory separately
 from folder-backed projects. The optional inventory defaults to empty. IDs are
@@ -25,16 +128,12 @@ fallbacks. Ordinary sessions retain their existing Honcho namespace behavior for
 stored unavailable or symlinked roots. Memory sync leaves existing explicit
 pending project entities unchanged and creates or revives no missing/deleted ones.
 
-**This is Core support, not a completed native transfer handoff.** The native
-transfer controller does not yet publish a durable, reviewed pending-project
-inventory or provide it before first startup. Starting a transferred destination
-without that integration still detaches unknown project IDs/roots and soft-deletes
-unmatched project memory entities. Source profiles remain preserved. The next
-integration must bind encrypted project metadata and pending IDs to the reviewed
-transfer, handle interrupted publication/recovery before activation, and reconnect
-folders through the trusted picker. Imported path hints must never enter either
-workspace-root list or create grants. Custom names, instructions, stable IDs,
-deletions and backup inventory need to survive that complete flow.
+At this historical foundation checkpoint, the native transfer controller did
+not yet publish a durable reviewed inventory before first startup. A transferred
+startup could still detach unknown IDs and soft-delete unmatched project entities.
+The authenticated handoff integration described above addresses that missing
+connection; the original foundation canary described below supplies its own
+trusted bootstrap metadata and remains separate evidence.
 
 Runtime source `fbbb0cd8` built separate ad-hoc candidate
 `389d0ff80056ab44eadeb7600490fd14e1385482626ebbc5a20e0355aae0c40d`

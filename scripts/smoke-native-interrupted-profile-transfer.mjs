@@ -52,6 +52,18 @@ async function selection() {
  try { return JSON.parse(await readFile(join(profile, 'native-core-profile.json'), 'utf8')); }
  catch (error) { if (error.code === 'ENOENT') return { active: '', previous: '' }; throw error; }
 }
+function assertPreparedHandoffRegistered(actual, before, relative) {
+ assert.equal(actual.version, 2, 'Review must persist the v2 handoff registry.');
+ assert.equal(actual.active, before.active, 'Review must preserve the active profile.');
+ assert.equal(actual.previous, before.previous, 'Review must preserve the previous profile.');
+ const handoffs = actual.handoffs;
+ assert(handoffs && typeof handoffs === 'object' && !Array.isArray(handoffs), 'Review must persist a handoff map.');
+ const legacyKeys = [...new Set(['', before.active, before.previous])];
+ assert.deepEqual(Object.keys(handoffs).sort(), [...legacyKeys, relative].sort(), 'Registration must add only the selected prepared profile.');
+ for (const key of legacyKeys) assert.equal(handoffs[key], null, `Legacy selection ${key || '(current profile)'} must remain unregistered.`);
+ assert.match(handoffs[relative], /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, 'Prepared profile must receive a canonical lowercase UUIDv4.');
+ return actual;
+}
 async function hashFile(path) { const hash = createHash('sha256'); for await (const chunk of createReadStream(path)) hash.update(chunk); return hash.digest('hex'); }
 async function treeDigest(root) {
  const rows = [];
@@ -134,17 +146,18 @@ try {
  assert.equal(await treeDigest(orphan), orphanDigest); assert.equal(await exists(join(orphan, '.kestrel-native-test-core-key-v1')), false);
  phase('actual-bundled-worker-crash-created-reviewable-unselected-stage');
  stage = 'native-review';
- const second = await start(); const beforeSelection = await selection(); assert.notEqual(beforeSelection.active, relative);
+ const second = await start(); const initialSelection = await selection(); assert.notEqual(initialSelection.active, relative);
  await waitOperator('review', 'Open Review Interrupted Transfers and display the generated staged transfer review; do not accept it yet.');
  assert(second.state.output.includes('KESTREL_NATIVE_INTERRUPTED_TRANSFER_REVIEW_READY'), 'Native reviewed transfer dialog was not confirmed.');
- assert.deepEqual(await selection(), beforeSelection); assert(await exists(`${database}.kestrel-transfer-journal`));
+ const registeredSelection = assertPreparedHandoffRegistered(await selection(), initialSelection, relative);
+ assert(await exists(`${database}.kestrel-transfer-journal`));
  assert.equal(await hashFile(destinationKeyPath), destinationKeyHash); assert.equal(await treeDigest(orphan), orphanDigest);
- phase('real-native-review-does-not-select-or-mutate-stage');
+ phase('real-native-review-registers-unselected-prepared-handoff-without-changing-profile-selection');
  stage = 'native-recover';
- await waitOperator('recover', 'Confirm the source is closed and recover the reviewed transfer; stop at the separate Use Recovered Data Profile choice without selecting it.');
+ await waitOperator('recover', 'Confirm the source is closed, review and accept the separate project-link counts dialog, then stop at Use Recovered Data Profile without selecting it.');
  for (const marker of ['KESTREL_NATIVE_INTERRUPTED_TRANSFER_WORKER_STOPPED', 'KESTREL_NATIVE_INTERRUPTED_TRANSFER_RECOVERED', 'KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTION_READY'])
   assert(second.state.output.includes(marker), `Native recovery did not confirm ${marker}.`);
- assert.deepEqual(await selection(), beforeSelection, 'Recovery alone must not activate the profile.');
+ assert.deepEqual(await selection(), registeredSelection, 'Recovery alone must not activate the profile or change registered handoffs.');
  assert.equal(await exists(`${database}.kestrel-transfer-journal`), true, 'The published recovery journal must remain available for review.');
  const journalHash = await hashFile(`${database}.kestrel-transfer-journal`);
  assert(await exists(database)); assert.equal(await hashFile(destinationKeyPath), destinationKeyHash);
@@ -155,13 +168,13 @@ try {
  phase('native-recovery-preserves-selection-source-and-destination-key');
  stage = 'keep-current';
  await waitOperator('keep-current', 'Choose Keep Current Profile at the recovered transfer choice, then dismiss any notice.');
- assert.deepEqual(await selection(), beforeSelection, 'Keep Current Profile must not change the selection.');
+ assert.deepEqual(await selection(), registeredSelection, 'Keep Current Profile must not change the selection.');
  assert.equal(await hashFile(`${database}.kestrel-transfer-journal`), journalHash);
  assert.equal(await hashFile(destinationKeyPath), destinationKeyHash); assert.equal(await treeDigest(source), sourceDigest); assert.equal(await treeDigest(orphan), orphanDigest);
  await stop();
  stage = 'restart-keep-current';
  const afterKeep = await start();
- assert.deepEqual(await selection(), beforeSelection);
+ assert.deepEqual(await selection(), registeredSelection);
  const currentSessions = await afterKeep.home.evaluate(() => window.kestrel.request({ type: 'runtime-list-sessions' }));
  assert(currentSessions.ok && currentSessions.sessions.some(item => item.id === originalId) && !currentSessions.sessions.some(item => item.id === sourceSessionId));
  const expandOriginal = afterKeep.home.getByRole('button', { name: 'Expand sidebar', exact: true });
@@ -174,14 +187,14 @@ try {
  stage = 'review-published';
  await waitOperator('review-published', 'Open Review Interrupted Transfers again and display the published transfer review; do not accept it yet.');
  assert(afterKeep.state.output.includes('KESTREL_NATIVE_INTERRUPTED_TRANSFER_REVIEW_READY'), 'Published transfer review was not confirmed after restart.');
- assert.deepEqual(await selection(), beforeSelection); assert.equal(await hashFile(`${database}.kestrel-transfer-journal`), journalHash);
+ assert.deepEqual(await selection(), registeredSelection); assert.equal(await hashFile(`${database}.kestrel-transfer-journal`), journalHash);
  assert.equal(await hashFile(destinationKeyPath), destinationKeyHash); assert.equal(await treeDigest(source), sourceDigest); assert.equal(await treeDigest(orphan), orphanDigest);
  phase('published-transfer-rediscovered-after-restart');
  stage = 'recover-published';
- await waitOperator('recover-published', 'Confirm the source is closed and recover the published transfer again; stop at Use Recovered Data Profile.');
+ await waitOperator('recover-published', 'Confirm the source is closed, review and accept the separate project-link counts dialog, then stop at Use Recovered Data Profile.');
  for (const marker of ['KESTREL_NATIVE_INTERRUPTED_TRANSFER_WORKER_STOPPED', 'KESTREL_NATIVE_INTERRUPTED_TRANSFER_RECOVERED', 'KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTION_READY'])
   assert(afterKeep.state.output.includes(marker), `Published recovery did not confirm ${marker}.`);
- assert.deepEqual(await selection(), beforeSelection);
+ assert.deepEqual(await selection(), registeredSelection);
  assert.equal(await hashFile(`${database}.kestrel-transfer-journal`), journalHash);
  assert.equal(await hashFile(destinationKeyPath), destinationKeyHash); assert.equal(await treeDigest(source), sourceDigest); assert.equal(await treeDigest(orphan), orphanDigest);
  await eventually(() => !execFileSync('/bin/ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n').some(row => row.includes(workerOptions.executable) && row.includes(workerOptions.entry)), 'Published recovery worker did not stop.');
@@ -189,7 +202,8 @@ try {
  stage = 'explicit-activation';
  await waitOperator('activate', 'Choose Use Recovered Data Profile, then dismiss the restart notice.');
  assert(afterKeep.state.output.includes('KESTREL_NATIVE_INTERRUPTED_TRANSFER_SELECTED'), 'Explicit native selection was not confirmed.');
- const activated = await selection(); assert.equal(activated.active, relative); assert.equal(activated.previous, beforeSelection.active);
+ const activated = await selection(); assert.equal(activated.active, relative); assert.equal(activated.previous, initialSelection.active);
+ assert.deepEqual(activated.handoffs, registeredSelection.handoffs, 'Activation must preserve the registered handoff map.');
  assert.equal(await hashFile(destinationKeyPath), destinationKeyHash); phase('separate-native-acceptance-selects-recovered-profile');
  await stop(); stage = 'restart-recovered'; const third = await start();
  const sessions = await third.home.evaluate(() => window.kestrel.request({ type: 'runtime-list-sessions' }));
@@ -201,7 +215,8 @@ try {
  stage = 'rollback';
  await waitOperator('rollback', 'Use the native previous data profile action, confirm it, and dismiss the restart notice.');
  assert(third.state.output.includes('KESTREL_NATIVE_CORE_PREVIOUS_SELECTED'), 'Previous profile selection was not confirmed.');
- const rolledBack = await selection(); assert.equal(rolledBack.active, beforeSelection.active); assert.equal(rolledBack.previous, relative);
+ const rolledBack = await selection(); assert.equal(rolledBack.active, initialSelection.active); assert.equal(rolledBack.previous, relative);
+ assert.deepEqual(rolledBack.handoffs, registeredSelection.handoffs, 'Rollback must preserve the registered handoff map.');
  await stop(); const fourth = await start();
  const restored = await fourth.home.evaluate(() => window.kestrel.request({ type: 'runtime-list-sessions' }));
  assert(restored.ok && restored.sessions.some(item => item.id === originalId) && !restored.sessions.some(item => item.id === sourceSessionId));

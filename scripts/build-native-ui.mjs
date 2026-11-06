@@ -13,6 +13,7 @@ export async function buildNativeUi({ renderer, resources }) {
 	await cp(join(root, "apps/native-chromium-host/resources/native-ui-broker.mjs"), join(resources, "native-ui-broker.mjs"));
 	await cp(join(root, "apps/native-chromium-host/resources/native-desktop-core.mjs"), join(resources, "native-desktop-core.mjs"));
 	await cp(join(root, "apps/native-chromium-host/resources/native-core-configuration.mjs"), join(resources, "native-core-configuration.mjs"));
+	await cp(join(root, "apps/native-chromium-host/resources/native-project-handoff-argument.mjs"), join(resources, "native-project-handoff-argument.mjs"));
 	await cp(join(root, "apps/native-chromium-host/resources/native-browser-relay.mjs"), join(resources, "native-browser-relay.mjs"));
 	await cp(join(root, "apps/native-chromium-host/resources/native-login-code-relay.mjs"), join(resources, "native-login-code-relay.mjs"));
 	await cp(join(root, "apps/native-chromium-host/resources/native-automation-relay.mjs"), join(resources, "native-automation-relay.mjs"));
