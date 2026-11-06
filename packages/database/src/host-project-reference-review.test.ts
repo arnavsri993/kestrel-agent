@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEncryptionKey } from "@kestrel/encryption";
-import { EntityRecordSchema } from "@kestrel/shared-types";
+import { EntityRecordSchema, type RuntimeSession } from "@kestrel/shared-types";
 import { afterEach, expect, it } from "vitest";
 import { KestrelDatabase } from "./index";
 import { planHostProfileFileTransfer, reviewHostProfileProjectReferences } from "./host-profile-file-transfer";
@@ -19,8 +19,11 @@ function fixture() {
 	const db = new KestrelDatabase(sourceDatabasePath, sourceKey);
 	return { db, sourceRoot, destinationRoot, sourceDatabasePath, sourceKey, destinationDatabasePath };
 }
+function sessionRecord(id: string, projectId: string, privacyMode: "private" | "incognito" = "private"): RuntimeSession {
+	return { id, title: "Generated project handoff", projectId, workspaceRoot: "/never-probe-this-project", privacyMode, allowedTools: [], status: "active", checkpoints: [], createdAt: at, updatedAt: at };
+}
 function session(db: KestrelDatabase, id: string, projectId: string, privacyMode: "private" | "incognito" = "private") {
-	db.saveRuntimeSession({ id, title: "Generated project handoff", projectId, workspaceRoot: "/never-probe-this-project", privacyMode, allowedTools: [], status: "active", checkpoints: [], createdAt: at, updatedAt: at });
+	db.saveRuntimeSession(sessionRecord(id, projectId, privacyMode));
 	db.saveRuntimeMessage({ id: `message-${id}`, sessionId: id, role: "user", content: "Generated authenticated private fixture", createdAt: at });
 }
 function entity(db: KestrelDatabase, id: string, status: "active" | "deleted") {
@@ -54,8 +57,16 @@ it("rejects changed or unauthenticated sources and tampered plans without disclo
 it("refuses unsupported identities or excess unique references instead of dropping them", () => {
 	for (const excess of [false, true]) {
 		const f = fixture();
-		if (excess) { for (let i = 0; i < 501; i++) session(f.db, `s-${i}`, `project-${i}`); }
-		else session(f.db, "a", "x".repeat(201));
+		// All 501 distinct projects must survive source review. Keep one
+		// authenticated message and 500 empty draft sessions to exercise the
+		// inventory limit without unrelated message volume. Commit once.
+		f.db.db.transaction(() => {
+			if (excess) {
+				session(f.db, "s-0", "project-0");
+				for (let i = 1; i < 501; i++) f.db.saveRuntimeSession(sessionRecord(`s-${i}`, `project-${i}`));
+			}
+			else session(f.db, "a", "x".repeat(201));
+		})();
 		f.db.close(); const plan = planHostProfileFileTransfer(f), before = readFileSync(f.sourceDatabasePath);
 		expect(() => reviewHostProfileProjectReferences({ plan, sourceKey: f.sourceKey })).toThrow(excess ? "pending-project limit" : "unsupported project identities");
 		expect(readFileSync(f.sourceDatabasePath)).toEqual(before); expect(readdirSync(f.destinationRoot)).toEqual([]);

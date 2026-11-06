@@ -52,7 +52,7 @@ same-user writers. Whole-selection rollback/deletion is not detectable without a
 separate monotonic protected authority.
 
 The final full suite passes **3,121 tests in 337 files**, with the same two existing
-ownership-mutation skips, in 106.41 seconds using two workers. All workspace type
+ownership-mutation skips, in 111.05 seconds using two workers. All workspace type
 checks pass. Compiled production selection/preview fixtures pass 49 checks. Seven
 recovery checks include actual worker SIGKILL, wrong keys, corrupt manifests,
 source changes, expiry and a failure before journal creation.
@@ -90,8 +90,24 @@ Final receipts and logs are
 `.tmp/native-project-handoff-evidence-reviewed/receipt.json`,
 `.tmp/native-project-handoff-context-evidence/receipt.json`,
 `.tmp/project-reconnection-settings-source-css-final/receipt.json`,
-`.tmp/native-project-handoff-full-unit.log`, and
+`.tmp/native-project-handoff-full-unit.log`,
+`.tmp/native-project-reference-ci-fixture-full-final.log`, and
 `.tmp/native-project-handoff-workspace-types.log`.
+
+The first handoff CI run at `0faf643a` passed all four CodeQL analyses but
+[failed both macOS test jobs](https://github.com/arnavsri993/kestrel-agent/actions/runs/42266137954)
+at the same five-second project-reference fixture timeout. Each job passed the
+other 336 files and 3,120 tests, with two existing skips; downstream native product
+checks were not reached. The limit fixture now commits 501 distinct project
+sessions in one transaction and retains one authenticated encrypted message plus
+500 empty drafts. It still refuses the 501st identity, preserves source bytes,
+and leaves the destination empty under the unchanged five-second budget. Its
+focused local case takes 1.14 seconds. The corrected full local suite passes
+3,121 tests/337 files in 111.05 seconds; database type checks pass. Runtime source
+and the `54863116...` candidate are unchanged by this test-only correction. New-head
+remote success is not credited in advance. The interrupted intermediate local
+attempt and the unauthenticated draft-only fixture failure remain in ignored logs.
+The final fixture includes authentication; no source validation was weakened.
 
 Published predecessor `6f11d1b2` passed both full
 [CI jobs](https://github.com/arnavsri993/kestrel-agent/actions/runs/42229645819),
