@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "@playwright/test";
 import { candidateDigest } from "./native-retirement-evidence.mjs";
+import { assertNoExactExecutableRunning, validateRealKeychainCandidate } from "./native-real-keychain-candidate.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const supplied = process.env.KESTREL_NATIVE_TEST_APP?.trim();
@@ -18,17 +19,24 @@ if (process.env.KESTREL_TEST_NATIVE_REAL_CORE_KEYCHAIN !== "1")
 	throw new Error("Set KESTREL_TEST_NATIVE_REAL_CORE_KEYCHAIN=1 to opt in. No app was launched.");
 if (!supplied) throw new Error("Set KESTREL_NATIVE_TEST_APP to the disposable .tmp candidate. No app was launched.");
 
-const expectedCandidate = resolve(root, ".tmp/native-chromium-host/Kestrel.app");
-const candidate = await realpath(resolve(supplied));
-
-const temporaryBuildRoot = await realpath(resolve(root, ".tmp"));
-if (candidate !== expectedCandidate || resolve(supplied) !== expectedCandidate ||
-	!candidate.startsWith(`${temporaryBuildRoot}/`))
-	throw new Error("Candidate must be the exact .tmp/native-chromium-host/Kestrel.app bundle. No app was launched.");
-const executable = join(candidate, "Contents/MacOS/Kestrel");
+const { candidate, executable, buildName } = await validateRealKeychainCandidate(supplied, { root });
 const bundleId = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", join(candidate, "Contents/Info.plist")], { encoding: "utf8" }).trim();
 if (bundleId !== "com.kestrel.native-chromium-host.dev")
 	throw new Error("Candidate does not have the expected native development bundle identity. No app was launched.");
+let child;
+let interruptedSignal;
+let receipt;
+function handleSignal(signal) {
+	interruptedSignal ??= signal;
+	if (receipt) {
+		receipt.result = "failed";
+		receipt.failedPhase ??= currentPhase;
+	}
+	process.exitCode = signal === "SIGINT" ? 130 : 143;
+	if (child && child.exitCode === null && child.signalCode === null) child.kill(signal);
+}
+process.on("SIGINT", handleSignal.bind(null, "SIGINT"));
+process.on("SIGTERM", handleSignal.bind(null, "SIGTERM"));
 await lstat(executable);
 
 const evidence = join(root, ".tmp", `native-real-keychain-evidence-${Date.now()}-${randomUUID()}`);
@@ -51,7 +59,6 @@ const databaseDir = join(profile, "native-core/database");
 const databasePath = join(databaseDir, "kestrel.sqlite");
 const account = createHash("sha256").update(profile).digest("hex");
 const fixture = `kestrel-real-keychain-canary:${randomUUID()}`;
-let child;
 let browser;
 let activeEndpoint;
 let currentPhase = "preflight";
@@ -63,11 +70,11 @@ let sessionId;
 let savedProfile = false;
 let restartedProfile = false;
 let fakeLegacyAbsentChecks = 0;
-const receipt = {
+receipt = {
 	version: 1,
 	gate: "native-core-real-keychain-restart",
 	optIn: "KESTREL_TEST_NATIVE_REAL_CORE_KEYCHAIN=1",
-	candidate: ".tmp/native-chromium-host/Kestrel.app",
+	candidate: `.tmp/${buildName}/Kestrel.app`,
 	bundleIdentifier: bundleId,
 	realBackendPath: "NativeCoreProfileKeyStore::GetOrCreate -> SecurityFrameworkKeychain",
 	keychainItem: {
@@ -83,6 +90,10 @@ function check(condition, message) {
 	if (!condition) throw new Error(message);
 }
 
+function checkNotInterrupted() {
+	if (interruptedSignal) throw new Error(`Canary interrupted by ${interruptedSignal}.`);
+}
+
 async function verifyNoFakeOrLegacyKeys() {
 	for (const path of [markerPath, fakeKeyPath, legacyKeyPath]) {
 		try { await lstat(path); throw new Error("Fake or legacy profile key material unexpectedly exists."); }
@@ -92,8 +103,12 @@ async function verifyNoFakeOrLegacyKeys() {
 }
 
 async function startCandidate() {
+	checkNotInterrupted();
+	assertNoExactExecutableRunning(executable);
+	checkNotInterrupted();
 	check(await candidateDigest(candidate) === firstCandidateDigest, "Candidate bundle changed between canary starts.");
 	await verifyNoFakeOrLegacyKeys();
+	checkNotInterrupted();
 	activeEndpoint = undefined;
 	let stdoutBuffer = "";
 	let stderrBuffer = "";
@@ -110,6 +125,8 @@ async function startCandidate() {
 			HOME: process.env.HOME ?? "",
 			TMPDIR: process.env.TMPDIR ?? tmpdir(),
 			LANG: process.env.LANG ?? "en_US.UTF-8",
+			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
 		},
 	});
 	childStopped = false;
@@ -128,15 +145,18 @@ async function startCandidate() {
 	scanForEndpoint(child.stderr, "stderr");
 	const deadline = Date.now() + 310_000; // Core permits a human Keychain prompt for up to five minutes.
 	while (!activeEndpoint && Date.now() < deadline) {
+		checkNotInterrupted();
 		check(!launchFailed && child.exitCode === null && child.signalCode === null, "Candidate exited before its private Core bridge became ready.");
 		await delay(100);
 	}
+	checkNotInterrupted();
 	check(Boolean(activeEndpoint), "Timed out waiting for the candidate after the Keychain prompt window.");
 	browser = await chromium.connectOverCDP(activeEndpoint, { noDefaults: true });
 	let context = browser.contexts()[0];
 	check(Boolean(context), "Candidate did not expose its browser context.");
 	let home;
 	for (let attempt = 0; attempt < 300; attempt++) {
+		checkNotInterrupted();
 		check(child.exitCode === null && child.signalCode === null, "Candidate exited before Kestrel Home became ready.");
 		home = context.pages().find(page => /chrome-extension:\/\/[^/]+\/index\.html$/.test(page.url()));
 		if (home) break;
@@ -154,6 +174,7 @@ async function startCandidate() {
 		}
 		await delay(100);
 	}
+	checkNotInterrupted();
 	check(Boolean(home), "Kestrel Home did not become ready.");
 	await home.waitForFunction(() => typeof window.kestrel?.request === "function", undefined, { timeout: 30_000 });
 	return home;
@@ -206,6 +227,7 @@ async function verifyFixtureAbsentFromRawDatabase() {
 }
 
 try {
+	checkNotInterrupted();
 	firstCandidateDigest = await candidateDigest(candidate);
 	receipt.candidateSha256 = firstCandidateDigest;
 	currentPhase = "first-start-and-write";
@@ -233,7 +255,10 @@ try {
 	await verifyFixtureAbsentFromRawDatabase();
 	restartedProfile = true;
 	await stopCandidate();
-	check(await candidateDigest(candidate) === firstCandidateDigest, "Candidate bundle changed during the canary.");
+	checkNotInterrupted();
+	receipt.candidateSha256After = await candidateDigest(candidate);
+	check(receipt.candidateSha256After === firstCandidateDigest, "Candidate bundle changed during the canary.");
+	checkNotInterrupted();
 	receipt.phases.push({ phase: "same-candidate-and-profile-restart-readback", passed: true, candidateSha256: firstCandidateDigest, sessionAndMessageRestored: true });
 	receipt.result = "passed";
 	currentPhase = "complete";
@@ -249,6 +274,10 @@ try {
 		receipt.result = "failed";
 		receipt.failedPhase ??= "owned-process-cleanup";
 		process.exitCode = 1;
+	}
+	if (interruptedSignal) {
+		receipt.result = "failed";
+		receipt.failedPhase ??= currentPhase;
 	}
 	if (forcedStop) {
 		receipt.result = "failed";
@@ -274,12 +303,24 @@ try {
 		receipt.profileCleanup = "candidate did not stop; profile retained for diagnosis";
 		receipt.profilePath = profile;
 	}
+	if (interruptedSignal) {
+		receipt.result = "failed";
+		receipt.failedPhase ??= currentPhase;
+		process.exitCode = interruptedSignal === "SIGINT" ? 130 : 143;
+	}
 	receipt.evidence = {
 		firstStartReachedCore: savedProfile,
 		restartReadbackPassed: restartedProfile,
 		fakeAndLegacyKeyFilesAbsent: fakeLegacyAbsentChecks >= 4,
 	};
-	await writeFile(join(evidence, "receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+	const receiptPath = join(evidence, "receipt.json");
+	await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+	if (interruptedSignal) {
+		receipt.result = "failed";
+		receipt.failedPhase ??= currentPhase;
+		process.exitCode = interruptedSignal === "SIGINT" ? 130 : 143;
+		await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+	}
 }
 
 if (receipt.result === "passed") console.log("Native real-Keychain Core restart canary passed; generated profile removed, scoped Keychain item left behind.");

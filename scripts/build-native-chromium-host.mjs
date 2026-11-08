@@ -28,6 +28,12 @@ function argumentValue(name) {
 	return index === -1 ? undefined : process.argv[index + 1];
 }
 
+export function nativeChromiumBuildModeCompileFlag(releaseBuild) {
+	if (typeof releaseBuild !== "boolean")
+		throw new TypeError("Native Chromium build mode must be an explicit boolean.");
+	return `-DKESTREL_NATIVE_RELEASE_BUILD=${releaseBuild ? "1" : "0"}`;
+}
+
 function assertTemporaryPath(path) {
 	const temporary = resolve(temporaryRoot);
 	const relativePath = relative(temporary, path);
@@ -169,6 +175,7 @@ export async function buildNativeChromiumHost({ output } = {}) {
 		const compileFlags = [
 			"-std=c++20",
 			"-stdlib=libc++",
+			nativeChromiumBuildModeCompileFlag(releaseBuild),
 			// The distributed CEF framework and the CEF C++ wrapper are release
 			// builds. Keep DCHECK-only ref-count state out of the host as well so
 			// all translation units agree on the ref-counted object layout.

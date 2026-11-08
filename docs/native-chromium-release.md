@@ -7,7 +7,69 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
-## Current checkpoint — native picker metadata and on-screen handoff, 2026-11-06
+## Current checkpoint — explicit Chromium Keychain release policy, 2026-11-08
+
+The native builder now selects `KESTREL_NATIVE_RELEASE_BUILD=0/1` explicitly
+for both host and helper compilation, separately from `NDEBUG`. Release builds
+remove Chromium's `use-mock-keychain` switch. Development builds retain their
+mock default; explicitly requesting `--kestrel-real-keychain` also removes a
+conflicting mock switch. Previously, release signing alone did not change this
+policy. A CEF-independent switch mutator is shared by the actual browser
+configuration and compiled development/release fixtures. Missing or invalid
+compile policies fail compilation. A sanitized startup marker records the
+selected policy; it does not prove access to a system Keychain item.
+
+The real-Core-Keychain canary now accepts a separately named, canonical owned
+candidate under `.tmp`, refuses the reserved default bundle and any running
+matching executable, and rejects linked, writable or malformed paths. It always
+creates its own private profile. Signal handling terminates only its child and
+uses bounded cleanup; interrupted runs cannot become passing receipts. Eighteen
+candidate-boundary cases and three compile-policy tests pass. An independent
+static review found no actionable issue.
+
+The newly built development candidate is
+`b32484e72fa48e53214f099e05fd18e283ec09af1f69d908dd5567dba4c10822`
+at `.tmp/native-keychain-policy-host/Kestrel.app`. Two actual native starts
+passed the production `NativeCoreProfileKeyStore::GetOrCreate` /
+`SecurityFrameworkKeychain` path. A generated conversation decrypted after
+restart, its unique payload stayed absent from raw database/WAL bytes, and no
+test or legacy key file existed. The generated profile was removed; its own
+random-path Keychain item remains, with no value exported. Evidence is
+`.tmp/native-real-keychain-evidence-1794007418871-d7799a23-c199-4b3d-a521-f355134b8a48/receipt.json`.
+This proves same-build Core key custody, not Chromium cookie/password storage,
+release-signing continuity or real-profile migration.
+
+The same bundle passes 16 native Settings phases, including last-window
+close/reopen with the same Core, and nine generated bundled handoff phases.
+Their hashes match before and after. Evidence is
+`.tmp/native-keychain-policy-settings-evidence/receipt.json` and
+`.tmp/native-keychain-policy-handoff-evidence/receipt.json`; the latter simulates
+picker replies. The Settings runtime log confirms the expected development
+`selected=mock` browser policy. No real Chromium Safe Storage acceptance or
+Developer ID/notarization result is claimed by the compile matrix or these
+Core tests. The earlier Store and Cocoa-transfer evidence below belongs to its
+recorded candidate, not this new bundle. No canonical app was replaced.
+
+The same candidate reopened the retained genuine normal-Store fixture and passed
+five function, tab-isolation, provenance, Core-preservation and restart phases.
+The official update callback returned `no_update` for uBlock Origin Lite
+`2026.1103.1743`; JSON Formatter remained `0.10.2`. Evidence is
+`.tmp/native-keychain-policy-store-update-evidence/receipt.json`, with unchanged
+candidate hashes. The run deliberately reports incomplete/exit 2 because no
+published version upgrade occurred; no version, receipt or install provenance
+was edited to turn it into an upgrade.
+
+The final full local suite passes **3,146 tests / 339 files**, with the same two
+ownership-mutation skips, in 128.95 seconds. All workspace type checks, source
+syntax/diff checks and production-secret scanning pass. Logs are
+`.tmp/native-keychain-policy-full-unit.log`,
+`.tmp/native-keychain-policy-types.log` and
+`.tmp/native-keychain-policy-secret-scan.log`. New-head CI remains separate from
+the previously green `c0f53334` checks. Real browser Safe Storage acceptance,
+real-profile/credential migration, Developer ID signing/notarization and canonical
+cutover remain open.
+
+## Previous checkpoint — native picker metadata and on-screen handoff, 2026-11-06
 
 The first actual native handoff acceptance test exposed a failure after a valid
 review: choosing a profile in Cocoa added `com.apple.macl` access metadata to the

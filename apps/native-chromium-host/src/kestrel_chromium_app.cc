@@ -10,6 +10,7 @@
 #include "include/cef_parser.h"
 #include "include/cef_scheme.h"
 #include "include/cef_v8.h"
+#include "kestrel_keychain_policy.h"
 
 namespace {
 
@@ -190,20 +191,18 @@ KestrelChromiumApp::KestrelChromiumApp(
 void KestrelChromiumApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
     CefRefPtr<CefCommandLine> command_line) {
-  // Default to Chromium's mock Keychain so ad-hoc development builds never
-  // spam unlock prompts. Opt into the real Chromium Keychain only when the
-  // host is launched with --kestrel-real-keychain (Developer ID / durable
-  // cutover). Chromium propagates browser-process switches to its helpers;
-  // limiting this change to the browser process follows CEF's safety guidance
-  // for child process command lines.
+  // Chromium propagates browser-process switches to its helpers; limiting
+  // Keychain policy selection to the browser process follows CEF's safety
+  // guidance for child process command lines.
   if (process_type.empty()) {
     if (!desktop_ui_path_.empty()) {
       command_line->RemoveSwitch("disable-extensions");
       command_line->AppendSwitchWithValue("load-extension", desktop_ui_path_);
     }
-    if (!command_line->HasSwitch("kestrel-real-keychain")) {
-      command_line->AppendSwitch("use-mock-keychain");
-    }
+    const bool mock_keychain =
+        kestrel::ConfigureKeychainPolicy(*command_line);
+    std::cout << "KESTREL_NATIVE_KEYCHAIN_POLICY selected="
+              << (mock_keychain ? "mock" : "system") << std::endl;
     // Kestrel starts local-first. The Chromium embed must not create a
     // background account, telemetry, component-updater, or reliability
     // network channel before a person explicitly chooses a provider route.
