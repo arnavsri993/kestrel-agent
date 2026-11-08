@@ -45,6 +45,7 @@
 #include "native_isolated_automation.h"
 #include "native_computer_use.h"
 #include "native_microphone_policy.h"
+#include "native_broker_environment.h"
 #include "kestrel_native_core_keychain.h"
 #include "kestrel_native_core_key_dispatch.h"
 #include "kestrel_native_profile_transfer.h"
@@ -683,10 +684,7 @@ int RunKestrelChromiumDesktop(int argc, char** argv, bool default_profile) {
   if ([project_handoff isKindOfClass:NSString.class]) [arguments addObjectsFromArray:@[@"--project-handoff-id", project_handoff]];
   if (default_profile || HasArgument(argc, argv, "--kestrel-durable-profile") || [project_handoff isKindOfClass:NSString.class]) [arguments addObject:@"--durable-profile"];
   broker.arguments = arguments;
-  NSDictionary* inherited = NSProcessInfo.processInfo.environment;
-  NSMutableDictionary* environment = [NSMutableDictionary dictionary];
-  for (NSString* name in @[@"HOME", @"PATH", @"LANG", @"TMPDIR"]) if (inherited[name]) environment[name] = inherited[name];
-  broker.environment = environment;
+  broker.environment = KestrelNativeBrokerEnvironment(NSProcessInfo.processInfo.environment);
   NSPipe* output = [NSPipe pipe];
   NSPipe* input = [NSPipe pipe];
   broker.standardOutput = output;

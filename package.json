@@ -81,6 +81,7 @@
 		"test:native-profile-transfer-ui": "node scripts/smoke-native-profile-transfer-ui.mjs",
 		"test:native-store-update-resume": "node scripts/resume-native-store-update.mjs",
     "test:native-real-keychain": "node scripts/smoke-native-real-keychain.mjs",
+    "test:native-real-browser-storage": "node scripts/smoke-native-real-browser-storage.mjs",
     "test:packaged-native:arm64": "KESTREL_NATIVE_TEST_APP=release/native-mac-arm64/Kestrel.app node scripts/smoke-native-chromium-host.mjs",
     "benchmark:browser-agent": "node scripts/run-browser-agent-benchmark.mjs",
     "benchmark:browser-agent:packaged:arm64": "KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel node scripts/run-browser-agent-benchmark.mjs",

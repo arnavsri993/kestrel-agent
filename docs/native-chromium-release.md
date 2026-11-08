@@ -7,7 +7,65 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
-## Current checkpoint — explicit Chromium Keychain release policy, 2026-11-08
+## Current checkpoint — browser storage diagnostic and broker isolation, 2026-11-08
+
+The desktop broker previously dropped the explicit provider-discovery opt-outs
+used by disposable-profile tests. Its environment now preserves the existing
+four runtime strings and only the exact string `1` for the subscription-CLI and
+local-model discovery opt-outs. Ambient credentials and other configuration
+remain excluded. Four compiled Foundation fixture cases cover the whitelist,
+normal behavior, rejected values and normalization. The actual native runtime
+also confirms subscription CLI discovery stays disabled in this test profile.
+Forwarding the local-model flag alone does not establish every model route's
+behavior.
+
+The fresh development bundle is
+`367a1417a7fa990d8a4f59d77b71633d546d379429ab388bd8baa7b381257030`
+at `.tmp/native-browser-storage-host/Kestrel.app`. It passes all 16 native
+Settings phases. A byte-identical, separately owned candidate passes two real
+Core-Keychain starts with encrypted conversation readback and no test/legacy
+key files. Receipts are
+`.tmp/native-browser-storage-settings-evidence/receipt.json` and
+`.tmp/native-real-keychain-evidence-1794178983168-8bd28159-a9f1-4001-8aee-e799009ef3c8/receipt.json`.
+The full suite passes **3,150 tests / 340 files**, with the same two ownership
+skips, in 113.09 seconds, and all workspace type checks pass. Logs are
+`.tmp/native-browser-storage-full-unit.log` and
+`.tmp/native-browser-storage-types.log`.
+
+The new `test:native-real-browser-storage` diagnostic requires explicit opt-in
+and a separate guarded candidate. It creates a private generated profile,
+isolates Core with a generated test key, and selects Chromium's system policy
+while checking the effective command line has no mock switch. It seeds one
+loopback-only persistent HttpOnly cookie once, disables reseeding before
+shutdown, and requires encrypted database rows plus cookie readback after a
+clean restart. A passing diagnostic would establish encrypted-cookie persistence
+under that configuration; it would not independently prove system Keychain
+custody, password storage, migration or signing continuity. Its receipt says so
+explicitly and is not a retirement-gate receipt.
+
+**The local browser-storage diagnostic has not passed.** The latest attempt
+verified the system policy, absent mock switch and discovery opt-out, then
+failed at `seed:create-tab` with no cookie response. The owned app exited with
+code 2. Receipt:
+`.tmp/native-real-browser-storage-1794177950869-cf83f035-3623-4d9f-9e82-973d65d7bde1/receipt.json`.
+A read-only call-stack sample taken while that owned process was alive showed
+a Chromium worker waiting in `SecItemCopyMatching` / Security.framework. The
+user reported no prompt appeared. Metadata-only checks found the default
+Keychain unlocked; they do not establish why this lookup waits. No Keychain
+values were exported and no shared item, authorization setting or code-sign
+clone was changed. Failed generated profiles remain private for diagnosis.
+
+A separate macOS CI job now runs the same diagnostic on a fresh hosted runner
+and uploads only its sanitized receipt. Its result must be observed at the new
+exact commit; it cannot clear the failed local acceptance or signing gates.
+Published predecessor `6fc15cf5` passed both CI jobs and all four CodeQL analyses.
+Its downloaded candidate has seven candidate-bound receipts covering 82 phases;
+those remain predecessor evidence, and Store acceptance was not requested in
+that CI run. No canonical app or user-used native window/profile was replaced.
+Real-profile and browser credential migration, a published Store upgrade,
+Developer ID signing/notarization and canonical cutover remain open.
+
+## Previous checkpoint — explicit Chromium Keychain release policy, 2026-11-08
 
 The native builder now selects `KESTREL_NATIVE_RELEASE_BUILD=0/1` explicitly
 for both host and helper compilation, separately from `NDEBUG`. Release builds

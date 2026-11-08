@@ -122,6 +122,40 @@ jobs:
       - run: corepack pnpm test:editors
       - run: corepack pnpm test:security
 
+  native_system_storage:
+    name: Native system-configured cookie diagnostic (macOS)
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      npm_config_arch: arm64
+      npm_config_target_arch: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - run: node scripts/build-native-chromium-host.mjs --output .tmp/native-system-storage-ci-host
+      - name: Test generated-profile system Keychain cookie storage
+        env:
+          KESTREL_NATIVE_TEST_APP: ${{ github.workspace }}/.tmp/native-system-storage-ci-host/Kestrel.app
+          KESTREL_TEST_NATIVE_REAL_BROWSER_KEYCHAIN: "1"
+        run: corepack pnpm test:native-real-browser-storage
+      - name: Upload system storage receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-system-storage-${{ github.run_attempt }}
+          include-hidden-files: true
+          path: .tmp/native-real-browser-storage-*/receipt.json
+          if-no-files-found: warn
+          retention-days: 14
+
   desktop:
     name: Desktop and packaged arm64 smoke
     runs-on: macos-15
