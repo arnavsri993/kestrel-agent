@@ -4045,6 +4045,7 @@ export const UserBrowserHistoryEntrySchema = z.object({
 	url: z.string().url().max(8_192),
 	title: z.string().min(1).max(500),
 	visitedAt: z.string().datetime(),
+	provenance: z.literal("imported").optional(),
 });
 export type UserBrowserHistoryEntry = z.infer<
 	typeof UserBrowserHistoryEntrySchema
@@ -4453,6 +4454,52 @@ export const BrowserDataTransferSchema = z.object({
 });
 export type BrowserDataTransfer = z.infer<typeof BrowserDataTransferSchema>;
 
+export const MAX_NATIVE_HISTORY_TRANSFER_BYTES = 1024 * 1024;
+export const MAX_NATIVE_HISTORY_SOURCE_BYTES = 10 * 1024 * 1024;
+export const NativeHistoryTransferEntrySchema = z.object({
+ url: z.string().min(1).max(8_192).refine(value => {
+  if (value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value) || !/^https?:\/\//i.test(value)) return false;
+  try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
+ }, "Use an HTTP(S) history URL without credentials."),
+ title: z.string().min(1).max(500).refine(value => !/[\u0000-\u001f\u007f]/.test(value), "History titles cannot contain control characters."),
+ visitedAt: z.string().datetime().refine(value => Number.isFinite(Date.parse(value)), "Use a valid visit date."),
+}).strict();
+export const NativeHistoryTransferSchema = z.object({
+ format: z.literal("kestrel-history"), version: z.literal(1),
+ entries: z.array(NativeHistoryTransferEntrySchema).max(5_000),
+}).strict().superRefine((value, context) => {
+ if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_NATIVE_HISTORY_TRANSFER_BYTES)
+  context.addIssue({ code: "custom", message: "History transfer exceeds 1 MiB." });
+});
+export type NativeHistoryTransfer = z.infer<typeof NativeHistoryTransferSchema>;
+export type NativeHistoryImportSummary = { entriesToAdd: number; duplicateEntries: number };
+export type NativeHistoryTransferFile = { data: NativeHistoryTransfer; source: "native" | "browser-data"; excluded: { bookmarks: number; sitePermissions: number; settings: boolean } };
+
+/** Validate the entire selected file before extracting a history-only payload. */
+export function parseNativeHistoryTransferFile(value: unknown): NativeHistoryTransferFile {
+ const serialized = JSON.stringify(value);
+ if (!serialized || new TextEncoder().encode(serialized).byteLength > MAX_NATIVE_HISTORY_SOURCE_BYTES) throw new Error("History source exceeds 10 MiB or is invalid.");
+ if (value && typeof value === "object" && "format" in value && value.format === "kestrel-history")
+  return { data: NativeHistoryTransferSchema.parse(value), source: "native", excluded: { bookmarks: 0, sitePermissions: 0, settings: false } };
+ const legacy = BrowserDataTransferSchema.strict().parse(value);
+ // Some historical settings schemas recover malformed nested values with
+ // defaults. A selected transfer file must be valid as supplied: defaults for
+ // absent fields are fine, replacement or stripping of provided values is not.
+ function unchangedProvidedFields(raw: unknown, parsed: unknown): void {
+  if (raw === parsed) return;
+  if (!raw || !parsed || typeof raw !== "object" || typeof parsed !== "object" || Array.isArray(raw) !== Array.isArray(parsed)) throw new Error("Invalid browser-data field.");
+  if (Array.isArray(raw) && raw.length !== (parsed as unknown[]).length) throw new Error("Invalid browser-data array.");
+  for (const key of Object.keys(raw)) {
+   if (!Object.hasOwn(parsed, key)) throw new Error("Unknown browser-data field.");
+   unchangedProvidedFields((raw as Record<string, unknown>)[key], (parsed as Record<string, unknown>)[key]);
+  }
+ }
+ unchangedProvidedFields(value, legacy);
+ const data = NativeHistoryTransferSchema.parse({ format: "kestrel-history", version: 1,
+  entries: legacy.history.map(({ url, title, visitedAt }) => ({ url, title, visitedAt })) });
+ return { data, source: "browser-data", excluded: { bookmarks: legacy.bookmarks.length, sitePermissions: legacy.sitePermissions.length, settings: true } };
+}
+
 export const NATIVE_HOME_SETTINGS_CATEGORIES = ["background", "shortcuts", "greeting", "widgets"] as const;
 export const NativeHomeSettingsCategorySchema = z.enum(NATIVE_HOME_SETTINGS_CATEGORIES);
 export type NativeHomeSettingsCategory = z.infer<typeof NativeHomeSettingsCategorySchema>;
@@ -4577,6 +4624,7 @@ export const UserBrowserStateSchema = z.object({
 		.regex(/^tab-[a-f0-9-]{36}$/)
 		.nullable(),
 	history: z.array(UserBrowserHistoryEntrySchema).max(5_000),
+	historySyncError: z.string().min(1).max(2_000).optional(),
 	originFavicons: z
 		.array(UserBrowserOriginFaviconSchema)
 		.max(200)
@@ -4702,6 +4750,8 @@ export const UserBrowserZoomSchema = z.object({
 export type UserBrowserZoom = z.infer<typeof UserBrowserZoomSchema>;
 
 export const UserBrowserEventSchema = z.discriminatedUnion("type", [
+	z.object({ type: z.literal("error"), error: z.string().min(1).max(2_000) }),
+	z.object({ type: z.literal("history-sync-recovered") }),
 	z.object({
 		type: z.literal("state"),
 		state: UserBrowserStateSchema,
@@ -4884,6 +4934,10 @@ export const RendererRequestSchema = z.union([
 		destinationFolderId: UserBrowserBookmarkFolderIdSchema.optional() }).strict(),
 	z.object({ type: z.literal("browser-apply-bookmark-import"), planId: z.string().uuid() }).strict(),
 	z.object({ type: z.literal("browser-discard-bookmark-import"), planId: z.string().uuid() }).strict(),
+ z.object({ type: z.literal("browser-export-history") }).strict(),
+ z.object({ type: z.literal("browser-plan-history-import"), data: NativeHistoryTransferSchema }).strict(),
+ z.object({ type: z.literal("browser-apply-history-import"), planId: z.string().uuid() }).strict(),
+ z.object({ type: z.literal("browser-discard-history-import"), planId: z.string().uuid() }).strict(),
 	z.object({ type: z.literal("browser-clear-history") }),
 	z.object({
 		type: z.literal("browser-clear-data"),
@@ -5456,6 +5510,8 @@ export type RendererResponse =
 	| { ok: true; homeSettingsImportPlan: { planId: string; expiresAt: string; categories: NativeHomeSettingsCategory[]; changedCategories: NativeHomeSettingsCategory[] } }
  | { ok: true; homeSettingsImportResult: { changedCategories: NativeHomeSettingsCategory[]; undoId: string; undoExpiresAt: string }; browserState: UserBrowserState }
  | { ok: true; homeSettingsUndoResult: { restoredCategories: NativeHomeSettingsCategory[] }; browserState: UserBrowserState }
+ | { ok: true; historyTransfer: NativeHistoryTransfer; historyExportExcluded: { entries: number; nativeTruncated: boolean } }
+ | { ok: true; historyImportPlan: { planId: string; expiresAt: string; summary: NativeHistoryImportSummary } }
  | { ok: true; bookmarkTransfer: NativeBookmarkTransfer; bookmarkExportExcluded: { bookmarks: number; folders: number } }
 	| { ok: true; bookmarkImportPlan: { planId: string; summary: NativeBookmarkImportSummary; expiresAt: string } }
 	| { ok: true; bookmarkImportResult: NativeBookmarkImportResult; browserState?: UserBrowserState }

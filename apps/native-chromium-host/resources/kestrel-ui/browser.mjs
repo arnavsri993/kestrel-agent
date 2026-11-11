@@ -5,6 +5,7 @@ import { capturePageContext } from "./page-context.mjs";
 import { createNativeAutomation } from "./native-automation.mjs";
 import { createNativeHomeSettingsTransfer } from "./home-settings-transfer.mjs";
 import { createNativeBookmarkTransfer } from "./bookmark-transfer.mjs";
+import { createNativeHistoryTransfer, NATIVE_IMPORTED_HISTORY_KEY, normalizeNativeHistory } from "./history-transfer.mjs";
 import { isNativeBrowserSettingsUrl } from "../../../../packages/shared-types/src/native-browser-settings.ts";
 
 const TAB_IDS_KEY = "kestrel.native.browser.tabIds.v1";
@@ -13,6 +14,7 @@ const BOOKMARK_IDS_KEY = "kestrel.native.browser.bookmarkIds.v1";
 const BOOKMARK_MODES_KEY = "kestrel.native.browser.bookmarkModes.v1";
 const BOOKMARK_REQUESTS = new Set(["browser-toggle-bookmark", "browser-save-bookmark", "browser-update-bookmark", "browser-remove-bookmark", "browser-create-bookmark-folder", "browser-rename-bookmark-folder", "browser-remove-bookmark-folder"]);
 const BOOKMARK_TRANSFER_REQUESTS = new Set(["browser-export-bookmarks", "browser-plan-bookmark-import", "browser-apply-bookmark-import", "browser-discard-bookmark-import"]);
+const HISTORY_TRANSFER_REQUESTS = new Set(["browser-export-history", "browser-plan-history-import", "browser-apply-history-import", "browser-discard-history-import"]);
 const INSTALL_DATES_KEY = "kestrel.native.browser.extensionInstallDates.v1";
 class BookmarkLimitError extends Error {}
 
@@ -42,7 +44,7 @@ const SUPPORTED = new Set([
 	"browser-get-state", "browser-create-tab", "browser-close-tab", "browser-select-tab",
 	"browser-navigate", "browser-back", "browser-forward", "browser-reload",
 	"browser-pin-tab", "browser-mute-tab", "browser-duplicate-tab", "browser-move-tab",
-	...BOOKMARK_REQUESTS, ...BOOKMARK_TRANSFER_REQUESTS, "browser-clear-history",
+	...BOOKMARK_REQUESTS, ...BOOKMARK_TRANSFER_REQUESTS, ...HISTORY_TRANSFER_REQUESTS, "browser-clear-history",
 	"browser-list-extensions", "browser-cancel-download",
 	"browser-update-settings", ...HOME_TRANSFER_REQUESTS,
 	"browser-get-context",
@@ -117,6 +119,8 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 				scheduleBookmarkEmit();
 			}
 		} });
+	const historyTransfer = createNativeHistoryTransfer({ read: () => stored(NATIVE_IMPORTED_HISTORY_KEY, { version: 1, entries: [] }), write: value => persist(NATIVE_IMPORTED_HISTORY_KEY, value),
+		readNative: readNativeHistory, clearNative: () => invoke(chromeApi.history, "deleteAll"), response, emit: emitState });
 	let focusedWindowId;
 	const loginCodeCaptures = new Map();
 	const loginCodeRevisions = new Map();
@@ -234,6 +238,7 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		return {
 			tabs: normalized, tabFolders: [], activeTabId: map[String(tabs.find((tab) => tab.active && tab.windowId === windowId)?.id)] || null,
 			history, originFavicons: [], downloads, bookmarks: bookmarkData.bookmarks,
+			...(historyTransfer.getSyncError() ? { historySyncError: historyTransfer.getSyncError() } : {}),
 			bookmarkFolders: bookmarkData.folders, recentlyClosedTabs: [],
 			sitePermissions: [], settings, settingsOwnership: "chromium",
 		};
@@ -302,12 +307,29 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 	});
 	chromeApi.storage.onChanged?.addListener?.((changes, area) => {
 		if (area === "local" && Object.hasOwn(changes || {}, BOOKMARK_MODES_KEY)) scheduleBookmarkEmit();
+		if (area === "local" && Object.hasOwn(changes || {}, NATIVE_IMPORTED_HISTORY_KEY)) scheduleEmit();
 	});
 	chromeApi.bookmarks?.onChanged?.addListener?.(scheduleBookmarkEmit);
 	chromeApi.bookmarks?.onCreated?.addListener?.(scheduleBookmarkEmit);
 	chromeApi.bookmarks?.onRemoved?.addListener?.(scheduleBookmarkEmit);
 	chromeApi.bookmarks?.onMoved?.addListener?.(scheduleBookmarkEmit);
 	chromeApi.history?.onVisited?.addListener?.(scheduleEmit);
+	chromeApi.history?.onVisitRemoved?.addListener?.(details => {
+		const reportFailure = error => {
+			try { emit("browser-event", { type: "error", error }); } catch { /* the event transport may already be closed */ }
+		};
+		// Never await this listener inside deleteAll: Kestrel's own clear holds
+		// the history queue until its native callback and archive write finish.
+		void historyTransfer.nativeHistoryRemoved(details).then(async result => {
+			await scheduleEmit();
+			if (!result.ok) reportFailure(result.error);
+			else if (details?.allHistory === true) {
+				// A partial URL list cannot prove an earlier failed removal was
+				// resolved. Only a verified full archive purge clears that error.
+				try { emit("browser-event", { type: "history-sync-recovered" }); } catch { /* the event transport may already be closed */ }
+			}
+		}).catch(() => reportFailure("Chromium history changed, but imported history could not be synchronized. Check history and try clearing it again."));
+	});
 	chromeApi.downloads?.onChanged?.addListener?.(scheduleEmit);
 
 	function bookmarkPresentation(node, record) {
@@ -481,16 +503,15 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
 		return response();
 	}
 
-	async function readHistory() {
-		if (!chromeApi.history?.search) return [];
-		const entries = await invoke(chromeApi.history, "search", { text: "", startTime: 0, maxResults: 5000 });
+	function readHistory() { return historyTransfer.read(); }
+	async function readNativeHistory() {
+		if (!chromeApi.history?.search) return { entries: [], excluded: 0, unavailable: true };
+		// One extra row detects a full API window so imports cannot hide records.
+		const entries = await invoke(chromeApi.history, "search", { text: "", startTime: 0, maxResults: 5001 });
 		const tabs = await invoke(chromeApi.tabs, "query", {});
 		const map = await tabMap(tabs);
 		const activeId = map[String(tabs.find((tab) => tab.active)?.id)] || uuid();
-		return asArray(entries).filter((entry) => entry.url?.length <= 8192 && /^https?:/i.test(entry.url || "")).map((entry) => ({
-			id: `visit-${crypto.randomUUID()}`, tabId: activeId, url: entry.url.slice(0, 8192),
-			title: (entry.title || entry.url).slice(0, 500), visitedAt: new Date(entry.lastVisitTime || Date.now()).toISOString(),
-		})).slice(0, 5000);
+		return normalizeNativeHistory(asArray(entries), activeId);
 	}
 	async function readDownloads() {
 		if (!chromeApi.downloads?.search) return [];
@@ -563,9 +584,9 @@ export function createBrowserAdapter(chromeApi, { emit = () => {}, uiUrl } = {})
    }
 			if (input.type === "browser-get-state") return response();
 			if (input.type === "browser-list-extensions") return listExtensions();
-			if (input.type === "browser-clear-history") {
-				await invoke(chromeApi.history, "deleteAll");
-				return response();
+			if (input.type === "browser-clear-history" || HISTORY_TRANSFER_REQUESTS.has(input.type)) {
+				try { return await historyTransfer.request(input); }
+				catch (error) { return { ok: false, error: error instanceof Error && !error.name.startsWith("Zod") ? error.message : "History transfer could not be completed. Check history before trying again." }; }
 			}
 			if (BOOKMARK_TRANSFER_REQUESTS.has(input.type)) {
 				const parsed = RendererRequestSchema.safeParse(input);

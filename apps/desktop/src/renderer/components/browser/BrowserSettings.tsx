@@ -26,6 +26,7 @@ import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
 import { browserExtensionOperationErrorMessage } from "../../../browser-extension-error";
 import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
 import { NativeBookmarkTransfer } from "./NativeBookmarkTransfer";
+import { NativeHistoryTransfer } from "./NativeHistoryTransfer";
 import { NativeHomeSettingsTransfer } from "./NativeHomeSettingsTransfer";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
@@ -390,6 +391,7 @@ function NativeBrowserSettings({ browser, contextEnabled, onToggleContext, secti
           ? <p>Manage saved pages and browsing data.</p>
           : <p>Open browser settings to view and change these preferences.</p>}
         {panel.section === "browser-reset" && <NativeBookmarkTransfer browser={browser} />}
+        {panel.section === "browser-reset" && <NativeHistoryTransfer browser={browser} />}
         {panel.section === "browser-reset" && <NativeHomeSettingsTransfer browser={browser} />}
         {panel.section === "browser-extensions" && <p><a href="https://chromewebstore.google.com/" onClick={(event) => { event.preventDefault(); void open("https://chromewebstore.google.com/"); }}>Browse Chrome Web Store</a></p>}
         {panel.section === "browser-privacy" && <div className="setting-row browser-setting-row" id="setting-browser-page-context">

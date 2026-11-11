@@ -7,7 +7,97 @@ from a private first-party MV3 extension. The agent companion uses Chromium's
 side panel. There is no AppKit window reparenting, clipped duplicate shell, or
 Electron process in this path.
 
-## Current checkpoint — browser storage diagnostic and broker isolation, 2026-11-08
+## Current checkpoint — native portable history and deletion feedback, 2026-11-11
+
+Native Settings now offers a reviewed history transfer beside bookmarks and Home
+settings. It accepts a bounded native history file or validates a complete
+Electron browser-data file before extracting history. Bookmarks, site permission
+grants, other settings and credentials are excluded. Preview and cancellation
+write no history; a consumed, expiring token binds apply to the reviewed native
+and imported metadata. Duplicate records preserve the destination's existing
+values. Limits are 5,000 records, 1 MiB of portable UTF-8 data and a 10 MiB
+selected source file. A separate 2 MiB authenticated worker-local frame budget
+holds the review envelope; native Core and unrelated request limits are unchanged.
+
+The original URL, title and visit date live in a versioned imported archive.
+Kestrel labels these entries Imported and sorts its history views newest first.
+The interface links directly to Kestrel history and explains its 5,000-entry
+recent view and bounded exports. Chromium's public
+[history API](https://developer.chrome.com/docs/extensions/reference/api/history#method-addUrl)
+can add only a current-time URL visit, so this implementation never calls
+`addUrl`, fabricates visits, edits Chromium SQLite or claims these records appear
+in Chromium history or address suggestions. Export counts are observed minimums
+when the native API's recent sample is truncated; oversized exports refuse.
+
+Kestrel's history-clear action removes both stores. Chromium full-history removal
+and explicitly listed removed URLs also update the imported archive through the
+same operation queue and invalidate pending reviews. Chrome date-range removal
+can omit URLs with older surviving visits; it does not prove complete archival
+range deletion. The UI directs complete imported-record removal through Kestrel's
+clear action. Partial storage failures report an error; unrelated state updates
+cannot hide the warning, and successful full recovery clears it. The running
+worker also includes unresolved status in initial browser state, so a newly
+opened or reloaded History/Settings document receives the same warning. This
+status is in memory; durable failed-deletion replay across a complete browser
+restart is not implemented.
+
+The actual native test found a production verification bug: Chrome storage may
+reorder JSON object fields. Comparing serialized field order falsely reported
+failed writes despite durable data. Verification and witnesses now compare JSON
+values with stable object-key order while retaining array order and exact scalar
+values. Tests distinguish key reordering from changed URLs, titles, dates, IDs,
+provenance and record order. The failed `0888cee0...` receipt remains preserved.
+Independent review also prompted stricter async-expiry checks, native display
+compatibility, accurate truncated-export disclosure and partial-clear feedback.
+
+The current ad-hoc bundle is
+`986545bc63ff4032f7d7a575abcf1809af190bfaf3d9feccc3b9aa661df54dba`
+at `.tmp/native-history-replay-host/Kestrel.app`. Its **11 actual native
+phases pass** with matching before/after hashes and generated-profile cleanup:
+review/cancel, keyboard apply, duplicates, legacy exclusions, portable export,
+restart, Imported labels and narrow-window layout, a near-limit renderer review,
+Chromium full-clear synchronization, a controlled storage-failure warning that
+survives History reload and an unrelated state event, and recovery through the real Kestrel history
+clear button followed by another restart. The storage failure is an explicit
+in-memory API fault in the owned first-party worker, not a real disk failure.
+Receipt: `.tmp/native-history-transfer-1794415900518/receipt.json`.
+
+The separate predecessor `b53e2fb1...` passed all 11 of its then-current phases,
+including the actual Cocoa Save As panel, completed download and original-data
+readback: `.tmp/native-history-transfer-1794414983723/receipt.json`. That receipt
+predates sticky-error feedback. The current automated canary explicitly reports
+`nativeSaveDialogVerified=false`; it does not inherit the predecessor's dialog
+observation. Preview, failure and narrow-layout screenshots were inspected.
+Its layout follows the existing Settings rows and labels, without a new design
+system or dependencies.
+
+The CI workflow now runs the history canary on a separately copied owned
+candidate and uploads only receipts and screenshots. The final local suite passes **3,211 tests / 343 files**, with the same two
+ownership-mutation skips, in 109.04 seconds. All workspace type checks, source
+syntax/diff checks, CI YAML parsing, production-secret scanning and dependency
+policy checks pass. Production dependency auditing reports no known
+vulnerabilities. The reviewed development-only advisory exception remains
+explicit and expires December 1. Logs are `.tmp/native-history-replay-full-unit.log`,
+`.tmp/native-history-replay-types.log`, `.tmp/native-history-replay-secret-scan.log`,
+`.tmp/native-history-dependency-policy.log` and
+`.tmp/native-history-production-audit.log`. The aggregate local `verify` command
+was not rerun because its native default build path is the preserved user-used
+bundle; separate candidate builds, focused native workflows and remote CI keep
+that boundary intact. New exact-head CI remains separate.
+Published predecessor `e5826263` passed all three CI jobs and four CodeQL
+analyses. Its verified artifacts contain seven shared-candidate receipts with
+82 phases and, on a separate candidate, two system-configured encrypted-cookie
+restart phases. The latter explicitly records
+`systemKeychainCustodyVerified=false`. Neither proves local browser credential
+acceptance, a Store upgrade, signing continuity or canonical cutover.
+
+No user profile or canonical app was replaced. The reserved `c7015edb...` bundle
+remains unchanged; its earlier PID is no longer present and was not closed by
+this work. Real browser credential and local Keychain acceptance, real-profile
+activation/rollback, a published Store upgrade, Developer ID signing/notarization
+and canonical Electron retirement remain open.
+
+## Previous checkpoint — browser storage diagnostic and broker isolation, 2026-11-08
 
 The desktop broker previously dropped the explicit provider-discovery opt-outs
 used by disposable-profile tests. Its environment now preserves the existing
