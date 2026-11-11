@@ -68,7 +68,9 @@ function inspectBuildEnvironment(sourceRoot) {
   let fullXcode = false;
   let macosSdk = '';
   try {
-    const selected = run('/usr/bin/xcode-select', ['-p']);
+    // A build-local override selects an installed Xcode without mutating the
+    // machine-wide Command Line Tools preference used by other projects.
+    const selected = process.env.DEVELOPER_DIR || run('/usr/bin/xcode-select', ['-p']);
     fullXcode = /\.app\/Contents\/Developer$/.test(selected) &&
       /^Xcode /m.test(run('/usr/bin/xcodebuild', ['-version']));
     macosSdk = run('/usr/bin/xcrun', ['--sdk', 'macosx', '--show-sdk-path']);

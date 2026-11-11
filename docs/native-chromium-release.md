@@ -74,9 +74,24 @@ requires a fresh production-vault test profile.
 Six focused CEF preparation tests pass, including real `git apply --check`
 against 228,724 bytes of SHA256-verified pinned upstream files. Source preparation
 refuses wrong commits, dirty targets, insufficient space or missing toolchain.
-This Mac currently has about 51 GiB free and only Command Line Tools; the
-specified build lane requires 150 GiB and full Xcode/depot_tools. No engine
-build, signing bypass or untrusted prebuilt engine was used.
+The first audit checked only `xcode-select` and incorrectly treated the selected
+Command Line Tools directory as proof that full Xcode was absent. Full Xcode
+27.2 was already installed. The user accepted Apple's license directly; SDK and
+compiler probes now succeed with the build-local
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` override. The source
+preflight now respects that override without changing system-wide selection.
+
+The user explicitly authorized clearing disk clutter except personal pictures.
+Removing reproducible caches/dependencies from inactive worktrees, old generated
+app bundles, obsolete installers, downloaded model weights and a public NPPES
+input dataset increased free space from about 51 GiB to about 170 GiB. Source
+worktrees, active dependencies, photos/videos, profiles, credentials, current
+candidate and the reserved user bundle were preserved. Downloaded official
+Chromium depot_tools is pinned locally to
+`1afcf0756e47f3a6ee82d7736b9fcda2d57b268e`; a shallow checkout of Chromium
+`156.0.8078.80` has started. These are prerequisite and checkout observations,
+not a successful custom-engine build. No signing bypass or untrusted prebuilt
+engine was used.
 
 Hardware crypto and isolation tests pass, including cross-process reopening,
 context mismatch, every-byte single-bit corruption and a crafted representation
@@ -86,12 +101,43 @@ store and bundled helper across two processes; it refuses pre-existing Core
 data without a vault. Its receipt explicitly reports no candidate binding or
 encrypted-database/browser proof. Neither fixture can satisfy release evidence.
 
+The standalone hardware fixture can additionally use a selected disposable
+bundle's actual Node/Core resources:
+
+```bash
+KESTREL_NATIVE_TEST_APP=/absolute/canonical/path/to/.tmp/candidate/Kestrel.app \
+  node scripts/smoke-native-local-vault.mjs
+```
+
+It obtains the production native store's key through a captured private pipe,
+creates a conversation/message in the bundled Core, stops both processes, unlocks
+the same vault in a new process, and decrypts the original message after restart.
+The generated message is absent from raw SQLite database and WAL bytes. This
+proves the tested Core payload persistence, not whole-database ciphertext or
+browser storage. The initial run passed with bundle `a1487b535943868e...`; receipt
+`.tmp/native-local-vault-core-fixture-1794425044640-6d52c3dd-5fc9-4f6a-a7b8-8ec2de1a5100/receipt.json`.
+The compiled key-store fixture replaces the native main process, so this remains
+explicitly ineligible for the candidate-bound release gate. No user key, real
+profile, Keychain password item or interactive prompt is used; generated
+profiles/binaries are removed after the run.
+
+A separate pinned-source audit verified all 118 CEF patch blobs (680,323 bytes)
+and the 117 configured patch entries. None targets either Chromium file changed
+by the custom provider patch. That is a patch-target compatibility check, not
+execution of the full upstream patch stack or a successful GN/engine build.
+
 Retirement now requires separate `native-local-vault` and
 `native-browser-local-vault` artifacts bound to the exact candidate, production
 provider, clean restart/readback and encrypted data, with no mock/test key or
 Keychain-item APIs. Browser evidence additionally requires encrypted persistent
 cookie readback. Old system-configured/Keychain receipts cannot satisfy these
 gates. Missing proof blocks both cutover planning and installation staging.
+
+Published head `f740ab1955f9049395da041e27f6599b8983b779` completed
+[CI run 43084497483](https://github.com/arnavsri993/kestrel-agent/actions/runs/43084497483)
+with both Core/security/native and desktop/packaged jobs successful. No
+real-Keychain job ran. This remote result applies to that exact head; later
+hardware fixture/preflight follow-ups require their own head validation.
 
 Local validation passes: the full source suite has 3,218 passing tests and three
 explicit skips (including optional network verification), type checking and the
