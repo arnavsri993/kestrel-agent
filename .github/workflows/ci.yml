@@ -137,6 +137,7 @@ jobs:
           name: desktop-failure-evidence-${{ github.run_attempt }}
           path: |
             .tmp/desktop-layout/**
+            .tmp/desktop-smoke-diagnostics/**
             .tmp/browser-agent-benchmark/*.json
             .tmp/ci-diagnostics/**
             test-results/**

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { createDesktopSmokeDiagnostics } from "./desktop-smoke-diagnostics.mjs";
+import { withDesktopFixture } from "./desktop-fixture-lifecycle.mjs";
 import {
 	openKestrelDestination,
 	selectSettingsSection,
@@ -20,6 +22,15 @@ const launchArgs = packagedExecutable
 	? ["--use-mock-keychain"]
 	: [resolve("apps/desktop")];
 let application;
+let page;
+let phase = "launch";
+const diagnostics = createDesktopSmokeDiagnostics();
+const captureUncaught = (error) => {
+	const receipt = diagnostics.captureCrash({ application, phase, error });
+	try {
+		if (receipt) console.error(`Disposable desktop smoke crash diagnostics: ${receipt}`);
+	} catch { /* Keep the original fatal exception authoritative. */ }
+};
 const server = createServer((_request, response) => {
 	response.writeHead(200, {
 		"content-type": "text/html; charset=utf-8",
@@ -37,25 +48,40 @@ const address = server.address();
 assert(address && typeof address === "object");
 const browserOrigin = `http://127.0.0.1:${address.port}`;
 
-try {
-	application = await electron.launch({
-		executablePath,
-		args: launchArgs,
-		env: {
-			...process.env,
-			KESTREL_TEST_USER_DATA: join(root, "user-data"),
-			// This disposable profile must be able to exercise a packaged binary
-			// while a person's canonical Kestrel app remains open.
-			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
-		},
+let serverClose;
+function closeServer() {
+	serverClose ??= new Promise((resolveClose, rejectClose) => {
+		const timer = setTimeout(() => rejectClose(new Error("Desktop smoke server close timed out.")), 2_000);
+		server.close((error) => {
+			clearTimeout(timer);
+			if (error) rejectClose(error);
+			else resolveClose();
+		});
+		server.closeAllConnections();
 	});
-	const page = await application.firstWindow();
+	return serverClose;
+}
+
+async function captureFailure(error) {
+	const receipt = await diagnostics.capture({ application, page, phase, error });
+	try {
+		if (receipt) console.error(`Disposable desktop smoke diagnostics: ${receipt}`);
+	} catch { /* Diagnostics must preserve the original failure. */ }
+}
+
+async function runSmoke() {
+	phase = "first-window";
+	page = await application.firstWindow();
+	diagnostics.observe(page);
+	phase = "onboarding";
 	await page.evaluate(() => {
 		localStorage.setItem("kestrel:onboarded", "yes");
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
+	phase = "composer";
 	await page.locator("#runtime-prompt").waitFor();
+	phase = "task-settings";
 	await page.locator('summary[aria-label="Task settings"]').click();
 	const taskSettings = page.locator(".task-settings[open]");
 	await taskSettings.locator(".runtime-project-picker select").waitFor();
@@ -82,11 +108,13 @@ try {
 			.isDisabled(),
 		true,
 	);
+	phase = "settings";
 	await openKestrelDestination(page, "Settings");
 	await selectSettingsSection(page, "general", "General");
 	await page.getByText("Communication style", { exact: true }).waitFor();
 	await page.getByText("Run at login", { exact: true }).waitFor();
 
+	phase = "decoder";
 	const petDecoder = await page.evaluate(async () => {
 		const result = await window.kestrel.request({
 			type: "pet-decoder-diagnostic",
@@ -100,6 +128,7 @@ try {
 	);
 	assert.match(petDecoder?.version ?? "", /^\d+\.\d+\.\d+/);
 
+	phase = "browser-tools";
 	const typedReceiptSentinel = "receipt-typed-body-sentinel";
 	const browserSmoke = await page.evaluate(
 		async ({ browserOrigin, typedReceiptSentinel }) => {
@@ -260,6 +289,7 @@ try {
 		),
 		true,
 	);
+	phase = "receipts";
 	assert.equal(
 		JSON.stringify(browserSmoke.browserReceipts).includes(typedReceiptSentinel),
 		false,
@@ -272,15 +302,54 @@ try {
 		),
 		true,
 	);
+	phase = "screenshot";
 	await page.screenshot({
 		path: join(root, "desktop-smoke.png"),
 		fullPage: true,
 	});
-	process.stdout.write(
-		`Rendered ${packagedExecutable ? "packaged" : "development"} desktop, native Sharp ${petDecoder.version}, isolated browser tools, and privacy-bounded action receipts passed.\n`,
-	);
+	return `Rendered ${packagedExecutable ? "packaged" : "development"} desktop, native Sharp ${petDecoder.version}, isolated browser tools, and privacy-bounded action receipts passed.\n`;
+}
+
+try {
+	// Observe fatal library failures without handling/suppressing the exception.
+	process.once("uncaughtExceptionMonitor", captureUncaught);
+	let successMessage;
+	await withDesktopFixture({
+		root,
+		launch: async () => {
+			try {
+				application = await electron.launch({
+					executablePath,
+					args: launchArgs,
+					env: {
+						...process.env,
+						KESTREL_TEST_USER_DATA: join(root, "user-data"),
+						// Keep this fixture isolated while the canonical app is open.
+						KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
+					},
+				});
+				return {
+					process: () => application.process(),
+					close: () => Promise.all([application.close(), closeServer()]),
+				};
+			} catch (error) {
+				await captureFailure(error);
+				throw error;
+			}
+		},
+		run: async () => {
+			try {
+				successMessage = await runSmoke();
+			} catch (error) {
+				await captureFailure(error);
+				throw error;
+			}
+		},
+	});
+	process.stdout.write(successMessage);
 } finally {
-	await application?.close();
-	await new Promise((resolveClose) => server.close(resolveClose));
-	rmSync(root, { recursive: true, force: true });
+	process.off("uncaughtExceptionMonitor", captureUncaught);
+	diagnostics.dispose();
+	// Launch failures retain the fixture. Preserve their original error during cleanup.
+	if (!serverClose) await closeServer().catch(() => {});
 }
